@@ -15,6 +15,7 @@ from simpletuner.helpers.data_backend.builders import (
     CsvBackendBuilder,
     HuggingfaceBackendBuilder,
     LocalBackendBuilder,
+    MemoryBackendBuilder,
     WebshartBackendBuilder,
     build_backend_from_config,
     create_backend_builder,
@@ -39,6 +40,7 @@ class TestBaseBackendBuilder(unittest.TestCase):
         """All builder classes implement required methods"""
         builder_classes = [
             LocalBackendBuilder,
+            MemoryBackendBuilder,
             AwsBackendBuilder,
             CsvBackendBuilder,
             HuggingfaceBackendBuilder,
@@ -59,6 +61,7 @@ class TestBaseBackendBuilder(unittest.TestCase):
         """All builder classes store accelerator"""
         builder_classes = [
             LocalBackendBuilder,
+            MemoryBackendBuilder,
             AwsBackendBuilder,
             CsvBackendBuilder,
             HuggingfaceBackendBuilder,
@@ -186,6 +189,73 @@ class TestLocalBackendBuilder(unittest.TestCase):
         self.assertEqual(result["data_backend"], mock_data_backend)
         self.assertEqual(result["metadata_backend"], mock_metadata_backend)
         self.assertEqual(result["instance_data_dir"], "/tmp/images")
+
+
+class TestMemoryBackendBuilder(unittest.TestCase):
+    def setUp(self):
+        self.accelerator = Mock()
+        self.accelerator.is_local_main_process = True
+        self.args = {
+            "cache_dir_text": "/tmp/text",
+            "cache_dir_vae": "/tmp/vae",
+            "compress_disk_cache": False,
+        }
+
+    @patch("simpletuner.helpers.data_backend.builders.memory.MemoryDataBackend")
+    def test_builds_memory_backend_with_mount_settings(self, mock_memory_backend):
+        config = TextEmbedBackendConfig.from_dict(
+            {
+                "id": "memory-text",
+                "type": "memory",
+                "dataset_type": "text_embeds",
+                "cache_dir": "/cache/text",
+                "memory_filesystem_path": "/mnt/simpletuner/text",
+                "memory_filesystem_size": "128G",
+                "memory_filesystem_sudo": True,
+            },
+            self.args,
+        )
+
+        MemoryBackendBuilder(self.accelerator, self.args).build(config)
+
+        mock_memory_backend.assert_called_once_with(
+            accelerator=self.accelerator,
+            id="memory-text",
+            source_path="/cache/text",
+            mount_path="/mnt/simpletuner/text",
+            filesystem_size="128G",
+            filesystem_sudo=True,
+            compress_cache=False,
+        )
+
+    @patch("simpletuner.helpers.data_backend.builders.memory.MemoryDataBackend")
+    def test_builds_image_embed_backend_from_default_cache_dir(self, mock_memory_backend):
+        config = ImageEmbedBackendConfig.from_dict(
+            {
+                "id": "memory-vae",
+                "type": "memory",
+                "dataset_type": "image_embeds",
+            },
+            self.args,
+        )
+
+        MemoryBackendBuilder(self.accelerator, self.args).build(config)
+
+        self.assertEqual(mock_memory_backend.call_args.kwargs["source_path"], "/tmp/vae")
+
+    def test_rejects_primary_dataset_types(self):
+        config = ImageBackendConfig.from_dict(
+            {
+                "id": "memory-images",
+                "type": "memory",
+                "dataset_type": "image",
+                "instance_data_dir": "/datasets/images",
+            },
+            {"resolution": 1.0, "resolution_type": "area"},
+        )
+
+        with self.assertRaisesRegex(ValueError, "only support dataset_type='text_embeds' or 'image_embeds'"):
+            MemoryBackendBuilder(self.accelerator, self.args).build(config)
 
 
 class TestAwsBackendBuilder(unittest.TestCase):
@@ -780,6 +850,12 @@ class TestCreateBackendBuilder(unittest.TestCase):
         self.assertIsInstance(builder, WebshartBackendBuilder)
         self.assertEqual(builder.accelerator, self.accelerator)
 
+    def test_create_memory_builder(self):
+        builder = create_backend_builder("memory", self.accelerator)
+
+        self.assertIsInstance(builder, MemoryBackendBuilder)
+        self.assertEqual(builder.accelerator, self.accelerator)
+
     def test_create_builder_invalid_type(self):
         """Test creating builder with invalid backend type"""
         with self.assertRaises(ValueError) as context:
@@ -790,7 +866,7 @@ class TestCreateBackendBuilder(unittest.TestCase):
 
     def test_supported_backend_types(self):
         """Test that all expected backend types are supported"""
-        expected_types = ["local", "aws", "csv", "huggingface", "webshart"]
+        expected_types = ["local", "memory", "aws", "csv", "huggingface", "webshart"]
 
         for backend_type in expected_types:
             # Should not raise any exceptions

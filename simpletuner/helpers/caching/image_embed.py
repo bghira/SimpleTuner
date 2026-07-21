@@ -55,7 +55,7 @@ class ImageEmbedCache(WebhookMixin):
         self.cache_data_backend = cache_data_backend if cache_data_backend is not None else image_data_backend
         self.instance_data_dir = instance_data_dir or ""
         self.cache_dir = cache_dir or ""
-        if self.cache_data_backend and self.cache_data_backend.type in ["local", "huggingface"] and self.cache_dir:
+        if self.cache_data_backend and self.cache_data_backend.type in ["local", "memory", "huggingface"] and self.cache_dir:
             self.cache_dir = os.path.abspath(self.cache_dir)
             self.cache_data_backend.create_directory(self.cache_dir)
         self.write_batch_size = write_batch_size
@@ -130,7 +130,7 @@ class ImageEmbedCache(WebhookMixin):
 
         for image_file in all_image_files:
             cache_filename, _ = self.generate_embed_filename(image_file)
-            if self.cache_data_backend.type == "local":
+            if self.cache_data_backend.type in {"local", "memory"}:
                 cache_filename = os.path.abspath(cache_filename)
             self.image_path_to_embed_path[image_file] = cache_filename
             self.embed_path_to_image_path[cache_filename] = image_file
@@ -160,7 +160,7 @@ class ImageEmbedCache(WebhookMixin):
         pending = []
         for image_path, embed_path in self.image_path_to_embed_path.items():
             test_path = embed_path
-            if self.cache_data_backend.type == "local":
+            if self.cache_data_backend.type in {"local", "memory"}:
                 test_path = os.path.abspath(embed_path)
             if not self.cache_data_backend.exists(test_path):
                 pending.append(image_path)
@@ -262,7 +262,7 @@ class ImageEmbedCache(WebhookMixin):
             self.embed_path_to_image_path[cache_path] = filepath
 
         directory = os.path.dirname(cache_path)
-        if directory and self.cache_data_backend.type == "local":
+        if directory and self.cache_data_backend.type in {"local", "memory"}:
             os.makedirs(directory, exist_ok=True)
 
         self.cache_data_backend.torch_save(embedding, cache_path)

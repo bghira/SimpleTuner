@@ -196,8 +196,30 @@
 
 ### `type`
 
-- **取值:** `aws` | `local` | `csv` | `huggingface` | `webshart`
-- **说明:** 决定此数据集所用的存储后端（本地、csv 或云）。
+- **取值:** `aws` | `local` | `memory` | `csv` | `huggingface` | `webshart`
+- **说明:** 决定此数据集所用的存储后端（本地、内存、csv 或云）。
+
+### 内存（tmpfs 和 RAM disk）后端
+
+`type: "memory"` 使用 `MemoryDataBackend`，它是由 Linux tmpfs 或 macOS 原生 RAM disk 支持的 `LocalDataBackend` 子类。它仅适用于 `dataset_type: "text_embeds"` 或 `dataset_type: "image_embeds"` 的缓存存储条目；主要图像、视频、音频、conditioning 和评估数据集不能使用它。SimpleTuner 会挂载一个独立的空文件系统，并在配置的 `cache_dir` 存在时将其复制进去。运行期间的读写使用内存中的副本，并在释放时丢弃；更改不会同步回 `cache_dir`。
+
+```json
+{
+  "id": "memory-vae-cache",
+  "type": "memory",
+  "dataset_type": "image_embeds",
+  "cache_dir": "/cache/vae",
+  "memory_filesystem_path": "/tmp/simpletuner-memory/vae",
+  "memory_filesystem_size": "512G",
+  "memory_filesystem_sudo": false
+}
+```
+
+- `memory_filesystem_path`：可选的空挂载目录。默认位于操作系统临时目录下的 `simpletuner-memory/<dataset id>`。此路径与 `cache_dir` 不得重叠，也不能互相包含。
+- `memory_filesystem_size`：内存文件系统容量，例如 `512G`。在 Linux 上可选，将使用系统 tmpfs 默认值，并接受 `80%` 等百分比。在 macOS 上为必填项，且必须是字节大小而非百分比；SimpleTuner 会将其转换为 `hdiutil` 所需的 512 字节扇区数。
+- `memory_filesystem_sudo`：仅限 Linux。设为 `true` 时通过 `sudo -n` 执行 `mount` 和 `umount`。以 root 身份运行时应保持 `false`。启用时必须预先配置免密码、非交互式 sudo。macOS RAM disk 无需此选项，使用 `hdiutil` 和 `diskutil`。
+
+内存后端要求 Linux 或 macOS，并需要足够的 RAM 或 swap 来容纳现有缓存以及训练期间写入的所有嵌入。它适合在大内存系统上解决大型 latent 或文本嵌入缓存的重复读取瓶颈。预加载现有缓存会增加启动时间；若要从空缓存开始，请使用空的或不存在的 `cache_dir`。
 
 ### `conditioning_type`
 

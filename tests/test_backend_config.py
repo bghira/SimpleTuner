@@ -112,6 +112,30 @@ class TestTextEmbedBackendConfig(unittest.TestCase):
 
         self.assertEqual(config.caption_filter_list, ["nsfw", "violence", "inappropriate"])
 
+    def test_memory_backend_settings_round_trip(self):
+        backend_dict = {
+            "id": "memory_text",
+            "type": "memory",
+            "dataset_type": "text_embeds",
+            "cache_dir": "/cache/text",
+            "memory_filesystem_path": "/mnt/simpletuner/text",
+            "memory_filesystem_size": "96G",
+            "memory_filesystem_sudo": True,
+        }
+
+        config = TextEmbedBackendConfig.from_dict(backend_dict, self.args)
+
+        self.assertEqual(
+            config.to_dict()["config"],
+            {
+                "cache_dir": "/cache/text",
+                "memory_filesystem_path": "/mnt/simpletuner/text",
+                "memory_filesystem_size": "96G",
+                "memory_filesystem_sudo": True,
+                "caption_filter_list": [],
+            },
+        )
+
     def test_text_cache_disable_implies_ondemand_and_round_trips(self):
         backend_dict = {
             "id": "text_test",
@@ -183,6 +207,29 @@ class TestImageEmbedBackendConfig(unittest.TestCase):
         expected = {"id": "image_embeds_test", "dataset_type": "image_embeds", "config": {}}
 
         self.assertEqual(output, expected)
+
+    def test_memory_backend_settings_round_trip(self):
+        backend_dict = {
+            "id": "memory_vae",
+            "type": "memory",
+            "dataset_type": "image_embeds",
+            "cache_dir": "/cache/vae",
+            "memory_filesystem_path": "/mnt/simpletuner/vae",
+            "memory_filesystem_size": "256G",
+            "memory_filesystem_sudo": True,
+        }
+
+        config = ImageEmbedBackendConfig.from_dict(backend_dict, self.args)
+
+        self.assertEqual(
+            config.to_dict()["config"],
+            {
+                "cache_dir": "/cache/vae",
+                "memory_filesystem_path": "/mnt/simpletuner/vae",
+                "memory_filesystem_size": "256G",
+                "memory_filesystem_sudo": True,
+            },
+        )
 
     def test_validate_success(self):
         """Test successful validation"""
