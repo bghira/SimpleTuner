@@ -30,6 +30,7 @@
 |-------|------------|-------|
 | **PixArt Sigma** | 0.6-0.9B | [Sigma 指南](SIGMA.md) |
 | **Cosmos2** | 2-14B | [Cosmos2 指南](COSMOS2IMAGE.md) |
+| **Cosmos3** | 16-65B | [Cosmos3 指南](COSMOS3.zh.md) |
 | **OmniGen** | 3.8B | [OmniGen 指南](OMNIGEN.md) |
 | **Qwen Image** | 20B | [Qwen 指南](QWEN_IMAGE.md) |
 | **LongCat Image** | 6B | [LongCat 指南](LONGCAT_IMAGE.md) |

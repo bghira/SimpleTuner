@@ -30,6 +30,7 @@ Guías paso a paso para entrenar cada arquitectura de modelo compatible.
 |-------|------------|-------|
 | **PixArt Sigma** | 0.6-0.9B | [Guía de Sigma](SIGMA.md) |
 | **Cosmos2** | 2-14B | [Guía de Cosmos2](COSMOS2IMAGE.md) |
+| **Cosmos3** | 16-65B | [Guía de Cosmos3](COSMOS3.es.md) |
 | **OmniGen** | 3.8B | [Guía de OmniGen](OMNIGEN.md) |
 | **Qwen Image** | 20B | [Guía de Qwen](QWEN_IMAGE.md) |
 | **LongCat Image** | 6B | [Guía de LongCat](LONGCAT_IMAGE.md) |

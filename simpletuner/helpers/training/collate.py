@@ -336,7 +336,8 @@ def compute_single_embedding(prompt_entry, text_embed_cache):
         # Grab the default text embed backend for null caption.
         text_embed_cache = StateTracker.get_default_text_embed_cache()
         # Use sentinel key for filename-based caches to match encode_dropout_caption()
-        if text_embed_cache._requires_path_based_keys:
+        use_dropout_sentinel = getattr(text_embed_cache.model, "use_text_cache_dropout_sentinel", lambda: True)()
+        if text_embed_cache._requires_path_based_keys and use_dropout_sentinel:
             prompt_entry["key"] = "__caption_dropout__"
         debug_log(
             f"Hashing caption '{prompt_value}' on text embed cache: {text_embed_cache.id} using data backend {text_embed_cache.data_backend.id}"
@@ -1059,6 +1060,17 @@ def collate_fn(batch):
             "prompt": caption,
             "dataset_relative_path": normalized_identifier,
         }
+        metadata_builder = getattr(model, "text_embed_cache_metadata_for_sample", None)
+        if callable(metadata_builder):
+            metadata.update(
+                metadata_builder(
+                    example=example,
+                    latent=latent_batch[idx],
+                    prompt=caption,
+                    data_backend_id=example_backend_id,
+                    dataset_relative_path=normalized_identifier,
+                )
+            )
         # Only include conditioning pixels for text embedding when using a single
         # conditioning image. With multiple backends in combined mode, skip image
         # context in embeddings and rely solely on latent references.
@@ -1075,6 +1087,9 @@ def collate_fn(batch):
             key_value = normalize_data_path(example_path, None)
         else:
             key_value = caption
+        key_builder = getattr(model, "text_embed_cache_key_value", None)
+        if callable(key_builder):
+            key_value = key_builder(prompt=caption, default_key=key_value, metadata=metadata)
         prompt_requests.append({"prompt": caption, "key": key_value, "metadata": metadata})
 
     if not text_embed_cache.disabled:

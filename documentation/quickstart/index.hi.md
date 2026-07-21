@@ -30,6 +30,7 @@
 |-------|------------|-------|
 | **PixArt Sigma** | 0.6-0.9B | [Sigma गाइड](SIGMA.md) |
 | **Cosmos2** | 2-14B | [Cosmos2 गाइड](COSMOS2IMAGE.md) |
+| **Cosmos3** | 16-65B | [Cosmos3 गाइड](COSMOS3.hi.md) |
 | **OmniGen** | 3.8B | [OmniGen गाइड](OMNIGEN.md) |
 | **Qwen Image** | 20B | [Qwen गाइड](QWEN_IMAGE.md) |
 | **LongCat Image** | 6B | [LongCat गाइड](LONGCAT_IMAGE.md) |

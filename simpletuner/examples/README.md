@@ -58,6 +58,12 @@ Z-Image conditioning examples:
 
 - `z-image-turbo.peft-lora+canny-conditioning` auto-generates Canny edge conditioning data and validates with those references through the IC-LoRA conditioning path.
 
+Cosmos3 examples:
+
+- `cosmos3-image.lycoris-lokr` uses `RareConcepts/Domokun`.
+- `cosmos3-video.lycoris-lokr` uses `sayakpaul/video-dataset-disney-organized`.
+- `cosmos3-video-audio.lycoris-lokr` uses local synchronized drumming files with `audio.auto_split`.
+
 Large multi-GPU video examples are split from the standard 24G examples:
 
 - `wan2.1-t2v-14b-480p-8xh100.peft-lora+cp-fa3`
