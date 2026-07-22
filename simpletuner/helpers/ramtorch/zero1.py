@@ -70,8 +70,8 @@ def broadcast_zero_params(rank_param_groups, async_op=True, include_ramtorch=Fal
 
     Args:
         rank_param_groups: Dict mapping rank -> list of param groups for that rank
-        async_op (bool): If True, performs non-blocking broadcasts and returns work handles.
-                         Defaults to False (blocking operation).
+        async_op (bool): If True, performs non-blocking broadcasts and waits for
+                         them before returning. Defaults to True.
         include_ramtorch (bool): If True, also broadcast RamTorch CPU parameters. Defaults to False.
     """
     work_handles = []

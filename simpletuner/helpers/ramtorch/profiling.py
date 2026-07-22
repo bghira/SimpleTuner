@@ -35,13 +35,36 @@ def _initial_stats() -> dict[str, Any]:
             "fallback_forward_transfers": 0,
             "hook_prefetch_calls": 0,
             "hook_prefetch_successes": 0,
+            "hook_prefetch_skipped_learned_order": 0,
             "sync_hook_calls": 0,
+            "prefetch_prediction_observations": 0,
+            "prefetch_prediction_hits": 0,
+            "prefetch_prediction_misses": 0,
+            "prefetch_prediction_terminal_misses": 0,
+            "prefetch_successor_learned_uses": 0,
+            "prefetch_successor_traversal_uses": 0,
+            "prefetch_successor_updates": 0,
             "bytes_prefetch_attempted": 0,
             "bytes_prefetched": 0,
             "bytes_prefetch_consumed": 0,
             "bytes_prefetch_stale": 0,
             "bytes_prefetch_unused": 0,
             "bytes_fallback_forward_transfer": 0,
+            "backward_preserve_attempts": 0,
+            "backward_preserve_retained": 0,
+            "backward_preserve_skipped_no_forward": 0,
+            "backward_preserve_skipped_policy": 0,
+            "backward_preserve_evicted": 0,
+            "backward_preserve_hits": 0,
+            "backward_preserve_misses": 0,
+            "backward_preserve_stale": 0,
+            "backward_weight_fallback_transfers": 0,
+            "bytes_backward_preserved": 0,
+            "bytes_backward_preserve_skipped_policy": 0,
+            "bytes_backward_preserve_evicted": 0,
+            "bytes_backward_preserve_hit": 0,
+            "bytes_backward_preserve_stale": 0,
+            "bytes_backward_weight_fallback_transfer": 0,
         },
         "devices": {},
     }
@@ -251,12 +274,106 @@ def record_fallback_forward_transfer(device: torch.device | str | int | None, te
         counters["bytes_fallback_forward_transfer"] += bytes_transferred
 
 
+def record_backward_preserve_attempt(
+    device: torch.device | str | int | None,
+    tensors,
+    *,
+    retained: bool,
+    reason: str | None = None,
+) -> None:
+    bytes_preserved = tensor_bytes(tensors)
+    with _LOCK:
+        counters = _STATS["counters"]
+        counters["backward_preserve_attempts"] += 1
+        if retained:
+            counters["backward_preserve_retained"] += 1
+            counters["bytes_backward_preserved"] += bytes_preserved
+        elif reason == "no_forward":
+            counters["backward_preserve_skipped_no_forward"] += 1
+
+
+def record_backward_preserve_evicted(device: torch.device | str | int | None, bytes_evicted: int) -> None:
+    with _LOCK:
+        counters = _STATS["counters"]
+        counters["backward_preserve_evicted"] += 1
+        counters["bytes_backward_preserve_evicted"] += int(bytes_evicted)
+
+
+def record_backward_preserve_skipped_policy(
+    device: torch.device | str | int | None,
+    bytes_skipped: int = 0,
+) -> None:
+    with _LOCK:
+        counters = _STATS["counters"]
+        counters["backward_preserve_skipped_policy"] += 1
+        counters["bytes_backward_preserve_skipped_policy"] += int(bytes_skipped)
+
+
+def record_backward_preserve_hit(device: torch.device | str | int | None, bytes_hit: int) -> None:
+    with _LOCK:
+        counters = _STATS["counters"]
+        counters["backward_preserve_hits"] += 1
+        counters["bytes_backward_preserve_hit"] += int(bytes_hit)
+
+
+def record_backward_preserve_miss(device: torch.device | str | int | None) -> None:
+    with _LOCK:
+        _STATS["counters"]["backward_preserve_misses"] += 1
+
+
+def record_backward_preserve_stale(device: torch.device | str | int | None, bytes_stale: int) -> None:
+    with _LOCK:
+        counters = _STATS["counters"]
+        counters["backward_preserve_stale"] += 1
+        counters["bytes_backward_preserve_stale"] += int(bytes_stale)
+
+
+def record_backward_weight_transfer(device: torch.device | str | int | None, tensors) -> None:
+    bytes_transferred = tensor_bytes(tensors)
+    with _LOCK:
+        counters = _STATS["counters"]
+        counters["backward_weight_fallback_transfers"] += 1
+        counters["bytes_backward_weight_fallback_transfer"] += bytes_transferred
+
+
 def record_hook_prefetch(success: bool) -> None:
     with _LOCK:
         counters = _STATS["counters"]
         counters["hook_prefetch_calls"] += 1
         if success:
             counters["hook_prefetch_successes"] += 1
+
+
+def record_hook_prefetch_skipped_learned_order() -> None:
+    with _LOCK:
+        _STATS["counters"]["hook_prefetch_skipped_learned_order"] += 1
+
+
+def record_prefetch_successor_source(source: str) -> None:
+    if source not in {"learned", "traversal"}:
+        return
+    counter = f"prefetch_successor_{source}_uses"
+    with _LOCK:
+        _STATS["counters"][counter] += 1
+
+
+def record_prefetch_successor_update() -> None:
+    with _LOCK:
+        _STATS["counters"]["prefetch_successor_updates"] += 1
+
+
+def record_prefetch_prediction(predicted_module_id: str | None, actual_module_id: str | None) -> None:
+    if not predicted_module_id:
+        return
+    with _LOCK:
+        counters = _STATS["counters"]
+        counters["prefetch_prediction_observations"] += 1
+        if predicted_module_id == actual_module_id:
+            counters["prefetch_prediction_hits"] += 1
+        else:
+            counters["prefetch_prediction_misses"] += 1
+            if actual_module_id is None:
+                counters["prefetch_prediction_terminal_misses"] += 1
 
 
 def record_sync_hook() -> None:
@@ -356,6 +473,21 @@ def snapshot() -> dict[str, Any]:
             "prefetch_policy": policy(),
             "min_free_ratio": _env_float("SIMPLETUNER_RAMTORCH_PREFETCH_MIN_FREE_RATIO", 0.20),
             "min_bytes": _env_int("SIMPLETUNER_RAMTORCH_PREFETCH_MIN_BYTES", 0),
+            "preserve_backward": os.environ.get("SIMPLETUNER_RAMTORCH_PRESERVE_BACKWARD", "1"),
+            "preserve_backward_max_entries": _env_int("SIMPLETUNER_RAMTORCH_PRESERVE_BACKWARD_MAX_ENTRIES", 2),
+            "preserve_backward_max_bytes": _env_int("SIMPLETUNER_RAMTORCH_PRESERVE_BACKWARD_MAX_BYTES", 0),
+            "preserve_backward_min_free_ratio": _env_float(
+                "SIMPLETUNER_RAMTORCH_PRESERVE_BACKWARD_MIN_FREE_RATIO",
+                0.05,
+            ),
+            "preserve_backward_min_free_bytes": _env_int(
+                "SIMPLETUNER_RAMTORCH_PRESERVE_BACKWARD_MIN_FREE_BYTES",
+                0,
+            ),
+            "preserve_backward_min_total_bytes": _env_int(
+                "SIMPLETUNER_RAMTORCH_PRESERVE_BACKWARD_MIN_TOTAL_BYTES",
+                0,
+            ),
             "warmup_steps": _env_int("SIMPLETUNER_RAMTORCH_PROFILE_WARMUP_STEPS", 5),
         }
         data["train_step_durations"] = _step_duration_summary()

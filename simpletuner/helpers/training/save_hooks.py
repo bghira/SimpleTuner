@@ -915,6 +915,7 @@ class SaveHookManager:
     def save_model_hook(self, models, weights, output_dir):
         # Write "training_state.json" to the output directory containing the training state
         StateTracker.save_training_state(os.path.join(output_dir, self.training_state_path))
+        StateTracker.save_ramtorch_prefetch_orders(output_dir)
 
         distributed_type = DistributedType.NO
         is_main_process = True
@@ -1030,6 +1031,7 @@ class SaveHookManager:
             StateTracker.load_training_state(training_state_path)
         else:
             logger.warning(f"Could not find {training_state_path} in checkpoint dir {input_dir}")
+        StateTracker.load_ramtorch_prefetch_orders(input_dir)
         self._load_ema_state(input_dir)
         is_fsdp2_run = self._is_fsdp2()
 

@@ -29,7 +29,7 @@ def setup_grad_sharding_hooks(rank_param_groups, current_rank):
             owner_rank = param_to_owner[param]
             # reduce towards the owner rank
             # non ramtorch params will use default dist reduce stream
-            dist.reduce(grad, dst=owner_rank, op=dist.ReduceOp.SUM, async_op=True)
+            dist.reduce(grad, dst=owner_rank, op=dist.ReduceOp.SUM, async_op=False)
 
             if current_rank == owner_rank:
                 # owner rank keeps the reduced gradient

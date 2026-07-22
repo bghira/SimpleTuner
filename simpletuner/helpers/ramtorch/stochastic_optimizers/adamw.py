@@ -144,10 +144,10 @@ class AdamW(Optimizer):
                 # ========= Asynchronously queue all operations for this parameter =========
                 # Determine target GPU device for computation
                 if device.type == "cpu":
-                    # If param is on CPU, use default GPU for computation
-                    compute_device = torch.cuda.current_device()
+                    if not torch.cuda.is_available():
+                        raise RuntimeError("RamTorch AdamW requires CUDA when parameters are stored on CPU")
+                    compute_device = torch.device("cuda", torch.cuda.current_device())
                 else:
-                    # If param is on GPU, use its device
                     compute_device = device
 
                 # 1. Queue Host-to-Device copy

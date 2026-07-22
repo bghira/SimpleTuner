@@ -9,6 +9,8 @@ This approach interleave compute and data transfer, making it useful for:
 - Scenarios where GPU memory is limited but CPU memory is abundant
 """
 
+from collections import OrderedDict
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -18,6 +20,14 @@ from simpletuner.helpers.ramtorch import profiling as ramtorch_profile
 
 # --- Per-device global state registry ---
 _DEVICE_STATE = {}
+
+
+def _to_cpu_pinned(tensor: torch.Tensor, *, dtype: torch.dtype | None = None) -> torch.Tensor:
+    if dtype is not None and tensor.dtype != dtype:
+        tensor = tensor.to(dtype=dtype)
+    if tensor.device.type == "cpu" and torch.cuda.is_available() and not tensor.is_pinned():
+        tensor = tensor.pin_memory()
+    return tensor
 
 
 def _device_obj(device):
@@ -31,7 +41,7 @@ def _device_obj(device):
 def _get_device_state(device=None):
     """Get or initialize per-device state (CUDA only)."""
     if device is None:
-        device = torch.cuda.current_device()
+        device = torch.device("cuda", torch.cuda.current_device())
     device = _device_obj(device)
 
     if device.type != "cuda":
@@ -52,7 +62,10 @@ def _get_device_state(device=None):
                 "w_buffers": [None, None],
                 "b_buffers": [None, None],
                 "forward_buffer_release_events": [None, None],
+                "forward_buffer_generations": [0, 0],
                 "forward_prefetches": {},
+                "forward_backward_residency": OrderedDict(),
+                "forward_backward_resident_bytes": 0,
                 "w_bwd_buffers": [None, None],
                 "w_grad_buffers": [None, None],
                 "b_grad_buffers": [None, None],
@@ -75,6 +88,32 @@ def _tensor_version(tensor):
 
 def _prefetch_versions(weight_cpu, bias_cpu):
     return (_tensor_version(weight_cpu), _tensor_version(bias_cpu))
+
+
+def _resident_bytes(entry):
+    return int(entry.get("bytes", 0))
+
+
+def _evict_backward_resident_entry(state, key, device):
+    entry = state["forward_backward_residency"].pop(key, None)
+    if entry is None:
+        return
+    bytes_evicted = _resident_bytes(entry)
+    state["forward_backward_resident_bytes"] = max(
+        0,
+        int(state.get("forward_backward_resident_bytes", 0)) - bytes_evicted,
+    )
+    ramtorch_profile.record_backward_preserve_evicted(device, bytes_evicted)
+
+
+def _evict_backward_residency_to_budget(state, device, *, max_entries: int, max_bytes: int):
+    residency = state["forward_backward_residency"]
+    while residency and max_entries > 0 and len(residency) > max_entries:
+        oldest_key = next(iter(residency))
+        _evict_backward_resident_entry(state, oldest_key, device)
+    while residency and max_bytes > 0 and int(state.get("forward_backward_resident_bytes", 0)) > max_bytes:
+        oldest_key = next(iter(residency))
+        _evict_backward_resident_entry(state, oldest_key, device)
 
 
 def prefetch_linear_forward(weight_cpu, bias_cpu, device="cuda"):
@@ -113,6 +152,8 @@ def prefetch_linear_forward(weight_cpu, bias_cpu, device="cuda"):
 
     selected_buffer = state["forward_clk"]
     state["forward_clk"] ^= 1
+    state["forward_buffer_generations"][selected_buffer] += 1
+    buffer_generation = state["forward_buffer_generations"][selected_buffer]
 
     transfer_stream = state["transfer_stream"]
     release_event = state["forward_buffer_release_events"][selected_buffer]
@@ -133,6 +174,7 @@ def prefetch_linear_forward(weight_cpu, bias_cpu, device="cuda"):
     state["forward_prefetches"][key] = {
         "buffer": selected_buffer,
         "event": event,
+        "generation": buffer_generation,
         "versions": versions,
     }
     ramtorch_profile.record_prefetch_enqueued(
@@ -155,6 +197,9 @@ def _consume_linear_forward_prefetch(weight_cpu, bias_cpu, device):
     if entry["versions"] != _prefetch_versions(weight_cpu, bias_cpu):
         ramtorch_profile.record_prefetch_stale("linear", key, device)
         return None
+    if state["forward_buffer_generations"][entry["buffer"]] != entry.get("generation"):
+        ramtorch_profile.record_prefetch_stale("linear", key, device)
+        return None
     ramtorch_profile.record_prefetch_consumed("linear", key, device)
     return entry
 
@@ -168,6 +213,7 @@ def _transfer_linear_forward(weight_cpu, bias_cpu, device):
 
     selected_buffer = state["forward_clk"]
     state["forward_clk"] ^= 1
+    state["forward_buffer_generations"][selected_buffer] += 1
     release_event = state["forward_buffer_release_events"][selected_buffer]
 
     with torch.cuda.stream(transfer_stream):
@@ -182,6 +228,111 @@ def _transfer_linear_forward(weight_cpu, bias_cpu, device):
         event.record()
 
     return {"buffer": selected_buffer, "event": event}
+
+
+def preserve_linear_forward_for_backward(
+    weight_cpu,
+    bias_cpu,
+    device="cuda",
+    *,
+    max_entries: int = 2,
+    max_bytes: int = 0,
+):
+    device_obj = _device_obj(device)
+    if device_obj.type != "cuda":
+        return False
+
+    last_forward = getattr(weight_cpu, "_ramtorch_last_forward_residency", None)
+    if not last_forward:
+        ramtorch_profile.record_backward_preserve_attempt(
+            device_obj,
+            (weight_cpu, bias_cpu),
+            retained=False,
+            reason="no_forward",
+        )
+        return False
+
+    key = _prefetch_key(weight_cpu, bias_cpu)
+    versions = _prefetch_versions(weight_cpu, bias_cpu)
+    if last_forward.get("key") != key or last_forward.get("versions") != versions:
+        ramtorch_profile.record_backward_preserve_attempt(device_obj, (weight_cpu, bias_cpu), retained=False)
+        return False
+
+    state = _get_device_state(device_obj)
+    buffer_index = last_forward.get("buffer")
+    if (
+        buffer_index is None
+        or state["forward_buffer_generations"][buffer_index] != last_forward.get("generation")
+        or last_forward.get("weight") is None
+    ):
+        ramtorch_profile.record_backward_preserve_attempt(device_obj, (weight_cpu, bias_cpu), retained=False)
+        return False
+
+    bytes_to_preserve = ramtorch_profile.tensor_bytes((weight_cpu, bias_cpu))
+    entry = {
+        "weight": last_forward["weight"],
+        "bias": last_forward.get("bias"),
+        "event": last_forward["event"],
+        "versions": versions,
+        "bytes": bytes_to_preserve,
+        "uses": 1,
+    }
+
+    residency = state["forward_backward_residency"]
+    old_entry = residency.pop(key, None)
+    if old_entry is not None:
+        state["forward_backward_resident_bytes"] = max(
+            0,
+            int(state.get("forward_backward_resident_bytes", 0)) - _resident_bytes(old_entry),
+        )
+        entry["uses"] = int(old_entry.get("uses", 1)) + 1
+
+    residency[key] = entry
+    state["forward_backward_resident_bytes"] = int(state.get("forward_backward_resident_bytes", 0)) + bytes_to_preserve
+    _evict_backward_residency_to_budget(
+        state,
+        device_obj,
+        max_entries=max(int(max_entries), 0),
+        max_bytes=max(int(max_bytes), 0),
+    )
+    retained = key in residency
+    ramtorch_profile.record_backward_preserve_attempt(
+        device_obj,
+        (weight_cpu, bias_cpu),
+        retained=retained,
+    )
+    return retained
+
+
+def _consume_linear_backward_residency(weight_cpu, bias_cpu, device):
+    state = _get_device_state(device)
+    key = _prefetch_key(weight_cpu, bias_cpu)
+    residency = state["forward_backward_residency"]
+    entry = residency.get(key)
+    if entry is None:
+        ramtorch_profile.record_backward_preserve_miss(device)
+        return None
+
+    bytes_resident = _resident_bytes(entry)
+    versions = _prefetch_versions(weight_cpu, bias_cpu)
+    if entry.get("versions") != versions:
+        _evict_backward_resident_entry(state, key, device)
+        ramtorch_profile.record_backward_preserve_stale(device, bytes_resident)
+        return None
+
+    uses = max(int(entry.get("uses", 1)), 1)
+    if uses <= 1:
+        residency.pop(key, None)
+        state["forward_backward_resident_bytes"] = max(
+            0,
+            int(state.get("forward_backward_resident_bytes", 0)) - bytes_resident,
+        )
+    else:
+        entry["uses"] = uses - 1
+        residency.move_to_end(key)
+
+    ramtorch_profile.record_backward_preserve_hit(device, bytes_resident)
+    return entry
 
 
 def _invoke_tensor_hooks(tensor, grad):
@@ -310,21 +461,34 @@ class BouncingLinearFn(torch.autograd.Function):
             transfer = _transfer_linear_forward(weight_cpu, bias_cpu, device_obj)
         selected_buffer = transfer["buffer"]
 
-        with record_function("forward_linear_compute"):  # for profiling and easy debugging
-            # make compute stream wait for this transfer
-            torch.cuda.current_stream().wait_event(transfer["event"])
+        with torch.cuda.device(device_obj):
+            compute_stream = torch.cuda.current_stream(device_obj)
+            with record_function("forward_linear_compute"):  # for profiling and easy debugging
+                # make compute stream wait for this transfer
+                compute_stream.wait_event(transfer["event"])
 
-            # Manual casting when autocast is enabled
-            if autocast_enabled:
-                x_compute = x.to(autocast_dtype)
-                w_compute = w_buffers[selected_buffer].to(autocast_dtype)
-                b_compute = b_buffers[selected_buffer].to(autocast_dtype) if b_buffers[selected_buffer] is not None else None
-                out = F.linear(x_compute, w_compute, b_compute)
-            else:
-                out = F.linear(x, w_buffers[selected_buffer], b_buffers[selected_buffer])
-            release_event = torch.cuda.Event()
-            release_event.record()
-            state["forward_buffer_release_events"][selected_buffer] = release_event
+                # Manual casting when autocast is enabled
+                if autocast_enabled:
+                    x_compute = x.to(autocast_dtype)
+                    w_compute = w_buffers[selected_buffer].to(autocast_dtype)
+                    b_compute = (
+                        b_buffers[selected_buffer].to(autocast_dtype) if b_buffers[selected_buffer] is not None else None
+                    )
+                    out = F.linear(x_compute, w_compute, b_compute)
+                else:
+                    out = F.linear(x, w_buffers[selected_buffer], b_buffers[selected_buffer])
+                release_event = torch.cuda.Event()
+                release_event.record(compute_stream)
+                state["forward_buffer_release_events"][selected_buffer] = release_event
+                weight_cpu._ramtorch_last_forward_residency = {
+                    "key": _prefetch_key(weight_cpu, bias_cpu),
+                    "versions": _prefetch_versions(weight_cpu, bias_cpu),
+                    "buffer": selected_buffer,
+                    "generation": state["forward_buffer_generations"][selected_buffer],
+                    "event": release_event,
+                    "weight": w_buffers[selected_buffer],
+                    "bias": b_buffers[selected_buffer],
+                }
 
         # save for backward
         ctx.save_for_backward(x, weight_cpu, bias_cpu)
@@ -425,16 +589,23 @@ class BouncingLinearFn(torch.autograd.Function):
         # flip the clock!
         state["backward_clk"] ^= 1
 
+        resident_forward = _consume_linear_backward_residency(weight_cpu, bias_cpu, device)
+
         # transfer weights on transfer stream
         with torch.cuda.stream(transfer_stream):
-            with record_function("backward_weight_transfer"):  # for profiling and easy debugging
-                # if it's a first time, it's a no-op
-                # wait for compute event to finish first
-                transfer_stream.wait_event(compute_backward_start_event)
+            if resident_forward is None:
+                ramtorch_profile.record_backward_weight_transfer(device, (weight_cpu,))
+                with record_function("backward_weight_transfer"):  # for profiling and easy debugging
+                    # if it's a first time, it's a no-op
+                    # wait for compute event to finish first
+                    transfer_stream.wait_event(compute_backward_start_event)
 
-                # alternate between buffers to prevent race condition where the transfer stream
-                # overwriting the weight buffers before the main stream finish calculating the value
-                w_bwd_buffers[selected_buffer] = weight_cpu.to(device, non_blocking=True)
+                    # alternate between buffers to prevent race condition where the transfer stream
+                    # overwriting the weight buffers before the main stream finish calculating the value
+                    w_bwd_buffers[selected_buffer] = weight_cpu.to(device, non_blocking=True)
+            else:
+                with record_function("backward_weight_resident"):  # for profiling and easy debugging
+                    transfer_stream.wait_event(resident_forward["event"])
 
             # load gradient for manual accumulation
             with record_function("backward_grad_accumulator_transfer"):  # for profiling and easy debugging
@@ -449,79 +620,85 @@ class BouncingLinearFn(torch.autograd.Function):
                 # record when transfer is done
                 transfer_backward_finished_event.record()
 
-        # Make the compute stream wait for the weight transfer to complete
-        torch.cuda.current_stream().wait_event(transfer_backward_finished_event)
+        with torch.cuda.device(device):
+            compute_stream = torch.cuda.current_stream(device)
 
-        # mark the start of compute event
-        compute_backward_start_event.record()
+            # Make the compute stream wait for the weight transfer to complete
+            compute_stream.wait_event(transfer_backward_finished_event)
 
-        with record_function("backward_linear_compute"):  # for profiling and easy debugging
-            # Manual casting for backward when autocast is enabled
-            if ctx.autocast_enabled:
-                grad_out_compute = grad_out.to(ctx.autocast_dtype)
-                x_compute = x.to(ctx.autocast_dtype)
-                w_compute = w_bwd_buffers[selected_buffer].to(ctx.autocast_dtype)
+            # mark the start of compute event
+            compute_backward_start_event.record(compute_stream)
 
-                # compute input grad
-                grad_input = grad_out_compute @ w_compute
-
-                if compute_weight_grad:
-                    torch.cuda.current_stream().wait_event(transfer_weight_backward_finished_event)
-                    w_grad_buffers[selected_buffer] = (grad_out_compute.flatten(0, -2).T @ x_compute.flatten(0, -2)).to(
-                        weight_cpu.dtype
-                    )
-            else:
-                # compute input grad
-                grad_input = grad_out @ w_bwd_buffers[selected_buffer]
-
-                if compute_weight_grad:
-                    torch.cuda.current_stream().wait_event(transfer_weight_backward_finished_event)
-                    w_grad_buffers[selected_buffer] = grad_out.flatten(0, -2).T @ x.flatten(0, -2)
-
-            # gradient accumulation is being performed directly
-            if compute_weight_grad:
-                with record_function("backward_weight_grad_accumulate"):  # for profiling and easy debugging
-
-                    # invoke grad hooks on weight gradient
-                    w_grad_buffers[selected_buffer] = _invoke_tensor_hooks(weight_cpu, w_grad_buffers[selected_buffer])
-
-                    if w_grad_accum_buffers[selected_buffer] is not None:
-
-                        # accumulate weight
-                        w_grad_buffers[selected_buffer] += w_grad_accum_buffers[selected_buffer]
-
-                    # invoke post accum hooks on weight gradient
-                    # use temporary reference to simplify post accum ipl
-                    weight_cpu.ramtorch_grad = w_grad_buffers[selected_buffer]
-                    _invoke_post_accum_tensor_hooks(weight_cpu)
-                    del weight_cpu.ramtorch_grad
-
-            if compute_bias_grad:
-                # sum over all batch-like dims, keep only last dim (Out)
-                reduce_dims = tuple(range(grad_out.ndim - 1))
-
-                # Keep bias gradient in fp32 for numerical stability when autocast is enabled
+            with record_function("backward_linear_compute"):  # for profiling and easy debugging
+                weight_for_backward = (
+                    resident_forward["weight"] if resident_forward is not None else w_bwd_buffers[selected_buffer]
+                )
+                # Manual casting for backward when autocast is enabled
                 if ctx.autocast_enabled:
-                    b_grad_buffers[selected_buffer] = grad_out.float().sum(dim=reduce_dims).to(bias_cpu.dtype)
+                    grad_out_compute = grad_out.to(ctx.autocast_dtype)
+                    x_compute = x.to(ctx.autocast_dtype)
+                    w_compute = weight_for_backward.to(ctx.autocast_dtype)
+
+                    # compute input grad
+                    grad_input = grad_out_compute @ w_compute
+
+                    if compute_weight_grad:
+                        compute_stream.wait_event(transfer_weight_backward_finished_event)
+                        w_grad_buffers[selected_buffer] = (grad_out_compute.flatten(0, -2).T @ x_compute.flatten(0, -2)).to(
+                            weight_cpu.dtype
+                        )
                 else:
-                    b_grad_buffers[selected_buffer] = grad_out.sum(dim=reduce_dims)
+                    # compute input grad
+                    grad_input = grad_out @ weight_for_backward
 
-                with record_function("backward_bias_grad_accumulate"):  # for profiling and easy debugging
+                    if compute_weight_grad:
+                        compute_stream.wait_event(transfer_weight_backward_finished_event)
+                        w_grad_buffers[selected_buffer] = grad_out.flatten(0, -2).T @ x.flatten(0, -2)
 
-                    # invoke grad hooks on bias gradient
-                    b_grad_buffers[selected_buffer] = _invoke_tensor_hooks(bias_cpu, b_grad_buffers[selected_buffer])
+                # gradient accumulation is being performed directly
+                if compute_weight_grad:
+                    with record_function("backward_weight_grad_accumulate"):  # for profiling and easy debugging
 
-                    if b_grad_accum_buffers[selected_buffer] is not None:
+                        # invoke grad hooks on weight gradient
+                        w_grad_buffers[selected_buffer] = _invoke_tensor_hooks(weight_cpu, w_grad_buffers[selected_buffer])
 
-                        # accumulate bias
-                        b_grad_buffers[selected_buffer] += b_grad_accum_buffers[selected_buffer]
+                        if w_grad_accum_buffers[selected_buffer] is not None:
 
-                    # invoke post accum hooks on bias gradient
-                    # use temporary reference to simplify post accum ipl
-                    bias_cpu.ramtorch_grad = b_grad_buffers[selected_buffer]
-                    _invoke_post_accum_tensor_hooks(bias_cpu)
-                    del bias_cpu.ramtorch_grad
-            compute_backward_finished_event.record()
+                            # accumulate weight
+                            w_grad_buffers[selected_buffer] += w_grad_accum_buffers[selected_buffer]
+
+                        # invoke post accum hooks on weight gradient
+                        # use temporary reference to simplify post accum ipl
+                        weight_cpu.ramtorch_grad = w_grad_buffers[selected_buffer]
+                        _invoke_post_accum_tensor_hooks(weight_cpu)
+                        del weight_cpu.ramtorch_grad
+
+                if compute_bias_grad:
+                    # sum over all batch-like dims, keep only last dim (Out)
+                    reduce_dims = tuple(range(grad_out.ndim - 1))
+
+                    # Keep bias gradient in fp32 for numerical stability when autocast is enabled
+                    if ctx.autocast_enabled:
+                        b_grad_buffers[selected_buffer] = grad_out.float().sum(dim=reduce_dims).to(bias_cpu.dtype)
+                    else:
+                        b_grad_buffers[selected_buffer] = grad_out.sum(dim=reduce_dims)
+
+                    with record_function("backward_bias_grad_accumulate"):  # for profiling and easy debugging
+
+                        # invoke grad hooks on bias gradient
+                        b_grad_buffers[selected_buffer] = _invoke_tensor_hooks(bias_cpu, b_grad_buffers[selected_buffer])
+
+                        if b_grad_accum_buffers[selected_buffer] is not None:
+
+                            # accumulate bias
+                            b_grad_buffers[selected_buffer] += b_grad_accum_buffers[selected_buffer]
+
+                        # invoke post accum hooks on bias gradient
+                        # use temporary reference to simplify post accum ipl
+                        bias_cpu.ramtorch_grad = b_grad_buffers[selected_buffer]
+                        _invoke_post_accum_tensor_hooks(bias_cpu)
+                        del bias_cpu.ramtorch_grad
+                compute_backward_finished_event.record(compute_stream)
 
         with record_function("backward_grad_transfer"):  # for profiling and easy debugging
             # directly populate the grad and do grad accumulation here instead of relying on autograd
@@ -611,7 +788,7 @@ class CPUBouncingLinear(nn.Module):
         self.out_features = out_features
         if device is None:
             if torch.cuda.is_available():
-                device = torch.cuda.current_device()
+                device = torch.device("cuda", torch.cuda.current_device())
             elif torch.backends.mps.is_available():
                 device = torch.device("mps")
             else:
@@ -653,9 +830,9 @@ class CPUBouncingLinear(nn.Module):
         # If dtype changed, apply it (but keep on CPU)
         if result.dtype != dummy.dtype:
             new_dtype = result.dtype
-            self.weight.data = self.weight.data.to(dtype=new_dtype)
+            self.weight.data = _to_cpu_pinned(self.weight.data, dtype=new_dtype)
             if self.bias is not None:
-                self.bias.data = self.bias.data.to(dtype=new_dtype)
+                self.bias.data = _to_cpu_pinned(self.bias.data, dtype=new_dtype)
 
         # Ignore any device changes by always staying on CPU
         del dummy
@@ -688,6 +865,20 @@ class CPUBouncingLinear(nn.Module):
     def prefetch_forward(self):
         """Schedule this layer's next forward CPU-to-GPU transfer."""
         return prefetch_linear_forward(self.weight, self.bias, self.device)
+
+    def ramtorch_forward_bytes(self):
+        """Return the bytes needed to keep this layer's forward weights resident."""
+        return ramtorch_profile.tensor_bytes((self.weight, self.bias))
+
+    def preserve_forward_for_backward(self, *, max_entries: int = 2, max_bytes: int = 0):
+        """Keep the most recent forward GPU weight buffer for backward reuse."""
+        return preserve_linear_forward_for_backward(
+            self.weight,
+            self.bias,
+            self.device,
+            max_entries=max_entries,
+            max_bytes=max_bytes,
+        )
 
 
 Linear = CPUBouncingLinear

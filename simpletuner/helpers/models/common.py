@@ -3670,7 +3670,7 @@ class ModelFoundation(ABC):
                 if use_sync_hooks:
                     from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks, add_ramtorch_sync_hooks
 
-                    prefetch_hooks = add_ramtorch_prefetch_hooks(module)
+                    prefetch_hooks = add_ramtorch_prefetch_hooks(module, component_label=component_label)
                     if not prefetch_hooks:
                         sync_hooks = add_ramtorch_sync_hooks(module)
                 if total:
@@ -3738,7 +3738,7 @@ class ModelFoundation(ABC):
                             add_ramtorch_sync_hooks,
                         )
 
-                        prefetch_hooks = add_ramtorch_prefetch_hooks(module)
+                        prefetch_hooks = add_ramtorch_prefetch_hooks(module, component_label=component_label)
                         if prefetch_hooks:
                             logger.info(
                                 "Applied RamTorch to %s Linear layers on %s, %d prefetch hooks.",

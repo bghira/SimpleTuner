@@ -287,6 +287,7 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
         self.use_additional_conditions = use_additional_conditions
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
 
         # 2. Initialize the position embedding and transformer blocks.
         self.height = self.config.sample_size
@@ -356,6 +357,9 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
 
     @property
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.attn_processors
@@ -627,7 +631,14 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
                 routing_now = True
 
             if torch.is_grad_enabled() and self.gradient_checkpointing:
-                hidden_states = self._gradient_checkpointing_func(
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = self._gradient_checkpointing_func
+
+                hidden_states = checkpoint_fn(
                     block,
                     hidden_states,
                     attention_mask,

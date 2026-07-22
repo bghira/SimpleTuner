@@ -152,9 +152,12 @@ def move_model_to_device(model: nn.Module, device: Optional[torch.device] = None
     """
     if device is None:
         if torch.cuda.is_available():
-            device = torch.cuda.current_device()
+            device = torch.device("cuda", torch.cuda.current_device())
         else:
             raise RuntimeError("RamTorch move_model_to_device requires a CUDA device")
+    else:
+        device = torch.device(device)
+
     for name, param in model.named_parameters(recurse=True):
         if getattr(param, "is_ramtorch", False):
             # Skip moving this param
@@ -209,14 +212,19 @@ def replace_linear_with_ramtorch(module: nn.Module, device: str = "cuda"):
                 dtype=child.weight.dtype,
                 skip_init=True,
             )
+            new_layer.train(child.training)
 
-            # Reference weights and bias
+            # Copy into the RamTorch layer's pinned CPU storage. Rebinding
+            # .data to the original tensor would discard the pinned allocation.
             with torch.no_grad():
-                new_layer.weight.data = child.weight.data
+                new_layer.weight.copy_(child.weight.detach().to("cpu"))
                 new_layer.weight.is_ramtorch = True
                 if child.bias is not None:
-                    new_layer.bias.data = child.bias.data
+                    new_layer.bias.copy_(child.bias.detach().to("cpu"))
                     new_layer.bias.is_ramtorch = True
+            new_layer.weight.requires_grad = child.weight.requires_grad
+            if new_layer.bias is not None and child.bias is not None:
+                new_layer.bias.requires_grad = child.bias.requires_grad
 
             # Replace the module in-place
             setattr(module, name, new_layer)
