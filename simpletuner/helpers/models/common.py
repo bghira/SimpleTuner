@@ -62,6 +62,7 @@ from simpletuner.helpers.training.lora_format import (
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.quantisation import (
+    MANUAL_QUANTIZATION_PRESETS,
     PIPELINE_ONLY_PRESETS,
     PIPELINE_QUANTIZATION_PRESETS,
     build_gguf_quantization_config,
@@ -3119,7 +3120,11 @@ class ModelFoundation(ABC):
                     f"{self.__class__.__name__} failed to materialize weights for {model_path}. "
                     "All model parameters remain on the meta device after reload."
                 )
-        if self._ramtorch_enabled() and self.model is not None:
+        if (
+            self._ramtorch_enabled()
+            and not self._ramtorch_base_deferred_until_after_quantization()
+            and self.model is not None
+        ):
             self._apply_ramtorch_layers(
                 self.model,
                 self.MODEL_TYPE.value,
@@ -3583,6 +3588,13 @@ class ModelFoundation(ABC):
     def _ramtorch_enabled(self) -> bool:
         return bool(getattr(self.config, "ramtorch", False))
 
+    def _ramtorch_base_deferred_until_after_quantization(self) -> bool:
+        if not self._ramtorch_enabled():
+            return False
+        if getattr(self.config, "quantize_via", None) == "pipeline":
+            return False
+        return getattr(self.config, "base_model_precision", None) in MANUAL_QUANTIZATION_PRESETS
+
     def _ramtorch_targets(self) -> Optional[list[str]]:
         targets = getattr(self.config, "ramtorch_target_modules", None)
         if targets is None:
@@ -3786,6 +3798,19 @@ class ModelFoundation(ABC):
             logger.debug("RamTorch ControlNet requested but no controlnet module is initialised.")
             return 0
         return self._apply_ramtorch_layers(controlnet, "controlnet")
+
+    def apply_ramtorch_to_transformer(self) -> int:
+        if not self._ramtorch_enabled():
+            return 0
+        if self.model is None:
+            logger.debug("RamTorch requested but no base model module is initialised.")
+            return 0
+        return self._apply_ramtorch_layers(
+            self.model,
+            self.MODEL_TYPE.value,
+            percent=self._ramtorch_transformer_percent(),
+            full_ramtorch=True,
+        )
 
     @property
     def group_offload_configured(self) -> bool:
