@@ -64,11 +64,6 @@ def _python_tag() -> str:
     return f"cp{sys.version_info.major}{sys.version_info.minor}"
 
 
-def _resolve_ramtorch_dependency() -> str:
-    """Return the ramtorch package specifier."""
-    return "ramtorch"
-
-
 PYTORCH_DEPENDENCIES = [
     "torch>=2.11.0",
     "torchvision>=0.26.0",
@@ -147,13 +142,11 @@ def get_cuda13_dependencies():
         "nvidia-nccl-cu13",
         "nvidia-ml-py>=12.555",
         "lm-eval>=0.4.4",
-        "ramtorch",
     ]
 
 
 def get_cuda_nightly_dependencies():
     """Get CUDA 12 nightly dependencies (PyTorch 2.11.0.dev) with direct wheel URLs."""
-    ramtorch_dep = _resolve_ramtorch_dependency()
     torch_version = os.environ.get("SIMPLETUNER_CUDA_NIGHTLY_TORCH_VERSION", "2.11.0.dev20260201")
     torchvision_version = os.environ.get("SIMPLETUNER_CUDA_NIGHTLY_TORCHVISION_VERSION", "0.25.0.dev20260201")
     torchaudio_version = os.environ.get("SIMPLETUNER_CUDA_NIGHTLY_TORCHAUDIO_VERSION", "2.11.0.dev20260201")
@@ -171,13 +164,11 @@ def get_cuda_nightly_dependencies():
         "nvidia-nccl-cu12",
         "nvidia-ml-py>=12.555",
         "lm-eval>=0.4.4",
-        ramtorch_dep,
     ]
 
 
 def get_cuda13_nightly_dependencies():
     """Get CUDA 13 nightly dependencies (PyTorch 2.11.0.dev) with direct wheel URLs."""
-    ramtorch_dep = _resolve_ramtorch_dependency()
     torch_version = os.environ.get("SIMPLETUNER_CUDA13_NIGHTLY_TORCH_VERSION", "2.11.0.dev20260201")
     torchvision_version = os.environ.get("SIMPLETUNER_CUDA13_NIGHTLY_TORCHVISION_VERSION", "0.25.0.dev20260201")
     torchaudio_version = os.environ.get("SIMPLETUNER_CUDA13_NIGHTLY_TORCHAUDIO_VERSION", "2.11.0.dev20260131")
@@ -195,12 +186,10 @@ def get_cuda13_nightly_dependencies():
         "nvidia-nccl-cu13",
         "nvidia-ml-py>=12.555",
         "lm-eval>=0.4.4",
-        ramtorch_dep,
     ]
 
 
 def get_cuda_dependencies():
-    ramtorch_dep = _resolve_ramtorch_dependency()
     return [
         *PYTORCH_DEPENDENCIES,
         "triton>=3.3.0",
@@ -211,7 +200,6 @@ def get_cuda_dependencies():
         "nvidia-nccl-cu12",
         "nvidia-ml-py>=12.555",
         "lm-eval>=0.4.4",
-        ramtorch_dep,
     ]
 
 
@@ -221,7 +209,6 @@ def get_rocm_dependencies():
         *PYTORCH_DEPENDENCIES,
         "triton>=3.3.0",
         TORCHAO_DEPENDENCY,
-        "ramtorch",
     ]
 
 
@@ -431,12 +418,15 @@ setup(
     packages=find_packages(),
     include_package_data=True,
     package_data={
-        "simpletuner": _collect_package_files(
-            "simpletuner/templates",
-            "simpletuner/static",
-            "simpletuner/config",
-            "simpletuner/documentation",
-        ),
+        "simpletuner": [
+            *_collect_package_files(
+                "simpletuner/templates",
+                "simpletuner/static",
+                "simpletuner/config",
+                "simpletuner/documentation",
+            ),
+            "helpers/ramtorch/LICENSE",
+        ],
     },
     python_requires=">=3.12,<3.14",
     install_requires=base_deps,
