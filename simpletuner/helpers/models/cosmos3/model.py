@@ -678,13 +678,13 @@ class Cosmos3Image(Cosmos2Image):
             self._training_pipeline_adapter = Cosmos3OmniPipeline(
                 transformer=self.unwrap_model(self.model),
                 text_tokenizer=self.text_tokenizer,
-                vae=self.get_vae(),
+                vae=None,
                 scheduler=self.noise_schedule,
                 sound_tokenizer=self.sound_tokenizer,
             )
         else:
             self._training_pipeline_adapter.transformer = self.unwrap_model(self.model)
-            self._training_pipeline_adapter.vae = self.get_vae()
+            self._training_pipeline_adapter.vae = None
             self._training_pipeline_adapter.sound_tokenizer = self.sound_tokenizer
         return self._training_pipeline_adapter
 
