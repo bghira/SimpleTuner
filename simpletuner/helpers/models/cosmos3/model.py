@@ -8,9 +8,23 @@ import torch.nn.functional as F
 from diffusers import UniPCMultistepScheduler
 from transformers import AutoTokenizer
 
+from simpletuner.helpers.acceleration import (
+    AccelerationBackend,
+    AccelerationPreset,
+    get_bitsandbytes_presets,
+    get_deepspeed_presets,
+    get_quanto_presets,
+    get_sdnq_presets,
+    get_torchao_presets,
+)
 from simpletuner.helpers.models.common import PipelineTypes, PredictionTypes, TextEmbedCacheKey, get_model_config_path
 from simpletuner.helpers.models.cosmos3.audio_tokenizer import Cosmos3AVAEAudioTokenizer
-from simpletuner.helpers.models.cosmos3.pipeline import Cosmos3OmniPipeline
+from simpletuner.helpers.models.cosmos3.pipeline import (
+    _SYSTEM_PROMPT_IMAGE,
+    _SYSTEM_PROMPT_VIDEO,
+    Cosmos3OmniPipeline,
+    get_3d_mrope_ids_text_tokens,
+)
 from simpletuner.helpers.models.cosmos3.reasoner import (
     COSMOS3_GENERATOR_COMPONENTS,
     COSMOS3_REASONER_COMPONENTS,
@@ -50,6 +64,100 @@ class Cosmos3Image(Cosmos2Image):
 
     TEXT_ENCODER_CONFIGURATION = {}
 
+    @classmethod
+    def max_swappable_blocks(cls, config=None) -> Optional[int]:
+        return 35
+
+    @classmethod
+    def get_acceleration_presets(cls) -> list[AccelerationPreset]:
+        base_memory_config = {
+            "base_model_precision": "no_change",
+            "gradient_checkpointing": True,
+        }
+
+        light_layers = ",".join(f"layers.{idx}.*" for idx in range(9))
+        balanced_layers = ",".join(f"layers.{idx}.*" for idx in range(18))
+
+        return [
+            AccelerationPreset(
+                backend=AccelerationBackend.RAMTORCH,
+                level="light",
+                name="RamTorch - Light",
+                description="Streams 9 of 36 transformer layers (~25%).",
+                tab="basic",
+                tradeoff_vram="Reduces transformer VRAM by streaming early layers from CPU.",
+                tradeoff_speed="Adds host-device transfer overhead.",
+                tradeoff_notes="Requires enough system RAM for CPU-resident weights.",
+                requires_min_system_ram_gb=64,
+                config={**base_memory_config, "ramtorch": True, "ramtorch_target_modules": light_layers},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.RAMTORCH,
+                level="balanced",
+                name="RamTorch - Balanced",
+                description="Streams 18 of 36 transformer layers (~50%).",
+                tab="basic",
+                tradeoff_vram="Reduces transformer VRAM by streaming half the layers from CPU.",
+                tradeoff_speed="Adds substantial host-device transfer overhead.",
+                tradeoff_notes="Requires enough system RAM for CPU-resident weights.",
+                requires_min_system_ram_gb=64,
+                config={**base_memory_config, "ramtorch": True, "ramtorch_target_modules": balanced_layers},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.RAMTORCH,
+                level="aggressive",
+                name="RamTorch - Aggressive",
+                description="Streams all transformer layers.",
+                tab="basic",
+                tradeoff_vram="Maximizes transformer weight offload.",
+                tradeoff_speed="Highest host-device transfer overhead.",
+                tradeoff_notes="Requires enough system RAM for CPU-resident weights.",
+                requires_min_system_ram_gb=64,
+                config={**base_memory_config, "ramtorch": True, "ramtorch_target_modules": "layers.*"},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="light",
+                name="Block Swap - Light",
+                description="Swaps 9 of 36 transformer layers (~25%).",
+                tab="basic",
+                tradeoff_vram="Keeps most layers GPU-resident.",
+                tradeoff_speed="Adds moderate block transfer overhead.",
+                tradeoff_notes="Requires enough system RAM for CPU-resident blocks.",
+                requires_min_system_ram_gb=64,
+                config={**base_memory_config, "musubi_blocks_to_swap": 9},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="balanced",
+                name="Block Swap - Balanced",
+                description="Swaps 18 of 36 transformer layers (~50%).",
+                tab="basic",
+                tradeoff_vram="Keeps half of the layers GPU-resident.",
+                tradeoff_speed="Adds significant block transfer overhead.",
+                tradeoff_notes="Requires enough system RAM for CPU-resident blocks.",
+                requires_min_system_ram_gb=64,
+                config={**base_memory_config, "musubi_blocks_to_swap": 18},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="aggressive",
+                name="Block Swap - Aggressive",
+                description="Swaps 30 of 36 transformer layers (~83%).",
+                tab="basic",
+                tradeoff_vram="Keeps only a small layer tail GPU-resident.",
+                tradeoff_speed="Highest block transfer overhead.",
+                tradeoff_notes="Requires enough system RAM for CPU-resident blocks.",
+                requires_min_system_ram_gb=64,
+                config={**base_memory_config, "musubi_blocks_to_swap": 30},
+            ),
+            *get_deepspeed_presets(base_memory_config),
+            *get_sdnq_presets(base_memory_config),
+            *get_torchao_presets(base_memory_config),
+            *get_quanto_presets(base_memory_config),
+            *get_bitsandbytes_presets(base_memory_config),
+        ]
+
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
         self.text_tokenizer = None
@@ -65,9 +173,9 @@ class Cosmos3Image(Cosmos2Image):
         if len(contexts) != len(prompts):
             raise ValueError(f"Cosmos3 received {len(prompts)} prompts but {len(contexts)} prompt contexts.")
 
-        adapter = self._get_training_pipeline_adapter()
         reasoner = self._load_reasoner()
         samples = []
+        logger.info("Encoding Cosmos3 reasoner cache for %s prompt(s).", len(prompts))
         for prompt, context in zip(prompts, contexts):
             signature = self._cosmos3_text_cache_signature(prompt=prompt, metadata=context)
             required = ("cosmos3_num_frames", "cosmos3_height", "cosmos3_width", "cosmos3_fps")
@@ -77,15 +185,14 @@ class Cosmos3Image(Cosmos2Image):
                     "Cosmos3 reasoner cache requires geometry metadata for every prompt. "
                     f"Missing {missing}; prompt={prompt!r}."
                 )
-            input_ids, _ = adapter.tokenize_prompt(
+            input_ids = self._tokenize_reasoner_prompt(
                 prompt=prompt,
-                negative_prompt="",
                 num_frames=int(context["cosmos3_num_frames"]),
                 height=int(context["cosmos3_height"]),
                 width=int(context["cosmos3_width"]),
                 fps=float(context["cosmos3_fps"]),
             )
-            text_segment = adapter._prepare_text_segment(input_ids, self.accelerator.device)
+            text_segment = self._prepare_reasoner_text_segment(input_ids, self.accelerator.device)
             memory_state = reasoner(
                 input_ids=text_segment["input_ids"],
                 position_ids=text_segment["text_mrope_ids"],
@@ -104,10 +211,25 @@ class Cosmos3Image(Cosmos2Image):
                     "reasoner_memory_state": {"layer_kv": memory_state.layer_kv},
                 }
             )
+        logger.info("Finished Cosmos3 reasoner cache encoding for %s prompt(s).", len(samples))
         return {"cosmos3_reasoner_cache": samples[0] if len(samples) == 1 else samples}
 
     def uses_text_embeddings_cache(self) -> bool:
         return True
+
+    @torch.no_grad()
+    def encode_text_batch(
+        self,
+        text_batch: list,
+        is_negative_prompt: bool = False,
+        prompt_contexts: Optional[list[dict]] = None,
+    ) -> dict:
+        previous_context = getattr(self, "_current_prompt_contexts", None)
+        self._current_prompt_contexts = prompt_contexts
+        try:
+            return self._encode_prompts(text_batch, is_negative_prompt)
+        finally:
+            self._current_prompt_contexts = previous_context
 
     def use_text_cache_dropout_sentinel(self) -> bool:
         return False
@@ -135,11 +257,42 @@ class Cosmos3Image(Cosmos2Image):
         metadata["cosmos3_cache_signature"] = self._cosmos3_text_cache_signature(prompt=prompt, metadata=metadata)
         return metadata
 
+    def text_embed_cache_metadata_for_filepath(
+        self,
+        *,
+        init_backend: dict,
+        image_path: str,
+        prompt: str,
+        data_backend_id: str | None,
+        dataset_relative_path: str | None,
+    ) -> dict:
+        metadata_backend = init_backend.get("metadata_backend")
+        sample_metadata = {}
+        if metadata_backend is not None:
+            sample_metadata = metadata_backend.get_metadata_by_filepath(image_path) or {}
+        target_size = sample_metadata.get("target_size") or sample_metadata.get("original_size")
+        if not target_size or len(target_size) != 2:
+            raise ValueError(f"Cosmos3 text cache precompute requires target_size metadata for {image_path}.")
+        width, height = int(target_size[0]), int(target_size[1])
+        num_frames = int(sample_metadata.get("bucket_frames") or sample_metadata.get("num_frames") or 1)
+        metadata = {
+            "cosmos3_num_frames": num_frames,
+            "cosmos3_height": height,
+            "cosmos3_width": width,
+            "cosmos3_fps": float(sample_metadata.get("fps") or getattr(self.config, "framerate", 24.0) or 24.0),
+            "cosmos3_reasoner_component": self._reasoner_component_id(),
+        }
+        metadata["cosmos3_cache_signature"] = self._cosmos3_text_cache_signature(prompt=prompt, metadata=metadata)
+        return metadata
+
     def text_embed_cache_key_value(self, *, prompt: str, default_key: str, metadata: dict) -> str:
         signature = metadata.get("cosmos3_cache_signature") or self._cosmos3_text_cache_signature(
             prompt=prompt, metadata=metadata
         )
         return f"{default_key}:cosmos3:{signature}"
+
+    def after_text_embed_cache_precompute(self):
+        self._offload_reasoner_after_text_cache()
 
     def slice_text_embedding_for_cache(self, text_encoder_output: dict, batch_index: int, batch_size: int):
         cache = text_encoder_output.get("cosmos3_reasoner_cache")
@@ -233,22 +386,79 @@ class Cosmos3Image(Cosmos2Image):
 
     def _load_reasoner(self):
         component_id = self._reasoner_component_id()
+        device = torch.device(self.accelerator.device)
         cache_key = (
             component_id,
-            str(self.accelerator.device),
+            str(device),
             self.config.weight_dtype,
             getattr(self.config, "revision", None),
         )
         if self.reasoner is not None and self._reasoner_component_cache_key == cache_key:
+            if self.reasoner.device != device:
+                logger.info("Moving Cosmos3 reasoner to %s for text cache encoding.", device)
+                self.reasoner.to(device=device, dtype=self.config.weight_dtype)
             return self.reasoner
+        logger.info("Loading Cosmos3 reasoner component %s on %s.", component_id, device)
         self.reasoner = Cosmos3Reasoner.from_pretrained(
             component_id,
-            device=self.accelerator.device,
+            device=device,
             dtype=self.config.weight_dtype,
             revision=getattr(self.config, "revision", None),
         )
         self._reasoner_component_cache_key = cache_key
         return self.reasoner
+
+    def _offload_reasoner_after_text_cache(self):
+        if self.reasoner is None:
+            return
+        if self.reasoner.device.type == "cuda":
+            logger.info("Moving Cosmos3 reasoner back to CPU after text cache encoding.")
+            self.reasoner.to(device=torch.device("cpu"))
+            torch.cuda.empty_cache()
+
+    def _tokenize_reasoner_prompt(self, *, prompt: str, num_frames: int, height: int, width: int, fps: float) -> list[int]:
+        self._load_text_tokenizer()
+        is_image = num_frames == 1
+        text = Cosmos3OmniPipeline._build_generation_json_prompt(
+            prompt,
+            num_frames=num_frames,
+            fps=fps,
+            height=height,
+            width=width,
+        )
+        conversations = []
+        if getattr(self.config, "default_use_system_prompt", True):
+            conversations.append({"role": "system", "content": _SYSTEM_PROMPT_IMAGE if is_image else _SYSTEM_PROMPT_VIDEO})
+        conversations.append({"role": "user", "content": text})
+        encodings = self.text_tokenizer.apply_chat_template(
+            conversations,
+            tokenize=True,
+            add_generation_prompt=True,
+            add_vision_id=False,
+            return_dict=True,
+        )
+        return list(encodings.input_ids) + [
+            self.text_tokenizer.eos_token_id,
+            self.text_tokenizer.convert_tokens_to_ids("<|vision_start|>"),
+        ]
+
+    def _prepare_reasoner_text_segment(self, input_ids: list[int], device: torch.device | str) -> dict:
+        transformer = self.unwrap_model(self.model) if self.model is not None else None
+        config = transformer.config if transformer is not None else self._load_reasoner().config
+        und_len = len(input_ids)
+        text_mrope_ids, next_mrope_offset = get_3d_mrope_ids_text_tokens(
+            num_tokens=und_len,
+            temporal_offset=0,
+            use_float_positions=getattr(config, "enable_fps_modulation", True),
+        )
+        return {
+            "input_ids": torch.tensor(input_ids, dtype=torch.long, device=device),
+            "text_indexes": torch.arange(und_len, dtype=torch.long, device=device),
+            "und_len": und_len,
+            "text_mrope_ids": text_mrope_ids.to(device),
+            "vision_start_temporal_offset": next_mrope_offset
+            + getattr(config, "unified_3d_mrope_temporal_modality_margin", 15000),
+        }
 
     def _load_preprocessor(self):
         self._load_text_tokenizer()
@@ -259,7 +469,7 @@ class Cosmos3Image(Cosmos2Image):
 
         self.text_tokenizer = AutoTokenizer.from_pretrained(
             get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path),
-            subfolder="tokenizer",
+            subfolder="text_tokenizer",
             revision=self.config.revision,
         )
         self.tokenizers = [self.text_tokenizer]
@@ -710,10 +920,7 @@ class Cosmos3Image(Cosmos2Image):
             self.config.tokenizer_max_length = 4096
             logger.info(f"Setting tokenizer max length to {self.config.tokenizer_max_length}")
         if not getattr(self.config, "text_cache_disable", False) and not getattr(self.config, "text_cache_ondemand", False):
-            logger.warning(
-                "Cosmos3 reasoner K/V caching requires on-demand text cache because keys include latent geometry."
-            )
-            self.config.text_cache_ondemand = True
+            logger.info("Cosmos3 reasoner K/V text cache will be pre-computed from bucket metadata.")
 
         self.config.pretrained_vae_model_name_or_path = None
 

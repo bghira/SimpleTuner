@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,6 +19,8 @@ from simpletuner.helpers.models.cosmos3.transformer import (
     Cosmos3VLTextMLP,
     Cosmos3VLTextRotaryEmbedding,
 )
+
+logger = logging.getLogger(__name__)
 
 COSMOS3_REASONER_COMPONENTS = {
     "edge": "SimpleTuner/cosmos3-component-reasoning-layers-bf16-edge",
@@ -229,7 +232,9 @@ class Cosmos3Reasoner(nn.Module):
         if config.component != "cosmos3_reasoner":
             raise ValueError(f"Expected Cosmos3 reasoner component, got {config.component!r}.")
         reasoner = cls(config)
+        logger.info("Loading Cosmos3 reasoner weights from %s", repo_id)
         state_dict = cls._load_component_state_dict(repo_id, revision=revision)
+        logger.info("Loaded Cosmos3 reasoner state dict with %s tensors from %s", len(state_dict), repo_id)
         reasoner.load_state_dict(state_dict, strict=True)
         reasoner.to(device=device, dtype=dtype)
         reasoner.requires_grad_(False)
@@ -257,7 +262,10 @@ class Cosmos3Reasoner(nn.Module):
             raise ValueError(f"Index file {index_path} does not contain a weight_map object.")
 
         state_dict = {}
-        for shard_name in sorted(set(weight_map.values())):
+        shard_names = sorted(set(weight_map.values()))
+        logger.info("Loading Cosmos3 reasoner state dict from %s shard(s)", len(shard_names))
+        for shard_name in shard_names:
+            logger.info("Loading Cosmos3 reasoner shard %s", shard_name)
             state_dict.update(load_file(cls._resolve_component_file(repo_id, shard_name, revision=revision)))
         return state_dict
 

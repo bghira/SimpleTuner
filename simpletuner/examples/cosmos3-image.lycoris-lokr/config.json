@@ -6,6 +6,8 @@
     "cosmos3_reasoner_component": "auto",
     "data_backend_config": "config/examples/multidatabackend-cosmos3-domokun-512px.json",
     "disable_bucket_pruning": true,
+    "dynamo_backend": "inductor",
+    "dynamo_use_regional_compilation": true,
     "eval_steps_interval": 5,
     "flow_schedule_auto_shift": true,
     "flow_schedule_shift": 0.0,

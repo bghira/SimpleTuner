@@ -8,10 +8,10 @@
     "factor": 4,
     "apply_preset": {
         "target_module": [
-            "Attention"
+            "Cosmos3PackedMoTAttention"
         ],
         "module_algo_map": {
-            "Attention": {
+            "Cosmos3PackedMoTAttention": {
                 "factor": 25
             }
         }
