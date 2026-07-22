@@ -147,6 +147,7 @@ def safety_check(args, accelerator):
         "auraflow",
         "hunyuanvideo",
         "ernie",
+        "cosmos3",
     ]
     if args.gradient_checkpointing_interval == 1:
         args.gradient_checkpointing_interval = None
