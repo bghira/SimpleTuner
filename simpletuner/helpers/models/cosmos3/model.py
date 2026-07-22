@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import os
 from typing import Optional
 
 import torch
@@ -869,7 +870,7 @@ class Cosmos3Image(Cosmos2Image):
         )
 
     def loss(self, prepared_batch, model_output, apply_conditioning_mask=True):
-        video_target = prepared_batch["latents"] - prepared_batch["noise"]
+        video_target = prepared_batch["noise"] - prepared_batch["latents"]
         video_prediction = model_output["model_prediction"].float()
         video_target = video_target.float()
         vision_loss_mask = prepared_batch.get("vision_loss_mask")
@@ -886,10 +887,57 @@ class Cosmos3Image(Cosmos2Image):
                 reduction="mean",
             )
 
+        if os.environ.get("SIMPLETUNER_COSMOS3_LOSS_DEBUG") or getattr(self.config, "cosmos3_loss_debug", False):
+            count = getattr(self, "_cosmos3_loss_debug_count", 0)
+            if count < 8:
+                self._cosmos3_loss_debug_count = count + 1
+                with torch.no_grad():
+                    flipped_target = prepared_batch["latents"].float() - prepared_batch["noise"].float()
+                    flipped_loss = F.mse_loss(video_prediction, flipped_target, reduction="mean")
+                    zero_loss = F.mse_loss(torch.zeros_like(video_target), video_target, reduction="mean")
+                    latents = prepared_batch["latents"].float()
+                    noise = prepared_batch["noise"].float()
+                    sigmas = prepared_batch.get("sigmas")
+                    timesteps = prepared_batch.get("timesteps")
+                    sigma_summary = "n/a"
+                    if torch.is_tensor(sigmas):
+                        sigmas_f = sigmas.float()
+                        sigma_summary = (
+                            f"{sigmas_f.mean().item():.4f}/" f"{sigmas_f.min().item():.4f}/" f"{sigmas_f.max().item():.4f}"
+                        )
+                    timestep_summary = "n/a"
+                    if torch.is_tensor(timesteps):
+                        timesteps_f = timesteps.float()
+                        timestep_summary = (
+                            f"{timesteps_f.mean().item():.2f}/"
+                            f"{timesteps_f.min().item():.2f}/"
+                            f"{timesteps_f.max().item():.2f}"
+                        )
+                    logger.warning(
+                        "Cosmos3 loss debug #%s: loss=%.6f flipped_loss=%.6f zero_target_loss=%.6f "
+                        "pred_mean=%.6f pred_std=%.6f target_mean=%.6f target_std=%.6f "
+                        "latent_mean=%.6f latent_std=%.6f noise_mean=%.6f noise_std=%.6f "
+                        "sigma_mean/min/max=%s timestep_mean/min/max=%s",
+                        count + 1,
+                        video_loss.detach().float().item(),
+                        flipped_loss.detach().float().item(),
+                        zero_loss.detach().float().item(),
+                        video_prediction.mean().item(),
+                        video_prediction.std().item(),
+                        video_target.mean().item(),
+                        video_target.std().item(),
+                        latents.mean().item(),
+                        latents.std().item(),
+                        noise.mean().item(),
+                        noise.std().item(),
+                        sigma_summary,
+                        timestep_summary,
+                    )
+
         if "audio_model_prediction" not in model_output:
             return video_loss
 
-        audio_target = prepared_batch["audio_latents"] - prepared_batch["audio_noise"]
+        audio_target = prepared_batch["audio_noise"] - prepared_batch["audio_latents"]
         audio_loss = F.mse_loss(
             model_output["audio_model_prediction"].float(),
             audio_target.float(),
