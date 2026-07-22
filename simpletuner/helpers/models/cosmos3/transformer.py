@@ -24,7 +24,11 @@ from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import RMSNorm
-from diffusers.utils import BaseOutput
+from diffusers.utils import BaseOutput, logging
+
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+
+logger = logging.get_logger(__name__)
 
 
 @dataclass
@@ -60,6 +64,38 @@ class Cosmos3AttnProcessor:
     _attention_backend = None
     _parallel_config = None
 
+    @staticmethod
+    def _project_und_qkv(attn: "Cosmos3PackedMoTAttention", und_seq: torch.Tensor):
+        q_dim = attn.num_attention_heads * attn.head_dim
+        kv_dim = attn.num_key_value_heads * attn.head_dim
+        if getattr(attn, "fused_projections", False) and hasattr(attn, "to_qkv"):
+            q_und, k_und, v_und = attn.to_qkv(und_seq).split((q_dim, kv_dim, kv_dim), dim=-1)
+        else:
+            q_und = attn.to_q(und_seq)
+            k_und = attn.to_k(und_seq)
+            v_und = attn.to_v(und_seq)
+        return (
+            q_und.view(-1, attn.num_attention_heads, attn.head_dim),
+            k_und.view(-1, attn.num_key_value_heads, attn.head_dim),
+            v_und.view(-1, attn.num_key_value_heads, attn.head_dim),
+        )
+
+    @staticmethod
+    def _project_gen_qkv(attn: "Cosmos3PackedMoTAttention", gen_seq: torch.Tensor):
+        q_dim = attn.num_attention_heads * attn.head_dim
+        kv_dim = attn.num_key_value_heads * attn.head_dim
+        if getattr(attn, "fused_projections", False) and hasattr(attn, "add_qkv_proj"):
+            q_gen, k_gen, v_gen = attn.add_qkv_proj(gen_seq).split((q_dim, kv_dim, kv_dim), dim=-1)
+        else:
+            q_gen = attn.add_q_proj(gen_seq)
+            k_gen = attn.add_k_proj(gen_seq)
+            v_gen = attn.add_v_proj(gen_seq)
+        return (
+            q_gen.view(-1, attn.num_attention_heads, attn.head_dim),
+            k_gen.view(-1, attn.num_key_value_heads, attn.head_dim),
+            v_gen.view(-1, attn.num_key_value_heads, attn.head_dim),
+        )
+
     def __call__(
         self,
         attn: "Cosmos3PackedMoTAttention",
@@ -68,12 +104,8 @@ class Cosmos3AttnProcessor:
         rotary_emb: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # Per-pathway projections
-        q_und = attn.to_q(und_seq).view(-1, attn.num_attention_heads, attn.head_dim)
-        k_und = attn.to_k(und_seq).view(-1, attn.num_key_value_heads, attn.head_dim)
-        v_und = attn.to_v(und_seq).view(-1, attn.num_key_value_heads, attn.head_dim)
-        q_gen = attn.add_q_proj(gen_seq).view(-1, attn.num_attention_heads, attn.head_dim)
-        k_gen = attn.add_k_proj(gen_seq).view(-1, attn.num_key_value_heads, attn.head_dim)
-        v_gen = attn.add_v_proj(gen_seq).view(-1, attn.num_key_value_heads, attn.head_dim)
+        q_und, k_und, v_und = self._project_und_qkv(attn, und_seq)
+        q_gen, k_gen, v_gen = self._project_gen_qkv(attn, gen_seq)
 
         q_und = attn.norm_q(q_und)
         k_und = attn.norm_k(k_und)
@@ -233,7 +265,7 @@ class Cosmos3PackedMoTAttention(nn.Module, AttentionModuleMixin):
 
     _default_processor_cls = Cosmos3AttnProcessor
     _available_processors = [Cosmos3AttnProcessor]
-    _supports_qkv_fusion = False
+    _supports_qkv_fusion = True
 
     def __init__(
         self,
@@ -298,6 +330,45 @@ class Cosmos3PackedMoTAttention(nn.Module, AttentionModuleMixin):
         if processor is None:
             processor = self._default_processor_cls()
         self.set_processor(processor)
+        self.fused_projections = False
+
+    @staticmethod
+    def _new_packed_projection(projections: tuple[nn.Linear, ...]) -> nn.Linear:
+        first = projections[0]
+        return nn.Linear(
+            first.in_features,
+            sum(projection.out_features for projection in projections),
+            bias=first.bias is not None,
+            device=first.weight.device,
+            dtype=first.weight.dtype,
+        )
+
+    @staticmethod
+    def _copy_packed_projection(target: nn.Linear, projections: tuple[nn.Linear, ...]) -> None:
+        target.weight.copy_(torch.cat([projection.weight.data for projection in projections]))
+        if target.bias is not None:
+            target.bias.copy_(torch.cat([projection.bias.data for projection in projections]))
+
+    @torch.no_grad()
+    def fuse_projections(self) -> None:
+        if getattr(self, "fused_projections", False):
+            return
+        if self.load_reasoning_layers:
+            self.to_qkv = self._new_packed_projection((self.to_q, self.to_k, self.to_v))
+            self._copy_packed_projection(self.to_qkv, (self.to_q, self.to_k, self.to_v))
+        self.add_qkv_proj = self._new_packed_projection((self.add_q_proj, self.add_k_proj, self.add_v_proj))
+        self._copy_packed_projection(self.add_qkv_proj, (self.add_q_proj, self.add_k_proj, self.add_v_proj))
+        self.fused_projections = True
+
+    @torch.no_grad()
+    def unfuse_projections(self) -> None:
+        if not getattr(self, "fused_projections", False):
+            return
+        if hasattr(self, "to_qkv"):
+            delattr(self, "to_qkv")
+        if hasattr(self, "add_qkv_proj"):
+            delattr(self, "add_qkv_proj")
+        self.fused_projections = False
 
     def forward(
         self,
@@ -316,9 +387,7 @@ class Cosmos3PackedMoTAttention(nn.Module, AttentionModuleMixin):
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         if not self.load_reasoning_layers:
             raise RuntimeError("Cosmos3 generator-only attention cannot produce reasoner K/V tensors.")
-        q_und = self.to_q(und_seq).view(-1, self.num_attention_heads, self.head_dim)
-        k_und = self.to_k(und_seq).view(-1, self.num_key_value_heads, self.head_dim)
-        v_und = self.to_v(und_seq).view(-1, self.num_key_value_heads, self.head_dim)
+        q_und, k_und, v_und = self.processor._project_und_qkv(self, und_seq)
 
         q_und = self.norm_q(q_und)
         k_und = self.norm_k(k_und)
@@ -353,9 +422,7 @@ class Cosmos3PackedMoTAttention(nn.Module, AttentionModuleMixin):
         rotary_emb: tuple[torch.Tensor, torch.Tensor],
         reasoner_kv: dict[str, torch.Tensor],
     ) -> torch.Tensor:
-        q_gen = self.add_q_proj(gen_seq).view(-1, self.num_attention_heads, self.head_dim)
-        k_gen = self.add_k_proj(gen_seq).view(-1, self.num_key_value_heads, self.head_dim)
-        v_gen = self.add_v_proj(gen_seq).view(-1, self.num_key_value_heads, self.head_dim)
+        q_gen, k_gen, v_gen = self.processor._project_gen_qkv(self, gen_seq)
 
         q_gen = self.norm_added_q(q_gen)
         k_gen = self.norm_added_k(k_gen)
@@ -530,6 +597,8 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
         use_und_k_norm_for_gen: bool = False,
         rope_axes_dim: tuple[int, int, int] | list[int] | None = None,
         load_reasoning_layers: bool = True,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
     ):
         super().__init__()
 
@@ -596,6 +665,34 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
             self.audio_modality_embed = nn.Parameter(torch.zeros(hidden_size))
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_interval = None
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=num_hidden_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
+
+    def fuse_qkv_projections(self, preferred_backend: str | None = None) -> None:
+        fused = 0
+        for module in self.modules():
+            if isinstance(module, Cosmos3PackedMoTAttention):
+                module.fuse_projections()
+                fused += 1
+        logger.info("Fused Cosmos3 QKV projections for %d attention module(s).", fused)
+
+    def unfuse_qkv_projections(self) -> None:
+        for module in self.modules():
+            if isinstance(module, Cosmos3PackedMoTAttention):
+                module.unfuse_projections()
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def _should_gradient_checkpoint_layer(self, layer_idx: int) -> bool:
+        if not torch.is_grad_enabled() or not self.gradient_checkpointing:
+            return False
+        return self.gradient_checkpointing_interval is None or layer_idx % self.gradient_checkpointing_interval == 0
 
     # -------------------------------------------------------------------------
     # Pure-tensor packing/unpacking helpers (no layer state).
@@ -922,6 +1019,12 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
         cos = cos.squeeze(0)
         sin = sin.squeeze(0)
 
+        grad_enabled = torch.is_grad_enabled()
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(self.layers, hidden_states.device, grad_enabled)
+
         if split_reasoner:
             layer_kv = (
                 reasoner_memory_state.layer_kv
@@ -933,25 +1036,33 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
             gen_seq = hidden_states
             rotary_gen = (cos[und_len:], sin[und_len:])
             for layer_idx, decoder_layer in enumerate(self.layers):
-                if torch.is_grad_enabled() and self.gradient_checkpointing:
+                if musubi_offload_active and musubi_manager.is_managed_block(layer_idx):
+                    musubi_manager.stream_in(decoder_layer, gen_seq.device)
+                if self._should_gradient_checkpoint_layer(layer_idx):
                     gen_seq = self._gradient_checkpointing_func(
                         lambda x, layer=decoder_layer, kv=layer_kv[layer_idx]: layer.forward_gen_only(x, rotary_gen, kv),
                         gen_seq,
                     )
                 else:
                     gen_seq = decoder_layer.forward_gen_only(gen_seq, rotary_gen, layer_kv[layer_idx])
+                if musubi_offload_active and musubi_manager.is_managed_block(layer_idx):
+                    musubi_manager.stream_out(decoder_layer)
             last_hidden_state = self.norm_moe_gen(gen_seq)
         else:
             und_seq = hidden_states[:und_len]
             gen_seq = hidden_states[und_len:]
             rotary_emb = (cos[:und_len], sin[:und_len], cos[und_len:], sin[und_len:])
-            for decoder_layer in self.layers:
-                if torch.is_grad_enabled() and self.gradient_checkpointing:
+            for layer_idx, decoder_layer in enumerate(self.layers):
+                if musubi_offload_active and musubi_manager.is_managed_block(layer_idx):
+                    musubi_manager.stream_in(decoder_layer, gen_seq.device)
+                if self._should_gradient_checkpoint_layer(layer_idx):
                     und_seq, gen_seq = self._gradient_checkpointing_func(
                         decoder_layer.__call__, und_seq, gen_seq, rotary_emb
                     )
                 else:
                     und_seq, gen_seq = decoder_layer(und_seq, gen_seq, rotary_emb)
+                if musubi_offload_active and musubi_manager.is_managed_block(layer_idx):
+                    musubi_manager.stream_out(decoder_layer)
             und_out = self.norm(und_seq)
             gen_out = self.norm_moe_gen(gen_seq)
             last_hidden_state = torch.cat([und_out, gen_out], dim=0)
