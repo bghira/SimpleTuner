@@ -353,7 +353,7 @@ class Cosmos3OmniPipeline(DiffusionPipeline):
         self,
         transformer: Cosmos3OmniTransformer,
         text_tokenizer: AutoTokenizer,
-        vae: AutoencoderKLWan,
+        vae: AutoencoderKLWan | None,
         scheduler: UniPCMultistepScheduler,
         sound_tokenizer: Cosmos3AVAEAudioTokenizer | None = None,
         default_use_system_prompt: bool = True,
@@ -371,9 +371,15 @@ class Cosmos3OmniPipeline(DiffusionPipeline):
             scheduler=scheduler,
             sound_tokenizer=sound_tokenizer,
         )
-        # VAE latent normalization stats
-        self._vae_latents_mean = torch.tensor(vae.config.latents_mean, dtype=vae.dtype)
-        self._vae_latents_inv_std = 1.0 / torch.tensor(vae.config.latents_std, dtype=vae.dtype)
+        # VAE latent normalization stats. The training adapter can be constructed
+        # without a live VAE because it consumes precomputed latents and only
+        # needs scale factors for prompt/mRoPE metadata.
+        if vae is not None:
+            self._vae_latents_mean = torch.tensor(vae.config.latents_mean, dtype=vae.dtype)
+            self._vae_latents_inv_std = 1.0 / torch.tensor(vae.config.latents_std, dtype=vae.dtype)
+        else:
+            self._vae_latents_mean = torch.zeros(1, dtype=torch.float32)
+            self._vae_latents_inv_std = torch.ones(1, dtype=torch.float32)
 
         # Image preprocessor for caller-supplied conditioning frames (PIL / tensor / numpy).
         self.vae_scale_factor_spatial = int(self.vae.config.scale_factor_spatial) if getattr(self, "vae", None) else 16
