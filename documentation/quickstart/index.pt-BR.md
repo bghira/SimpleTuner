@@ -30,6 +30,7 @@ Guias passo a passo para treinar cada arquitetura de modelo suportada.
 |-------|------------|------|
 | **PixArt Sigma** | 0.6-0.9B | [Guia Sigma](SIGMA.md) |
 | **Cosmos2** | 2-14B | [Guia Cosmos2](COSMOS2IMAGE.md) |
+| **Cosmos3** | 4-65B | [Guia Cosmos3](COSMOS3.pt-BR.md) |
 | **OmniGen** | 3.8B | [Guia OmniGen](OMNIGEN.md) |
 | **Qwen Image** | 20B | [Guia Qwen](QWEN_IMAGE.md) |
 | **LongCat Image** | 6B | [Guia LongCat](LONGCAT_IMAGE.md) |
@@ -57,6 +58,7 @@ Guias passo a passo para treinar cada arquitetura de modelo suportada.
 | **Wan Video** | 1.3-14B | [Guia Wan](WAN.md) |
 | **LTX Video** | 5B | [Guia LTX](LTXVIDEO.md) |
 | **LTX Video 2** | 19B | [Guia LTX Video 2](LTXVIDEO2.md) |
+| **Cosmos3** | 4-65B | [Guia Cosmos3](COSMOS3.pt-BR.md) |
 | **Hunyuan Video** | 8.3B | [Guia Hunyuan](HUNYUANVIDEO.md) |
 | **Sana Video** | - | [Guia Sana Video](SANAVIDEO.md) |
 | **Kandinsky 5 Video** | - | [Guia Kandinsky Video](KANDINSKY5_VIDEO.md) |
