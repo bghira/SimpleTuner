@@ -73,8 +73,14 @@ def _move_module_without_swapping_quanto_params(module: nn.Module, device: torch
     for child in module.children():
         _move_module_without_swapping_quanto_params(child, device)
 
+    keep_local_trainable_state = device.type == "cpu" and any(
+        param is not None and param.requires_grad for param in module._parameters.values()
+    )
+
     for key, param in module._parameters.items():
         if param is None:
+            continue
+        if keep_local_trainable_state and param.requires_grad:
             continue
         if _is_quanto_tensor(param):
             _move_quanto_tensor_to_device(param, device)
@@ -85,6 +91,8 @@ def _move_module_without_swapping_quanto_params(module: nn.Module, device: torch
 
     for key, buffer in module._buffers.items():
         if buffer is None:
+            continue
+        if keep_local_trainable_state:
             continue
         if _is_quanto_tensor(buffer):
             _move_quanto_tensor_to_device(buffer, device)
@@ -194,22 +202,18 @@ class MusubiBlockSwapManager:
             if not self.is_managed_block(idx):
                 continue
 
-            def _make_pre_hook():
+            def _make_pre_hook(owner_block):
                 def _pre_hook(_module, _grad_output):
-                    self.stream_in(_module, compute_device)
+                    self.stream_in(owner_block, compute_device)
                     return None
 
                 return _pre_hook
 
-            def _make_post_hook():
-                def _post_hook(_module, _grad_input, _grad_output):
-                    self.stream_out(_module)
-                    return None
-
-                return _post_hook
-
-            self._backward_hooks.append(block.register_full_backward_pre_hook(_make_pre_hook()))
-            self._backward_hooks.append(block.register_full_backward_hook(_make_post_hook()))
+            # Module-level hooks on the block itself can fire too late for saved
+            # tensors inside child ops, so every descendant streams the owning
+            # block back in before its own backward work begins.
+            for hook_module in block.modules():
+                self._backward_hooks.append(hook_module.register_full_backward_pre_hook(_make_pre_hook(block)))
 
         self._backward_hook_device = compute_device
 

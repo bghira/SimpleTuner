@@ -94,6 +94,22 @@ simpletuner configure config/foo/config.json
 - **動作**: 既存キャッシュは読み込み、新しくエンコードした不足エントリは書き込みます。起動後も必要なため、テキストエンコーダはロードしたままになります。
 - **データローダー設定**: `text_embeds` バックエンドごとに `"text_cache_ondemand": true` で有効化できます。
 
+### `--cosmos3_reasoner_component`
+
+- **内容**: Cosmos3 の凍結 reasoner component の Hugging Face repo id またはローカルパス。
+- **既定値**: `auto`
+- **用途**: Cosmos3 の text cache が layer ごとの reasoner K/V entry を書き込むために使います。
+- **自動選択**: `SimpleTuner/cosmos3-component-reasoning-layers-bf16-edge`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-nano`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-i2v`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-t2i`.
+- **注記**: Cosmos3 は sample geometry を reasoner cache key に含めるため、on-demand text cache を強制します。
+
+### `--cosmos3_generator_component`
+
+- **内容**: Cosmos3 の generation-only transformer component の Hugging Face repo id またはローカルパス。
+- **既定値**: `auto`
+- **用途**: `auto` は対応する Edge, Nano, Super, Super-I2V, Super-T2I component を選択します。
+- **自動選択**: `SimpleTuner/cosmos3-component-generation-layers-bf16-edge`, `SimpleTuner/cosmos3-component-generation-layers-bf16-nano`, `SimpleTuner/cosmos3-component-generation-layers-bf16-super`, `SimpleTuner/cosmos3-component-generation-layers-bf16-super-i2v`, `SimpleTuner/cosmos3-component-generation-layers-bf16-super-t2i`.
+- **注記**: この component は transformer 内の reasoner weights を省き、reasoner K/V entries を必要とします。
+
 ### `--text_cache_disable`
 
 - **内容**: 既存エントリの読み込みを維持したまま、すべてのテキスト埋め込みキャッシュへの書き込みを無効化します。
