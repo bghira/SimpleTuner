@@ -55,7 +55,7 @@ class IterationTracker:
 
     @property
     def latest_step_duration(self) -> float | None:
-        """Return the most recently observed completed-step duration."""
+        """Most recent completed step duration, in seconds."""
         return self._latest_step_duration
 
     def _compute_window_rates(self) -> dict[int, float]:

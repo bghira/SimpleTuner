@@ -169,6 +169,7 @@ class VAECache(WebhookMixin):
             self.cache_dir = self.cache_dir[:-1]
         if self.cache_data_backend and self.cache_data_backend.type in [
             "local",
+            "memory",
             "huggingface",
         ]:
             self.cache_dir = os.path.abspath(self.cache_dir)
@@ -688,7 +689,7 @@ class VAECache(WebhookMixin):
         self.vae_path_to_image_path = {}
         for image_file in all_image_files:
             cache_filename, _ = self.generate_vae_cache_filename(image_file)
-            if self.cache_data_backend.type == "local":
+            if self.cache_data_backend.type in {"local", "memory"}:
                 cache_filename = os.path.abspath(cache_filename)
             self.image_path_to_vae_path[image_file] = cache_filename
             self.vae_path_to_image_path[cache_filename] = image_file

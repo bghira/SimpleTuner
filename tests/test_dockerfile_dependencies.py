@@ -26,7 +26,6 @@ class DockerfileDependenciesTests(unittest.TestCase):
             "torchao>=0.17.0,<0.18.0",
             "nvidia-ml-py>=12.555",
             "lm-eval>=0.4.4",
-            "ramtorch",
         ]
 
         for dependency in expected_dependencies:

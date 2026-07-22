@@ -53,6 +53,7 @@ LTX-2 conditioning examples are split by conditioning style:
 - `ltxvideo2-19b-t2v.peft-lora+first-frame-conditioning` shows the shorthand `ltx2_*` probability fields.
 - `ltxvideo2-19b-t2v.peft-lora+intrinsic-conditioning` shows the explicit `ltx2_intrinsic_conditioning` object list.
 - `ltxvideo2-19b-t2v.peft-lora+reference-conditioning` shows IC-LoRA reference conditioning with coordinate scale overrides.
+- `ltxvideo2-2.3-dev-720p-single-gpu.peft-lora+ramtorch` adapts the LTX-2.3 720p profile for one GPU with RamTorch transformer-block streaming.
 
 Z-Image conditioning examples:
 
