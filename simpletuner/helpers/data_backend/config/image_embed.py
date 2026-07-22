@@ -35,6 +35,8 @@ class ImageEmbedBackendConfig(BaseBackendConfig):
             config.compress_cache = bool(compress_arg)
             config.config["compress_cache"] = config.compress_cache
 
+        config._apply_memory_backend_settings(backend_dict)
+
         config.apply_defaults(args)
 
         return config
@@ -54,6 +56,10 @@ class ImageEmbedBackendConfig(BaseBackendConfig):
         validators.check_for_caption_filter_list_misuse(self.dataset_type, False, self.id)
 
     def to_dict(self) -> Dict[str, Any]:
-        result = {"id": self.id, "dataset_type": DatasetType.IMAGE_EMBEDS.value, "config": {}}
+        result = {
+            "id": self.id,
+            "dataset_type": DatasetType.IMAGE_EMBEDS.value,
+            "config": self._memory_backend_settings_dict(),
+        }
 
         return result

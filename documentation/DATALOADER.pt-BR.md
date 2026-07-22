@@ -196,8 +196,30 @@ Durante a descoberta de metadados, o loader registra `sample_rate`, `num_samples
 
 ### `type`
 
-- **Valores:** `aws` | `local` | `csv` | `huggingface` | `webshart`
-- **Descrição:** Determina o backend de armazenamento (local, csv ou nuvem) usado para este dataset.
+- **Valores:** `aws` | `local` | `memory` | `csv` | `huggingface` | `webshart`
+- **Descrição:** Determina o backend de armazenamento (local, memória, csv ou nuvem) usado para este dataset.
+
+### Backends em memória (tmpfs e RAM disk)
+
+`type: "memory"` usa `MemoryDataBackend`, uma subclasse de `LocalDataBackend` baseada em tmpfs no Linux ou em um RAM disk nativo no macOS. Ele está disponível apenas para entradas de armazenamento de cache com `dataset_type: "text_embeds"` ou `dataset_type: "image_embeds"`; datasets primários de imagem, vídeo, áudio, conditioning e avaliação não podem usá-lo. O SimpleTuner monta um sistema de arquivos vazio separado e copia o `cache_dir` configurado quando esse diretório existe. Leituras e gravações usam a cópia residente em memória e são descartadas ao liberá-la; elas não são sincronizadas de volta para `cache_dir`.
+
+```json
+{
+  "id": "memory-vae-cache",
+  "type": "memory",
+  "dataset_type": "image_embeds",
+  "cache_dir": "/cache/vae",
+  "memory_filesystem_path": "/tmp/simpletuner-memory/vae",
+  "memory_filesystem_size": "512G",
+  "memory_filesystem_sudo": false
+}
+```
+
+- `memory_filesystem_path`: Diretório de montagem vazio opcional. O padrão é `simpletuner-memory/<id do dataset>` dentro do diretório temporário do sistema. Esse diretório e `cache_dir` não podem se sobrepor nem conter um ao outro.
+- `memory_filesystem_size`: Capacidade do sistema de arquivos em memória, como `512G`. É opcional no Linux, onde se aplica o padrão do tmpfs e percentuais como `80%` são aceitos. No macOS é obrigatório e deve ser um tamanho em bytes, não um percentual; o SimpleTuner o converte para o número de setores de 512 bytes exigido pelo `hdiutil`.
+- `memory_filesystem_sudo`: Apenas Linux. Quando `true`, executa `mount` e `umount` por `sudo -n`. Deixe `false` ao executar como root. O sudo não interativo e sem senha deve estar configurado previamente quando habilitado. RAM disks do macOS usam `hdiutil` e `diskutil` sem esta opção.
+
+Backends de memória exigem Linux ou macOS e RAM ou swap suficiente para o cache existente e todos os embeddings gravados durante o treinamento. São úteis para caches grandes de latentes ou embeddings de texto em sistemas com muita memória quando leituras repetidas são o gargalo. Pré-carregar um cache existente aumenta o tempo de inicialização; use um `cache_dir` vazio ou inexistente para iniciar com um cache vazio.
 
 ### `conditioning_type`
 

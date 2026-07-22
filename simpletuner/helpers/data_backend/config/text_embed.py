@@ -66,6 +66,8 @@ class TextEmbedBackendConfig(BaseBackendConfig):
             for aws_key, aws_value in aws_block.items():
                 setattr(config, aws_key, aws_value)
 
+        config._apply_memory_backend_settings(backend_dict)
+
         config.apply_defaults(args)
 
         return config

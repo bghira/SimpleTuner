@@ -55,6 +55,7 @@ from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.publishing import PublishingManager
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.publishing.providers.s3 import S3PublishingProvider
+from simpletuner.helpers.ramtorch import profiling as ramtorch_profile
 from simpletuner.helpers.scheduled_sampling.rollout import apply_scheduled_sampling_rollout
 from simpletuner.helpers.training import _flatten_parameters, trainable_parameter_count
 from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
@@ -4097,7 +4098,9 @@ class Trainer:
         attach_shared_ramtorch_parameters = None
         if self._ramtorch_distributed() and primary_model is not None:
             ramtorch_utils.ensure_available()
-            from ramtorch.helpers import attach_shared_ramtorch_parameters as attach_shared_ramtorch_parameters
+            from simpletuner.helpers.ramtorch.utils import (
+                attach_shared_ramtorch_parameters as attach_shared_ramtorch_parameters,
+            )
 
             ignored = ramtorch_utils.mark_ddp_ignore_params(primary_model)
             if ignored:
@@ -6077,6 +6080,8 @@ class Trainer:
         self.init_trackers()
         self._train_initial_msg()
         self.mark_optimizer_train()
+        if ramtorch_profile.profile_enabled():
+            ramtorch_profile.reset_for_new_run()
         torch_profiler = self._create_torch_profiler()
         if torch_profiler is not None:
             torch_profiler.start()
@@ -6583,6 +6588,11 @@ class Trainer:
                     current_epoch_step += 1
                     StateTracker.set_global_step(self.state["global_step"])
                     self.iteration_tracker.record_step(self.state["global_step"])
+                    if ramtorch_profile.profile_enabled():
+                        ramtorch_profile.record_train_step(
+                            self.state["global_step"],
+                            self.iteration_tracker.latest_step_duration,
+                        )
 
                     ema_decay_value = "None (EMA not in use)"
                     if self.config.use_ema:

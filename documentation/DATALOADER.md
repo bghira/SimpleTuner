@@ -197,8 +197,30 @@ During metadata discovery the loader records `sample_rate`, `num_samples`, `num_
 
 ### `type`
 
-- **Values:** `aws` | `local` | `csv` | `huggingface` | `webshart`
-- **Description:** Determines the storage backend (local, csv or cloud) used for this dataset.
+- **Values:** `aws` | `local` | `memory` | `csv` | `huggingface` | `webshart`
+- **Description:** Determines the storage backend (local, memory, csv or cloud) used for this dataset.
+
+### Memory (tmpfs and RAM disk) backends
+
+`type: "memory"` uses `MemoryDataBackend`, a `LocalDataBackend` subclass backed by Linux tmpfs or a native macOS RAM disk. It is available only for cache-storage entries with `dataset_type: "text_embeds"` or `dataset_type: "image_embeds"`; primary image, video, audio, conditioning, and evaluation datasets cannot use it. SimpleTuner mounts a separate empty filesystem and copies the configured `cache_dir` into it when that source directory exists. Reads and writes during the run use the memory-resident copy, and changes are discarded when it is released; they are not synchronized back to `cache_dir`.
+
+```json
+{
+  "id": "memory-vae-cache",
+  "type": "memory",
+  "dataset_type": "image_embeds",
+  "cache_dir": "/cache/vae",
+  "memory_filesystem_path": "/tmp/simpletuner-memory/vae",
+  "memory_filesystem_size": "512G",
+  "memory_filesystem_sudo": false
+}
+```
+
+- `memory_filesystem_path`: Optional empty mount directory. The default is the operating system temporary directory under `simpletuner-memory/<dataset id>`. It and `cache_dir` must not overlap or contain one another.
+- `memory_filesystem_size`: Memory filesystem capacity, such as `512G`. It is optional on Linux, where the system tmpfs default applies and percentages such as `80%` are accepted. It is required on macOS and must be a byte size rather than a percentage; SimpleTuner converts it to the 512-byte sector count required by `hdiutil`.
+- `memory_filesystem_sudo`: Linux only. When `true`, runs `mount` and `umount` through `sudo -n`. Leave it `false` when running as root, as is common in containers. Passwordless non-interactive sudo must already be configured when enabled. macOS RAM disks use `hdiutil` and `diskutil` without this option.
+
+Memory backends require Linux or macOS and enough RAM or swap for the existing cache plus all embeddings written during training. They are useful for large latent or text-embedding caches on high-memory systems when repeated filesystem reads are the bottleneck. Preloading an existing cache increases startup time; use an empty or absent `cache_dir` when the cache should start empty.
 
 ### `conditioning_type`
 

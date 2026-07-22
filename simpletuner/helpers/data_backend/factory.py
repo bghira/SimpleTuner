@@ -104,6 +104,7 @@ from simpletuner.helpers.data_backend.csv_url_list import CSVDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.data_backend.local import LocalDataBackend
+from simpletuner.helpers.data_backend.memory import MemoryDataBackend
 from simpletuner.helpers.data_backend.runtime.schedule import (
     dataset_is_active,
     normalize_end_epoch,
@@ -293,6 +294,10 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         raise ValueError(f"(id={backend.get('id')}) disable_vae_cache has been removed. Use vae_cache_disable instead.")
     dataset_type = _backend_dataset_type(backend)
     output = {"id": backend["id"], "config": {}, "dataset_type": dataset_type.value}
+    if backend.get("type") == "memory":
+        for key in ("memory_filesystem_path", "memory_filesystem_size", "memory_filesystem_sudo"):
+            if key in backend:
+                output["config"][key] = backend[key]
     is_audio_dataset = dataset_type is DatasetType.AUDIO
 
     start_epoch = normalize_start_epoch(backend.get("start_epoch", 1))
@@ -1039,6 +1044,8 @@ def from_instance_representation(representation: dict) -> "BaseDataBackend":
         from simpletuner.helpers.data_backend.local import LocalDataBackend
 
         return LocalDataBackend.from_instance_representation(representation)
+    elif backend_type == "memory":
+        return MemoryDataBackend.from_instance_representation(representation)
     elif backend_type == "huggingface":
         from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 
@@ -2473,12 +2480,16 @@ class FactoryRegistry:
             init_backend = init_backend_config(backend, self.args, self.accelerator)
             StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
 
-            if backend["type"] == "local":
+            if backend["type"] in {"local", "memory"}:
                 text_embed_cache_dir_paths.append(backend.get("cache_dir", self.args.cache_dir_text))
                 config = create_backend_config(backend, vars(self.args))
                 builder = create_backend_builder(backend["type"], self.accelerator, self.args)
                 init_backend["data_backend"] = builder.build(config)
-                init_backend["cache_dir"] = backend.get("cache_dir", self.args.cache_dir_text)
+                init_backend["cache_dir"] = (
+                    init_backend["data_backend"].mount_path
+                    if backend["type"] == "memory"
+                    else backend.get("cache_dir", self.args.cache_dir_text)
+                )
             elif backend["type"] == "aws":
                 config = create_backend_config(backend, vars(self.args))
                 builder = create_backend_builder(backend["type"], self.accelerator, self.args)
@@ -2642,7 +2653,7 @@ class FactoryRegistry:
                 raise ValueError(f"You can only have one backend named {init_backend['id']}")
             StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
 
-            if backend["type"] == "local":
+            if backend["type"] in {"local", "memory"}:
                 config = create_backend_config(backend, vars(self.args))
                 builder = create_backend_builder(backend["type"], self.accelerator, self.args)
                 init_backend["data_backend"] = builder.build(config)
@@ -2655,7 +2666,11 @@ class FactoryRegistry:
             else:
                 raise ValueError(f"Unknown data backend type: {backend['type']}")
 
-            init_backend["cache_dir"] = backend.get("cache_dir", self.args.cache_dir_vae)
+            init_backend["cache_dir"] = (
+                init_backend["data_backend"].mount_path
+                if backend["type"] == "memory"
+                else backend.get("cache_dir", self.args.cache_dir_vae)
+            )
             if backend.get("vae_cache_clear_each_epoch", False):
                 init_backend["clear_cache_each_epoch"] = True
 
@@ -4007,6 +4022,8 @@ class FactoryRegistry:
                 )
                 return
         vae_cache_dir = backend.get("cache_dir_vae", None)
+        if image_embed_data_backend["data_backend"].type == "memory" and image_embed_data_backend.get("cache_dir"):
+            vae_cache_dir = image_embed_data_backend["cache_dir"]
         if not vae_cache_dir:
             vae_cache_dir = self._default_vae_cache_dir(init_backend["id"], dataset_type_enum)
             backend["cache_dir_vae"] = vae_cache_dir

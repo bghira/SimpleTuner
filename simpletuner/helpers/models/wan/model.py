@@ -1398,11 +1398,13 @@ class Wan(VideoModelFoundation):
             raise ValueError(
                 f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
             )
-        if self.config.aspect_bucket_alignment != 32:
+        required_aspect_bucket_alignment = 64 if "5b" in str(self.config.model_flavour).lower() else 32
+        if self.config.aspect_bucket_alignment != required_aspect_bucket_alignment:
             logger.warning(
-                f"{self.NAME} requires an alignment value of 32px. Overriding the value of --aspect_bucket_alignment."
+                f"{self.NAME} requires an alignment value of {required_aspect_bucket_alignment}px. "
+                "Overriding the value of --aspect_bucket_alignment."
             )
-            self.config.aspect_bucket_alignment = 32
+            self.config.aspect_bucket_alignment = required_aspect_bucket_alignment
 
         if self.config.prediction_type is not None:
             logger.warning(f"{self.NAME} does not support prediction type {self.config.prediction_type}.")
