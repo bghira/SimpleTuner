@@ -10,12 +10,86 @@ __all__ = ["MusubiBlockSwapManager", "apply_musubi_pretrained_defaults"]
 def _module_on_device(module: nn.Module, device: torch.device) -> bool:
     target = torch.device(device)
     for tensor in module.parameters():
-        if tensor.device != target:
+        if not _tensor_on_device(tensor, target):
             return False
     for tensor in module.buffers():
-        if tensor.device != target:
+        if not _tensor_on_device(tensor, target):
             return False
     return True
+
+
+def _same_device(actual: torch.device, expected: torch.device) -> bool:
+    if actual == expected:
+        return True
+    if actual.type != expected.type:
+        return False
+    return expected.index is None and actual.index in (None, 0)
+
+
+def _is_quanto_tensor(tensor) -> bool:
+    module_name = type(tensor).__module__
+    return module_name.startswith("optimum.quanto.") and hasattr(tensor, "_data")
+
+
+def _tensor_on_device(tensor, device: torch.device) -> bool:
+    if not _same_device(tensor.device, device):
+        return False
+    if not _is_quanto_tensor(tensor):
+        return True
+    for attr in ("_data", "_scale", "_shift", "_scale_shift"):
+        value = getattr(tensor, attr, None)
+        if value is None:
+            continue
+        if _is_quanto_tensor(value):
+            if not _tensor_on_device(value, device):
+                return False
+            continue
+        if hasattr(value, "device") and not _same_device(value.device, device):
+            return False
+    return True
+
+
+def _module_has_quanto_tensor(module: nn.Module) -> bool:
+    return any(_is_quanto_tensor(tensor) for tensor in module.parameters()) or any(
+        _is_quanto_tensor(tensor) for tensor in module.buffers()
+    )
+
+
+def _move_quanto_tensor_to_device(tensor, device: torch.device):
+    if not _same_device(tensor.device, device):
+        tensor.data = tensor.data.to(device, non_blocking=True)
+    for attr in ("_data", "_scale", "_shift", "_scale_shift"):
+        value = getattr(tensor, attr, None)
+        if value is None:
+            continue
+        if _is_quanto_tensor(value):
+            _move_quanto_tensor_to_device(value, device)
+            continue
+        if hasattr(value, "device") and not _same_device(value.device, device):
+            setattr(tensor, attr, value.to(device, non_blocking=True))
+
+
+def _move_module_without_swapping_quanto_params(module: nn.Module, device: torch.device):
+    for child in module.children():
+        _move_module_without_swapping_quanto_params(child, device)
+
+    for key, param in module._parameters.items():
+        if param is None:
+            continue
+        if _is_quanto_tensor(param):
+            _move_quanto_tensor_to_device(param, device)
+        elif not _same_device(param.device, device):
+            param.data = param.data.to(device, non_blocking=True)
+        if param.grad is not None and not _same_device(param.grad.device, device):
+            param.grad = param.grad.to(device, non_blocking=True)
+
+    for key, buffer in module._buffers.items():
+        if buffer is None:
+            continue
+        if _is_quanto_tensor(buffer):
+            _move_quanto_tensor_to_device(buffer, device)
+        elif not _same_device(buffer.device, device):
+            module._buffers[key] = buffer.to(device, non_blocking=True)
 
 
 class MusubiBlockSwapManager:
@@ -143,7 +217,10 @@ class MusubiBlockSwapManager:
         if _module_on_device(module, device):
             return
         with torch.no_grad():
-            module.to(device)
+            if _module_has_quanto_tensor(module):
+                _move_module_without_swapping_quanto_params(module, device)
+            else:
+                module.to(device)
 
 
 def apply_musubi_pretrained_defaults(config, pretrained_load_args: dict) -> dict:
