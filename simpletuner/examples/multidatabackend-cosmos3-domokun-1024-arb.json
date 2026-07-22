@@ -1,0 +1,17 @@
+[
+    {
+        "cache_dir_vae": "cache/vae/{model_family}/cosmos3-domokun-1024-arb",
+        "caption_strategy": "instanceprompt",
+        "crop": false,
+        "dataset_name": "RareConcepts/Domokun",
+        "id": "cosmos3-domokun-1024-arb",
+        "instance_prompt": "Domo",
+        "maximum_image_size": 1024,
+        "metadata_backend": "huggingface",
+        "minimum_image_size": 128,
+        "resolution": 1024,
+        "resolution_type": "pixel",
+        "target_downsample_size": 1024,
+        "type": "huggingface"
+    }
+]

@@ -62,6 +62,8 @@ Z-Image conditioning examples:
 Cosmos3 examples:
 
 - `cosmos3-image.lycoris-lokr` uses `RareConcepts/Domokun`.
+- `cosmos3-image-48g.lycoris-lokr` targets 48GB GPUs at 1024px ARB with interval gradient checkpointing.
+- `cosmos3-image-80g.lycoris-lokr` targets 80GB GPUs at 1024px ARB with FlashAttention 3 and no gradient checkpointing.
 - `cosmos3-video.lycoris-lokr` uses `sayakpaul/video-dataset-disney-organized`.
 - `cosmos3-video-audio.lycoris-lokr` uses local synchronized drumming files with `audio.auto_split`.
 - `cosmos3-super-i2v.lycoris-lokr` uses `nvidia/Cosmos3-Super-Image2Video` with `video.is_i2v`.
