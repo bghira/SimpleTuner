@@ -10,6 +10,7 @@ Entrena un LyCORIS LoKr para NVIDIA Cosmos3.
 
 | Flavour | Modelo Hub | Notas |
 | --- | --- | --- |
+| `edge` | `nvidia/Cosmos3-Edge` | modelo omni edge de 4B |
 | `nano` | `nvidia/Cosmos3-Nano` | modelo omni 16B |
 | `super` | `nvidia/Cosmos3-Super` | modelo omni 65B |
 | `super-t2i` | `nvidia/Cosmos3-Super-Text2Image` | modelo texto-a-imagen 65B |
@@ -30,6 +31,7 @@ SimpleTuner usa componentes Cosmos3 separados por defecto:
 
 | Flavour | Reasoner | Generator |
 | --- | --- | --- |
+| `edge` | `SimpleTuner/cosmos3-component-reasoning-layers-bf16-edge` | `SimpleTuner/cosmos3-component-generation-layers-bf16-edge` |
 | `nano` | `SimpleTuner/cosmos3-component-reasoning-layers-bf16-nano` | `SimpleTuner/cosmos3-component-generation-layers-bf16-nano` |
 | `super` | `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super` | `SimpleTuner/cosmos3-component-generation-layers-bf16-super` |
 | `super-t2i` | `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-t2i` | `SimpleTuner/cosmos3-component-generation-layers-bf16-super-t2i` |
@@ -84,9 +86,13 @@ pip install -e .
 | Ejemplo | Flavour | Dataset | Medio | Backend |
 | --- | --- | --- | --- | --- |
 | `cosmos3-image.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | imagen | `multidatabackend-cosmos3-domokun-512px.json` |
+| `cosmos3-image-48g.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | imagen, ajustado para 48 GB | `multidatabackend-cosmos3-domokun-1024-arb.json` |
+| `cosmos3-image-80g.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | imagen, ajustado para 80 GB | `multidatabackend-cosmos3-domokun-1024-arb.json` |
 | `cosmos3-video.lycoris-lokr` | `nano` | `sayakpaul/video-dataset-disney-organized` | video | `multidatabackend-cosmos3-disney-video-480p+49f.json` |
 | `cosmos3-video-audio.lycoris-lokr` | `nano` | `bghira/Synchronised-Drumming-Gemini3Captions` | video + audio | `multidatabackend-cosmos3-drumming-video-audio-480p+49f.json` |
 | `cosmos3-super-i2v.lycoris-lokr` | `super-i2v` | `sayakpaul/video-dataset-disney-organized` | imagen-a-video | `multidatabackend-cosmos3-disney-i2v-480p+49f.json` |
+
+Los ejemplos de imagen `48g` y `80g` son variantes de la receta nano image LoKr ajustadas por tamaño de memoria. Ambos usan el backend 1024px aspect-ratio. La config `48g` mantiene gradient checkpointing con `gradient_checkpointing_interval: 2`; la config `80g` desactiva gradient checkpointing y habilita `flash-attn-3-hub`.
 
 ## Campos requeridos
 
@@ -175,6 +181,8 @@ SimpleTuner crea el backend de referencia estricta desde esta marca.
 
 ```bash
 simpletuner train example=cosmos3-image.lycoris-lokr
+simpletuner train example=cosmos3-image-48g.lycoris-lokr
+simpletuner train example=cosmos3-image-80g.lycoris-lokr
 simpletuner train example=cosmos3-video.lycoris-lokr
 simpletuner train example=cosmos3-video-audio.lycoris-lokr
 simpletuner train example=cosmos3-super-i2v.lycoris-lokr

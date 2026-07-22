@@ -10,6 +10,7 @@
 
 | Flavour | Hub model | Notes |
 | --- | --- | --- |
+| `edge` | `nvidia/Cosmos3-Edge` | 4B edge 全模态模型 |
 | `nano` | `nvidia/Cosmos3-Nano` | 16B omni model |
 | `super` | `nvidia/Cosmos3-Super` | 65B omni model |
 | `super-t2i` | `nvidia/Cosmos3-Super-Text2Image` | 65B text-to-image model |
@@ -30,6 +31,7 @@ SimpleTuner 默认使用拆分的 Cosmos3 transformer components:
 
 | Flavour | Reasoner | Generator |
 | --- | --- | --- |
+| `edge` | `SimpleTuner/cosmos3-component-reasoning-layers-bf16-edge` | `SimpleTuner/cosmos3-component-generation-layers-bf16-edge` |
 | `nano` | `SimpleTuner/cosmos3-component-reasoning-layers-bf16-nano` | `SimpleTuner/cosmos3-component-generation-layers-bf16-nano` |
 | `super` | `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super` | `SimpleTuner/cosmos3-component-generation-layers-bf16-super` |
 | `super-t2i` | `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-t2i` | `SimpleTuner/cosmos3-component-generation-layers-bf16-super-t2i` |
@@ -84,9 +86,13 @@ pip install -e .
 | Example | Flavour | Dataset | Media | Backend |
 | --- | --- | --- | --- | --- |
 | `cosmos3-image.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | image | `multidatabackend-cosmos3-domokun-512px.json` |
+| `cosmos3-image-48g.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | 图像，48 GB 调优 | `multidatabackend-cosmos3-domokun-1024-arb.json` |
+| `cosmos3-image-80g.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | 图像，80 GB 调优 | `multidatabackend-cosmos3-domokun-1024-arb.json` |
 | `cosmos3-video.lycoris-lokr` | `nano` | `sayakpaul/video-dataset-disney-organized` | video | `multidatabackend-cosmos3-disney-video-480p+49f.json` |
 | `cosmos3-video-audio.lycoris-lokr` | `nano` | `bghira/Synchronised-Drumming-Gemini3Captions` | video + audio | `multidatabackend-cosmos3-drumming-video-audio-480p+49f.json` |
 | `cosmos3-super-i2v.lycoris-lokr` | `super-i2v` | `sayakpaul/video-dataset-disney-organized` | image-to-video | `multidatabackend-cosmos3-disney-i2v-480p+49f.json` |
+
+`48g` 和 `80g` 图像示例是按显存容量调优的 nano 图像 LoKr 配方变体。两者都使用 1024px 宽高比后端。`48g` 配置使用 `gradient_checkpointing_interval: 2` 保留 gradient checkpointing；`80g` 配置禁用 gradient checkpointing 并启用 `flash-attn-3-hub`。
 
 ## Required Fields
 
@@ -175,6 +181,8 @@ SimpleTuner 会根据这个 flag 创建 paired strict reference conditioning bac
 
 ```bash
 simpletuner train example=cosmos3-image.lycoris-lokr
+simpletuner train example=cosmos3-image-48g.lycoris-lokr
+simpletuner train example=cosmos3-image-80g.lycoris-lokr
 simpletuner train example=cosmos3-video.lycoris-lokr
 simpletuner train example=cosmos3-video-audio.lycoris-lokr
 simpletuner train example=cosmos3-super-i2v.lycoris-lokr

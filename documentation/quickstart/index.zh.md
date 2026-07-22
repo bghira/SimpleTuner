@@ -30,7 +30,7 @@
 |-------|------------|-------|
 | **PixArt Sigma** | 0.6-0.9B | [Sigma 指南](SIGMA.md) |
 | **Cosmos2** | 2-14B | [Cosmos2 指南](COSMOS2IMAGE.md) |
-| **Cosmos3** | 16-65B | [Cosmos3 指南](COSMOS3.zh.md) |
+| **Cosmos3** | 4-65B | [Cosmos3 指南](COSMOS3.zh.md) |
 | **OmniGen** | 3.8B | [OmniGen 指南](OMNIGEN.md) |
 | **Qwen Image** | 20B | [Qwen 指南](QWEN_IMAGE.md) |
 | **LongCat Image** | 6B | [LongCat 指南](LONGCAT_IMAGE.md) |
@@ -58,7 +58,7 @@
 | **Wan Video** | 1.3-14B | [Wan 指南](WAN.md) |
 | **LTX Video** | 5B | [LTX 指南](LTXVIDEO.md) |
 | **LTX Video 2** | 19B | [LTX Video 2 指南](LTXVIDEO2.md) |
-| **Cosmos3** | 16-65B | [Cosmos3 指南](COSMOS3.zh.md) |
+| **Cosmos3** | 4-65B | [Cosmos3 指南](COSMOS3.zh.md) |
 | **Hunyuan Video** | 8.3B | [Hunyuan 指南](HUNYUANVIDEO.md) |
 | **Sana Video** | - | [Sana Video 指南](SANAVIDEO.md) |
 | **Kandinsky 5 Video** | - | [Kandinsky Video 指南](KANDINSKY5_VIDEO.md) |
