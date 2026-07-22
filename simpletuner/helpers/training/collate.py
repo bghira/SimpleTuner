@@ -314,8 +314,9 @@ def compute_latents(filepaths, data_backend_id: str, model):
             latents = deepfloyd_pixels(filepaths, data_backend_id, model)
 
             return latents
-        if StateTracker.get_args().vae_cache_ondemand or getattr(StateTracker.get_args(), "vae_cache_disable", False):
-            latents = StateTracker.get_vaecache(id=data_backend_id).encode_images([None] * len(filepaths), filepaths)
+        vae_cache = StateTracker.get_vaecache(id=data_backend_id)
+        if getattr(vae_cache, "vae_cache_ondemand", False):
+            latents = vae_cache.encode_images([None] * len(filepaths), filepaths)
         else:
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 latents = list(executor.map(fetch_latent, filepaths, [data_backend_id] * len(filepaths)))
@@ -335,7 +336,8 @@ def compute_single_embedding(prompt_entry, text_embed_cache):
         # Grab the default text embed backend for null caption.
         text_embed_cache = StateTracker.get_default_text_embed_cache()
         # Use sentinel key for filename-based caches to match encode_dropout_caption()
-        if text_embed_cache._requires_path_based_keys:
+        use_dropout_sentinel = getattr(text_embed_cache.model, "use_text_cache_dropout_sentinel", lambda: True)()
+        if text_embed_cache._requires_path_based_keys and use_dropout_sentinel:
             prompt_entry["key"] = "__caption_dropout__"
         debug_log(
             f"Hashing caption '{prompt_value}' on text embed cache: {text_embed_cache.id} using data backend {text_embed_cache.data_backend.id}"
@@ -369,14 +371,21 @@ def compute_prompt_embeddings(prompt_entries, text_embed_cache, model):
             normalized_entries.append(entry)
         else:
             normalized_entries.append({"prompt": entry, "key": entry, "metadata": {}})
-    with ThreadPoolExecutor() as executor:
-        text_encoder_output = list(
-            executor.map(
-                compute_single_embedding,
-                normalized_entries,
-                [text_embed_cache] * len(normalized_entries),
+    default_cache = StateTracker.get_default_text_embed_cache()
+    empty_prompt_uses_ondemand = any(not entry.get("prompt") for entry in normalized_entries) and getattr(
+        default_cache, "text_cache_ondemand", False
+    )
+    if getattr(text_embed_cache, "text_cache_ondemand", False) or empty_prompt_uses_ondemand:
+        text_encoder_output = [compute_single_embedding(entry, text_embed_cache) for entry in normalized_entries]
+    else:
+        with ThreadPoolExecutor() as executor:
+            text_encoder_output = list(
+                executor.map(
+                    compute_single_embedding,
+                    normalized_entries,
+                    [text_embed_cache] * len(normalized_entries),
+                )
             )
-        )
     prompt_embeds, pooled_prompt_embeds, attn_masks, time_ids = [], [], [], []
 
     def _collate_tensors(tensors):
@@ -594,13 +603,6 @@ def collate_fn(batch):
 
     assert isinstance(data_backend_id, str)
     batch_backend_id = data_backend_id
-    debug_log("Collect luminance values")
-    if "luminance" in examples[0]:
-        batch_luminance = [example.get("luminance", 0) for example in examples]
-    else:
-        batch_luminance = [0] * len(examples)
-    # average it
-    batch_luminance = sum(batch_luminance) / len(batch_luminance)
     debug_log("Extract filepaths")
     filepaths = extract_filepaths(examples)
     data_backend = StateTracker.get_data_backend(batch_backend_id)
@@ -1058,6 +1060,17 @@ def collate_fn(batch):
             "prompt": caption,
             "dataset_relative_path": normalized_identifier,
         }
+        metadata_builder = getattr(model, "text_embed_cache_metadata_for_sample", None)
+        if callable(metadata_builder):
+            metadata.update(
+                metadata_builder(
+                    example=example,
+                    latent=latent_batch[idx],
+                    prompt=caption,
+                    data_backend_id=example_backend_id,
+                    dataset_relative_path=normalized_identifier,
+                )
+            )
         # Only include conditioning pixels for text embedding when using a single
         # conditioning image. With multiple backends in combined mode, skip image
         # context in embeddings and rely solely on latent references.
@@ -1074,6 +1087,9 @@ def collate_fn(batch):
             key_value = normalize_data_path(example_path, None)
         else:
             key_value = caption
+        key_builder = getattr(model, "text_embed_cache_key_value", None)
+        if callable(key_builder):
+            key_value = key_builder(prompt=caption, default_key=key_value, metadata=metadata)
         prompt_requests.append({"prompt": caption, "key": key_value, "metadata": metadata})
 
     if not text_embed_cache.disabled:
@@ -1243,7 +1259,6 @@ def collate_fn(batch):
         "t5xxl_ids": all_text_encoder_outputs.get("t5xxl_ids"),
         "t5xxl_weights": all_text_encoder_outputs.get("t5xxl_weights"),
         "batch_time_ids": all_text_encoder_outputs.get("batch_time_ids"),
-        "batch_luminance": batch_luminance,
         "conditioning_pixel_values": conditioning_pixel_values,
         "conditioning_latents": conditioning_latents,
         "conditioning_latents_type": conditioning_latents_type,

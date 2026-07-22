@@ -818,7 +818,11 @@ class LTXVideo2(VideoModelFoundation):
         if self._module_has_meta_tensors(unwrapped):
             raise RuntimeError("LTX-2 transformer parameters remain on the meta device after loading.")
 
-        if self._ramtorch_enabled() and self.model is not None:
+        if (
+            self._ramtorch_enabled()
+            and not self._ramtorch_base_deferred_until_after_quantization()
+            and self.model is not None
+        ):
             self._apply_ramtorch_layers(self.model, self.MODEL_TYPE.value, percent=self._ramtorch_transformer_percent())
         if move_to_device and self.model is not None:
             self.model.to(self.accelerator.device, dtype=self.config.weight_dtype)

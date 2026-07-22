@@ -46,6 +46,24 @@ def _set_arg_value(args: Any, key: str, value: Any) -> None:
         setattr(args, key, value)
 
 
+def _as_bool(value: Any) -> bool:
+    """Coerce common config boolean values without inventing fallback behavior."""
+
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off", ""}:
+            return False
+    return bool(value)
+
+
 def _coerce_bucket_keys(indices: Dict[Any, Iterable]) -> Dict[Any, list]:
     """Return a copy of aspect ratio bucket indices with numeric keys coerced to float."""
     coerced: Dict[Any, list] = {}
@@ -86,6 +104,7 @@ from simpletuner.helpers.data_backend.csv_url_list import CSVDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.data_backend.local import LocalDataBackend
+from simpletuner.helpers.data_backend.memory import MemoryDataBackend
 from simpletuner.helpers.data_backend.runtime.schedule import (
     dataset_is_active,
     normalize_end_epoch,
@@ -271,8 +290,14 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
     else:
         logger.setLevel(logging.ERROR)
+    if "disable_vae_cache" in backend:
+        raise ValueError(f"(id={backend.get('id')}) disable_vae_cache has been removed. Use vae_cache_disable instead.")
     dataset_type = _backend_dataset_type(backend)
     output = {"id": backend["id"], "config": {}, "dataset_type": dataset_type.value}
+    if backend.get("type") == "memory":
+        for key in ("memory_filesystem_path", "memory_filesystem_size", "memory_filesystem_sudo"):
+            if key in backend:
+                output["config"][key] = backend[key]
     is_audio_dataset = dataset_type is DatasetType.AUDIO
 
     start_epoch = normalize_start_epoch(backend.get("start_epoch", 1))
@@ -363,6 +388,16 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if dataset_type is DatasetType.TEXT_EMBEDS:
         if "caption_filter_list" in backend:
             output["config"]["caption_filter_list"] = backend["caption_filter_list"]
+        text_cache_disable = _as_bool(_get_arg_value(args, "text_cache_disable", False)) or _as_bool(
+            backend.get("text_cache_disable", False)
+        )
+        text_cache_ondemand = (
+            _as_bool(_get_arg_value(args, "text_cache_ondemand", False))
+            or _as_bool(backend.get("text_cache_ondemand", False))
+            or text_cache_disable
+        )
+        output["config"]["text_cache_ondemand"] = text_cache_ondemand
+        output["config"]["text_cache_disable"] = text_cache_disable
 
         return output
     elif dataset_type is DatasetType.IMAGE_EMBEDS:
@@ -411,6 +446,16 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         raise ValueError(f"(id={backend['id']}) dataset_type must be one of {[choice.value for choice in choices]}.")
     if "vae_cache_clear_each_epoch" in backend:
         output["config"]["vae_cache_clear_each_epoch"] = backend["vae_cache_clear_each_epoch"]
+    dataset_vae_cache_disable = _as_bool(_get_arg_value(args, "vae_cache_disable", False)) or _as_bool(
+        backend.get("vae_cache_disable", False)
+    )
+    dataset_vae_cache_ondemand = (
+        _as_bool(_get_arg_value(args, "vae_cache_ondemand", False))
+        or _as_bool(backend.get("vae_cache_ondemand", False))
+        or dataset_vae_cache_disable
+    )
+    output["config"]["vae_cache_ondemand"] = dataset_vae_cache_ondemand
+    output["config"]["vae_cache_disable"] = dataset_vae_cache_disable
     if "probability" in backend:
         probability = backend["probability"]
         if probability is None or probability == "":
@@ -999,6 +1044,8 @@ def from_instance_representation(representation: dict) -> "BaseDataBackend":
         from simpletuner.helpers.data_backend.local import LocalDataBackend
 
         return LocalDataBackend.from_instance_representation(representation)
+    elif backend_type == "memory":
+        return MemoryDataBackend.from_instance_representation(representation)
     elif backend_type == "huggingface":
         from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 
@@ -2433,12 +2480,16 @@ class FactoryRegistry:
             init_backend = init_backend_config(backend, self.args, self.accelerator)
             StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
 
-            if backend["type"] == "local":
+            if backend["type"] in {"local", "memory"}:
                 text_embed_cache_dir_paths.append(backend.get("cache_dir", self.args.cache_dir_text))
                 config = create_backend_config(backend, vars(self.args))
                 builder = create_backend_builder(backend["type"], self.accelerator, self.args)
                 init_backend["data_backend"] = builder.build(config)
-                init_backend["cache_dir"] = backend.get("cache_dir", self.args.cache_dir_text)
+                init_backend["cache_dir"] = (
+                    init_backend["data_backend"].mount_path
+                    if backend["type"] == "memory"
+                    else backend.get("cache_dir", self.args.cache_dir_text)
+                )
             elif backend["type"] == "aws":
                 config = create_backend_config(backend, vars(self.args))
                 builder = create_backend_builder(backend["type"], self.accelerator, self.args)
@@ -2461,6 +2512,8 @@ class FactoryRegistry:
             logger.debug(f"rank {get_rank()} is creating TextEmbeddingCache")
             move_text_encoders(self.args, self.text_encoders, self.accelerator.device, force_move=True)
             text_cache_dir = init_backend.get("cache_dir", self.args.cache_dir_text)
+            text_cache_disable = init_backend["config"]["text_cache_disable"]
+            text_cache_ondemand = init_backend["config"]["text_cache_ondemand"]
             init_backend["text_embed_cache"] = TextEmbeddingCache(
                 id=init_backend["id"],
                 data_backend=init_backend["data_backend"],
@@ -2470,7 +2523,12 @@ class FactoryRegistry:
                 cache_dir=text_cache_dir,
                 model_type=StateTracker.get_model_family(),
                 write_batch_size=backend.get("write_batch_size", self.args.write_batch_size),
+                text_encoder_batch_size=backend.get(
+                    "text_encoder_batch_size", getattr(self.args, "text_encoder_batch_size", 1)
+                ),
                 model=self.model,
+                text_cache_ondemand=text_cache_ondemand,
+                text_cache_disable=text_cache_disable,
             )
             logger.debug(f"rank {get_rank()} completed creation of TextEmbeddingCache")
 
@@ -2482,8 +2540,9 @@ class FactoryRegistry:
                 else nullcontext()
             )
             with main_process_context:
-                logger.debug(f"rank {get_rank()} is discovering all files")
-                init_backend["text_embed_cache"].discover_all_files()
+                if not text_cache_ondemand:
+                    logger.debug(f"rank {get_rank()} is discovering all files")
+                    init_backend["text_embed_cache"].discover_all_files()
             logger.debug(f"rank {get_rank()} is waiting for other processes")
             if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
@@ -2492,7 +2551,21 @@ class FactoryRegistry:
                 StateTracker.set_default_text_embed_cache(init_backend["text_embed_cache"])
                 logger.debug(f"Set the default text embed cache to {init_backend['id']}.")
 
-                info_log("Pre-computing null embedding")
+                should_precompute_dropout = getattr(self.args, "caption_dropout_probability", 0.1) > 0.0
+                should_precompute_dropout = (
+                    should_precompute_dropout
+                    and getattr(
+                        self.model,
+                        "should_precompute_dropout_caption",
+                        lambda: True,
+                    )()
+                )
+                if text_cache_ondemand:
+                    info_log("Skipping null embedding pre-computation for on-demand text cache.")
+                elif not should_precompute_dropout:
+                    info_log("Skipping null embedding pre-computation because caption dropout is disabled.")
+                else:
+                    info_log("Pre-computing null embedding")
                 logger.debug(f"rank {get_rank()} may skip computing the embedding..")
                 main_process_context = (
                     self.accelerator.main_process_first()
@@ -2500,9 +2573,10 @@ class FactoryRegistry:
                     else nullcontext()
                 )
                 with main_process_context:
-                    logger.debug(f"rank {get_rank()} is computing the null embed")
-                    init_backend["text_embed_cache"].encode_dropout_caption()
-                    logger.debug(f"rank {get_rank()} has completed computing the null embed")
+                    if not text_cache_ondemand and should_precompute_dropout:
+                        logger.debug(f"rank {get_rank()} is computing the null embed")
+                        init_backend["text_embed_cache"].encode_dropout_caption()
+                        logger.debug(f"rank {get_rank()} has completed computing the null embed")
 
                 logger.debug(f"rank {get_rank()} is waiting for other processes")
                 if self._is_multi_process():
@@ -2590,7 +2664,7 @@ class FactoryRegistry:
                 raise ValueError(f"You can only have one backend named {init_backend['id']}")
             StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
 
-            if backend["type"] == "local":
+            if backend["type"] in {"local", "memory"}:
                 config = create_backend_config(backend, vars(self.args))
                 builder = create_backend_builder(backend["type"], self.accelerator, self.args)
                 init_backend["data_backend"] = builder.build(config)
@@ -2603,7 +2677,11 @@ class FactoryRegistry:
             else:
                 raise ValueError(f"Unknown data backend type: {backend['type']}")
 
-            init_backend["cache_dir"] = backend.get("cache_dir", self.args.cache_dir_vae)
+            init_backend["cache_dir"] = (
+                init_backend["data_backend"].mount_path
+                if backend["type"] == "memory"
+                else backend.get("cache_dir", self.args.cache_dir_vae)
+            )
             if backend.get("vae_cache_clear_each_epoch", False):
                 init_backend["clear_cache_each_epoch"] = True
 
@@ -3534,6 +3612,11 @@ class FactoryRegistry:
         """Process text embeddings for captions."""
         if not self._uses_text_embeddings_cache():
             return
+        if init_backend["text_embed_cache"].text_cache_ondemand:
+            info_log(f"(id={init_backend['id']}) Skipping text embed pre-computation for on-demand cache.")
+            init_backend["config"]["hash_filenames"] = True
+            StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
+            return
         # Skip text embed processing for audio datasets that source from video.
         # These datasets inherit captions from their parent dataset during training
         # (see MultiAspectSampler.__getitem__ where source_dataset_id triggers caption lookup from parent).
@@ -3619,12 +3702,26 @@ class FactoryRegistry:
                     "prompt": caption,
                     "dataset_relative_path": normalized_identifier,
                 }
+                metadata_builder = getattr(self.model, "text_embed_cache_metadata_for_filepath", None)
+                if callable(metadata_builder):
+                    metadata.update(
+                        metadata_builder(
+                            init_backend=init_backend,
+                            image_path=image_path_str,
+                            prompt=caption,
+                            data_backend_id=dataset_id,
+                            dataset_relative_path=normalized_identifier,
+                        )
+                    )
                 if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME:
                     key_value = f"{dataset_id}:{normalized_identifier}"
                 elif key_type is TextEmbedCacheKey.FILENAME:
                     key_value = normalize_data_path(image_path_str, None)
                 else:
                     key_value = caption
+                key_builder = getattr(self.model, "text_embed_cache_key_value", None)
+                if callable(key_builder):
+                    key_value = key_builder(prompt=caption, default_key=key_value, metadata=metadata)
                 prompt_records.append({"prompt": caption, "key": key_value, "metadata": metadata})
 
             # Add entity label records for images with grounding annotations
@@ -3900,7 +3997,7 @@ class FactoryRegistry:
                 f"{len(init_backend['conditioning_image_embed_cache'].image_path_to_embed_path)} entries."
             )
 
-        if not self.args.vae_cache_ondemand:
+        if not init_backend["config"]["vae_cache_ondemand"]:
             pending_files = init_backend["conditioning_image_embed_cache"].discover_unprocessed_files()
             logger.info(f"Conditioning image embed cache has {len(pending_files)} unprocessed files.")
             if is_i2v_video:
@@ -3924,10 +4021,6 @@ class FactoryRegistry:
         text_embed_cache_dir_paths: List[str],
         conditioning_type: Optional[str],
     ) -> None:
-        disable_vae_cache = backend.get("disable_vae_cache") or init_backend["config"].get("disable_vae_cache")
-        if disable_vae_cache:
-            info_log(f"(id={init_backend['id']}) Skipping VAE cache configuration (disable_vae_cache=True).")
-            return
         """Configure VAE cache for the backend."""
         dataset_type_enum = ensure_dataset_type(init_backend.get("dataset_type"), default=DatasetType.IMAGE)
         allowed_types = {
@@ -3954,6 +4047,8 @@ class FactoryRegistry:
                 )
                 return
         vae_cache_dir = backend.get("cache_dir_vae", None)
+        if image_embed_data_backend["data_backend"].type == "memory" and image_embed_data_backend.get("cache_dir"):
+            vae_cache_dir = image_embed_data_backend["cache_dir"]
         if not vae_cache_dir:
             vae_cache_dir = self._default_vae_cache_dir(init_backend["id"], dataset_type_enum)
             backend["cache_dir_vae"] = vae_cache_dir
@@ -4040,6 +4135,9 @@ class FactoryRegistry:
             if vae_batch_size is None:
                 vae_batch_size = self.args.vae_batch_size
 
+        dataset_vae_cache_disable = init_backend["config"]["vae_cache_disable"]
+        dataset_vae_cache_ondemand = init_backend["config"]["vae_cache_ondemand"]
+
         init_backend["vaecache"] = VAECache(
             id=init_backend["id"],
             dataset_type=init_backend["dataset_type"],
@@ -4058,8 +4156,8 @@ class FactoryRegistry:
             cache_dir=vae_cache_dir,
             max_workers=backend.get("max_workers", self.args.max_workers),
             process_queue_size=process_queue_size,
-            vae_cache_ondemand=self.args.vae_cache_ondemand,
-            vae_cache_disable=getattr(self.args, "vae_cache_disable", False),
+            vae_cache_ondemand=dataset_vae_cache_ondemand,
+            vae_cache_disable=dataset_vae_cache_disable,
             hash_filenames=True,  # always enabled
             enable_nsfw_check=getattr(self.args, "enable_nsfw_check", False),
             nsfw_check_models=getattr(self.args, "nsfw_check_models", None) or DEFAULT_NSFW_CHECK_MODELS_CSV,
@@ -4073,7 +4171,7 @@ class FactoryRegistry:
         )
         init_backend["vaecache"].set_webhook_handler(StateTracker.get_webhook_handler())
 
-        if not self.args.vae_cache_ondemand and not getattr(self.args, "vae_cache_disable", False):
+        if not init_backend["vaecache"].vae_cache_ondemand:
             info_log(f"(id={init_backend['id']}) Discovering cache objects..")
             if self.accelerator.is_local_main_process:
                 try:
@@ -4430,7 +4528,12 @@ class FactoryRegistry:
 
         self._create_dataset_and_sampler(backend, init_backend, conditioning_type)
 
-        self._process_text_embeddings(backend, init_backend, conditioning_type)
+        text_precompute_cleanup = getattr(self.model, "after_text_embed_cache_precompute", None)
+        try:
+            self._process_text_embeddings(backend, init_backend, conditioning_type)
+        finally:
+            if callable(text_precompute_cleanup):
+                text_precompute_cleanup()
 
         if backend.get("auto_generated", False):
             self._handle_auto_generated_dataset(backend, init_backend)
@@ -4464,9 +4567,8 @@ class FactoryRegistry:
         self._handle_error_scanning_and_metadata(backend, init_backend, conditioning_type)
 
         if (
-            not self.args.vae_cache_ondemand
-            and not getattr(self.args, "vae_cache_disable", False)
-            and "vaecache" in init_backend
+            "vaecache" in init_backend
+            and not init_backend["vaecache"].vae_cache_ondemand
             and "vae" not in self.args.skip_file_discovery
             and "vae" not in backend.get("skip_file_discovery", "")
             and "deepfloyd" not in StateTracker.get_args().model_type
@@ -4478,13 +4580,11 @@ class FactoryRegistry:
         ):
             unprocessed_files = init_backend["vaecache"].discover_unprocessed_files()
             logger.info(f"VAECache has {len(unprocessed_files)} unprocessed files.")
-            if not self.args.vae_cache_ondemand and not getattr(self.args, "vae_cache_disable", False):
-                logger.info(f"Executing VAE cache update..")
-                init_backend["vaecache"].process_buckets()
-            logger.debug(f"Encoding images during training: {self.args.vae_cache_ondemand}")
+            logger.info(f"Executing VAE cache update..")
+            init_backend["vaecache"].process_buckets()
+            logger.debug(f"Encoding images during training: {init_backend['vaecache'].vae_cache_ondemand}")
             if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
-
         move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
         init_backend_debug_info = {
             k: v for k, v in init_backend.items() if isinstance(v, Union[list, int, float, str, dict, tuple])

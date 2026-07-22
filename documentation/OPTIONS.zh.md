@@ -87,6 +87,36 @@ simpletuner configure config/foo/config.json
 - **原因**：默认值允许按模型定制的紧凑 cache 布局。例如，Ideogram 4 会在写入 cache 文件前，通过 transformer 中冻结的 `llm_cond_norm` 和 `llm_cond_proj` 层投影 13 层 Qwen hidden-state 堆栈；这些层在 LoRA 和 full transformer 训练中都会保持冻结。
 - **何时使用**：用于调试缓存兼容性、确实需要 raw 未投影的 text encoder features，或在改造类似 Ideogram 的架构进行从零训练且 text projection 不是固定预训练组件时启用。
 
+### `--text_cache_ondemand`
+
+- **内容**：跳过完整的文本缓存预计算，在训练或验证请求缺失的提示词嵌入时再进行编码。
+- **默认值**：`False`
+- **行为**：仍会读取已有缓存条目，并写入新编码的缺失条目。文本编码器会保持加载，因为启动后仍需要使用。
+- **数据加载器覆盖**：`text_embeds` 后端可通过 `"text_cache_ondemand": true` 独立启用。
+
+### `--cosmos3_reasoner_component`
+
+- **内容**：Cosmos3 冻结 reasoner 组件的 Hugging Face repo id 或本地路径。
+- **默认值**：`auto`
+- **用途**：Cosmos3 文本缓存使用此组件写入逐层 reasoner K/V 条目。
+- **自动选项**：`SimpleTuner/cosmos3-component-reasoning-layers-bf16-edge`、`SimpleTuner/cosmos3-component-reasoning-layers-bf16-nano`、`SimpleTuner/cosmos3-component-reasoning-layers-bf16-super`、`SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-i2v`、`SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-t2i`。
+- **说明**：Cosmos3 会强制使用按需文本缓存，因为 reasoner 缓存键包含样本几何信息。
+
+### `--cosmos3_generator_component`
+
+- **内容**：Cosmos3 仅生成 transformer 组件的 Hugging Face repo id 或本地路径。
+- **默认值**：`auto`
+- **用途**：`auto` 会选择匹配的 Edge、Nano、Super、Super-I2V 或 Super-T2I 组件。
+- **自动选项**：`SimpleTuner/cosmos3-component-generation-layers-bf16-edge`、`SimpleTuner/cosmos3-component-generation-layers-bf16-nano`、`SimpleTuner/cosmos3-component-generation-layers-bf16-super`、`SimpleTuner/cosmos3-component-generation-layers-bf16-super-i2v`、`SimpleTuner/cosmos3-component-generation-layers-bf16-super-t2i`。
+- **说明**：该组件省略 transformer 内部的 reasoner 权重，并需要 reasoner K/V 条目。
+
+### `--text_cache_disable`
+
+- **内容**：禁止所有文本嵌入缓存写入，同时保留对已有条目的读取。
+- **默认值**：`False`
+- **行为**：隐含启用 `--text_cache_ondemand`；缺失嵌入会在请求时编码，但不会存储。
+- **数据加载器覆盖**：当全局选项为 false 时，可在单个 `text_embeds` 后端设置 `"text_cache_disable": true`。
+
 ### `--trust_remote_code`
 
 - **内容**：当 checkpoint 依赖上游自定义类时，允许 Transformers 和 tokenizer 执行模型仓库中的自定义 Python 代码。
@@ -1043,10 +1073,10 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 - **内容**：训练步数上限。设为 0 时由 `--num_train_epochs` 优先。
 - **原因**：用于缩短训练时长。
 
-### `--ignore_final_epochs`
+### `--strict_epoch_limit`
 
-- **内容**：忽略最后计算的 epoch，改由 `--max_train_steps` 控制。
-- **原因**：当 dataloader 长度变化导致训练提前结束时，该选项会忽略最后的 epoch 并继续训练至 `--max_train_steps`。
+- **内容**：当 epoch 计数达到 `--num_train_epochs` 时停止训练，即使尚未达到 `--max_train_steps`。
+- **原因**：对于显式设置 `--max_train_steps`、并希望继续经过额外 epoch 直到达到步数上限的训练，请关闭此选项。`--max_train_steps=0` 的训练始终按 epoch 驱动，并使用严格 epoch 上限。
 
 ### `--learning_rate`
 
@@ -1838,7 +1868,7 @@ usage: train.py [-h] --model_family
                 [--input_perturbation_steps INPUT_PERTURBATION_STEPS]
                 [--lr_end LR_END] [--lr_scale [LR_SCALE]]
                 [--lr_scale_sqrt [LR_SCALE_SQRT]]
-                [--ignore_final_epochs [IGNORE_FINAL_EPOCHS]]
+                [--strict_epoch_limit [STRICT_EPOCH_LIMIT]]
                 [--freeze_encoder_before FREEZE_ENCODER_BEFORE]
                 [--freeze_encoder_after FREEZE_ENCODER_AFTER]
                 [--freeze_encoder_strategy {before,between,after}]
@@ -1856,6 +1886,8 @@ usage: train.py [-h] --model_family
                 [--preserve_data_backend_cache [PRESERVE_DATA_BACKEND_CACHE]]
                 [--override_dataset_config [OVERRIDE_DATASET_CONFIG]]
                 [--cache_dir CACHE_DIR] [--cache_dir_text CACHE_DIR_TEXT]
+                [--text_cache_ondemand [TEXT_CACHE_ONDEMAND]]
+                [--text_cache_disable [TEXT_CACHE_DISABLE]]
                 [--cache_dir_vae CACHE_DIR_VAE]
                 [--compress_disk_cache [COMPRESS_DISK_CACHE]]
                 [--aspect_bucket_disable_rebuild [ASPECT_BUCKET_DISABLE_REBUILD]]
@@ -1865,6 +1897,7 @@ usage: train.py [-h] --model_family
                 [--image_processing_batch_size IMAGE_PROCESSING_BATCH_SIZE]
                 [--write_batch_size WRITE_BATCH_SIZE]
                 [--read_batch_size READ_BATCH_SIZE]
+                [--text_encoder_batch_size TEXT_ENCODER_BATCH_SIZE]
                 [--enable_multiprocessing [ENABLE_MULTIPROCESSING]]
                 [--max_workers MAX_WORKERS]
                 [--aws_max_pool_connections AWS_MAX_POOL_CONNECTIONS]
@@ -2334,9 +2367,10 @@ options:
   --lr_scale_sqrt [LR_SCALE_SQRT]
                         If using --lr_scale, use the square root of (number of
                         GPUs * gradient accumulation steps * batch size)
-  --ignore_final_epochs [IGNORE_FINAL_EPOCHS]
-                        When provided, the max epoch counter will not
-                        determine the end of the training run
+  --strict_epoch_limit [STRICT_EPOCH_LIMIT]
+                        Stop training when the epoch counter reaches
+                        --num_train_epochs, even if --max_train_steps
+                        has not been reached
   --freeze_encoder_before FREEZE_ENCODER_BEFORE
                         When using 'before' strategy, we will freeze layers
                         earlier than this
@@ -2407,6 +2441,12 @@ options:
   --cache_dir_text CACHE_DIR_TEXT
                         This is the path to a local directory that will
                         contain your text embed cache
+  --text_cache_ondemand [TEXT_CACHE_ONDEMAND]
+                        在训练期间按需编码缺失的文本嵌入，而不是预计算完整文本缓存。
+                        已有条目会被复用，新编码的缺失条目会写入缓存。
+  --text_cache_disable [TEXT_CACHE_DISABLE]
+                        禁止文本缓存写入，并按需编码缺失嵌入。已有缓存条目仍会读取。
+                        该选项隐含启用 --text_cache_ondemand。
   --text_embed_full_cache [TEXT_EMBED_FULL_CACHE]
                         Store full raw text encoder outputs in the text embed
                         cache. This opts out of model-specific cache size
@@ -2456,6 +2496,10 @@ options:
   --read_batch_size READ_BATCH_SIZE
                         Used by the VAE cache to prefetch image data. This is
                         the number of images to read ahead
+  --text_encoder_batch_size TEXT_ENCODER_BATCH_SIZE
+                        Batch size used when precomputing uncached text
+                        embeddings. A value of 1 preserves the original one-
+                        caption-per-forward behavior.
   --enable_multiprocessing [ENABLE_MULTIPROCESSING]
                         If set, will use processes instead of threads during
                         metadata caching operations

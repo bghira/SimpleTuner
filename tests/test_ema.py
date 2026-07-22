@@ -4,6 +4,7 @@ import unittest
 
 import torch
 
+from simpletuner.helpers.training import ema as ema_module
 from simpletuner.helpers.training.ema import EMAModel
 
 
@@ -92,6 +93,31 @@ class TestEMAModel(unittest.TestCase):
             # Check that the new EMA model's shadow parameters match the saved state
             for shadow_param, new_shadow_param in zip(self.ema_model.shadow_params, new_ema_model.shadow_params):
                 self.assertTrue(torch.equal(shadow_param, new_shadow_param))
+
+    def test_state_dict_gathers_dtensor_before_detach(self):
+        class FakeDTensor:
+            def __init__(self):
+                self.full_tensor_called = False
+
+            def full_tensor(self):
+                self.full_tensor_called = True
+                return torch.ones(2, 2)
+
+            def detach(self):
+                raise AssertionError("DTensor detach should not be called before materialization.")
+
+        fake_dtensor = FakeDTensor()
+        original_dtensor = ema_module.DTensor
+        try:
+            ema_module.DTensor = FakeDTensor
+            self.ema_model.shadow_params = [fake_dtensor]
+
+            state_dict = self.ema_model.state_dict()
+        finally:
+            ema_module.DTensor = original_dtensor
+
+        self.assertTrue(fake_dtensor.full_tensor_called)
+        self.assertTrue(torch.equal(state_dict["shadow_params.0"], torch.ones(2, 2)))
 
     def test_copy_to_handles_reordered_parameters(self):
         class MixedParamModule(torch.nn.Module):

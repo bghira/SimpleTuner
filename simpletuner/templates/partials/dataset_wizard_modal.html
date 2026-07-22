@@ -260,6 +260,32 @@
                                 </div>
                             </div>
 
+                            <div class="form-check mb-3">
+                                <input type="checkbox"
+                                       class="form-check-input"
+                                       id="wizardVaeCacheOndemand"
+                                       x-model="currentDataset.vae_cache_ondemand">
+                                <label class="form-check-label" for="wizardVaeCacheOndemand">
+                                    Encode VAE latents on demand for this dataset
+                                </label>
+                                <div class="form-text">
+                                    Encodes missing latents during training and saves them to the VAE cache.
+                                </div>
+                            </div>
+
+                            <div class="form-check mb-3">
+                                <input type="checkbox"
+                                       class="form-check-input"
+                                       id="wizardVaeCacheDisable"
+                                       x-model="currentDataset.vae_cache_disable">
+                                <label class="form-check-label" for="wizardVaeCacheDisable">
+                                    Disable VAE cache writes for this dataset
+                                </label>
+                                <div class="form-text">
+                                    Encodes latents on demand without saving generated VAE latents to disk.
+                                </div>
+                            </div>
+
                             <!-- Text Embed Cache Directory (conditional) -->
                             <div class="mb-3" x-show="(createNewConfig || !existingTextEmbeds) && !separateTextEmbeds" x-init="if (currentDataset.id && currentDataset.cache_dir_text === 'cache/text') { currentDataset.cache_dir_text = `cache/text/${currentDataset.id}` }">
                                 <label class="form-label">
@@ -309,6 +335,22 @@
                                x-model="textEmbedsDataset.cache_dir"
                                placeholder="cache/text">
                         <div class="form-text">Directory where text embeddings will be stored</div>
+                    </div>
+
+                    <div class="form-check mb-2">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="wizardTextCacheOndemand"
+                               x-model="textEmbedsDataset.text_cache_ondemand">
+                        <label class="form-check-label" for="wizardTextCacheOndemand">Encode missing text embeds on demand</label>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input"
+                               type="checkbox"
+                               id="wizardTextCacheDisable"
+                               x-model="textEmbedsDataset.text_cache_disable">
+                        <label class="form-check-label" for="wizardTextCacheDisable">Disable text cache writes</label>
+                        <div class="form-text">Reads existing cache entries and implies on-demand encoding for misses.</div>
                     </div>
 
                     <div class="p-3 rounded mb-2" style="background: rgba(34, 197, 94, 0.1); border-left: 3px solid rgba(34, 197, 94, 0.5);">

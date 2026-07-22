@@ -10,7 +10,7 @@
     "evaluation_type": "none",
     "gradient_checkpointing": true,
     "hub_model_id": "simpletuner-example-ernie-peft-lora",
-    "ignore_final_epochs": true,
+    "strict_epoch_limit": false,
     "learning_rate": 1e-4,
     "lora_rank": 16,
     "lora_type": "standard",

@@ -135,6 +135,30 @@ class BaseBackendConfig(ABC):
         if self.target_downsample_size is None:
             self.target_downsample_size = args.get("target_downsample_size")
 
+    def _apply_memory_backend_settings(self, backend_dict: Dict[str, Any]) -> None:
+        if self.backend_type != "memory":
+            return
+        for key in (
+            "cache_dir",
+            "memory_filesystem_path",
+            "memory_filesystem_size",
+            "memory_filesystem_sudo",
+        ):
+            if key in backend_dict:
+                self.config[key] = backend_dict[key]
+
+    def _memory_backend_settings_dict(self) -> Dict[str, Any]:
+        return {
+            key: self.config[key]
+            for key in (
+                "cache_dir",
+                "memory_filesystem_path",
+                "memory_filesystem_size",
+                "memory_filesystem_sudo",
+            )
+            if key in self.config
+        }
+
     def to_dict(self) -> Dict[str, Any]:
         result = {"id": self.id, "dataset_type": self.dataset_type.value, "config": self.config.copy()}
 

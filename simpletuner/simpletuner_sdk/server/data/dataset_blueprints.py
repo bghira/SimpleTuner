@@ -672,6 +672,16 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "advanced": True,
                 },
                 {
+                    "id": "text_encoder_batch_size",
+                    "label": "text encoder batch size",
+                    "description": "batch size when precomputing uncached text embeddings",
+                    "type": "number",
+                    "defaultValue": 1,
+                    "min": 1,
+                    "step": 1,
+                    "advanced": True,
+                },
+                {
                     "id": "preserve_data_backend_cache",
                     "label": "preserve backend cache",
                     "description": "keep data backend cache between runs",
@@ -1077,6 +1087,130 @@ _BLUEPRINTS: List[BackendBlueprint] = [
         }
     ),
 ]
+
+
+def _memory_filesystem_fields() -> List[DatasetField]:
+    return [
+        DatasetField(
+            id="memory_filesystem_path",
+            label="memory filesystem path",
+            description="empty directory used as the memory filesystem mount",
+            type="text",
+            placeholder="/tmp/simpletuner-memory/my-cache",
+            advanced=True,
+        ),
+        DatasetField(
+            id="memory_filesystem_size",
+            label="memory filesystem size",
+            description="capacity such as 64G; required on macOS, while Linux also accepts values such as 80%",
+            type="text",
+            placeholder="64G",
+            advanced=True,
+        ),
+        DatasetField(
+            id="memory_filesystem_sudo",
+            label="use sudo on Linux",
+            description="run Linux mount and unmount through non-interactive sudo when not root",
+            type="toggle",
+            defaultValue=False,
+            advanced=True,
+        ),
+    ]
+
+
+def _create_memory_text_embed_blueprint() -> BackendBlueprint:
+    source = next(blueprint for blueprint in _BLUEPRINTS if blueprint.id == "local-text-embeds")
+    blueprint = source.model_copy(deep=True)
+    blueprint.id = "memory-text-embeds"
+    blueprint.backendType = "memory"
+    blueprint.label = "memory text embeds"
+    blueprint.description = "preload and write text embedding cache files in a memory filesystem"
+    blueprint.defaults["type"] = "memory"
+
+    for field in blueprint.fields:
+        if field.id == "type":
+            field.defaultValue = "memory"
+            field.options = [DatasetFieldOption(value="memory", label="memory filesystem")]
+
+    blueprint.fields.extend(_memory_filesystem_fields())
+    blueprint.metadata = BlueprintMetadata(
+        tags=["text_embeds", "memory", "tmpfs", "ramdisk"],
+        docsUrl=docs_url("DATALOADER.md#memory-tmpfs-and-ram-disk-backends"),
+    )
+    return blueprint
+
+
+_BLUEPRINTS.extend(
+    [
+        _create_memory_text_embed_blueprint(),
+        BackendBlueprint(
+            id="memory-image-embeds",
+            backendType="memory",
+            datasetTypes=["image_embeds"],
+            label="memory image embeds",
+            description="preload and write VAE embedding cache files in a memory filesystem",
+            defaults={
+                "type": "memory",
+                "cache_dir": "cache/vae",
+            },
+            fields=[
+                DatasetField(
+                    id="id",
+                    label="dataset id",
+                    description="unique identifier for this cache",
+                    type="text",
+                    required=True,
+                    placeholder="my-image-embeds",
+                ),
+                DatasetField(
+                    id="type",
+                    label="backend type",
+                    description="storage backend type",
+                    type="select",
+                    defaultValue="memory",
+                    options=[DatasetFieldOption(value="memory", label="memory filesystem")],
+                ),
+                DatasetField(
+                    id="dataset_type",
+                    label="dataset type",
+                    description="type of data in this dataset",
+                    type="select",
+                    defaultValue="image_embeds",
+                    options=[DatasetFieldOption(value="image_embeds", label="image embeds")],
+                ),
+                DatasetField(
+                    id="cache_dir",
+                    label="cache directory",
+                    description="source directory containing cached VAE embeddings",
+                    type="text",
+                    required=True,
+                    placeholder="cache/vae",
+                ),
+                DatasetField(
+                    id="preserve_data_backend_cache",
+                    label="preserve backend cache",
+                    description="keep data backend cache metadata between runs",
+                    type="toggle",
+                    defaultValue=False,
+                    advanced=True,
+                ),
+                DatasetField(
+                    id="vae_cache_clear_each_epoch",
+                    label="clear cache each epoch",
+                    description="clear VAE cache entries after each training epoch",
+                    type="toggle",
+                    defaultValue=False,
+                    advanced=True,
+                ),
+                *_memory_filesystem_fields(),
+            ],
+            metadata=BlueprintMetadata(
+                tags=["image_embeds", "memory", "tmpfs", "ramdisk"],
+                docsUrl=docs_url("DATALOADER.md#memory-tmpfs-and-ram-disk-backends"),
+            ),
+        ),
+    ]
+)
 
 
 def get_dataset_blueprints() -> List[BackendBlueprint]:

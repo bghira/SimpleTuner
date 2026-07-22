@@ -24,6 +24,7 @@ import threading
 import time
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
@@ -54,6 +55,7 @@ from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.publishing import PublishingManager
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.publishing.providers.s3 import S3PublishingProvider
+from simpletuner.helpers.ramtorch import profiling as ramtorch_profile
 from simpletuner.helpers.scheduled_sampling.rollout import apply_scheduled_sampling_rollout
 from simpletuner.helpers.training import _flatten_parameters, trainable_parameter_count
 from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
@@ -1800,7 +1802,6 @@ class Trainer:
                     self.init_freeze_models,
                     self.init_trainable_peft_adapter,
                     self.init_lyrics_embedder_training,
-                    self.init_ema_model,
                 ]
             )
 
@@ -2323,8 +2324,30 @@ class Trainer:
         StateTracker.set_vae_dtype(self.model.vae.dtype)
         StateTracker.set_vae(self.model.vae)
 
+    @contextmanager
+    def _disable_fsdp_cpu_ram_efficient_loading_for_text_encoder(self):
+        accelerator = getattr(self, "accelerator", None)
+        state = getattr(accelerator, "state", None)
+        distributed_type = getattr(state, "distributed_type", getattr(accelerator, "distributed_type", None))
+        fsdp_plugin = getattr(state, "fsdp_plugin", None)
+        if distributed_type != DistributedType.FSDP or not getattr(fsdp_plugin, "cpu_ram_efficient_loading", False):
+            yield
+            return
+
+        env_name = "FSDP_CPU_RAM_EFFICIENT_LOADING"
+        previous_value = os.environ.get(env_name)
+        os.environ[env_name] = "False"
+        try:
+            yield
+        finally:
+            if previous_value is None:
+                os.environ.pop(env_name, None)
+            else:
+                os.environ[env_name] = previous_value
+
     def init_text_encoder(self, move_to_accelerator: bool = True):
-        self.model.load_text_encoder(move_to_device=move_to_accelerator)
+        with self._disable_fsdp_cpu_ram_efficient_loading_for_text_encoder():
+            self.model.load_text_encoder(move_to_device=move_to_accelerator)
 
     def init_freeze_models(self):
         self.model.freeze_components()
@@ -2639,6 +2662,13 @@ class Trainer:
     def init_unload_text_encoder(self):
         if self.config.model_type != "full" and self.config.train_text_encoder:
             return
+        if (
+            getattr(self.config, "text_cache_ondemand", False)
+            or getattr(self.config, "text_cache_disable", False)
+            or StateTracker.any_text_cache_uses_ondemand()
+        ):
+            logger.info("Keeping text encoders loaded for on-demand text embedding.")
+            return
         memory_before_unload = self.stats_memory_used()
         if self.accelerator.is_main_process:
             logger.info("Unloading text encoders, as they are not being trained.")
@@ -2938,6 +2968,17 @@ class Trainer:
                         args=self.config,
                     )
                     self.model.set_prepared_model(q_model, base_model=False)
+
+        if (
+            getattr(self.config, "ramtorch", False)
+            and not preprocessing_models_only
+            and not ema_only
+            and hasattr(self.model, "_ramtorch_base_deferred_until_after_quantization")
+            and self.model._ramtorch_base_deferred_until_after_quantization()
+        ):
+            applied = self.model.apply_ramtorch_to_transformer()
+            if applied:
+                logger.info("Applied deferred RamTorch to %s base model layers after quantization.", applied)
 
         # After quantization, re-move non-ramtorch layers to GPU
         # Quantization may have moved the model to CPU, leaving normalization weights there
@@ -3479,6 +3520,13 @@ class Trainer:
         self.config.num_update_steps_per_epoch = math.ceil(total_num_batches / grad_accum)
         steps_per_epoch = max(self.config.num_update_steps_per_epoch, 1)
         target_epochs = float(self.config.num_train_epochs or 0)
+        max_train_steps_was_unset = self.config.max_train_steps is None or self.config.max_train_steps == 0
+        if max_train_steps_was_unset and not self.config.strict_epoch_limit:
+            logger.info(
+                "Enabling strict_epoch_limit because --max_train_steps is unset; "
+                "epoch-driven runs stop at --num_train_epochs."
+            )
+            self.config.strict_epoch_limit = True
         if getattr(self.config, "overrode_max_train_steps", False):
             self.config.max_train_steps = int(math.ceil(target_epochs * steps_per_epoch))
             # Afterwards we recalculate our number of training epochs
@@ -3938,8 +3986,19 @@ class Trainer:
         # this runs on all processes to ensure shapes are aligned.
         self.model.pre_ema_creation()
         fsdp_version = getattr(self.config, "fsdp_version", 1)
-        fsdp_enabled = getattr(self.config, "fsdp_enable", False)
+        fsdp_enabled = getattr(self.config, "fsdp_enable", False) or getattr(self.config, "use_fsdp", False)
         is_fsdp2_run = fsdp_enabled and fsdp_version == 2 and self.accelerator.distributed_type == DistributedType.FSDP
+
+        if is_fsdp2_run and getattr(self.config, "ema_cpu_only", False):
+            raise RuntimeError(
+                "ema_cpu_only is not supported with FSDP2. "
+                "FSDP2 EMA shadows are DTensors and must remain on the accelerator."
+            )
+        if is_fsdp2_run and getattr(self.config, "ema_device", "cpu") != "accelerator":
+            logger.warning(
+                "FSDP2 EMA shadows are DTensors and must remain on the accelerator. " "Using ema_device='accelerator'."
+            )
+            self.config.ema_device = "accelerator"
 
         should_log = self.accelerator.is_main_process
         # TwinFlow requires EMA on all ranks for teacher passes; create EMA everywhere when enabled.
@@ -3979,6 +4038,32 @@ class Trainer:
         # Pass EMA model reference to the model for TwinFlow teacher access
         self.model.ema_model = self.ema_model
         self.model.post_ema_creation()
+        self._place_ema_model(is_fsdp2_run=is_fsdp2_run)
+
+    def _place_ema_model(self, *, is_fsdp2_run: bool) -> None:
+        if self.ema_model is None or is_fsdp2_run:
+            return
+
+        if self.config.ema_device == "accelerator":
+            logger.info("Moving EMA model weights to accelerator...")
+        self.ema_model.to(
+            (self.accelerator.device if self.config.ema_device == "accelerator" else "cpu"),
+            dtype=self.config.weight_dtype,
+        )
+
+        if self.config.ema_device == "cpu" and not self.config.ema_cpu_only:
+            logger.info("Pinning EMA model weights to CPU...")
+            try:
+                self.ema_model.pin_memory()
+            except Exception as e:
+                self._emit_event(
+                    notification_event(
+                        message=f"Failed to pin EMA to CPU: {e}",
+                        severity="warning",
+                        job_id=self.job_id,
+                    )
+                )
+                logger.error(f"Failed to pin EMA model to CPU: {e}")
 
     def init_hooks(self):
         from simpletuner.helpers.training.save_hooks import SaveHookManager
@@ -4031,7 +4116,9 @@ class Trainer:
         attach_shared_ramtorch_parameters = None
         if self._ramtorch_distributed() and primary_model is not None:
             ramtorch_utils.ensure_available()
-            from ramtorch.helpers import attach_shared_ramtorch_parameters as attach_shared_ramtorch_parameters
+            from simpletuner.helpers.ramtorch.utils import (
+                attach_shared_ramtorch_parameters as attach_shared_ramtorch_parameters,
+            )
 
             ignored = ramtorch_utils.mark_ddp_ignore_params(primary_model)
             if ignored:
@@ -4146,28 +4233,6 @@ class Trainer:
             elif label == "train_dataloader":
                 self.train_dataloaders = [prepared]
         self._report_cuda_usage_if_requested("after_accelerator_prepare")
-        if self.config.use_ema and self.ema_model is not None:
-            if self.config.ema_device == "accelerator":
-                logger.info("Moving EMA model weights to accelerator...")
-            print(f"EMA model: {self.ema_model}")
-            self.ema_model.to(
-                (self.accelerator.device if self.config.ema_device == "accelerator" else "cpu"),
-                dtype=self.config.weight_dtype,
-            )
-
-            if self.config.ema_device == "cpu" and not self.config.ema_cpu_only:
-                logger.info("Pinning EMA model weights to CPU...")
-                try:
-                    self.ema_model.pin_memory()
-                except Exception as e:
-                    self._emit_event(
-                        notification_event(
-                            message=f"Failed to pin EMA to CPU: {e}",
-                            severity="warning",
-                            job_id=self.job_id,
-                        )
-                    )
-                    logger.error(f"Failed to pin EMA model to CPU: {e}")
 
         idx_count = 0
         for _, backend in StateTracker.get_data_backends().items():
@@ -4219,7 +4284,12 @@ class Trainer:
         prepared_model.eval()
 
     def init_unload_vae(self):
-        if self.config.keep_vae_loaded or self.config.vae_cache_ondemand or getattr(self.config, "vae_cache_disable", False):
+        if (
+            self.config.keep_vae_loaded
+            or self.config.vae_cache_ondemand
+            or getattr(self.config, "vae_cache_disable", False)
+            or StateTracker.any_vae_cache_uses_ondemand()
+        ):
             return
         memory_before_unload = self.stats_memory_used()
         self.model.unload_vae()
@@ -4669,7 +4739,7 @@ class Trainer:
                 * self.accelerator.num_processes
             )
 
-        if self.state["current_epoch"] > self.config.num_train_epochs + 1 and not self.config.ignore_final_epochs:
+        if self.state["current_epoch"] > self.config.num_train_epochs + 1 and self.config.strict_epoch_limit:
             logger.info(
                 f"Reached the end ({self.state['current_epoch']} epochs) of our training run ({self.config.num_train_epochs} epochs). This run will do zero steps."
             )
@@ -4852,6 +4922,11 @@ class Trainer:
         lr_scheduler = self.init_lr_scheduler()
         self.init_hooks()
         self.init_prepare_models(lr_scheduler=lr_scheduler)
+        self.init_ema_model()
+        if self.model_hooks is not None:
+            self.model_hooks.ema_model = self.ema_model
+        if getattr(self, "validation", None) is not None:
+            self.validation.ema_model = self.ema_model
         lr_scheduler = self.init_resume_checkpoint(lr_scheduler=lr_scheduler)
         self.init_post_load_freeze()
 
@@ -6023,6 +6098,8 @@ class Trainer:
         self.init_trackers()
         self._train_initial_msg()
         self.mark_optimizer_train()
+        if ramtorch_profile.profile_enabled():
+            ramtorch_profile.reset_for_new_run()
         torch_profiler = self._create_torch_profiler()
         if torch_profiler is not None:
             torch_profiler.start()
@@ -6046,7 +6123,6 @@ class Trainer:
 
         # Some values that are required to be initialised later.
         step = self.state["global_step"]
-        training_luminance_values = []
         current_epoch_step = None
         self.bf, fetch_thread = None, None
         iterator_fn = random_dataloader_iterator
@@ -6054,10 +6130,10 @@ class Trainer:
         # receive the same batch data before it's split along the sequence dimension
         cp_batch_synchronizer = ContextParallelBatchSynchronizer(self.accelerator)
         num_epochs_to_track = int(math.ceil(self.config.num_train_epochs)) + 1
-        if self.config.ignore_final_epochs:
+        if not self.config.strict_epoch_limit:
             num_epochs_to_track += 1000000
         for epoch in range(self.state["first_epoch"], num_epochs_to_track):
-            if self.state["current_epoch"] > self.config.num_train_epochs + 1 and not self.config.ignore_final_epochs:
+            if self.state["current_epoch"] > self.config.num_train_epochs + 1 and self.config.strict_epoch_limit:
                 # This might immediately end training, but that's useful for simply exporting the model.
                 logger.info(
                     f"Training run is complete ({self.config.num_train_epochs}/{self.config.num_train_epochs} epochs, {self.state['global_step']}/{self.config.max_train_steps} steps)."
@@ -6163,10 +6239,6 @@ class Trainer:
                     raise ValueError(
                         f"Received a None batch, which is not a good thing. Traceback: {traceback.format_exc()}"
                     )
-
-                # Add the current batch of training data's avg luminance to a list.
-                if "batch_luminance" in prepared_batch:
-                    training_luminance_values.append(prepared_batch["batch_luminance"])
 
                 if getattr(self, "distiller", None) is not None:
                     self.distiller.pre_training_step(self.model, step)
@@ -6534,6 +6606,11 @@ class Trainer:
                     current_epoch_step += 1
                     StateTracker.set_global_step(self.state["global_step"])
                     self.iteration_tracker.record_step(self.state["global_step"])
+                    if ramtorch_profile.profile_enabled():
+                        ramtorch_profile.record_train_step(
+                            self.state["global_step"],
+                            self.iteration_tracker.latest_step_duration,
+                        )
 
                     ema_decay_value = "None (EMA not in use)"
                     if self.config.use_ema:
@@ -6584,11 +6661,6 @@ class Trainer:
                     # Clear buffers
                     self.timesteps_buffer = []
                     self.twinflow_traj_buffer = []
-
-                    # Average out the luminance values of each batch, so that we can store that in this step.
-                    if training_luminance_values:
-                        avg_training_data_luminance = sum(training_luminance_values) / len(training_luminance_values)
-                        wandb_logs["train_luminance"] = avg_training_data_luminance
 
                     logger.debug(
                         f"Step {self.state['global_step']} of {self.config.max_train_steps}: loss {loss.item()}, lr {self.lr}, epoch {epoch}/{self.config.num_train_epochs}, ema_decay_value {ema_decay_value}, train_loss {self.train_loss}"
@@ -6703,7 +6775,6 @@ class Trainer:
                         logger.error(f"Failed to log to accelerator; ignoring error: {e}")
 
                     # Reset some values for the next go.
-                    training_luminance_values = []
                     self.train_loss = 0.0
                     self.train_diffusion_loss = 0.0
                     last_step_saved_checkpoint = checkpoint_saved_this_step
@@ -6756,7 +6827,7 @@ class Trainer:
                     torch_profiler.step()
 
                 if self.state["global_step"] >= self.config.max_train_steps or (
-                    epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
+                    epoch > self.config.num_train_epochs and self.config.strict_epoch_limit
                 ):
                     logger.info(
                         f"Training has completed."
@@ -6784,7 +6855,7 @@ class Trainer:
                 self._populate_checkpoint_assets(epoch_checkpoint_dir)
 
             if self.state["global_step"] >= self.config.max_train_steps or (
-                epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
+                epoch > self.config.num_train_epochs and self.config.strict_epoch_limit
             ):
                 logger.info(
                     f"Exiting training loop. Beginning model unwind at epoch {epoch}, step {self.state['global_step']}"

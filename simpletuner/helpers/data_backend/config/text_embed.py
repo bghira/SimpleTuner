@@ -13,6 +13,8 @@ from .base import BaseBackendConfig
 class TextEmbedBackendConfig(BaseBackendConfig):
 
     caption_filter_list: Optional[List[str]] = None
+    text_cache_ondemand: bool = False
+    text_cache_disable: bool = False
 
     def __post_init__(self):
         self.dataset_type = DatasetType.TEXT_EMBEDS
@@ -26,7 +28,11 @@ class TextEmbedBackendConfig(BaseBackendConfig):
             dataset_type=DatasetType.TEXT_EMBEDS,
             disabled=backend_dict.get("disabled", backend_dict.get("disable", False)),
             caption_filter_list=backend_dict.get("caption_filter_list", []),
+            text_cache_ondemand=bool(backend_dict.get("text_cache_ondemand", False)),
+            text_cache_disable=bool(backend_dict.get("text_cache_disable", False)),
         )
+        if config.text_cache_disable:
+            config.text_cache_ondemand = True
 
         compress_arg = backend_dict.get("compress_cache", None)
         if compress_arg is None:
@@ -60,6 +66,8 @@ class TextEmbedBackendConfig(BaseBackendConfig):
             for aws_key, aws_value in aws_block.items():
                 setattr(config, aws_key, aws_value)
 
+        config._apply_memory_backend_settings(backend_dict)
+
         config.apply_defaults(args)
 
         return config
@@ -81,6 +89,10 @@ class TextEmbedBackendConfig(BaseBackendConfig):
 
         if self.caption_filter_list is not None:
             result["config"]["caption_filter_list"] = self.caption_filter_list
+        if self.text_cache_ondemand:
+            result["config"]["text_cache_ondemand"] = True
+        if self.text_cache_disable:
+            result["config"]["text_cache_disable"] = True
 
         for key, value in self.config.items():
             result["config"][key] = value

@@ -144,6 +144,7 @@ class BaseBackendBuilder(ABC):
             delete_unwanted_images=backend_dict.get("delete_unwanted_images", args.get("delete_unwanted_images")),
             cache_file_suffix=backend_dict.get("cache_file_suffix", config.id),
             repeats=config.config.get("repeats", 0),
+            max_num_samples=backend_dict.get("max_num_samples"),
             **metadata_backend_args,
         )
 

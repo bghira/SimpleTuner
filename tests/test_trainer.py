@@ -610,6 +610,86 @@ except ImportError:
 
 
 class TestTrainer(unittest.TestCase):
+    def test_init_text_encoder_disables_fsdp_cpu_ram_efficient_loading_during_load(self):
+        trainer = object.__new__(Trainer)
+        observed_env_values = []
+
+        def load_text_encoder(move_to_device: bool = True):
+            observed_env_values.append((move_to_device, os.environ.get("FSDP_CPU_RAM_EFFICIENT_LOADING")))
+
+        trainer.model = SimpleNamespace(load_text_encoder=load_text_encoder)
+        trainer.accelerator = SimpleNamespace(
+            state=SimpleNamespace(
+                distributed_type=DistributedType.FSDP,
+                fsdp_plugin=SimpleNamespace(cpu_ram_efficient_loading=True),
+            )
+        )
+
+        with patch.dict(os.environ, {"FSDP_CPU_RAM_EFFICIENT_LOADING": "True"}, clear=False):
+            trainer.init_text_encoder(move_to_accelerator=False)
+            self.assertEqual(os.environ["FSDP_CPU_RAM_EFFICIENT_LOADING"], "True")
+
+        self.assertEqual(observed_env_values, [(False, "False")])
+
+    def test_init_text_encoder_restores_fsdp_cpu_ram_efficient_loading_after_error(self):
+        trainer = object.__new__(Trainer)
+
+        def load_text_encoder(move_to_device: bool = True):
+            raise RuntimeError("load failed")
+
+        trainer.model = SimpleNamespace(load_text_encoder=load_text_encoder)
+        trainer.accelerator = SimpleNamespace(
+            state=SimpleNamespace(
+                distributed_type=DistributedType.FSDP,
+                fsdp_plugin=SimpleNamespace(cpu_ram_efficient_loading=True),
+            )
+        )
+
+        with patch.dict(os.environ, {"FSDP_CPU_RAM_EFFICIENT_LOADING": "True"}, clear=False):
+            with self.assertRaisesRegex(RuntimeError, "load failed"):
+                trainer.init_text_encoder()
+            self.assertEqual(os.environ["FSDP_CPU_RAM_EFFICIENT_LOADING"], "True")
+
+    def test_init_text_encoder_restores_missing_env_from_fsdp_plugin_state(self):
+        trainer = object.__new__(Trainer)
+
+        def load_text_encoder(move_to_device: bool = True):
+            self.assertEqual(os.environ.get("FSDP_CPU_RAM_EFFICIENT_LOADING"), "False")
+
+        trainer.model = SimpleNamespace(load_text_encoder=load_text_encoder)
+        trainer.accelerator = SimpleNamespace(
+            state=SimpleNamespace(
+                distributed_type=DistributedType.FSDP,
+                fsdp_plugin=SimpleNamespace(cpu_ram_efficient_loading=True),
+            )
+        )
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FSDP_CPU_RAM_EFFICIENT_LOADING", None)
+            trainer.init_text_encoder()
+            self.assertNotIn("FSDP_CPU_RAM_EFFICIENT_LOADING", os.environ)
+
+    def test_init_text_encoder_leaves_env_unchanged_without_fsdp_cpu_ram_efficient_loading(self):
+        trainer = object.__new__(Trainer)
+        observed_env_values = []
+
+        def load_text_encoder(move_to_device: bool = True):
+            observed_env_values.append(os.environ.get("FSDP_CPU_RAM_EFFICIENT_LOADING"))
+
+        trainer.model = SimpleNamespace(load_text_encoder=load_text_encoder)
+        trainer.accelerator = SimpleNamespace(
+            state=SimpleNamespace(
+                distributed_type=DistributedType.FSDP,
+                fsdp_plugin=SimpleNamespace(cpu_ram_efficient_loading=False),
+            )
+        )
+
+        with patch.dict(os.environ, {"FSDP_CPU_RAM_EFFICIENT_LOADING": "True"}, clear=False):
+            trainer.init_text_encoder()
+            self.assertEqual(os.environ["FSDP_CPU_RAM_EFFICIENT_LOADING"], "True")
+
+        self.assertEqual(observed_env_values, ["True"])
+
     def test_resolve_ddp_find_unused_parameters_uses_explicit_config(self):
         trainer = object.__new__(Trainer)
         trainer.config = SimpleNamespace(find_unused_parameters=False, model_family="ltxvideo2")
@@ -1257,6 +1337,68 @@ class TestTrainer(unittest.TestCase):
         with self.assertRaises(ValueError):
             trainer._load_fsdp_plugin()
 
+    def test_resume_and_prepare_initializes_ema_after_prepare(self):
+        trainer = object.__new__(Trainer)
+        trainer.ema_model = None
+        trainer.validation = SimpleNamespace(ema_model=None)
+        trainer.model_hooks = None
+        events = []
+        ema_model = object()
+
+        trainer.init_optimizer = Mock(side_effect=lambda: events.append("optimizer"))
+        trainer.init_lr_scheduler = Mock(side_effect=lambda: events.append("lr_scheduler") or object())
+        trainer.init_hooks = Mock(
+            side_effect=lambda: (
+                events.append("hooks"),
+                setattr(trainer, "model_hooks", SimpleNamespace(ema_model=None)),
+            )
+        )
+        trainer.init_prepare_models = Mock(side_effect=lambda lr_scheduler: events.append("prepare"))
+
+        def init_ema_model():
+            events.append("ema")
+            trainer.ema_model = ema_model
+
+        def init_resume_checkpoint(lr_scheduler):
+            events.append("resume")
+            self.assertIs(trainer.model_hooks.ema_model, ema_model)
+            self.assertIs(trainer.validation.ema_model, ema_model)
+            return lr_scheduler
+
+        trainer.init_ema_model = Mock(side_effect=init_ema_model)
+        trainer.init_resume_checkpoint = Mock(side_effect=init_resume_checkpoint)
+        trainer.init_post_load_freeze = Mock(side_effect=lambda: events.append("post_load_freeze"))
+
+        trainer.resume_and_prepare()
+
+        self.assertEqual(
+            events,
+            ["optimizer", "lr_scheduler", "hooks", "prepare", "ema", "resume", "post_load_freeze"],
+        )
+
+    def test_init_ema_model_rejects_cpu_only_with_fsdp2(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            use_ema=True,
+            fsdp_enable=True,
+            fsdp_version=2,
+            ema_cpu_only=True,
+            ema_device="cpu",
+        )
+        trainer.accelerator = SimpleNamespace(distributed_type=DistributedType.FSDP)
+        trainer.model = Mock()
+
+        with self.assertRaisesRegex(RuntimeError, "ema_cpu_only is not supported with FSDP2"):
+            trainer.init_ema_model()
+
+    def test_place_ema_model_skips_dtensor_weights_for_fsdp2(self):
+        trainer = object.__new__(Trainer)
+        trainer.ema_model = Mock()
+
+        trainer._place_ema_model(is_fsdp2_run=True)
+
+        trainer.ema_model.to.assert_not_called()
+
     @patch("simpletuner.helpers.training.trainer.Validation")
     def test_init_validations_enabled_for_fsdp_full_shard(self, mock_validation):
         """Test that FSDP with reshard_after_forward now supports validation"""
@@ -1628,6 +1770,37 @@ class TestTrainer(unittest.TestCase):
         trainer._epoch_rollover(1)
         self.assertEqual(trainer.state["current_epoch"], 1)
 
+    @patch("simpletuner.helpers.training.trainer.StateTracker.get_dataset_schedule", return_value=None)
+    @patch("simpletuner.helpers.training.trainer.StateTracker.get_data_backends")
+    def test_recalculate_training_steps_forces_strict_epoch_limit_for_epoch_runs(
+        self, mock_get_data_backends, mock_get_dataset_schedule
+    ):
+        trainer = object.__new__(Trainer)
+        trainer.distiller = None
+        trainer.lr_scheduler = None
+        trainer.accelerator = SimpleNamespace(num_processes=1)
+        trainer.config = SimpleNamespace(
+            distillation_method=None,
+            gradient_accumulation_steps=5,
+            max_train_steps=0,
+            num_train_epochs=2,
+            overrode_max_train_steps=False,
+            strict_epoch_limit=False,
+            train_batch_size=1,
+        )
+        mock_get_data_backends.return_value = {
+            "train": {
+                "config": {},
+                "metadata_backend": [object()] * 10,
+            }
+        }
+
+        trainer._recalculate_training_steps()
+
+        self.assertTrue(trainer.config.strict_epoch_limit)
+        self.assertEqual(2, trainer.config.num_update_steps_per_epoch)
+        self.assertEqual(4, trainer.config.max_train_steps)
+
     @patch("simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock())
     @patch(
         "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
@@ -1816,7 +1989,7 @@ class TestTrainer(unittest.TestCase):
                 learning_rate=0.001,
                 is_schedulefree=False,
                 overrode_max_train_steps=False,
-                ignore_final_epochs=False,
+                strict_epoch_limit=True,
                 optimizer="adamw",
                 delete_invalid_checkpoints=True,
             )
@@ -1871,7 +2044,7 @@ class TestTrainer(unittest.TestCase):
                 learning_rate=0.001,
                 is_schedulefree=False,
                 overrode_max_train_steps=False,
-                ignore_final_epochs=False,
+                strict_epoch_limit=True,
                 optimizer="adamw",
                 delete_invalid_checkpoints=True,
             )
@@ -1962,7 +2135,7 @@ class TestTrainer(unittest.TestCase):
             output_dir="/path/to/output",
             resume_from_checkpoint="checkpoint-100",
             num_train_epochs=1,
-            ignore_final_epochs=False,
+            strict_epoch_limit=True,
             optimizer="prodigy",
             lr_scheduler="constant",
             is_schedulefree=False,
@@ -2023,7 +2196,7 @@ class TestTrainer(unittest.TestCase):
             output_dir="/path/to/output",
             resume_from_checkpoint="checkpoint-100",
             num_train_epochs=1,
-            ignore_final_epochs=False,
+            strict_epoch_limit=True,
             optimizer="prodigy",
             lr_scheduler="constant",
             is_schedulefree=False,
@@ -2152,7 +2325,7 @@ class TestTrainer(unittest.TestCase):
             lr_scheduler="constant",
             eval_dataset_id=None,
             num_update_steps_per_epoch=1,
-            ignore_final_epochs=False,
+            strict_epoch_limit=True,
             distillation_method=None,
             disable_accelerator=False,
             optimizer="adamw",

@@ -50,8 +50,7 @@ RUN python${PYTHON_VERSION} -m venv /opt/venv \
        "deepspeed>=0.17.2" \
        "torchao>=0.17.0,<0.18.0" \
        "nvidia-ml-py>=12.555" \
-       "lm-eval>=0.4.4" \
-       ramtorch
+       "lm-eval>=0.4.4"
 
 # 3. Install SimpleTuner
 # Use main for current model integrations such as Boogu-Image.

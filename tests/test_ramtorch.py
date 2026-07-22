@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
@@ -67,10 +68,9 @@ class RamTorchUtilsTests(unittest.TestCase):
             replaced = ramtorch_utils.replace_linear_layers_with_ramtorch(model, device="cuda", target_patterns=None)
 
         self.assertEqual(replaced, 2)
-        self.assertEqual(replace_all_calls["count"], 1)
-        # No replacements performed because replace_all is stubbed.
-        self.assertIsInstance(model.linear1, nn.Linear)
-        self.assertIsInstance(model.block[0], nn.Linear)
+        self.assertEqual(replace_all_calls["count"], 0)
+        self.assertIsInstance(model.linear1, _StubLinear)
+        self.assertIsInstance(model.block[0], _StubLinear)
 
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA not available")
     def test_replace_linear_with_percent_50(self):
@@ -118,7 +118,125 @@ class RamTorchUtilsTests(unittest.TestCase):
             replaced = ramtorch_utils.replace_linear_layers_with_ramtorch(model, device="cuda", percent=100)
 
         self.assertEqual(replaced, 2)
-        self.assertEqual(replace_all_calls["count"], 1)  # Should use replace_all for efficiency
+        self.assertEqual(replace_all_calls["count"], 0)
+
+    def test_replace_torchao_int8_linear_preserves_weight_subclass(self):
+        try:
+            from torchao.prototype.quantized_training import int8_weight_only_quantized_training
+            from torchao.prototype.quantized_training.int8 import Int8QuantizedTrainingLinearWeight
+            from torchao.quantization import quantize_
+        except ImportError as exc:
+            self.skipTest(f"TorchAO int8 training quantization is unavailable: {exc}")
+
+        model = nn.Sequential(nn.Linear(16, 16))
+        quantize_(model, int8_weight_only_quantized_training())
+        model.requires_grad_(False)
+        original_weight_type = type(model[0].weight)
+
+        with patch.object(
+            ramtorch_utils,
+            "ensure_available",
+            return_value=self._build_stub_imports(lambda mod, device=None: None),
+        ):
+            replaced = ramtorch_utils.replace_linear_layers_with_ramtorch(model, device="cpu")
+
+        self.assertEqual(replaced, 1)
+        self.assertIsInstance(model[0], _StubLinear)
+        self.assertIs(type(model[0].weight), original_weight_type)
+        self.assertIsInstance(model[0].weight, Int8QuantizedTrainingLinearWeight)
+        self.assertNotIn("weight", dict(model[0].named_parameters(recurse=False)))
+        self.assertIn("weight", dict(model[0].named_buffers(recurse=False)))
+        self.assertTrue(getattr(model[0].weight, "is_ramtorch", False))
+
+    def test_replace_quanto_qlinear_preserves_weight_subclass(self):
+        try:
+            from optimum.quanto import freeze, qint8, quantize
+            from optimum.quanto.nn.qlinear import QLinear
+            from optimum.quanto.tensor.weights.qbytes import WeightQBytesTensor
+        except ImportError as exc:
+            self.skipTest(f"Quanto int8 quantization is unavailable: {exc}")
+
+        model = nn.Sequential(nn.Linear(16, 16))
+        quantize(model, weights=qint8)
+        freeze(model)
+        self.assertIsInstance(model[0], QLinear)
+
+        with patch.object(
+            ramtorch_utils,
+            "ensure_available",
+            return_value=self._build_stub_imports(lambda mod, device=None: None),
+        ):
+            replaced = ramtorch_utils.replace_linear_layers_with_ramtorch(model, device="cpu")
+
+        self.assertEqual(replaced, 1)
+        self.assertIsInstance(model[0], _StubLinear)
+        self.assertIsInstance(model[0].weight, WeightQBytesTensor)
+        self.assertNotIn("weight", dict(model[0].named_parameters(recurse=False)))
+        self.assertIn("weight", dict(model[0].named_buffers(recurse=False)))
+        self.assertTrue(getattr(model[0].weight, "is_ramtorch", False))
+
+    def test_move_embeddings_to_device_skips_ramtorch_buffers(self):
+        class _BufferModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.register_buffer("regular_buffer", torch.ones(2))
+                weight = torch.ones(2)
+                weight.is_ramtorch = True
+                self.register_buffer("ramtorch_buffer", weight)
+
+        model = _BufferModel()
+        moved = ramtorch_utils.move_embeddings_to_device(model, torch.device("meta"))
+
+        self.assertEqual(moved, 0)
+        self.assertEqual(model.regular_buffer.device.type, "meta")
+        self.assertEqual(model.ramtorch_buffer.device.type, "cpu")
+        self.assertTrue(getattr(model.ramtorch_buffer, "is_ramtorch", False))
+
+    def test_torchao_int8_ramtorch_backward_uses_dense_weight_view(self):
+        try:
+            from torchao.prototype.quantized_training import int8_weight_only_quantized_training
+            from torchao.quantization import quantize_
+        except ImportError as exc:
+            self.skipTest(f"TorchAO int8 training quantization is unavailable: {exc}")
+
+        from simpletuner.helpers.ramtorch.modules.linear import Linear as RamTorchLinear
+
+        linear = nn.Linear(16, 16)
+        quantize_(linear, int8_weight_only_quantized_training())
+
+        ramtorch_linear = RamTorchLinear(16, 16, bias=True, device="cpu", dtype=linear.weight.dtype, skip_init=True)
+        ramtorch_linear.weight = nn.Parameter(linear.weight.detach(), requires_grad=False)
+        ramtorch_linear.weight.is_ramtorch = True
+        ramtorch_linear.bias = nn.Parameter(linear.bias.detach().clone(), requires_grad=False)
+        ramtorch_linear.bias.is_ramtorch = True
+
+        x = torch.randn(2, 16, requires_grad=True)
+        loss = ramtorch_linear(x).sum()
+        loss.backward()
+
+        self.assertIsNotNone(x.grad)
+        self.assertGreater(float(x.grad.abs().sum()), 0.0)
+
+    def test_manual_quantization_defers_base_ramtorch_until_after_quantization(self):
+        from simpletuner.helpers.models.common import ModelFoundation
+
+        model = SimpleNamespace(
+            config=SimpleNamespace(
+                ramtorch=True,
+                quantize_via="accelerator",
+                base_model_precision="int8-torchao",
+            ),
+            _ramtorch_enabled=lambda: True,
+        )
+
+        self.assertTrue(ModelFoundation._ramtorch_base_deferred_until_after_quantization(model))
+
+        model.config.quantize_via = "pipeline"
+        self.assertFalse(ModelFoundation._ramtorch_base_deferred_until_after_quantization(model))
+
+        model.config.quantize_via = "accelerator"
+        model.config.base_model_precision = "no_change"
+        self.assertFalse(ModelFoundation._ramtorch_base_deferred_until_after_quantization(model))
 
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA not available")
     def test_replace_linear_with_percent_0(self):
@@ -189,11 +307,723 @@ class RamTorchUtilsTests(unittest.TestCase):
                     setattr(self.linear_b.bias, "is_ramtorch", True)
 
         model = _IgnoreModel()
+        buffer = torch.ones(2)
+        buffer.is_ramtorch = True
+        model.register_buffer("ramtorch_buffer", buffer)
         ignored = ramtorch_utils.mark_ddp_ignore_params(model)
-        self.assertEqual(ignored, 2)
+        self.assertEqual(ignored, 3)
         ignore_set = getattr(model, "_ddp_params_and_buffers_to_ignore", set())
         self.assertIn("linear_b.weight", ignore_set)
         self.assertIn("linear_b.bias", ignore_set)
+        self.assertIn("ramtorch_buffer", ignore_set)
+
+    def test_prefetch_hooks_follow_ramtorch_module_order(self):
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        StateTracker.reset_ramtorch_prefetch_orders()
+
+        class _PrefetchModule(nn.Module):
+            is_ramtorch = True
+
+            def __init__(self, label, calls):
+                super().__init__()
+                self.label = label
+                self.calls = calls
+
+            def prefetch_forward(self):
+                self.calls.append(self.label)
+                return True
+
+            def forward(self, x):
+                return x
+
+        calls = []
+        model = nn.Sequential(
+            _PrefetchModule("first", calls),
+            nn.ReLU(),
+            _PrefetchModule("second", calls),
+            _PrefetchModule("third", calls),
+        )
+
+        hooks = add_ramtorch_prefetch_hooks(model, component_label="sequential-test")
+        try:
+            self.assertGreaterEqual(len(hooks), 2)
+            model(torch.ones(1))
+        finally:
+            for hook in hooks:
+                hook.remove()
+
+        self.assertEqual(calls, ["second", "third"])
+
+    def test_prefetch_hooks_learn_actual_execution_order(self):
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        class _PrefetchModule(nn.Module):
+            is_ramtorch = True
+
+            def __init__(self, label, calls):
+                super().__init__()
+                self.label = label
+                self.calls = calls
+
+            def prefetch_forward(self):
+                self.calls.append(self.label)
+                return True
+
+            def forward(self, x):
+                return x
+
+        class _OutOfTraversalOrder(nn.Module):
+            def __init__(self, calls):
+                super().__init__()
+                self.first = _PrefetchModule("first", calls)
+                self.second = _PrefetchModule("second", calls)
+                self.third = _PrefetchModule("third", calls)
+
+            def forward(self, x):
+                x = self.first(x)
+                x = self.third(x)
+                return self.second(x)
+
+        calls = []
+        model = _OutOfTraversalOrder(calls)
+        StateTracker.reset_ramtorch_prefetch_orders()
+
+        with patch.dict(
+            "os.environ",
+            {
+                "SIMPLETUNER_RAMTORCH_PREFETCH_LEARNED_MIN_OBSERVATIONS": "2",
+                "SIMPLETUNER_RAMTORCH_PREFETCH_LEARNED_MIN_CONFIDENCE": "0.5",
+            },
+        ):
+            hooks = add_ramtorch_prefetch_hooks(model, component_label="out-of-order-test")
+            try:
+                for _ in range(4):
+                    model(torch.ones(1))
+            finally:
+                for hook in hooks:
+                    hook.remove()
+
+        self.assertEqual(calls[:4], ["second", "third", "second", "third"])
+        self.assertEqual(calls[4:], ["third", "second", "third", "second"])
+        self.assertEqual(
+            StateTracker.get_ramtorch_prefetch_successor("out-of-order-test", "first"),
+            "third",
+        )
+        self.assertEqual(
+            StateTracker.get_ramtorch_prefetch_successor("out-of-order-test", "third"),
+            "second",
+        )
+        self.assertTrue(StateTracker.ramtorch_prefetch_disabled("out-of-order-test", "second"))
+
+    def test_prefetch_hooks_preserve_tail_for_backward(self):
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        class _PrefetchModule(nn.Module):
+            is_ramtorch = True
+
+            def __init__(self, label, prefetch_calls, preserve_calls):
+                super().__init__()
+                self.label = label
+                self.prefetch_calls = prefetch_calls
+                self.preserve_calls = preserve_calls
+
+            def prefetch_forward(self):
+                self.prefetch_calls.append(self.label)
+                return True
+
+            def preserve_forward_for_backward(self, *, max_entries=2, max_bytes=0):
+                self.preserve_calls.append((self.label, max_entries, max_bytes))
+                return True
+
+            def ramtorch_forward_bytes(self):
+                return 1
+
+            def forward(self, x):
+                return x
+
+        prefetch_calls = []
+        preserve_calls = []
+        model = nn.Sequential(
+            _PrefetchModule("first", prefetch_calls, preserve_calls),
+            _PrefetchModule("second", prefetch_calls, preserve_calls),
+            _PrefetchModule("third", prefetch_calls, preserve_calls),
+            _PrefetchModule("fourth", prefetch_calls, preserve_calls),
+        )
+        StateTracker.reset_ramtorch_prefetch_orders()
+
+        with patch.dict("os.environ", {"SIMPLETUNER_RAMTORCH_PRESERVE_BACKWARD_MAX_ENTRIES": "2"}):
+            hooks = add_ramtorch_prefetch_hooks(model, component_label="tail-preserve-test")
+            try:
+                model(torch.ones(1))
+            finally:
+                for hook in hooks:
+                    hook.remove()
+
+        self.assertEqual(prefetch_calls, ["second", "third", "fourth"])
+        self.assertEqual(
+            preserve_calls,
+            [
+                ("third", 2, 0),
+                ("fourth", 2, 0),
+            ],
+        )
+
+    def test_prefetch_hooks_skip_backward_preserve_when_free_vram_is_low(self):
+        from simpletuner.helpers.ramtorch import profiling as ramtorch_profile
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        class _PrefetchModule(nn.Module):
+            is_ramtorch = True
+            device = torch.device("cuda", 0)
+
+            def __init__(self, label, prefetch_calls, preserve_calls):
+                super().__init__()
+                self.label = label
+                self.prefetch_calls = prefetch_calls
+                self.preserve_calls = preserve_calls
+
+            def prefetch_forward(self):
+                self.prefetch_calls.append(self.label)
+                return True
+
+            def preserve_forward_for_backward(self, *, max_entries=2, max_bytes=0):
+                self.preserve_calls.append((self.label, max_entries, max_bytes))
+                return True
+
+            def ramtorch_forward_bytes(self):
+                return 1024
+
+            def forward(self, x):
+                return x
+
+        prefetch_calls = []
+        preserve_calls = []
+        model = nn.Sequential(
+            _PrefetchModule("first", prefetch_calls, preserve_calls),
+            _PrefetchModule("second", prefetch_calls, preserve_calls),
+            _PrefetchModule("third", prefetch_calls, preserve_calls),
+        )
+        StateTracker.reset_ramtorch_prefetch_orders()
+        ramtorch_profile.reset_for_new_run()
+
+        env = {
+            "SIMPLETUNER_RAMTORCH_PRESERVE_BACKWARD_MAX_ENTRIES": "2",
+            "SIMPLETUNER_RAMTORCH_PRESERVE_BACKWARD_MIN_FREE_RATIO": "0.20",
+        }
+        with (
+            patch.dict("os.environ", env),
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.mem_get_info", return_value=(10, 100)),
+            patch("torch.cuda.device"),
+        ):
+            hooks = add_ramtorch_prefetch_hooks(model, component_label="tail-preserve-vram-test")
+            try:
+                model(torch.ones(1))
+            finally:
+                for hook in hooks:
+                    hook.remove()
+
+        self.assertEqual(prefetch_calls, ["second", "third"])
+        self.assertEqual(preserve_calls, [])
+        counters = ramtorch_profile.snapshot()["counters"]
+        self.assertEqual(counters["backward_preserve_skipped_policy"], 2)
+        self.assertEqual(counters["bytes_backward_preserve_skipped_policy"], 2048)
+
+    def test_ramtorch_prefetch_order_state_round_trips(self):
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            StateTracker.reset_ramtorch_prefetch_orders()
+            StateTracker.configure_ramtorch_prefetch_component(
+                "transformer",
+                ["layers.0", "layers.2"],
+            )
+            for _ in range(3):
+                StateTracker.record_ramtorch_prefetch_transition(
+                    "transformer",
+                    "layers.0",
+                    "layers.2",
+                )
+            StateTracker.save_ramtorch_prefetch_orders(tmp_dir)
+
+            StateTracker.reset_ramtorch_prefetch_orders()
+            StateTracker.load_ramtorch_prefetch_orders(tmp_dir)
+
+            self.assertEqual(
+                StateTracker.get_ramtorch_prefetch_successor("transformer", "layers.0"),
+                "layers.2",
+            )
+
+    def test_ramtorch_prefetch_order_resets_when_topology_changes(self):
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        StateTracker.reset_ramtorch_prefetch_orders()
+        StateTracker.configure_ramtorch_prefetch_component(
+            "transformer",
+            ["layers.0", "layers.2"],
+        )
+        for _ in range(3):
+            StateTracker.record_ramtorch_prefetch_transition(
+                "transformer",
+                "layers.0",
+                "layers.2",
+            )
+        self.assertEqual(
+            StateTracker.get_ramtorch_prefetch_successor("transformer", "layers.0"),
+            "layers.2",
+        )
+
+        StateTracker.configure_ramtorch_prefetch_component(
+            "transformer",
+            ["layers.0", "layers.1", "layers.2"],
+        )
+
+        self.assertIsNone(StateTracker.get_ramtorch_prefetch_successor("transformer", "layers.0"))
+        component = StateTracker.get_ramtorch_prefetch_component("transformer")
+        self.assertEqual(component.get("observations"), 0)
+        self.assertEqual(component.get("successors"), {})
+
+    def test_prefetch_hooks_decline_when_ramtorch_module_lacks_prefetch(self):
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        StateTracker.reset_ramtorch_prefetch_orders()
+
+        class _MissingPrefetchModule(nn.Module):
+            is_ramtorch = True
+
+            def forward(self, x):
+                return x
+
+        model = nn.Sequential(_MissingPrefetchModule(), _MissingPrefetchModule())
+        self.assertEqual(add_ramtorch_prefetch_hooks(model), [])
+
+    def test_prefetch_hooks_decline_when_policy_is_sync(self):
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        StateTracker.reset_ramtorch_prefetch_orders()
+
+        class _PrefetchModule(nn.Module):
+            is_ramtorch = True
+
+            def prefetch_forward(self):
+                return True
+
+            def forward(self, x):
+                return x
+
+        model = nn.Sequential(_PrefetchModule(), _PrefetchModule())
+        with patch.dict("os.environ", {"SIMPLETUNER_RAMTORCH_PREFETCH_POLICY": "sync"}):
+            self.assertEqual(add_ramtorch_prefetch_hooks(model), [])
+
+    def test_bundled_linear_skips_frozen_weight_gradients(self):
+        from simpletuner.helpers.ramtorch.modules.linear import Linear
+
+        linear = Linear(3, 2, device="cpu")
+        linear.weight.requires_grad = False
+        if linear.bias is not None:
+            linear.bias.requires_grad = False
+
+        x = torch.randn(4, 3, requires_grad=True)
+        linear(x).sum().backward()
+
+        self.assertIsNotNone(x.grad)
+        self.assertIsNone(linear.weight.grad)
+        if linear.bias is not None:
+            self.assertIsNone(linear.bias.grad)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA not available")
+    def test_bundled_linear_reuses_preserved_forward_weight_in_backward(self):
+        from simpletuner.helpers.ramtorch import profiling as ramtorch_profile
+        from simpletuner.helpers.ramtorch.modules.linear import Linear
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        device = torch.device("cuda", torch.cuda.current_device())
+        model = nn.Sequential(
+            Linear(4, 4, device=device),
+            nn.SiLU(),
+            Linear(4, 4, device=device),
+            nn.SiLU(),
+            Linear(4, 2, device=device),
+        )
+        StateTracker.reset_ramtorch_prefetch_orders()
+        ramtorch_profile.reset_for_new_run()
+
+        with patch.dict("os.environ", {"SIMPLETUNER_RAMTORCH_PRESERVE_BACKWARD_MAX_ENTRIES": "2"}):
+            hooks = add_ramtorch_prefetch_hooks(model, component_label="linear-tail-preserve-test")
+            try:
+                x = torch.randn(8, 4, device=device, requires_grad=True)
+                model(x).sum().backward()
+                torch.cuda.synchronize(device)
+            finally:
+                for hook in hooks:
+                    hook.remove()
+
+        counters = ramtorch_profile.snapshot()["counters"]
+        self.assertGreaterEqual(counters["backward_preserve_retained"], 1)
+        self.assertGreaterEqual(counters["backward_preserve_hits"], 1)
+        self.assertGreater(counters["bytes_backward_preserve_hit"], 0)
+
+    def test_prefetch_hooks_follow_ramtorch_module_order(self):
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        StateTracker.reset_ramtorch_prefetch_orders()
+
+        class _PrefetchModule(nn.Module):
+            is_ramtorch = True
+
+            def __init__(self, label, calls):
+                super().__init__()
+                self.label = label
+                self.calls = calls
+
+            def prefetch_forward(self):
+                self.calls.append(self.label)
+                return True
+
+            def forward(self, x):
+                return x
+
+        calls = []
+        model = nn.Sequential(
+            _PrefetchModule("first", calls),
+            nn.ReLU(),
+            _PrefetchModule("second", calls),
+            _PrefetchModule("third", calls),
+        )
+
+        hooks = add_ramtorch_prefetch_hooks(model, component_label="sequential-test")
+        try:
+            self.assertGreaterEqual(len(hooks), 2)
+            model(torch.ones(1))
+        finally:
+            for hook in hooks:
+                hook.remove()
+
+        self.assertEqual(calls, ["second", "third"])
+
+    def test_prefetch_hooks_learn_actual_execution_order(self):
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        class _PrefetchModule(nn.Module):
+            is_ramtorch = True
+
+            def __init__(self, label, calls):
+                super().__init__()
+                self.label = label
+                self.calls = calls
+
+            def prefetch_forward(self):
+                self.calls.append(self.label)
+                return True
+
+            def forward(self, x):
+                return x
+
+        class _OutOfTraversalOrder(nn.Module):
+            def __init__(self, calls):
+                super().__init__()
+                self.first = _PrefetchModule("first", calls)
+                self.second = _PrefetchModule("second", calls)
+                self.third = _PrefetchModule("third", calls)
+
+            def forward(self, x):
+                x = self.first(x)
+                x = self.third(x)
+                return self.second(x)
+
+        calls = []
+        model = _OutOfTraversalOrder(calls)
+        StateTracker.reset_ramtorch_prefetch_orders()
+
+        with patch.dict(
+            "os.environ",
+            {
+                "SIMPLETUNER_RAMTORCH_PREFETCH_LEARNED_MIN_OBSERVATIONS": "2",
+                "SIMPLETUNER_RAMTORCH_PREFETCH_LEARNED_MIN_CONFIDENCE": "0.5",
+            },
+        ):
+            hooks = add_ramtorch_prefetch_hooks(model, component_label="out-of-order-test")
+            try:
+                for _ in range(4):
+                    model(torch.ones(1))
+            finally:
+                for hook in hooks:
+                    hook.remove()
+
+        self.assertEqual(calls[:4], ["second", "third", "second", "third"])
+        self.assertEqual(calls[4:], ["third", "second", "third", "second"])
+        self.assertEqual(
+            StateTracker.get_ramtorch_prefetch_successor("out-of-order-test", "first"),
+            "third",
+        )
+        self.assertEqual(
+            StateTracker.get_ramtorch_prefetch_successor("out-of-order-test", "third"),
+            "second",
+        )
+        self.assertTrue(StateTracker.ramtorch_prefetch_disabled("out-of-order-test", "second"))
+
+    def test_prefetch_hooks_preserve_tail_for_backward(self):
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        class _PrefetchModule(nn.Module):
+            is_ramtorch = True
+
+            def __init__(self, label, prefetch_calls, preserve_calls):
+                super().__init__()
+                self.label = label
+                self.prefetch_calls = prefetch_calls
+                self.preserve_calls = preserve_calls
+
+            def prefetch_forward(self):
+                self.prefetch_calls.append(self.label)
+                return True
+
+            def preserve_forward_for_backward(self, *, max_entries=2, max_bytes=0):
+                self.preserve_calls.append((self.label, max_entries, max_bytes))
+                return True
+
+            def ramtorch_forward_bytes(self):
+                return 1
+
+            def forward(self, x):
+                return x
+
+        prefetch_calls = []
+        preserve_calls = []
+        model = nn.Sequential(
+            _PrefetchModule("first", prefetch_calls, preserve_calls),
+            _PrefetchModule("second", prefetch_calls, preserve_calls),
+            _PrefetchModule("third", prefetch_calls, preserve_calls),
+            _PrefetchModule("fourth", prefetch_calls, preserve_calls),
+        )
+        StateTracker.reset_ramtorch_prefetch_orders()
+
+        with patch.dict("os.environ", {"SIMPLETUNER_RAMTORCH_PRESERVE_BACKWARD_MAX_ENTRIES": "2"}):
+            hooks = add_ramtorch_prefetch_hooks(model, component_label="tail-preserve-test")
+            try:
+                model(torch.ones(1))
+            finally:
+                for hook in hooks:
+                    hook.remove()
+
+        self.assertEqual(prefetch_calls, ["second", "third", "fourth"])
+        self.assertEqual(
+            preserve_calls,
+            [
+                ("third", 2, 0),
+                ("fourth", 2, 0),
+            ],
+        )
+
+    def test_prefetch_hooks_skip_backward_preserve_when_free_vram_is_low(self):
+        from simpletuner.helpers.ramtorch import profiling as ramtorch_profile
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        class _PrefetchModule(nn.Module):
+            is_ramtorch = True
+            device = torch.device("cuda", 0)
+
+            def __init__(self, label, prefetch_calls, preserve_calls):
+                super().__init__()
+                self.label = label
+                self.prefetch_calls = prefetch_calls
+                self.preserve_calls = preserve_calls
+
+            def prefetch_forward(self):
+                self.prefetch_calls.append(self.label)
+                return True
+
+            def preserve_forward_for_backward(self, *, max_entries=2, max_bytes=0):
+                self.preserve_calls.append((self.label, max_entries, max_bytes))
+                return True
+
+            def ramtorch_forward_bytes(self):
+                return 1024
+
+            def forward(self, x):
+                return x
+
+        prefetch_calls = []
+        preserve_calls = []
+        model = nn.Sequential(
+            _PrefetchModule("first", prefetch_calls, preserve_calls),
+            _PrefetchModule("second", prefetch_calls, preserve_calls),
+            _PrefetchModule("third", prefetch_calls, preserve_calls),
+        )
+        StateTracker.reset_ramtorch_prefetch_orders()
+        ramtorch_profile.reset_for_new_run()
+
+        env = {
+            "SIMPLETUNER_RAMTORCH_PRESERVE_BACKWARD_MAX_ENTRIES": "2",
+            "SIMPLETUNER_RAMTORCH_PRESERVE_BACKWARD_MIN_FREE_RATIO": "0.20",
+        }
+        with (
+            patch.dict("os.environ", env),
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.mem_get_info", return_value=(10, 100)),
+            patch("torch.cuda.device"),
+        ):
+            hooks = add_ramtorch_prefetch_hooks(model, component_label="tail-preserve-vram-test")
+            try:
+                model(torch.ones(1))
+            finally:
+                for hook in hooks:
+                    hook.remove()
+
+        self.assertEqual(prefetch_calls, ["second", "third"])
+        self.assertEqual(preserve_calls, [])
+        counters = ramtorch_profile.snapshot()["counters"]
+        self.assertEqual(counters["backward_preserve_skipped_policy"], 2)
+        self.assertEqual(counters["bytes_backward_preserve_skipped_policy"], 2048)
+
+    def test_ramtorch_prefetch_order_state_round_trips(self):
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            StateTracker.reset_ramtorch_prefetch_orders()
+            StateTracker.configure_ramtorch_prefetch_component(
+                "transformer",
+                ["layers.0", "layers.2"],
+            )
+            for _ in range(3):
+                StateTracker.record_ramtorch_prefetch_transition(
+                    "transformer",
+                    "layers.0",
+                    "layers.2",
+                )
+            StateTracker.save_ramtorch_prefetch_orders(tmp_dir)
+
+            StateTracker.reset_ramtorch_prefetch_orders()
+            StateTracker.load_ramtorch_prefetch_orders(tmp_dir)
+
+            self.assertEqual(
+                StateTracker.get_ramtorch_prefetch_successor("transformer", "layers.0"),
+                "layers.2",
+            )
+
+    def test_ramtorch_prefetch_order_resets_when_topology_changes(self):
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        StateTracker.reset_ramtorch_prefetch_orders()
+        StateTracker.configure_ramtorch_prefetch_component(
+            "transformer",
+            ["layers.0", "layers.2"],
+        )
+        for _ in range(3):
+            StateTracker.record_ramtorch_prefetch_transition(
+                "transformer",
+                "layers.0",
+                "layers.2",
+            )
+        self.assertEqual(
+            StateTracker.get_ramtorch_prefetch_successor("transformer", "layers.0"),
+            "layers.2",
+        )
+
+        StateTracker.configure_ramtorch_prefetch_component(
+            "transformer",
+            ["layers.0", "layers.1", "layers.2"],
+        )
+
+        self.assertIsNone(StateTracker.get_ramtorch_prefetch_successor("transformer", "layers.0"))
+        component = StateTracker.get_ramtorch_prefetch_component("transformer")
+        self.assertEqual(component.get("observations"), 0)
+        self.assertEqual(component.get("successors"), {})
+
+    def test_prefetch_hooks_decline_when_ramtorch_module_lacks_prefetch(self):
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        StateTracker.reset_ramtorch_prefetch_orders()
+
+        class _MissingPrefetchModule(nn.Module):
+            is_ramtorch = True
+
+            def forward(self, x):
+                return x
+
+        model = nn.Sequential(_MissingPrefetchModule(), _MissingPrefetchModule())
+        self.assertEqual(add_ramtorch_prefetch_hooks(model), [])
+
+    def test_prefetch_hooks_decline_when_policy_is_sync(self):
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        StateTracker.reset_ramtorch_prefetch_orders()
+
+        class _PrefetchModule(nn.Module):
+            is_ramtorch = True
+
+            def prefetch_forward(self):
+                return True
+
+            def forward(self, x):
+                return x
+
+        model = nn.Sequential(_PrefetchModule(), _PrefetchModule())
+        with patch.dict("os.environ", {"SIMPLETUNER_RAMTORCH_PREFETCH_POLICY": "sync"}):
+            self.assertEqual(add_ramtorch_prefetch_hooks(model), [])
+
+    def test_bundled_linear_skips_frozen_weight_gradients(self):
+        from simpletuner.helpers.ramtorch.modules.linear import Linear
+
+        linear = Linear(3, 2, device="cpu")
+        linear.weight.requires_grad = False
+        if linear.bias is not None:
+            linear.bias.requires_grad = False
+
+        x = torch.randn(4, 3, requires_grad=True)
+        linear(x).sum().backward()
+
+        self.assertIsNotNone(x.grad)
+        self.assertIsNone(linear.weight.grad)
+        if linear.bias is not None:
+            self.assertIsNone(linear.bias.grad)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "CUDA not available")
+    def test_bundled_linear_reuses_preserved_forward_weight_in_backward(self):
+        from simpletuner.helpers.ramtorch import profiling as ramtorch_profile
+        from simpletuner.helpers.ramtorch.modules.linear import Linear
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        device = torch.device("cuda", torch.cuda.current_device())
+        model = nn.Sequential(
+            Linear(4, 4, device=device),
+            nn.SiLU(),
+            Linear(4, 4, device=device),
+            nn.SiLU(),
+            Linear(4, 2, device=device),
+        )
+        StateTracker.reset_ramtorch_prefetch_orders()
+        ramtorch_profile.reset_for_new_run()
+
+        with patch.dict("os.environ", {"SIMPLETUNER_RAMTORCH_PRESERVE_BACKWARD_MAX_ENTRIES": "2"}):
+            hooks = add_ramtorch_prefetch_hooks(model, component_label="linear-tail-preserve-test")
+            try:
+                x = torch.randn(8, 4, device=device, requires_grad=True)
+                model(x).sum().backward()
+                torch.cuda.synchronize(device)
+            finally:
+                for hook in hooks:
+                    hook.remove()
+
+        counters = ramtorch_profile.snapshot()["counters"]
+        self.assertGreaterEqual(counters["backward_preserve_retained"], 1)
+        self.assertGreaterEqual(counters["backward_preserve_hits"], 1)
+        self.assertGreater(counters["bytes_backward_preserve_hit"], 0)
 
 
 class RamTorchConfigTests(unittest.TestCase):

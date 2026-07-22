@@ -2,11 +2,9 @@ import logging
 import os
 
 import numpy as np
-import torch
 import wandb
 from PIL import Image
 
-from simpletuner.helpers.image_manipulation.brightness import calculate_luminance
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
@@ -86,25 +84,16 @@ def log_images_to_trackers(accelerator, validation_images, validation_resolution
                 columns = [
                     "Prompt",
                     *resolution_list,
-                    "Mean Luminance",
                 ]
                 table = wandb.Table(columns=columns)
 
                 # Process each prompt and its associated images
                 for prompt_shortname, image_list in validation_images.items():
                     wandb_images = []
-                    luminance_values = []
                     logger.debug(f"Prompt {prompt_shortname} has {len(image_list)} images")
                     for image in image_list:
                         wandb_image = wandb.Image(image)
                         wandb_images.append(wandb_image)
-                        luminance = calculate_luminance(image)
-                        luminance_values.append(luminance)
-
-                    if luminance_values:
-                        mean_luminance = torch.tensor(luminance_values).mean().item()
-                    else:
-                        mean_luminance = 0.0
 
                     while len(wandb_images) < len(resolution_list):
                         # any missing images will crash it. use None so they are indexed.
@@ -114,7 +103,7 @@ def log_images_to_trackers(accelerator, validation_images, validation_resolution
                     if len(wandb_images) > len(resolution_list):
                         wandb_images = wandb_images[: len(resolution_list)]
 
-                    table.add_data(prompt_shortname, *wandb_images, mean_luminance)
+                    table.add_data(prompt_shortname, *wandb_images)
 
                 # Log the table to Weights & Biases
                 tracker.log(

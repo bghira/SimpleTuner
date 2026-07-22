@@ -119,6 +119,7 @@ class _CacheArgsNamespace:
             "write_batch_size": 64,
             "read_batch_size": 25,
             "vae_batch_size": 4,
+            "text_encoder_batch_size": 1,
             "vae_cache_ondemand": False,
             "i_know_what_i_am_doing": True,
             "resolution": 1024,
@@ -729,6 +730,9 @@ class CacheJobService:
                 cache_dir=cache_dir_text,
                 model_type=global_config.get("model_family", ""),
                 write_batch_size=int(global_config.get("write_batch_size", 64) or 64),
+                text_encoder_batch_size=int(
+                    dataset_config.get("text_encoder_batch_size", global_config.get("text_encoder_batch_size", 1)) or 1
+                ),
                 model=model,
             )
 

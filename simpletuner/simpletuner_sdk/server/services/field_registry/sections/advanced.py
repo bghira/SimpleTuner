@@ -880,20 +880,21 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
-    # Ignore Final Epochs
+    # Strict Epoch Limit
     registry._add_field(
         ConfigField(
-            name="ignore_final_epochs",
-            arg_name="--ignore_final_epochs",
-            ui_label="Ignore Final Epochs",
+            name="strict_epoch_limit",
+            arg_name="--strict_epoch_limit",
+            ui_label="Strict Epoch Limit",
             field_type=FieldType.CHECKBOX,
             tab="training",
             section="training_schedule",
             default_value=False,
-            help_text="When provided, the max epoch counter will not determine the end of the training run",
-            tooltip="Instead, it will end when it hits --max_train_steps.",
+            help_text="Stop training when the epoch counter reaches --num_train_epochs, even if --max_train_steps has not been reached",
+            tooltip="When disabled, explicit --max_train_steps runs may continue through additional epoch passes until the step limit is reached.",
             importance=ImportanceLevel.ADVANCED,
             order=30,
+            documentation="OPTIONS.md#--strict_epoch_limit",
         )
     )
 
@@ -1276,6 +1277,42 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="text_cache_ondemand",
+            arg_name="--text_cache_ondemand",
+            ui_label="Text Cache On-Demand",
+            field_type=FieldType.CHECKBOX,
+            tab="basic",
+            section="caching",
+            subsection="advanced",
+            default_value=False,
+            help_text="Encode missing text embeddings during training instead of pre-computing the full text cache.",
+            tooltip="Existing cached embeddings are reused. Missing embeddings are encoded when requested and written to the cache.",
+            importance=ImportanceLevel.ADVANCED,
+            order=50.1,
+            documentation="OPTIONS.md#--text_cache_ondemand",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="text_cache_disable",
+            arg_name="--text_cache_disable",
+            ui_label="Disable Text Cache Writes",
+            field_type=FieldType.CHECKBOX,
+            tab="basic",
+            section="caching",
+            subsection="advanced",
+            default_value=False,
+            help_text="Disable text embedding cache writes and encode missing embeddings on demand.",
+            tooltip="Existing cached embeddings are still read, but newly encoded embeddings are not stored. This implies on-demand mode.",
+            importance=ImportanceLevel.ADVANCED,
+            order=50.2,
+            documentation="OPTIONS.md#--text_cache_disable",
+        )
+    )
+
     # Text Embed Full Cache
     registry._add_field(
         ConfigField(
@@ -1462,6 +1499,26 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Text Encoder Batch Size
+    registry._add_field(
+        ConfigField(
+            name="text_encoder_batch_size",
+            arg_name="--text_encoder_batch_size",
+            ui_label="Text Encoder Batch Size",
+            field_type=FieldType.NUMBER,
+            tab="basic",
+            section="caching",
+            subsection="advanced",
+            default_value=1,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1")],
+            help_text="Batch size used when precomputing uncached text embeddings. A value of 1 preserves the original one-caption-per-forward behavior.",
+            tooltip="Batch size used when precomputing uncached text embeddings. Increase this to improve text encoder throughput when VRAM allows.",
+            importance=ImportanceLevel.ADVANCED,
+            order=61,
+            documentation="OPTIONS.md#--text_encoder_batch_size",
+        )
+    )
+
     # Enable Multiprocessing
     registry._add_field(
         ConfigField(
@@ -1476,7 +1533,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="For some systems, multiprocessing may be faster than threading, but will consume a lot more memory. Use this option with caution, and monitor your system's memory usage.",
             dependencies=[FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True)],
             importance=ImportanceLevel.ADVANCED,
-            order=61,
+            order=62,
         )
     )
 

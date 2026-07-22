@@ -9,7 +9,12 @@ import torch
 from PIL import Image
 
 import tests.test_stubs  # noqa: F401
-from simpletuner.helpers.training.collate import collate_fn, describe_missing_conditioning_pairs
+from simpletuner.helpers.training.collate import (
+    collate_fn,
+    compute_latents,
+    compute_prompt_embeddings,
+    describe_missing_conditioning_pairs,
+)
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
@@ -100,7 +105,6 @@ class CollateFunctionTests(unittest.TestCase):
                     {
                         "image_path": "sample.png",
                         "instance_prompt_text": "caption",
-                        "luminance": 0.5,
                         "original_size": (64, 64),
                         "image_data": MagicMock(),
                         "crop_coordinates": [0, 0, 32, 32],
@@ -175,6 +179,41 @@ class CollateFunctionTests(unittest.TestCase):
         self.assertTrue(torch.equal(result["add_text_embeds"], text_outputs["pooled_prompt_embeds"]))
         backend_mock = active_mocks[5]
         backend_mock.assert_called()
+
+    def test_compute_latents_uses_backend_ondemand_mode(self):
+        vae_cache = SimpleNamespace(
+            vae_cache_ondemand=True,
+            encode_images=MagicMock(return_value=["latent"]),
+        )
+
+        with (
+            patch.object(StateTracker, "get_args", return_value=self.base_args),
+            patch.object(StateTracker, "get_vaecache", return_value=vae_cache),
+        ):
+            latents = compute_latents(["sample.png"], "backend-1", MagicMock())
+
+        self.assertEqual(latents, ["latent"])
+        vae_cache.encode_images.assert_called_once_with([None], ["sample.png"])
+
+    def test_compute_prompt_embeddings_serializes_ondemand_cache_access(self):
+        text_cache = SimpleNamespace(text_cache_ondemand=True)
+        model = MagicMock()
+        model.collate_prompt_embeds.return_value = {"prompt_embeds": torch.ones(2, 1, 1)}
+        outputs = [
+            {"prompt_embeds": torch.ones(1, 1, 1)},
+            {"prompt_embeds": torch.ones(1, 1, 1)},
+        ]
+
+        with (
+            patch.object(StateTracker, "get_default_text_embed_cache", return_value=text_cache),
+            patch("simpletuner.helpers.training.collate.compute_single_embedding", side_effect=outputs) as compute_one,
+            patch("simpletuner.helpers.training.collate.ThreadPoolExecutor") as executor,
+        ):
+            result = compute_prompt_embeddings(["one", "two"], text_cache, model)
+
+        executor.assert_not_called()
+        self.assertEqual(compute_one.call_count, 2)
+        self.assertEqual(result["prompt_embeds"].shape, torch.Size([2, 1, 1]))
 
     def test_collate_fn_stacks_conditioning_image_embeds(self):
         conditioning_tensor = torch.ones(2, 4)

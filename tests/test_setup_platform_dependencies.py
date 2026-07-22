@@ -22,6 +22,12 @@ def load_setup_kwargs() -> dict:
 
 
 class SetupPlatformDependencyTests(unittest.TestCase):
+    def test_base_dependencies_require_trainingsample_0_3_range(self):
+        install_requires = load_setup_kwargs()["install_requires"]
+
+        self.assertIn("trainingsample>=0.3.0,<0.4.0", install_requires)
+        self.assertNotIn("trainingsample>=0.2.18", install_requires)
+
     def test_platform_extras_use_latest_torchao_with_expected_torch_floor(self):
         extras_require = load_setup_kwargs()["extras_require"]
 

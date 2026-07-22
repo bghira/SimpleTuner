@@ -112,6 +112,45 @@ class TestTextEmbedBackendConfig(unittest.TestCase):
 
         self.assertEqual(config.caption_filter_list, ["nsfw", "violence", "inappropriate"])
 
+    def test_memory_backend_settings_round_trip(self):
+        backend_dict = {
+            "id": "memory_text",
+            "type": "memory",
+            "dataset_type": "text_embeds",
+            "cache_dir": "/cache/text",
+            "memory_filesystem_path": "/mnt/simpletuner/text",
+            "memory_filesystem_size": "96G",
+            "memory_filesystem_sudo": True,
+        }
+
+        config = TextEmbedBackendConfig.from_dict(backend_dict, self.args)
+
+        self.assertEqual(
+            config.to_dict()["config"],
+            {
+                "cache_dir": "/cache/text",
+                "memory_filesystem_path": "/mnt/simpletuner/text",
+                "memory_filesystem_size": "96G",
+                "memory_filesystem_sudo": True,
+                "caption_filter_list": [],
+            },
+        )
+
+    def test_text_cache_disable_implies_ondemand_and_round_trips(self):
+        backend_dict = {
+            "id": "text_test",
+            "dataset_type": "text_embeds",
+            "text_cache_disable": True,
+        }
+
+        config = TextEmbedBackendConfig.from_dict(backend_dict, self.args)
+        output = config.to_dict()
+
+        self.assertTrue(config.text_cache_disable)
+        self.assertTrue(config.text_cache_ondemand)
+        self.assertTrue(output["config"]["text_cache_disable"])
+        self.assertTrue(output["config"]["text_cache_ondemand"])
+
     def test_to_dict_output(self):
         """Test to_dict method produces correct output"""
         backend_dict = {"id": "text_test", "dataset_type": "text_embeds", "caption_filter_list": ["test_filter"]}
@@ -168,6 +207,29 @@ class TestImageEmbedBackendConfig(unittest.TestCase):
         expected = {"id": "image_embeds_test", "dataset_type": "image_embeds", "config": {}}
 
         self.assertEqual(output, expected)
+
+    def test_memory_backend_settings_round_trip(self):
+        backend_dict = {
+            "id": "memory_vae",
+            "type": "memory",
+            "dataset_type": "image_embeds",
+            "cache_dir": "/cache/vae",
+            "memory_filesystem_path": "/mnt/simpletuner/vae",
+            "memory_filesystem_size": "256G",
+            "memory_filesystem_sudo": True,
+        }
+
+        config = ImageEmbedBackendConfig.from_dict(backend_dict, self.args)
+
+        self.assertEqual(
+            config.to_dict()["config"],
+            {
+                "cache_dir": "/cache/vae",
+                "memory_filesystem_path": "/mnt/simpletuner/vae",
+                "memory_filesystem_size": "256G",
+                "memory_filesystem_sudo": True,
+            },
+        )
 
     def test_validate_success(self):
         """Test successful validation"""
@@ -258,6 +320,55 @@ class TestImageBackendConfig(unittest.TestCase):
         self.assertEqual(config.minimum_image_size, 0.5)
         self.assertEqual(config.maximum_image_size, 10.0)
         self.assertEqual(config.target_downsample_size, 5.0)
+
+    def test_vae_cache_ondemand_round_trip(self):
+        backend_dict = {
+            "id": "image_test",
+            "type": "local",
+            "dataset_type": "image",
+            "vae_cache_ondemand": True,
+        }
+
+        config = ImageBackendConfig.from_dict(backend_dict, self.args)
+        output = config.to_dict()
+
+        self.assertTrue(config.vae_cache_ondemand)
+        self.assertFalse(config.vae_cache_disable)
+        self.assertTrue(output["config"]["vae_cache_ondemand"])
+        self.assertNotIn("vae_cache_disable", output["config"])
+
+    def test_vae_cache_disable_implies_ondemand_and_round_trips(self):
+        backend_dict = {
+            "id": "image_test",
+            "type": "local",
+            "dataset_type": "image",
+            "vae_cache_disable": True,
+        }
+
+        config = ImageBackendConfig.from_dict(backend_dict, self.args)
+        output = config.to_dict()
+
+        self.assertTrue(config.vae_cache_ondemand)
+        self.assertTrue(config.vae_cache_disable)
+        self.assertTrue(output["config"]["vae_cache_ondemand"])
+        self.assertTrue(output["config"]["vae_cache_disable"])
+
+    def test_direct_construction_normalizes_vae_cache_disable(self):
+        config = ImageBackendConfig(id="image_test", vae_cache_disable=True)
+
+        self.assertTrue(config.vae_cache_ondemand)
+        self.assertTrue(config.vae_cache_disable)
+
+    def test_removed_disable_vae_cache_key_raises(self):
+        backend_dict = {
+            "id": "image_test",
+            "type": "local",
+            "dataset_type": "image",
+            "disable_vae_cache": True,
+        }
+
+        with self.assertRaisesRegex(ValueError, "vae_cache_disable"):
+            ImageBackendConfig.from_dict(backend_dict, self.args)
 
     def test_crop_aspect_random_with_buckets(self):
         """Test crop_aspect=random with crop_aspect_buckets"""

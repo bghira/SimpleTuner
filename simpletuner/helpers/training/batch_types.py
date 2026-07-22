@@ -25,7 +25,6 @@ class TrainingBatch:
     prompt_embeds: Optional[torch.Tensor]
     add_text_embeds: Optional[torch.Tensor]
     batch_time_ids: Optional[torch.Tensor]
-    batch_luminance: Optional[float]
     conditioning_pixel_values: Optional[list]
     conditioning_latents: Optional[list]
     conditioning_image_embeds: Optional[Any]

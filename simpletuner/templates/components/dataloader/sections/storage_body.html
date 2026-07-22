@@ -362,7 +362,7 @@
     </div>
 
     <!-- Embed Options (for text_embeds/image_embeds) -->
-    <div class="section-group" x-show="(editingDataset.dataset_type === 'text_embeds' || editingDataset.dataset_type === 'image_embeds') && matchesParamFilter('embed', 'batch', 'write', 'cache', 'preserve')">
+    <div class="section-group" x-show="(editingDataset.dataset_type === 'text_embeds' || editingDataset.dataset_type === 'image_embeds') && matchesParamFilter('embed', 'batch', 'write', 'cache', 'preserve', 'ondemand', 'disable')">
         <h6 class="modal-section-title">Embed Options</h6>
         <div class="row g-2">
             <div class="col-md-6">
@@ -389,6 +389,32 @@
                 <div class="form-text small text-muted ps-4">
                     Keep data backend cache between runs
                 </div>
+            </div>
+            <div class="col-md-6" x-show="editingDataset.dataset_type === 'text_embeds'">
+                <div class="form-check mt-2">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           :id="'text-cache-ondemand-storage-' + editingDataset.id"
+                           x-model="editingDataset.text_cache_ondemand"
+                           @change="markAsUnsaved()">
+                    <label class="form-check-label small" :for="'text-cache-ondemand-storage-' + editingDataset.id">
+                        Encode missing text embeds on demand <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#text_cache_ondemand') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+                    </label>
+                </div>
+                <div class="form-text small text-muted ps-4">Skip full text-cache pre-computation and encode cache misses during use.</div>
+            </div>
+            <div class="col-md-6" x-show="editingDataset.dataset_type === 'text_embeds'">
+                <div class="form-check mt-2">
+                    <input class="form-check-input"
+                           type="checkbox"
+                           :id="'text-cache-disable-storage-' + editingDataset.id"
+                           x-model="editingDataset.text_cache_disable"
+                           @change="markAsUnsaved()">
+                    <label class="form-check-label small" :for="'text-cache-disable-storage-' + editingDataset.id">
+                        Disable text cache writes <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#text_cache_disable') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+                    </label>
+                </div>
+                <div class="form-text small text-muted ps-4">Read existing entries, encode misses on demand, and do not store new embeddings.</div>
             </div>
         </div>
     </div>

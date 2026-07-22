@@ -72,6 +72,7 @@ class ImageBackendConfig(BaseBackendConfig):
     minimum_image_size: Optional[Union[int, float]] = None
     minimum_aspect_ratio: Optional[Union[int, float]] = None
     maximum_aspect_ratio: Optional[Union[int, float]] = None
+    max_num_samples: Optional[int] = None
 
     conditioning: Optional[Dict[str, Any]] = None
     conditioning_config: Optional[Dict[str, Any]] = None
@@ -82,22 +83,32 @@ class ImageBackendConfig(BaseBackendConfig):
 
     video: Optional[Dict[str, Any]] = None
 
-    disable_vae_cache: bool = False
+    vae_cache_ondemand: bool = False
+    vae_cache_disable: bool = False
 
     is_regularisation_data: bool = False
     is_regularization_data: bool = False
 
     @classmethod
     def from_dict(cls, backend_dict: Dict[str, Any], args: Dict[str, Any]) -> "ImageBackendConfig":
+        if "disable_vae_cache" in backend_dict:
+            raise ValueError(
+                f"(id={backend_dict.get('id')}) disable_vae_cache has been removed. Use vae_cache_disable instead."
+            )
+
         def _get_arg(key: str, default: Any = None) -> Any:
             if isinstance(args, dict):
                 return args.get(key, default)
             return getattr(args, key, default)
 
+        vae_cache_disable = bool(backend_dict.get("vae_cache_disable", False))
+        vae_cache_ondemand = bool(backend_dict.get("vae_cache_ondemand", False)) or vae_cache_disable
         config = cls(
             id=backend_dict["id"],
             backend_type=backend_dict.get("type", "local"),
             dataset_type=DatasetType.from_value(backend_dict.get("dataset_type"), DatasetType.IMAGE),
+            vae_cache_ondemand=vae_cache_ondemand,
+            vae_cache_disable=vae_cache_disable,
         )
 
         config.disabled = backend_dict.get("disabled", backend_dict.get("disable", False))
@@ -116,6 +127,7 @@ class ImageBackendConfig(BaseBackendConfig):
         config.minimum_image_size = backend_dict.get("minimum_image_size", _get_arg("minimum_image_size"))
         config.maximum_image_size = backend_dict.get("maximum_image_size", _get_arg("maximum_image_size"))
         config.target_downsample_size = backend_dict.get("target_downsample_size", _get_arg("target_downsample_size"))
+        config.max_num_samples = backend_dict.get("max_num_samples")
         config.minimum_aspect_ratio = backend_dict.get("minimum_aspect_ratio")
         config.maximum_aspect_ratio = backend_dict.get("maximum_aspect_ratio")
 
@@ -181,7 +193,9 @@ class ImageBackendConfig(BaseBackendConfig):
 
         config.vae_cache_clear_each_epoch = backend_dict.get("vae_cache_clear_each_epoch")
         config.probability = float(backend_dict.get("probability", 1.0)) if backend_dict.get("probability") else 1.0
-        config.timestep_sampling_offset = float(backend_dict.get("timestep_sampling_offset", 0.0)) if backend_dict.get("timestep_sampling_offset") else 0.0
+        config.timestep_sampling_offset = (
+            float(backend_dict.get("timestep_sampling_offset", 0.0)) if backend_dict.get("timestep_sampling_offset") else 0.0
+        )
         config.repeats = int(backend_dict.get("repeats", 0)) if backend_dict.get("repeats") else 0
         config.disable_validation = backend_dict.get("disable_validation", False)
         if "hash_filenames" in backend_dict and config.backend_type != "csv":
@@ -196,7 +210,15 @@ class ImageBackendConfig(BaseBackendConfig):
         config.parquet = backend_dict.get("parquet")
         config.video = backend_dict.get("video")
 
-        config.disable_vae_cache = bool(backend_dict.get("disable_vae_cache", False))
+        config.vae_cache_ondemand = bool(backend_dict.get("vae_cache_ondemand", False)) or config.vae_cache_disable
+        vae_cache_disable_raw = backend_dict.get("vae_cache_disable", False)
+        if isinstance(vae_cache_disable_raw, str):
+            normalized = vae_cache_disable_raw.strip().lower()
+            if normalized in {"true", "1", "yes", "on"}:
+                vae_cache_disable_raw = True
+            elif normalized in {"false", "0", "no", "off", ""}:
+                vae_cache_disable_raw = False
+        config.vae_cache_disable = bool(vae_cache_disable_raw)
 
         config.is_regularisation_data = backend_dict.get(
             "is_regularisation_data", backend_dict.get("is_regularization_data", False)
@@ -217,6 +239,11 @@ class ImageBackendConfig(BaseBackendConfig):
         config.apply_defaults(args)
 
         return config
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        self.vae_cache_disable = bool(self.vae_cache_disable)
+        self.vae_cache_ondemand = bool(self.vae_cache_ondemand) or self.vae_cache_disable
 
     # compatibility helpers
     @property
@@ -280,8 +307,10 @@ class ImageBackendConfig(BaseBackendConfig):
             if self.caption_strategy is None:
                 self.caption_strategy = "webshart"
 
-        if self.disable_vae_cache:
-            self.config["disable_vae_cache"] = True
+        if self.vae_cache_ondemand:
+            self.config["vae_cache_ondemand"] = True
+        if self.vae_cache_disable:
+            self.config["vae_cache_disable"] = True
 
     def validate(self, args: Dict[str, Any]) -> None:
         validators.validate_backend_id(self.id)
@@ -427,6 +456,10 @@ class ImageBackendConfig(BaseBackendConfig):
             config["crop_aspect_buckets"] = self.crop_aspect_buckets
         if self.vae_cache_clear_each_epoch is not None:
             config["vae_cache_clear_each_epoch"] = self.vae_cache_clear_each_epoch
+        if self.vae_cache_ondemand:
+            config["vae_cache_ondemand"] = True
+        if self.vae_cache_disable:
+            config["vae_cache_disable"] = True
         if self.hash_filenames is not None:
             config["hash_filenames"] = self.hash_filenames
         if self.shorten_filenames is not None:
@@ -440,6 +473,8 @@ class ImageBackendConfig(BaseBackendConfig):
             config["minimum_aspect_ratio"] = self.minimum_aspect_ratio
         if self.maximum_aspect_ratio is not None:
             config["maximum_aspect_ratio"] = self.maximum_aspect_ratio
+        if self.max_num_samples is not None:
+            config["max_num_samples"] = self.max_num_samples
 
         if self.conditioning is not None:
             config["conditioning"] = self.conditioning

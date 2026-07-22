@@ -7,11 +7,13 @@ from .base import BaseBackendBuilder
 from .csv import CsvBackendBuilder
 from .huggingface import HuggingfaceBackendBuilder
 from .local import LocalBackendBuilder
+from .memory import MemoryBackendBuilder
 from .webshart import WebshartBackendBuilder
 
 __all__ = [
     "BaseBackendBuilder",
     "LocalBackendBuilder",
+    "MemoryBackendBuilder",
     "AwsBackendBuilder",
     "CsvBackendBuilder",
     "HuggingfaceBackendBuilder",
@@ -24,6 +26,7 @@ __all__ = [
 def create_backend_builder(backend_type: str, accelerator, args: Optional[Any] = None) -> BaseBackendBuilder:
     builder_mapping = {
         "local": LocalBackendBuilder,
+        "memory": MemoryBackendBuilder,
         "aws": AwsBackendBuilder,
         "csv": CsvBackendBuilder,
         "huggingface": HuggingfaceBackendBuilder,

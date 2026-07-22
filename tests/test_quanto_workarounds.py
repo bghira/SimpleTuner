@@ -5,7 +5,7 @@ import torch
 from diffusers.hooks import apply_group_offloading
 from optimum.quanto import freeze, qint4, qint8, quantize
 
-import simpletuner.helpers.training.quantisation.quanto_workarounds  # noqa: F401
+import simpletuner.helpers.training.quantisation.quanto_workarounds as quanto_workarounds  # noqa: F401
 
 
 class _LinearWrapper(torch.nn.Module):
@@ -30,6 +30,12 @@ class QuantoWorkaroundsTests(unittest.TestCase):
         quantize(model, weights=quant_scheme)
         freeze(model)
         return model
+
+    def test_unspecified_cuda_matches_cuda_zero(self):
+        if not torch.cuda.is_available():
+            self.skipTest("CUDA not available")
+
+        self.assertTrue(quanto_workarounds._same_device(torch.device("cuda:0"), torch.device("cuda")))
 
     def _assert_storage_matches_backing_tensor(self, tensor):
         self.assertNotEqual(tensor.data_ptr(), 0)
@@ -90,6 +96,55 @@ class QuantoWorkaroundsTests(unittest.TestCase):
         self.assertEqual(weight._scale.device.type, device.type)
         if device.index is not None:
             self.assertEqual(weight._scale.device.index, device.index)
+
+    def test_quantized_backward_recovers_offloaded_weight_backing(self):
+        if not torch.cuda.is_available():
+            self.skipTest("CUDA not available")
+
+        device = torch.device("cuda")
+        model = self._quantized_linear(qint8)
+        weight = model.linear.weight
+        weight.data = weight.data.to(device)
+
+        input_tensor = torch.randn(2, 4, device=device, requires_grad=True)
+        output = model(input_tensor)
+
+        # Musubi block swap can stream quantized backing tensors back to CPU
+        # before autograd consumes the saved linear weight in backward.
+        weight._data = weight._data.to("cpu")
+        weight._scale = weight._scale.to("cpu")
+
+        output.sum().backward()
+
+        self.assertIsNotNone(input_tensor.grad)
+        self.assertEqual(input_tensor.grad.device.type, device.type)
+
+    def test_quantized_backward_recovers_offloaded_saved_activation(self):
+        if not torch.cuda.is_available():
+            self.skipTest("CUDA not available")
+
+        device = torch.device("cuda")
+        model = self._quantized_linear(qint8).to(device)
+        weight = model.linear.weight
+
+        input_tensor = torch.randn(2, 4, device=device, requires_grad=True)
+        output = model(input_tensor)
+
+        # Some offload/checkpointing paths can leave the saved activation tensor
+        # on CPU before the quantized linear backward computes grad(weight).
+        class Context:
+            needs_input_grad = (False, True, False)
+
+        ctx = Context()
+        ctx.saved_tensors = (input_tensor.detach().cpu(), weight)
+
+        _, weight_grad, _ = quanto_workarounds.reshape_qlf_backward(
+            ctx,
+            torch.ones_like(output),
+        )
+
+        self.assertIsNotNone(weight_grad)
+        self.assertEqual(weight_grad.device.type, device.type)
 
     def test_tinygemm_tensor_data_access_with_misaligned_devices(self):
         """Test that TinyGemmWeightQBitsTensor.data access works when internal tensors are on different devices.

@@ -77,6 +77,26 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 - **Description:** Number of text embeds to write in a single batch operation. Higher values can improve write throughput but use more memory.
 - **Default:** Falls back to the trainer's `--write_batch_size` argument (typically 128).
 
+### `text_encoder_batch_size`
+
+- **Only applies to `dataset_type=text_embeds`**
+- **Description:** Number of captions to encode in one text encoder forward while precomputing uncached text embeddings. Higher values can improve throughput but use more VRAM.
+- **Default:** Falls back to the trainer's `--text_encoder_batch_size` argument (default 1).
+
+### `text_cache_ondemand`
+
+- **Only applies to `dataset_type=text_embeds`**
+- **Values:** `true` | `false`
+- **Description:** Skips full text-embedding pre-computation. Existing entries are read from this cache, while missing embeddings are encoded during training or validation and then written to the cache.
+- **Note:** Every image or video dataset assigned to this `text_embeds` backend inherits this behavior. To use different cache behavior for selected source datasets, create another `text_embeds` backend and assign it with the source dataset's `text_embeds` field.
+
+### `text_cache_disable`
+
+- **Only applies to `dataset_type=text_embeds`**
+- **Values:** `true` | `false`
+- **Description:** Reads existing text embeddings but does not write newly encoded embeddings. Missing entries are encoded during training or validation, so this option implies `text_cache_ondemand`.
+- **Note:** The global `--text_cache_disable` option applies to every text cache. Use this backend option when the global option is false and only selected `text_embeds` backends should avoid writes.
+
 ### `text_embeds`
 
 - **Only applies to `dataset_type=image`**
@@ -177,8 +197,30 @@ During metadata discovery the loader records `sample_rate`, `num_samples`, `num_
 
 ### `type`
 
-- **Values:** `aws` | `local` | `csv` | `huggingface` | `webshart`
-- **Description:** Determines the storage backend (local, csv or cloud) used for this dataset.
+- **Values:** `aws` | `local` | `memory` | `csv` | `huggingface` | `webshart`
+- **Description:** Determines the storage backend (local, memory, csv or cloud) used for this dataset.
+
+### Memory (tmpfs and RAM disk) backends
+
+`type: "memory"` uses `MemoryDataBackend`, a `LocalDataBackend` subclass backed by Linux tmpfs or a native macOS RAM disk. It is available only for cache-storage entries with `dataset_type: "text_embeds"` or `dataset_type: "image_embeds"`; primary image, video, audio, conditioning, and evaluation datasets cannot use it. SimpleTuner mounts a separate empty filesystem and copies the configured `cache_dir` into it when that source directory exists. Reads and writes during the run use the memory-resident copy, and changes are discarded when it is released; they are not synchronized back to `cache_dir`.
+
+```json
+{
+  "id": "memory-vae-cache",
+  "type": "memory",
+  "dataset_type": "image_embeds",
+  "cache_dir": "/cache/vae",
+  "memory_filesystem_path": "/tmp/simpletuner-memory/vae",
+  "memory_filesystem_size": "512G",
+  "memory_filesystem_sudo": false
+}
+```
+
+- `memory_filesystem_path`: Optional empty mount directory. The default is the operating system temporary directory under `simpletuner-memory/<dataset id>`. It and `cache_dir` must not overlap or contain one another.
+- `memory_filesystem_size`: Memory filesystem capacity, such as `512G`. It is optional on Linux, where the system tmpfs default applies and percentages such as `80%` are accepted. It is required on macOS and must be a byte size rather than a percentage; SimpleTuner converts it to the 512-byte sector count required by `hdiutil`.
+- `memory_filesystem_sudo`: Linux only. When `true`, runs `mount` and `umount` through `sudo -n`. Leave it `false` when running as root, as is common in containers. Passwordless non-interactive sudo must already be configured when enabled. macOS RAM disks use `hdiutil` and `diskutil` without this option.
+
+Memory backends require Linux or macOS and enough RAM or swap for the existing cache plus all embeddings written during training. They are useful for large latent or text-embedding caches on high-memory systems when repeated filesystem reads are the bottleneck. Preloading an existing cache increases startup time; use an empty or absent `cache_dir` when the cache should start empty.
 
 ### `conditioning_type`
 
@@ -824,11 +866,25 @@ See the [Troubleshooting](#troubleshooting-filtered-datasets) section below for 
 - When enabled, all VAE cache objects are deleted from the filesystem at the end of each dataset repeat cycle. This can be resource-intensive for large datasets, but combined with `crop_style=random` and/or `crop_aspect=random` you'll want this enabled to ensure you sample a full range of crops from each image.
 - In fact, this option is **enabled by default** when using random bucketing or crops.
 
+### `vae_cache_ondemand`
+
+- **Values:** `true` | `false`
+- **Description:** When enabled on a dataset, missing VAE latents are encoded during training and written to that dataset's VAE cache instead of being precomputed at startup.
+- **Note:** The global `--vae_cache_ondemand` option still applies to every dataset. Use this dataset option when the global option is false and only selected datasets should encode VAE latents on demand.
+
 ### `vae_cache_disable`
 
 - **Values:** `true` | `false`
-- **Description:** When enabled (via the command-line argument `--vae_cache_disable`), this option implicitly enables on-demand VAE caching but disables writing the generated embeddings to disk. This is useful for large datasets where disk space is a concern or writing is impractical.
-- **Note:** This is a trainer-level argument, not a per-dataset configuration option, but it affects how the dataloader interacts with the VAE cache.
+- **Description:** When enabled on a dataset, that dataset encodes VAE latents on demand and does not write newly generated latents to disk. This is useful for large datasets where disk space is a concern or writing is impractical.
+- **Note:** The global `--vae_cache_disable` option still applies to every dataset. Use this dataset option to disable VAE cache writes only for selected datasets when the global option is false. The removed `disable_vae_cache` spelling is rejected; use `vae_cache_disable`.
+
+### Choosing a VAE cache strategy
+
+`vae_cache_ondemand` trades startup time for work during training; it is not a VRAM optimization. Choose the strategy per dataset based on expected cache reuse and whether the VAE can remain available during training:
+
+1. **Extremely large, reusable dataset:** Set `vae_cache_ondemand=true` when a complete precache pass would delay training for too long. Training begins without waiting for every image, and each missing latent is written to the cache so later visits can reuse it.
+2. **Very high-resolution dataset:** Leave `vae_cache_ondemand=false` (and keep the global option false) when VAE encoding could OOM with the training model loaded. The default startup precache allows the VAE to be unloaded before training. Neither on-demand mode nor `vae_cache_disable` solves this memory constraint because both require VAE encoding during training. VAE tiling or slicing may reduce peak memory during the startup precache.
+3. **Web-scale dataset with little expected reuse:** Set `vae_cache_disable=true` when the dataset contains millions or billions of images and the planned run is unlikely to approach one epoch. This still encodes sampled images on demand, but avoids cache writes and storage growth when most latents would never be read again. It has the same training-time VAE memory requirement as on-demand caching.
 
 ### `skip_file_discovery`
 

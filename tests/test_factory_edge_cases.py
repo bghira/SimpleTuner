@@ -76,6 +76,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.args.aws_max_pool_connections = 128
         self.args.vae_cache_scan_behaviour = "ignore"
         self.args.vae_cache_ondemand = False
+        self.args.vae_cache_disable = False
         self.args.skip_file_discovery = ""
         self.args.gradient_accumulation_steps = 1
         self.args.caption_strategy = "filename"
@@ -236,6 +237,112 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 factory.configure_data_backends(loaded_config)
 
         self.assertIn("unique 'id' field", str(context.exception))
+
+    def test_dataset_vae_cache_modes_use_dataset_ondemand_mode(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
+
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        modes = [
+            ({"vae_cache_ondemand": True}, False),
+            ({"vae_cache_disable": True}, True),
+        ]
+
+        for backend_mode, expected_disable in modes:
+            with self.subTest(backend_mode=backend_mode):
+                backend = {
+                    "id": "dataset-ondemand-cache",
+                    "type": "local",
+                    "dataset_type": "image",
+                    "instance_data_dir": self.temp_dir,
+                    "cache_dir_vae": os.path.join(self.temp_dir, "vae"),
+                    **backend_mode,
+                }
+                init_backend = init_backend_config(backend, self.args, self.accelerator)
+                init_backend.update(
+                    {
+                        "data_backend": MagicMock(id=backend["id"], type="local"),
+                        "metadata_backend": MagicMock(),
+                        "instance_data_dir": self.temp_dir,
+                    }
+                )
+                image_embed_backend = {"data_backend": MagicMock(type="local")}
+
+                with (
+                    patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state_tracker,
+                    patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+                    patch("simpletuner.helpers.data_backend.factory.VAECache", autospec=True) as mock_vae_cache,
+                ):
+                    mock_state_tracker.get_vae.return_value = MagicMock()
+                    mock_state_tracker.get_webhook_handler.return_value = None
+                    mock_state_tracker.get_image_files.return_value = {}
+
+                    mock_vae_instance = MagicMock()
+                    mock_vae_instance.vae_cache_ondemand = True
+                    mock_vae_instance.set_webhook_handler.return_value = None
+                    mock_vae_instance.build_vae_cache_filename_map.return_value = None
+                    mock_vae_cache.return_value = mock_vae_instance
+
+                    factory._configure_vae_cache(
+                        backend,
+                        init_backend,
+                        image_embed_backend,
+                        vae_cache_dir_paths=[],
+                        text_embed_cache_dir_paths=[],
+                        conditioning_type=None,
+                    )
+
+                kwargs = mock_vae_cache.call_args.kwargs
+                self.assertFalse(self.args.vae_cache_ondemand)
+                self.assertFalse(self.args.vae_cache_disable)
+                self.assertEqual(expected_disable, kwargs["vae_cache_disable"])
+                self.assertTrue(kwargs["vae_cache_ondemand"])
+                self.assertEqual(expected_disable, init_backend["config"]["vae_cache_disable"])
+                self.assertTrue(init_backend["config"]["vae_cache_ondemand"])
+                mock_vae_instance.discover_all_files.assert_not_called()
+
+    def test_ondemand_text_embed_backend_skips_dataset_precomputation(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory._uses_text_embeddings_cache = lambda: True
+        cache = MagicMock(text_cache_ondemand=True)
+        init_backend = {
+            "id": "image-dataset",
+            "config": {},
+            "text_embed_cache": cache,
+        }
+
+        with patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config") as set_config:
+            factory._process_text_embeddings({}, init_backend, None)
+
+        cache.compute_embeddings_for_prompts.assert_not_called()
+        self.assertTrue(init_backend["config"]["hash_filenames"])
+        set_config.assert_called_once_with("image-dataset", init_backend["config"])
+
+    def test_text_embed_disable_config_implies_ondemand_without_mutating_global_args(self):
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        self.args.text_cache_ondemand = False
+        self.args.text_cache_disable = False
+        backend = {
+            "id": "text-disabled-cache",
+            "type": "local",
+            "dataset_type": "text_embeds",
+            "text_cache_disable": True,
+        }
+
+        result = init_backend_config(backend, self.args, self.accelerator)
+
+        self.assertTrue(result["config"]["text_cache_disable"])
+        self.assertTrue(result["config"]["text_cache_ondemand"])
+        self.assertFalse(self.args.text_cache_disable)
+        self.assertFalse(self.args.text_cache_ondemand)
 
     def test_inline_conditioning_auto_generation_for_image_dataset(self):
         """Inline conditioning blocks on image datasets should spawn auto-generated conditioning datasets."""
@@ -1145,6 +1252,70 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
                     # Image embed setup should not instantiate the cache; the owning dataset does.
                     mock_vae_cache.assert_not_called()
+
+    def test_memory_image_embed_backend_uses_tmpfs_mount_as_cache_dir(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        backend = {
+            "id": "memory-image-embeds",
+            "dataset_type": "image_embeds",
+            "type": "memory",
+            "cache_dir": "/cache/vae",
+        }
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        memory_backend = MagicMock(type="memory", mount_path="/mnt/simpletuner-memory/vae")
+        builder = MagicMock()
+        builder.build.return_value = memory_backend
+
+        with (
+            patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state_tracker,
+            patch("simpletuner.helpers.data_backend.factory.create_backend_builder", return_value=builder),
+        ):
+            self._setup_state_tracker_mocks(mock_state_tracker)
+            factory.configure_image_embed_backends([backend])
+
+        configured = factory.image_embed_backends[backend["id"]]
+        self.assertIs(configured["data_backend"], memory_backend)
+        self.assertEqual(configured["cache_dir"], memory_backend.mount_path)
+
+    def test_memory_text_embed_backend_uses_tmpfs_mount_as_cache_dir(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        backend = {
+            "id": "memory-text-embeds",
+            "dataset_type": "text_embeds",
+            "type": "memory",
+            "cache_dir": "/cache/text",
+            "default": True,
+        }
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        factory._uses_text_embeddings_cache = lambda: True
+        memory_backend = MagicMock(type="memory", mount_path="/mnt/simpletuner-memory/text")
+        builder = MagicMock()
+        builder.build.return_value = memory_backend
+
+        with (
+            patch("simpletuner.helpers.data_backend.factory.StateTracker") as mock_state_tracker,
+            patch("simpletuner.helpers.data_backend.factory.create_backend_builder", return_value=builder),
+        ):
+            self._setup_state_tracker_mocks(mock_state_tracker)
+            factory.configure_text_embed_backends([backend])
+
+        configured = factory.text_embed_backends[backend["id"]]
+        self.assertIs(configured["data_backend"], memory_backend)
+        self.assertEqual(configured["cache_dir"], memory_backend.mount_path)
 
     def test_qwen_edit_model_invalid_conditioning_type(self):
         """Test that Qwen edit models reject invalid conditioning_type values."""

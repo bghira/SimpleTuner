@@ -1,7 +1,7 @@
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
-from pathlib import Path
 from typing import Any, List, Tuple, Union
 
 import torch
@@ -127,7 +127,6 @@ class LocalDataBackend(BaseDataBackend):
     def list_files(self, file_extensions: List[str], instance_data_dir: str) -> List[Tuple[str, List, List[str]]]:
         """
         List all files matching the given file extensions.
-        Creates Path objects of each file found.
         """
         logger.debug(
             f"LocalDataBackend.list_files: file_extensions={file_extensions}, instance_data_dir={instance_data_dir}"
@@ -138,51 +137,34 @@ class LocalDataBackend(BaseDataBackend):
         if not file_extensions:
             file_extensions = self._default_file_extensions()
 
-        def _rglob_follow_symlinks(path: Path, extensions: List[str]):
-            # Skip Spotlight and Jupyter directories
-            forbidden_directories = {
-                ".Spotlight-V100",
-                ".Trashes",
-                ".fseventsd",
-                ".TemporaryItems",
-                ".zfs",
-                ".ipynb_checkpoints",
-            }
-            if path.name in forbidden_directories:
-                return
+        forbidden_directories = {
+            ".Spotlight-V100",
+            ".Trashes",
+            ".fseventsd",
+            ".TemporaryItems",
+            ".zfs",
+            ".ipynb_checkpoints",
+        }
+        extensions = tuple(f".{ext.lower().lstrip('.')}" for ext in file_extensions) if file_extensions else None
 
-            # If no extensions are provided, list all files
-            if not extensions:
-                for p in path.rglob("*"):
-                    if p.is_file():
-                        yield p
-            else:
-                for ext in extensions:
-                    for p in path.rglob(ext):
-                        if p.is_file():
-                            yield p
-
-            for p in path.iterdir():
-                if p.is_dir() and not p.is_symlink():
-                    yield from _rglob_follow_symlinks(p, extensions)
-                elif p.is_symlink():
-                    try:
-                        real_path = p.resolve()
-                        if real_path.is_dir():
-                            yield from _rglob_follow_symlinks(real_path, extensions)
-                    except Exception as e:
-                        logger.warning(f"Broken symlink encountered: {p} - {e}")
-
-        # Prepare the extensions for globbing
-        extensions = [f"*.{ext.lower()}" for ext in file_extensions] if file_extensions else None
-
-        paths = list(_rglob_follow_symlinks(Path(instance_data_dir), extensions))
-
-        # Group files by their parent directory
         path_dict = {}
-        for path in paths:
-            parent = str(path.parent)
-            path_dict.setdefault(parent, []).append(str(path.absolute()))
+        seen_directories = set()
+        for root, dirs, files in os.walk(instance_data_dir, followlinks=True):
+            real_root = os.path.realpath(root)
+            if real_root in seen_directories:
+                dirs.clear()
+                continue
+            seen_directories.add(real_root)
+            dirs[:] = [directory for directory in dirs if directory not in forbidden_directories]
+
+            absolute_root = os.path.abspath(root)
+            matching_files = []
+            for filename in files:
+                if extensions and not filename.lower().endswith(extensions):
+                    continue
+                matching_files.append(os.path.join(absolute_root, filename))
+            if matching_files:
+                path_dict.setdefault(root, []).extend(matching_files)
 
         results = [(subdir, [], files) for subdir, files in path_dict.items()]
         return results
@@ -273,31 +255,43 @@ class LocalDataBackend(BaseDataBackend):
             raise ValueError(f"read_image_batch must be given a list of image filepaths. Received type: {type(filepaths)}")
         output_images = []
         available_keys = []
-        for filepath in filepaths:
+
+        def read_one(filepath: str) -> tuple[str, Any, Exception | None]:
             try:
                 image_data = self.read_image(filepath, delete_problematic_images)
+                return filepath, image_data, None
+            except Exception as e:
+                return filepath, None, e
+
+        max_workers = min(16, max(1, len(filepaths)))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = executor.map(read_one, filepaths)
+
+        for filepath, image_data, error in results:
+            if error is None:
                 if image_data is None:
                     log_level = logging.WARNING if should_log() else logging.DEBUG
                     logger.log(log_level, f"Unable to load image '{filepath}', skipping.")
                     continue
                 output_images.append(image_data)
                 available_keys.append(filepath)
-            except Exception as e:
-                if delete_problematic_images:
-                    logger.error(f"Deleting image '{filepath}', because --delete_problematic_images is provided. Error: {e}")
-                    try:
-                        self.delete(filepath)
-                    except Exception as del_e:
-                        logger.error(f"Failed to delete problematic image {filepath}: {del_e}")
-                else:
-                    log_level = logging.WARNING if should_log() else logging.DEBUG
-                    logger.log(
-                        log_level,
-                        (
-                            f"A problematic image {filepath} is detected, but we are not allowed to remove it, because "
-                            f"--delete_problematic_images is not provided. Please correct this manually. Error: {e}"
-                        ),
-                    )
+                continue
+
+            if delete_problematic_images:
+                logger.error(f"Deleting image '{filepath}', because --delete_problematic_images is provided. Error: {error}")
+                try:
+                    self.delete(filepath)
+                except Exception as del_e:
+                    logger.error(f"Failed to delete problematic image {filepath}: {del_e}")
+            else:
+                log_level = logging.WARNING if should_log() else logging.DEBUG
+                logger.log(
+                    log_level,
+                    (
+                        f"A problematic image {filepath} is detected, but we are not allowed to remove it, because "
+                        f"--delete_problematic_images is not provided. Please correct this manually. Error: {error}"
+                    ),
+                )
         return available_keys, output_images
 
     def create_directory(self, directory_path: str) -> None:
@@ -371,10 +365,16 @@ class LocalDataBackend(BaseDataBackend):
             logger.error(error_msg)
             raise ValueError(error_msg)
 
-        for filepath, data in zip(filepaths, data_list):
+        def write_one(item: tuple[str, Any]) -> None:
+            filepath, data = item
             try:
                 self.write(filepath, data)
                 logger.debug(f"Successfully wrote to {filepath}")
             except Exception as e:
                 logger.error(f"Failed to write to {filepath}: {e}")
                 raise
+
+        max_workers = min(16, max(1, len(filepaths)))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for _ in executor.map(write_one, zip(filepaths, data_list)):
+                pass

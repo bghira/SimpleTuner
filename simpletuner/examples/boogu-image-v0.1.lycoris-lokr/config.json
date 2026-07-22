@@ -12,7 +12,7 @@
     "grad_clip_method": "value",
     "gradient_checkpointing": true,
     "hub_model_id": "simpletuner-example-boogu-image-v0-1-lycoris-lokr",
-    "ignore_final_epochs": true,
+    "strict_epoch_limit": false,
     "learning_rate": 1e-4,
     "lora_alpha": 128,
     "lora_rank": 128,

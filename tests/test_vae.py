@@ -17,7 +17,6 @@ if "trainingsample" not in sys.modules:
     trainingsample_stub.batch_resize_images = lambda *args, **kwargs: []
     trainingsample_stub.batch_center_crop_images = lambda *args, **kwargs: []
     trainingsample_stub.batch_random_crop_images = lambda *args, **kwargs: []
-    trainingsample_stub.batch_calculate_luminance = lambda *args, **kwargs: []
     trainingsample_stub.batch_resize_videos = lambda *args, **kwargs: []
     trainingsample_stub.__spec__ = importlib.machinery.ModuleSpec("trainingsample", loader=None)
     sys.modules["trainingsample"] = trainingsample_stub
@@ -163,6 +162,17 @@ class TestVaeCache(unittest.TestCase):
             instance_data_dir="/data/reference",
             file_extensions=video_file_extensions,
         )
+
+    def test_local_unprocessed_file_set_tracks_reassigned_file_list(self):
+        vae_cache = VAECache.__new__(VAECache)
+        vae_cache.local_unprocessed_files = ["/data/first.png"]
+
+        self.assertIn("/data/first.png", vae_cache._local_unprocessed_file_set())
+
+        vae_cache.local_unprocessed_files = ["/data/second.png"]
+
+        self.assertNotIn("/data/first.png", vae_cache._local_unprocessed_file_set())
+        self.assertIn("/data/second.png", vae_cache._local_unprocessed_file_set())
 
 
 class DummyAccelerator:

@@ -8,7 +8,7 @@
     "disable_bucket_pruning": true,
     "gradient_checkpointing": true,
     "hub_model_id": "simpletuner-example-z-image-peft-lora",
-    "ignore_final_epochs": true,
+    "strict_epoch_limit": false,
     "learning_rate": 1e-4,
     "lora_rank": 64,
     "lora_type": "standard",

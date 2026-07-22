@@ -354,7 +354,6 @@ if "trainingsample" not in sys.modules:  # pragma: no cover
     trainingsample_stub.batch_resize_images = _return_first_arg
     trainingsample_stub.batch_center_crop_images = _return_first_arg
     trainingsample_stub.batch_random_crop_images = _return_first_arg
-    trainingsample_stub.batch_calculate_luminance = lambda images, *_args, **_kwargs: [0.0 for _ in images]
     trainingsample_stub.batch_resize_videos = _return_first_arg
     sys.modules["trainingsample"] = trainingsample_stub
 
@@ -406,6 +405,7 @@ class TestFactoryDistillerRequirements(unittest.TestCase):
             maximum_image_size=2.0,
             vae_cache_scan_behaviour="ignore",
             vae_cache_ondemand=False,
+            vae_cache_disable=False,
             skip_file_discovery="",
             caption_strategy="filename",
             prepend_instance_prompt=False,

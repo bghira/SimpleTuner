@@ -87,6 +87,36 @@ simpletuner configure config/foo/config.json
 - **Why**: default setting model-specific compact cache layouts को allow करती है। उदाहरण के लिए, Ideogram 4 cache files लिखने से पहले अपने 13-layer Qwen hidden-state stack को transformer की frozen `llm_cond_norm` और `llm_cond_proj` layers से project करता है; ये layers LoRA और full transformer training दोनों में frozen रहती हैं।
 - **When to use**: cache compatibility debugging के लिए, जब आपको raw unprojected text encoder features चाहिए हों, या जब आप Ideogram-style architecture को scratch training के लिए adapt कर रहे हों और text projection fixed pretrained component न हो।
 
+### `--text_cache_ondemand`
+
+- **What**: पूरे text cache की pre-computation छोड़ता है और training या validation द्वारा माँगे जाने पर missing prompt embeddings encode करता है।
+- **Default**: `False`
+- **Behavior**: मौजूदा cache entries पढ़ी जाती हैं और नए encoded misses लिखे जाते हैं। Startup के बाद आवश्यकता होने के कारण text encoders loaded रहते हैं।
+- **Dataloader override**: कोई `text_embeds` backend इसे `"text_cache_ondemand": true` से independently enable कर सकता है।
+
+### `--cosmos3_reasoner_component`
+
+- **What**: frozen Cosmos3 reasoner component के लिए Hugging Face repo id या local path।
+- **Default**: `auto`
+- **Use**: Cosmos3 text cache इस component से per-layer reasoner K/V entries लिखता है।
+- **Auto choices**: `SimpleTuner/cosmos3-component-reasoning-layers-bf16-edge`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-nano`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-i2v`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-t2i`.
+- **Note**: Cosmos3 on-demand text cache force करता है क्योंकि reasoner cache keys में sample geometry शामिल होती है।
+
+### `--cosmos3_generator_component`
+
+- **What**: Cosmos3 generation-only transformer component के लिए Hugging Face repo id या local path।
+- **Default**: `auto`
+- **Use**: `auto` matching Edge, Nano, Super, Super-I2V, या Super-T2I component चुनता है।
+- **Auto choices**: `SimpleTuner/cosmos3-component-generation-layers-bf16-edge`, `SimpleTuner/cosmos3-component-generation-layers-bf16-nano`, `SimpleTuner/cosmos3-component-generation-layers-bf16-super`, `SimpleTuner/cosmos3-component-generation-layers-bf16-super-i2v`, `SimpleTuner/cosmos3-component-generation-layers-bf16-super-t2i`.
+- **Note**: यह component transformer के अंदर के reasoner weights हटाता है और reasoner K/V entries require करता है।
+
+### `--text_cache_disable`
+
+- **What**: मौजूदा entries को पढ़ते हुए सभी text embedding cache writes disable करता है।
+- **Default**: `False`
+- **Behavior**: `--text_cache_ondemand` को implicitly enable करता है; missing embeddings request पर encode होते हैं लेकिन store नहीं होते।
+- **Dataloader override**: global option false होने पर individual `text_embeds` backends इसे `"text_cache_disable": true` से enable कर सकते हैं।
+
 ### `--trust_remote_code`
 
 - **What**: जब checkpoint upstream custom classes पर निर्भर हो, तब Transformers और tokenizer को model repository से custom Python code चलाने की अनुमति देता है।
@@ -1040,10 +1070,10 @@ Different models different conditioning data expect करते हैं:
 - **What**: इतने training steps के बाद training बंद होती है। 0 सेट करने पर `--num_train_epochs` को प्राथमिकता मिलती है।
 - **Why**: training को छोटा करने के लिए उपयोगी।
 
-### `--ignore_final_epochs`
+### `--strict_epoch_limit`
 
-- **What**: अंतिम गिने गए epochs को ignore करके `--max_train_steps` को प्राथमिकता देता है।
-- **Why**: dataloader length बदलने पर epoch calculation बदल जाती है और training जल्दी खत्म हो सकती है। यह विकल्प अंतिम epochs को ignore करके `--max_train_steps` तक training जारी रखता है।
+- **What**: epoch counter के `--num_train_epochs` तक पहुंचते ही training रोकता है, भले ही `--max_train_steps` अभी पूरा न हुआ हो।
+- **Why**: इसे explicit `--max_train_steps` runs के लिए बंद करें, जहां step limit तक पहुंचने के लिए अतिरिक्त epoch passes जारी रखने हैं। `--max_train_steps=0` वाली runs हमेशा epoch-driven होती हैं और strict epoch limit इस्तेमाल करती हैं।
 
 ### `--learning_rate`
 
@@ -1833,7 +1863,7 @@ usage: train.py [-h] --model_family
                 [--input_perturbation_steps INPUT_PERTURBATION_STEPS]
                 [--lr_end LR_END] [--lr_scale [LR_SCALE]]
                 [--lr_scale_sqrt [LR_SCALE_SQRT]]
-                [--ignore_final_epochs [IGNORE_FINAL_EPOCHS]]
+                [--strict_epoch_limit [STRICT_EPOCH_LIMIT]]
                 [--freeze_encoder_before FREEZE_ENCODER_BEFORE]
                 [--freeze_encoder_after FREEZE_ENCODER_AFTER]
                 [--freeze_encoder_strategy {before,between,after}]
@@ -1851,6 +1881,8 @@ usage: train.py [-h] --model_family
                 [--preserve_data_backend_cache [PRESERVE_DATA_BACKEND_CACHE]]
                 [--override_dataset_config [OVERRIDE_DATASET_CONFIG]]
                 [--cache_dir CACHE_DIR] [--cache_dir_text CACHE_DIR_TEXT]
+                [--text_cache_ondemand [TEXT_CACHE_ONDEMAND]]
+                [--text_cache_disable [TEXT_CACHE_DISABLE]]
                 [--cache_dir_vae CACHE_DIR_VAE]
                 [--compress_disk_cache [COMPRESS_DISK_CACHE]]
                 [--aspect_bucket_disable_rebuild [ASPECT_BUCKET_DISABLE_REBUILD]]
@@ -1860,6 +1892,7 @@ usage: train.py [-h] --model_family
                 [--image_processing_batch_size IMAGE_PROCESSING_BATCH_SIZE]
                 [--write_batch_size WRITE_BATCH_SIZE]
                 [--read_batch_size READ_BATCH_SIZE]
+                [--text_encoder_batch_size TEXT_ENCODER_BATCH_SIZE]
                 [--enable_multiprocessing [ENABLE_MULTIPROCESSING]]
                 [--max_workers MAX_WORKERS]
                 [--aws_max_pool_connections AWS_MAX_POOL_CONNECTIONS]
@@ -2330,9 +2363,10 @@ options:
   --lr_scale_sqrt [LR_SCALE_SQRT]
                         If using --lr_scale, use the square root of (number of
                         GPUs * gradient accumulation steps * batch size)
-  --ignore_final_epochs [IGNORE_FINAL_EPOCHS]
-                        When provided, the max epoch counter will not
-                        determine the end of the training run
+  --strict_epoch_limit [STRICT_EPOCH_LIMIT]
+                        Stop training when the epoch counter reaches
+                        --num_train_epochs, even if --max_train_steps
+                        has not been reached
   --freeze_encoder_before FREEZE_ENCODER_BEFORE
                         When using 'before' strategy, we will freeze layers
                         earlier than this
@@ -2403,6 +2437,12 @@ options:
   --cache_dir_text CACHE_DIR_TEXT
                         This is the path to a local directory that will
                         contain your text embed cache
+  --text_cache_ondemand [TEXT_CACHE_ONDEMAND]
+                        पूरा text cache precompute करने के बजाय training के दौरान missing
+                        embeddings encode करता है। मौजूदा entries reuse होती हैं।
+  --text_cache_disable [TEXT_CACHE_DISABLE]
+                        cache writes disable करके misses को on demand encode करता है।
+                        मौजूदा entries पढ़ी जाती हैं। --text_cache_ondemand implied है।
   --text_embed_full_cache [TEXT_EMBED_FULL_CACHE]
                         Store full raw text encoder outputs in the text embed
                         cache. This opts out of model-specific cache size
@@ -2452,6 +2492,10 @@ options:
   --read_batch_size READ_BATCH_SIZE
                         Used by the VAE cache to prefetch image data. This is
                         the number of images to read ahead
+  --text_encoder_batch_size TEXT_ENCODER_BATCH_SIZE
+                        Batch size used when precomputing uncached text
+                        embeddings. A value of 1 preserves the original one-
+                        caption-per-forward behavior.
   --enable_multiprocessing [ENABLE_MULTIPROCESSING]
                         If set, will use processes instead of threads during
                         metadata caching operations

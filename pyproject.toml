@@ -71,6 +71,7 @@ exclude = ["tests*", "scripts*", "install*", "config*", "documentation*"]
 [tool.setuptools.package-data]
 simpletuner = [
     "examples/**/*",
+    "helpers/ramtorch/LICENSE",
     "py.typed",
 ]
 

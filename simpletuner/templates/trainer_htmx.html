@@ -1555,6 +1555,8 @@ function trainerComponent() {
                 cache_dir: '{output_dir}/cache/text/{model_family}',
                 default: true,
                 write_batch_size: 128,
+                text_cache_ondemand: false,
+                text_cache_disable: false,
             });
             return working;
         },
@@ -1866,6 +1868,10 @@ function trainerComponent() {
             dataset.only_instance_prompt = this.normalizeBoolean(dataset.only_instance_prompt);
             dataset.disabled = this.normalizeBoolean(dataset.disabled);
             dataset.vae_cache_clear_each_epoch = this.normalizeBoolean(dataset.vae_cache_clear_each_epoch);
+            dataset.vae_cache_ondemand = this.normalizeBoolean(dataset.vae_cache_ondemand);
+            dataset.vae_cache_disable = this.normalizeBoolean(dataset.vae_cache_disable);
+            dataset.text_cache_ondemand = this.normalizeBoolean(dataset.text_cache_ondemand);
+            dataset.text_cache_disable = this.normalizeBoolean(dataset.text_cache_disable);
 
             // max_upscale_threshold (nullable float)
             if (dataset.max_upscale_threshold !== undefined && dataset.max_upscale_threshold !== null && dataset.max_upscale_threshold !== '') {
@@ -2608,6 +2614,18 @@ function trainerComponent() {
                     delete cleaned.vae_cache_clear_each_epoch;
                 }
 
+                if (this.normalizeBoolean(dataset.vae_cache_ondemand)) {
+                    cleaned.vae_cache_ondemand = true;
+                } else {
+                    delete cleaned.vae_cache_ondemand;
+                }
+
+                if (this.normalizeBoolean(dataset.vae_cache_disable)) {
+                    cleaned.vae_cache_disable = true;
+                } else {
+                    delete cleaned.vae_cache_disable;
+                }
+
                 // max_upscale_threshold (nullable float)
                 if (dataset.max_upscale_threshold !== null && dataset.max_upscale_threshold !== undefined && dataset.max_upscale_threshold !== '') {
                     const threshold = parseFloat(dataset.max_upscale_threshold);
@@ -2657,9 +2675,26 @@ function trainerComponent() {
                     } else {
                         delete cleaned.caption_filter_list;
                     }
+                    if (cleaned.dataset_type === 'text_embeds') {
+                        if (this.normalizeBoolean(dataset.text_cache_ondemand)) {
+                            cleaned.text_cache_ondemand = true;
+                        } else {
+                            delete cleaned.text_cache_ondemand;
+                        }
+                        if (this.normalizeBoolean(dataset.text_cache_disable)) {
+                            cleaned.text_cache_disable = true;
+                        } else {
+                            delete cleaned.text_cache_disable;
+                        }
+                    } else {
+                        delete cleaned.text_cache_ondemand;
+                        delete cleaned.text_cache_disable;
+                    }
                 } else {
                     delete cleaned.write_batch_size;
                     delete cleaned.caption_filter_list;
+                    delete cleaned.text_cache_ondemand;
+                    delete cleaned.text_cache_disable;
                 }
 
                 if (['image', 'video'].includes(cleaned.dataset_type)) {
@@ -3742,7 +3777,11 @@ function trainerComponent() {
                     caption_column: '',
                     streaming: false,
                     auth_token: '',
+                    vae_cache_ondemand: false,
+                    vae_cache_disable: false,
                     disabled: false,
+                    text_cache_ondemand: false,
+                    text_cache_disable: false,
                     _showAdvanced: false,
                     _connectionStatus: null,
                     _connectionMessage: '',

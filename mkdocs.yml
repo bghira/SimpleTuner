@@ -251,6 +251,7 @@ nav:
       - HiDream: quickstart/HIDREAM.md
       - Kolors: quickstart/KOLORS.md
       - Cosmos2: quickstart/COSMOS2IMAGE.md
+      - Cosmos3: quickstart/COSMOS3.md
       - OmniGen: quickstart/OMNIGEN.md
       - Z-Image: quickstart/ZIMAGE.md
       - Krea2: quickstart/KREA2.md
@@ -268,6 +269,7 @@ nav:
       - Wan Video: quickstart/WAN.md
       - LTX Video: quickstart/LTXVIDEO.md
       - LTX Video 2: quickstart/LTXVIDEO2.md
+      - Cosmos3: quickstart/COSMOS3.md
       - Hunyuan Video: quickstart/HUNYUANVIDEO.md
       - Sana Video: quickstart/SANAVIDEO.md
       - Kandinsky 5 Video: quickstart/KANDINSKY5_VIDEO.md

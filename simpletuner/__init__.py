@@ -126,4 +126,4 @@ def _suppress_swigvarlink(message, *args, **kwargs):
 warnings.warn = _suppress_swigvarlink
 
 
-__version__ = "4.4.1"
+__version__ = "4.5.0"

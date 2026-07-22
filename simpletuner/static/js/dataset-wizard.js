@@ -38,6 +38,8 @@
         cache_dir_text: '{output_dir}/cache/text/{model_family}/{id}',
         probability: 1,
         repeats: 0,
+        vae_cache_ondemand: false,
+        vae_cache_disable: false,
         parquet: {
             path: '',
             filename_column: 'id',
@@ -111,7 +113,9 @@
             textEmbedsDataset: {
                 id: 'text-embeds',
                 cache_dir: '{output_dir}/cache/text/{model_family}',
-                type: 'local'
+                type: 'local',
+                text_cache_ondemand: false,
+                text_cache_disable: false
             },
             vaeCacheDataset: {
                 id: 'vae-cache',
@@ -647,6 +651,18 @@
                 datasetToAdd.is_regularisation_data =
                     datasetToAdd.is_regularisation_data === true ||
                     datasetToAdd.is_regularisation_data === 'true';
+                datasetToAdd.vae_cache_ondemand =
+                    datasetToAdd.vae_cache_ondemand === true ||
+                    datasetToAdd.vae_cache_ondemand === 'true';
+                if (!datasetToAdd.vae_cache_ondemand) {
+                    delete datasetToAdd.vae_cache_ondemand;
+                }
+                datasetToAdd.vae_cache_disable =
+                    datasetToAdd.vae_cache_disable === true ||
+                    datasetToAdd.vae_cache_disable === 'true';
+                if (!datasetToAdd.vae_cache_disable) {
+                    delete datasetToAdd.vae_cache_disable;
+                }
 
                 // Clean up parquet config if not using parquet caption strategy
                 if (datasetToAdd.caption_strategy !== 'parquet') {
@@ -1091,6 +1107,14 @@
 
                 clone.cache_dir = this.resolveTextCacheDirectory(clone.cache_dir, queueDatasets);
                 clone.default = clone.default === undefined ? true : Boolean(clone.default);
+                clone.text_cache_ondemand = clone.text_cache_ondemand === true || clone.text_cache_ondemand === 'true';
+                clone.text_cache_disable = clone.text_cache_disable === true || clone.text_cache_disable === 'true';
+                if (!clone.text_cache_ondemand) {
+                    delete clone.text_cache_ondemand;
+                }
+                if (!clone.text_cache_disable) {
+                    delete clone.text_cache_disable;
+                }
 
                 return clone;
             },

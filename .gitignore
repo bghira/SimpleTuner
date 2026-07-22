@@ -4,6 +4,11 @@ multidatabackend*json
 !simpletuner/examples/multidatabackend-small-video-720p+81f.json
 !simpletuner/examples/multidatabackend-small-video-720p+49f.json
 !simpletuner/examples/multidatabackend-small-video-1080p+49f.json
+!simpletuner/examples/multidatabackend-cosmos3-disney-i2v-480p+49f.json
+!simpletuner/examples/multidatabackend-cosmos3-disney-video-480p+49f.json
+!simpletuner/examples/multidatabackend-cosmos3-domokun-512px.json
+!simpletuner/examples/multidatabackend-cosmos3-domokun-1024-arb.json
+!simpletuner/examples/multidatabackend-cosmos3-drumming-video-audio-480p+49f.json
 # Python and virtual environment files
 output/
 temp/

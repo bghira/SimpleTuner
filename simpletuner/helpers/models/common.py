@@ -62,6 +62,7 @@ from simpletuner.helpers.training.lora_format import (
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank
 from simpletuner.helpers.training.quantisation import (
+    MANUAL_QUANTIZATION_PRESETS,
     PIPELINE_ONLY_PRESETS,
     PIPELINE_QUANTIZATION_PRESETS,
     build_gguf_quantization_config,
@@ -556,6 +557,13 @@ class ModelFoundation(ABC):
         Defaults to no-op.
         """
         return embeddings
+
+    def slice_text_embedding_for_cache(self, text_encoder_output: dict, batch_index: int, batch_size: int):
+        """
+        Optional hook for models whose text cache payload cannot be sliced by the generic tensor batch slicer.
+        Return None to use the generic slicer.
+        """
+        return None
 
     def load_validation_models(self, pipeline=None, pipeline_type=None) -> None:
         """
@@ -1530,6 +1538,12 @@ class ModelFoundation(ABC):
         Override to False for models that do not use text encoder embeddings.
         """
         return bool(getattr(self, "TEXT_ENCODER_CONFIGURATION", None))
+
+    def use_text_cache_dropout_sentinel(self) -> bool:
+        """
+        Return False when empty prompts still need per-sample text cache keys.
+        """
+        return True
 
     def uses_noise_schedule(self) -> bool:
         """
@@ -3119,7 +3133,11 @@ class ModelFoundation(ABC):
                     f"{self.__class__.__name__} failed to materialize weights for {model_path}. "
                     "All model parameters remain on the meta device after reload."
                 )
-        if self._ramtorch_enabled() and self.model is not None:
+        if (
+            self._ramtorch_enabled()
+            and not self._ramtorch_base_deferred_until_after_quantization()
+            and self.model is not None
+        ):
             self._apply_ramtorch_layers(
                 self.model,
                 self.MODEL_TYPE.value,
@@ -3583,6 +3601,13 @@ class ModelFoundation(ABC):
     def _ramtorch_enabled(self) -> bool:
         return bool(getattr(self.config, "ramtorch", False))
 
+    def _ramtorch_base_deferred_until_after_quantization(self) -> bool:
+        if not self._ramtorch_enabled():
+            return False
+        if getattr(self.config, "quantize_via", None) == "pipeline":
+            return False
+        return getattr(self.config, "base_model_precision", None) in MANUAL_QUANTIZATION_PRESETS
+
     def _ramtorch_targets(self) -> Optional[list[str]]:
         targets = getattr(self.config, "ramtorch_target_modules", None)
         if targets is None:
@@ -3662,17 +3687,28 @@ class ModelFoundation(ABC):
                     include_conv=True,
                     include_layernorm=True,
                     percent=percent,
-                    add_sync_hooks=use_sync_hooks,
+                    add_sync_hooks=False,
                 )
                 total = counts.get("linear", 0) + counts.get("other", 0)
-                sync_hooks = counts.get("sync_hooks", [])
+                prefetch_hooks = []
+                sync_hooks = []
+                if use_sync_hooks:
+                    from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks, add_ramtorch_sync_hooks
+
+                    prefetch_hooks = add_ramtorch_prefetch_hooks(module, component_label=component_label)
+                    if not prefetch_hooks:
+                        sync_hooks = add_ramtorch_sync_hooks(module)
                 if total:
                     logger.info(
                         "Applied full RamTorch to %s: %d Linear, %d other layers%s.",
                         component_label,
                         counts.get("linear", 0),
                         counts.get("other", 0),
-                        f", {len(sync_hooks)} sync hooks" if use_sync_hooks else "",
+                        (
+                            f", {len(prefetch_hooks)} prefetch hooks"
+                            if prefetch_hooks
+                            else f", {len(sync_hooks)} sync hooks" if sync_hooks else ""
+                        ),
                     )
                 # Log diagnostic info about ramtorch conversion
                 ramtorch_params = 0
@@ -3722,15 +3758,27 @@ class ModelFoundation(ABC):
                 )
                 if replaced:
                     if use_sync_hooks:
-                        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_sync_hooks
-
-                        hooks = add_ramtorch_sync_hooks(module)
-                        logger.info(
-                            "Applied RamTorch to %s Linear layers on %s, %d sync hooks.",
-                            replaced,
-                            component_label,
-                            len(hooks),
+                        from simpletuner.helpers.ramtorch_extensions import (
+                            add_ramtorch_prefetch_hooks,
+                            add_ramtorch_sync_hooks,
                         )
+
+                        prefetch_hooks = add_ramtorch_prefetch_hooks(module, component_label=component_label)
+                        if prefetch_hooks:
+                            logger.info(
+                                "Applied RamTorch to %s Linear layers on %s, %d prefetch hooks.",
+                                replaced,
+                                component_label,
+                                len(prefetch_hooks),
+                            )
+                        else:
+                            hooks = add_ramtorch_sync_hooks(module)
+                            logger.info(
+                                "Applied RamTorch to %s Linear layers on %s, %d sync hooks.",
+                                replaced,
+                                component_label,
+                                len(hooks),
+                            )
                     else:
                         logger.info("Applied RamTorch to %s Linear layers on %s.", replaced, component_label)
 
@@ -3763,6 +3811,19 @@ class ModelFoundation(ABC):
             logger.debug("RamTorch ControlNet requested but no controlnet module is initialised.")
             return 0
         return self._apply_ramtorch_layers(controlnet, "controlnet")
+
+    def apply_ramtorch_to_transformer(self) -> int:
+        if not self._ramtorch_enabled():
+            return 0
+        if self.model is None:
+            logger.debug("RamTorch requested but no base model module is initialised.")
+            return 0
+        return self._apply_ramtorch_layers(
+            self.model,
+            self.MODEL_TYPE.value,
+            percent=self._ramtorch_transformer_percent(),
+            full_ramtorch=True,
+        )
 
     @property
     def group_offload_configured(self) -> bool:

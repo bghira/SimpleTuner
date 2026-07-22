@@ -10,12 +10,94 @@ __all__ = ["MusubiBlockSwapManager", "apply_musubi_pretrained_defaults"]
 def _module_on_device(module: nn.Module, device: torch.device) -> bool:
     target = torch.device(device)
     for tensor in module.parameters():
-        if tensor.device != target:
+        if not _tensor_on_device(tensor, target):
             return False
     for tensor in module.buffers():
-        if tensor.device != target:
+        if not _tensor_on_device(tensor, target):
             return False
     return True
+
+
+def _same_device(actual: torch.device, expected: torch.device) -> bool:
+    if actual == expected:
+        return True
+    if actual.type != expected.type:
+        return False
+    return expected.index is None and actual.index in (None, 0)
+
+
+def _is_quanto_tensor(tensor) -> bool:
+    module_name = type(tensor).__module__
+    return module_name.startswith("optimum.quanto.") and hasattr(tensor, "_data")
+
+
+def _tensor_on_device(tensor, device: torch.device) -> bool:
+    if not _same_device(tensor.device, device):
+        return False
+    if not _is_quanto_tensor(tensor):
+        return True
+    for attr in ("_data", "_scale", "_shift", "_scale_shift"):
+        value = getattr(tensor, attr, None)
+        if value is None:
+            continue
+        if _is_quanto_tensor(value):
+            if not _tensor_on_device(value, device):
+                return False
+            continue
+        if hasattr(value, "device") and not _same_device(value.device, device):
+            return False
+    return True
+
+
+def _module_has_quanto_tensor(module: nn.Module) -> bool:
+    return any(_is_quanto_tensor(tensor) for tensor in module.parameters()) or any(
+        _is_quanto_tensor(tensor) for tensor in module.buffers()
+    )
+
+
+def _move_quanto_tensor_to_device(tensor, device: torch.device):
+    if not _same_device(tensor.device, device):
+        tensor.data = tensor.data.to(device, non_blocking=True)
+    for attr in ("_data", "_scale", "_shift", "_scale_shift"):
+        value = getattr(tensor, attr, None)
+        if value is None:
+            continue
+        if _is_quanto_tensor(value):
+            _move_quanto_tensor_to_device(value, device)
+            continue
+        if hasattr(value, "device") and not _same_device(value.device, device):
+            setattr(tensor, attr, value.to(device, non_blocking=True))
+
+
+def _move_module_without_swapping_quanto_params(module: nn.Module, device: torch.device):
+    for child in module.children():
+        _move_module_without_swapping_quanto_params(child, device)
+
+    keep_local_trainable_state = device.type == "cpu" and any(
+        param is not None and param.requires_grad for param in module._parameters.values()
+    )
+
+    for key, param in module._parameters.items():
+        if param is None:
+            continue
+        if keep_local_trainable_state and param.requires_grad:
+            continue
+        if _is_quanto_tensor(param):
+            _move_quanto_tensor_to_device(param, device)
+        elif not _same_device(param.device, device):
+            param.data = param.data.to(device, non_blocking=True)
+        if param.grad is not None and not _same_device(param.grad.device, device):
+            param.grad = param.grad.to(device, non_blocking=True)
+
+    for key, buffer in module._buffers.items():
+        if buffer is None:
+            continue
+        if keep_local_trainable_state:
+            continue
+        if _is_quanto_tensor(buffer):
+            _move_quanto_tensor_to_device(buffer, device)
+        elif not _same_device(buffer.device, device):
+            module._buffers[key] = buffer.to(device, non_blocking=True)
 
 
 class MusubiBlockSwapManager:
@@ -120,22 +202,18 @@ class MusubiBlockSwapManager:
             if not self.is_managed_block(idx):
                 continue
 
-            def _make_pre_hook():
+            def _make_pre_hook(owner_block):
                 def _pre_hook(_module, _grad_output):
-                    self.stream_in(_module, compute_device)
+                    self.stream_in(owner_block, compute_device)
                     return None
 
                 return _pre_hook
 
-            def _make_post_hook():
-                def _post_hook(_module, _grad_input, _grad_output):
-                    self.stream_out(_module)
-                    return None
-
-                return _post_hook
-
-            self._backward_hooks.append(block.register_full_backward_pre_hook(_make_pre_hook()))
-            self._backward_hooks.append(block.register_full_backward_hook(_make_post_hook()))
+            # Module-level hooks on the block itself can fire too late for saved
+            # tensors inside child ops, so every descendant streams the owning
+            # block back in before its own backward work begins.
+            for hook_module in block.modules():
+                self._backward_hooks.append(hook_module.register_full_backward_pre_hook(_make_pre_hook(block)))
 
         self._backward_hook_device = compute_device
 
@@ -143,7 +221,10 @@ class MusubiBlockSwapManager:
         if _module_on_device(module, device):
             return
         with torch.no_grad():
-            module.to(device)
+            if _module_has_quanto_tensor(module):
+                _move_module_without_swapping_quanto_params(module, device)
+            else:
+                module.to(device)
 
 
 def apply_musubi_pretrained_defaults(config, pretrained_load_args: dict) -> dict:

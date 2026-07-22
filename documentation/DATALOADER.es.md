@@ -77,6 +77,26 @@ Aquí está el ejemplo más básico de un archivo de configuración del dataload
 - **Descripción:** Número de text embeds que se escriben en una sola operación por batch. Valores más altos pueden mejorar el throughput de escritura pero usan más memoria.
 - **Default:** Usa el argumento `--write_batch_size` del trainer (normalmente 128).
 
+### `text_encoder_batch_size`
+
+- **Solo aplica a `dataset_type=text_embeds`**
+- **Descripción:** Número de captions que se codifican en un solo forward del encoder de texto al precomputar text embeddings no cacheados. Valores más altos pueden mejorar el throughput pero usan más VRAM.
+- **Default:** Usa el argumento `--text_encoder_batch_size` del trainer (predeterminado 1).
+
+### `text_cache_ondemand`
+
+- **Solo aplica a `dataset_type=text_embeds`**
+- **Valores:** `true` | `false`
+- **Descripción:** Omite el cálculo previo completo de embeddings de texto. Las entradas existentes se leen de este caché; los embeddings que falten se codifican durante el entrenamiento o la validación y se escriben en el caché.
+- **Nota:** Cada dataset de imagen o vídeo asignado a este backend `text_embeds` hereda este comportamiento. Para usar otro comportamiento en determinados datasets de origen, crea otro backend `text_embeds` y asígnalo mediante el campo `text_embeds` del dataset de origen.
+
+### `text_cache_disable`
+
+- **Solo aplica a `dataset_type=text_embeds`**
+- **Valores:** `true` | `false`
+- **Descripción:** Lee embeddings de texto existentes, pero no escribe los recién codificados. Las entradas que falten se codifican durante el entrenamiento o la validación, por lo que esta opción implica `text_cache_ondemand`.
+- **Nota:** La opción global `--text_cache_disable` se aplica a todos los cachés de texto. Usa esta opción de backend cuando la opción global sea false y solo ciertos backends `text_embeds` deban evitar escrituras.
+
 ### `text_embeds`
 
 - **Solo aplica a `dataset_type=image`**
@@ -176,8 +196,30 @@ Durante el descubrimiento de metadatos, el loader registra `sample_rate`, `num_s
 
 ### `type`
 
-- **Valores:** `aws` | `local` | `csv` | `huggingface` | `webshart`
-- **Descripción:** Determina el backend de almacenamiento (local, csv o cloud) usado para este dataset.
+- **Valores:** `aws` | `local` | `memory` | `csv` | `huggingface` | `webshart`
+- **Descripción:** Determina el backend de almacenamiento (local, memoria, csv o cloud) usado para este dataset.
+
+### Backends en memoria (tmpfs y RAM disk)
+
+`type: "memory"` usa `MemoryDataBackend`, una subclase de `LocalDataBackend` respaldada por tmpfs en Linux o un RAM disk nativo en macOS. Solo está disponible para entradas de almacenamiento de caché con `dataset_type: "text_embeds"` o `dataset_type: "image_embeds"`; no puede usarse para datasets primarios de imagen, vídeo, audio, conditioning o evaluación. SimpleTuner monta un sistema de archivos vacío separado y copia allí el `cache_dir` configurado cuando ese directorio existe. Las lecturas y escrituras usan la copia residente en memoria y se descartan al liberarla; no se sincronizan con `cache_dir`.
+
+```json
+{
+  "id": "memory-vae-cache",
+  "type": "memory",
+  "dataset_type": "image_embeds",
+  "cache_dir": "/cache/vae",
+  "memory_filesystem_path": "/tmp/simpletuner-memory/vae",
+  "memory_filesystem_size": "512G",
+  "memory_filesystem_sudo": false
+}
+```
+
+- `memory_filesystem_path`: Directorio de montaje vacío opcional. Por defecto se usa `simpletuner-memory/<id del dataset>` dentro del directorio temporal del sistema. Este directorio y `cache_dir` no deben superponerse ni contenerse entre sí.
+- `memory_filesystem_size`: Capacidad del sistema de archivos en memoria, como `512G`. Es opcional en Linux, donde se aplica el valor tmpfs predeterminado y se aceptan porcentajes como `80%`. En macOS es obligatorio y debe ser un tamaño en bytes, no un porcentaje; SimpleTuner lo convierte al número de sectores de 512 bytes requerido por `hdiutil`.
+- `memory_filesystem_sudo`: Solo Linux. Si es `true`, ejecuta `mount` y `umount` mediante `sudo -n`. Déjalo en `false` al ejecutar como root, algo habitual en contenedores. Al habilitarlo, sudo sin contraseña y no interactivo debe estar configurado previamente. Los RAM disks de macOS usan `hdiutil` y `diskutil` sin esta opción.
+
+Los backends de memoria requieren Linux o macOS y suficiente RAM o swap para la caché existente y todos los embeddings escritos durante el entrenamiento. Son útiles para cachés grandes de latentes o embeddings de texto en sistemas con mucha memoria cuando las lecturas repetidas son el cuello de botella. Precargar una caché existente aumenta el tiempo de inicio; usa un `cache_dir` vacío o inexistente para comenzar con una caché vacía.
 
 ### `conditioning_type`
 
@@ -823,11 +865,25 @@ Consulta la sección [Solución de Problemas](#solución-de-problemas-de-dataset
 - Cuando está habilitado, todos los objetos de caché VAE se eliminan del filesystem al final de cada ciclo de repeats del dataset. Esto puede ser intensivo en recursos para datasets grandes, pero combinado con `crop_style=random` y/o `crop_aspect=random` querrás tenerlo habilitado para asegurar que muestreas un rango completo de recortes de cada imagen.
 - De hecho, esta opción está **habilitada por defecto** cuando se usa bucketing aleatorio o recortes aleatorios.
 
+### `vae_cache_ondemand`
+
+- **Valores:** `true` | `false`
+- **Descripción:** Cuando se activa en un dataset, los latentes VAE que falten se codifican durante el entrenamiento y se escriben en la caché VAE de ese dataset en lugar de precalcularse al inicio.
+- **Nota:** La opción global `--vae_cache_ondemand` sigue aplicándose a todos los datasets. Usa esta opción de dataset cuando la opción global sea false y solo ciertos datasets deban codificar latentes VAE bajo demanda.
+
 ### `vae_cache_disable`
 
 - **Valores:** `true` | `false`
-- **Descripción:** Cuando está habilitado (mediante el argumento de línea de comandos `--vae_cache_disable`), esta opción habilita implícitamente el cacheo VAE bajo demanda, pero desactiva la escritura de los embeddings generados a disco. Esto es útil para datasets grandes donde el espacio en disco es una preocupación o escribir no es práctico.
-- **Nota:** Este es un argumento a nivel de trainer, no una opción de configuración por dataset, pero afecta cómo el dataloader interactúa con la caché VAE.
+- **Descripción:** Cuando está habilitado en un dataset, ese dataset codifica latentes VAE bajo demanda y no escribe en disco los latentes generados nuevos. Esto es útil para datasets grandes donde el espacio en disco es una preocupación o escribir no es práctico.
+- **Nota:** La opción global `--vae_cache_disable` sigue aplicándose a todos los datasets. Usa esta opción de dataset para desactivar la escritura de caché VAE solo en datasets seleccionados cuando la opción global es falsa. La forma eliminada `disable_vae_cache` se rechaza; usa `vae_cache_disable`.
+
+### Elegir una estrategia de caché VAE
+
+`vae_cache_ondemand` intercambia tiempo de inicio por trabajo durante el entrenamiento; no es una optimización de VRAM. Elige la estrategia por dataset según la reutilización esperada de la caché y si el VAE puede permanecer disponible durante el entrenamiento:
+
+1. **Dataset extremadamente grande y reutilizable:** Configura `vae_cache_ondemand=true` cuando una pasada completa de precaché retrasaría demasiado el entrenamiento. El entrenamiento comienza sin esperar a todas las imágenes y cada latente que falta se escribe en la caché para reutilizarlo en visitas posteriores.
+2. **Dataset de resolución muy alta:** Deja `vae_cache_ondemand=false` (y mantén falsa la opción global) cuando la codificación VAE podría causar un OOM con el modelo de entrenamiento cargado. El precaché de inicio predeterminado permite descargar el VAE antes del entrenamiento. Ni el modo bajo demanda ni `vae_cache_disable` resuelven esta limitación de memoria, porque ambos requieren codificación VAE durante el entrenamiento. El tiling o slicing del VAE puede reducir el pico de memoria durante el precaché inicial.
+3. **Dataset a escala web con poca reutilización esperada:** Configura `vae_cache_disable=true` cuando el dataset contiene millones o miles de millones de imágenes y es poco probable que la ejecución prevista se acerque a una época. Las imágenes muestreadas se siguen codificando bajo demanda, pero se evitan las escrituras de caché y el crecimiento del almacenamiento cuando la mayoría de los latentes no volverían a leerse. Requiere la misma memoria del VAE durante el entrenamiento que la caché bajo demanda.
 
 ### `skip_file_discovery`
 

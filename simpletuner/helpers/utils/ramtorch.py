@@ -2,7 +2,7 @@ import importlib
 import logging
 from fnmatch import fnmatch
 from functools import lru_cache
-from typing import Iterable, Optional, Sequence
+from typing import Any, Iterable, Optional, Sequence
 
 import torch
 import torch.nn as nn
@@ -18,15 +18,12 @@ def _ramtorch_imports():
     """
     Import RamTorch lazily to avoid hard dependencies when the feature is unused.
     """
-    importlib.import_module("ramtorch")  # noqa: F401
+    importlib.import_module("simpletuner.helpers.ramtorch")  # noqa: F401
 
-    from simpletuner.helpers import ramtorch_workarounds
-
-    ramtorch_workarounds.apply_ramtorch_workarounds()
-    from ramtorch.helpers import replace_linear_with_ramtorch
-    from ramtorch.modules.linear import Linear as RamTorchLinear
-    from ramtorch.zero1 import broadcast_zero_params, create_zero_param_groups
-    from ramtorch.zero2 import setup_grad_sharding_hooks
+    from simpletuner.helpers.ramtorch.modules.linear import Linear as RamTorchLinear
+    from simpletuner.helpers.ramtorch.utils import replace_linear_with_ramtorch
+    from simpletuner.helpers.ramtorch.zero1 import broadcast_zero_params, create_zero_param_groups
+    from simpletuner.helpers.ramtorch.zero2 import setup_grad_sharding_hooks
 
     return {
         "Linear": RamTorchLinear,
@@ -54,8 +51,8 @@ def ensure_available() -> dict:
         return imports
     except ImportError as exc:
         raise ImportError(
-            "RamTorch is required for --ramtorch but is not installed. Install from the RamTorch checkout (e.g. "
-            "`pip install -e ~/src/ramtorch`) or disable --ramtorch."
+            "SimpleTuner's bundled RamTorch implementation could not be imported. "
+            "Reinstall SimpleTuner or disable --ramtorch."
         ) from exc
     except Exception as exc:
         raise ImportError(f"RamTorch import failed: {exc}") from exc
@@ -99,11 +96,62 @@ def _matches_pattern(name: str, module: nn.Module, patterns: Iterable[str]) -> b
     return False
 
 
+def _is_quanto_linear(module: nn.Module) -> bool:
+    return module.__class__.__name__ == "QLinear" and module.__class__.__module__.startswith("optimum.quanto.")
+
+
+def _is_replaceable_linear(module: nn.Module) -> bool:
+    if isinstance(module, nn.Linear):
+        return True
+    return _is_quanto_linear(module) and hasattr(module, "in_features") and hasattr(module, "out_features")
+
+
+def _tensor_uses_subclass_storage(tensor: Any) -> bool:
+    tensor_type = type(tensor)
+    return tensor_type is not torch.Tensor and tensor_type is not nn.Parameter
+
+
+def _cpu_tensor_from_tensor(tensor: torch.Tensor) -> torch.Tensor:
+    return tensor.detach().to("cpu")
+
+
+def _store_tensor_buffer(module: nn.Module, attr_name: str, tensor: torch.Tensor) -> None:
+    if attr_name in module._parameters:
+        del module._parameters[attr_name]
+    if attr_name in module._buffers:
+        del module._buffers[attr_name]
+    module.register_buffer(attr_name, tensor)
+
+
+def _copy_or_assign_parameter(
+    new_layer: nn.Module,
+    attr_name: str,
+    source_tensor: torch.Tensor | None,
+    *,
+    requires_grad: bool,
+) -> None:
+    if source_tensor is None:
+        setattr(new_layer, attr_name, None)
+        return
+
+    target_param = getattr(new_layer, attr_name)
+    if _tensor_uses_subclass_storage(source_tensor):
+        _store_tensor_buffer(new_layer, attr_name, _cpu_tensor_from_tensor(source_tensor))
+    else:
+        with torch.no_grad():
+            target_param.copy_(source_tensor.detach().to("cpu"))
+        target_param.requires_grad = requires_grad
+
+    param = getattr(new_layer, attr_name)
+    if param is not None:
+        setattr(param, "is_ramtorch", True)
+
+
 def _count_eligible_linear_layers(
     module: nn.Module,
     patterns: Optional[list[str]],
     name_prefix: str = "",
-) -> list[tuple[nn.Module, str, nn.Linear, str]]:
+) -> list[tuple[nn.Module, str, nn.Module, str]]:
     """
     Count and collect all Linear layers eligible for replacement.
 
@@ -116,7 +164,7 @@ def _count_eligible_linear_layers(
         for child_name, child in current.named_children():
             qualified_name = f"{prefix}.{child_name}" if prefix else child_name
 
-            if isinstance(child, nn.Linear):
+            if _is_replaceable_linear(child):
                 if patterns is None or _matches_pattern(qualified_name, child, patterns):
                     eligible.append((current, child_name, child, qualified_name))
                 continue
@@ -153,22 +201,11 @@ def replace_linear_layers_with_ramtorch(
 
     imports = ensure_available()
     ramtorch_linear = imports["Linear"]
-    replace_all = imports["replace_all"]
     patterns = normalize_patterns(target_patterns)
     resolved_device = _normalize_device(device)
 
     # Handle percentage: if not specified or 100, replace all
     use_percent = percent is not None and percent < 100
-
-    if patterns is None and not use_percent:
-        # Replace every Linear using RamTorch's helper.
-        num_linear = sum(1 for _, child in module.named_modules() if isinstance(child, nn.Linear))
-        replace_all(module, device=resolved_device)
-        for _, child in module.named_modules():
-            if isinstance(child, ramtorch_linear):
-                for param in child.parameters(recurse=False):
-                    setattr(param, "is_ramtorch", True)
-        return num_linear
 
     # Collect all eligible layers first (needed for percentage calculation)
     eligible = _count_eligible_linear_layers(module, patterns, name_prefix)
@@ -195,27 +232,30 @@ def replace_linear_layers_with_ramtorch(
         if isinstance(child, ramtorch_linear):
             continue
 
+        child_bias = getattr(child, "bias", None)
+        child_weight = getattr(child, "weight")
         new_layer = ramtorch_linear(
-            child.in_features,
-            child.out_features,
-            bias=child.bias is not None,
+            int(child.in_features),
+            int(child.out_features),
+            bias=child_bias is not None,
             device=resolved_device,
-            dtype=child.weight.dtype,
+            dtype=child_weight.dtype,
             skip_init=True,
         )
         new_layer.train(child.training)
 
-        with torch.no_grad():
-            new_layer.weight.copy_(child.weight.detach().to("cpu"))
-            if child.bias is not None and new_layer.bias is not None:
-                new_layer.bias.copy_(child.bias.detach().to("cpu"))
-
-        new_layer.weight.requires_grad = child.weight.requires_grad
-        if new_layer.bias is not None and child.bias is not None:
-            new_layer.bias.requires_grad = child.bias.requires_grad
-        setattr(new_layer.weight, "is_ramtorch", True)
-        if new_layer.bias is not None:
-            setattr(new_layer.bias, "is_ramtorch", True)
+        _copy_or_assign_parameter(
+            new_layer,
+            "weight",
+            child_weight,
+            requires_grad=bool(getattr(child_weight, "requires_grad", False)),
+        )
+        _copy_or_assign_parameter(
+            new_layer,
+            "bias",
+            child_bias,
+            requires_grad=bool(getattr(child_bias, "requires_grad", False)),
+        )
 
         setattr(parent, child_name, new_layer)
         replaced += 1
@@ -303,7 +343,8 @@ def register_lora_custom_module(lora_config) -> bool:
     try:
         import torch
         from peft.tuners.lora.layer import Linear as PeftLinear
-        from ramtorch.modules.linear import Linear as RamTorchLinear
+
+        from simpletuner.helpers.ramtorch.modules.linear import Linear as RamTorchLinear
     except Exception:
         return False
 
@@ -417,7 +458,8 @@ def _maybe_patch_peft_lora_config() -> bool:
             try:
                 register_lora_custom_module(config)
                 from peft.tuners.lora.layer import Linear as PeftLinear
-                from ramtorch.modules.linear import Linear as RamTorchLinear
+
+                from simpletuner.helpers.ramtorch.modules.linear import Linear as RamTorchLinear
 
                 custom_modules = getattr(config, "_custom_modules", None)
                 if not isinstance(custom_modules, dict):
@@ -476,7 +518,8 @@ def _maybe_patch_peft_lora_model() -> bool:
         from peft.tuners.lora.layer import Linear as PeftLinear
         from peft.tuners.lora.model import LoraModel
         from peft.tuners.tuners_utils import BaseTuner, BaseTunerLayer
-        from ramtorch.modules.linear import Linear as RamTorchLinear
+
+        from simpletuner.helpers.ramtorch.modules.linear import Linear as RamTorchLinear
     except Exception:
         return False
 
@@ -689,6 +732,8 @@ def move_embeddings_to_device(module: nn.Module, device: object) -> int:
     for name, child in module.named_modules():
         # Move buffers from all modules (e.g., position_ids in CLIPTextEmbeddings)
         for buf_name, buf in child.named_buffers(recurse=False):
+            if getattr(buf, "is_ramtorch", False):
+                continue
             if buf.device.type == "cpu":
                 child.register_buffer(buf_name, buf.to(device))
 
@@ -722,6 +767,7 @@ def mark_ddp_ignore_params(module: nn.Module) -> int:
         Number of parameters added to the ignore list.
     """
     ramtorch_names = [name for name, param in module.named_parameters() if getattr(param, "is_ramtorch", False)]
+    ramtorch_names.extend(name for name, buffer in module.named_buffers() if getattr(buffer, "is_ramtorch", False))
     if not ramtorch_names:
         device_types = {param.device.type for _, param in module.named_parameters() if param.device is not None}
         if "cuda" in device_types and "cpu" in device_types:

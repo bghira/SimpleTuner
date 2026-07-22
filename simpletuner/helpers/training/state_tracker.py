@@ -1,4 +1,5 @@
 import fcntl
+import hashlib
 import json
 import logging
 import os
@@ -20,6 +21,9 @@ filename_mapping = {
     "all_distillation_cache_files": "distillation_cache",
     "all_caption_files": "caption",
 }
+
+RAMTORCH_PREFETCH_ORDERS_FILENAME = "ramtorch_prefetch_orders.json"
+RAMTORCH_PREFETCH_TERMINAL = "__terminal__"
 
 
 class StateTracker:
@@ -83,6 +87,12 @@ class StateTracker:
     # Snapshot paths for models loaded from HuggingFace cache (for delete_model_after_load)
     # Keys: "transformer", "unet", "vae", "text_encoder_0", "text_encoder_1", etc.
     _model_snapshot_paths: dict = {}
+
+    # Learned RamTorch forward successor order, keyed by model component and
+    # qualified module name. This is optimization state; checkpoint save hooks
+    # persist it beside training_state.json when RamTorch is active.
+    ramtorch_prefetch_orders: dict = {"version": 1, "components": {}}
+    _ramtorch_prefetch_orders_loaded = False
 
     @classmethod
     def delete_cache_files(cls, data_backend_id: str = None, preserve_data_backend_cache=False):
@@ -327,6 +337,184 @@ class StateTracker:
             "exhausted_backends": cls.exhausted_backends,
             "repeats": cls.repeats,
         }
+
+    @classmethod
+    def _ramtorch_prefetch_order_path(cls, directory: str | Path | None = None) -> Path | None:
+        if directory is None:
+            output_dir = getattr(cls.args, "output_dir", None) if cls.args is not None else None
+            if not output_dir:
+                return None
+            directory = output_dir
+        path = Path(directory)
+        if path.suffix == ".json":
+            return path
+        return path / RAMTORCH_PREFETCH_ORDERS_FILENAME
+
+    @classmethod
+    def reset_ramtorch_prefetch_orders(cls):
+        cls.ramtorch_prefetch_orders = {"version": 1, "components": {}}
+        cls._ramtorch_prefetch_orders_loaded = False
+
+    @classmethod
+    def _normalise_ramtorch_prefetch_orders(cls, data: dict | None) -> dict:
+        if not isinstance(data, dict):
+            return {"version": 1, "components": {}}
+        components = data.get("components")
+        if not isinstance(components, dict):
+            components = {}
+        normalised = {"version": 1, "components": components}
+        for component in normalised["components"].values():
+            if not isinstance(component, dict):
+                continue
+            component.setdefault("transitions", {})
+            component.setdefault("successors", {})
+            component.setdefault("disabled", {})
+            component.setdefault("observations", 0)
+        return normalised
+
+    @classmethod
+    def load_ramtorch_prefetch_orders(cls, directory: str | Path | None = None) -> dict:
+        path = cls._ramtorch_prefetch_order_path(directory)
+        if path is None or not path.exists():
+            cls.ramtorch_prefetch_orders = cls._normalise_ramtorch_prefetch_orders(cls.ramtorch_prefetch_orders)
+            cls._ramtorch_prefetch_orders_loaded = True
+            return cls.ramtorch_prefetch_orders
+        try:
+            with path.open("r") as handle:
+                fcntl.flock(handle, fcntl.LOCK_SH)
+                try:
+                    data = json.load(handle)
+                finally:
+                    fcntl.flock(handle, fcntl.LOCK_UN)
+        except Exception as e:
+            logger.warning(f"Unable to load RamTorch prefetch order state from {path}: {e}")
+            data = None
+        cls.ramtorch_prefetch_orders = cls._normalise_ramtorch_prefetch_orders(data)
+        cls._ramtorch_prefetch_orders_loaded = True
+        return cls.ramtorch_prefetch_orders
+
+    @classmethod
+    def ensure_ramtorch_prefetch_orders_loaded(cls):
+        if not cls._ramtorch_prefetch_orders_loaded:
+            cls.load_ramtorch_prefetch_orders()
+
+    @classmethod
+    def save_ramtorch_prefetch_orders(cls, directory: str | Path | None = None) -> None:
+        path = cls._ramtorch_prefetch_order_path(directory)
+        if path is None:
+            return
+        data = cls._normalise_ramtorch_prefetch_orders(cls.ramtorch_prefetch_orders)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = path.with_suffix(f"{path.suffix}.tmp")
+        with temp_path.open("w") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                json.dump(data, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+        temp_path.replace(path)
+
+    @classmethod
+    def get_ramtorch_prefetch_component(cls, component_key: str) -> dict:
+        cls.ensure_ramtorch_prefetch_orders_loaded()
+        state = cls._normalise_ramtorch_prefetch_orders(cls.ramtorch_prefetch_orders)
+        cls.ramtorch_prefetch_orders = state
+        components = state.setdefault("components", {})
+        return components.setdefault(
+            str(component_key),
+            {
+                "transitions": {},
+                "successors": {},
+                "disabled": {},
+                "observations": 0,
+            },
+        )
+
+    @classmethod
+    def configure_ramtorch_prefetch_component(cls, component_key: str, module_ids: list[str]) -> None:
+        component = cls.get_ramtorch_prefetch_component(component_key)
+        module_ids = [str(module_id) for module_id in module_ids]
+        order_hash = hashlib.sha256("\n".join(module_ids).encode("utf-8")).hexdigest()
+        previous_hash = component.get("module_order_hash")
+        if previous_hash and previous_hash != order_hash:
+            component["transitions"] = {}
+            component["successors"] = {}
+            component["disabled"] = {}
+            component["observations"] = 0
+        component["module_order_hash"] = order_hash
+        component["module_count"] = len(module_ids)
+        component["module_order_version"] = 1
+
+    @classmethod
+    def get_ramtorch_prefetch_successor(cls, component_key: str, module_id: str) -> str | None:
+        component = cls.get_ramtorch_prefetch_component(component_key)
+        if str(module_id) in component.get("disabled", {}):
+            return None
+        successor = component.get("successors", {}).get(str(module_id))
+        return successor if isinstance(successor, str) and successor else None
+
+    @classmethod
+    def ramtorch_prefetch_disabled(cls, component_key: str, module_id: str) -> bool:
+        component = cls.get_ramtorch_prefetch_component(component_key)
+        return str(module_id) in component.get("disabled", {})
+
+    @classmethod
+    def record_ramtorch_prefetch_transition(
+        cls,
+        component_key: str,
+        previous_module_id: str,
+        actual_module_id: str | None,
+        *,
+        min_observations: int = 3,
+        min_confidence: float = 0.80,
+    ) -> bool:
+        component = cls.get_ramtorch_prefetch_component(component_key)
+        previous_module_id = str(previous_module_id)
+        actual_key = str(actual_module_id) if actual_module_id else RAMTORCH_PREFETCH_TERMINAL
+
+        transitions = component.setdefault("transitions", {})
+        successor_counts = transitions.setdefault(previous_module_id, {})
+        successor_counts[actual_key] = int(successor_counts.get(actual_key, 0)) + 1
+        component["observations"] = int(component.get("observations", 0)) + 1
+        component["updated_at_unix"] = time.time()
+
+        total = sum(int(value) for value in successor_counts.values())
+        best_key, best_count = max(successor_counts.items(), key=lambda item: int(item[1]))
+        confidence = best_count / total if total else 0.0
+
+        successors = component.setdefault("successors", {})
+        disabled = component.setdefault("disabled", {})
+        old_successor = successors.get(previous_module_id)
+        old_disabled = disabled.get(previous_module_id)
+
+        if total < max(int(min_observations), 1):
+            return False
+
+        changed = False
+        if confidence < float(min_confidence):
+            successors.pop(previous_module_id, None)
+            disabled[previous_module_id] = {
+                "reason": "ambiguous",
+                "best": best_key,
+                "confidence": confidence,
+                "observations": total,
+            }
+            changed = old_successor is not None or old_disabled != disabled[previous_module_id]
+        elif best_key == RAMTORCH_PREFETCH_TERMINAL:
+            successors.pop(previous_module_id, None)
+            disabled[previous_module_id] = {
+                "reason": "terminal",
+                "confidence": confidence,
+                "observations": total,
+            }
+            changed = old_successor is not None or old_disabled != disabled[previous_module_id]
+        else:
+            disabled.pop(previous_module_id, None)
+            successors[previous_module_id] = best_key
+            changed = old_successor != best_key or old_disabled is not None
+
+        return changed
 
     @classmethod
     def set_repeats(cls, repeats: int, data_backend_id: str = None):
@@ -756,6 +944,24 @@ class StateTracker:
     @classmethod
     def get_vaecache(cls, id: str):
         return cls.data_backends[id].get("vaecache", None)
+
+    @classmethod
+    def any_vae_cache_uses_ondemand(cls) -> bool:
+        for data_backend in cls.data_backends.values():
+            vae_cache = data_backend.get("vaecache") if isinstance(data_backend, dict) else None
+            if vae_cache is not None and getattr(vae_cache, "vae_cache_ondemand", False):
+                return True
+        return False
+
+    @classmethod
+    def any_text_cache_uses_ondemand(cls) -> bool:
+        caches = [
+            data_backend.get("text_embed_cache")
+            for data_backend in cls.data_backends.values()
+            if isinstance(data_backend, dict)
+        ]
+        caches.append(cls.default_text_embed_cache)
+        return any(cache is not None and getattr(cache, "text_cache_ondemand", False) for cache in caches)
 
     @classmethod
     def set_default_text_embed_cache(cls, default_text_embed_cache):
