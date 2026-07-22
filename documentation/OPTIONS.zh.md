@@ -94,6 +94,22 @@ simpletuner configure config/foo/config.json
 - **行为**：仍会读取已有缓存条目，并写入新编码的缺失条目。文本编码器会保持加载，因为启动后仍需要使用。
 - **数据加载器覆盖**：`text_embeds` 后端可通过 `"text_cache_ondemand": true` 独立启用。
 
+### `--cosmos3_reasoner_component`
+
+- **内容**：Cosmos3 冻结 reasoner 组件的 Hugging Face repo id 或本地路径。
+- **默认值**：`auto`
+- **用途**：Cosmos3 文本缓存使用此组件写入逐层 reasoner K/V 条目。
+- **自动选项**：`SimpleTuner/cosmos3-component-reasoning-layers-bf16-edge`、`SimpleTuner/cosmos3-component-reasoning-layers-bf16-nano`、`SimpleTuner/cosmos3-component-reasoning-layers-bf16-super`、`SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-i2v`、`SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-t2i`。
+- **说明**：Cosmos3 会强制使用按需文本缓存，因为 reasoner 缓存键包含样本几何信息。
+
+### `--cosmos3_generator_component`
+
+- **内容**：Cosmos3 仅生成 transformer 组件的 Hugging Face repo id 或本地路径。
+- **默认值**：`auto`
+- **用途**：`auto` 会选择匹配的 Edge、Nano、Super、Super-I2V 或 Super-T2I 组件。
+- **自动选项**：`SimpleTuner/cosmos3-component-generation-layers-bf16-edge`、`SimpleTuner/cosmos3-component-generation-layers-bf16-nano`、`SimpleTuner/cosmos3-component-generation-layers-bf16-super`、`SimpleTuner/cosmos3-component-generation-layers-bf16-super-i2v`、`SimpleTuner/cosmos3-component-generation-layers-bf16-super-t2i`。
+- **说明**：该组件省略 transformer 内部的 reasoner 权重，并需要 reasoner K/V 条目。
+
 ### `--text_cache_disable`
 
 - **内容**：禁止所有文本嵌入缓存写入，同时保留对已有条目的读取。

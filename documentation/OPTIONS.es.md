@@ -94,6 +94,22 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 - **Comportamiento**: Las entradas existentes se siguen leyendo y los fallos recién codificados se escriben. Los codificadores de texto permanecen cargados porque se necesitan después del arranque.
 - **Configuración del dataloader**: Un backend `text_embeds` puede activarlo de forma independiente con `"text_cache_ondemand": true`.
 
+### `--cosmos3_reasoner_component`
+
+- **Qué**: Repo de Hugging Face o ruta local para el componente reasoner congelado de Cosmos3.
+- **Predeterminado**: `auto`
+- **Uso**: El cache de texto de Cosmos3 usa este componente para escribir entradas K/V por capa del reasoner.
+- **Opciones automáticas**: `SimpleTuner/cosmos3-component-reasoning-layers-bf16-edge`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-nano`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-i2v`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-t2i`.
+- **Nota**: Cosmos3 fuerza cache de texto bajo demanda porque las claves del cache del reasoner incluyen geometría de muestra.
+
+### `--cosmos3_generator_component`
+
+- **Qué**: Repo de Hugging Face o ruta local para el componente transformer de solo generación de Cosmos3.
+- **Predeterminado**: `auto`
+- **Uso**: `auto` selecciona el componente Edge, Nano, Super, Super-I2V o Super-T2I correspondiente.
+- **Opciones automáticas**: `SimpleTuner/cosmos3-component-generation-layers-bf16-edge`, `SimpleTuner/cosmos3-component-generation-layers-bf16-nano`, `SimpleTuner/cosmos3-component-generation-layers-bf16-super`, `SimpleTuner/cosmos3-component-generation-layers-bf16-super-i2v`, `SimpleTuner/cosmos3-component-generation-layers-bf16-super-t2i`.
+- **Nota**: El componente omite los pesos del reasoner dentro del transformer y requiere entradas K/V del reasoner.
+
 ### `--text_cache_disable`
 
 - **Qué**: Desactiva las escrituras en todos los cachés de embeddings de texto, pero conserva la lectura de entradas existentes.

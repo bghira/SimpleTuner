@@ -30,6 +30,7 @@ Para a matriz completa e mais precisa de recursos, consulte o [README principal]
 | Stable Diffusion XL | 2.6B | ✓ | ✓ | ✓ | não recomendado | bf16 | ✓ | ✗ | ✗ | ✗ | ✓ | ✗ | ✓ | ✓ | [SDXL.md](quickstart/SDXL.md) |
 | Lumina2 | 2B | ✓ | ✓ | ✓ | int8 opcional | bf16 | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ✓ | [LUMINA2.md](quickstart/LUMINA2.md) |
 | Cosmos2 | 2B | ✓ | ✓ | ✓ | não recomendado | bf16 | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ | ✓ | [COSMOS2IMAGE.md](quickstart/COSMOS2IMAGE.md) |
+| Cosmos3 | 16B-65B | ✓ | ✓ | ✓* | no_change primeiro | bf16 | ✓ | ✓ | ✗ | ✗ | ✗ | audio opt | ✗ | ✓ | [COSMOS3.md](quickstart/COSMOS3.pt-BR.md) |
 | LTX Video | ~2.5B | ✓ | ✓ | ✓ | int8/fp8 opcional | bf16 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ I2V | ✗ | ✓ | [LTXVIDEO.md](quickstart/LTXVIDEO.md) |
 | LTX Video 2 | 19B | ✓ | ✓ | ✓* | int8/fp8 opcional | bf16 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ opt | ✗ | ✓ | [LTXVIDEO2.md](quickstart/LTXVIDEO2.md) |
 | Hunyuan Video 1.5 | 8.3B | ✓ | ✓ | ✓* | int8 opcional | bf16 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ I2V | ✗ | ✓ | [HUNYUANVIDEO.md](quickstart/HUNYUANVIDEO.md) |
