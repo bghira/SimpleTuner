@@ -14,7 +14,7 @@
     "ideogram_schedule_mu": 0.0,
     "ideogram_schedule_std": 1.5,
     "ideogram_validation": true,
-    "ignore_final_epochs": true,
+    "strict_epoch_limit": false,
     "learning_rate": 1e-4,
     "lora_rank": 32,
     "lora_type": "standard",

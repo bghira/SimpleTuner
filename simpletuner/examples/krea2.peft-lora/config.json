@@ -13,7 +13,7 @@
     "fuse_qkv_projections": true,
     "gradient_checkpointing": true,
     "hub_model_id": "simpletuner-example-krea2-peft-lora",
-    "ignore_final_epochs": true,
+    "strict_epoch_limit": false,
     "learning_rate": 1e-4,
     "lora_rank": 64,
     "lora_type": "standard",

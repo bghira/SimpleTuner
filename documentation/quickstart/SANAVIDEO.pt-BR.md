@@ -159,7 +159,7 @@ Ao final, seu config deve se parecer com:
   "delete_problematic_images": "true",
   "framerate": 16,
   "validation_prompt_library": false,
-  "ignore_final_epochs": true
+  "strict_epoch_limit": false
 }
 ```
 </details>
