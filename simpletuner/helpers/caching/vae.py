@@ -233,6 +233,8 @@ class VAECache(WebhookMixin):
         self.vae_input_queue = Queue()
         self._local_unprocessed_files_set_source = None
         self._local_unprocessed_files_set = None
+        self._vae_cache_written_count = 0
+        self._vae_cache_written_lock = threading.Lock()
 
         # Initialize batch processing helper
         self.batch_processor = BatchedTrainingSamples()
@@ -1400,6 +1402,8 @@ class VAECache(WebhookMixin):
 
         if not self.vae_cache_disable:
             self.cache_data_backend.write_batch(filepaths, latents)
+            with self._vae_cache_written_lock:
+                self._vae_cache_written_count += len(filepaths)
 
         return latents
 
@@ -2009,6 +2013,8 @@ class VAECache(WebhookMixin):
                     }
                     last_reported_index = 0
                     local_unprocessed_files = self._local_unprocessed_file_set()
+                    with self._vae_cache_written_lock:
+                        written_before_bucket = self._vae_cache_written_count
 
                     for raw_filepath in tqdm(
                         relevant_files,
@@ -2045,7 +2051,6 @@ class VAECache(WebhookMixin):
                                 futures.append(future_to_process)
 
                             if self.vae_input_queue.qsize() >= self.vae_batch_size:
-                                statistics["cached"] += 1
                                 future_to_process = executor.submit(self._encode_images_in_batch)
                                 futures.append(future_to_process)
                                 if self.webhook_handler is not None:
@@ -2106,6 +2111,8 @@ class VAECache(WebhookMixin):
                             futures.append(future_to_write)
 
                         futures = self._process_futures(futures, executor)
+                        with self._vae_cache_written_lock:
+                            statistics["cached"] += max(0, self._vae_cache_written_count - written_before_bucket)
                         log_msg = f"(id={self.id}) Bucket {bucket} caching results: {statistics}"
                         if get_rank() == 0:
                             logger.debug(log_msg)
@@ -2128,6 +2135,15 @@ class VAECache(WebhookMixin):
         # Send completion event for VAE cache initialization
         self._finalize_deferred_metadata_filters()
         self._write_nsfw_scan_report()
+        if self.accelerator.is_local_main_process:
+            StateTracker.set_vae_cache_files(
+                self.cache_data_backend.list_files(
+                    instance_data_dir=self.cache_dir,
+                    file_extensions=["pt"],
+                ),
+                data_backend_id=self.id,
+            )
+        self.accelerator.wait_for_everyone()
         if self.webhook_handler is not None:
             event = lifecycle_stage_event(
                 key="init_vae_cache",
