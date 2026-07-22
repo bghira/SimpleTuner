@@ -51,6 +51,27 @@ class MusubiBlockSwapTests(unittest.TestCase):
             self.assertEqual(qlinear.weight._data.device.type, "cpu")
             self.assertEqual(qlinear.weight._scale.device.type, "cpu")
 
+    def test_stream_out_keeps_trainable_params_on_accelerator(self):
+        device = self._accelerator_device()
+        block = nn.Sequential(nn.Linear(4, 4), nn.SiLU(), nn.Linear(4, 4))
+        for param in block.parameters():
+            param.requires_grad_(False)
+        block.register_parameter("adapter_weight", nn.Parameter(torch.ones(4, device=device)))
+        block.register_buffer("adapter_scalar", torch.ones((), device=device))
+        block.to(device)
+
+        manager = MusubiBlockSwapManager(
+            block_indices=[0],
+            offload_device=torch.device("cpu"),
+            logger=logging.getLogger(__name__),
+        )
+
+        manager.stream_out(block)
+
+        self.assertEqual(block.adapter_weight.device.type, device.type)
+        self.assertEqual(block.adapter_scalar.device.type, device.type)
+        self.assertEqual(block[0].weight.device.type, "cpu")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,5 @@
 import logging
+import os
 
 import optimum
 import torch
@@ -8,6 +9,43 @@ from optimum.quanto.tensor.weights.qbits import WeightQBitsTensor
 from optimum.quanto.tensor.weights.qbytes import WeightQBytesTensor
 
 _quanto_workarounds_logger = logging.getLogger("simpletuner.quanto_workarounds")
+_QUANTO_DEBUG_DEVICES = os.environ.get("SIMPLETUNER_QUANTO_DEBUG_DEVICES") == "1"
+
+
+def _device_summary(tensor):
+    if tensor is None:
+        return "None"
+    parts = [type(tensor).__name__]
+    device = getattr(tensor, "device", None)
+    if device is not None:
+        parts.append(f"device={device}")
+    dtype = getattr(tensor, "dtype", None)
+    if dtype is not None:
+        parts.append(f"dtype={dtype}")
+    for attr in ("_data", "_scale", "_shift", "_scale_shift"):
+        value = getattr(tensor, attr, None)
+        value_device = getattr(value, "device", None)
+        if value_device is not None:
+            parts.append(f"{attr}.device={value_device}")
+    return " ".join(parts)
+
+
+def _debug_devices(label, *tensors):
+    if not _QUANTO_DEBUG_DEVICES:
+        return
+    summaries = "; ".join(_device_summary(tensor) for tensor in tensors)
+    _quanto_workarounds_logger.warning("Quanto device debug %s: %s", label, summaries)
+
+
+def _same_device(actual: torch.device, expected: torch.device) -> bool:
+    actual = torch.device(actual)
+    expected = torch.device(expected)
+    if actual == expected:
+        return True
+    if actual.type != expected.type:
+        return False
+    return expected.index is None and actual.index in (None, 0)
+
 
 # ============================================================================
 # PyTorch cpp_extension fix for ROCm/HIP on systems where ROCM_HOME=/usr
@@ -157,19 +195,36 @@ _quanto_native_failed = False
 
 def _move_qbits_tensor_to_device(tensor, device):
     """Move a WeightQBitsTensor's internal components to the specified device."""
+    device = torch.device(device)
     if not hasattr(tensor, "_data"):
         return tensor
 
-    if tensor._data.device != device:
+    if not _same_device(tensor._data.device, device):
         tensor._data = tensor._data.to(device, non_blocking=True)
-    if hasattr(tensor, "_scale") and tensor._scale is not None and tensor._scale.device != device:
+    if hasattr(tensor, "_scale") and tensor._scale is not None and not _same_device(tensor._scale.device, device):
         tensor._scale = tensor._scale.to(device, non_blocking=True)
-    if hasattr(tensor, "_shift") and tensor._shift is not None and tensor._shift.device != device:
+    if hasattr(tensor, "_shift") and tensor._shift is not None and not _same_device(tensor._shift.device, device):
         tensor._shift = tensor._shift.to(device, non_blocking=True)
-    if hasattr(tensor, "_scale_shift") and tensor._scale_shift is not None and tensor._scale_shift.device != device:
+    if (
+        hasattr(tensor, "_scale_shift")
+        and tensor._scale_shift is not None
+        and not _same_device(tensor._scale_shift.device, device)
+    ):
         tensor._scale_shift = tensor._scale_shift.to(device, non_blocking=True)
 
     return tensor
+
+
+def _move_quantized_tensor_to_device(tensor, device):
+    """Move a Quanto tensor object and its backing tensors to the target device."""
+    device = torch.device(device)
+    tensor_device = getattr(tensor, "device", None)
+    if tensor_device is not None and not _same_device(tensor_device, device):
+        try:
+            tensor = tensor.to(device=device, non_blocking=True)
+        except TypeError:
+            tensor = tensor.to(device)
+    return _move_qbits_tensor_to_device(tensor, device)
 
 
 def _dequantize_fallback_forward(ctx, input, other, bias, input_device):
@@ -201,6 +256,7 @@ def _device_aware_qlf_forward(ctx, input, other, bias=None):
     """
     global _quanto_native_failed
 
+    _debug_devices("qlf_forward.enter", input, other, bias)
     input_device = input.device if hasattr(input, "device") else None
 
     if input_device is not None and hasattr(other, "_data"):
@@ -214,7 +270,7 @@ def _device_aware_qlf_forward(ctx, input, other, bias=None):
 
             # Try native path first: move quantized tensor to GPU
             try:
-                _move_qbits_tensor_to_device(other, input_device)
+                other = _move_quantized_tensor_to_device(other, input_device)
                 return _original_qlf_forward(ctx, input, other, bias)
             except Exception as e:
                 # Native path failed - likely HIP/CUDA extension compilation error
@@ -227,7 +283,7 @@ def _device_aware_qlf_forward(ctx, input, other, bias=None):
 
                 # Move tensors back to CPU to avoid partial state
                 try:
-                    _move_qbits_tensor_to_device(other, other_device)
+                    other = _move_quantized_tensor_to_device(other, other_device)
                 except Exception:
                     pass
 
@@ -243,20 +299,42 @@ def reshape_qlf_backward(ctx, gO):
     # another one where we need .reshape instead of .view
     input_gO = other_gO = bias_gO = None
     input, other = ctx.saved_tensors
+    _debug_devices("qlf_backward.enter", gO, input, other)
     out_features, in_features = other.shape
     if ctx.needs_input_grad[0]:
         # grad(A@(B.t()) = gO => grad(A) = gO@(B.t().t()) = gO@B
-        input_gO = torch.matmul(gO, other)
+        if hasattr(other, "_data"):
+            other = _move_quantized_tensor_to_device(other, gO.device)
+        other_for_grad = other.dequantize() if hasattr(other, "dequantize") else other
+        other_for_grad = other_for_grad.to(device=gO.device, dtype=gO.dtype, non_blocking=True)
+        _debug_devices("qlf_backward.input_grad", gO, other, other_for_grad)
+        try:
+            input_gO = torch.matmul(gO, other_for_grad)
+        except RuntimeError:
+            _debug_devices("qlf_backward.input_grad_failed", gO, other, other_for_grad)
+            raise
     if ctx.needs_input_grad[1]:
         # grad(B@A.t()) = gO.t() => grad(B) = gO.t()@(A.t().t()) = gO.t()@A
-        other_gO = torch.matmul(
-            gO.reshape(-1, out_features).t(),
-            input.to(gO.dtype).reshape(-1, in_features),
-        )
+        if hasattr(input, "_data"):
+            input = _move_quantized_tensor_to_device(input, gO.device)
+        input_for_grad = input.to(device=gO.device, dtype=gO.dtype, non_blocking=True)
+        _debug_devices("qlf_backward.weight_grad", gO, input_for_grad)
+        try:
+            other_gO = torch.matmul(
+                gO.reshape(-1, out_features).t(),
+                input_for_grad.reshape(-1, in_features),
+            )
+        except RuntimeError:
+            _debug_devices("qlf_backward.weight_grad_failed", gO, input_for_grad)
+            raise
     if ctx.needs_input_grad[2]:
         # Bias gradient is the sum on all dimensions but the last one
         dim = tuple(range(gO.ndim - 1))
-        bias_gO = gO.sum(dim)
+        try:
+            bias_gO = gO.sum(dim)
+        except RuntimeError:
+            _debug_devices("qlf_backward.bias_grad_failed", gO)
+            raise
     return input_gO, other_gO, bias_gO
 
 
