@@ -2551,8 +2551,19 @@ class FactoryRegistry:
                 StateTracker.set_default_text_embed_cache(init_backend["text_embed_cache"])
                 logger.debug(f"Set the default text embed cache to {init_backend['id']}.")
 
+                should_precompute_dropout = getattr(self.args, "caption_dropout_probability", 0.1) > 0.0
+                should_precompute_dropout = (
+                    should_precompute_dropout
+                    and getattr(
+                        self.model,
+                        "should_precompute_dropout_caption",
+                        lambda: True,
+                    )()
+                )
                 if text_cache_ondemand:
                     info_log("Skipping null embedding pre-computation for on-demand text cache.")
+                elif not should_precompute_dropout:
+                    info_log("Skipping null embedding pre-computation because caption dropout is disabled.")
                 else:
                     info_log("Pre-computing null embedding")
                 logger.debug(f"rank {get_rank()} may skip computing the embedding..")
@@ -2562,7 +2573,7 @@ class FactoryRegistry:
                     else nullcontext()
                 )
                 with main_process_context:
-                    if not text_cache_ondemand:
+                    if not text_cache_ondemand and should_precompute_dropout:
                         logger.debug(f"rank {get_rank()} is computing the null embed")
                         init_backend["text_embed_cache"].encode_dropout_caption()
                         logger.debug(f"rank {get_rank()} has completed computing the null embed")
@@ -3691,12 +3702,26 @@ class FactoryRegistry:
                     "prompt": caption,
                     "dataset_relative_path": normalized_identifier,
                 }
+                metadata_builder = getattr(self.model, "text_embed_cache_metadata_for_filepath", None)
+                if callable(metadata_builder):
+                    metadata.update(
+                        metadata_builder(
+                            init_backend=init_backend,
+                            image_path=image_path_str,
+                            prompt=caption,
+                            data_backend_id=dataset_id,
+                            dataset_relative_path=normalized_identifier,
+                        )
+                    )
                 if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME:
                     key_value = f"{dataset_id}:{normalized_identifier}"
                 elif key_type is TextEmbedCacheKey.FILENAME:
                     key_value = normalize_data_path(image_path_str, None)
                 else:
                     key_value = caption
+                key_builder = getattr(self.model, "text_embed_cache_key_value", None)
+                if callable(key_builder):
+                    key_value = key_builder(prompt=caption, default_key=key_value, metadata=metadata)
                 prompt_records.append({"prompt": caption, "key": key_value, "metadata": metadata})
 
             # Add entity label records for images with grounding annotations
@@ -4503,7 +4528,12 @@ class FactoryRegistry:
 
         self._create_dataset_and_sampler(backend, init_backend, conditioning_type)
 
-        self._process_text_embeddings(backend, init_backend, conditioning_type)
+        text_precompute_cleanup = getattr(self.model, "after_text_embed_cache_precompute", None)
+        try:
+            self._process_text_embeddings(backend, init_backend, conditioning_type)
+        finally:
+            if callable(text_precompute_cleanup):
+                text_precompute_cleanup()
 
         if backend.get("auto_generated", False):
             self._handle_auto_generated_dataset(backend, init_backend)
@@ -4555,7 +4585,6 @@ class FactoryRegistry:
             logger.debug(f"Encoding images during training: {init_backend['vaecache'].vae_cache_ondemand}")
             if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
-
         move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
         init_backend_debug_info = {
             k: v for k, v in init_backend.items() if isinstance(v, Union[list, int, float, str, dict, tuple])

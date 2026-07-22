@@ -557,6 +557,13 @@ class ModelFoundation(ABC):
         """
         return embeddings
 
+    def slice_text_embedding_for_cache(self, text_encoder_output: dict, batch_index: int, batch_size: int):
+        """
+        Optional hook for models whose text cache payload cannot be sliced by the generic tensor batch slicer.
+        Return None to use the generic slicer.
+        """
+        return None
+
     def load_validation_models(self, pipeline=None, pipeline_type=None) -> None:
         """
         Optional hook for models to lazily load validation-only components.
@@ -1530,6 +1537,12 @@ class ModelFoundation(ABC):
         Override to False for models that do not use text encoder embeddings.
         """
         return bool(getattr(self, "TEXT_ENCODER_CONFIGURATION", None))
+
+    def use_text_cache_dropout_sentinel(self) -> bool:
+        """
+        Return False when empty prompts still need per-sample text cache keys.
+        """
+        return True
 
     def uses_noise_schedule(self) -> bool:
         """

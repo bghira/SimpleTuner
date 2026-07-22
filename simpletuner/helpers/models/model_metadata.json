@@ -71,6 +71,19 @@
         "name": "Cosmos (T2I)",
         "prediction_type": "sample"
     },
+    "cosmos3": {
+        "class_name": "Cosmos3Image",
+        "flavour_choices": [
+            "edge",
+            "nano",
+            "super",
+            "super-i2v",
+            "super-t2i"
+        ],
+        "module_path": "simpletuner.helpers.models.cosmos3.model",
+        "name": "Cosmos3 (T2I)",
+        "prediction_type": "flow_matching"
+    },
     "deepfloyd": {
         "class_name": "DeepFloydIF",
         "flavour_choices": [

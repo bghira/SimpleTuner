@@ -29,11 +29,19 @@ def unwrap_model(accelerator, model, keep_fp32_wrapper: bool = True):
 
 
 def gather_dict_of_tensors_shapes(tensors: dict) -> dict:
+    def _shape(value):
+        if isinstance(value, dict):
+            return {k: _shape(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_shape(item) for item in value]
+        if hasattr(value, "shape"):
+            return value.shape
+        return None
+
     if "prompt_embeds" in tensors and isinstance(tensors["prompt_embeds"], list):
         # some models like HiDream return a list of batched tensors..
         return {k: [x.shape for x in v] for k, v in tensors.items()}
-    else:
-        return {k: v.shape if v is not None else None for k, v in tensors.items()}
+    return {k: _shape(v) for k, v in tensors.items()}
 
 
 def move_dict_of_tensors_to_device(tensors: dict, device) -> dict:
@@ -47,7 +55,14 @@ def move_dict_of_tensors_to_device(tensors: dict, device) -> dict:
     Returns:
         dict: Dictionary of tensors moved to the specified device.
     """
-    if "prompt_embeds" in tensors and isinstance(tensors["prompt_embeds"], list):
-        return {k: [x.to(device) for x in v] for k, v in tensors.items()}
-    else:
-        return {k: v.to(device) if v is not None else None for k, v in tensors.items()}
+
+    def _move(value):
+        if isinstance(value, dict):
+            return {k: _move(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_move(item) for item in value]
+        if hasattr(value, "to"):
+            return value.to(device)
+        return value
+
+    return {k: _move(v) for k, v in tensors.items()}
