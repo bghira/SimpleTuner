@@ -2,6 +2,8 @@
     "base_model_precision": "no_change",
     "checkpoint_step_interval": 5,
     "checkpoints_total_limit": 5,
+    "cosmos3_generator_component": "auto",
+    "cosmos3_reasoner_component": "auto",
     "data_backend_config": "config/examples/multidatabackend-cosmos3-drumming-video-audio-480p+49f.json",
     "disable_bucket_pruning": true,
     "eval_steps_interval": 5,

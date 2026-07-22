@@ -1,33 +1,55 @@
-## Cosmos3 क्विकस्टार्ट
+# Cosmos3 क्विकस्टार्ट
 
 NVIDIA Cosmos3 के लिए LyCORIS LoKr ट्रेन करें।
 
 ## मॉडल नोट्स
 
 - `model_family`: `cosmos3`
-- डिफ़ॉल्ट flavour: `nano`
-- Flavours:
-  - `nano`: `nvidia/Cosmos3-Nano`, 16B
-  - `super`: `nvidia/Cosmos3-Super`, 65B
-  - `super-t2i`: `nvidia/Cosmos3-Super-Text2Image`, 65B
-- SimpleTuner में Cosmos3 tokenizer IDs सीधे उपयोग करता है।
-- Positive prompts tokenization के दौरान Cosmos3 structured JSON captions में बदलते हैं।
+- default `model_flavour`: `nano`
+- supported flavours:
+
+| Flavour | Hub model | Notes |
+| --- | --- | --- |
+| `nano` | `nvidia/Cosmos3-Nano` | 16B omni model |
+| `super` | `nvidia/Cosmos3-Super` | 65B omni model |
+| `super-t2i` | `nvidia/Cosmos3-Super-Text2Image` | 65B text-to-image model |
+| `super-i2v` | `nvidia/Cosmos3-Super-Image2Video` | 65B image-to-video model, silent video |
+
+- Cosmos3 tokenizer IDs सीधे उपयोग करता है।
+- Positive prompts tokenization के दौरान Cosmos3 JSON captions में बदलते हैं।
 - Negative prompts JSON में नहीं बदलते।
 - `text_embeds` backend न जोड़ें।
-- ये उदाहरण `image_embeds` backend नहीं जोड़ते।
-- image और video samples सामान्य VAE cache उपयोग करते हैं।
-- audio वाला video सामान्य VAE cache और audio VAE cache उपयोग करता है।
-- action और policy datasets इस गाइड में शामिल नहीं हैं।
+- Image और video samples normal VAE cache उपयोग करते हैं।
+- Video + audio samples normal VAE cache और audio VAE cache उपयोग करते हैं।
+- `super-i2v` को conditioning latents चाहिए।
+- Action और policy datasets यहां शामिल नहीं हैं।
 
-## हार्डवेयर
+## Components
+
+SimpleTuner default रूप से split Cosmos3 transformer components उपयोग करता है:
+
+| Flavour | Reasoner | Generator |
+| --- | --- | --- |
+| `nano` | `SimpleTuner/cosmos3-component-reasoning-layers-bf16-nano` | `SimpleTuner/cosmos3-component-generation-layers-bf16-nano` |
+| `super` | `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super` | `SimpleTuner/cosmos3-component-generation-layers-bf16-super` |
+| `super-t2i` | `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-t2i` | `SimpleTuner/cosmos3-component-generation-layers-bf16-super-t2i` |
+| `super-i2v` | `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-i2v` | `SimpleTuner/cosmos3-component-generation-layers-bf16-super-i2v` |
+
+- `cosmos3_reasoner_component: auto` रखें।
+- `cosmos3_generator_component: auto` रखें।
+- Reasoner outputs text embed cache path से cache होते हैं।
+- `text_cache_disable: true` training में frozen reasoner फिर चलाता है।
+
+## Hardware
 
 - `model_flavour: nano` से शुरू करें।
 - `mixed_precision: bf16` उपयोग करें।
-- पहले `base_model_precision: no_change` उपयोग करें।
+- `base_model_precision: no_change` से शुरू करें।
 - `train_batch_size: 1` रखें।
-- `gradient_checkpointing` सक्षम करें।
+- `gradient_checkpointing` enable करें।
+- Transformer load-time memory घटाने के लिए split generator components उपयोग करें।
 
-वैकल्पिक group offload:
+Optional group offload:
 
 ```bash
 --enable_group_offload \
@@ -36,11 +58,11 @@ NVIDIA Cosmos3 के लिए LyCORIS LoKr ट्रेन करें।
 --group_offload_use_stream
 ```
 
-- Streams केवल CUDA पर हैं।
-- इसे `--enable_model_cpu_offload` के साथ न मिलाएँ।
-- system RAM कम हो तो `--group_offload_to_disk_path /fast-ssd/simpletuner-offload` जोड़ें।
+- Streams केवल CUDA हैं।
+- `--enable_model_cpu_offload` के साथ न मिलाएं।
+- System RAM कम हो तो `--group_offload_to_disk_path /fast-ssd/simpletuner-offload` जोड़ें।
 
-## इंस्टॉलेशन
+## Installation
 
 ```bash
 pip install 'simpletuner[cuda]'
@@ -57,18 +79,18 @@ python3.13 -m venv .venv
 pip install -e .
 ```
 
-## उदाहरण configs
+## Example Configs
 
-| उदाहरण | Dataset | Media | Backend |
-| --- | --- | --- | --- |
-| `cosmos3-image.lycoris-lokr` | `RareConcepts/Domokun` | image | `multidatabackend-cosmos3-domokun-512px.json` |
-| `cosmos3-video.lycoris-lokr` | `sayakpaul/video-dataset-disney-organized` | video | `multidatabackend-cosmos3-disney-video-480p+49f.json` |
-| `cosmos3-video-audio.lycoris-lokr` | `bghira/Synchronised-Drumming-Gemini3Captions` | video + audio | `multidatabackend-cosmos3-drumming-video-audio-480p+49f.json` |
+| Example | Flavour | Dataset | Media | Backend |
+| --- | --- | --- | --- | --- |
+| `cosmos3-image.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | image | `multidatabackend-cosmos3-domokun-512px.json` |
+| `cosmos3-video.lycoris-lokr` | `nano` | `sayakpaul/video-dataset-disney-organized` | video | `multidatabackend-cosmos3-disney-video-480p+49f.json` |
+| `cosmos3-video-audio.lycoris-lokr` | `nano` | `bghira/Synchronised-Drumming-Gemini3Captions` | video + audio | `multidatabackend-cosmos3-drumming-video-audio-480p+49f.json` |
+| `cosmos3-super-i2v.lycoris-lokr` | `super-i2v` | `sayakpaul/video-dataset-disney-organized` | image-to-video | `multidatabackend-cosmos3-disney-i2v-480p+49f.json` |
 
-## जरूरी fields
+## Required Fields
 
 - `model_family`: `cosmos3`
-- `model_flavour`: `nano`
 - `model_type`: `lora`
 - `lora_type`: `lycoris`
 - `base_model_precision`: `no_change`
@@ -76,7 +98,7 @@ pip install -e .
 - `train_batch_size`: `1`
 - `gradient_checkpointing`: `true`
 
-## Dataset नोट्स
+## Dataset Notes
 
 ### Image
 
@@ -84,7 +106,8 @@ pip install -e .
 - Backend: `config/examples/multidatabackend-cosmos3-domokun-512px.json`
 - Backend type: `huggingface`
 - Caption strategy: `instanceprompt`
-- Text embed cache: उपयोग नहीं होता
+- Text embed cache: reasoner cache only
+- Audio cache: not used
 
 ### Video
 
@@ -92,8 +115,8 @@ pip install -e .
 - Backend: `config/examples/multidatabackend-cosmos3-disney-video-480p+49f.json`
 - Backend type: `huggingface`
 - Columns: `video`, `prompt`
-- Text embed cache: उपयोग नहीं होता
-- Audio cache: उपयोग नहीं होता
+- Text embed cache: reasoner cache only
+- Audio cache: not used
 
 ### Video With Audio
 
@@ -101,10 +124,10 @@ pip install -e .
 - Backend: `config/examples/multidatabackend-cosmos3-drumming-video-audio-480p+49f.json`
 - Backend type: `local`
 - Files: `.mpeg` videos with adjacent `.txt` captions
-- Text embed cache: उपयोग नहीं होता
-- Audio cache: video backend से auto-generated
+- Text embed cache: reasoner cache only
+- Audio cache: video backend से generated
 
-Training से पहले dataset डाउनलोड करें:
+Training से पहले dataset download करें:
 
 ```bash
 huggingface-cli download \
@@ -113,7 +136,7 @@ huggingface-cli download \
   --local-dir datasets/Synchronised-Drumming-Gemini3Captions
 ```
 
-Backend में यह शामिल है:
+Audio backend block:
 
 ```json
 "audio": {
@@ -125,14 +148,36 @@ Backend में यह शामिल है:
 }
 ```
 
-SimpleTuner उस block से audio dataset inject करता है और audio latents को अलग VAE cache में store करता है।
+### Super-I2V
 
-## चलाएँ
+- Dataset: [`sayakpaul/video-dataset-disney-organized`](https://huggingface.co/datasets/sayakpaul/video-dataset-disney-organized)
+- Backend: `config/examples/multidatabackend-cosmos3-disney-i2v-480p+49f.json`
+- Backend type: `huggingface`
+- Columns: `video`, `prompt`
+- `video.is_i2v`: `true`
+- Conditioning type: `reference_strict`
+- Conditioning latents: required
+- Audio cache: not used
+
+I2V backend video dataset में यह सेट करता है:
+
+```json
+"video": {
+  "num_frames": 49,
+  "min_frames": 49,
+  "is_i2v": true
+}
+```
+
+SimpleTuner इस flag से paired strict reference conditioning backend बनाता है।
+
+## Run
 
 ```bash
 simpletuner train example=cosmos3-image.lycoris-lokr
 simpletuner train example=cosmos3-video.lycoris-lokr
 simpletuner train example=cosmos3-video-audio.lycoris-lokr
+simpletuner train example=cosmos3-super-i2v.lycoris-lokr
 ```
 
 ## Validation
@@ -140,7 +185,7 @@ simpletuner train example=cosmos3-video-audio.lycoris-lokr
 - Image example: `validation_resolution: 512x512`
 - Video examples: `validation_resolution: 768x432`
 - Video examples: `validation_num_video_frames: 49`
-- Audio generation validation के लिए dataset-based validation settings की जरूरत हो सकती है।
+- Super-I2V example: conditioning validation inputs उपयोग करता है।
 
 ## References
 

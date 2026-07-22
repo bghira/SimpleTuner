@@ -58,6 +58,7 @@ Guias passo a passo para treinar cada arquitetura de modelo suportada.
 | **Wan Video** | 1.3-14B | [Guia Wan](WAN.md) |
 | **LTX Video** | 5B | [Guia LTX](LTXVIDEO.md) |
 | **LTX Video 2** | 19B | [Guia LTX Video 2](LTXVIDEO2.md) |
+| **Cosmos3** | 16-65B | [Guia Cosmos3](COSMOS3.pt-BR.md) |
 | **Hunyuan Video** | 8.3B | [Guia Hunyuan](HUNYUANVIDEO.md) |
 | **Sana Video** | - | [Guia Sana Video](SANAVIDEO.md) |
 | **Kandinsky 5 Video** | - | [Guia Kandinsky Video](KANDINSKY5_VIDEO.md) |

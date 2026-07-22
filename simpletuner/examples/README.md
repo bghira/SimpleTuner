@@ -63,6 +63,7 @@ Cosmos3 examples:
 - `cosmos3-image.lycoris-lokr` uses `RareConcepts/Domokun`.
 - `cosmos3-video.lycoris-lokr` uses `sayakpaul/video-dataset-disney-organized`.
 - `cosmos3-video-audio.lycoris-lokr` uses local synchronized drumming files with `audio.auto_split`.
+- `cosmos3-super-i2v.lycoris-lokr` uses `nvidia/Cosmos3-Super-Image2Video` with `video.is_i2v`.
 
 Large multi-GPU video examples are split from the standard 24G examples:
 

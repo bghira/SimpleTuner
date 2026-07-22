@@ -58,6 +58,7 @@
 | **Wan Video** | 1.3-14B | [Wan गाइड](WAN.md) |
 | **LTX Video** | 5B | [LTX गाइड](LTXVIDEO.md) |
 | **LTX Video 2** | 19B | [LTX Video 2 गाइड](LTXVIDEO2.md) |
+| **Cosmos3** | 16-65B | [Cosmos3 गाइड](COSMOS3.hi.md) |
 | **Hunyuan Video** | 8.3B | [Hunyuan गाइड](HUNYUANVIDEO.md) |
 | **Sana Video** | - | [Sana Video गाइड](SANAVIDEO.md) |
 | **Kandinsky 5 Video** | - | [Kandinsky Video गाइड](KANDINSKY5_VIDEO.md) |
