@@ -16,6 +16,9 @@ class _DummyModel:
     def text_embed_cache_key(self):
         return self._key_type
 
+    def uses_text_embeddings_cache(self):
+        return bool(getattr(self, "TEXT_ENCODER_CONFIGURATION", None))
+
     def pack_text_embeddings_for_cache(self, embeddings):
         return embeddings
 

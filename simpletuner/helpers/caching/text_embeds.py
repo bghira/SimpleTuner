@@ -219,6 +219,12 @@ class TextEmbeddingCache(WebhookMixin):
         batch_index: int,
         batch_size: int,
     ) -> Dict[str, Any]:
+        custom_slicer = getattr(self.model, "slice_text_embedding_for_cache", None)
+        if callable(custom_slicer):
+            custom_output = custom_slicer(text_encoder_output, batch_index, batch_size)
+            if custom_output is not None:
+                return custom_output
+
         per_sample_output: Dict[str, Any] = {}
         attention_mask = text_encoder_output.get("attention_mask")
         true_length = None
@@ -452,9 +458,8 @@ class TextEmbeddingCache(WebhookMixin):
     ):
         if self.model is None:
             self.model = StateTracker.get_model()
-        if self.model.TEXT_ENCODER_CONFIGURATION == {}:
-            # This is a model that doesn't use text encoders.
-            self.debug_log(f"Model type {self.model_type} does not use text encoders, skipping text embed caching.")
+        if not self.model.uses_text_embeddings_cache():
+            self.debug_log(f"Model type {self.model_type} does not use text embed caching.")
             self.disabled = True
             return None
         normalized_inputs = self._normalize_prompt_records(all_prompts)
@@ -653,9 +658,8 @@ class TextEmbeddingCache(WebhookMixin):
                     continue
                 if encode_current_prompt:
                     # If load_from_cache is True, should_encode would be False unless we failed to load.
-                    self.debug_log(
-                        f"Encoding filename {filename} :: device {self.text_encoders[0].device} :: prompt {prompt}"
-                    )
+                    encoder_device = self.text_encoders[0].device if self.text_encoders else "model"
+                    self.debug_log(f"Encoding filename {filename} :: device {encoder_device} :: prompt {prompt}")
                     prompt_contexts = [record.get("metadata") or {}]
                     text_encoder_output = self.model.encode_text_batch(
                         [prompt], is_negative_prompt=is_negative_prompt, prompt_contexts=prompt_contexts

@@ -59,6 +59,17 @@ Z-Image conditioning examples:
 
 - `z-image-turbo.peft-lora+canny-conditioning` auto-generates Canny edge conditioning data and validates with those references through the IC-LoRA conditioning path.
 
+Cosmos3 examples:
+
+- `cosmos3-image.lycoris-lokr` uses `RareConcepts/Domokun`.
+- `cosmos3-edge-image-24g.lycoris-lokr` and `cosmos3-edge-image-32g.lycoris-lokr` target 1024px ARB image LoKr on 24GB and 32GB cards.
+- `cosmos3-nano-image-24g.lycoris-lokr`, `cosmos3-nano-image-32g.lycoris-lokr`, `cosmos3-nano-image-48g.lycoris-lokr`, and `cosmos3-nano-image-80g.lycoris-lokr` target 1024px ARB image LoKr on progressively larger GPUs.
+- `cosmos3-super-image-48g.lycoris-lokr` and `cosmos3-super-image-80g.lycoris-lokr` target 1024px ARB image LoKr for the Super text-to-image flavour.
+- `cosmos3-image-48g.lycoris-lokr` and `cosmos3-image-80g.lycoris-lokr` are legacy aliases for Nano 48GB and 80GB profiles.
+- `cosmos3-video.lycoris-lokr` uses `sayakpaul/video-dataset-disney-organized`.
+- `cosmos3-video-audio.lycoris-lokr` uses local synchronized drumming files with `audio.auto_split`.
+- `cosmos3-super-i2v.lycoris-lokr` uses `nvidia/Cosmos3-Super-Image2Video` with `video.is_i2v`.
+
 Large multi-GPU video examples are split from the standard 24G examples:
 
 - `wan2.1-t2v-14b-480p-8xh100.peft-lora+cp-fa3`

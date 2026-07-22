@@ -94,6 +94,22 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **Comportamento**: Entradas existentes continuam sendo lidas e ausências recém-codificadas são gravadas. Os text encoders permanecem carregados porque são necessários após o startup.
 - **Configuração do dataloader**: Um backend `text_embeds` pode ativar isso independentemente com `"text_cache_ondemand": true`.
 
+### `--cosmos3_reasoner_component`
+
+- **O que**: Repo Hugging Face ou caminho local para o componente reasoner congelado do Cosmos3.
+- **Padrão**: `auto`
+- **Uso**: O cache de texto do Cosmos3 usa este componente para gravar entradas K/V por camada do reasoner.
+- **Opções automáticas**: `SimpleTuner/cosmos3-component-reasoning-layers-bf16-edge`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-nano`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-i2v`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-t2i`.
+- **Nota**: Cosmos3 força cache de texto sob demanda porque as chaves do cache do reasoner incluem geometria da amostra.
+
+### `--cosmos3_generator_component`
+
+- **O que**: Repo Hugging Face ou caminho local para o componente transformer apenas de geração do Cosmos3.
+- **Padrão**: `auto`
+- **Uso**: `auto` seleciona o componente Edge, Nano, Super, Super-I2V ou Super-T2I correspondente.
+- **Opções automáticas**: `SimpleTuner/cosmos3-component-generation-layers-bf16-edge`, `SimpleTuner/cosmos3-component-generation-layers-bf16-nano`, `SimpleTuner/cosmos3-component-generation-layers-bf16-super`, `SimpleTuner/cosmos3-component-generation-layers-bf16-super-i2v`, `SimpleTuner/cosmos3-component-generation-layers-bf16-super-t2i`.
+- **Nota**: O componente omite os pesos do reasoner dentro do transformer e requer entradas K/V do reasoner.
+
 ### `--text_cache_disable`
 
 - **O que**: Desativa gravações em todos os caches de text embeddings, mantendo a leitura de entradas existentes.

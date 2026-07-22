@@ -312,6 +312,7 @@ base_deps = [
     "py3langid>=0.2.2",
     "pypinyin>=0.50.0",
     "sentencepiece>=0.2.0",
+    "tiktoken>=0.13.0",
     "spacy>=3.7.4",
     "hangul-romanize>=0.1.0",
     "optimum-quanto>=0.2.7",

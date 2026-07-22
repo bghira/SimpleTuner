@@ -94,6 +94,22 @@ simpletuner configure config/foo/config.json
 - **Behavior**: मौजूदा cache entries पढ़ी जाती हैं और नए encoded misses लिखे जाते हैं। Startup के बाद आवश्यकता होने के कारण text encoders loaded रहते हैं।
 - **Dataloader override**: कोई `text_embeds` backend इसे `"text_cache_ondemand": true` से independently enable कर सकता है।
 
+### `--cosmos3_reasoner_component`
+
+- **What**: frozen Cosmos3 reasoner component के लिए Hugging Face repo id या local path।
+- **Default**: `auto`
+- **Use**: Cosmos3 text cache इस component से per-layer reasoner K/V entries लिखता है।
+- **Auto choices**: `SimpleTuner/cosmos3-component-reasoning-layers-bf16-edge`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-nano`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-i2v`, `SimpleTuner/cosmos3-component-reasoning-layers-bf16-super-t2i`.
+- **Note**: Cosmos3 on-demand text cache force करता है क्योंकि reasoner cache keys में sample geometry शामिल होती है।
+
+### `--cosmos3_generator_component`
+
+- **What**: Cosmos3 generation-only transformer component के लिए Hugging Face repo id या local path।
+- **Default**: `auto`
+- **Use**: `auto` matching Edge, Nano, Super, Super-I2V, या Super-T2I component चुनता है।
+- **Auto choices**: `SimpleTuner/cosmos3-component-generation-layers-bf16-edge`, `SimpleTuner/cosmos3-component-generation-layers-bf16-nano`, `SimpleTuner/cosmos3-component-generation-layers-bf16-super`, `SimpleTuner/cosmos3-component-generation-layers-bf16-super-i2v`, `SimpleTuner/cosmos3-component-generation-layers-bf16-super-t2i`.
+- **Note**: यह component transformer के अंदर के reasoner weights हटाता है और reasoner K/V entries require करता है।
+
 ### `--text_cache_disable`
 
 - **What**: मौजूदा entries को पढ़ते हुए सभी text embedding cache writes disable करता है।
