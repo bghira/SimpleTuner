@@ -94,6 +94,16 @@ def _resident_bytes(entry):
     return int(entry.get("bytes", 0))
 
 
+def _dense_weight_for_grad(weight, *, device=None, dtype=None):
+    if hasattr(weight, "dequantize"):
+        weight = weight.dequantize()
+    if device is not None and getattr(weight, "device", None) != device:
+        weight = weight.to(device, non_blocking=True)
+    if dtype is not None and getattr(weight, "dtype", None) != dtype:
+        weight = weight.to(dtype)
+    return weight
+
+
 def _evict_backward_resident_entry(state, key, device):
     entry = state["forward_backward_residency"].pop(key, None)
     if entry is None:
@@ -539,11 +549,11 @@ class BouncingLinearFn(torch.autograd.Function):
             if ctx.autocast_enabled and ctx.autocast_dtype is not None:
                 grad_out_compute = grad_out.to(ctx.autocast_dtype)
                 x_compute = x.to(ctx.autocast_dtype)
-                w_compute = w_dev.to(ctx.autocast_dtype)
+                w_compute = _dense_weight_for_grad(w_dev, device=device, dtype=ctx.autocast_dtype)
             else:
                 grad_out_compute = grad_out
                 x_compute = x
-                w_compute = w_dev
+                w_compute = _dense_weight_for_grad(w_dev, device=device, dtype=grad_out.dtype)
 
             grad_input = grad_out_compute @ w_compute
             if compute_weight_grad:
@@ -637,7 +647,7 @@ class BouncingLinearFn(torch.autograd.Function):
                 if ctx.autocast_enabled:
                     grad_out_compute = grad_out.to(ctx.autocast_dtype)
                     x_compute = x.to(ctx.autocast_dtype)
-                    w_compute = weight_for_backward.to(ctx.autocast_dtype)
+                    w_compute = _dense_weight_for_grad(weight_for_backward, device=device, dtype=ctx.autocast_dtype)
 
                     # compute input grad
                     grad_input = grad_out_compute @ w_compute
@@ -649,7 +659,11 @@ class BouncingLinearFn(torch.autograd.Function):
                         )
                 else:
                     # compute input grad
-                    grad_input = grad_out @ weight_for_backward
+                    grad_input = grad_out @ _dense_weight_for_grad(
+                        weight_for_backward,
+                        device=device,
+                        dtype=grad_out.dtype,
+                    )
 
                     if compute_weight_grad:
                         compute_stream.wait_event(transfer_weight_backward_finished_event)

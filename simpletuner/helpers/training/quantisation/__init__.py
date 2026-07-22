@@ -1122,31 +1122,50 @@ def _sdnq_model(
             f"Consider uint8, uint16, or fp16 for better training stability."
         )
 
-    try:
-        model = sdnq_training_post_load_quant(
-            model,
-            weights_dtype=weights_dtype,
-            quantized_matmul_dtype=quantized_matmul_dtype,
-            group_size=group_size,
-            hadamard_group_size=hadamard_group_size,
-            svd_rank=svd_rank,
-            svd_steps=svd_steps,
-            use_svd=use_svd,
-            use_hadamard=use_hadamard,
-            use_grad_ckpt=getattr(args, "gradient_checkpointing", True),
-            use_quantized_matmul=use_quantized_matmul,
-            use_static_quantization=use_static_quantization,
-            use_stochastic_rounding=use_stochastic_rounding,
-            dequantize_fp32=dequantize_fp32,
-            non_blocking=False,
-            add_skip_keys=True,  # Let SDNQ handle module exclusions
-            quantization_device=quantization_device,
-            return_device=return_device,
-            modules_to_not_convert=modules_to_not_convert,
-            modules_to_not_use_matmul=getattr(args, "sdnq_modules_to_not_use_matmul", None),
-            modules_dtype_dict=getattr(args, "sdnq_modules_dtype_dict", None),
-            modules_quant_config=getattr(args, "sdnq_modules_quant_config", None),
+    sdnq_kwargs = {
+        "weights_dtype": weights_dtype,
+        "quantized_matmul_dtype": quantized_matmul_dtype,
+        "group_size": group_size,
+        "hadamard_group_size": hadamard_group_size,
+        "svd_rank": svd_rank,
+        "svd_steps": svd_steps,
+        "use_svd": use_svd,
+        "use_hadamard": use_hadamard,
+        "use_grad_ckpt": getattr(args, "gradient_checkpointing", True),
+        "use_quantized_matmul": use_quantized_matmul,
+        "use_static_quantization": use_static_quantization,
+        "use_stochastic_rounding": use_stochastic_rounding,
+        "dequantize_fp32": dequantize_fp32,
+        "non_blocking": False,
+        "add_skip_keys": True,  # Let SDNQ handle module exclusions
+        "quantization_device": quantization_device,
+        "return_device": return_device,
+        "modules_to_not_convert": modules_to_not_convert,
+        "modules_to_not_use_matmul": getattr(args, "sdnq_modules_to_not_use_matmul", None),
+        "modules_dtype_dict": getattr(args, "sdnq_modules_dtype_dict", None),
+        "modules_quant_config": getattr(args, "sdnq_modules_quant_config", None),
+    }
+    sdnq_supported_kwargs = set(signature(sdnq_training_post_load_quant).parameters)
+    unsupported_requested = []
+    if use_hadamard and "use_hadamard" not in sdnq_supported_kwargs:
+        unsupported_requested.append("sdnq_use_hadamard")
+    if getattr(args, "sdnq_hadamard_group_size", None) is not None and "hadamard_group_size" not in sdnq_supported_kwargs:
+        unsupported_requested.append("sdnq_hadamard_group_size")
+    if (
+        getattr(args, "sdnq_modules_to_not_use_matmul", None) is not None
+        and "modules_to_not_use_matmul" not in sdnq_supported_kwargs
+    ):
+        unsupported_requested.append("sdnq_modules_to_not_use_matmul")
+    if getattr(args, "sdnq_modules_quant_config", None) is not None and "modules_quant_config" not in sdnq_supported_kwargs:
+        unsupported_requested.append("sdnq_modules_quant_config")
+    if unsupported_requested:
+        raise ValueError(
+            "The installed SDNQ package does not support these SimpleTuner options: " + ", ".join(unsupported_requested)
         )
+    sdnq_kwargs = {key: value for key, value in sdnq_kwargs.items() if key in sdnq_supported_kwargs}
+
+    try:
+        model = sdnq_training_post_load_quant(model, **sdnq_kwargs)
         logger.info(
             "SDNQ config: weights_dtype=%s, matmul_dtype=%s, group_size=%s, qmm=%s, compile=%s, fp8_mm=%s, tensorwise_fp8=%s, svd=%s, hadamard=%s.",
             weights_dtype,

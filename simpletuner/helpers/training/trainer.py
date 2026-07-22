@@ -2969,6 +2969,17 @@ class Trainer:
                     )
                     self.model.set_prepared_model(q_model, base_model=False)
 
+        if (
+            getattr(self.config, "ramtorch", False)
+            and not preprocessing_models_only
+            and not ema_only
+            and hasattr(self.model, "_ramtorch_base_deferred_until_after_quantization")
+            and self.model._ramtorch_base_deferred_until_after_quantization()
+        ):
+            applied = self.model.apply_ramtorch_to_transformer()
+            if applied:
+                logger.info("Applied deferred RamTorch to %s base model layers after quantization.", applied)
+
         # After quantization, re-move non-ramtorch layers to GPU
         # Quantization may have moved the model to CPU, leaving normalization weights there
         if getattr(self.config, "ramtorch", False) and not preprocessing_models_only:
