@@ -193,7 +193,7 @@ Al final, tu config debería parecerse a la mía:
   "lora_rank": 128,
   "flow_schedule_shift": 1,
   "validation_prompt_library": false,
-  "ignore_final_epochs": true
+  "strict_epoch_limit": false
 }
 ```
 </details>

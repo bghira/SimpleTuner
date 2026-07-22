@@ -88,7 +88,7 @@ Edita tu `config/config.json`:
     "gradient_accumulation_steps": 1,
     "gradient_checkpointing": true,
     "hub_model_id": "wan-disney-DMD-3step",
-    "ignore_final_epochs": true,
+    "strict_epoch_limit": false,
     "learning_rate": 2e-5,
     "lora_alpha": 128,
     "lora_rank": 128,

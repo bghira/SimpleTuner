@@ -880,20 +880,21 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
-    # Ignore Final Epochs
+    # Strict Epoch Limit
     registry._add_field(
         ConfigField(
-            name="ignore_final_epochs",
-            arg_name="--ignore_final_epochs",
-            ui_label="Ignore Final Epochs",
+            name="strict_epoch_limit",
+            arg_name="--strict_epoch_limit",
+            ui_label="Strict Epoch Limit",
             field_type=FieldType.CHECKBOX,
             tab="training",
             section="training_schedule",
             default_value=False,
-            help_text="When provided, the max epoch counter will not determine the end of the training run",
-            tooltip="Instead, it will end when it hits --max_train_steps.",
+            help_text="Stop training when the epoch counter reaches --num_train_epochs, even if --max_train_steps has not been reached",
+            tooltip="When disabled, explicit --max_train_steps runs may continue through additional epoch passes until the step limit is reached.",
             importance=ImportanceLevel.ADVANCED,
             order=30,
+            documentation="OPTIONS.md#--strict_epoch_limit",
         )
     )
 

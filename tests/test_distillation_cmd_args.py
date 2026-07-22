@@ -1,5 +1,6 @@
 import unittest
 from tempfile import NamedTemporaryFile
+from unittest.mock import patch
 
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.helpers.configuration.cmd_args import parse_cmdline_args
@@ -17,6 +18,30 @@ def _base_args():
 
 
 class DistillationCmdArgsTests(unittest.TestCase):
+    @patch("simpletuner.helpers.configuration.cmd_args.warning_log")
+    def test_ignore_final_epochs_true_maps_to_loose_epoch_limit(self, mock_warning_log):
+        args = parse_cmdline_args(input_args=_base_args() + ["--ignore_final_epochs"], exit_on_error=True)
+
+        self.assertFalse(args.strict_epoch_limit)
+        warning_messages = [call.args[0] for call in mock_warning_log.call_args_list]
+        self.assertTrue(
+            any("has been replaced with --strict_epoch_limit" in message for message in warning_messages),
+            warning_messages,
+        )
+
+    def test_ignore_final_epochs_false_maps_to_strict_epoch_limit(self):
+        args = parse_cmdline_args(input_args=_base_args() + ["--ignore_final_epochs=false"], exit_on_error=True)
+
+        self.assertTrue(args.strict_epoch_limit)
+
+    def test_strict_epoch_limit_wins_over_deprecated_ignore_final_epochs(self):
+        args = parse_cmdline_args(
+            input_args=_base_args() + ["--strict_epoch_limit", "--ignore_final_epochs"],
+            exit_on_error=True,
+        )
+
+        self.assertTrue(args.strict_epoch_limit)
+
     def test_distillation_rejects_text_encoder_training(self):
         for method in ("lcm", "dcm", "dmd", "perflow", "flow_dpo", "anyflow"):
             with self.subTest(method=method):

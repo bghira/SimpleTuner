@@ -204,7 +204,7 @@ Tu configuración al final se verá como la mía:
   "lora_rank": 16,
   "flow_schedule_shift": 3,
   "validation_prompt_library": false,
-  "ignore_final_epochs": true
+  "strict_epoch_limit": false
 }
 ```
 </details>

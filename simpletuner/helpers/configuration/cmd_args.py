@@ -576,10 +576,21 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
         return normalized
 
+    legacy_ignore_final_epochs_value = None
+    legacy_ignore_final_epochs_ignored = False
+
     def _normalize_input_args(raw_args):
+        nonlocal legacy_ignore_final_epochs_value, legacy_ignore_final_epochs_ignored
         if raw_args is None:
             return None
 
+        strict_epoch_limit_provided = any(
+            arg == "--strict_epoch_limit"
+            or arg == "--strict-epoch-limit"
+            or arg.startswith("--strict_epoch_limit=")
+            or arg.startswith("--strict-epoch-limit=")
+            for arg in raw_args
+        )
         normalized_args = []
         skip_next = False
 
@@ -609,6 +620,27 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 normalized_args.append(arg)
                 normalized_args.append(_normalize_model_family(raw_args[idx + 1]))
                 skip_next = True
+                continue
+
+            if arg.startswith(("--ignore_final_epochs=", "--ignore-final-epochs=")):
+                _, value = arg.split("=", 1)
+                legacy_ignore_final_epochs_value = _parse_bool_flag(value)
+                if strict_epoch_limit_provided:
+                    legacy_ignore_final_epochs_ignored = True
+                else:
+                    normalized_args.append(f"--strict_epoch_limit={not legacy_ignore_final_epochs_value}")
+                continue
+
+            if arg in ("--ignore_final_epochs", "--ignore-final-epochs"):
+                next_value = None
+                if idx + 1 < len(raw_args) and not raw_args[idx + 1].startswith("-"):
+                    next_value = raw_args[idx + 1]
+                    skip_next = True
+                legacy_ignore_final_epochs_value = _parse_bool_flag(next_value)
+                if strict_epoch_limit_provided:
+                    legacy_ignore_final_epochs_ignored = True
+                else:
+                    normalized_args.append(f"--strict_epoch_limit={not legacy_ignore_final_epochs_value}")
                 continue
 
             normalized_args.append(arg)
@@ -647,6 +679,18 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     if args is None:
         return None
+
+    if legacy_ignore_final_epochs_value is not None:
+        if legacy_ignore_final_epochs_ignored:
+            warning_log(
+                "The option --ignore_final_epochs has been replaced with --strict_epoch_limit. "
+                "Ignoring --ignore_final_epochs because --strict_epoch_limit was also provided."
+            )
+        else:
+            warning_log(
+                "The option --ignore_final_epochs has been replaced with --strict_epoch_limit. "
+                f"Using --strict_epoch_limit={not legacy_ignore_final_epochs_value}."
+            )
 
     if hasattr(args, "lr_scheduler"):
         normalized_lr_scheduler = normalize_lr_scheduler_value(

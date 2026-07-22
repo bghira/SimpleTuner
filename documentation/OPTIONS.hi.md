@@ -1054,10 +1054,10 @@ Different models different conditioning data expect करते हैं:
 - **What**: इतने training steps के बाद training बंद होती है। 0 सेट करने पर `--num_train_epochs` को प्राथमिकता मिलती है।
 - **Why**: training को छोटा करने के लिए उपयोगी।
 
-### `--ignore_final_epochs`
+### `--strict_epoch_limit`
 
-- **What**: अंतिम गिने गए epochs को ignore करके `--max_train_steps` को प्राथमिकता देता है।
-- **Why**: dataloader length बदलने पर epoch calculation बदल जाती है और training जल्दी खत्म हो सकती है। यह विकल्प अंतिम epochs को ignore करके `--max_train_steps` तक training जारी रखता है।
+- **What**: epoch counter के `--num_train_epochs` तक पहुंचते ही training रोकता है, भले ही `--max_train_steps` अभी पूरा न हुआ हो।
+- **Why**: इसे explicit `--max_train_steps` runs के लिए बंद करें, जहां step limit तक पहुंचने के लिए अतिरिक्त epoch passes जारी रखने हैं। `--max_train_steps=0` वाली runs हमेशा epoch-driven होती हैं और strict epoch limit इस्तेमाल करती हैं।
 
 ### `--learning_rate`
 
@@ -1847,7 +1847,7 @@ usage: train.py [-h] --model_family
                 [--input_perturbation_steps INPUT_PERTURBATION_STEPS]
                 [--lr_end LR_END] [--lr_scale [LR_SCALE]]
                 [--lr_scale_sqrt [LR_SCALE_SQRT]]
-                [--ignore_final_epochs [IGNORE_FINAL_EPOCHS]]
+                [--strict_epoch_limit [STRICT_EPOCH_LIMIT]]
                 [--freeze_encoder_before FREEZE_ENCODER_BEFORE]
                 [--freeze_encoder_after FREEZE_ENCODER_AFTER]
                 [--freeze_encoder_strategy {before,between,after}]
@@ -2347,9 +2347,10 @@ options:
   --lr_scale_sqrt [LR_SCALE_SQRT]
                         If using --lr_scale, use the square root of (number of
                         GPUs * gradient accumulation steps * batch size)
-  --ignore_final_epochs [IGNORE_FINAL_EPOCHS]
-                        When provided, the max epoch counter will not
-                        determine the end of the training run
+  --strict_epoch_limit [STRICT_EPOCH_LIMIT]
+                        Stop training when the epoch counter reaches
+                        --num_train_epochs, even if --max_train_steps
+                        has not been reached
   --freeze_encoder_before FREEZE_ENCODER_BEFORE
                         When using 'before' strategy, we will freeze layers
                         earlier than this

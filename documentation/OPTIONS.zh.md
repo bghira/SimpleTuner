@@ -1057,10 +1057,10 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 - **内容**：训练步数上限。设为 0 时由 `--num_train_epochs` 优先。
 - **原因**：用于缩短训练时长。
 
-### `--ignore_final_epochs`
+### `--strict_epoch_limit`
 
-- **内容**：忽略最后计算的 epoch，改由 `--max_train_steps` 控制。
-- **原因**：当 dataloader 长度变化导致训练提前结束时，该选项会忽略最后的 epoch 并继续训练至 `--max_train_steps`。
+- **内容**：当 epoch 计数达到 `--num_train_epochs` 时停止训练，即使尚未达到 `--max_train_steps`。
+- **原因**：对于显式设置 `--max_train_steps`、并希望继续经过额外 epoch 直到达到步数上限的训练，请关闭此选项。`--max_train_steps=0` 的训练始终按 epoch 驱动，并使用严格 epoch 上限。
 
 ### `--learning_rate`
 
@@ -1852,7 +1852,7 @@ usage: train.py [-h] --model_family
                 [--input_perturbation_steps INPUT_PERTURBATION_STEPS]
                 [--lr_end LR_END] [--lr_scale [LR_SCALE]]
                 [--lr_scale_sqrt [LR_SCALE_SQRT]]
-                [--ignore_final_epochs [IGNORE_FINAL_EPOCHS]]
+                [--strict_epoch_limit [STRICT_EPOCH_LIMIT]]
                 [--freeze_encoder_before FREEZE_ENCODER_BEFORE]
                 [--freeze_encoder_after FREEZE_ENCODER_AFTER]
                 [--freeze_encoder_strategy {before,between,after}]
@@ -2351,9 +2351,10 @@ options:
   --lr_scale_sqrt [LR_SCALE_SQRT]
                         If using --lr_scale, use the square root of (number of
                         GPUs * gradient accumulation steps * batch size)
-  --ignore_final_epochs [IGNORE_FINAL_EPOCHS]
-                        When provided, the max epoch counter will not
-                        determine the end of the training run
+  --strict_epoch_limit [STRICT_EPOCH_LIMIT]
+                        Stop training when the epoch counter reaches
+                        --num_train_epochs, even if --max_train_steps
+                        has not been reached
   --freeze_encoder_before FREEZE_ENCODER_BEFORE
                         When using 'before' strategy, we will freeze layers
                         earlier than this
