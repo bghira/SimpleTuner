@@ -9,7 +9,7 @@
     "flow_schedule_shift": 1.73,
     "gradient_checkpointing": true,
     "hub_model_id": "simpletuner-example-auraflow-peft-lora",
-    "ignore_final_epochs": true,
+    "strict_epoch_limit": false,
     "learning_rate": 1e-4,
     "lora_alpha": 8,
     "lora_rank": 8,

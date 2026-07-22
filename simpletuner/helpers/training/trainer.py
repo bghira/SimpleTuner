@@ -3520,6 +3520,13 @@ class Trainer:
         self.config.num_update_steps_per_epoch = math.ceil(total_num_batches / grad_accum)
         steps_per_epoch = max(self.config.num_update_steps_per_epoch, 1)
         target_epochs = float(self.config.num_train_epochs or 0)
+        max_train_steps_was_unset = self.config.max_train_steps is None or self.config.max_train_steps == 0
+        if max_train_steps_was_unset and not self.config.strict_epoch_limit:
+            logger.info(
+                "Enabling strict_epoch_limit because --max_train_steps is unset; "
+                "epoch-driven runs stop at --num_train_epochs."
+            )
+            self.config.strict_epoch_limit = True
         if getattr(self.config, "overrode_max_train_steps", False):
             self.config.max_train_steps = int(math.ceil(target_epochs * steps_per_epoch))
             # Afterwards we recalculate our number of training epochs
@@ -4732,7 +4739,7 @@ class Trainer:
                 * self.accelerator.num_processes
             )
 
-        if self.state["current_epoch"] > self.config.num_train_epochs + 1 and not self.config.ignore_final_epochs:
+        if self.state["current_epoch"] > self.config.num_train_epochs + 1 and self.config.strict_epoch_limit:
             logger.info(
                 f"Reached the end ({self.state['current_epoch']} epochs) of our training run ({self.config.num_train_epochs} epochs). This run will do zero steps."
             )
@@ -6123,10 +6130,10 @@ class Trainer:
         # receive the same batch data before it's split along the sequence dimension
         cp_batch_synchronizer = ContextParallelBatchSynchronizer(self.accelerator)
         num_epochs_to_track = int(math.ceil(self.config.num_train_epochs)) + 1
-        if self.config.ignore_final_epochs:
+        if not self.config.strict_epoch_limit:
             num_epochs_to_track += 1000000
         for epoch in range(self.state["first_epoch"], num_epochs_to_track):
-            if self.state["current_epoch"] > self.config.num_train_epochs + 1 and not self.config.ignore_final_epochs:
+            if self.state["current_epoch"] > self.config.num_train_epochs + 1 and self.config.strict_epoch_limit:
                 # This might immediately end training, but that's useful for simply exporting the model.
                 logger.info(
                     f"Training run is complete ({self.config.num_train_epochs}/{self.config.num_train_epochs} epochs, {self.state['global_step']}/{self.config.max_train_steps} steps)."
@@ -6820,7 +6827,7 @@ class Trainer:
                     torch_profiler.step()
 
                 if self.state["global_step"] >= self.config.max_train_steps or (
-                    epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
+                    epoch > self.config.num_train_epochs and self.config.strict_epoch_limit
                 ):
                     logger.info(
                         f"Training has completed."
@@ -6848,7 +6855,7 @@ class Trainer:
                 self._populate_checkpoint_assets(epoch_checkpoint_dir)
 
             if self.state["global_step"] >= self.config.max_train_steps or (
-                epoch > self.config.num_train_epochs and not self.config.ignore_final_epochs
+                epoch > self.config.num_train_epochs and self.config.strict_epoch_limit
             ):
                 logger.info(
                     f"Exiting training loop. Beginning model unwind at epoch {epoch}, step {self.state['global_step']}"

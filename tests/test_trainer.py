@@ -1770,6 +1770,37 @@ class TestTrainer(unittest.TestCase):
         trainer._epoch_rollover(1)
         self.assertEqual(trainer.state["current_epoch"], 1)
 
+    @patch("simpletuner.helpers.training.trainer.StateTracker.get_dataset_schedule", return_value=None)
+    @patch("simpletuner.helpers.training.trainer.StateTracker.get_data_backends")
+    def test_recalculate_training_steps_forces_strict_epoch_limit_for_epoch_runs(
+        self, mock_get_data_backends, mock_get_dataset_schedule
+    ):
+        trainer = object.__new__(Trainer)
+        trainer.distiller = None
+        trainer.lr_scheduler = None
+        trainer.accelerator = SimpleNamespace(num_processes=1)
+        trainer.config = SimpleNamespace(
+            distillation_method=None,
+            gradient_accumulation_steps=5,
+            max_train_steps=0,
+            num_train_epochs=2,
+            overrode_max_train_steps=False,
+            strict_epoch_limit=False,
+            train_batch_size=1,
+        )
+        mock_get_data_backends.return_value = {
+            "train": {
+                "config": {},
+                "metadata_backend": [object()] * 10,
+            }
+        }
+
+        trainer._recalculate_training_steps()
+
+        self.assertTrue(trainer.config.strict_epoch_limit)
+        self.assertEqual(2, trainer.config.num_update_steps_per_epoch)
+        self.assertEqual(4, trainer.config.max_train_steps)
+
     @patch("simpletuner.helpers.training.trainer.Trainer._misc_init", return_value=Mock())
     @patch(
         "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
@@ -1958,7 +1989,7 @@ class TestTrainer(unittest.TestCase):
                 learning_rate=0.001,
                 is_schedulefree=False,
                 overrode_max_train_steps=False,
-                ignore_final_epochs=False,
+                strict_epoch_limit=True,
                 optimizer="adamw",
                 delete_invalid_checkpoints=True,
             )
@@ -2013,7 +2044,7 @@ class TestTrainer(unittest.TestCase):
                 learning_rate=0.001,
                 is_schedulefree=False,
                 overrode_max_train_steps=False,
-                ignore_final_epochs=False,
+                strict_epoch_limit=True,
                 optimizer="adamw",
                 delete_invalid_checkpoints=True,
             )
@@ -2104,7 +2135,7 @@ class TestTrainer(unittest.TestCase):
             output_dir="/path/to/output",
             resume_from_checkpoint="checkpoint-100",
             num_train_epochs=1,
-            ignore_final_epochs=False,
+            strict_epoch_limit=True,
             optimizer="prodigy",
             lr_scheduler="constant",
             is_schedulefree=False,
@@ -2165,7 +2196,7 @@ class TestTrainer(unittest.TestCase):
             output_dir="/path/to/output",
             resume_from_checkpoint="checkpoint-100",
             num_train_epochs=1,
-            ignore_final_epochs=False,
+            strict_epoch_limit=True,
             optimizer="prodigy",
             lr_scheduler="constant",
             is_schedulefree=False,
@@ -2294,7 +2325,7 @@ class TestTrainer(unittest.TestCase):
             lr_scheduler="constant",
             eval_dataset_id=None,
             num_update_steps_per_epoch=1,
-            ignore_final_epochs=False,
+            strict_epoch_limit=True,
             distillation_method=None,
             disable_accelerator=False,
             optimizer="adamw",

@@ -159,7 +159,7 @@ cp config/config.json.example config/config.json
   "delete_problematic_images": "true",
   "framerate": 16,
   "validation_prompt_library": false,
-  "ignore_final_epochs": true
+  "strict_epoch_limit": false
 }
 ```
 </details>

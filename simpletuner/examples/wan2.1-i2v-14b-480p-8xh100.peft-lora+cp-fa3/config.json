@@ -17,7 +17,7 @@
   "gradient_accumulation_steps": 1,
   "gradient_checkpointing": true,
   "hub_model_id": "simpletuner-wan2.1-i2v-14b-480p-8xh100-lora-test",
-  "ignore_final_epochs": true,
+  "strict_epoch_limit": false,
   "learning_rate": 6e-5,
   "lora_rank": 16,
   "lora_type": "standard",

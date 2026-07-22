@@ -15,7 +15,7 @@
     "gradient_accumulation_steps": 1,
     "gradient_checkpointing": true,
     "hub_model_id": "simpletuner-controlnet-wan-i2v-a14b-high",
-    "ignore_final_epochs": true,
+    "strict_epoch_limit": false,
     "learning_rate": 6e-5,
     "lora_rank": 16,
     "lora_type": "standard",

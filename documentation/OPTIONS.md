@@ -1076,10 +1076,10 @@ These are optional advanced settings for LTX-2 training. Set them in JSON/TOML c
 - **What**: Number of training steps to exit training after. If set to 0, will allow `--num_train_epochs` to take priority.
 - **Why**: Useful for shortening the length of training.
 
-### `--ignore_final_epochs`
+### `--strict_epoch_limit`
 
-- **What**: Ignore the final counted epochs in favour of `--max_train_steps`.
-- **Why**: When changing the dataloader length, training may end earlier than you want because the epoch calculation changes. This option will ignore the final epochs and instead continue to train until `--max_train_steps` is reached.
+- **What**: Stop training when the epoch counter reaches `--num_train_epochs`, even if `--max_train_steps` has not been reached.
+- **Why**: Disable this for explicit `--max_train_steps` runs that should continue through extra epoch passes until the step limit is reached. Runs with `--max_train_steps=0` are always epoch-driven and use a strict epoch limit.
 
 ### `--learning_rate`
 
@@ -1869,7 +1869,7 @@ usage: train.py [-h] --model_family
                 [--input_perturbation_steps INPUT_PERTURBATION_STEPS]
                 [--lr_end LR_END] [--lr_scale [LR_SCALE]]
                 [--lr_scale_sqrt [LR_SCALE_SQRT]]
-                [--ignore_final_epochs [IGNORE_FINAL_EPOCHS]]
+                [--strict_epoch_limit [STRICT_EPOCH_LIMIT]]
                 [--freeze_encoder_before FREEZE_ENCODER_BEFORE]
                 [--freeze_encoder_after FREEZE_ENCODER_AFTER]
                 [--freeze_encoder_strategy {before,between,after}]
@@ -2369,9 +2369,10 @@ options:
   --lr_scale_sqrt [LR_SCALE_SQRT]
                         If using --lr_scale, use the square root of (number of
                         GPUs * gradient accumulation steps * batch size)
-  --ignore_final_epochs [IGNORE_FINAL_EPOCHS]
-                        When provided, the max epoch counter will not
-                        determine the end of the training run
+  --strict_epoch_limit [STRICT_EPOCH_LIMIT]
+                        Stop training when the epoch counter reaches
+                        --num_train_epochs, even if --max_train_steps
+                        has not been reached
   --freeze_encoder_before FREEZE_ENCODER_BEFORE
                         When using 'before' strategy, we will freeze layers
                         earlier than this
