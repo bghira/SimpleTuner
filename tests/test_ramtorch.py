@@ -144,6 +144,8 @@ class RamTorchUtilsTests(unittest.TestCase):
         self.assertIsInstance(model[0], _StubLinear)
         self.assertIs(type(model[0].weight), original_weight_type)
         self.assertIsInstance(model[0].weight, Int8QuantizedTrainingLinearWeight)
+        self.assertNotIn("weight", dict(model[0].named_parameters(recurse=False)))
+        self.assertIn("weight", dict(model[0].named_buffers(recurse=False)))
         self.assertTrue(getattr(model[0].weight, "is_ramtorch", False))
 
     def test_replace_quanto_qlinear_preserves_weight_subclass(self):
@@ -169,7 +171,26 @@ class RamTorchUtilsTests(unittest.TestCase):
         self.assertEqual(replaced, 1)
         self.assertIsInstance(model[0], _StubLinear)
         self.assertIsInstance(model[0].weight, WeightQBytesTensor)
+        self.assertNotIn("weight", dict(model[0].named_parameters(recurse=False)))
+        self.assertIn("weight", dict(model[0].named_buffers(recurse=False)))
         self.assertTrue(getattr(model[0].weight, "is_ramtorch", False))
+
+    def test_move_embeddings_to_device_skips_ramtorch_buffers(self):
+        class _BufferModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.register_buffer("regular_buffer", torch.ones(2))
+                weight = torch.ones(2)
+                weight.is_ramtorch = True
+                self.register_buffer("ramtorch_buffer", weight)
+
+        model = _BufferModel()
+        moved = ramtorch_utils.move_embeddings_to_device(model, torch.device("meta"))
+
+        self.assertEqual(moved, 0)
+        self.assertEqual(model.regular_buffer.device.type, "meta")
+        self.assertEqual(model.ramtorch_buffer.device.type, "cpu")
+        self.assertTrue(getattr(model.ramtorch_buffer, "is_ramtorch", False))
 
     def test_torchao_int8_ramtorch_backward_uses_dense_weight_view(self):
         try:
@@ -286,11 +307,15 @@ class RamTorchUtilsTests(unittest.TestCase):
                     setattr(self.linear_b.bias, "is_ramtorch", True)
 
         model = _IgnoreModel()
+        buffer = torch.ones(2)
+        buffer.is_ramtorch = True
+        model.register_buffer("ramtorch_buffer", buffer)
         ignored = ramtorch_utils.mark_ddp_ignore_params(model)
-        self.assertEqual(ignored, 2)
+        self.assertEqual(ignored, 3)
         ignore_set = getattr(model, "_ddp_params_and_buffers_to_ignore", set())
         self.assertIn("linear_b.weight", ignore_set)
         self.assertIn("linear_b.bias", ignore_set)
+        self.assertIn("ramtorch_buffer", ignore_set)
 
     def test_prefetch_hooks_follow_ramtorch_module_order(self):
         from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks

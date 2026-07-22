@@ -111,9 +111,16 @@ def _tensor_uses_subclass_storage(tensor: Any) -> bool:
     return tensor_type is not torch.Tensor and tensor_type is not nn.Parameter
 
 
-def _cpu_parameter_from_tensor(tensor: torch.Tensor, *, requires_grad: bool) -> nn.Parameter:
-    tensor = tensor.detach().to("cpu")
-    return nn.Parameter(tensor, requires_grad=requires_grad)
+def _cpu_tensor_from_tensor(tensor: torch.Tensor) -> torch.Tensor:
+    return tensor.detach().to("cpu")
+
+
+def _store_tensor_buffer(module: nn.Module, attr_name: str, tensor: torch.Tensor) -> None:
+    if attr_name in module._parameters:
+        del module._parameters[attr_name]
+    if attr_name in module._buffers:
+        del module._buffers[attr_name]
+    module.register_buffer(attr_name, tensor)
 
 
 def _copy_or_assign_parameter(
@@ -129,7 +136,7 @@ def _copy_or_assign_parameter(
 
     target_param = getattr(new_layer, attr_name)
     if _tensor_uses_subclass_storage(source_tensor):
-        setattr(new_layer, attr_name, _cpu_parameter_from_tensor(source_tensor, requires_grad=requires_grad))
+        _store_tensor_buffer(new_layer, attr_name, _cpu_tensor_from_tensor(source_tensor))
     else:
         with torch.no_grad():
             target_param.copy_(source_tensor.detach().to("cpu"))
@@ -725,6 +732,8 @@ def move_embeddings_to_device(module: nn.Module, device: object) -> int:
     for name, child in module.named_modules():
         # Move buffers from all modules (e.g., position_ids in CLIPTextEmbeddings)
         for buf_name, buf in child.named_buffers(recurse=False):
+            if getattr(buf, "is_ramtorch", False):
+                continue
             if buf.device.type == "cpu":
                 child.register_buffer(buf_name, buf.to(device))
 
@@ -758,6 +767,7 @@ def mark_ddp_ignore_params(module: nn.Module) -> int:
         Number of parameters added to the ignore list.
     """
     ramtorch_names = [name for name, param in module.named_parameters() if getattr(param, "is_ramtorch", False)]
+    ramtorch_names.extend(name for name, buffer in module.named_buffers() if getattr(buffer, "is_ramtorch", False))
     if not ramtorch_names:
         device_types = {param.device.type for _, param in module.named_parameters() if param.device is not None}
         if "cuda" in device_types and "cpu" in device_types:

@@ -1156,6 +1156,8 @@ def _sdnq_model(
         and "modules_to_not_use_matmul" not in sdnq_supported_kwargs
     ):
         unsupported_requested.append("sdnq_modules_to_not_use_matmul")
+    if getattr(args, "sdnq_modules_dtype_dict", None) is not None and "modules_dtype_dict" not in sdnq_supported_kwargs:
+        unsupported_requested.append("sdnq_modules_dtype_dict")
     if getattr(args, "sdnq_modules_quant_config", None) is not None and "modules_quant_config" not in sdnq_supported_kwargs:
         unsupported_requested.append("sdnq_modules_quant_config")
     if unsupported_requested:
