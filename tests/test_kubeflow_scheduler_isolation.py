@@ -21,6 +21,7 @@ class KubeflowSchedulerIsolationTestCase(unittest.IsolatedAsyncioTestCase):
 
     def tearDown(self) -> None:
         """Remove the isolated repository."""
+        self.repository.reset_instance()
         self.temp_dir.cleanup()
 
     async def test_kubeflow_jobs_are_excluded_from_local_gpu_queries(self) -> None:

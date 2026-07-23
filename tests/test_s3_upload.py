@@ -8,6 +8,7 @@ Tests the S3 upload API:
 - Object listing
 """
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
