@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Callable, Dict, Optional, Union
 
 import torch
 from diffusers import DiffusionPipeline, FlowMatchEulerDiscreteScheduler
+from diffusers.loaders.lora_base import LoraBaseMixin
 from diffusers.pipelines.pipeline_utils import ImagePipelineOutput
 from einops import rearrange
 from huggingface_hub import snapshot_download
@@ -170,7 +171,41 @@ def _pack_prompt_embeds(prompt_embeds: torch.Tensor, prompt_embeds_mask: Optiona
     return txt, txt_cu, mask, vec
 
 
-class MageFlowPipeline(DiffusionPipeline):
+class MageFlowLoraLoaderMixin(LoraBaseMixin):
+    _lora_loadable_modules = ["transformer"]
+    transformer_name = "transformer"
+
+    @classmethod
+    def save_lora_weights(
+        cls,
+        save_directory: Union[str, os.PathLike],
+        transformer_lora_layers: Dict[str, Union[torch.nn.Module, torch.Tensor]] = None,
+        is_main_process: bool = True,
+        weight_name: str = None,
+        save_function: Callable = None,
+        safe_serialization: bool = True,
+        transformer_lora_adapter_metadata: Optional[dict] = None,
+    ):
+        if not transformer_lora_layers:
+            raise ValueError("You must pass `transformer_lora_layers`.")
+
+        state_dict = cls.pack_weights(transformer_lora_layers, cls.transformer_name)
+        lora_adapter_metadata = {}
+        if transformer_lora_adapter_metadata:
+            lora_adapter_metadata.update(cls.pack_weights(transformer_lora_adapter_metadata, cls.transformer_name))
+
+        cls.write_lora_layers(
+            state_dict=state_dict,
+            save_directory=save_directory,
+            is_main_process=is_main_process,
+            weight_name=weight_name,
+            save_function=save_function,
+            safe_serialization=safe_serialization,
+            lora_adapter_metadata=lora_adapter_metadata,
+        )
+
+
+class MageFlowPipeline(DiffusionPipeline, MageFlowLoraLoaderMixin):
     model_cpu_offload_seq = "text_encoder->transformer->vae"
     _optional_components = ["text_encoder", "tokenizer", "processor"]
 
