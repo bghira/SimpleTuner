@@ -14,7 +14,6 @@ from simpletuner.helpers.models.mageflow.vendor.pipeline import (
     _build_pack_ctx,
     _lens_to_cu,
     _make_divisible_by_16,
-    _velocity,
 )
 
 
@@ -51,6 +50,99 @@ def _tokens_to_image(vae, tokens: torch.Tensor, height: int, width: int):
     from PIL import Image
 
     return Image.fromarray(decoded[0])
+
+
+@torch.amp.autocast(
+    "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu",
+    dtype=torch.float32,
+)
+def _optimized_scale(positive_flat: torch.Tensor, negative_flat: torch.Tensor):
+    dot_product = torch.sum(positive_flat * negative_flat, dim=1, keepdim=True)
+    squared_norm = torch.sum(negative_flat**2, dim=1, keepdim=True) + 1e-8
+    return dot_product / squared_norm
+
+
+def _transformer_velocity(transformer, img, ctx, sigma, *, skip_layers: Optional[list[int]] = None):
+    dev = img.device
+    t_vec = torch.full((ctx["na"],), sigma, dtype=img.dtype, device=dev)
+    return transformer(
+        img=img,
+        txt=ctx["txt"],
+        timesteps=t_vec,
+        img_shapes=ctx["img_shapes"],
+        img_cu_seqlens=ctx["img_cu"],
+        txt_cu_seqlens=ctx["txt_cu"],
+        skip_layers=skip_layers,
+    )
+
+
+def _mageflow_velocity(
+    transformer,
+    img,
+    ctx,
+    sigma,
+    *,
+    step_index: int,
+    num_inference_steps: int,
+    skip_guidance_layers: Optional[list[int]] = None,
+    skip_layer_guidance_scale: float = 2.8,
+    skip_layer_guidance_stop: float = 0.2,
+    skip_layer_guidance_start: float = 0.01,
+    guidance_rescale: Optional[float] = None,
+    use_cfg_zero_star: bool = True,
+):
+    if not ctx["has_neg"]:
+        return _transformer_velocity(transformer, img, ctx, sigma)
+
+    if ctx["batch_cfg"]:
+        n_img = img.shape[1]
+        t_vec = torch.full((2 * ctx["na"],), sigma, dtype=img.dtype, device=img.device)
+        out = transformer(
+            img=torch.cat([img, img], dim=1),
+            txt=ctx["d_txt"],
+            timesteps=t_vec,
+            img_shapes=ctx["d_img_shapes"],
+            img_cu_seqlens=ctx["d_img_cu"],
+            txt_cu_seqlens=ctx["d_txt_cu"],
+        )
+        cond, unc = out[:, :n_img, :], out[:, n_img:, :]
+    else:
+        cond = _transformer_velocity(transformer, img, ctx, sigma)
+        neg_ctx = {
+            **ctx,
+            "txt": ctx["neg_txt"],
+            "txt_cu": ctx["neg_cu"],
+        }
+        unc = _transformer_velocity(transformer, img, neg_ctx, sigma)
+
+    cfg = ctx["cfg"]
+    if use_cfg_zero_star:
+        alpha = _optimized_scale(cond.reshape(1, -1).float(), unc.reshape(1, -1).float()).view(1, 1, 1)
+        alpha = alpha.to(dtype=cond.dtype, device=cond.device)
+        velocity = unc * alpha + cfg * (cond - unc * alpha)
+    elif ctx["renorm"]:
+        velocity = unc + cfg * (cond - unc)
+        velocity = velocity * (torch.norm(cond, dim=-1, keepdim=True) / (torch.norm(velocity, dim=-1, keepdim=True) + 1e-6))
+    else:
+        velocity = unc + cfg * (cond - unc)
+
+    should_skip_layers = (
+        skip_guidance_layers is not None
+        and len(skip_guidance_layers) > 0
+        and step_index > num_inference_steps * skip_layer_guidance_start
+        and step_index < num_inference_steps * skip_layer_guidance_stop
+    )
+    if should_skip_layers:
+        skip_velocity = _transformer_velocity(transformer, img, ctx, sigma, skip_layers=skip_guidance_layers)
+        velocity = velocity + (cond - skip_velocity) * skip_layer_guidance_scale
+
+    if guidance_rescale is not None:
+        std_cond = torch.std(cond.float(), dim=(1, 2), keepdim=True)
+        std_guided = torch.std(velocity.float(), dim=(1, 2), keepdim=True)
+        factor = (std_cond / (std_guided + 1e-8)).to(dtype=velocity.dtype)
+        velocity = velocity * (1.0 - guidance_rescale + guidance_rescale * factor)
+
+    return velocity
 
 
 def _pack_prompt_embeds(prompt_embeds: torch.Tensor, prompt_embeds_mask: Optional[torch.Tensor], device):
@@ -225,6 +317,12 @@ class MageFlowPipeline(DiffusionPipeline):
         num_images_per_prompt: int = 1,
         generator: Optional[torch.Generator] = None,
         static_shift: Optional[float] = None,
+        skip_guidance_layers: Optional[list[int]] = None,
+        skip_layer_guidance_scale: float = 2.8,
+        skip_layer_guidance_stop: float = 0.2,
+        skip_layer_guidance_start: float = 0.01,
+        guidance_rescale: Optional[float] = None,
+        use_cfg_zero_star: bool = True,
         return_dict: bool = True,
         **kwargs,
     ):
@@ -290,7 +388,20 @@ class MageFlowPipeline(DiffusionPipeline):
         )
         self._set_scheduler_timesteps(num_inference_steps, device, static_shift)
         for step_index, timestep in enumerate(self.scheduler.timesteps):
-            velocity = _velocity(self.transformer, tokens, ctx, self.scheduler.sigmas[step_index].item())
+            velocity = _mageflow_velocity(
+                self.transformer,
+                tokens,
+                ctx,
+                self.scheduler.sigmas[step_index].item(),
+                step_index=step_index,
+                num_inference_steps=num_inference_steps,
+                skip_guidance_layers=skip_guidance_layers,
+                skip_layer_guidance_scale=skip_layer_guidance_scale,
+                skip_layer_guidance_stop=skip_layer_guidance_stop,
+                skip_layer_guidance_start=skip_layer_guidance_start,
+                guidance_rescale=guidance_rescale,
+                use_cfg_zero_star=use_cfg_zero_star,
+            )
             tokens = self.scheduler.step(velocity, timestep, tokens, return_dict=False)[0]
 
         images = []

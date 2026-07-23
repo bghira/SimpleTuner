@@ -9,6 +9,7 @@ from PIL import Image
 
 from simpletuner.helpers.models.mageflow.pipeline import (
     MageFlowPipeline,
+    _mageflow_velocity,
     _make_divisible_by_16,
     _pack_prompt_embeds,
     _tokens_to_image,
@@ -18,7 +19,6 @@ from simpletuner.helpers.models.mageflow.vendor.pipeline import (
     _build_pack_ctx,
     _lens_to_cu,
     _resize_long_edge,
-    _velocity,
 )
 
 
@@ -150,12 +150,39 @@ class MageFlowEditPipeline(MageFlowPipeline):
         num_images_per_prompt: int = 1,
         generator: Optional[torch.Generator] = None,
         static_shift: Optional[float] = None,
+        skip_guidance_layers: Optional[list[int]] = None,
+        skip_layer_guidance_scale: float = 2.8,
+        skip_layer_guidance_stop: float = 0.2,
+        skip_layer_guidance_start: float = 0.01,
+        guidance_rescale: Optional[float] = None,
+        use_cfg_zero_star: bool = True,
         return_dict: bool = True,
         **kwargs,
     ):
         del kwargs
         if image is None:
-            raise ValueError("Mage-Flow edit validation requires an input image.")
+            return super().__call__(
+                prompt=prompt,
+                prompt_embeds=prompt_embeds,
+                prompt_embeds_mask=prompt_embeds_mask,
+                negative_prompt=negative_prompt,
+                negative_prompt_embeds=negative_prompt_embeds,
+                negative_prompt_embeds_mask=negative_prompt_embeds_mask,
+                height=height or 1024,
+                width=width or 1024,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale,
+                num_images_per_prompt=num_images_per_prompt,
+                generator=generator,
+                static_shift=static_shift,
+                skip_guidance_layers=skip_guidance_layers,
+                skip_layer_guidance_scale=skip_layer_guidance_scale,
+                skip_layer_guidance_stop=skip_layer_guidance_stop,
+                skip_layer_guidance_start=skip_layer_guidance_start,
+                guidance_rescale=guidance_rescale,
+                use_cfg_zero_star=use_cfg_zero_star,
+                return_dict=return_dict,
+            )
 
         device = self._execution_device
         dtype = next(self.transformer.parameters()).dtype
@@ -268,7 +295,20 @@ class MageFlowEditPipeline(MageFlowPipeline):
                 parts.append(target)
                 parts.append(ref)
             packed = torch.cat(parts, dim=1)
-            velocity = _velocity(self.transformer, packed, ctx, self.scheduler.sigmas[step_index].item())
+            velocity = _mageflow_velocity(
+                self.transformer,
+                packed,
+                ctx,
+                self.scheduler.sigmas[step_index].item(),
+                step_index=step_index,
+                num_inference_steps=num_inference_steps,
+                skip_guidance_layers=skip_guidance_layers,
+                skip_layer_guidance_scale=skip_layer_guidance_scale,
+                skip_layer_guidance_stop=skip_layer_guidance_stop,
+                skip_layer_guidance_start=skip_layer_guidance_start,
+                guidance_rescale=guidance_rescale,
+                use_cfg_zero_star=use_cfg_zero_star,
+            )
             pred_target = velocity[:, target_idx]
             stepped = self.scheduler.step(
                 pred_target,

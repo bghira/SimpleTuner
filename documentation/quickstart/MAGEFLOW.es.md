@@ -23,6 +23,8 @@ Instala SimpleTuner:
 pip install 'simpletuner[cuda]'
 ```
 
+Mage-Flow usa atencion empaquetada de longitud variable. Para usar FlashAttention 2 sin compilar el paquete `flash-attn` localmente, define `"attention_mechanism": "flash-attn-varlen-hub"` para que SimpleTuner cargue el kernel desde Hugging Face Hub. Deja el valor predeterminado `diffusers` para PyTorch SDPA.
+
 Config inicial para texto a imagen:
 
 ```json
@@ -64,7 +66,11 @@ Para edición:
 }
 ```
 
-Los flavours de edición requieren imágenes de condicionamiento. SimpleTuner cambia automáticamente a la pipeline de edición durante `check_user_config`, igual que Flux Kontext.
+## Mage Flow (Edit) Considerations
+
+Los checkpoints Mage-Flow edit no requieren un dataset de condicionamiento o referencia. Microsoft entreno los modelos edit conjuntamente en tareas de generacion y edicion, asi que el prior generativo se conserva. En SimpleTuner puedes seguir usando un dataset normal de imagenes para LoRA de sujeto, estilo o concepto aunque `model_flavour` sea `edit-base`, `edit` o `edit-turbo`.
+
+Usa pares source/target solo cuando quieras entrenar comportamiento de edicion. SimpleTuner usa automaticamente la pipeline compatible con edicion; cuando no se proporciona imagen de condicionamiento, la validacion y el prompt encoding usan el flujo text-to-image.
 
 ## Dataloader
 
@@ -96,7 +102,7 @@ Para subject/style LoRA usa el dataloader de imágenes normal con cache separado
 ]
 ```
 
-Para edición usa pares source/target. El caption debe ser la instrucción de edición, no solo una descripción de la imagen final.
+Para entrenar comportamiento de edicion opcional, usa pares source/target. El caption debe ser la instruccion de edicion, no solo una descripcion de la imagen final.
 
 ## Presets de memoria
 

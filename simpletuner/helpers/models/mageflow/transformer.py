@@ -22,6 +22,12 @@ from simpletuner.helpers.training.gradient_checkpointing_interval import (
 logger = logging.getLogger(__name__)
 
 
+def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor):
+    if buffer is None:
+        return
+    buffer[key] = hidden_states
+
+
 def _resolve_repo_dir(repo_id_or_path: str, *, revision: Optional[str] = None, local_files_only: bool = False) -> str:
     if os.path.isdir(repo_id_or_path):
         return os.path.abspath(repo_id_or_path)
@@ -66,6 +72,7 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
         attn_type: str = "sdpa",
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
+        enable_time_sign_embed: bool = False,
     ):
         del (
             vec_in_dim,
@@ -100,6 +107,10 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
             patch_size=patch_size,
         )
         MageFlow.__init__(self, params)
+        self.time_sign_embed: torch.nn.Embedding | None = None
+        if enable_time_sign_embed:
+            self.time_sign_embed = torch.nn.Embedding(2, self.inner_dim)
+            torch.nn.init.zeros_(self.time_sign_embed.weight)
         self.gradient_checkpointing_backend = get_checkpoint_backend()
         self._gradient_checkpointing_func = get_checkpoint_function()
         self._musubi_block_swap = MusubiBlockSwapManager.build(
@@ -117,6 +128,7 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
         attn_type = kwargs.pop("attn_type", None)
         musubi_blocks_to_swap = kwargs.pop("musubi_blocks_to_swap", 0)
         musubi_block_swap_device = kwargs.pop("musubi_block_swap_device", "cpu")
+        enable_time_sign_embed = kwargs.pop("enable_time_sign_embed", False)
         use_safetensors = kwargs.pop("use_safetensors", True)
         if not use_safetensors:
             raise ValueError("Mage-Flow transformer checkpoints are expected to be safetensors.")
@@ -134,6 +146,7 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
             config["attn_type"] = attn_type
         config["musubi_blocks_to_swap"] = musubi_blocks_to_swap
         config["musubi_block_swap_device"] = musubi_block_swap_device
+        config["enable_time_sign_embed"] = enable_time_sign_embed
         model = cls(**config)
         state_dict = load_file(os.path.join(model_dir, "diffusion_pytorch_model.safetensors"), device="cpu")
         model.load_state_dict(state_dict, strict=False, assign=True)
@@ -165,9 +178,15 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
         img_cu_seqlens: torch.Tensor | None = None,
         txt_cu_seqlens: torch.Tensor | None = None,
         attention_kwargs: dict[str, Any] | None = None,
-    ) -> torch.Tensor:
+        timestep_sign: torch.Tensor | None = None,
+        skip_layers: list[int] | None = None,
+        hidden_states_buffer: dict | None = None,
+        return_dict: bool | None = None,
+    ) -> torch.Tensor | tuple[torch.Tensor]:
         if img.ndim != 3 or txt.ndim != 3:
             raise ValueError("Input img and txt tensors must have 3 dimensions.")
+        if timesteps.ndim != 1:
+            raise ValueError("Mage-Flow expects batchwise 1D timesteps; tokenwise timesteps are not supported.")
 
         ms_pe = self.pos_embed(img_shapes, device=img.device)
 
@@ -176,6 +195,29 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
 
         timesteps = timesteps.to(img.dtype)
         temb = self.time_text_embed(timesteps, img)
+        if timestep_sign is not None:
+            if self.time_sign_embed is None:
+                raise ValueError(
+                    "timestep_sign was provided but the model was loaded without `enable_time_sign_embed=True`. "
+                    "Enable TwinFlow or load a TwinFlow-compatible checkpoint."
+                )
+            sign_tensor = timestep_sign.to(device=img.device)
+            if sign_tensor.ndim == 0:
+                sign_tensor = sign_tensor.expand(temb.shape[0])
+            elif sign_tensor.ndim == 1:
+                if sign_tensor.shape[0] == 1 and temb.shape[0] != 1:
+                    sign_tensor = sign_tensor.expand(temb.shape[0])
+                elif sign_tensor.shape[0] != temb.shape[0]:
+                    raise ValueError(
+                        f"Mage-Flow timestep_sign expected 1 or {temb.shape[0]} batch values, "
+                        f"got {sign_tensor.shape[0]}."
+                    )
+            else:
+                raise ValueError(
+                    f"Mage-Flow timestep_sign expected scalar or 1D batch tensor, got shape {tuple(sign_tensor.shape)}."
+                )
+            sign_idx = (sign_tensor < 0).long()
+            temb = temb + self.time_sign_embed(sign_idx).to(dtype=temb.dtype, device=temb.device)
 
         txt = self.txt_in(txt)
         txt_vec = torch.zeros(txt.shape[0], self.inner_dim, dtype=txt.dtype, device=txt.device)
@@ -192,10 +234,13 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
                 torch.is_grad_enabled(),
             )
 
+        skip_layers_set = set(skip_layers) if skip_layers is not None else set()
         for index_block, block in enumerate(self.transformer_blocks):
             if musubi_offload_active and musubi_manager.is_managed_block(index_block):
                 musubi_manager.stream_in(block, img.device)
-            if self.training and self.checkpoint:
+            if index_block in skip_layers_set:
+                pass
+            elif self.training and self.checkpoint:
                 txt, img = self._gradient_checkpointing_func(
                     block,
                     img,
@@ -218,6 +263,7 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
                 )
             if musubi_offload_active and musubi_manager.is_managed_block(index_block):
                 musubi_manager.stream_out(block)
+            _store_hidden_state(hidden_states_buffer, f"layer_{index_block}", img)
 
         img = self.norm_out(
             img,
@@ -225,4 +271,6 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
             cu_seqlens=img_cu_seqlens,
         )
         img = self.proj_out(img)
+        if return_dict is False:
+            return (img,)
         return img

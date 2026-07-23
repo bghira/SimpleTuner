@@ -23,6 +23,8 @@ SimpleTuner をインストールします:
 pip install 'simpletuner[cuda]'
 ```
 
+Mage-Flow は packed variable-length attention を使います。ローカルで `flash-attn` パッケージをビルドせずに FlashAttention 2 を使うには、`"attention_mechanism": "flash-attn-varlen-hub"` を設定し、SimpleTuner に Hugging Face Hub kernel を読み込ませてください。PyTorch SDPA を使う場合は既定の `diffusers` のままで構いません。
+
 text-to-image の開始設定:
 
 ```json
@@ -64,7 +66,11 @@ text-to-image の開始設定:
 }
 ```
 
-編集 flavours には conditioning image dataset が必要です。SimpleTuner は Flux Kontext と同じように、`check_user_config` で編集 pipeline に切り替えます。
+## Mage Flow (Edit) Considerations
+
+Mage-Flow edit checkpoint は conditioning/reference dataset を必須としません。Microsoft は edit model を生成タスクと編集タスクで joint training しているため、生成 prior は保持されています。SimpleTuner では `model_flavour` が `edit-base`、`edit`、`edit-turbo` の場合でも、subject、style、concept LoRA 用の通常の画像 dataset をそのまま使えます。
+
+編集挙動を明示的に学習したい場合だけ source/target のペアデータを使ってください。SimpleTuner は edit flavour に対して編集対応 pipeline を自動的に使いますが、conditioning image がない場合は validation と prompt encoding が text-to-image path を使います。
 
 ## Dataloader
 
@@ -96,7 +102,7 @@ text-to-image の開始設定:
 ]
 ```
 
-編集学習では source/target のペアデータを使います。caption は最終画像の説明ではなく、編集指示として書いてください。
+任意で編集挙動を学習する場合は source/target のペアデータを使います。caption は最終画像の説明ではなく、編集指示として書いてください。
 
 ## メモリプリセット
 

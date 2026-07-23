@@ -36,6 +36,8 @@ pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org
 
 For a development checkout, follow the [installation documentation](../INSTALL.md).
 
+Mage-Flow uses packed variable-length attention. To use FlashAttention 2 without building the `flash-attn` package locally, set `"attention_mechanism": "flash-attn-varlen-hub"` so SimpleTuner loads the Hugging Face Hub kernel. Leave the default `diffusers` value for PyTorch SDPA.
+
 ## Setting up the environment
 
 ### Web interface method
@@ -97,7 +99,11 @@ For edit LoRA training, switch the flavour and model path:
 }
 ```
 
-Edit flavours require a conditioning image dataset. SimpleTuner routes them through the edit pipeline automatically during `check_user_config`, similar to Flux Kontext.
+## Mage Flow (Edit) Considerations
+
+The Mage-Flow edit checkpoints do not require a conditioning or reference dataset. Microsoft trained the edit models jointly on generation and editing tasks, so the generative prior is preserved. In SimpleTuner you can keep using a normal image dataset for subject, style, or concept LoRA finetuning even when `model_flavour` is `edit-base`, `edit`, or `edit-turbo`.
+
+Use paired source/target data only when you specifically want to train edit behavior. SimpleTuner routes edit flavours through the edit-capable pipeline automatically; when no conditioning image is provided, validation and prompt encoding use the text-to-image path.
 
 ## Dataloader configuration
 
@@ -132,7 +138,7 @@ For ordinary subject or style LoRAs, use the normal image dataloader:
 ]
 ```
 
-For edit training, use paired source/target data and configure conditioning images the same way you would for other edit models. The caption should describe the edit instruction, not just the target image. The conditioning image is encoded as Mage-VAE latents and appended to the noisy target sequence during training.
+For optional edit-behavior training, use paired source/target data and configure conditioning images the same way you would for other edit models. The caption should describe the edit instruction, not just the target image. The conditioning image is encoded as Mage-VAE latents and appended to the noisy target sequence during training.
 
 ## Validation prompts
 

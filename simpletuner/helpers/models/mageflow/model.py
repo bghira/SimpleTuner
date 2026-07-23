@@ -14,13 +14,7 @@ from simpletuner.helpers.acceleration import (
     get_sdnq_presets,
     get_torchao_presets,
 )
-from simpletuner.helpers.models.common import (
-    ImageModelFoundation,
-    ModelTypes,
-    PipelineTypes,
-    PredictionTypes,
-    TextEmbedCacheKey,
-)
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.mageflow.autoencoder import MageVAE
 from simpletuner.helpers.models.mageflow.pipeline import MageFlowPipeline
 from simpletuner.helpers.models.mageflow.pipeline_edit import MageFlowEditPipeline
@@ -198,15 +192,12 @@ class MageFlow(ImageModelFoundation):
         if self.config.aspect_bucket_alignment != 16:
             logger.warning("Mage-Flow uses a 16px latent alignment. Overriding --aspect_bucket_alignment.")
             self.config.aspect_bucket_alignment = 16
+        if int(getattr(self.config, "context_parallel_size", 1) or 1) > 1:
+            raise ValueError("Mage-Flow does not support --context_parallel_size because it uses packed varlen attention.")
         self.config.tokenizer_max_length = int(getattr(self.config, "tokenizer_max_length", None) or 2048)
         if self._is_edit_flavour():
             self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG] = MageFlowEditPipeline
             self.PIPELINE_CLASSES[PipelineTypes.IMG2IMG] = MageFlowEditPipeline
-            if getattr(self.config, "validation_using_datasets", False):
-                logger.warning(
-                    "Mage-Flow edit validation uses the edit conditioning path. Disabling --validation_using_datasets."
-                )
-                self.config.validation_using_datasets = False
         validation_steps = getattr(self.config, "validation_num_inference_steps", None)
         if self._model_flavour().endswith("turbo") and validation_steps is not None and validation_steps > 8:
             logger.warning("Mage-Flow Turbo checkpoints are intended for few-step validation; consider 4 steps.")
@@ -215,6 +206,18 @@ class MageFlow(ImageModelFoundation):
         args = super().pretrained_load_args(pretrained_load_args)
         args["attn_type"] = getattr(self.config, "attention_mechanism", None) or "sdpa"
         return apply_musubi_pretrained_defaults(self.config, args)
+
+    def _select_crepa_hidden_states(self, prepared_batch: dict, hidden_states_buffer):
+        if hidden_states_buffer is None:
+            return None
+        crepa = getattr(self, "crepa_regularizer", None)
+        block_idx = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(crepa, "block_index", None),
+        )
+        if block_idx is None:
+            return None
+        return hidden_states_buffer.get(f"layer_{int(block_idx)}")
 
     def _load_processor_for_pipeline(self):
         if self.processor is not None:
@@ -230,7 +233,7 @@ class MageFlow(ImageModelFoundation):
         return self.processor
 
     def requires_conditioning_dataset(self) -> bool:
-        return self._is_edit_flavour()
+        return False
 
     def supports_conditioning_dataset(self) -> bool:
         return self._is_edit_flavour()
@@ -239,18 +242,13 @@ class MageFlow(ImageModelFoundation):
         return self._is_edit_flavour()
 
     def requires_conditioning_validation_inputs(self) -> bool:
-        return self._is_edit_flavour()
+        return False
 
     def requires_validation_edit_captions(self) -> bool:
-        return self._is_edit_flavour()
+        return False
 
     def requires_text_embed_image_context(self) -> bool:
-        return self._is_edit_flavour()
-
-    def text_embed_cache_key(self) -> TextEmbedCacheKey:
-        if self._is_edit_flavour():
-            return TextEmbedCacheKey.DATASET_AND_FILENAME
-        return super().text_embed_cache_key()
+        return False
 
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         if self._is_edit_flavour() and "conditioning_image" in pipeline_kwargs and "image" not in pipeline_kwargs:
@@ -304,8 +302,6 @@ class MageFlow(ImageModelFoundation):
             pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
             prompt_contexts = getattr(self, "_current_prompt_contexts", None)
             images = self._prepare_prompt_images(prompt_contexts, len(prompts))
-            if images is None:
-                raise ValueError("Mage-Flow edit text encoding requires one conditioning image per prompt.")
             return pipeline.encode_prompt(
                 prompts,
                 images=images,
@@ -423,6 +419,7 @@ class MageFlow(ImageModelFoundation):
 
     def model_predict(self, prepared_batch, custom_timesteps: list = None):
         del custom_timesteps
+        hidden_states_buffer = self._new_hidden_state_buffer()
         latents = prepared_batch["noisy_latents"].to(device=self.accelerator.device, dtype=self.config.weight_dtype)
         conditioning_latents = prepared_batch.get("conditioning_latents") if self._is_edit_flavour() else None
         (
@@ -440,13 +437,17 @@ class MageFlow(ImageModelFoundation):
         if timestep.ndim == 0:
             timestep = timestep.expand(len(img_lens))
 
-        model_pred = self.get_trained_component(base_model=True)(
+        model_pred = self.get_trained_component(base_model=True, unwrap_model=False)(
             img=img,
             txt=txt,
             timesteps=timestep,
             img_shapes=img_shapes,
             img_cu_seqlens=img_cu,
             txt_cu_seqlens=txt_cu,
+            timestep_sign=(
+                prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+            ),
+            hidden_states_buffer=hidden_states_buffer,
         )
         model_pred = model_pred[:, target_indices]
         cursor = 0
@@ -455,7 +456,11 @@ class MageFlow(ImageModelFoundation):
             sample = model_pred[:, cursor : cursor + target_len]
             samples.append(rearrange(sample, "1 (h w) c -> c h w", h=latent_h, w=latent_w))
             cursor += target_len
-        return {"model_prediction": torch.stack(samples, dim=0)}
+        return {
+            "model_prediction": torch.stack(samples, dim=0),
+            "crepa_hidden_states": self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer),
+            "hidden_states_buffer": hidden_states_buffer,
+        }
 
 
 ModelRegistry.register("mageflow", MageFlow)
