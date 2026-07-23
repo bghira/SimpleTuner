@@ -188,10 +188,126 @@ class MageFlow(ImageModelFoundation):
     def _is_edit_flavour(self) -> bool:
         return self._model_flavour() in {"edit-base", "edit", "edit-turbo"}
 
+    @staticmethod
+    def _normalise_attention_mechanism(attention_mechanism: str | None) -> str:
+        return str(attention_mechanism or "").strip().lower().replace("_", "-")
+
+    @staticmethod
+    def _recommended_attention_mechanism() -> str:
+        if not torch.cuda.is_available():
+            return "flash-attn-varlen-hub"
+
+        major, _ = torch.cuda.get_device_capability()
+        if major >= 10:
+            logger.warning(
+                "Blackwell CUDA capability detected for Mage-Flow; selecting flash-attn-4-hub for packed varlen "
+                "attention. This backend has not been validated by the SimpleTuner Mage-Flow presets yet."
+            )
+            return "flash-attn-4-hub"
+        if major >= 9:
+            return "flash-attn-3-varlen-hub"
+        return "flash-attn-varlen-hub"
+
+    def _normalise_mageflow_attention_config(self) -> None:
+        requested = getattr(self.config, "attention_mechanism", None)
+        requested_normalised = self._normalise_attention_mechanism(requested)
+        recommended = self._recommended_attention_mechanism()
+        supported = {
+            "fa2",
+            "flash-attn-2",
+            "flash-attn-2-hub",
+            "flash-attention-2",
+            "flash-attention-2-hub",
+            "flash-attn-varlen",
+            "flash-attn-varlen-hub",
+            "flash-attention-varlen",
+            "flash-attention-varlen-hub",
+            "flash-varlen-hub",
+            "flash2",
+            "flash2-hub",
+            "fa3",
+            "flash-attn-3",
+            "flash-attn-3-hub",
+            "flash-attn-3-varlen",
+            "flash-attn-3-varlen-hub",
+            "flash-attention-3",
+            "flash-attention-3-hub",
+            "flash-attention-3-varlen",
+            "flash-attention-3-varlen-hub",
+            "flash3",
+            "flash3-hub",
+            "flash3-varlen",
+            "flash3-varlen-hub",
+            "fa4",
+            "flash-attn-4",
+            "flash-attn-4-hub",
+            "flash-attention-4",
+            "flash-attention-4-hub",
+            "flash4",
+            "flash4-hub",
+            "auto",
+            "automatic",
+        }
+        supported_aliases = {
+            "fa2": "flash-attn-varlen-hub",
+            "flash-attn-2": "flash-attn-varlen-hub",
+            "flash-attn-2-hub": "flash-attn-varlen-hub",
+            "flash-attention-2": "flash-attn-varlen-hub",
+            "flash-attention-2-hub": "flash-attn-varlen-hub",
+            "flash-attn-varlen": "flash-attn-varlen-hub",
+            "flash-attention-varlen": "flash-attn-varlen-hub",
+            "flash-attention-varlen-hub": "flash-attn-varlen-hub",
+            "flash-varlen-hub": "flash-attn-varlen-hub",
+            "flash2": "flash-attn-varlen-hub",
+            "flash2-hub": "flash-attn-varlen-hub",
+            "fa3": "flash-attn-3-varlen-hub",
+            "flash-attn-3": "flash-attn-3-varlen-hub",
+            "flash-attn-3-hub": "flash-attn-3-varlen-hub",
+            "flash-attention-3": "flash-attn-3-varlen-hub",
+            "flash-attention-3-hub": "flash-attn-3-varlen-hub",
+            "flash-attention-3-varlen": "flash-attn-3-varlen-hub",
+            "flash-attention-3-varlen-hub": "flash-attn-3-varlen-hub",
+            "flash3": "flash-attn-3-varlen-hub",
+            "flash3-hub": "flash-attn-3-varlen-hub",
+            "flash3-varlen": "flash-attn-3-varlen-hub",
+            "flash3-varlen-hub": "flash-attn-3-varlen-hub",
+            "fa4": "flash-attn-4-hub",
+            "flash-attn-4": "flash-attn-4-hub",
+            "flash-attention-4": "flash-attn-4-hub",
+            "flash-attention-4-hub": "flash-attn-4-hub",
+            "flash4": "flash-attn-4-hub",
+            "flash4-hub": "flash-attn-4-hub",
+            "auto": recommended,
+            "automatic": recommended,
+        }
+
+        if requested_normalised in supported:
+            resolved = supported_aliases.get(requested_normalised, requested_normalised or recommended)
+            if resolved != requested:
+                logger.info(
+                    "Normalising Mage-Flow --attention_mechanism=%s to %s for packed varlen attention.",
+                    requested,
+                    resolved,
+                )
+                self.config.attention_mechanism = resolved
+            return
+
+        if requested_normalised:
+            logger.warning(
+                "Mage-Flow uses packed varlen attention and does not support --attention_mechanism=%s. "
+                "Overriding with %s for this CUDA target.",
+                requested,
+                recommended,
+            )
+        else:
+            logger.info("Mage-Flow attention mechanism unset; using %s for packed varlen attention.", recommended)
+        self.config.attention_mechanism = recommended
+
     def check_user_config(self):
         if self.config.aspect_bucket_alignment != 16:
             logger.warning("Mage-Flow uses a 16px latent alignment. Overriding --aspect_bucket_alignment.")
             self.config.aspect_bucket_alignment = 16
+        self._normalise_mageflow_attention_config()
         if int(getattr(self.config, "context_parallel_size", 1) or 1) > 1:
             raise ValueError("Mage-Flow does not support --context_parallel_size because it uses packed varlen attention.")
         self.config.tokenizer_max_length = int(getattr(self.config, "tokenizer_max_length", None) or 2048)
