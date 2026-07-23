@@ -11,9 +11,13 @@ Tests cover:
 from __future__ import annotations
 
 import unittest
-from typing import Any, Dict, List, Optional, Tuple
 
-from simpletuner.simpletuner_sdk.server.services.training_service import TrainingJobResult, get_gpu_requirements
+from simpletuner.simpletuner_sdk.server.services.training_service import (
+    TrainingJobResult,
+    _queue_training_job,
+    _queued_preferred_gpus,
+    get_gpu_requirements,
+)
 
 
 class TestGetGPURequirements(unittest.TestCase):
@@ -221,6 +225,156 @@ class TestQueueTrainingJob(unittest.TestCase):
         # 1. test_queue_store_gpu.py - tests add_to_queue with GPU fields
         # 2. local_gpu.test.js - tests API submission behavior
         pass
+
+    def test_incomplete_preferred_gpus_are_not_persisted(self):
+        """A queued 2-GPU job should not hard-pin itself to one GPU forever."""
+        self.assertIsNone(_queued_preferred_gpus([0], num_processes=2, any_gpu=False))
+
+    def test_duplicate_preferred_gpus_are_not_counted_as_complete(self):
+        """Duplicate GPU IDs should not satisfy a multi-GPU preference."""
+        self.assertIsNone(_queued_preferred_gpus([0, 0], num_processes=2, any_gpu=False))
+
+    def test_duplicate_complete_preferred_gpus_are_deduplicated(self):
+        """Complete preferences are persisted without duplicate GPU IDs."""
+        self.assertEqual(_queued_preferred_gpus([0, 1, 1], num_processes=2, any_gpu=False), [0, 1])
+
+    def test_complete_preferred_gpus_are_persisted(self):
+        """Complete preferences remain hard preferences for queued jobs."""
+        self.assertEqual(_queued_preferred_gpus([0, 1], num_processes=2, any_gpu=False), [0, 1])
+
+    def test_any_gpu_drops_preferred_gpus(self):
+        """The any-GPU mode should let the allocator choose later."""
+        self.assertIsNone(_queued_preferred_gpus([0, 1], num_processes=2, any_gpu=True))
+
+    def test_queued_job_processes_pending_when_approval_not_required(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        mock_repo = MagicMock()
+        mock_repo.get_queue_stats = AsyncMock(return_value={"queue_depth": 0})
+        mock_repo.add = AsyncMock()
+
+        with (
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository.get_job_repository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.training_service._process_pending_local_jobs"
+            ) as mock_process,
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.training_service._detect_local_hardware",
+                return_value="local",
+            ),
+        ):
+            result = _queue_training_job(
+                job_id="queued-job",
+                runtime_config={"--output_dir": "/tmp/out"},
+                env_name="test-env",
+                num_processes=2,
+                preferred_gpus=None,
+                any_gpu=False,
+                org_id=None,
+                user_id=None,
+            )
+
+        self.assertEqual(result.status, "queued")
+        mock_repo.add.assert_awaited_once()
+        mock_process.assert_called_once_with()
+
+    def test_approval_queue_does_not_process_pending(self):
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        mock_repo = MagicMock()
+        mock_repo.get_queue_stats = AsyncMock(return_value={"queue_depth": 0})
+        mock_repo.add = AsyncMock()
+
+        with (
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository.get_job_repository",
+                return_value=mock_repo,
+            ),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.training_service._process_pending_local_jobs"
+            ) as mock_process,
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.training_service._detect_local_hardware",
+                return_value="local",
+            ),
+        ):
+            result = _queue_training_job(
+                job_id="approval-job",
+                runtime_config={"--output_dir": "/tmp/out"},
+                env_name="test-env",
+                num_processes=2,
+                preferred_gpus=None,
+                any_gpu=False,
+                org_id=None,
+                user_id=None,
+                requires_approval=True,
+                approval_reason="quota review",
+            )
+
+        self.assertEqual(result.status, "blocked")
+        mock_repo.add.assert_awaited_once()
+        mock_process.assert_not_called()
+
+    def test_process_pending_local_jobs_schedules_on_running_loop(self):
+        import asyncio
+        from unittest.mock import MagicMock, patch
+
+        from simpletuner.simpletuner_sdk.server.services.training_service import _process_pending_local_jobs
+
+        async def run_check():
+            started = asyncio.Event()
+            release = asyncio.Event()
+            allocator = MagicMock()
+
+            async def process_pending_jobs():
+                started.set()
+                await release.wait()
+                return []
+
+            allocator.process_pending_jobs = process_pending_jobs
+
+            with patch(
+                "simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.get_gpu_allocator",
+                return_value=allocator,
+            ):
+                _process_pending_local_jobs()
+                await asyncio.wait_for(started.wait(), timeout=1)
+                release.set()
+                await asyncio.sleep(0)
+
+        asyncio.run(run_check())
+
+    def test_process_pending_local_jobs_logs_async_failure(self):
+        import asyncio
+        from unittest.mock import MagicMock, patch
+
+        from simpletuner.simpletuner_sdk.server.services import training_service
+
+        async def run_check():
+            allocator = MagicMock()
+
+            async def process_pending_jobs():
+                raise RuntimeError("queue failed")
+
+            allocator.process_pending_jobs = process_pending_jobs
+
+            with (
+                patch(
+                    "simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.get_gpu_allocator",
+                    return_value=allocator,
+                ),
+                patch.object(training_service.logger, "exception") as mock_exception,
+            ):
+                training_service._process_pending_local_jobs()
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+
+            mock_exception.assert_called_once_with("Failed to process pending local jobs after enqueue")
+
+        asyncio.run(run_check())
 
 
 class TestReleaseJobGPUs(unittest.TestCase):
