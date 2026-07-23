@@ -230,6 +230,14 @@ class TestQueueTrainingJob(unittest.TestCase):
         """A queued 2-GPU job should not hard-pin itself to one GPU forever."""
         self.assertIsNone(_queued_preferred_gpus([0], num_processes=2, any_gpu=False))
 
+    def test_duplicate_preferred_gpus_are_not_counted_as_complete(self):
+        """Duplicate GPU IDs should not satisfy a multi-GPU preference."""
+        self.assertIsNone(_queued_preferred_gpus([0, 0], num_processes=2, any_gpu=False))
+
+    def test_duplicate_complete_preferred_gpus_are_deduplicated(self):
+        """Complete preferences are persisted without duplicate GPU IDs."""
+        self.assertEqual(_queued_preferred_gpus([0, 1, 1], num_processes=2, any_gpu=False), [0, 1])
+
     def test_complete_preferred_gpus_are_persisted(self):
         """Complete preferences remain hard preferences for queued jobs."""
         self.assertEqual(_queued_preferred_gpus([0, 1], num_processes=2, any_gpu=False), [0, 1])

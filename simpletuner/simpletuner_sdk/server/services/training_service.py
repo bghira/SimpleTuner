@@ -32,6 +32,7 @@ from simpletuner.simpletuner_sdk.server.services.hardware_service import detect_
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults, WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
+from .local_gpu_allocator import dedupe_gpu_ids
 from .webhook_defaults import DEFAULT_WEBHOOK_CONFIG, get_authenticated_webhook_config, get_default_callback_url
 
 logger = logging.getLogger(__name__)
@@ -131,6 +132,7 @@ def _queued_preferred_gpus(preferred_gpus: Optional[List[int]], num_processes: i
     """
     if any_gpu or not preferred_gpus:
         return None
+    preferred_gpus = dedupe_gpu_ids(preferred_gpus)
     if len(preferred_gpus) < num_processes:
         logger.warning(
             "Ignoring incomplete GPU preference %s for queued job needing %d GPU(s)",

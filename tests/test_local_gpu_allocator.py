@@ -624,6 +624,43 @@ class TestLocalGPUAllocatorProcessPending(unittest.TestCase):
 
     @patch("simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.detect_gpu_inventory")
     @patch("simpletuner.simpletuner_sdk.server.services.webui_state.WebUIStateStore")
+    @patch("simpletuner.simpletuner_sdk.process_keeper.submit_job")
+    @patch("simpletuner.simpletuner_sdk.server.services.cloud.async_job_store.AsyncJobStore.get_instance")
+    def test_process_pending_falls_back_from_duplicate_gpu_preference(
+        self,
+        mock_job_store_instance,
+        mock_submit,
+        mock_state_store,
+        mock_detect,
+    ):
+        """Duplicate queued preferences should not allocate the same GPU twice."""
+        mock_detect.return_value = self.mock_inventory
+        mock_state_store.return_value.load_defaults.return_value = self.mock_defaults
+
+        mock_store = AsyncMock()
+        mock_store.update_job = AsyncMock(return_value=True)
+        mock_job_store_instance.return_value = mock_store
+
+        entry = self._create_entry(
+            "job-1",
+            num_processes=2,
+            allocated_gpus=[0, 0],
+            metadata={
+                "runtime_config": {"--output_dir": "/tmp/test"},
+                "env_name": "test-env",
+                "any_gpu": False,
+            },
+        )
+        self.mock_queue_store.add_entry(entry)
+
+        started = asyncio.run(self.allocator.process_pending_jobs())
+
+        self.assertEqual(started, ["job-1"])
+        self.assertEqual(entry.allocated_gpus, [0, 1])
+        mock_submit.assert_called_once()
+
+    @patch("simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.detect_gpu_inventory")
+    @patch("simpletuner.simpletuner_sdk.server.services.webui_state.WebUIStateStore")
     def test_process_pending_no_pending(self, mock_state_store, mock_detect):
         """Test processing when no pending jobs."""
         mock_detect.return_value = self.mock_inventory
