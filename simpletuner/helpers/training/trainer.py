@@ -610,6 +610,42 @@ class Trainer:
             logger.error("Failed to initialise publishing providers: %s", exc)
             self.publishing_manager = None
 
+    def _publish_final_artifacts(self) -> List[Any]:
+        """Publish the completed output directory through configured providers.
+
+        Returns:
+            Publishing results produced by all successful providers.
+
+        Raises:
+            FileNotFoundError: If publishing is enabled but the output directory is missing.
+            RuntimeError: If a required publishing provider reports no artifacts.
+        """
+        manager = self.publishing_manager
+        if manager is None or not getattr(manager, "configured", False):
+            return []
+
+        output_dir = Path(self.config.output_dir)
+        if not output_dir.exists():
+            raise FileNotFoundError(f"Final publishing directory does not exist: {output_dir}")
+
+        results = manager.publish(
+            output_dir,
+            artifact_name=output_dir.name,
+            metadata={
+                "job_id": self.job_id,
+                "global_step": self.state.get("global_step", 0),
+                "epoch": self.state.get("current_epoch", 0),
+                "artifact_stage": "final",
+            },
+        )
+        required = any(
+            bool(getattr(provider, "config", {}).get("required", False))
+            for provider in getattr(manager, "providers", [])
+        )
+        if required and not results:
+            raise RuntimeError("Required final artifact publishing did not succeed")
+        return results
+
     def _enable_dynamo_dynamic_output_capture(self) -> None:
         try:
             import torch._dynamo as torch_dynamo
@@ -6999,6 +7035,12 @@ class Trainer:
                 self._finish_hub_uploads()
             else:
                 self._run_post_upload_script(local_path=self.config.output_dir, remote_path=None)
+            if (
+                self.accelerator.is_main_process
+                and os.environ.get("SIMPLETUNER_PUBLISH_FINAL_ARTIFACTS", "").lower()
+                in {"1", "true", "yes", "on"}
+            ):
+                self._publish_final_artifacts()
             # Mark model_save as completed
             event = lifecycle_stage_event(
                 key="model_save",

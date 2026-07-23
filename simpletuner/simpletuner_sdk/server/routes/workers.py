@@ -8,7 +8,6 @@ Two sets of endpoints:
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import secrets
@@ -20,6 +19,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..services.cloud.auth import User, get_optional_user
+from ..services.worker_credentials import generate_worker_token, hash_token
 
 logger = logging.getLogger(__name__)
 
@@ -125,27 +125,6 @@ class TokenRotationResponse(BaseModel):
 # Helper Functions
 
 
-def hash_token(token: str) -> str:
-    """Hash a worker token using SHA-256.
-
-    Args:
-        token: The plaintext token
-
-    Returns:
-        The hex digest of the token hash
-    """
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def generate_worker_token() -> str:
-    """Generate a secure worker token.
-
-    Returns:
-        A URL-safe token string
-    """
-    return secrets.token_urlsafe(32)
-
-
 async def validate_worker_token(token: str) -> Any:
     """Validate X-Worker-Token header and return worker.
 
@@ -241,6 +220,7 @@ async def register_worker(
     Raises:
         HTTPException: 401 if token is invalid
     """
+    from ..models.worker import WorkerStatus, WorkerType
     from ..services.worker_repository import get_worker_repository
 
     worker = await validate_worker_token(x_worker_token)
@@ -257,21 +237,39 @@ async def register_worker(
 
     now = datetime.now(timezone.utc)
 
-    # Determine worker type
-    worker_type = "persistent" if request.persistent else "ephemeral"
+    if (
+        worker.is_job_bound
+        and request.current_job_id is not None
+        and request.current_job_id != worker.current_job_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Worker {worker.worker_id} is bound to job "
+                f"{worker.current_job_id}, not {request.current_job_id}"
+            ),
+        )
+
+    worker_type = (
+        WorkerType.EPHEMERAL
+        if worker.is_job_bound
+        else WorkerType.PERSISTENT if request.persistent else WorkerType.EPHEMERAL
+    )
 
     # Update worker with registration info
     updates = {
         "name": request.name,
         "gpu_info": request.gpu_info,
-        "status": "idle",
-        "worker_type": worker_type.upper(),
+        "status": WorkerStatus.CONNECTING if worker.is_job_bound else WorkerStatus.IDLE,
+        "worker_type": worker_type,
         "labels": request.labels,
         "last_heartbeat": now,
         "connected_at": now,
     }
 
-    if request.provider:
+    if worker.is_job_bound:
+        updates["current_job_id"] = worker.current_job_id
+    elif request.provider:
         updates["provider"] = request.provider
 
     await worker_repo.update_worker(worker.worker_id, updates)
@@ -287,7 +285,10 @@ async def register_worker(
         job_repo = get_job_repository()
         job = await job_repo.get(request.current_job_id)
 
-        if job and job.status in ["running", "starting"]:
+        if worker.is_job_bound and job and job.status in ["pending", "queued"]:
+            # The SSE connection triggers the first and only dispatch.
+            pass
+        elif job and job.status in ["running", "starting"]:
             # Job is still active - worker should resume
             resume_job = {
                 "job_id": job.job_id,
@@ -341,6 +342,15 @@ async def worker_stream(
     # Create queue for this worker
     queue = asyncio.Queue()
     worker_streams[worker_id] = queue
+
+    if worker.is_job_bound:
+        from ..services.worker_manager import get_worker_manager
+
+        worker_manager = get_worker_manager()
+        if worker_manager is None:
+            logger.error("Cannot dispatch bound Worker %s: WorkerManager is not initialized", worker_id)
+        else:
+            await worker_manager.dispatch_bound_job(worker_id)
 
     async def event_generator():
         """Generate SSE events for the worker."""
@@ -411,15 +421,35 @@ async def worker_heartbeat(
     worker_repo = get_worker_repository()
 
     # Update worker with heartbeat info
+    if (
+        worker.is_job_bound
+        and request.current_job_id is not None
+        and request.current_job_id != worker.current_job_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Worker {worker.worker_id} is bound to job "
+                f"{worker.current_job_id}, not {request.current_job_id}"
+            ),
+        )
+
     now = datetime.now(timezone.utc)
     updates = {
         "status": request.status,
         "last_heartbeat": now,
     }
+    if worker.is_job_bound:
+        from ..models.worker import WorkerStatus
+
+        updates["status"] = (
+            WorkerStatus.BUSY if request.status == WorkerStatus.BUSY.value else WorkerStatus.CONNECTING
+        )
+        updates["current_job_id"] = worker.current_job_id
     if worker.connected_at is None:
         updates["connected_at"] = now
 
-    if request.current_job_id:
+    if request.current_job_id and not worker.is_job_bound:
         updates["current_job_id"] = request.current_job_id
 
     await worker_repo.update_worker(worker.worker_id, updates)
@@ -480,8 +510,31 @@ async def update_job_status(
         request.status,
     )
 
+    completion_metadata = None
+    if request.status == "completed" and worker.is_job_bound:
+        from ..services.kubeflow_job_service import get_kubeflow_job_service
+
+        service = get_kubeflow_job_service()
+        if service is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Kubeflow service is unavailable",
+            )
+        if not service.artifacts_received(job):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Central LoRA artifact upload has not completed",
+            )
+
+        completion_metadata = dict(job.metadata or {})
+        upload_state = dict(completion_metadata.get("artifact_upload") or {})
+        upload_state["status"] = "complete"
+        completion_metadata["artifact_upload"] = upload_state
+
     # Update job status
     updates: Dict[str, Any] = {"status": request.status}
+    if completion_metadata is not None:
+        updates["metadata"] = completion_metadata
 
     if request.error:
         updates["error_message"] = request.error
@@ -491,30 +544,47 @@ async def update_job_status(
 
     await job_repo.update(job_id, updates)
 
-    # Free worker when job completes
+    # Release an ordinary Worker, or delete a one-shot Kubeflow Worker and its
+    # TrainJob after the terminal status is safely persisted.
     if request.status in ["completed", "failed", "cancelled"]:
         from ..models.worker import WorkerStatus
         from ..services.worker_repository import get_worker_repository
 
         worker_repo = get_worker_repository()
-        await worker_repo.update_worker(
-            worker.worker_id,
-            {
-                "status": WorkerStatus.IDLE,
-                "current_job_id": None,
-            },
-        )
-        logger.info(f"Freed worker {worker.worker_id} after job {job_id} {request.status}")
+        if worker.is_job_bound:
+            await worker_repo.update_worker(
+                worker.worker_id,
+                {
+                    "status": WorkerStatus.DRAINING,
+                    "current_job_id": worker.current_job_id,
+                },
+            )
+            from ..services.kubeflow_job_service import get_kubeflow_job_service
 
-        # Try to dispatch any pending worker jobs
-        try:
-            from ..services.worker_manager import get_worker_manager
+            service = get_kubeflow_job_service()
+            if service is None:
+                logger.error("Kubeflow service unavailable while finalizing job %s", job_id)
+            else:
+                await service.finalize(job_id)
+        else:
+            await worker_repo.update_worker(
+                worker.worker_id,
+                {
+                    "status": WorkerStatus.IDLE,
+                    "current_job_id": None,
+                },
+            )
+            logger.info(f"Freed worker {worker.worker_id} after job {job_id} {request.status}")
 
-            worker_manager = get_worker_manager()
-            if worker_manager:
-                await worker_manager.dispatch_pending_jobs()
-        except Exception as exc:
-            logger.warning("Failed to dispatch pending jobs: %s", exc)
+            # Try to dispatch any pending worker jobs
+            try:
+                from ..services.worker_manager import get_worker_manager
+
+                worker_manager = get_worker_manager()
+                if worker_manager:
+                    await worker_manager.dispatch_pending_jobs()
+            except Exception as exc:
+                logger.warning("Failed to dispatch pending jobs: %s", exc)
 
     # Emit SSE event for UI updates
     try:

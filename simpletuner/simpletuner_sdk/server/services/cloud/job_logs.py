@@ -88,6 +88,13 @@ async def fetch_job_logs(job: "UnifiedJob", max_bytes: int = 50000) -> str:
     Returns:
         Log content as a string
     """
+    if job.provider == "kubeflow":
+        from ..kubeflow_job_service import get_kubeflow_job_service
+
+        service = get_kubeflow_job_service()
+        if service is None:
+            return "(Kubeflow service is unavailable)"
+        return await service.get_logs(job)
     if job.job_type == JobType.CLOUD and job.provider:
         return await _fetch_cloud_logs(job)
     elif job.job_type == JobType.LOCAL:
