@@ -303,6 +303,12 @@ class TestTransformerBackendAttribute(unittest.TestCase):
 
         self.assertTrue(hasattr(AuraFlowTransformer2DModel, "set_gradient_checkpointing_backend"))
 
+    def test_mageflow_transformer_has_backend_attribute(self):
+        """Test that MageFlowTransformer2DModel has gradient_checkpointing_backend."""
+        from simpletuner.helpers.models.mageflow.transformer import MageFlowTransformer2DModel
+
+        self.assertTrue(hasattr(MageFlowTransformer2DModel, "set_gradient_checkpointing_backend"))
+
 
 if __name__ == "__main__":
     unittest.main()
