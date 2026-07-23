@@ -7,6 +7,9 @@ import torch
 from diffusers.loaders.lora_base import LoraBaseMixin, _fetch_state_dict
 from diffusers.utils import (
     USE_PEFT_BACKEND,
+    convert_unet_state_dict_to_peft,
+    get_adapter_name,
+    get_peft_kwargs,
     is_peft_available,
     is_peft_version,
     is_torch_version,
@@ -15,6 +18,8 @@ from diffusers.utils import (
     logging,
 )
 from huggingface_hub.utils import validate_hf_hub_args
+
+from simpletuner.helpers.utils.offloading import restore_offload_state, unpack_offload_state
 
 _LOW_CPU_MEM_USAGE_DEFAULT_LORA = False
 if is_torch_version(">=", "1.9.0"):
@@ -27,8 +32,60 @@ if is_torch_version(">=", "1.9.0"):
         _LOW_CPU_MEM_USAGE_DEFAULT_LORA = True
 
 TRANSFORMER_NAME = "transformer"
+KREA2_LORA_TRANSFORMER_PREFIXES = ("transformer", "diffusion_model")
+KREA2_EXTERNAL_LORA_MODULE_MAP = (
+    ("blocks.", "transformer_blocks."),
+    (".attn.wq.", ".attn.to_q."),
+    (".attn.wk.", ".attn.to_k."),
+    (".attn.wv.", ".attn.to_v."),
+    (".attn.wo.", ".attn.to_out.0."),
+    (".attn.gate.", ".attn.to_gate."),
+    (".mlp.gate.", ".ff.gate."),
+    (".mlp.up.", ".ff.up."),
+    (".mlp.down.", ".ff.down."),
+)
 
 logger = logging.get_logger(__name__)
+
+
+def _normalize_krea2_lora_state_dict(
+    state_dict: dict[str, torch.Tensor],
+) -> tuple[dict[str, torch.Tensor], str | None]:
+    """Return KREA2 transformer LoRA keys without their serialization prefix."""
+    for prefix in KREA2_LORA_TRANSFORMER_PREFIXES:
+        prefix_with_dot = f"{prefix}."
+        matches = {
+            _translate_krea2_lora_module_key(key.removeprefix(prefix_with_dot)): value
+            for key, value in state_dict.items()
+            if key.startswith(prefix_with_dot)
+        }
+        if matches:
+            return matches, prefix
+
+    return {_translate_krea2_lora_module_key(key): value for key, value in state_dict.items()}, None
+
+
+def _translate_krea2_lora_module_key(key: str) -> str:
+    """Map external KREA LoRA module names onto SimpleTuner's KREA2 module graph."""
+    translated = key
+    for old, new in KREA2_EXTERNAL_LORA_MODULE_MAP:
+        if old == "blocks.":
+            if translated.startswith(old):
+                translated = translated.replace(old, new, 1)
+            continue
+        translated = translated.replace(old, new)
+    return translated
+
+
+def _infer_krea2_lora_target_modules(state_dict: dict[str, torch.Tensor]) -> list[str]:
+    """Infer exact model-relative module paths from PEFT-style LoRA tensor keys."""
+    target_modules: dict[str, None] = {}
+    for key in state_dict:
+        for marker in (".lora_A.", ".lora_B."):
+            if marker in key:
+                target_modules[key.split(marker, 1)[0]] = None
+                break
+    return list(target_modules)
 
 
 class Krea2LoraLoaderMixin(LoraBaseMixin):
@@ -156,17 +213,87 @@ class Krea2LoraLoaderMixin(LoraBaseMixin):
                 "`low_cpu_mem_usage=True` is not compatible with this `peft` version. Please update it with `pip install -U peft`."
             )
 
-        # Load the layers corresponding to transformer.
-        logger.info(f"Loading {cls.transformer_name}.")
-        transformer.load_lora_adapter(
-            state_dict,
-            network_alphas=None,
-            adapter_name=adapter_name,
-            metadata=metadata,
-            _pipeline=_pipeline,
-            low_cpu_mem_usage=low_cpu_mem_usage,
-            hotswap=hotswap,
+        if hotswap:
+            # Keep the upstream hot-swap implementation for compiled pipelines. Normal validation
+            # adapter loading uses the explicit PEFT path below so KREA module names are targeted.
+            logger.info(f"Loading {cls.transformer_name}.")
+            transformer.load_lora_adapter(
+                state_dict,
+                network_alphas=None,
+                adapter_name=adapter_name,
+                metadata=metadata,
+                _pipeline=_pipeline,
+                low_cpu_mem_usage=low_cpu_mem_usage,
+                hotswap=hotswap,
+            )
+            return
+
+        from peft import LoraConfig, inject_adapter_in_model, set_peft_model_state_dict
+
+        state_dict, source_prefix = _normalize_krea2_lora_state_dict(state_dict)
+        if not state_dict:
+            supported = ", ".join(f"{prefix}.*" for prefix in KREA2_LORA_TRANSFORMER_PREFIXES)
+            raise ValueError(f"No KREA2 transformer LoRA keys were found. Expected one of: {supported}.")
+
+        first_key = next(iter(state_dict.keys()))
+        if "lora_A" not in first_key:
+            state_dict = convert_unet_state_dict_to_peft(state_dict)
+
+        if adapter_name in getattr(transformer, "peft_config", {}):
+            raise ValueError(
+                f"Adapter name {adapter_name} already in use in the transformer - please select a new adapter name."
+            )
+
+        rank = {}
+        for key, val in state_dict.items():
+            if "lora_B" in key and getattr(val, "ndim", 0) > 1:
+                rank[key] = val.shape[1]
+
+        target_modules = _infer_krea2_lora_target_modules(state_dict)
+        if not target_modules:
+            raise ValueError(
+                "Could not infer KREA2 LoRA target modules from the adapter state dict. "
+                "Expected keys ending in .lora_A.weight and .lora_B.weight."
+            )
+
+        lora_config_kwargs = get_peft_kwargs(rank, network_alpha_dict=None, peft_state_dict=state_dict)
+        lora_config_kwargs["target_modules"] = target_modules
+        if "use_dora" in lora_config_kwargs:
+            if lora_config_kwargs["use_dora"] and is_peft_version("<", "0.9.0"):
+                raise ValueError(
+                    "You need `peft` 0.9.0 at least to use DoRA-enabled LoRAs. "
+                    "Please upgrade your installation of `peft`."
+                )
+            if not lora_config_kwargs["use_dora"]:
+                lora_config_kwargs.pop("use_dora")
+        lora_config = LoraConfig(**lora_config_kwargs)
+
+        if adapter_name is None:
+            adapter_name = get_adapter_name(transformer)
+
+        logger.info(
+            f"Loading {cls.transformer_name} LoRA adapter '{adapter_name}' "
+            f"from {source_prefix or 'unprefixed'} keys with {len(target_modules)} target module(s)."
         )
+
+        offload_state = cls._optionally_disable_offloading(_pipeline)
+        (
+            is_model_cpu_offload,
+            is_sequential_cpu_offload,
+            is_group_offload,
+        ) = unpack_offload_state(offload_state)
+
+        peft_kwargs = {}
+        if is_peft_version(">=", "0.13.1"):
+            peft_kwargs["low_cpu_mem_usage"] = low_cpu_mem_usage
+
+        try:
+            inject_adapter_in_model(lora_config, transformer, adapter_name=adapter_name, **peft_kwargs)
+            incompatible_keys = set_peft_model_state_dict(transformer, state_dict, adapter_name, **peft_kwargs)
+            if incompatible_keys is not None:
+                logger.info(f"Loaded KREA2 LoRA with incompatible keys: {incompatible_keys}")
+        finally:
+            restore_offload_state(_pipeline, is_model_cpu_offload, is_sequential_cpu_offload, is_group_offload)
 
     @classmethod
     # Copied from diffusers.loaders.lora_pipeline.CogVideoXLoraLoaderMixin.save_lora_weights
