@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import torch
+from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 
 from simpletuner.helpers.models.common import TextEmbedCacheKey
 from simpletuner.helpers.models.krea2 import Krea2, Krea2LoraLoaderMixin, Krea2Pipeline, Krea2Transformer2DModel
@@ -29,6 +30,12 @@ class FakeLatentDistribution:
 
     def sample(self):
         return self.latents
+
+
+class FakeKrea2VAE(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.temperal_downsample = []
 
 
 class Krea2VendoredModelTests(unittest.TestCase):
@@ -335,6 +342,88 @@ class Krea2VendoredModelTests(unittest.TestCase):
                 "module.transformer_blocks.0.attn.to_q.lora_B.weight",
             },
         )
+
+    def test_lora_loader_targets_original_module_for_compiled_transformer(self):
+        class CompiledTransformer(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self._orig_mod = Krea2Transformer2DModel(
+                    in_channels=4,
+                    num_layers=1,
+                    attention_head_dim=6,
+                    num_attention_heads=1,
+                    num_key_value_heads=1,
+                    intermediate_size=8,
+                    timestep_embed_dim=8,
+                    text_hidden_dim=6,
+                    num_text_layers=1,
+                    text_num_attention_heads=1,
+                    text_num_key_value_heads=1,
+                    text_intermediate_size=8,
+                    num_layerwise_text_blocks=1,
+                    num_refiner_text_blocks=0,
+                    axes_dims_rope=(2, 2, 2),
+                )
+
+        transformer = CompiledTransformer()
+        state_dict = {
+            "transformer.blocks.0.attn.wq.lora_A.weight": torch.ones(2, 6),
+            "transformer.blocks.0.attn.wq.lora_B.weight": torch.ones(6, 2),
+        }
+
+        Krea2LoraLoaderMixin.load_lora_into_transformer(
+            state_dict,
+            transformer=transformer,
+            adapter_name="krea2_turbo",
+        )
+
+        self.assertIn("krea2_turbo", transformer._orig_mod.peft_config)
+        self.assertIn(
+            "transformer_blocks.0.attn.to_q",
+            transformer._orig_mod.peft_config["krea2_turbo"].target_modules,
+        )
+        self.assertTrue(hasattr(transformer._orig_mod.transformer_blocks[0].attn.to_q, "lora_A"))
+
+    def test_pipeline_validation_adapter_lifecycle_accepts_comfyui_krea2_lora_keys(self):
+        transformer = Krea2Transformer2DModel(
+            in_channels=4,
+            num_layers=1,
+            attention_head_dim=6,
+            num_attention_heads=1,
+            num_key_value_heads=1,
+            intermediate_size=8,
+            timestep_embed_dim=8,
+            text_hidden_dim=6,
+            num_text_layers=1,
+            text_num_attention_heads=1,
+            text_num_key_value_heads=1,
+            text_intermediate_size=8,
+            num_layerwise_text_blocks=1,
+            num_refiner_text_blocks=0,
+            axes_dims_rope=(2, 2, 2),
+        )
+        pipeline = Krea2Pipeline(
+            scheduler=FlowMatchEulerDiscreteScheduler(),
+            vae=FakeKrea2VAE(),
+            text_encoder=None,
+            tokenizer=None,
+            transformer=transformer,
+            text_encoder_select_layers=(0,),
+        )
+        state_dict = {
+            "diffusion_model.blocks.0.attn.wq.lora_A.weight": torch.ones(2, 6),
+            "diffusion_model.blocks.0.attn.wq.lora_B.weight": torch.ones(6, 2),
+        }
+
+        pipeline.load_lora_weights(state_dict, adapter_name="krea2_turbo_r256_comfy")
+        pipeline.set_adapters("krea2_turbo_r256_comfy", 1.0)
+
+        self.assertEqual(pipeline.get_active_adapters(), ["krea2_turbo_r256_comfy"])
+        self.assertEqual(pipeline.get_list_adapters(), {"transformer": ["krea2_turbo_r256_comfy"]})
+
+        pipeline.delete_adapters("krea2_turbo_r256_comfy")
+
+        self.assertEqual(pipeline.get_list_adapters(), {"transformer": []})
 
     def test_pipeline_accepts_reference_image_for_validation(self):
         parameters = inspect.signature(Krea2Pipeline.__call__).parameters
