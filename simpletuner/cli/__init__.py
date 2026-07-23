@@ -262,6 +262,39 @@ Examples:
         "-e",
         help="Environment to auto-start training with",
     )
+    server_parser.add_argument(
+        "--kubeflow",
+        action="store_true",
+        help="Enable one-shot single-GPU Workers through Kubeflow Trainer and Kueue",
+    )
+    server_parser.add_argument(
+        "--kubeflow-namespace",
+        default="default",
+        help="Kubernetes namespace for TrainJobs (default: default)",
+    )
+    server_parser.add_argument(
+        "--kubeflow-runtime",
+        default="simpletuner-worker",
+        help="Namespace-scoped TrainingRuntime name (default: simpletuner-worker)",
+    )
+    server_parser.add_argument(
+        "--kubeflow-queue",
+        help="Kueue LocalQueue used for TrainJob admission",
+    )
+    server_parser.add_argument(
+        "--kubeflow-worker-image",
+        help="Container image that runs the SimpleTuner Worker",
+    )
+    server_parser.add_argument(
+        "--kubeflow-orchestrator-url",
+        help="Server URL reachable from Worker Pods",
+    )
+    server_parser.add_argument(
+        "--kubeflow-poll-interval",
+        type=float,
+        default=5.0,
+        help="TrainJob reconciliation interval in seconds (default: 5)",
+    )
 
 
 def _add_shutdown_parser(subparsers):
@@ -381,9 +414,9 @@ def _add_jobs_parser(subparsers):
     submit_parser.add_argument(
         "--target",
         "-t",
-        choices=["local", "worker", "auto"],
+        choices=["local", "worker", "kubeflow", "auto"],
         default="auto",
-        help="Execution target: local (this machine), worker (remote), auto (prefer worker if available)",
+        help="Execution target: local, worker, kubeflow, or auto",
     )
 
     # cancel

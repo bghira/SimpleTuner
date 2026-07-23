@@ -35,8 +35,10 @@ class MockRequest:
 class MockJob:
     """Mock job record."""
 
-    def __init__(self, job_id: str = "test-job-123"):
+    def __init__(self, job_id: str = "test-job-123", provider: str = "test-provider"):
         self.job_id = job_id
+        self.provider = provider
+        self.metadata = {}
 
 
 class TestS3PutObjectAuthentication(unittest.TestCase):
@@ -126,9 +128,12 @@ class TestS3PutObjectAuthentication(unittest.TestCase):
         ):
             result = asyncio.run(s3_put_object("test-bucket", "test.txt", request))
 
-        self.assertIn("ETag", result)
-        self.assertEqual(result["Key"], "test.txt")
-        self.assertEqual(result["Bucket"], "test-bucket")
+        self.assertEqual(result.status_code, 200)
+        self.assertIn("etag", result.headers)
+        self.assertEqual(
+            json.loads(result.body),
+            {"ETag": result.headers["etag"], "Key": "test.txt", "Bucket": "test-bucket"},
+        )
 
         # Verify file was created
         file_path = Path(self.temp_dir) / "test-bucket" / "test.txt"
@@ -155,7 +160,45 @@ class TestS3PutObjectAuthentication(unittest.TestCase):
         ):
             result = asyncio.run(s3_put_object("bucket2", "secret.bin", request))
 
-        self.assertIn("ETag", result)
+        self.assertEqual(result.status_code, 200)
+        self.assertIn("etag", result.headers)
+        self.assertEqual(
+            json.loads(result.body),
+            {"ETag": result.headers["etag"], "Key": "secret.bin", "Bucket": "bucket2"},
+        )
+
+
+    def test_kubeflow_upload_is_registered_on_the_job(self):
+        """Test Kubeflow uploads are recorded before job completion."""
+        import asyncio
+
+        from simpletuner.simpletuner_sdk.server.routes.cloud.storage import put_object as s3_put_object
+
+        key = "job-456/tiny-output/pytorch_lora_weights.safetensors"
+        request = MockRequest(
+            headers={"X-Upload-Token": "valid-token-123"},
+            body=b"lora weights",
+        )
+        mock_store = MagicMock()
+        mock_store.get_job_by_upload_token = AsyncMock(
+            return_value=MockJob("job-456", provider="kubeflow")
+        )
+        mock_store.update_job = AsyncMock()
+
+        with patch(
+            "simpletuner.simpletuner_sdk.server.routes.cloud.storage.get_job_store",
+            return_value=mock_store,
+        ):
+            asyncio.run(s3_put_object("outputs", key, request))
+
+        mock_store.update_job.assert_awaited_once()
+        job_id, updates = mock_store.update_job.await_args.args
+        self.assertEqual(job_id, "job-456")
+        self.assertEqual(
+            updates["metadata"]["artifact_upload"]["received_files"],
+            [f"outputs/{key}"],
+        )
+        self.assertEqual(updates["output_url"], "/api/cloud/storage/outputs/job-456")
 
 
 class TestS3PathTraversalPrevention(unittest.TestCase):

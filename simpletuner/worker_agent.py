@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -119,8 +120,33 @@ class WorkerAgent:
         self.worker_id: Optional[str] = None
         self.current_job: Optional[Dict[str, Any]] = None
         self.shutdown_requested = False
-        self.training_process: Optional[subprocess.Popen] = None
+        self.training_process: Optional[Any] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
+
+    @staticmethod
+    def _is_async_process(process: Any) -> bool:
+        """Return whether a process uses asyncio's subprocess interface.
+
+        Args:
+            process: Training process owned by this Worker.
+
+        Returns:
+            True when the process must be awaited through asyncio.
+        """
+        return isinstance(process, asyncio.subprocess.Process)
+
+    def _is_process_running(self, process: Any) -> bool:
+        """Return whether either supported subprocess type is still active.
+
+        Args:
+            process: Training process owned by this Worker.
+
+        Returns:
+            True while the process has not reached a terminal status.
+        """
+        if self._is_async_process(process):
+            return process.returncode is None
+        return process.poll() is None
 
     async def run(self):
         """Main entry point"""
@@ -155,7 +181,7 @@ class WorkerAgent:
         logger.info("Shutdown signal received")
         self.shutdown_requested = True
 
-        if self.training_process and self.training_process.poll() is None:
+        if self.training_process and self._is_process_running(self.training_process):
             logger.info("Sending SIGTERM to training process")
             self.training_process.terminate()
 
@@ -258,18 +284,26 @@ class WorkerAgent:
 
         # Write config files to temp directory
         job_dir = Path(f"/tmp/simpletuner_job_{job_id}")
-        job_dir.mkdir(exist_ok=True)
+        job_dir.mkdir(parents=True, exist_ok=True)
 
         config_path = job_dir / "config.json"
-        dataloader_path = job_dir / "dataloader.yaml"
+        is_kubeflow_job = event.get("provider") == "kubeflow"
+        job_config = copy.deepcopy(event["config"])
+        dataloader = event.get("dataloader")
+        if is_kubeflow_job and dataloader is not None:
+            dataloader_path = job_dir / "dataloader.json"
+            with dataloader_path.open("w", encoding="utf-8") as handle:
+                json.dump(dataloader, handle)
+            job_config["data_backend_config"] = str(dataloader_path)
+        elif dataloader is not None:
+            dataloader_path = job_dir / "dataloader.yaml"
+            import yaml
 
-        # Import yaml here to avoid import at module level
-        import yaml
+            with dataloader_path.open("w", encoding="utf-8") as handle:
+                yaml.safe_dump(dataloader, handle)
 
-        with config_path.open("w", encoding="utf-8") as f:
-            json.dump(event["config"], f)
-        with open(dataloader_path, "w") as f:
-            yaml.dump(event["dataloader"], f)
+        with config_path.open("w", encoding="utf-8") as handle:
+            json.dump(job_config, handle)
 
         # Set up environment
         env = os.environ.copy()
@@ -283,6 +317,8 @@ class WorkerAgent:
         )
         if event.get("hf_token"):
             env["HF_TOKEN"] = event["hf_token"]
+        if is_kubeflow_job:
+            env["SIMPLETUNER_PUBLISH_FINAL_ARTIFACTS"] = "true"
 
         # Report starting status
         await self._report_job_status("starting")
@@ -296,33 +332,50 @@ class WorkerAgent:
         ]
 
         logger.info(f"Launching training: {' '.join(cmd)}")
-        self.training_process = subprocess.Popen(
-            cmd,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
+        if is_kubeflow_job:
+            self.training_process = await asyncio.create_subprocess_exec(
+                *cmd,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+        else:
+            self.training_process = subprocess.Popen(
+                cmd,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
 
         # Monitor in background
         asyncio.create_task(self._monitor_training(job_dir))
 
     async def _monitor_training(self, job_dir: Path):
-        """Monitor training process and report status"""
+        """Monitor the training subprocess and report its terminal status.
+
+        Args:
+            job_dir: Per-job directory containing materialized configuration.
+        """
         process = self.training_process
+        if process is None:
+            raise RuntimeError("Training process is not initialized")
 
-        await self._report_job_status("training")
-
-        # Stream output (could send to server for log streaming)
-        while process.poll() is None:
+        if self._is_async_process(process):
+            await self._report_job_status("running")
             if process.stdout:
-                line = process.stdout.readline()
-                if line:
-                    # Parse progress from output if possible
-                    logger.info(f"[training] {line.rstrip()}")
-            await asyncio.sleep(0.1)
-
-        exit_code = process.returncode
+                while line := await process.stdout.readline():
+                    logger.info("[training] %s", line.decode("utf-8", errors="replace").rstrip())
+            exit_code = await process.wait()
+        else:
+            await self._report_job_status("training")
+            while process.poll() is None:
+                if process.stdout:
+                    line = process.stdout.readline()
+                    if line:
+                        logger.info("[training] %s", line.rstrip())
+                await asyncio.sleep(0.1)
+            exit_code = process.returncode
         logger.info(f"Training finished with exit code: {exit_code}")
 
         if exit_code == 0:
@@ -343,16 +396,25 @@ class WorkerAgent:
 
     async def _stop_current_job(self):
         """Stop the current training job"""
-        if self.training_process and self.training_process.poll() is None:
+        process = self.training_process
+        if process and self._is_process_running(process):
             logger.info("Stopping current job")
-            self.training_process.terminate()
+            process.terminate()
 
             # Wait for graceful shutdown
-            try:
-                self.training_process.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                logger.warning("Training process did not stop, killing")
-                self.training_process.kill()
+            if self._is_async_process(process):
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=30)
+                except asyncio.TimeoutError:
+                    logger.warning("Training process did not stop, killing")
+                    process.kill()
+                    await process.wait()
+            else:
+                try:
+                    process.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    logger.warning("Training process did not stop, killing")
+                    process.kill()
 
         if self.current_job:
             await self._report_job_status("cancelled")

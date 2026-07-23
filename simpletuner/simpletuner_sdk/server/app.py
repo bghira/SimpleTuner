@@ -411,34 +411,34 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.debug("Failed to configure rate limiters: %s", e)
 
-    # Initialize worker manager for GPU worker orchestration
+    # Initialize the shared Worker manager used by both ordinary Workers and
+    # one-shot Kubeflow Workers.
     worker_manager = None
     try:
-        from simpletuner.simpletuner_sdk.server.services.sse_manager import get_sse_manager
-        from simpletuner.simpletuner_sdk.server.services.worker_manager import WorkerManager
-        from simpletuner.simpletuner_sdk.server.services.worker_repository import WorkerRepository
-
-        worker_repository = WorkerRepository()
-
-        # Get job store for worker manager (uses cloud job store)
         from simpletuner.simpletuner_sdk.server.services.cloud.container import get_job_store
+        from simpletuner.simpletuner_sdk.server.services.sse_manager import get_sse_manager
+        from simpletuner.simpletuner_sdk.server.services.worker_manager import initialize_worker_manager
+        from simpletuner.simpletuner_sdk.server.services.worker_repository import get_worker_repository
 
-        job_store = get_job_store()
-        sse_manager = get_sse_manager()
-
-        worker_manager = WorkerManager(
-            worker_repository=worker_repository,
-            job_store=job_store,
-            sse_manager=sse_manager,
+        worker_manager = await initialize_worker_manager(
+            worker_repository=get_worker_repository(),
+            job_store=get_job_store(),
+            sse_manager=get_sse_manager(),
         )
-
-        # Reconcile worker state from previous server run
-        await worker_manager.reconcile_on_startup()
-
-        # Start background health check loop
-        await worker_manager.start()
     except Exception as e:
         logger.warning("Failed to start worker manager: %s", e)
+
+    # Kubeflow is opt-in. Invalid in-cluster configuration must fail startup
+    # instead of silently routing a GPU task through the local scheduler.
+    from simpletuner.simpletuner_sdk.server.services.kubeflow_job_service import (
+        initialize_kubeflow_job_service,
+    )
+
+    kubeflow_job_service = await initialize_kubeflow_job_service()
+    if kubeflow_job_service is not None:
+        if worker_manager is None:
+            raise RuntimeError("Kubeflow scheduling requires an initialized WorkerManager")
+        logger.info("Kubeflow single-GPU job service started")
 
     try:
         yield
@@ -455,10 +455,22 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning("Error stopping background tasks: %s", e)
 
-        # Stop worker manager
+        # Stop Kubernetes reconciliation before the shared Worker manager.
+        try:
+            from simpletuner.simpletuner_sdk.server.services.kubeflow_job_service import (
+                shutdown_kubeflow_job_service,
+            )
+
+            await shutdown_kubeflow_job_service()
+            logger.debug("Kubeflow job service stopped")
+        except Exception as e:
+            logger.warning("Error stopping Kubeflow job service: %s", e)
+
         if worker_manager:
             try:
-                await worker_manager.stop()
+                from simpletuner.simpletuner_sdk.server.services.worker_manager import shutdown_worker_manager
+
+                await shutdown_worker_manager()
                 logger.debug("Worker manager stopped")
             except Exception as e:
                 logger.warning("Error stopping worker manager: %s", e)

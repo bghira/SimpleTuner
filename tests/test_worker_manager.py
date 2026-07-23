@@ -36,6 +36,7 @@ class TestWorkerManager(unittest.IsolatedAsyncioTestCase):
         worker_id: str = "worker-1",
         status: WorkerStatus = WorkerStatus.IDLE,
         worker_type: WorkerType = WorkerType.PERSISTENT,
+        provider: str = None,
         current_job_id: str = None,
         last_heartbeat: datetime = None,
         created_at: datetime = None,
@@ -46,6 +47,7 @@ class TestWorkerManager(unittest.IsolatedAsyncioTestCase):
             worker_id: Worker ID
             status: Worker status
             worker_type: Worker type
+            provider: Infrastructure provider
             current_job_id: Current job ID
             last_heartbeat: Last heartbeat timestamp
             created_at: Creation timestamp
@@ -64,7 +66,7 @@ class TestWorkerManager(unittest.IsolatedAsyncioTestCase):
             token_hash="test-token-hash",
             user_id=1,
             gpu_info={"name": "A100", "vram_gb": 80, "count": 1},
-            provider=None,
+            provider=provider,
             labels={},
             current_job_id=current_job_id,
             last_heartbeat=last_heartbeat,
@@ -653,6 +655,62 @@ class TestWorkerManager(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0.1)
 
         await self.worker_manager.stop()
+
+    async def test_bound_kubeflow_worker_skips_generic_health_recovery(self) -> None:
+        """Verify Kubernetes reconciliation owns provisioned Worker failures."""
+        worker = self._create_worker(
+            status=WorkerStatus.CONNECTING,
+            worker_type=WorkerType.EPHEMERAL,
+            provider="kubeflow",
+            current_job_id="job-1",
+            created_at=datetime.now(timezone.utc) - timedelta(seconds=600),
+        )
+
+        await self.worker_manager._check_worker(worker, datetime.now(timezone.utc))
+
+        self.assertTrue(worker.is_job_bound)
+        self.mock_worker_repository.update_worker.assert_not_called()
+        self.mock_worker_repository.delete_worker.assert_not_called()
+        self.mock_job_store.update_job.assert_not_called()
+
+    async def test_dispatch_bound_job_never_selects_idle_worker(self) -> None:
+        """Verify a provisioned Worker receives only its preassigned job."""
+        worker = self._create_worker(
+            status=WorkerStatus.CONNECTING,
+            worker_type=WorkerType.EPHEMERAL,
+            provider="kubeflow",
+            current_job_id="job-1",
+        )
+        job = self._create_job(
+            job_id="job-1",
+            status="queued",
+            provider="kubeflow",
+            metadata={
+                "config": {"model_family": "sdxl"},
+                "worker_id": "worker-1",
+            },
+        )
+        self.mock_worker_repository.get_worker.return_value = worker
+        self.mock_job_store.get_job.return_value = job
+
+        with (
+            patch(
+                "simpletuner.simpletuner_sdk.server.routes.workers.is_worker_connected",
+                return_value=True,
+            ),
+            patch(
+                "simpletuner.simpletuner_sdk.server.routes.workers.push_to_worker",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as push,
+        ):
+            dispatched = await self.worker_manager.dispatch_bound_job("worker-1")
+
+        self.assertTrue(dispatched)
+        self.mock_worker_repository.get_idle_worker_for_job.assert_not_called()
+        self.assertEqual(push.await_args.args[0], "worker-1")
+        self.assertEqual(push.await_args.args[1]["job_id"], "job-1")
+        self.assertEqual(push.await_args.args[1]["provider"], "kubeflow")
 
 
 if __name__ == "__main__":

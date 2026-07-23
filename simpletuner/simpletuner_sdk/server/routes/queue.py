@@ -355,18 +355,39 @@ async def cancel_queued_job(
     job_id: str,
     user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
-    """Cancel a job in the queue."""
+    """Cancel a queued job while preserving provider-specific cleanup.
+
+    Kubeflow jobs are represented in the unified job store instead of the
+    Scheduler queue. They must delete their TrainJob resources before the
+    request can be considered cancelled.
+
+    Args:
+        job_id: Training job identifier.
+        user: Authenticated caller requesting cancellation.
+
+    Returns:
+        A successful cancellation response.
+
+    Raises:
+        HTTPException: If the job is not found, access is denied, or the
+            provider cannot cancel the requested job.
+    """
+    from ..services.kubeflow_job_service import get_kubeflow_job_service
+
     queue_store = QueueStore()
     entry = await queue_store.get_entry_by_job_id(job_id)
+    service = get_kubeflow_job_service()
+    kubeflow_job = await service.get_managed_job(job_id) if service else None
 
-    if not entry:
+    if not entry and kubeflow_job is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Job not found in queue: {job_id}",
         )
 
     # Check permission
-    is_own = entry.user_id == user.id
+    owner_id = kubeflow_job.user_id if kubeflow_job is not None else entry.user_id
+    is_own = owner_id == user.id
     can_cancel_all = user.has_permission("queue.cancel.all")
     can_cancel_own = user.has_permission("queue.cancel.own")
 
@@ -380,6 +401,10 @@ async def cancel_queued_job(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Permission denied: queue.cancel.all",
         )
+
+    if kubeflow_job is not None:
+        await service.cancel(job_id)
+        return {"success": True, "job_id": job_id}
 
     scheduler = get_scheduler()
     success = await scheduler.cancel_job(job_id)
@@ -579,9 +604,9 @@ class LocalJobSubmitRequest(BaseModel):
     no_wait: bool = Field(False, description="Reject immediately if GPUs unavailable")
     any_gpu: bool = Field(False, description="Use any available GPUs instead of configured device IDs")
     for_approval: bool = Field(False, description="Request approval to exceed org GPU quota")
-    target: Literal["local", "worker", "auto"] = Field(
+    target: Literal["local", "worker", "kubeflow", "auto"] = Field(
         "auto",
-        description="Execution target: 'local' (this machine), 'worker' (remote worker), 'auto' (prefer worker if available)",
+        description="Execution target: 'local', 'worker', 'kubeflow', or 'auto'",
     )
 
 
@@ -723,6 +748,7 @@ async def submit_local_job(
     Loads the config from disk and either:
     - Runs locally on this machine's GPUs (target='local')
     - Dispatches to a remote worker (target='worker')
+    - Creates a Kueue-admitted single-GPU TrainJob (target='kubeflow')
     - Auto-selects based on availability (target='auto', default)
     """
     from pathlib import Path
@@ -751,6 +777,31 @@ async def submit_local_job(
             return LocalJobSubmitResponse(
                 success=False,
                 error=f"Config '{request.config_name}' not found",
+            )
+
+        if request.target == "kubeflow":
+            from ..services.kubeflow_job_service import get_kubeflow_job_service
+
+            service = get_kubeflow_job_service()
+            if service is None:
+                return LocalJobSubmitResponse(
+                    success=False,
+                    error="Kubeflow integration is not enabled on this server",
+                )
+            try:
+                job = await service.submit(
+                    config_name=request.config_name,
+                    config=config,
+                    user_id=user.id if user else None,
+                )
+            except Exception as exc:
+                logger.exception("Failed to submit Kubeflow job")
+                return LocalJobSubmitResponse(success=False, error=str(exc))
+            return LocalJobSubmitResponse(
+                success=True,
+                job_id=job.job_id,
+                status=job.status,
+                allocated_worker_id=(job.metadata or {}).get("worker_id"),
             )
 
         # Always initialize worker repository to ensure consistent state
