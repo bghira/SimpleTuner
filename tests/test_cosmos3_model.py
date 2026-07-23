@@ -562,7 +562,7 @@ class Cosmos3ModelTests(unittest.TestCase):
 
         self.assertEqual(model.loss(prepared_batch, model_output).item(), 1.0)
 
-    def test_extract_cosmos3_reasoner_component_filters_and_scrubs_metadata(self):
+    def test_extract_cosmos3_reasoner_component_filters_and_writes_public_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             transformer_dir = root / "source" / "transformer"
@@ -596,7 +596,7 @@ class Cosmos3ModelTests(unittest.TestCase):
                     "norm.weight": torch.ones(4),
                 },
                 transformer_dir / "diffusion_pytorch_model.safetensors",
-                metadata={"source": "/Users/kash/should-not-copy"},
+                metadata={"format": "pt", "note": "input-metadata"},
             )
 
             output_dir = root / "out"
@@ -616,8 +616,11 @@ class Cosmos3ModelTests(unittest.TestCase):
             self.assertIn("layers.0.self_attn.to_q.weight", keys)
             self.assertIn("layers.0.self_attn.k_norm_und_for_gen.weight", keys)
             self.assertNotIn("layers.0.self_attn.add_q_proj.weight", keys)
-            config_text = (output_dir / "config.json").read_text(encoding="utf-8")
-            self.assertNotIn("/Users/", config_text)
+            config = json.loads((output_dir / "config.json").read_text(encoding="utf-8"))
+            self.assertEqual(config["component"], "cosmos3_reasoner")
+            self.assertEqual(config["source_model_id"], "nvidia/Cosmos3-Nano")
+            self.assertEqual(config["source_revision"], "abc123")
+            self.assertEqual(config["dtype"], "bfloat16")
             index_path = output_dir / "model.safetensors.index.json"
             self.assertTrue(index_path.is_file())
             index = json.loads(index_path.read_text(encoding="utf-8"))
@@ -625,12 +628,19 @@ class Cosmos3ModelTests(unittest.TestCase):
             shard_path = output_dir / index["weight_map"]["layers.0.self_attn.to_q.weight"]
             with safe_open(shard_path, framework="pt", device="cpu") as handle:
                 metadata = handle.metadata()
-                self.assertEqual(metadata["simpletuner_component"], "cosmos3_reasoner")
-                self.assertNotIn("/Users/", json.dumps(metadata))
+                self.assertEqual(
+                    metadata,
+                    {
+                        "format": "pt",
+                        "simpletuner_component": "cosmos3_reasoner",
+                        "source_model_id": "nvidia/Cosmos3-Nano",
+                        "source_revision": "abc123",
+                    },
+                )
             state_dict = Cosmos3Reasoner._load_component_state_dict(str(output_dir))
             self.assertIn("layers.0.self_attn.to_q.weight", state_dict)
 
-    def test_extract_cosmos3_generator_component_filters_and_scrubs_metadata(self):
+    def test_extract_cosmos3_generator_component_filters_and_writes_public_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             transformer_dir = root / "source" / "transformer"
@@ -682,7 +692,7 @@ class Cosmos3ModelTests(unittest.TestCase):
                     "time_embedder.linear_1.weight": torch.zeros(4, 256),
                 },
                 transformer_dir / "diffusion_pytorch_model.safetensors",
-                metadata={"source": "/Users/kash/should-not-copy"},
+                metadata={"format": "pt", "note": "input-metadata"},
             )
 
             output_dir = root / "out"
@@ -713,14 +723,23 @@ class Cosmos3ModelTests(unittest.TestCase):
             self.assertEqual(config["hidden_act"], "relu2")
             self.assertFalse(config["qk_norm_for_text"])
             self.assertTrue(config["use_und_k_norm_for_gen"])
-            self.assertNotIn("/Users/", json.dumps(config))
+            self.assertEqual(config["source_model_id"], "nvidia/Cosmos3-Nano")
+            self.assertEqual(config["source_revision"], "abc123")
+            self.assertEqual(config["dtype"], "bfloat16")
             index = json.loads((output_dir / "diffusion_pytorch_model.safetensors.index.json").read_text(encoding="utf-8"))
             self.assertIn("layers.0.self_attn.add_q_proj.weight", index["weight_map"])
             shard_path = output_dir / index["weight_map"]["layers.0.self_attn.add_q_proj.weight"]
             with safe_open(shard_path, framework="pt", device="cpu") as handle:
                 metadata = handle.metadata()
-                self.assertEqual(metadata["simpletuner_component"], "cosmos3_generator")
-                self.assertNotIn("/Users/", json.dumps(metadata))
+                self.assertEqual(
+                    metadata,
+                    {
+                        "format": "pt",
+                        "simpletuner_component": "cosmos3_generator",
+                        "source_model_id": "nvidia/Cosmos3-Nano",
+                        "source_revision": "abc123",
+                    },
+                )
 
     def test_generator_only_transformer_does_not_allocate_reasoner_layers(self):
         transformer = Cosmos3OmniTransformer(

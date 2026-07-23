@@ -297,12 +297,44 @@ class PackedAttentionBackend:
                 key.contiguous(),
                 value.contiguous(),
                 cu_seqlens,
+                cu_seqlens,
+                max_seqlen,
                 max_seqlen,
                 causal=causal,
                 dropout_p=dropout_p,
                 softmax_scale=softmax_scale,
             )
         return _pad_varlen_output(output_unpad, indices, batch_size, padded_seqlen)
+
+    def varlen_unpacked(
+        self,
+        query_unpad: torch.Tensor,
+        key_unpad: torch.Tensor,
+        value_unpad: torch.Tensor,
+        cu_seqlens_q: torch.Tensor,
+        cu_seqlens_k: torch.Tensor,
+        max_seqlen_q: int,
+        max_seqlen_k: int,
+        *,
+        causal: bool = False,
+        dropout_p: float = 0.0,
+        softmax_scale: Optional[float] = None,
+    ) -> torch.Tensor:
+        if self.varlen_unpacked_func is None:
+            raise RuntimeError(f"Packed attention backend '{self.name}' does not provide varlen unpacked attention.")
+        return _call_varlen_unpacked_kernel(
+            self.varlen_unpacked_func,
+            query_unpad,
+            key_unpad,
+            value_unpad,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            max_seqlen_q,
+            max_seqlen_k,
+            causal=causal,
+            dropout_p=dropout_p,
+            softmax_scale=softmax_scale,
+        )
 
 
 _PACKED_BACKEND_ALIASES = {
@@ -478,8 +510,10 @@ def _call_varlen_unpacked_kernel(
     query_unpad: torch.Tensor,
     key_unpad: torch.Tensor,
     value_unpad: torch.Tensor,
-    cu_seqlens: torch.Tensor,
-    max_seqlen: int,
+    cu_seqlens_q: torch.Tensor,
+    cu_seqlens_k: torch.Tensor,
+    max_seqlen_q: int,
+    max_seqlen_k: int,
     *,
     causal: bool,
     dropout_p: float,
@@ -495,10 +529,10 @@ def _call_varlen_unpacked_kernel(
         query_unpad,
         key_unpad,
         value_unpad,
-        cu_seqlens,
-        cu_seqlens,
-        max_seqlen,
-        max_seqlen,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        max_seqlen_q,
+        max_seqlen_k,
         **kwargs,
     )
     if isinstance(output, tuple):

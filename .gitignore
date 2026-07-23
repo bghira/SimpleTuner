@@ -66,6 +66,10 @@ wandb/
 cache/
 vae_cache/
 vendor/
+!simpletuner/helpers/models/mageflow/vendor/
+!simpletuner/helpers/models/mageflow/vendor/**
+simpletuner/helpers/models/mageflow/vendor/**/__pycache__/
+simpletuner/helpers/models/mageflow/vendor/**/*.pyc
 inference/
 webhooks.json
 untracked/

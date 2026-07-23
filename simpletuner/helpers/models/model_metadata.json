@@ -279,6 +279,20 @@
         "name": "Lumina-T2I",
         "prediction_type": "flow_matching"
     },
+    "mageflow": {
+        "class_name": "MageFlow",
+        "flavour_choices": [
+            "base",
+            "default",
+            "turbo",
+            "edit-base",
+            "edit",
+            "edit-turbo"
+        ],
+        "module_path": "simpletuner.helpers.models.mageflow.model",
+        "name": "Mage-Flow",
+        "prediction_type": "flow_matching"
+    },
     "omnigen": {
         "class_name": "OmniGen",
         "flavour_choices": [

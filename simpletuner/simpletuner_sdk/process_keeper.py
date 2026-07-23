@@ -367,7 +367,7 @@ mode = func_payload.get("mode")
 
 if mode == "callable":
     try:
-        globals_dict = {{"__builtins__": __builtins__}}
+        globals_dict = {{"__builtins__": __builtins__, "sys": sys}}
         globals_meta = func_payload.get("globals", {{}}) or {{}}
         modules_meta = globals_meta.get("modules", {{}}) or {{}}
         values_meta = globals_meta.get("values", {{}}) or {{}}

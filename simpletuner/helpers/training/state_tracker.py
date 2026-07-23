@@ -634,10 +634,13 @@ class StateTracker:
             cls.all_vae_cache_files[data_backend_id].clear()
         else:
             cls.all_vae_cache_files[data_backend_id] = {}
-        for subdirectory_list in raw_file_list:
-            _, _, files = subdirectory_list
+        for entry in raw_file_list or []:
+            if isinstance(entry, (str, Path)):
+                files = [str(entry)]
+            else:
+                _, _, files = entry
             for image in files:
-                cls.all_vae_cache_files[data_backend_id][image] = False
+                cls.all_vae_cache_files[data_backend_id][str(image)] = False
         cls._save_to_disk(
             "all_vae_cache_files_{}".format(data_backend_id),
             cls.all_vae_cache_files[data_backend_id],

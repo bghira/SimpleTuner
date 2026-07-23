@@ -19,6 +19,7 @@ Guias passo a passo para treinar cada arquitetura de modelo suportada.
 | **HiDream** | 17B MoE | [Guia HiDream](HIDREAM.md) |
 | **Z-Image** | - | [Guia Z-Image](ZIMAGE.md) |
 | **Krea2** | - | [Guia Krea2](KREA2.pt-BR.md) |
+| **Mage-Flow** | 4B | [Guia Mage-Flow](MAGEFLOW.pt-BR.md) |
 | **Boogu-Image** | - | [Guia Boogu-Image](BOOGU_IMAGE.pt-BR.md) |
 | **zlab i1** | 3B | [Guia zlab i1](ZLAB_i1.pt-BR.md) |
 | **Ideogram 4** | 9B | [Guia Ideogram 4](IDEOGRAM4.pt-BR.md) |

@@ -32,6 +32,16 @@ else:
     QConv2d, QLinear = None, None
 
 
+def _ensure_lora_adapter_on_device(layer: LoraLayer, adapter_name: str, device: torch.device) -> None:
+    for adapters in (layer.lora_A, layer.lora_B):
+        module = adapters.get(adapter_name)
+        if module is None:
+            continue
+        weight = getattr(module, "weight", None)
+        if weight is not None and weight.device != device:
+            module.to(device)
+
+
 class QuantoLoraLinear(torch.nn.Module, LoraLayer):
     """LoRA layer implementation for quanto QLinear"""
 
@@ -77,6 +87,7 @@ class QuantoLoraLinear(torch.nn.Module, LoraLayer):
             for active_adapter in self.active_adapters:
                 if active_adapter not in self.lora_A.keys():
                     continue
+                _ensure_lora_adapter_on_device(self, active_adapter, x.device)
                 lora_A = self.lora_A[active_adapter]
                 lora_B = self.lora_B[active_adapter]
                 dropout = self.lora_dropout[active_adapter]
@@ -245,6 +256,7 @@ class QuantoLoraConv2d(torch.nn.Module, LoraLayer):
             for active_adapter in self.active_adapters:
                 if active_adapter not in self.lora_A.keys():
                     continue
+                _ensure_lora_adapter_on_device(self, active_adapter, x.device)
                 lora_A = self.lora_A[active_adapter]
                 lora_B = self.lora_B[active_adapter]
                 dropout = self.lora_dropout[active_adapter]
