@@ -10,7 +10,7 @@ Pontos de partida:
 
 - `bf16`, 512px, batch 1 para smoke tests
 - `bf16`, 1024px, batch 1 para LoRA normal em GPUs maiores
-- `int8-torchao` ou NF4 quando faltar VRAM
+- `fp8wo-torchao` quando faltar VRAM em GPUs NVIDIA Ada/Hopper ou mais novas
 - flavours Turbo com 4 passos de validação
 
 Use 24GB como mínimo prático para testes reduzidos ou quantizados, 48GB para 1024px com mais conforto e 80GB para edit training ou batches maiores.
@@ -114,9 +114,11 @@ Use cerca de 20 passos para `default`, 30 para `base` e 4 para `turbo` / `edit-t
 
 ```json
 {
-  "base_model_precision": "int8-torchao",
+  "base_model_precision": "fp8wo-torchao",
   "quantize_via": "cpu"
 }
 ```
+
+Em smoke tests de LoRA para Mage-Flow, a quantização int8 produziu picos suspeitos de loss quando comparada com FP8 weight-only TorchAO. Evite presets int8 para Mage-Flow a menos que você valide a curva de loss no seu dataset. NF4 e outros presets de quantização ainda podem ser úteis.
 
 O SimpleTuner vendoriza o código MIT do Mage-Flow e o envolve em pipelines Diffusers nativas para validação.

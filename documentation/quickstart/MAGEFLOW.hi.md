@@ -10,7 +10,7 @@ Mage-Flow Flux.1 और Qwen-Image से छोटा है, लेकिन �
 
 - `bf16`, 512px, batch 1 smoke test के लिए
 - `bf16`, 1024px, batch 1 सामान्य LoRA के लिए
-- VRAM कम हो तो `int8-torchao` या NF4
+- Ada/Hopper या नए NVIDIA GPU पर VRAM कम हो तो `fp8wo-torchao`
 - Turbo flavours के लिए validation में 4 steps
 
 24GB reduced या quantised प्रयोगों के लिए व्यावहारिक न्यूनतम है, 48GB 1024px के लिए बेहतर है, और 80GB edit training या बड़े batch के लिए अच्छा है।
@@ -114,9 +114,11 @@ Mage-Flow memory optimisation menu में RAMTorch और Musubi block swap p
 
 ```json
 {
-  "base_model_precision": "int8-torchao",
+  "base_model_precision": "fp8wo-torchao",
   "quantize_via": "cpu"
 }
 ```
+
+Mage-Flow LoRA smoke tests में int8 quantisation ने FP8 weight-only TorchAO की तुलना में suspicious loss spikes दिखाए। अपने dataset पर loss curve validate किए बिना Mage-Flow int8 presets से बचें। NF4 और दूसरे quantisation presets फिर भी उपयोगी हो सकते हैं।
 
 SimpleTuner MIT-licensed Mage-Flow code को vendor करता है और validation consistency के लिए native Diffusers pipelines में wrap करता है।

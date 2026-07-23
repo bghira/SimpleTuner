@@ -12,7 +12,7 @@ Good starting points:
 
 - **bf16, 512px, batch 1** for smoke tests and caption/crop checks
 - **bf16, 1024px, batch 1** for normal LoRA experiments on large GPUs
-- **int8-torchao or NF4**, 1024px, batch 1 when VRAM is tight
+- **fp8wo-torchao**, 1024px, batch 1 when VRAM is tight on Ada/Hopper or newer NVIDIA GPUs
 - **Turbo flavours**, 4 validation steps, when fast validation feedback matters
 
 You will want:
@@ -162,16 +162,16 @@ Mage-Flow exposes built-in RAMTorch and Musubi block swap presets in the memory 
 
 ## Quantisation notes
 
-Start with `bf16` when it fits. If it does not, try:
+Start with `bf16` when it fits. If it does not, prefer FP8 weight-only TorchAO on GPUs with float8 support:
 
 ```json
 {
-  "base_model_precision": "int8-torchao",
+  "base_model_precision": "fp8wo-torchao",
   "quantize_via": "cpu"
 }
 ```
 
-NF4 and other SimpleTuner quantisation presets may also be useful for LoRA training. Keep the text encoder frozen; the initial cache pass is expensive but it should not be trained for normal LoRA runs.
+In Mage-Flow LoRA smoke tests, int8 quantisation produced suspicious loss spikes compared with FP8 weight-only TorchAO. Avoid int8 Mage-Flow presets unless you validate the loss curve on your dataset. NF4 and other SimpleTuner quantisation presets may also be useful for LoRA training. Keep the text encoder frozen; the initial cache pass is expensive but it should not be trained for normal LoRA runs.
 
 ## Implementation notes
 
