@@ -11,6 +11,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 from contextlib import suppress
 from unittest.mock import MagicMock, Mock, patch
@@ -162,6 +163,10 @@ def crashing_task(config):
     os._exit(1)
 
 
+def sys_global_task(config):
+    return sys.version_info.major
+
+
 def slow_shutdown(config):
     # slow shutdown handler for testing timeouts
     signal.signal(signal.SIGTERM, lambda s, f: time.sleep(10))
@@ -299,6 +304,23 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
         events = get_process_events(job_id)
         error_events = [event for event in events if (event.get("type") or "").lower() == "error"]
         self.assertTrue(error_events, f"Expected error event, received: {events}")
+
+    def test_callable_payload_reconstruction_provides_sys_global(self):
+        job_id = "test_callable_sys_global"
+        self.test_jobs.append(job_id)
+        target = types.FunctionType(sys_global_task.__code__, {"__builtins__": __builtins__}, sys_global_task.__name__)
+
+        submit_job(job_id, target, {})
+
+        deadline = time.time() + 5
+        status = None
+        while time.time() < deadline:
+            status = get_process_status(job_id)
+            if status not in {"pending", "running"}:
+                break
+            time.sleep(0.1)
+
+        self.assertEqual(status, "completed")
 
     def test_log_extraction_prefers_cuda_oom_message(self):
         """Synthetic log extraction should highlight CUDA OOM failures."""
