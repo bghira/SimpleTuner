@@ -20,6 +20,20 @@ logger = logging.getLogger(__name__)
 _allocator_instance: Optional["LocalGPUAllocator"] = None
 
 
+def dedupe_gpu_ids(gpu_ids: Optional[List[int]]) -> Optional[List[int]]:
+    """Return GPU IDs with duplicates removed in their original order."""
+    if not gpu_ids:
+        return gpu_ids
+    deduped = []
+    seen = set()
+    for gpu_id in gpu_ids:
+        if gpu_id in seen:
+            continue
+        seen.add(gpu_id)
+        deduped.append(gpu_id)
+    return deduped
+
+
 def get_gpu_allocator() -> "LocalGPUAllocator":
     """Get the singleton LocalGPUAllocator instance."""
     global _allocator_instance
@@ -460,10 +474,19 @@ class LocalGPUAllocator:
             # Get any_gpu setting from metadata
             metadata = job.metadata or {}
             any_gpu = metadata.get("any_gpu", False)
+            preferred_gpus = dedupe_gpu_ids(job.allocated_gpus) if not any_gpu else None
+            if preferred_gpus and len(preferred_gpus) < job.num_processes:
+                logger.warning(
+                    "Queued job %s needs %d GPU(s), but only has preferred GPUs %s; " "falling back to any available GPUs",
+                    job.job_id,
+                    job.num_processes,
+                    preferred_gpus,
+                )
+                preferred_gpus = None
 
             can_start, gpus, reason = await self.can_allocate(
                 required_count=job.num_processes,
-                preferred_gpus=job.allocated_gpus if not any_gpu else None,
+                preferred_gpus=preferred_gpus,
                 any_gpu=any_gpu,
             )
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import copy
 import json
 import logging
@@ -30,14 +32,15 @@ from simpletuner.simpletuner_sdk.server.services.hardware_service import detect_
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults, WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
-from .webhook_defaults import (
-    DEFAULT_CALLBACK_URL,
-    DEFAULT_WEBHOOK_CONFIG,
-    get_authenticated_webhook_config,
-    get_default_callback_url,
-)
+from .local_gpu_allocator import dedupe_gpu_ids
+from .webhook_defaults import DEFAULT_WEBHOOK_CONFIG, get_authenticated_webhook_config, get_default_callback_url
 
 logger = logging.getLogger(__name__)
+
+_LOCAL_QUEUE_PROCESS_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="simpletuner-local-queue",
+)
 
 
 def _get_job_store():
@@ -118,6 +121,26 @@ def get_gpu_requirements(runtime_config: Dict[str, Any]) -> Tuple[int, Optional[
                 device_ids = parsed
 
     return (num_processes, device_ids)
+
+
+def _queued_preferred_gpus(preferred_gpus: Optional[List[int]], num_processes: int, any_gpu: bool) -> Optional[List[int]]:
+    """Return the hard GPU preference to persist for a queued local job.
+
+    ``allocated_gpus`` doubles as "preferred GPUs" while a local job is queued.
+    Persisting an incomplete preference, such as ``[0]`` for a two-process job,
+    makes the allocator wait forever even when enough other GPUs are idle.
+    """
+    if any_gpu or not preferred_gpus:
+        return None
+    preferred_gpus = dedupe_gpu_ids(preferred_gpus)
+    if len(preferred_gpus) < num_processes:
+        logger.warning(
+            "Ignoring incomplete GPU preference %s for queued job needing %d GPU(s)",
+            preferred_gpus,
+            num_processes,
+        )
+        return None
+    return preferred_gpus
 
 
 _PROMPT_LIBRARY_RUNTIME_ROOT = Path(tempfile.gettempdir()) / "simpletuner_prompt_libraries"
@@ -1167,7 +1190,7 @@ def start_training_job(
             )
 
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             # We're in an async context, create a task
             import concurrent.futures
 
@@ -1274,7 +1297,7 @@ def start_training_job(
             return job
 
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             import concurrent.futures
 
             with concurrent.futures.ThreadPoolExecutor() as pool:
@@ -1397,7 +1420,7 @@ def start_training_job(
                     logger.debug("Stored PID %d for job %s", pid, job_id)
 
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
                 import concurrent.futures
 
                 with concurrent.futures.ThreadPoolExecutor() as pool:
@@ -1466,6 +1489,7 @@ def _queue_training_job(
             stats = await job_repo.get_queue_stats()
             queue_depth = stats.get("queue_depth", 0)
 
+            queued_preferred_gpus = _queued_preferred_gpus(preferred_gpus, num_processes, any_gpu)
             job = UnifiedJob(
                 job_id=job_id,
                 job_type=JobType.LOCAL,
@@ -1477,7 +1501,7 @@ def _queue_training_job(
                 user_id=user_id,
                 org_id=org_id,
                 num_processes=num_processes,
-                allocated_gpus=preferred_gpus if not any_gpu else None,
+                allocated_gpus=queued_preferred_gpus,
                 requires_approval=requires_approval,
                 queue_position=queue_depth + 1,
                 output_url=output_url,
@@ -1494,7 +1518,7 @@ def _queue_training_job(
             return job.queue_position, status
 
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             import concurrent.futures
 
             with concurrent.futures.ThreadPoolExecutor() as pool:
@@ -1504,6 +1528,9 @@ def _queue_training_job(
             return asyncio.run(_async_add())
 
     position, status = _add_to_queue()
+
+    if not requires_approval:
+        _process_pending_local_jobs()
 
     if requires_approval:
         logger.info(
@@ -1532,6 +1559,34 @@ def _queue_training_job(
         queue_position=position,
         reason=f"Waiting for {num_processes} GPU(s) to become available",
     )
+
+
+def _process_pending_local_jobs() -> None:
+    """Kick the local GPU allocator after a local job is queued."""
+    from .local_gpu_allocator import get_gpu_allocator
+
+    async def _async_process():
+        started = await get_gpu_allocator().process_pending_jobs()
+        if started:
+            logger.info("Started %d pending local job(s): %s", len(started), started)
+
+    def _log_process_result(future):
+        try:
+            future.result()
+        except asyncio.CancelledError:
+            logger.debug("Pending local job processing task was cancelled")
+        except Exception:
+            logger.exception("Failed to process pending local jobs after enqueue")
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        future = _LOCAL_QUEUE_PROCESS_EXECUTOR.submit(lambda: asyncio.run(_async_process()))
+        future.add_done_callback(_log_process_result)
+        return
+
+    task = loop.create_task(_async_process())
+    task.add_done_callback(_log_process_result)
 
 
 def terminate_training_job(job_id: Optional[str], *, status: str, clear_job_id: bool) -> bool:
@@ -1614,7 +1669,7 @@ def _release_job_gpus(job_id: str, *, process_pending: bool = True) -> None:
                     logger.info("Started %d pending jobs after GPU release", len(started))
 
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             import concurrent.futures
 
             with concurrent.futures.ThreadPoolExecutor() as pool:
