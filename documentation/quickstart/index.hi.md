@@ -19,6 +19,7 @@
 | **HiDream** | 17B MoE | [HiDream गाइड](HIDREAM.md) |
 | **Z-Image** | - | [Z-Image गाइड](ZIMAGE.md) |
 | **Krea2** | - | [Krea2 गाइड](KREA2.hi.md) |
+| **Mage-Flow** | 4B | [Mage-Flow गाइड](MAGEFLOW.hi.md) |
 | **Boogu-Image** | - | [Boogu-Image गाइड](BOOGU_IMAGE.hi.md) |
 | **zlab i1** | 3B | [zlab i1 गाइड](ZLAB_i1.hi.md) |
 | **Ideogram 4** | 9B | [Ideogram 4 गाइड](IDEOGRAM4.hi.md) |

@@ -524,6 +524,21 @@ def _quanto_model(
             "norm_out",
             "context_embedder",
         ]
+    elif StateTracker.get_args().model_family == "mageflow":
+        extra_quanto_args["exclude"] = [
+            # Mage-Flow uses packed latent/text streams with small conditioning
+            # projections that are more sensitive than the large attention/MLP weights.
+            "*norm*",
+            "*pos_embed*",
+            "img_in",
+            "txt_in",
+            "time_text_embed*",
+            "time_sign_embed*",
+            "*img_mod*",
+            "*txt_mod*",
+            "norm_out*",
+            "proj_out",
+        ]
     if quantize_activations:
         logger.info("Quanto: Freezing model weights and activations")
         extra_quanto_args["activations"] = weight_quant
@@ -1086,6 +1101,21 @@ def _sdnq_model(
     if args.model_family == "flux":
         # Use ".proj_out" for root level proj_out in Flux (inner layers also have proj_out)
         modules_to_not_convert.append(".proj_out")
+    elif args.model_family == "mageflow":
+        modules_to_not_convert.extend(
+            [
+                ".img_in",
+                ".txt_in",
+                ".time_text_embed",
+                ".time_sign_embed",
+                ".norm_out",
+                ".proj_out",
+                "*pos_embed*",
+                "*norm*",
+                "*img_mod*",
+                "*txt_mod*",
+            ]
+        )
     if getattr(args, "sdnq_modules_to_not_convert", None):
         modules_to_not_convert.extend(args.sdnq_modules_to_not_convert)
 
