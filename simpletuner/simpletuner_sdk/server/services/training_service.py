@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import copy
 import json
 import logging
@@ -30,13 +32,14 @@ from simpletuner.simpletuner_sdk.server.services.hardware_service import detect_
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIDefaults, WebUIStateStore
 from simpletuner.simpletuner_sdk.server.utils.paths import resolve_config_path
 
-from .webhook_defaults import (
-    DEFAULT_WEBHOOK_CONFIG,
-    get_authenticated_webhook_config,
-    get_default_callback_url,
-)
+from .webhook_defaults import DEFAULT_WEBHOOK_CONFIG, get_authenticated_webhook_config, get_default_callback_url
 
 logger = logging.getLogger(__name__)
+
+_LOCAL_QUEUE_PROCESS_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="simpletuner-local-queue",
+)
 
 
 def _get_job_store():
@@ -1524,6 +1527,9 @@ def _queue_training_job(
 
     position, status = _add_to_queue()
 
+    if not requires_approval:
+        _process_pending_local_jobs()
+
     if requires_approval:
         logger.info(
             "Queued training job %s for approval at position %d (reason: %s)",
@@ -1551,6 +1557,34 @@ def _queue_training_job(
         queue_position=position,
         reason=f"Waiting for {num_processes} GPU(s) to become available",
     )
+
+
+def _process_pending_local_jobs() -> None:
+    """Kick the local GPU allocator after a local job is queued."""
+    from .local_gpu_allocator import get_gpu_allocator
+
+    async def _async_process():
+        started = await get_gpu_allocator().process_pending_jobs()
+        if started:
+            logger.info("Started %d pending local job(s): %s", len(started), started)
+
+    def _log_process_result(future):
+        try:
+            future.result()
+        except asyncio.CancelledError:
+            logger.debug("Pending local job processing task was cancelled")
+        except Exception:
+            logger.exception("Failed to process pending local jobs after enqueue")
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        future = _LOCAL_QUEUE_PROCESS_EXECUTOR.submit(lambda: asyncio.run(_async_process()))
+        future.add_done_callback(_log_process_result)
+        return
+
+    task = loop.create_task(_async_process())
+    task.add_done_callback(_log_process_result)
 
 
 def terminate_training_job(job_id: Optional[str], *, status: str, clear_job_id: bool) -> bool:
