@@ -28,6 +28,19 @@ def _store_hidden_state(buffer, key: str, hidden_states: torch.Tensor):
     buffer[key] = hidden_states
 
 
+def _ensure_module_device(module: torch.nn.Module | None, device: torch.device) -> None:
+    if module is None:
+        return
+    for param in module.parameters(recurse=True):
+        if getattr(param, "is_ramtorch", False):
+            return
+    first_tensor = next(module.parameters(recurse=True), None)
+    if first_tensor is None:
+        first_tensor = next(module.buffers(recurse=True), None)
+    if first_tensor is not None and first_tensor.device != device:
+        module.to(device)
+
+
 def _resolve_repo_dir(repo_id_or_path: str, *, revision: Optional[str] = None, local_files_only: bool = False) -> str:
     if os.path.isdir(repo_id_or_path):
         return os.path.abspath(repo_id_or_path)
@@ -188,6 +201,9 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
         if timesteps.ndim != 1:
             raise ValueError("Mage-Flow expects batchwise 1D timesteps; tokenwise timesteps are not supported.")
 
+        for module in (self.img_in, self.txt_norm, self.time_text_embed, self.time_sign_embed, self.txt_in):
+            _ensure_module_device(module, img.device)
+
         ms_pe = self.pos_embed(img_shapes, device=img.device)
 
         img = self.img_in(img)
@@ -236,6 +252,8 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
 
         skip_layers_set = set(skip_layers) if skip_layers is not None else set()
         for index_block, block in enumerate(self.transformer_blocks):
+            _ensure_module_device(getattr(block, "img_mod", None), img.device)
+            _ensure_module_device(getattr(block, "txt_mod", None), img.device)
             if musubi_offload_active and musubi_manager.is_managed_block(index_block):
                 musubi_manager.stream_in(block, img.device)
             if index_block in skip_layers_set:
@@ -265,6 +283,8 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
                 musubi_manager.stream_out(block)
             _store_hidden_state(hidden_states_buffer, f"layer_{index_block}", img)
 
+        _ensure_module_device(self.norm_out, img.device)
+        _ensure_module_device(self.proj_out, img.device)
         img = self.norm_out(
             img,
             temb,

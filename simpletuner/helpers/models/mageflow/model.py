@@ -405,6 +405,27 @@ class MageFlow(ImageModelFoundation):
                 return None
         return images
 
+    @staticmethod
+    def _ensure_qwen3vl_text_rotary_precision(text_encoder, device: torch.device) -> None:
+        rotary_emb = text_encoder.language_model.rotary_emb
+        inv_freq = rotary_emb.inv_freq
+        original_inv_freq = getattr(rotary_emb, "original_inv_freq", None)
+        if (
+            inv_freq.dtype == torch.float32
+            and inv_freq.device == device
+            and (
+                original_inv_freq is None
+                or (original_inv_freq.dtype == torch.float32 and original_inv_freq.device == device)
+            )
+        ):
+            return
+
+        inv_freq, attention_scaling = rotary_emb.compute_default_rope_parameters(rotary_emb.config, device)
+        inv_freq = inv_freq.to(device=device, dtype=torch.float32)
+        rotary_emb.register_buffer("inv_freq", inv_freq, persistent=False)
+        rotary_emb.register_buffer("original_inv_freq", inv_freq.clone(), persistent=False)
+        rotary_emb.attention_scaling = attention_scaling
+
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         del is_negative_prompt
         if self.text_encoders is None or len(self.text_encoders) == 0:
@@ -413,6 +434,7 @@ class MageFlow(ImageModelFoundation):
         text_encoder = self.text_encoders[0]
         if text_encoder.device != self.accelerator.device:
             text_encoder.to(self.accelerator.device, dtype=self.config.weight_dtype)
+        self._ensure_qwen3vl_text_rotary_precision(text_encoder, self.accelerator.device)
 
         if self._is_edit_flavour():
             pipeline = self.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)

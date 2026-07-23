@@ -14,6 +14,7 @@ from simpletuner.helpers.models.mageflow.pipeline_edit import MageFlowEditPipeli
 from simpletuner.helpers.models.mageflow.transformer import MageFlowTransformer2DModel
 from simpletuner.helpers.models.mageflow.vendor.models.modules import _attn_backend as mageflow_attn_backend
 from simpletuner.helpers.models.mageflow.vendor.models.modules.text_encoder import _resolve_hf_attn_impl
+from simpletuner.helpers.models.mageflow.vendor.pipeline import _build_pack_ctx, _lens_to_cu
 from simpletuner.helpers.models.registry import ModelRegistry
 
 
@@ -171,6 +172,71 @@ class MageFlowModelTests(unittest.TestCase):
     def test_mageflow_text_encoder_hub_flash_loads_hf_module_with_sdpa(self):
         self.assertEqual(_resolve_hf_attn_impl("diffusers"), "sdpa")
         self.assertEqual(_resolve_hf_attn_impl("flash-attn-varlen-hub"), "sdpa")
+
+    def test_mageflow_pack_metadata_dtypes_do_not_follow_bf16_default_dtype(self):
+        previous_dtype = torch.get_default_dtype()
+        device = torch.device("cpu")
+        try:
+            torch.set_default_dtype(torch.bfloat16)
+            txt = torch.randn(1, 5, 8)
+            neg_txt = torch.randn(1, 5, 8)
+            txt_cu = _lens_to_cu([5], device)
+            neg_cu = _lens_to_cu([5], device)
+            ctx = _build_pack_ctx(
+                torch.zeros(1, 4, 3, dtype=torch.float32),
+                _lens_to_cu([4], device),
+                [[(1, 2, 2)]],
+                [4],
+                txt,
+                txt_cu,
+                torch.ones(1, 5, dtype=torch.bool),
+                torch.randn(1, 8),
+                neg_txt,
+                neg_cu,
+                torch.ones(1, 5, dtype=torch.bool),
+                torch.randn(1, 8),
+                5.0,
+                False,
+                True,
+                device,
+            )
+        finally:
+            torch.set_default_dtype(previous_dtype)
+
+        self.assertEqual(ctx["txt_ids"].dtype, torch.float32)
+        self.assertEqual(ctx["neg_ids"].dtype, torch.float32)
+        self.assertEqual(ctx["d_txt_ids"].dtype, torch.float32)
+        self.assertEqual(ctx["d_txt_mask"].dtype, torch.bool)
+        self.assertEqual(ctx["img_cu"].dtype, torch.int32)
+        self.assertEqual(ctx["d_img_cu"].dtype, torch.int32)
+
+    def test_mageflow_restores_qwen_text_rotary_inv_freq_to_fp32(self):
+        model_cls = _mageflow_class()
+
+        class RotaryEmbedding(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = SimpleNamespace()
+                self.attention_scaling = 0.25
+                rounded = torch.tensor([1.0, 0.1001], dtype=torch.bfloat16)
+                self.register_buffer("inv_freq", rounded, persistent=False)
+                self.register_buffer("original_inv_freq", rounded.clone(), persistent=False)
+
+            @staticmethod
+            def compute_default_rope_parameters(config, device):
+                del config
+                return torch.tensor([1.0, 0.100123], device=device, dtype=torch.float32), 1.0
+
+        text_encoder = SimpleNamespace(language_model=SimpleNamespace(rotary_emb=RotaryEmbedding()))
+
+        model_cls._ensure_qwen3vl_text_rotary_precision(text_encoder, torch.device("cpu"))
+
+        rotary_emb = text_encoder.language_model.rotary_emb
+        self.assertEqual(rotary_emb.inv_freq.dtype, torch.float32)
+        self.assertEqual(rotary_emb.original_inv_freq.dtype, torch.float32)
+        self.assertTrue(torch.equal(rotary_emb.inv_freq, torch.tensor([1.0, 0.100123], dtype=torch.float32)))
+        self.assertTrue(torch.equal(rotary_emb.original_inv_freq, rotary_emb.inv_freq))
+        self.assertEqual(rotary_emb.attention_scaling, 1.0)
 
     def test_pretrained_load_args_enable_twinflow_time_sign_embedding(self):
         model_cls = _mageflow_class()

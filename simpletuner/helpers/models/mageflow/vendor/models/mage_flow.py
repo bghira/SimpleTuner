@@ -311,7 +311,7 @@ class MageFlowModel(nn.Module):
                 img_shapes.append([(1, h, w)])
                 model_inputs.append(rearrange(latents, "b c h w -> b (h w) c").squeeze(0))
                 if with_ids:
-                    ids = torch.zeros(h, w, 3, device=latents.device)
+                    ids = torch.zeros(h, w, 3, device=latents.device, dtype=torch.float32)
                     ids[..., 1] = ids[..., 1] + torch.arange(h, device=latents.device)[:, None]
                     ids[..., 2] = ids[..., 2] + torch.arange(w, device=latents.device)[None, :]
                     img_ids_list.append(rearrange(ids, "h w c -> (h w) c"))
@@ -357,7 +357,7 @@ class MageFlowModel(nn.Module):
         img_shapes = [[(1, h, w)]] * bs
         model_input = rearrange(model_input, "b c h w -> b (h w) c")
         if with_ids:
-            img_ids = torch.zeros(h, w, 3, device=model_input.device)
+            img_ids = torch.zeros(h, w, 3, device=model_input.device, dtype=torch.float32)
             img_ids[..., 1] = img_ids[..., 1] + torch.arange(h, device=model_input.device)[:, None]
             img_ids[..., 2] = img_ids[..., 2] + torch.arange(w, device=model_input.device)[None, :]
             img_ids = repeat(img_ids, "h w c -> b (h w) c", b=bs)

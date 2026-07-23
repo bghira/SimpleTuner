@@ -144,6 +144,26 @@ def _move_peft_lora_adapters_to_device(peft_layer: Any, device: torch.device | N
             _move_module(peft_layer.lora_B[adapter_name])
 
 
+def _move_peft_base_layer_to_device(peft_layer: Any, device: torch.device | None) -> None:
+    if device is None:
+        return
+    try:
+        base_layer = peft_layer.get_base_layer()
+    except Exception:
+        base_layer = getattr(peft_layer, "base_layer", None)
+    if base_layer is None:
+        return
+    for param in base_layer.parameters(recurse=True):
+        if getattr(param, "is_ramtorch", False):
+            return
+    try:
+        first_param = next(base_layer.parameters(recurse=True), None)
+    except Exception:
+        first_param = None
+    if first_param is not None and first_param.device != device:
+        base_layer.to(device)
+
+
 def _tensor_uses_subclass_storage(tensor: Any) -> bool:
     tensor_type = type(tensor)
     return tensor_type is not torch.Tensor and tensor_type is not nn.Parameter
@@ -392,6 +412,7 @@ def register_lora_custom_module(lora_config) -> bool:
         """
 
         def _ensure_lora_on_device(self, device):
+            _move_peft_base_layer_to_device(self, device)
             _move_peft_lora_adapters_to_device(self, device)
 
         def forward(self, x: torch.Tensor, *args, **kwargs):  # type: ignore[override]
@@ -518,6 +539,7 @@ def _maybe_patch_peft_lora_model() -> bool:
 
     class RamTorchPeftLinear(PeftLinear):  # type: ignore[misc]
         def _ensure_lora_on_device(self, device):
+            _move_peft_base_layer_to_device(self, device)
             _move_peft_lora_adapters_to_device(self, device)
 
         def forward(self, x: torch.Tensor, *args, **kwargs):  # type: ignore[override]
@@ -584,7 +606,9 @@ def _maybe_patch_peft_lora_forward() -> bool:
         return False
 
     def _wrapped_forward(self, x: torch.Tensor, *args, **kwargs):  # type: ignore[override]
-        _move_peft_lora_adapters_to_device(self, x.device if torch.is_tensor(x) else None)
+        device = x.device if torch.is_tensor(x) else None
+        _move_peft_base_layer_to_device(self, device)
+        _move_peft_lora_adapters_to_device(self, device)
         return orig_forward(self, x, *args, **kwargs)
 
     _wrapped_forward._ramtorch_wrapped = True

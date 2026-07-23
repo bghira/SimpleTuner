@@ -23,31 +23,18 @@ quantised_precision_levels = [
     "uint4-sdnq",
     "uint3-sdnq",
     "uint2-sdnq",
+    "nf4-bnb",
+    "int4-torchao",
+    # "fp4-bnb",
+    # "fp8-bnb",
+    "fp8-quanto",
+    "fp8uz-quanto",
+    "fp8-native",
+    "fp8-torchao",
+    "fp8wo-torchao",
+    "fp8-int4-torchao",
+    "fp8-transformerengine",
 ]
-
-# Skip torch import in CLI mode for fast startup
-if os.environ.get("SIMPLETUNER_SKIP_TORCH", "").lower() not in ("1", "true", "yes"):
-    import torch
-
-    if torch.cuda.is_available():
-        quantised_precision_levels.extend(
-            [
-                "nf4-bnb",
-                "int4-torchao",
-                # "fp4-bnb",
-                # "fp8-bnb",
-                "fp8-quanto",
-                "fp8uz-quanto",
-            ]
-        )
-        primary_device = torch.cuda.get_device_properties(0)
-        if primary_device.major > 8 or (primary_device.major == 8 and primary_device.minor >= 9):
-            # Ada Lovelace (RTX 40/L40S), Hopper, or newer.
-            quantised_precision_levels.append("fp8-native")
-            quantised_precision_levels.append("fp8-torchao")
-            quantised_precision_levels.append("fp8wo-torchao")
-            quantised_precision_levels.append("fp8-int4-torchao")
-            quantised_precision_levels.append("fp8-transformerengine")
 
 try:
     import pillow_jxl

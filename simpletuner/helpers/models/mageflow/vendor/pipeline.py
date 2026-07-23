@@ -163,7 +163,7 @@ def _build_pack_ctx(
         "img_shapes": img_shapes,
         "img_max": int(max(img_lens)),
         "txt": txt,
-        "txt_ids": torch.zeros(1, txt.shape[1], 3, device=device),
+        "txt_ids": torch.zeros(1, txt.shape[1], 3, device=device, dtype=torch.float32),
         "txt_cu": txt_cu,
         "txt_mask": txt_mask,
         "vec": vec,
@@ -174,7 +174,7 @@ def _build_pack_ctx(
     ctx.update(
         {
             "neg_txt": neg_txt,
-            "neg_ids": torch.zeros(1, neg_txt.shape[1], 3, device=device),
+            "neg_ids": torch.zeros(1, neg_txt.shape[1], 3, device=device, dtype=torch.float32),
             "neg_cu": neg_cu,
             "neg_mask": neg_mask,
             "neg_vec": neg_vec,
@@ -192,9 +192,9 @@ def _build_pack_ctx(
                 "d_img_cu": _lens_to_cu(list(img_lens) + list(img_lens), device),
                 "d_img_shapes": [img_shapes[0] + img_shapes[0]],
                 "d_txt": d_txt,
-                "d_txt_ids": torch.zeros(1, d_txt.shape[1], 3, device=device),
+                "d_txt_ids": torch.zeros(1, d_txt.shape[1], 3, device=device, dtype=torch.float32),
                 "d_txt_cu": _lens_to_cu(pos_lens + neg_lens, device),
-                "d_txt_mask": torch.ones(1, d_txt.shape[1], device=device),
+                "d_txt_mask": torch.ones(1, d_txt.shape[1], device=device, dtype=torch.bool),
                 "d_vec": torch.cat([vec, neg_vec], dim=0),
                 "d_txt_max": int(max(pos_lens + neg_lens)),
             }
@@ -393,7 +393,7 @@ def generate_images(
         x = encode_noise(tuple(x.shape[1:]), key=gs_key_int, seed=seeds[i], device=dev, dtype=torch.bfloat16)
         _, _, gh, gw = x.shape
         img_list.append(rearrange(x, "b c h w -> b (h w) c")[0])
-        ids = torch.zeros(gh, gw, 3, device=dev)
+        ids = torch.zeros(gh, gw, 3, device=dev, dtype=torch.float32)
         ids[..., 1] = ids[..., 1] + torch.arange(gh, device=dev)[:, None]
         ids[..., 2] = ids[..., 2] + torch.arange(gw, device=dev)[None, :]
         ids_list.append(rearrange(ids, "h w c -> (h w) c"))
@@ -621,7 +621,7 @@ def generate_edits(
         x = encode_noise(tuple(x.shape[1:]), key=gs_key_int, seed=seeds[i], device=dev, dtype=torch.bfloat16)
         _, _, gh, gw = x.shape
         tgt = rearrange(x, "b c h w -> b (h w) c")  # [1, Lt, C]
-        tgt_ids = torch.zeros(gh, gw, 3, device=dev)
+        tgt_ids = torch.zeros(gh, gw, 3, device=dev, dtype=torch.float32)
         tgt_ids[..., 1] = tgt_ids[..., 1] + torch.arange(gh, device=dev)[:, None]
         tgt_ids[..., 2] = tgt_ids[..., 2] + torch.arange(gw, device=dev)[None, :]
         tgt_ids = rearrange(tgt_ids, "h w c -> (h w) c").unsqueeze(0)
@@ -738,7 +738,7 @@ def invert_to_noise(
     _, ch, gh, gw = z0.shape
     img = rearrange(z0, "b c h w -> b (h w) c").to(torch.bfloat16)  # [1, gh*gw, C]
 
-    ids = torch.zeros(gh, gw, 3, device=dev)
+    ids = torch.zeros(gh, gw, 3, device=dev, dtype=torch.float32)
     ids[..., 1] = ids[..., 1] + torch.arange(gh, device=dev)[:, None]
     ids[..., 2] = ids[..., 2] + torch.arange(gw, device=dev)[None, :]
     img_ids = rearrange(ids, "h w c -> (h w) c").unsqueeze(0)
