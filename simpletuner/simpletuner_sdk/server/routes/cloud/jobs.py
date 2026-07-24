@@ -199,6 +199,7 @@ async def cancel_job(
         CloudJobStatus.UPLOADING.value,
         CloudJobStatus.QUEUED.value,
         CloudJobStatus.RUNNING.value,
+        "starting",
     ]
     if job.status not in cancellable_states:
         raise JobStateError(job_id, job.status, cancellable_states)
@@ -231,7 +232,19 @@ async def cancel_job(
             logger.error("Error cancelling cloud job %s: %s", job_id, exc)
             raise ProviderError(job.provider, f"Error cancelling job: {exc}", cause=exc)
 
-    if job.job_type == JobType.LOCAL:
+    is_kubeflow_job = job.job_type == JobType.LOCAL and job.provider == "kubeflow"
+    if is_kubeflow_job:
+        from ...services.kubeflow_job_service import get_kubeflow_job_service
+
+        service = get_kubeflow_job_service()
+        if service is None:
+            raise ProviderError("kubeflow", "Kubeflow integration is not initialized")
+        try:
+            await service.cancel(job_id)
+        except Exception as exc:
+            logger.error("Error cancelling Kubeflow job %s: %s", job_id, exc)
+            raise ProviderError("kubeflow", f"Error cancelling job: {exc}", cause=exc)
+    elif job.job_type == JobType.LOCAL:
         try:
             from simpletuner.simpletuner_sdk import process_keeper
 
@@ -311,7 +324,7 @@ async def cancel_job(
         logger.warning("Failed to broadcast SSE event: %s", exc)
 
     # Release GPUs and process pending jobs for local jobs AFTER broadcasting cancellation
-    if job.job_type == JobType.LOCAL:
+    if job.job_type == JobType.LOCAL and not is_kubeflow_job:
         try:
             from ...services.local_gpu_allocator import get_gpu_allocator
 

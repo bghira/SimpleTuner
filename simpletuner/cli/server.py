@@ -128,6 +128,49 @@ def _ensure_server_state_dir() -> None:
     os.environ["SIMPLETUNER_STATE_DIR"] = str(get_local_state_dir())
 
 
+def _configure_kubeflow_environment(args) -> Optional[str]:
+    """Validate Kubeflow CLI arguments and export the integration contract.
+
+    Args:
+        args: Parsed server command arguments.
+
+    Returns:
+        An error message when configuration is invalid, otherwise None.
+    """
+    if not getattr(args, "kubeflow", False):
+        return None
+    if getattr(args, "mode", "unified") == "callback":
+        return "Kubeflow scheduling requires trainer or unified server mode"
+
+    required = {
+        "--kubeflow-namespace": getattr(args, "kubeflow_namespace", None),
+        "--kubeflow-runtime": getattr(args, "kubeflow_runtime", None),
+        "--kubeflow-queue": getattr(args, "kubeflow_queue", None),
+        "--kubeflow-worker-image": getattr(args, "kubeflow_worker_image", None),
+        "--kubeflow-orchestrator-url": getattr(args, "kubeflow_orchestrator_url", None),
+    }
+    missing = [flag for flag, value in required.items() if not value]
+    if missing:
+        return f"Kubeflow scheduling requires: {', '.join(missing)}"
+
+    poll_interval = getattr(args, "kubeflow_poll_interval", 5.0)
+    if poll_interval <= 0:
+        return "--kubeflow-poll-interval must be greater than zero"
+
+    os.environ.update(
+        {
+            "SIMPLETUNER_KUBEFLOW_ENABLED": "true",
+            "SIMPLETUNER_KUBEFLOW_NAMESPACE": str(required["--kubeflow-namespace"]),
+            "SIMPLETUNER_KUBEFLOW_RUNTIME": str(required["--kubeflow-runtime"]),
+            "SIMPLETUNER_KUBEFLOW_QUEUE": str(required["--kubeflow-queue"]),
+            "SIMPLETUNER_KUBEFLOW_WORKER_IMAGE": str(required["--kubeflow-worker-image"]),
+            "SIMPLETUNER_KUBEFLOW_ORCHESTRATOR_URL": str(required["--kubeflow-orchestrator-url"]),
+            "SIMPLETUNER_KUBEFLOW_POLL_INTERVAL": str(poll_interval),
+        }
+    )
+    return None
+
+
 def cmd_server(args) -> int:
     """Handle server command."""
     host = getattr(args, "host", "0.0.0.0")
@@ -139,6 +182,11 @@ def cmd_server(args) -> int:
     ssl_cert = getattr(args, "ssl_cert", None)
     ssl_no_verify = getattr(args, "ssl_no_verify", False)
     env = getattr(args, "env", None)
+
+    kubeflow_error = _configure_kubeflow_environment(args)
+    if kubeflow_error:
+        print(f"Error: {kubeflow_error}")
+        return 1
 
     _ensure_server_state_dir()
 
