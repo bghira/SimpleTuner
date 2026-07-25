@@ -1,4 +1,5 @@
 import inspect
+import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -9,6 +10,7 @@ from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from simpletuner.helpers.models.common import TextEmbedCacheKey
 from simpletuner.helpers.models.krea2 import Krea2, Krea2LoraLoaderMixin, Krea2Pipeline, Krea2Transformer2DModel
 from simpletuner.helpers.models.krea2.lora_pipeline import _infer_krea2_lora_target_modules, _normalize_krea2_lora_state_dict
+from simpletuner.helpers.models.krea2.quantized_loading import _decode_comfy_quant, _map_comfy_key_to_diffusers
 from simpletuner.helpers.models.krea2.transformer import Krea2Attention, _krea2_rope_freqs_dtype
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.tread import TREADRouter
@@ -86,6 +88,38 @@ class Krea2VendoredModelTests(unittest.TestCase):
     def test_lora_save_accepts_transformer_metadata(self):
         parameters = inspect.signature(Krea2LoraLoaderMixin.save_lora_weights).parameters
         self.assertIn("transformer_lora_adapter_metadata", parameters)
+
+    def test_transformer_exposes_single_file_loader(self):
+        parameters = inspect.signature(Krea2Transformer2DModel.from_single_file).parameters
+
+        self.assertIn("pretrained_model_link_or_path", parameters)
+        self.assertIn("filename", parameters)
+        self.assertIn("torch_dtype", parameters)
+
+    def test_convrot_comfy_key_mapping(self):
+        self.assertEqual(
+            _map_comfy_key_to_diffusers("model.diffusion_model.blocks.3.attn.wq.weight"),
+            "transformer_blocks.3.attn.to_q.weight",
+        )
+        self.assertEqual(
+            _map_comfy_key_to_diffusers("model.diffusion_model.blocks.4.mlp.down.weight"),
+            "transformer_blocks.4.ff.down.weight",
+        )
+        self.assertEqual(
+            _map_comfy_key_to_diffusers("model.diffusion_model.txtfusion.refiner_blocks.1.attn.qknorm.knorm.scale"),
+            "text_fusion.refiner_blocks.1.attn.norm_k.weight",
+        )
+        self.assertEqual(
+            _map_comfy_key_to_diffusers("model.diffusion_model.last.modulation.lin"),
+            "final_layer.scale_shift_table",
+        )
+
+    def test_convrot_comfy_quant_metadata_decodes(self):
+        metadata = {"convrot": True, "convrot_groupsize": 256, "per_row": True}
+        json_bytes = json.dumps(metadata).encode("utf-8")
+        payload = torch.tensor(list(json_bytes), dtype=torch.uint8)
+
+        self.assertEqual(_decode_comfy_quant(payload), metadata)
 
     def test_lora_loader_normalizes_transformer_prefix_and_targets(self):
         state_dict = {
