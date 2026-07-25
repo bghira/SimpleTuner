@@ -626,6 +626,29 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         self._tread_router = router
         self._tread_routes = routes
 
+    @classmethod
+    def from_single_file(
+        cls,
+        pretrained_model_link_or_path: str,
+        *args: Any,
+        filename: str | None = None,
+        subfolder: str | None = None,
+        revision: str | None = None,
+        torch_dtype: torch.dtype | None = None,
+        **kwargs: Any,
+    ) -> "ZImageTransformer2DModel":
+        del args, kwargs
+        from simpletuner.helpers.models.z_image.quantized_loading import load_zimage_comfy_convrot_checkpoint
+
+        return load_zimage_comfy_convrot_checkpoint(
+            cls,
+            pretrained_model_link_or_path,
+            filename=filename,
+            subfolder=subfolder,
+            revision=revision,
+            torch_dtype=torch_dtype,
+        )
+
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.t_embedder.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
         register_flowmap_config(self, gate_value, deltatime_type)
