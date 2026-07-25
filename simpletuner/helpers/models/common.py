@@ -3186,6 +3186,13 @@ class ModelFoundation(ABC):
         """
         self._init_layersync_regularizer()
 
+    def post_quantization_setup(self):
+        """
+        Hook for model families that need setup after manual quantization.
+
+        """
+        return
+
     def fuse_qkv_projections(self):
         if not self.config.fuse_qkv_projections or self._qkv_projections_fused:
             return

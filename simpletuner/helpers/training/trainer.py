@@ -2969,6 +2969,9 @@ class Trainer:
                     )
                     self.model.set_prepared_model(q_model, base_model=False)
 
+        if not preprocessing_models_only and not ema_only:
+            self.model.post_quantization_setup()
+
         if (
             getattr(self.config, "ramtorch", False)
             and not preprocessing_models_only
