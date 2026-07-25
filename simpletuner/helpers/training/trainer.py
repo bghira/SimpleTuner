@@ -34,6 +34,7 @@ import huggingface_hub
 import wandb
 from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
+from torch.distributed.tensor import DTensor
 
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
@@ -553,22 +554,19 @@ class Trainer:
         target_logs: Dict[str, float],
         *,
         require_value_method: bool = False,
-        clone_norm_value: bool = False,
         is_regularisation_data: bool = False,
     ):
-        if self.grad_norm is None:
+        grad_value = self._normalize_metric_value(self.grad_norm)
+        if grad_value is None:
             return
 
         prefix = "regularisation_" if is_regularisation_data else ""
         if self.config.grad_clip_method == "norm":
-            grad_value = self.grad_norm
-            if clone_norm_value:
-                grad_value = float(self.grad_norm.clone().detach())
             target_logs[f"{prefix}grad_norm"] = grad_value
         elif (
             not require_value_method or self.config.grad_clip_method == "value"
         ) and not self.config.use_deepspeed_optimizer:
-            target_logs[f"{prefix}grad_absmax"] = self.grad_norm
+            target_logs[f"{prefix}grad_absmax"] = grad_value
 
     def _config_uses_bitsandbytes(self) -> bool:
         if not getattr(self, "config", None):
@@ -5301,7 +5299,7 @@ class Trainer:
             metrics.setdefault("total_batch_size", batch_size_value)
         metrics.update(self.iteration_tracker.iteration_metrics())
         # Add gradient metrics (same logic as _update_grad_metrics but for webhook payload)
-        self._update_grad_metrics(metrics, clone_norm_value=True, is_regularisation_data=parent_loss is not None)
+        self._update_grad_metrics(metrics, is_regularisation_data=parent_loss is not None)
         if extra_metrics:
             for key, value in extra_metrics.items():
                 if value is None:
@@ -5693,11 +5691,36 @@ class Trainer:
         return overridden_batch
 
     def _max_grad_value(self):
-        max_grad_value = float("-inf")  # Start with a very small number
+        gradients = []
+        device_mesh = None
+        empty_local_gradient = None
         for param in self._get_trainable_parameters():
-            if param.grad is not None:
-                max_grad_value = max(max_grad_value, param.grad.abs().max().item())
+            gradient = param.grad
+            if gradient is None:
+                continue
+            if isinstance(gradient, DTensor):
+                device_mesh = gradient.device_mesh
+                gradient = gradient.to_local()
+                if gradient.numel() == 0:
+                    empty_local_gradient = gradient
+                    continue
+            gradients.append(gradient)
 
+        if gradients:
+            max_grad_value = torch.nn.utils.get_total_norm(gradients, norm_type=float("inf"))
+        elif empty_local_gradient is None:
+            return float("-inf")
+        else:
+            max_grad_value = empty_local_gradient.new_tensor(float("-inf"))
+
+        if device_mesh is not None:
+            if max_grad_value.device.type != device_mesh.device_type:
+                max_grad_value = max_grad_value.to(device_mesh.device_type)
+            torch.distributed.all_reduce(
+                max_grad_value,
+                op=torch.distributed.ReduceOp.MAX,
+                group=device_mesh.get_group(),
+            )
         return max_grad_value
 
     def prepare_batch(self, batch: dict):
@@ -6406,12 +6429,16 @@ class Trainer:
                                 if param.grad is not None:
                                     param.grad.data = param.grad.data.to(torch.float32)
 
-                        self.grad_norm = self._max_grad_value()
-                        if (
+                        should_clip_gradients = (
                             self.accelerator.sync_gradients
                             and self.config.optimizer not in ["optimi-stableadamw", "prodigy"]
                             and self.config.max_grad_norm > 0
+                        )
+                        if self.accelerator.sync_gradients and (
+                            self.config.grad_clip_method != "norm" or not should_clip_gradients
                         ):
+                            self.grad_norm = self._max_grad_value()
+                        if should_clip_gradients:
                             # StableAdamW/Prodigy do not need clipping, similar to Adafactor.
                             if self.config.fsdp_enable:
                                 # For FSDP, handle FSDP1/FSDP2 separately and surface failures instead of crashing.
@@ -6811,7 +6838,6 @@ class Trainer:
                 self._update_grad_metrics(
                     logs,
                     require_value_method=True,
-                    clone_norm_value=True,
                     is_regularisation_data=is_regularisation_data,
                 )
 
