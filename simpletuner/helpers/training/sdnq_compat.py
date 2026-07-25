@@ -43,6 +43,14 @@ def _output_shape(grad_output: torch.Tensor, input: torch.Tensor | None, input_s
     return output_shape
 
 
+def _optional_tensor(value: torch.Tensor | None, placeholder: torch.Tensor) -> torch.Tensor:
+    return value if value is not None else placeholder
+
+
+def _restore_optional(value: torch.Tensor, present: bool) -> torch.Tensor | None:
+    return value if present else None
+
+
 def _patch_int8_static(module: Any) -> None:
     def int8_matmul_backward_ckpt(
         grad_output,
@@ -119,13 +127,24 @@ def _patch_int8_static(module: Any) -> None:
                 new_input, input_scale = module.get_int8_matmul_backward_inputs(input, hadamard)
             else:
                 new_input = input_scale = None
-            ctx.save_for_backward(new_input, weight, input_scale, bias)
+            placeholder = input.new_empty(0)
+            ctx.has_weight_grad_inputs = new_input is not None
+            ctx.has_bias = bias is not None
+            ctx.save_for_backward(
+                _optional_tensor(new_input, placeholder),
+                weight,
+                _optional_tensor(input_scale, placeholder),
+                _optional_tensor(bias, placeholder),
+            )
             ctx.input_shape = input.shape
             return result
 
         @staticmethod
         def backward(ctx, grad_output):
             input, weight, input_scale, bias = ctx.saved_tensors
+            input = _restore_optional(input, ctx.has_weight_grad_inputs)
+            input_scale = _restore_optional(input_scale, ctx.has_weight_grad_inputs)
+            bias = _restore_optional(bias, ctx.has_bias)
             if weight.sdnq_dequantizer.use_hadamard:
                 hadamard = module.get_hadamard(
                     weight.sdnq_dequantizer.hadamard_group_size,
@@ -244,13 +263,31 @@ def _patch_int8_dynamic(module: Any) -> None:
                 hadamard,
                 do_grad_weight=ctx.needs_input_grad[1],
             )
-            ctx.save_for_backward(new_input, new_weight, input_scale, weight_scale, bias, svd_up, svd_down)
+            placeholder = input.new_empty(0)
+            ctx.has_weight_grad_inputs = new_input is not None
+            ctx.has_bias = bias is not None
+            ctx.has_svd_up = svd_up is not None
+            ctx.has_svd_down = svd_down is not None
+            ctx.save_for_backward(
+                _optional_tensor(new_input, placeholder),
+                new_weight,
+                _optional_tensor(input_scale, placeholder),
+                weight_scale,
+                _optional_tensor(bias, placeholder),
+                _optional_tensor(svd_up, placeholder),
+                _optional_tensor(svd_down, placeholder),
+            )
             ctx.input_shape = input.shape
             return result
 
         @staticmethod
         def backward(ctx, grad_output):
             input, weight, input_scale, weight_scale, bias, svd_up, svd_down = ctx.saved_tensors
+            input = _restore_optional(input, ctx.has_weight_grad_inputs)
+            input_scale = _restore_optional(input_scale, ctx.has_weight_grad_inputs)
+            bias = _restore_optional(bias, ctx.has_bias)
+            svd_up = _restore_optional(svd_up, ctx.has_svd_up)
+            svd_down = _restore_optional(svd_down, ctx.has_svd_down)
             hadamard = (
                 module.get_hadamard(ctx.hadamard_group_size, dtype=grad_output.dtype, device=grad_output.device)
                 if ctx.use_hadamard
@@ -356,13 +393,24 @@ def _patch_fp_static(module: Any, *, dtype_name: str, matmul_dtype: str) -> None
                 )
             else:
                 new_input = input_scale = None
-            ctx.save_for_backward(new_input, weight, input_scale, bias)
+            placeholder = input.new_empty(0)
+            ctx.has_weight_grad_inputs = new_input is not None
+            ctx.has_bias = bias is not None
+            ctx.save_for_backward(
+                _optional_tensor(new_input, placeholder),
+                weight,
+                _optional_tensor(input_scale, placeholder),
+                _optional_tensor(bias, placeholder),
+            )
             ctx.input_shape = input.shape
             return result
 
         @staticmethod
         def backward(ctx, grad_output):
             input, weight, input_scale, bias = ctx.saved_tensors
+            input = _restore_optional(input, ctx.has_weight_grad_inputs)
+            input_scale = _restore_optional(input_scale, ctx.has_weight_grad_inputs)
+            bias = _restore_optional(bias, ctx.has_bias)
             hadamard = (
                 module.get_hadamard(
                     weight.sdnq_dequantizer.hadamard_group_size,
@@ -492,13 +540,31 @@ def _patch_fp_dynamic(module: Any, *, dtype_name: str, matmul_dtype: str) -> Non
                 hadamard,
                 do_grad_weight=ctx.needs_input_grad[1],
             )
-            ctx.save_for_backward(new_input, new_weight, input_scale, weight_scale, bias, svd_up, svd_down)
+            placeholder = input.new_empty(0)
+            ctx.has_weight_grad_inputs = new_input is not None
+            ctx.has_bias = bias is not None
+            ctx.has_svd_up = svd_up is not None
+            ctx.has_svd_down = svd_down is not None
+            ctx.save_for_backward(
+                _optional_tensor(new_input, placeholder),
+                new_weight,
+                _optional_tensor(input_scale, placeholder),
+                weight_scale,
+                _optional_tensor(bias, placeholder),
+                _optional_tensor(svd_up, placeholder),
+                _optional_tensor(svd_down, placeholder),
+            )
             ctx.input_shape = input.shape
             return result
 
         @staticmethod
         def backward(ctx, grad_output):
             input, weight, input_scale, weight_scale, bias, svd_up, svd_down = ctx.saved_tensors
+            input = _restore_optional(input, ctx.has_weight_grad_inputs)
+            input_scale = _restore_optional(input_scale, ctx.has_weight_grad_inputs)
+            bias = _restore_optional(bias, ctx.has_bias)
+            svd_up = _restore_optional(svd_up, ctx.has_svd_up)
+            svd_down = _restore_optional(svd_down, ctx.has_svd_down)
             hadamard = (
                 module.get_hadamard(ctx.hadamard_group_size, dtype=grad_output.dtype, device=grad_output.device)
                 if ctx.use_hadamard
@@ -605,13 +671,26 @@ def _patch_uint8_static(module: Any) -> None:
                 new_input, input_scale, input_zero_point = module.get_uint8_matmul_backward_inputs(input, hadamard)
             else:
                 new_input = input_scale = input_zero_point = None
-            ctx.save_for_backward(new_input, weight, input_scale, input_zero_point, bias)
+            placeholder = input.new_empty(0)
+            ctx.has_weight_grad_inputs = new_input is not None
+            ctx.has_bias = bias is not None
+            ctx.save_for_backward(
+                _optional_tensor(new_input, placeholder),
+                weight,
+                _optional_tensor(input_scale, placeholder),
+                _optional_tensor(input_zero_point, placeholder),
+                _optional_tensor(bias, placeholder),
+            )
             ctx.input_shape = input.shape
             return result
 
         @staticmethod
         def backward(ctx, grad_output):
             input, weight, input_scale, input_zero_point, bias = ctx.saved_tensors
+            input = _restore_optional(input, ctx.has_weight_grad_inputs)
+            input_scale = _restore_optional(input_scale, ctx.has_weight_grad_inputs)
+            input_zero_point = _restore_optional(input_zero_point, ctx.has_weight_grad_inputs)
+            bias = _restore_optional(bias, ctx.has_bias)
             hadamard = (
                 module.get_hadamard(
                     weight.sdnq_dequantizer.hadamard_group_size,
@@ -738,16 +817,21 @@ def _patch_uint8_dynamic(module: Any) -> None:
                     do_grad_weight=ctx.needs_input_grad[1],
                 )
             )
+            placeholder = input.new_empty(0)
+            ctx.has_weight_grad_inputs = new_input is not None
+            ctx.has_bias = bias is not None
+            ctx.has_svd_up = svd_up is not None
+            ctx.has_svd_down = svd_down is not None
             ctx.save_for_backward(
-                new_input,
+                _optional_tensor(new_input, placeholder),
                 new_weight,
-                input_scale,
+                _optional_tensor(input_scale, placeholder),
                 weight_scale,
-                input_zero_point,
+                _optional_tensor(input_zero_point, placeholder),
                 weight_zero_point,
-                bias,
-                svd_up,
-                svd_down,
+                _optional_tensor(bias, placeholder),
+                _optional_tensor(svd_up, placeholder),
+                _optional_tensor(svd_down, placeholder),
             )
             ctx.input_shape = input.shape
             return result
@@ -757,6 +841,12 @@ def _patch_uint8_dynamic(module: Any) -> None:
             input, weight, input_scale, weight_scale, input_zero_point, weight_zero_point, bias, svd_up, svd_down = (
                 ctx.saved_tensors
             )
+            input = _restore_optional(input, ctx.has_weight_grad_inputs)
+            input_scale = _restore_optional(input_scale, ctx.has_weight_grad_inputs)
+            input_zero_point = _restore_optional(input_zero_point, ctx.has_weight_grad_inputs)
+            bias = _restore_optional(bias, ctx.has_bias)
+            svd_up = _restore_optional(svd_up, ctx.has_svd_up)
+            svd_down = _restore_optional(svd_down, ctx.has_svd_down)
             hadamard = (
                 module.get_hadamard(ctx.hadamard_group_size, dtype=grad_output.dtype, device=grad_output.device)
                 if ctx.use_hadamard
