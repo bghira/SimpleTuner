@@ -407,7 +407,12 @@ class MageFlow(ImageModelFoundation):
 
     @staticmethod
     def _ensure_qwen3vl_text_rotary_precision(text_encoder, device: torch.device) -> None:
-        rotary_emb = text_encoder.language_model.rotary_emb
+        language_model = getattr(text_encoder, "language_model", None)
+        if language_model is None and hasattr(text_encoder, "model"):
+            language_model = getattr(text_encoder.model, "language_model", None)
+        if language_model is None:
+            raise AttributeError(f"{text_encoder.__class__.__name__} does not expose a Qwen3-VL language_model")
+        rotary_emb = language_model.rotary_emb
         inv_freq = rotary_emb.inv_freq
         original_inv_freq = getattr(rotary_emb, "original_inv_freq", None)
         if (
