@@ -72,9 +72,9 @@
 
     ---
 
-    Research features such as AnyFlow, Prompt2Effect, Self-Flow, Flow-DPO, LayerSync, Diff2Flow, Metal Flash Attention, and Video CREPA
+    Research features such as AnyFlow, ConvRot-style SDNQ Hadamard quantization, Prompt2Effect, Self-Flow, Flow-DPO, LayerSync, Diff2Flow, Metal Flash Attention, and Video CREPA
 
-    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: Metal Flash Attention](experimental/METAL_FLASH_ATTENTION.md)
+    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: ConvRot / Hadamard SDNQ](experimental/CONVROT.md) · [:octicons-arrow-right-24: Metal Flash Attention](experimental/METAL_FLASH_ATTENTION.md)
 
 </div>
 
