@@ -1,5 +1,5 @@
 {
-    "base_model_precision": "int8-torchao",
+    "base_model_precision": "int8-sdnq",
     "caption_dropout_probability": 0.0,
     "checkpoint_step_interval": 50,
     "checkpoints_total_limit": 5,
@@ -38,6 +38,11 @@
     "resolution": 1024,
     "resolution_type": "pixel_area",
     "resume_from_checkpoint": null,
+    "sdnq_compile_mode": "compile",
+    "sdnq_group_size": -1,
+    "sdnq_hadamard_group_size": 128,
+    "sdnq_use_hadamard": true,
+    "sdnq_use_quantized_matmul": true,
     "seed": 42,
     "skip_file_discovery": false,
     "tracker_project_name": "lora-training",
