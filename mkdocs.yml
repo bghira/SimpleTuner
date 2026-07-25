@@ -345,6 +345,7 @@ nav:
       - Sliding Window (SLA): attention/SLA.md
     - Experimental:
       - AnyFlow: experimental/ANYFLOW.md
+      - ConvRot / Hadamard SDNQ: experimental/CONVROT.md
       - Diff2Flow: experimental/DIFF2FLOW.md
       - Flow-DPO: experimental/FLOW_DPO.md
       - LayerSync: experimental/LAYERSYNC.md
