@@ -1,5 +1,5 @@
 {
-    "base_model_precision": "int8-quanto",
+    "base_model_precision": "int8-sdnq",
     "checkpoint_step_interval": 10,
     "controlnet": false,
     "data_backend_config": "config/examples/multidatabackend-small-dreambooth-512px.json",
@@ -26,6 +26,11 @@
     "push_to_hub": false,
     "quantize_via": "cpu",
     "report_to": "none",
+    "sdnq_compile_mode": "compile",
+    "sdnq_group_size": -1,
+    "sdnq_hadamard_group_size": 128,
+    "sdnq_use_hadamard": true,
+    "sdnq_use_quantized_matmul": true,
     "seed": 42,
     "tracker_project_name": "lora-training",
     "tracker_run_name": "example-training-run",
