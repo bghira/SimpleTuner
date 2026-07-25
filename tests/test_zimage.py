@@ -1,12 +1,55 @@
+import inspect
+import json
 import unittest
 
 import torch
 
 from simpletuner.helpers.models.z_image.model import ZImage
+from simpletuner.helpers.models.z_image.quantized_loading import _decode_comfy_quant, _map_zimage_comfy_key_to_diffusers
 from simpletuner.helpers.models.z_image.transformer import ZImageTransformer2DModel
 
 
 class ZImageTransformerPaddingTests(unittest.TestCase):
+    def test_transformer_exposes_single_file_loader(self):
+        parameters = inspect.signature(ZImageTransformer2DModel.from_single_file).parameters
+
+        self.assertIn("pretrained_model_link_or_path", parameters)
+        self.assertIn("filename", parameters)
+        self.assertIn("torch_dtype", parameters)
+
+    def test_convrot_comfy_key_mapping(self):
+        self.assertEqual(
+            _map_zimage_comfy_key_to_diffusers("x_embedder.weight"),
+            ["all_x_embedder.2-1.weight"],
+        )
+        self.assertEqual(
+            _map_zimage_comfy_key_to_diffusers("final_layer.linear.weight"),
+            ["all_final_layer.2-1.linear.weight"],
+        )
+        self.assertEqual(
+            _map_zimage_comfy_key_to_diffusers("layers.3.attention.q_norm.weight"),
+            ["layers.3.attention.norm_q.weight"],
+        )
+        self.assertEqual(
+            _map_zimage_comfy_key_to_diffusers("layers.3.attention.out.weight"),
+            ["layers.3.attention.to_out.0.weight"],
+        )
+        self.assertEqual(
+            _map_zimage_comfy_key_to_diffusers("layers.3.attention.qkv.weight"),
+            [
+                "layers.3.attention.to_q.weight",
+                "layers.3.attention.to_k.weight",
+                "layers.3.attention.to_v.weight",
+            ],
+        )
+
+    def test_convrot_comfy_quant_metadata_decodes(self):
+        metadata = {"format": "int8_tensorwise", "convrot": True, "convrot_groupsize": 64, "per_row": True}
+        json_bytes = json.dumps(metadata).encode("utf-8")
+        payload = torch.tensor(list(json_bytes), dtype=torch.uint8)
+
+        self.assertEqual(_decode_comfy_quant(payload), metadata)
+
     def test_patchify_handles_zero_padding_len(self):
         model = ZImageTransformer2DModel(
             all_patch_size=(2,),
