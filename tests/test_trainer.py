@@ -2255,6 +2255,51 @@ class TestTrainer(unittest.TestCase):
             self.assertEqual(group["running_d_denom"].device, group["params"][0].device)
             self.assertFalse(group["use_focus"])
 
+    @patch("simpletuner.helpers.training.trainer.get_rank", return_value=1)
+    @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_load_checkpoint")
+    def test_init_resume_checkpoint_loads_sampler_from_hook_training_state_path(self, mock_attention_backend, mock_get_rank):
+        trainer = object.__new__(Trainer)
+        trainer.model = Mock()
+        trainer.config = SimpleNamespace(
+            output_dir="/path/to/output",
+            resume_from_checkpoint="checkpoint-100",
+            num_train_epochs=1,
+            max_train_steps=100,
+            strict_epoch_limit=True,
+            optimizer="adamw",
+            lr_scheduler="constant",
+            is_schedulefree=False,
+            learning_rate=0.001,
+            musubi_blocks_to_swap=0,
+        )
+        trainer.config.total_steps_remaining_at_start = 100
+        trainer.accelerator = Mock(num_processes=2)
+        trainer.accelerator.wait_for_everyone = Mock()
+        trainer.accelerator.load_state = Mock()
+        trainer.state = {"global_step": 0, "first_epoch": 1, "current_epoch": 1, "global_resume_step": 0}
+        trainer.distiller = None
+        trainer.optimizer = Mock()
+        trainer.optimizer.param_groups = [{"lr": 0.1}]
+        trainer._emit_event = Mock()
+        trainer.job_id = "test-job"
+        trainer.model_hooks = SimpleNamespace(training_state_path="training_state-rank1.json")
+        sampler = Mock()
+        lr_scheduler = Mock()
+        lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
+
+        with patch(
+            "simpletuner.helpers.training.trainer.StateTracker.get_data_backends",
+            return_value={"foo": {"sampler": sampler}},
+        ):
+            with patch("simpletuner.helpers.training.trainer.StateTracker.get_global_step", return_value=10):
+                with patch("simpletuner.helpers.training.trainer.StateTracker.set_global_resume_step"):
+                    with patch("simpletuner.helpers.training.trainer.StateTracker.get_training_state", return_value={}):
+                        with patch("simpletuner.helpers.training.trainer.StateTracker.get_epoch", return_value=1):
+                            with patch("simpletuner.helpers.training.trainer.StateTracker.set_epoch"):
+                                trainer.init_resume_checkpoint(lr_scheduler=lr_scheduler)
+
+        sampler.load_states.assert_called_once_with(state_path="/path/to/output/checkpoint-100/training_state-rank1.json")
+
     def test_epoch_checkpoint_persists_next_epoch_without_state_mutation(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             checkpoint_dir = Path(tmpdir) / "checkpoint-10"
