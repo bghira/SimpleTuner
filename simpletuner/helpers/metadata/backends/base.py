@@ -904,12 +904,10 @@ class MetadataBackend:
                 end_idx = min(start_idx + chunk_size, len(trimmed_images))
                 images_split = trimmed_images[start_idx:end_idx]
 
-                # Handle padding if requested (for uniform batch sizes)
-                if apply_padding and len(images_split) < chunk_size and len(images_split) > 0:
-                    padding_needed = chunk_size - len(images_split)
-                    # Pad by repeating elements from the split
-                    padding = (images_split * ((padding_needed // len(images_split)) + 1))[:padding_needed]
-                    images_split = images_split + padding
+                # Match Accelerate's apply_padding behavior by repeating the
+                # final input item, including for otherwise empty DP shards.
+                if apply_padding and trimmed_images and len(images_split) < chunk_size:
+                    images_split = images_split + [trimmed_images[-1]] * (chunk_size - len(images_split))
 
                 new_aspect_ratio_bucket_indices[bucket] = images_split
             else:
