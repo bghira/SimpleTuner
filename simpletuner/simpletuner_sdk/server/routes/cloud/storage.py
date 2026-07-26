@@ -8,25 +8,84 @@ NOTE: This module was renamed from s3.py to storage.py for clarity.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 
 from ...services.cloud.auth import User, UserStore, get_optional_user
+from ...services.kubeflow import KUBEFLOW_PROVIDER, LOCAL_UPLOAD_BUCKET
 from ._shared import get_client_ip, get_job_store, get_local_upload_dir
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/storage", tags=["storage"])
 
+async def _record_kubeflow_upload(
+    store: Any,
+    authenticated_job: Any,
+    bucket: str,
+    key: str,
+) -> None:
+    """Register one centrally received Kubeflow artifact.
+
+    Args:
+        store: Unified job store.
+        authenticated_job: Job selected by the upload token.
+        bucket: S3-compatible bucket name.
+        key: Object key supplied by the publisher.
+
+    Raises:
+        HTTPException: If a Kubeflow job writes outside its job-scoped prefix.
+    """
+    if getattr(authenticated_job, "provider", None) != KUBEFLOW_PROVIDER:
+        return
+
+    required_prefix = f"{authenticated_job.job_id}/"
+    if bucket != LOCAL_UPLOAD_BUCKET or not key.startswith(required_prefix):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Kubeflow artifacts must use the job-scoped output path",
+        )
+
+    metadata = dict(getattr(authenticated_job, "metadata", None) or {})
+    upload_state = dict(metadata.get("artifact_upload") or {})
+    received_files = list(upload_state.get("received_files") or [])
+    object_path = f"{bucket}/{key}"
+    if object_path not in received_files:
+        received_files.append(object_path)
+    upload_state.update(
+        {
+            "status": "receiving",
+            "received_files": received_files,
+        }
+    )
+    metadata["artifact_upload"] = upload_state
+    await store.update_job(
+        authenticated_job.job_id,
+        {
+            "metadata": metadata,
+            "output_url": f"/api/cloud/storage/{LOCAL_UPLOAD_BUCKET}/{authenticated_job.job_id}",
+        },
+    )
+
 
 @router.put("/{bucket}/{key:path}")
-async def put_object(bucket: str, key: str, request: Request) -> Dict[str, Any]:
+async def put_object(bucket: str, key: str, request: Request) -> JSONResponse:
     """S3-compatible PUT Object endpoint for receiving file uploads from the Cog.
 
     Requires authentication via per-job upload token.
+
+    Args:
+        bucket: S3-compatible destination bucket.
+        key: Object key within the destination bucket.
+        request: Incoming upload request.
+
+    Returns:
+        The legacy object metadata payload with an S3-compatible ETag header.
     """
     store = get_job_store()
     client_ip = get_client_ip(request)
@@ -77,12 +136,14 @@ async def put_object(bucket: str, key: str, request: Request) -> Dict[str, Any]:
         file_path.write_bytes(content)
 
         logger.info("Storage PUT: %s/%s (%d bytes)", bucket, key, len(content))
+        await _record_kubeflow_upload(store, authenticated_job, bucket, key)
 
-        return {
-            "ETag": f'"{hash(content) & 0xFFFFFFFF:08x}"',
-            "Key": key,
-            "Bucket": bucket,
-        }
+        etag = hashlib.md5(content, usedforsecurity=False).hexdigest()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"ETag": f'"{etag}"', "Key": key, "Bucket": bucket},
+            headers={"ETag": f'"{etag}"'},
+        )
 
     except HTTPException:
         raise
