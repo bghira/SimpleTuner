@@ -554,19 +554,24 @@ class Trainer:
         target_logs: Dict[str, float],
         *,
         require_value_method: bool = False,
+        clone_norm_value: bool = False,
         is_regularisation_data: bool = False,
     ):
-        grad_value = self._normalize_metric_value(self.grad_norm)
-        if grad_value is None:
+        if self.grad_norm is None:
             return
 
         prefix = "regularisation_" if is_regularisation_data else ""
         if self.config.grad_clip_method == "norm":
+            grad_value = self.grad_norm
+            if clone_norm_value:
+                grad_value = self._normalize_metric_value(self.grad_norm)
+                if grad_value is None:
+                    return
             target_logs[f"{prefix}grad_norm"] = grad_value
         elif (
             not require_value_method or self.config.grad_clip_method == "value"
         ) and not self.config.use_deepspeed_optimizer:
-            target_logs[f"{prefix}grad_absmax"] = grad_value
+            target_logs[f"{prefix}grad_absmax"] = self.grad_norm
 
     def _config_uses_bitsandbytes(self) -> bool:
         if not getattr(self, "config", None):
@@ -5299,7 +5304,11 @@ class Trainer:
             metrics.setdefault("total_batch_size", batch_size_value)
         metrics.update(self.iteration_tracker.iteration_metrics())
         # Add gradient metrics (same logic as _update_grad_metrics but for webhook payload)
-        self._update_grad_metrics(metrics, is_regularisation_data=parent_loss is not None)
+        self._update_grad_metrics(
+            metrics,
+            clone_norm_value=True,
+            is_regularisation_data=parent_loss is not None,
+        )
         if extra_metrics:
             for key, value in extra_metrics.items():
                 if value is None:
