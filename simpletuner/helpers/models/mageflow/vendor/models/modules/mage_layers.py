@@ -458,9 +458,19 @@ class MageDoubleStreamAttnProcessor:
         img_dest_indices = joint_cu_lens[img_sample_ids] + txt_lens[img_sample_ids] + img_intra_pos
 
         total_tokens = joint_cu_lens[-1]
-        joint_query = torch.empty((total_tokens, *txt_query.shape[1:]), dtype=txt_query.dtype, device=device)
-        joint_key = torch.empty((total_tokens, *txt_key.shape[1:]), dtype=txt_key.dtype, device=device)
-        joint_value = torch.empty((total_tokens, *txt_value.shape[1:]), dtype=txt_value.dtype, device=device)
+        attention_dtype = torch.promote_types(
+            torch.promote_types(torch.promote_types(img_query.dtype, img_key.dtype), img_value.dtype),
+            torch.promote_types(torch.promote_types(txt_query.dtype, txt_key.dtype), txt_value.dtype),
+        )
+        if attention_dtype == torch.float32:
+            device_type = hidden_states.device.type
+            if torch.is_autocast_enabled(device_type):
+                attention_dtype = torch.get_autocast_dtype(device_type)
+            elif hidden_states.dtype in {torch.float16, torch.bfloat16}:
+                attention_dtype = hidden_states.dtype
+        joint_query = torch.empty((total_tokens, *img_query.shape[1:]), dtype=attention_dtype, device=device)
+        joint_key = torch.empty((total_tokens, *img_key.shape[1:]), dtype=attention_dtype, device=device)
+        joint_value = torch.empty((total_tokens, *img_value.shape[1:]), dtype=attention_dtype, device=device)
 
         # logger.info(f"joint_query shape: {joint_query.shape}")
         # logger.info(f"joint_key shape: {joint_key.shape}")
@@ -468,14 +478,14 @@ class MageDoubleStreamAttnProcessor:
         # logger.info(f"txt_dest_indices shape: {txt_dest_indices.shape}")
         # logger.info(f"img_dest_indices shape: {img_dest_indices.shape}")
 
-        joint_query[txt_dest_indices] = txt_query
-        joint_query[img_dest_indices] = img_query
+        joint_query[txt_dest_indices] = txt_query.to(joint_query.dtype)
+        joint_query[img_dest_indices] = img_query.to(joint_query.dtype)
 
-        joint_key[txt_dest_indices] = txt_key
-        joint_key[img_dest_indices] = img_key
+        joint_key[txt_dest_indices] = txt_key.to(joint_key.dtype)
+        joint_key[img_dest_indices] = img_key.to(joint_key.dtype)
 
-        joint_value[txt_dest_indices] = txt_value
-        joint_value[img_dest_indices] = img_value
+        joint_value[txt_dest_indices] = txt_value.to(joint_value.dtype)
+        joint_value[img_dest_indices] = img_value.to(joint_value.dtype)
 
         max_seqlen = joint_lens.max().item()
         joint_attn_output = flash_attn_varlen_func(
