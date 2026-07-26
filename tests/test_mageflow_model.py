@@ -238,6 +238,35 @@ class MageFlowModelTests(unittest.TestCase):
         self.assertTrue(torch.equal(rotary_emb.original_inv_freq, rotary_emb.inv_freq))
         self.assertEqual(rotary_emb.attention_scaling, 1.0)
 
+    def test_mageflow_restores_nested_qwen_text_rotary_inv_freq_to_fp32(self):
+        model_cls = _mageflow_class()
+
+        class RotaryEmbedding(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = SimpleNamespace()
+                self.attention_scaling = 0.25
+                rounded = torch.tensor([1.0, 0.1001], dtype=torch.bfloat16)
+                self.register_buffer("inv_freq", rounded, persistent=False)
+                self.register_buffer("original_inv_freq", rounded.clone(), persistent=False)
+
+            @staticmethod
+            def compute_default_rope_parameters(config, device):
+                del config
+                return torch.tensor([1.0, 0.100123], device=device, dtype=torch.float32), 1.0
+
+        language_model = SimpleNamespace(rotary_emb=RotaryEmbedding())
+        text_encoder = SimpleNamespace(model=SimpleNamespace(language_model=language_model))
+
+        model_cls._ensure_qwen3vl_text_rotary_precision(text_encoder, torch.device("cpu"))
+
+        rotary_emb = language_model.rotary_emb
+        self.assertEqual(rotary_emb.inv_freq.dtype, torch.float32)
+        self.assertEqual(rotary_emb.original_inv_freq.dtype, torch.float32)
+        self.assertTrue(torch.equal(rotary_emb.inv_freq, torch.tensor([1.0, 0.100123], dtype=torch.float32)))
+        self.assertTrue(torch.equal(rotary_emb.original_inv_freq, rotary_emb.inv_freq))
+        self.assertEqual(rotary_emb.attention_scaling, 1.0)
+
     def test_pretrained_load_args_enable_twinflow_time_sign_embedding(self):
         model_cls = _mageflow_class()
         model = object.__new__(model_cls)
