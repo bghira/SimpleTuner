@@ -9,7 +9,7 @@ from PIL import Image
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
-from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.metadata.backends.base import MetadataBackend, get_cp_aware_dp_info
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.multiaspect.state import BucketStateManager
 from simpletuner.helpers.prompts import PromptHandler
@@ -116,6 +116,16 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.state_manager = BucketStateManager(self.id)
         self._val_master_list = sorted(sum(self.metadata_backend.aspect_ratio_bucket_indices.values(), []))
 
+    def _partition_topology(self):
+        effective_dp_size, dp_rank, cp_size = get_cp_aware_dp_info(self.accelerator)
+        return {
+            "world_size": self.accelerator.num_processes,
+            "rank": self.accelerator.process_index,
+            "effective_dp_size": effective_dp_size,
+            "dp_rank": dp_rank,
+            "cp_size": cp_size,
+        }
+
     def save_state(self, state_path: str):
         """
         This method should be called when the accelerator save hook is called,
@@ -129,15 +139,31 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             "current_bucket": self.current_bucket,
             "seen_images": self.metadata_backend.seen_images,
             "current_epoch": self.current_epoch,
+            "partition_topology": self._partition_topology(),
         }
         self.state_manager.save_state(state, state_path)
 
     def load_states(self, state_path: str):
-        try:
-            self.buckets = self.load_buckets()
-            previous_state = self.state_manager.load_state(state_path)
-        except Exception as e:
-            raise e
+        previous_state = self.state_manager.load_state(state_path)
+        saved_partition = previous_state.get("aspect_ratio_bucket_indices")
+        if saved_partition is not None:
+            saved_topology = previous_state.get("partition_topology")
+            current_topology = self._partition_topology()
+            if saved_topology is None and current_topology["world_size"] > 1:
+                raise ValueError(
+                    "Cannot safely restore distributed sampler state because the checkpoint does not record its "
+                    f"data-partition topology; current={current_topology}."
+                )
+            else:
+                if saved_topology is not None and saved_topology != current_topology:
+                    raise ValueError(
+                        "Cannot restore sampler state with a different distributed data-partition topology: "
+                        f"checkpoint={saved_topology}, current={current_topology}."
+                    )
+                self.metadata_backend.aspect_ratio_bucket_indices = saved_partition
+                self._val_master_list = sorted(sum(saved_partition.values(), []))
+
+        self.buckets = self.load_buckets()
         self.exhausted_buckets = []
         if "exhausted_buckets" in previous_state:
             self.logger.info(f"Previous checkpoint had {len(previous_state['exhausted_buckets'])} exhausted buckets.")
