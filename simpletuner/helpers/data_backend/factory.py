@@ -3283,7 +3283,7 @@ class FactoryRegistry:
                     f" You have to reduce your batch size, or increase your dataset size (id={init_backend['id']})."
                 )
 
-        apply_padding = True if not self.args.max_train_steps or self.args.max_train_steps == 0 else False
+        apply_padding = not self.args.max_train_steps or self.args.allow_dataset_oversubscription
 
         if backend.get("auto_generated", False):
             # when we're duplicating a metadata set, it's already split between processes.

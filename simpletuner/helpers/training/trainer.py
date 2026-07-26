@@ -5451,7 +5451,8 @@ class Trainer:
                 # we'll have to split the buckets between GPUs again now, so that the VAE cache distributes properly.
                 logger.info("Splitting buckets across GPUs")
                 backend["metadata_backend"].split_buckets_between_processes(
-                    gradient_accumulation_steps=self.config.gradient_accumulation_steps
+                    gradient_accumulation_steps=self.config.gradient_accumulation_steps,
+                    apply_padding=(self.config.overrode_max_train_steps or self.config.allow_dataset_oversubscription),
                 )
                 # we have to rebuild the VAE cache if it exists.
                 if "vaecache" in backend:
