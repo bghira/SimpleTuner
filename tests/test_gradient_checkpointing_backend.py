@@ -309,6 +309,12 @@ class TestTransformerBackendAttribute(unittest.TestCase):
 
         self.assertTrue(hasattr(MageFlowTransformer2DModel, "set_gradient_checkpointing_backend"))
 
+    def test_qwen_image_transformer_has_backend_attribute(self):
+        """Test that QwenImageTransformer2DModel has gradient_checkpointing_backend."""
+        from simpletuner.helpers.models.qwen_image.transformer import QwenImageTransformer2DModel
+
+        self.assertTrue(hasattr(QwenImageTransformer2DModel, "set_gradient_checkpointing_backend"))
+
 
 if __name__ == "__main__":
     unittest.main()
