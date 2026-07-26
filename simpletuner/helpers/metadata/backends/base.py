@@ -781,6 +781,9 @@ class MetadataBackend:
         # Early validation: check if configuration is mathematically impossible
         buckets_that_will_fail = []
         for bucket, images in self.aspect_ratio_bucket_indices.items():
+            if not images:
+                # Empty buckets do not require repeat calculation or padding.
+                continue
             total_img_count_incl_repeats = len(images) * (self.repeats + 1)
             if total_img_count_incl_repeats < effective_batch_size:
                 buckets_that_will_fail.append(
@@ -890,7 +893,7 @@ class MetadataBackend:
                     removed=removed_for_trim,
                     effective_batch_size=effective_batch_size,
                 )
-            if len(trimmed_images) == 0 and should_log():
+            if len(trimmed_images) == 0 and images and should_log():
                 logger.error(
                     f"Bucket {bucket} has no samples after trimming because {len(images)} samples are not enough to satisfy an effective batch size of {effective_batch_size}."
                     " Lower your batch size, increase repeat count, or increase data pool size."
@@ -903,6 +906,16 @@ class MetadataBackend:
                         effective_batch_size=effective_batch_size,
                     )
 
+            # Pad from the shuffled global bucket before splitting. This gives every
+            # effective-DP rank the same shard length without concentrating all
+            # duplicated samples on the final item.
+            if apply_padding and trimmed_images and effective_dp_size > 1:
+                padded_size = ceil(len(trimmed_images) / effective_dp_size) * effective_dp_size
+                padding_needed = padded_size - len(trimmed_images)
+                if padding_needed:
+                    cycle_count = ceil(padding_needed / len(trimmed_images))
+                    trimmed_images = trimmed_images + (trimmed_images * cycle_count)[:padding_needed]
+
             # Split data by DP rank (not global rank) when context parallelism is enabled.
             # This ensures all ranks in a CP group get the same data shard.
             if cp_size > 1:
@@ -912,15 +925,11 @@ class MetadataBackend:
                 end_idx = min(start_idx + chunk_size, len(trimmed_images))
                 images_split = trimmed_images[start_idx:end_idx]
 
-                # Match Accelerate's apply_padding behavior by repeating the
-                # final input item, including for otherwise empty DP shards.
-                if apply_padding and trimmed_images and len(images_split) < chunk_size:
-                    images_split = images_split + [trimmed_images[-1]] * (chunk_size - len(images_split))
-
                 new_aspect_ratio_bucket_indices[bucket] = images_split
             else:
-                # Standard splitting when CP is disabled
-                with self.accelerator.split_between_processes(trimmed_images, apply_padding=apply_padding) as images_split:
+                # Global padding has already made the bucket divisible by the DP
+                # world size, so per-rank tail padding must stay disabled.
+                with self.accelerator.split_between_processes(trimmed_images, apply_padding=False) as images_split:
                     new_aspect_ratio_bucket_indices[bucket] = images_split
 
         self.aspect_ratio_bucket_indices = new_aspect_ratio_bucket_indices
