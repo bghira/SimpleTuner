@@ -19,6 +19,7 @@ simpletuner/examples/krea2.peft-lora/config.json
   "model_type": "lora",
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "mixed_precision": "bf16",
+  "attention_mechanism": "cudnn",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "train_batch_size": 1,
@@ -38,6 +39,7 @@ TorchAO int8 weight-only は VRAM を大きく下げますが、今回テスト�
 
 - 入るなら `bf16` を使う。
 - メモリが足りない場合は `int8-torchao` を使う。
+- NVIDIA GPU では `attention_mechanism=cudnn` を使う。Krea2 の native SDPA path は、通常なら入る L40S クラスの run でも OOM するほどメモリを使うことがあります。
 - `gradient_checkpointing=true` を維持する。
 - `fuse_qkv_projections=true` を維持する。
 - `dynamo_backend=inductor`、`dynamo_mode=reduce-overhead`、`dynamo_use_regional_compilation=true` は、batch/resolution が入ることを確認してから使う。
@@ -52,6 +54,7 @@ TorchAO int8 weight-only は VRAM を大きく下げますが、今回テスト�
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "base_model_precision": "no_change",
   "mixed_precision": "bf16",
+  "attention_mechanism": "cudnn",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "optimizer": "optimi-lion",

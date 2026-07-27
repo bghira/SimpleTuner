@@ -19,6 +19,7 @@ Para la primera ejecución, usa la configuración de ejemplo y mantén el modelo
   "model_type": "lora",
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "mixed_precision": "bf16",
+  "attention_mechanism": "cudnn",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "train_batch_size": 1,
@@ -38,6 +39,7 @@ Recomendaciones:
 
 - Usa `bf16` cuando el modelo quepa.
 - Usa `int8-torchao` cuando necesites margen de memoria.
+- Usa `attention_mechanism=cudnn` en GPUs NVIDIA; la ruta SDPA nativa de Krea2 puede usar suficiente memoria para OOM en ejecuciones de clase L40S que por lo demas caben.
 - Mantén `gradient_checkpointing=true`.
 - Mantén `fuse_qkv_projections=true`.
 - Usa `dynamo_backend=inductor`, `dynamo_mode=reduce-overhead` y `dynamo_use_regional_compilation=true` solo después de confirmar que el batch/resolución cabe.
@@ -52,6 +54,7 @@ Recomendaciones:
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "base_model_precision": "no_change",
   "mixed_precision": "bf16",
+  "attention_mechanism": "cudnn",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "optimizer": "optimi-lion",
