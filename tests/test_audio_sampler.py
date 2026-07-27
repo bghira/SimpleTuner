@@ -19,9 +19,11 @@ class TestAudioSampler(unittest.TestCase):
         self.mock_metadata.id = "test_backend"
         self.mock_metadata.aspect_ratio_bucket_indices = {"10s": ["a.wav", "b.wav"], "20s": ["c.wav"]}
         self.mock_metadata.seen_images = {}
-        self.mock_metadata.is_seen = lambda x: x in self.mock_metadata.seen_images
+        self.mock_metadata.is_seen = (
+            lambda x, occurrence_index=0: int(self.mock_metadata.seen_images.get(x, 0)) > occurrence_index
+        )
         self.mock_metadata.mark_batch_as_seen = lambda batch: [
-            self.mock_metadata.seen_images.update({x: True}) for x in batch
+            self.mock_metadata.seen_images.update({x: int(self.mock_metadata.seen_images.get(x, 0)) + 1}) for x in batch
         ]
         self.mock_metadata.reset_seen_images = lambda: self.mock_metadata.seen_images.clear()
         self.mock_metadata.instance_data_dir = ""

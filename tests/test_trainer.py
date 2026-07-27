@@ -1837,6 +1837,54 @@ class TestTrainer(unittest.TestCase):
             self.assertEqual(trainer.state["current_epoch"], 2)
             self.assertEqual(trainer.extra_lr_scheduler_kwargs["epoch"], 2)
 
+    def test_epoch_rollover_reuses_initial_bucket_padding_policy(self):
+        cases = (
+            ("fixed_steps", False, False, False),
+            ("epoch_driven", True, False, True),
+            ("oversubscribed_fixed_steps", False, True, True),
+        )
+
+        for name, overrode_max_train_steps, allow_oversubscription, expected in cases:
+            with self.subTest(name=name):
+                trainer = object.__new__(Trainer)
+                trainer.state = {"first_epoch": 1, "current_epoch": 1}
+                trainer.accelerator = MagicMock(is_main_process=True)
+                trainer.extra_lr_scheduler_kwargs = {}
+                trainer.get_steps_per_epoch_for_epoch = MagicMock(return_value=100)
+                trainer.config = SimpleNamespace(
+                    num_train_epochs=5,
+                    aspect_bucket_disable_rebuild=False,
+                    lr_scheduler="constant",
+                    num_update_steps_per_epoch=100,
+                    gradient_accumulation_steps=3,
+                    overrode_max_train_steps=overrode_max_train_steps,
+                    allow_dataset_oversubscription=allow_oversubscription,
+                )
+                metadata_backend = MagicMock(read_only=True)
+                backends = {"train": {"metadata_backend": metadata_backend}}
+                backend_config = {
+                    "crop": True,
+                    "crop_aspect": "random",
+                }
+
+                with (
+                    patch("simpletuner.helpers.training.trainer.StateTracker.set_epoch"),
+                    patch(
+                        "simpletuner.helpers.training.trainer.StateTracker.get_data_backends",
+                        return_value=backends,
+                    ),
+                    patch(
+                        "simpletuner.helpers.training.trainer.StateTracker.get_data_backend_config",
+                        return_value=backend_config,
+                    ),
+                ):
+                    trainer._epoch_rollover(2)
+
+                metadata_backend.split_buckets_between_processes.assert_called_once_with(
+                    gradient_accumulation_steps=3,
+                    apply_padding=expected,
+                )
+
     @patch(
         "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
         return_value=Mock(),
