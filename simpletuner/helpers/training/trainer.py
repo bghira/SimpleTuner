@@ -385,7 +385,8 @@ class Trainer:
             yield
             return
 
-        assert self.accelerator is not None
+        if self.accelerator is None:
+            raise RuntimeError("Accelerator must be initialized before running FSDP2 export collectives.")
         status = torch.zeros((), dtype=torch.int32, device=self.accelerator.device)
         try:
             yield
