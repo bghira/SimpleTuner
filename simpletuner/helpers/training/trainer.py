@@ -595,7 +595,10 @@ class Trainer:
         elif (
             not require_value_method or self.config.grad_clip_method == "value"
         ) and not self.config.use_deepspeed_optimizer:
-            target_logs[f"{prefix}grad_absmax"] = self.grad_norm
+            grad_value = self.grad_norm
+            if clone_norm_value:
+                grad_value = float(self.grad_norm.clone().detach())
+            target_logs[f"{prefix}grad_absmax"] = grad_value
 
     def _config_uses_bitsandbytes(self) -> bool:
         if not getattr(self, "config", None):

@@ -1249,6 +1249,19 @@ class TestTrainer(unittest.TestCase):
         self.assertIn("grad_absmax", logs)
         self.assertIs(logs["grad_absmax"], trainer.grad_norm)
 
+    def test_update_grad_metrics_clones_absmax_value_when_requested(self):
+        trainer = self._build_trainer_for_grad_logging(
+            grad_clip_method="value",
+            use_deepspeed=False,
+            grad_value=torch.tensor(1.2),
+        )
+        logs = {}
+        trainer._update_grad_metrics(logs, clone_norm_value=True)
+        self.assertIn("grad_absmax", logs)
+        self.assertEqual(
+            logs["grad_absmax"], float(trainer.grad_norm.clone().detach())
+        )
+
     def test_update_grad_metrics_clones_norm_value_when_requested(self):
         trainer = self._build_trainer_for_grad_logging(
             grad_clip_method="norm",
@@ -1309,7 +1322,9 @@ class TestTrainer(unittest.TestCase):
         )
         metrics = trainer._compose_training_progress_metrics(epoch=1)
         self.assertIn("grad_absmax", metrics)
-        self.assertIs(metrics["grad_absmax"], trainer.grad_norm)
+        self.assertEqual(
+            metrics["grad_absmax"], float(trainer.grad_norm.clone().detach())
+        )
         self.assertNotIn("grad_norm", metrics)
 
     def test_compose_training_progress_metrics_excludes_grad_with_deepspeed(self):
