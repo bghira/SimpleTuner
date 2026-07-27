@@ -448,16 +448,37 @@ class FluxSingleTransformerBlock(PatchableModule):
             pre_only=True,
         )
 
+    def _ffn_forward(
+        self,
+        residual: torch.Tensor,
+        norm_hidden_states: torch.Tensor,
+        attn_output: torch.Tensor,
+        gate: torch.Tensor,
+    ) -> torch.Tensor:
+        mlp_hidden_states = self.act_mlp(self.proj_mlp(norm_hidden_states))
+        hidden_states = torch.cat([attn_output, mlp_hidden_states], dim=2)
+        if gate.ndim == 2:
+            gate = gate.unsqueeze(1)
+        hidden_states = gate * self.proj_out(hidden_states)
+        hidden_states = residual + hidden_states
+
+        hidden_states = torch.nan_to_num(hidden_states, nan=0.0, posinf=65504, neginf=-65504)
+        if hidden_states.dtype == torch.float16:
+            hidden_states = hidden_states.clip(-65504, 65504)
+
+        return hidden_states
+
     def forward(
         self,
         hidden_states: torch.FloatTensor,
         temb: torch.FloatTensor,
         image_rotary_emb=None,
         attention_mask: Optional[torch.Tensor] = None,
+        checkpoint_ffn: bool = False,
+        checkpoint_fn: Any | None = None,
     ):
         residual = hidden_states
         norm_hidden_states, gate = _flux_apply_ada_layer_norm_zero_single(self.norm, hidden_states, temb)
-        mlp_hidden_states = self.act_mlp(self.proj_mlp(norm_hidden_states))
 
         if attention_mask is not None:
             attention_mask = expand_flux_attention_mask(
@@ -471,17 +492,18 @@ class FluxSingleTransformerBlock(PatchableModule):
             attention_mask=attention_mask,
         )
 
-        hidden_states = torch.cat([attn_output, mlp_hidden_states], dim=2)
-        if gate.ndim == 2:
-            gate = gate.unsqueeze(1)
-        hidden_states = gate * self.proj_out(hidden_states)
-        hidden_states = residual + hidden_states
-
-        hidden_states = torch.nan_to_num(hidden_states, nan=0.0, posinf=65504, neginf=-65504)
-        if hidden_states.dtype == torch.float16:
-            hidden_states = hidden_states.clip(-65504, 65504)
-
-        return hidden_states
+        if checkpoint_ffn:
+            if checkpoint_fn is None:
+                raise ValueError("checkpoint_fn is required when checkpoint_ffn=True")
+            return checkpoint_fn(
+                self._ffn_forward,
+                residual,
+                norm_hidden_states,
+                attn_output,
+                gate,
+                use_reentrant=False,
+            )
+        return self._ffn_forward(residual, norm_hidden_states, attn_output, gate)
 
 
 @maybe_allow_in_graph
@@ -534,6 +556,50 @@ class FluxTransformerBlock(PatchableModule):
         self._chunk_size = None
         self._chunk_dim = 0
 
+    def _ffn_forward(
+        self,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor,
+        shift_mlp: torch.Tensor,
+        scale_mlp: torch.Tensor,
+        gate_mlp: torch.Tensor,
+        c_shift_mlp: torch.Tensor,
+        c_scale_mlp: torch.Tensor,
+        c_gate_mlp: torch.Tensor,
+        ip_attn_output: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        norm_hidden_states = self.norm2(hidden_states)
+        if scale_mlp.ndim == 2:
+            norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+        else:
+            norm_hidden_states = norm_hidden_states * (1 + scale_mlp) + shift_mlp
+
+        ff_output = self.ff(norm_hidden_states)
+        if gate_mlp.ndim == 2:
+            gate_mlp = gate_mlp.unsqueeze(1)
+        ff_output = gate_mlp * ff_output
+
+        hidden_states = hidden_states + ff_output
+        if ip_attn_output is not None:
+            hidden_states = hidden_states + ip_attn_output
+
+        norm_encoder_hidden_states = self.norm2_context(encoder_hidden_states)
+        if c_scale_mlp.ndim == 2:
+            norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
+        else:
+            norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp) + c_shift_mlp
+
+        context_ff_output = self.ff_context(norm_encoder_hidden_states)
+        if c_gate_mlp.ndim == 2:
+            c_gate_mlp = c_gate_mlp.unsqueeze(1)
+        encoder_hidden_states = encoder_hidden_states + c_gate_mlp * context_ff_output
+
+        encoder_hidden_states = torch.nan_to_num(encoder_hidden_states, nan=0.0, posinf=65504, neginf=-65504)
+        if encoder_hidden_states.dtype == torch.float16:
+            encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
+
+        return encoder_hidden_states, hidden_states
+
     def forward(
         self,
         hidden_states: torch.FloatTensor,
@@ -542,6 +608,8 @@ class FluxTransformerBlock(PatchableModule):
         context_temb: Optional[torch.FloatTensor] = None,
         image_rotary_emb=None,
         attention_mask: Optional[torch.Tensor] = None,
+        checkpoint_ffn: bool = False,
+        checkpoint_fn: Any | None = None,
     ):
         if context_temb is None:
             context_temb = temb
@@ -566,6 +634,7 @@ class FluxTransformerBlock(PatchableModule):
             image_rotary_emb=image_rotary_emb,
             attention_mask=attention_mask,
         )
+        ip_attn_output = None
         if len(attention_outputs) == 2:
             attn_output, context_attn_output = attention_outputs
         elif len(attention_outputs) == 3:
@@ -577,43 +646,39 @@ class FluxTransformerBlock(PatchableModule):
         attn_output = gate_msa * attn_output
         hidden_states = hidden_states + attn_output
 
-        norm_hidden_states = self.norm2(hidden_states)
-        if scale_mlp.ndim == 2:
-            norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
-        else:
-            norm_hidden_states = norm_hidden_states * (1 + scale_mlp) + shift_mlp
-
-        ff_output = self.ff(norm_hidden_states)
-        if gate_mlp.ndim == 2:
-            gate_mlp = gate_mlp.unsqueeze(1)
-        ff_output = gate_mlp * ff_output
-
-        hidden_states = hidden_states + ff_output
-        if len(attention_outputs) == 3:
-            hidden_states = hidden_states + ip_attn_output
-
         # Process attention outputs for the `encoder_hidden_states`.
         if c_gate_msa.ndim == 2:
             c_gate_msa = c_gate_msa.unsqueeze(1)
         context_attn_output = c_gate_msa * context_attn_output
         encoder_hidden_states = encoder_hidden_states + context_attn_output
 
-        norm_encoder_hidden_states = self.norm2_context(encoder_hidden_states)
-        if c_scale_mlp.ndim == 2:
-            norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
-        else:
-            norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp) + c_shift_mlp
-
-        context_ff_output = self.ff_context(norm_encoder_hidden_states)
-        if c_gate_mlp.ndim == 2:
-            c_gate_mlp = c_gate_mlp.unsqueeze(1)
-        encoder_hidden_states = encoder_hidden_states + c_gate_mlp * context_ff_output
-
-        encoder_hidden_states = torch.nan_to_num(encoder_hidden_states, nan=0.0, posinf=65504, neginf=-65504)
-        if encoder_hidden_states.dtype == torch.float16:
-            encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
-
-        return encoder_hidden_states, hidden_states
+        if checkpoint_ffn:
+            if checkpoint_fn is None:
+                raise ValueError("checkpoint_fn is required when checkpoint_ffn=True")
+            return checkpoint_fn(
+                self._ffn_forward,
+                hidden_states,
+                encoder_hidden_states,
+                shift_mlp,
+                scale_mlp,
+                gate_mlp,
+                c_shift_mlp,
+                c_scale_mlp,
+                c_gate_mlp,
+                ip_attn_output,
+                use_reentrant=False,
+            )
+        return self._ffn_forward(
+            hidden_states,
+            encoder_hidden_states,
+            shift_mlp,
+            scale_mlp,
+            gate_mlp,
+            c_shift_mlp,
+            c_scale_mlp,
+            c_gate_mlp,
+            ip_attn_output,
+        )
 
 
 class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
@@ -635,6 +700,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
     """
 
     _supports_gradient_checkpointing = True
+    _supports_ffn_gradient_checkpointing = True
     # Hint FSDP auto wrap policy to shard per transformer block.
     _no_split_modules = ["FluxTransformerBlock", "FluxSingleTransformerBlock"]
     _cp_plan = {
@@ -1094,6 +1160,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                 and self.gradient_checkpointing
                 and (self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0)
             ):
+                checkpoint_ffn = self.gradient_checkpointing_backend.endswith("-ffn")
 
                 def create_custom_forward(module, return_dict=None):
                     def custom_forward(*inputs):
@@ -1104,7 +1171,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
                     return custom_forward
 
-                if self.gradient_checkpointing_backend == "unsloth":
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint
@@ -1113,18 +1180,30 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                     checkpoint_fn = simpletuner_checkpoint
                     ckpt_kwargs = _transformerengine_checkpoint_kwargs(block)
 
-                if is_torch_version(">=", "1.11.0"):
-                    ckpt_kwargs["use_reentrant"] = False
-                encoder_hidden_states, hidden_states = checkpoint_fn(
-                    create_custom_forward(block),
-                    hidden_states,
-                    encoder_hidden_states,
-                    temb_img,
-                    temb_txt,
-                    current_rope,
-                    attention_mask,
-                    **ckpt_kwargs,
-                )
+                if checkpoint_ffn:
+                    encoder_hidden_states, hidden_states = block(
+                        hidden_states=hidden_states,
+                        encoder_hidden_states=encoder_hidden_states,
+                        temb=temb_img,
+                        context_temb=temb_txt,
+                        image_rotary_emb=current_rope,
+                        attention_mask=attention_mask,
+                        checkpoint_ffn=True,
+                        checkpoint_fn=checkpoint_fn,
+                    )
+                else:
+                    if is_torch_version(">=", "1.11.0"):
+                        ckpt_kwargs["use_reentrant"] = False
+                    encoder_hidden_states, hidden_states = checkpoint_fn(
+                        create_custom_forward(block),
+                        hidden_states,
+                        encoder_hidden_states,
+                        temb_img,
+                        temb_txt,
+                        current_rope,
+                        attention_mask,
+                        **ckpt_kwargs,
+                    )
 
             else:
                 encoder_hidden_states, hidden_states = block(
@@ -1217,6 +1296,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                     and index_block % self.gradient_checkpointing_interval == 0
                 )
             ):
+                checkpoint_ffn = self.gradient_checkpointing_backend.endswith("-ffn")
 
                 def create_custom_forward(module, return_dict=None):
                     def custom_forward(*inputs):
@@ -1227,7 +1307,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
                     return custom_forward
 
-                if self.gradient_checkpointing_backend == "unsloth":
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint
@@ -1236,16 +1316,26 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                     checkpoint_fn = simpletuner_checkpoint
                     ckpt_kwargs = _transformerengine_checkpoint_kwargs(block)
 
-                if is_torch_version(">=", "1.11.0"):
-                    ckpt_kwargs["use_reentrant"] = False
-                hidden_states = checkpoint_fn(
-                    create_custom_forward(block),
-                    hidden_states,
-                    temb_single,
-                    current_rope,
-                    attention_mask,
-                    **ckpt_kwargs,
-                )
+                if checkpoint_ffn:
+                    hidden_states = block(
+                        hidden_states=hidden_states,
+                        temb=temb_single,
+                        image_rotary_emb=current_rope,
+                        attention_mask=attention_mask,
+                        checkpoint_ffn=True,
+                        checkpoint_fn=checkpoint_fn,
+                    )
+                else:
+                    if is_torch_version(">=", "1.11.0"):
+                        ckpt_kwargs["use_reentrant"] = False
+                    hidden_states = checkpoint_fn(
+                        create_custom_forward(block),
+                        hidden_states,
+                        temb_single,
+                        current_rope,
+                        attention_mask,
+                        **ckpt_kwargs,
+                    )
 
             else:
                 hidden_states = block(

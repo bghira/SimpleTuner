@@ -584,6 +584,27 @@ class MageFlowTransformerBlock(nn.Module):
         else:
             return x * (1 + scale) + shift, gate
 
+    def _ffn_forward(
+        self,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor,
+        img_mod2: torch.Tensor,
+        txt_mod2: torch.Tensor,
+        img_cu_lens: torch.Tensor | None,
+        txt_cu_lens: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        img_normed2 = self.img_norm2(hidden_states)
+        img_modulated2, img_gate2 = self._modulate(img_normed2, img_mod2, cu_lens=img_cu_lens)
+        img_mlp_output = self.img_mlp(img_modulated2)
+        hidden_states = hidden_states + img_gate2 * img_mlp_output
+
+        txt_normed2 = self.txt_norm2(encoder_hidden_states)
+        txt_modulated2, txt_gate2 = self._modulate(txt_normed2, txt_mod2, cu_lens=txt_cu_lens)
+        txt_mlp_output = self.txt_mlp(txt_modulated2)
+        encoder_hidden_states = encoder_hidden_states + txt_gate2 * txt_mlp_output
+
+        return encoder_hidden_states, hidden_states
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -596,6 +617,8 @@ class MageFlowTransformerBlock(nn.Module):
         txt_cu_lens: torch.Tensor,
         img_cu_lens: torch.Tensor,
         joint_attention_kwargs: dict[str, Any] | None = None,
+        checkpoint_ffn: bool = False,
+        checkpoint_fn: Any | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # Get modulation parameters for both streams
         # if isinstance(temb, tuple):
@@ -655,17 +678,28 @@ class MageFlowTransformerBlock(nn.Module):
         hidden_states = hidden_states + img_gate1 * img_attn_output
         encoder_hidden_states = encoder_hidden_states + txt_gate1 * txt_attn_output
 
-        # Process image stream - norm2 + MLP
-        img_normed2 = self.img_norm2(hidden_states)
-        img_modulated2, img_gate2 = self._modulate(img_normed2, img_mod2, cu_lens=img_cu_lens)
-        img_mlp_output = self.img_mlp(img_modulated2)
-        hidden_states = hidden_states + img_gate2 * img_mlp_output
-
-        # Process text stream - norm2 + MLP
-        txt_normed2 = self.txt_norm2(encoder_hidden_states)
-        txt_modulated2, txt_gate2 = self._modulate(txt_normed2, txt_mod2, cu_lens=txt_cu_lens)
-        txt_mlp_output = self.txt_mlp(txt_modulated2)
-        encoder_hidden_states = encoder_hidden_states + txt_gate2 * txt_mlp_output
+        if checkpoint_ffn:
+            if checkpoint_fn is None:
+                raise ValueError("checkpoint_fn is required when checkpoint_ffn=True")
+            encoder_hidden_states, hidden_states = checkpoint_fn(
+                self._ffn_forward,
+                hidden_states,
+                encoder_hidden_states,
+                img_mod2,
+                txt_mod2,
+                img_cu_lens,
+                txt_cu_lens,
+                use_reentrant=False,
+            )
+        else:
+            encoder_hidden_states, hidden_states = self._ffn_forward(
+                hidden_states,
+                encoder_hidden_states,
+                img_mod2,
+                txt_mod2,
+                img_cu_lens,
+                txt_cu_lens,
+            )
 
         # Clip to prevent overflow for fp16
         if encoder_hidden_states.dtype == torch.float16:
