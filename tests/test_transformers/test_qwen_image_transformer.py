@@ -1256,6 +1256,34 @@ class TestQwenImageTransformer2DModel(TransformerBaseTest):
 
         self.assertIsNotNone(output)
 
+    @patch("simpletuner.helpers.training.offloaded_gradient_checkpointer.offloaded_checkpoint")
+    def test_gradient_checkpointing_unsloth_backend_uses_offloaded_checkpoint(self, mock_offloaded_checkpoint):
+        """Test unsloth backend selects the offloaded checkpoint function."""
+        model = self._create_model_or_skip(**self.config)
+        model.gradient_checkpointing = True
+        model.train()
+        model.set_gradient_checkpointing_backend("unsloth")
+        model._gradient_checkpointing_func = Mock()
+
+        mock_offloaded_checkpoint.side_effect = lambda block, *args, **kwargs: block(*args)
+
+        hidden_states, img_shapes = self._generate_packed_hidden_states(2, 32, 32)
+        encoder_hidden_states = torch.randn(2, 77, 512)
+        timestep = torch.randint(0, 1000, (2,))
+        hidden_states.requires_grad_(True)
+
+        output = model(
+            hidden_states=hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            timestep=timestep,
+            img_shapes=img_shapes,
+            txt_seq_lens=[77],
+        )
+
+        self.assertIsNotNone(output)
+        self.assertEqual(mock_offloaded_checkpoint.call_count, len(model.transformer_blocks))
+        model._gradient_checkpointing_func.assert_not_called()
+
     def test_batch_size_gt_one_does_not_forward_encoder_mask_twice(self):
         """Batch>1 should keep encoder_hidden_states_mask out of joint_attention_kwargs."""
         model = self._create_model_or_skip(**self.config)
