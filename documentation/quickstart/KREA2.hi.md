@@ -19,6 +19,7 @@ simpletuner/examples/krea2.peft-lora/config.json
   "model_type": "lora",
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "mixed_precision": "bf16",
+  "attention_mechanism": "cudnn",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "train_batch_size": 1,
@@ -38,6 +39,7 @@ Recommendations:
 
 - Model fit हो तो `bf16` उपयोग करें।
 - Memory headroom चाहिए तो `int8-torchao` उपयोग करें।
+- NVIDIA GPUs पर `attention_mechanism=cudnn` उपयोग करें; Krea2 का native SDPA path इतनी memory use कर सकता है कि otherwise-valid L40S-class runs OOM हो जाएं।
 - `gradient_checkpointing=true` रखें।
 - `fuse_qkv_projections=true` रखें।
 - `dynamo_backend=inductor`, `dynamo_mode=reduce-overhead`, और `dynamo_use_regional_compilation=true` केवल batch/resolution fit होने की पुष्टि के बाद enable करें।
@@ -52,6 +54,7 @@ Recommendations:
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "base_model_precision": "no_change",
   "mixed_precision": "bf16",
+  "attention_mechanism": "cudnn",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "optimizer": "optimi-lion",

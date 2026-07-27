@@ -93,6 +93,7 @@ The important values are:
 - `model_flavour` - set this to `raw`.
 - `pretrained_model_name_or_path` - set this to `krea/Krea-2-Raw`.
 - `mixed_precision` - keep this at `bf16` on modern NVIDIA GPUs.
+- `attention_mechanism` - use `cudnn` on NVIDIA GPUs. Krea2's native SDPA path can use enough memory to OOM otherwise-valid L40S-class training runs.
 - `gradient_checkpointing` - keep this enabled unless you are deliberately measuring memory.
 - `fuse_qkv_projections` - keep this enabled. Krea2 supports permanent QKV fusion for the attention projections, and the LoRA target changes to the fused projection.
 - `train_batch_size` - start at 1. Increase after the run is stable.
@@ -111,6 +112,7 @@ A conservative bf16 starting point:
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "base_model_precision": "no_change",
   "mixed_precision": "bf16",
+  "attention_mechanism": "cudnn",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "optimizer": "optimi-lion",
