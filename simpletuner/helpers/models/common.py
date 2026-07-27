@@ -3151,15 +3151,29 @@ class ModelFoundation(ABC):
         self.configure_chunked_feed_forward()
 
         # Set gradient checkpointing backend
-        checkpoint_backend = getattr(self.config, "gradient_checkpointing_backend", "torch")
-        if checkpoint_backend == "unsloth" and not torch.cuda.is_available():
+        checkpoint_backend = (getattr(self.config, "gradient_checkpointing_backend", None) or "torch").lower()
+        if checkpoint_backend not in ["torch", "torch-ffn", "unsloth", "unsloth-ffn"]:
+            logger.warning(f"Invalid gradient checkpointing backend '{checkpoint_backend}', falling back to torch")
+            checkpoint_backend = "torch"
+        if checkpoint_backend in {"unsloth", "unsloth-ffn"} and not torch.cuda.is_available():
             logger.warning("Unsloth gradient checkpointing backend requires CUDA, falling back to torch")
             checkpoint_backend = "torch"
 
-        from simpletuner.helpers.training.gradient_checkpointing_interval import set_checkpoint_backend
+        from simpletuner.helpers.training.gradient_checkpointing_interval import (
+            get_checkpoint_backend_scope,
+            set_checkpoint_backend,
+        )
+
+        if get_checkpoint_backend_scope(checkpoint_backend) == "ffn":
+            trained_component = self.unwrap_model(model=self.model) if self.model is not None else None
+            if trained_component is None or not getattr(trained_component, "_supports_ffn_gradient_checkpointing", False):
+                raise ValueError(
+                    f"Gradient checkpointing backend '{checkpoint_backend}' requires FFN-only checkpointing support, "
+                    f"but {self.config.model_family} does not expose it."
+                )
 
         set_checkpoint_backend(checkpoint_backend)
-        if checkpoint_backend == "unsloth":
+        if checkpoint_backend in {"unsloth", "unsloth-ffn"}:
             logger.info("Using Unsloth-style gradient checkpointing (CPU offload)")
 
         if self.config.gradient_checkpointing_interval is not None and self.config.gradient_checkpointing_interval > 1:

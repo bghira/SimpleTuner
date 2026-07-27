@@ -280,11 +280,13 @@ simpletuner configure config/foo/config.json
 
 ### `--gradient_checkpointing_backend`
 
-- **Choices**: `torch`, `unsloth`
-- **What**: Gradient checkpointing के लिए implementation चुनें।
-  - `torch` (default): Standard PyTorch checkpointing जो backward pass के दौरान activations को recalculate करता है। ~20% time overhead।
-  - `unsloth`: Recalculate करने के बजाय activations को asynchronously CPU पर offload करता है। ~30% अधिक memory बचत केवल ~2% overhead के साथ। Fast PCIe bandwidth आवश्यक है।
-- **Note**: केवल `--gradient_checkpointing` enabled होने पर प्रभावी। `unsloth` backend के लिए CUDA आवश्यक है।
+- **Choices**: `torch`, `torch-ffn`, `unsloth`, `unsloth-ffn`
+- **What**: Gradient checkpointing के लिए implementation और scope चुनें।
+  - `torch` (default): पूरे supported block को checkpoint करता है और backward में activations recompute करता है।
+  - `torch-ffn`: साफ FFN boundary वाले models पर केवल feed-forward side checkpoint करता है।
+  - `unsloth`: पूरे supported block को checkpoint करता है और saved tensors CPU पर offload करता है।
+  - `unsloth-ffn`: केवल feed-forward side checkpoint करता है और उसके saved tensors CPU पर offload करता है।
+- **Note**: केवल `--gradient_checkpointing` enabled होने पर प्रभावी। `unsloth` variants के लिए CUDA आवश्यक है। FFN-only variants अभी Flux.1-style blocks और MageFlow support करते हैं, और unsupported scope पर साफ error मिलता है। Measured tradeoffs के लिए [Unsloth-style checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) देखें।
 
 ### `--refiner_training`
 

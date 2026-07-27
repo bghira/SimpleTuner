@@ -280,11 +280,13 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 
 ### `--gradient_checkpointing_backend`
 
-- **Opciones**: `torch`, `unsloth`
-- **Qué**: Selecciona la implementación para gradient checkpointing.
-  - `torch` (por defecto): Checkpointing estándar de PyTorch que recalcula activaciones durante el backward pass. ~20% de overhead de tiempo.
-  - `unsloth`: Descarga activaciones a CPU de forma asíncrona en lugar de recalcular. ~30% más ahorro de memoria con solo ~2% de overhead. Requiere ancho de banda PCIe rápido.
-- **Nota**: Solo efectivo cuando `--gradient_checkpointing` está habilitado. El backend `unsloth` requiere CUDA.
+- **Opciones**: `torch`, `torch-ffn`, `unsloth`, `unsloth-ffn`
+- **Qué**: Selecciona implementación y scope para gradient checkpointing.
+  - `torch` (por defecto): checkpoint del bloque completo compatible y recompute en backward.
+  - `torch-ffn`: checkpoint solo del lado feed-forward en modelos con un límite FFN limpio.
+  - `unsloth`: checkpoint del bloque completo compatible y offload de tensores guardados a CPU.
+  - `unsloth-ffn`: checkpoint solo del lado feed-forward y offload de sus tensores guardados a CPU.
+- **Nota**: Solo efectivo cuando `--gradient_checkpointing` está habilitado. Las variantes `unsloth` requieren CUDA. Las variantes FFN-only soportan actualmente bloques estilo Flux.1 y MageFlow, y fallan de forma explícita si no existe ese scope. Consulta [Unsloth-style checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) para tradeoffs medidos.
 
 ### `--refiner_training`
 
