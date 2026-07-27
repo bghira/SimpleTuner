@@ -458,9 +458,19 @@ class MageDoubleStreamAttnProcessor:
         img_dest_indices = joint_cu_lens[img_sample_ids] + txt_lens[img_sample_ids] + img_intra_pos
 
         total_tokens = joint_cu_lens[-1]
-        joint_query = torch.empty((total_tokens, *txt_query.shape[1:]), dtype=txt_query.dtype, device=device)
-        joint_key = torch.empty((total_tokens, *txt_key.shape[1:]), dtype=txt_key.dtype, device=device)
-        joint_value = torch.empty((total_tokens, *txt_value.shape[1:]), dtype=txt_value.dtype, device=device)
+        attention_dtype = torch.promote_types(
+            torch.promote_types(torch.promote_types(img_query.dtype, img_key.dtype), img_value.dtype),
+            torch.promote_types(torch.promote_types(txt_query.dtype, txt_key.dtype), txt_value.dtype),
+        )
+        if attention_dtype == torch.float32:
+            device_type = hidden_states.device.type
+            if torch.is_autocast_enabled(device_type):
+                attention_dtype = torch.get_autocast_dtype(device_type)
+            elif hidden_states.dtype in {torch.float16, torch.bfloat16}:
+                attention_dtype = hidden_states.dtype
+        joint_query = torch.empty((total_tokens, *img_query.shape[1:]), dtype=attention_dtype, device=device)
+        joint_key = torch.empty((total_tokens, *img_key.shape[1:]), dtype=attention_dtype, device=device)
+        joint_value = torch.empty((total_tokens, *img_value.shape[1:]), dtype=attention_dtype, device=device)
 
         # logger.info(f"joint_query shape: {joint_query.shape}")
         # logger.info(f"joint_key shape: {joint_key.shape}")
@@ -468,14 +478,14 @@ class MageDoubleStreamAttnProcessor:
         # logger.info(f"txt_dest_indices shape: {txt_dest_indices.shape}")
         # logger.info(f"img_dest_indices shape: {img_dest_indices.shape}")
 
-        joint_query[txt_dest_indices] = txt_query
-        joint_query[img_dest_indices] = img_query
+        joint_query[txt_dest_indices] = txt_query.to(joint_query.dtype)
+        joint_query[img_dest_indices] = img_query.to(joint_query.dtype)
 
-        joint_key[txt_dest_indices] = txt_key
-        joint_key[img_dest_indices] = img_key
+        joint_key[txt_dest_indices] = txt_key.to(joint_key.dtype)
+        joint_key[img_dest_indices] = img_key.to(joint_key.dtype)
 
-        joint_value[txt_dest_indices] = txt_value
-        joint_value[img_dest_indices] = img_value
+        joint_value[txt_dest_indices] = txt_value.to(joint_value.dtype)
+        joint_value[img_dest_indices] = img_value.to(joint_value.dtype)
 
         max_seqlen = joint_lens.max().item()
         joint_attn_output = flash_attn_varlen_func(
@@ -574,6 +584,27 @@ class MageFlowTransformerBlock(nn.Module):
         else:
             return x * (1 + scale) + shift, gate
 
+    def _ffn_forward(
+        self,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor,
+        img_mod2: torch.Tensor,
+        txt_mod2: torch.Tensor,
+        img_cu_lens: torch.Tensor | None,
+        txt_cu_lens: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        img_normed2 = self.img_norm2(hidden_states)
+        img_modulated2, img_gate2 = self._modulate(img_normed2, img_mod2, cu_lens=img_cu_lens)
+        img_mlp_output = self.img_mlp(img_modulated2)
+        hidden_states = hidden_states + img_gate2 * img_mlp_output
+
+        txt_normed2 = self.txt_norm2(encoder_hidden_states)
+        txt_modulated2, txt_gate2 = self._modulate(txt_normed2, txt_mod2, cu_lens=txt_cu_lens)
+        txt_mlp_output = self.txt_mlp(txt_modulated2)
+        encoder_hidden_states = encoder_hidden_states + txt_gate2 * txt_mlp_output
+
+        return encoder_hidden_states, hidden_states
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -586,6 +617,8 @@ class MageFlowTransformerBlock(nn.Module):
         txt_cu_lens: torch.Tensor,
         img_cu_lens: torch.Tensor,
         joint_attention_kwargs: dict[str, Any] | None = None,
+        checkpoint_ffn: bool = False,
+        checkpoint_fn: Any | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # Get modulation parameters for both streams
         # if isinstance(temb, tuple):
@@ -645,17 +678,28 @@ class MageFlowTransformerBlock(nn.Module):
         hidden_states = hidden_states + img_gate1 * img_attn_output
         encoder_hidden_states = encoder_hidden_states + txt_gate1 * txt_attn_output
 
-        # Process image stream - norm2 + MLP
-        img_normed2 = self.img_norm2(hidden_states)
-        img_modulated2, img_gate2 = self._modulate(img_normed2, img_mod2, cu_lens=img_cu_lens)
-        img_mlp_output = self.img_mlp(img_modulated2)
-        hidden_states = hidden_states + img_gate2 * img_mlp_output
-
-        # Process text stream - norm2 + MLP
-        txt_normed2 = self.txt_norm2(encoder_hidden_states)
-        txt_modulated2, txt_gate2 = self._modulate(txt_normed2, txt_mod2, cu_lens=txt_cu_lens)
-        txt_mlp_output = self.txt_mlp(txt_modulated2)
-        encoder_hidden_states = encoder_hidden_states + txt_gate2 * txt_mlp_output
+        if checkpoint_ffn:
+            if checkpoint_fn is None:
+                raise ValueError("checkpoint_fn is required when checkpoint_ffn=True")
+            encoder_hidden_states, hidden_states = checkpoint_fn(
+                self._ffn_forward,
+                hidden_states,
+                encoder_hidden_states,
+                img_mod2,
+                txt_mod2,
+                img_cu_lens,
+                txt_cu_lens,
+                use_reentrant=False,
+            )
+        else:
+            encoder_hidden_states, hidden_states = self._ffn_forward(
+                hidden_states,
+                encoder_hidden_states,
+                img_mod2,
+                txt_mod2,
+                img_cu_lens,
+                txt_cu_lens,
+            )
 
         # Clip to prevent overflow for fp16
         if encoder_hidden_states.dtype == torch.float16:

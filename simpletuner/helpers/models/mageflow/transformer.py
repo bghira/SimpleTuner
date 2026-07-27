@@ -15,6 +15,7 @@ from simpletuner.helpers.models.mageflow.vendor.models.modules._attn_backend imp
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.gradient_checkpointing_interval import (
     get_checkpoint_backend,
+    get_checkpoint_backend_scope,
     get_checkpoint_function,
     set_checkpoint_backend,
 )
@@ -49,6 +50,7 @@ def _resolve_repo_dir(repo_id_or_path: str, *, revision: Optional[str] = None, l
 
 class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterMixin):
     _supports_gradient_checkpointing = True
+    _supports_ffn_gradient_checkpointing = True
     _no_split_modules = ["MageFlowTransformerBlock"]
     _skip_layerwise_casting_patterns = ["pos_embed", "norm"]
 
@@ -125,6 +127,7 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
             self.time_sign_embed = torch.nn.Embedding(2, self.inner_dim)
             torch.nn.init.zeros_(self.time_sign_embed.weight)
         self.gradient_checkpointing_backend = get_checkpoint_backend()
+        self.gradient_checkpointing_scope = get_checkpoint_backend_scope()
         self._gradient_checkpointing_func = get_checkpoint_function()
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=depth,
@@ -170,6 +173,7 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
     def set_gradient_checkpointing_backend(self, backend: str):
         set_checkpoint_backend(backend)
         self.gradient_checkpointing_backend = backend
+        self.gradient_checkpointing_scope = get_checkpoint_backend_scope(backend)
         self._gradient_checkpointing_func = get_checkpoint_function()
 
     def enable_gradient_checkpointing(self, gradient_checkpointing_func=None):
@@ -258,6 +262,18 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
                 musubi_manager.stream_in(block, img.device)
             if index_block in skip_layers_set:
                 pass
+            elif self.training and self.checkpoint and self.gradient_checkpointing_scope == "ffn":
+                txt, img = block(
+                    hidden_states=img,
+                    encoder_hidden_states=txt,
+                    txt_cu_lens=txt_cu_seqlens,
+                    img_cu_lens=img_cu_seqlens,
+                    temb=temb,
+                    image_rotary_emb=ms_pe,
+                    joint_attention_kwargs=attention_kwargs,
+                    checkpoint_ffn=True,
+                    checkpoint_fn=self._gradient_checkpointing_func,
+                )
             elif self.training and self.checkpoint:
                 txt, img = self._gradient_checkpointing_func(
                     block,

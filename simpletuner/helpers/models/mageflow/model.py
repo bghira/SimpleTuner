@@ -407,7 +407,12 @@ class MageFlow(ImageModelFoundation):
 
     @staticmethod
     def _ensure_qwen3vl_text_rotary_precision(text_encoder, device: torch.device) -> None:
-        rotary_emb = text_encoder.language_model.rotary_emb
+        language_model = getattr(text_encoder, "language_model", None)
+        if language_model is None and hasattr(text_encoder, "model"):
+            language_model = getattr(text_encoder.model, "language_model", None)
+        if language_model is None:
+            raise AttributeError(f"{text_encoder.__class__.__name__} does not expose a Qwen3-VL language_model")
+        rotary_emb = language_model.rotary_emb
         inv_freq = rotary_emb.inv_freq
         original_inv_freq = getattr(rotary_emb, "original_inv_freq", None)
         if (
@@ -521,6 +526,7 @@ class MageFlow(ImageModelFoundation):
         target_tokens = rearrange(latents, "b c h w -> b (h w) c")
         sample_lens = []
         target_lens = []
+        target_shapes = []
         shape_seq = []
         target_indices = []
         parts = []
@@ -530,6 +536,7 @@ class MageFlow(ImageModelFoundation):
             parts.append(target)
             total_len = target.shape[1]
             target_lens.append(total_len)
+            target_shapes.append((height, width))
             shape_seq.append((1, height, width))
             if conditioning_latents is not None:
                 refs = conditioning_latents
@@ -551,8 +558,7 @@ class MageFlow(ImageModelFoundation):
             sample_lens,
             torch.cat(target_indices),
             target_lens,
-            height,
-            width,
+            target_shapes,
         )
 
     def model_predict(self, prepared_batch, custom_timesteps: list = None):
@@ -567,8 +573,7 @@ class MageFlow(ImageModelFoundation):
             img_lens,
             target_indices,
             target_lens,
-            latent_h,
-            latent_w,
+            target_shapes,
         ) = self._pack_latents_for_model(latents, conditioning_latents=conditioning_latents)
         txt, txt_cu = self._pack_text(prepared_batch)
         timestep = prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=self.config.weight_dtype) / 1000.0
@@ -590,7 +595,7 @@ class MageFlow(ImageModelFoundation):
         model_pred = model_pred[:, target_indices]
         cursor = 0
         samples = []
-        for target_len in target_lens:
+        for target_len, (latent_h, latent_w) in zip(target_lens, target_shapes, strict=True):
             sample = model_pred[:, cursor : cursor + target_len]
             samples.append(rearrange(sample, "1 (h w) c -> c h w", h=latent_h, w=latent_w))
             cursor += target_len
