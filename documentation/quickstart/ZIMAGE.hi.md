@@ -20,6 +20,18 @@ Z‑Image को Flux से कम मेमोरी चाहिए, ले�
 
 Apple GPUs पर प्रशिक्षण अनुशंसित नहीं है।
 
+### SDNQ Hadamard की मापी गई performance
+
+ये measurements `z-image-turbo.peft-lora` Domokun example पर 1000 steps, validation enabled, `base_model_precision=int8-sdnq`, `sdnq_use_hadamard=true`, `sdnq_group_size=-1`, `sdnq_hadamard_group_size=256`, और gradient checkpointing enabled के साथ लिए गए। इस path को enable करने वाले options के लिए [ConvRot / Hadamard SDNQ quick setup](../experimental/CONVROT.md#quick-setup) देखें। इन्हें इस recipe के comparison points मानें, hardware guarantee नहीं।
+
+| GPU | Run | Train loop s/step | Mean train step | p50 | p95 | Peak allocated VRAM |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| H100 80GB | current SDNQ Hadamard path | 1.107 | 1.087 | 1.071 | 1.109 | 9.70 GiB |
+| L40S | current SDNQ Hadamard path | 1.026 | 1.018 | 1.002 | 1.040 | 9.66 GiB |
+| L40S | baseline SDNQ Hadamard path | 1.131 | 1.072 | 1.055 | 1.102 | 9.66 GiB |
+
+Warm-cache L40S comparison में current path train-loop wall time से 10.3% और measured train-step mean से 5.2% baseline SDNQ Hadamard path से तेज था।
+
 ### मेमोरी ऑफ़लोडिंग (वैकल्पिक)
 
 Grouped module offloading transformer weights bottleneck होने पर VRAM दबाव काफी कम करता है। इसे `TRAINER_EXTRA_ARGS` (या WebUI Hardware page) में निम्न flags जोड़कर सक्षम करें:

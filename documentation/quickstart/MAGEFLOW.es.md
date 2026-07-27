@@ -119,6 +119,15 @@ Usa 20 pasos para `default`, 30 para `base` y 4 para `turbo` / `edit-turbo`.
 }
 ```
 
-En pruebas rápidas de LoRA para Mage-Flow, la cuantización int8 produjo picos de loss sospechosos frente a FP8 weight-only TorchAO. Evita presets int8 para Mage-Flow salvo que valides la curva de loss en tu dataset. NF4 y otros presets de cuantización pueden seguir siendo útiles.
+Para SDNQ INT8 y ConvRot, prefiere buckets con crop cuadrado mientras validas Mage-Flow. Con buckets de aspecto arbitrario, SDNQ debe compilar y cachear muchas formas de activación, lo que puede dominar ejecuciones cortas. Un smoke LoRA Domokun en H100 80GB con crop cuadrado centrado usó un solo bucket `1.0` y produjo rangos de loss estables en 100 pasos:
+
+| Ruta de precisión | Rango de loss | Loss media | Loop s/step | Paso medio |
+| --- | ---: | ---: | ---: | ---: |
+| BF16 | `0.117..1.17` | `0.5689` | `0.189` | `0.177` |
+| FP8 weight-only TorchAO | `0.120..1.17` | `0.5696` | `0.234` | `0.222` |
+| SDNQ INT8 vanilla | `0.129..1.17` | `0.5736` | `1.113` | `0.277` |
+| SDNQ ConvRot 256 | `0.124..1.17` | `0.5696` | `0.436` | `0.299` |
+
+La misma carga con buckets de aspecto arbitrario paso mucho mas tiempo compilando formas de entrada SDNQ. Mantén el text encoder congelado; el cache inicial es costoso, pero no deberia entrenarse en ejecuciones LoRA normales. NF4 y otros presets de cuantización pueden seguir siendo útiles.
 
 SimpleTuner incluye una copia vendorizada del código MIT de Mage-Flow y lo envuelve en pipelines nativas de Diffusers para validación.

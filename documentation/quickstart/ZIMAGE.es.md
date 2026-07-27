@@ -20,6 +20,18 @@ Necesitarás:
 
 Las GPUs de Apple no se recomiendan para entrenamiento.
 
+### Rendimiento medido con SDNQ Hadamard
+
+Estas mediciones usaron el ejemplo `z-image-turbo.peft-lora` de Domokun durante 1000 pasos con validacion activada, `base_model_precision=int8-sdnq`, `sdnq_use_hadamard=true`, `sdnq_group_size=-1`, `sdnq_hadamard_group_size=256` y gradient checkpointing activado. Consulta la [configuracion rapida de ConvRot / Hadamard SDNQ](../experimental/CONVROT.md#quick-setup) para las opciones que activan esta ruta. Usalas como puntos de comparacion para esta receta, no como garantias de hardware.
+
+| GPU | Ejecucion | s/paso del loop | Paso medio | p50 | p95 | VRAM maxima asignada |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| H100 80GB | ruta SDNQ Hadamard actual | 1.107 | 1.087 | 1.071 | 1.109 | 9.70 GiB |
+| L40S | ruta SDNQ Hadamard actual | 1.026 | 1.018 | 1.002 | 1.040 | 9.66 GiB |
+| L40S | baseline SDNQ Hadamard | 1.131 | 1.072 | 1.055 | 1.102 | 9.66 GiB |
+
+En la comparacion con caches calientes en L40S, la ruta actual fue 10.3% mas rapida por tiempo de loop y 5.2% mas rapida por media de paso medida que el baseline SDNQ Hadamard.
+
 ### Offloading de memoria (opcional)
 
 El offloading agrupado de módulos reduce drásticamente la presión de VRAM cuando el cuello de botella son los pesos del transformer. Puedes habilitarlo agregando los siguientes flags a `TRAINER_EXTRA_ARGS` (o en la página Hardware de la WebUI):
