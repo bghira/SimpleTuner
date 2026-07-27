@@ -763,6 +763,27 @@ class TestTrainer(unittest.TestCase):
 
         mock_all_reduce.assert_called_once()
 
+    def test_fsdp2_full_export_failure_guard_raises_when_peer_rank_failed(self):
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(num_processes=2, device=torch.device("cpu"))
+
+        def mark_remote_failure(tensor, op=None):
+            tensor.fill_(1)
+
+        with (
+            patch("simpletuner.helpers.training.trainer.torch.distributed.is_available", return_value=True),
+            patch("simpletuner.helpers.training.trainer.torch.distributed.is_initialized", return_value=True),
+            patch(
+                "simpletuner.helpers.training.trainer.torch.distributed.all_reduce",
+                side_effect=mark_remote_failure,
+            ) as mock_all_reduce,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "failed on another rank"):
+                with trainer._fsdp2_full_export_failure_guard(True):
+                    pass
+
+        mock_all_reduce.assert_called_once()
+
     def test_run_intermediary_validation_passes_step_to_would_validate(self):
         trainer = object.__new__(Trainer)
         validation = MagicMock()
