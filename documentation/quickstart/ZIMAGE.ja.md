@@ -20,6 +20,18 @@ Z-Image は Flux よりメモリが少ないものの、強力な GPU が有利�
 
 Apple GPU は学習に推奨されません。
 
+### SDNQ Hadamard の測定性能
+
+これらの測定は、`z-image-turbo.peft-lora` の Domokun 例を 1000 step、validation 有効、`base_model_precision=int8-sdnq`、`sdnq_use_hadamard=true`、`sdnq_group_size=-1`、`sdnq_hadamard_group_size=256`、gradient checkpointing 有効で実行したものです。この path を有効化する option は [ConvRot / Hadamard SDNQ quick setup](../experimental/CONVROT.md#quick-setup) を参照してください。このレシピの比較値として扱い、ハードウェア保証とは見なさないでください。
+
+| GPU | 実行 | train loop 秒/step | 平均 train step | p50 | p95 | peak allocated VRAM |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| H100 80GB | 現行 SDNQ Hadamard path | 1.107 | 1.087 | 1.071 | 1.109 | 9.70 GiB |
+| L40S | 現行 SDNQ Hadamard path | 1.026 | 1.018 | 1.002 | 1.040 | 9.66 GiB |
+| L40S | baseline SDNQ Hadamard path | 1.131 | 1.072 | 1.055 | 1.102 | 9.66 GiB |
+
+warm cache の L40S 比較では、現行 path は baseline SDNQ Hadamard path より train-loop wall time で 10.3%、測定 train-step 平均で 5.2% 高速でした。
+
 ### メモリオフロード（オプション）
 
 Transformer 重みがボトルネックの場合、グループオフロードで VRAM を大幅に削減できます。`TRAINER_EXTRA_ARGS`（または WebUI の Hardware ページ）に以下を追加します:
