@@ -278,10 +278,11 @@ class SaveHookMetadataTests(unittest.TestCase):
         manager.accelerator.distributed_type = DistributedType.FSDP
         manager.accelerator.state = SimpleNamespace(fsdp_plugin=SimpleNamespace(fsdp_version=2))
 
-        with patch("simpletuner.helpers.training.save_hooks.compare_versions", return_value=False):
+        with patch("simpletuner.helpers.training.save_hooks.compare_versions", return_value=False) as compare_versions:
             with self.assertRaisesRegex(RuntimeError, "accelerate>=1.8.0"):
                 manager.validate_fsdp2_pipeline_export()
 
+        compare_versions.assert_called_once_with("accelerate", ">=", "1.8.0")
         self.assertIsNone(manager.fsdp2_pipeline_export_spec)
 
     def test_validate_fsdp2_pipeline_export_populates_spec(self):
@@ -303,9 +304,10 @@ class SaveHookMetadataTests(unittest.TestCase):
         manager.accelerator.distributed_type = DistributedType.FSDP
         manager.accelerator.state = SimpleNamespace(fsdp_plugin=SimpleNamespace(fsdp_version=2))
 
-        with patch("simpletuner.helpers.training.save_hooks.compare_versions", return_value=True):
+        with patch("simpletuner.helpers.training.save_hooks.compare_versions", return_value=True) as compare_versions:
             manager.validate_fsdp2_pipeline_export()
 
+        compare_versions.assert_called_once_with("accelerate", ">=", "1.8.0")
         self.assertIsNotNone(manager.fsdp2_pipeline_export_spec)
         self.assertEqual(manager.fsdp2_pipeline_export_spec.pipeline_type, PipelineTypes.TEXT2IMG)
         self.assertEqual(manager.fsdp2_pipeline_export_spec.component_name, "transformer")
@@ -331,9 +333,11 @@ class SaveHookMetadataTests(unittest.TestCase):
         manager.accelerator.distributed_type = DistributedType.FSDP
         manager.accelerator.state = SimpleNamespace(fsdp_plugin=SimpleNamespace(fsdp_version=2))
 
-        with patch("simpletuner.helpers.training.save_hooks.compare_versions", return_value=True):
+        with patch("simpletuner.helpers.training.save_hooks.compare_versions", return_value=True) as compare_versions:
             with self.assertRaisesRegex(RuntimeError, "registered pipeline component"):
                 manager.validate_fsdp2_pipeline_export()
+
+        compare_versions.assert_called_once_with("accelerate", ">=", "1.8.0")
 
     def test_materialize_fsdp2_state_dict_for_save_applies_ema_weights(self):
         component = _DummyExportComponent(width=2)

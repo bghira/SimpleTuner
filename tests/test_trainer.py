@@ -784,6 +784,20 @@ class TestTrainer(unittest.TestCase):
 
         mock_all_reduce.assert_called_once()
 
+    def test_fsdp2_full_export_failure_guard_allows_successful_collective(self):
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(num_processes=2, device=torch.device("cpu"))
+
+        with (
+            patch("simpletuner.helpers.training.trainer.torch.distributed.is_available", return_value=True),
+            patch("simpletuner.helpers.training.trainer.torch.distributed.is_initialized", return_value=True),
+            patch("simpletuner.helpers.training.trainer.torch.distributed.all_reduce") as mock_all_reduce,
+        ):
+            with trainer._fsdp2_full_export_failure_guard(True):
+                pass
+
+        mock_all_reduce.assert_called_once()
+
     def test_run_intermediary_validation_passes_step_to_would_validate(self):
         trainer = object.__new__(Trainer)
         validation = MagicMock()
