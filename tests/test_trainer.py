@@ -1372,6 +1372,46 @@ class TestTrainer(unittest.TestCase):
         with self.assertRaises(ValueError):
             trainer._load_fsdp_plugin()
 
+    def test_load_fsdp_plugin_rejects_cpu_offload_with_torchao_optimizer_offload(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            fsdp_enable=True,
+            fsdp_version=2,
+            fsdp_reshard_after_forward=True,
+            fsdp_cpu_ram_efficient_loading=False,
+            fsdp_cpu_offload=True,
+            fsdp_state_dict_type="SHARDED_STATE_DICT",
+            fsdp_auto_wrap_policy="transformer_based_wrap",
+            fsdp_transformer_layer_cls_to_wrap=None,
+            optimizer="adamw_bf16",
+            optimizer_cpu_offload_method="torchao",
+            optimizer_release_gradients=False,
+            deepspeed_config=None,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "post-accumulate gradient hook"):
+            trainer._load_fsdp_plugin()
+
+    def test_load_fsdp_plugin_rejects_cpu_offload_with_optimi_gradient_release(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            fsdp_enable=True,
+            fsdp_version=2,
+            fsdp_reshard_after_forward=True,
+            fsdp_cpu_ram_efficient_loading=False,
+            fsdp_cpu_offload=True,
+            fsdp_state_dict_type="SHARDED_STATE_DICT",
+            fsdp_auto_wrap_policy="transformer_based_wrap",
+            fsdp_transformer_layer_cls_to_wrap=None,
+            optimizer="optimi-adamw",
+            optimizer_cpu_offload_method="none",
+            optimizer_release_gradients=True,
+            deepspeed_config=None,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "post-accumulate gradient hook"):
+            trainer._load_fsdp_plugin()
+
     def test_resume_and_prepare_initializes_ema_after_prepare(self):
         trainer = object.__new__(Trainer)
         trainer.ema_model = None

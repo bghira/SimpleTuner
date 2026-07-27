@@ -215,6 +215,47 @@ class TestFSDPCmdArgs(unittest.TestCase):
                 exit_on_error=False,
             )
 
+    def test_fsdp2_cpu_offload_rejects_optimi_gradient_release(self):
+        tmp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
+        base_args = [
+            "--model_family=sdxl",
+            "--model_type=full",
+            f"--output_dir={tmp_dir}",
+            "--optimizer=optimi-adamw",
+            "--data_backend_config=dummy",
+        ]
+        with self.assertRaisesRegex(ValueError, "post-accumulate gradient hook"):
+            parse_cmdline_args(
+                input_args=base_args
+                + [
+                    "--fsdp_enable",
+                    "--fsdp_version=2",
+                    "--fsdp_cpu_offload",
+                    "--optimizer_release_gradients",
+                ],
+                exit_on_error=False,
+            )
+
+    def test_fsdp2_cpu_offload_allows_standard_optimizer(self):
+        tmp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
+        args = parse_cmdline_args(
+            input_args=[
+                "--model_family=sdxl",
+                "--model_type=full",
+                f"--output_dir={tmp_dir}",
+                "--optimizer=adamw_bf16",
+                "--data_backend_config=dummy",
+                "--fsdp_enable",
+                "--fsdp_version=2",
+                "--fsdp_cpu_offload",
+            ],
+            exit_on_error=False,
+        )
+
+        self.assertTrue(args.fsdp_cpu_offload)
+
 
 if __name__ == "__main__":
     unittest.main()

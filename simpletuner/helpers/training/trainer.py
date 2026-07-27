@@ -1196,6 +1196,21 @@ class Trainer:
             )
             setattr(self.config, "gradient_checkpointing", False)
 
+        if fsdp_version == 2 and cpu_offload:
+            optimizer_name = str(getattr(self.config, "optimizer", "") or "").lower()
+            uses_optimi_gradient_release = bool(getattr(self.config, "optimizer_release_gradients", False)) and (
+                "optimi" in optimizer_name
+            )
+            uses_torchao_cpu_offload_optimizer = (
+                str(getattr(self.config, "optimizer_cpu_offload_method", "") or "").lower() == "torchao"
+            )
+            if uses_optimi_gradient_release or uses_torchao_cpu_offload_optimizer:
+                raise RuntimeError(
+                    "FSDP v2 CPU parameter offload is not compatible with post-accumulate gradient hook based "
+                    "optimizer paths. Disable fsdp_cpu_offload, optimizer_release_gradients, or "
+                    "optimizer_cpu_offload_method=torchao."
+                )
+
         plugin_kwargs = {
             "fsdp_version": fsdp_version,
             "reshard_after_forward": reshard_after_forward,
