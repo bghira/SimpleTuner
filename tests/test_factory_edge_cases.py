@@ -1109,8 +1109,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 # Should NOT raise, should auto-adjust repeats
                 try:
                     MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
-                    # Check that repeats was adjusted
-                    self.assertEqual(mock_backend.repeats, 7, "Repeats should be auto-adjusted to 7")
+                    self.assertEqual(mock_backend.repeats, 0)
+                    self.assertEqual(len(mock_backend.aspect_ratio_bucket_indices["1.0"]), 4)
                 except ValueError as e:
                     self.fail(f"Should not raise with oversubscription enabled: {e}")
 

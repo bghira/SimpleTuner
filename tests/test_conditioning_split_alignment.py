@@ -1,3 +1,4 @@
+import json
 import multiprocessing
 import os
 import unittest
@@ -423,6 +424,41 @@ class TestConditioningSplitAlignment(unittest.TestCase):
             total_conditioning_images,
             0,
             "Conditioning duplication should retain samples even when cache reload returns empty data.",
+        )
+
+    def test_rank_local_conditioning_schedule_does_not_overwrite_target_cache(self):
+        base_images = {"1.0": [f"/datasets/train/img_{i}.png" for i in range(16)]}
+        accelerator = self._init_state(num_processes=4, process_index=1, train_batch_size=8)
+        source_schedule = {}
+        source_sentinel = {"config": {}, "aspect_ratio_bucket_indices": {"1.0": ["canonical-source-cache"]}}
+        sentinel = {"config": {}, "aspect_ratio_bucket_indices": {"1.0": ["canonical-target-cache"]}}
+
+        def before_copy(train_meta, cond_meta, train_backend, cond_backend, *_args):
+            source_schedule.update({bucket: list(paths) for bucket, paths in train_meta.aspect_ratio_bucket_indices.items()})
+            train_backend.write(train_meta.cache_file, json.dumps(source_sentinel))
+            cond_backend.write(cond_meta.cache_file, json.dumps(sentinel))
+
+        train_meta, cond_meta = self._prepare_metadata_backends(
+            accelerator=accelerator,
+            base_buckets=base_images,
+            source_id="cache_source",
+            source_dir="/datasets/train",
+            conditioning_id="cache_conditioning",
+            conditioning_dir="/datasets/control",
+            before_copy_callback=before_copy,
+        )
+
+        self.assertTrue(train_meta.read_only)
+        self.assertTrue(cond_meta.read_only)
+        self.assertEqual(source_schedule, train_meta.aspect_ratio_bucket_indices)
+        self.assertEqual(json.loads(train_meta.data_backend.read(train_meta.cache_file)), source_sentinel)
+        self.assertEqual(
+            json.loads(cond_meta.data_backend.read(cond_meta.cache_file))["aspect_ratio_bucket_indices"],
+            sentinel["aspect_ratio_bucket_indices"],
+        )
+        self.assertEqual(
+            cond_meta.aspect_ratio_bucket_indices["1.0"],
+            [path.replace("/datasets/train", "/datasets/control", 1) for path in source_schedule["1.0"]],
         )
 
     def test_reference_strict_duplication_multi_process_reload(self):

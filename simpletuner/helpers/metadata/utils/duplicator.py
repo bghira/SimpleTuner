@@ -21,19 +21,7 @@ class DatasetDuplicator:
         if source_meta is None or target_meta is None:
             raise ValueError(f"Both backends must have metadata_backend defined. Received {source_meta} \n\n {target_meta}")
 
-        logger.debug("Reloading metadata caches...")
-        prior_source_buckets = {
-            bucket: list(paths) for bucket, paths in getattr(source_meta, "aspect_ratio_bucket_indices", {}).items()
-        }
-        prior_source_metadata = dict(source_meta.image_metadata) if getattr(source_meta, "image_metadata", None) else None
-        source_meta.reload_cache(set_config=False)
-        if not source_meta.aspect_ratio_bucket_indices and prior_source_buckets:
-            logger.warning(
-                "Source metadata cache reload returned no buckets; restoring in-memory snapshot to avoid data loss."
-            )
-            source_meta.aspect_ratio_bucket_indices = {bucket: list(paths) for bucket, paths in prior_source_buckets.items()}
-            if prior_source_metadata is not None:
-                source_meta.image_metadata = prior_source_metadata
+        logger.debug("Reloading target metadata cache...")
         target_meta.reload_cache(set_config=False)
 
         # Get the instance directories for path translation
@@ -88,7 +76,7 @@ class DatasetDuplicator:
         else:
             # Regular copy without path translation
             logger.info("Copying metadata without path translation")
-            target_meta.set_metadata(metadata_backend=source_meta, update_json=True)
+            target_meta.set_metadata(metadata_backend=source_meta, update_json=False)
 
         source_config = source_backend.get("config", {}) or {}
         target_config = target_backend.get("config", {}) or {}
@@ -131,10 +119,8 @@ class DatasetDuplicator:
 
         target_meta.config = target_config
 
-        # Save the updated metadata
-        target_meta.save_cache()
-
-        # IMPORTANT: save_cache() only saves bucket indices, we must also save the image_metadata
+        # Bucket indices may be rank-local here; do not overwrite the canonical target cache.
+        target_meta.set_readonly()
         if hasattr(target_meta, "save_image_metadata"):
             target_meta.save_image_metadata()
             logger.debug("Saved image_metadata to disk")
@@ -144,7 +130,6 @@ class DatasetDuplicator:
         logger.info("Metadata copied successfully.")
         source_meta.print_debug_info()
         target_meta.print_debug_info()
-        target_meta.set_readonly()
 
     @staticmethod
     def generate_conditioning_datasets(global_config, source_backend_config):
