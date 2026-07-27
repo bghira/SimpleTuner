@@ -1058,10 +1058,6 @@ def _sdnq_model(
         # Silence sdnq startup logs
         logging.getLogger("sdnq").setLevel(logging.WARNING)
         import sdnq.common as sdnq_common
-
-        from simpletuner.helpers.training.sdnq_compat import apply_sdnq_checkpointed_backward_fix
-
-        apply_sdnq_checkpointed_backward_fix(logger)
         from sdnq.training import sdnq_training_post_load_quant
     except ImportError as e:
         raise ImportError(f"To use SDNQ, please install the sdnq library: `pip install sdnq`: {e}")

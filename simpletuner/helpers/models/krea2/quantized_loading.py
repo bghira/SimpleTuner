@@ -129,9 +129,6 @@ def _materialize_krea2_meta_buffers(model: nn.Module) -> None:
 
 def _load_sdnq_training_symbols():
     try:
-        from simpletuner.helpers.training.sdnq_compat import apply_sdnq_checkpointed_backward_fix
-
-        apply_sdnq_checkpointed_backward_fix()
         from sdnq.dequantizer import SDNQDequantizer
         from sdnq.layers import get_sdnq_wrapper_class
         from sdnq.training.forward import get_forward_func
