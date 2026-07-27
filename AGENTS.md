@@ -40,6 +40,7 @@
 - Problems should always be provable through tests, logging, or other means
 - Generally speaking, it's fine to run the full application end-to-end to verify a fix, "it's heavy" is not a valid excuse to avoid verification - we're on a ML development workstation that's designed to allow running these workloads
 - For the most part, things should not be marked as CUDA-only unless it relies on third-party compiled CUDA kernels or similar. Don't be afraid to use the available accelerator eg. mps, cuda, if available on the system opportunistically.
+- Do not assume checkpoint resume supports changing topology or dataset settings. Changing DDP/FSDP/CP layout, world size, batch sizing, gradient accumulation, repeats, bucket splitting, shuffling, or dataloader configuration between save and resume can produce unexpected behavior; avoid adding compatibility fallbacks unless support for that specific change is explicitly required and verified.
 
 ## Frontend testing
 

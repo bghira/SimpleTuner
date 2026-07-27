@@ -171,7 +171,16 @@ Start with `bf16` when it fits. If it does not, prefer FP8 weight-only TorchAO o
 }
 ```
 
-In Mage-Flow LoRA smoke tests, int8 quantisation produced suspicious loss spikes compared with FP8 weight-only TorchAO. Avoid int8 Mage-Flow presets unless you validate the loss curve on your dataset. NF4 and other SimpleTuner quantisation presets may also be useful for LoRA training. Keep the text encoder frozen; the initial cache pass is expensive but it should not be trained for normal LoRA runs.
+For SDNQ INT8 and ConvRot, prefer square-crop buckets while validating Mage-Flow. With arbitrary aspect buckets, SDNQ has to compile and cache many activation shapes, which can dominate short runs. A H100 80GB Domokun LoRA smoke with center square crop used one `1.0` bucket and produced stable 100-step loss ranges:
+
+| Precision path | Loss range | Mean loss | Loop s/step | Mean step |
+| --- | ---: | ---: | ---: | ---: |
+| BF16 | `0.117..1.17` | `0.5689` | `0.189` | `0.177` |
+| FP8 weight-only TorchAO | `0.120..1.17` | `0.5696` | `0.234` | `0.222` |
+| SDNQ INT8 vanilla | `0.129..1.17` | `0.5736` | `1.113` | `0.277` |
+| SDNQ ConvRot 256 | `0.124..1.17` | `0.5696` | `0.436` | `0.299` |
+
+The same workload with arbitrary aspect buckets spent far more time compiling SDNQ input shapes. Keep the text encoder frozen; the initial cache pass is expensive but it should not be trained for normal LoRA runs. NF4 and other SimpleTuner quantisation presets may also be useful for LoRA training.
 
 ## Implementation notes
 

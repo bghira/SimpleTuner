@@ -19,6 +19,7 @@ simpletuner/examples/krea2.peft-lora/config.json
   "model_type": "lora",
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "mixed_precision": "bf16",
+  "attention_mechanism": "cudnn",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "train_batch_size": 1,
@@ -38,6 +39,7 @@ TorchAO int8 weight-only 可以显著降低 VRAM，但在测试的 SimpleTuner �
 
 - 能放下时使用 `bf16`。
 - 需要显存余量时使用 `int8-torchao`。
+- 在 NVIDIA GPU 上使用 `attention_mechanism=cudnn`；Krea2 的 native SDPA 路径可能占用足够多的内存，使本应能放下的 L40S 级训练 run OOM。
 - 保持 `gradient_checkpointing=true`。
 - 保持 `fuse_qkv_projections=true`。
 - 只有在确认 batch/resolution 能放下后，才启用 `dynamo_backend=inductor`、`dynamo_mode=reduce-overhead` 和 `dynamo_use_regional_compilation=true`。
@@ -52,6 +54,7 @@ TorchAO int8 weight-only 可以显著降低 VRAM，但在测试的 SimpleTuner �
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "base_model_precision": "no_change",
   "mixed_precision": "bf16",
+  "attention_mechanism": "cudnn",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "optimizer": "optimi-lion",

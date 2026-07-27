@@ -10,15 +10,26 @@ from accelerate.utils import DistributedType
 from safetensors import safe_open
 from safetensors.torch import save_file
 
-from simpletuner.helpers.models.common import ModelFoundation, PipelineTypes
-from simpletuner.helpers.training.save_hooks import MODEL_SPEC_VERSION, SaveHookManager, _materialize_state_dict_for_save
+from simpletuner.helpers.models.common import ModelFoundation, ModelTypes, PipelineTypes
+from simpletuner.helpers.training.save_hooks import (
+    MODEL_SPEC_VERSION,
+    SaveHookManager,
+    _materialize_fsdp2_state_dict_for_save,
+    _materialize_state_dict_for_save,
+)
 
 
 class _DummyAccelerator:
     is_main_process = True
+    distributed_type = DistributedType.NO
+    device = torch.device("cpu")
+    state = None
 
     def unwrap_model(self, model):
         return model
+
+    def get_state_dict(self, model, unwrap=False):
+        return model.state_dict()
 
 
 class _DummyBaseModule:
@@ -60,6 +71,46 @@ class _DummyModel:
 
     def get_text_encoder(self, index: int):
         return self._text_encoders.get(index)
+
+
+class _DummyExportPipeline:
+    transformer_name = "transformer"
+
+    @classmethod
+    def save_pretrained(cls, *args, **kwargs):
+        return None
+
+
+class _DummyBrokenExportPipeline(_DummyExportPipeline):
+    transformer_name = ""
+
+
+class _DummyExportComponent(torch.nn.Module):
+    def __init__(self, width=2):
+        super().__init__()
+        self.config = SimpleNamespace(width=width)
+        self.weight = torch.nn.Parameter(torch.arange(float(width)).reshape(1, width))
+        self.bias = torch.nn.Parameter(torch.ones(width))
+        self.frozen = torch.nn.Parameter(torch.zeros(1), requires_grad=False)
+
+    @classmethod
+    def from_config(cls, config):
+        return cls(width=config.width)
+
+
+class _DummyFullModel(_DummyModel):
+    MODEL_CLASS = _DummyExportComponent
+    MODEL_TYPE = ModelTypes.TRANSFORMER
+    DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
+
+    def __init__(self, trained_component, pipeline_class=_DummyExportPipeline, controlnet=False):
+        super().__init__(trained_component=trained_component)
+        self.config = SimpleNamespace(controlnet=controlnet)
+        self.PIPELINE_CLASSES = {
+            PipelineTypes.TEXT2IMG: pipeline_class,
+            PipelineTypes.IMG2IMG: pipeline_class,
+            PipelineTypes.CONTROLNET: pipeline_class,
+        }
 
 
 class _DummySavePipeline:
@@ -207,6 +258,105 @@ class SaveHookMetadataTests(unittest.TestCase):
 
         self.assertEqual(manager.ema_model.decay, 0.99)
         self.assertEqual(manager.ema_model.optimization_step, 42)
+
+    def test_validate_fsdp2_pipeline_export_rejects_old_accelerate(self):
+        trained_component = _DummyExportComponent()
+        model = _DummyFullModel(trained_component=trained_component)
+        manager = SaveHookManager(
+            args=SimpleNamespace(
+                use_ema=False,
+                model_type="full",
+                lora_type="standard",
+                controlnet=False,
+                validation_using_datasets=False,
+            ),
+            model=model,
+            ema_model=_ema_stub,
+            accelerator=_DummyAccelerator(),
+            use_deepspeed_optimizer=False,
+        )
+        manager.accelerator.distributed_type = DistributedType.FSDP
+        manager.accelerator.state = SimpleNamespace(fsdp_plugin=SimpleNamespace(fsdp_version=2))
+
+        with patch("simpletuner.helpers.training.save_hooks.compare_versions", return_value=False) as compare_versions:
+            with self.assertRaisesRegex(RuntimeError, "accelerate>=1.8.0"):
+                manager.validate_fsdp2_pipeline_export()
+
+        compare_versions.assert_called_once_with("accelerate", ">=", "1.8.0")
+        self.assertIsNone(manager.fsdp2_pipeline_export_spec)
+
+    def test_validate_fsdp2_pipeline_export_populates_spec(self):
+        trained_component = _DummyExportComponent(width=3)
+        model = _DummyFullModel(trained_component=trained_component)
+        manager = SaveHookManager(
+            args=SimpleNamespace(
+                use_ema=False,
+                model_type="full",
+                lora_type="standard",
+                controlnet=False,
+                validation_using_datasets=False,
+            ),
+            model=model,
+            ema_model=_ema_stub,
+            accelerator=_DummyAccelerator(),
+            use_deepspeed_optimizer=False,
+        )
+        manager.accelerator.distributed_type = DistributedType.FSDP
+        manager.accelerator.state = SimpleNamespace(fsdp_plugin=SimpleNamespace(fsdp_version=2))
+
+        with patch("simpletuner.helpers.training.save_hooks.compare_versions", return_value=True) as compare_versions:
+            manager.validate_fsdp2_pipeline_export()
+
+        compare_versions.assert_called_once_with("accelerate", ">=", "1.8.0")
+        self.assertIsNotNone(manager.fsdp2_pipeline_export_spec)
+        self.assertEqual(manager.fsdp2_pipeline_export_spec.pipeline_type, PipelineTypes.TEXT2IMG)
+        self.assertEqual(manager.fsdp2_pipeline_export_spec.component_name, "transformer")
+        self.assertIs(manager.fsdp2_pipeline_export_spec.model_class, _DummyExportComponent)
+        self.assertEqual(manager.fsdp2_pipeline_export_spec.model_config.width, 3)
+
+    def test_validate_fsdp2_pipeline_export_rejects_invalid_component_registration(self):
+        trained_component = _DummyExportComponent()
+        model = _DummyFullModel(trained_component=trained_component, pipeline_class=_DummyBrokenExportPipeline)
+        manager = SaveHookManager(
+            args=SimpleNamespace(
+                use_ema=False,
+                model_type="full",
+                lora_type="standard",
+                controlnet=False,
+                validation_using_datasets=False,
+            ),
+            model=model,
+            ema_model=_ema_stub,
+            accelerator=_DummyAccelerator(),
+            use_deepspeed_optimizer=False,
+        )
+        manager.accelerator.distributed_type = DistributedType.FSDP
+        manager.accelerator.state = SimpleNamespace(fsdp_plugin=SimpleNamespace(fsdp_version=2))
+
+        with patch("simpletuner.helpers.training.save_hooks.compare_versions", return_value=True) as compare_versions:
+            with self.assertRaisesRegex(RuntimeError, "registered pipeline component"):
+                manager.validate_fsdp2_pipeline_export()
+
+        compare_versions.assert_called_once_with("accelerate", ">=", "1.8.0")
+
+    def test_materialize_fsdp2_state_dict_for_save_applies_ema_weights(self):
+        component = _DummyExportComponent(width=2)
+        accelerator = _DummyAccelerator()
+        accelerator.distributed_type = DistributedType.FSDP
+        accelerator.state = SimpleNamespace(fsdp_plugin=SimpleNamespace(fsdp_version=2))
+        ema_weight = torch.full_like(component.weight, 9.0)
+        ema_bias = torch.full_like(component.bias, 7.0)
+        ema_model = SimpleNamespace(
+            shadow_params=[ema_weight, ema_bias],
+            _tracked_param_ids=[id(component.weight), id(component.bias)],
+        )
+
+        state_dict = _materialize_fsdp2_state_dict_for_save(accelerator, component, ema_model=ema_model)
+
+        self.assertEqual(state_dict["weight"].device.type, "cpu")
+        self.assertTrue(torch.equal(state_dict["weight"], ema_weight))
+        self.assertTrue(torch.equal(state_dict["bias"], ema_bias))
+        self.assertTrue(torch.equal(state_dict["frozen"], component.frozen.detach().cpu()))
 
     def test_save_hook_collects_metadata_for_transformer_and_text_encoder(self):
         text_encoder = _DummyTextEncoder("text_encoder")

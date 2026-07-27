@@ -34,6 +34,7 @@ import huggingface_hub
 import wandb
 from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
+from torch.distributed.tensor import DTensor
 
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
@@ -379,6 +380,33 @@ class Trainer:
             num_processes = 1
         return num_processes > 1 and torch.distributed.is_available() and torch.distributed.is_initialized()
 
+    @contextmanager
+    def _fsdp2_full_export_failure_guard(self, enabled: bool):
+        if not enabled or not self._distributed_collectives_ready():
+            yield
+            return
+
+        if self.accelerator is None:
+            raise RuntimeError("Accelerator must be initialized before running FSDP2 export collectives.")
+        status = torch.zeros((), dtype=torch.int32, device=self.accelerator.device)
+        try:
+            yield
+        finally:
+            original_exception_type = sys.exc_info()[0]
+            status.fill_(int(original_exception_type is not None))
+            try:
+                torch.distributed.all_reduce(status, op=torch.distributed.ReduceOp.MAX)
+            except Exception as collective_error:
+                if original_exception_type is not None:
+                    logger.error(
+                        "Failed to propagate FSDP2 final-export failure to peer ranks: %s",
+                        collective_error,
+                    )
+                else:
+                    raise
+            if original_exception_type is None and status.item():
+                raise RuntimeError("FSDP2 full-model export failed on another rank.")
+
     def _any_rank_reached_epoch_end(self, reached_epoch_end: bool) -> bool:
         if not self._distributed_collectives_ready():
             return reached_epoch_end
@@ -563,12 +591,17 @@ class Trainer:
         if self.config.grad_clip_method == "norm":
             grad_value = self.grad_norm
             if clone_norm_value:
-                grad_value = float(self.grad_norm.clone().detach())
+                grad_value = self._normalize_metric_value(self.grad_norm)
+                if grad_value is None:
+                    return
             target_logs[f"{prefix}grad_norm"] = grad_value
         elif (
             not require_value_method or self.config.grad_clip_method == "value"
         ) and not self.config.use_deepspeed_optimizer:
-            target_logs[f"{prefix}grad_absmax"] = self.grad_norm
+            grad_value = self.grad_norm
+            if clone_norm_value:
+                grad_value = float(self.grad_norm.clone().detach())
+            target_logs[f"{prefix}grad_absmax"] = grad_value
 
     def _config_uses_bitsandbytes(self) -> bool:
         if not getattr(self, "config", None):
@@ -1168,6 +1201,21 @@ class Trainer:
                 "FSDP activation checkpointing enabled; disabling model-level gradient checkpointing to avoid conflicts."
             )
             setattr(self.config, "gradient_checkpointing", False)
+
+        if fsdp_version == 2 and cpu_offload:
+            optimizer_name = str(getattr(self.config, "optimizer", "") or "").lower()
+            uses_optimi_gradient_release = bool(getattr(self.config, "optimizer_release_gradients", False)) and (
+                "optimi" in optimizer_name
+            )
+            uses_torchao_cpu_offload_optimizer = (
+                str(getattr(self.config, "optimizer_cpu_offload_method", "") or "").lower() == "torchao"
+            )
+            if uses_optimi_gradient_release or uses_torchao_cpu_offload_optimizer:
+                raise RuntimeError(
+                    "FSDP v2 CPU parameter offload is not compatible with post-accumulate gradient hook based "
+                    "optimizer paths. Disable fsdp_cpu_offload, optimizer_release_gradients, or "
+                    "optimizer_cpu_offload_method=torchao."
+                )
 
         plugin_kwargs = {
             "fsdp_version": fsdp_version,
@@ -2969,6 +3017,9 @@ class Trainer:
                     )
                     self.model.set_prepared_model(q_model, base_model=False)
 
+        if not preprocessing_models_only and not ema_only:
+            self.model.post_quantization_setup()
+
         if (
             getattr(self.config, "ramtorch", False)
             and not preprocessing_models_only
@@ -4112,6 +4163,7 @@ class Trainer:
         primary_model = self.model.get_trained_component(unwrap_model=False)
         if hasattr(self.model, "before_accelerator_prepare"):
             self.model.before_accelerator_prepare()
+        self.model_hooks.validate_fsdp2_pipeline_export()
         apply_standalone_context_parallel(self.accelerator, primary_model, self._context_parallel_topology)
         attach_shared_ramtorch_parameters = None
         if self._ramtorch_distributed() and primary_model is not None:
@@ -4684,16 +4736,13 @@ class Trainer:
             job_id=self.job_id,
         )
         self._emit_event(event)
-        training_state_filename = f"training_state.json"
-        if get_rank() > 0:
-            training_state_filename = f"training_state-{get_rank()}.json"
         for _, backend in StateTracker.get_data_backends().items():
             if "sampler" in backend:
                 backend["sampler"].load_states(
                     state_path=os.path.join(
                         self.config.output_dir,
                         path,
-                        training_state_filename,
+                        self.model_hooks.training_state_path,
                     ),
                 )
         self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
@@ -5298,7 +5347,11 @@ class Trainer:
             metrics.setdefault("total_batch_size", batch_size_value)
         metrics.update(self.iteration_tracker.iteration_metrics())
         # Add gradient metrics (same logic as _update_grad_metrics but for webhook payload)
-        self._update_grad_metrics(metrics, clone_norm_value=True, is_regularisation_data=parent_loss is not None)
+        self._update_grad_metrics(
+            metrics,
+            clone_norm_value=True,
+            is_regularisation_data=parent_loss is not None,
+        )
         if extra_metrics:
             for key, value in extra_metrics.items():
                 if value is None:
@@ -5690,11 +5743,36 @@ class Trainer:
         return overridden_batch
 
     def _max_grad_value(self):
-        max_grad_value = float("-inf")  # Start with a very small number
+        gradients = []
+        device_mesh = None
+        empty_local_gradient = None
         for param in self._get_trainable_parameters():
-            if param.grad is not None:
-                max_grad_value = max(max_grad_value, param.grad.abs().max().item())
+            gradient = param.grad
+            if gradient is None:
+                continue
+            if isinstance(gradient, DTensor):
+                device_mesh = gradient.device_mesh
+                gradient = gradient.to_local()
+                if gradient.numel() == 0:
+                    empty_local_gradient = gradient
+                    continue
+            gradients.append(gradient)
 
+        if gradients:
+            max_grad_value = torch.nn.utils.get_total_norm(gradients, norm_type=float("inf"))
+        elif empty_local_gradient is None:
+            return float("-inf")
+        else:
+            max_grad_value = empty_local_gradient.new_tensor(float("-inf"))
+
+        if device_mesh is not None:
+            if max_grad_value.device.type != device_mesh.device_type:
+                max_grad_value = max_grad_value.to(device_mesh.device_type)
+            torch.distributed.all_reduce(
+                max_grad_value,
+                op=torch.distributed.ReduceOp.MAX,
+                group=device_mesh.get_group(),
+            )
         return max_grad_value
 
     def prepare_batch(self, batch: dict):
@@ -6403,12 +6481,16 @@ class Trainer:
                                 if param.grad is not None:
                                     param.grad.data = param.grad.data.to(torch.float32)
 
-                        self.grad_norm = self._max_grad_value()
-                        if (
+                        should_clip_gradients = (
                             self.accelerator.sync_gradients
                             and self.config.optimizer not in ["optimi-stableadamw", "prodigy"]
                             and self.config.max_grad_norm > 0
+                        )
+                        if self.accelerator.sync_gradients and (
+                            self.config.grad_clip_method != "norm" or not should_clip_gradients
                         ):
+                            self.grad_norm = self._max_grad_value()
+                        if should_clip_gradients:
                             # StableAdamW/Prodigy do not need clipping, similar to Adafactor.
                             if self.config.fsdp_enable:
                                 # For FSDP, handle FSDP1/FSDP2 separately and surface failures instead of crashing.
@@ -6808,7 +6890,6 @@ class Trainer:
                 self._update_grad_metrics(
                     logs,
                     require_value_method=True,
-                    clone_norm_value=True,
                     is_regularisation_data=is_regularisation_data,
                 )
 
@@ -6870,6 +6951,14 @@ class Trainer:
             logger.info("Torch profiler stopped.")
         validation_images = None
         final_lora_save_kwargs = None
+        fsdp_plugin = getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None)
+        is_fsdp2_full_model_save = (
+            self.config.model_type == "full"
+            and self.accelerator.distributed_type == DistributedType.FSDP
+            and getattr(fsdp_plugin, "fsdp_version", 1) == 2
+        )
+        fsdp2_model_for_save = None
+        fsdp2_pipeline_export_spec = None
         if "lora" in self.config.model_type and "standard" == self.config.lora_type.lower():
             from simpletuner.helpers.training.save_hooks import _materialize_state_dict_for_save
 
@@ -6898,116 +6987,158 @@ class Trainer:
             if self.config.fsdp_enable:
                 self.accelerator.wait_for_everyone()
 
-        if self.accelerator.is_main_process:
-            event = lifecycle_stage_event(
-                key="model_save",
-                label="Saving Final Model",
-                status="running",
-                message=f"Finalizing model and saving to {self.config.output_dir}",
-                job_id=self.job_id,
-            )
-            self._emit_event(event)
-            self.mark_optimizer_eval()
-            if self.validation is not None:
-                AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
-                self.disable_gradient_checkpointing()
-                # Emit validation start lifecycle event for final validations
-                validation_start_event = lifecycle_stage_event(
-                    key="final_validation",
-                    label="Running Final Validations",
-                    status="running",
-                    message="Generating final validation images...",
-                    job_id=self.job_id,
+        with self._fsdp2_full_export_failure_guard(is_fsdp2_full_model_save):
+            if is_fsdp2_full_model_save:
+                from simpletuner.helpers.training.save_hooks import (
+                    _build_model_from_state_dict_for_save,
+                    _materialize_fsdp2_state_dict_for_save,
                 )
-                self._emit_event(validation_start_event)
-                validation_images = self.validation.run_validations(
-                    validation_type="final",
-                    step=self.state["global_step"],
-                    force_evaluation=True,
-                    skip_execution=True,
-                ).validation_images
-                # Emit validation completed lifecycle event
-                validation_completed_event = lifecycle_stage_event(
-                    key="final_validation",
-                    label="Running Final Validations",
-                    status="completed",
-                    message="Final validation images completed",
-                    job_id=self.job_id,
+
+                fsdp2_pipeline_export_spec = getattr(
+                    getattr(self, "model_hooks", None),
+                    "fsdp2_pipeline_export_spec",
+                    None,
                 )
-                self._emit_event(validation_completed_event)
-                # we don't have to do this but we will anyway.
-                AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
-            if self.model.get_trained_component() is not None:
-                self.model.model = unwrap_model(self.accelerator, self.model.model)
-            if "lora" in self.config.model_type and "standard" == self.config.lora_type.lower():
-                if final_lora_save_kwargs is None:
-                    raise RuntimeError("Final LoRA save kwargs were not materialized before the main-process save.")
-                self.model.save_lora_weights(
-                    **final_lora_save_kwargs,
+                if fsdp2_pipeline_export_spec is None:
+                    raise RuntimeError("FSDP2 full-model pipeline export was not validated before training.")
+                trained_component = self.model.get_trained_component(unwrap_model=False)
+                fsdp2_state_dict = _materialize_fsdp2_state_dict_for_save(
+                    self.accelerator,
+                    trained_component,
+                    ema_model=self.ema_model if self.config.use_ema else None,
                 )
-                del final_lora_save_kwargs
-                reclaim_memory()
-            elif "lora" in self.config.model_type and "lycoris" == self.config.lora_type.lower():
-                if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer:
-                    logger.info(f"Saving final LyCORIS checkpoint to {self.config.output_dir}")
-                    # Save final LyCORIS checkpoint.
-                    if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
-                        from simpletuner.helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME
-
-                        self.accelerator._lycoris_wrapped_network.save_weights(
-                            os.path.join(self.config.output_dir, LORA_SAFETENSORS_FILENAME),
-                            list(self.accelerator._lycoris_wrapped_network.parameters())[0].dtype,
-                            {"lycoris_config": json.dumps(self.lycoris_config)},  # metadata
-                        )
-                        shutil.copy2(
-                            self.config.lycoris_config,
-                            os.path.join(self.config.output_dir, "lycoris_config.json"),
-                        )
-
-            elif self.config.use_ema:
-                if self.model.get_trained_component() is not None:
-                    self.ema_model.copy_to(self.model.get_trained_component().parameters())
-
-            if self.config.model_type == "full":
-                if self.config.save_text_encoder:
-                    self.model.load_text_encoder()
-                self.model.load_vae()
-                pipeline = self.model.get_pipeline()
-                pipeline.save_pretrained(
-                    os.path.join(self.config.output_dir, "pipeline"),
-                    safe_serialization=True,
-                )
-                logger.info(f"Wrote pipeline to disk: {self.config.output_dir}/pipeline")
-
-            if self.hub_manager is not None and self.accelerator.is_main_process:
-                captured_step = self.state["global_step"]
-                captured_epoch = self.state["current_epoch"]
-
-                def _upload_final_model():
-                    repo_url = self.hub_manager.upload_model(
-                        validation_images,
-                        self.webhook_handler,
-                        global_step=captured_step,
-                        epoch=captured_epoch,
+                if self.accelerator.is_main_process:
+                    fsdp2_model_for_save = _build_model_from_state_dict_for_save(
+                        fsdp2_pipeline_export_spec.model_class,
+                        fsdp2_pipeline_export_spec.model_config,
+                        fsdp2_state_dict,
                     )
-                    return repo_url, self.config.output_dir, repo_url
+                del fsdp2_state_dict
 
-                try:
-                    self._schedule_hub_upload("final model upload", _upload_final_model)
-                except Exception as e:
-                    logger.error(f"Error uploading final model to hub: {e}")
-                self._finish_hub_uploads()
-            else:
-                self._run_post_upload_script(local_path=self.config.output_dir, remote_path=None)
-            # Mark model_save as completed
-            event = lifecycle_stage_event(
-                key="model_save",
-                label="Saving Final Model",
-                status="completed",
-                message=f"Model saved to {self.config.output_dir}",
-                job_id=self.job_id,
-            )
-            self._emit_event(event)
+            if self.accelerator.is_main_process:
+                event = lifecycle_stage_event(
+                    key="model_save",
+                    label="Saving Final Model",
+                    status="running",
+                    message=f"Finalizing model and saving to {self.config.output_dir}",
+                    job_id=self.job_id,
+                )
+                self._emit_event(event)
+                self.mark_optimizer_eval()
+                if self.validation is not None:
+                    AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
+                    self.disable_gradient_checkpointing()
+                    # Emit validation start lifecycle event for final validations
+                    validation_start_event = lifecycle_stage_event(
+                        key="final_validation",
+                        label="Running Final Validations",
+                        status="running",
+                        message="Generating final validation images...",
+                        job_id=self.job_id,
+                    )
+                    self._emit_event(validation_start_event)
+                    validation_images = self.validation.run_validations(
+                        validation_type="final",
+                        step=self.state["global_step"],
+                        force_evaluation=True,
+                        skip_execution=True,
+                    ).validation_images
+                    # Emit validation completed lifecycle event
+                    validation_completed_event = lifecycle_stage_event(
+                        key="final_validation",
+                        label="Running Final Validations",
+                        status="completed",
+                        message="Final validation images completed",
+                        job_id=self.job_id,
+                    )
+                    self._emit_event(validation_completed_event)
+                    # we don't have to do this but we will anyway.
+                    AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
+                if self.model.get_trained_component() is not None and not is_fsdp2_full_model_save:
+                    self.model.model = unwrap_model(self.accelerator, self.model.model)
+                if "lora" in self.config.model_type and "standard" == self.config.lora_type.lower():
+                    if final_lora_save_kwargs is None:
+                        raise RuntimeError("Final LoRA save kwargs were not materialized before the main-process save.")
+                    self.model.save_lora_weights(
+                        **final_lora_save_kwargs,
+                    )
+                    del final_lora_save_kwargs
+                    reclaim_memory()
+                elif "lora" in self.config.model_type and "lycoris" == self.config.lora_type.lower():
+                    if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer:
+                        logger.info(f"Saving final LyCORIS checkpoint to {self.config.output_dir}")
+                        # Save final LyCORIS checkpoint.
+                        if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
+                            from simpletuner.helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME
+
+                            self.accelerator._lycoris_wrapped_network.save_weights(
+                                os.path.join(self.config.output_dir, LORA_SAFETENSORS_FILENAME),
+                                list(self.accelerator._lycoris_wrapped_network.parameters())[0].dtype,
+                                {"lycoris_config": json.dumps(self.lycoris_config)},  # metadata
+                            )
+                            shutil.copy2(
+                                self.config.lycoris_config,
+                                os.path.join(self.config.output_dir, "lycoris_config.json"),
+                            )
+
+                elif self.config.use_ema and not is_fsdp2_full_model_save:
+                    if self.model.get_trained_component() is not None:
+                        self.ema_model.copy_to(self.model.get_trained_component().parameters())
+
+                if self.config.model_type == "full":
+                    if self.config.save_text_encoder:
+                        self.model.load_text_encoder()
+                    self.model.load_vae()
+                    if is_fsdp2_full_model_save:
+                        from simpletuner.helpers.training.save_hooks import _save_pipeline_with_component_for_save
+
+                        pipeline = self.model.get_pipeline(pipeline_type=fsdp2_pipeline_export_spec.pipeline_type)
+                        _save_pipeline_with_component_for_save(
+                            pipeline,
+                            fsdp2_pipeline_export_spec.component_name,
+                            fsdp2_model_for_save,
+                            os.path.join(self.config.output_dir, "pipeline"),
+                        )
+                    else:
+                        pipeline = self.model.get_pipeline()
+                        pipeline.save_pretrained(
+                            os.path.join(self.config.output_dir, "pipeline"),
+                            safe_serialization=True,
+                        )
+                    logger.info(f"Wrote pipeline to disk: {self.config.output_dir}/pipeline")
+                    if is_fsdp2_full_model_save:
+                        del fsdp2_model_for_save
+                        reclaim_memory()
+
+                if self.hub_manager is not None and self.accelerator.is_main_process:
+                    captured_step = self.state["global_step"]
+                    captured_epoch = self.state["current_epoch"]
+
+                    def _upload_final_model():
+                        repo_url = self.hub_manager.upload_model(
+                            validation_images,
+                            self.webhook_handler,
+                            global_step=captured_step,
+                            epoch=captured_epoch,
+                        )
+                        return repo_url, self.config.output_dir, repo_url
+
+                    try:
+                        self._schedule_hub_upload("final model upload", _upload_final_model)
+                    except Exception as e:
+                        logger.error(f"Error uploading final model to hub: {e}")
+                    self._finish_hub_uploads()
+                else:
+                    self._run_post_upload_script(local_path=self.config.output_dir, remote_path=None)
+                # Mark model_save as completed
+                event = lifecycle_stage_event(
+                    key="model_save",
+                    label="Saving Final Model",
+                    status="completed",
+                    message=f"Model saved to {self.config.output_dir}",
+                    job_id=self.job_id,
+                )
+                self._emit_event(event)
         self.accelerator.end_training()
         # Emit training_complete event after all model saving and validation is complete
         event = lifecycle_stage_event(

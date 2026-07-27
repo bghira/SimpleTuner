@@ -601,6 +601,29 @@ class Krea2Transformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftAdapt
             if isinstance(module, Krea2Attention):
                 module.unfuse_projections()
 
+    @classmethod
+    def from_single_file(
+        cls,
+        pretrained_model_link_or_path: str,
+        *args: Any,
+        filename: str | None = None,
+        subfolder: str | None = None,
+        revision: str | None = None,
+        torch_dtype: torch.dtype | None = None,
+        **kwargs: Any,
+    ) -> "Krea2Transformer2DModel":
+        del args, kwargs
+        from simpletuner.helpers.models.krea2.quantized_loading import load_krea2_comfy_convrot_checkpoint
+
+        return load_krea2_comfy_convrot_checkpoint(
+            cls,
+            pretrained_model_link_or_path,
+            filename=filename,
+            subfolder=subfolder,
+            revision=revision,
+            torch_dtype=torch_dtype,
+        )
+
     @apply_lora_scale("attention_kwargs")
     def forward(
         self,

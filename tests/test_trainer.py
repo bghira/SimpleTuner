@@ -763,6 +763,41 @@ class TestTrainer(unittest.TestCase):
 
         mock_all_reduce.assert_called_once()
 
+    def test_fsdp2_full_export_failure_guard_raises_when_peer_rank_failed(self):
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(num_processes=2, device=torch.device("cpu"))
+
+        def mark_remote_failure(tensor, op=None):
+            tensor.fill_(1)
+
+        with (
+            patch("simpletuner.helpers.training.trainer.torch.distributed.is_available", return_value=True),
+            patch("simpletuner.helpers.training.trainer.torch.distributed.is_initialized", return_value=True),
+            patch(
+                "simpletuner.helpers.training.trainer.torch.distributed.all_reduce",
+                side_effect=mark_remote_failure,
+            ) as mock_all_reduce,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "failed on another rank"):
+                with trainer._fsdp2_full_export_failure_guard(True):
+                    pass
+
+        mock_all_reduce.assert_called_once()
+
+    def test_fsdp2_full_export_failure_guard_allows_successful_collective(self):
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(num_processes=2, device=torch.device("cpu"))
+
+        with (
+            patch("simpletuner.helpers.training.trainer.torch.distributed.is_available", return_value=True),
+            patch("simpletuner.helpers.training.trainer.torch.distributed.is_initialized", return_value=True),
+            patch("simpletuner.helpers.training.trainer.torch.distributed.all_reduce") as mock_all_reduce,
+        ):
+            with trainer._fsdp2_full_export_failure_guard(True):
+                pass
+
+        mock_all_reduce.assert_called_once()
+
     def test_run_intermediary_validation_passes_step_to_would_validate(self):
         trainer = object.__new__(Trainer)
         validation = MagicMock()
@@ -1214,6 +1249,19 @@ class TestTrainer(unittest.TestCase):
         self.assertIn("grad_absmax", logs)
         self.assertIs(logs["grad_absmax"], trainer.grad_norm)
 
+    def test_update_grad_metrics_clones_absmax_value_when_requested(self):
+        trainer = self._build_trainer_for_grad_logging(
+            grad_clip_method="value",
+            use_deepspeed=False,
+            grad_value=torch.tensor(1.2),
+        )
+        logs = {}
+        trainer._update_grad_metrics(logs, clone_norm_value=True)
+        self.assertIn("grad_absmax", logs)
+        self.assertEqual(
+            logs["grad_absmax"], float(trainer.grad_norm.clone().detach())
+        )
+
     def test_update_grad_metrics_clones_norm_value_when_requested(self):
         trainer = self._build_trainer_for_grad_logging(
             grad_clip_method="norm",
@@ -1274,7 +1322,9 @@ class TestTrainer(unittest.TestCase):
         )
         metrics = trainer._compose_training_progress_metrics(epoch=1)
         self.assertIn("grad_absmax", metrics)
-        self.assertIs(metrics["grad_absmax"], trainer.grad_norm)
+        self.assertEqual(
+            metrics["grad_absmax"], float(trainer.grad_norm.clone().detach())
+        )
         self.assertNotIn("grad_norm", metrics)
 
     def test_compose_training_progress_metrics_excludes_grad_with_deepspeed(self):
@@ -1335,6 +1385,46 @@ class TestTrainer(unittest.TestCase):
         )
 
         with self.assertRaises(ValueError):
+            trainer._load_fsdp_plugin()
+
+    def test_load_fsdp_plugin_rejects_cpu_offload_with_torchao_optimizer_offload(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            fsdp_enable=True,
+            fsdp_version=2,
+            fsdp_reshard_after_forward=True,
+            fsdp_cpu_ram_efficient_loading=False,
+            fsdp_cpu_offload=True,
+            fsdp_state_dict_type="SHARDED_STATE_DICT",
+            fsdp_auto_wrap_policy="transformer_based_wrap",
+            fsdp_transformer_layer_cls_to_wrap=None,
+            optimizer="adamw_bf16",
+            optimizer_cpu_offload_method="torchao",
+            optimizer_release_gradients=False,
+            deepspeed_config=None,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "post-accumulate gradient hook"):
+            trainer._load_fsdp_plugin()
+
+    def test_load_fsdp_plugin_rejects_cpu_offload_with_optimi_gradient_release(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            fsdp_enable=True,
+            fsdp_version=2,
+            fsdp_reshard_after_forward=True,
+            fsdp_cpu_ram_efficient_loading=False,
+            fsdp_cpu_offload=True,
+            fsdp_state_dict_type="SHARDED_STATE_DICT",
+            fsdp_auto_wrap_policy="transformer_based_wrap",
+            fsdp_transformer_layer_cls_to_wrap=None,
+            optimizer="optimi-adamw",
+            optimizer_cpu_offload_method="none",
+            optimizer_release_gradients=True,
+            deepspeed_config=None,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "post-accumulate gradient hook"):
             trainer._load_fsdp_plugin()
 
     def test_resume_and_prepare_initializes_ema_after_prepare(self):
@@ -2254,6 +2344,51 @@ class TestTrainer(unittest.TestCase):
             self.assertEqual(group["running_d_numerator"].device, group["params"][0].device)
             self.assertEqual(group["running_d_denom"].device, group["params"][0].device)
             self.assertFalse(group["use_focus"])
+
+    @patch("simpletuner.helpers.training.trainer.get_rank", return_value=1)
+    @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_load_checkpoint")
+    def test_init_resume_checkpoint_loads_sampler_from_hook_training_state_path(self, mock_attention_backend, mock_get_rank):
+        trainer = object.__new__(Trainer)
+        trainer.model = Mock()
+        trainer.config = SimpleNamespace(
+            output_dir="/path/to/output",
+            resume_from_checkpoint="checkpoint-100",
+            num_train_epochs=1,
+            max_train_steps=100,
+            strict_epoch_limit=True,
+            optimizer="adamw",
+            lr_scheduler="constant",
+            is_schedulefree=False,
+            learning_rate=0.001,
+            musubi_blocks_to_swap=0,
+        )
+        trainer.config.total_steps_remaining_at_start = 100
+        trainer.accelerator = Mock(num_processes=2)
+        trainer.accelerator.wait_for_everyone = Mock()
+        trainer.accelerator.load_state = Mock()
+        trainer.state = {"global_step": 0, "first_epoch": 1, "current_epoch": 1, "global_resume_step": 0}
+        trainer.distiller = None
+        trainer.optimizer = Mock()
+        trainer.optimizer.param_groups = [{"lr": 0.1}]
+        trainer._emit_event = Mock()
+        trainer.job_id = "test-job"
+        trainer.model_hooks = SimpleNamespace(training_state_path="training_state-rank1.json")
+        sampler = Mock()
+        lr_scheduler = Mock()
+        lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
+
+        with patch(
+            "simpletuner.helpers.training.trainer.StateTracker.get_data_backends",
+            return_value={"foo": {"sampler": sampler}},
+        ):
+            with patch("simpletuner.helpers.training.trainer.StateTracker.get_global_step", return_value=10):
+                with patch("simpletuner.helpers.training.trainer.StateTracker.set_global_resume_step"):
+                    with patch("simpletuner.helpers.training.trainer.StateTracker.get_training_state", return_value={}):
+                        with patch("simpletuner.helpers.training.trainer.StateTracker.get_epoch", return_value=1):
+                            with patch("simpletuner.helpers.training.trainer.StateTracker.set_epoch"):
+                                trainer.init_resume_checkpoint(lr_scheduler=lr_scheduler)
+
+        sampler.load_states.assert_called_once_with(state_path="/path/to/output/checkpoint-100/training_state-rank1.json")
 
     def test_epoch_checkpoint_persists_next_epoch_without_state_mutation(self):
         with tempfile.TemporaryDirectory() as tmpdir:

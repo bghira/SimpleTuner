@@ -1239,6 +1239,20 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 "FSDP v2 uses DTensor-sharded parameters, but Quanto kernels do not register DTensor sharding "
                 f"strategies. Disable Quanto precision for FSDP v2 runs ({field_list}), or use non-FSDP LoRA training."
             )
+        if args.fsdp_version == 2 and getattr(args, "fsdp_cpu_offload", False):
+            optimizer_name = str(getattr(args, "optimizer", "") or "").lower()
+            uses_optimi_gradient_release = bool(getattr(args, "optimizer_release_gradients", False)) and (
+                "optimi" in optimizer_name
+            )
+            uses_torchao_cpu_offload_optimizer = (
+                str(getattr(args, "optimizer_cpu_offload_method", "") or "").lower() == "torchao"
+            )
+            if uses_optimi_gradient_release or uses_torchao_cpu_offload_optimizer:
+                raise ValueError(
+                    "FSDP v2 CPU parameter offload is not compatible with post-accumulate gradient hook based "
+                    "optimizer paths. Disable --fsdp_cpu_offload, --optimizer_release_gradients, or "
+                    "--optimizer_cpu_offload_method=torchao."
+                )
     else:
         # When FSDP is disabled, normalise auxiliary options so downstream logic can rely on None/False.
         args.fsdp_transformer_layer_cls_to_wrap = None

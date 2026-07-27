@@ -1098,6 +1098,7 @@ class QwenImageTransformer2DModel(
         self.proj_out = nn.Linear(self.inner_dim, patch_size * patch_size * self.out_channels, bias=True)
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=num_layers,
             blocks_to_swap=musubi_blocks_to_swap,
@@ -1108,6 +1109,9 @@ class QwenImageTransformer2DModel(
         # TREAD support
         self._tread_router = None
         self._tread_routes = None
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
 
     def set_router(self, router: TREADRouter, routes: Optional[List[Dict]] = None):
         """Set TREAD router and routes for token reduction during training."""
@@ -1403,7 +1407,14 @@ class QwenImageTransformer2DModel(
 
                     return custom_forward
 
-                encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
+                if self.gradient_checkpointing_backend == "unsloth":
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = self._gradient_checkpointing_func
+
+                encoder_hidden_states, hidden_states = checkpoint_fn(
                     create_custom_forward(block, modulate_index),
                     hidden_states,
                     encoder_hidden_states,

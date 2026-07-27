@@ -13,6 +13,7 @@ from simpletuner.helpers.models.mageflow.pipeline import MageFlowPipeline, _mage
 from simpletuner.helpers.models.mageflow.pipeline_edit import MageFlowEditPipeline
 from simpletuner.helpers.models.mageflow.transformer import MageFlowTransformer2DModel
 from simpletuner.helpers.models.mageflow.vendor.models.modules import _attn_backend as mageflow_attn_backend
+from simpletuner.helpers.models.mageflow.vendor.models.modules import mage_layers
 from simpletuner.helpers.models.mageflow.vendor.models.modules.text_encoder import _resolve_hf_attn_impl
 from simpletuner.helpers.models.mageflow.vendor.pipeline import _build_pack_ctx, _lens_to_cu
 from simpletuner.helpers.models.registry import ModelRegistry
@@ -210,6 +211,57 @@ class MageFlowModelTests(unittest.TestCase):
         self.assertEqual(ctx["img_cu"].dtype, torch.int32)
         self.assertEqual(ctx["d_img_cu"].dtype, torch.int32)
 
+    def test_mageflow_attention_joint_pack_uses_single_flash_dtype(self):
+        calls = {}
+
+        class FixedProjection:
+            def __init__(self, dtype):
+                self.dtype = dtype
+
+            def __call__(self, x):
+                return torch.ones(*x.shape[:-1], 4, device=x.device, dtype=self.dtype)
+
+        def fake_flash(q, k, v, **kwargs):
+            del kwargs
+            calls["q_dtype"] = q.dtype
+            calls["k_dtype"] = k.dtype
+            calls["v_dtype"] = v.dtype
+            return q
+
+        attn = SimpleNamespace(
+            heads=1,
+            to_q=FixedProjection(torch.float32),
+            to_k=FixedProjection(torch.bfloat16),
+            to_v=FixedProjection(torch.bfloat16),
+            add_q_proj=FixedProjection(torch.bfloat16),
+            add_k_proj=FixedProjection(torch.bfloat16),
+            add_v_proj=FixedProjection(torch.bfloat16),
+            norm_q=None,
+            norm_k=None,
+            norm_added_q=None,
+            norm_added_k=None,
+            to_out=torch.nn.ModuleList([torch.nn.Identity()]),
+            to_add_out=torch.nn.Identity(),
+        )
+        processor = mage_layers.MageDoubleStreamAttnProcessor()
+        image_rotary_emb = torch.ones(4, 2, dtype=torch.complex64)
+
+        with patch.object(mage_layers, "flash_attn_varlen_func", side_effect=fake_flash):
+            img_output, txt_output = processor(
+                attn,
+                hidden_states=torch.zeros(1, 4, 4, dtype=torch.bfloat16),
+                encoder_hidden_states=torch.zeros(1, 3, 4, dtype=torch.bfloat16),
+                img_cu_lens=torch.tensor([0, 4], dtype=torch.int32),
+                txt_cu_lens=torch.tensor([0, 3], dtype=torch.int32),
+                image_rotary_emb=image_rotary_emb,
+            )
+
+        self.assertEqual(calls["q_dtype"], torch.bfloat16)
+        self.assertEqual(calls["k_dtype"], torch.bfloat16)
+        self.assertEqual(calls["v_dtype"], torch.bfloat16)
+        self.assertEqual(img_output.dtype, torch.bfloat16)
+        self.assertEqual(txt_output.dtype, torch.bfloat16)
+
     def test_mageflow_restores_qwen_text_rotary_inv_freq_to_fp32(self):
         model_cls = _mageflow_class()
 
@@ -232,6 +284,35 @@ class MageFlowModelTests(unittest.TestCase):
         model_cls._ensure_qwen3vl_text_rotary_precision(text_encoder, torch.device("cpu"))
 
         rotary_emb = text_encoder.language_model.rotary_emb
+        self.assertEqual(rotary_emb.inv_freq.dtype, torch.float32)
+        self.assertEqual(rotary_emb.original_inv_freq.dtype, torch.float32)
+        self.assertTrue(torch.equal(rotary_emb.inv_freq, torch.tensor([1.0, 0.100123], dtype=torch.float32)))
+        self.assertTrue(torch.equal(rotary_emb.original_inv_freq, rotary_emb.inv_freq))
+        self.assertEqual(rotary_emb.attention_scaling, 1.0)
+
+    def test_mageflow_restores_nested_qwen_text_rotary_inv_freq_to_fp32(self):
+        model_cls = _mageflow_class()
+
+        class RotaryEmbedding(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = SimpleNamespace()
+                self.attention_scaling = 0.25
+                rounded = torch.tensor([1.0, 0.1001], dtype=torch.bfloat16)
+                self.register_buffer("inv_freq", rounded, persistent=False)
+                self.register_buffer("original_inv_freq", rounded.clone(), persistent=False)
+
+            @staticmethod
+            def compute_default_rope_parameters(config, device):
+                del config
+                return torch.tensor([1.0, 0.100123], device=device, dtype=torch.float32), 1.0
+
+        language_model = SimpleNamespace(rotary_emb=RotaryEmbedding())
+        text_encoder = SimpleNamespace(model=SimpleNamespace(language_model=language_model))
+
+        model_cls._ensure_qwen3vl_text_rotary_precision(text_encoder, torch.device("cpu"))
+
+        rotary_emb = language_model.rotary_emb
         self.assertEqual(rotary_emb.inv_freq.dtype, torch.float32)
         self.assertEqual(rotary_emb.original_inv_freq.dtype, torch.float32)
         self.assertTrue(torch.equal(rotary_emb.inv_freq, torch.tensor([1.0, 0.100123], dtype=torch.float32)))
@@ -416,6 +497,23 @@ class MageFlowModelTests(unittest.TestCase):
         self.assertTrue(wrapper.called)
         self.assertEqual(result["model_prediction"].shape, (1, 4, 2, 2))
         self.assertIsNone(result["hidden_states_buffer"])
+
+    def test_pack_latents_tracks_rectangular_target_shape(self):
+        model_cls = _mageflow_class()
+        model = object.__new__(model_cls)
+        model.accelerator = SimpleNamespace(device=torch.device("cpu"))
+
+        img, img_cu, img_shapes, img_lens, target_indices, target_lens, target_shapes = model._pack_latents_for_model(
+            torch.randn(1, 4, 3, 5)
+        )
+
+        self.assertEqual(img.shape, (1, 15, 4))
+        self.assertTrue(torch.equal(img_cu, torch.tensor([0, 15], dtype=torch.int32)))
+        self.assertEqual(img_shapes, [[(1, 3, 5)]])
+        self.assertEqual(img_lens, [15])
+        self.assertTrue(torch.equal(target_indices, torch.arange(15)))
+        self.assertEqual(target_lens, [15])
+        self.assertEqual(target_shapes, [(3, 5)])
 
     def test_model_predict_passes_layersync_crepa_hidden_state_buffer(self):
         model_cls = _mageflow_class()

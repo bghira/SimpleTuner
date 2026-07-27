@@ -119,6 +119,15 @@ Mage-Flow 在内存优化菜单中提供 RAMTorch 和 Musubi block swap 预设�
 }
 ```
 
-在 Mage-Flow LoRA 快速测试中，int8 量化相比 FP8 weight-only TorchAO 出现了可疑的 loss 峰值。除非你已经在自己的数据集上验证 loss 曲线，否则请避免使用 Mage-Flow 的 int8 预设。NF4 和其他量化预设仍可能有用。
+验证 SDNQ INT8 和 ConvRot 时，Mage-Flow 建议先使用 square crop bucket。任意宽高比 bucket 会让 SDNQ 编译并缓存很多 activation shape，短跑时这些编译开销可能占主导。H100 80GB 上的 Domokun LoRA smoke 使用 center square crop 后只有一个 `1.0` bucket，100 步 loss range 稳定：
+
+| 精度路径 | Loss range | Mean loss | Loop s/step | Mean step |
+| --- | ---: | ---: | ---: | ---: |
+| BF16 | `0.117..1.17` | `0.5689` | `0.189` | `0.177` |
+| FP8 weight-only TorchAO | `0.120..1.17` | `0.5696` | `0.234` | `0.222` |
+| SDNQ INT8 vanilla | `0.129..1.17` | `0.5736` | `1.113` | `0.277` |
+| SDNQ ConvRot 256 | `0.124..1.17` | `0.5696` | `0.436` | `0.299` |
+
+同一 workload 使用任意宽高比 bucket 时，SDNQ input shape 编译耗时明显更多。保持 text encoder 冻结；初始 cache pass 很贵，但普通 LoRA 训练不应训练它。NF4 和其他量化预设仍可能有用。
 
 SimpleTuner vendored 了 MIT 许可的 Mage-Flow 代码，并用原生 Diffusers pipeline 包装以便验证和保存流程一致。

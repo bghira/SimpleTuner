@@ -214,7 +214,16 @@ class ZImage(ImageModelFoundation):
 
     def post_model_load_setup(self):
         super().post_model_load_setup()
+        if getattr(self.config, "is_sdnq", False):
+            self._assistant_lora_deferred_until_after_quantization = True
+            return
         self._maybe_load_assistant_lora()
+
+    def post_quantization_setup(self):
+        super().post_quantization_setup()
+        if getattr(self, "_assistant_lora_deferred_until_after_quantization", False):
+            self._maybe_load_assistant_lora()
+            self._assistant_lora_deferred_until_after_quantization = False
 
     def _assistant_lora_weight_for_flavour(self):
         weight_map = getattr(self, "ASSISTANT_LORA_WEIGHT_NAMES", None) or {}

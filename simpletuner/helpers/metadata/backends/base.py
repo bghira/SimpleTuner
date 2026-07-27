@@ -7,7 +7,6 @@ import time
 from math import ceil, floor
 from multiprocessing import Process, Queue
 from pathlib import Path
-from random import shuffle
 
 # For semaphore
 from threading import Semaphore, Thread
@@ -22,7 +21,7 @@ from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
-from simpletuner.helpers.training.multi_process import should_log
+from simpletuner.helpers.training.multi_process import broadcast_object_from_main, should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("BaseMetadataBackend")
@@ -867,13 +866,22 @@ class MetadataBackend:
                 raise ValueError(error_msg)
 
         should_shuffle_contents = os.environ.get("SIMPLETUNER_SHUFFLE_BUCKETS", "1") == "1"
+        if should_shuffle_contents:
+            # Process-specific RNG seeding must not change the split input across ranks.
+            shuffle_seed = getattr(StateTracker.get_args(), "seed", None)
+            if self.accelerator.is_main_process and shuffle_seed is None:
+                shuffle_seed = random.SystemRandom().getrandbits(64)
+            shuffle_seed = broadcast_object_from_main(shuffle_seed if self.accelerator.is_main_process else None)
+
         for bucket, images in self.aspect_ratio_bucket_indices.items():
             if should_shuffle_contents:
                 logger.debug(f"Shuffling bucket {bucket} contents.")
-                shuffle(images)
+                images = images.copy()
+                random.Random(f"{shuffle_seed}:{self.id}:{bucket}").shuffle(images)
             total_img_count_incl_repeats = len(images) * (self.repeats + 1)
             num_batches = ceil(total_img_count_incl_repeats / effective_batch_size)
-            trimmed_images = images[: num_batches * effective_batch_size]
+            trim_limit = num_batches * effective_batch_size
+            trimmed_images = images[:trim_limit] if trim_limit < len(images) else images
             removed_for_trim = len(images) - len(trimmed_images)
             if removed_for_trim > 0 and self.bucket_report:
                 self.bucket_report.record_bucket_event(

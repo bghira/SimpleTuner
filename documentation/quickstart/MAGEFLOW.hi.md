@@ -119,6 +119,15 @@ Mage-Flow memory optimisation menu में RAMTorch और Musubi block swap p
 }
 ```
 
-Mage-Flow LoRA smoke tests में int8 quantisation ने FP8 weight-only TorchAO की तुलना में suspicious loss spikes दिखाए। अपने dataset पर loss curve validate किए बिना Mage-Flow int8 presets से बचें। NF4 और दूसरे quantisation presets फिर भी उपयोगी हो सकते हैं।
+SDNQ INT8 और ConvRot validate करते समय Mage-Flow के लिए पहले square-crop buckets prefer करें। Arbitrary aspect buckets में SDNQ को कई activation shapes compile/cache करने पड़ते हैं, जो short runs में dominant cost बन सकता है। H100 80GB Domokun LoRA smoke में center square crop ने सिर्फ एक `1.0` bucket इस्तेमाल किया और 100 steps पर stable loss ranges दिए:
+
+| Precision path | Loss range | Mean loss | Loop s/step | Mean step |
+| --- | ---: | ---: | ---: | ---: |
+| BF16 | `0.117..1.17` | `0.5689` | `0.189` | `0.177` |
+| FP8 weight-only TorchAO | `0.120..1.17` | `0.5696` | `0.234` | `0.222` |
+| SDNQ INT8 vanilla | `0.129..1.17` | `0.5736` | `1.113` | `0.277` |
+| SDNQ ConvRot 256 | `0.124..1.17` | `0.5696` | `0.436` | `0.299` |
+
+उसी workload को arbitrary aspect buckets पर चलाने से SDNQ input shapes compile करने में काफी अधिक समय लगा। Text encoder frozen रखें; initial cache pass महंगा है, लेकिन normal LoRA runs में इसे train नहीं करना चाहिए। NF4 और दूसरे quantisation presets फिर भी उपयोगी हो सकते हैं।
 
 SimpleTuner MIT-licensed Mage-Flow code को vendor करता है और validation consistency के लिए native Diffusers pipelines में wrap करता है।

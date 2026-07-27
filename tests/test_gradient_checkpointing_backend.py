@@ -1,5 +1,5 @@
 """
-Tests for gradient checkpointing backend selection (torch vs unsloth).
+Tests for gradient checkpointing backend selection.
 """
 
 import unittest
@@ -147,6 +147,12 @@ class TestGradientCheckpointingBackend(unittest.TestCase):
             set_checkpoint_backend("unsloth")
             self.assertEqual(get_checkpoint_backend(), "unsloth")
 
+            set_checkpoint_backend("torch-ffn")
+            self.assertEqual(get_checkpoint_backend(), "torch-ffn")
+
+            set_checkpoint_backend("unsloth-ffn")
+            self.assertEqual(get_checkpoint_backend(), "unsloth-ffn")
+
             set_checkpoint_backend("torch")
             self.assertEqual(get_checkpoint_backend(), "torch")
         finally:
@@ -164,6 +170,20 @@ class TestGradientCheckpointingBackend(unittest.TestCase):
         self.assertIn("torch", str(cm.exception))
         self.assertIn("unsloth", str(cm.exception))
 
+    def test_checkpoint_backend_scope(self):
+        """Test backend scope parsing."""
+        from simpletuner.helpers.training.gradient_checkpointing_interval import (
+            get_checkpoint_backend_base,
+            get_checkpoint_backend_scope,
+        )
+
+        self.assertEqual(get_checkpoint_backend_base("torch"), "torch")
+        self.assertEqual(get_checkpoint_backend_scope("torch"), "layer")
+        self.assertEqual(get_checkpoint_backend_base("torch-ffn"), "torch")
+        self.assertEqual(get_checkpoint_backend_scope("torch-ffn"), "ffn")
+        self.assertEqual(get_checkpoint_backend_base("unsloth-ffn"), "unsloth")
+        self.assertEqual(get_checkpoint_backend_scope("unsloth-ffn"), "ffn")
+
     def test_get_checkpoint_function_torch(self):
         """Test that get_checkpoint_function returns torch checkpoint for torch backend."""
         from simpletuner.helpers.training.gradient_checkpointing_interval import (
@@ -176,6 +196,10 @@ class TestGradientCheckpointingBackend(unittest.TestCase):
 
         try:
             set_checkpoint_backend("torch")
+            checkpoint_fn = get_checkpoint_function()
+            self.assertEqual(checkpoint_fn, torch.utils.checkpoint.checkpoint)
+
+            set_checkpoint_backend("torch-ffn")
             checkpoint_fn = get_checkpoint_function()
             self.assertEqual(checkpoint_fn, torch.utils.checkpoint.checkpoint)
         finally:
@@ -194,6 +218,10 @@ class TestGradientCheckpointingBackend(unittest.TestCase):
 
         try:
             set_checkpoint_backend("unsloth")
+            checkpoint_fn = get_checkpoint_function()
+            self.assertEqual(checkpoint_fn, offloaded_checkpoint)
+
+            set_checkpoint_backend("unsloth-ffn")
             checkpoint_fn = get_checkpoint_function()
             self.assertEqual(checkpoint_fn, offloaded_checkpoint)
         finally:
@@ -248,8 +276,10 @@ class TestConfigFieldIntegration(unittest.TestCase):
 
         self.assertIsNotNone(field)
         self.assertEqual(field.default_value, "torch")
-        self.assertIn({"value": "torch", "label": "PyTorch (recompute)"}, field.choices)
-        self.assertIn({"value": "unsloth", "label": "Unsloth (CPU offload)"}, field.choices)
+        self.assertIn({"value": "torch", "label": "PyTorch layer (recompute)"}, field.choices)
+        self.assertIn({"value": "torch-ffn", "label": "PyTorch FFN-only (recompute)"}, field.choices)
+        self.assertIn({"value": "unsloth", "label": "Unsloth layer (CPU offload)"}, field.choices)
+        self.assertIn({"value": "unsloth-ffn", "label": "Unsloth FFN-only (CPU offload)"}, field.choices)
 
     def test_gradient_checkpointing_backend_validation(self):
         """Test that invalid backend values are rejected."""
@@ -267,7 +297,9 @@ class TestConfigFieldIntegration(unittest.TestCase):
 
         self.assertIsNotNone(choices_rule)
         self.assertIn("torch", choices_rule.value)
+        self.assertIn("torch-ffn", choices_rule.value)
         self.assertIn("unsloth", choices_rule.value)
+        self.assertIn("unsloth-ffn", choices_rule.value)
 
 
 class TestTransformerBackendAttribute(unittest.TestCase):
@@ -278,6 +310,40 @@ class TestTransformerBackendAttribute(unittest.TestCase):
         from simpletuner.helpers.models.flux.transformer import FluxTransformer2DModel
 
         self.assertTrue(hasattr(FluxTransformer2DModel, "set_gradient_checkpointing_backend"))
+        self.assertTrue(getattr(FluxTransformer2DModel, "_supports_ffn_gradient_checkpointing", False))
+
+    def test_flux_blocks_support_ffn_checkpoint_scope(self):
+        """Test that Flux blocks preserve output values with FFN-only checkpointing."""
+        from simpletuner.helpers.models.flux.transformer import FluxSingleTransformerBlock, FluxTransformerBlock
+
+        double_block = FluxTransformerBlock(dim=16, num_attention_heads=2, attention_head_dim=8).train()
+        hidden = torch.randn(2, 4, 16, requires_grad=True)
+        encoder_hidden = torch.randn(2, 3, 16, requires_grad=True)
+        temb = torch.randn(2, 16)
+
+        expected_encoder, expected_hidden = double_block(hidden, encoder_hidden, temb)
+        actual_encoder, actual_hidden = double_block(
+            hidden,
+            encoder_hidden,
+            temb,
+            checkpoint_ffn=True,
+            checkpoint_fn=torch.utils.checkpoint.checkpoint,
+        )
+        self.assertTrue(torch.allclose(expected_encoder, actual_encoder, atol=1e-6))
+        self.assertTrue(torch.allclose(expected_hidden, actual_hidden, atol=1e-6))
+
+        single_block = FluxSingleTransformerBlock(dim=16, num_attention_heads=2, attention_head_dim=8).train()
+        hidden = torch.randn(2, 7, 16, requires_grad=True)
+        temb = torch.randn(2, 16)
+
+        expected_hidden = single_block(hidden, temb)
+        actual_hidden = single_block(
+            hidden,
+            temb,
+            checkpoint_ffn=True,
+            checkpoint_fn=torch.utils.checkpoint.checkpoint,
+        )
+        self.assertTrue(torch.allclose(expected_hidden, actual_hidden, atol=1e-6))
 
     def test_sana_transformer_has_backend_attribute(self):
         """Test that SanaTransformer2DModel has gradient_checkpointing_backend."""
@@ -308,6 +374,13 @@ class TestTransformerBackendAttribute(unittest.TestCase):
         from simpletuner.helpers.models.mageflow.transformer import MageFlowTransformer2DModel
 
         self.assertTrue(hasattr(MageFlowTransformer2DModel, "set_gradient_checkpointing_backend"))
+        self.assertTrue(getattr(MageFlowTransformer2DModel, "_supports_ffn_gradient_checkpointing", False))
+
+    def test_qwen_image_transformer_has_backend_attribute(self):
+        """Test that QwenImageTransformer2DModel has gradient_checkpointing_backend."""
+        from simpletuner.helpers.models.qwen_image.transformer import QwenImageTransformer2DModel
+
+        self.assertTrue(hasattr(QwenImageTransformer2DModel, "set_gradient_checkpointing_backend"))
 
 
 if __name__ == "__main__":
