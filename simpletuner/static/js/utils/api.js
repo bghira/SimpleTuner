@@ -12,18 +12,22 @@
         return path.startsWith("/") ? path : `/${path}`;
     }
 
+    function normalizeBaseUrl(url) {
+        return typeof url === "string" ? url.replace(/\/+$/, "") : "";
+    }
+
     function getBaseOrigin() {
         return global.location ? global.location.origin : "";
     }
 
     const ApiClient = {
         get apiBaseUrl() {
-            return (global.ServerConfig && global.ServerConfig.apiBaseUrl) || getBaseOrigin();
+            return normalizeBaseUrl((global.ServerConfig && global.ServerConfig.apiBaseUrl) || getBaseOrigin());
         },
 
         get callbackBaseUrl() {
             if (global.ServerConfig && global.ServerConfig.callbackUrl) {
-                return global.ServerConfig.callbackUrl;
+                return normalizeBaseUrl(global.ServerConfig.callbackUrl);
             }
             return this.apiBaseUrl;
         },
