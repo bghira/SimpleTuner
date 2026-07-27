@@ -54,14 +54,14 @@ Bloque transformer sintético, bf16, flash SDPA, pesos base congelados, batch 1.
 
 Con empaquetado 2x2, `64x64`, `128x128` y `256x256` pasan a `1024`, `4096` y `16384` tokens.
 
-| GPU | Tokens | Sin checkpoint | Torch layer | Unsloth layer |
-| --- | ---: | ---: | ---: | ---: |
-| H100 80GB | 1024 | 0.0166s / 4.43 GiB | 0.0231s / 3.64 GiB | 0.0265s / 3.56 GiB |
-| H100 80GB | 4096 | 0.0948s / 7.43 GiB | 0.1233s / 4.26 GiB | 0.1358s / 3.93 GiB |
-| H100 80GB | 16384 | 0.8781s / 19.39 GiB | 1.1157s / 6.72 GiB | 1.1662s / 5.41 GiB |
-| L40S | 1024 | 0.0500s / 4.39 GiB | 0.0666s / 3.60 GiB | 0.0725s / 3.51 GiB |
-| L40S | 4096 | 0.2461s / 7.38 GiB | 0.3169s / 4.21 GiB | 0.3369s / 3.88 GiB |
-| L40S | 16384 | 1.8153s / 19.35 GiB | 2.3360s / 6.67 GiB | 2.4218s / 5.36 GiB |
+| GPU | Tokens | Sin checkpoint | Torch FFN | Unsloth FFN | Torch layer | Unsloth layer |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| H100 80GB | 1024 | 0.0166s / 4.43 GiB | 0.0191s / 4.08 GiB | 0.0233s / 4.00 GiB | 0.0231s / 3.64 GiB | 0.0265s / 3.56 GiB |
+| H100 80GB | 4096 | 0.0948s / 7.43 GiB | 0.1029s / 6.02 GiB | 0.1157s / 5.67 GiB | 0.1233s / 4.26 GiB | 0.1358s / 3.93 GiB |
+| H100 80GB | 16384 | 0.8781s / 19.39 GiB | 0.9117s / 13.77 GiB | 0.9632s / 12.36 GiB | 1.1157s / 6.72 GiB | 1.1662s / 5.41 GiB |
+| L40S | 1024 | 0.0500s / 4.39 GiB | 0.0575s / 4.04 GiB | 0.0627s / 3.95 GiB | 0.0666s / 3.60 GiB | 0.0725s / 3.51 GiB |
+| L40S | 4096 | 0.2461s / 7.38 GiB | 0.2729s / 5.97 GiB | 0.2933s / 5.62 GiB | 0.3169s / 4.21 GiB | 0.3369s / 3.88 GiB |
+| L40S | 16384 | 1.8153s / 19.35 GiB | 1.9639s / 13.72 GiB | 2.0250s / 12.31 GiB | 2.3360s / 6.67 GiB | 2.4218s / 5.36 GiB |
 
 En `1024` tokens, el offload extra casi no importa salvo que ya estés al límite. En `16384` tokens, `torch-ffn` es el paso barato y whole-layer checkpointing es la palanca grande para caber. `unsloth` compra alrededor de `1.3 GiB` más que torch layer checkpointing.
 
@@ -69,10 +69,10 @@ En `1024` tokens, el offload extra casi no importa salvo que ya estés al límit
 
 `32` capas congeladas, ancho `4096`, `3072` tokens:
 
-| GPU | Sin checkpoint | Torch layer | Unsloth layer |
-| --- | ---: | ---: | ---: |
-| H100 80GB | 0.1943s / 14.56 GiB | 0.2527s / 8.01 GiB | 0.2722s / 7.30 GiB |
-| L40S | 0.5045s / 14.51 GiB | 0.6491s / 7.96 GiB | 0.6864s / 7.26 GiB |
+| GPU | Sin checkpoint | Torch FFN | Unsloth FFN | Torch layer | Unsloth layer |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| H100 80GB | 0.1943s / 14.56 GiB | 0.2138s / 11.65 GiB | 0.2317s / 10.92 GiB | 0.2527s / 8.01 GiB | 0.2722s / 7.30 GiB |
+| L40S | 0.5045s / 14.51 GiB | 0.5640s / 11.60 GiB | 0.5932s / 10.88 GiB | 0.6491s / 7.96 GiB | 0.6864s / 7.26 GiB |
 
 Con pesos completos entrenables, gradientes y optimizer dominaron el pico, así que `unsloth` no ahorró más que `torch` en ese run sintético. PEFT se parece más al caso de pesos congelados.
 

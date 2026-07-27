@@ -54,14 +54,14 @@ Synthetic transformer block, bf16, flash SDPA, frozen base weights, batch 1. The
 
 For 2x2 packed latents, `64x64`, `128x128`, and `256x256` become `1024`, `4096`, and `16384` transformer tokens.
 
-| GPU | Tokens | No checkpoint | Torch layer | Unsloth layer |
-| --- | ---: | ---: | ---: | ---: |
-| H100 80GB | 1024 | 0.0166s / 4.43 GiB | 0.0231s / 3.64 GiB | 0.0265s / 3.56 GiB |
-| H100 80GB | 4096 | 0.0948s / 7.43 GiB | 0.1233s / 4.26 GiB | 0.1358s / 3.93 GiB |
-| H100 80GB | 16384 | 0.8781s / 19.39 GiB | 1.1157s / 6.72 GiB | 1.1662s / 5.41 GiB |
-| L40S | 1024 | 0.0500s / 4.39 GiB | 0.0666s / 3.60 GiB | 0.0725s / 3.51 GiB |
-| L40S | 4096 | 0.2461s / 7.38 GiB | 0.3169s / 4.21 GiB | 0.3369s / 3.88 GiB |
-| L40S | 16384 | 1.8153s / 19.35 GiB | 2.3360s / 6.67 GiB | 2.4218s / 5.36 GiB |
+| GPU | Tokens | No checkpoint | Torch FFN | Unsloth FFN | Torch layer | Unsloth layer |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| H100 80GB | 1024 | 0.0166s / 4.43 GiB | 0.0191s / 4.08 GiB | 0.0233s / 4.00 GiB | 0.0231s / 3.64 GiB | 0.0265s / 3.56 GiB |
+| H100 80GB | 4096 | 0.0948s / 7.43 GiB | 0.1029s / 6.02 GiB | 0.1157s / 5.67 GiB | 0.1233s / 4.26 GiB | 0.1358s / 3.93 GiB |
+| H100 80GB | 16384 | 0.8781s / 19.39 GiB | 0.9117s / 13.77 GiB | 0.9632s / 12.36 GiB | 1.1157s / 6.72 GiB | 1.1662s / 5.41 GiB |
+| L40S | 1024 | 0.0500s / 4.39 GiB | 0.0575s / 4.04 GiB | 0.0627s / 3.95 GiB | 0.0666s / 3.60 GiB | 0.0725s / 3.51 GiB |
+| L40S | 4096 | 0.2461s / 7.38 GiB | 0.2729s / 5.97 GiB | 0.2933s / 5.62 GiB | 0.3169s / 4.21 GiB | 0.3369s / 3.88 GiB |
+| L40S | 16384 | 1.8153s / 19.35 GiB | 1.9639s / 13.72 GiB | 2.0250s / 12.31 GiB | 2.3360s / 6.67 GiB | 2.4218s / 5.36 GiB |
 
 At `1024` tokens, the extra offload is noise unless you are already out of room. At `16384` tokens, `torch-ffn` is the best cheap step and whole-layer checkpointing is the big fit lever. `unsloth` buys about another `1.3 GiB` beyond torch layer checkpointing.
 
@@ -69,10 +69,10 @@ At `1024` tokens, the extra offload is noise unless you are already out of room.
 
 Frozen `32` layer, width `4096`, `3072` tokens:
 
-| GPU | No checkpoint | Torch layer | Unsloth layer |
-| --- | ---: | ---: | ---: |
-| H100 80GB | 0.1943s / 14.56 GiB | 0.2527s / 8.01 GiB | 0.2722s / 7.30 GiB |
-| L40S | 0.5045s / 14.51 GiB | 0.6491s / 7.96 GiB | 0.6864s / 7.26 GiB |
+| GPU | No checkpoint | Torch FFN | Unsloth FFN | Torch layer | Unsloth layer |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| H100 80GB | 0.1943s / 14.56 GiB | 0.2138s / 11.65 GiB | 0.2317s / 10.92 GiB | 0.2527s / 8.01 GiB | 0.2722s / 7.30 GiB |
+| L40S | 0.5045s / 14.51 GiB | 0.5640s / 11.60 GiB | 0.5932s / 10.88 GiB | 0.6491s / 7.96 GiB | 0.6864s / 7.26 GiB |
 
 Trainable full weights changed the picture: gradients and optimizer state dominated the peak, so `unsloth` did not save more than `torch` in that toy run. PEFT runs are closer to the frozen-weight case.
 
