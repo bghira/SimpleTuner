@@ -263,6 +263,82 @@ class TestGradientCheckpointingBackend(unittest.TestCase):
         finally:
             set_checkpoint_backend(original_backend)
 
+    def test_checkpoint_sequential_state_matches_direct_gradients(self):
+        """Test segmented checkpointing over a tuple-carrying block sequence."""
+        from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state
+
+        class TupleBlock(nn.Module):
+            def __init__(self, dim: int):
+                super().__init__()
+                self.x_proj = nn.Linear(dim, dim)
+                self.y_proj = nn.Linear(dim, dim)
+
+            def forward(self, x, y):
+                next_x = torch.relu(self.x_proj(x) + y)
+                next_y = torch.relu(self.y_proj(y) + next_x)
+                return next_x, next_y
+
+        direct_blocks = nn.ModuleList([TupleBlock(8) for _ in range(4)])
+        checkpointed_blocks = nn.ModuleList([TupleBlock(8) for _ in range(4)])
+        checkpointed_blocks.load_state_dict(direct_blocks.state_dict())
+
+        direct_x = torch.randn(2, 8, requires_grad=True)
+        direct_y = torch.randn(2, 8, requires_grad=True)
+        checkpointed_x = direct_x.detach().clone().requires_grad_(True)
+        checkpointed_y = direct_y.detach().clone().requires_grad_(True)
+
+        x, y = direct_x, direct_y
+        for block in direct_blocks:
+            x, y = block(x, y)
+        direct_loss = x.sum() + y.sum()
+        direct_loss.backward()
+
+        def run_block(_index, block, x, y):
+            return block(x, y)
+
+        x, y = checkpoint_sequential_state(
+            list(checkpointed_blocks),
+            2,
+            (checkpointed_x, checkpointed_y),
+            run_block,
+            torch.utils.checkpoint.checkpoint,
+            {"use_reentrant": False},
+        )
+        checkpointed_loss = x.sum() + y.sum()
+        checkpointed_loss.backward()
+
+        self.assertTrue(torch.allclose(direct_x.grad, checkpointed_x.grad, atol=1e-6))
+        self.assertTrue(torch.allclose(direct_y.grad, checkpointed_y.grad, atol=1e-6))
+        for direct_block, checkpointed_block in zip(direct_blocks, checkpointed_blocks):
+            for direct_param, checkpointed_param in zip(direct_block.parameters(), checkpointed_block.parameters()):
+                self.assertTrue(torch.allclose(direct_param.grad, checkpointed_param.grad, atol=1e-6))
+
+    def test_checkpoint_sequential_state_uses_contiguous_chunks(self):
+        """Test that segment_size controls contiguous chunk boundaries."""
+        from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state
+
+        calls = []
+
+        def checkpoint_fn(function, *args, **_kwargs):
+            calls.append("checkpoint")
+            return function(*args)
+
+        def run_block(index, block, x):
+            calls.append(index)
+            return x + block
+
+        (result,) = checkpoint_sequential_state(
+            [1, 2, 3, 4, 5],
+            2,
+            (torch.tensor(0),),
+            run_block,
+            checkpoint_fn,
+            {"use_reentrant": False},
+        )
+
+        self.assertEqual(result.item(), 15)
+        self.assertEqual(calls, ["checkpoint", 0, 1, "checkpoint", 2, 3, "checkpoint", 4])
+
 
 class TestConfigFieldIntegration(unittest.TestCase):
     """Tests for the configuration field integration."""
@@ -374,6 +450,7 @@ class TestTransformerBackendAttribute(unittest.TestCase):
         from simpletuner.helpers.models.mageflow.transformer import MageFlowTransformer2DModel
 
         self.assertTrue(hasattr(MageFlowTransformer2DModel, "set_gradient_checkpointing_backend"))
+        self.assertTrue(hasattr(MageFlowTransformer2DModel, "set_gradient_checkpointing_interval"))
         self.assertTrue(getattr(MageFlowTransformer2DModel, "_supports_ffn_gradient_checkpointing", False))
 
     def test_qwen_image_transformer_has_backend_attribute(self):

@@ -275,8 +275,8 @@ simpletuner configure config/foo/config.json
 
 ### `--gradient_checkpointing_interval`
 
-- **What**: हर *n* blocks पर checkpoint करें, जहाँ *n* शून्य से बड़ा मान है। 1 का मान `--gradient_checkpointing` enabled जैसा है, और 2 हर दूसरे block पर checkpoint करेगा।
-- **Note**: यह विकल्प फिलहाल केवल SDXL और Flux में समर्थित है। SDXL इसमें hackish implementation उपयोग करता है।
+- **What**: *n* contiguous blocks के chunks checkpoint करें, जहाँ *n* शून्य से बड़ा मान है। 1 का मान `--gradient_checkpointing` enabled जैसा है, और 2 दो-block chunks checkpoint करता है।
+- **Note**: Flux और MageFlow whole-block paths पर contiguous chunked checkpointing use करते हैं। Higher values recompute overhead घटाती हैं लेकिन VRAM में ज्यादा activations रखती हैं।
 
 ### `--gradient_checkpointing_backend`
 

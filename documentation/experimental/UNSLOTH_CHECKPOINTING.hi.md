@@ -32,7 +32,7 @@ Supported model families में आप कम blocks भी checkpoint कर
 }
 ```
 
-`gradient_checkpointing_interval: 2` हर दूसरे supported block को checkpoint करता है। Higher values कम checkpointing करती हैं और VRAM में ज्यादा activations रखती हैं।
+`gradient_checkpointing_interval: 2` supported whole-block paths पर contiguous दो-block chunks checkpoint करता है। Higher values कम recompute करती हैं और VRAM में ज्यादा activations रखती हैं।
 
 `torch-ffn` और `unsloth-ffn` अभी Flux.1-style blocks और MageFlow support करते हैं। बाकी model families साफ error देंगी जब तक उनके blocks वही safe boundary expose नहीं करते।
 

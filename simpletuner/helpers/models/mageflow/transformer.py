@@ -14,6 +14,7 @@ from simpletuner.helpers.models.mageflow.vendor.models.mage_flow import MageFlow
 from simpletuner.helpers.models.mageflow.vendor.models.modules._attn_backend import set_attn_backend
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.gradient_checkpointing_interval import (
+    checkpoint_sequential_state,
     get_checkpoint_backend,
     get_checkpoint_backend_scope,
     get_checkpoint_function,
@@ -128,6 +129,7 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
             torch.nn.init.zeros_(self.time_sign_embed.weight)
         self.gradient_checkpointing_backend = get_checkpoint_backend()
         self.gradient_checkpointing_scope = get_checkpoint_backend_scope()
+        self.gradient_checkpointing_interval = None
         self._gradient_checkpointing_func = get_checkpoint_function()
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=depth,
@@ -175,6 +177,9 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
         self.gradient_checkpointing_backend = backend
         self.gradient_checkpointing_scope = get_checkpoint_backend_scope(backend)
         self._gradient_checkpointing_func = get_checkpoint_function()
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
 
     def enable_gradient_checkpointing(self, gradient_checkpointing_func=None):
         self.checkpoint = True
@@ -256,6 +261,46 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
 
         skip_layers_set = set(skip_layers) if skip_layers is not None else set()
         for index_block, block in enumerate(self.transformer_blocks):
+            if (
+                self.training
+                and self.checkpoint
+                and self.gradient_checkpointing_scope == "layer"
+                and self.gradient_checkpointing_interval is not None
+                and self.gradient_checkpointing_interval > 1
+                and not musubi_offload_active
+                and not skip_layers_set
+                and hidden_states_buffer is None
+            ):
+                if index_block % self.gradient_checkpointing_interval != 0:
+                    continue
+                segment_blocks = list(
+                    self.transformer_blocks[index_block : index_block + self.gradient_checkpointing_interval]
+                )
+                for segment_block in segment_blocks:
+                    _ensure_module_device(getattr(segment_block, "img_mod", None), img.device)
+                    _ensure_module_device(getattr(segment_block, "txt_mod", None), img.device)
+
+                def run_segment_block(_relative_index, segment_block, segment_txt, segment_img):
+                    return segment_block(
+                        hidden_states=segment_img,
+                        encoder_hidden_states=segment_txt,
+                        txt_cu_lens=txt_cu_seqlens,
+                        img_cu_lens=img_cu_seqlens,
+                        temb=temb,
+                        image_rotary_emb=ms_pe,
+                        joint_attention_kwargs=attention_kwargs,
+                    )
+
+                txt, img = checkpoint_sequential_state(
+                    segment_blocks,
+                    len(segment_blocks),
+                    (txt, img),
+                    run_segment_block,
+                    self._gradient_checkpointing_func,
+                    {"use_reentrant": False},
+                )
+                continue
+
             _ensure_module_device(getattr(block, "img_mod", None), img.device)
             _ensure_module_device(getattr(block, "txt_mod", None), img.device)
             if musubi_offload_active and musubi_manager.is_managed_block(index_block):

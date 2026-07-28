@@ -282,8 +282,8 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 ### `--gradient_checkpointing_interval`
 
-- **What**: Checkpoint only every *n* blocks, where *n* is a value greater than zero. A value of 1 is effectively the same as just leaving `--gradient_checkpointing` enabled, and a value of 2 will checkpoint every other block.
-- **Note**: SDXL and Flux are currently the only models supporting this option. SDXL uses a hackish implementation.
+- **What**: Checkpoint contiguous chunks of *n* blocks, where *n* is a value greater than zero. A value of 1 is effectively the same as just leaving `--gradient_checkpointing` enabled, and a value of 2 checkpoints two-block chunks.
+- **Note**: Flux and MageFlow use contiguous chunked checkpointing on whole-block paths. Higher values reduce recompute overhead but keep more activations in VRAM.
 
 ### `--gradient_checkpointing_backend`
 

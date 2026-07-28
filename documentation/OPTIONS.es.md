@@ -275,8 +275,8 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 
 ### `--gradient_checkpointing_interval`
 
-- **Qué**: Hace checkpoint cada *n* bloques, donde *n* es un valor mayor que cero. Un valor de 1 es equivalente a dejar `--gradient_checkpointing` habilitado, y un valor de 2 hará checkpoint en bloques alternos.
-- **Nota**: SDXL y Flux son actualmente los únicos modelos que soportan esta opción. SDXL usa una implementación algo improvisada.
+- **Qué**: Hace checkpoint de chunks contiguos de *n* bloques, donde *n* es un valor mayor que cero. Un valor de 1 equivale a dejar `--gradient_checkpointing` habilitado, y 2 checkpointa chunks de dos bloques.
+- **Nota**: Flux y MageFlow usan checkpointing en chunks contiguos en rutas whole-block. Valores más altos reducen recompute pero dejan más activaciones en VRAM.
 
 ### `--gradient_checkpointing_backend`
 

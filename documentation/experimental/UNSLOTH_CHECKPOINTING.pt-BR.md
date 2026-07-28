@@ -32,7 +32,7 @@ Em famílias compatíveis, você também pode checkpointar menos blocos:
 }
 ```
 
-`gradient_checkpointing_interval: 2` faz checkpoint a cada dois blocos compatíveis. Valores maiores fazem menos checkpointing e mantêm mais activations na VRAM.
+`gradient_checkpointing_interval: 2` faz checkpoint de chunks contiguos de dois blocos em caminhos whole-block compatíveis. Valores maiores recomputam menos e mantêm mais activations na VRAM.
 
 `torch-ffn` e `unsloth-ffn` atualmente suportam blocos estilo Flux.1 e MageFlow. Outras famílias falham claramente até seus blocos exporem a mesma fronteira segura.
 
