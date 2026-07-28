@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import torch
 
+from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.publishing.providers.s3 import S3PublishingProvider
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
@@ -2164,6 +2165,338 @@ class TestTrainer(unittest.TestCase):
             self.assertFalse(Path(tmpdir, "checkpoint-200").exists())
             trainer.accelerator.load_state.assert_called_once_with(os.path.join(tmpdir, "checkpoint-100"))
 
+    def _build_standard_checkpoint_test_trainer(self, output_dir, limit, use_checkpoint_manager):
+        trainer = object.__new__(Trainer)
+        trainer.job_id = None
+        trainer.hub_manager = None
+        trainer.webhook_handler = None
+        trainer.validation = None
+        trainer._prepare_training_progress_payload = Mock(return_value=({}, {}))
+        trainer._emit_event = Mock()
+        trainer._run_post_upload_script = Mock()
+        trainer._drain_hub_upload_futures = Mock()
+        trainer.checkpoint_manager = CheckpointManager(output_dir) if use_checkpoint_manager else None
+        trainer.state = {"global_step": 110, "current_epoch": 1}
+        trainer.config = SimpleNamespace(
+            output_dir=output_dir,
+            use_deepspeed_optimizer=False,
+            fsdp_enable=False,
+            checkpoints_total_limit=limit,
+            num_train_epochs=1,
+        )
+        trainer.accelerator = SimpleNamespace(is_main_process=True)
+        return trainer
+
+    def test_checkpoint_state_cleanup_temp_removes_standard_and_rolling_temp(self):
+        for use_checkpoint_manager in (True, False):
+            with self.subTest(use_checkpoint_manager=use_checkpoint_manager):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    for checkpoint in (
+                        "checkpoint-10",
+                        "checkpoint-20-rolling",
+                        "checkpoint-30-tmp",
+                        "checkpoint-40-rolling-tmp",
+                    ):
+                        Path(tmpdir, checkpoint).mkdir()
+
+                    trainer = object.__new__(Trainer)
+                    trainer.checkpoint_manager = CheckpointManager(tmpdir) if use_checkpoint_manager else None
+                    trainer.checkpoint_state_cleanup_temp(tmpdir)
+
+                    remaining = sorted(path.name for path in Path(tmpdir).glob("checkpoint-*"))
+                    self.assertEqual(remaining, ["checkpoint-10", "checkpoint-20-rolling"])
+
+    def test_standard_checkpoint_unlimited_cleans_temp_without_rotation(self):
+        for use_checkpoint_manager in (True, False):
+            with self.subTest(use_checkpoint_manager=use_checkpoint_manager):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    existing_checkpoint = Path(tmpdir, "checkpoint-100")
+                    incoming_checkpoint = Path(tmpdir, "checkpoint-110")
+                    temp_checkpoint = Path(tmpdir, "checkpoint-90-tmp")
+                    existing_checkpoint.mkdir()
+                    temp_checkpoint.mkdir()
+
+                    trainer = self._build_standard_checkpoint_test_trainer(
+                        tmpdir,
+                        limit=0,
+                        use_checkpoint_manager=use_checkpoint_manager,
+                    )
+                    trainer.checkpoint_state_cleanup = Mock(wraps=trainer.checkpoint_state_cleanup)
+
+                    def save_checkpoint(output_dir):
+                        self.assertEqual(tmpdir, output_dir)
+                        self.assertFalse(temp_checkpoint.exists())
+                        incoming_checkpoint.mkdir()
+                        return str(incoming_checkpoint)
+
+                    trainer.checkpoint_state_save = Mock(side_effect=save_checkpoint)
+                    save_path = trainer._run_standard_checkpoint(
+                        webhook_message=None,
+                        parent_loss=None,
+                        epoch=0,
+                        upload_to_hub=False,
+                    )
+
+                    self.assertEqual(str(incoming_checkpoint), save_path)
+                    remaining = sorted(path.name for path in Path(tmpdir).glob("checkpoint-*"))
+                    self.assertEqual(remaining, ["checkpoint-100", "checkpoint-110"])
+                    trainer.checkpoint_state_cleanup.assert_not_called()
+                    trainer._drain_hub_upload_futures.assert_not_called()
+
+    def test_standard_checkpoint_waits_only_when_removal_is_needed(self):
+        for use_checkpoint_manager in (True, False):
+            with self.subTest(use_checkpoint_manager=use_checkpoint_manager):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    existing_checkpoint = Path(tmpdir, "checkpoint-100")
+                    incoming_checkpoint = Path(tmpdir, "checkpoint-110")
+                    next_checkpoint = Path(tmpdir, "checkpoint-120")
+                    existing_checkpoint.mkdir()
+
+                    trainer = self._build_standard_checkpoint_test_trainer(
+                        tmpdir,
+                        limit=2,
+                        use_checkpoint_manager=use_checkpoint_manager,
+                    )
+
+                    def save_checkpoint(output_dir):
+                        self.assertEqual(tmpdir, output_dir)
+                        incoming_checkpoint.mkdir()
+                        return str(incoming_checkpoint)
+
+                    trainer.checkpoint_state_save = Mock(side_effect=save_checkpoint)
+                    save_path = trainer._run_standard_checkpoint(
+                        webhook_message=None,
+                        parent_loss=None,
+                        epoch=0,
+                        upload_to_hub=False,
+                    )
+
+                    self.assertEqual(str(incoming_checkpoint), save_path)
+                    remaining = sorted(path.name for path in Path(tmpdir).glob("checkpoint-*"))
+                    self.assertEqual(remaining, ["checkpoint-100", "checkpoint-110"])
+                    trainer._drain_hub_upload_futures.assert_not_called()
+
+                    def save_next_checkpoint(output_dir):
+                        self.assertEqual(tmpdir, output_dir)
+                        next_checkpoint.mkdir()
+                        return str(next_checkpoint)
+
+                    trainer.state["global_step"] = 120
+                    trainer.checkpoint_state_save = Mock(side_effect=save_next_checkpoint)
+                    save_path = trainer._run_standard_checkpoint(
+                        webhook_message=None,
+                        parent_loss=None,
+                        epoch=0,
+                        upload_to_hub=False,
+                    )
+
+                    self.assertEqual(str(next_checkpoint), save_path)
+                    remaining = sorted(path.name for path in Path(tmpdir).glob("checkpoint-*"))
+                    self.assertEqual(remaining, ["checkpoint-110", "checkpoint-120"])
+                    trainer._drain_hub_upload_futures.assert_called_once_with(wait=True)
+
+    def test_standard_checkpoint_rotation_preserves_recovery_and_new_save(self):
+        for use_checkpoint_manager in (True, False):
+            with self.subTest(use_checkpoint_manager=use_checkpoint_manager):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    resume_checkpoint = Path(tmpdir) / "checkpoint-100"
+                    existing_checkpoint = Path(tmpdir) / "checkpoint-200"
+                    incoming_checkpoint = Path(tmpdir) / "checkpoint-110"
+                    temp_checkpoint = Path(tmpdir) / "checkpoint-90-tmp"
+                    resume_checkpoint.mkdir()
+                    existing_checkpoint.mkdir()
+                    temp_checkpoint.mkdir()
+
+                    trainer = object.__new__(Trainer)
+                    trainer.job_id = None
+                    trainer.hub_manager = Mock()
+                    trainer.hub_manager.upload_latest_checkpoint.return_value = (
+                        "remote/checkpoint-110",
+                        str(incoming_checkpoint),
+                        "repo-url",
+                    )
+                    trainer.webhook_handler = None
+                    trainer.validation = None
+                    trainer._prepare_training_progress_payload = Mock(return_value=({}, {}))
+                    trainer._emit_event = Mock()
+                    trainer._run_post_upload_script = Mock()
+                    trainer._schedule_hub_upload = Mock(side_effect=lambda _description, upload: upload())
+
+                    def drain_uploads_before_removal(*, wait):
+                        self.assertTrue(wait)
+                        self.assertTrue(resume_checkpoint.exists())
+                        self.assertTrue(existing_checkpoint.exists())
+                        self.assertTrue(incoming_checkpoint.exists())
+
+                    trainer._drain_hub_upload_futures = Mock(side_effect=drain_uploads_before_removal)
+                    trainer.checkpoint_manager = CheckpointManager(tmpdir) if use_checkpoint_manager else None
+                    trainer.state = {"global_step": 110, "current_epoch": 1}
+                    trainer.config = SimpleNamespace(
+                        output_dir=tmpdir,
+                        use_deepspeed_optimizer=False,
+                        fsdp_enable=False,
+                        checkpoints_total_limit=1,
+                        num_train_epochs=1,
+                        resume_from_checkpoint="checkpoint-100",
+                    )
+                    trainer.accelerator = SimpleNamespace(is_main_process=True)
+
+                    def fail_save(output_dir):
+                        self.assertEqual(tmpdir, output_dir)
+                        self.assertFalse(temp_checkpoint.exists())
+                        raise RuntimeError("save failed")
+
+                    trainer.checkpoint_state_save = Mock(side_effect=fail_save)
+
+                    with self.assertRaisesRegex(RuntimeError, "save failed"):
+                        trainer._run_standard_checkpoint(
+                            webhook_message=None,
+                            parent_loss=None,
+                            epoch=0,
+                            upload_to_hub=False,
+                        )
+                    self.assertTrue(resume_checkpoint.exists())
+                    self.assertTrue(existing_checkpoint.exists())
+
+                    def save_checkpoint(output_dir):
+                        self.assertEqual(tmpdir, output_dir)
+                        self.assertTrue(resume_checkpoint.exists())
+                        self.assertTrue(existing_checkpoint.exists())
+                        incoming_checkpoint.mkdir()
+                        return str(incoming_checkpoint)
+
+                    trainer.checkpoint_state_save = Mock(side_effect=save_checkpoint)
+                    save_path = trainer._run_standard_checkpoint(
+                        webhook_message=None,
+                        parent_loss=None,
+                        epoch=0,
+                        upload_to_hub=True,
+                    )
+
+                    self.assertEqual(str(incoming_checkpoint), save_path)
+                    self.assertTrue(Path(save_path).exists())
+                    remaining = sorted(path.name for path in Path(tmpdir).glob("checkpoint-*"))
+                    self.assertEqual(remaining, ["checkpoint-110"])
+                    trainer.hub_manager.upload_latest_checkpoint.assert_called_once_with(
+                        validation_images=None,
+                        webhook_handler=None,
+                        global_step=110,
+                        epoch=1,
+                        checkpoint_path=str(incoming_checkpoint),
+                    )
+                    trainer._drain_hub_upload_futures.assert_called_once_with(wait=True)
+
+    def test_hub_upload_uses_explicit_checkpoint_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            Path(tmpdir, "checkpoint-200").mkdir()
+            incoming_checkpoint = Path(tmpdir, "checkpoint-110")
+            incoming_checkpoint.mkdir()
+
+            hub_manager = object.__new__(HubManager)
+            hub_manager.config = SimpleNamespace(output_dir=tmpdir)
+            hub_manager.find_latest_checkpoint = Mock(return_value=Path(tmpdir, "checkpoint-200"))
+            hub_manager.upload_model = Mock(return_value="repo-url")
+            hub_manager._repo_url = Mock(return_value="remote/checkpoint-110")
+
+            result = hub_manager.upload_latest_checkpoint(
+                validation_images=None,
+                webhook_handler=None,
+                global_step=110,
+                epoch=1,
+                checkpoint_path=str(incoming_checkpoint),
+            )
+
+            self.assertEqual(("remote/checkpoint-110", str(incoming_checkpoint), "repo-url"), result)
+            hub_manager.find_latest_checkpoint.assert_not_called()
+            hub_manager.upload_model.assert_called_once_with(
+                validation_images=None,
+                override_path=incoming_checkpoint,
+                webhook_handler=None,
+                global_step=110,
+                epoch=1,
+            )
+            hub_manager._repo_url.assert_called_once_with("checkpoint-110")
+
+    def test_rolling_checkpoint_rotation_preserves_recovery_and_new_save(self):
+        for use_checkpoint_manager in (True, False):
+            with self.subTest(use_checkpoint_manager=use_checkpoint_manager):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    resume_checkpoint = Path(tmpdir, "checkpoint-100-rolling")
+                    existing_checkpoint = Path(tmpdir, "checkpoint-200-rolling")
+                    incoming_checkpoint = Path(tmpdir, "checkpoint-110-rolling")
+                    temp_checkpoint = Path(tmpdir, "checkpoint-90-rolling-tmp")
+                    resume_checkpoint.mkdir()
+                    existing_checkpoint.mkdir()
+                    temp_checkpoint.mkdir()
+
+                    trainer = object.__new__(Trainer)
+                    trainer.checkpoint_manager = CheckpointManager(tmpdir) if use_checkpoint_manager else None
+                    trainer.config = SimpleNamespace(
+                        output_dir=tmpdir,
+                        use_deepspeed_optimizer=False,
+                        fsdp_enable=False,
+                        checkpoints_rolling_total_limit=1,
+                    )
+                    trainer.accelerator = SimpleNamespace(is_main_process=True)
+
+                    def fail_save(output_dir, suffix):
+                        self.assertEqual(tmpdir, output_dir)
+                        self.assertEqual("rolling", suffix)
+                        self.assertFalse(temp_checkpoint.exists())
+                        raise RuntimeError("save failed")
+
+                    trainer.checkpoint_state_save = Mock(side_effect=fail_save)
+                    with self.assertRaisesRegex(RuntimeError, "save failed"):
+                        trainer._save_rolling_checkpoint()
+                    self.assertTrue(resume_checkpoint.exists())
+                    self.assertTrue(existing_checkpoint.exists())
+
+                    def save_checkpoint(output_dir, suffix):
+                        self.assertEqual(tmpdir, output_dir)
+                        self.assertEqual("rolling", suffix)
+                        self.assertTrue(resume_checkpoint.exists())
+                        self.assertTrue(existing_checkpoint.exists())
+                        incoming_checkpoint.mkdir()
+                        return str(incoming_checkpoint)
+
+                    trainer.checkpoint_state_save = Mock(side_effect=save_checkpoint)
+                    save_path = trainer._save_rolling_checkpoint()
+
+                    self.assertEqual(str(incoming_checkpoint), save_path)
+                    self.assertTrue(Path(save_path).exists())
+                    remaining = sorted(path.name for path in Path(tmpdir).glob("checkpoint-*"))
+                    self.assertEqual(remaining, ["checkpoint-110-rolling"])
+
+    def test_rolling_checkpoint_non_main_save_ownership(self):
+        for use_deepspeed, fsdp_enable, should_save in (
+            (False, False, False),
+            (True, False, True),
+            (False, True, True),
+        ):
+            with self.subTest(use_deepspeed=use_deepspeed, fsdp_enable=fsdp_enable):
+                trainer = object.__new__(Trainer)
+                trainer.config = SimpleNamespace(
+                    output_dir="/tmp/output",
+                    use_deepspeed_optimizer=use_deepspeed,
+                    fsdp_enable=fsdp_enable,
+                    checkpoints_rolling_total_limit=1,
+                )
+                trainer.accelerator = SimpleNamespace(is_main_process=False)
+                trainer.checkpoint_state_cleanup_temp = Mock()
+                trainer.checkpoint_state_cleanup = Mock()
+                trainer.checkpoint_state_save = Mock(return_value="/tmp/output/checkpoint-110-rolling")
+
+                save_path = trainer._save_rolling_checkpoint()
+
+                if should_save:
+                    self.assertEqual("/tmp/output/checkpoint-110-rolling", save_path)
+                    trainer.checkpoint_state_save.assert_called_once_with("/tmp/output", "rolling")
+                else:
+                    self.assertIsNone(save_path)
+                    trainer.checkpoint_state_save.assert_not_called()
+                trainer.checkpoint_state_cleanup_temp.assert_not_called()
+                trainer.checkpoint_state_cleanup.assert_not_called()
+
     @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_save_checkpoint")
     def test_checkpoint_state_save_writes_completion_guard(self, mock_attention_backend):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2215,6 +2548,68 @@ class TestTrainer(unittest.TestCase):
             self.assertIn("pytorch_lora_weights.safetensors", manifest["files"])
             self.assertNotIn(".guard", manifest["files"])
             trainer.accelerator.wait_for_everyone.assert_not_called()
+
+    @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_save_checkpoint")
+    def test_checkpoint_state_save_synchronizes_only_all_rank_temp_writes(self, mock_attention_backend):
+        distributed_configs = (
+            (DistributedType.DEEPSPEED, True, False, (True, False), ["wait", "save", "wait", "wait", "wait"]),
+            (DistributedType.FSDP, False, True, (True, False), ["wait", "save", "wait", "wait", "wait"]),
+            (DistributedType.MULTI_GPU, False, False, (True,), ["save"]),
+        )
+        for distributed_type, use_deepspeed, fsdp_enable, process_roles, expected_events in distributed_configs:
+            for is_main_process in process_roles:
+                with self.subTest(distributed_type=distributed_type, is_main_process=is_main_process):
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        trainer = object.__new__(Trainer)
+                        trainer.config = SimpleNamespace(
+                            output_dir=tmpdir,
+                            checkpointing_use_tempdir=True,
+                            disk_low_threshold=None,
+                            use_deepspeed_optimizer=use_deepspeed,
+                            fsdp_enable=fsdp_enable,
+                        )
+                        trainer.state = {"global_step": 100}
+                        trainer.job_id = "test-job"
+                        trainer.model = SimpleNamespace()
+                        trainer.model_hooks = SimpleNamespace(
+                            training_state_path="training_state.json",
+                            get_modelspec_architecture=Mock(return_value="test/lora"),
+                        )
+                        trainer.checkpoint_manager = CheckpointManager(tmpdir)
+                        trainer.mark_optimizer_eval = Mock()
+                        trainer.mark_optimizer_train = Mock()
+                        trainer._emit_event = Mock()
+                        trainer._run_post_checkpoint_script = Mock()
+
+                        events = []
+
+                        def wait_for_everyone():
+                            events.append("wait")
+
+                        def save_state(path):
+                            self.assertEqual(expected_events[: expected_events.index("save")], events)
+                            events.append("save")
+                            Path(path).mkdir(parents=True, exist_ok=True)
+                            Path(path, "pytorch_lora_weights.safetensors").write_bytes(b"weights")
+
+                        trainer.accelerator = SimpleNamespace(
+                            _models=[],
+                            is_main_process=is_main_process,
+                            distributed_type=distributed_type,
+                            save_state=Mock(side_effect=save_state),
+                            wait_for_everyone=Mock(side_effect=wait_for_everyone),
+                        )
+
+                        with patch(
+                            "simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends",
+                            return_value={},
+                        ):
+                            save_path = trainer.checkpoint_state_save(tmpdir)
+
+                        self.assertEqual(str(Path(tmpdir, "checkpoint-100")), save_path)
+                        self.assertEqual(expected_events, events)
+                        expected_written_path = Path(save_path) if is_main_process else Path(f"{save_path}-tmp")
+                        self.assertTrue(expected_written_path.exists())
 
     @patch("simpletuner.helpers.training.trainer.logger")
     def test_init_resume_checkpoint_prodigy_without_split_groups(self, mock_logger):
@@ -2407,6 +2802,7 @@ class TestTrainer(unittest.TestCase):
             trainer._emit_event = Mock()
             trainer._run_post_upload_script = Mock()
             trainer.checkpoint_state_cleanup = Mock()
+            trainer.checkpoint_manager = None
             trainer.state = {"global_step": 10, "global_resume_step": 0, "current_epoch": 2}
             trainer.config = SimpleNamespace(
                 output_dir=str(tmpdir),

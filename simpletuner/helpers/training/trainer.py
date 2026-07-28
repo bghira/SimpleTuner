@@ -5241,15 +5241,21 @@ class Trainer:
             **progress_kwargs,
         )
         self._emit_event(event)
-        if self.accelerator.is_main_process and self.config.checkpoints_total_limit is not None:
-            self.checkpoint_state_cleanup(
-                self.config.output_dir,
-                self.config.checkpoints_total_limit,
-            )
+        checkpoint_limit = self.config.checkpoints_total_limit
+        if self.accelerator.is_main_process:
+            self.checkpoint_state_cleanup_temp(self.config.output_dir)
 
         save_path = None
         if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer or self.config.fsdp_enable:
             save_path = self.checkpoint_state_save(self.config.output_dir)
+        if self.accelerator.is_main_process and checkpoint_limit is not None and checkpoint_limit > 0:
+            if len(self.checkpoint_state_filter(self.config.output_dir)) > checkpoint_limit:
+                self._drain_hub_upload_futures(wait=True)
+            self.checkpoint_state_cleanup(
+                self.config.output_dir,
+                checkpoint_limit,
+                protected_checkpoint=save_path,
+            )
 
         hub_upload_planned = upload_to_hub and self.hub_manager is not None
         if hub_upload_planned:
@@ -5264,6 +5270,7 @@ class Trainer:
                         webhook_handler=self.webhook_handler,
                         global_step=captured_step,
                         epoch=captured_epoch,
+                        checkpoint_path=save_path,
                     )
                     return remote_path, local_path, repo_url
 
@@ -5275,6 +5282,23 @@ class Trainer:
         else:
             if save_path:
                 self._run_post_upload_script(local_path=save_path, remote_path=None)
+        return save_path
+
+    def _save_rolling_checkpoint(self):
+        checkpoint_limit = self.config.checkpoints_rolling_total_limit
+        if self.accelerator.is_main_process:
+            self.checkpoint_state_cleanup_temp(self.config.output_dir)
+
+        save_path = None
+        if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer or self.config.fsdp_enable:
+            save_path = self.checkpoint_state_save(self.config.output_dir, "rolling")
+        if self.accelerator.is_main_process and checkpoint_limit is not None and checkpoint_limit > 0:
+            self.checkpoint_state_cleanup(
+                self.config.output_dir,
+                checkpoint_limit,
+                "rolling",
+                protected_checkpoint=save_path,
+            )
         return save_path
 
     def _send_webhook_msg(
@@ -5861,7 +5885,7 @@ class Trainer:
                 if len(cs) < 2:
                     continue
                 elif len(cs) > 2:
-                    sfx = cs[2]
+                    sfx = cs[-1]
 
                 if base != "checkpoint":
                     continue
@@ -5874,26 +5898,36 @@ class Trainer:
 
             return checkpoints_keep
 
-    def checkpoint_state_cleanup(self, output_dir, limit, suffix=None):
+    def checkpoint_state_cleanup_temp(self, output_dir):
         if self.checkpoint_manager:
-            self.checkpoint_manager.cleanup_checkpoints(limit, suffix)
+            self.checkpoint_manager._remove_temp_checkpoints()
         else:
-            # Fallback to original implementation
-            # remove any left over temp checkpoints (partially written, etc)
             checkpoints = self.checkpoint_state_filter(output_dir, "tmp")
             for removing_checkpoint in checkpoints:
                 self.checkpoint_state_remove(output_dir, removing_checkpoint)
+
+    def checkpoint_state_cleanup(self, output_dir, limit, suffix=None, protected_checkpoint=None):
+        if self.checkpoint_manager:
+            self.checkpoint_manager.cleanup_checkpoints(
+                limit,
+                suffix,
+                protected_checkpoint=protected_checkpoint,
+            )
+        else:
+            # remove any left over temp checkpoints (partially written, etc)
+            self.checkpoint_state_cleanup_temp(output_dir)
 
             # now remove normal checkpoints past the limit
             checkpoints = self.checkpoint_state_filter(output_dir, suffix)
             checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
 
-            # before we save the new checkpoint, we need to have at _most_ `limit - 1` checkpoints
-            if len(checkpoints) < limit:
+            if len(checkpoints) <= limit:
                 return
 
-            num_to_remove = len(checkpoints) - limit + 1
-            removing_checkpoints = checkpoints[0:num_to_remove]
+            num_to_remove = len(checkpoints) - limit
+            protected_name = os.path.basename(os.path.normpath(protected_checkpoint)) if protected_checkpoint else None
+            removal_candidates = [checkpoint for checkpoint in checkpoints if checkpoint != protected_name]
+            removing_checkpoints = removal_candidates[0:num_to_remove]
             logger.debug(f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints")
             logger.debug(f"removing checkpoints: {', '.join(removing_checkpoints)}")
 
@@ -5971,6 +6005,13 @@ class Trainer:
         all_processes_saving = bool(
             getattr(self.config, "use_deepspeed_optimizer", False) or getattr(self.config, "fsdp_enable", False)
         )
+        if (
+            self.accelerator is not None
+            and distributed_type != DistributedType.NO
+            and all_processes_saving
+            and self.config.checkpointing_use_tempdir
+        ):
+            self.accelerator.wait_for_everyone()
         if fsdp_v2_run:
             logger.info("FSDP v2 detected; saving with sharded state dict (_use_dtensor disabled for NCCL compatibility).")
         if is_main_process:
@@ -6812,16 +6853,7 @@ class Trainer:
                             **progress_kwargs,
                         )
                         self._emit_event(event)
-                        if self.accelerator.is_main_process and self.config.checkpoints_rolling_total_limit is not None:
-                            # _before_ saving state, check if this save would set us over the `checkpoints_rolling_total_limit`
-                            self.checkpoint_state_cleanup(
-                                self.config.output_dir,
-                                self.config.checkpoints_rolling_total_limit,
-                                "rolling",
-                            )
-
-                        if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer:
-                            self.checkpoint_state_save(self.config.output_dir, "rolling")
+                        self._save_rolling_checkpoint()
 
                     if (
                         self.config.accelerator_cache_clear_interval is not None
