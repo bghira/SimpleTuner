@@ -152,12 +152,14 @@ def safety_check(args, accelerator):
         "cosmos3",
         "mageflow",
         "boogu_image",
+        "cosmos",
     ]
     gradient_checkpointing_segment_stride_supported_models = [
         "ace_step",
         "auraflow",
         "boogu_image",
         "chroma",
+        "cosmos",
     ]
     attention_activation_offload_supported_models = [
         "chroma",
