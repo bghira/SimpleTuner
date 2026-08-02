@@ -71,3 +71,19 @@ class BooguImageSegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=False,
             attention_offload=False,
         )
+
+
+class ChromaSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.chroma.transformer import ChromaTransformer2DModel
+
+        assert_checkpointing_controls(
+            self,
+            ChromaTransformer2DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            offload=True,
+            ffn=True,
+            attention_offload=True,
+        )

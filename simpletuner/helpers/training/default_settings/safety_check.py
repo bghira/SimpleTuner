@@ -157,8 +157,11 @@ def safety_check(args, accelerator):
         "ace_step",
         "auraflow",
         "boogu_image",
+        "chroma",
     ]
-    attention_activation_offload_supported_models = []
+    attention_activation_offload_supported_models = [
+        "chroma",
+    ]
     if getattr(args, "gradient_checkpointing_offload_attention", False):
         if args.model_family.lower() not in attention_activation_offload_supported_models:
             raise ValueError(
