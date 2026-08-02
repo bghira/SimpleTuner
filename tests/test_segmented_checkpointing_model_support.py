@@ -447,3 +447,19 @@ class LTXVideoSegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=False,
             attention_offload=False,
         )
+
+
+class LTXVideo2SegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
+
+        assert_checkpointing_controls(
+            self,
+            LTX2VideoTransformer3DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            checkpoint_attention_offload=True,
+            ffn=True,
+            attention_offload=True,
+        )

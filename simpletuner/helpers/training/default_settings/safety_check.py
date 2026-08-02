@@ -162,6 +162,7 @@ def safety_check(args, accelerator):
         "longcat_image",
         "longcat_video",
         "ltxvideo",
+        "ltxvideo2",
     ]
     gradient_checkpointing_segment_stride_supported_models = [
         "ace_step",
@@ -182,6 +183,7 @@ def safety_check(args, accelerator):
         "longcat_image",
         "longcat_video",
         "ltxvideo",
+        "ltxvideo2",
     ]
     attention_activation_offload_supported_models = [
         "chroma",
@@ -195,6 +197,7 @@ def safety_check(args, accelerator):
         "krea2",
         "longcat_image",
         "longcat_video",
+        "ltxvideo2",
     ]
     if getattr(args, "gradient_checkpointing_offload_attention", False):
         if args.model_family.lower() not in attention_activation_offload_supported_models:
