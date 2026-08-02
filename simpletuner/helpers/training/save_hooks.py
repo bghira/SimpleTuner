@@ -300,7 +300,7 @@ class SaveHookManager:
 
         self.denoiser_class = self.model.MODEL_CLASS
         self.denoiser_subdir = self.model.MODEL_SUBFOLDER
-        pipeline_type = self.model.DEFAULT_PIPELINE_TYPE
+        pipeline_type = getattr(self.model, "DEFAULT_PIPELINE_TYPE", PipelineTypes.TEXT2IMG)
         if args.validation_using_datasets and PipelineTypes.IMG2IMG in self.model.PIPELINE_CLASSES:
             pipeline_type = PipelineTypes.IMG2IMG
         self.pipeline_class = self.model.PIPELINE_CLASSES[pipeline_type]

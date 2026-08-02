@@ -588,7 +588,11 @@ class PromptHandler:
         captions = []
         caption_image_paths = []
         images_missing_captions = []
-        metadata_backend = (StateTracker.get_data_backend(data_backend.id) or {}).get("metadata_backend")
+        try:
+            data_backend_state = StateTracker.get_data_backend(data_backend.id) or {}
+        except KeyError:
+            data_backend_state = {}
+        metadata_backend = data_backend_state.get("metadata_backend")
         bucket_indices = getattr(metadata_backend, "aspect_ratio_bucket_indices", None)
         max_num_samples = getattr(metadata_backend, "max_num_samples", None) or backend_config.get("max_num_samples")
         if max_num_samples and isinstance(bucket_indices, dict) and bucket_indices:
