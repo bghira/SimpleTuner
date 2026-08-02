@@ -161,6 +161,7 @@ def safety_check(args, accelerator):
         "krea2",
         "longcat_image",
         "longcat_video",
+        "ltxvideo",
     ]
     gradient_checkpointing_segment_stride_supported_models = [
         "ace_step",
@@ -180,6 +181,7 @@ def safety_check(args, accelerator):
         "krea2",
         "longcat_image",
         "longcat_video",
+        "ltxvideo",
     ]
     attention_activation_offload_supported_models = [
         "chroma",

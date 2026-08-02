@@ -41,6 +41,8 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.checkpointing import checkpoint as simpletuner_checkpoint
+from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state, should_checkpoint_block
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.tread import TREADRouter
 
@@ -547,6 +549,9 @@ class LTXVideoTransformer3DModel(
             nn.init.zeros_(self.time_sign_embed.weight)
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
 
         # TREAD support
         self._tread_router = None
@@ -557,6 +562,15 @@ class LTXVideoTransformer3DModel(
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     def set_router(self, router: TREADRouter, routes: Optional[List[Dict]] = None):
         """Set TREAD router and routes for token reduction during training."""
@@ -689,8 +703,53 @@ class LTXVideoTransformer3DModel(
         if musubi_manager is not None:
             musubi_offload_active = musubi_manager.activate(self.transformer_blocks, hidden_states.device, grad_enabled)
 
+        use_segmented_checkpointing = (
+            grad_enabled
+            and self.gradient_checkpointing
+            and self.gradient_checkpointing_interval is not None
+            and self.gradient_checkpointing_interval > 1
+            and not self.gradient_checkpointing_backend.endswith("-ffn")
+            and not use_routing
+            and not musubi_offload_active
+            and grounding_objs is None
+            and hidden_states_buffer is None
+            and not output_hidden_states
+        )
+        segmented_checkpoint_fn = None
+        if use_segmented_checkpointing:
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                segmented_checkpoint_fn = offloaded_checkpoint
+            else:
+                segmented_checkpoint_fn = simpletuner_checkpoint
+
         capture_idx = 0
         for bid, block in enumerate(self.transformer_blocks):
+            if use_segmented_checkpointing:
+                if bid != 0:
+                    continue
+
+                def run_segmented_block(_idx, segment_block, segment_hidden_states):
+                    return segment_block(
+                        hidden_states=segment_hidden_states,
+                        encoder_hidden_states=encoder_hidden_states,
+                        temb=temb,
+                        image_rotary_emb=image_rotary_emb,
+                        encoder_attention_mask=encoder_attention_mask,
+                    )
+
+                (hidden_states,) = checkpoint_sequential_state(
+                    self.transformer_blocks,
+                    self.gradient_checkpointing_interval,
+                    (hidden_states,),
+                    run_segmented_block,
+                    segmented_checkpoint_fn,
+                    {"use_reentrant": False},
+                    segment_stride=self.gradient_checkpointing_segment_stride,
+                )
+                continue
+
             # TREAD routing for this layer
             if use_routing:
                 # Check if this layer should use routing
@@ -711,14 +770,30 @@ class LTXVideoTransformer3DModel(
                         break
             if musubi_offload_active and musubi_manager.is_managed_block(bid):
                 musubi_manager.stream_in(block, hidden_states.device)
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
-                hidden_states = self._gradient_checkpointing_func(
+            checkpoint_this_block = should_checkpoint_block(
+                bid,
+                grad_enabled and self.gradient_checkpointing,
+                self.gradient_checkpointing_interval,
+                self.gradient_checkpointing_segment_stride,
+            )
+            if checkpoint_this_block:
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                    checkpoint_kwargs = {"use_reentrant": False}
+                else:
+                    checkpoint_fn = self._gradient_checkpointing_func
+                    checkpoint_kwargs = {}
+
+                hidden_states = checkpoint_fn(
                     block,
                     hidden_states,
                     encoder_hidden_states,
                     temb,
                     image_rotary_emb,
                     encoder_attention_mask,
+                    **checkpoint_kwargs,
                 )
             else:
                 hidden_states = block(
