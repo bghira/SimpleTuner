@@ -36,6 +36,8 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.checkpointing import checkpoint as simpletuner_checkpoint
+from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state, should_checkpoint_block
 from simpletuner.helpers.training.packed_attention_processors import PackedFusedAttnProcessor2_0
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
@@ -350,6 +352,8 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
             self.caption_projection = PixArtAlphaTextProjection(
                 in_features=self.config.caption_channels, hidden_size=self.inner_dim
             )
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
 
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=num_layers,
@@ -360,6 +364,12 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
 
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     @property
     # Copied from diffusers.models.unets.unet_2d_condition.UNet2DConditionModel.attn_processors
@@ -614,8 +624,54 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
         if musubi_manager is not None:
             musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
 
+        use_segmented_checkpointing = (
+            grad_enabled
+            and self.gradient_checkpointing
+            and self.gradient_checkpointing_interval is not None
+            and self.gradient_checkpointing_interval > 1
+            and not self.gradient_checkpointing_backend.endswith("-ffn")
+            and not use_routing
+            and not musubi_offload_active
+            and controlnet_block_samples is None
+            and hidden_states_buffer is None
+        )
+        segmented_checkpoint_fn = None
+        if use_segmented_checkpointing:
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                segmented_checkpoint_fn = offloaded_checkpoint
+            else:
+                segmented_checkpoint_fn = simpletuner_checkpoint
+
         capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
+            if use_segmented_checkpointing:
+                if index_block != 0:
+                    continue
+
+                def run_segmented_block(_idx, segment_block, segment_hidden_states):
+                    return segment_block(
+                        segment_hidden_states,
+                        attention_mask=attention_mask,
+                        encoder_hidden_states=encoder_hidden_states,
+                        encoder_attention_mask=encoder_attention_mask,
+                        timestep=timestep,
+                        cross_attention_kwargs=cross_attention_kwargs,
+                        class_labels=None,
+                    )
+
+                (hidden_states,) = checkpoint_sequential_state(
+                    self.transformer_blocks,
+                    self.gradient_checkpointing_interval,
+                    (hidden_states,),
+                    run_segmented_block,
+                    segmented_checkpoint_fn,
+                    {"use_reentrant": False},
+                    segment_stride=self.gradient_checkpointing_segment_stride,
+                )
+                continue
+
             if musubi_offload_active and musubi_manager.is_managed_block(index_block):
                 musubi_manager.stream_in(block, hidden_states.device)
             # TREAD: START a route?
@@ -630,8 +686,13 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
                 hidden_states = router.start_route(hidden_states, tread_mask_info)
                 routing_now = True
 
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
-                if self.gradient_checkpointing_backend == "unsloth":
+            if torch.is_grad_enabled() and should_checkpoint_block(
+                index_block,
+                self.gradient_checkpointing,
+                self.gradient_checkpointing_interval,
+                self.gradient_checkpointing_segment_stride,
+            ):
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint

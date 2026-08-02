@@ -495,3 +495,19 @@ class MageFlowSegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=True,
             attention_offload=True,
         )
+
+
+class PixArtSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.pixart.transformer import PixArtTransformer2DModel
+
+        assert_checkpointing_controls(
+            self,
+            PixArtTransformer2DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            checkpoint_attention_offload=False,
+            ffn=False,
+            attention_offload=False,
+        )
