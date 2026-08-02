@@ -11,6 +11,7 @@ from diffusers.models.modeling_utils import ModelMixin
 from simpletuner.helpers.models.zlab_i1.model import ZLabI1
 from simpletuner.helpers.models.zlab_i1.pipeline import ZlabI1Pipeline
 from simpletuner.helpers.models.zlab_i1.transformer import ZlabI1Transformer2DModel
+from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state
 from simpletuner.helpers.training.layersync import LayerSyncRegularizer
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
@@ -237,6 +238,31 @@ class ZlabI1FeatureTests(unittest.TestCase):
 
         self.assertEqual(output.shape, latents.shape)
         self.assertTrue(torch.isfinite(output).all())
+
+    def test_segmented_checkpointing_uses_sequential_state_helper(self):
+        self.transformer.train()
+        self.transformer.gradient_checkpointing = True
+        self.transformer.gradient_checkpointing_interval = 2
+        self.transformer.gradient_checkpointing_segment_stride = 4
+        self.transformer._gradient_checkpointing_func = lambda fn, *args, **kwargs: fn(*args)
+
+        with patch(
+            "simpletuner.helpers.models.zlab_i1.transformer.checkpoint_sequential_state",
+            wraps=checkpoint_sequential_state,
+        ) as checkpoint_sequential:
+            output = self.transformer(
+                self.latents.detach().clone().requires_grad_(),
+                self.timesteps,
+                self.prompt_embeds,
+                self.attention_mask,
+            )
+
+        self.assertEqual(output.shape, self.latents.shape)
+        self.assertTrue(torch.isfinite(output).all())
+        checkpoint_sequential.assert_called_once()
+        args, kwargs = checkpoint_sequential.call_args
+        self.assertEqual(args[1], 2)
+        self.assertEqual(kwargs, {"segment_stride": 4})
 
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA not available")
     def test_musubi_streams_i1_blocks_on_cuda_forward(self):

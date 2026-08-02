@@ -171,6 +171,7 @@ def safety_check(args, accelerator):
         "wan_s2v",
         "wan",
         "z_image",
+        "zlab_i1",
     ]
     gradient_checkpointing_segment_stride_supported_models = [
         "ace_step",
@@ -203,6 +204,7 @@ def safety_check(args, accelerator):
         "wan_s2v",
         "wan",
         "z_image",
+        "zlab_i1",
     ]
     attention_activation_offload_supported_models = [
         "chroma",
