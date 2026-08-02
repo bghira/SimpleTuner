@@ -340,3 +340,19 @@ class HunyuanVideoSegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=False,
             attention_offload=True,
         )
+
+
+class IdeogramSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.ideogram.transformer import Ideogram4Transformer
+
+        assert_checkpointing_controls(
+            self,
+            Ideogram4Transformer,
+            backend=True,
+            interval=True,
+            stride=True,
+            checkpoint_attention_offload=False,
+            ffn=False,
+            attention_offload=False,
+        )
