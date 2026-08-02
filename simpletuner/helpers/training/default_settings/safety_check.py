@@ -159,6 +159,8 @@ def safety_check(args, accelerator):
         "kandinsky5_image",
         "kandinsky5_video",
         "krea2",
+        "longcat_image",
+        "longcat_video",
     ]
     gradient_checkpointing_segment_stride_supported_models = [
         "ace_step",
@@ -176,6 +178,8 @@ def safety_check(args, accelerator):
         "kandinsky5_image",
         "kandinsky5_video",
         "krea2",
+        "longcat_image",
+        "longcat_video",
     ]
     attention_activation_offload_supported_models = [
         "chroma",
@@ -187,6 +191,8 @@ def safety_check(args, accelerator):
         "kandinsky5_image",
         "kandinsky5_video",
         "krea2",
+        "longcat_image",
+        "longcat_video",
     ]
     if getattr(args, "gradient_checkpointing_offload_attention", False):
         if args.model_family.lower() not in attention_activation_offload_supported_models:

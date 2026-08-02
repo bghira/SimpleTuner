@@ -399,3 +399,35 @@ class Krea2SegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=True,
             attention_offload=True,
         )
+
+
+class LongCatImageSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.longcat_image.transformer import LongCatImageTransformer2DModel
+
+        assert_checkpointing_controls(
+            self,
+            LongCatImageTransformer2DModel,
+            backend=False,
+            interval=True,
+            stride=True,
+            checkpoint_attention_offload=True,
+            ffn=False,
+            attention_offload=True,
+        )
+
+
+class LongCatVideoSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.longcat_video.transformer import LongCatVideoTransformer3DModel
+
+        assert_checkpointing_controls(
+            self,
+            LongCatVideoTransformer3DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            checkpoint_attention_offload=True,
+            ffn=False,
+            attention_offload=True,
+        )
