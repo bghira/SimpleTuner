@@ -65,5 +65,5 @@
     "validation_prompt_library": false,
     "validation_resolution": "512x512",
     "validation_seed": 42,
-    "validation_steps": 10,
+    "validation_steps": 10
 }
