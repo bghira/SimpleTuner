@@ -372,3 +372,14 @@ class Kandinsky5SegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=False,
             attention_offload=True,
         )
+
+
+class KolorsControlNetCheckpointingCompatibilityTests(unittest.TestCase):
+    def test_gradient_checkpointing_signature_accepts_diffusers_kwargs(self):
+        import inspect
+
+        from simpletuner.helpers.models.kolors.controlnet import ControlNetModel
+
+        parameters = inspect.signature(ControlNetModel._set_gradient_checkpointing).parameters
+        self.assertIn("enable", parameters)
+        self.assertIn("gradient_checkpointing_func", parameters)
