@@ -156,6 +156,8 @@ def safety_check(args, accelerator):
         "flux2",
         "hidream",
         "ideogram",
+        "kandinsky5_image",
+        "kandinsky5_video",
     ]
     gradient_checkpointing_segment_stride_supported_models = [
         "ace_step",
@@ -170,12 +172,18 @@ def safety_check(args, accelerator):
         "hidream",
         "hunyuanvideo",
         "ideogram",
+        "kandinsky5_image",
+        "kandinsky5_video",
     ]
     attention_activation_offload_supported_models = [
         "chroma",
         "flux",
         "flux2",
         "hunyuanvideo",
+        "kandinsky5-image",
+        "kandinsky5-video",
+        "kandinsky5_image",
+        "kandinsky5_video",
     ]
     if getattr(args, "gradient_checkpointing_offload_attention", False):
         if args.model_family.lower() not in attention_activation_offload_supported_models:
