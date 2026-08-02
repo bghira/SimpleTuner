@@ -191,6 +191,7 @@ def safety_check(args, accelerator):
         "mageflow",
         "pixart",
         "qwen_image",
+        "sana",
     ]
     attention_activation_offload_supported_models = [
         "chroma",

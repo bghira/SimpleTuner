@@ -527,3 +527,19 @@ class QwenImageSegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=False,
             attention_offload=False,
         )
+
+
+class SanaSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.sana.transformer import SanaTransformer2DModel
+
+        assert_checkpointing_controls(
+            self,
+            SanaTransformer2DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            checkpoint_attention_offload=False,
+            ffn=False,
+            attention_offload=False,
+        )
