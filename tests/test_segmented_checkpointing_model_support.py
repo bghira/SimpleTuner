@@ -479,3 +479,19 @@ class Lumina2SegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=False,
             attention_offload=False,
         )
+
+
+class MageFlowSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.mageflow.transformer import MageFlowTransformer2DModel
+
+        assert_checkpointing_controls(
+            self,
+            MageFlowTransformer2DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            checkpoint_attention_offload=True,
+            ffn=True,
+            attention_offload=True,
+        )

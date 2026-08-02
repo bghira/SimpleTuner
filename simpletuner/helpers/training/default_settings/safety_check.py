@@ -186,6 +186,7 @@ def safety_check(args, accelerator):
         "ltxvideo",
         "ltxvideo2",
         "lumina2",
+        "mageflow",
     ]
     attention_activation_offload_supported_models = [
         "chroma",
@@ -200,6 +201,7 @@ def safety_check(args, accelerator):
         "longcat_image",
         "longcat_video",
         "ltxvideo2",
+        "mageflow",
     ]
     if getattr(args, "gradient_checkpointing_offload_attention", False):
         if args.model_family.lower() not in attention_activation_offload_supported_models:
