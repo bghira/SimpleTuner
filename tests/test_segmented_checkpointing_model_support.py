@@ -292,3 +292,19 @@ class FluxBlockCheckpointingScopeTests(unittest.TestCase):
             hidden, temb, checkpoint_ffn=True, checkpoint_fn=torch.utils.checkpoint.checkpoint, offload_attention=True
         )
         self.assertTrue(torch.allclose(expected_hidden, actual_hidden, atol=1e-6))
+
+
+class Flux2SegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.flux2.transformer import Flux2Transformer2DModel
+
+        assert_checkpointing_controls(
+            self,
+            Flux2Transformer2DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            offload=True,
+            ffn=False,
+            attention_offload=True,
+        )
