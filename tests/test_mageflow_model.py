@@ -1,5 +1,6 @@
 import inspect
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,8 +9,8 @@ from unittest.mock import patch
 import torch
 
 from simpletuner.helpers.acceleration import AccelerationBackend
-from simpletuner.helpers.models.common import PipelineTypes
-from simpletuner.helpers.models.mageflow.pipeline import MageFlowPipeline, _mageflow_velocity
+from simpletuner.helpers.models.common import ImageModelFoundation, PipelineTypes
+from simpletuner.helpers.models.mageflow.pipeline import MageFlowPipeline, _load_scheduler, _mageflow_velocity
 from simpletuner.helpers.models.mageflow.pipeline_edit import MageFlowEditPipeline
 from simpletuner.helpers.models.mageflow.transformer import MageFlowTransformer2DModel
 from simpletuner.helpers.models.mageflow.vendor.models.modules import _attn_backend as mageflow_attn_backend
@@ -56,6 +57,7 @@ class MageFlowModelTests(unittest.TestCase):
         self.assertIn("edit-turbo", model_cls.get_flavour_choices())
         self.assertFalse(model_cls.DDP_FIND_UNUSED_PARAMETERS)
         self.assertIn("MageFlowTransformerBlock", model_cls.MODEL_CLASS._no_split_modules)
+        self.assertEqual(model_cls.HUGGINGFACE_PATHS["base"], "natalie5/Mage-Flow-Base")
 
     def test_context_parallel_is_rejected(self):
         model_cls = _mageflow_class()
@@ -382,6 +384,40 @@ class MageFlowModelTests(unittest.TestCase):
         self.assertEqual(output.shape, (1, 4, 4))
         self.assertEqual(len(checkpoint_calls), 1)
         self.assertEqual(checkpoint_calls[0], {"use_reentrant": False})
+
+    def test_model_level_gradient_checkpointing_reaches_wrapped_transformer(self):
+        model_cls = _mageflow_class()
+        foundation = object.__new__(model_cls)
+        transformer = _tiny_transformer()
+        foundation.model = SimpleNamespace(base_model=SimpleNamespace(model=transformer))
+        foundation.unwrap_model = lambda model=None, keep_fp32_wrapper=True: model
+
+        foundation.enable_gradient_checkpointing()
+        self.assertTrue(transformer.checkpoint)
+        self.assertTrue(transformer.config.checkpoint)
+
+        foundation.disable_gradient_checkpointing()
+        self.assertFalse(transformer.checkpoint)
+        self.assertFalse(transformer.config.checkpoint)
+
+    def test_missing_pipeline_scheduler_config_uses_default_flow_scheduler(self):
+        with tempfile.TemporaryDirectory() as repo_dir:
+            scheduler = _load_scheduler(repo_dir)
+
+        self.assertEqual(scheduler.config.num_train_timesteps, 1000)
+        self.assertEqual(scheduler.config.shift, 6.0)
+
+    def test_training_noise_schedule_uses_default_when_checkpoint_has_no_scheduler_config(self):
+        model_cls = _mageflow_class()
+        foundation = object.__new__(model_cls)
+        foundation.config = SimpleNamespace(flow_schedule_shift=7.0)
+
+        with patch.object(ImageModelFoundation, "setup_training_noise_schedule", side_effect=OSError("missing")):
+            config, scheduler = foundation.setup_training_noise_schedule()
+
+        self.assertIs(config, foundation.config)
+        self.assertEqual(scheduler.config.num_train_timesteps, 1000)
+        self.assertEqual(scheduler.config.shift, 7.0)
 
     def test_transformer_supports_twinflow_time_sign(self):
         model = _tiny_transformer(enable_time_sign_embed=True)

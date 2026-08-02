@@ -910,5 +910,14 @@ def load_from_repo(repo_dir: str, device: str = "cuda") -> MageFlowModel:
         model.vae.to(torch.bfloat16)
     model.eval()
     # Diffusers FlowMatchEulerDiscreteScheduler (scheduler/scheduler_config.json).
-    model.scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(_safe_subpath(repo_dir, "scheduler"))
+    scheduler_dir = _safe_subpath(repo_dir, "scheduler")
+    scheduler_config = os.path.join(scheduler_dir, "scheduler_config.json")
+    if os.path.isdir(scheduler_dir) and os.path.exists(scheduler_config):
+        model.scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(scheduler_dir)
+    else:
+        model.scheduler = build_scheduler(
+            1,
+            device=device,
+            shift=(cfg.static_shift if cfg.static_shift is not None else 6.0),
+        )
     return model

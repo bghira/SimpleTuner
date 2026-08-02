@@ -24,6 +24,14 @@ def _resolve_repo_dir(repo_id_or_path: str, *, revision: Optional[str] = None, l
     return snapshot_download(repo_id=repo_id_or_path, revision=revision, local_files_only=local_files_only)
 
 
+def _load_scheduler(repo_dir: str):
+    scheduler_dir = os.path.join(repo_dir, "scheduler")
+    scheduler_config = os.path.join(scheduler_dir, "scheduler_config.json")
+    if os.path.isdir(scheduler_dir) and os.path.exists(scheduler_config):
+        return FlowMatchEulerDiscreteScheduler.from_pretrained(scheduler_dir)
+    return FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=6.0, use_dynamic_shifting=False)
+
+
 def _call_vae_decode(vae, latents: torch.Tensor) -> torch.Tensor:
     if hasattr(vae, "decode_to_tensor"):
         return vae.decode_to_tensor(latents)
@@ -236,7 +244,7 @@ class MageFlowPipeline(DiffusionPipeline, MageFlowLoraLoaderMixin):
             revision=revision,
             local_files_only=local_files_only,
         )
-        scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(os.path.join(repo_dir, "scheduler"))
+        scheduler = _load_scheduler(repo_dir)
         return cls(
             transformer=transformer,
             vae=vae,
