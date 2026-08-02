@@ -168,6 +168,8 @@ def safety_check(args, accelerator):
         "qwen_image",
         "sanavideo",
         "stable_cascade",
+        "wan_s2v",
+        "wan",
     ]
     gradient_checkpointing_segment_stride_supported_models = [
         "ace_step",
@@ -197,6 +199,8 @@ def safety_check(args, accelerator):
         "sanavideo",
         "sd3",
         "stable_cascade",
+        "wan_s2v",
+        "wan",
     ]
     attention_activation_offload_supported_models = [
         "chroma",
@@ -213,6 +217,7 @@ def safety_check(args, accelerator):
         "ltxvideo2",
         "mageflow",
         "sd3",
+        "wan",
     ]
     if getattr(args, "gradient_checkpointing_offload_attention", False):
         if args.model_family.lower() not in attention_activation_offload_supported_models:

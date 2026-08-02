@@ -591,3 +591,35 @@ class StableCascadeSegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=False,
             attention_offload=False,
         )
+
+
+class WanSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.wan.transformer import WanTransformer3DModel
+
+        assert_checkpointing_controls(
+            self,
+            WanTransformer3DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            offload=True,
+            ffn=True,
+            attention_offload=True,
+        )
+
+
+class WanS2VSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.wan_s2v.transformer import WanS2VTransformer3DModel
+
+        assert_checkpointing_controls(
+            self,
+            WanS2VTransformer3DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            offload=False,
+            ffn=False,
+            attention_offload=False,
+        )
