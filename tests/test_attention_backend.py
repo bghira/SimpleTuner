@@ -779,7 +779,7 @@ class TestAttentionBackendPersistence(unittest.TestCase):
             "flash-attn-varlen-hub",
         )
 
-    def test_packed_hub_backend_passes_trust_remote_code(self):
+    def test_packed_hub_backend_passes_trust_remote_code_without_touching_telemetry(self):
         calls = []
         constants_module = ModuleType("huggingface_hub.constants")
         constants_module.HF_HUB_DISABLE_TELEMETRY = True
@@ -806,5 +806,26 @@ class TestAttentionBackendPersistence(unittest.TestCase):
             backend = attention_backend_module.get_packed_attention_backend("flash-attn-varlen-hub")
 
         self.assertEqual(backend.name, "flash-attn-varlen-hub")
-        self.assertEqual(calls, [("kernels-community/flash-attn2", {"trust_remote_code": True, "version": 3}, False)])
+        self.assertEqual(calls, [("kernels-community/flash-attn2", {"trust_remote_code": True, "version": 3}, True)])
         self.assertTrue(constants_module.HF_HUB_DISABLE_TELEMETRY)
+
+    def test_packed_hub_backend_omits_unknown_kernel_version(self):
+        calls = []
+        kernels_module = ModuleType("kernels")
+
+        class DummyKernel:
+            @staticmethod
+            def flash_attn_qkvpacked_func(qkv, dropout_p=0.0, softmax_scale=None, causal=False):
+                return qkv[:, :, 0]
+
+        def fake_get_kernel(target, **kwargs):
+            calls.append((target, dict(kwargs)))
+            return DummyKernel()
+
+        kernels_module.get_kernel = fake_get_kernel
+
+        with patch.dict(sys.modules, {"kernels": kernels_module}):
+            kernel = attention_backend_module._get_hub_kernel("example/custom-kernel")
+
+        self.assertIsInstance(kernel, DummyKernel)
+        self.assertEqual(calls, [("example/custom-kernel", {"trust_remote_code": True})])

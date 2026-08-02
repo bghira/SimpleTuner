@@ -5,7 +5,6 @@ import inspect
 import os
 import subprocess
 import sys
-from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
@@ -379,31 +378,17 @@ def _normalize_backend_key(value: str) -> str:
     return value.replace("_", "-")
 
 
-@contextmanager
-def _hf_kernel_download_context():
-    patched_telemetry_constants: list[tuple[Any, bool]] = []
-    try:
-        try:
-            hf_constants = importlib.import_module("huggingface_hub.constants")
-            if hasattr(hf_constants, "HF_HUB_DISABLE_TELEMETRY"):
-                patched_telemetry_constants.append((hf_constants, getattr(hf_constants, "HF_HUB_DISABLE_TELEMETRY")))
-                setattr(hf_constants, "HF_HUB_DISABLE_TELEMETRY", False)
-        except Exception:
-            pass
-        yield
-    finally:
-        for constants_module, original_value in patched_telemetry_constants:
-            setattr(constants_module, "HF_HUB_DISABLE_TELEMETRY", original_value)
-
-
 def _get_hub_kernel(target: str) -> Any:
     try:
         from kernels import get_kernel
     except ImportError as exc:
         raise RuntimeError("The 'kernels' package is required for Hugging Face Hub attention kernels.") from exc
 
-    with _hf_kernel_download_context():
-        return get_kernel(target, trust_remote_code=True, version=_HUB_KERNEL_VERSIONS.get(target))
+    kwargs: Dict[str, Any] = {"trust_remote_code": True}
+    version = _HUB_KERNEL_VERSIONS.get(target)
+    if version is not None:
+        kwargs["version"] = version
+    return get_kernel(target, **kwargs)
 
 
 @lru_cache(maxsize=32)
@@ -1414,22 +1399,15 @@ class AttentionBackendController:
             raise RuntimeError(message)
 
         patched_kernel_modules: list[tuple[Any, Any]] = []
-        patched_telemetry_constants: list[tuple[Any, bool]] = []
-        if backend_key.endswith("-hub"):
-            try:
-                hf_constants = importlib.import_module("huggingface_hub.constants")
-                if hasattr(hf_constants, "HF_HUB_DISABLE_TELEMETRY"):
-                    patched_telemetry_constants.append((hf_constants, getattr(hf_constants, "HF_HUB_DISABLE_TELEMETRY")))
-                    setattr(hf_constants, "HF_HUB_DISABLE_TELEMETRY", False)
-            except Exception:
-                pass
-
         if trust_remote_code and backend_key.endswith("-hub"):
             for module_name in ("kernels", "kernels.utils"):
                 try:
                     kernel_module = importlib.import_module(module_name)
                     original_get_kernel = getattr(kernel_module, "get_kernel", None)
-                except Exception:
+                except ModuleNotFoundError as exc:
+                    missing_module = exc.name or ""
+                    if missing_module not in {module_name, module_name.split(".", 1)[0]}:
+                        raise
                     continue
                 if not callable(original_get_kernel):
                     continue
@@ -1467,8 +1445,6 @@ class AttentionBackendController:
         finally:
             for kernel_module, original_get_kernel in patched_kernel_modules:
                 setattr(kernel_module, "get_kernel", original_get_kernel)
-            for constants_module, original_value in patched_telemetry_constants:
-                setattr(constants_module, "HF_HUB_DISABLE_TELEMETRY", original_value)
 
         cls._diffusers_backend_context = context
         cls._diffusers_backend_name = backend_key
