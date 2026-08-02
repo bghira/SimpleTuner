@@ -543,3 +543,19 @@ class SanaSegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=False,
             attention_offload=False,
         )
+
+
+class SanaVideoSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.sanavideo.transformer import SanaVideoTransformer3DModel
+
+        assert_checkpointing_controls(
+            self,
+            SanaVideoTransformer3DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            offload=False,
+            ffn=False,
+            attention_offload=False,
+        )
