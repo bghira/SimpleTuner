@@ -151,10 +151,12 @@ def safety_check(args, accelerator):
         "ernie",
         "cosmos3",
         "mageflow",
+        "boogu_image",
     ]
     gradient_checkpointing_segment_stride_supported_models = [
         "ace_step",
         "auraflow",
+        "boogu_image",
     ]
     attention_activation_offload_supported_models = []
     if getattr(args, "gradient_checkpointing_offload_attention", False):

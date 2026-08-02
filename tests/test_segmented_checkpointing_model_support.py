@@ -55,3 +55,19 @@ class AuraFlowSegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=False,
             attention_offload=False,
         )
+
+
+class BooguImageSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.boogu_image.transformer import BooguImageTransformer2DModel
+
+        assert_checkpointing_controls(
+            self,
+            BooguImageTransformer2DModel,
+            backend=False,
+            interval=True,
+            stride=True,
+            offload=False,
+            ffn=False,
+            attention_offload=False,
+        )
