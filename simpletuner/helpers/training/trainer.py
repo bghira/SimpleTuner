@@ -3386,6 +3386,9 @@ class Trainer:
             logger.debug("Enabling gradient checkpointing.")
             if hasattr(self.model.get_trained_component(), "enable_gradient_checkpointing"):
                 unwrap_model(self.accelerator, self.model.get_trained_component()).enable_gradient_checkpointing()
+            model_level_enable = getattr(self.model, "enable_gradient_checkpointing", None)
+            if callable(model_level_enable):
+                model_level_enable()
             if hasattr(self.config, "train_text_encoder") and self.config.train_text_encoder:
                 for text_encoder in self.model.text_encoders:
                     if text_encoder is not None:
@@ -3398,6 +3401,9 @@ class Trainer:
                 unwrap_model(
                     self.accelerator, self.model.get_trained_component(base_model=True)
                 ).disable_gradient_checkpointing()
+            model_level_disable = getattr(self.model, "disable_gradient_checkpointing", None)
+            if callable(model_level_disable):
+                model_level_disable()
             if self.config.controlnet:
                 unwrap_model(self.accelerator, self.model.get_trained_component()).disable_gradient_checkpointing()
             if hasattr(self.config, "train_text_encoder") and self.config.train_text_encoder:
@@ -4172,6 +4178,9 @@ class Trainer:
                 attach_shared_ramtorch_parameters as attach_shared_ramtorch_parameters,
             )
 
+            moved = ramtorch_utils.move_embeddings_to_device(primary_model, self.accelerator.device)
+            if moved:
+                logger.info("Moved %s non-RamTorch CPU parameters/buffers before DDP prepare.", moved)
             ignored = ramtorch_utils.mark_ddp_ignore_params(primary_model)
             if ignored:
                 logger.info("Marking %s RamTorch parameters to ignore for DDP.", ignored)
@@ -5640,6 +5649,119 @@ class Trainer:
 
         return model_pred
 
+    def _compute_model_prediction_loss(self, prepared_batch: dict) -> tuple[torch.Tensor, dict, torch.Tensor, dict, dict]:
+        model_pred = self.model_predict(
+            prepared_batch=prepared_batch,
+        )
+        loss, loss_logs = self.model.loss_with_logs(
+            prepared_batch=prepared_batch,
+            model_output=model_pred,
+            apply_conditioning_mask=True,
+        )
+        diffusion_loss = loss.clone()
+        loss, aux_loss_logs = self.model.auxiliary_loss(
+            prepared_batch=prepared_batch,
+            model_output=model_pred,
+            loss=loss,
+        )
+        distill_logs = {}
+        if self.config.distillation_method is not None:
+            loss, distill_logs = self.distiller.compute_distill_loss(prepared_batch, model_pred, loss)
+            loss, gen_logs = self.distiller.generator_loss_step(prepared_batch, model_pred, loss)
+            distill_logs.update(gen_logs)
+        return loss, loss_logs, diffusion_loss, aux_loss_logs, distill_logs
+
+    def _discard_probe_gradients(self) -> None:
+        trained_component = self.model.get_trained_component(unwrap_model=False)
+        if trained_component is not None:
+            trained_component.zero_grad(set_to_none=True)
+        if getattr(self, "optimizer", None) is not None:
+            self.optimizer.zero_grad(set_to_none=True)
+        if getattr(self, "sidecar_optimizer", None) is not None:
+            self.sidecar_optimizer.zero_grad(set_to_none=True)
+
+    def _activation_offload_prefetch_autotune_probe(self, prepared_batch: dict, *, label: str) -> float:
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        start_time = time.perf_counter()
+        loss, _loss_logs, _diffusion_loss, _aux_loss_logs, _distill_logs = self._compute_model_prediction_loss(
+            dict(prepared_batch)
+        )
+        self.accelerator.backward(loss)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        elapsed = time.perf_counter() - start_time
+        self._discard_probe_gradients()
+        logger.debug("Activation offload prefetch autotune %s probe: %.4fs", label, elapsed)
+        return elapsed
+
+    def _maybe_autotune_activation_offload_prefetch(self, prepared_batch: dict) -> None:
+        if not getattr(self.config, "gradient_checkpointing_offload_prefetch", False):
+            return
+        if not getattr(self.config, "gradient_checkpointing_offload_attention", False):
+            logger.info("Skipping activation offload prefetch autotune because attention activation offload is disabled.")
+            return
+        if getattr(self, "_activation_offload_prefetch_autotuned", False):
+            return
+        if self.config.disable_accelerator or not torch.cuda.is_available():
+            logger.info("Skipping activation offload prefetch autotune because CUDA training is unavailable.")
+            return
+        if self.config.distillation_method is not None:
+            logger.warning("Skipping activation offload prefetch autotune for distillation runs.")
+            self._activation_offload_prefetch_autotuned = True
+            return
+
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import (
+            get_activation_offload_prefetch_autotune_enabled,
+            mark_activation_offload_prefetch_autotune_decision,
+            reset_activation_offload_prefetch_stats,
+            set_activation_offload_prefetch_autotune_enabled,
+            set_activation_offload_prefetch_enabled,
+            set_activation_offload_prefetch_runtime_disabled,
+        )
+
+        self._activation_offload_prefetch_autotuned = True
+        previous_autotune_enabled = get_activation_offload_prefetch_autotune_enabled()
+        cpu_rng_state = torch.get_rng_state()
+        cuda_rng_states = torch.cuda.get_rng_state_all()
+
+        def restore_rng_state() -> None:
+            torch.set_rng_state(cpu_rng_state)
+            torch.cuda.set_rng_state_all(cuda_rng_states)
+
+        logger.info("Autotuning attention activation prefetch with a real model_predict/backward probe.")
+        try:
+            set_activation_offload_prefetch_enabled(True)
+            set_activation_offload_prefetch_autotune_enabled(False)
+            reset_activation_offload_prefetch_stats()
+
+            set_activation_offload_prefetch_runtime_disabled(True, decision=None)
+            restore_rng_state()
+            self._activation_offload_prefetch_autotune_probe(prepared_batch, label="learn")
+
+            restore_rng_state()
+            jit_seconds = self._activation_offload_prefetch_autotune_probe(prepared_batch, label="jit")
+
+            set_activation_offload_prefetch_runtime_disabled(False, decision=None)
+            restore_rng_state()
+            prefetch_seconds = self._activation_offload_prefetch_autotune_probe(prepared_batch, label="prefetch")
+
+            decision = "prefetch" if prefetch_seconds < jit_seconds * 0.98 else "jit"
+            mark_activation_offload_prefetch_autotune_decision(decision)
+            logger.info(
+                "Activation offload prefetch autotune selected %s (jit=%.4fs, prefetch=%.4fs).",
+                decision,
+                jit_seconds,
+                prefetch_seconds,
+            )
+        except Exception as exc:
+            logger.warning("Activation offload prefetch autotune failed; disabling prefetch. Error: %s", exc)
+            mark_activation_offload_prefetch_autotune_decision("jit")
+            self._discard_probe_gradients()
+        finally:
+            restore_rng_state()
+            set_activation_offload_prefetch_autotune_enabled(previous_autotune_enabled)
+
     def _prepare_custom_timestep_batch(self, prepared_batch: dict, custom_timesteps):
         overridden_batch = dict(prepared_batch)
         reference_timesteps = prepared_batch.get("timesteps")
@@ -6422,26 +6544,12 @@ class Trainer:
                                         module.scaling[key] = val * strength
                                     slider_original_scaling[layer_id] = (module, saved)
 
+                    self._maybe_autotune_activation_offload_prefetch(prepared_batch)
+
                     training_logger.debug("Predicting.")
-                    model_pred = self.model_predict(
-                        prepared_batch=prepared_batch,
+                    loss, loss_logs, diffusion_loss, aux_loss_logs, distill_logs = self._compute_model_prediction_loss(
+                        prepared_batch
                     )
-                    loss, loss_logs = self.model.loss_with_logs(
-                        prepared_batch=prepared_batch,
-                        model_output=model_pred,
-                        apply_conditioning_mask=True,
-                    )
-                    diffusion_loss = loss.clone()
-                    loss, aux_loss_logs = self.model.auxiliary_loss(
-                        prepared_batch=prepared_batch,
-                        model_output=model_pred,
-                        loss=loss,
-                    )
-                    distill_logs = {}
-                    if self.config.distillation_method is not None:
-                        loss, distill_logs = self.distiller.compute_distill_loss(prepared_batch, model_pred, loss)
-                        loss, gen_logs = self.distiller.generator_loss_step(prepared_batch, model_pred, loss)
-                        distill_logs.update(gen_logs)
                     parent_loss = None
                     if is_regularisation_data:
                         parent_loss = loss

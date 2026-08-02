@@ -23,6 +23,10 @@ from simpletuner.helpers.ramtorch import profiling as ramtorch_profile
 _DEVICE_STATE = {}
 
 
+def _forward_prefetch_stream_count() -> int:
+    return max(_env_int("SIMPLETUNER_RAMTORCH_FORWARD_PREFETCH_STREAMS", 4), 1)
+
+
 def _to_cpu_pinned(tensor: torch.Tensor, *, dtype: torch.dtype | None = None) -> torch.Tensor:
     if dtype is not None and tensor.dtype != dtype:
         tensor = tensor.to(dtype=dtype)
@@ -45,6 +49,16 @@ def _tensor_version(tensor: torch.Tensor | None):
 
 def _tensor_versions(tensors):
     return tuple(_tensor_version(tensor) for tensor in tensors)
+
+
+def _record_stream_if_supported(tensor: torch.Tensor | None, stream) -> None:
+    if tensor is None:
+        return
+    try:
+        tensor.record_stream(stream)
+    except (AssertionError, NotImplementedError) as exc:
+        if "record_stream" not in str(exc):
+            raise
 
 
 def _prefetch_forward_tensors(module: nn.Module, *tensors: torch.Tensor | None) -> bool:
@@ -74,7 +88,7 @@ def _prefetch_forward_tensors(module: nn.Module, *tensors: torch.Tensor | None) 
         return False
 
     state = _get_device_state(device)
-    transfer_stream = state["transfer_stream"]
+    transfer_stream = _next_transfer_stream(state, device)
     with torch.cuda.stream(transfer_stream):
         with record_function("forward_weight_bias_prefetch"):
             copied = tuple(tensor.to(device, non_blocking=True) if tensor is not None else None for tensor in tensors)
@@ -110,7 +124,11 @@ def _consume_forward_prefetch(module: nn.Module, *tensors: torch.Tensor | None):
         return None
 
     with torch.cuda.device(device):
-        torch.cuda.current_stream(device).wait_event(prefetched["event"])
+        current_stream = torch.cuda.current_stream(device)
+        current_stream.wait_event(prefetched["event"])
+        for tensor in prefetched["tensors"]:
+            if tensor is not None:
+                _record_stream_if_supported(tensor, current_stream)
     ramtorch_profile.record_prefetch_consumed("extensions", key, device)
     return prefetched["tensors"]
 
@@ -126,14 +144,18 @@ def _transfer_forward_tensors(module: nn.Module, *tensors: torch.Tensor | None):
 
     ramtorch_profile.record_fallback_forward_transfer(device, tensors)
     state = _get_device_state(device)
-    transfer_stream = state["transfer_stream"]
+    transfer_stream = _next_transfer_stream(state, device)
 
     with torch.cuda.stream(transfer_stream):
         with record_function("forward_weight_bias_transfer"):
             copied = tuple(tensor.to(device, non_blocking=True) if tensor is not None else None for tensor in tensors)
 
     with torch.cuda.device(device):
-        torch.cuda.current_stream(device).wait_stream(transfer_stream)
+        current_stream = torch.cuda.current_stream(device)
+        current_stream.wait_stream(transfer_stream)
+        for tensor in copied:
+            if tensor is not None:
+                _record_stream_if_supported(tensor, current_stream)
     return copied
 
 
@@ -197,11 +219,22 @@ def _get_device_state(device):
     if device not in _DEVICE_STATE:
         with torch.cuda.device(device):
             _DEVICE_STATE[device] = {
-                "transfer_stream": torch.cuda.Stream(device=device),
+                "transfer_streams": [torch.cuda.Stream(device=device) for _ in range(_forward_prefetch_stream_count())],
+                "transfer_stream_clk": 0,
                 "buffers": {},
                 "clock": 0,
             }
     return _DEVICE_STATE[device]
+
+
+def _next_transfer_stream(state, device):
+    streams = state.get("transfer_streams")
+    if not streams:
+        streams = [state.get("transfer_stream") or torch.cuda.Stream(device=device)]
+        state["transfer_streams"] = streams
+    selected = int(state.get("transfer_stream_clk", 0)) % len(streams)
+    state["transfer_stream_clk"] = selected + 1
+    return streams[selected]
 
 
 class CPUBouncingEmbedding(nn.Module):
@@ -1152,33 +1185,36 @@ def add_ramtorch_prefetch_hooks(module: nn.Module, component_label: str | None =
     hooks.append(module.register_forward_pre_hook(lambda _mod, _inp: runtime.begin_forward()))
     hooks.append(module.register_forward_hook(lambda _mod, _inp, _out: runtime.end_forward()))
 
+    def preserve_or_discard(current_id: str, current_module: nn.Module) -> None:
+        preserve_fn = getattr(current_module, "preserve_forward_for_backward", None)
+        if runtime.should_preserve_for_backward(current_id) and callable(preserve_fn):
+            preserve_fn(
+                max_entries=runtime.backward_preserve_max_entries,
+                max_bytes=runtime.backward_preserve_max_bytes,
+            )
+            return
+
+        discard_fn = getattr(current_module, "discard_forward_for_backward", None)
+        if callable(discard_fn):
+            discard_fn()
+
     for module_id, current in ramtorch_modules:
 
         def pre_hook(_mod, _inp, current_id=module_id):
             runtime.module_entered(current_id)
-            return None
-
-        def hook(_mod, _inp, _out, current_id=module_id, current_module=current):
             successor_id, target, source = runtime.choose_successor(current_id)
             if target is None or successor_id is None:
                 ramtorch_profile.record_hook_prefetch_skipped_learned_order()
-                preserve_fn = getattr(current_module, "preserve_forward_for_backward", None)
-                if runtime.should_preserve_for_backward(current_id) and callable(preserve_fn):
-                    preserve_fn(
-                        max_entries=runtime.backward_preserve_max_entries,
-                        max_bytes=runtime.backward_preserve_max_bytes,
-                    )
                 return None
+
             runtime.predicted(current_id, successor_id)
             ramtorch_profile.record_prefetch_successor_source(source or "traversal")
             success = target.prefetch_forward()
             ramtorch_profile.record_hook_prefetch(bool(success))
-            preserve_fn = getattr(current_module, "preserve_forward_for_backward", None)
-            if runtime.should_preserve_for_backward(current_id) and callable(preserve_fn):
-                preserve_fn(
-                    max_entries=runtime.backward_preserve_max_entries,
-                    max_bytes=runtime.backward_preserve_max_bytes,
-                )
+            return None
+
+        def hook(_mod, _inp, _out, current_id=module_id, current_module=current):
+            preserve_or_discard(current_id, current_module)
             return None
 
         hooks.append(current.register_forward_pre_hook(pre_hook))

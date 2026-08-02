@@ -45,6 +45,8 @@ from simpletuner.helpers.training.context_parallel_tensors import (
     shard_cp_tensor,
     unshard_cp_tensor,
 )
+from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state
+from simpletuner.helpers.training.offloaded_gradient_checkpointer import activation_offload_context
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 
@@ -374,6 +376,9 @@ class ZImageTransformerBlock(nn.Module):
         attn_mask: torch.Tensor,
         freqs_cis: torch.Tensor,
         adaln_input: Optional[torch.Tensor] = None,
+        checkpoint_ffn: bool = False,
+        checkpoint_fn: Any | None = None,
+        offload_attention: bool = False,
     ):
         if self.modulation:
             assert adaln_input is not None
@@ -388,44 +393,52 @@ class ZImageTransformerBlock(nn.Module):
                 scale_msa, scale_mlp = 1.0 + scale_msa, 1.0 + scale_mlp
 
             # Attention block
-            attn_out = clamp_fp16(
-                self.attention(
-                    self.attention_norm1(x) * scale_msa,
-                    attention_mask=attn_mask,
-                    freqs_cis=freqs_cis,
+            with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+                attn_out = clamp_fp16(
+                    self.attention(
+                        self.attention_norm1(x) * scale_msa,
+                        attention_mask=attn_mask,
+                        freqs_cis=freqs_cis,
+                    )
                 )
-            )
             x = x + gate_msa * self.attention_norm2(attn_out)
 
             # FFN block
-            x = x + gate_mlp * self.ffn_norm2(
-                clamp_fp16(
-                    self.feed_forward(
-                        self.ffn_norm1(x) * scale_mlp,
-                    )
-                )
-            )
+            if checkpoint_ffn:
+                if checkpoint_fn is None:
+                    raise ValueError("checkpoint_fn is required when checkpoint_ffn=True")
+                ffn_out = checkpoint_fn(self._ffn_forward_modulated, x, scale_mlp, use_reentrant=False)
+            else:
+                ffn_out = self._ffn_forward_modulated(x, scale_mlp)
+            x = x + gate_mlp * ffn_out
         else:
             # Attention block
-            attn_out = clamp_fp16(
-                self.attention(
-                    self.attention_norm1(x),
-                    attention_mask=attn_mask,
-                    freqs_cis=freqs_cis,
+            with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+                attn_out = clamp_fp16(
+                    self.attention(
+                        self.attention_norm1(x),
+                        attention_mask=attn_mask,
+                        freqs_cis=freqs_cis,
+                    )
                 )
-            )
             x = x + self.attention_norm2(attn_out)
 
             # FFN block
-            x = x + self.ffn_norm2(
-                clamp_fp16(
-                    self.feed_forward(
-                        self.ffn_norm1(x),
-                    )
-                )
-            )
+            if checkpoint_ffn:
+                if checkpoint_fn is None:
+                    raise ValueError("checkpoint_fn is required when checkpoint_ffn=True")
+                ffn_out = checkpoint_fn(self._ffn_forward_unmodulated, x, use_reentrant=False)
+            else:
+                ffn_out = self._ffn_forward_unmodulated(x)
+            x = x + ffn_out
 
         return x
+
+    def _ffn_forward_modulated(self, x: torch.Tensor, scale_mlp: torch.Tensor) -> torch.Tensor:
+        return self.ffn_norm2(clamp_fp16(self.feed_forward(self.ffn_norm1(x) * scale_mlp)))
+
+    def _ffn_forward_unmodulated(self, x: torch.Tensor) -> torch.Tensor:
+        return self.ffn_norm2(clamp_fp16(self.feed_forward(self.ffn_norm1(x))))
 
 
 class FinalLayer(nn.Module):
@@ -497,6 +510,8 @@ class RopeEmbedder:
 
 class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
     _supports_gradient_checkpointing = True
+    _supports_ffn_gradient_checkpointing = True
+    _supports_attention_activation_offload = True
     _no_split_modules = ["ZImageTransformerBlock"]
     _repeated_blocks = ["ZImageTransformerBlock"]
     _skip_layerwise_casting_patterns = ["t_embedder", "cap_embedder"]  # precision sensitive layers
@@ -540,6 +555,9 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         self.t_scale = t_scale
         self.gradient_checkpointing = False
         self.gradient_checkpointing_backend = "torch"
+        self.gradient_checkpointing_offload_attention = False
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
 
         assert len(all_patch_size) == len(all_f_patch_size)
 
@@ -621,6 +639,15 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
 
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
+
+    def set_gradient_checkpointing_offload_attention(self, enabled: bool):
+        self.gradient_checkpointing_offload_attention = bool(enabled)
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         self._tread_router = router
@@ -855,7 +882,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             x_attn_mask[i, :seq_len] = 1
 
         if torch.is_grad_enabled() and self.gradient_checkpointing:
-            if self.gradient_checkpointing_backend == "unsloth":
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
                 from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                 checkpoint_fn = offloaded_checkpoint
@@ -863,10 +890,43 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
                 checkpoint_fn = torch.utils.checkpoint.checkpoint
 
             for layer in self.noise_refiner:
-                x = checkpoint_fn(layer, x, x_attn_mask, x_freqs_cis, adaln_input, use_reentrant=False)
+                if self.gradient_checkpointing_backend.endswith("-ffn"):
+                    x = layer(
+                        x,
+                        x_attn_mask,
+                        x_freqs_cis,
+                        adaln_input,
+                        checkpoint_ffn=True,
+                        checkpoint_fn=checkpoint_fn,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
+                    )
+                else:
+
+                    def run_noise_refiner(
+                        checkpoint_x,
+                        checkpoint_attn_mask,
+                        checkpoint_freqs,
+                        checkpoint_adaln,
+                        layer_module=layer,
+                    ):
+                        return layer_module(
+                            checkpoint_x,
+                            checkpoint_attn_mask,
+                            checkpoint_freqs,
+                            checkpoint_adaln,
+                            offload_attention=self.gradient_checkpointing_offload_attention,
+                        )
+
+                    x = checkpoint_fn(run_noise_refiner, x, x_attn_mask, x_freqs_cis, adaln_input, use_reentrant=False)
         else:
             for layer in self.noise_refiner:
-                x = layer(x, x_attn_mask, x_freqs_cis, adaln_input)
+                x = layer(
+                    x,
+                    x_attn_mask,
+                    x_freqs_cis,
+                    adaln_input,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
+                )
 
         # cap embed & refine
         cap_item_seqlens = [len(_) for _ in cap_feats]
@@ -886,7 +946,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             cap_attn_mask[i, :seq_len] = 1
 
         if torch.is_grad_enabled() and self.gradient_checkpointing:
-            if self.gradient_checkpointing_backend == "unsloth":
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
                 from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                 checkpoint_fn = offloaded_checkpoint
@@ -894,10 +954,41 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
                 checkpoint_fn = torch.utils.checkpoint.checkpoint
 
             for layer in self.context_refiner:
-                cap_feats = checkpoint_fn(layer, cap_feats, cap_attn_mask, cap_freqs_cis, use_reentrant=False)
+                if self.gradient_checkpointing_backend.endswith("-ffn"):
+                    cap_feats = layer(
+                        cap_feats,
+                        cap_attn_mask,
+                        cap_freqs_cis,
+                        checkpoint_ffn=True,
+                        checkpoint_fn=checkpoint_fn,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
+                    )
+                else:
+
+                    def run_context_refiner(
+                        checkpoint_cap_feats,
+                        checkpoint_attn_mask,
+                        checkpoint_freqs,
+                        layer_module=layer,
+                    ):
+                        return layer_module(
+                            checkpoint_cap_feats,
+                            checkpoint_attn_mask,
+                            checkpoint_freqs,
+                            offload_attention=self.gradient_checkpointing_offload_attention,
+                        )
+
+                    cap_feats = checkpoint_fn(
+                        run_context_refiner, cap_feats, cap_attn_mask, cap_freqs_cis, use_reentrant=False
+                    )
         else:
             for layer in self.context_refiner:
-                cap_feats = layer(cap_feats, cap_attn_mask, cap_freqs_cis)
+                cap_feats = layer(
+                    cap_feats,
+                    cap_attn_mask,
+                    cap_freqs_cis,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
+                )
 
         # unified
         unified = []
@@ -961,15 +1052,41 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
 
         def apply_layer(layer_module, h, attn_mask, freqs, layer_adaln_input):
             if torch.is_grad_enabled() and self.gradient_checkpointing:
-                if self.gradient_checkpointing_backend == "unsloth":
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint
                 else:
                     checkpoint_fn = torch.utils.checkpoint.checkpoint
 
-                return checkpoint_fn(layer_module, h, attn_mask, freqs, layer_adaln_input, use_reentrant=False)
-            return layer_module(h, attn_mask, freqs, layer_adaln_input)
+                if self.gradient_checkpointing_backend.endswith("-ffn"):
+                    return layer_module(
+                        h,
+                        attn_mask,
+                        freqs,
+                        layer_adaln_input,
+                        checkpoint_ffn=True,
+                        checkpoint_fn=checkpoint_fn,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
+                    )
+
+                def run_checkpointed_layer(checkpoint_h, checkpoint_attn_mask, checkpoint_freqs, checkpoint_adaln):
+                    return layer_module(
+                        checkpoint_h,
+                        checkpoint_attn_mask,
+                        checkpoint_freqs,
+                        checkpoint_adaln,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
+                    )
+
+                return checkpoint_fn(run_checkpointed_layer, h, attn_mask, freqs, layer_adaln_input, use_reentrant=False)
+            return layer_module(
+                h,
+                attn_mask,
+                freqs,
+                layer_adaln_input,
+                offload_attention=self.gradient_checkpointing_offload_attention,
+            )
 
         skip_set = set(skip_layers) if skip_layers is not None else set()
         capture_idx = 0
@@ -982,7 +1099,48 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         if musubi_manager is not None:
             musubi_offload_active = musubi_manager.activate(combined_blocks, unified.device, grad_enabled)
 
+        use_segmented_checkpointing = (
+            grad_enabled
+            and self.gradient_checkpointing
+            and self.gradient_checkpointing_interval is not None
+            and self.gradient_checkpointing_interval > 1
+            and not use_routing
+            and not skip_set
+            and hidden_states_buffer is None
+            and not musubi_offload_active
+        )
+        if use_segmented_checkpointing:
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                segmented_checkpoint_fn = offloaded_checkpoint
+            else:
+                segmented_checkpoint_fn = torch.utils.checkpoint.checkpoint
+
+            layer_adaln_input = unified_adaln_input if unified_adaln_input is not None else adaln_input
+
+            def run_segmented_layer(_idx, layer_module, h):
+                return layer_module(
+                    h,
+                    unified_attn_mask,
+                    unified_freqs_cis,
+                    layer_adaln_input,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
+                )
+
+            (unified,) = checkpoint_sequential_state(
+                self.layers,
+                self.gradient_checkpointing_interval,
+                (unified,),
+                run_segmented_layer,
+                segmented_checkpoint_fn,
+                {"use_reentrant": False},
+                segment_stride=self.gradient_checkpointing_segment_stride,
+            )
+
         for idx, layer in enumerate(self.layers):
+            if use_segmented_checkpointing:
+                break
             if musubi_offload_active and musubi_manager.is_managed_block(idx):
                 musubi_manager.stream_in(layer, unified.device)
             if use_routing and route_ptr < len(routes) and idx == routes[route_ptr]["start_layer_idx"]:

@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import torch
 
@@ -157,6 +158,57 @@ class TestSanaVideoTransformer3DModel(unittest.TestCase):
                 guidance=guidance,
                 timestep_sign=timestep_sign,
             )
+
+    def test_segmented_checkpointing_uses_sequential_state_helper(self):
+        model = SanaVideoTransformer3DModel(
+            in_channels=4,
+            out_channels=4,
+            num_attention_heads=2,
+            attention_head_dim=8,
+            num_layers=4,
+            num_cross_attention_heads=2,
+            cross_attention_head_dim=8,
+            cross_attention_dim=16,
+            caption_channels=16,
+            mlp_ratio=2.0,
+            sample_size=2,
+            patch_size=(1, 1, 1),
+            qk_norm="rms_norm_across_heads",
+            rope_max_seq_len=32,
+        )
+        model.train()
+        model.gradient_checkpointing = True
+        model.gradient_checkpointing_interval = 2
+        model.gradient_checkpointing_segment_stride = 4
+
+        def fake_checkpoint_sequential_state(
+            blocks,
+            segment_size,
+            state,
+            run_block,
+            checkpoint_fn,
+            checkpoint_kwargs=None,
+            segment_stride=None,
+        ):
+            return state
+
+        with patch(
+            "simpletuner.helpers.models.sanavideo.transformer.checkpoint_sequential_state",
+            side_effect=fake_checkpoint_sequential_state,
+        ) as checkpoint_sequential:
+            output = model(
+                hidden_states=torch.randn(1, 4, 2, 2, 2, requires_grad=True),
+                encoder_hidden_states=torch.randn(1, 5, 16),
+                timestep=torch.randint(0, 1000, (1, 8)),
+            )
+
+        output_tensor = output.sample if hasattr(output, "sample") else output
+        self.assertEqual(output_tensor.shape, (1, 4, 2, 2, 2))
+        checkpoint_sequential.assert_called_once()
+        args, kwargs = checkpoint_sequential.call_args
+        self.assertIs(args[0], model.transformer_blocks)
+        self.assertEqual(args[1], 2)
+        self.assertEqual(kwargs, {"segment_stride": 4})
 
 
 if __name__ == "__main__":

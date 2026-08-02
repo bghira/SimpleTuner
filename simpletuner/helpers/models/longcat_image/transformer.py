@@ -27,6 +27,8 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
+from simpletuner.helpers.training.offloaded_gradient_checkpointer import activation_offload_context
 
 logger = get_logger(__name__, log_level="INFO")
 
@@ -185,6 +187,7 @@ def _run_longcat_transformer_block(
     temb: torch.Tensor,
     context_temb: torch.Tensor,
     image_rotary_emb,
+    offload_attention: bool = False,
 ):
     norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = _longcat_apply_ada_layer_norm_zero(
         block.norm1, hidden_states, temb
@@ -193,11 +196,12 @@ def _run_longcat_transformer_block(
         block.norm1_context, encoder_hidden_states, context_temb
     )
 
-    attention_outputs = block.attn(
-        hidden_states=norm_hidden_states,
-        encoder_hidden_states=norm_encoder_hidden_states,
-        image_rotary_emb=image_rotary_emb,
-    )
+    with activation_offload_context(offload_attention, label=f"{block.__class__.__qualname__}:attention"):
+        attention_outputs = block.attn(
+            hidden_states=norm_hidden_states,
+            encoder_hidden_states=norm_encoder_hidden_states,
+            image_rotary_emb=image_rotary_emb,
+        )
     if len(attention_outputs) == 2:
         attn_output, context_attn_output = attention_outputs
     elif len(attention_outputs) == 3:
@@ -244,6 +248,7 @@ def _run_longcat_single_transformer_block(
     encoder_hidden_states: torch.Tensor,
     temb: torch.Tensor,
     image_rotary_emb,
+    offload_attention: bool = False,
 ):
     text_seq_len = encoder_hidden_states.shape[1]
     hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
@@ -251,7 +256,8 @@ def _run_longcat_single_transformer_block(
     residual = hidden_states
     norm_hidden_states, gate = _longcat_apply_ada_layer_norm_zero_single(block.norm, hidden_states, temb)
     mlp_hidden_states = block.act_mlp(block.proj_mlp(norm_hidden_states))
-    attn_output = block.attn(hidden_states=norm_hidden_states, image_rotary_emb=image_rotary_emb)
+    with activation_offload_context(offload_attention, label=f"{block.__class__.__qualname__}:attention"):
+        attn_output = block.attn(hidden_states=norm_hidden_states, image_rotary_emb=image_rotary_emb)
 
     hidden_states = torch.cat([attn_output, mlp_hidden_states], dim=2)
     if gate.ndim == 2:
@@ -271,6 +277,7 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     """
 
     _supports_gradient_checkpointing = True
+    _supports_attention_activation_offload = True
     _cp_plan = {
         "": {
             "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
@@ -341,6 +348,9 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         self.proj_out = nn.Linear(self.inner_dim, patch_size * patch_size * self.out_channels, bias=True)
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
+        self.gradient_checkpointing_offload_attention = False
         self.initialize_weights()
 
         self.use_checkpoint = [True] * num_layers
@@ -353,6 +363,15 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
+
+    def set_gradient_checkpointing_offload_attention(self, enabled: bool):
+        self.gradient_checkpointing_offload_attention = bool(enabled)
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.time_embed.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
@@ -456,7 +475,16 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         for index_block, block in enumerate(self.transformer_blocks):
             if musubi_offload_active and musubi_manager.is_managed_block(capture_idx):
                 musubi_manager.stream_in(block, hidden_states.device)
-            if torch.is_grad_enabled() and self.gradient_checkpointing and self.use_checkpoint[index_block]:
+            if (
+                torch.is_grad_enabled()
+                and self.use_checkpoint[index_block]
+                and should_checkpoint_block(
+                    capture_idx,
+                    self.gradient_checkpointing,
+                    self.gradient_checkpointing_interval,
+                    self.gradient_checkpointing_segment_stride,
+                )
+            ):
                 encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
                     _run_longcat_transformer_block,
                     block,
@@ -465,6 +493,7 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     temb_img,
                     temb_txt,
                     image_rotary_emb,
+                    self.gradient_checkpointing_offload_attention,
                 )
             else:
                 encoder_hidden_states, hidden_states = _run_longcat_transformer_block(
@@ -474,6 +503,7 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     temb_img,
                     temb_txt,
                     image_rotary_emb,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
                 )
             if musubi_offload_active and musubi_manager.is_managed_block(capture_idx):
                 musubi_manager.stream_out(block)
@@ -483,7 +513,16 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         for index_block, block in enumerate(self.single_transformer_blocks):
             if musubi_offload_active and musubi_manager.is_managed_block(capture_idx):
                 musubi_manager.stream_in(block, hidden_states.device)
-            if torch.is_grad_enabled() and self.gradient_checkpointing and self.use_single_checkpoint[index_block]:
+            if (
+                torch.is_grad_enabled()
+                and self.use_single_checkpoint[index_block]
+                and should_checkpoint_block(
+                    capture_idx,
+                    self.gradient_checkpointing,
+                    self.gradient_checkpointing_interval,
+                    self.gradient_checkpointing_segment_stride,
+                )
+            ):
                 encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
                     _run_longcat_single_transformer_block,
                     block,
@@ -491,6 +530,7 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     encoder_hidden_states,
                     temb_single,
                     image_rotary_emb,
+                    self.gradient_checkpointing_offload_attention,
                 )
             else:
                 encoder_hidden_states, hidden_states = _run_longcat_single_transformer_block(
@@ -499,6 +539,7 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     encoder_hidden_states,
                     temb_single,
                     image_rotary_emb,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
                 )
             if musubi_offload_active and musubi_manager.is_managed_block(capture_idx):
                 musubi_manager.stream_out(block)

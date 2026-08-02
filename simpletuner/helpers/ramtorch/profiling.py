@@ -80,6 +80,12 @@ def reset_for_new_run() -> None:
         _STATS = _initial_stats()
         _OUTSTANDING.clear()
         _STEP_DURATIONS.clear()
+    if torch.cuda.is_available():
+        for index in range(torch.cuda.device_count()):
+            try:
+                torch.cuda.reset_peak_memory_stats(torch.device("cuda", index))
+            except Exception:
+                continue
 
 
 def profile_enabled() -> bool:
@@ -492,6 +498,18 @@ def snapshot() -> dict[str, Any]:
         }
         data["train_step_durations"] = _step_duration_summary()
         data["peak_memory"] = _peak_memory()
+        try:
+            from simpletuner.helpers.training.offloaded_gradient_checkpointer import (
+                get_activation_offload_pin_memory_stats,
+                get_activation_offload_prefetch_stats,
+            )
+
+            data["activation_offload"] = {
+                "pin_memory": get_activation_offload_pin_memory_stats(),
+                "prefetch": get_activation_offload_prefetch_stats(),
+            }
+        except Exception as exc:
+            data["activation_offload"] = {"error": str(exc)}
         data["finished_at_unix"] = time.time()
         return data
 

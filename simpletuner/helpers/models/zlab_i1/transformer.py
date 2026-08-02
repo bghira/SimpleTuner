@@ -17,6 +17,7 @@ from diffusers.models.modeling_utils import ModelMixin
 from huggingface_hub import hf_hub_download
 
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state, should_checkpoint_block
 from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.getLogger(__name__)
@@ -501,6 +502,8 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         self.register_to_config(head_dim=resolved_head_dim)
         self.head_dim = resolved_head_dim
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
         self.input_size = input_size
         self.image_resolution = image_resolution
         self.patch_size = patch_size
@@ -583,6 +586,12 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     def set_router(self, router: TREADRouter, routes: list[dict[str, Any]]):
         self._tread_router = router
@@ -764,6 +773,48 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                 return router.end_route(image_tokens, tread_mask_info, original_x=saved_image_tokens)
             return image_tokens
 
+        def run_segmented_block(
+            block_index: int,
+            block: i1DiTBlock,
+            segment_image_tokens: torch.Tensor,
+            segment_text_tokens: torch.Tensor,
+            *skip_slots: torch.Tensor,
+        ) -> tuple[torch.Tensor, ...]:
+            skip_images = list(skip_slots[: len(self.in_blocks)])
+            skip_texts = list(skip_slots[len(self.in_blocks) :])
+            if block_index < len(self.in_blocks):
+                segment_image_tokens, segment_text_tokens = block(
+                    segment_image_tokens,
+                    segment_text_tokens,
+                    image_freqs,
+                    text_freqs,
+                    text_mask,
+                    None,
+                )
+                skip_images[block_index] = segment_image_tokens
+                skip_texts[block_index] = segment_text_tokens
+            elif block_index == len(self.in_blocks):
+                segment_image_tokens, segment_text_tokens = block(
+                    segment_image_tokens,
+                    segment_text_tokens,
+                    image_freqs,
+                    text_freqs,
+                    text_mask,
+                    None,
+                )
+            else:
+                out_index = block_index - len(self.in_blocks) - 1
+                skip_index = len(self.in_blocks) - 1 - out_index
+                segment_image_tokens, segment_text_tokens = block(
+                    segment_image_tokens,
+                    segment_text_tokens,
+                    image_freqs,
+                    text_freqs,
+                    text_mask,
+                    (skip_images[skip_index], skip_texts[skip_index]),
+                )
+            return (segment_image_tokens, segment_text_tokens, *skip_images, *skip_texts)
+
         def run_block(block: i1DiTBlock, skip: Optional[tuple[torch.Tensor, torch.Tensor]] = None):
             block_skip = skip
             if (
@@ -773,7 +824,12 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                 and block_skip[0].shape[1] != image_tokens.shape[1]
             ):
                 block_skip = (router.start_route(block_skip[0], tread_mask_info), block_skip[1])
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
+            if torch.is_grad_enabled() and should_checkpoint_block(
+                global_idx,
+                self.gradient_checkpointing,
+                self.gradient_checkpointing_interval,
+                self.gradient_checkpointing_segment_stride,
+            ):
                 inputs = (
                     block,
                     image_tokens,
@@ -793,45 +849,75 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         if musubi_manager is not None:
             musubi_offload_active = musubi_manager.activate(combined_blocks, x.device, torch.is_grad_enabled())
 
-        for block in self.in_blocks:
+        segment_size = self.gradient_checkpointing_interval
+        use_segmented_checkpointing = (
+            self.training
+            and torch.is_grad_enabled()
+            and self.gradient_checkpointing
+            and segment_size is not None
+            and segment_size > 1
+            and not use_routing
+            and not musubi_offload_active
+            and skip_layers is None
+            and hidden_states_buffer is None
+        )
+        if use_segmented_checkpointing:
+            empty_image_skip = image_tokens.new_empty(0)
+            empty_text_skip = text_tokens.new_empty(0)
+            segmented_state = checkpoint_sequential_state(
+                combined_blocks,
+                segment_size,
+                (
+                    image_tokens,
+                    text_tokens,
+                    *([empty_image_skip] * len(self.in_blocks)),
+                    *([empty_text_skip] * len(self.in_blocks)),
+                ),
+                run_segmented_block,
+                self._gradient_checkpointing_func,
+                segment_stride=self.gradient_checkpointing_segment_stride,
+            )
+            image_tokens, text_tokens = segmented_state[:2]
+        else:
+            for block in self.in_blocks:
+                if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                    musubi_manager.stream_in(block, x.device)
+                maybe_start_route()
+                if global_idx not in skip_set:
+                    image_tokens, text_tokens = run_block(block)
+                image_tokens_for_storage = full_image_tokens_for_storage()
+                skips.append((image_tokens_for_storage, text_tokens))
+                maybe_end_route()
+                _store_hidden_state(hidden_states_buffer, f"layer_{global_idx}", image_tokens_for_storage)
+                if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                    musubi_manager.stream_out(block)
+                global_idx += 1
+
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
-                musubi_manager.stream_in(block, x.device)
+                musubi_manager.stream_in(self.mid_block, x.device)
             maybe_start_route()
             if global_idx not in skip_set:
-                image_tokens, text_tokens = run_block(block)
+                image_tokens, text_tokens = run_block(self.mid_block)
             image_tokens_for_storage = full_image_tokens_for_storage()
-            skips.append((image_tokens_for_storage, text_tokens))
             maybe_end_route()
             _store_hidden_state(hidden_states_buffer, f"layer_{global_idx}", image_tokens_for_storage)
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
-                musubi_manager.stream_out(block)
+                musubi_manager.stream_out(self.mid_block)
             global_idx += 1
 
-        if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
-            musubi_manager.stream_in(self.mid_block, x.device)
-        maybe_start_route()
-        if global_idx not in skip_set:
-            image_tokens, text_tokens = run_block(self.mid_block)
-        image_tokens_for_storage = full_image_tokens_for_storage()
-        maybe_end_route()
-        _store_hidden_state(hidden_states_buffer, f"layer_{global_idx}", image_tokens_for_storage)
-        if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
-            musubi_manager.stream_out(self.mid_block)
-        global_idx += 1
-
-        for block in self.out_blocks:
-            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
-                musubi_manager.stream_in(block, x.device)
-            maybe_start_route()
-            skip = skips.pop()
-            if global_idx not in skip_set:
-                image_tokens, text_tokens = run_block(block, skip)
-            image_tokens_for_storage = full_image_tokens_for_storage()
-            maybe_end_route()
-            _store_hidden_state(hidden_states_buffer, f"layer_{global_idx}", image_tokens_for_storage)
-            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
-                musubi_manager.stream_out(block)
-            global_idx += 1
+            for block in self.out_blocks:
+                if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                    musubi_manager.stream_in(block, x.device)
+                maybe_start_route()
+                skip = skips.pop()
+                if global_idx not in skip_set:
+                    image_tokens, text_tokens = run_block(block, skip)
+                image_tokens_for_storage = full_image_tokens_for_storage()
+                maybe_end_route()
+                _store_hidden_state(hidden_states_buffer, f"layer_{global_idx}", image_tokens_for_storage)
+                if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                    musubi_manager.stream_out(block)
+                global_idx += 1
         tokens = self.final_layer(image_tokens)
         bsz = x.shape[0]
         h = token_height

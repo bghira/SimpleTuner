@@ -10,6 +10,8 @@ from diffusers.models.normalization import RMSNorm
 from torch import Tensor
 from torch._dynamo import allow_in_graph as maybe_allow_in_graph
 
+from simpletuner.helpers.training.offloaded_gradient_checkpointer import activation_offload_context
+
 from ._attn_backend import flash_attn_varlen_func
 
 
@@ -619,6 +621,7 @@ class MageFlowTransformerBlock(nn.Module):
         joint_attention_kwargs: dict[str, Any] | None = None,
         checkpoint_ffn: bool = False,
         checkpoint_fn: Any | None = None,
+        offload_attention: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # Get modulation parameters for both streams
         # if isinstance(temb, tuple):
@@ -658,17 +661,18 @@ class MageFlowTransformerBlock(nn.Module):
         joint_attention_kwargs = joint_attention_kwargs or {}
         # logger.info(f"img_modulated: {img_modulated}")
         # logger.info(f"txt_modulated: {txt_modulated}")
-        attn_output = self.attn(
-            hidden_states=img_modulated,  # Image stream (will be processed as "sample")
-            encoder_hidden_states=txt_modulated,  # Text stream (will be processed as "context")
-            # encoder_hidden_states_mask=encoder_hidden_states_mask,
-            image_rotary_emb=image_rotary_emb,
-            txt_cu_lens=txt_cu_lens,
-            img_cu_lens=img_cu_lens,
-            # freqs_cos=freqs_cos,
-            # freqs_sin=freqs_sin,
-            **joint_attention_kwargs,
-        )
+        with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+            attn_output = self.attn(
+                hidden_states=img_modulated,  # Image stream (will be processed as "sample")
+                encoder_hidden_states=txt_modulated,  # Text stream (will be processed as "context")
+                # encoder_hidden_states_mask=encoder_hidden_states_mask,
+                image_rotary_emb=image_rotary_emb,
+                txt_cu_lens=txt_cu_lens,
+                img_cu_lens=img_cu_lens,
+                # freqs_cos=freqs_cos,
+                # freqs_sin=freqs_sin,
+                **joint_attention_kwargs,
+            )
         # logger.info(f"attn_output: {attn_output}")
 
         # MageDoubleStreamAttnProcessor returns (img_output, txt_output) when encoder_hidden_states is provided

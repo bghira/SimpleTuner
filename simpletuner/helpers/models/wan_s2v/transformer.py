@@ -40,6 +40,7 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
 from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.get_logger(__name__)
@@ -135,10 +136,10 @@ class WanS2VAttnProcessor2_0:
         for i in range(batch_size):
             s = hidden_states.size(2)
             x_i = torch.view_as_complex(hidden_states[i, :, :s].to(torch.float64).reshape(hidden_states.size(1), s, -1, 2))
-            freqs_i = freqs[i, :s]
+            freqs_i = freqs[i, :s].transpose(0, 1)
             x_i = torch.view_as_real(x_i * freqs_i).flatten(2)
             output.append(x_i)
-        return torch.stack(output).transpose(1, 2).type_as(hidden_states)
+        return torch.stack(output).type_as(hidden_states)
 
 
 # -----------------------------------------------------------------------------
@@ -332,7 +333,10 @@ class AudioInjector(nn.Module):
         else:
             attn_hidden_states = self.injector_pre_norm_feat[audio_attn_id](input_hidden_states)
 
-        residual_out = self.injector[audio_attn_id](attn_hidden_states, attn_audio_emb, None, None)
+        residual_out = self.injector[audio_attn_id](
+            hidden_states=attn_hidden_states,
+            encoder_hidden_states=attn_audio_emb,
+        )
         residual_out = residual_out.unflatten(0, (-1, merged_audio_emb_num_frames)).flatten(1, 2)
         hidden_states[:, :original_sequence_length] = hidden_states[:, :original_sequence_length] + residual_out
 
@@ -1048,6 +1052,9 @@ class WanS2VTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         self.scale_shift_table = nn.Parameter(torch.randn(1, 2, inner_dim) / inner_dim**0.5)
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=num_layers,
             blocks_to_swap=musubi_blocks_to_swap,
@@ -1059,9 +1066,27 @@ class WanS2VTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         self.condition_embedder.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
         register_flowmap_config(self, gate_value, deltatime_type)
 
-    def _set_gradient_checkpointing(self, module, value=False):
+    def _set_gradient_checkpointing(self, module=None, value=False, enable=None, gradient_checkpointing_func=None):
+        if enable is not None:
+            value = enable
+        if gradient_checkpointing_func is not None:
+            self._gradient_checkpointing_func = gradient_checkpointing_func
+        if module is None:
+            module = self
+            self.gradient_checkpointing = value
         if hasattr(module, "gradient_checkpointing"):
             module.gradient_checkpointing = value
+        for child in module.children():
+            self._set_gradient_checkpointing(child, value=value)
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         """Set the TREAD router and routing configuration."""
@@ -1308,7 +1333,12 @@ class WanS2VTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             if musubi_offload_active and musubi_manager.is_managed_block(block_idx):
                 musubi_manager.stream_in(block, hidden_states.device)
 
-            if self.training and self.gradient_checkpointing:
+            if self.training and should_checkpoint_block(
+                block_idx,
+                self.gradient_checkpointing,
+                self.gradient_checkpointing_interval,
+                self.gradient_checkpointing_segment_stride,
+            ):
                 hidden_states = self._gradient_checkpointing_func(
                     block, hidden_states, encoder_hidden_states, timestep_proj, current_rope
                 )

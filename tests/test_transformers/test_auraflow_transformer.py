@@ -912,6 +912,36 @@ class TestAuraFlowTransformer2DModel(TransformerBaseTest):
             model.set_gradient_checkpointing_interval(interval)
             self.assertEqual(model.gradient_checkpointing_interval, interval)
 
+    def test_gradient_checkpointing_handles_joint_and_single_blocks_backward(self):
+        model = AuraFlowTransformer2DModel(
+            sample_size=8,
+            patch_size=2,
+            in_channels=4,
+            out_channels=4,
+            num_mmdit_layers=1,
+            num_single_dit_layers=1,
+            attention_head_dim=8,
+            num_attention_heads=2,
+            joint_attention_dim=16,
+            caption_projection_dim=16,
+            pos_embed_max_size=16,
+        )
+        model.train()
+        model.gradient_checkpointing = True
+        model.set_gradient_checkpointing_interval(None)
+
+        hidden_states = torch.randn(1, 4, 8, 8, requires_grad=True)
+        encoder_hidden_states = torch.randn(1, 3, 16)
+        output = model(
+            hidden_states=hidden_states,
+            encoder_hidden_states=encoder_hidden_states,
+            timestep=torch.tensor([1.0]),
+            return_dict=False,
+        )[0]
+
+        output.float().mean().backward()
+        self.assertIsNotNone(hidden_states.grad)
+
     def test_transformer_tread_router_methods(self):
         """Test TREAD router configuration methods."""
         with patch("diffusers.models.embeddings.Timesteps"), patch("diffusers.models.embeddings.TimestepEmbedding"):

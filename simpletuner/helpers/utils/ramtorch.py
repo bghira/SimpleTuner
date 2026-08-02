@@ -778,20 +778,25 @@ def move_non_linear_layers_to_device(module: nn.Module, device: object) -> int:
 
 def mark_ddp_ignore_params(module: nn.Module) -> int:
     """
-    Mark RamTorch parameters on a module to be ignored by DistributedDataParallel.
+    Mark RamTorch/CPU-resident parameters on a module to be ignored by
+    DistributedDataParallel.
 
     Returns:
-        Number of parameters added to the ignore list.
+        Number of parameters and buffers added to the ignore list.
     """
-    ramtorch_names = [name for name, param in module.named_parameters() if getattr(param, "is_ramtorch", False)]
-    ramtorch_names.extend(name for name, buffer in module.named_buffers() if getattr(buffer, "is_ramtorch", False))
-    if not ramtorch_names:
-        device_types = {param.device.type for _, param in module.named_parameters() if param.device is not None}
-        if "cuda" in device_types and "cpu" in device_types:
-            ramtorch_names = [name for name, param in module.named_parameters() if param.device.type == "cpu"]
-    if not ramtorch_names:
+    named_params = list(module.named_parameters())
+    named_buffers = list(module.named_buffers())
+    ignore_names = {name for name, param in named_params if getattr(param, "is_ramtorch", False)}
+    ignore_names.update(name for name, buffer in named_buffers if getattr(buffer, "is_ramtorch", False))
+
+    device_types = {param.device.type for _, param in named_params if param.device is not None}
+    should_ignore_cpu_residents = bool(ignore_names) or {"cpu", "cuda"}.issubset(device_types)
+    if should_ignore_cpu_residents:
+        ignore_names.update(name for name, param in named_params if param.device.type == "cpu" and not param.requires_grad)
+        ignore_names.update(name for name, buffer in named_buffers if buffer.device.type == "cpu")
+    if not ignore_names:
         return 0
 
     existing = getattr(module, "_ddp_params_and_buffers_to_ignore", set())
-    module._ddp_params_and_buffers_to_ignore = set(existing) | set(ramtorch_names)
-    return len(ramtorch_names)
+    module._ddp_params_and_buffers_to_ignore = set(existing) | ignore_names
+    return len(ignore_names)
