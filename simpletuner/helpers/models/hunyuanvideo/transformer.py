@@ -45,6 +45,8 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state, should_checkpoint_block
+from simpletuner.helpers.training.offloaded_gradient_checkpointer import activation_offload_context
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -168,11 +170,13 @@ class HunyuanVideo15AttnProcessor2_0:
             value = torch.cat([value, encoder_value], dim=1)
 
         batch_size, seq_len, heads, dim = query.shape
-        attention_mask = F.pad(attention_mask, (seq_len - attention_mask.shape[1], 0), value=True)
-        attention_mask = attention_mask.bool()
-        self_attn_mask_1 = attention_mask.view(batch_size, 1, 1, seq_len).repeat(1, 1, seq_len, 1)
-        self_attn_mask_2 = self_attn_mask_1.transpose(2, 3)
-        attention_mask = (self_attn_mask_1 & self_attn_mask_2).bool()
+        if attention_mask is not None:
+            attention_mask = F.pad(attention_mask, (seq_len - attention_mask.shape[1], 0), value=True)
+            attention_mask = attention_mask.bool()
+            if bool(attention_mask.all()):
+                attention_mask = None
+            else:
+                attention_mask = attention_mask.view(batch_size, 1, 1, seq_len)
 
         # 5. Attention
         hidden_states = dispatch_attention_fn(
@@ -645,6 +649,9 @@ class HunyuanVideo15TransformerBlock(nn.Module):
         context_temb: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         freqs_cis: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        checkpoint_ffn: bool = False,
+        checkpoint_fn: Any | None = None,
+        offload_attention: bool = False,
         *args,
         **kwargs,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -659,12 +666,13 @@ class HunyuanVideo15TransformerBlock(nn.Module):
         )
 
         # 2. Joint attention
-        attn_output, context_attn_output = self.attn(
-            hidden_states=norm_hidden_states,
-            encoder_hidden_states=norm_encoder_hidden_states,
-            attention_mask=attention_mask,
-            image_rotary_emb=freqs_cis,
-        )
+        with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+            attn_output, context_attn_output = self.attn(
+                hidden_states=norm_hidden_states,
+                encoder_hidden_states=norm_encoder_hidden_states,
+                attention_mask=attention_mask,
+                image_rotary_emb=freqs_cis,
+            )
 
         # 3. Modulation and residual connection
         if gate_msa.ndim == 2:
@@ -687,8 +695,17 @@ class HunyuanVideo15TransformerBlock(nn.Module):
             norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp) + c_shift_mlp
 
         # 4. Feed-forward
-        ff_output = self.ff(norm_hidden_states)
-        context_ff_output = self.ff_context(norm_encoder_hidden_states)
+        if checkpoint_ffn:
+            if checkpoint_fn is None:
+                raise ValueError("checkpoint_fn is required when checkpoint_ffn=True")
+            ff_output, context_ff_output = checkpoint_fn(
+                self._ffn_forward,
+                norm_hidden_states,
+                norm_encoder_hidden_states,
+                use_reentrant=False,
+            )
+        else:
+            ff_output, context_ff_output = self._ffn_forward(norm_hidden_states, norm_encoder_hidden_states)
 
         if gate_mlp.ndim == 2:
             gate_mlp = gate_mlp.unsqueeze(1)
@@ -698,6 +715,13 @@ class HunyuanVideo15TransformerBlock(nn.Module):
         encoder_hidden_states = encoder_hidden_states + c_gate_mlp * context_ff_output
 
         return hidden_states, encoder_hidden_states
+
+    def _ffn_forward(
+        self,
+        norm_hidden_states: torch.Tensor,
+        norm_encoder_hidden_states: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        return self.ff(norm_hidden_states), self.ff_context(norm_encoder_hidden_states)
 
 
 class HunyuanVideo15Transformer3DModel(
@@ -740,6 +764,7 @@ class HunyuanVideo15Transformer3DModel(
     """
 
     _supports_gradient_checkpointing = True
+    _supports_attention_activation_offload = True
     _skip_layerwise_casting_patterns = ["x_embedder", "context_embedder", "norm"]
     _no_split_modules = [
         "HunyuanVideo15TransformerBlock",
@@ -795,6 +820,7 @@ class HunyuanVideo15Transformer3DModel(
         self._tread_router = None
         self._tread_routes = None
         self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
 
         inner_dim = num_attention_heads * attention_head_dim
         out_channels = out_channels or in_channels
@@ -839,6 +865,7 @@ class HunyuanVideo15Transformer3DModel(
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_backend = "torch"
+        self.gradient_checkpointing_offload_attention = False
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=num_layers,
             blocks_to_swap=musubi_blocks_to_swap,
@@ -1002,6 +1029,11 @@ class HunyuanVideo15Transformer3DModel(
 
         encoder_hidden_states = torch.stack(new_encoder_hidden_states)
         encoder_attention_mask = torch.stack(new_encoder_attention_mask)
+        live_conditioning_columns = encoder_attention_mask.any(dim=0)
+        if bool(live_conditioning_columns.any()):
+            last_live_conditioning_column = int(live_conditioning_columns.nonzero()[-1].item()) + 1
+            encoder_hidden_states = encoder_hidden_states[:, :last_live_conditioning_column]
+            encoder_attention_mask = encoder_attention_mask[:, :last_live_conditioning_column]
 
         grad_enabled = torch.is_grad_enabled()
         musubi_manager = self._musubi_block_swap
@@ -1012,37 +1044,92 @@ class HunyuanVideo15Transformer3DModel(
         # 4. Transformer blocks
         capture_idx = 0
         if torch.is_grad_enabled() and self.gradient_checkpointing:
-            if self.gradient_checkpointing_backend == "unsloth":
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
                 from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                 checkpoint_fn = offloaded_checkpoint
             else:
                 checkpoint_fn = torch.utils.checkpoint.checkpoint
 
-            for idx, block in enumerate(self.transformer_blocks):
-                if musubi_offload_active and musubi_manager.is_managed_block(idx):
-                    musubi_manager.stream_in(block, hidden_states.device)
-                hidden_states, encoder_hidden_states = checkpoint_fn(
-                    block,
-                    hidden_states,
-                    encoder_hidden_states,
-                    temb_hidden,
-                    temb_context,
-                    encoder_attention_mask,
-                    image_rotary_emb,
-                    use_reentrant=False,
+            use_sequential_segments = (
+                self.gradient_checkpointing_interval is not None
+                and self.gradient_checkpointing_interval > 1
+                and hidden_states_buffer is None
+                and not self.gradient_checkpointing_backend.endswith("-ffn")
+            )
+
+            if use_sequential_segments:
+
+                def run_segment_block(idx, block, segment_hidden_states, segment_encoder_hidden_states):
+                    if musubi_offload_active and musubi_manager.is_managed_block(idx):
+                        musubi_manager.stream_in(block, segment_hidden_states.device)
+                    result = block(
+                        segment_hidden_states,
+                        segment_encoder_hidden_states,
+                        temb_hidden,
+                        temb_context,
+                        encoder_attention_mask,
+                        image_rotary_emb,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
+                    )
+                    if musubi_offload_active and musubi_manager.is_managed_block(idx):
+                        musubi_manager.stream_out(block)
+                    return result
+
+                hidden_states, encoder_hidden_states = checkpoint_sequential_state(
+                    self.transformer_blocks,
+                    self.gradient_checkpointing_interval,
+                    (hidden_states, encoder_hidden_states),
+                    run_segment_block,
+                    checkpoint_fn,
+                    {"use_reentrant": False},
+                    segment_stride=self.gradient_checkpointing_segment_stride,
                 )
-                if musubi_offload_active and musubi_manager.is_managed_block(idx):
-                    musubi_manager.stream_out(block)
-                tokens_view = _reshape_hunyuan_video_tokens(
-                    hidden_states,
-                    batch_size=batch_size,
-                    post_patch_num_frames=post_patch_num_frames,
-                    post_patch_height=post_patch_height,
-                    post_patch_width=post_patch_width,
-                )
-                _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", tokens_view)
-                capture_idx += 1
+            else:
+                for idx, block in enumerate(self.transformer_blocks):
+                    if musubi_offload_active and musubi_manager.is_managed_block(idx):
+                        musubi_manager.stream_in(block, hidden_states.device)
+                    checkpoint_this_block = should_checkpoint_block(
+                        idx,
+                        True,
+                        self.gradient_checkpointing_interval,
+                        self.gradient_checkpointing_segment_stride,
+                    )
+                    if checkpoint_this_block and not self.gradient_checkpointing_backend.endswith("-ffn"):
+                        hidden_states, encoder_hidden_states = checkpoint_fn(
+                            block,
+                            hidden_states,
+                            encoder_hidden_states,
+                            temb_hidden,
+                            temb_context,
+                            encoder_attention_mask,
+                            image_rotary_emb,
+                            offload_attention=self.gradient_checkpointing_offload_attention,
+                            use_reentrant=False,
+                        )
+                    else:
+                        hidden_states, encoder_hidden_states = block(
+                            hidden_states,
+                            encoder_hidden_states,
+                            temb_hidden,
+                            temb_context,
+                            encoder_attention_mask,
+                            image_rotary_emb,
+                            checkpoint_ffn=self.gradient_checkpointing_backend.endswith("-ffn") and checkpoint_this_block,
+                            checkpoint_fn=checkpoint_fn,
+                            offload_attention=self.gradient_checkpointing_offload_attention,
+                        )
+                    if musubi_offload_active and musubi_manager.is_managed_block(idx):
+                        musubi_manager.stream_out(block)
+                    tokens_view = _reshape_hunyuan_video_tokens(
+                        hidden_states,
+                        batch_size=batch_size,
+                        post_patch_num_frames=post_patch_num_frames,
+                        post_patch_height=post_patch_height,
+                        post_patch_width=post_patch_width,
+                    )
+                    _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", tokens_view)
+                    capture_idx += 1
 
         else:
             for idx, block in enumerate(self.transformer_blocks):
@@ -1055,6 +1142,7 @@ class HunyuanVideo15Transformer3DModel(
                     temb_context,
                     encoder_attention_mask,
                     image_rotary_emb,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
                 )
                 if musubi_offload_active and musubi_manager.is_managed_block(idx):
                     musubi_manager.stream_out(block)
@@ -1096,5 +1184,11 @@ class HunyuanVideo15Transformer3DModel(
     def set_gradient_checkpointing_interval(self, interval: int):
         self.gradient_checkpointing_interval = interval
 
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
+
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
+
+    def set_gradient_checkpointing_offload_attention(self, enabled: bool):
+        self.gradient_checkpointing_offload_attention = bool(enabled)

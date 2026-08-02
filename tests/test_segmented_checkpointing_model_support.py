@@ -324,3 +324,19 @@ class HiDreamSegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=False,
             attention_offload=False,
         )
+
+
+class HunyuanVideoSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.hunyuanvideo.transformer import HunyuanVideo15Transformer3DModel
+
+        assert_checkpointing_controls(
+            self,
+            HunyuanVideo15Transformer3DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            checkpoint_attention_offload=True,
+            ffn=False,
+            attention_offload=True,
+        )
