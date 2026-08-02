@@ -490,11 +490,31 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             default_value=None,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Interval must be at least 1")],
             dependencies=[FieldDependency(field="gradient_checkpointing", operator="equals", value=True, action="enable")],
-            help_text="Checkpoint contiguous chunks of N transformer blocks (leave blank for per-block checkpointing)",
-            tooltip="Higher values reduce recompute overhead but keep more activations in VRAM. Flux and MageFlow use contiguous chunked checkpointing on whole-block paths.",
+            help_text="Adjust checkpoint spacing or chunk size for supported transformer blocks (leave blank for per-block checkpointing)",
+            tooltip="Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Z-Image, and Wan whole-block paths use contiguous chunks of N blocks. Other families may checkpoint every N-th block. Higher values can reduce recompute but keep more activations in VRAM.",
             importance=ImportanceLevel.ADVANCED,
             order=16,
             documentation="OPTIONS.md#--gradient_checkpointing_interval",
+        )
+    )
+
+    # Gradient Checkpointing Segment Stride
+    registry._add_field(
+        ConfigField(
+            name="gradient_checkpointing_segment_stride",
+            arg_name="--gradient_checkpointing_segment_stride",
+            ui_label="Gradient Checkpointing Segment Stride",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="memory_optimization",
+            default_value=None,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Stride must be at least 1")],
+            dependencies=[FieldDependency(field="gradient_checkpointing", operator="equals", value=True, action="enable")],
+            help_text="Start a checkpointed segment every N blocks on supported segmented paths",
+            tooltip="Use with interval as segment width. interval=2 and stride=4 checkpoints two blocks, runs the next two blocks normally, and repeats on supported whole-block paths.",
+            importance=ImportanceLevel.ADVANCED,
+            order=17,
+            documentation="OPTIONS.md#--gradient_checkpointing_segment_stride",
         )
     )
 
@@ -511,7 +531,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             help_text="Offload text encoders to CPU during VAE caching",
             tooltip="Useful for large models that OOM during startup. May significantly increase startup time.",
             importance=ImportanceLevel.ADVANCED,
-            order=17,
+            order=18,
             documentation="OPTIONS.md#--offload_during_startup",
         )
     )

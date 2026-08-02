@@ -49,6 +49,29 @@ def get_checkpoint_function():
     return torch.utils.checkpoint.checkpoint
 
 
+def should_checkpoint_block(
+    block_index: int,
+    gradient_checkpointing: bool,
+    interval: int | None = None,
+    segment_stride: int | None = None,
+) -> bool:
+    """Return whether an individual block should be checkpointed.
+
+    ``interval=None`` means every block, matching the legacy layer checkpointing
+    behavior. With a stride, checkpoint the first ``interval`` blocks in each
+    stride window, e.g. interval=2 stride=4 checkpoints 0,1,4,5,...
+    """
+    if not gradient_checkpointing:
+        return False
+    if interval is None or interval <= 1:
+        return True
+    if segment_stride is None:
+        return block_index % interval == 0
+    if segment_stride < interval:
+        raise ValueError("segment_stride must be at least interval")
+    return block_index % segment_stride < interval
+
+
 def checkpoint_sequential_state(
     blocks: Sequence[Any],
     segment_size: int,
@@ -56,6 +79,7 @@ def checkpoint_sequential_state(
     run_block: Callable[..., tuple[Any, ...] | Any],
     checkpoint_fn: Callable[..., Any],
     checkpoint_kwargs: dict[str, Any] | None = None,
+    segment_stride: int | None = None,
 ) -> tuple[Any, ...]:
     """Checkpoint contiguous chunks of a stateful block sequence.
 
@@ -64,11 +88,15 @@ def checkpoint_sequential_state(
     """
     if segment_size < 1:
         raise ValueError("segment_size must be greater than 0")
+    if segment_stride is None:
+        segment_stride = segment_size
+    if segment_stride < segment_size:
+        raise ValueError("segment_stride must be at least segment_size")
 
     current_state = state if isinstance(state, tuple) else (state,)
     checkpoint_kwargs = dict(checkpoint_kwargs or {})
 
-    for segment_start in range(0, len(blocks), segment_size):
+    for segment_start in range(0, len(blocks), segment_stride):
         segment_blocks = tuple(blocks[segment_start : segment_start + segment_size])
 
         def run_segment(*segment_state, _segment_start=segment_start, _segment_blocks=segment_blocks):
@@ -82,5 +110,11 @@ def checkpoint_sequential_state(
 
         result = checkpoint_fn(run_segment, *current_state, **checkpoint_kwargs)
         current_state = result if isinstance(result, tuple) else (result,)
+
+        gap_start = segment_start + len(segment_blocks)
+        gap_end = min(segment_start + segment_stride, len(blocks))
+        for block_index in range(gap_start, gap_end):
+            result = run_block(block_index, blocks[block_index], *current_state)
+            current_state = result if isinstance(result, tuple) else (result,)
 
     return current_state

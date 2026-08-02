@@ -34,7 +34,13 @@
 
 `gradient_checkpointing_interval: 2` 会在受支持的 whole-block 路径上 checkpoint 连续的两个 block chunk。值越大，重算越少，VRAM 里保留的 activation 越多。
 
-`torch-ffn` 和 `unsloth-ffn` 目前支持 Flux.1 风格 blocks 和 MageFlow。其他模型族会明确报错，直到它们的 block 暴露同样安全的边界。
+在这些分段路径上，`gradient_checkpointing_segment_stride` 也可以和 `unsloth` 一起使用。把它当作 fit lever，而不是 speed lever：跳过的 blocks 仍留在 GPU，checkpointed blocks 仍会把保存 tensor CPU offload。Torch-only 概览和模型 benchmark 见 [Segmented Checkpointing](SEGMENTED_CHECKPOINTING.md)。
+
+`gradient_checkpointing_offload_attention` 独立于 backend。在支持 attention/FFN 分离的 blocks 上，它会 offload attention 侧保存的 activations。它可以单独运行；当模型支持所选 backend 时，也可与 `torch`、`torch-ffn`、`unsloth` 或 `unsloth-ffn` 组合。
+
+`gradient_checkpointing_offload_pin_memory_max_buckets` 控制 offloaded saved tensors 的 pinned CPU pooling。默认是 `12` 个不同 tensor buckets；设为 `0` 时只使用普通 CPU memory。
+
+`torch-ffn` 和 `unsloth-ffn` 目前支持 Chroma、Flux、Krea 2、LTXVideo2、MageFlow、Wan 和 Z-Image。其他模型族会明确报错，直到它们的 block 暴露同样安全的边界。
 
 ## 它交换了什么
 

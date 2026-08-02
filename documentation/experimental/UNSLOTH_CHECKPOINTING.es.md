@@ -34,7 +34,13 @@ En familias compatibles también puedes checkpointar menos bloques:
 
 `gradient_checkpointing_interval: 2` checkpointa chunks contiguos de dos bloques en rutas de bloque completo compatibles. Valores más altos recomputan menos y dejan más activaciones en VRAM.
 
-`torch-ffn` y `unsloth-ffn` soportan actualmente bloques estilo Flux.1 y MageFlow. Otras familias fallan claramente hasta que sus bloques expongan el mismo límite seguro.
+En esas rutas segmentadas, `gradient_checkpointing_segment_stride` también funciona con `unsloth`. Trátalo como una palanca para caber, no para acelerar: los bloques saltados se quedan en GPU, mientras los bloques checkpointed siguen usando CPU offload para tensores guardados. Para el resumen con torch y benchmarks por modelo, consulta [Segmented Checkpointing](SEGMENTED_CHECKPOINTING.md).
+
+`gradient_checkpointing_offload_attention` es independiente del backend. En bloques compatibles con separación attention/FFN, descarga las activaciones guardadas del lado attention. Puede ejecutarse solo o combinarse con `torch`, `torch-ffn`, `unsloth` o `unsloth-ffn` cuando el modelo soporte ese backend.
+
+`gradient_checkpointing_offload_pin_memory_max_buckets` controla el pooling de CPU pinned para tensores guardados offloaded. El valor predeterminado es `12` buckets de tensor distintos; usa `0` para usar solo memoria CPU normal.
+
+`torch-ffn` y `unsloth-ffn` soportan actualmente Chroma, Flux, Krea 2, LTXVideo2, MageFlow, Wan y Z-Image. Otras familias fallan claramente hasta que sus bloques expongan el mismo límite seguro.
 
 ## Qué intercambia
 

@@ -150,6 +150,29 @@ def safety_check(args, accelerator):
         "cosmos3",
         "mageflow",
     ]
+    gradient_checkpointing_segment_stride_supported_models = []
+    attention_activation_offload_supported_models = []
+    if getattr(args, "gradient_checkpointing_offload_attention", False):
+        if args.model_family.lower() not in attention_activation_offload_supported_models:
+            raise ValueError(
+                "--gradient_checkpointing_offload_attention is only supported on model families with a clean "
+                f"attention/FFN checkpointing boundary. Currently supported models: {attention_activation_offload_supported_models}"
+            )
+    elif getattr(args, "gradient_checkpointing_offload_prefetch", False):
+        logger.warning(
+            "Gradient checkpointing activation prefetch requires --gradient_checkpointing_offload_attention; disabling prefetch."
+        )
+        args.gradient_checkpointing_offload_prefetch = False
+    raw_offload_pin_bucket_count = getattr(args, "gradient_checkpointing_offload_pin_memory_max_buckets", 12)
+    if raw_offload_pin_bucket_count in (None, "", "None"):
+        args.gradient_checkpointing_offload_pin_memory_max_buckets = 12
+    else:
+        try:
+            args.gradient_checkpointing_offload_pin_memory_max_buckets = int(raw_offload_pin_bucket_count)
+        except (TypeError, ValueError):
+            raise ValueError("Gradient checkpointing offload pinned bucket count must be a non-negative integer.")
+        if args.gradient_checkpointing_offload_pin_memory_max_buckets < 0:
+            raise ValueError("Gradient checkpointing offload pinned bucket count must be non-negative.")
     if args.gradient_checkpointing_interval == 1:
         args.gradient_checkpointing_interval = None
     if args.gradient_checkpointing_interval is not None:
@@ -160,6 +183,28 @@ def safety_check(args, accelerator):
             args.gradient_checkpointing_interval = None
         if args.gradient_checkpointing_interval == 0:
             raise ValueError("Gradient checkpointing interval must be greater than 0. Please set it to a positive integer.")
+    if getattr(args, "gradient_checkpointing_segment_stride", None) in ("", "None"):
+        args.gradient_checkpointing_segment_stride = None
+    if getattr(args, "gradient_checkpointing_segment_stride", None) is not None:
+        try:
+            args.gradient_checkpointing_segment_stride = int(args.gradient_checkpointing_segment_stride)
+        except (TypeError, ValueError):
+            raise ValueError("Gradient checkpointing segment stride must be a positive integer.")
+        if args.model_family.lower() not in gradient_checkpointing_segment_stride_supported_models:
+            logger.warning(
+                f"Gradient checkpointing segment stride is not supported with {args.model_family} models. "
+                f"Currently supported models: {gradient_checkpointing_segment_stride_supported_models}"
+            )
+            args.gradient_checkpointing_segment_stride = None
+        elif args.gradient_checkpointing_segment_stride <= 0:
+            raise ValueError("Gradient checkpointing segment stride must be greater than 0.")
+        elif args.gradient_checkpointing_interval is None:
+            logger.warning(
+                "Gradient checkpointing segment stride requires --gradient_checkpointing_interval greater than 1; ignoring segment stride."
+            )
+            args.gradient_checkpointing_segment_stride = None
+        elif args.gradient_checkpointing_segment_stride < args.gradient_checkpointing_interval:
+            raise ValueError("Gradient checkpointing segment stride must be at least the checkpointing interval.")
 
     def _normalize_interval(raw_value, cast):
         if raw_value in (None, "", "None"):

@@ -9,6 +9,7 @@ This approach interleave compute and data transfer, making it useful for:
 - Scenarios where GPU memory is limited but CPU memory is abundant
 """
 
+import os
 from collections import OrderedDict
 
 import torch
@@ -20,6 +21,20 @@ from simpletuner.helpers.ramtorch import profiling as ramtorch_profile
 
 # --- Per-device global state registry ---
 _DEVICE_STATE = {}
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    if value in (None, ""):
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def _forward_prefetch_stream_count() -> int:
+    return max(_env_int("SIMPLETUNER_RAMTORCH_FORWARD_PREFETCH_STREAMS", 4), 1)
 
 
 def _to_cpu_pinned(tensor: torch.Tensor, *, dtype: torch.dtype | None = None) -> torch.Tensor:
@@ -52,6 +67,10 @@ def _get_device_state(device=None):
             _DEVICE_STATE[device] = {
                 # streams & events
                 "transfer_stream": torch.cuda.Stream(device=device),
+                "forward_transfer_streams": [
+                    torch.cuda.Stream(device=device) for _ in range(_forward_prefetch_stream_count())
+                ],
+                "forward_transfer_stream_clk": 0,
                 "transfer_grad_stream": torch.cuda.Stream(device=device),
                 "transfer_backward_finished_event": torch.cuda.Event(),
                 "transfer_weight_backward_start_event": torch.cuda.Event(),
@@ -78,6 +97,16 @@ def _get_device_state(device=None):
     return _DEVICE_STATE[device]
 
 
+def _next_forward_transfer_stream(state, device):
+    streams = state.get("forward_transfer_streams")
+    if not streams:
+        streams = [state.get("transfer_stream") or torch.cuda.Stream(device=device)]
+        state["forward_transfer_streams"] = streams
+    selected = int(state.get("forward_transfer_stream_clk", 0)) % len(streams)
+    state["forward_transfer_stream_clk"] = selected + 1
+    return streams[selected]
+
+
 def _prefetch_key(weight_cpu, bias_cpu):
     return (id(weight_cpu), id(bias_cpu) if bias_cpu is not None else None)
 
@@ -94,6 +123,11 @@ def _resident_bytes(entry):
     return int(entry.get("bytes", 0))
 
 
+def _clear_linear_forward_residency(weight_cpu) -> None:
+    if hasattr(weight_cpu, "_ramtorch_last_forward_residency"):
+        delattr(weight_cpu, "_ramtorch_last_forward_residency")
+
+
 def _dense_weight_for_grad(weight, *, device=None, dtype=None):
     if hasattr(weight, "dequantize"):
         weight = weight.dequantize()
@@ -102,6 +136,24 @@ def _dense_weight_for_grad(weight, *, device=None, dtype=None):
     if dtype is not None and getattr(weight, "dtype", None) != dtype:
         weight = weight.to(dtype)
     return weight
+
+
+def _dense_weight_for_linear(weight, *, dtype=None):
+    if hasattr(weight, "dequantize"):
+        weight = weight.dequantize()
+    if dtype is not None and getattr(weight, "dtype", None) != dtype:
+        weight = weight.to(dtype)
+    return weight
+
+
+def _record_stream_if_supported(tensor: torch.Tensor | None, stream) -> None:
+    if tensor is None:
+        return
+    try:
+        tensor.record_stream(stream)
+    except (AssertionError, NotImplementedError) as exc:
+        if "record_stream" not in str(exc):
+            raise
 
 
 def _evict_backward_resident_entry(state, key, device):
@@ -160,32 +212,21 @@ def prefetch_linear_forward(weight_cpu, bias_cpu, device="cuda"):
     if not allowed:
         return False
 
-    selected_buffer = state["forward_clk"]
-    state["forward_clk"] ^= 1
-    state["forward_buffer_generations"][selected_buffer] += 1
-    buffer_generation = state["forward_buffer_generations"][selected_buffer]
-
-    transfer_stream = state["transfer_stream"]
-    release_event = state["forward_buffer_release_events"][selected_buffer]
+    transfer_stream = _next_forward_transfer_stream(state, device_obj)
 
     with torch.cuda.stream(transfer_stream):
-        if release_event is not None:
-            transfer_stream.wait_event(release_event)
-
         with record_function("forward_weight_bias_prefetch"):
-            state["w_buffers"][selected_buffer] = weight_cpu.to(device_obj, non_blocking=True)
-            state["b_buffers"][selected_buffer] = (
-                bias_cpu.to(device_obj, non_blocking=True) if bias_cpu is not None else None
-            )
+            weight_gpu = weight_cpu.to(device_obj, non_blocking=True)
+            bias_gpu = bias_cpu.to(device_obj, non_blocking=True) if bias_cpu is not None else None
 
         event = torch.cuda.Event()
         event.record()
 
     state["forward_prefetches"][key] = {
-        "buffer": selected_buffer,
         "event": event,
-        "generation": buffer_generation,
         "versions": versions,
+        "weight": weight_gpu,
+        "bias": bias_gpu,
     }
     ramtorch_profile.record_prefetch_enqueued(
         "linear",
@@ -207,7 +248,11 @@ def _consume_linear_forward_prefetch(weight_cpu, bias_cpu, device):
     if entry["versions"] != _prefetch_versions(weight_cpu, bias_cpu):
         ramtorch_profile.record_prefetch_stale("linear", key, device)
         return None
-    if state["forward_buffer_generations"][entry["buffer"]] != entry.get("generation"):
+    buffer_index = entry.get("buffer")
+    if buffer_index is not None and state["forward_buffer_generations"][buffer_index] != entry.get("generation"):
+        ramtorch_profile.record_prefetch_stale("linear", key, device)
+        return None
+    if buffer_index is None and entry.get("weight") is None:
         ramtorch_profile.record_prefetch_stale("linear", key, device)
         return None
     ramtorch_profile.record_prefetch_consumed("linear", key, device)
@@ -270,11 +315,12 @@ def preserve_linear_forward_for_backward(
 
     state = _get_device_state(device_obj)
     buffer_index = last_forward.get("buffer")
-    if (
-        buffer_index is None
-        or state["forward_buffer_generations"][buffer_index] != last_forward.get("generation")
-        or last_forward.get("weight") is None
-    ):
+    if last_forward.get("weight") is None:
+        _clear_linear_forward_residency(weight_cpu)
+        ramtorch_profile.record_backward_preserve_attempt(device_obj, (weight_cpu, bias_cpu), retained=False)
+        return False
+    if buffer_index is not None and state["forward_buffer_generations"][buffer_index] != last_forward.get("generation"):
+        _clear_linear_forward_residency(weight_cpu)
         ramtorch_profile.record_backward_preserve_attempt(device_obj, (weight_cpu, bias_cpu), retained=False)
         return False
 
@@ -306,6 +352,7 @@ def preserve_linear_forward_for_backward(
         max_bytes=max(int(max_bytes), 0),
     )
     retained = key in residency
+    _clear_linear_forward_residency(weight_cpu)
     ramtorch_profile.record_backward_preserve_attempt(
         device_obj,
         (weight_cpu, bias_cpu),
@@ -469,35 +516,45 @@ class BouncingLinearFn(torch.autograd.Function):
         transfer = _consume_linear_forward_prefetch(weight_cpu, bias_cpu, device_obj)
         if transfer is None:
             transfer = _transfer_linear_forward(weight_cpu, bias_cpu, device_obj)
-        selected_buffer = transfer["buffer"]
+        selected_buffer = transfer.get("buffer")
+        weight_forward = transfer.get("weight")
+        bias_forward = transfer.get("bias")
+        if weight_forward is None:
+            weight_forward = w_buffers[selected_buffer]
+            bias_forward = b_buffers[selected_buffer]
 
         with torch.cuda.device(device_obj):
             compute_stream = torch.cuda.current_stream(device_obj)
             with record_function("forward_linear_compute"):  # for profiling and easy debugging
                 # make compute stream wait for this transfer
                 compute_stream.wait_event(transfer["event"])
+                _record_stream_if_supported(weight_forward, compute_stream)
+                if bias_forward is not None:
+                    _record_stream_if_supported(bias_forward, compute_stream)
 
                 # Manual casting when autocast is enabled
                 if autocast_enabled:
                     x_compute = x.to(autocast_dtype)
-                    w_compute = w_buffers[selected_buffer].to(autocast_dtype)
-                    b_compute = (
-                        b_buffers[selected_buffer].to(autocast_dtype) if b_buffers[selected_buffer] is not None else None
-                    )
+                    w_compute = _dense_weight_for_linear(weight_forward, dtype=autocast_dtype)
+                    b_compute = bias_forward.to(autocast_dtype) if bias_forward is not None else None
                     out = F.linear(x_compute, w_compute, b_compute)
                 else:
-                    out = F.linear(x, w_buffers[selected_buffer], b_buffers[selected_buffer])
+                    w_compute = _dense_weight_for_linear(weight_forward, dtype=x.dtype)
+                    out = F.linear(x, w_compute, bias_forward)
                 release_event = torch.cuda.Event()
                 release_event.record(compute_stream)
-                state["forward_buffer_release_events"][selected_buffer] = release_event
+                if selected_buffer is not None:
+                    state["forward_buffer_release_events"][selected_buffer] = release_event
                 weight_cpu._ramtorch_last_forward_residency = {
                     "key": _prefetch_key(weight_cpu, bias_cpu),
                     "versions": _prefetch_versions(weight_cpu, bias_cpu),
                     "buffer": selected_buffer,
-                    "generation": state["forward_buffer_generations"][selected_buffer],
+                    "generation": (
+                        state["forward_buffer_generations"][selected_buffer] if selected_buffer is not None else None
+                    ),
                     "event": release_event,
-                    "weight": w_buffers[selected_buffer],
-                    "bias": b_buffers[selected_buffer],
+                    "weight": weight_forward,
+                    "bias": bias_forward,
                 }
 
         # save for backward
@@ -893,6 +950,10 @@ class CPUBouncingLinear(nn.Module):
             max_entries=max_entries,
             max_bytes=max_bytes,
         )
+
+    def discard_forward_for_backward(self):
+        """Release the most recent forward GPU weight reference when it will not be reused."""
+        _clear_linear_forward_residency(self.weight)
 
 
 Linear = CPUBouncingLinear

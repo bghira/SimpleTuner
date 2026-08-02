@@ -3266,16 +3266,59 @@ class ModelFoundation(ABC):
         if checkpoint_backend in {"unsloth", "unsloth-ffn"}:
             logger.info("Using Unsloth-style gradient checkpointing (CPU offload)")
 
+        offload_attention = bool(getattr(self.config, "gradient_checkpointing_offload_attention", False))
+        raw_pin_bucket_count = getattr(self.config, "gradient_checkpointing_offload_pin_memory_max_buckets", 12)
+        offload_pin_memory_max_buckets = 12 if raw_pin_bucket_count in (None, "", "None") else int(raw_pin_bucket_count)
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import (
+            set_activation_offload_pin_memory_max_buckets,
+            set_activation_offload_prefetch_enabled,
+        )
+
+        set_activation_offload_pin_memory_max_buckets(offload_pin_memory_max_buckets)
+        set_activation_offload_prefetch_enabled(bool(getattr(self.config, "gradient_checkpointing_offload_prefetch", False)))
+        if offload_attention:
+            trained_component = self.unwrap_model(model=self.model) if self.model is not None else None
+            if trained_component is None or not getattr(trained_component, "_supports_attention_activation_offload", False):
+                raise ValueError(
+                    "--gradient_checkpointing_offload_attention requires a model with an attention/FFN checkpointing "
+                    f"boundary, but {self.config.model_family} does not expose it."
+                )
+            logger.info("Using attention activation offload for gradient checkpointing")
+
         if self.config.gradient_checkpointing_interval is not None and self.config.gradient_checkpointing_interval > 1:
             if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_interval"):
                 logger.info("Setting gradient checkpointing interval..")
                 self.unwrap_model(model=self.model).set_gradient_checkpointing_interval(
                     int(self.config.gradient_checkpointing_interval)
                 )
+            else:
+                logger.warning(
+                    "--gradient_checkpointing_interval=%s was requested, but %s does not expose interval "
+                    "checkpointing support; the value will be ignored.",
+                    self.config.gradient_checkpointing_interval,
+                    self.config.model_family,
+                )
+
+        gradient_checkpointing_segment_stride = getattr(self.config, "gradient_checkpointing_segment_stride", None)
+        if gradient_checkpointing_segment_stride is not None:
+            if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_segment_stride"):
+                logger.info("Setting gradient checkpointing segment stride..")
+                self.unwrap_model(model=self.model).set_gradient_checkpointing_segment_stride(
+                    int(gradient_checkpointing_segment_stride)
+                )
+            else:
+                logger.warning(
+                    "--gradient_checkpointing_segment_stride=%s was requested, but %s does not expose segmented "
+                    "checkpoint stride support; the value will be ignored.",
+                    gradient_checkpointing_segment_stride,
+                    self.config.model_family,
+                )
 
         # Set gradient checkpointing backend on model if supported
         if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_backend"):
             self.unwrap_model(model=self.model).set_gradient_checkpointing_backend(checkpoint_backend)
+        if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_offload_attention"):
+            self.unwrap_model(model=self.model).set_gradient_checkpointing_offload_attention(offload_attention)
 
         self.fuse_qkv_projections()
         self.post_model_load_setup()

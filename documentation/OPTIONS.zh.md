@@ -283,8 +283,14 @@ simpletuner configure config/foo/config.json
 
 ### `--gradient_checkpointing_interval`
 
-- **内容**：checkpoint 连续的 *n* 个 block chunk，*n* 必须大于 0。1 等同于启用 `--gradient_checkpointing`，2 会 checkpoint 两个 block 的 chunk。
-- **说明**：Flux 和 MageFlow 会在 whole-block 路径上使用连续 chunk checkpointing。值越大，重算开销越低，但 VRAM 里保留的 activation 越多。
+- **内容**：transformer block checkpointing 的模型相关 interval。1 基本等同于启用 `--gradient_checkpointing`。
+- **说明**：Flux、Flux.2、Krea 2、LTXVideo2、MageFlow、Z-Image 和 Wan 在 whole-block 路径上使用连续的 *n* 个 block chunk。其他支持此选项的模型族可能仍使用旧的“每第 *n* 个 block checkpoint”行为。值越大可能降低重算开销，但通常会在 VRAM 中保留更多 activation。
+
+### `--gradient_checkpointing_segment_stride`
+
+- **内容**：在支持 segmented whole-block 路径的模型上，每隔 *n* 个 block 启动一个 checkpointed segment。
+- **示例**：设置 `--gradient_checkpointing_interval=2` 且 `--gradient_checkpointing_segment_stride=4` 时，SimpleTuner 会 checkpoint 两个 block，然后正常运行接下来的两个 block，如此重复。
+- **说明**：Flux、Flux.2、Krea 2、LTXVideo2、MageFlow、Z-Image 和 Wan segmented 路径支持此选项。stride 必须大于或等于 interval。参见 [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md)。
 
 ### `--gradient_checkpointing_backend`
 
@@ -294,7 +300,27 @@ simpletuner configure config/foo/config.json
   - `torch-ffn`：在有清晰 FFN 边界的模型上，只 checkpoint feed-forward 部分。
   - `unsloth`：checkpoint 整个受支持 block，并把保存的 tensor 卸载到 CPU。
   - `unsloth-ffn`：只 checkpoint feed-forward 部分，并把保存的 tensor 卸载到 CPU。
-- **说明**：仅在启用 `--gradient_checkpointing` 时生效。`unsloth` 变体需要 CUDA。FFN-only 变体目前支持 Flux.1 风格 blocks 和 MageFlow；模型不支持该 scope 时会直接报错。实测 tradeoff 见 [Unsloth-style checkpointing](experimental/UNSLOTH_CHECKPOINTING.md)。
+- **说明**：仅在启用 `--gradient_checkpointing` 时生效。`unsloth` 变体需要 CUDA。FFN-only 变体目前支持 Chroma、Flux、Krea 2、LTXVideo2、MageFlow、Wan 和 Z-Image；模型不支持该 scope 时会直接报错。实测 tradeoff 见 [Unsloth-style checkpointing](experimental/UNSLOTH_CHECKPOINTING.md)。
+
+### `--gradient_checkpointing_offload_attention`
+
+- **内容**：在有清晰 attention/FFN 边界的模型上，把 attention 侧保存的 activations 卸载到 CPU。
+- **原因**：当传输比重算 attention 更便宜时，可降低 VRAM，且不需要支付完整 attention 重算成本。
+- **说明**：它可以单独启用。也可与模型支持的任意 checkpoint backend 组合。Attention offload 目前支持 Chroma、Flux、Flux.2、Krea 2、LTXVideo2、MageFlow、Wan 和 Z-Image；不支持的模型会直接报错。
+
+### `--gradient_checkpointing_offload_pin_memory_max_buckets`
+
+- **默认值**：`12`
+- **内容**：activation offload 可使用的 pinned CPU tensor bucket 最大数量。
+- **原因**：pinned memory 有利于 CPU/GPU 传输，但可变分辨率和文本长度会产生少见 tensor 形状。达到上限后，新的 bucket 形状会改用普通 CPU memory。
+- **说明**：设为 `0` 可关闭 activation offload 的 pinned-memory pooling。
+
+### `--gradient_checkpointing_offload_prefetch`
+
+- **默认值**：`false`
+- **内容**：学习 offloaded activations 的 backward restore 顺序，并把可能下一个需要的 tensor 预取回 GPU。
+- **原因**：JIT H2D restore 通常很难重叠。顺序稳定后，prefetch 可把部分传输隐藏在 backward compute 后面。
+- **说明**：实验性功能，并且只在启用 `--gradient_checkpointing_offload_attention` 时生效。
 
 ### `--refiner_training`
 
@@ -1744,6 +1770,7 @@ usage: train.py [-h] --model_family
                 [--text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
                 [--text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
                 [--gradient_checkpointing_interval GRADIENT_CHECKPOINTING_INTERVAL]
+                [--gradient_checkpointing_segment_stride GRADIENT_CHECKPOINTING_SEGMENT_STRIDE]
                 [--offload_during_startup [OFFLOAD_DURING_STARTUP]]
                 [--quantize_via {cpu,accelerator,pipeline}]
                 [--quantization_config QUANTIZATION_CONFIG]
@@ -2060,6 +2087,8 @@ options:
                         memory.
   --gradient_checkpointing_interval GRADIENT_CHECKPOINTING_INTERVAL
                         Checkpoint every N transformer blocks
+  --gradient_checkpointing_segment_stride GRADIENT_CHECKPOINTING_SEGMENT_STRIDE
+                        Start a checkpointed segment every N transformer blocks
   --offload_during_startup [OFFLOAD_DURING_STARTUP]
                         Offload text encoders to CPU during VAE caching
   --quantize_via {cpu,accelerator,pipeline}
