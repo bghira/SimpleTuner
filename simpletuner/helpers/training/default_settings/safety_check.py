@@ -170,6 +170,7 @@ def safety_check(args, accelerator):
         "stable_cascade",
         "wan_s2v",
         "wan",
+        "z_image",
     ]
     gradient_checkpointing_segment_stride_supported_models = [
         "ace_step",
@@ -201,6 +202,7 @@ def safety_check(args, accelerator):
         "stable_cascade",
         "wan_s2v",
         "wan",
+        "z_image",
     ]
     attention_activation_offload_supported_models = [
         "chroma",
@@ -218,6 +220,7 @@ def safety_check(args, accelerator):
         "mageflow",
         "sd3",
         "wan",
+        "z_image",
     ]
     if getattr(args, "gradient_checkpointing_offload_attention", False):
         if args.model_family.lower() not in attention_activation_offload_supported_models:

@@ -656,3 +656,19 @@ class WanS2VSegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=False,
             attention_offload=False,
         )
+
+
+class ZImageSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.z_image.transformer import ZImageTransformer2DModel
+
+        assert_checkpointing_controls(
+            self,
+            ZImageTransformer2DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            offload=True,
+            ffn=True,
+            attention_offload=True,
+        )
