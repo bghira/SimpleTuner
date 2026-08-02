@@ -144,3 +144,19 @@ class Cosmos3SegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=False,
             attention_offload=False,
         )
+
+
+class ErnieSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.ernie.transformer import ErnieImageTransformer2DModel
+
+        assert_checkpointing_controls(
+            self,
+            ErnieImageTransformer2DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            checkpoint_attention_offload=False,
+            ffn=False,
+            attention_offload=False,
+        )

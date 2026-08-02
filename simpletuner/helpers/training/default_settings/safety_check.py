@@ -161,6 +161,7 @@ def safety_check(args, accelerator):
         "chroma",
         "cosmos",
         "cosmos3",
+        "ernie",
     ]
     attention_activation_offload_supported_models = [
         "chroma",
