@@ -163,6 +163,50 @@ def add_first_frame_conditioning(
 
 
 @torch.no_grad()
+def add_first_frame_latent_conditioning(
+    latent_model_input: torch.Tensor,
+    clean_latents: torch.Tensor,
+    vae: AutoencoderKLWan,
+):
+    """
+    Adds Wan 2.1 I2V conditioning from already-cached clean latents when the
+    batch does not carry explicit first-frame pixels.
+    """
+    device = latent_model_input.device
+    dtype = latent_model_input.dtype
+    temporal_downsample = getattr(vae, "temperal_downsample", None)
+    vae_scale_factor_temporal = 2 ** sum(temporal_downsample) if temporal_downsample is not None else 4
+
+    batch, _, num_latent_frames, latent_height, latent_width = latent_model_input.shape
+    num_frames = (num_latent_frames - 1) * 4 + 1
+
+    clean_latents = clean_latents.to(device=device, dtype=dtype)
+    if clean_latents.shape[0] != batch:
+        clean_latents = clean_latents.expand(batch, -1, -1, -1, -1)
+
+    mask_lat_size = torch.ones(
+        batch,
+        1,
+        num_frames,
+        latent_height,
+        latent_width,
+        device=device,
+        dtype=dtype,
+    )
+    mask_lat_size[:, :, list(range(1, num_frames))] = 0
+    first_frame_mask = mask_lat_size[:, :, 0:1]
+    first_frame_mask = torch.repeat_interleave(first_frame_mask, dim=2, repeats=vae_scale_factor_temporal)
+    mask_lat_size = torch.concat([first_frame_mask, mask_lat_size[:, :, 1:, :]], dim=2)
+    mask_lat_size = mask_lat_size.view(batch, -1, vae_scale_factor_temporal, latent_height, latent_width)
+    mask_lat_size = mask_lat_size.transpose(1, 2)
+
+    latent_condition = torch.zeros_like(clean_latents)
+    latent_condition[:, :, :1] = clean_latents[:, :, :1]
+    first_frame_condition = torch.concat([mask_lat_size, latent_condition], dim=1)
+    return torch.cat([latent_model_input, first_frame_condition], dim=1)
+
+
+@torch.no_grad()
 def add_first_frame_conditioning_v22(
     latent_model_input: torch.Tensor,
     first_frame: torch.Tensor,
@@ -758,7 +802,14 @@ class Wan(VideoModelFoundation):
             return
         first_frame, last_frame = self._extract_conditioning_frames(prepared_batch)
         if first_frame is None:
-            if is_i2v_batch and not getattr(self, "_wan_warned_missing_i2v_conditioning", False) and should_log():
+            clean_latents = prepared_batch.get("latents")
+            if torch.is_tensor(clean_latents):
+                transformer_kwargs["hidden_states"] = add_first_frame_latent_conditioning(
+                    transformer_kwargs["hidden_states"],
+                    clean_latents,
+                    self.get_vae(),
+                )
+            elif is_i2v_batch and not getattr(self, "_wan_warned_missing_i2v_conditioning", False) and should_log():
                 logger.warning(
                     "Wan I2V conditioning data was requested but no conditioning frames were provided. "
                     "Ensure your dataset supplies conditioning images when training I2V flavours."
