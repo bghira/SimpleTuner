@@ -300,9 +300,10 @@ class SaveHookManager:
 
         self.denoiser_class = self.model.MODEL_CLASS
         self.denoiser_subdir = self.model.MODEL_SUBFOLDER
-        self.pipeline_class = self.model.PIPELINE_CLASSES[
-            (PipelineTypes.IMG2IMG if args.validation_using_datasets else PipelineTypes.TEXT2IMG)
-        ]
+        pipeline_type = self.model.DEFAULT_PIPELINE_TYPE
+        if args.validation_using_datasets and PipelineTypes.IMG2IMG in self.model.PIPELINE_CLASSES:
+            pipeline_type = PipelineTypes.IMG2IMG
+        self.pipeline_class = self.model.PIPELINE_CLASSES[pipeline_type]
 
         self.ema_model_cls = self.model.get_trained_component().__class__
         self.ema_model_subdir = f"{self.model.MODEL_SUBFOLDER}_ema"

@@ -588,9 +588,17 @@ class PromptHandler:
         captions = []
         caption_image_paths = []
         images_missing_captions = []
-        all_image_files = StateTracker.get_image_files(data_backend_id=data_backend.id) or data_backend.list_files(
-            instance_data_dir=instance_data_dir, file_extensions=image_file_extensions
-        )
+        metadata_backend = (StateTracker.get_data_backend(data_backend.id) or {}).get("metadata_backend")
+        bucket_indices = getattr(metadata_backend, "aspect_ratio_bucket_indices", None)
+        max_num_samples = getattr(metadata_backend, "max_num_samples", None) or backend_config.get("max_num_samples")
+        if max_num_samples and isinstance(bucket_indices, dict) and bucket_indices:
+            all_image_files = []
+            for bucket in sorted(bucket_indices.keys(), key=str):
+                all_image_files.extend(bucket_indices[bucket])
+        else:
+            all_image_files = StateTracker.get_image_files(data_backend_id=data_backend.id) or data_backend.list_files(
+                instance_data_dir=instance_data_dir, file_extensions=image_file_extensions
+            )
         if isinstance(all_image_files, list) and len(all_image_files) > 0 and isinstance(all_image_files[0], tuple):
             all_image_files = all_image_files[0][2]
         from tqdm import tqdm

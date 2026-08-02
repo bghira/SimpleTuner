@@ -35,6 +35,9 @@ class OmniGenModelTests(unittest.TestCase):
     def test_model_supports_crepa_self_flow(self):
         self.assertTrue(self.model.supports_crepa_self_flow())
 
+    def test_model_does_not_use_text_embedding_cache(self):
+        self.assertFalse(self.model.uses_text_embeddings_cache())
+
     def test_prepare_crepa_self_flow_batch_creates_tokenwise_timesteps(self):
         self.model.config.crepa_self_flow_mask_ratio = 0.5
         batch = {

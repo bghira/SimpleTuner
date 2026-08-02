@@ -6,7 +6,9 @@ from typing import Dict, Optional
 import torch
 import torchaudio
 from diffusers import AutoencoderKLWan, FlowMatchEulerDiscreteScheduler
-from transformers import T5TokenizerFast, UMT5EncoderModel, Wav2Vec2Model, Wav2Vec2Processor
+from huggingface_hub import hf_hub_download
+from safetensors import safe_open
+from transformers import T5TokenizerFast, UMT5EncoderModel, Wav2Vec2FeatureExtractor, Wav2Vec2Model
 
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
 from simpletuner.helpers.models.tae.types import VideoTAESpec
@@ -100,7 +102,7 @@ class WanS2V(VideoModelFoundation):
                 return
 
             logger.info(f"Loading Wav2Vec2 audio encoder from {self.AUDIO_ENCODER_MODEL}")
-            self._audio_processor = Wav2Vec2Processor.from_pretrained(self.AUDIO_ENCODER_MODEL)
+            self._audio_processor = Wav2Vec2FeatureExtractor.from_pretrained(self.AUDIO_ENCODER_MODEL)
             self._audio_encoder = Wav2Vec2Model.from_pretrained(
                 self.AUDIO_ENCODER_MODEL,
                 torch_dtype=torch.float32,  # Wav2Vec2 needs fp32
@@ -246,9 +248,12 @@ class WanS2V(VideoModelFoundation):
         if self.config.t5_padding == "zero":
             prompt_embeds = prompt_embeds * masks.to(device=prompt_embeds.device).unsqueeze(-1).expand(prompt_embeds.shape)
 
-        return prompt_embeds, masks
+        return {
+            "prompt_embeds": prompt_embeds,
+            "attention_masks": masks,
+        }
 
-    def prepare_batch_conditions(self, batch: dict) -> dict:
+    def prepare_batch_conditions(self, batch: dict, state: Optional[dict] = None) -> dict:
         """
         Prepare batch with audio conditioning.
 
@@ -445,11 +450,6 @@ class WanS2V(VideoModelFoundation):
         self.config.vae_enable_tiling = True
         self.config.vae_enable_slicing = True
 
-    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
-        """Arguments for loading pretrained model."""
-        load_args = super().pretrained_load_args(pretrained_load_args)
-        return load_args
-
     def get_pipeline(self, pipeline_type: PipelineTypes, load_base_model: bool = True):
         """Get inference pipeline for validation."""
         if pipeline_type not in self.PIPELINE_CLASSES:
@@ -463,8 +463,14 @@ class WanS2V(VideoModelFoundation):
         else:
             transformer = None
 
-        tokenizer = self.get_tokenizer()
-        text_encoder = self.get_text_encoder()
+        if self.tokenizers is None:
+            self.load_text_tokenizer()
+        tokenizer = self.tokenizers[0] if self.tokenizers else None
+
+        text_encoder = self.get_text_encoder(0)
+        if text_encoder is None:
+            self.load_text_encoder()
+            text_encoder = self.get_text_encoder(0)
         vae = self.get_vae()
         scheduler = FlowMatchEulerDiscreteScheduler()
 
@@ -529,3 +535,98 @@ class WanS2V(VideoModelFoundation):
             self.config.pretrained_model_name_or_path = self.HUGGINGFACE_PATHS[flavour]
 
         logger.info(f"Configured {self.NAME} with flavour: {flavour}")
+
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        args = super().pretrained_load_args(pretrained_load_args)
+        args["low_cpu_mem_usage"] = True
+        return args
+
+    @staticmethod
+    def _get_parameter(module: torch.nn.Module, name: str) -> torch.nn.Parameter | None:
+        target = module
+        for part in name.split(".")[:-1]:
+            target = getattr(target, part, None)
+            if target is None:
+                return None
+        parameter = getattr(target, name.split(".")[-1], None)
+        return parameter if isinstance(parameter, torch.nn.Parameter) else None
+
+    @staticmethod
+    def _set_parameter(module: torch.nn.Module, name: str, tensor: torch.Tensor, requires_grad: bool) -> None:
+        target = module
+        parts = name.split(".")
+        for part in parts[:-1]:
+            target = getattr(target, part)
+        setattr(target, parts[-1], torch.nn.Parameter(tensor, requires_grad=requires_grad))
+
+    @staticmethod
+    def _checkpoint_file(model_path: str, model_subfolder: str | None, filename: str, load_kwargs: dict) -> str:
+        relpath = f"{model_subfolder}/{filename}" if model_subfolder else filename
+        if os.path.isdir(model_path):
+            return os.path.join(model_path, relpath)
+        return hf_hub_download(
+            model_path,
+            relpath,
+            revision=load_kwargs.get("revision"),
+            local_files_only=bool(load_kwargs.get("local_files_only", False)),
+        )
+
+    def _load_checkpoint_tensor(
+        self,
+        model_path: str,
+        model_subfolder: str | None,
+        tensor_name: str,
+        load_kwargs: dict,
+    ) -> torch.Tensor | None:
+        import json
+
+        index_path = self._checkpoint_file(
+            model_path,
+            model_subfolder,
+            "diffusion_pytorch_model.safetensors.index.json",
+            load_kwargs,
+        )
+        with open(index_path, "r") as handle:
+            weight_map = json.load(handle).get("weight_map", {})
+        shard_name = weight_map.get(tensor_name)
+        if shard_name is None:
+            return None
+        shard_path = self._checkpoint_file(model_path, model_subfolder, shard_name, load_kwargs)
+        with safe_open(shard_path, framework="pt", device="cpu") as shard:
+            return shard.get_tensor(tensor_name)
+
+    def materialize_meta_tensors_after_load(
+        self,
+        model: torch.nn.Module,
+        model_path: str,
+        model_subfolder: str | None,
+        load_kwargs: dict,
+    ) -> bool:
+        aliases = {
+            "condition_embedder.causal_audio_encoder.weighted_avg.weights": "condition_embedder.causal_audio_encoder.weights",
+            "condition_embedder.causal_audio_encoder.encoder.conv2.conv.conv.weight": "condition_embedder.causal_audio_encoder.encoder.conv2.conv.weight",
+            "condition_embedder.causal_audio_encoder.encoder.conv2.conv.conv.bias": "condition_embedder.causal_audio_encoder.encoder.conv2.conv.bias",
+            "condition_embedder.causal_audio_encoder.encoder.conv3.conv.conv.weight": "condition_embedder.causal_audio_encoder.encoder.conv3.conv.weight",
+            "condition_embedder.causal_audio_encoder.encoder.conv3.conv.conv.bias": "condition_embedder.causal_audio_encoder.encoder.conv3.conv.bias",
+        }
+        materialized = False
+        for target_name, source_name in aliases.items():
+            target_parameter = self._get_parameter(model, target_name)
+            if target_parameter is None or target_parameter.device.type != "meta":
+                continue
+            source_tensor = self._load_checkpoint_tensor(model_path, model_subfolder, source_name, load_kwargs)
+            if source_tensor is None:
+                continue
+            if tuple(source_tensor.shape) != tuple(target_parameter.shape):
+                logger.warning(
+                    "Skipping WanS2V checkpoint alias %s -> %s because shapes differ: %s != %s",
+                    source_name,
+                    target_name,
+                    tuple(source_tensor.shape),
+                    tuple(target_parameter.shape),
+                )
+                continue
+            source_tensor = source_tensor.to(dtype=target_parameter.dtype, device="cpu")
+            self._set_parameter(model, target_name, source_tensor, requires_grad=target_parameter.requires_grad)
+            materialized = True
+        return materialized
