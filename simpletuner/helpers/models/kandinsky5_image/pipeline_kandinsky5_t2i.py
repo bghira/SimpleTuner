@@ -426,10 +426,10 @@ class Kandinsky5T2IPipeline(DiffusionPipeline, KandinskyLoraLoaderMixin):
             image=kwargs.get("image"),
         )
 
-        text_rope_pos = torch.arange(prompt_cu_seqlens.diff().max().item(), device=device)
+        text_rope_pos = torch.arange(prompt_embeds_qwen.shape[1], device=device)
         negative_text_rope_pos = (
-            torch.arange(negative_prompt_cu_seqlens.diff().max().item(), device=device)
-            if negative_prompt_cu_seqlens is not None
+            torch.arange(negative_prompt_embeds_qwen.shape[1], device=device)
+            if negative_prompt_embeds_qwen is not None
             else None
         )
 
@@ -534,28 +534,13 @@ class Kandinsky5T2IPipeline(DiffusionPipeline, KandinskyLoraLoaderMixin):
             if self.vae is None:
                 raise ValueError("VAE is not loaded; set output_type='latent' or load the VAE to decode images.")
             latents = latents.to(self.vae.dtype)
-            images = latents.reshape(
-                batch_size,
-                num_images_per_prompt,
-                1,
-                height // self.vae_scale_factor_spatial,
-                width // self.vae_scale_factor_spatial,
-                num_channels_latents,
-            )
-            images = images.permute(0, 1, 5, 2, 3, 4)
-            images = images.reshape(
-                batch_size * num_images_per_prompt,
-                num_channels_latents,
-                1,
-                height // self.vae_scale_factor_spatial,
-                width // self.vae_scale_factor_spatial,
-            )
+            images = latents[:, 0].permute(0, 3, 1, 2).contiguous()
             images = images / getattr(self.vae.config, "scaling_factor", 1.0)
             images = self.vae.decode(images).sample
             if self.image_processor is None:
                 images = images
             else:
-                images = self.image_processor.postprocess_image(images, output_type=output_type)
+                images = self.image_processor.postprocess(images, output_type=output_type)
         else:
             images = latents
 
