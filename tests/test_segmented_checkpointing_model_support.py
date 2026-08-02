@@ -39,3 +39,19 @@ class AceStepSegmentedCheckpointingSupportTests(unittest.TestCase):
             interval=True,
             stride=True,
         )
+
+
+class AuraFlowSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.auraflow.transformer import AuraFlowTransformer2DModel
+
+        assert_checkpointing_controls(
+            self,
+            AuraFlowTransformer2DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            offload=False,
+            ffn=False,
+            attention_offload=False,
+        )

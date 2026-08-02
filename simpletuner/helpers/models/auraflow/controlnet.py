@@ -378,7 +378,7 @@ class AuraFlowControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOri
 
                     return custom_forward
 
-                if self.gradient_checkpointing_backend == "unsloth":
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint
@@ -416,7 +416,7 @@ class AuraFlowControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOri
 
                         return custom_forward
 
-                    if self.gradient_checkpointing_backend == "unsloth":
+                    if self.gradient_checkpointing_backend.startswith("unsloth"):
                         from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                         checkpoint_fn = offloaded_checkpoint

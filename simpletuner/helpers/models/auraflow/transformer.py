@@ -23,6 +23,7 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.packed_attention_processors import PackedAuraFlowAttnProcessor2_0
 from simpletuner.helpers.training.tread import TREADRouter
@@ -493,6 +494,7 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
         self.gradient_checkpointing_backend = "torch"
 
         total_layers = num_mmdit_layers + num_single_dit_layers
@@ -511,6 +513,9 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
             interval (`int`): The interval for gradient checkpointing.
         """
         self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
@@ -824,17 +829,16 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
 
             if (
                 self.training
-                and self.gradient_checkpointing
-                and (self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0)
+                and torch.is_grad_enabled()
+                and should_checkpoint_block(
+                    index_block,
+                    self.gradient_checkpointing,
+                    self.gradient_checkpointing_interval,
+                    self.gradient_checkpointing_segment_stride,
+                )
             ):
 
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs)
-
-                    return custom_forward
-
-                if self.gradient_checkpointing_backend == "unsloth":
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint
@@ -842,8 +846,18 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
                     checkpoint_fn = torch.utils.checkpoint.checkpoint
 
                 ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+
+                def custom_forward(hidden_states, encoder_hidden_states, temb, context_temb, checkpoint_block=block):
+                    return checkpoint_block(
+                        hidden_states=hidden_states,
+                        encoder_hidden_states=encoder_hidden_states,
+                        temb=temb,
+                        context_temb=context_temb,
+                        attention_kwargs=attention_kwargs,
+                    )
+
                 encoder_hidden_states, hidden_states = checkpoint_fn(
-                    create_custom_forward(block),
+                    custom_forward,
                     hidden_states,
                     encoder_hidden_states,
                     temb,
@@ -947,20 +961,16 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
 
                 if (
                     self.training
-                    and self.gradient_checkpointing
-                    and (
-                        self.gradient_checkpointing_interval is None
-                        or index_block % self.gradient_checkpointing_interval == 0
+                    and torch.is_grad_enabled()
+                    and should_checkpoint_block(
+                        index_block,
+                        self.gradient_checkpointing,
+                        self.gradient_checkpointing_interval,
+                        self.gradient_checkpointing_segment_stride,
                     )
                 ):
 
-                    def create_custom_forward(module):
-                        def custom_forward(*inputs):
-                            return module(*inputs)
-
-                        return custom_forward
-
-                    if self.gradient_checkpointing_backend == "unsloth":
+                    if self.gradient_checkpointing_backend.startswith("unsloth"):
                         from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                         checkpoint_fn = offloaded_checkpoint
@@ -968,8 +978,16 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
                         checkpoint_fn = torch.utils.checkpoint.checkpoint
 
                     ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+
+                    def custom_forward(hidden_states, temb, checkpoint_block=block):
+                        return checkpoint_block(
+                            hidden_states=hidden_states,
+                            temb=temb,
+                            attention_kwargs=attention_kwargs,
+                        )
+
                     combined_hidden_states = checkpoint_fn(
-                        create_custom_forward(block),
+                        custom_forward,
                         combined_hidden_states,
                         single_temb,
                         **ckpt_kwargs,
