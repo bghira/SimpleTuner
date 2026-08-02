@@ -46,6 +46,7 @@ from simpletuner.helpers.models.flux.attention import FluxAttnProcessor3_0, Flux
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.attention_backend import maybe_metal_flash_rope_attention
 from simpletuner.helpers.training.checkpointing import checkpoint as simpletuner_checkpoint
+from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
@@ -1124,8 +1125,63 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         if hasattr(self, "position_net") and grounding_kwargs is not None:
             grounding_objs = self.position_net(**grounding_kwargs)
 
+        segment_size = self.gradient_checkpointing_interval
+        has_te_checkpoint_context = any(
+            getattr(block, "_simpletuner_te_checkpoint_context_fn", None) is not None for block in combined_blocks
+        )
+        use_segmented_checkpointing = (
+            self.training
+            and self.gradient_checkpointing
+            and segment_size is not None
+            and segment_size > 1
+            and not self.gradient_checkpointing_backend.endswith("-ffn")
+            and not use_routing
+            and not musubi_offload_active
+            and not has_te_checkpoint_context
+            and grounding_objs is None
+            and hidden_states_buffer is None
+        )
+        segmented_checkpoint_fn = None
+        segmented_checkpoint_kwargs: Dict[str, Any] = {}
+        if use_segmented_checkpointing:
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                segmented_checkpoint_fn = offloaded_checkpoint
+            else:
+                segmented_checkpoint_fn = simpletuner_checkpoint
+            segmented_checkpoint_kwargs = {"use_reentrant": False}
+
         capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
+            if use_segmented_checkpointing and controlnet_block_samples is None:
+                if index_block % segment_size != 0:
+                    continue
+                segment_blocks = list(self.transformer_blocks[index_block : index_block + segment_size])
+
+                def run_double_block(_relative_index, segment_block, segment_hidden_states, segment_encoder_hidden_states):
+                    next_encoder_hidden_states, next_hidden_states = segment_block(
+                        hidden_states=segment_hidden_states,
+                        encoder_hidden_states=segment_encoder_hidden_states,
+                        temb=temb_img,
+                        context_temb=temb_txt,
+                        image_rotary_emb=image_rotary_emb,
+                        attention_mask=attention_mask,
+                    )
+                    return next_hidden_states, next_encoder_hidden_states
+
+                hidden_states, encoder_hidden_states = checkpoint_sequential_state(
+                    segment_blocks,
+                    len(segment_blocks),
+                    (hidden_states, encoder_hidden_states),
+                    run_double_block,
+                    segmented_checkpoint_fn,
+                    segmented_checkpoint_kwargs,
+                )
+                global_idx += len(segment_blocks)
+                capture_idx += len(segment_blocks)
+                continue
+
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
                 musubi_manager.stream_in(block, hidden_states.device)
             # TREAD: START a route?
@@ -1251,6 +1307,31 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         txt_len = encoder_hidden_states.shape[1]
 
         for index_block, block in enumerate(self.single_transformer_blocks):
+            if use_segmented_checkpointing and controlnet_single_block_samples is None:
+                if index_block % segment_size != 0:
+                    continue
+                segment_blocks = list(self.single_transformer_blocks[index_block : index_block + segment_size])
+
+                def run_single_block(_relative_index, segment_block, segment_hidden_states):
+                    return segment_block(
+                        hidden_states=segment_hidden_states,
+                        temb=temb_single,
+                        image_rotary_emb=image_rotary_emb,
+                        attention_mask=attention_mask,
+                    )
+
+                (hidden_states,) = checkpoint_sequential_state(
+                    segment_blocks,
+                    len(segment_blocks),
+                    (hidden_states,),
+                    run_single_block,
+                    segmented_checkpoint_fn,
+                    segmented_checkpoint_kwargs,
+                )
+                global_idx += len(segment_blocks)
+                capture_idx += len(segment_blocks)
+                continue
+
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
                 musubi_manager.stream_in(block, hidden_states.device)
             # TREAD: START? (operate on *image* tokens only)
@@ -1291,10 +1372,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             if (
                 self.training
                 and self.gradient_checkpointing
-                or (
-                    self.gradient_checkpointing_interval is not None
-                    and index_block % self.gradient_checkpointing_interval == 0
-                )
+                and (self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0)
             ):
                 checkpoint_ffn = self.gradient_checkpointing_backend.endswith("-ffn")
 

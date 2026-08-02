@@ -32,7 +32,7 @@
 }
 ```
 
-`gradient_checkpointing_interval: 2` 表示每两个支持的 block 做一次 checkpoint。值越大，checkpoint 越少，VRAM 里保留的 activation 越多。
+`gradient_checkpointing_interval: 2` 会在受支持的 whole-block 路径上 checkpoint 连续的两个 block chunk。值越大，重算越少，VRAM 里保留的 activation 越多。
 
 `torch-ffn` 和 `unsloth-ffn` 目前支持 Flux.1 风格 blocks 和 MageFlow。其他模型族会明确报错，直到它们的 block 暴露同样安全的边界。
 

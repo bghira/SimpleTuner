@@ -32,7 +32,7 @@
 }
 ```
 
-`gradient_checkpointing_interval: 2` は対応 block を 1 つおきに checkpoint します。値を大きくすると checkpointing は減り、VRAM に残る activation は増えます。
+`gradient_checkpointing_interval: 2` は対応する whole-block path で連続した 2-block chunk を checkpoint します。値を大きくすると再計算は減り、VRAM に残る activation は増えます。
 
 `torch-ffn` と `unsloth-ffn` は現在 Flux.1-style blocks と MageFlow に対応しています。他のモデル族は、同じ安全な境界を expose するまで明示的に失敗します。
 

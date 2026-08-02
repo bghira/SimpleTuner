@@ -276,8 +276,8 @@ simpletuner configure config/foo/config.json
 
 ### `--gradient_checkpointing_interval`
 
-- **内容**：每 *n* 个块进行一次 checkpoint，*n* 必须大于 0。1 等同于启用 `--gradient_checkpointing`，2 则每隔一个块进行一次。
-- **说明**：目前仅 SDXL 与 Flux 支持此选项。SDXL 使用较为权宜的实现。
+- **内容**：checkpoint 连续的 *n* 个 block chunk，*n* 必须大于 0。1 等同于启用 `--gradient_checkpointing`，2 会 checkpoint 两个 block 的 chunk。
+- **说明**：Flux 和 MageFlow 会在 whole-block 路径上使用连续 chunk checkpointing。值越大，重算开销越低，但 VRAM 里保留的 activation 越多。
 
 ### `--gradient_checkpointing_backend`
 

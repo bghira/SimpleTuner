@@ -276,8 +276,8 @@ simpletuner configure config/foo/config.json
 
 ### `--gradient_checkpointing_interval`
 
-- **内容**: *n* ブロックごとにチェックポイントを作成します。値は 0 より大きい必要があります。1 は `--gradient_checkpointing` と同等で、2 は隔ブロックでチェックポイントを作成します。
-- **注記**: 現在このオプションに対応しているのは SDXL と Flux のみです。SDXL は暫定的な実装です。
+- **内容**: 連続した *n* block chunk を checkpoint します。値は 0 より大きい必要があります。1 は `--gradient_checkpointing` と同等で、2 は 2-block chunk を checkpoint します。
+- **注記**: Flux と MageFlow は whole-block path で連続 chunk checkpointing を使います。値を大きくすると再計算 overhead は減りますが、VRAM に残る activation は増えます。
 
 ### `--gradient_checkpointing_backend`
 

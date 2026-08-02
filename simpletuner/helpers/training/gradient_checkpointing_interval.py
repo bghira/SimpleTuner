@@ -1,13 +1,7 @@
-"""
-Gradient checkpointing backend selection.
+"""Gradient checkpointing backend and segmentation helpers."""
 
-This module provides the ability to select between different gradient checkpointing
-backends (torch native vs unsloth CPU offload).
-
-Note: Per-layer interval checkpointing is implemented directly in transformer models
-that support it (Flux, Chroma, SD3, Sana, AuraFlow, etc.) via their
-`set_gradient_checkpointing_interval` method.
-"""
+from collections.abc import Callable, Sequence
+from typing import Any
 
 _checkpoint_backend = "torch"  # "torch", "unsloth", "torch-ffn", or "unsloth-ffn"
 _offloaded_checkpoint = None  # Lazy import
@@ -53,3 +47,40 @@ def get_checkpoint_function():
     if get_checkpoint_backend_base() == "unsloth" and _offloaded_checkpoint is not None:
         return _offloaded_checkpoint
     return torch.utils.checkpoint.checkpoint
+
+
+def checkpoint_sequential_state(
+    blocks: Sequence[Any],
+    segment_size: int,
+    state: tuple[Any, ...] | Any,
+    run_block: Callable[..., tuple[Any, ...] | Any],
+    checkpoint_fn: Callable[..., Any],
+    checkpoint_kwargs: dict[str, Any] | None = None,
+) -> tuple[Any, ...]:
+    """Checkpoint contiguous chunks of a stateful block sequence.
+
+    Unlike ``torch.utils.checkpoint.checkpoint_sequential``, this supports block
+    functions that carry multiple tensors through the sequence.
+    """
+    if segment_size < 1:
+        raise ValueError("segment_size must be greater than 0")
+
+    current_state = state if isinstance(state, tuple) else (state,)
+    checkpoint_kwargs = dict(checkpoint_kwargs or {})
+
+    for segment_start in range(0, len(blocks), segment_size):
+        segment_blocks = tuple(blocks[segment_start : segment_start + segment_size])
+
+        def run_segment(*segment_state, _segment_start=segment_start, _segment_blocks=segment_blocks):
+            next_state = segment_state
+            for offset, block in enumerate(_segment_blocks):
+                result = run_block(_segment_start + offset, block, *next_state)
+                next_state = result if isinstance(result, tuple) else (result,)
+            if len(next_state) == 1:
+                return next_state[0]
+            return next_state
+
+        result = checkpoint_fn(run_segment, *current_state, **checkpoint_kwargs)
+        current_state = result if isinstance(result, tuple) else (result,)
+
+    return current_state

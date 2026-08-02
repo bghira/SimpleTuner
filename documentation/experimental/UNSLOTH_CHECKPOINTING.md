@@ -32,7 +32,7 @@ For supported model families, you can also checkpoint fewer blocks:
 }
 ```
 
-`gradient_checkpointing_interval: 2` checkpoints every other supported block. Higher values spend less time checkpointing and keep more activations in VRAM.
+`gradient_checkpointing_interval: 2` checkpoints contiguous two-block chunks on supported whole-block paths. Higher values spend less time recomputing and keep more activations in VRAM.
 
 `torch-ffn` and `unsloth-ffn` currently support Flux.1-style blocks and MageFlow. Other model families fail clearly until their block internals expose the same safe boundary.
 
