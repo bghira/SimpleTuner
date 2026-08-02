@@ -162,9 +162,11 @@ def safety_check(args, accelerator):
         "cosmos",
         "cosmos3",
         "ernie",
+        "flux",
     ]
     attention_activation_offload_supported_models = [
         "chroma",
+        "flux",
     ]
     if getattr(args, "gradient_checkpointing_offload_attention", False):
         if args.model_family.lower() not in attention_activation_offload_supported_models:

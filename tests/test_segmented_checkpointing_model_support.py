@@ -160,3 +160,53 @@ class ErnieSegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=False,
             attention_offload=False,
         )
+
+
+class FluxSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.flux.transformer import FluxTransformer2DModel
+
+        assert_checkpointing_controls(
+            self,
+            FluxTransformer2DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            offload=True,
+            ffn=True,
+            attention_offload=True,
+        )
+
+
+class FluxBlockCheckpointingScopeTests(unittest.TestCase):
+    def test_blocks_accept_ffn_checkpoint_and_attention_offload_scope(self):
+        import torch
+
+        from simpletuner.helpers.models.flux.transformer import FluxSingleTransformerBlock, FluxTransformerBlock
+
+        double_block = FluxTransformerBlock(dim=16, num_attention_heads=2, attention_head_dim=8).train()
+        hidden = torch.randn(2, 4, 16, requires_grad=True)
+        encoder_hidden = torch.randn(2, 3, 16, requires_grad=True)
+        temb = torch.randn(2, 16)
+
+        expected_encoder, expected_hidden = double_block(hidden, encoder_hidden, temb)
+        actual_encoder, actual_hidden = double_block(
+            hidden,
+            encoder_hidden,
+            temb,
+            checkpoint_ffn=True,
+            checkpoint_fn=torch.utils.checkpoint.checkpoint,
+            offload_attention=True,
+        )
+        self.assertTrue(torch.allclose(expected_encoder, actual_encoder, atol=1e-6))
+        self.assertTrue(torch.allclose(expected_hidden, actual_hidden, atol=1e-6))
+
+        single_block = FluxSingleTransformerBlock(dim=16, num_attention_heads=2, attention_head_dim=8).train()
+        hidden = torch.randn(2, 7, 16, requires_grad=True)
+        temb = torch.randn(2, 16)
+
+        expected_hidden = single_block(hidden, temb)
+        actual_hidden = single_block(
+            hidden, temb, checkpoint_ffn=True, checkpoint_fn=torch.utils.checkpoint.checkpoint, offload_attention=True
+        )
+        self.assertTrue(torch.allclose(expected_hidden, actual_hidden, atol=1e-6))
