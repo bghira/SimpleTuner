@@ -160,6 +160,7 @@ def safety_check(args, accelerator):
         "boogu_image",
         "chroma",
         "cosmos",
+        "cosmos3",
     ]
     attention_activation_offload_supported_models = [
         "chroma",

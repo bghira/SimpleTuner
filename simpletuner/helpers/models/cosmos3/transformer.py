@@ -27,6 +27,7 @@ from diffusers.models.normalization import RMSNorm
 from diffusers.utils import BaseOutput, logging
 
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
 
 logger = logging.get_logger(__name__)
 
@@ -666,6 +667,7 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=num_hidden_layers,
             blocks_to_swap=musubi_blocks_to_swap,
@@ -689,10 +691,18 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
     def set_gradient_checkpointing_interval(self, interval: int):
         self.gradient_checkpointing_interval = interval
 
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
+
     def _should_gradient_checkpoint_layer(self, layer_idx: int) -> bool:
         if not torch.is_grad_enabled() or not self.gradient_checkpointing:
             return False
-        return self.gradient_checkpointing_interval is None or layer_idx % self.gradient_checkpointing_interval == 0
+        return should_checkpoint_block(
+            layer_idx,
+            True,
+            self.gradient_checkpointing_interval,
+            self.gradient_checkpointing_segment_stride,
+        )
 
     @staticmethod
     def _stream_in_for_checkpoint_recompute(musubi_manager, layer_idx: int, layer: nn.Module, device: torch.device) -> None:
@@ -772,12 +782,9 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
             h_patches = h_padded // p
             w_patches = w_padded // p
             t_n = len(noisy_frame_indexes)
-            output_tensor = torch.zeros(
-                (latent_channel, t_c, h_orig, w_orig),
-                device=packed_mse_preds.device,
-                dtype=packed_mse_preds.dtype,
-            )
             num_patches = t_n * h_patches * w_patches
+            output_dtype = packed_mse_preds.dtype
+            latent = None
             if num_patches > 0:
                 end_idx = start_idx + num_patches
                 latent_patches = packed_mse_preds[start_idx:end_idx]
@@ -785,6 +792,14 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
                 latent = torch.einsum("thwpqc->cthpwq", latent_patches)
                 latent = latent.reshape(latent_channel, t_n, h_patches * p, w_patches * p)
                 latent = latent[:, :, :h_orig, :w_orig]
+                output_dtype = latent.dtype
+
+            output_tensor = torch.zeros(
+                (latent_channel, t_c, h_orig, w_orig),
+                device=packed_mse_preds.device,
+                dtype=output_dtype,
+            )
+            if latent is not None:
                 output_tensor[:, noisy_frame_indexes] = latent
                 start_idx = end_idx
             unpatchified_latents.append(output_tensor.unsqueeze(0))

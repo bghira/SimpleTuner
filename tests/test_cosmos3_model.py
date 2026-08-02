@@ -4,6 +4,7 @@ import unittest
 from importlib import resources
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import torch
 from safetensors import safe_open
@@ -251,6 +252,55 @@ class Cosmos3ModelTests(unittest.TestCase):
         self.assertFalse(transformer.layers[0].mlp.down_proj.weight.requires_grad)
         self.assertTrue(transformer.layers[0].self_attn.add_q_proj.weight.requires_grad)
         self.assertTrue(transformer.layers[0].mlp_moe_gen.down_proj.weight.requires_grad)
+
+    def test_unpatchify_preserves_prediction_dtype(self):
+        transformer = Cosmos3OmniTransformer(
+            hidden_size=8,
+            intermediate_size=16,
+            head_dim=4,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            num_hidden_layers=1,
+            latent_channel=2,
+            patch_latent_dim=8,
+            vocab_size=32,
+        )
+        packed = torch.randn(4, 8, dtype=torch.bfloat16)
+
+        unpacked = transformer._unpatchify_and_unpack_latents(
+            packed_mse_preds=packed,
+            token_shapes_vision=[(1, 2, 2)],
+            noisy_frame_indexes_vision=[torch.tensor([0], dtype=torch.long)],
+            original_latent_shapes=[(1, 4, 4)],
+        )
+
+        self.assertEqual(unpacked[0].dtype, torch.bfloat16)
+        self.assertEqual(unpacked[0].shape, (1, 2, 1, 4, 4))
+
+    def test_unpatchify_uses_materialized_latent_dtype(self):
+        transformer = Cosmos3OmniTransformer(
+            hidden_size=8,
+            intermediate_size=16,
+            head_dim=4,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            num_hidden_layers=1,
+            latent_channel=2,
+            patch_latent_dim=8,
+            vocab_size=32,
+        )
+        packed = torch.randn(4, 8, dtype=torch.float32)
+
+        with mock.patch("torch.einsum", return_value=torch.zeros(2, 1, 2, 2, 2, 2, dtype=torch.bfloat16)):
+            unpacked = transformer._unpatchify_and_unpack_latents(
+                packed_mse_preds=packed,
+                token_shapes_vision=[(1, 2, 2)],
+                noisy_frame_indexes_vision=[torch.tensor([0], dtype=torch.long)],
+                original_latent_shapes=[(1, 4, 4)],
+            )
+
+        self.assertEqual(unpacked[0].dtype, torch.bfloat16)
+        self.assertEqual(unpacked[0].shape, (1, 2, 1, 4, 4))
 
     def test_cosmos3_text_cache_metadata_and_collation(self):
         model = TestableCosmos3Image()

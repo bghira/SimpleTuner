@@ -128,3 +128,19 @@ class CosmosSegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=False,
             attention_offload=False,
         )
+
+
+class Cosmos3SegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.cosmos3.transformer import Cosmos3OmniTransformer
+
+        assert_checkpointing_controls(
+            self,
+            Cosmos3OmniTransformer,
+            backend=False,
+            interval=True,
+            stride=True,
+            checkpoint_attention_offload=False,
+            ffn=False,
+            attention_offload=False,
+        )
