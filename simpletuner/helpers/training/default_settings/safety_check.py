@@ -167,6 +167,7 @@ def safety_check(args, accelerator):
         "pixart",
         "qwen_image",
         "sanavideo",
+        "stable_cascade",
     ]
     gradient_checkpointing_segment_stride_supported_models = [
         "ace_step",
@@ -195,6 +196,7 @@ def safety_check(args, accelerator):
         "sana",
         "sanavideo",
         "sd3",
+        "stable_cascade",
     ]
     attention_activation_offload_supported_models = [
         "chroma",

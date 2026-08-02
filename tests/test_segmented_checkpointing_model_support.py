@@ -575,3 +575,19 @@ class SD3SegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=False,
             attention_offload=True,
         )
+
+
+class StableCascadeSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.stable_cascade.unet import StableCascadeUNet
+
+        assert_checkpointing_controls(
+            self,
+            StableCascadeUNet,
+            backend=False,
+            interval=True,
+            stride=True,
+            offload=False,
+            ffn=False,
+            attention_offload=False,
+        )
