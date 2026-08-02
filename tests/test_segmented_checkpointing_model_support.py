@@ -383,3 +383,19 @@ class KolorsControlNetCheckpointingCompatibilityTests(unittest.TestCase):
         parameters = inspect.signature(ControlNetModel._set_gradient_checkpointing).parameters
         self.assertIn("enable", parameters)
         self.assertIn("gradient_checkpointing_func", parameters)
+
+
+class Krea2SegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.krea2.transformer import Krea2Transformer2DModel
+
+        assert_checkpointing_controls(
+            self,
+            Krea2Transformer2DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            checkpoint_attention_offload=True,
+            ffn=True,
+            attention_offload=True,
+        )
