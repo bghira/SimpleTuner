@@ -154,6 +154,7 @@ def safety_check(args, accelerator):
         "boogu_image",
         "cosmos",
         "flux2",
+        "hidream",
     ]
     gradient_checkpointing_segment_stride_supported_models = [
         "ace_step",
@@ -165,6 +166,7 @@ def safety_check(args, accelerator):
         "ernie",
         "flux",
         "flux2",
+        "hidream",
     ]
     attention_activation_offload_supported_models = [
         "chroma",
