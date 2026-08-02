@@ -5,6 +5,7 @@ import inspect
 import os
 import subprocess
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
@@ -367,9 +368,42 @@ _PACKED_BACKEND_ALIASES = {
     "flash4-hub": ("hub-fa4", "kernels-community/flash-attn4"),
 }
 
+_HUB_KERNEL_VERSIONS: Dict[str, int] = {
+    "kernels-community/flash-attn2": 3,
+    "kernels-community/flash-attn3": 1,
+    "kernels-community/flash-attn4": 0,
+}
+
 
 def _normalize_backend_key(value: str) -> str:
     return value.replace("_", "-")
+
+
+@contextmanager
+def _hf_kernel_download_context():
+    patched_telemetry_constants: list[tuple[Any, bool]] = []
+    try:
+        try:
+            hf_constants = importlib.import_module("huggingface_hub.constants")
+            if hasattr(hf_constants, "HF_HUB_DISABLE_TELEMETRY"):
+                patched_telemetry_constants.append((hf_constants, getattr(hf_constants, "HF_HUB_DISABLE_TELEMETRY")))
+                setattr(hf_constants, "HF_HUB_DISABLE_TELEMETRY", False)
+        except Exception:
+            pass
+        yield
+    finally:
+        for constants_module, original_value in patched_telemetry_constants:
+            setattr(constants_module, "HF_HUB_DISABLE_TELEMETRY", original_value)
+
+
+def _get_hub_kernel(target: str) -> Any:
+    try:
+        from kernels import get_kernel
+    except ImportError as exc:
+        raise RuntimeError("The 'kernels' package is required for Hugging Face Hub attention kernels.") from exc
+
+    with _hf_kernel_download_context():
+        return get_kernel(target, trust_remote_code=True, version=_HUB_KERNEL_VERSIONS.get(target))
 
 
 @lru_cache(maxsize=32)
@@ -380,12 +414,7 @@ def get_packed_attention_backend(
     backend_key = _select_packed_backend(preferred_backend, require_varlen_qkvpacked=require_varlen_qkvpacked)
     provider, target = _PACKED_BACKEND_ALIASES[backend_key]
     if provider.startswith("hub-"):
-        try:
-            from kernels import get_kernel
-        except ImportError as exc:
-            raise RuntimeError("The 'kernels' package is required for Hugging Face Hub attention kernels.") from exc
-
-        module = get_kernel(target)
+        module = _get_hub_kernel(target)
         return PackedAttentionBackend(backend_key, module)
 
     import importlib
@@ -1120,7 +1149,8 @@ class AttentionBackendController:
         diffusers_backend = cls._resolve_diffusers_backend(backend_alias)
         if diffusers_backend is not None:
             cls._clear_metal_flash_attention_quantization_mode()
-            cls._enable_diffusers_backend(backend_alias, diffusers_backend)
+            trust_remote_code = cls._truthy_config_value(getattr(config, "trust_remote_code", False))
+            cls._enable_diffusers_backend(backend_alias, diffusers_backend, trust_remote_code=trust_remote_code)
             return
 
         cls.restore_default()
@@ -1167,6 +1197,14 @@ class AttentionBackendController:
             return None
         normalized = cls._normalize_backend_key(backend)
         return _DIFFUSERS_BACKEND_ALIASES.get(normalized)
+
+    @staticmethod
+    def _truthy_config_value(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
 
     @classmethod
     def _load_metal_flash_attention_extension(cls, backend: str = "metal-flash-attention"):
@@ -1358,29 +1396,79 @@ class AttentionBackendController:
         return False
 
     @classmethod
-    def _enable_diffusers_backend(cls, backend_key: str, backend_enum: AttentionBackendName) -> None:
+    def _enable_diffusers_backend(
+        cls,
+        backend_key: str,
+        backend_enum: AttentionBackendName,
+        *,
+        trust_remote_code: bool = False,
+    ) -> None:
         if cls._diffusers_backend_name == backend_key:
             return
         if diffusers_attention_backend is None or _check_attention_backend_requirements is None:
-            message = f"Diffusers attention backend helpers are unavailable. Upgrade diffusers to at least 0.35 to use {backend_key}."
+            message = (
+                "Diffusers attention backend helpers are unavailable. "
+                f"Upgrade diffusers to at least 0.35 to use {backend_key}."
+            )
             logger.error(message)
             raise RuntimeError(message)
 
-        try:
-            _check_attention_backend_requirements(backend_enum)
-        except Exception as exc:  # pragma: no cover - exercised only when backend requirements fail
-            message = f"Attention backend '{backend_key}' is unavailable: {exc}"
-            logger.error(message)
-            raise RuntimeError(message) from exc
+        patched_kernel_modules: list[tuple[Any, Any]] = []
+        patched_telemetry_constants: list[tuple[Any, bool]] = []
+        if backend_key.endswith("-hub"):
+            try:
+                hf_constants = importlib.import_module("huggingface_hub.constants")
+                if hasattr(hf_constants, "HF_HUB_DISABLE_TELEMETRY"):
+                    patched_telemetry_constants.append((hf_constants, getattr(hf_constants, "HF_HUB_DISABLE_TELEMETRY")))
+                    setattr(hf_constants, "HF_HUB_DISABLE_TELEMETRY", False)
+            except Exception:
+                pass
 
-        cls._disable_diffusers_backend()
+        if trust_remote_code and backend_key.endswith("-hub"):
+            for module_name in ("kernels", "kernels.utils"):
+                try:
+                    kernel_module = importlib.import_module(module_name)
+                    original_get_kernel = getattr(kernel_module, "get_kernel", None)
+                except Exception:
+                    continue
+                if not callable(original_get_kernel):
+                    continue
+
+                def patched_get_kernel(*args, _original_get_kernel=original_get_kernel, **kwargs):
+                    kwargs.setdefault("trust_remote_code", True)
+                    repo_id = kwargs.get("repo_id")
+                    if repo_id is None and args:
+                        repo_id = args[0]
+                    if kwargs.get("version") is None and kwargs.get("revision") is None:
+                        version = _HUB_KERNEL_VERSIONS.get(repo_id)
+                        if version is not None:
+                            kwargs["version"] = version
+                    return _original_get_kernel(*args, **kwargs)
+
+                setattr(kernel_module, "get_kernel", patched_get_kernel)
+                patched_kernel_modules.append((kernel_module, original_get_kernel))
+
         try:
-            context = diffusers_attention_backend(backend_enum)
-            context.__enter__()
-        except Exception as exc:
-            message = f"Failed to enable attention backend '{backend_key}': {exc}"
-            logger.error(message)
-            raise RuntimeError(message) from exc
+            try:
+                _check_attention_backend_requirements(backend_enum)
+            except Exception as exc:  # pragma: no cover - exercised only when backend requirements fail
+                message = f"Attention backend '{backend_key}' is unavailable: {exc}"
+                logger.error(message)
+                raise RuntimeError(message) from exc
+
+            cls._disable_diffusers_backend()
+            try:
+                context = diffusers_attention_backend(backend_enum)
+                context.__enter__()
+            except Exception as exc:
+                message = f"Failed to enable attention backend '{backend_key}': {exc}"
+                logger.error(message)
+                raise RuntimeError(message) from exc
+        finally:
+            for kernel_module, original_get_kernel in patched_kernel_modules:
+                setattr(kernel_module, "get_kernel", original_get_kernel)
+            for constants_module, original_value in patched_telemetry_constants:
+                setattr(constants_module, "HF_HUB_DISABLE_TELEMETRY", original_value)
 
         cls._diffusers_backend_context = context
         cls._diffusers_backend_name = backend_key
@@ -1785,7 +1873,8 @@ class AttentionBackendController:
         saved_settings = payload.get("settings")
         if saved_settings and cls._sla_settings and cls._sla_settings != saved_settings:
             logger.warning(
-                "SLA runtime settings differ from checkpoint settings. Runtime=%s, Checkpoint=%s. Proceeding with runtime configuration.",
+                "SLA runtime settings differ from checkpoint settings. Runtime=%s, Checkpoint=%s. "
+                "Proceeding with runtime configuration.",
                 cls._sla_settings,
                 saved_settings,
             )
