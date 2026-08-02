@@ -142,6 +142,7 @@ def safety_check(args, accelerator):
 
     gradient_checkpointing_interval_supported_models = [
         "flux",
+        "ace_step",
         "sana",
         "sd3",
         "chroma",
@@ -151,7 +152,9 @@ def safety_check(args, accelerator):
         "cosmos3",
         "mageflow",
     ]
-    gradient_checkpointing_segment_stride_supported_models = []
+    gradient_checkpointing_segment_stride_supported_models = [
+        "ace_step",
+    ]
     attention_activation_offload_supported_models = []
     if getattr(args, "gradient_checkpointing_offload_attention", False):
         if args.model_family.lower() not in attention_activation_offload_supported_models:
