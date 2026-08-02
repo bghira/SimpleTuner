@@ -68,6 +68,60 @@ class TestMultiAspectSampler(unittest.TestCase):
         buckets = self.sampler.load_buckets()
         self.assertEqual(buckets, ["1.0"])
 
+    def test_padded_occurrences_are_consumed_individually(self):
+        """A repeated filepath represents multiple scheduled samples, not one boolean item."""
+        metadata_backend = object.__new__(DiscoveryMetadataBackend)
+        metadata_backend.instance_data_dir = ""
+        metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["same.jpg", "same.jpg"]}
+        metadata_backend.seen_images = {}
+
+        sampler = object.__new__(MultiAspectSampler)
+        sampler.metadata_backend = metadata_backend
+        sampler.logger = MagicMock()
+        sampler.debug_log = MagicMock()
+
+        self.assertEqual(sampler._get_unseen_images("1.0"), ["same.jpg", "same.jpg"])
+        metadata_backend.mark_as_seen("same.jpg")
+        self.assertEqual(sampler._get_unseen_images("1.0"), ["same.jpg"])
+
+        # Old checkpoints stored booleans. True means the filepath was
+        # exhausted, including every scheduled duplicate.
+        metadata_backend.seen_images = {"same.jpg": True}
+        self.assertEqual(sampler._get_unseen_images("1.0"), [])
+
+        metadata_backend.seen_images = {}
+        metadata_backend.mark_batch_as_seen(["same.jpg", "same.jpg"])
+        self.assertEqual(metadata_backend.seen_occurrence_count("same.jpg"), 2)
+        self.assertEqual(sampler._get_unseen_images("1.0"), [])
+
+        metadata_backend.seen_images = {"same.jpg": "corrupt"}
+        with self.assertRaisesRegex(TypeError, "Invalid seen occurrence count"):
+            metadata_backend.seen_occurrence_count("same.jpg")
+
+    def test_load_states_restores_schedule_before_normalizing_legacy_seen_flags(self):
+        self.sampler.state_manager.load_state.return_value = {
+            "aspect_ratio_bucket_indices": {"1.0": ["same.jpg", "same.jpg", "other.jpg"]},
+            "buckets": ["1.0"],
+            "current_bucket": 0,
+            "exhausted_buckets": ["old"],
+            "seen_images": {"same.jpg": True, "other.jpg": False, "legacy.jpg": True},
+        }
+
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["stale.jpg"]}
+        self.metadata_backend.seen_images = {}
+        self.sampler.load_states(self.state_path)
+
+        self.assertEqual(
+            self.metadata_backend.aspect_ratio_bucket_indices,
+            {"1.0": ["same.jpg", "same.jpg", "other.jpg"]},
+        )
+        self.assertEqual(self.sampler.buckets, ["1.0"])
+        self.assertEqual(self.sampler.current_bucket, 0)
+        self.assertEqual(self.sampler.exhausted_buckets, ["old"])
+        self.assertEqual(self.metadata_backend.seen_images["same.jpg"], 2)
+        self.assertEqual(self.metadata_backend.seen_images["other.jpg"], 0)
+        self.assertTrue(self.metadata_backend.seen_images["legacy.jpg"])
+
     def test_change_bucket(self):
         self.sampler.buckets = ["1.5"]
         self.sampler.exhausted_buckets = ["1.0"]

@@ -903,33 +903,21 @@ class MetadataBackend:
                         effective_batch_size=effective_batch_size,
                     )
 
-            # Split data by DP rank (not global rank) when context parallelism is enabled.
-            # This ensures all ranks in a CP group get the same data shard.
-            if cp_size > 1:
-                # Custom CP-aware splitting: split by dp_rank instead of process_index
-                chunk_size = ceil(len(trimmed_images) / effective_dp_size) if effective_dp_size > 0 else len(trimmed_images)
-                start_idx = dp_rank * chunk_size
-                end_idx = min(start_idx + chunk_size, len(trimmed_images))
-                images_split = trimmed_images[start_idx:end_idx]
-
-                # Handle padding if requested (for uniform batch sizes)
-                if apply_padding and len(images_split) < chunk_size and len(images_split) > 0:
-                    padding_needed = chunk_size - len(images_split)
-                    # Pad by repeating elements from the split
-                    padding = (images_split * ((padding_needed // len(images_split)) + 1))[:padding_needed]
-                    images_split = images_split + padding
-
-                new_aspect_ratio_bucket_indices[bucket] = images_split
-            else:
-                # Standard splitting when CP is disabled
-                with self.accelerator.split_between_processes(trimmed_images, apply_padding=apply_padding) as images_split:
-                    new_aspect_ratio_bucket_indices[bucket] = images_split
+            samples_per_rank, extra_samples = divmod(len(trimmed_images), effective_dp_size)
+            start_idx = dp_rank * samples_per_rank + min(dp_rank, extra_samples)
+            local_size = samples_per_rank + int(dp_rank < extra_samples)
+            images_split = trimmed_images[start_idx : start_idx + local_size]
+            if apply_padding:
+                target_size = samples_per_rank + int(extra_samples > 0)
+                if trimmed_images and len(images_split) < target_size:
+                    images_split += [trimmed_images[-1]] * (target_size - len(images_split))
+            new_aspect_ratio_bucket_indices[bucket] = images_split
 
         self.aspect_ratio_bucket_indices = new_aspect_ratio_bucket_indices
         post_total = sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])
         if self.bucket_report:
             self.bucket_report.record_bucket_snapshot("post_split", self.aspect_ratio_bucket_indices)
-        if total_samples != post_total:
+        if self.accelerator.num_processes > 1 or total_samples != post_total:
             self.read_only = True
 
         # Check if this backend has no samples after splitting (can happen with multi-GPU setups)
@@ -944,14 +932,28 @@ class MetadataBackend:
 
         logger.debug(f"Count of items after split: {post_total}")
 
+    def seen_occurrence_count(self, image_path) -> int:
+        """Return consumed occurrences, accepting boolean values from older checkpoints."""
+        value = self.seen_images.get(image_path, 0)
+        if isinstance(value, bool):
+            return int(value)
+        if not isinstance(value, int):
+            raise TypeError(f"Invalid seen occurrence count for {image_path!r}: {value!r}")
+        if value < 0:
+            raise ValueError(f"Seen occurrence count cannot be negative for {image_path!r}: {value}")
+        return int(value)
+
     def mark_as_seen(self, image_path):
-        self.seen_images[image_path] = True
+        self.seen_images[image_path] = self.seen_occurrence_count(image_path) + 1
 
     def mark_batch_as_seen(self, image_paths):
-        self.seen_images.update({image_path: True for image_path in image_paths})
+        for image_path in image_paths:
+            self.mark_as_seen(image_path)
 
-    def is_seen(self, image_path):
-        return self.seen_images.get(image_path, False)
+    def is_seen(self, image_path, occurrence_index: int = 0):
+        if isinstance(self.seen_images.get(image_path, 0), bool):
+            return self.seen_images[image_path]
+        return self.seen_occurrence_count(image_path) > occurrence_index
 
     def reset_seen_images(self):
         self.seen_images.clear()

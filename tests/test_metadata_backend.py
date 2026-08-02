@@ -345,9 +345,6 @@ class TestSplitBucketsEvalDataset(unittest.TestCase):
         mock_accelerator = MagicMock()
         mock_accelerator.num_processes = 1
         mock_accelerator.process_index = 0
-        mock_accelerator.split_between_processes = MagicMock()
-        mock_accelerator.split_between_processes.return_value.__enter__ = MagicMock(return_value=["eval_img1.jpg"])
-        mock_accelerator.split_between_processes.return_value.__exit__ = MagicMock(return_value=False)
         mock_backend.accelerator = mock_accelerator
 
         with (
@@ -416,9 +413,6 @@ class TestSplitBucketsEvalDataset(unittest.TestCase):
         mock_accelerator = MagicMock()
         mock_accelerator.num_processes = 1
         mock_accelerator.process_index = 0
-        mock_accelerator.split_between_processes = MagicMock()
-        mock_accelerator.split_between_processes.return_value.__enter__ = MagicMock(return_value=["eval_img1.jpg"])
-        mock_accelerator.split_between_processes.return_value.__exit__ = MagicMock(return_value=False)
         mock_backend.accelerator = mock_accelerator
 
         with (
@@ -438,6 +432,86 @@ class TestSplitBucketsEvalDataset(unittest.TestCase):
             MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=8, apply_padding=False)
 
         self.assertIn("1.0", mock_backend.aspect_ratio_bucket_indices)
+
+
+class TestDistributedBucketPadding(unittest.TestCase):
+    """Regression coverage for PR #2897 distributed bucket policies."""
+
+    @staticmethod
+    def _backend(images, *, num_processes=8):
+        backend = MagicMock(spec=MetadataBackend)
+        backend.id = "distributed-padding"
+        backend.batch_size = 1
+        backend.repeats = 0
+        backend.bucket_report = None
+        backend.dataset_type = DatasetType.IMAGE
+        backend.aspect_ratio_bucket_indices = {"1.0": list(images)}
+        backend.read_only = False
+        backend.accelerator = MagicMock(
+            num_processes=num_processes,
+            process_index=0,
+            is_main_process=True,
+        )
+        return backend
+
+    def _split_rank(self, images, rank, *, cp_size, apply_padding):
+        backend = self._backend(images)
+        with (
+            patch.dict("os.environ", {"SIMPLETUNER_SHUFFLE_BUCKETS": "0"}),
+            patch.object(
+                StateTracker,
+                "get_args",
+                return_value=SimpleNamespace(allow_dataset_oversubscription=apply_padding),
+            ),
+            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+            patch(
+                "simpletuner.helpers.metadata.backends.base.get_cp_aware_dp_info",
+                return_value=(8, rank, cp_size),
+            ),
+        ):
+            MetadataBackend.split_buckets_between_processes(
+                backend,
+                gradient_accumulation_steps=1,
+                apply_padding=apply_padding,
+            )
+        return backend.aspect_ratio_bucket_indices["1.0"]
+
+    def test_cp_padding_fills_empty_dp_shards_from_final_global_item(self):
+        images = ["img0", "img1", "img2", "img3"]
+        shards = [self._split_rank(images, rank, cp_size=2, apply_padding=True) for rank in range(8)]
+
+        self.assertEqual([len(shard) for shard in shards], [1] * 8)
+        self.assertEqual([item for shard in shards for item in shard], images + ["img3"] * 4)
+
+    def test_cp_no_padding_uses_balanced_qr_partition(self):
+        images = [f"img{index}" for index in range(9)]
+        shards = [self._split_rank(images, rank, cp_size=2, apply_padding=False) for rank in range(8)]
+
+        self.assertEqual([len(shard) for shard in shards], [2, 1, 1, 1, 1, 1, 1, 1])
+        self.assertEqual([item for shard in shards for item in shard], images)
+
+    def test_standard_split_preserves_balanced_qr_order(self):
+        images = [f"img{index}" for index in range(9)]
+        shards = [self._split_rank(images, rank, cp_size=1, apply_padding=False) for rank in range(8)]
+
+        self.assertEqual([len(shard) for shard in shards], [2, 1, 1, 1, 1, 1, 1, 1])
+        self.assertEqual([item for shard in shards for item in shard], images)
+
+    def test_standard_split_padding_exact_division_preserves_cardinality(self):
+        images = [f"img{index}" for index in range(8)]
+        shards = [self._split_rank(images, rank, cp_size=1, apply_padding=True) for rank in range(8)]
+
+        self.assertEqual([len(shard) for shard in shards], [1] * 8)
+        self.assertEqual([item for shard in shards for item in shard], images)
+
+    def test_padding_non_divisible_preserves_qr_boundaries(self):
+        images = [f"img{index}" for index in range(10)]
+        expected = [["img0", "img1"], ["img2", "img3"]] + [[f"img{index}", "img9"] for index in range(4, 10)]
+
+        for cp_size in (1, 2):
+            with self.subTest(cp_size=cp_size):
+                shards = [self._split_rank(images, rank, cp_size=cp_size, apply_padding=True) for rank in range(8)]
+                self.assertEqual(shards, expected)
 
 
 class TestFilteringStatistics(unittest.TestCase):

@@ -134,10 +134,20 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
     def load_states(self, state_path: str):
         try:
-            self.buckets = self.load_buckets()
             previous_state = self.state_manager.load_state(state_path)
         except Exception as e:
             raise e
+
+        # Checkpoints contain the rank-local schedule. Restore it before seen
+        # state so legacy boolean flags can be expanded to all occurrences.
+        saved_schedule = previous_state.get("aspect_ratio_bucket_indices")
+        if isinstance(saved_schedule, dict):
+            self.metadata_backend.aspect_ratio_bucket_indices = saved_schedule
+            self._val_master_list = sorted(sum(saved_schedule.values(), []))
+        self.buckets = previous_state.get("buckets", self.load_buckets())
+        if "current_bucket" in previous_state:
+            self.current_bucket = previous_state["current_bucket"]
+
         self.exhausted_buckets = []
         if "exhausted_buckets" in previous_state:
             self.logger.info(f"Previous checkpoint had {len(previous_state['exhausted_buckets'])} exhausted buckets.")
@@ -149,7 +159,20 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         # Merge seen_images into self.state_manager.seen_images Manager.dict:
         if "seen_images" in previous_state:
             self.logger.info(f"Previous checkpoint had {len(previous_state['seen_images'])} seen {self.sample_type_strs}.")
-            self.metadata_backend.seen_images.update(previous_state["seen_images"])
+            occurrence_counts = {}
+            for images in self.metadata_backend.aspect_ratio_bucket_indices.values():
+                for image_path in images:
+                    occurrence_counts[image_path] = occurrence_counts.get(image_path, 0) + 1
+            normalized_seen = {
+                image_path: (
+                    (occurrence_counts.get(image_path, True) if value else 0)
+                    if isinstance(value, bool)
+                    else value
+                )
+                for image_path, value in previous_state["seen_images"].items()
+            }
+            self.metadata_backend.seen_images.clear()
+            self.metadata_backend.seen_images.update(normalized_seen)
 
     def load_buckets(self):
         return list(self.metadata_backend.aspect_ratio_bucket_indices.keys())  # These keys are a float value, eg. 1.78.
@@ -389,6 +412,17 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         # Bucket not found with either type
         return []
 
+    def _filter_unseen_occurrences(self, images):
+        """Filter consumed positions without collapsing duplicate filepaths."""
+        occurrence_indices = {}
+        unseen = []
+        for image in images:
+            occurrence_index = occurrence_indices.get(image, 0)
+            occurrence_indices[image] = occurrence_index + 1
+            if not self.metadata_backend.is_seen(image, occurrence_index):
+                unseen.append(image)
+        return unseen
+
     def _get_unseen_images(self, bucket=None):
         """
         Get unseen {self.sample_type_strs} from the specified bucket.
@@ -410,8 +444,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
             return [
                 (os.path.join(self.metadata_backend.instance_data_dir, image) if not image.startswith("http") else image)
-                for image in bucket_images
-                if not self.metadata_backend.is_seen(image)
+                for image in self._filter_unseen_occurrences(bucket_images)
             ]
         elif bucket is None:
             unseen_images = []
@@ -423,8 +456,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                             if not image.startswith("http")
                             else image
                         )
-                        for image in images
-                        if not self.metadata_backend.is_seen(image)
+                        for image in self._filter_unseen_occurrences(images)
                     ]
                 )
             return unseen_images
