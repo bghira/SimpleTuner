@@ -1037,6 +1037,16 @@ class TestTransformerBackendAttribute(unittest.TestCase):
         self.assertTrue(getattr(MageFlowTransformer2DModel, "_supports_ffn_gradient_checkpointing", False))
         self.assertTrue(getattr(MageFlowTransformer2DModel, "_supports_attention_activation_offload", False))
 
+    def test_kandinsky5_transformer_has_segmented_checkpointing_setters(self):
+        """Test that Kandinsky5Transformer3DModel exposes segmented checkpointing controls."""
+        from simpletuner.helpers.models.kandinsky5_video.transformer_kandinsky5 import Kandinsky5Transformer3DModel
+
+        self.assertTrue(hasattr(Kandinsky5Transformer3DModel, "set_gradient_checkpointing_backend"))
+        self.assertTrue(hasattr(Kandinsky5Transformer3DModel, "set_gradient_checkpointing_interval"))
+        self.assertTrue(hasattr(Kandinsky5Transformer3DModel, "set_gradient_checkpointing_segment_stride"))
+        self.assertTrue(hasattr(Kandinsky5Transformer3DModel, "set_gradient_checkpointing_offload_attention"))
+        self.assertTrue(getattr(Kandinsky5Transformer3DModel, "_supports_attention_activation_offload", False))
+
     def test_ltx2_transformer_has_checkpointing_support_flags(self):
         """Test that LTX2VideoTransformer3DModel exposes FFN and attention offload support."""
         from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
