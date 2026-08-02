@@ -511,3 +511,19 @@ class PixArtSegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=False,
             attention_offload=False,
         )
+
+
+class QwenImageSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.qwen_image.transformer import QwenImageTransformer2DModel
+
+        assert_checkpointing_controls(
+            self,
+            QwenImageTransformer2DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            checkpoint_attention_offload=False,
+            ffn=False,
+            attention_offload=False,
+        )
