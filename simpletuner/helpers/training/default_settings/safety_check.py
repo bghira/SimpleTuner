@@ -8,6 +8,7 @@ from torch.version import cuda as cuda_version
 
 from simpletuner.helpers.training.attention_backend import AttentionBackendMode
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
+from simpletuner.helpers.training.offloaded_gradient_checkpointer import normalize_activation_offload_pin_memory_max_buckets
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -163,16 +164,9 @@ def safety_check(args, accelerator):
             "Gradient checkpointing activation prefetch requires --gradient_checkpointing_offload_attention; disabling prefetch."
         )
         args.gradient_checkpointing_offload_prefetch = False
-    raw_offload_pin_bucket_count = getattr(args, "gradient_checkpointing_offload_pin_memory_max_buckets", 12)
-    if raw_offload_pin_bucket_count in (None, "", "None"):
-        args.gradient_checkpointing_offload_pin_memory_max_buckets = 12
-    else:
-        try:
-            args.gradient_checkpointing_offload_pin_memory_max_buckets = int(raw_offload_pin_bucket_count)
-        except (TypeError, ValueError):
-            raise ValueError("Gradient checkpointing offload pinned bucket count must be a non-negative integer.")
-        if args.gradient_checkpointing_offload_pin_memory_max_buckets < 0:
-            raise ValueError("Gradient checkpointing offload pinned bucket count must be non-negative.")
+    args.gradient_checkpointing_offload_pin_memory_max_buckets = normalize_activation_offload_pin_memory_max_buckets(
+        getattr(args, "gradient_checkpointing_offload_pin_memory_max_buckets", 12)
+    )
     if args.gradient_checkpointing_interval == 1:
         args.gradient_checkpointing_interval = None
     if args.gradient_checkpointing_interval is not None:

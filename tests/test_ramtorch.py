@@ -332,6 +332,7 @@ class RamTorchUtilsTests(unittest.TestCase):
         self.assertIn("linear_b.weight", ignore_set)
         self.assertIn("linear_b.bias", ignore_set)
         self.assertIn("ramtorch_buffer", ignore_set)
+        self.assertEqual(ramtorch_utils.mark_ddp_ignore_params(model), 0)
 
     def test_mark_ddp_ignore_params_skips_plain_cpu_modules(self):
         model = nn.Sequential(nn.Linear(2, 2), nn.LayerNorm(2))

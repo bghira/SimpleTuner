@@ -296,7 +296,7 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 - **What**: Start a checkpointed segment every *n* blocks on supported segmented whole-block paths.
 - **Example**: With `--gradient_checkpointing_interval=2` and `--gradient_checkpointing_segment_stride=4`, SimpleTuner checkpoints two blocks, runs the next two blocks normally, and repeats.
-- **Note**: Supported by Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Z-Image, and Wan segmented paths. The stride must be at least the interval. See [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md).
+- **Note**: Only takes effect on model families that expose segmented whole-block support in the installed SimpleTuner version. Unsupported families log a warning and ignore the value. The stride must be at least the interval. See [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md).
 
 ### `--gradient_checkpointing_backend`
 
@@ -312,7 +312,7 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 - **What**: Offload attention-side saved activations to CPU on models with a clean attention/FFN boundary.
 - **Why**: When transfer is cheaper than recomputing attention, this can reduce VRAM without paying the full attention rematerialization cost.
-- **Note**: This can be enabled by itself. It can also be combined with any checkpoint backend that the model supports. Attention offload is currently supported by Chroma, Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Wan, and Z-Image; unsupported model families fail loudly.
+- **Note**: This can be enabled by itself. It can also be combined with any checkpoint backend that the model supports. It only takes effect on model families that expose a clean attention/FFN boundary in the installed SimpleTuner version; unsupported model families fail loudly.
 
 ### `--gradient_checkpointing_offload_pin_memory_max_buckets`
 

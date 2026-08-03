@@ -290,7 +290,7 @@ simpletuner configure config/foo/config.json
 
 - **内容**：在支持 segmented whole-block 路径的模型上，每隔 *n* 个 block 启动一个 checkpointed segment。
 - **示例**：设置 `--gradient_checkpointing_interval=2` 且 `--gradient_checkpointing_segment_stride=4` 时，SimpleTuner 会 checkpoint 两个 block，然后正常运行接下来的两个 block，如此重复。
-- **说明**：Flux、Flux.2、Krea 2、LTXVideo2、MageFlow、Z-Image 和 Wan segmented 路径支持此选项。stride 必须大于或等于 interval。参见 [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md)。
+- **说明**：仅在已安装的 SimpleTuner 版本中暴露 segmented whole-block 支持的模型族上生效。不支持的模型族会记录 warning 并忽略该值。stride 必须大于或等于 interval。参见 [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md)。
 
 ### `--gradient_checkpointing_backend`
 
@@ -306,7 +306,7 @@ simpletuner configure config/foo/config.json
 
 - **内容**：在有清晰 attention/FFN 边界的模型上，把 attention 侧保存的 activations 卸载到 CPU。
 - **原因**：当传输比重算 attention 更便宜时，可降低 VRAM，且不需要支付完整 attention 重算成本。
-- **说明**：它可以单独启用。也可与模型支持的任意 checkpoint backend 组合。Attention offload 目前支持 Chroma、Flux、Flux.2、Krea 2、LTXVideo2、MageFlow、Wan 和 Z-Image；不支持的模型会直接报错。
+- **说明**：它可以单独启用。也可与模型支持的任意 checkpoint backend 组合。仅在已安装的 SimpleTuner 版本中暴露清晰 attention/FFN 边界的模型族上生效；不支持的模型会直接报错。
 
 ### `--gradient_checkpointing_offload_pin_memory_max_buckets`
 

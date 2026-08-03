@@ -797,6 +797,7 @@ def mark_ddp_ignore_params(module: nn.Module) -> int:
     if not ignore_names:
         return 0
 
-    existing = getattr(module, "_ddp_params_and_buffers_to_ignore", set())
-    module._ddp_params_and_buffers_to_ignore = set(existing) | ignore_names
-    return len(ignore_names)
+    existing = set(getattr(module, "_ddp_params_and_buffers_to_ignore", set()))
+    newly_added = ignore_names - existing
+    module._ddp_params_and_buffers_to_ignore = existing | ignore_names
+    return len(newly_added)

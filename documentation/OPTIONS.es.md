@@ -289,7 +289,7 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 
 - **Qué**: Inicia un segmento con checkpoint cada *n* bloques en rutas segmented whole-block compatibles.
 - **Ejemplo**: Con `--gradient_checkpointing_interval=2` y `--gradient_checkpointing_segment_stride=4`, SimpleTuner checkpointa dos bloques, ejecuta los dos siguientes normalmente y repite.
-- **Nota**: Compatible con rutas segmentadas de Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Z-Image y Wan. El stride debe ser al menos igual al interval. Consulta [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md).
+- **Nota**: Solo tiene efecto en familias de modelos que exponen soporte segmented whole-block en la version instalada de SimpleTuner. Las familias no soportadas registran una advertencia e ignoran el valor. El stride debe ser al menos igual al interval. Consulta [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md).
 
 ### `--gradient_checkpointing_backend`
 
@@ -305,7 +305,7 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 
 - **Qué**: Hace offload a CPU de las activaciones guardadas del lado attention en modelos con un límite attention/FFN limpio.
 - **Por qué**: Cuando transferir es más barato que recomputar attention, reduce VRAM sin pagar todo el coste de rematerializar attention.
-- **Nota**: Puede activarse por si solo. Tambien puede combinarse con cualquier checkpoint backend que soporte el modelo. Attention offload actualmente soporta Chroma, Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Wan y Z-Image; las familias no soportadas fallan de forma explícita.
+- **Nota**: Puede activarse por si solo. Tambien puede combinarse con cualquier checkpoint backend que soporte el modelo. Solo tiene efecto en familias de modelos que exponen una frontera attention/FFN limpia en la version instalada de SimpleTuner; las familias no soportadas fallan de forma explicita.
 
 ### `--gradient_checkpointing_offload_pin_memory_max_buckets`
 

@@ -30,6 +30,7 @@ class _PinnedBucketKey:
 class _RestoreView:
     size: tuple[int, ...]
     stride: tuple[int, ...]
+    storage_offset: int
 
 
 @dataclass
@@ -385,8 +386,8 @@ class _ActivationOffloadPrefetchRuntime:
             if not self.prefetch(record.generation, successor_id):
                 self.prefetch_misses += 1
 
-    def prefetch(self, generation: int, logical_id: str) -> bool:
-        candidates = self.records.get((generation, logical_id), ())
+    def prefetch(self, generation: int, predictor_id: str) -> bool:
+        candidates = self.records.get((generation, predictor_id), ())
         for candidate in reversed(candidates):
             if candidate.consumed or candidate.prefetched_tensor is not None:
                 continue
@@ -607,6 +608,20 @@ def get_activation_offload_pin_memory_max_buckets() -> int:
     return _PINNED_MEMORY_POOL.max_buckets
 
 
+def normalize_activation_offload_pin_memory_max_buckets(
+    raw_value: object, default: int = _DEFAULT_PIN_MEMORY_MAX_BUCKETS
+) -> int:
+    if raw_value in (None, "", "None"):
+        return default
+    try:
+        max_buckets = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Gradient checkpointing offload pinned bucket count must be a non-negative integer.") from exc
+    if max_buckets < 0:
+        raise ValueError("Gradient checkpointing offload pinned bucket count must be non-negative.")
+    return max_buckets
+
+
 def get_activation_offload_pin_memory_stats() -> dict:
     """Return lifetime pinned CPU bucket statistics for activation offload."""
     return _PINNED_MEMORY_POOL.snapshot()
@@ -694,7 +709,8 @@ class CPUOffloadHooks:
         flat_view = self._flat_storage_view(tensor)
         if flat_view is None:
             return tensor, None
-        return flat_view, _RestoreView(tuple(tensor.size()), tuple(tensor.stride()))
+        restore_storage_offset = tensor.storage_offset() - flat_view.storage_offset()
+        return flat_view, _RestoreView(tuple(tensor.size()), tuple(tensor.stride()), restore_storage_offset)
 
     def _copy_to_cpu(
         self, tensor: torch.Tensor
@@ -776,7 +792,7 @@ class CPUOffloadHooks:
             if pool_key is not None:
                 _PINNED_MEMORY_POOL.release_after_cuda_copy(pool_key, tensor, original_device)
             if restore_view is not None:
-                restored = torch.as_strided(restored, restore_view.size, restore_view.stride, 0)
+                restored = torch.as_strided(restored, restore_view.size, restore_view.stride, restore_view.storage_offset)
             return restored
         return tensor
 
@@ -789,7 +805,7 @@ class CPUOffloadHooks:
     def _restore_view_if_needed(self, tensor: torch.Tensor, restore_view: _RestoreView | None) -> torch.Tensor:
         if restore_view is None:
             return tensor
-        return torch.as_strided(tensor, restore_view.size, restore_view.stride, 0)
+        return torch.as_strided(tensor, restore_view.size, restore_view.stride, restore_view.storage_offset)
 
     def _unpack_record(self, record: _OffloadedActivationRecord) -> torch.Tensor:
         record.consumed = True

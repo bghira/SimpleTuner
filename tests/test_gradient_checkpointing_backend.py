@@ -167,6 +167,22 @@ class TestOffloadedGradientCheckpointer(unittest.TestCase):
         finally:
             set_activation_offload_pin_memory_max_buckets(original)
 
+    def test_activation_offload_pin_memory_bucket_count_normalization(self):
+        """Pinned bucket config values produce explicit validation errors."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import (
+            normalize_activation_offload_pin_memory_max_buckets,
+        )
+
+        self.assertEqual(normalize_activation_offload_pin_memory_max_buckets(None), 12)
+        self.assertEqual(normalize_activation_offload_pin_memory_max_buckets(""), 12)
+        self.assertEqual(normalize_activation_offload_pin_memory_max_buckets("0"), 0)
+        self.assertEqual(normalize_activation_offload_pin_memory_max_buckets(3), 3)
+
+        with self.assertRaisesRegex(ValueError, "non-negative integer"):
+            normalize_activation_offload_pin_memory_max_buckets("many")
+        with self.assertRaisesRegex(ValueError, "non-negative"):
+            normalize_activation_offload_pin_memory_max_buckets(-1)
+
     def test_activation_offload_copy_stream_counts_are_configurable(self):
         """Activation offload copy stream pools expose bounded tunable widths."""
         from simpletuner.helpers.training.offloaded_gradient_checkpointer import (
@@ -273,6 +289,22 @@ class TestOffloadedGradientCheckpointer(unittest.TestCase):
         self.assertEqual(tuple(restored.shape), tuple(transposed.shape))
         self.assertEqual(tuple(restored.stride()), tuple(transposed.stride()))
         self.assertTrue(torch.equal(restored, transposed))
+
+    def test_cpu_offload_dense_offset_views_restore_values(self):
+        """Dense views with non-zero base offsets restore from the copied transfer span."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import CPUOffloadHooks
+
+        hooks = CPUOffloadHooks()
+        base = torch.arange(20)
+        offset_view = torch.as_strided(base, (3, 4), (1, 3), 2)
+
+        self.assertEqual(offset_view.storage_offset(), 2)
+        transfer_tensor, restore_view = hooks._transfer_view(offset_view)
+        restored = hooks.unpack((transfer_tensor.clone(), torch.device("cpu"), None, restore_view))
+
+        self.assertEqual(tuple(restored.shape), tuple(offset_view.shape))
+        self.assertEqual(tuple(restored.stride()), tuple(offset_view.stride()))
+        self.assertTrue(torch.equal(restored, offset_view))
 
     def test_cpu_offload_sparse_storage_views_keep_original_layout(self):
         """Views with holes in storage are not flattened because storage-order transfer would lose layout."""
@@ -392,11 +424,11 @@ class TestOffloadedGradientCheckpointer(unittest.TestCase):
             pinned_a = torch.empty(32, 32, pin_memory=True)
             pinned_b = torch.empty(32, 32, pin_memory=True)
             pool_key = _PINNED_MEMORY_POOL.key_for(pinned_a)
-            for logical_id, tensor in (("a", pinned_a), ("b", pinned_b)):
+            for predictor_id, tensor in (("a", pinned_a), ("b", pinned_b)):
                 _ACTIVATION_PREFETCH_RUNTIME.register(
                     _OffloadedActivationRecord(
-                        logical_id=logical_id,
-                        predictor_id=logical_id,
+                        logical_id=predictor_id,
+                        predictor_id=predictor_id,
                         generation=0,
                         tensor=tensor,
                         original_device=torch.device("cuda"),
@@ -405,7 +437,7 @@ class TestOffloadedGradientCheckpointer(unittest.TestCase):
                         ready_event=None,
                     )
                 )
-                self.assertTrue(_ACTIVATION_PREFETCH_RUNTIME.prefetch(0, logical_id))
+                self.assertTrue(_ACTIVATION_PREFETCH_RUNTIME.prefetch(0, predictor_id))
 
             torch.cuda.synchronize()
             stats = get_activation_offload_copy_stream_stats()

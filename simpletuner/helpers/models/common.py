@@ -3267,13 +3267,15 @@ class ModelFoundation(ABC):
             logger.info("Using Unsloth-style gradient checkpointing (CPU offload)")
 
         offload_attention = bool(getattr(self.config, "gradient_checkpointing_offload_attention", False))
-        raw_pin_bucket_count = getattr(self.config, "gradient_checkpointing_offload_pin_memory_max_buckets", 12)
-        offload_pin_memory_max_buckets = 12 if raw_pin_bucket_count in (None, "", "None") else int(raw_pin_bucket_count)
         from simpletuner.helpers.training.offloaded_gradient_checkpointer import (
+            normalize_activation_offload_pin_memory_max_buckets,
             set_activation_offload_pin_memory_max_buckets,
             set_activation_offload_prefetch_enabled,
         )
 
+        offload_pin_memory_max_buckets = normalize_activation_offload_pin_memory_max_buckets(
+            getattr(self.config, "gradient_checkpointing_offload_pin_memory_max_buckets", 12)
+        )
         set_activation_offload_pin_memory_max_buckets(offload_pin_memory_max_buckets)
         set_activation_offload_prefetch_enabled(bool(getattr(self.config, "gradient_checkpointing_offload_prefetch", False)))
         if offload_attention:

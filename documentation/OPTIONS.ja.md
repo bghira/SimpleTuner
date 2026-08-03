@@ -290,7 +290,7 @@ simpletuner configure config/foo/config.json
 
 - **内容**: 対応する segmented whole-block path で、*n* block ごとに checkpointed segment を開始します。
 - **例**: `--gradient_checkpointing_interval=2` と `--gradient_checkpointing_segment_stride=4` では、SimpleTuner は 2 block を checkpoint し、次の 2 block を通常実行し、それを繰り返します。
-- **注記**: Flux、Flux.2、Krea 2、LTXVideo2、MageFlow、Z-Image、Wan の segmented path で対応しています。stride は interval 以上である必要があります。[Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md) を参照してください。
+- **注記**: インストール済み SimpleTuner のバージョンで segmented whole-block support を公開している model family でのみ有効です。未対応 family では warning を記録し、値を無視します。stride は interval 以上である必要があります。[Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md) を参照してください。
 
 ### `--gradient_checkpointing_backend`
 
@@ -306,7 +306,7 @@ simpletuner configure config/foo/config.json
 
 - **内容**: 明確な attention/FFN 境界があるモデルで、attention 側の保存 activations を CPU に offload します。
 - **理由**: attention を再計算するより転送が安い場合、完全な attention rematerialization cost を払わずに VRAM を減らせます。
-- **注記**: 単体でも有効化できます。そのモデルがサポートする任意の checkpoint backend とも組み合わせられます。Attention offload は現在 Chroma、Flux、Flux.2、Krea 2、LTXVideo2、MageFlow、Wan、Z-Image に対応し、未対応モデルでは明示的に失敗します。
+- **注記**: 単体でも有効化できます。そのモデルがサポートする任意の checkpoint backend とも組み合わせられます。インストール済み SimpleTuner のバージョンで明確な attention/FFN boundary を公開している model family でのみ有効です。未対応モデルでは明示的に失敗します。
 
 ### `--gradient_checkpointing_offload_pin_memory_max_buckets`
 
