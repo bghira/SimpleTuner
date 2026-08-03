@@ -603,10 +603,43 @@ class WanSegmentedCheckpointingSupportTests(unittest.TestCase):
             backend=True,
             interval=True,
             stride=True,
-            offload=True,
+            checkpoint_attention_offload=True,
             ffn=True,
             attention_offload=True,
         )
+
+    def test_block_accepts_ffn_checkpoint_and_attention_offload_scope(self):
+        import torch
+
+        from simpletuner.helpers.models.wan.transformer import WanTransformerBlock
+
+        torch.manual_seed(0)
+        block = WanTransformerBlock(dim=16, ffn_dim=64, num_heads=2).train()
+        hidden_states = torch.randn(2, 5, 16, requires_grad=True)
+        encoder_hidden_states = torch.randn(2, 7, 16, requires_grad=True)
+        temb = torch.randn(2, 6, 16)
+        rotary_emb = torch.randn(1, 1, hidden_states.shape[1], 4, dtype=torch.complex64)
+
+        expected_hidden_states = block(hidden_states, encoder_hidden_states, temb, rotary_emb)
+
+        checkpoint_use_reentrant_values = []
+
+        def checkpoint_fn(function, *args, **kwargs):
+            checkpoint_use_reentrant_values.append(kwargs.get("use_reentrant"))
+            return torch.utils.checkpoint.checkpoint(function, *args, **kwargs)
+
+        actual_hidden_states = block(
+            hidden_states,
+            encoder_hidden_states,
+            temb,
+            rotary_emb,
+            checkpoint_ffn=True,
+            checkpoint_fn=checkpoint_fn,
+            offload_attention=True,
+        )
+
+        self.assertEqual(checkpoint_use_reentrant_values, [False])
+        self.assertTrue(torch.allclose(expected_hidden_states, actual_hidden_states, atol=1e-6))
 
 
 class WanS2VSegmentedCheckpointingSupportTests(unittest.TestCase):
@@ -619,7 +652,7 @@ class WanS2VSegmentedCheckpointingSupportTests(unittest.TestCase):
             backend=True,
             interval=True,
             stride=True,
-            offload=False,
+            checkpoint_attention_offload=False,
             ffn=False,
             attention_offload=False,
         )
