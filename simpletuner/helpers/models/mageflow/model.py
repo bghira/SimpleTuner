@@ -2,6 +2,7 @@ import logging
 from typing import Optional
 
 import torch
+from diffusers import FlowMatchEulerDiscreteScheduler
 from einops import rearrange
 from transformers import AutoProcessor, AutoTokenizer, Qwen3VLForConditionalGeneration
 
@@ -22,6 +23,7 @@ from simpletuner.helpers.models.mageflow.transformer import MageFlowTransformer2
 from simpletuner.helpers.models.mageflow.vendor.pipeline import _lens_to_cu
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
+from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +51,12 @@ class MageFlow(ImageModelFoundation):
 
     DEFAULT_MODEL_FLAVOUR = "base"
     HUGGINGFACE_PATHS = {
-        "base": "microsoft/Mage-Flow-Base",
-        "default": "microsoft/Mage-Flow",
-        "turbo": "microsoft/Mage-Flow-Turbo",
-        "edit-base": "microsoft/Mage-Flow-Edit-Base",
-        "edit": "microsoft/Mage-Flow-Edit",
-        "edit-turbo": "microsoft/Mage-Flow-Edit-Turbo",
+        "base": "natalie5/Mage-Flow-Base",
+        "default": "natalie5/Mage-Flow",
+        "turbo": "natalie5/Mage-Flow-Turbo",
+        "edit-base": "natalie5/Mage-Flow-Edit-Base",
+        "edit": "natalie5/Mage-Flow-Edit",
+        "edit-turbo": "natalie5/Mage-Flow-Edit-Turbo",
     }
     MODEL_LICENSE = "mit"
 
@@ -187,6 +189,52 @@ class MageFlow(ImageModelFoundation):
 
     def _is_edit_flavour(self) -> bool:
         return self._model_flavour() in {"edit-base", "edit", "edit-turbo"}
+
+    def _resolve_checkpointing_transformer(self):
+        seen = set()
+
+        def visit(module):
+            if module is None or id(module) in seen:
+                return None
+            seen.add(id(module))
+            try:
+                module = self.unwrap_model(model=module)
+            except Exception:
+                pass
+            if isinstance(module, MageFlowTransformer2DModel):
+                return module
+            for attr_name in ("base_model", "model", "module", "_orig_mod"):
+                child = getattr(module, attr_name, None)
+                if child is not module:
+                    resolved = visit(child)
+                    if resolved is not None:
+                        return resolved
+            return None
+
+        return visit(getattr(self, "model", None))
+
+    def enable_gradient_checkpointing(self):
+        transformer = self._resolve_checkpointing_transformer()
+        if transformer is not None:
+            transformer.enable_gradient_checkpointing()
+
+    def disable_gradient_checkpointing(self):
+        transformer = self._resolve_checkpointing_transformer()
+        if transformer is not None:
+            transformer.disable_gradient_checkpointing()
+
+    def setup_training_noise_schedule(self):
+        try:
+            super().setup_training_noise_schedule()
+        except OSError:
+            logger.info("Mage-Flow checkpoint has no scheduler config; using the default training flow scheduler.")
+            self.noise_schedule = FlowMatchEulerDiscreteScheduler(
+                num_train_timesteps=1000,
+                shift=self.config.flow_schedule_shift if self.config.flow_schedule_shift is not None else 6.0,
+                use_dynamic_shifting=False,
+            )
+            fix_flow_match_euler_schedule_bounds(self.noise_schedule)
+        return self.config, self.noise_schedule
 
     @staticmethod
     def _normalise_attention_mechanism(attention_mechanism: str | None) -> str:
