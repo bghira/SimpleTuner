@@ -50,6 +50,7 @@ class HeartMuLa(AudioModelFoundation):
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
         self.model = None
+        self.vae = None
         self.tokenizer: Optional[Tokenizer] = None
         self.gen_config: Optional[HeartMuLaGenConfig] = None
         self._gen_asset_path: Optional[str] = None
@@ -96,6 +97,10 @@ class HeartMuLa(AudioModelFoundation):
                 )
             ]
         return []
+
+    def check_user_config(self):
+        super().check_user_config()
+        self.DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2AUDIO
 
     def uses_audio_latents(self) -> bool:
         return False
@@ -173,6 +178,26 @@ class HeartMuLa(AudioModelFoundation):
             self.model.to(self.accelerator.device)
         return self.model
 
+    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2AUDIO, load_base_model: bool = True):
+        if isinstance(pipeline_type, str):
+            pipeline_type = PipelineTypes(pipeline_type)
+        if pipeline_type != PipelineTypes.TEXT2AUDIO:
+            raise NotImplementedError(f"Pipeline type {pipeline_type} not defined in {self.__class__.__name__}.")
+        cached_pipeline = self.pipelines.get(pipeline_type)
+        transformer = self.unwrap_model(model=self.model) if self.model is not None else None
+        if cached_pipeline is not None:
+            if transformer is not None:
+                cached_pipeline.transformer = transformer
+            return cached_pipeline
+
+        pipeline = self.PIPELINE_CLASSES[pipeline_type].from_pretrained(
+            self._resolve_pretrained_path(),
+            transformer=transformer,
+            torch_dtype=self.config.weight_dtype,
+        )
+        self.pipelines[pipeline_type] = pipeline
+        return pipeline
+
     def add_lora_adapter(self):
         from peft import LoraConfig, get_peft_model
 
@@ -221,6 +246,23 @@ class HeartMuLa(AudioModelFoundation):
             )
 
         return addkeys, misskeys
+
+    def save_lora_weights(self, *args, **kwargs):
+        if args:
+            save_directory = args[0]
+        else:
+            save_directory = kwargs.get("save_directory")
+        if save_directory is None:
+            raise ValueError("save_directory is required to save LoRA weights.")
+
+        os.makedirs(save_directory, exist_ok=True)
+        trained_component = self.get_trained_component()
+        if trained_component is None:
+            raise ValueError("No HeartMuLa component is available to save LoRA weights.")
+        trained_component = self.unwrap_model(model=trained_component)
+        if not hasattr(trained_component, "save_pretrained"):
+            raise NotImplementedError("HeartMuLa LoRA saving requires a PEFT-wrapped component.")
+        trained_component.save_pretrained(save_directory, safe_serialization=True)
 
     def prepare_batch(self, batch: dict, state: dict) -> dict:
         if not batch:

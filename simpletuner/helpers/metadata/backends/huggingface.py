@@ -165,6 +165,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             except Exception as e:
                 logger.warning(f"Error loading caption cache, will regenerate: {e}")
         logger.info("Extracting captions from Hugging Face dataset...")
+        indices = self._limited_dataset_indices()
 
         def process_item(idx):
             item = self.data_backend.dataset[idx]
@@ -179,13 +180,12 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             return None
 
         captions = {}
-        total_items = len(self.data_backend.dataset)
         with concurrent.futures.ThreadPoolExecutor() as executor:
             results = list(
                 tqdm(
-                    executor.map(process_item, range(total_items)),
+                    executor.map(process_item, indices),
                     desc="Extracting captions",
-                    total=total_items,
+                    total=len(indices),
                     ncols=100,
                     mininterval=0.5,
                     ascii=True,
@@ -205,6 +205,18 @@ class HuggingfaceMetadataBackend(MetadataBackend):
 
         logger.info(f"Extracted {len(captions)} captions from dataset")
         return captions
+
+    def _limited_dataset_indices(self) -> List[int]:
+        total_items = len(self.data_backend.dataset)
+        all_files = [f"{idx}.{self.file_extension}" for idx in range(total_items)]
+        limited_files = self._apply_max_num_samples_limit(all_files)
+        indices = []
+        for virtual_path in limited_files:
+            try:
+                indices.append(int(str(virtual_path).rsplit(".", 1)[0]))
+            except (TypeError, ValueError):
+                continue
+        return indices
 
     def _extract_caption_from_item(self, item: Dict) -> Optional[Union[str, List[str]]]:
         caption = None
@@ -758,23 +770,25 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         aspect_ratio_bucket_updates = {}
         metadata_updates = {}
 
-        total_items = len(self.data_backend.dataset)
+        indices = self._limited_dataset_indices()
         if self.bucket_report:
-            pending_items = max(total_items - len(existing_files), 0)
+            pending_items = max(len(indices) - len(existing_files), 0)
             self.bucket_report.record_stage(
                 "new_files_to_process",
                 sample_count=pending_items,
                 ignore_existing_cache=ignore_existing_cache,
             )
-        for idx in tqdm(
-            range(total_items),
-            desc="Processing HF dataset items",
-            total=total_items,
-            leave=False,
-            ncols=100,
+        for progress_index, idx in enumerate(
+            tqdm(
+                indices,
+                desc="Processing HF dataset items",
+                total=len(indices),
+                leave=False,
+                ncols=100,
+            )
         ):
             if progress_callback is not None:
-                progress_callback(idx + 1, total_items)
+                progress_callback(progress_index + 1, len(indices))
 
             virtual_path = f"{idx}.{self.file_extension}"
 

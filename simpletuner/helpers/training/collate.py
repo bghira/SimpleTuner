@@ -396,6 +396,7 @@ def compute_prompt_embeddings(prompt_entries, text_embed_cache, model):
         - If tensors are 3D [1, seq, dim], concatenate along dim=0 to get [batch, seq, dim]
         - If tensors have inconsistent dimensions, normalize them first
         """
+        tensors = [tensor for tensor in tensors if tensor is not None]
         if not tensors:
             return None
 
@@ -644,6 +645,13 @@ def collate_fn(batch):
         token_payload["is_regularisation_data"] = is_regularisation_data
         token_payload["is_i2v_data"] = is_i2v_data
         return token_payload
+
+    uses_text_embeddings_cache = True
+    if model is not None:
+        try:
+            uses_text_embeddings_cache = bool(model.uses_text_embeddings_cache())
+        except AttributeError:
+            uses_text_embeddings_cache = True
 
     debug_log("Compute latents")
     batch_data = compute_latents(filepaths, batch_backend_id, model)
@@ -1026,17 +1034,16 @@ def collate_fn(batch):
         # If the caption is empty, we use the instance prompt text.
         captions = [caption if caption else example["instance_prompt_text"] for caption, example in zip(captions, examples)]
         debug_log(f"Pull cached text embeds. conditioning captions: {captions}")
-
-        # Get the appropriate text_embed_cache
-        if conditioning_backends:
-            text_embed_cache = conditioning_backends[0]["text_embed_cache"]
-        else:
-            text_embed_cache = StateTracker.get_data_backend(data_backend_id)["text_embed_cache"]
     else:
         # Use training captions (default behavior)
         captions = [example["instance_prompt_text"] for example in examples]
         debug_log(f"Pull cached text embeds. Using training set captions: {captions}")
-        text_embed_cache = StateTracker.get_data_backend(data_backend_id)["text_embed_cache"]
+    text_embed_cache = None
+    if uses_text_embeddings_cache:
+        if has_conditioning_captions and is_random_mode and conditioning_backends:
+            text_embed_cache = conditioning_backends[0]["text_embed_cache"]
+        else:
+            text_embed_cache = StateTracker.get_data_backend(data_backend_id)["text_embed_cache"]
     prompt_requests = []
     key_type = TextEmbedCacheKey.CAPTION
     getter = getattr(model, "text_embed_cache_key", None)
@@ -1046,53 +1053,54 @@ def collate_fn(batch):
         except Exception as exc:
             debug_log(f"text_embed_cache_key() lookup failed on model {type(model)}: {exc}")
 
-    for idx, caption in enumerate(captions):
-        example = examples[idx]
-        example_path = example.get("image_path")
-        example_backend_id = example.get("data_backend_id")
-        backend_config = StateTracker.get_data_backend_config(example_backend_id) if example_backend_id else {}
-        backend_config = backend_config or {}
-        dataset_root = backend_config.get("instance_data_dir")
-        normalized_identifier = normalize_data_path(example_path, dataset_root)
-        metadata = {
-            "image_path": example_path,
-            "data_backend_id": example_backend_id,
-            "prompt": caption,
-            "dataset_relative_path": normalized_identifier,
-        }
-        metadata_builder = getattr(model, "text_embed_cache_metadata_for_sample", None)
-        if callable(metadata_builder):
-            metadata.update(
-                metadata_builder(
-                    example=example,
-                    latent=latent_batch[idx],
-                    prompt=caption,
-                    data_backend_id=example_backend_id,
-                    dataset_relative_path=normalized_identifier,
+    if uses_text_embeddings_cache:
+        for idx, caption in enumerate(captions):
+            example = examples[idx]
+            example_path = example.get("image_path")
+            example_backend_id = example.get("data_backend_id")
+            backend_config = StateTracker.get_data_backend_config(example_backend_id) if example_backend_id else {}
+            backend_config = backend_config or {}
+            dataset_root = backend_config.get("instance_data_dir")
+            normalized_identifier = normalize_data_path(example_path, dataset_root)
+            metadata = {
+                "image_path": example_path,
+                "data_backend_id": example_backend_id,
+                "prompt": caption,
+                "dataset_relative_path": normalized_identifier,
+            }
+            metadata_builder = getattr(model, "text_embed_cache_metadata_for_sample", None)
+            if callable(metadata_builder):
+                metadata.update(
+                    metadata_builder(
+                        example=example,
+                        latent=latent_batch[idx],
+                        prompt=caption,
+                        data_backend_id=example_backend_id,
+                        dataset_relative_path=normalized_identifier,
+                    )
                 )
-            )
-        # Only include conditioning pixels for text embedding when using a single
-        # conditioning image. With multiple backends in combined mode, skip image
-        # context in embeddings and rely solely on latent references.
-        # (In random mode with multiple backends, only one image is selected, so
-        # we can still use it for text embedding context.)
-        has_multiple_combined_refs = len(conditioning_backends) > 1 and is_combined_mode
-        if not has_multiple_combined_refs:
-            pixel_value = _conditioning_pixel_value_for_example(idx)
-            if pixel_value is not None:
-                metadata["conditioning_pixel_values"] = pixel_value
-        if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME and example_backend_id and example_path:
-            key_value = f"{example_backend_id}:{normalized_identifier}"
-        elif key_type is TextEmbedCacheKey.FILENAME and example_path:
-            key_value = normalize_data_path(example_path, None)
-        else:
-            key_value = caption
-        key_builder = getattr(model, "text_embed_cache_key_value", None)
-        if callable(key_builder):
-            key_value = key_builder(prompt=caption, default_key=key_value, metadata=metadata)
-        prompt_requests.append({"prompt": caption, "key": key_value, "metadata": metadata})
+            # Only include conditioning pixels for text embedding when using a single
+            # conditioning image. With multiple backends in combined mode, skip image
+            # context in embeddings and rely solely on latent references.
+            # (In random mode with multiple backends, only one image is selected, so
+            # we can still use it for text embedding context.)
+            has_multiple_combined_refs = len(conditioning_backends) > 1 and is_combined_mode
+            if not has_multiple_combined_refs:
+                pixel_value = _conditioning_pixel_value_for_example(idx)
+                if pixel_value is not None:
+                    metadata["conditioning_pixel_values"] = pixel_value
+            if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME and example_backend_id and example_path:
+                key_value = f"{example_backend_id}:{normalized_identifier}"
+            elif key_type is TextEmbedCacheKey.FILENAME and example_path:
+                key_value = normalize_data_path(example_path, None)
+            else:
+                key_value = caption
+            key_builder = getattr(model, "text_embed_cache_key_value", None)
+            if callable(key_builder):
+                key_value = key_builder(prompt=caption, default_key=key_value, metadata=metadata)
+            prompt_requests.append({"prompt": caption, "key": key_value, "metadata": metadata})
 
-    if not text_embed_cache.disabled:
+    if text_embed_cache is not None and not text_embed_cache.disabled:
         all_text_encoder_outputs = compute_prompt_embeddings(prompt_requests, text_embed_cache, StateTracker.get_model())
     else:
         all_text_encoder_outputs = {}
@@ -1132,6 +1140,19 @@ def collate_fn(batch):
     if not any(s2v_audio_paths):
         backend_config = StateTracker.get_data_backend_config(batch_backend_id) or {}
         dataset_type = backend_config.get("dataset_type")
+
+        def resolve_local_source_audio_path(path: str | None) -> str | None:
+            if not path:
+                return None
+            candidates = [path]
+            instance_data_dir = backend_config.get("instance_data_dir")
+            if instance_data_dir and not os.path.isabs(path):
+                candidates.insert(0, os.path.join(instance_data_dir, path.lstrip(os.sep)))
+            for candidate in candidates:
+                if os.path.exists(candidate):
+                    return candidate
+            return None
+
         if dataset_type == "video":
             s2v_datasets = StateTracker.get_s2v_datasets(batch_backend_id)
             if len(s2v_datasets) == 1:
@@ -1142,17 +1163,20 @@ def collate_fn(batch):
                     if audio_backend_id is not None:
                         metadata_backend = s2v_datasets[0].get("metadata_backend")
                         if metadata_backend is None:
-                            s2v_audio_paths = list(filepaths)
-                            s2v_audio_backend_ids = [audio_backend_id] * len(s2v_audio_paths)
+                            s2v_audio_paths = [resolve_local_source_audio_path(path) for path in filepaths]
+                            s2v_audio_backend_ids = [
+                                audio_backend_id if path is not None else None for path in s2v_audio_paths
+                            ]
                         else:
                             s2v_audio_paths = []
                             s2v_audio_backend_ids = []
                             for path in filepaths:
-                                if metadata_backend.get_metadata_by_filepath(path) is None:
+                                audio_path = resolve_local_source_audio_path(path)
+                                if metadata_backend.get_metadata_by_filepath(path) is None or audio_path is None:
                                     s2v_audio_paths.append(None)
                                     s2v_audio_backend_ids.append(None)
                                 else:
-                                    s2v_audio_paths.append(path)
+                                    s2v_audio_paths.append(audio_path)
                                     s2v_audio_backend_ids.append(audio_backend_id)
 
     audio_latent_batch = None
@@ -1228,6 +1252,8 @@ def collate_fn(batch):
     grounding_batch = None
     max_grounding_entities = getattr(StateTracker.get_args(), "max_grounding_entities", None)
     if max_grounding_entities and max_grounding_entities > 0:
+        if text_embed_cache is None:
+            raise ValueError("Grounding annotations require a text embedding cache.")
         from simpletuner.helpers.training.grounding.collate import GroundingCollate
 
         grounding_image_cache = StateTracker.get_grounding_image_embed_cache(data_backend_id)

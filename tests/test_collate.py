@@ -26,12 +26,14 @@ class _StubModel:
         requires_conditioning_latents: bool = False,
         requires_conditioning_dataset: bool = False,
         requires_text_embed_image_context: bool = False,
+        uses_text_embeddings_cache: bool = True,
     ):
         self._requires_conditioning = requires_conditioning
         self._use_reference_embeds = use_reference_embeds
         self._requires_conditioning_latents = requires_conditioning_latents
         self._requires_conditioning_dataset = requires_conditioning_dataset
         self._requires_text_embed_context = requires_text_embed_image_context
+        self._uses_text_embeddings_cache = uses_text_embeddings_cache
 
     def requires_conditioning_image_embeds(self):
         return self._requires_conditioning
@@ -53,6 +55,9 @@ class _StubModel:
 
     def requires_text_embed_image_context(self):
         return self._requires_text_embed_context
+
+    def uses_text_embeddings_cache(self):
+        return self._uses_text_embeddings_cache
 
 
 class _StubConditioningSample:
@@ -179,6 +184,25 @@ class CollateFunctionTests(unittest.TestCase):
         self.assertTrue(torch.equal(result["add_text_embeds"], text_outputs["pooled_prompt_embeds"]))
         backend_mock = active_mocks[5]
         backend_mock.assert_called()
+
+    def test_collate_fn_preserves_prompts_without_text_cache(self):
+        backend_dict = {
+            "data_backend": _make_stub_data_backend(),
+            "config": {"instance_data_dir": "/train"},
+        }
+
+        model = _StubModel(requires_conditioning=False, uses_text_embeddings_cache=False)
+        patchers, _ = self._patch_state_tracker(
+            model=model, data_backend=backend_dict, text_outputs={}, backend_lookup={"backend-1": backend_dict}
+        )
+        with ExitStack() as stack:
+            active_mocks = [stack.enter_context(patcher) for patcher in patchers]
+            result = collate_fn(self.base_batch)
+
+        self.assertEqual(result["prompts"], ["caption"])
+        self.assertEqual(result["text_encoder_output"], {})
+        self.assertIsNone(result["prompt_embeds"])
+        active_mocks[9].assert_not_called()
 
     def test_compute_latents_uses_backend_ondemand_mode(self):
         vae_cache = SimpleNamespace(

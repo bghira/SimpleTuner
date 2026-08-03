@@ -218,6 +218,45 @@ class TestAudioMetadataBackends(unittest.TestCase):
         self.assertEqual(audio_metadata["num_channels"], 2)
         self.assertEqual(audio_metadata["truncation_mode"], "beginning")
 
+    def test_parquet_audio_bucket_preserves_lyrics_and_token_path(self):
+        dataset_id = "audio_parquet_tokens"
+        audio_path = os.path.join(self.tempdir.name, "tokenized.wav")
+        sample_rate, num_samples = _write_test_wav(audio_path)
+
+        manifest_path = os.path.join(self.tempdir.name, "tokens.jsonl")
+        record = {
+            "filepath": os.path.basename(audio_path),
+            "description": "bright synth pop",
+            "sample_rate": sample_rate,
+            "num_samples": num_samples,
+            "duration": round(num_samples / sample_rate, 2),
+            "channels": 1,
+            "lyrics": "hello from heartmula",
+            "audio_tokens_path": "tokenized.tokens.npy",
+        }
+        with open(manifest_path, "w", encoding="utf-8") as manifest_file:
+            manifest_file.write(json.dumps(record) + "\n")
+
+        backend = self._build_backend(dataset_id)
+        self._register_dataset_config(dataset_id)
+        parquet_backend = self._parquet_backend(dataset_id, backend, manifest_path)
+        parquet_backend.parquet_config["caption_column"] = "description"
+        parquet_backend.parquet_config["lyrics_column"] = "lyrics"
+
+        metadata_updates = {}
+        parquet_backend._process_for_bucket(
+            image_path_str=audio_path,
+            aspect_ratio_bucket_indices={},
+            metadata_updates=metadata_updates,
+            statistics={},
+        )
+
+        audio_metadata = metadata_updates[audio_path]
+        self.assertEqual(audio_metadata["tags"], "bright synth pop")
+        self.assertEqual(audio_metadata["prompt"], "bright synth pop")
+        self.assertEqual(audio_metadata["lyrics"], "hello from heartmula")
+        self.assertEqual(audio_metadata["audio_tokens_path"], "tokenized.tokens.npy")
+
     def test_parquet_audio_bucket_reads_from_audio_when_manifest_missing_values(self):
         dataset_id = "audio_parquet_fallback"
         audio_path = os.path.join(self.tempdir.name, "fallback.wav")

@@ -244,7 +244,8 @@ class ACEStep(AudioModelFoundation):
 
     def __init__(self, config: dict, accelerator):
         super().__init__(config, accelerator)
-        self.text_tokenizer_max_length = getattr(self.config, "tokenizer_max_length", 256)
+        default_text_length = 77 if str(getattr(self.config, "model_flavour", "")).startswith("v15") else 256
+        self.text_tokenizer_max_length = int(getattr(self.config, "tokenizer_max_length", None) or default_text_length)
         self.mert_model = None
         self.hubert_model = None
         self.resampler_mert = None
@@ -261,6 +262,7 @@ class ACEStep(AudioModelFoundation):
         self._v15_layout: Optional[Dict[str, str]] = None
         self._v15_layout_probe_base: Optional[str] = None
         self.silence_latent: Optional[torch.Tensor] = None
+        self.v15_condition_model_dtype = getattr(self.config, "weight_dtype", torch.float32)
 
     def get_lora_target_layers(self):
         manual_targets = self._get_peft_lora_target_modules()
@@ -434,6 +436,27 @@ class ACEStep(AudioModelFoundation):
 
     def _load_v15_hf_component(self, loader_cls, *, component_name: str, pretrained_model_name_or_path: str, **kwargs):
         trust_remote_code = self._trust_remote_code_enabled()
+        force_cpu_init_without_meta = bool(kwargs.pop("force_cpu_init_without_meta", False))
+        original_get_init_context = None
+        if force_cpu_init_without_meta:
+            from transformers.modeling_utils import PreTrainedModel
+
+            original_get_init_context = PreTrainedModel.get_init_context
+            original_get_init_context_func = original_get_init_context.__func__
+
+            def get_cpu_init_context(cls, dtype, is_quantized, _is_ds_init_called, allow_all_kernels):
+                contexts = original_get_init_context_func(
+                    cls,
+                    dtype,
+                    is_quantized,
+                    _is_ds_init_called,
+                    allow_all_kernels,
+                )
+                return [
+                    context for context in contexts if not (isinstance(context, torch.device) and context.type == "meta")
+                ]
+
+            PreTrainedModel.get_init_context = classmethod(get_cpu_init_context)
         try:
             return loader_cls.from_pretrained(
                 pretrained_model_name_or_path=pretrained_model_name_or_path,
@@ -448,6 +471,9 @@ class ACEStep(AudioModelFoundation):
                     "`trust_remote_code=true` in the SimpleTuner configuration and retry."
                 ) from exc
             raise
+        finally:
+            if original_get_init_context is not None:
+                PreTrainedModel.get_init_context = original_get_init_context
 
     def _build_v15_text_prompt(self, prompt: str, prompt_context: Optional[dict]) -> str:
         metadata = prompt_context or {}
@@ -475,6 +501,18 @@ class ACEStep(AudioModelFoundation):
         if embedding_layer is None:
             raise AttributeError("ACE-Step v1.5 text encoder does not expose an input embedding layer.")
         return embedding_layer
+
+    def _ensure_v15_condition_model_dtype(self):
+        model = getattr(self, "model", None)
+        if not self._is_v15_layout_active() or model is None:
+            return
+        component = self.unwrap_model(model=model)
+        try:
+            first_param = next(component.parameters())
+        except StopIteration:
+            return
+        if first_param.dtype != self.v15_condition_model_dtype:
+            component.to(device=self.accelerator.device, dtype=self.v15_condition_model_dtype)
 
     def _get_v15_silence_latent_slice(self, length: int, device, dtype) -> torch.Tensor:
         if self.silence_latent is None:
@@ -540,15 +578,79 @@ class ACEStep(AudioModelFoundation):
         )
         refer_audio_order_mask = torch.zeros(text_hidden_states.shape[0], device=text_hidden_states.device, dtype=torch.long)
         full_model.encoder.eval()
+        model_config = getattr(full_model, "config", None)
+        original_attn_implementation = getattr(model_config, "_attn_implementation", None)
         with torch.no_grad():
-            return full_model.encoder(
-                text_hidden_states=text_hidden_states,
-                text_attention_mask=text_attention_mask,
-                lyric_hidden_states=lyric_hidden_states,
-                lyric_attention_mask=lyric_attention_mask,
-                refer_audio_acoustic_hidden_states_packed=refer_audio_hidden,
-                refer_audio_order_mask=refer_audio_order_mask,
+            try:
+                if model_config is not None:
+                    model_config._attn_implementation = "eager"
+                return full_model.encoder(
+                    text_hidden_states=text_hidden_states,
+                    text_attention_mask=text_attention_mask,
+                    lyric_hidden_states=lyric_hidden_states,
+                    lyric_attention_mask=lyric_attention_mask,
+                    refer_audio_acoustic_hidden_states_packed=refer_audio_hidden,
+                    refer_audio_order_mask=refer_audio_order_mask,
+                )
+            finally:
+                if model_config is not None:
+                    model_config._attn_implementation = original_attn_implementation
+
+    def _configure_v15_flash_attention(self) -> None:
+        if not torch.cuda.is_available() or not hasattr(self.model, "config"):
+            return
+
+        attn_implementation = "kernels-community/flash-attn2"
+        try:
+            import transformers.modeling_flash_attention_utils as flash_utils
+            from huggingface_hub import constants as hf_hub_constants
+            from transformers.integrations import hub_kernels
+            from transformers.integrations.flash_attention import flash_attention_forward
+            from transformers.masking_utils import ALL_MASK_ATTENTION_FUNCTIONS
+            from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+
+            original_disable_telemetry = hf_hub_constants.HF_HUB_DISABLE_TELEMETRY
+            try:
+                # huggingface_hub 1.26 can emit an illegal trailing-semicolon
+                # User-Agent when telemetry is disabled and `kernels` downloads
+                # hub kernels. Keep the environment unchanged and only patch the
+                # cached constant for this direct kernel load.
+                hf_hub_constants.HF_HUB_DISABLE_TELEMETRY = False
+                kernel = hub_kernels.get_kernel_hub(
+                    attn_implementation,
+                    version=1,
+                    trust_remote_code=True,
+                )
+            finally:
+                hf_hub_constants.HF_HUB_DISABLE_TELEMETRY = original_disable_telemetry
+            flash_utils._loaded_implementation = attn_implementation
+            flash_utils._flash_fn = getattr(kernel, "flash_attn_func", None)
+            flash_utils._flash_varlen_fn = getattr(kernel, "flash_attn_varlen_func", None)
+            flash_utils._flash_with_kvcache_fn = getattr(kernel, "flash_attn_with_kvcache", None)
+            flash_utils._pad_fn = flash_utils._pad_input
+            flash_utils._unpad_fn = flash_utils._unpad_input
+            flash_utils._process_flash_kwargs_fn = flash_utils._lazy_define_process_function(flash_utils._flash_varlen_fn)
+            ALL_ATTENTION_FUNCTIONS.register(attn_implementation, flash_attention_forward)
+            ALL_MASK_ATTENTION_FUNCTIONS.register(
+                attn_implementation,
+                ALL_MASK_ATTENTION_FUNCTIONS["flash_attention_2"],
             )
+            self.model.config._attn_implementation_internal = attn_implementation
+        except Exception as exc:
+            logger.warning(
+                "Could not register ACE-Step v1.5 FlashAttention 2 fallback kernel; falling back to eager attention: %s",
+                exc,
+            )
+            self.model.config._attn_implementation = "eager"
+
+    def _v15_flash_attention_mask(self, mask: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+        if mask is None:
+            return None
+        full_model = self.unwrap_model(model=self.model)
+        attn_implementation = getattr(getattr(full_model, "config", None), "_attn_implementation", None)
+        if attn_implementation != "eager" and torch.is_tensor(mask):
+            return None
+        return mask
 
     def _sample_v15_timesteps(self, batch_size: int, device, dtype) -> torch.Tensor:
         full_model = self.unwrap_model(model=self.model)
@@ -643,6 +745,8 @@ class ACEStep(AudioModelFoundation):
                     [
                         f"{v15_variant_subdir}/*",
                         f"{v15_variant_subdir}/{self.V15_SILENCE_LATENT_FILENAME}",
+                        "acestep-v15-*/*",
+                        "acestep-v15-*/silence_latent.pt",
                     ]
                 )
             else:
@@ -765,10 +869,14 @@ class ACEStep(AudioModelFoundation):
                 AutoModel,
                 component_name="condition model",
                 pretrained_model_name_or_path=v15_layout["variant_path"],
-                torch_dtype=self.config.weight_dtype,
+                torch_dtype=self.v15_condition_model_dtype,
+                low_cpu_mem_usage=False,
+                allow_all_kernels=True,
+                force_cpu_init_without_meta=True,
             )
             if move_to_device:
-                self.model.to(self.accelerator.device, dtype=self.config.weight_dtype)
+                self.model.to(self.accelerator.device, dtype=self.v15_condition_model_dtype)
+            self._configure_v15_flash_attention()
             for module_name in ("encoder", "tokenizer", "detokenizer"):
                 module = getattr(self.model, module_name, None)
                 if module is None:
@@ -1398,7 +1506,7 @@ class ACEStep(AudioModelFoundation):
     def get_trained_component(self, base_model: bool = False, unwrap_model: bool = True):
         if not self._is_v15_layout_active():
             return super().get_trained_component(base_model=base_model, unwrap_model=unwrap_model)
-        component = self.model if base_model else getattr(self.model, "decoder", None)
+        component = self.model
         if unwrap_model:
             return self.unwrap_model(model=component)
         return component
@@ -1444,11 +1552,11 @@ class ACEStep(AudioModelFoundation):
         if self._ramtorch_enabled():
             ramtorch_utils.register_lora_custom_module(self.lora_config)
 
-        self.model.decoder = get_peft_model(self.model.decoder, self.lora_config)
+        self.model = get_peft_model(self.model, self.lora_config)
 
         if getattr(self.config, "init_lora", None):
             addkeys, misskeys = load_lora_weights(
-                {self.MODEL_TYPE.value: self.model.decoder},
+                {self.MODEL_TYPE.value: self.model},
                 self.config.init_lora,
                 use_dora=getattr(self.config, "use_dora", False),
             )
@@ -1488,13 +1596,15 @@ class ACEStep(AudioModelFoundation):
                 batch["encoder_attention_mask"] = torch.ones(mask_shape, dtype=torch.long)
 
             device = self.accelerator.device
-            dtype = getattr(self.config, "weight_dtype", torch.float32)
+            dtype = self.v15_condition_model_dtype
             latents = latent_batch.to(device=device, dtype=dtype)
             batch_size = latents.shape[0]
-            normalized_lyrics = self._normalize_v15_lyrics_inputs(lyrics, batch_size=batch_size)
             attention_mask = batch["latent_attention_mask"].to(device=device, dtype=dtype)
             text_hidden_states = batch["prompt_embeds"].to(device=device, dtype=dtype)
             text_attention_mask = batch["encoder_attention_mask"].to(device=device, dtype=torch.long)
+
+            self._ensure_v15_condition_model_dtype()
+            normalized_lyrics = self._normalize_v15_lyrics_inputs(lyrics, batch_size=batch_size)
             lyric_hidden_states, lyric_attention_mask = self._embed_v15_lyrics_batch(normalized_lyrics)
             encoder_hidden_states, encoder_attention_mask = self._run_v15_encoder(
                 text_hidden_states=text_hidden_states,
@@ -1523,6 +1633,8 @@ class ACEStep(AudioModelFoundation):
                     null_condition_emb = null_condition_emb.to(device=device, dtype=dtype).expand_as(encoder_hidden_states)
                     encoder_hidden_states = torch.where(keep_mask > 0, encoder_hidden_states, null_condition_emb)
 
+            context_latents = self._build_v15_context_latents(latents.shape[1], latents.shape[0], device, dtype)
+
             return {
                 "latents": latents,
                 "noise": noise,
@@ -1531,7 +1643,7 @@ class ACEStep(AudioModelFoundation):
                 "attention_mask": attention_mask,
                 "encoder_hidden_states": encoder_hidden_states,
                 "encoder_attention_mask": encoder_attention_mask,
-                "context_latents": self._build_v15_context_latents(latents.shape[1], latents.shape[0], device, dtype),
+                "context_latents": context_latents,
                 "flow_target": noise - latents,
             }
 
@@ -1647,31 +1759,63 @@ class ACEStep(AudioModelFoundation):
             raise ValueError("ACE-Step transformer has not been loaded before model_predict was invoked.")
 
         if self._is_v15_layout_active():
+            self._ensure_v15_condition_model_dtype()
+            full_model = self.unwrap_model(model=self.model)
+            decoder = getattr(full_model, "decoder", None)
+            if decoder is None and hasattr(full_model, "base_model"):
+                base_model = getattr(full_model.base_model, "model", full_model.base_model)
+                decoder = getattr(base_model, "decoder", None)
+            if decoder is None:
+                raise ValueError("ACE-Step v1.5 condition model does not expose a decoder module.")
             call_kwargs = {
                 "hidden_states": prepared_batch["noisy_latents"],
                 "timestep": prepared_batch["timesteps"],
-                "attention_mask": prepared_batch["attention_mask"],
+                "attention_mask": self._v15_flash_attention_mask(prepared_batch["attention_mask"]),
                 "encoder_hidden_states": prepared_batch["encoder_hidden_states"],
-                "encoder_attention_mask": prepared_batch.get("encoder_attention_mask"),
+                "encoder_attention_mask": self._v15_flash_attention_mask(prepared_batch.get("encoder_attention_mask")),
                 "context_latents": prepared_batch["context_latents"],
                 "timestep_r": prepared_batch["timesteps"],
             }
             call_kwargs.update(
                 self._get_flowmap_r_timestep_forward_kwargs(
                     prepared_batch,
-                    target=getattr(transformer, "forward", transformer),
+                    target=getattr(decoder, "forward", decoder),
                     kwarg_name="timestep_r",
                 )
             )
-            output = transformer(**call_kwargs)
+            output = decoder(**call_kwargs)
             flow_pred = output[0] if isinstance(output, (tuple, list)) else getattr(output, "sample", None)
             if flow_pred is None and hasattr(output, "__getitem__"):
                 flow_pred = output[0]
             if flow_pred is None:
                 raise ValueError("ACE-Step v1.5 decoder did not return a flow prediction tensor.")
             if not torch.isfinite(flow_pred).all():
+
+                def _tensor_summary(name: str, tensor: Optional[torch.Tensor]) -> str:
+                    if not torch.is_tensor(tensor):
+                        return f"{name}=None"
+                    finite = torch.isfinite(tensor)
+                    if not finite.any():
+                        return f"{name}=shape{tuple(tensor.shape)} dtype={tensor.dtype} all_nonfinite"
+                    sample = tensor.detach()[finite].float()
+                    return (
+                        f"{name}=shape{tuple(tensor.shape)} dtype={tensor.dtype} "
+                        f"min={sample.min().item()} max={sample.max().item()} mean={sample.mean().item()}"
+                    )
+
                 raise ValueError(
-                    f"Non-finite model_prediction detected (min={flow_pred.min().item()}, max={flow_pred.max().item()})"
+                    "Non-finite model_prediction detected: "
+                    + "; ".join(
+                        [
+                            _tensor_summary("noisy_latents", prepared_batch.get("noisy_latents")),
+                            _tensor_summary("timesteps", prepared_batch.get("timesteps")),
+                            _tensor_summary("attention_mask", prepared_batch.get("attention_mask")),
+                            _tensor_summary("encoder_hidden_states", prepared_batch.get("encoder_hidden_states")),
+                            _tensor_summary("encoder_attention_mask", prepared_batch.get("encoder_attention_mask")),
+                            _tensor_summary("context_latents", prepared_batch.get("context_latents")),
+                            _tensor_summary("flow_pred", flow_pred),
+                        ]
+                    )
                 )
             return {
                 "model_prediction": flow_pred,
@@ -1736,6 +1880,11 @@ class ACEStep(AudioModelFoundation):
         """
         import torch.nn.functional as F
 
+        if self._is_v15_layout_active():
+            diffusion_loss = model_output.get("diffusion_loss") if isinstance(model_output, dict) else None
+            if diffusion_loss is not None:
+                return diffusion_loss
+
         model_pred = model_output.get("model_prediction")
         if model_pred is None:
             model_pred = model_output.get("sample")
@@ -1770,6 +1919,12 @@ class ACEStep(AudioModelFoundation):
         return loss
 
     def auxiliary_loss(self, model_output, prepared_batch: dict, loss: torch.Tensor, **kwargs):
+        if (
+            self._is_v15_layout_active()
+            and isinstance(model_output, dict)
+            and model_output.get("diffusion_loss") is not None
+        ):
+            return loss, None
         loss, base_logs = super().auxiliary_loss(model_output=model_output, prepared_batch=prepared_batch, loss=loss)
         proj_losses = model_output.get("proj_losses")
         if not proj_losses:

@@ -196,6 +196,27 @@ class SaveHookMetadataTests(unittest.TestCase):
         )
         return manager, model, trained_component
 
+    def test_manager_rejects_invalid_default_pipeline_type(self):
+        args = SimpleNamespace(
+            use_ema=False,
+            model_type="lora",
+            lora_type="standard",
+            controlnet=False,
+            validation_using_datasets=False,
+        )
+        trained_component = _DummyTrainedComponent("transformer")
+        model = _DummyModel(trained_component=trained_component)
+        model.DEFAULT_PIPELINE_TYPE = None
+
+        with self.assertRaisesRegex(ValueError, "DEFAULT_PIPELINE_TYPE"):
+            SaveHookManager(
+                args=args,
+                model=model,
+                ema_model=_ema_stub,
+                accelerator=_DummyAccelerator(),
+                use_deepspeed_optimizer=False,
+            )
+
     def test_materialize_state_dict_for_save_expands_dtensor_like_values(self):
         class DTensor:
             def __init__(self):
