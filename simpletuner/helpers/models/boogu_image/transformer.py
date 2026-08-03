@@ -152,8 +152,6 @@ class PromptEmbedding(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalMod
         )
 
         self.gradient_checkpointing = False
-        self.gradient_checkpointing_interval = None
-        self.gradient_checkpointing_segment_stride = None
 
         self.initialize_weights()
 
@@ -907,8 +905,12 @@ class BooguImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
             [img_len + sum(ref_img_len) for img_len, ref_img_len in zip(l_effective_img_len, l_effective_ref_img_len)]
         )
 
-        hidden_states = self.x_embedder(hidden_states).clone()
-        ref_image_hidden_states = self.ref_image_patch_embedder(ref_image_hidden_states).clone()
+        hidden_states = self.x_embedder(hidden_states)
+        ref_image_hidden_states = self.ref_image_patch_embedder(ref_image_hidden_states)
+        if hidden_states.requires_grad:
+            hidden_states = hidden_states.clone()
+        if ref_image_hidden_states.requires_grad:
+            ref_image_hidden_states = ref_image_hidden_states.clone()
 
         for i in range(batch_size):
             shift = 0
