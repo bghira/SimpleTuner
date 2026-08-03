@@ -34,12 +34,9 @@ def detect_state_dict_format(state_dict: Dict[str, Any]) -> Optional[PEFTLoRAFor
     keys = list(state_dict.keys())
     comfy_prefix_hits = sum(k.startswith("diffusion_model.") for k in keys)
     comfy_alpha_hits = sum(k.endswith(".alpha") for k in keys)
-    comfy_ab_hits = sum(".lora_A" in k or ".lora_B" in k for k in keys)
     diffusers_down_up_hits = sum(".lora.down" in k or ".lora.up" in k for k in keys)
 
     if comfy_prefix_hits or (comfy_alpha_hits and diffusers_down_up_hits == 0):
-        return PEFTLoRAFormat.COMFYUI
-    if comfy_ab_hits and diffusers_down_up_hits == 0 and comfy_prefix_hits >= 0:
         return PEFTLoRAFormat.COMFYUI
     return PEFTLoRAFormat.DIFFUSERS
 

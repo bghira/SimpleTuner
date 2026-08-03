@@ -9,7 +9,6 @@ from simpletuner.helpers.training.lora_format import (
     detect_state_dict_format,
 )
 
-
 DOWN = torch.full((4, 8), 1.0)
 UP = torch.full((8, 4), 2.0)
 
@@ -82,11 +81,17 @@ class ConvertDiffusersToComfyUISDLoraTests(unittest.TestCase):
 class DetectStateDictFormatTests(unittest.TestCase):
     MODULE = "transformer.blocks.0.attn.to_q"
 
-    def test_peft_named_dict_is_reported_as_comfyui(self):
-        self.assertEqual(detect_state_dict_format(_peft_named(self.MODULE)), PEFTLoRAFormat.COMFYUI)
+    def test_peft_named_dict_is_reported_as_diffusers(self):
+        self.assertEqual(detect_state_dict_format(_peft_named(self.MODULE)), PEFTLoRAFormat.DIFFUSERS)
 
     def test_diffusers_named_dict_is_reported_as_diffusers(self):
         self.assertEqual(detect_state_dict_format(_diffusers_named(self.MODULE)), PEFTLoRAFormat.DIFFUSERS)
+
+    def test_diffusion_model_peft_named_dict_is_reported_as_comfyui(self):
+        self.assertEqual(
+            detect_state_dict_format(_peft_named("diffusion_model.blocks.0.attn.to_q")),
+            PEFTLoRAFormat.COMFYUI,
+        )
 
 
 if __name__ == "__main__":

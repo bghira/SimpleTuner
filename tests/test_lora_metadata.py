@@ -489,9 +489,7 @@ class SaveHookMetadataTests(unittest.TestCase):
         for use_ema in (False, True):
             with self.subTest(use_ema=use_ema):
                 manager, model, trained_component = self._make_manager(args_overrides={"use_ema": use_ema})
-                with patch(
-                    "simpletuner.helpers.training.save_hooks.get_peft_model_state_dict", return_value=lora_state
-                ):
+                with patch("simpletuner.helpers.training.save_hooks.get_peft_model_state_dict", return_value=lora_state):
                     with tempfile.TemporaryDirectory() as tmpdir:
                         manager._save_lora(models=[trained_component], weights=[object()], output_dir=tmpdir)
 
@@ -539,6 +537,86 @@ class SaveHookMetadataTests(unittest.TestCase):
         self.assertEqual(len(written), len(lora_state))
         for key in written:
             self.assertTrue(key.endswith((".lora_A.weight", ".lora_B.weight")), key)
+
+    def test_save_hook_peft_output_loads_through_diffusers_with_model_prefix(self):
+        from diffusers.loaders.peft import PeftAdapterMixin
+        from peft import LoraConfig, inject_adapter_in_model
+        from peft.utils import get_peft_model_state_dict
+
+        class Block(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.to_gate = torch.nn.Linear(8, 8, bias=False)
+                self.to_q = torch.nn.Linear(8, 8, bias=False)
+
+        class Denoiser(PeftAdapterMixin, torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.model = torch.nn.Module()
+                self.model.transformer = torch.nn.Module()
+                self.model.transformer.foo = Block()
+
+        class Pipeline:
+            pass
+
+        class Model:
+            MODEL_CLASS = Denoiser
+            MODEL_SUBFOLDER = "model"
+            PIPELINE_CLASSES = {PipelineTypes.TEXT2IMG: Pipeline}
+
+            def __init__(self, trained_component):
+                self.trained_component = trained_component
+                self.saved_lora_layers = None
+
+            def get_trained_component(self, unwrap_model=False, base_model=False):
+                return self.trained_component
+
+            def get_text_encoder(self, index):
+                return None
+
+            def save_lora_weights(self, output_dir, **kwargs):
+                self.saved_lora_layers = kwargs["model_lora_layers"]
+
+        def make_trained_component():
+            component = Denoiser()
+            inject_adapter_in_model(
+                LoraConfig(r=2, lora_alpha=2, target_modules=["to_gate", "to_q"]),
+                component,
+                adapter_name="default",
+            )
+            return component
+
+        def load_with_diffusers_from_safetensors(state_dict):
+            target = Denoiser()
+            with tempfile.TemporaryDirectory() as tmpdir:
+                save_file(state_dict, os.path.join(tmpdir, "pytorch_lora_weights.safetensors"))
+                target.load_lora_adapter(
+                    tmpdir,
+                    prefix=None,
+                    weight_name="pytorch_lora_weights.safetensors",
+                    use_safetensors=True,
+                    adapter_name="loaded",
+                )
+            return sorted(name for name, module in target.named_modules() if hasattr(module, "lora_A"))
+
+        expected_modules = ["model.transformer.foo.to_gate", "model.transformer.foo.to_q"]
+        raw_peft_state = get_peft_model_state_dict(make_trained_component())
+        self.assertEqual(load_with_diffusers_from_safetensors(raw_peft_state), expected_modules)
+
+        trained_component = make_trained_component()
+        model = Model(trained_component)
+        manager = SaveHookManager(
+            args=SimpleNamespace(use_ema=False, controlnet=False, validation_using_datasets=False),
+            model=model,
+            ema_model=_ema_stub,
+            accelerator=_DummyAccelerator(),
+            use_deepspeed_optimizer=False,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager._save_lora(models=[trained_component], weights=[object()], output_dir=tmpdir, write=True)
+
+        self.assertEqual(load_with_diffusers_from_safetensors(model.saved_lora_layers), expected_modules)
 
     def test_legacy_mixed_checkpoint_normalises_for_resume(self):
         from diffusers.utils import convert_unet_state_dict_to_peft
