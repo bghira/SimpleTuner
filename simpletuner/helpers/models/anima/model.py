@@ -283,20 +283,21 @@ class Anima(ImageModelFoundation):
         return super().load_model(move_to_device=move_to_device)
 
     def _prompt_tokenizer_sources(self) -> tuple[str, str]:
+        qwen_tokenizer_source = self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path")
         model_path = getattr(self.config, "pretrained_model_name_or_path", None)
         if isinstance(model_path, str):
             model_dir = Path(model_path)
             qwen_dir = model_dir / "tokenizer"
             t5_dir = model_dir / "t5_tokenizer"
             if qwen_dir.is_dir() and t5_dir.is_dir():
-                return str(qwen_dir), str(t5_dir)
+                return qwen_tokenizer_source or str(qwen_dir), str(t5_dir)
             qwen_dir = model_dir / "prompt_tokenizer_qwen"
             t5_dir = model_dir / "prompt_tokenizer_t5"
             if qwen_dir.is_dir() and t5_dir.is_dir():
-                return str(qwen_dir), str(t5_dir)
+                return qwen_tokenizer_source or str(qwen_dir), str(t5_dir)
             if self._uses_diffusers_repo_layout():
-                return f"{model_path}::tokenizer", f"{model_path}::t5_tokenizer"
-        return _QWEN_TOKENIZER_SOURCE, _T5_TOKENIZER_SOURCE
+                return qwen_tokenizer_source or f"{model_path}::tokenizer", f"{model_path}::t5_tokenizer"
+        return qwen_tokenizer_source or _QWEN_TOKENIZER_SOURCE, _T5_TOKENIZER_SOURCE
 
     def load_text_tokenizer(self):
         qwen_source, t5_source = self._prompt_tokenizer_sources()
@@ -313,8 +314,10 @@ class Anima(ImageModelFoundation):
     def load_text_encoder(self, move_to_device: bool = True):
         if self.text_encoders is not None and len(self.text_encoders) > 0:
             return
+        qwen_text_encoder_path = self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path")
         model_path = (
-            getattr(self.config, "pretrained_text_encoder_model_name_or_path", None)
+            qwen_text_encoder_path
+            or getattr(self.config, "pretrained_text_encoder_model_name_or_path", None)
             or self.config.pretrained_model_name_or_path
         )
         revision = getattr(self.config, "text_encoder_revision", None) or getattr(self.config, "revision", None)
@@ -324,6 +327,34 @@ class Anima(ImageModelFoundation):
             execution_device=self.accelerator.device.type,
         )
         load_device = self.accelerator.device.type if move_to_device else "cpu"
+        if qwen_text_encoder_path:
+            if os.path.isfile(model_path):
+                text_encoder = load_text_encoder_single_file(
+                    file_path=model_path,
+                    device=load_device,
+                    dtype=dtype,
+                )
+            else:
+                load_kwargs = {
+                    "pretrained_model_name_or_path": model_path,
+                    "revision": revision,
+                    "torch_dtype": dtype,
+                    "local_files_only": bool(getattr(self.config, "local_files_only", False)),
+                    "cache_dir": getattr(self.config, "cache_dir", None),
+                    "force_download": bool(getattr(self.config, "force_download", False)),
+                }
+                self._add_hf_token_kwarg(load_kwargs)
+                text_encoder = Qwen3Model.from_pretrained(**load_kwargs)
+                text_encoder.eval().requires_grad_(False)
+                text_encoder.to(device=load_device, dtype=dtype)
+            self.text_encoders = [text_encoder]
+            self.text_encoder = text_encoder
+            self.text_encoder_1 = text_encoder
+            if not move_to_device:
+                text_encoder.to("cpu")
+            if getattr(self, "prompt_tokenizer", None) is None:
+                self.load_text_tokenizer()
+            return
         if self._uses_diffusers_repo_layout(model_path, component_subfolder="text_encoder"):
             load_kwargs = {
                 "pretrained_model_name_or_path": model_path,

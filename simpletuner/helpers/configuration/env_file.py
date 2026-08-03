@@ -32,6 +32,7 @@ env_to_args_map = {
     "MODEL_TYPE": "--model_type",
     "MODEL_NAME": "--pretrained_model_name_or_path",
     "MODEL_FAMILY": "--model_family",
+    "QWEN_TEXT_ENCODER_MODEL_NAME_OR_PATH": "--qwen_text_encoder_model_name_or_path",
     "TRAIN_BATCH_SIZE": "--train_batch_size",
     "USE_GRADIENT_CHECKPOINTING": "--gradient_checkpointing",
     "ENABLE_CHUNKED_FEED_FORWARD": "--enable_chunked_feed_forward",

@@ -378,9 +378,13 @@ class ACEStep(AudioModelFoundation):
             if available_variants:
                 variant_dir = available_variants[0]
 
+        qwen_text_encoder_path = self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path")
         tokenizer_dir = shared_root / self.V15_SHARED_TEXT_ENCODER_SUBFOLDER
         vae_dir = shared_root / self.V15_SHARED_VAE_SUBFOLDER
-        if variant_dir is None or not tokenizer_dir.is_dir() or not vae_dir.is_dir():
+        if variant_dir is None or not vae_dir.is_dir():
+            self._v15_layout = None
+            return None
+        if not qwen_text_encoder_path and not tokenizer_dir.is_dir():
             self._v15_layout = None
             return None
 
@@ -404,7 +408,7 @@ class ACEStep(AudioModelFoundation):
         self._v15_layout = {
             "root_path": str(shared_root),
             "variant_path": str(variant_dir),
-            "tokenizer_path": str(tokenizer_dir),
+            "tokenizer_path": qwen_text_encoder_path or str(tokenizer_dir),
             "vae_path": str(vae_dir),
             "silence_latent_path": str(silence_path),
         }

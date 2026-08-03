@@ -25,7 +25,7 @@ Para seleccionar una variante, configura `model_flavour` en tu configuración:
 }
 ```
 
-> **Importante**: Para `klein-4b` y `klein-9b`, deja `pretrained_text_encoder_model_name_or_path` sin definir a menos que realmente quieras reemplazar el codificador Qwen3 incluido. Si configuras ese campo, anulas el valor predeterminado de Klein y puedes provocar la descarga de otro codificador de texto.
+> **Importante**: Para `klein-4b` y `klein-9b`, deja `qwen_text_encoder_model_name_or_path` sin definir para usar el codificador Qwen3 incluido. Configuralo solo cuando reemplaces el codificador Qwen3 incluido por otra fuente compatible con Qwen.
 
 ## Resumen del modelo
 

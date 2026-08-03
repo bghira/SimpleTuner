@@ -211,8 +211,15 @@ class LongCatImage(ImageModelFoundation):
         text_processor = getattr(self, "text_processor", None)
         if text_processor is not None:
             return text_processor
-        model_path = get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path)
-        text_processor = AutoProcessor.from_pretrained(model_path, subfolder="text_processor")
+        qwen_text_encoder_path = self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path")
+        model_path = qwen_text_encoder_path or get_model_config_path(
+            self.config.model_family,
+            self.config.pretrained_model_name_or_path,
+        )
+        processor_kwargs = {"pretrained_model_name_or_path": model_path}
+        if not qwen_text_encoder_path:
+            processor_kwargs["subfolder"] = "text_processor"
+        text_processor = AutoProcessor.from_pretrained(**processor_kwargs)
         self.text_processor = text_processor
         return text_processor
 

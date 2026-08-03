@@ -253,6 +253,13 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **O que**: Caminho para o modelo Gemma pre-treinado ou seu identificador em <https://huggingface.co/models>.
 - **Por que**: Ao treinar modelos baseados em Gemma (por exemplo LTX-2, Sana ou Lumina2), voce pode apontar para um checkpoint Gemma compartilhado sem mudar o caminho do modelo base de difusao.
 
+### `--qwen_text_encoder_model_name_or_path`
+
+- **O que**: Caminho para um encoder de texto Qwen pre-treinado ou seu identificador em <https://huggingface.co/models>.
+- **Padrao**: `None` (usa a origem do encoder de texto Qwen definida pelo modelo selecionado).
+- **Por que**: Use para compartilhar ou substituir o encoder de texto Qwen em familias de modelos baseadas em Qwen sem editar o cache do Hugging Face.
+- **Notas**: Aplica-se a familias de modelos com um unico encoder de texto Qwen. Se uma familia definir varios encoders Qwen, a opcao e ignorada e o SimpleTuner registra um aviso.
+
 ### `--max_grounding_entities`
 - Numero maximo de entidades de grounding por imagem para anotacoes espaciais no estilo GLIGEN. Padrao: 0 (desabilitado). Valores tipicos: 4-16.
 
@@ -1744,6 +1751,7 @@ usage: train.py [-h] --model_family
                 [--pretrained_unet_subfolder PRETRAINED_UNET_SUBFOLDER]
                 [--pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH]
                 [--pretrained_gemma_model_name_or_path PRETRAINED_GEMMA_MODEL_NAME_OR_PATH]
+                [--qwen_text_encoder_model_name_or_path QWEN_TEXT_ENCODER_MODEL_NAME_OR_PATH]
                 [--revision REVISION] [--variant VARIANT]
                 [--base_model_default_dtype {bf16,fp32}]
                 [--unet_attention_slice [UNET_ATTENTION_SLICE]]
@@ -2074,6 +2082,8 @@ options:
                         Path to pretrained T5 model
   --pretrained_gemma_model_name_or_path PRETRAINED_GEMMA_MODEL_NAME_OR_PATH
                         Path to pretrained Gemma model
+  --qwen_text_encoder_model_name_or_path QWEN_TEXT_ENCODER_MODEL_NAME_OR_PATH
+                        Path to pretrained Qwen text encoder model
   --revision REVISION   Git branch/tag/commit for model version
   --variant VARIANT     Model variant (e.g., fp16, bf16)
   --base_model_default_dtype {bf16,fp32}

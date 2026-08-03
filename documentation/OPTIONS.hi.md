@@ -253,6 +253,13 @@ simpletuner configure config/foo/config.json
 - **What**: pretrained Gemma model का path या <https://huggingface.co/models> से उसका identifier.
 - **Why**: Gemma‑based models (जैसे LTX-2, Sana, Lumina2) ट्रेन करते समय आप base diffusion model path बदले बिना Gemma weights का source specify कर सकते हैं।
 
+### `--qwen_text_encoder_model_name_or_path`
+
+- **What**: pretrained Qwen text encoder model का path या <https://huggingface.co/models> से उसका identifier.
+- **Default**: `None` (selected model में defined Qwen text encoder source उपयोग होता है).
+- **Why**: Qwen-based model families में Qwen text encoder को share या replace करने के लिए इसका उपयोग करें, बिना Hugging Face cache edit किए।
+- **Notes**: यह उन model families पर लागू होता है जिनमें एक Qwen text encoder है। अगर कोई model family multiple Qwen encoders define करती है, तो option ignore होता है और SimpleTuner warning log करता है।
+
 ### `--max_grounding_entities`
 - GLIGEN-style spatial annotations के लिए प्रति image grounding entities की अधिकतम संख्या। Default: 0 (disabled)। सामान्य मान: 4-16।
 
@@ -1746,6 +1753,7 @@ usage: train.py [-h] --model_family
                 [--pretrained_unet_subfolder PRETRAINED_UNET_SUBFOLDER]
                 [--pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH]
                 [--pretrained_gemma_model_name_or_path PRETRAINED_GEMMA_MODEL_NAME_OR_PATH]
+                [--qwen_text_encoder_model_name_or_path QWEN_TEXT_ENCODER_MODEL_NAME_OR_PATH]
                 [--revision REVISION] [--variant VARIANT]
                 [--base_model_default_dtype {bf16,fp32}]
                 [--unet_attention_slice [UNET_ATTENTION_SLICE]]
@@ -2077,6 +2085,8 @@ options:
                         Path to pretrained T5 model
   --pretrained_gemma_model_name_or_path PRETRAINED_GEMMA_MODEL_NAME_OR_PATH
                         Path to pretrained Gemma model
+  --qwen_text_encoder_model_name_or_path QWEN_TEXT_ENCODER_MODEL_NAME_OR_PATH
+                        Path to pretrained Qwen text encoder model
   --revision REVISION   Git branch/tag/commit for model version
   --variant VARIANT     Model variant (e.g., fp16, bf16)
   --base_model_default_dtype {bf16,fp32}

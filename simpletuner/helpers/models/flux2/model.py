@@ -455,7 +455,9 @@ class Flux2(ImageModelFoundation):
         # For Klein models, text encoder is bundled in the model repo under "text_encoder" subfolder
         # and tokenizer is in a separate "tokenizer" subfolder
         model_path = self.config.pretrained_model_name_or_path
-        text_encoder_path = getattr(self.config, "pretrained_text_encoder_model_name_or_path", None)
+        text_encoder_path = self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path") or getattr(
+            self.config, "pretrained_text_encoder_model_name_or_path", None
+        )
         if text_encoder_path is None:
             text_encoder_path = model_path
             text_encoder_subfolder = "text_encoder"
