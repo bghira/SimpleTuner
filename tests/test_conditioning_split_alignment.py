@@ -1,3 +1,4 @@
+import json
 import multiprocessing
 import os
 import unittest
@@ -157,6 +158,7 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         source_data_backend: InMemoryDataBackend | None = None,
         conditioning_data_backend: InMemoryDataBackend | None = None,
         before_copy_callback=None,
+        apply_padding: bool = False,
     ):
         source_config = {
             "resolution_type": "area",
@@ -195,7 +197,7 @@ class TestConditioningSplitAlignment(unittest.TestCase):
                 "dataset_type": "image",
             }
         )
-        training_metadata.split_buckets_between_processes()
+        training_metadata.split_buckets_between_processes(apply_padding=apply_padding)
 
         conditioning_config = {
             "resolution_type": "area",
@@ -424,6 +426,106 @@ class TestConditioningSplitAlignment(unittest.TestCase):
             0,
             "Conditioning duplication should retain samples even when cache reload returns empty data.",
         )
+
+    def test_rank_local_conditioning_schedule_does_not_overwrite_target_cache(self):
+        base_images = {"1.0": [f"/datasets/train/img_{i}.png" for i in range(16)]}
+        accelerator = self._init_state(num_processes=4, process_index=1, train_batch_size=8)
+        source_schedule = {}
+        source_sentinel = {"config": {}, "aspect_ratio_bucket_indices": {"1.0": ["canonical-source-cache"]}}
+        sentinel = {"config": {}, "aspect_ratio_bucket_indices": {"1.0": ["canonical-target-cache"]}}
+
+        def before_copy(train_meta, cond_meta, train_backend, cond_backend, *_args):
+            source_schedule.update({bucket: list(paths) for bucket, paths in train_meta.aspect_ratio_bucket_indices.items()})
+            train_backend.write(train_meta.cache_file, json.dumps(source_sentinel))
+            cond_backend.write(cond_meta.cache_file, json.dumps(sentinel))
+
+        train_meta, cond_meta = self._prepare_metadata_backends(
+            accelerator=accelerator,
+            base_buckets=base_images,
+            source_id="cache_source",
+            source_dir="/datasets/train",
+            conditioning_id="cache_conditioning",
+            conditioning_dir="/datasets/control",
+            before_copy_callback=before_copy,
+        )
+
+        self.assertTrue(train_meta.read_only)
+        self.assertTrue(cond_meta.read_only)
+        self.assertEqual(source_schedule, train_meta.aspect_ratio_bucket_indices)
+        self.assertEqual(json.loads(train_meta.data_backend.read(train_meta.cache_file)), source_sentinel)
+        self.assertEqual(
+            json.loads(cond_meta.data_backend.read(cond_meta.cache_file))["aspect_ratio_bucket_indices"],
+            sentinel["aspect_ratio_bucket_indices"],
+        )
+        self.assertEqual(
+            cond_meta.aspect_ratio_bucket_indices["1.0"],
+            [path.replace("/datasets/train", "/datasets/control", 1) for path in source_schedule["1.0"]],
+        )
+
+    def test_duplication_preserves_the_padded_split_source_schedule(self):
+        # The main process persists the unsplit discovery list before the split, and the
+        # post-split save is a no-op because the split marks the backend read-only. Duplication
+        # must not reload that unsplit list back over the rank-local schedule.
+        source_dir = "/datasets/pad_train"
+        conditioning_dir = "/datasets/pad_control"
+        base_images = {"1.0": [f"{source_dir}/img_{index}.png" for index in range(4)]}
+        num_processes = 8
+        conditioning_backend = InMemoryDataBackend("pad_control")
+        conditioning_cache_path = f"{conditioning_dir}/aspect_ratio_bucket_indices.json"
+
+        source_shards = []
+        conditioning_cache_snapshots = []
+
+        def persist_unsplit_source_cache(train_meta, *_args):
+            split_view = {bucket: list(paths) for bucket, paths in train_meta.aspect_ratio_bucket_indices.items()}
+            original_read_only = train_meta.read_only
+            train_meta.read_only = False
+            train_meta.aspect_ratio_bucket_indices = deepcopy(base_images)
+            train_meta.save_cache()
+            train_meta.aspect_ratio_bucket_indices = split_view
+            train_meta.read_only = original_read_only
+
+        for process_index in range(num_processes):
+            with self.subTest(process=process_index):
+                accelerator = self._init_state(num_processes=num_processes, process_index=process_index)
+                source_backend = InMemoryDataBackend("pad_train")
+                train_meta, cond_meta = self._prepare_metadata_backends(
+                    accelerator=accelerator,
+                    base_buckets=base_images,
+                    source_id="pad_train",
+                    source_dir=source_dir,
+                    conditioning_id="pad_control",
+                    conditioning_dir=conditioning_dir,
+                    source_data_backend=source_backend,
+                    conditioning_data_backend=conditioning_backend,
+                    before_copy_callback=persist_unsplit_source_cache,
+                    apply_padding=True,
+                )
+
+                # The clobber source has to be present, or this test proves nothing.
+                self.assertIn(f"{source_dir}/aspect_ratio_bucket_indices.json", source_backend._storage)
+
+                # The clobber also coerces bucket keys to float, so do not index by "1.0".
+                (shard,) = (list(paths) for paths in train_meta.aspect_ratio_bucket_indices.values())
+                source_shards.append(shard)
+                conditioning_cache_snapshots.append(conditioning_backend._storage.get(conditioning_cache_path))
+
+                (conditioning_shard,) = (list(paths) for paths in cond_meta.aspect_ratio_bucket_indices.values())
+                self.assertEqual(
+                    conditioning_shard,
+                    [path.replace(source_dir, conditioning_dir, 1) for path in shard],
+                    msg=f"Conditioning dataset did not inherit the rank {process_index} shard.",
+                )
+
+        self.assertEqual([len(shard) for shard in source_shards], [1] * num_processes)
+        self.assertEqual(
+            sorted({path for shard in source_shards for path in shard}),
+            base_images["1.0"],
+            msg="The eight rank shards no longer cover the dataset.",
+        )
+        # Every rank writes the conditioning cache to the same path, so its contents must not
+        # depend on which rank wrote last.
+        self.assertEqual(len(set(conditioning_cache_snapshots)), 1)
 
     def test_reference_strict_duplication_multi_process_reload(self):
         manager = multiprocessing.Manager()

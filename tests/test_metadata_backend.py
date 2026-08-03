@@ -454,8 +454,9 @@ class TestDistributedBucketPadding(unittest.TestCase):
         )
         return backend
 
-    def _split_rank(self, images, rank, *, cp_size, apply_padding):
+    def _split_rank(self, images, rank, *, cp_size, apply_padding, repeats=0):
         backend = self._backend(images)
+        backend.repeats = repeats
         with (
             patch.dict("os.environ", {"SIMPLETUNER_SHUFFLE_BUCKETS": "0"}),
             patch.object(
@@ -463,7 +464,11 @@ class TestDistributedBucketPadding(unittest.TestCase):
                 "get_args",
                 return_value=SimpleNamespace(allow_dataset_oversubscription=apply_padding),
             ),
-            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+            patch.object(
+                StateTracker,
+                "get_data_backend_config",
+                return_value={"repeats": repeats} if repeats else {},
+            ),
             patch(
                 "simpletuner.helpers.metadata.backends.base.get_cp_aware_dp_info",
                 return_value=(8, rank, cp_size),
@@ -478,7 +483,10 @@ class TestDistributedBucketPadding(unittest.TestCase):
 
     def test_cp_padding_fills_empty_dp_shards_from_final_global_item(self):
         images = ["img0", "img1", "img2", "img3"]
-        shards = [self._split_rank(images, rank, cp_size=2, apply_padding=True) for rank in range(8)]
+        shards = [
+            self._split_rank(images, rank, cp_size=2, apply_padding=True, repeats=1)
+            for rank in range(8)
+        ]
 
         self.assertEqual([len(shard) for shard in shards], [1] * 8)
         self.assertEqual([item for shard in shards for item in shard], images + ["img3"] * 4)
@@ -512,6 +520,218 @@ class TestDistributedBucketPadding(unittest.TestCase):
             with self.subTest(cp_size=cp_size):
                 shards = [self._split_rank(images, rank, cp_size=cp_size, apply_padding=True) for rank in range(8)]
                 self.assertEqual(shards, expected)
+
+
+class TestAutomaticOversubscriptionLogicalSequence(unittest.TestCase):
+    """Automatic repeats are materialised into a rank-local cyclic schedule."""
+
+    @staticmethod
+    def _backend(images, dp_size, rank, cp_size=1, batch_size=1, repeats=0):
+        backend = object.__new__(MetadataBackend)
+        backend.id = "auto-oversubscription"
+        backend.batch_size = batch_size
+        backend.repeats = repeats
+        backend.bucket_report = None
+        backend.dataset_type = DatasetType.IMAGE
+        backend.read_only = False
+        backend._aspect_ratio_bucket_indices = {"1.0": list(images)}
+        backend.accelerator = SimpleNamespace(
+            num_processes=dp_size * cp_size,
+            process_index=rank,
+            is_main_process=True,
+        )
+        return backend
+
+    def _split(self, backend, dp_size, rank, cp_size, gradient_accumulation_steps, config=None):
+        with (
+            patch.dict("os.environ", {"SIMPLETUNER_SHUFFLE_BUCKETS": "0"}),
+            patch.object(
+                StateTracker,
+                "get_args",
+                return_value=SimpleNamespace(allow_dataset_oversubscription=True, seed=0),
+            ),
+            patch.object(StateTracker, "get_data_backend_config", return_value=config or {}),
+            patch(
+                "simpletuner.helpers.metadata.backends.base.get_cp_aware_dp_info",
+                return_value=(dp_size, rank, cp_size),
+            ),
+        ):
+            MetadataBackend.split_buckets_between_processes(
+                backend,
+                gradient_accumulation_steps=gradient_accumulation_steps,
+                apply_padding=True,
+            )
+
+    def test_standard_auto_repeat_provides_one_complete_ga_window_per_rank(self):
+        shards = []
+        for rank in range(8):
+            backend = self._backend(["img0"], dp_size=8, rank=rank)
+            self._split(backend, 8, rank, 1, gradient_accumulation_steps=4, config={"repeats": 0})
+            shards.append(backend.aspect_ratio_bucket_indices["1.0"])
+            self.assertEqual(backend.repeats, 0)
+
+        self.assertEqual([len(shard) for shard in shards], [4] * 8)
+        self.assertEqual(sum(map(len, shards)), 32)
+        self.assertEqual({item for shard in shards for item in shard}, {"img0"})
+
+    def test_context_parallel_auto_repeat_uses_effective_dp_and_cyclic_tail(self):
+        images = [f"img{index}" for index in range(5)]
+        shards = []
+        for rank in range(4):
+            backend = self._backend(images, dp_size=4, rank=rank, cp_size=2)
+            self._split(backend, 4, rank, 2, gradient_accumulation_steps=2, config={"repeats": 0})
+            shards.append(backend.aspect_ratio_bucket_indices["1.0"])
+
+        self.assertEqual([len(shard) for shard in shards], [4] * 4)
+        self.assertEqual(
+            [item for shard in shards for item in shard],
+            images + images + (images * 2)[:6],
+        )
+
+    def test_docs_style_auto_repeat_cardinality_is_padded_to_full_window(self):
+        images = [f"img{index}" for index in range(25)]
+        shards = []
+        for rank in range(8):
+            backend = self._backend(images, dp_size=8, rank=rank)
+            self._split(backend, 8, rank, 1, gradient_accumulation_steps=4, config={"repeats": 0})
+            shards.append(backend.aspect_ratio_bucket_indices["1.0"])
+
+        self.assertEqual([len(shard) for shard in shards], [8] * 8)
+        self.assertEqual(
+            [item for shard in shards for item in shard],
+            images + images + images[:14],
+        )
+
+    def test_auto_repeat_count_is_backend_wide_across_buckets(self):
+        backend = self._backend([], dp_size=2, rank=0, batch_size=4)
+        backend._aspect_ratio_bucket_indices = {
+            "small": ["s0", "s1", "s2"],
+            "large": ["l0", "l1", "l2", "l3", "l4", "l5", "l6"],
+        }
+        self._split(backend, 2, 0, 1, gradient_accumulation_steps=1, config={"repeats": 0})
+
+        self.assertEqual(backend.repeats, 0)
+        self.assertEqual(
+            {bucket: len(values) for bucket, values in backend.aspect_ratio_bucket_indices.items()},
+            {"small": 8, "large": 12},
+        )
+        self.assertEqual(
+            backend.aspect_ratio_bucket_indices["small"],
+            ["s0", "s1", "s2", "s0", "s1", "s2", "s0", "s1"],
+        )
+        self.assertEqual(
+            backend.aspect_ratio_bucket_indices["large"],
+            ["l0", "l1", "l2", "l3", "l4", "l5", "l6", "l0", "l1", "l2", "l3", "l4"],
+        )
+
+    def test_manual_repeats_are_not_materialised(self):
+        backend = self._backend(["img0"], dp_size=8, rank=0, repeats=31)
+        self._split(backend, 8, 0, 1, gradient_accumulation_steps=4, config={"repeats": 31})
+
+        self.assertEqual(backend.aspect_ratio_bucket_indices["1.0"], ["img0"])
+        self.assertEqual(backend.repeats, 31)
+
+    def test_empty_buckets_are_ignored_without_division_by_zero(self):
+        backend = self._backend([], dp_size=8, rank=0, batch_size=1)
+        backend._aspect_ratio_bucket_indices = {"empty": [], "full": ["img0"]}
+        self._split(backend, 8, 0, 1, gradient_accumulation_steps=1, config={"repeats": 0})
+        self.assertEqual(backend.aspect_ratio_bucket_indices["empty"], [])
+        self.assertEqual(len(backend.aspect_ratio_bucket_indices["full"]), 1)
+
+
+class TestEmptyBucketRepeatValidation(unittest.TestCase):
+    """An empty bucket key survives update_buckets_with_existing_files and reaches the split."""
+
+    @staticmethod
+    def _backend(buckets, *, repeats=0):
+        backend = MagicMock(spec=MetadataBackend)
+        backend.id = "empty-bucket"
+        backend.batch_size = 1
+        backend.repeats = repeats
+        backend.bucket_report = None
+        backend.dataset_type = DatasetType.IMAGE
+        backend.aspect_ratio_bucket_indices = {key: list(value) for key, value in buckets.items()}
+        backend.read_only = False
+        backend.accelerator = MagicMock(num_processes=1, process_index=0, is_main_process=True)
+        return backend
+
+    @staticmethod
+    def _split(backend, *, num_processes, allow_oversubscription, dp_rank=0):
+        with (
+            patch.dict("os.environ", {"SIMPLETUNER_SHUFFLE_BUCKETS": "0"}),
+            patch.object(
+                StateTracker,
+                "get_args",
+                return_value=SimpleNamespace(allow_dataset_oversubscription=allow_oversubscription),
+            ),
+            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+            patch(
+                "simpletuner.helpers.metadata.backends.base.get_cp_aware_dp_info",
+                return_value=(num_processes, dp_rank, 1),
+            ),
+        ):
+            MetadataBackend.split_buckets_between_processes(
+                backend,
+                gradient_accumulation_steps=1,
+                apply_padding=allow_oversubscription,
+            )
+
+    def test_empty_bucket_does_not_divide_by_zero(self):
+        # The crash is not distribution-specific: effective_batch_size is at least 1, so an
+        # empty bucket always joins buckets_that_will_fail regardless of world size.
+        for num_processes in (1, 2, 8):
+            for allow_oversubscription in (True, False):
+                with self.subTest(num_processes=num_processes, allow_oversubscription=allow_oversubscription):
+                    backend = self._backend({"1.0": ["a.jpg", "b.jpg"], "1.5": []})
+                    try:
+                        self._split(backend, num_processes=num_processes, allow_oversubscription=allow_oversubscription)
+                    except ZeroDivisionError as error:
+                        self.fail(f"empty bucket divided by zero: {error}")
+                    except ValueError:
+                        # The pre-existing "zero usable batches" guard is allowed to fire; it is
+                        # asserted on its own below.
+                        pass
+
+    def test_oversubscription_ignores_the_empty_bucket_when_adjusting_repeats(self):
+        # The auto repeat factor ceil(8 / 2) - 1 = 3 is driven by the two-image bucket alone.
+        # Since #2918, repeats is left unmutated and the factor is materialised into the
+        # rank-local shard instead: logical 2 * (3 + 1) = 8 samples, batch-aligned to the
+        # effective batch size of 8, so every rank holds exactly 8 // 8 = 1 cyclic sample.
+        shards = []
+        for dp_rank in range(8):
+            backend = self._backend({"1.0": ["a.jpg", "b.jpg"], "1.5": []})
+            self._split(backend, num_processes=8, allow_oversubscription=True, dp_rank=dp_rank)
+            self.assertEqual(backend.repeats, 0, "auto oversubscription must not mutate repeats")
+            self.assertEqual(backend.aspect_ratio_bucket_indices["1.5"], [])
+            shards.append(backend.aspect_ratio_bucket_indices["1.0"])
+
+        self.assertEqual([len(shard) for shard in shards], [1] * 8)
+        self.assertEqual([shard[0] for shard in shards], ["a.jpg", "b.jpg"] * 4)
+
+    def test_empty_bucket_still_reports_zero_usable_batches_without_oversubscription(self):
+        backend = self._backend({"1.0": ["a.jpg", "b.jpg"], "1.5": []})
+        with self.assertRaises(ValueError) as raised:
+            self._split(backend, num_processes=8, allow_oversubscription=False)
+        self.assertIn("zero usable batches", str(raised.exception))
+
+    def test_bucket_without_empty_keys_is_unaffected(self):
+        backend = self._backend({"1.0": ["a.jpg", "b.jpg"]})
+        self._split(backend, num_processes=8, allow_oversubscription=True)
+
+        # Same materialised schedule as the empty-bucket case: repeats stays 0 and rank 0
+        # holds the first of the eight batch-aligned cyclic samples.
+        self.assertEqual(backend.repeats, 0, "auto oversubscription must not mutate repeats")
+        self.assertEqual(backend.aspect_ratio_bucket_indices["1.0"], ["a.jpg"])
+
+    def test_refresh_leaves_an_empty_bucket_key_behind(self):
+        # update_buckets_with_existing_files assigns [] rather than dropping the key, which is
+        # how the empty bucket reaches the split in the first place.
+        backend = MagicMock()
+        backend.aspect_ratio_bucket_indices = {"1.0": ["a.jpg"], "1.5": ["gone.jpg"]}
+        backend.bucket_report = None
+        MetadataBackend.update_buckets_with_existing_files(backend, {"a.jpg"})
+
+        self.assertEqual(backend.aspect_ratio_bucket_indices, {"1.0": ["a.jpg"], "1.5": []})
 
 
 class TestFilteringStatistics(unittest.TestCase):
