@@ -187,12 +187,18 @@ class CheckpointManager:
             return None
         return data
 
-    def cleanup_checkpoints(self, limit: int, suffix: Optional[str] = None):
-        """Clean up old checkpoints, keeping only the most recent ones.
+    def cleanup_checkpoints(
+        self,
+        limit: int,
+        suffix: Optional[str] = None,
+        protected_checkpoint: Optional[str] = None,
+    ):
+        """Clean up old checkpoints, preserving a specified checkpoint when provided.
 
         Args:
             limit: Maximum number of checkpoints to keep
             suffix: Optional suffix to filter checkpoints
+            protected_checkpoint: Optional checkpoint path or name to preserve
         """
         # Remove temp checkpoints first
         self._remove_temp_checkpoints()
@@ -204,13 +210,19 @@ class CheckpointManager:
         # Remove old checkpoints if we exceed the limit
         if len(checkpoints) > limit:
             num_to_remove = len(checkpoints) - limit
-            removing_checkpoints = checkpoints[:num_to_remove]
+            protected_name = os.path.basename(os.path.normpath(protected_checkpoint)) if protected_checkpoint else None
+            removal_candidates = [checkpoint for checkpoint in checkpoints if checkpoint != protected_name]
+            removing_checkpoints = removal_candidates[:num_to_remove]
 
             logger.debug(f"{len(checkpoints)} checkpoints exist, removing {len(removing_checkpoints)} checkpoints")
             logger.debug(f"Removing checkpoints: {', '.join(removing_checkpoints)}")
 
             for checkpoint in removing_checkpoints:
                 self.remove_checkpoint(checkpoint)
+
+    def cleanup_temp_checkpoints(self):
+        """Remove temporary checkpoints without rotating completed checkpoints."""
+        self._remove_temp_checkpoints()
 
     def remove_checkpoint(self, checkpoint_name: str):
         """Remove a specific checkpoint.
@@ -246,7 +258,7 @@ class CheckpointManager:
             if len(parts) < 2:
                 continue
             elif len(parts) > 2:
-                checkpoint_suffix = parts[2]
+                checkpoint_suffix = parts[-1]
 
             if base != "checkpoint":
                 continue
