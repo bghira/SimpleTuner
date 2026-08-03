@@ -196,7 +196,7 @@ class WanModelTests(unittest.TestCase):
     def test_latent_i2v_conditioning_builds_36_channel_input(self):
         latent_model_input = torch.zeros(1, 16, 3, 4, 5)
         clean_latents = torch.arange(1 * 16 * 3 * 4 * 5, dtype=torch.float32).view(1, 16, 3, 4, 5)
-        vae = SimpleNamespace(temperal_downsample=[1, 1])
+        vae = SimpleNamespace(config=SimpleNamespace(temperal_downsample=[1, 1]))
 
         conditioned = add_first_frame_latent_conditioning(latent_model_input, clean_latents, vae)
 
@@ -206,6 +206,38 @@ class WanModelTests(unittest.TestCase):
         self.assertTrue(torch.all(conditioned[:, 16:20, 1:] == 0))
         self.assertTrue(torch.equal(conditioned[:, 20:, :1], clean_latents[:, :, :1]))
         self.assertTrue(torch.all(conditioned[:, 20:, 1:] == 0))
+
+    def test_latent_i2v_conditioning_uses_config_temporal_downsample(self):
+        latent_model_input = torch.zeros(1, 16, 3, 4, 5)
+        clean_latents = torch.zeros(1, 16, 3, 4, 5)
+        vae = SimpleNamespace(config=SimpleNamespace(temperal_downsample=[0, 1]))
+
+        conditioned = add_first_frame_latent_conditioning(latent_model_input, clean_latents, vae)
+
+        self.assertEqual(tuple(conditioned.shape), (1, 34, 3, 4, 5))
+        self.assertTrue(torch.all(conditioned[:, 16:18, 0] == 1))
+        self.assertTrue(torch.all(conditioned[:, 16:18, 1:] == 0))
+
+    def test_i2v_conditioning_uses_cached_latents_without_warning(self):
+        model = object.__new__(Wan)
+        model._is_i2v_like_flavour = MagicMock(return_value=False)
+        model._extract_conditioning_frames = MagicMock(return_value=(None, None))
+        model.get_vae = MagicMock(return_value=SimpleNamespace(config=SimpleNamespace(temperal_downsample=[1, 1])))
+
+        hidden_states = torch.zeros(1, 16, 3, 4, 5)
+        clean_latents = torch.arange(1 * 16 * 3 * 4 * 5, dtype=torch.float32).view(1, 16, 3, 4, 5)
+        transformer_kwargs = {"hidden_states": hidden_states.clone()}
+        prepared_batch = {"is_i2v_data": True, "latents": clean_latents}
+
+        with patch("simpletuner.helpers.models.wan.model.logger.warning") as warning:
+            Wan._apply_i2v_conditioning_to_kwargs(model, prepared_batch, transformer_kwargs)
+
+        conditioned = transformer_kwargs["hidden_states"]
+        self.assertEqual(tuple(conditioned.shape), (1, 36, 3, 4, 5))
+        self.assertTrue(torch.equal(conditioned[:, :16], hidden_states))
+        self.assertTrue(torch.equal(conditioned[:, 20:, :1], clean_latents[:, :, :1]))
+        self.assertTrue(torch.all(conditioned[:, 20:, 1:] == 0))
+        warning.assert_not_called()
 
 
 if __name__ == "__main__":

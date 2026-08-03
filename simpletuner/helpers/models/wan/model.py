@@ -174,11 +174,14 @@ def add_first_frame_latent_conditioning(
     """
     device = latent_model_input.device
     dtype = latent_model_input.dtype
-    temporal_downsample = getattr(vae, "temperal_downsample", None)
+    vae_config = getattr(vae, "config", None)
+    temporal_downsample = getattr(vae_config, "temperal_downsample", None)
+    if temporal_downsample is None:
+        temporal_downsample = getattr(vae, "temperal_downsample", None)
     vae_scale_factor_temporal = 2 ** sum(temporal_downsample) if temporal_downsample is not None else 4
 
     batch, _, num_latent_frames, latent_height, latent_width = latent_model_input.shape
-    num_frames = (num_latent_frames - 1) * 4 + 1
+    num_frames = (num_latent_frames - 1) * vae_scale_factor_temporal + 1
 
     clean_latents = clean_latents.to(device=device, dtype=dtype)
     if clean_latents.shape[0] != batch:
@@ -193,7 +196,7 @@ def add_first_frame_latent_conditioning(
         device=device,
         dtype=dtype,
     )
-    mask_lat_size[:, :, list(range(1, num_frames))] = 0
+    mask_lat_size[:, :, 1:] = 0
     first_frame_mask = mask_lat_size[:, :, 0:1]
     first_frame_mask = torch.repeat_interleave(first_frame_mask, dim=2, repeats=vae_scale_factor_temporal)
     mask_lat_size = torch.concat([first_frame_mask, mask_lat_size[:, :, 1:, :]], dim=2)
