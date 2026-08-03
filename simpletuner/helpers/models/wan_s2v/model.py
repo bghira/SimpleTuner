@@ -7,7 +7,8 @@ import torch
 import torchaudio
 from diffusers import AutoencoderKLWan, FlowMatchEulerDiscreteScheduler
 from huggingface_hub import hf_hub_download
-from safetensors import safe_open
+from huggingface_hub.errors import EntryNotFoundError, HfHubHTTPError, LocalEntryNotFoundError
+from safetensors import SafetensorError, safe_open
 from transformers import T5TokenizerFast, UMT5EncoderModel, Wav2Vec2FeatureExtractor, Wav2Vec2Model
 
 from simpletuner.helpers.models.common import ModelTypes, PipelineTypes, PredictionTypes, VideoModelFoundation
@@ -580,20 +581,28 @@ class WanS2V(VideoModelFoundation):
     ) -> torch.Tensor | None:
         import json
 
-        index_path = self._checkpoint_file(
-            model_path,
-            model_subfolder,
-            "diffusion_pytorch_model.safetensors.index.json",
-            load_kwargs,
-        )
-        with open(index_path, "r") as handle:
-            weight_map = json.load(handle).get("weight_map", {})
+        try:
+            index_path = self._checkpoint_file(
+                model_path,
+                model_subfolder,
+                "diffusion_pytorch_model.safetensors.index.json",
+                load_kwargs,
+            )
+            with open(index_path, "r", encoding="utf-8") as handle:
+                weight_map = json.load(handle).get("weight_map", {})
+        except (OSError, json.JSONDecodeError, EntryNotFoundError, HfHubHTTPError, LocalEntryNotFoundError) as exc:
+            logger.debug("Skipping WanS2V checkpoint alias materialization; could not read safetensors index: %s", exc)
+            return None
         shard_name = weight_map.get(tensor_name)
         if shard_name is None:
             return None
-        shard_path = self._checkpoint_file(model_path, model_subfolder, shard_name, load_kwargs)
-        with safe_open(shard_path, framework="pt", device="cpu") as shard:
-            return shard.get_tensor(tensor_name)
+        try:
+            shard_path = self._checkpoint_file(model_path, model_subfolder, shard_name, load_kwargs)
+            with safe_open(shard_path, framework="pt", device="cpu") as shard:
+                return shard.get_tensor(tensor_name)
+        except (OSError, SafetensorError, KeyError, EntryNotFoundError, HfHubHTTPError, LocalEntryNotFoundError) as exc:
+            logger.debug("Skipping WanS2V checkpoint alias %s; could not read tensor: %s", tensor_name, exc)
+            return None
 
     def materialize_meta_tensors_after_load(
         self,

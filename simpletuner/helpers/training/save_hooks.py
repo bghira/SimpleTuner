@@ -301,9 +301,29 @@ class SaveHookManager:
         self.denoiser_class = self.model.MODEL_CLASS
         self.denoiser_subdir = self.model.MODEL_SUBFOLDER
         pipeline_type = getattr(self.model, "DEFAULT_PIPELINE_TYPE", PipelineTypes.TEXT2IMG)
+        if isinstance(pipeline_type, str):
+            try:
+                pipeline_type = PipelineTypes(pipeline_type)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Unsupported DEFAULT_PIPELINE_TYPE for {type(self.model).__name__}: {pipeline_type!r}"
+                ) from exc
         if args.validation_using_datasets and PipelineTypes.IMG2IMG in self.model.PIPELINE_CLASSES:
             pipeline_type = PipelineTypes.IMG2IMG
-        self.pipeline_class = self.model.PIPELINE_CLASSES[pipeline_type]
+        if not isinstance(pipeline_type, PipelineTypes):
+            raise ValueError(
+                f"DEFAULT_PIPELINE_TYPE for {type(self.model).__name__} must be a PipelineTypes value, "
+                f"got {pipeline_type!r}."
+            )
+        self.pipeline_class = self.model.PIPELINE_CLASSES.get(pipeline_type)
+        if self.pipeline_class is None:
+            available_pipeline_types = ", ".join(
+                key.value if isinstance(key, PipelineTypes) else repr(key) for key in self.model.PIPELINE_CLASSES
+            )
+            raise ValueError(
+                f"{type(self.model).__name__} does not register a save pipeline for {pipeline_type.value!r}. "
+                f"Available pipeline types: {available_pipeline_types or 'none'}."
+            )
 
         self.ema_model_cls = self.model.get_trained_component().__class__
         self.ema_model_subdir = f"{self.model.MODEL_SUBFOLDER}_ema"
