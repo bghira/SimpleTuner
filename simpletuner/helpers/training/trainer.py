@@ -5900,7 +5900,7 @@ class Trainer:
 
     def checkpoint_state_cleanup_temp(self, output_dir):
         if self.checkpoint_manager:
-            self.checkpoint_manager._remove_temp_checkpoints()
+            self.checkpoint_manager.cleanup_temp_checkpoints()
         else:
             checkpoints = self.checkpoint_state_filter(output_dir, "tmp")
             for removing_checkpoint in checkpoints:

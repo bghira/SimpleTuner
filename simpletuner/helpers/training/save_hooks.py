@@ -1071,13 +1071,19 @@ class SaveHookManager:
     def save_model_hook(self, models, weights, output_dir):
         # Write "training_state.json" to the output directory containing the training state
         StateTracker.save_training_state(os.path.join(output_dir, self.training_state_path))
-        StateTracker.save_ramtorch_prefetch_orders(output_dir)
 
         distributed_type = DistributedType.NO
         is_main_process = True
+        is_local_main_process = True
         if self.accelerator is not None:
             distributed_type = getattr(self.accelerator, "distributed_type", DistributedType.NO)
             is_main_process = getattr(self.accelerator, "is_main_process", True)
+            is_local_main_process = getattr(self.accelerator, "is_local_main_process", True)
+
+        # One writer per node keeps node-local checkpoint state present without
+        # allowing every rank to race on the same prefetch-order file.
+        if is_local_main_process:
+            StateTracker.save_ramtorch_prefetch_orders(output_dir)
 
         with self._offload_models_during_save(is_main_process):
             self._save_ema_state(output_dir, is_main_process=is_main_process)

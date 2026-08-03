@@ -220,6 +220,10 @@ class CheckpointManager:
             for checkpoint in removing_checkpoints:
                 self.remove_checkpoint(checkpoint)
 
+    def cleanup_temp_checkpoints(self):
+        """Remove temporary checkpoints without rotating completed checkpoints."""
+        self._remove_temp_checkpoints()
+
     def remove_checkpoint(self, checkpoint_name: str):
         """Remove a specific checkpoint.
 
