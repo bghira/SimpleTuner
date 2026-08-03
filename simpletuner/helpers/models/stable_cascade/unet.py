@@ -456,10 +456,10 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
                 deltatime_type=deltatime_type,
             )
 
-    def set_gradient_checkpointing_interval(self, interval: int):
+    def set_gradient_checkpointing_interval(self, interval: int | None) -> None:
         self.gradient_checkpointing_interval = interval
 
-    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None) -> None:
         self.gradient_checkpointing_segment_stride = segment_stride
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
