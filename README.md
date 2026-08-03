@@ -81,29 +81,73 @@ For deployment details, see the [Enterprise Guide](/documentation/experimental/s
 
 ### Model Architecture Support
 
-| Model | Parameters | PEFT LoRA | Lycoris | Full-Rank | ControlNet | Ref Inputs | Quantization | Flow Matching | Text Encoders |
-|-------|------------|-----------|---------|-----------|------------|------------|--------------|---------------|---------------|
-| **Stable Diffusion XL** | 3.5B | ✓ | ✓ | ✓ | ✓ | ✗ | int8/nf4 | ✗ | CLIP-L/G |
-| **Stable Diffusion 3** | 2B-8B | ✓ | ✓ | ✓* | ✓ | ✗ | int8/fp8/nf4 | ✓ | CLIP-L/G + T5-XXL |
-| **Flux.1** | 12B | ✓ | ✓ | ✓* | ✓ | ✓ (Kontext) | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL |
-| **Flux.2** | 32B | ✓ | ✓ | ✓* | ✗ | ✓ opt | int8/fp8/nf4 | ✓ | Mistral-3 Small |
-| **Ideogram 4** | 9B | ✓ | ✓ | ✓* | ✗ | ✗ | fp8/nf4 | ✓ | Qwen3-VL |
-| **ACE-Step** | 3.5B | ✓ | ✓ | ✓* | ✗ | ✗ | int8 | ✓ | UMT5 |
-| **HeartMuLa** | 3B | ✓ | ✓ | ✓* | ✗ | ✗ | int8 | ✗ | None |
-| **Chroma 1** | 8.9B | ✓ | ✓ | ✓* | ✗ | ✗ | int8/fp8/nf4 | ✓ | T5-XXL |
-| **Auraflow** | 6.8B | ✓ | ✓ | ✓* | ✓ | ✗ | int8/fp8/nf4 | ✓ | UMT5-XXL |
-| **PixArt Sigma** | 0.6B-0.9B | ✗ | ✓ | ✓ | ✓ | ✗ | int8 | ✗ | T5-XXL |
-| **Sana** | 0.6B-4.8B | ✗ | ✓ | ✓ | ✗ | ✗ | int8 | ✓ | Gemma2-2B |
-| **Lumina2** | 2B | ✓ | ✓ | ✓ | ✗ | ✗ | int8 | ✓ | Gemma2 |
-| **Kwai Kolors** | 5B | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ChatGLM-6B |
-| **LTX Video** | 5B | ✓ | ✓ | ✓ | ✗ | ✓ I2V | int8/fp8 | ✓ | T5-XXL |
-| **LTX Video 2** | 19B | ✓ | ✓ | ✓* | ✗ | ✓ opt | int8/fp8 | ✓ | Gemma3 |
-| **Wan Video** | 1.3B-14B | ✓ | ✓ | ✓* | ✗ | ✗ | int8 | ✓ | UMT5 |
-| **HiDream** | 17B (8.5B MoE) | ✓ | ✓ | ✓* | ✓ | ✗ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL + Llama |
-| **Cosmos2** | 2B-14B | ✗ | ✓ | ✓ | ✗ | ✗ | int8 | ✓ | T5-XXL |
-| **OmniGen** | 3.8B | ✓ | ✓ | ✓ | ✗ | ✗ | int8/fp8 | ✓ | T5-XXL |
-| **Qwen Image** | 20B | ✓ | ✓ | ✓* | ✗ | ✓ req (Edit) | int8/nf4 (req.) | ✓ | T5-XXL |
-| **SD 1.x/2.x (Legacy)** | 0.9B | ✓ | ✓ | ✓ | ✓ | ✗ | int8/nf4 | ✗ | CLIP-L |
+| Model | Parameters | PEFT LoRA | Lycoris | Full-Rank | ControlNet | Ref Inputs | Quantization | Flow Matching | Text Encoders | License | Allows commercial use |
+| ------- | ------------ | ----------- | --------- | ----------- | ------------ | ------------ | -------------- | --------------- | --------------- | ------- | :---: |
+| **Stable Diffusion XL** | 3.5B | ✓ | ✓ | ✓ | ✓ | ✗ | int8/nf4 | ✗ | CLIP-L/G | [OpenRAIL++](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md) | Conditions apply<sup>1</sup> |
+| **Stable Diffusion 3** | 2B-8B | ✓ | ✓ | ✓* | ✓ | ✗ | int8/fp8/nf4 | ✓ | CLIP-L/G + T5-XXL | [Stability AI Community](https://stability.ai/license) | Conditions apply<sup>2</sup> |
+| **Flux.1** | 12B | ✓ | ✓ | ✓* | ✓ | ✓ (Kontext) | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL | [BFL Non-Commercial](https://bfl.ai/legal/non-commercial-license-terms) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Conditions apply<sup>3</sup> |
+| **Flux.2** | 32B | ✓ | ✓ | ✓* | ✗ | ✓ opt | int8/fp8/nf4 | ✓ | Mistral-3 Small | [BFL Non-Commercial](https://bfl.ai/legal/non-commercial-license-terms) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Conditions apply<sup>4</sup> |
+| **Ideogram 4** | 9B | ✓ | ✓ | ✓* | ✗ | ✗ | fp8/nf4 | ✓ | Qwen3-VL | [Ideogram 4 Non-Commercial](https://huggingface.co/ideogram-ai/ideogram-4-nf4/blob/main/LICENSE.md) | No<sup>5</sup> |
+| **Z-Image** | 6B | ✓ | ✓ | ✓* | ✗ | ✗ | int8 | ✓ | Qwen3 4B | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Yes |
+| **Z-Image Omni** | 6B | ✓ | ✓ | ✓* | ✗ | ✓ edit | int8/fp8/nf4 | ✓ | Qwen3 4B | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Yes |
+| **Krea2** | - | ✓ | ✓ | ✓* | ✗ | ✓ opt | int8 | ✓ | Qwen3-VL | [Krea 2 Community](https://www.krea.ai/krea-2-licensing) | Conditions apply<sup>6</sup> |
+| **Anima** | 2B | ✓ | ✓ | ✓* | ✗ | ✗ | not recommended | ✓ | Qwen3 0.6B | [CircleStone Labs Non-Commercial](https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md) | No<sup>5</sup> |
+| **Mage-Flow** | 4B | ✓ | ✓ | ✓* | ✗ | ✓ edit | int8/fp8 | ✓ | Qwen3-VL | [MIT](https://opensource.org/license/mit) | Yes |
+| **Boogu-Image** | - | ✓ | ✓ | ✓* | ✗ | ✓ edit | fp8 | ✓ | Qwen3-VL | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Yes |
+| **zlab i1** | 3B | ✓ | ✓ | ✓ | ✗ | ✗ | int8 | ✓ | T5Gemma 2B | [Unspecified](https://huggingface.co/bghira/zlab-i1-diffusers) | Conditions apply<sup>12</sup> |
+| **ERNIE-Image** | - | ✓ | ✓ | ✓* | ✗ | ✗ | int8 | ✓ | ERNIE | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Yes |
+| **ACE-Step** | 3.5B | ✓ | ✓ | ✓* | ✗ | ✗ | int8 | ✓ | UMT5 | [Apache-2.0](https://huggingface.co/ACE-Step/ACE-Step-v1-3.5B) / [MIT](https://huggingface.co/ACE-Step/Ace-Step1.5) | Yes |
+| **HeartMuLa** | 3B | ✓ | ✓ | ✓* | ✗ | ✗ | int8 | ✗ | None | [Apache-2.0](https://huggingface.co/HeartMuLa/HeartMuLa-oss-3B) | Yes |
+| **Chroma 1** | 8.9B | ✓ | ✓ | ✓* | ✗ | ✗ | int8/fp8/nf4 | ✓ | T5-XXL | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Yes |
+| **Auraflow** | 6.8B | ✓ | ✓ | ✓* | ✓ | ✗ | int8/fp8/nf4 | ✓ | UMT5-XXL | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) / [Pony License](https://huggingface.co/purplesmartai/pony-v7-base/blob/main/LICENSE) | Conditions apply<sup>8</sup> |
+| **PixArt Sigma** | 0.6B-0.9B | ✗ | ✓ | ✓ | ✓ | ✗ | int8 | ✗ | T5-XXL | [OpenRAIL++](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md) | Conditions apply<sup>1</sup> |
+| **Sana** | 0.6B-4.8B | ✗ | ✓ | ✓ | ✗ | ✗ | int8 | ✓ | Gemma2-2B | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Yes |
+| **Lumina2** | 2B | ✓ | ✓ | ✓ | ✗ | ✗ | int8 | ✓ | Gemma2 | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Yes |
+| **Kwai Kolors** | 5B | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ChatGLM-6B | [Kwai Kolors License](https://huggingface.co/terminusresearch/kwai-kolors-1.0/blob/main/MODEL_LICENSE) | Conditions apply<sup>7</sup> |
+| **LTX Video** | 5B | ✓ | ✓ | ✓ | ✗ | ✓ I2V | int8/fp8 | ✓ | T5-XXL | [LTX Video OpenRAIL-M](https://huggingface.co/Lightricks/LTX-Video-0.9.5/blob/main/ltx-video-2b-v0.9.5.license.txt) | Conditions apply<sup>10</sup> |
+| **LTX Video 2** | 19B | ✓ | ✓ | ✓* | ✗ | ✓ opt | int8/fp8 | ✓ | Gemma3 | [LTX-2 Community](https://ltx.io/model/license) | Conditions apply<sup>10</sup> |
+| **Wan Video** | 1.3B-14B | ✓ | ✓ | ✓* | ✗ | ✗ | int8 | ✓ | UMT5 | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Yes |
+| **Wan S2V** | 14B | ✓ | ✓ | ✓* | ✗ | audio req | int8 | ✓ | UMT5 | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Yes |
+| **HiDream** | 17B (8.5B MoE) | ✓ | ✓ | ✓* | ✓ | ✗ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL + Llama | [MIT](https://opensource.org/license/mit) | Yes |
+| **Cosmos2** | 2B-14B | ✗ | ✓ | ✓ | ✗ | ✗ | int8 | ✓ | T5-XXL | [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) | Yes<sup>9</sup> |
+| **Cosmos3** | 4B-65B | ✓ | ✓ | ✓* | ✗ | ✓ I2V/audio | no_change first | ✓ | built-in | [OpenMDW 1.1](https://github.com/OpenMDW/openmdw/blob/main/1.1/LICENSE.OpenMDW-1.1) | Yes |
+| **Hunyuan Video 1.5** | 8.3B | ✓ | ✓ | ✓* | ✗ | ✓ I2V | int8 | ✓ | Hunyuan LLM + CLIP | [Tencent Hunyuan Community](https://huggingface.co/tencent/HunyuanVideo-1.5/blob/main/LICENSE) | Conditions apply<sup>11</sup> |
+| **SanaVideo** | 2B | ✓ | ✓ | ✓* | ✗ | ✗ | int8/fp8 | ✓ | Gemma2 | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Yes |
+| **Kandinsky 5.0 Image** | 6B | ✓ | ✓ | ✓* | ✗ | ✓ I2I | int8 | ✓ | Qwen2.5-VL | [MIT](https://opensource.org/license/mit) | Yes |
+| **Kandinsky 5.0 Video** | 2B-19B | ✓ | ✓ | ✓* | ✗ | ✓ I2V | int8 | ✓ | Qwen2.5-VL | [MIT](https://opensource.org/license/mit) | Yes |
+| **LongCat-Image** | 6B | ✓ | ✓ | ✓* | ✗ | ✓ edit | int8/fp8 | ✓ | Qwen2.5-VL | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Yes |
+| **LongCat-Video** | 13.6B | ✓ | ✓ | ✓* | ✗ | ✓ I2V/edit | int8/fp8 | ✓ | Qwen2.5-VL | [MIT](https://opensource.org/license/mit) | Yes |
+| **OmniGen** | 3.8B | ✓ | ✓ | ✓ | ✗ | ✗ | int8/fp8 | ✓ | T5-XXL | [MIT](https://opensource.org/license/mit) | Yes |
+| **Qwen Image** | 20B | ✓ | ✓ | ✓* | ✗ | ✓ req (Edit) | int8/nf4 (req.) | ✓ | T5-XXL | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Yes |
+| **DeepFloyd IF** | 0.4B-4.3B | ✓ | ✓ | ✓ | ✗ | ✓ SR | int8/fp8 | ✗ | T5-XXL | [DeepFloyd IF License](https://huggingface.co/DeepFloyd/IF-I-M-v1.0) | No<sup>5</sup> |
+| **Stable Cascade (C)** | 1B, 3.6B prior | ✓ | ✓ | ✓* | ✗ | ✗ | not supported | ✗ | CLIP-bigG | [Stable Cascade NC Community](https://huggingface.co/stabilityai/stable-cascade/blob/main/LICENSE) | No<sup>5</sup> |
+| **SD 1.x/2.x (Legacy)** | 0.9B | ✓ | ✓ | ✓ | ✓ | ✗ | int8/nf4 | ✗ | CLIP-L | [OpenRAIL++](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md) | Conditions apply<sup>1</sup> |
+
+*Commercial-use status covers model weights, derivative checkpoints, fine-tunes, and hosted model use. Generated-output rights can differ; read the linked license text before commercial deployment.*
+
+<sup>1</sup> OpenRAIL-style licenses generally permit commercial use with usage restrictions that remain attached to the model and derivatives.
+
+<sup>2</sup> Stability AI Community License is available for qualifying users below the revenue threshold; larger commercial use needs Stability enterprise terms.
+
+<sup>3</sup> Flux.1 varies by flavour: Schnell and LibreFlux are Apache-2.0, while Dev, Krea, and Kontext use BFL non-commercial terms; review FluxBooru upstream metadata before commercial use.
+
+<sup>4</sup> Flux.2 varies by flavour: Klein 4B is Apache-2.0, while Dev and Klein 9B use BFL non-commercial terms.
+
+<sup>5</sup> Public non-commercial model terms do not permit commercial use of weights, derivative checkpoints, or hosted model services without a separate license.
+
+<sup>6</sup> Krea 2 Community License permits commercial use only under its revenue and safety/filtering requirements; otherwise an enterprise license is required.
+
+<sup>7</sup> Kolors commercial model or derivative use requires applying for and receiving explicit permission from the licensor.
+
+<sup>8</sup> AuraFlow supports Apache-2.0 upstream flavours and a Pony flavour with a separate custom license; check the selected flavour.
+
+<sup>9</sup> NVIDIA Open Model License permits commercial use but includes agreement, acceptable-use, and export-control terms.
+
+<sup>10</sup> LTX Video 0.9.5 uses OpenRAIL-M; LTX Video 2 uses LTX community terms with a revenue threshold for commercial use.
+
+<sup>11</sup> Tencent Hunyuan Community License includes territorial exclusions and a commercial threshold for very large services.
+
+<sup>12</sup> This mirror publishes `license: other` without a standard license text; review upstream terms before commercial use.
 
 *✓ = Supported, ✗ = Not supported, * = Requires DeepSpeed for full-rank training, Ref Inputs marks existing reference/edit/I2V conditioning paths only*
 
