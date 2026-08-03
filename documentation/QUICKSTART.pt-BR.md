@@ -312,4 +312,4 @@ Se seu dataset acaba com menos amostras utilizáveis do que você esperava, arqu
 - Na WebUI, navegue até o diretório do seu dataset e selecione-o para ver estatísticas de filtragem
 - Verifique os logs durante o processamento do dataset por estatísticas como: `Sample processing statistics: {'total_processed': 100, 'skipped': {'too_small': 15, ...}}`
 
-Para solução de problemas detalhada, consulte [Solucionando problemas de datasets filtrados](DATALOADER.pt-BR.md#solucionando-problemas-de-datasets-filtrados) na documentação do dataloader.
+Para solução de problemas detalhada, consulte [Solucionando problemas de datasets filtrados](DATALOADER.pt-BR.md) na documentação do dataloader.

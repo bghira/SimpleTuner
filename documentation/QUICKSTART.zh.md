@@ -312,4 +312,4 @@
 - 在 WebUI 中，浏览到您的数据集目录并选择它以查看过滤统计
 - 在数据集处理期间检查日志中的统计信息，如：`Sample processing statistics: {'total_processed': 100, 'skipped': {'too_small': 15, ...}}`
 
-详细故障排除请参阅数据加载器文档中的[故障排除-过滤后的数据集](DATALOADER.zh.md#故障排除-过滤后的数据集)。
+详细故障排除请参阅数据加载器文档中的[故障排除-过滤后的数据集](DATALOADER.zh.md)。

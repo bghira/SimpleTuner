@@ -312,4 +312,4 @@
 - WebUI में, अपने dataset directory पर browse करें और filtering statistics देखने के लिए इसे select करें
 - Dataset processing के दौरान logs में इस तरह के statistics check करें: `Sample processing statistics: {'total_processed': 100, 'skipped': {'too_small': 15, ...}}`
 
-विस्तृत troubleshooting के लिए, dataloader documentation में [Filtered datasets का Troubleshooting](DATALOADER.hi.md#filtered-datasets-का-troubleshooting) देखें।
+विस्तृत troubleshooting के लिए, dataloader documentation में [Filtered datasets का Troubleshooting](DATALOADER.hi.md) देखें।
