@@ -81,31 +81,51 @@ SimpleTunerには、エンタープライズグレードの機能を備えた完
 
 ### モデルアーキテクチャサポート
 
-| モデル | パラメータ数 | PEFT LoRA | Lycoris | Full-Rank | ControlNet | 量子化 | Flow Matching | テキストエンコーダー |
-|-------|------------|-----------|---------|-----------|------------|--------------|---------------|---------------|
-| **Stable Diffusion XL** | 3.5B | ✓ | ✓ | ✓ | ✓ | int8/nf4 | ✗ | CLIP-L/G |
-| **Stable Diffusion 3** | 2B-8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L/G + T5-XXL |
-| **Flux.1** | 12B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL |
-| **Flux.2** | 32B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | Mistral-3 Small |
-| **Ideogram 4** | 9B | ✓ | ✓ | ✓* | ✗ | fp8/nf4 | ✓ | Qwen3-VL |
-| **ACE-Step** | 3.5B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
-| **HeartMuLa** | 3B | ✓ | ✓ | ✓* | ✗ | int8 | ✗ | なし |
-| **Chroma 1** | 8.9B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | T5-XXL |
-| **Auraflow** | 6.8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | UMT5-XXL |
-| **PixArt Sigma** | 0.6B-0.9B | ✗ | ✓ | ✓ | ✓ | int8 | ✗ | T5-XXL |
-| **Sana** | 0.6B-4.8B | ✗ | ✓ | ✓ | ✗ | int8 | ✓ | Gemma2-2B |
-| **Lumina2** | 2B | ✓ | ✓ | ✓ | ✗ | int8 | ✓ | Gemma2 |
-| **Kwai Kolors** | 5B | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ChatGLM-6B |
-| **LTX Video** | 5B | ✓ | ✓ | ✓ | ✗ | int8/fp8 | ✓ | T5-XXL |
-| **LTX Video 2** | 19B | ✓ | ✓ | ✓* | ✗ | int8/fp8 | ✓ | Gemma3 |
-| **Wan Video** | 1.3B-14B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
-| **HiDream** | 17B (8.5B MoE) | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL + Llama |
-| **Cosmos2** | 2B-14B | ✗ | ✓ | ✓ | ✗ | int8 | ✓ | T5-XXL |
-| **OmniGen** | 3.8B | ✓ | ✓ | ✓ | ✗ | int8/fp8 | ✓ | T5-XXL |
-| **Qwen Image** | 20B | ✓ | ✓ | ✓* | ✗ | int8/nf4 (req.) | ✓ | T5-XXL |
-| **SD 1.x/2.x (Legacy)** | 0.9B | ✓ | ✓ | ✓ | ✓ | int8/nf4 | ✗ | CLIP-L |
+SimpleTunerは以下のモデルファミリーをサポートしています。詳細なトレーニング機能の対応状況は[Quickstartガイド](/documentation/QUICKSTART.ja.md)を参照してください。
 
-*✓ = サポート, ✗ = 非サポート, * = Full-rankトレーニングにDeepSpeedが必要*
+| モデル | パラメータ数 | ライセンス | 商用利用 |
+| --- | --- | --- | --- |
+| **ACE-Step** | 3.5B | Apache-2.0 | 可 |
+| **Anima** | 未指定 | CircleStone Labs Non-Commercial License v1.2 | 不可（モデル）；出力は可 |
+| **Auraflow** | 6B | Apache-2.0 | 可 |
+| **Boogu-Image** | 未指定 | Apache-2.0 | 可 |
+| **Chroma 1** | 8.9B | Apache-2.0 | 可 |
+| **Cosmos2** | 2B-14B | NVIDIA Open Model License | 可 |
+| **Cosmos3** | 16B-65B | OpenMDW-1.1 | 可 |
+| **DeepFloyd IF** | 0.4B-4.3B stages | DeepFloyd IF License | Abandonware |
+| **ERNIE-Image** | 未指定 | Apache-2.0 | 可 |
+| **Flux.1** | 8B-12B | Apache-2.0 (schnell); FLUX.1 [dev] Non-Commercial License (dev/Kontext) | checkpointごとに異なる |
+| **Flux.2** | 4B-32B | Apache-2.0 (klein 4B); FLUX Non-Commercial License (dev/klein 9B) | checkpointごとに異なる |
+| **HeartMuLa** | 3B | SimpleTunerでは未指定 | 上流の条件を確認 |
+| **HiDream** | 17B (8.5B MoE) | MIT | 可 |
+| **Hunyuan Video** | 8.3B | AGPL-3.0 | 可（copyleft） |
+| **Ideogram 4** | 9B | Ideogram 4 Non-Commercial | 不可 |
+| **Kandinsky 5.0 Image** | 6B (lite) | MIT | 可 |
+| **Kandinsky 5.0 Video** | 2B lite, 19B pro | MIT | 可 |
+| **Kwai Kolors** | 2.7B | Apache-2.0 | Abandonware |
+| **Krea2** | 未指定 | Krea 2 Community License | 可（年収100万米ドル未満；安全対策必須） |
+| **LongCat Image** | 6B | Apache-2.0 | 可 |
+| **LongCat Video** | 13.6B | MIT | 可 |
+| **LTX Video** | ~2.5B | Apache-2.0 | 可 |
+| **LTX Video 2** | 19B | Apache-2.0 | 可 |
+| **Lumina2** | 2B | Apache-2.0 | 可 |
+| **Mage-Flow** | 4B | MIT | 可 |
+| **OmniGen** | 3.8B | MIT | 可 |
+| **PixArt Sigma** | 0.6B-0.9B | OpenRAIL++ | 可（制限あり） |
+| **Qwen Image** | 20B | Apache-2.0 | 可 |
+| **Sana** | 0.6B-4.8B | Apache-2.0 | 可 |
+| **Sana Video** | 2B | Apache-2.0 | 可 |
+| **SD 1.x/2.x (Legacy)** | 0.9B | OpenRAIL++ | 可（制限あり） |
+| **Stable Diffusion 3** | 2B-8B | Stability AI Community License | 可（年収100万米ドル未満） |
+| **Stable Diffusion XL** | 3.5B | CreativeML OpenRAIL-M | 可（制限あり） |
+| **Stable Cascade (Stage C)** | 1B, 3.6B prior | SimpleTunerでは未指定 | Abandonware |
+| **Wan Video** | 1.3B-14B | Apache-2.0 | 可 |
+| **Wan S2V** | 14B | Apache-2.0 | 可 |
+| **Z-Image** | 6B | Apache-2.0 | 可 |
+| **Z-Image Omni** | 6B | Apache-2.0 | 可 |
+| **ZLab I1** | 3B | MIT | 可 |
+
+*ライセンス値は、利用可能な場合はSimpleTunerのモデルヘルパーから、以前未指定だった項目は上流のモデルカード/ライセンスから取得しています。`SimpleTunerでは未指定`は、ヘルパーがライセンス名を持たず、ここでも上流条件を要約していないことを意味します。使用前に上流モデルカードを確認してください。*
 
 ### 高度なトレーニング技術
 
