@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from simpletuner.helpers.models.common import ImageModelFoundation
 
@@ -99,10 +100,12 @@ class QwenTextEncoderOverrideTests(unittest.TestCase):
             }
         )
 
-        with self.assertLogs("simpletuner.helpers.models.common", level="WARNING") as logs:
+        with patch("simpletuner.helpers.models.common.logger.warning") as warning:
             self.assertEqual(model._resolve_text_encoder_path(first_qwen_config), "base/model")
 
-        self.assertIn("Ignoring qwen_text_encoder_model_name_or_path", logs.output[0])
+        warning.assert_called_once()
+        self.assertIn("Ignoring qwen_text_encoder_model_name_or_path", warning.call_args.args[0])
+        self.assertEqual(warning.call_args.args[2], 2)
         self.assertEqual(
             model._resolve_text_encoder_subfolder(first_qwen_config, "subfolder", "text_encoder"),
             "text_encoder",
