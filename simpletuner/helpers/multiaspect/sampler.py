@@ -9,7 +9,7 @@ from PIL import Image
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
-from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.metadata.backends.base import MetadataBackend, get_cp_aware_dp_info
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.multiaspect.state import BucketStateManager
 from simpletuner.helpers.prompts import PromptHandler
@@ -121,6 +121,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         This method should be called when the accelerator save hook is called,
          so that the state is correctly restored with a given checkpoint.
         """
+        effective_dp_size, dp_rank, _cp_size = get_cp_aware_dp_info(self.accelerator)
         state = {
             "aspect_ratio_bucket_indices": self.metadata_backend.aspect_ratio_bucket_indices,
             "buckets": self.buckets,
@@ -129,8 +130,45 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             "current_bucket": self.current_bucket,
             "seen_images": self.metadata_backend.seen_images,
             "current_epoch": self.current_epoch,
+            "dp_size": effective_dp_size,
+            "dp_rank": dp_rank,
         }
         self.state_manager.save_state(state, state_path)
+
+    def _saved_schedule_is_restorable(self, previous_state: dict, state_path: str) -> bool:
+        """A saved schedule is one rank's shard of the dataset.
+
+        Restoring it is only correct when the data-parallel layout is unchanged and every rank
+        has a shard to restore. Restoring on some ranks while the others re-split leaves the
+        ranks disagreeing about who owns which samples.
+        """
+        effective_dp_size, dp_rank, _cp_size = get_cp_aware_dp_info(self.accelerator)
+        if previous_state.get("dp_size") != effective_dp_size or previous_state.get("dp_rank") != dp_rank:
+            self.logger.warning(
+                f"Checkpoint schedule was written for dp_size={previous_state.get('dp_size')} "
+                f"dp_rank={previous_state.get('dp_rank')}, but this run is dp_size={effective_dp_size} "
+                f"dp_rank={dp_rank}. Keeping the freshly split schedule."
+            )
+            return False
+
+        checkpoint_dir = os.path.dirname(state_path)
+        own_filename = os.path.basename(state_path)
+        stem, extension = os.path.splitext(own_filename)
+        stem = stem.split("-rank", 1)[0]
+        for rank in range(self.accelerator.num_processes):
+            # Rank 0 writes the unsuffixed name, so it has to be built separately rather than
+            # scanned as a -rank{N} sibling. This rank's own state is evidently present.
+            filename = f"{stem}{extension}" if rank == 0 else f"{stem}-rank{rank}{extension}"
+            if filename == own_filename:
+                continue
+            sibling = self.state_manager.mangle_state_path(os.path.join(checkpoint_dir, filename))
+            if not os.path.exists(sibling):
+                self.logger.warning(
+                    f"Checkpoint holds no sampler state for rank {rank}, so the rank-local schedules "
+                    "cannot be restored consistently. Keeping the freshly split schedule."
+                )
+                return False
+        return True
 
     def load_states(self, state_path: str):
         try:
@@ -141,7 +179,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         # Checkpoints contain the rank-local schedule. Restore it before seen
         # state so legacy boolean flags can be expanded to all occurrences.
         saved_schedule = previous_state.get("aspect_ratio_bucket_indices")
-        if isinstance(saved_schedule, dict):
+        if isinstance(saved_schedule, dict) and self._saved_schedule_is_restorable(previous_state, state_path):
             self.metadata_backend.aspect_ratio_bucket_indices = saved_schedule
             self._val_master_list = sorted(sum(saved_schedule.values(), []))
         self.buckets = previous_state.get("buckets", self.load_buckets())
