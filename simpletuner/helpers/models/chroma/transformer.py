@@ -601,6 +601,7 @@ class ChromaTransformerBlock(nn.Module):
                 c_scale_mlp,
                 c_gate_mlp,
                 ip_attn_output,
+                use_reentrant=False,
             )
         return self._ffn_forward(
             hidden_states,
@@ -1028,7 +1029,7 @@ class ChromaTransformer2DModel(
                 and self.gradient_checkpointing
                 and should_checkpoint_block(
                     index_block,
-                    True,
+                    self.gradient_checkpointing,
                     self.gradient_checkpointing_interval,
                     self.gradient_checkpointing_segment_stride,
                 )
@@ -1230,7 +1231,7 @@ class ChromaTransformer2DModel(
                 and self.gradient_checkpointing
                 and should_checkpoint_block(
                     index_block,
-                    True,
+                    self.gradient_checkpointing,
                     self.gradient_checkpointing_interval,
                     self.gradient_checkpointing_segment_stride,
                 )

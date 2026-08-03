@@ -83,7 +83,32 @@ class ChromaSegmentedCheckpointingSupportTests(unittest.TestCase):
             backend=True,
             interval=True,
             stride=True,
-            offload=True,
+            checkpoint_attention_offload=True,
             ffn=True,
             attention_offload=True,
         )
+
+    def test_ffn_checkpointing_uses_non_reentrant_checkpoint(self):
+        import torch
+
+        from simpletuner.helpers.models.chroma.transformer import ChromaTransformerBlock
+
+        checkpoint_kwargs = {}
+
+        def checkpoint_fn(function, *args, **kwargs):
+            checkpoint_kwargs.update(kwargs)
+            return function(*args)
+
+        block = ChromaTransformerBlock(dim=16, num_attention_heads=2, attention_head_dim=8).train()
+        encoder_hidden_states, hidden_states = block(
+            hidden_states=torch.randn(2, 4, 16, requires_grad=True),
+            encoder_hidden_states=torch.randn(2, 3, 16, requires_grad=True),
+            image_temb=torch.randn(2, 6, 16),
+            text_temb=torch.randn(2, 6, 16),
+            checkpoint_ffn=True,
+            checkpoint_fn=checkpoint_fn,
+        )
+
+        self.assertEqual(checkpoint_kwargs, {"use_reentrant": False})
+        self.assertEqual(encoder_hidden_states.shape, (2, 3, 16))
+        self.assertEqual(hidden_states.shape, (2, 4, 16))
