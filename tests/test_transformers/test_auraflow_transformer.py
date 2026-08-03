@@ -33,6 +33,8 @@ from transformer_test_helpers import (
     TypoTestUtils,
 )
 
+from simpletuner.helpers.models.auraflow.controlnet import AuraFlowControlNetModel
+
 # Import the target classes
 from simpletuner.helpers.models.auraflow.transformer import (
     AuraFlowFeedForward,
@@ -941,6 +943,59 @@ class TestAuraFlowTransformer2DModel(TransformerBaseTest):
 
         output.float().mean().backward()
         self.assertIsNotNone(hidden_states.grad)
+
+    def test_controlnet_checkpointing_forwards_attention_kwargs(self):
+        class RecordingJointBlock(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.received_attention_kwargs = None
+
+            def forward(self, hidden_states, encoder_hidden_states, temb, attention_kwargs=None):
+                self.received_attention_kwargs = attention_kwargs
+                return encoder_hidden_states + hidden_states.mean() * 0, hidden_states + temb.mean() * 0
+
+        class RecordingSingleBlock(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.received_attention_kwargs = None
+
+            def forward(self, hidden_states, temb, attention_kwargs=None):
+                self.received_attention_kwargs = attention_kwargs
+                return hidden_states + temb.mean() * 0
+
+        model = AuraFlowControlNetModel(
+            sample_size=8,
+            patch_size=2,
+            in_channels=4,
+            out_channels=4,
+            num_mmdit_layers=1,
+            num_single_dit_layers=1,
+            attention_head_dim=8,
+            num_attention_heads=2,
+            joint_attention_dim=16,
+            caption_projection_dim=16,
+            pos_embed_max_size=16,
+        )
+        joint_block = RecordingJointBlock()
+        single_block = RecordingSingleBlock()
+        model.joint_transformer_blocks[0] = joint_block
+        model.single_transformer_blocks[0] = single_block
+        model.train()
+        model.gradient_checkpointing = True
+
+        hidden_states = torch.randn(1, 4, 8, 8, requires_grad=True)
+        attention_kwargs = {"processor_marker": "preserved"}
+        model(
+            hidden_states=hidden_states,
+            controlnet_cond=torch.zeros_like(hidden_states),
+            encoder_hidden_states=torch.randn(1, 3, 16),
+            timestep=torch.tensor([1.0]),
+            attention_kwargs=attention_kwargs,
+            return_dict=False,
+        )
+
+        self.assertEqual(joint_block.received_attention_kwargs, attention_kwargs)
+        self.assertEqual(single_block.received_attention_kwargs, attention_kwargs)
 
     def test_transformer_tread_router_methods(self):
         """Test TREAD router configuration methods."""

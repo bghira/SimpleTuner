@@ -51,7 +51,7 @@ class AuraFlowSegmentedCheckpointingSupportTests(unittest.TestCase):
             backend=True,
             interval=True,
             stride=True,
-            offload=False,
+            checkpoint_attention_offload=False,
             ffn=False,
             attention_offload=False,
         )
