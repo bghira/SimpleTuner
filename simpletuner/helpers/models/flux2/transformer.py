@@ -235,15 +235,16 @@ class Flux2AttnProcessor:
 
         hidden_states = None
         if image_rotary_emb is not None and self._packed_attention_backend is None and not cp_active:
-            hidden_states = maybe_metal_flash_rope_attention(
-                query,
-                key,
-                value,
-                image_rotary_emb,
-                attn_mask=attention_mask,
-                backend=self._attention_backend,
-                layout="bshd",
-            )
+            with activation_offload_context(offload_attention, label=f"{attn.__class__.__qualname__}:attention"):
+                hidden_states = maybe_metal_flash_rope_attention(
+                    query,
+                    key,
+                    value,
+                    image_rotary_emb,
+                    attn_mask=attention_mask,
+                    backend=self._attention_backend,
+                    layout="bshd",
+                )
 
         if hidden_states is None:
             if image_rotary_emb is not None:
@@ -412,15 +413,16 @@ class Flux2ParallelSelfAttnProcessor:
 
         hidden_states = None
         if image_rotary_emb is not None and self._packed_attention_backend is None and not cp_active:
-            hidden_states = maybe_metal_flash_rope_attention(
-                query,
-                key,
-                value,
-                image_rotary_emb,
-                attn_mask=attention_mask,
-                backend=self._attention_backend,
-                layout="bshd",
-            )
+            with activation_offload_context(offload_attention, label=f"{attn.__class__.__qualname__}:attention"):
+                hidden_states = maybe_metal_flash_rope_attention(
+                    query,
+                    key,
+                    value,
+                    image_rotary_emb,
+                    attn_mask=attention_mask,
+                    backend=self._attention_backend,
+                    layout="bshd",
+                )
 
         if hidden_states is None:
             if image_rotary_emb is not None:
