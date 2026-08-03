@@ -103,12 +103,13 @@ class Ideogram4(ImageModelFoundation):
     def load_text_encoder(self, move_to_device: bool = True):
         repo_id = getattr(self.config, "pretrained_model_name_or_path", None) or self.HUGGINGFACE_PATHS["fp8"]
         pipe_config = Ideogram4PipelineConfig(weights_repo=repo_id)
+        qwen_repo_id = self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path")
         tokenizer, text_encoder = _load_qwen3_vl(
-            repo_id,
+            qwen_repo_id or repo_id,
             self.accelerator.device,
             self.config.weight_dtype,
-            tokenizer_subfolder=pipe_config.tokenizer_subfolder,
-            text_encoder_subfolder=pipe_config.text_encoder_subfolder,
+            tokenizer_subfolder=None if qwen_repo_id else pipe_config.tokenizer_subfolder,
+            text_encoder_subfolder=None if qwen_repo_id else pipe_config.text_encoder_subfolder,
         )
         self.tokenizers = [tokenizer]
         self.text_encoders = [text_encoder]

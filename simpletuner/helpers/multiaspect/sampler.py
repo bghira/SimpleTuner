@@ -9,7 +9,7 @@ from PIL import Image
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
-from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.metadata.backends.base import MetadataBackend, get_cp_aware_dp_info
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.multiaspect.state import BucketStateManager
 from simpletuner.helpers.prompts import PromptHandler
@@ -121,6 +121,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         This method should be called when the accelerator save hook is called,
          so that the state is correctly restored with a given checkpoint.
         """
+        effective_dp_size, dp_rank, _cp_size = get_cp_aware_dp_info(self.accelerator)
         state = {
             "aspect_ratio_bucket_indices": self.metadata_backend.aspect_ratio_bucket_indices,
             "buckets": self.buckets,
@@ -129,15 +130,62 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             "current_bucket": self.current_bucket,
             "seen_images": self.metadata_backend.seen_images,
             "current_epoch": self.current_epoch,
+            "dp_size": effective_dp_size,
+            "dp_rank": dp_rank,
         }
         self.state_manager.save_state(state, state_path)
 
+    def _saved_schedule_is_restorable(self, previous_state: dict, state_path: str) -> bool:
+        """A saved schedule is one rank's shard of the dataset.
+
+        Restoring it is only correct when the data-parallel layout is unchanged and every rank
+        has a shard to restore. Restoring on some ranks while the others re-split leaves the
+        ranks disagreeing about who owns which samples.
+        """
+        effective_dp_size, dp_rank, _cp_size = get_cp_aware_dp_info(self.accelerator)
+        if previous_state.get("dp_size") != effective_dp_size or previous_state.get("dp_rank") != dp_rank:
+            self.logger.warning(
+                f"Checkpoint schedule was written for dp_size={previous_state.get('dp_size')} "
+                f"dp_rank={previous_state.get('dp_rank')}, but this run is dp_size={effective_dp_size} "
+                f"dp_rank={dp_rank}. Keeping the freshly split schedule."
+            )
+            return False
+
+        checkpoint_dir = os.path.dirname(state_path)
+        own_filename = os.path.basename(state_path)
+        stem, extension = os.path.splitext(own_filename)
+        stem = stem.split("-rank", 1)[0]
+        for rank in range(self.accelerator.num_processes):
+            # Rank 0 writes the unsuffixed name, so it has to be built separately rather than
+            # scanned as a -rank{N} sibling. This rank's own state is evidently present.
+            filename = f"{stem}{extension}" if rank == 0 else f"{stem}-rank{rank}{extension}"
+            if filename == own_filename:
+                continue
+            sibling = self.state_manager.mangle_state_path(os.path.join(checkpoint_dir, filename))
+            if not os.path.exists(sibling):
+                self.logger.warning(
+                    f"Checkpoint holds no sampler state for rank {rank}, so the rank-local schedules "
+                    "cannot be restored consistently. Keeping the freshly split schedule."
+                )
+                return False
+        return True
+
     def load_states(self, state_path: str):
         try:
-            self.buckets = self.load_buckets()
             previous_state = self.state_manager.load_state(state_path)
         except Exception as e:
             raise e
+
+        # Checkpoints contain the rank-local schedule. Restore it before seen
+        # state so legacy boolean flags can be expanded to all occurrences.
+        saved_schedule = previous_state.get("aspect_ratio_bucket_indices")
+        if isinstance(saved_schedule, dict) and self._saved_schedule_is_restorable(previous_state, state_path):
+            self.metadata_backend.aspect_ratio_bucket_indices = saved_schedule
+            self._val_master_list = sorted(sum(saved_schedule.values(), []))
+        self.buckets = previous_state.get("buckets", self.load_buckets())
+        if "current_bucket" in previous_state:
+            self.current_bucket = previous_state["current_bucket"]
+
         self.exhausted_buckets = []
         if "exhausted_buckets" in previous_state:
             self.logger.info(f"Previous checkpoint had {len(previous_state['exhausted_buckets'])} exhausted buckets.")
@@ -149,7 +197,20 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         # Merge seen_images into self.state_manager.seen_images Manager.dict:
         if "seen_images" in previous_state:
             self.logger.info(f"Previous checkpoint had {len(previous_state['seen_images'])} seen {self.sample_type_strs}.")
-            self.metadata_backend.seen_images.update(previous_state["seen_images"])
+            occurrence_counts = {}
+            for images in self.metadata_backend.aspect_ratio_bucket_indices.values():
+                for image_path in images:
+                    occurrence_counts[image_path] = occurrence_counts.get(image_path, 0) + 1
+            normalized_seen = {
+                image_path: (
+                    (occurrence_counts.get(image_path, True) if value else 0)
+                    if isinstance(value, bool)
+                    else value
+                )
+                for image_path, value in previous_state["seen_images"].items()
+            }
+            self.metadata_backend.seen_images.clear()
+            self.metadata_backend.seen_images.update(normalized_seen)
 
     def load_buckets(self):
         return list(self.metadata_backend.aspect_ratio_bucket_indices.keys())  # These keys are a float value, eg. 1.78.
@@ -389,6 +450,17 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         # Bucket not found with either type
         return []
 
+    def _filter_unseen_occurrences(self, images):
+        """Filter consumed positions without collapsing duplicate filepaths."""
+        occurrence_indices = {}
+        unseen = []
+        for image in images:
+            occurrence_index = occurrence_indices.get(image, 0)
+            occurrence_indices[image] = occurrence_index + 1
+            if not self.metadata_backend.is_seen(image, occurrence_index):
+                unseen.append(image)
+        return unseen
+
     def _get_unseen_images(self, bucket=None):
         """
         Get unseen {self.sample_type_strs} from the specified bucket.
@@ -410,8 +482,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
             return [
                 (os.path.join(self.metadata_backend.instance_data_dir, image) if not image.startswith("http") else image)
-                for image in bucket_images
-                if not self.metadata_backend.is_seen(image)
+                for image in self._filter_unseen_occurrences(bucket_images)
             ]
         elif bucket is None:
             unseen_images = []
@@ -423,8 +494,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                             if not image.startswith("http")
                             else image
                         )
-                        for image in images
-                        if not self.metadata_backend.is_seen(image)
+                        for image in self._filter_unseen_occurrences(images)
                     ]
                 )
             return unseen_images

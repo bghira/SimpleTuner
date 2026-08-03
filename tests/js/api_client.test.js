@@ -84,6 +84,22 @@ describe('ApiClient', () => {
         });
     });
 
+    describe('base URL normalization', () => {
+        test('removes trailing slashes from configured base URLs', () => {
+            global.ServerConfig = {
+                apiBaseUrl: 'https://api.example.com/',
+                callbackUrl: 'https://callback.example.com///',
+            };
+
+            expect(window.ApiClient.apiBaseUrl).toBe('https://api.example.com');
+            expect(window.ApiClient.callbackBaseUrl).toBe('https://callback.example.com');
+            expect(window.ApiClient.resolve('/api/jobs', { forceApi: true }))
+                .toBe('https://api.example.com/api/jobs');
+            expect(window.ApiClient.resolve('/notify', { forceCallback: true }))
+                .toBe('https://callback.example.com/notify');
+        });
+    });
+
     describe('resolve', () => {
         test('resolves path with default options', () => {
             const result = window.ApiClient.resolve('/api/jobs');

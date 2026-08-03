@@ -35,6 +35,7 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
@@ -472,6 +473,7 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
         self.gradient_checkpointing_backend = "torch"
 
         # tread support
@@ -499,6 +501,9 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                 The interval at which to checkpoint the gradients.
         """
         self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
@@ -742,7 +747,12 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             if (
                 self.training
                 and self.gradient_checkpointing
-                and (self.gradient_checkpointing_interval is None or i % self.gradient_checkpointing_interval == 0)
+                and should_checkpoint_block(
+                    i,
+                    True,
+                    self.gradient_checkpointing_interval,
+                    self.gradient_checkpointing_segment_stride,
+                )
             ):
 
                 def create_custom_forward(module):
@@ -751,7 +761,7 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
                     return custom_forward
 
-                if self.gradient_checkpointing_backend == "unsloth":
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint

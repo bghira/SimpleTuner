@@ -161,6 +161,9 @@ class OmniGen(ImageModelFoundation):
     def supports_crepa_self_flow(self) -> bool:
         return True
 
+    def uses_text_embeddings_cache(self) -> bool:
+        return False
+
     def get_transforms(self, dataset_type: str = "image"):
         from torchvision import transforms
 

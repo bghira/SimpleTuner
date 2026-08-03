@@ -15,7 +15,7 @@
     "lr_scheduler": "constant",
     "lycoris_config": "config/examples/cosmos2image.lycoris-lokr/lycoris_config.json",
     "max_train_steps": 100,
-    "model_family": "cosmos2image",
+    "model_family": "cosmos",
     "model_type": "lora",
     "num_train_epochs": 0,
     "optimizer": "adamw_bf16",

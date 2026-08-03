@@ -296,9 +296,14 @@ class HubManager:
         return highest_checkpoint
 
     def upload_latest_checkpoint(
-        self, validation_images: dict, webhook_handler=None, global_step: int = None, epoch: int = None
+        self,
+        validation_images: dict,
+        webhook_handler=None,
+        global_step: int = None,
+        epoch: int = None,
+        checkpoint_path: str = None,
     ):
-        checkpoint_path = self.find_latest_checkpoint()
+        checkpoint_path = Path(checkpoint_path) if checkpoint_path else self.find_latest_checkpoint()
         if checkpoint_path:
             logging.info(f"Checkpoint path: {checkpoint_path}")
             try:

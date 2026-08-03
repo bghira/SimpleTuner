@@ -977,6 +977,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         # Mock accelerator with 8 GPUs
         mock_accelerator = MagicMock()
         mock_accelerator.num_processes = 8
+        mock_accelerator.process_index = 0
         mock_backend.accelerator = mock_accelerator
 
         # Mock StateTracker.get_args() to return args with allow_dataset_oversubscription=False
@@ -1023,16 +1024,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         # Mock accelerator with 2 GPUs
         mock_accelerator = MagicMock()
         mock_accelerator.num_processes = 2
-
-        # Mock split_between_processes to distribute images properly
-        def split_side_effect(images, apply_padding=False):
-            mock_context = MagicMock()
-            # Each GPU gets half the images
-            mock_context.__enter__ = MagicMock(return_value=images[: len(images) // 2])
-            mock_context.__exit__ = MagicMock(return_value=False)
-            return mock_context
-
-        mock_accelerator.split_between_processes = MagicMock(side_effect=split_side_effect)
+        mock_accelerator.process_index = 0
         mock_backend.accelerator = mock_accelerator
 
         # Mock StateTracker.get_args() to return args with allow_dataset_oversubscription=False
@@ -1068,14 +1060,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
         mock_accelerator = MagicMock()
         mock_accelerator.num_processes = 1
-
-        def split_side_effect(images, apply_padding=False):
-            mock_context = MagicMock()
-            mock_context.__enter__ = MagicMock(return_value=images)
-            mock_context.__exit__ = MagicMock(return_value=False)
-            return mock_context
-
-        mock_accelerator.split_between_processes = MagicMock(side_effect=split_side_effect)
+        mock_accelerator.process_index = 0
         mock_backend.accelerator = mock_accelerator
 
         with (
@@ -1091,8 +1076,6 @@ class TestFactoryEdgeCases(unittest.TestCase):
             except ValueError as e:
                 if "Dataset configuration will produce zero usable batches" in str(e):
                     self.fail(f"Eval dataset should not consider grad accumulation: {e}")
-
-        mock_accelerator.split_between_processes.assert_called_once()
 
     def test_oversubscription_auto_adjustment(self):
         """Test that --allow_dataset_oversubscription automatically adjusts repeats."""
@@ -1110,6 +1093,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         # Mock accelerator with 8 GPUs
         mock_accelerator = MagicMock()
         mock_accelerator.num_processes = 8
+        mock_accelerator.process_index = 0
         mock_backend.accelerator = mock_accelerator
 
         # Mock StateTracker to enable oversubscription and NO user-set repeats
@@ -1122,20 +1106,11 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 # Return config WITHOUT 'repeats' key (not user-set)
                 mock_get_config.return_value = {"id": "test_auto_adjust"}
 
-                # Mock the split_between_processes to avoid actual splitting
-                def split_side_effect(images, apply_padding=False):
-                    mock_context = MagicMock()
-                    mock_context.__enter__ = MagicMock(return_value=images)
-                    mock_context.__exit__ = MagicMock(return_value=False)
-                    return mock_context
-
-                mock_accelerator.split_between_processes = MagicMock(side_effect=split_side_effect)
-
                 # Should NOT raise, should auto-adjust repeats
                 try:
                     MetadataBackend.split_buckets_between_processes(mock_backend, gradient_accumulation_steps=1)
-                    # Check that repeats was adjusted
-                    self.assertEqual(mock_backend.repeats, 7, "Repeats should be auto-adjusted to 7")
+                    self.assertEqual(mock_backend.repeats, 0)
+                    self.assertEqual(len(mock_backend.aspect_ratio_bucket_indices["1.0"]), 4)
                 except ValueError as e:
                     self.fail(f"Should not raise with oversubscription enabled: {e}")
 
@@ -1154,6 +1129,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
         mock_accelerator = MagicMock()
         mock_accelerator.num_processes = 8
+        mock_accelerator.process_index = 0
         mock_backend.accelerator = mock_accelerator
 
         # Mock StateTracker with oversubscription enabled BUT user set repeats
@@ -1189,6 +1165,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
         mock_accelerator = MagicMock()
         mock_accelerator.num_processes = 8
+        mock_accelerator.process_index = 0
         mock_backend.accelerator = mock_accelerator
 
         # Mock StateTracker with oversubscription DISABLED
@@ -1207,6 +1184,49 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 error_msg = str(context.exception)
                 self.assertIn("Dataset configuration will produce zero usable batches", error_msg)
                 self.assertIn("Enable --allow_dataset_oversubscription", error_msg)
+
+    def test_bucket_split_padding_policy_matches_training_mode(self):
+        """Factory padding covers epoch and explicit oversubscription policies."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        factory._handle_config_versioning = MagicMock()
+
+        cases = (
+            ("fixed_steps", 100, False, False),
+            ("oversubscribed_fixed_steps", 100, True, True),
+            ("epoch_driven", 0, False, True),
+        )
+        for name, max_train_steps, allow_oversubscription, expected in cases:
+            with self.subTest(name=name):
+                factory.args.max_train_steps = max_train_steps
+                factory.args.allow_dataset_oversubscription = allow_oversubscription
+                factory.args.skip_file_discovery = "aspect"
+                factory.args.eval_dataset_id = None
+
+                metadata_backend = MagicMock()
+                init_backend = {
+                    "id": "train",
+                    "config": {},
+                    "dataset_type": "image",
+                    "metadata_backend": metadata_backend,
+                }
+                factory._handle_bucket_operations(
+                    backend={"id": "train", "skip_file_discovery": "aspect"},
+                    init_backend=init_backend,
+                    conditioning_type=None,
+                )
+
+                metadata_backend.split_buckets_between_processes.assert_called_once_with(
+                    gradient_accumulation_steps=factory.args.gradient_accumulation_steps,
+                    apply_padding=expected,
+                )
 
     def test_image_embeds_backend_configuration(self):
         """Image embed configuration should not instantiate VAE cache directly."""

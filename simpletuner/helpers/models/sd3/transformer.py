@@ -38,7 +38,10 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.checkpointing import checkpoint as simpletuner_checkpoint
+from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state, should_checkpoint_block
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
+from simpletuner.helpers.training.offloaded_gradient_checkpointer import activation_offload_context
 from simpletuner.helpers.training.packed_attention_processors import PackedJointAttnProcessor2_0
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
@@ -146,16 +149,9 @@ def _sd3_apply_joint_transformer_block(
     temb_hidden: torch.Tensor,
     temb_context: torch.Tensor,
     joint_attention_kwargs: Optional[Dict[str, Any]] = None,
+    offload_attention: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     joint_attention_kwargs = joint_attention_kwargs or {}
-    if temb_hidden.ndim == 2 and temb_context.ndim == 2:
-        return block(
-            hidden_states=hidden_states,
-            encoder_hidden_states=encoder_hidden_states,
-            temb=temb_hidden,
-            joint_attention_kwargs=joint_attention_kwargs,
-        )
-
     if block.use_dual_attention:
         (
             norm_hidden_states,
@@ -182,11 +178,12 @@ def _sd3_apply_joint_transformer_block(
             c_gate_mlp,
         ) = _sd3_apply_ada_layer_norm_zero(block.norm1_context, encoder_hidden_states, temb_context)
 
-    attn_output, context_attn_output = block.attn(
-        hidden_states=norm_hidden_states,
-        encoder_hidden_states=norm_encoder_hidden_states,
-        **joint_attention_kwargs,
-    )
+    with activation_offload_context(offload_attention, label=f"{block.__class__.__qualname__}:attention"):
+        attn_output, context_attn_output = block.attn(
+            hidden_states=norm_hidden_states,
+            encoder_hidden_states=norm_encoder_hidden_states,
+            **joint_attention_kwargs,
+        )
 
     if gate_msa.ndim == 2:
         gate_msa = gate_msa.unsqueeze(1)
@@ -194,7 +191,8 @@ def _sd3_apply_joint_transformer_block(
     hidden_states = hidden_states + attn_output
 
     if block.use_dual_attention:
-        attn_output2 = block.attn2(hidden_states=norm_hidden_states2, **joint_attention_kwargs)
+        with activation_offload_context(offload_attention, label=f"{block.__class__.__qualname__}:dual_attention"):
+            attn_output2 = block.attn2(hidden_states=norm_hidden_states2, **joint_attention_kwargs)
         if gate_msa2.ndim == 2:
             gate_msa2 = gate_msa2.unsqueeze(1)
         attn_output2 = gate_msa2 * attn_output2
@@ -269,6 +267,7 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
         "PatchEmbed",
     ]
     _supports_gradient_checkpointing = True
+    _supports_attention_activation_offload = True
     _fsdp_exclude_auto_wrap_modules = ["PatchEmbed"]
     _cp_plan = {
         "": {
@@ -375,7 +374,9 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
         self.gradient_checkpointing_backend = "torch"
+        self.gradient_checkpointing_offload_attention = False
 
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=num_layers,
@@ -387,8 +388,14 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
     def set_gradient_checkpointing_interval(self, interval: int):
         self.gradient_checkpointing_interval = interval
 
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
+
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
+
+    def set_gradient_checkpointing_offload_attention(self, enabled: bool):
+        self.gradient_checkpointing_offload_attention = bool(enabled)
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         self._tread_router = router
@@ -719,116 +726,152 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
         if hasattr(self, "position_net") and grounding_kwargs is not None:
             grounding_objs = self.position_net(**grounding_kwargs)
 
-        capture_idx = 0
-        for index_block, block in enumerate(self.transformer_blocks):
-            if musubi_offload_active and musubi_manager.is_managed_block(index_block):
-                musubi_manager.stream_in(block, hidden_states.device)
-            # TREAD: START a route?
-            if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
-                mask_ratio = routes[route_ptr]["selection_ratio"]
-                tread_mask_info = router.get_mask(
-                    hidden_states,
-                    mask_ratio=mask_ratio,
-                    force_keep=force_keep_mask,
-                )
-                saved_tokens = hidden_states.clone()
-                hidden_states = router.start_route(hidden_states, tread_mask_info)
-                routing_now = True
+        segment_size = self.gradient_checkpointing_interval
+        use_segmented_checkpointing = (
+            self.training
+            and self.gradient_checkpointing
+            and segment_size is not None
+            and segment_size > 1
+            and not self.gradient_checkpointing_backend.endswith("-ffn")
+            and not use_routing
+            and not musubi_offload_active
+            and skip_layers is None
+            and block_controlnet_hidden_states is None
+            and grounding_objs is None
+            and hidden_states_buffer is None
+        )
+        segmented_checkpoint_fn = None
+        segmented_checkpoint_kwargs: Dict[str, Any] = {}
+        if use_segmented_checkpointing:
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
-            # Skip specified layers
-            if skip_layers is not None and index_block in skip_layers:
-                if block_controlnet_hidden_states is not None and block.context_pre_only is False:
-                    interval_control = len(self.transformer_blocks) // len(block_controlnet_hidden_states)
-                    hidden_states = hidden_states + block_controlnet_hidden_states[index_block // interval_control]
-                continue
+                segmented_checkpoint_fn = offloaded_checkpoint
+            else:
+                segmented_checkpoint_fn = simpletuner_checkpoint
+            segmented_checkpoint_kwargs = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
 
-            if (
-                self.training
-                and self.gradient_checkpointing
-                and (self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0)
+            def run_segment_block(
+                _relative_index,
+                segment_block,
+                segment_encoder_hidden_states,
+                segment_hidden_states,
             ):
+                return _sd3_apply_joint_transformer_block(
+                    segment_block,
+                    segment_hidden_states,
+                    segment_encoder_hidden_states,
+                    temb_hidden,
+                    temb_context,
+                    joint_attention_kwargs=joint_attention_kwargs,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
+                )
 
-                def create_custom_forward(module, return_dict=None):
-                    def custom_forward(*inputs):
-                        if return_dict is not None:
-                            return module(*inputs, return_dict=return_dict)
-                        else:
-                            return module(*inputs)
-
-                    return custom_forward
-
-                if self.gradient_checkpointing_backend == "unsloth":
-                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
-
-                    checkpoint_fn = offloaded_checkpoint
-                else:
-                    checkpoint_fn = torch.utils.checkpoint.checkpoint
-
-                ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                if temb_hidden.ndim == 2:
-                    encoder_hidden_states, hidden_states = checkpoint_fn(
-                        create_custom_forward(block),
+            encoder_hidden_states, hidden_states = checkpoint_sequential_state(
+                self.transformer_blocks,
+                segment_size,
+                (encoder_hidden_states, hidden_states),
+                run_segment_block,
+                segmented_checkpoint_fn,
+                segmented_checkpoint_kwargs,
+                segment_stride=self.gradient_checkpointing_segment_stride,
+            )
+        else:
+            capture_idx = 0
+            for index_block, block in enumerate(self.transformer_blocks):
+                if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+                    musubi_manager.stream_in(block, hidden_states.device)
+                # TREAD: START a route?
+                if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
+                    mask_ratio = routes[route_ptr]["selection_ratio"]
+                    tread_mask_info = router.get_mask(
                         hidden_states,
-                        encoder_hidden_states,
-                        temb_hidden,
-                        **ckpt_kwargs,
+                        mask_ratio=mask_ratio,
+                        force_keep=force_keep_mask,
                     )
-                else:
+                    saved_tokens = hidden_states.clone()
+                    hidden_states = router.start_route(hidden_states, tread_mask_info)
+                    routing_now = True
 
-                    def create_tokenwise_forward(module, attention_kwargs):
-                        def custom_forward(*inputs):
-                            return _sd3_apply_joint_transformer_block(
-                                module,
-                                inputs[0],
-                                inputs[1],
-                                inputs[2],
-                                inputs[3],
-                                joint_attention_kwargs=attention_kwargs,
-                            )
+                # Skip specified layers
+                if skip_layers is not None and index_block in skip_layers:
+                    if block_controlnet_hidden_states is not None and block.context_pre_only is False:
+                        interval_control = len(self.transformer_blocks) // len(block_controlnet_hidden_states)
+                        hidden_states = hidden_states + block_controlnet_hidden_states[index_block // interval_control]
+                    continue
 
-                        return custom_forward
+                if (
+                    self.training
+                    and self.gradient_checkpointing
+                    and should_checkpoint_block(
+                        index_block,
+                        True,
+                        self.gradient_checkpointing_interval,
+                        self.gradient_checkpointing_segment_stride,
+                    )
+                ):
 
+                    def custom_forward(*inputs, checkpoint_block=block, attention_kwargs=joint_attention_kwargs):
+                        return _sd3_apply_joint_transformer_block(
+                            checkpoint_block,
+                            inputs[0],
+                            inputs[1],
+                            inputs[2],
+                            inputs[3],
+                            joint_attention_kwargs=attention_kwargs,
+                            offload_attention=self.gradient_checkpointing_offload_attention,
+                        )
+
+                    if self.gradient_checkpointing_backend.startswith("unsloth"):
+                        from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                        checkpoint_fn = offloaded_checkpoint
+                    else:
+                        checkpoint_fn = simpletuner_checkpoint
+
+                    ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
                     encoder_hidden_states, hidden_states = checkpoint_fn(
-                        create_tokenwise_forward(block, joint_attention_kwargs),
+                        custom_forward,
                         hidden_states,
                         encoder_hidden_states,
                         temb_hidden,
                         temb_context,
                         **ckpt_kwargs,
                     )
-            else:
-                encoder_hidden_states, hidden_states = _sd3_apply_joint_transformer_block(
-                    block,
-                    hidden_states,
-                    encoder_hidden_states,
-                    temb_hidden,
-                    temb_context,
-                    joint_attention_kwargs=joint_attention_kwargs,
-                )
+                else:
+                    encoder_hidden_states, hidden_states = _sd3_apply_joint_transformer_block(
+                        block,
+                        hidden_states,
+                        encoder_hidden_states,
+                        temb_hidden,
+                        temb_context,
+                        joint_attention_kwargs=joint_attention_kwargs,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
+                    )
 
-            if grounding_objs is not None and hasattr(block, "fuser"):
-                hidden_states = apply_grounding_fuser(block.fuser, hidden_states, grounding_objs)
+                if grounding_objs is not None and hasattr(block, "fuser"):
+                    hidden_states = apply_grounding_fuser(block.fuser, hidden_states, grounding_objs)
 
-            # controlnet residual
-            if block_controlnet_hidden_states is not None and block.context_pre_only is False:
-                interval_control = len(self.transformer_blocks) // len(block_controlnet_hidden_states)
-                hidden_states = hidden_states + block_controlnet_hidden_states[index_block // interval_control]
+                # controlnet residual
+                if block_controlnet_hidden_states is not None and block.context_pre_only is False:
+                    interval_control = len(self.transformer_blocks) // len(block_controlnet_hidden_states)
+                    hidden_states = hidden_states + block_controlnet_hidden_states[index_block // interval_control]
 
-            # TREAD: END the current route?
-            if routing_now and global_idx == routes[route_ptr]["end_layer_idx"]:
-                hidden_states = router.end_route(
-                    hidden_states,
-                    tread_mask_info,
-                    original_x=saved_tokens,
-                )
-                routing_now = False
-                route_ptr += 1
+                # TREAD: END the current route?
+                if routing_now and global_idx == routes[route_ptr]["end_layer_idx"]:
+                    hidden_states = router.end_route(
+                        hidden_states,
+                        tread_mask_info,
+                        original_x=saved_tokens,
+                    )
+                    routing_now = False
+                    route_ptr += 1
 
-            if musubi_offload_active and musubi_manager.is_managed_block(index_block):
-                musubi_manager.stream_out(block)
-            _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
-            capture_idx += 1
-            global_idx += 1
+                if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+                    musubi_manager.stream_out(block)
+                _store_hidden_state(hidden_states_buffer, f"layer_{capture_idx}", hidden_states)
+                capture_idx += 1
+                global_idx += 1
 
         hidden_states = _sd3_apply_ada_layer_norm_continuous(self.norm_out, hidden_states, temb_hidden)
         hidden_states = self.proj_out(hidden_states)

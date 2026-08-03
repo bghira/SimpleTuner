@@ -16,8 +16,6 @@ from simpletuner.helpers.acceleration import (
     get_sdnq_presets,
     get_torchao_presets,
 )
-from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
-from simpletuner.helpers.models.flux.model import Flux
 from simpletuner.helpers.models.boogu_image.pipeline import BooguImagePipeline
 from simpletuner.helpers.models.boogu_image.pipeline_edit import BooguImageEditPipeline
 from simpletuner.helpers.models.boogu_image.pipeline_img2img import BooguImageImg2ImgPipeline
@@ -26,6 +24,8 @@ from simpletuner.helpers.models.boogu_image.schedulers.scheduling_flow_match_eul
     FlowMatchEulerDiscreteScheduler,
 )
 from simpletuner.helpers.models.boogu_image.transformer import BooguImageTransformer2DModel
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.flux.model import Flux
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
 
@@ -188,8 +188,8 @@ class BooguImage(ImageModelFoundation):
     def _load_processor_for_pipeline(self):
         if self.processor is not None:
             return self.processor
-        processor_path = getattr(self.config, "processor_pretrained_model_name_or_path", None) or self._model_config_path()
-        processor_subfolder = getattr(self.config, "processor_subfolder", self.PROCESSOR_SUBFOLDER)
+        processor_path = self._resolve_qwen_processor_path(self._model_config_path())
+        processor_subfolder = self._resolve_qwen_processor_subfolder(self.PROCESSOR_SUBFOLDER)
         processor_kwargs = {
             "pretrained_model_name_or_path": processor_path,
             "subfolder": processor_subfolder,

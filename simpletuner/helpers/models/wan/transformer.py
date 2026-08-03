@@ -34,7 +34,9 @@ from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscal
 
 from simpletuner.helpers.models.flowmap import register_flowmap_config
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
+from simpletuner.helpers.training.offloaded_gradient_checkpointer import activation_offload_context
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 
@@ -532,6 +534,9 @@ class WanTransformerBlock(nn.Module):
         encoder_hidden_states: torch.Tensor,
         temb: torch.Tensor,
         rotary_emb: torch.Tensor,
+        checkpoint_ffn: bool = False,
+        checkpoint_fn: Any | None = None,
+        offload_attention: bool = False,
     ) -> torch.Tensor:
         self._ensure_module_dtype(hidden_states.device, hidden_states.dtype)
 
@@ -557,27 +562,40 @@ class WanTransformerBlock(nn.Module):
         # 1. Self-attention
         norm_hidden_states = self.norm1(hidden_states)
         norm_hidden_states = norm_hidden_states * (1 + scale_msa) + shift_msa
-        attn_output = self.attn1(hidden_states=norm_hidden_states, rotary_emb=rotary_emb)
+        with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+            attn_output = self.attn1(hidden_states=norm_hidden_states, rotary_emb=rotary_emb)
         hidden_states = hidden_states + attn_output * gate_msa
 
         # 2. Cross-attention
         norm_hidden_states = self.norm2(hidden_states)
-        attn_output = self.attn2(
-            hidden_states=norm_hidden_states,
-            encoder_hidden_states=encoder_hidden_states,
-        )
+        with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+            attn_output = self.attn2(
+                hidden_states=norm_hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+            )
         hidden_states = hidden_states + attn_output
 
         # 3. Feed-forward
         norm_hidden_states = self.norm3(hidden_states)
         norm_hidden_states = norm_hidden_states * (1 + c_scale_msa) + c_shift_msa
-        if self._chunk_enabled:
-            ff_output = self._run_chunked_feed_forward(norm_hidden_states)
+        if checkpoint_ffn:
+            if checkpoint_fn is None:
+                raise ValueError("checkpoint_fn is required when checkpoint_ffn=True")
+            ff_output = checkpoint_fn(
+                self._run_feed_forward,
+                norm_hidden_states,
+                use_reentrant=False,
+            )
         else:
-            ff_output = self.ffn(norm_hidden_states)
+            ff_output = self._run_feed_forward(norm_hidden_states)
         hidden_states = hidden_states + ff_output * c_gate_msa
 
         return hidden_states
+
+    def _run_feed_forward(self, norm_hidden_states: torch.Tensor) -> torch.Tensor:
+        if self._chunk_enabled:
+            return self._run_chunked_feed_forward(norm_hidden_states)
+        return self.ffn(norm_hidden_states)
 
     def _run_chunked_feed_forward(self, norm_hidden_states: torch.Tensor) -> torch.Tensor:
         if self._chunk_auto:
@@ -673,6 +691,8 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
     """
 
     _supports_gradient_checkpointing = True
+    _supports_ffn_gradient_checkpointing = True
+    _supports_attention_activation_offload = True
     _tread_router: Optional[TREADRouter] = None
     _tread_routes: Optional[List[Dict[str, Any]]] = None
     _skip_layerwise_casting_patterns = ["patch_embedding", "condition_embedder", "norm"]
@@ -803,6 +823,9 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_backend = "torch"
+        self.gradient_checkpointing_offload_attention = False
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
         self.force_v2_1_time_embedding: bool = False
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=num_layers,
@@ -833,6 +856,15 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
 
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
+
+    def set_gradient_checkpointing_offload_attention(self, enabled: bool):
+        self.gradient_checkpointing_offload_attention = bool(enabled)
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         """Set the TREAD router and routing configuration."""
@@ -995,107 +1027,180 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
             grounding_objs = self.position_net(**grounding_kwargs)
 
         captured_frame_hidden: Optional[torch.Tensor] = None
+        use_segmented_checkpointing = (
+            torch.is_grad_enabled()
+            and self.gradient_checkpointing
+            and self.gradient_checkpointing_interval is not None
+            and self.gradient_checkpointing_interval > 1
+            and not self.gradient_checkpointing_backend.endswith("-ffn")
+            and skip_layers is None
+            and not use_routing
+            and not musubi_offload_active
+            and grounding_objs is None
+            and not output_hidden_states
+            and hidden_states_buffer is None
+        )
 
         # Transformer blocks with TREAD routing
-        for i, block in enumerate(self.blocks):
-            # TREAD: START a route?
-            if use_routing and route_ptr < len(routes) and i == routes[route_ptr]["start_layer_idx"]:
-                mask_ratio = routes[route_ptr]["selection_ratio"]
+        if use_segmented_checkpointing:
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
-                # Apply routing to video tokens only
-                # Note: encoder_hidden_states (text) is never routed, only passed to cross-attention
-                tread_mask_info = router.get_mask(
-                    hidden_states,  # (B, S_video, D) where S_video = T*H*W tokens
-                    mask_ratio=mask_ratio,
-                    force_keep=force_keep_mask,
-                )
-                saved_tokens = hidden_states.clone()
-                hidden_states = router.start_route(hidden_states, tread_mask_info)
-                routing_now = True
+                checkpoint_fn = offloaded_checkpoint
+            else:
+                checkpoint_fn = torch.utils.checkpoint.checkpoint
 
-                # Route the rotary embeddings to match the selected video tokens
-                # This preserves the 3D positional information for kept tokens
-                current_rope = self._route_rope(
-                    rotary_emb,
-                    tread_mask_info,
-                    keep_len=hidden_states.size(1),
-                    batch=hidden_states.size(0),
-                )
-
-            # Skip layers if specified
-            if skip_layers is not None and i in skip_layers:
-                continue
-
-            if musubi_offload_active and musubi_manager.is_managed_block(i):
-                musubi_manager.stream_in(block, hidden_states.device)
-
-            # Apply transformer block
-            # Each block does:
-            # 1. Self-attention on video tokens (with rotary embeddings)
-            # 2. Cross-attention from video to text tokens
-            # 3. Feed-forward on video tokens
-            # Only video tokens are routed; text tokens always remain full sequence
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
-                if self.gradient_checkpointing_backend == "unsloth":
-                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
-
-                    checkpoint_fn = offloaded_checkpoint
-                else:
-                    checkpoint_fn = torch.utils.checkpoint.checkpoint
-
-                hidden_states = checkpoint_fn(
-                    block,
-                    hidden_states,  # video tokens (possibly routed)
-                    encoder_hidden_states,  # text tokens (always full sequence)
+            def run_wan_block(_block_index, segment_block, segment_hidden_states):
+                return segment_block(
+                    segment_hidden_states,
+                    encoder_hidden_states,
                     timestep_proj,
-                    current_rope,  # rotary embeddings (possibly routed)
-                    use_reentrant=False,
-                )
-            else:
-                hidden_states = block(hidden_states, encoder_hidden_states, timestep_proj, current_rope)
-
-            if grounding_objs is not None and hasattr(block, "fuser"):
-                hidden_states = apply_grounding_fuser(
-                    block.fuser,
-                    hidden_states,
-                    grounding_objs,
-                    tokens_per_frame=post_patch_height * post_patch_width,
-                    num_frames=post_patch_num_frames,
+                    current_rope,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
                 )
 
-            # TREAD: END the current route?
-            if routing_now and i == routes[route_ptr]["end_layer_idx"]:
-                hidden_states = router.end_route(
-                    hidden_states,
-                    tread_mask_info,
-                    original_x=saved_tokens,
-                )
-                routing_now = False
-                route_ptr += 1
-                current_rope = rotary_emb
+            (hidden_states,) = checkpoint_sequential_state(
+                self.blocks,
+                self.gradient_checkpointing_interval,
+                (hidden_states,),
+                run_wan_block,
+                checkpoint_fn,
+                {"use_reentrant": False},
+                segment_stride=self.gradient_checkpointing_segment_stride,
+            )
+        else:
+            for i, block in enumerate(self.blocks):
+                # TREAD: START a route?
+                if use_routing and route_ptr < len(routes) and i == routes[route_ptr]["start_layer_idx"]:
+                    mask_ratio = routes[route_ptr]["selection_ratio"]
 
-            if output_hidden_states and (hidden_state_layer is None or i == hidden_state_layer):
-                captured_frame_hidden = hidden_states.reshape(
-                    batch_size,
-                    post_patch_num_frames,
-                    post_patch_height * post_patch_width,
-                    -1,
-                )
-                if hidden_state_layer is not None and i == hidden_state_layer:
-                    output_hidden_states = False
-            if hidden_states_buffer is not None:
-                tokens_view = hidden_states.reshape(
-                    batch_size,
-                    post_patch_num_frames,
-                    post_patch_height * post_patch_width,
-                    -1,
-                )
-            else:
-                tokens_view = hidden_states
-            _store_hidden_state(hidden_states_buffer, f"layer_{i}", tokens_view)
+                    # Apply routing to video tokens only
+                    # Note: encoder_hidden_states (text) is never routed, only passed to cross-attention
+                    tread_mask_info = router.get_mask(
+                        hidden_states,  # (B, S_video, D) where S_video = T*H*W tokens
+                        mask_ratio=mask_ratio,
+                        force_keep=force_keep_mask,
+                    )
+                    saved_tokens = hidden_states.clone()
+                    hidden_states = router.start_route(hidden_states, tread_mask_info)
+                    routing_now = True
 
-            if musubi_offload_active and musubi_manager.is_managed_block(i):
-                musubi_manager.stream_out(block)
+                    # Route the rotary embeddings to match the selected video tokens
+                    # This preserves the 3D positional information for kept tokens
+                    current_rope = self._route_rope(
+                        rotary_emb,
+                        tread_mask_info,
+                        keep_len=hidden_states.size(1),
+                        batch=hidden_states.size(0),
+                    )
+
+                # Skip layers if specified
+                if skip_layers is not None and i in skip_layers:
+                    continue
+
+                if musubi_offload_active and musubi_manager.is_managed_block(i):
+                    musubi_manager.stream_in(block, hidden_states.device)
+
+                # Apply transformer block
+                # Each block does:
+                # 1. Self-attention on video tokens (with rotary embeddings)
+                # 2. Cross-attention from video to text tokens
+                # 3. Feed-forward on video tokens
+                # Only video tokens are routed; text tokens always remain full sequence
+                if torch.is_grad_enabled() and self.gradient_checkpointing:
+                    if self.gradient_checkpointing_backend.startswith("unsloth"):
+                        from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                        checkpoint_fn = offloaded_checkpoint
+                    else:
+                        checkpoint_fn = torch.utils.checkpoint.checkpoint
+
+                    if self.gradient_checkpointing_backend.endswith("-ffn"):
+                        hidden_states = block(
+                            hidden_states,
+                            encoder_hidden_states,
+                            timestep_proj,
+                            current_rope,
+                            checkpoint_ffn=True,
+                            checkpoint_fn=checkpoint_fn,
+                            offload_attention=self.gradient_checkpointing_offload_attention,
+                        )
+                    else:
+
+                        def run_checkpointed_block(
+                            checkpoint_hidden_states,
+                            checkpoint_encoder_hidden_states,
+                            checkpoint_temb,
+                            checkpoint_rope,
+                            checkpoint_block=block,
+                        ):
+                            return checkpoint_block(
+                                checkpoint_hidden_states,
+                                checkpoint_encoder_hidden_states,
+                                checkpoint_temb,
+                                checkpoint_rope,
+                                offload_attention=self.gradient_checkpointing_offload_attention,
+                            )
+
+                        hidden_states = checkpoint_fn(
+                            run_checkpointed_block,
+                            hidden_states,  # video tokens (possibly routed)
+                            encoder_hidden_states,  # text tokens (always full sequence)
+                            timestep_proj,
+                            current_rope,  # rotary embeddings (possibly routed)
+                            use_reentrant=False,
+                        )
+                else:
+                    hidden_states = block(
+                        hidden_states,
+                        encoder_hidden_states,
+                        timestep_proj,
+                        current_rope,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
+                    )
+
+                if grounding_objs is not None and hasattr(block, "fuser"):
+                    hidden_states = apply_grounding_fuser(
+                        block.fuser,
+                        hidden_states,
+                        grounding_objs,
+                        tokens_per_frame=post_patch_height * post_patch_width,
+                        num_frames=post_patch_num_frames,
+                    )
+
+                # TREAD: END the current route?
+                if routing_now and i == routes[route_ptr]["end_layer_idx"]:
+                    hidden_states = router.end_route(
+                        hidden_states,
+                        tread_mask_info,
+                        original_x=saved_tokens,
+                    )
+                    routing_now = False
+                    route_ptr += 1
+                    current_rope = rotary_emb
+
+                if output_hidden_states and (hidden_state_layer is None or i == hidden_state_layer):
+                    captured_frame_hidden = hidden_states.reshape(
+                        batch_size,
+                        post_patch_num_frames,
+                        post_patch_height * post_patch_width,
+                        -1,
+                    )
+                    if hidden_state_layer is not None and i == hidden_state_layer:
+                        output_hidden_states = False
+                if hidden_states_buffer is not None:
+                    tokens_view = hidden_states.reshape(
+                        batch_size,
+                        post_patch_num_frames,
+                        post_patch_height * post_patch_width,
+                        -1,
+                    )
+                else:
+                    tokens_view = hidden_states
+                _store_hidden_state(hidden_states_buffer, f"layer_{i}", tokens_view)
+
+                if musubi_offload_active and musubi_manager.is_managed_block(i):
+                    musubi_manager.stream_out(block)
 
         # Output processing remains the same
         if temb.ndim == 2:

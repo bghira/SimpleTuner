@@ -31,7 +31,9 @@ from simpletuner.helpers.models.flowmap import (
 from simpletuner.helpers.models.flux.attention import FluxFusedFlashAttnProcessor3
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.attention_backend import AttentionBackendController
+from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
+from simpletuner.helpers.training.offloaded_gradient_checkpointer import activation_offload_context
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 
@@ -350,6 +352,24 @@ class ChromaSingleTransformerBlock(nn.Module):
             pre_only=True,
         )
 
+    def _ffn_forward(
+        self,
+        residual: torch.Tensor,
+        norm_hidden_states: torch.Tensor,
+        attn_output: torch.Tensor,
+        gate: torch.Tensor,
+    ) -> torch.Tensor:
+        mlp_hidden_states = self.act_mlp(self.proj_mlp(norm_hidden_states))
+        hidden_states = torch.cat([attn_output, mlp_hidden_states], dim=2)
+        if gate.ndim == 2:
+            gate = gate.unsqueeze(1)
+        hidden_states = gate * self.proj_out(hidden_states)
+        hidden_states = residual + hidden_states
+        if hidden_states.dtype == torch.float16:
+            hidden_states = hidden_states.clip(-65504, 65504)
+
+        return hidden_states
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -357,10 +377,12 @@ class ChromaSingleTransformerBlock(nn.Module):
         image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         attention_mask: Optional[torch.Tensor] = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
+        checkpoint_ffn: bool = False,
+        checkpoint_fn: Any | None = None,
+        offload_attention: bool = False,
     ) -> torch.Tensor:
         residual = hidden_states
         norm_hidden_states, gate = self.norm(hidden_states, emb=temb)
-        mlp_hidden_states = self.act_mlp(self.proj_mlp(norm_hidden_states))
         joint_attention_kwargs = joint_attention_kwargs or {}
 
         if attention_mask is not None:
@@ -394,12 +416,13 @@ class ChromaSingleTransformerBlock(nn.Module):
         except Exception:
             logger.debug("ChromaFluxSingleTransformerBlock failed to publish QK-Clip logits.", exc_info=True)
 
-        attn_output = self.attn(
-            hidden_states=norm_hidden_states,
-            image_rotary_emb=image_rotary_emb,
-            attention_mask=attention_mask,
-            **joint_attention_kwargs,
-        )
+        with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+            attn_output = self.attn(
+                hidden_states=norm_hidden_states,
+                image_rotary_emb=image_rotary_emb,
+                attention_mask=attention_mask,
+                **joint_attention_kwargs,
+            )
         publish_attention_max_logits(
             getattr(self.attn, "last_query", None) if hasattr(self.attn, "last_query") else None,
             getattr(self.attn, "last_key", None) if hasattr(self.attn, "last_key") else None,
@@ -408,15 +431,17 @@ class ChromaSingleTransformerBlock(nn.Module):
             getattr(self.attn, "to_k", None) and self.attn.to_k.weight,
         )
 
-        hidden_states = torch.cat([attn_output, mlp_hidden_states], dim=2)
-        if gate.ndim == 2:
-            gate = gate.unsqueeze(1)
-        hidden_states = gate * self.proj_out(hidden_states)
-        hidden_states = residual + hidden_states
-        if hidden_states.dtype == torch.float16:
-            hidden_states = hidden_states.clip(-65504, 65504)
-
-        return hidden_states
+        if checkpoint_ffn:
+            if checkpoint_fn is None:
+                raise ValueError("checkpoint_fn is required when checkpoint_ffn=True")
+            return checkpoint_fn(
+                self._ffn_forward,
+                residual,
+                norm_hidden_states,
+                attn_output,
+                gate,
+            )
+        return self._ffn_forward(residual, norm_hidden_states, attn_output, gate)
 
 
 @maybe_allow_in_graph
@@ -451,6 +476,43 @@ class ChromaTransformerBlock(nn.Module):
         self.norm2_context = nn.LayerNorm(dim, elementwise_affine=False, eps=1e-6)
         self.ff_context = FeedForward(dim=dim, dim_out=dim, activation_fn="gelu-approximate")
 
+    def _ffn_forward(
+        self,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: torch.Tensor,
+        shift_mlp: torch.Tensor,
+        scale_mlp: torch.Tensor,
+        gate_mlp: torch.Tensor,
+        c_shift_mlp: torch.Tensor,
+        c_scale_mlp: torch.Tensor,
+        c_gate_mlp: torch.Tensor,
+        ip_attn_output: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        norm_hidden_states = self.norm2(hidden_states)
+        if scale_mlp.ndim == 2:
+            norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+        else:
+            norm_hidden_states = norm_hidden_states * (1 + scale_mlp) + shift_mlp
+
+        ff_output = self.ff(norm_hidden_states)
+        if gate_mlp.ndim == 2:
+            gate_mlp = gate_mlp.unsqueeze(1)
+        hidden_states = hidden_states + gate_mlp * ff_output
+        if ip_attn_output is not None:
+            hidden_states = hidden_states + ip_attn_output
+
+        norm_encoder_hidden_states = self.norm2_context(encoder_hidden_states)
+        norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
+
+        context_ff_output = self.ff_context(norm_encoder_hidden_states)
+        if c_gate_mlp.ndim == 2:
+            c_gate_mlp = c_gate_mlp.unsqueeze(1)
+        encoder_hidden_states = encoder_hidden_states + c_gate_mlp * context_ff_output
+        if encoder_hidden_states.dtype == torch.float16:
+            encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
+
+        return encoder_hidden_states, hidden_states
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -460,6 +522,9 @@ class ChromaTransformerBlock(nn.Module):
         image_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         attention_mask: Optional[torch.Tensor] = None,
         joint_attention_kwargs: Optional[Dict[str, Any]] = None,
+        checkpoint_ffn: bool = False,
+        checkpoint_fn: Any | None = None,
+        offload_attention: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(hidden_states, emb=image_temb)
 
@@ -497,14 +562,16 @@ class ChromaTransformerBlock(nn.Module):
         except Exception:
             logger.debug("ChromaTransformerBlock failed to publish QK-Clip logits.", exc_info=True)
 
-        attention_outputs = self.attn(
-            hidden_states=norm_hidden_states,
-            encoder_hidden_states=norm_encoder_hidden_states,
-            image_rotary_emb=image_rotary_emb,
-            attention_mask=attention_mask,
-            **joint_attention_kwargs,
-        )
+        with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+            attention_outputs = self.attn(
+                hidden_states=norm_hidden_states,
+                encoder_hidden_states=norm_encoder_hidden_states,
+                image_rotary_emb=image_rotary_emb,
+                attention_mask=attention_mask,
+                **joint_attention_kwargs,
+            )
 
+        ip_attn_output = None
         if len(attention_outputs) == 2:
             attn_output, context_attn_output = attention_outputs
         elif len(attention_outputs) == 3:
@@ -515,37 +582,38 @@ class ChromaTransformerBlock(nn.Module):
         attn_output = gate_msa * attn_output
         hidden_states = hidden_states + attn_output
 
-        norm_hidden_states = self.norm2(hidden_states)
-        if scale_mlp.ndim == 2:
-            norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
-        else:
-            norm_hidden_states = norm_hidden_states * (1 + scale_mlp) + shift_mlp
-
-        ff_output = self.ff(norm_hidden_states)
-        if gate_mlp.ndim == 2:
-            gate_mlp = gate_mlp.unsqueeze(1)
-        ff_output = gate_mlp * ff_output
-
-        hidden_states = hidden_states + ff_output
-        if len(attention_outputs) == 3:
-            hidden_states = hidden_states + ip_attn_output
-
         if c_gate_msa.ndim == 2:
             c_gate_msa = c_gate_msa.unsqueeze(1)
         context_attn_output = c_gate_msa * context_attn_output
         encoder_hidden_states = encoder_hidden_states + context_attn_output
 
-        norm_encoder_hidden_states = self.norm2_context(encoder_hidden_states)
-        norm_encoder_hidden_states = norm_encoder_hidden_states * (1 + c_scale_mlp[:, None]) + c_shift_mlp[:, None]
-
-        context_ff_output = self.ff_context(norm_encoder_hidden_states)
-        if c_gate_mlp.ndim == 2:
-            c_gate_mlp = c_gate_mlp.unsqueeze(1)
-        encoder_hidden_states = encoder_hidden_states + c_gate_mlp * context_ff_output
-        if encoder_hidden_states.dtype == torch.float16:
-            encoder_hidden_states = encoder_hidden_states.clip(-65504, 65504)
-
-        return encoder_hidden_states, hidden_states
+        if checkpoint_ffn:
+            if checkpoint_fn is None:
+                raise ValueError("checkpoint_fn is required when checkpoint_ffn=True")
+            return checkpoint_fn(
+                self._ffn_forward,
+                hidden_states,
+                encoder_hidden_states,
+                shift_mlp,
+                scale_mlp,
+                gate_mlp,
+                c_shift_mlp,
+                c_scale_mlp,
+                c_gate_mlp,
+                ip_attn_output,
+                use_reentrant=False,
+            )
+        return self._ffn_forward(
+            hidden_states,
+            encoder_hidden_states,
+            shift_mlp,
+            scale_mlp,
+            gate_mlp,
+            c_shift_mlp,
+            c_scale_mlp,
+            c_gate_mlp,
+            ip_attn_output,
+        )
 
 
 class ChromaTransformer2DModel(
@@ -562,6 +630,8 @@ class ChromaTransformer2DModel(
     """
 
     _supports_gradient_checkpointing = True
+    _supports_ffn_gradient_checkpointing = True
+    _supports_attention_activation_offload = True
     _no_split_modules = ["ChromaTransformerBlock", "ChromaSingleTransformerBlock"]
     _repeated_blocks = ["ChromaTransformerBlock", "ChromaSingleTransformerBlock"]
     _skip_layerwise_casting_patterns = ["pos_embed", "norm"]
@@ -679,6 +749,8 @@ class ChromaTransformer2DModel(
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
+        self.gradient_checkpointing_offload_attention = False
         self.gradient_checkpointing_backend = "torch"
 
         total_layers = num_layers + num_single_layers
@@ -707,6 +779,12 @@ class ChromaTransformer2DModel(
         Sets how often gradient checkpointing should be applied when enabled.
         """
         self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
+
+    def set_gradient_checkpointing_offload_attention(self, enabled: bool):
+        self.gradient_checkpointing_offload_attention = bool(enabled)
 
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
@@ -949,26 +1027,66 @@ class ChromaTransformer2DModel(
             use_checkpoint = (
                 torch.is_grad_enabled()
                 and self.gradient_checkpointing
-                and (self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0)
+                and should_checkpoint_block(
+                    index_block,
+                    self.gradient_checkpointing,
+                    self.gradient_checkpointing_interval,
+                    self.gradient_checkpointing_segment_stride,
+                )
             )
 
             if use_checkpoint:
-                if self.gradient_checkpointing_backend == "unsloth":
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint
                 else:
                     checkpoint_fn = self._gradient_checkpointing_func
 
-                encoder_hidden_states, hidden_states = checkpoint_fn(
-                    block,
-                    hidden_states,
-                    encoder_hidden_states,
-                    image_temb,
-                    text_temb,
-                    current_rope,
-                    attention_mask,
-                )
+                if self.gradient_checkpointing_backend.endswith("-ffn"):
+                    encoder_hidden_states, hidden_states = block(
+                        hidden_states=hidden_states,
+                        encoder_hidden_states=encoder_hidden_states,
+                        image_temb=image_temb,
+                        text_temb=text_temb,
+                        image_rotary_emb=current_rope,
+                        attention_mask=attention_mask,
+                        joint_attention_kwargs=joint_attention_kwargs,
+                        checkpoint_ffn=True,
+                        checkpoint_fn=checkpoint_fn,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
+                    )
+                else:
+
+                    def run_checkpointed_block(
+                        checkpoint_hidden_states,
+                        checkpoint_encoder_hidden_states,
+                        checkpoint_image_temb,
+                        checkpoint_text_temb,
+                        checkpoint_rope,
+                        checkpoint_attention_mask,
+                        checkpoint_block=block,
+                    ):
+                        return checkpoint_block(
+                            hidden_states=checkpoint_hidden_states,
+                            encoder_hidden_states=checkpoint_encoder_hidden_states,
+                            image_temb=checkpoint_image_temb,
+                            text_temb=checkpoint_text_temb,
+                            image_rotary_emb=checkpoint_rope,
+                            attention_mask=checkpoint_attention_mask,
+                            joint_attention_kwargs=joint_attention_kwargs,
+                            offload_attention=self.gradient_checkpointing_offload_attention,
+                        )
+
+                    encoder_hidden_states, hidden_states = checkpoint_fn(
+                        run_checkpointed_block,
+                        hidden_states,
+                        encoder_hidden_states,
+                        image_temb,
+                        text_temb,
+                        current_rope,
+                        attention_mask,
+                    )
 
             else:
                 encoder_hidden_states, hidden_states = block(
@@ -979,6 +1097,7 @@ class ChromaTransformer2DModel(
                     image_rotary_emb=current_rope,
                     attention_mask=attention_mask,
                     joint_attention_kwargs=joint_attention_kwargs,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
                 )
 
             if grounding_objs is not None and hasattr(block, "fuser"):
@@ -1110,23 +1229,56 @@ class ChromaTransformer2DModel(
             use_checkpoint = (
                 torch.is_grad_enabled()
                 and self.gradient_checkpointing
-                and (self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0)
+                and should_checkpoint_block(
+                    index_block,
+                    self.gradient_checkpointing,
+                    self.gradient_checkpointing_interval,
+                    self.gradient_checkpointing_segment_stride,
+                )
             )
 
             if use_checkpoint:
-                if self.gradient_checkpointing_backend == "unsloth":
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint
                 else:
                     checkpoint_fn = self._gradient_checkpointing_func
 
-                hidden_states = checkpoint_fn(
-                    block,
-                    hidden_states,
-                    temb,
-                    current_rope,
-                )
+                if self.gradient_checkpointing_backend.endswith("-ffn"):
+                    hidden_states = block(
+                        hidden_states=hidden_states,
+                        temb=temb,
+                        image_rotary_emb=current_rope,
+                        attention_mask=attention_mask,
+                        joint_attention_kwargs=joint_attention_kwargs,
+                        checkpoint_ffn=True,
+                        checkpoint_fn=checkpoint_fn,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
+                    )
+                else:
+
+                    def run_checkpointed_block(
+                        checkpoint_hidden_states,
+                        checkpoint_temb,
+                        checkpoint_rope,
+                        checkpoint_block=block,
+                    ):
+                        return checkpoint_block(
+                            hidden_states=checkpoint_hidden_states,
+                            temb=checkpoint_temb,
+                            image_rotary_emb=checkpoint_rope,
+                            attention_mask=attention_mask,
+                            joint_attention_kwargs=joint_attention_kwargs,
+                            offload_attention=self.gradient_checkpointing_offload_attention,
+                        )
+
+                    hidden_states = checkpoint_fn(
+                        run_checkpointed_block,
+                        hidden_states,
+                        temb,
+                        current_rope,
+                    )
 
             else:
                 hidden_states = block(
@@ -1135,6 +1287,7 @@ class ChromaTransformer2DModel(
                     image_rotary_emb=current_rope,
                     attention_mask=attention_mask,
                     joint_attention_kwargs=joint_attention_kwargs,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
                 )
 
             if grounding_objs is not None and hasattr(block, "fuser"):

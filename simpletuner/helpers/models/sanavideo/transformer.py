@@ -39,6 +39,8 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.checkpointing import checkpoint as simpletuner_checkpoint
+from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state, should_checkpoint_block
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 
@@ -769,6 +771,9 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         self.proj_out = nn.Linear(inner_dim, math.prod(patch_size) * out_channels)
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
+        self.gradient_checkpointing_backend = "torch"
 
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=num_layers,
@@ -776,6 +781,15 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         if hasattr(self.time_embed, "enable_flowmap_time_conditioning"):
@@ -988,13 +1002,29 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
             musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
 
         capture_idx = 0
-        if torch.is_grad_enabled() and self.gradient_checkpointing:
-            for index_block, block in enumerate(self.transformer_blocks):
-                if musubi_offload_active and musubi_manager.is_managed_block(index_block):
-                    musubi_manager.stream_in(block, hidden_states.device)
-                hidden_states = self._gradient_checkpointing_func(
-                    block,
-                    hidden_states,
+        use_segmented_checkpointing = (
+            grad_enabled
+            and self.gradient_checkpointing
+            and self.gradient_checkpointing_interval is not None
+            and self.gradient_checkpointing_interval > 1
+            and not self.gradient_checkpointing_backend.endswith("-ffn")
+            and not musubi_offload_active
+            and grounding_objs is None
+            and controlnet_block_samples is None
+            and not output_hidden_states
+            and hidden_states_buffer is None
+        )
+        if use_segmented_checkpointing:
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                segmented_checkpoint_fn = offloaded_checkpoint
+            else:
+                segmented_checkpoint_fn = simpletuner_checkpoint
+
+            def run_segmented_block(_idx, segment_block, segment_hidden_states):
+                return segment_block(
+                    segment_hidden_states,
                     attention_mask,
                     encoder_hidden_states,
                     encoder_attention_mask,
@@ -1004,6 +1034,57 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
                     post_patch_width,
                     rotary_emb,
                 )
+
+            (hidden_states,) = checkpoint_sequential_state(
+                self.transformer_blocks,
+                self.gradient_checkpointing_interval,
+                (hidden_states,),
+                run_segmented_block,
+                segmented_checkpoint_fn,
+                {"use_reentrant": False},
+                segment_stride=self.gradient_checkpointing_segment_stride,
+            )
+        elif torch.is_grad_enabled() and self.gradient_checkpointing:
+            for index_block, block in enumerate(self.transformer_blocks):
+                if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+                    musubi_manager.stream_in(block, hidden_states.device)
+                if should_checkpoint_block(
+                    index_block,
+                    self.gradient_checkpointing,
+                    self.gradient_checkpointing_interval,
+                    self.gradient_checkpointing_segment_stride,
+                ):
+                    if self.gradient_checkpointing_backend.startswith("unsloth"):
+                        from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                        checkpoint_fn = offloaded_checkpoint
+                    else:
+                        checkpoint_fn = self._gradient_checkpointing_func
+
+                    hidden_states = checkpoint_fn(
+                        block,
+                        hidden_states,
+                        attention_mask,
+                        encoder_hidden_states,
+                        encoder_attention_mask,
+                        timestep,
+                        post_patch_num_frames,
+                        post_patch_height,
+                        post_patch_width,
+                        rotary_emb,
+                    )
+                else:
+                    hidden_states = block(
+                        hidden_states,
+                        attention_mask,
+                        encoder_hidden_states,
+                        encoder_attention_mask,
+                        timestep,
+                        post_patch_num_frames,
+                        post_patch_height,
+                        post_patch_width,
+                        rotary_emb,
+                    )
                 if grounding_objs is not None and hasattr(block, "fuser"):
                     hidden_states = apply_grounding_fuser(
                         block.fuser,

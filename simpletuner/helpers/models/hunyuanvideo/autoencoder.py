@@ -1095,10 +1095,18 @@ class AutoencoderKLConv3D(ModelMixin, ConfigMixin):
             self.tile_latent_min_size * self.tile_overlap_factor
         ).is_integer(), "self.tile_latent_min_size multiplied by tile_overlap_factor must be an integer"
 
-    def _set_gradient_checkpointing(self, module, value=False):
+    def _set_gradient_checkpointing(self, module=None, value=False, enable=None, gradient_checkpointing_func=None):
         """Enable or disable gradient checkpointing on encoder and decoder."""
+        if enable is not None:
+            value = enable
+        if gradient_checkpointing_func is not None:
+            self._gradient_checkpointing_func = gradient_checkpointing_func
+        if module is None:
+            module = self
         if isinstance(module, (Encoder, Decoder)):
             module.gradient_checkpointing = value
+        for child in module.children():
+            self._set_gradient_checkpointing(child, value=value)
 
     def enable_temporal_tiling(self, use_tiling: bool = True):
         raise RuntimeError("Temporal tiling is not supported for this VAE.")

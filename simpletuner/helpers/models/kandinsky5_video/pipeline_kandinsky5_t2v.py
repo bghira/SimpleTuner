@@ -785,11 +785,11 @@ class Kandinsky5T2VPipeline(DiffusionPipeline, KandinskyLoraLoaderMixin):
             torch.arange(width // self.vae_scale_factor_spatial // 2, device=device),
         ]
 
-        text_rope_pos = torch.arange(prompt_cu_seqlens.diff().max().item(), device=device)
+        text_rope_pos = torch.arange(prompt_embeds_qwen.shape[1], device=device)
 
         negative_text_rope_pos = (
-            torch.arange(negative_prompt_cu_seqlens.diff().max().item(), device=device)
-            if negative_prompt_cu_seqlens is not None
+            torch.arange(negative_prompt_embeds_qwen.shape[1], device=device)
+            if negative_prompt_embeds_qwen is not None
             else None
         )
 

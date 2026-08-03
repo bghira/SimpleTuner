@@ -32,9 +32,15 @@
 }
 ```
 
-`gradient_checkpointing_interval: 2` は対応 block を 1 つおきに checkpoint します。値を大きくすると checkpointing は減り、VRAM に残る activation は増えます。
+`gradient_checkpointing_interval: 2` は対応する whole-block path で連続した 2-block chunk を checkpoint します。値を大きくすると再計算は減り、VRAM に残る activation は増えます。
 
-`torch-ffn` と `unsloth-ffn` は現在 Flux.1-style blocks と MageFlow に対応しています。他のモデル族は、同じ安全な境界を expose するまで明示的に失敗します。
+これらの segmented path では、`gradient_checkpointing_segment_stride` も `unsloth` で使えます。速度目的ではなく fit lever として扱ってください。Skip された blocks は GPU に残り、checkpoint された blocks は保存 tensor に CPU offload を使います。Torch-only の概要とモデル別 benchmark は [Segmented Checkpointing](SEGMENTED_CHECKPOINTING.md) を参照してください。
+
+`gradient_checkpointing_offload_attention` は backend とは別の option です。対応する attention/FFN split blocks では、attention 側の保存 activations を offload します。単体でも実行でき、モデルがその backend をサポートする場合は `torch`、`torch-ffn`、`unsloth`、`unsloth-ffn` と組み合わせられます。
+
+`gradient_checkpointing_offload_pin_memory_max_buckets` は offload された保存 tensor の pinned CPU pooling を制御します。デフォルトは `12` 個の distinct tensor buckets です。`0` にすると通常の CPU memory だけを使います。
+
+`torch-ffn` と `unsloth-ffn` は現在 Chroma、Flux、Krea 2、LTXVideo2、MageFlow、Wan、Z-Image に対応しています。他のモデル族は、同じ安全な境界を expose するまで明示的に失敗します。
 
 ## 何を交換するか
 
