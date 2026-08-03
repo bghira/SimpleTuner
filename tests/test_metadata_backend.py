@@ -639,6 +639,101 @@ class TestAutomaticOversubscriptionLogicalSequence(unittest.TestCase):
         self.assertEqual(len(backend.aspect_ratio_bucket_indices["full"]), 1)
 
 
+class TestEmptyBucketRepeatValidation(unittest.TestCase):
+    """An empty bucket key survives update_buckets_with_existing_files and reaches the split."""
+
+    @staticmethod
+    def _backend(buckets, *, repeats=0):
+        backend = MagicMock(spec=MetadataBackend)
+        backend.id = "empty-bucket"
+        backend.batch_size = 1
+        backend.repeats = repeats
+        backend.bucket_report = None
+        backend.dataset_type = DatasetType.IMAGE
+        backend.aspect_ratio_bucket_indices = {key: list(value) for key, value in buckets.items()}
+        backend.read_only = False
+        backend.accelerator = MagicMock(num_processes=1, process_index=0, is_main_process=True)
+        return backend
+
+    @staticmethod
+    def _split(backend, *, num_processes, allow_oversubscription, dp_rank=0):
+        with (
+            patch.dict("os.environ", {"SIMPLETUNER_SHUFFLE_BUCKETS": "0"}),
+            patch.object(
+                StateTracker,
+                "get_args",
+                return_value=SimpleNamespace(allow_dataset_oversubscription=allow_oversubscription),
+            ),
+            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+            patch(
+                "simpletuner.helpers.metadata.backends.base.get_cp_aware_dp_info",
+                return_value=(num_processes, dp_rank, 1),
+            ),
+        ):
+            MetadataBackend.split_buckets_between_processes(
+                backend,
+                gradient_accumulation_steps=1,
+                apply_padding=allow_oversubscription,
+            )
+
+    def test_empty_bucket_does_not_divide_by_zero(self):
+        # The crash is not distribution-specific: effective_batch_size is at least 1, so an
+        # empty bucket always joins buckets_that_will_fail regardless of world size.
+        for num_processes in (1, 2, 8):
+            for allow_oversubscription in (True, False):
+                with self.subTest(num_processes=num_processes, allow_oversubscription=allow_oversubscription):
+                    backend = self._backend({"1.0": ["a.jpg", "b.jpg"], "1.5": []})
+                    try:
+                        self._split(backend, num_processes=num_processes, allow_oversubscription=allow_oversubscription)
+                    except ZeroDivisionError as error:
+                        self.fail(f"empty bucket divided by zero: {error}")
+                    except ValueError:
+                        # The pre-existing "zero usable batches" guard is allowed to fire; it is
+                        # asserted on its own below.
+                        pass
+
+    def test_oversubscription_ignores_the_empty_bucket_when_adjusting_repeats(self):
+        # The auto repeat factor ceil(8 / 2) - 1 = 3 is driven by the two-image bucket alone.
+        # Since #2918, repeats is left unmutated and the factor is materialised into the
+        # rank-local shard instead: logical 2 * (3 + 1) = 8 samples, batch-aligned to the
+        # effective batch size of 8, so every rank holds exactly 8 // 8 = 1 cyclic sample.
+        shards = []
+        for dp_rank in range(8):
+            backend = self._backend({"1.0": ["a.jpg", "b.jpg"], "1.5": []})
+            self._split(backend, num_processes=8, allow_oversubscription=True, dp_rank=dp_rank)
+            self.assertEqual(backend.repeats, 0, "auto oversubscription must not mutate repeats")
+            self.assertEqual(backend.aspect_ratio_bucket_indices["1.5"], [])
+            shards.append(backend.aspect_ratio_bucket_indices["1.0"])
+
+        self.assertEqual([len(shard) for shard in shards], [1] * 8)
+        self.assertEqual([shard[0] for shard in shards], ["a.jpg", "b.jpg"] * 4)
+
+    def test_empty_bucket_still_reports_zero_usable_batches_without_oversubscription(self):
+        backend = self._backend({"1.0": ["a.jpg", "b.jpg"], "1.5": []})
+        with self.assertRaises(ValueError) as raised:
+            self._split(backend, num_processes=8, allow_oversubscription=False)
+        self.assertIn("zero usable batches", str(raised.exception))
+
+    def test_bucket_without_empty_keys_is_unaffected(self):
+        backend = self._backend({"1.0": ["a.jpg", "b.jpg"]})
+        self._split(backend, num_processes=8, allow_oversubscription=True)
+
+        # Same materialised schedule as the empty-bucket case: repeats stays 0 and rank 0
+        # holds the first of the eight batch-aligned cyclic samples.
+        self.assertEqual(backend.repeats, 0, "auto oversubscription must not mutate repeats")
+        self.assertEqual(backend.aspect_ratio_bucket_indices["1.0"], ["a.jpg"])
+
+    def test_refresh_leaves_an_empty_bucket_key_behind(self):
+        # update_buckets_with_existing_files assigns [] rather than dropping the key, which is
+        # how the empty bucket reaches the split in the first place.
+        backend = MagicMock()
+        backend.aspect_ratio_bucket_indices = {"1.0": ["a.jpg"], "1.5": ["gone.jpg"]}
+        backend.bucket_report = None
+        MetadataBackend.update_buckets_with_existing_files(backend, {"a.jpg"})
+
+        self.assertEqual(backend.aspect_ratio_bucket_indices, {"1.0": ["a.jpg"], "1.5": []})
+
+
 class TestFilteringStatistics(unittest.TestCase):
     """Test filtering_statistics storage and retrieval in metadata backends (issue #2474)."""
 
