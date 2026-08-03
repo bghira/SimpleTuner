@@ -80,6 +80,31 @@ class HunyuanVideoModelTests(unittest.TestCase):
         model = HunyuanVideo.__new__(HunyuanVideo)
         self.assertTrue(model.supports_crepa_self_flow())
 
+    def test_check_user_config_maps_upstream_repo_to_diffusers_flavour_repo(self):
+        model = HunyuanVideo.__new__(HunyuanVideo)
+        model.config = SimpleNamespace(
+            model_flavour="t2v-480p",
+            pretrained_model_name_or_path=HunyuanVideo.UPSTREAM_MODEL_REPO,
+        )
+
+        model.check_user_config()
+
+        self.assertEqual(
+            model.config.pretrained_model_name_or_path,
+            HunyuanVideo.HUGGINGFACE_PATHS["t2v-480p"],
+        )
+
+    def test_check_user_config_preserves_explicit_custom_model_path(self):
+        model = HunyuanVideo.__new__(HunyuanVideo)
+        model.config = SimpleNamespace(
+            model_flavour="t2v-480p",
+            pretrained_model_name_or_path="local-or-hub/custom-hunyuan-diffusers",
+        )
+
+        model.check_user_config()
+
+        self.assertEqual(model.config.pretrained_model_name_or_path, "local-or-hub/custom-hunyuan-diffusers")
+
     def test_prepare_crepa_self_flow_batch_builds_tokenwise_student_and_teacher_views(self):
         model = HunyuanVideo.__new__(HunyuanVideo)
         model.accelerator = SimpleNamespace(device=torch.device("cpu"))
