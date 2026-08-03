@@ -18,10 +18,10 @@ Guias passo a passo para treinar cada arquitetura de modelo suportada.
 | **Lumina2** | 2B | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Sim | [Guia Lumina2](LUMINA2.md) |
 | **HiDream** | 17B MoE | [MIT](https://opensource.org/license/mit) | Sim | [Guia HiDream](HIDREAM.md) |
 | **Z-Image** | - | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Sim | [Guia Z-Image](ZIMAGE.md) |
-| **Krea2** | - | [Krea 2 Community](https://www.krea.ai/krea-2-licensing) | Condições aplicáveis<sup>6</sup> | [Guia Krea2](KREA2.pt-BR.md) |
+| **Krea2** | - | [Krea 2 Community](https://www.krea.ai/krea-2-licensing) | Sim<sup>6</sup> | [Guia Krea2](KREA2.pt-BR.md) |
 | **Mage-Flow** | 4B | [MIT](https://opensource.org/license/mit) | Sim | [Guia Mage-Flow](MAGEFLOW.pt-BR.md) |
 | **Boogu-Image** | - | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Sim | [Guia Boogu-Image](BOOGU_IMAGE.pt-BR.md) |
-| **zlab i1** | 3B | [Unspecified](https://huggingface.co/bghira/zlab-i1-diffusers) | Condições aplicáveis<sup>12</sup> | [Guia zlab i1](ZLAB_i1.pt-BR.md) |
+| **zlab i1** | 3B | [MIT](https://opensource.org/license/mit) | Sim | [Guia zlab i1](ZLAB_i1.pt-BR.md) |
 | **Ideogram 4** | 9B | [Ideogram 4 Non-Commercial](https://huggingface.co/ideogram-ai/ideogram-4-nf4/blob/main/LICENSE.md) | Não<sup>5</sup> | [Guia Ideogram 4](IDEOGRAM4.pt-BR.md) |
 | **ERNIE-Image** | - | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Sim | [Guia ERNIE](ERNIE.md) |
 
@@ -42,8 +42,8 @@ Guias passo a passo para treinar cada arquitetura de modelo suportada.
 | Modelo | Parâmetros | Licença | Permite uso comercial | Guia |
 | ------- | ------------ | --- | :---: | ------ |
 | **Stable Diffusion XL** | 3.5B | [OpenRAIL++](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md) | Condições aplicáveis<sup>1</sup> | [Guia SDXL](SDXL.md) |
-| **Kolors** | 5B | [Kwai Kolors License](https://huggingface.co/terminusresearch/kwai-kolors-1.0/blob/main/MODEL_LICENSE) | Condições aplicáveis<sup>7</sup> | [Guia Kolors](KOLORS.md) |
-| **Stable Cascade** | - | [Stable Cascade NC Community](https://huggingface.co/stabilityai/stable-cascade/blob/main/LICENSE) | Não<sup>5</sup> | [Guia Cascade](STABLE_CASCADE_C.md) |
+| **Kolors** | 5B | [Kwai Kolors License](https://huggingface.co/terminusresearch/kwai-kolors-1.0/blob/main/MODEL_LICENSE) | Abandonware<sup>7</sup> | [Guia Kolors](KOLORS.md) |
+| **Stable Cascade** | - | [Stable Cascade NC Community](https://huggingface.co/stabilityai/stable-cascade/blob/main/LICENSE) | Abandonware<sup>7</sup> | [Guia Cascade](STABLE_CASCADE_C.md) |
 
 ### Edição de Imagem
 
@@ -78,9 +78,9 @@ Guias passo a passo para treinar cada arquitetura de modelo suportada.
 
 <sup>5</sup> Termos públicos de modelo não comercial não permitem uso comercial de pesos, checkpoints derivados ou serviços hospedados do modelo sem uma licença separada.
 
-<sup>6</sup> A Krea 2 Community License permite uso comercial apenas sob seus requisitos de receita e segurança/filtragem; caso contrário, é necessária uma licença empresarial.
+<sup>6</sup> A Krea 2 Community License permite uso comercial sob seu limite de receita (menos de $1M anuais) e requisitos de segurança/filtragem; caso contrário, é necessária uma licença empresarial.
 
-<sup>7</sup> O uso comercial do modelo Kolors ou de seus derivados exige solicitar e receber permissão explícita do licenciante.
+<sup>7</sup> Abandonware significa que o fornecedor original efetivamente deixou o modelo para trás e não há um caminho confiável para pedir permissão; cada usuário deve decidir se aceita esse risco.
 
 <sup>8</sup> AuraFlow aceita flavours upstream Apache-2.0 e um flavour Pony com uma licença personalizada separada; confira o flavour selecionado.
 
@@ -90,7 +90,6 @@ Guias passo a passo para treinar cada arquitetura de modelo suportada.
 
 <sup>11</sup> A Tencent Hunyuan Community License inclui exclusões territoriais e um limite comercial para serviços muito grandes.
 
-<sup>12</sup> Este mirror publica `license: other` sem texto de licença padrão; revise os termos upstream antes de uso comercial.
 
 ## Modelos de Áudio
 

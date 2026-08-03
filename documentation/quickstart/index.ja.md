@@ -18,10 +18,10 @@
 | **Lumina2** | 2B | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | はい | [Lumina2 ガイド](LUMINA2.md) |
 | **HiDream** | 17B MoE | [MIT](https://opensource.org/license/mit) | はい | [HiDream ガイド](HIDREAM.md) |
 | **Z-Image** | - | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | はい | [Z-Image ガイド](ZIMAGE.md) |
-| **Krea2** | - | [Krea 2 Community](https://www.krea.ai/krea-2-licensing) | 条件付き<sup>6</sup> | [Krea2 ガイド](KREA2.ja.md) |
+| **Krea2** | - | [Krea 2 Community](https://www.krea.ai/krea-2-licensing) | はい<sup>6</sup> | [Krea2 ガイド](KREA2.ja.md) |
 | **Mage-Flow** | 4B | [MIT](https://opensource.org/license/mit) | はい | [Mage-Flow ガイド](MAGEFLOW.ja.md) |
 | **Boogu-Image** | - | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | はい | [Boogu-Image ガイド](BOOGU_IMAGE.ja.md) |
-| **zlab i1** | 3B | [Unspecified](https://huggingface.co/bghira/zlab-i1-diffusers) | 条件付き<sup>12</sup> | [zlab i1 ガイド](ZLAB_i1.ja.md) |
+| **zlab i1** | 3B | [MIT](https://opensource.org/license/mit) | はい | [zlab i1 ガイド](ZLAB_i1.ja.md) |
 | **Ideogram 4** | 9B | [Ideogram 4 Non-Commercial](https://huggingface.co/ideogram-ai/ideogram-4-nf4/blob/main/LICENSE.md) | いいえ<sup>5</sup> | [Ideogram 4 ガイド](IDEOGRAM4.ja.md) |
 | **ERNIE-Image** | - | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | はい | [ERNIE ガイド](ERNIE.md) |
 
@@ -42,8 +42,8 @@
 | モデル | パラメータ | ライセンス | 商用利用 | ガイド |
 | ------- | ------------ | --- | :---: | ------- |
 | **Stable Diffusion XL** | 3.5B | [OpenRAIL++](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md) | 条件付き<sup>1</sup> | [SDXL ガイド](SDXL.md) |
-| **Kolors** | 5B | [Kwai Kolors License](https://huggingface.co/terminusresearch/kwai-kolors-1.0/blob/main/MODEL_LICENSE) | 条件付き<sup>7</sup> | [Kolors ガイド](KOLORS.md) |
-| **Stable Cascade** | - | [Stable Cascade NC Community](https://huggingface.co/stabilityai/stable-cascade/blob/main/LICENSE) | いいえ<sup>5</sup> | [Cascade ガイド](STABLE_CASCADE_C.md) |
+| **Kolors** | 5B | [Kwai Kolors License](https://huggingface.co/terminusresearch/kwai-kolors-1.0/blob/main/MODEL_LICENSE) | Abandonware<sup>7</sup> | [Kolors ガイド](KOLORS.md) |
+| **Stable Cascade** | - | [Stable Cascade NC Community](https://huggingface.co/stabilityai/stable-cascade/blob/main/LICENSE) | Abandonware<sup>7</sup> | [Cascade ガイド](STABLE_CASCADE_C.md) |
 
 ### 画像編集
 
@@ -78,9 +78,9 @@
 
 <sup>5</sup> 公開されている非商用モデル条件では、別ライセンスなしに重み、派生チェックポイント、ホスト型モデルサービスを商用利用できません。
 
-<sup>6</sup> Krea 2 Community License は収益および安全性/フィルタリング要件を満たす場合のみ商用利用を許可します。それ以外はエンタープライズライセンスが必要です。
+<sup>6</sup> Krea 2 Community License は、収益上限（年間 $1M 未満）と安全性/フィルタリング要件を満たす場合に商用利用を許可します。それ以外はエンタープライズライセンスが必要です。
 
-<sup>7</sup> Kolors のモデルまたは派生物の商用利用には、ライセンサーへの申請と明示的な許可が必要です。
+<sup>7</sup> Abandonware は、元のベンダーが実質的にモデルを放置しており、許可を得る信頼できる経路がないことを意味します。そのリスクを受け入れるかはエンドユーザーの判断です。
 
 <sup>8</sup> AuraFlow は Apache-2.0 の upstream flavour と、別のカスタムライセンスを持つ Pony flavour をサポートします。選択した flavour を確認してください。
 
@@ -90,7 +90,6 @@
 
 <sup>11</sup> Tencent Hunyuan Community License には地域除外と、非常に大規模なサービス向けの商用しきい値があります。
 
-<sup>12</sup> この mirror は標準ライセンス本文なしで `license: other` を公開しています。商用利用前に upstream terms を確認してください。
 
 ## 音声モデル
 
