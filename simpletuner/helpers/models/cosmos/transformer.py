@@ -805,7 +805,6 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
 
         # 3. Patchify input
         p_t, p_h, p_w = self.config.patch_size
-        expected_num_frames = num_frames // p_t
         expected_height = height // p_h
         expected_width = width // p_w
         hidden_states = self.patch_embed(hidden_states)
@@ -898,11 +897,15 @@ class CosmosTransformer3DModel(PatchableModule, ModelMixin, ConfigMixin, FromOri
                         break
             if musubi_offload_active and musubi_manager.is_managed_block(bid):
                 musubi_manager.stream_in(block, hidden_states.device)
-            if torch.is_grad_enabled() and should_checkpoint_block(
-                bid,
-                self.gradient_checkpointing,
-                self.gradient_checkpointing_interval,
-                self.gradient_checkpointing_segment_stride,
+            if (
+                grad_enabled
+                and self.gradient_checkpointing
+                and should_checkpoint_block(
+                    bid,
+                    self.gradient_checkpointing,
+                    self.gradient_checkpointing_interval,
+                    self.gradient_checkpointing_segment_stride,
+                )
             ):
                 hidden_states = self._gradient_checkpointing_func(
                     block,
