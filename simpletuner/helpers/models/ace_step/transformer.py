@@ -37,6 +37,7 @@ from simpletuner.helpers.models.flowmap import (
     set_flowmap_gate,
     validate_flowmap_deltatime_type,
 )
+from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
 
 from .attention import LinearTransformerBlock, t2i_modulate
 from .lyrics_utils.lyric_encoder import ConformerEncoder as LyricEncoder
@@ -364,12 +365,20 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
 
         self.final_layer = T2IFinalLayer(self.inner_dim, patch_size=patch_size, out_channels=out_channels)
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
         self.gradient_checkpointing_backend = "torch"
         self._mps_fp32 = False
         self._logged_dtype_mismatch = False
 
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="ACEStep")
@@ -619,9 +628,14 @@ class ACEStepTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
         capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
 
-            if self.training and self.gradient_checkpointing:
+            if self.training and should_checkpoint_block(
+                index_block,
+                self.gradient_checkpointing,
+                self.gradient_checkpointing_interval,
+                self.gradient_checkpointing_segment_stride,
+            ):
 
-                if self.gradient_checkpointing_backend == "unsloth":
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint
