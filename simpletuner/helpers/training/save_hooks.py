@@ -1074,11 +1074,16 @@ class SaveHookManager:
 
         distributed_type = DistributedType.NO
         is_main_process = True
+        is_local_main_process = True
         if self.accelerator is not None:
             distributed_type = getattr(self.accelerator, "distributed_type", DistributedType.NO)
             is_main_process = getattr(self.accelerator, "is_main_process", True)
+            is_local_main_process = getattr(self.accelerator, "is_local_main_process", True)
 
-        if is_main_process:
+        # One writer per node, so the file also lands on node-local storage in
+        # multi-node runs. Concurrent node-mains on a shared filesystem are safe
+        # because the writer uses a process-unique temp name and atomic rename.
+        if is_local_main_process:
             StateTracker.save_ramtorch_prefetch_orders(output_dir)
 
         with self._offload_models_during_save(is_main_process):

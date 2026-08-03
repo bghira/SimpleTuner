@@ -405,7 +405,7 @@ class StateTracker:
             return
         data = cls._normalise_ramtorch_prefetch_orders(cls.ramtorch_prefetch_orders)
         path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = path.with_suffix(f"{path.suffix}.tmp")
+        temp_path = path.with_suffix(f"{path.suffix}.tmp.{os.getpid()}")
         with temp_path.open("w") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)
             try:
