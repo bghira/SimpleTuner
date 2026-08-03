@@ -1,6 +1,7 @@
 import inspect
 import json
 import unittest
+from unittest.mock import patch
 
 import torch
 
@@ -114,6 +115,35 @@ class ZImageTransformerPaddingTests(unittest.TestCase):
         # Should not raise
         model._set_gradient_checkpointing(enable=True)
         self.assertTrue(model.gradient_checkpointing)
+
+    def test_ffn_backend_disables_segmented_checkpointing(self):
+        model = ZImageTransformer2DModel(
+            all_patch_size=(2,),
+            all_f_patch_size=(1,),
+            in_channels=1,
+            dim=8,
+            n_layers=2,
+            n_refiner_layers=1,
+            n_heads=1,
+            n_kv_heads=1,
+            norm_eps=1e-5,
+            qk_norm=False,
+            cap_feat_dim=4,
+            rope_theta=1.0,
+            t_scale=1.0,
+            axes_dims=[2, 2, 4],
+            axes_lens=[64, 64, 64],
+        )
+        model.train()
+        model._set_gradient_checkpointing(enable=True)
+        model.set_gradient_checkpointing_backend("torch-ffn")
+        model.set_gradient_checkpointing_interval(2)
+
+        with patch("simpletuner.helpers.models.z_image.transformer.checkpoint_sequential_state") as segmented:
+            output = model([torch.zeros(1, 1, 8, 8, requires_grad=True)], torch.full((1,), 0.5), [torch.zeros(2, 4)])[0]
+
+        segmented.assert_not_called()
+        self.assertEqual(output[0].shape, (1, 1, 8, 8))
 
     def test_context_parallel_only_marks_unified_transformer_blocks(self):
         model = ZImageTransformer2DModel(

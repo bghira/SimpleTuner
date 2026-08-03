@@ -1104,6 +1104,7 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
             and self.gradient_checkpointing
             and self.gradient_checkpointing_interval is not None
             and self.gradient_checkpointing_interval > 1
+            and not self.gradient_checkpointing_backend.endswith("-ffn")
             and not use_routing
             and not skip_set
             and hidden_states_buffer is None

@@ -668,7 +668,7 @@ class ZImageSegmentedCheckpointingSupportTests(unittest.TestCase):
             backend=True,
             interval=True,
             stride=True,
-            offload=True,
+            checkpoint_attention_offload=True,
             ffn=True,
             attention_offload=True,
         )
