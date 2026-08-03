@@ -51,6 +51,40 @@ class MusubiBlockSwapTests(unittest.TestCase):
             self.assertEqual(qlinear.weight._data.device.type, "cpu")
             self.assertEqual(qlinear.weight._scale.device.type, "cpu")
 
+    def test_sdnq_module_streams_without_apply_swap(self):
+        device = self._accelerator_device()
+
+        class FakeSDNQLinear(nn.Linear):
+            pass
+
+        FakeSDNQLinear.__module__ = "sdnq.training.layers.linear"
+        block = nn.Sequential(FakeSDNQLinear(4, 4), nn.SiLU(), FakeSDNQLinear(4, 4))
+        for param in block.parameters():
+            param.requires_grad_(False)
+            param.sdnq_dequantizer = object()
+            param.weight = param.detach().clone()
+            param.scale = torch.ones(param.shape[0], 1, device=param.device)
+        block.to(device)
+
+        manager = MusubiBlockSwapManager(
+            block_indices=[0],
+            offload_device=torch.device("cpu"),
+            logger=logging.getLogger(__name__),
+        )
+
+        with patch.object(FakeSDNQLinear, "_apply", side_effect=RuntimeError("_apply(): Couldn't swap SDNQLinear.weight")):
+            manager.stream_out(block)
+            self.assertTrue(_module_on_device(block, torch.device("cpu")))
+            self.assertEqual(block[0].weight.device.type, "cpu")
+            self.assertEqual(block[0].weight.scale.device.type, "cpu")
+
+            manager.stream_in(block, device)
+            self.assertTrue(_module_on_device(block, device))
+            self.assertEqual(block[0].weight.device.type, device.type)
+            self.assertEqual(block[0].weight.scale.device.type, device.type)
+            output = block(torch.randn(2, 4, device=device))
+            self.assertEqual(output.device.type, device.type)
+
     def test_stream_out_keeps_trainable_params_on_accelerator(self):
         device = self._accelerator_device()
         block = nn.Sequential(nn.Linear(4, 4), nn.SiLU(), nn.Linear(4, 4))

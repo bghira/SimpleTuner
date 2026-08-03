@@ -357,6 +357,7 @@ nav:
       - Metal Flash Attention: experimental/METAL_FLASH_ATTENTION.md
       - Prompt2Effect: experimental/PROMPT2EFFECT.md
       - Self-Flow: experimental/SELF_FLOW.md
+      - Segmented Checkpointing: experimental/SEGMENTED_CHECKPOINTING.md
       - Scheduled Sampling: experimental/SCHEDULED_SAMPLING.md
       - T-LoRA: experimental/T_LORA.md
       - Unsloth-Style Checkpointing: experimental/UNSLOTH_CHECKPOINTING.md

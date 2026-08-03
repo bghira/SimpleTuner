@@ -282,8 +282,14 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 
 ### `--gradient_checkpointing_interval`
 
-- **O que**: Faz checkpoint de chunks contiguos de *n* blocos, onde *n* e um valor maior que zero. Um valor 1 e efetivamente o mesmo que deixar `--gradient_checkpointing` habilitado, e 2 faz checkpoint de chunks de dois blocos.
-- **Nota**: Flux e MageFlow usam checkpointing em chunks contiguos nos caminhos whole-block. Valores maiores reduzem recompute, mas mantêm mais activations na VRAM.
+- **O que**: Intervalo dependente do modelo para checkpointing de blocos transformer. Um valor 1 e basicamente o mesmo que deixar `--gradient_checkpointing` habilitado.
+- **Nota**: Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Z-Image e Wan usam chunks contiguos de *n* blocos nos caminhos whole-block. Outras familias que expoem esta opcao podem continuar usando o comportamento antigo de "checkpoint a cada *n* blocos". Valores maiores podem reduzir recompute, mas normalmente mantem mais activations na VRAM.
+
+### `--gradient_checkpointing_segment_stride`
+
+- **O que**: Inicia um segmento com checkpoint a cada *n* blocos nos caminhos segmented whole-block suportados.
+- **Exemplo**: Com `--gradient_checkpointing_interval=2` e `--gradient_checkpointing_segment_stride=4`, o SimpleTuner faz checkpoint de dois blocos, executa os dois blocos seguintes normalmente e repete.
+- **Nota**: So tem efeito em familias de modelos que expoem suporte segmented whole-block na versao instalada do SimpleTuner. Familias nao suportadas registram um aviso e ignoram o valor. O stride deve ser pelo menos igual ao interval. Veja [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md).
 
 ### `--gradient_checkpointing_backend`
 
@@ -293,7 +299,27 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
   - `torch-ffn`: checkpoint só do lado feed-forward em modelos com fronteira FFN limpa.
   - `unsloth`: checkpoint do bloco completo compatível e offload dos tensores salvos para CPU.
   - `unsloth-ffn`: checkpoint só do lado feed-forward e offload dos tensores salvos para CPU.
-- **Nota**: So funciona quando `--gradient_checkpointing` esta habilitado. As variantes `unsloth` requerem CUDA. As variantes FFN-only atualmente suportam blocos estilo Flux.1 e MageFlow, e falham explicitamente quando o modelo nao expoe esse escopo. Veja [Unsloth-style checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) para tradeoffs medidos.
+- **Nota**: So funciona quando `--gradient_checkpointing` esta habilitado. As variantes `unsloth` requerem CUDA. As variantes FFN-only atualmente suportam Chroma, Flux, Krea 2, LTXVideo2, MageFlow, Wan e Z-Image, e falham explicitamente quando o modelo nao expoe esse escopo. Veja [Unsloth-style checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) para tradeoffs medidos.
+
+### `--gradient_checkpointing_offload_attention`
+
+- **O que**: Faz offload para CPU das activations salvas do lado attention em modelos com fronteira attention/FFN limpa.
+- **Por que**: Quando transferencia e mais barata que recomputar attention, reduz VRAM sem pagar todo o custo de rematerializar attention.
+- **Nota**: Pode ser ativado sozinho. Tambem pode ser combinado com qualquer checkpoint backend que o modelo suportar. So tem efeito em familias de modelos que expoem uma fronteira attention/FFN limpa na versao instalada do SimpleTuner; familias nao suportadas falham explicitamente.
+
+### `--gradient_checkpointing_offload_pin_memory_max_buckets`
+
+- **Padrao**: `12`
+- **O que**: Numero maximo de buckets distintos de tensores CPU pinned usados por activation offload.
+- **Por que**: Pinned memory melhora transferencias CPU/GPU, mas resolucoes e comprimentos de texto variaveis podem criar shapes raros. Ao atingir esse limite, novos bucket shapes usam memoria CPU normal.
+- **Nota**: Use `0` para desativar o pooling de pinned memory para activation offload.
+
+### `--gradient_checkpointing_offload_prefetch`
+
+- **Padrao**: `false`
+- **O que**: Aprende a ordem de restore no backward para activations offloaded e prefetch o provavel proximo tensor para a GPU.
+- **Por que**: Restore H2D just-in-time quase nao consegue overlap. Com ordem estavel, prefetch pode esconder parte da transferencia atras do backward compute.
+- **Nota**: Experimental e ativo apenas com `--gradient_checkpointing_offload_attention`.
 
 ### `--refiner_training`
 
@@ -1737,6 +1763,7 @@ usage: train.py [-h] --model_family
                 [--text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
                 [--text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
                 [--gradient_checkpointing_interval GRADIENT_CHECKPOINTING_INTERVAL]
+                [--gradient_checkpointing_segment_stride GRADIENT_CHECKPOINTING_SEGMENT_STRIDE]
                 [--offload_during_startup [OFFLOAD_DURING_STARTUP]]
                 [--quantize_via {cpu,accelerator,pipeline}]
                 [--quantization_config QUANTIZATION_CONFIG]
@@ -2053,6 +2080,8 @@ options:
                         memory.
   --gradient_checkpointing_interval GRADIENT_CHECKPOINTING_INTERVAL
                         Checkpoint every N transformer blocks
+  --gradient_checkpointing_segment_stride GRADIENT_CHECKPOINTING_SEGMENT_STRIDE
+                        Start a checkpointed segment every N transformer blocks
   --offload_during_startup [OFFLOAD_DURING_STARTUP]
                         Offload text encoders to CPU during VAE caching
   --quantize_via {cpu,accelerator,pipeline}

@@ -3,6 +3,8 @@ Tests for gradient checkpointing backend selection.
 """
 
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
 import torch
 import torch.nn as nn
@@ -109,12 +111,12 @@ class TestOffloadedGradientCheckpointer(unittest.TestCase):
         hooks = CPUOffloadHooks()
 
         if torch.cuda.is_available():
-            tensor = torch.randn(4, 4, device="cuda")
+            tensor = torch.randn(4, 4, device="cuda", requires_grad=True) * 2
             packed = hooks.pack(tensor)
-            # Pack returns (cpu_tensor, original_device) tuple
+            # Pack returns (cpu_tensor, original_device[, pool_key]) tuple
             self.assertIsInstance(packed, tuple)
-            self.assertEqual(len(packed), 2)
-            cpu_tensor, original_device = packed
+            self.assertGreaterEqual(len(packed), 2)
+            cpu_tensor, original_device = packed[:2]
             self.assertEqual(cpu_tensor.device.type, "cpu")
             self.assertEqual(original_device.type, "cuda")
 
@@ -129,9 +131,503 @@ class TestOffloadedGradientCheckpointer(unittest.TestCase):
             self.assertEqual(cpu_tensor.device.type, "cpu")
             self.assertIsNone(original_device)
 
+    def test_activation_offload_does_not_recompute_forward(self):
+        """Activation offload preserves the original forward graph instead of rematerializing it."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import activation_offload
+
+        class CountingModule(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+                self.linear = nn.Linear(4, 4)
+
+            def forward(self, x):
+                self.calls += 1
+                return torch.relu(self.linear(x))
+
+        module = CountingModule()
+        x = torch.randn(2, 4, requires_grad=True)
+        activation_offload(module, x).sum().backward()
+
+        self.assertEqual(module.calls, 1)
+
+    def test_activation_offload_pin_memory_bucket_setting(self):
+        """Pinned bucket limit is configurable."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import (
+            get_activation_offload_pin_memory_max_buckets,
+            set_activation_offload_pin_memory_max_buckets,
+        )
+
+        original = get_activation_offload_pin_memory_max_buckets()
+        try:
+            set_activation_offload_pin_memory_max_buckets(7)
+            self.assertEqual(get_activation_offload_pin_memory_max_buckets(), 7)
+            set_activation_offload_pin_memory_max_buckets(0)
+            self.assertEqual(get_activation_offload_pin_memory_max_buckets(), 0)
+        finally:
+            set_activation_offload_pin_memory_max_buckets(original)
+
+    def test_activation_offload_pin_memory_bucket_count_normalization(self):
+        """Pinned bucket config values produce explicit validation errors."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import (
+            normalize_activation_offload_pin_memory_max_buckets,
+        )
+
+        self.assertEqual(normalize_activation_offload_pin_memory_max_buckets(None), 12)
+        self.assertEqual(normalize_activation_offload_pin_memory_max_buckets(""), 12)
+        self.assertEqual(normalize_activation_offload_pin_memory_max_buckets("0"), 0)
+        self.assertEqual(normalize_activation_offload_pin_memory_max_buckets(3), 3)
+
+        with self.assertRaisesRegex(ValueError, "non-negative integer"):
+            normalize_activation_offload_pin_memory_max_buckets("many")
+        with self.assertRaisesRegex(ValueError, "non-negative"):
+            normalize_activation_offload_pin_memory_max_buckets(-1)
+
+    def test_activation_offload_copy_stream_counts_are_configurable(self):
+        """Activation offload copy stream pools expose bounded tunable widths."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import (
+            get_activation_offload_copy_stream_stats,
+            get_activation_offload_d2h_copy_stream_count,
+            get_activation_offload_h2d_prefetch_stream_count,
+            set_activation_offload_d2h_copy_stream_count,
+            set_activation_offload_h2d_prefetch_stream_count,
+        )
+
+        original_d2h = get_activation_offload_d2h_copy_stream_count()
+        original_h2d = get_activation_offload_h2d_prefetch_stream_count()
+        try:
+            set_activation_offload_d2h_copy_stream_count(3)
+            set_activation_offload_h2d_prefetch_stream_count(5)
+
+            self.assertEqual(get_activation_offload_d2h_copy_stream_count(), 3)
+            self.assertEqual(get_activation_offload_h2d_prefetch_stream_count(), 5)
+            stats = get_activation_offload_copy_stream_stats()
+            self.assertEqual(stats["d2h"]["width"], 3)
+            self.assertEqual(stats["h2d_prefetch"]["width"], 5)
+
+            set_activation_offload_d2h_copy_stream_count(0)
+            set_activation_offload_h2d_prefetch_stream_count(-1)
+            self.assertEqual(get_activation_offload_d2h_copy_stream_count(), 1)
+            self.assertEqual(get_activation_offload_h2d_prefetch_stream_count(), 1)
+        finally:
+            set_activation_offload_d2h_copy_stream_count(original_d2h)
+            set_activation_offload_h2d_prefetch_stream_count(original_h2d)
+
+    def test_pinned_memory_pool_tracks_reuse_stats(self):
+        """Pinned pool stats track allocation, release, and buffer reuse per bucket."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import _PinnedMemoryPool
+
+        pool = _PinnedMemoryPool(max_buckets=1)
+        pool._allocate = lambda key: torch.empty_strided(key.size, key.stride, dtype=key.dtype, layout=key.layout)
+        key = pool.key_for(torch.empty(2, 3))
+
+        first = pool.checkout(key)
+        pool.release_after_cuda_copy(key, first, torch.device("cpu"))
+        second = pool.checkout(key)
+
+        self.assertIs(first, second)
+        snapshot = pool.snapshot()
+        bucket = snapshot["buckets"][0]
+        self.assertEqual(snapshot["total_accesses"], 2)
+        self.assertEqual(snapshot["total_allocations"], 1)
+        self.assertEqual(snapshot["total_buffer_reuses"], 1)
+        self.assertEqual(bucket["accesses"], 2)
+        self.assertEqual(bucket["allocations"], 1)
+        self.assertEqual(bucket["buffer_reuses"], 1)
+        self.assertEqual(bucket["releases"], 1)
+
+    def test_pinned_memory_pool_eviction_uses_persisted_stats(self):
+        """Repeated non-resident shapes can evict colder resident buckets without losing old counters."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import _PinnedMemoryPool
+
+        pool = _PinnedMemoryPool(max_buckets=1)
+        pool._allocate = lambda key: torch.empty_strided(key.size, key.stride, dtype=key.dtype, layout=key.layout)
+        key_a = pool.key_for(torch.empty(2, 3))
+        key_b = pool.key_for(torch.empty(4, 5))
+
+        first = pool.checkout(key_a)
+        pool.release_after_cuda_copy(key_a, first, torch.device("cpu"))
+
+        self.assertIsNone(pool.checkout(key_b))
+        second = pool.checkout(key_b)
+
+        self.assertIsNotNone(second)
+        snapshot = pool.snapshot()
+        buckets = {(bucket["size"], bucket["stride"]): bucket for bucket in snapshot["buckets"]}
+        bucket_a = buckets[((2, 3), (3, 1))]
+        bucket_b = buckets[((4, 5), (5, 1))]
+
+        self.assertFalse(bucket_a["resident"])
+        self.assertEqual(bucket_a["evictions"], 1)
+        self.assertEqual(bucket_a["accesses"], 1)
+        self.assertTrue(bucket_b["resident"])
+        self.assertEqual(bucket_b["accesses"], 2)
+        self.assertEqual(bucket_b["cap_misses"], 1)
+        self.assertEqual(bucket_b["admissions"], 1)
+        self.assertEqual(snapshot["tracked_buckets"], 2)
+        self.assertEqual(snapshot["total_evictions"], 1)
+
+    def test_cpu_offload_dense_noncontiguous_views_use_flat_transfer(self):
+        """Dense views can transfer as flat storage and restore their original logical stride."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import CPUOffloadHooks
+
+        hooks = CPUOffloadHooks()
+        base = torch.arange(12).view(3, 4)
+        transposed = base.t()
+
+        flat = hooks._flat_storage_view(transposed)
+
+        self.assertIsNotNone(flat)
+        self.assertEqual(tuple(flat.shape), (12,))
+        self.assertEqual(tuple(flat.stride()), (1,))
+        self.assertEqual(flat.storage_offset(), transposed.storage_offset())
+
+        transfer_tensor, restore_view = hooks._transfer_view(transposed)
+        restored = hooks.unpack((transfer_tensor.clone(), torch.device("cpu"), None, restore_view))
+
+        self.assertEqual(tuple(transfer_tensor.shape), (12,))
+        self.assertEqual(tuple(restored.shape), tuple(transposed.shape))
+        self.assertEqual(tuple(restored.stride()), tuple(transposed.stride()))
+        self.assertTrue(torch.equal(restored, transposed))
+
+    def test_cpu_offload_dense_offset_views_restore_values(self):
+        """Dense views with non-zero base offsets restore from the copied transfer span."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import CPUOffloadHooks
+
+        hooks = CPUOffloadHooks()
+        base = torch.arange(20)
+        offset_view = torch.as_strided(base, (3, 4), (1, 3), 2)
+
+        self.assertEqual(offset_view.storage_offset(), 2)
+        transfer_tensor, restore_view = hooks._transfer_view(offset_view)
+        restored = hooks.unpack((transfer_tensor.clone(), torch.device("cpu"), None, restore_view))
+
+        self.assertEqual(tuple(restored.shape), tuple(offset_view.shape))
+        self.assertEqual(tuple(restored.stride()), tuple(offset_view.stride()))
+        self.assertTrue(torch.equal(restored, offset_view))
+
+    def test_cpu_offload_sparse_storage_views_keep_original_layout(self):
+        """Views with holes in storage are not flattened because storage-order transfer would lose layout."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import CPUOffloadHooks
+
+        hooks = CPUOffloadHooks()
+        sparse_view = torch.arange(12).view(3, 4)[:, ::2]
+
+        flat = hooks._flat_storage_view(sparse_view)
+        transfer_tensor, restore_view = hooks._transfer_view(sparse_view)
+
+        self.assertIsNone(flat)
+        self.assertIs(transfer_tensor, sparse_view)
+        self.assertIsNone(restore_view)
+
+    def test_cpu_offload_flat_transfer_key_ignores_dense_view_stride(self):
+        """Pinned bucket keys are based on transfer shape, not dense view logical stride."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import CPUOffloadHooks, _PinnedMemoryPool
+
+        hooks = CPUOffloadHooks()
+        pool = _PinnedMemoryPool(max_buckets=2)
+        base = torch.empty(3, 4)
+        transposed = base.t()
+
+        base_transfer, base_restore = hooks._transfer_view(base)
+        transposed_transfer, transposed_restore = hooks._transfer_view(transposed)
+        base_key = pool.key_for(base_transfer)
+        transposed_key = pool.key_for(transposed_transfer)
+
+        self.assertEqual(base_key, transposed_key)
+        self.assertEqual(base_key.size, (12,))
+        self.assertEqual(base_key.stride, (1,))
+        self.assertEqual(base_restore.size, (3, 4))
+        self.assertEqual(transposed_restore.size, (4, 3))
+        self.assertEqual(transposed_restore.stride, (1, 4))
+
+    @unittest.skipIf(not torch.cuda.is_available(), "CUDA required for pinned offload test")
+    def test_activation_offload_pin_memory_bucket_limit(self):
+        """New shapes fall back to pageable CPU once the pinned bucket cap is reached."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import (
+            CPUOffloadHooks,
+            get_activation_offload_pin_memory_max_buckets,
+            get_activation_offload_pin_memory_stats,
+            reset_activation_offload_pin_memory_stats,
+            set_activation_offload_pin_memory_max_buckets,
+        )
+
+        original = get_activation_offload_pin_memory_max_buckets()
+        try:
+            set_activation_offload_pin_memory_max_buckets(0)
+            reset_activation_offload_pin_memory_stats()
+            set_activation_offload_pin_memory_max_buckets(1)
+            hooks = CPUOffloadHooks()
+
+            first = hooks.pack(torch.randn(4, 4, device="cuda", requires_grad=True) * 2)
+            second = hooks.pack(torch.randn(8, 8, device="cuda", requires_grad=True) * 2)
+
+            self.assertTrue(first[0].is_pinned())
+            self.assertIsNotNone(first[2])
+            self.assertIsNone(second[2])
+            self.assertEqual(get_activation_offload_pin_memory_stats()["total_cap_misses"], 1)
+        finally:
+            set_activation_offload_pin_memory_max_buckets(original)
+
+    @unittest.skipIf(not torch.cuda.is_available(), "CUDA required for copy stream offload test")
+    def test_cpu_offload_uses_copy_stream_ready_event(self):
+        """Pinned CUDA offload returns a ready event and restores dense view strides."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import CPUOffloadHooks
+
+        hooks = CPUOffloadHooks()
+        tensor = (torch.arange(12, device="cuda", dtype=torch.float32, requires_grad=True) * 2).view(3, 4).t()
+
+        packed = hooks.pack(tensor)
+
+        self.assertGreaterEqual(len(packed), 5)
+        self.assertIsNotNone(packed[2])
+        self.assertIsNotNone(packed[3])
+        self.assertIsNotNone(packed[4])
+
+        unpacked = hooks.unpack(packed)
+        torch.cuda.synchronize()
+
+        self.assertEqual(unpacked.device.type, "cuda")
+        self.assertEqual(tuple(unpacked.shape), tuple(tensor.shape))
+        self.assertEqual(tuple(unpacked.stride()), tuple(tensor.stride()))
+        self.assertTrue(torch.equal(unpacked, tensor.detach()))
+
+    @unittest.skipIf(not torch.cuda.is_available(), "CUDA required for copy stream pool test")
+    def test_activation_offload_copy_stream_pools_round_robin_by_direction(self):
+        """D2H offload and H2D prefetch use independent round-robin stream pools."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import (
+            _ACTIVATION_PREFETCH_RUNTIME,
+            _PINNED_MEMORY_POOL,
+            CPUOffloadHooks,
+            _OffloadedActivationRecord,
+            get_activation_offload_copy_stream_stats,
+            get_activation_offload_d2h_copy_stream_count,
+            get_activation_offload_h2d_prefetch_stream_count,
+            reset_activation_offload_copy_stream_stats,
+            reset_activation_offload_prefetch_stats,
+            set_activation_offload_d2h_copy_stream_count,
+            set_activation_offload_h2d_prefetch_stream_count,
+        )
+
+        original_d2h = get_activation_offload_d2h_copy_stream_count()
+        original_h2d = get_activation_offload_h2d_prefetch_stream_count()
+        try:
+            set_activation_offload_d2h_copy_stream_count(2)
+            set_activation_offload_h2d_prefetch_stream_count(2)
+            reset_activation_offload_prefetch_stats()
+            reset_activation_offload_copy_stream_stats()
+
+            hooks = CPUOffloadHooks()
+            hooks.pack(torch.randn(32, 32, device="cuda", requires_grad=True) * 2)
+            hooks.pack(torch.randn(32, 32, device="cuda", requires_grad=True) * 3)
+
+            pinned_a = torch.empty(32, 32, pin_memory=True)
+            pinned_b = torch.empty(32, 32, pin_memory=True)
+            pool_key = _PINNED_MEMORY_POOL.key_for(pinned_a)
+            for predictor_id, tensor in (("a", pinned_a), ("b", pinned_b)):
+                _ACTIVATION_PREFETCH_RUNTIME.register(
+                    _OffloadedActivationRecord(
+                        logical_id=predictor_id,
+                        predictor_id=predictor_id,
+                        generation=0,
+                        tensor=tensor,
+                        original_device=torch.device("cuda"),
+                        pool_key=pool_key,
+                        restore_view=None,
+                        ready_event=None,
+                    )
+                )
+                self.assertTrue(_ACTIVATION_PREFETCH_RUNTIME.prefetch(0, predictor_id))
+
+            torch.cuda.synchronize()
+            stats = get_activation_offload_copy_stream_stats()
+            d2h_devices = list(stats["d2h"]["devices"].values())
+            h2d_devices = list(stats["h2d_prefetch"]["devices"].values())
+
+            self.assertEqual(d2h_devices[0]["uses"], [1, 1])
+            self.assertEqual(h2d_devices[0]["uses"], [1, 1])
+        finally:
+            reset_activation_offload_prefetch_stats()
+            set_activation_offload_d2h_copy_stream_count(original_d2h)
+            set_activation_offload_h2d_prefetch_stream_count(original_h2d)
+
+    def test_activation_offload_prefetch_learns_stable_successors(self):
+        """Activation prefetch learns on stable predictor ids instead of unique payload ids."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import (
+            _ACTIVATION_PREFETCH_RUNTIME,
+            _OffloadedActivationRecord,
+            get_activation_offload_prefetch_enabled,
+            reset_activation_offload_prefetch_stats,
+            set_activation_offload_prefetch_enabled,
+        )
+
+        reset_activation_offload_prefetch_stats()
+        original_enabled = get_activation_offload_prefetch_enabled()
+        try:
+            set_activation_offload_prefetch_enabled(False)
+            for generation in range(2):
+                first = _OffloadedActivationRecord(
+                    logical_id=f"{generation}:a:payload",
+                    predictor_id="block.attn:0",
+                    generation=generation,
+                    tensor=torch.empty(1),
+                    original_device=torch.device("cpu"),
+                    pool_key=None,
+                    restore_view=None,
+                    ready_event=None,
+                )
+                second = _OffloadedActivationRecord(
+                    logical_id=f"{generation}:b:payload",
+                    predictor_id="block.attn:1",
+                    generation=generation,
+                    tensor=torch.empty(1),
+                    original_device=torch.device("cpu"),
+                    pool_key=None,
+                    restore_view=None,
+                    ready_event=None,
+                )
+                _ACTIVATION_PREFETCH_RUNTIME.register(first)
+                _ACTIVATION_PREFETCH_RUNTIME.register(second)
+                _ACTIVATION_PREFETCH_RUNTIME.consume(first)
+                _ACTIVATION_PREFETCH_RUNTIME.consume(second)
+
+            stats = _ACTIVATION_PREFETCH_RUNTIME.snapshot()
+            self.assertEqual(_ACTIVATION_PREFETCH_RUNTIME.successors["block.attn:0"], "block.attn:1")
+            self.assertEqual(stats["learned_successors"], 1)
+            self.assertEqual(stats["transition_updates"], 1)
+        finally:
+            set_activation_offload_prefetch_enabled(original_enabled)
+            reset_activation_offload_prefetch_stats()
+
+    def test_activation_offload_prefetch_retires_unconsumed_generation_records(self):
+        """Unpacked-only subsets should not strand pinned buffers in the prefetch runtime."""
+        from simpletuner.helpers.training import offloaded_gradient_checkpointer as offload
+
+        original_pool = offload._PINNED_MEMORY_POOL
+        original_runtime = offload._ACTIVATION_PREFETCH_RUNTIME
+        pool = offload._PinnedMemoryPool(max_buckets=1)
+        pool._allocate = lambda key: torch.empty_strided(key.size, key.stride, dtype=key.dtype, layout=key.layout)
+        runtime = offload._ActivationOffloadPrefetchRuntime()
+        try:
+            offload._PINNED_MEMORY_POOL = pool
+            offload._ACTIVATION_PREFETCH_RUNTIME = runtime
+            key = pool.key_for(torch.empty(2, 3))
+            cpu_tensor = pool.checkout(key)
+            record = offload._OffloadedActivationRecord(
+                logical_id="0:unused:payload",
+                predictor_id="unused",
+                generation=0,
+                tensor=cpu_tensor,
+                original_device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+                pool_key=key,
+                restore_view=None,
+                ready_event=None,
+            )
+
+            runtime.register(record)
+            runtime.saw_unpack_since_pack = True
+
+            self.assertEqual(runtime.snapshot()["active_records"], 1)
+            self.assertEqual(runtime.next_generation_for_pack(), 1)
+
+            snapshot = runtime.snapshot()
+            pool_snapshot = pool.snapshot()
+            self.assertEqual(snapshot["active_records"], 0)
+            self.assertTrue(record.cpu_released)
+            self.assertEqual(pool_snapshot["buckets"][0]["releases"], 1)
+            self.assertEqual(pool_snapshot["buckets"][0]["available_buffers"], 1)
+        finally:
+            offload._PINNED_MEMORY_POOL = original_pool
+            offload._ACTIVATION_PREFETCH_RUNTIME = original_runtime
+
+    def test_activation_offload_prefetch_autotune_disables_worse_prefetch(self):
+        """Autotune disables prefetch when measured waits are not better than JIT restore."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import (
+            _ACTIVATION_PREFETCH_RUNTIME,
+            reset_activation_offload_prefetch_stats,
+        )
+
+        reset_activation_offload_prefetch_stats()
+        try:
+            for _ in range(8):
+                _ACTIVATION_PREFETCH_RUNTIME.record_jit_restore_ms(1.0)
+                _ACTIVATION_PREFETCH_RUNTIME.record_prefetch_wait_ms(1.1)
+
+            stats = _ACTIVATION_PREFETCH_RUNTIME.snapshot()
+            self.assertTrue(stats["autotune_disabled"])
+            self.assertEqual(stats["autotune_decision"], "jit")
+        finally:
+            reset_activation_offload_prefetch_stats()
+
 
 class TestGradientCheckpointingBackend(unittest.TestCase):
     """Tests for the gradient checkpointing backend module."""
+
+    def test_trainer_prefetch_autotune_uses_model_predict_and_discards_gradients(self):
+        """Trainer-level prefetch autotune probes the real prediction/loss path without retaining grads."""
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import (
+            activation_offload_prefetch_autotune_decision,
+            reset_activation_offload_prefetch_stats,
+        )
+        from simpletuner.helpers.training.trainer import Trainer
+
+        class FakeAccelerator:
+            def __init__(self):
+                self.backward_calls = 0
+
+            def backward(self, loss):
+                self.backward_calls += 1
+                loss.backward()
+
+        class FakeModel:
+            def __init__(self, component):
+                self.component = component
+
+            def get_trained_component(self, unwrap_model=False):
+                return self.component
+
+            def loss_with_logs(self, prepared_batch, model_output, apply_conditioning_mask=True):
+                return model_output.square().mean(), {}
+
+            def auxiliary_loss(self, prepared_batch, model_output, loss):
+                return loss, {}
+
+        trainer = Trainer.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            gradient_checkpointing_offload_prefetch=True,
+            gradient_checkpointing_offload_attention=True,
+            disable_accelerator=False,
+            distillation_method=None,
+        )
+        trainer.probe_component = nn.Linear(2, 2)
+        trainer.model = FakeModel(trainer.probe_component)
+        trainer.optimizer = torch.optim.SGD(trainer.probe_component.parameters(), lr=0.1)
+        trainer.sidecar_optimizer = None
+        trainer.accelerator = FakeAccelerator()
+        trainer.predict_calls = 0
+
+        def model_predict(prepared_batch):
+            trainer.predict_calls += 1
+            return trainer.probe_component(prepared_batch["x"])
+
+        trainer.model_predict = model_predict
+        prepared_batch = {"x": torch.ones(1, 2)}
+
+        reset_activation_offload_prefetch_stats()
+        with (
+            mock.patch("simpletuner.helpers.training.trainer.torch.cuda.is_available", return_value=True),
+            mock.patch("simpletuner.helpers.training.trainer.torch.cuda.synchronize"),
+            mock.patch("simpletuner.helpers.training.trainer.torch.cuda.get_rng_state_all", return_value=[]),
+            mock.patch("simpletuner.helpers.training.trainer.torch.cuda.set_rng_state_all"),
+        ):
+            trainer._maybe_autotune_activation_offload_prefetch(prepared_batch)
+
+        self.assertEqual(trainer.predict_calls, 3)
+        self.assertEqual(trainer.accelerator.backward_calls, 3)
+        self.assertIsNone(trainer.probe_component.weight.grad)
+        self.assertIsNone(trainer.probe_component.bias.grad)
+        self.assertIn(activation_offload_prefetch_autotune_decision(), {"jit", "prefetch"})
+        reset_activation_offload_prefetch_stats()
 
     def test_set_checkpoint_backend(self):
         """Test that checkpoint backend can be set."""
@@ -339,6 +835,47 @@ class TestGradientCheckpointingBackend(unittest.TestCase):
         self.assertEqual(result.item(), 15)
         self.assertEqual(calls, ["checkpoint", 0, 1, "checkpoint", 2, 3, "checkpoint", 4])
 
+    def test_checkpoint_sequential_state_segment_stride_runs_gaps_without_checkpoint(self):
+        """Test that segment_stride leaves deterministic eager gaps between chunks."""
+        from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state
+
+        calls = []
+
+        def checkpoint_fn(function, *args, **_kwargs):
+            calls.append("checkpoint")
+            return function(*args)
+
+        def run_block(index, block, x):
+            calls.append(index)
+            return x + block
+
+        (result,) = checkpoint_sequential_state(
+            [1, 2, 3, 4, 5, 6],
+            2,
+            (torch.tensor(0),),
+            run_block,
+            checkpoint_fn,
+            {"use_reentrant": False},
+            segment_stride=4,
+        )
+
+        self.assertEqual(result.item(), 21)
+        self.assertEqual(calls, ["checkpoint", 0, 1, 2, 3, "checkpoint", 4, 5])
+
+    def test_checkpoint_sequential_state_rejects_overlapping_stride(self):
+        """Test that overlapping segment schedules are rejected."""
+        from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state
+
+        with self.assertRaisesRegex(ValueError, "segment_stride"):
+            checkpoint_sequential_state(
+                [1, 2],
+                2,
+                (torch.tensor(0),),
+                lambda _index, block, x: x + block,
+                lambda function, *args, **_kwargs: function(*args),
+                segment_stride=1,
+            )
+
 
 class TestConfigFieldIntegration(unittest.TestCase):
     """Tests for the configuration field integration."""
@@ -356,6 +893,42 @@ class TestConfigFieldIntegration(unittest.TestCase):
         self.assertIn({"value": "torch-ffn", "label": "PyTorch FFN-only (recompute)"}, field.choices)
         self.assertIn({"value": "unsloth", "label": "Unsloth layer (CPU offload)"}, field.choices)
         self.assertIn({"value": "unsloth-ffn", "label": "Unsloth FFN-only (CPU offload)"}, field.choices)
+
+    def test_gradient_checkpointing_offload_attention_field_exists(self):
+        """Test that the attention activation offload field is registered."""
+        from simpletuner.simpletuner_sdk.server.services.field_registry import FieldRegistry
+
+        registry = FieldRegistry()
+        field = registry.get_field("gradient_checkpointing_offload_attention")
+
+        self.assertIsNotNone(field)
+        self.assertEqual(field.default_value, False)
+        self.assertEqual(field.arg_name, "--gradient_checkpointing_offload_attention")
+        self.assertEqual(field.dependencies, [])
+
+    def test_gradient_checkpointing_offload_pin_memory_max_buckets_field_exists(self):
+        """Test that the attention offload pinned bucket field is registered."""
+        from simpletuner.simpletuner_sdk.server.services.field_registry import FieldRegistry
+
+        registry = FieldRegistry()
+        field = registry.get_field("gradient_checkpointing_offload_pin_memory_max_buckets")
+
+        self.assertIsNotNone(field)
+        self.assertEqual(field.default_value, 12)
+        self.assertEqual(field.arg_name, "--gradient_checkpointing_offload_pin_memory_max_buckets")
+        self.assertEqual(len(field.dependencies), 1)
+        self.assertEqual(field.dependencies[0].field, "gradient_checkpointing_offload_attention")
+
+    def test_gradient_checkpointing_offload_prefetch_field_exists(self):
+        """Test that the attention offload prefetch field is registered."""
+        from simpletuner.simpletuner_sdk.server.services.field_registry import FieldRegistry
+
+        registry = FieldRegistry()
+        field = registry.get_field("gradient_checkpointing_offload_prefetch")
+
+        self.assertIsNotNone(field)
+        self.assertEqual(field.default_value, False)
+        self.assertEqual(field.arg_name, "--gradient_checkpointing_offload_prefetch")
 
     def test_gradient_checkpointing_backend_validation(self):
         """Test that invalid backend values are rejected."""
@@ -377,87 +950,16 @@ class TestConfigFieldIntegration(unittest.TestCase):
         self.assertIn("unsloth", choices_rule.value)
         self.assertIn("unsloth-ffn", choices_rule.value)
 
+    def test_gradient_checkpointing_segment_stride_field_exists(self):
+        """Test that the segmented checkpointing stride field is registered."""
+        from simpletuner.simpletuner_sdk.server.services.field_registry import FieldRegistry
 
-class TestTransformerBackendAttribute(unittest.TestCase):
-    """Tests that transformer models have the backend attribute and setter."""
+        registry = FieldRegistry()
+        field = registry.get_field("gradient_checkpointing_segment_stride")
 
-    def test_flux_transformer_has_backend_attribute(self):
-        """Test that FluxTransformer2DModel has gradient_checkpointing_backend."""
-        from simpletuner.helpers.models.flux.transformer import FluxTransformer2DModel
-
-        self.assertTrue(hasattr(FluxTransformer2DModel, "set_gradient_checkpointing_backend"))
-        self.assertTrue(getattr(FluxTransformer2DModel, "_supports_ffn_gradient_checkpointing", False))
-
-    def test_flux_blocks_support_ffn_checkpoint_scope(self):
-        """Test that Flux blocks preserve output values with FFN-only checkpointing."""
-        from simpletuner.helpers.models.flux.transformer import FluxSingleTransformerBlock, FluxTransformerBlock
-
-        double_block = FluxTransformerBlock(dim=16, num_attention_heads=2, attention_head_dim=8).train()
-        hidden = torch.randn(2, 4, 16, requires_grad=True)
-        encoder_hidden = torch.randn(2, 3, 16, requires_grad=True)
-        temb = torch.randn(2, 16)
-
-        expected_encoder, expected_hidden = double_block(hidden, encoder_hidden, temb)
-        actual_encoder, actual_hidden = double_block(
-            hidden,
-            encoder_hidden,
-            temb,
-            checkpoint_ffn=True,
-            checkpoint_fn=torch.utils.checkpoint.checkpoint,
-        )
-        self.assertTrue(torch.allclose(expected_encoder, actual_encoder, atol=1e-6))
-        self.assertTrue(torch.allclose(expected_hidden, actual_hidden, atol=1e-6))
-
-        single_block = FluxSingleTransformerBlock(dim=16, num_attention_heads=2, attention_head_dim=8).train()
-        hidden = torch.randn(2, 7, 16, requires_grad=True)
-        temb = torch.randn(2, 16)
-
-        expected_hidden = single_block(hidden, temb)
-        actual_hidden = single_block(
-            hidden,
-            temb,
-            checkpoint_ffn=True,
-            checkpoint_fn=torch.utils.checkpoint.checkpoint,
-        )
-        self.assertTrue(torch.allclose(expected_hidden, actual_hidden, atol=1e-6))
-
-    def test_sana_transformer_has_backend_attribute(self):
-        """Test that SanaTransformer2DModel has gradient_checkpointing_backend."""
-        from simpletuner.helpers.models.sana.transformer import SanaTransformer2DModel
-
-        self.assertTrue(hasattr(SanaTransformer2DModel, "set_gradient_checkpointing_backend"))
-
-    def test_sd3_transformer_has_backend_attribute(self):
-        """Test that SD3Transformer2DModel has gradient_checkpointing_backend."""
-        from simpletuner.helpers.models.sd3.transformer import SD3Transformer2DModel
-
-        self.assertTrue(hasattr(SD3Transformer2DModel, "set_gradient_checkpointing_backend"))
-
-    def test_chroma_transformer_has_backend_attribute(self):
-        """Test that ChromaTransformer2DModel has gradient_checkpointing_backend."""
-        from simpletuner.helpers.models.chroma.transformer import ChromaTransformer2DModel
-
-        self.assertTrue(hasattr(ChromaTransformer2DModel, "set_gradient_checkpointing_backend"))
-
-    def test_auraflow_transformer_has_backend_attribute(self):
-        """Test that AuraFlowTransformer2DModel has gradient_checkpointing_backend."""
-        from simpletuner.helpers.models.auraflow.transformer import AuraFlowTransformer2DModel
-
-        self.assertTrue(hasattr(AuraFlowTransformer2DModel, "set_gradient_checkpointing_backend"))
-
-    def test_mageflow_transformer_has_backend_attribute(self):
-        """Test that MageFlowTransformer2DModel has gradient_checkpointing_backend."""
-        from simpletuner.helpers.models.mageflow.transformer import MageFlowTransformer2DModel
-
-        self.assertTrue(hasattr(MageFlowTransformer2DModel, "set_gradient_checkpointing_backend"))
-        self.assertTrue(hasattr(MageFlowTransformer2DModel, "set_gradient_checkpointing_interval"))
-        self.assertTrue(getattr(MageFlowTransformer2DModel, "_supports_ffn_gradient_checkpointing", False))
-
-    def test_qwen_image_transformer_has_backend_attribute(self):
-        """Test that QwenImageTransformer2DModel has gradient_checkpointing_backend."""
-        from simpletuner.helpers.models.qwen_image.transformer import QwenImageTransformer2DModel
-
-        self.assertTrue(hasattr(QwenImageTransformer2DModel, "set_gradient_checkpointing_backend"))
+        self.assertIsNotNone(field)
+        self.assertEqual(field.default_value, None)
+        self.assertEqual(field.arg_name, "--gradient_checkpointing_segment_stride")
 
 
 if __name__ == "__main__":

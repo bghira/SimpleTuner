@@ -258,6 +258,68 @@ def register_training_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="gradient_checkpointing_offload_attention",
+            arg_name="--gradient_checkpointing_offload_attention",
+            ui_label="Offload Attention Activations",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="memory_optimization",
+            default_value=False,
+            help_text="Move attention-side saved activations to CPU instead of keeping them in VRAM",
+            tooltip="Works on supported attention/FFN split blocks. Best paired with FFN-only checkpointing when attention transfer is cheaper than recompute.",
+            importance=ImportanceLevel.ADVANCED,
+            order=3,
+            documentation="OPTIONS.md#--gradient_checkpointing_offload_attention",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="gradient_checkpointing_offload_pin_memory_max_buckets",
+            arg_name="--gradient_checkpointing_offload_pin_memory_max_buckets",
+            ui_label="Offload Pinned Memory Buckets",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="memory_optimization",
+            default_value=12,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Bucket count must be non-negative")],
+            dependencies=[
+                FieldDependency(
+                    field="gradient_checkpointing_offload_attention", operator="equals", value=True, action="show"
+                )
+            ],
+            help_text="Maximum number of distinct pinned CPU tensor buckets for activation offload",
+            tooltip="Set 0 to disable pinned-memory pooling. Once the cap is reached, unseen tensor shapes use normal CPU memory.",
+            importance=ImportanceLevel.ADVANCED,
+            order=4,
+            documentation="OPTIONS.md#--gradient_checkpointing_offload_pin_memory_max_buckets",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="gradient_checkpointing_offload_prefetch",
+            arg_name="--gradient_checkpointing_offload_prefetch",
+            ui_label="Prefetch Offloaded Activations",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="memory_optimization",
+            default_value=False,
+            dependencies=[
+                FieldDependency(
+                    field="gradient_checkpointing_offload_attention", operator="equals", value=True, action="show"
+                )
+            ],
+            help_text="Learn activation restore order and prefetch CPU-offloaded tensors back to GPU",
+            tooltip="Experimental. Can overlap H2D restore with backward compute after the runtime has observed a stable unpack order.",
+            importance=ImportanceLevel.ADVANCED,
+            order=5,
+            documentation="OPTIONS.md#--gradient_checkpointing_offload_prefetch",
+        )
+    )
+
     # Group Offloading
     registry._add_field(
         ConfigField(
