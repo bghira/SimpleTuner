@@ -1097,8 +1097,9 @@ class SaveHookManager:
             is_main_process = getattr(self.accelerator, "is_main_process", True)
             is_local_main_process = getattr(self.accelerator, "is_local_main_process", True)
 
-        # One writer per node keeps node-local checkpoint state present without
-        # allowing every rank to race on the same prefetch-order file.
+        # One writer per node, so the file also lands on node-local storage in
+        # multi-node runs. Concurrent node-mains on a shared filesystem are safe
+        # because the writer uses a process-unique temp name and atomic rename.
         if is_local_main_process:
             StateTracker.save_ramtorch_prefetch_orders(output_dir)
 
