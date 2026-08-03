@@ -1050,11 +1050,18 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
                     musubi_manager.stream_in(block, hidden_states.device)
                 if should_checkpoint_block(
                     index_block,
-                    True,
+                    self.gradient_checkpointing,
                     self.gradient_checkpointing_interval,
                     self.gradient_checkpointing_segment_stride,
                 ):
-                    hidden_states = self._gradient_checkpointing_func(
+                    if self.gradient_checkpointing_backend.startswith("unsloth"):
+                        from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                        checkpoint_fn = offloaded_checkpoint
+                    else:
+                        checkpoint_fn = self._gradient_checkpointing_func
+
+                    hidden_states = checkpoint_fn(
                         block,
                         hidden_states,
                         attention_mask,

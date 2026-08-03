@@ -210,6 +210,29 @@ class TestSanaVideoTransformer3DModel(unittest.TestCase):
         self.assertEqual(args[1], 2)
         self.assertEqual(kwargs, {"segment_stride": 4})
 
+    def test_unsloth_backend_uses_offloaded_checkpoint_for_per_block_path(self):
+        self.model.train()
+        self.model.gradient_checkpointing = True
+        self.model.gradient_checkpointing_backend = "unsloth"
+        self.model.gradient_checkpointing_interval = None
+
+        def fake_offloaded_checkpoint(function, *args, **kwargs):
+            return function(*args, **kwargs)
+
+        with patch(
+            "simpletuner.helpers.training.offloaded_gradient_checkpointer.offloaded_checkpoint",
+            side_effect=fake_offloaded_checkpoint,
+        ) as offloaded_checkpoint:
+            output = self.model(
+                hidden_states=torch.randn(1, 4, 2, 2, 2, requires_grad=True),
+                encoder_hidden_states=torch.randn(1, 5, 16),
+                timestep=torch.randint(0, 1000, (1, 8)),
+            )
+
+        output_tensor = output.sample if hasattr(output, "sample") else output
+        self.assertEqual(output_tensor.shape, (1, 4, 2, 2, 2))
+        offloaded_checkpoint.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
