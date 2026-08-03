@@ -386,8 +386,8 @@ class MageFlow(ImageModelFoundation):
     def _load_processor_for_pipeline(self):
         if self.processor is not None:
             return self.processor
-        processor_path = getattr(self.config, "processor_pretrained_model_name_or_path", None) or self._model_config_path()
-        processor_subfolder = getattr(self.config, "processor_subfolder", self.PROCESSOR_SUBFOLDER)
+        processor_path = self._resolve_qwen_processor_path(self._model_config_path())
+        processor_subfolder = self._resolve_qwen_processor_subfolder(self.PROCESSOR_SUBFOLDER)
         self.processor = self.PROCESSOR_CLASS.from_pretrained(
             processor_path,
             subfolder=processor_subfolder,

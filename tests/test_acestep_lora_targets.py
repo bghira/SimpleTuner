@@ -20,6 +20,7 @@ class TestACEStepLoraTargets(unittest.TestCase):
         self.config.pretrained_model_name_or_path = "dummy_path"
         self.config.pretrained_transformer_model_name_or_path = None
         self.config.pretrained_transformer_subfolder = None
+        self.config.qwen_text_encoder_model_name_or_path = None
         self.config.model_family = "ace_step"
         self.config.model_flavour = "base"
         self.config.peft_lora_target_modules = None

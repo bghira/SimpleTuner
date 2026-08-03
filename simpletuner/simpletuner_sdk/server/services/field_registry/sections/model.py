@@ -1131,6 +1131,26 @@ def register_model_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Qwen Text Encoder Model Path
+    registry._add_field(
+        ConfigField(
+            name="qwen_text_encoder_model_name_or_path",
+            arg_name="--qwen_text_encoder_model_name_or_path",
+            ui_label="Qwen Model Path",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="model_config",
+            subsection="advanced_paths",
+            default_value=None,
+            placeholder="path/to/qwen",
+            help_text="Path to pretrained Qwen text encoder model",
+            tooltip="HuggingFace model ID or local path for the Qwen text encoder component.",
+            importance=ImportanceLevel.ADVANCED,
+            order=30,
+            documentation="OPTIONS.md#--qwen_text_encoder_model_name_or_path",
+        )
+    )
+
     # Revision
     registry._add_field(
         ConfigField(
@@ -1146,7 +1166,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             help_text="Git branch/tag/commit for model version",
             tooltip="Specific version of the model to load from HuggingFace. Useful for reproducible training.",
             importance=ImportanceLevel.ADVANCED,
-            order=30,
+            order=31,
         )
     )
 
@@ -1165,7 +1185,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             help_text="Model variant (e.g., fp16, bf16)",
             tooltip="Specific variant of the model to load, such as precision variants.",
             importance=ImportanceLevel.ADVANCED,
-            order=31,
+            order=32,
         )
     )
 
@@ -1187,7 +1207,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             help_text="Default precision for quantized base model weights",
             tooltip="Precision for non-quantized weights in quantized models. BF16 recommended for stability.",
             importance=ImportanceLevel.ADVANCED,
-            order=32,
+            order=33,
         )
     )
 
@@ -1208,7 +1228,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tooltip="Experimental feature for memory savings. May impact training quality. Only available for UNet-based architectures.",
             importance=ImportanceLevel.EXPERIMENTAL,
             model_specific=["sd15", "sd20", "sdxl", "deepfloyd"],
-            order=33,
+            order=34,
         )
     )
 

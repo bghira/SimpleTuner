@@ -293,7 +293,11 @@ class HunyuanVideo(VideoModelFoundation):
         Load the Qwen2.5 VL text encoder and ByT5 glyph encoder.
         """
         device = self.accelerator.device if move_to_device else torch.device("cpu")
-        qwen_path = getattr(self.config, "hunyuan_text_encoder_path", None) or self.TEXT_ENCODER_REPO
+        qwen_path = (
+            self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path")
+            or getattr(self.config, "hunyuan_text_encoder_path", None)
+            or self.TEXT_ENCODER_REPO
+        )
 
         logger.info(f"Loading HunyuanVideo text encoder from {qwen_path}")
         tokenizer = Qwen2Tokenizer.from_pretrained(qwen_path)

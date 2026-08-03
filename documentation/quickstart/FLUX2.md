@@ -25,7 +25,7 @@ To select a variant, set `model_flavour` in your config:
 }
 ```
 
-> **Important**: For `klein-4b` and `klein-9b`, leave `pretrained_text_encoder_model_name_or_path` unset unless you intentionally want to replace the bundled Qwen3 text encoder. Setting that field overrides the Klein default and can trigger downloads of a different text encoder.
+> **Important**: For `klein-4b` and `klein-9b`, leave `qwen_text_encoder_model_name_or_path` unset to use the bundled Qwen3 text encoder. Set it only when replacing the bundled Qwen3 text encoder with another Qwen-compatible source.
 
 ## Model Overview
 

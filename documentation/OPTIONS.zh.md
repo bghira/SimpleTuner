@@ -254,6 +254,13 @@ simpletuner configure config/foo/config.json
 - **内容**：预训练 Gemma 模型路径或 <https://huggingface.co/models> 上的标识符。
 - **原因**：训练 Gemma 系模型（例如 LTX-2、Sana、Lumina2）时，可单独指定 Gemma 权重来源，而无需更换基础扩散模型路径。
 
+### `--qwen_text_encoder_model_name_or_path`
+
+- **内容**：预训练 Qwen 文本编码器模型路径，或 <https://huggingface.co/models> 上的标识符。
+- **默认**：`None`（使用所选模型定义的 Qwen 文本编码器来源）。
+- **原因**：用于在 Qwen 系模型家族中共享或替换 Qwen 文本编码器，而无需编辑 Hugging Face 缓存。
+- **说明**：此选项适用于只有一个 Qwen 文本编码器的模型家族。如果某个模型家族定义了多个 Qwen 编码器，该选项会被忽略，SimpleTuner 会记录警告。
+
 ### `--max_grounding_entities`
 - 每张图像用于 GLIGEN 风格空间标注的最大 grounding 实体数。默认值：0（禁用）。典型值：4-16。
 
@@ -1751,6 +1758,7 @@ usage: train.py [-h] --model_family
                 [--pretrained_unet_subfolder PRETRAINED_UNET_SUBFOLDER]
                 [--pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH]
                 [--pretrained_gemma_model_name_or_path PRETRAINED_GEMMA_MODEL_NAME_OR_PATH]
+                [--qwen_text_encoder_model_name_or_path QWEN_TEXT_ENCODER_MODEL_NAME_OR_PATH]
                 [--revision REVISION] [--variant VARIANT]
                 [--base_model_default_dtype {bf16,fp32}]
                 [--unet_attention_slice [UNET_ATTENTION_SLICE]]
@@ -2081,6 +2089,8 @@ options:
                         Path to pretrained T5 model
   --pretrained_gemma_model_name_or_path PRETRAINED_GEMMA_MODEL_NAME_OR_PATH
                         Path to pretrained Gemma model
+  --qwen_text_encoder_model_name_or_path QWEN_TEXT_ENCODER_MODEL_NAME_OR_PATH
+                        Path to pretrained Qwen text encoder model
   --revision REVISION   Git branch/tag/commit for model version
   --variant VARIANT     Model variant (e.g., fp16, bf16)
   --base_model_default_dtype {bf16,fp32}
