@@ -23,6 +23,8 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
+from simpletuner.helpers.training.offloaded_gradient_checkpointer import activation_offload_context
 
 logger = logging.getLogger(__name__)
 _BSA_DISABLED_WARNED = False
@@ -961,7 +963,17 @@ class LongCatSingleStreamBlock(nn.Module):
         self.ffn = FeedForwardSwiGLU(dim=hidden_size, hidden_dim=int(hidden_size * mlp_ratio))
 
     def forward(
-        self, x, y, t, y_seqlen, latent_shape, num_cond_latents=None, return_kv=False, kv_cache=None, skip_crs_attn=False
+        self,
+        x,
+        y,
+        t,
+        y_seqlen,
+        latent_shape,
+        num_cond_latents=None,
+        return_kv=False,
+        kv_cache=None,
+        skip_crs_attn=False,
+        offload_attention=False,
     ):
         x_dtype = x.dtype
 
@@ -987,13 +999,14 @@ class LongCatSingleStreamBlock(nn.Module):
 
         x_m = modulate_fp32(self.mod_norm_attn, x.view(B, T, -1, C), shift_msa, scale_msa).view(B, N, C)
 
-        if kv_cache is not None:
-            attn_outputs = self.attn.forward_with_kv_cache(
-                x_m, shape=latent_shape, num_cond_latents=num_cond_latents, kv_cache=kv_cache
-            )
-            kv_cache = kv_cache
-        else:
-            attn_outputs = self.attn(x_m, shape=latent_shape, num_cond_latents=num_cond_latents, return_kv=return_kv)
+        with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:self_attention"):
+            if kv_cache is not None:
+                attn_outputs = self.attn.forward_with_kv_cache(
+                    x_m, shape=latent_shape, num_cond_latents=num_cond_latents, kv_cache=kv_cache
+                )
+                kv_cache = kv_cache
+            else:
+                attn_outputs = self.attn(x_m, shape=latent_shape, num_cond_latents=num_cond_latents, return_kv=return_kv)
         if return_kv:
             x_s, kv_cache = attn_outputs
         else:
@@ -1006,9 +1019,10 @@ class LongCatSingleStreamBlock(nn.Module):
         if not skip_crs_attn:
             if kv_cache is not None:
                 num_cond_latents = None
-            x = x + self.cross_attn(
-                self.pre_crs_attn_norm(x), y, y_seqlen, num_cond_latents=num_cond_latents, shape=latent_shape
-            )
+            with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:cross_attention"):
+                x = x + self.cross_attn(
+                    self.pre_crs_attn_norm(x), y, y_seqlen, num_cond_latents=num_cond_latents, shape=latent_shape
+                )
 
         x = modulate_fp32(self.mod_norm_ffn, x.view(B, T, -1, C), shift_mlp, scale_mlp).view(B, N, C)
 
@@ -1027,6 +1041,7 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
     """
 
     _supports_gradient_checkpointing = True
+    _supports_attention_activation_offload = True
     _cp_plan = {
         "": {
             "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
@@ -1107,6 +1122,9 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_backend = "torch"
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
+        self.gradient_checkpointing_offload_attention = False
         self.text_tokens_zero_pad = text_tokens_zero_pad
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=depth,
@@ -1117,6 +1135,15 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
+
+    def set_gradient_checkpointing_offload_attention(self, enabled: bool):
+        self.gradient_checkpointing_offload_attention = bool(enabled)
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.t_embedder.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
@@ -1273,8 +1300,13 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             if musubi_offload_active and musubi_manager.is_managed_block(i):
                 musubi_manager.stream_in(block, hidden_states.device)
 
-            if grad_enabled and self.gradient_checkpointing:
-                if self.gradient_checkpointing_backend == "unsloth":
+            if grad_enabled and should_checkpoint_block(
+                capture_idx,
+                self.gradient_checkpointing,
+                self.gradient_checkpointing_interval,
+                self.gradient_checkpointing_segment_stride,
+            ):
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint
@@ -1292,6 +1324,7 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     return_kv,
                     kv_cache_dict.get(i, None),
                     skip_crs_attn,
+                    self.gradient_checkpointing_offload_attention,
                     use_reentrant=False,
                 )
             else:
@@ -1305,6 +1338,7 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     return_kv,
                     kv_cache_dict.get(i, None),
                     skip_crs_attn,
+                    self.gradient_checkpointing_offload_attention,
                 )
 
             if return_kv:

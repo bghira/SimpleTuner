@@ -46,7 +46,9 @@ from simpletuner.helpers.models.flowmap import (
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.checkpointing import checkpoint as simpletuner_checkpoint
+from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
+from simpletuner.helpers.training.offloaded_gradient_checkpointer import activation_offload_context
 from simpletuner.helpers.training.packed_attention_processors import run_packed_qkv_attention
 from simpletuner.helpers.training.tread import TREADRouter
 
@@ -956,6 +958,9 @@ class LTX2VideoTransformerBlock(nn.Module):
         perturbation_mask: Optional[torch.Tensor] = None,
         all_perturbed: Optional[bool] = None,
         audio_only: bool = False,
+        checkpoint_ffn: bool = False,
+        checkpoint_fn: Any | None = None,
+        offload_attention: bool = False,
     ) -> torch.Tensor:
         batch_size = audio_hidden_states.size(0)
         video_batch_size = hidden_states.size(0)
@@ -989,7 +994,8 @@ class LTX2VideoTransformerBlock(nn.Module):
             if self.perturbed_attn:
                 audio_self_attn_args["perturbation_mask"] = perturbation_mask
                 audio_self_attn_args["all_perturbed"] = all_perturbed
-            attn_audio_hidden_states = self.audio_attn1(**audio_self_attn_args)
+            with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+                attn_audio_hidden_states = self.audio_attn1(**audio_self_attn_args)
             audio_hidden_states = audio_hidden_states + attn_audio_hidden_states * audio_gate_msa
 
             norm_audio_hidden_states = self.audio_norm2(audio_hidden_states)
@@ -997,18 +1003,24 @@ class LTX2VideoTransformerBlock(nn.Module):
                 norm_audio_hidden_states = norm_audio_hidden_states * (1 + audio_scale_text_q) + audio_shift_text_q
             if self.cross_attn_adaln:
                 audio_encoder_hidden_states = audio_encoder_hidden_states * (1 + audio_scale_text_kv) + audio_shift_text_kv
-            attn_audio_hidden_states = self.audio_attn2(
-                norm_audio_hidden_states,
-                encoder_hidden_states=audio_encoder_hidden_states,
-                query_rotary_emb=None,
-                attention_mask=audio_encoder_attention_mask,
-            )
+            with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+                attn_audio_hidden_states = self.audio_attn2(
+                    norm_audio_hidden_states,
+                    encoder_hidden_states=audio_encoder_hidden_states,
+                    query_rotary_emb=None,
+                    attention_mask=audio_encoder_attention_mask,
+                )
             if self.audio_cross_attn_adaln:
                 attn_audio_hidden_states = attn_audio_hidden_states * audio_gate_text_q
             audio_hidden_states = audio_hidden_states + attn_audio_hidden_states
 
             norm_audio_hidden_states = self.audio_norm3(audio_hidden_states) * (1 + audio_scale_mlp) + audio_shift_mlp
-            audio_ff_output = self.audio_ff(norm_audio_hidden_states)
+            if checkpoint_ffn:
+                if checkpoint_fn is None:
+                    raise ValueError("checkpoint_fn is required when checkpoint_ffn=True")
+                audio_ff_output = checkpoint_fn(self.audio_ff, norm_audio_hidden_states, use_reentrant=False)
+            else:
+                audio_ff_output = self.audio_ff(norm_audio_hidden_states)
             audio_hidden_states = audio_hidden_states + audio_ff_output * audio_gate_mlp
 
             return hidden_states, audio_hidden_states
@@ -1031,7 +1043,8 @@ class LTX2VideoTransformerBlock(nn.Module):
         if self.perturbed_attn:
             video_self_attn_args["perturbation_mask"] = perturbation_mask
             video_self_attn_args["all_perturbed"] = all_perturbed
-        attn_hidden_states = self.attn1(**video_self_attn_args)
+        with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+            attn_hidden_states = self.attn1(**video_self_attn_args)
         hidden_states = hidden_states + attn_hidden_states * gate_msa
 
         norm_audio_hidden_states = self.audio_norm1(audio_hidden_states)
@@ -1052,7 +1065,8 @@ class LTX2VideoTransformerBlock(nn.Module):
         if self.perturbed_attn:
             audio_self_attn_args["perturbation_mask"] = perturbation_mask
             audio_self_attn_args["all_perturbed"] = all_perturbed
-        attn_audio_hidden_states = self.audio_attn1(**audio_self_attn_args)
+        with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+            attn_audio_hidden_states = self.audio_attn1(**audio_self_attn_args)
         audio_hidden_states = audio_hidden_states + attn_audio_hidden_states * audio_gate_msa
 
         # 2. Video and Audio Cross-Attention with the text embeddings
@@ -1067,12 +1081,13 @@ class LTX2VideoTransformerBlock(nn.Module):
             norm_hidden_states = norm_hidden_states * (1 + scale_text_q) + shift_text_q
         if self.cross_attn_adaln:
             encoder_hidden_states = encoder_hidden_states * (1 + scale_text_kv) + shift_text_kv
-        attn_hidden_states = self.attn2(
-            norm_hidden_states,
-            encoder_hidden_states=encoder_hidden_states,
-            query_rotary_emb=None,
-            attention_mask=encoder_attention_mask,
-        )
+        with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+            attn_hidden_states = self.attn2(
+                norm_hidden_states,
+                encoder_hidden_states=encoder_hidden_states,
+                query_rotary_emb=None,
+                attention_mask=encoder_attention_mask,
+            )
         if self.video_cross_attn_adaln:
             attn_hidden_states = attn_hidden_states * gate_text_q
         hidden_states = hidden_states + attn_hidden_states
@@ -1082,12 +1097,13 @@ class LTX2VideoTransformerBlock(nn.Module):
             norm_audio_hidden_states = norm_audio_hidden_states * (1 + audio_scale_text_q) + audio_shift_text_q
         if self.cross_attn_adaln:
             audio_encoder_hidden_states = audio_encoder_hidden_states * (1 + audio_scale_text_kv) + audio_shift_text_kv
-        attn_audio_hidden_states = self.audio_attn2(
-            norm_audio_hidden_states,
-            encoder_hidden_states=audio_encoder_hidden_states,
-            query_rotary_emb=None,
-            attention_mask=audio_encoder_attention_mask,
-        )
+        with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+            attn_audio_hidden_states = self.audio_attn2(
+                norm_audio_hidden_states,
+                encoder_hidden_states=audio_encoder_hidden_states,
+                query_rotary_emb=None,
+                attention_mask=audio_encoder_attention_mask,
+            )
         if self.audio_cross_attn_adaln:
             attn_audio_hidden_states = attn_audio_hidden_states * audio_gate_text_q
         audio_hidden_states = audio_hidden_states + attn_audio_hidden_states
@@ -1119,13 +1135,14 @@ class LTX2VideoTransformerBlock(nn.Module):
                     1 + audio_a2v_ca_scale.squeeze(2)
                 ) + audio_a2v_ca_shift.squeeze(2)
 
-                a2v_attn_hidden_states = self.audio_to_video_attn(
-                    mod_norm_hidden_states,
-                    encoder_hidden_states=mod_norm_audio_hidden_states,
-                    query_rotary_emb=ca_video_rotary_emb,
-                    key_rotary_emb=ca_audio_rotary_emb,
-                    attention_mask=a2v_cross_attention_mask,
-                )
+                with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+                    a2v_attn_hidden_states = self.audio_to_video_attn(
+                        mod_norm_hidden_states,
+                        encoder_hidden_states=mod_norm_audio_hidden_states,
+                        query_rotary_emb=ca_video_rotary_emb,
+                        key_rotary_emb=ca_audio_rotary_emb,
+                        attention_mask=a2v_cross_attention_mask,
+                    )
                 hidden_states = hidden_states + a2v_gate * a2v_attn_hidden_states
 
             if use_v2a_cross_attention:
@@ -1136,22 +1153,31 @@ class LTX2VideoTransformerBlock(nn.Module):
                     1 + audio_v2a_ca_scale.squeeze(2)
                 ) + audio_v2a_ca_shift.squeeze(2)
 
-                v2a_attn_hidden_states = self.video_to_audio_attn(
-                    mod_norm_audio_hidden_states,
-                    encoder_hidden_states=mod_norm_hidden_states,
-                    query_rotary_emb=ca_audio_rotary_emb,
-                    key_rotary_emb=ca_video_rotary_emb,
-                    attention_mask=v2a_cross_attention_mask,
-                )
+                with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+                    v2a_attn_hidden_states = self.video_to_audio_attn(
+                        mod_norm_audio_hidden_states,
+                        encoder_hidden_states=mod_norm_hidden_states,
+                        query_rotary_emb=ca_audio_rotary_emb,
+                        key_rotary_emb=ca_video_rotary_emb,
+                        attention_mask=v2a_cross_attention_mask,
+                    )
                 audio_hidden_states = audio_hidden_states + v2a_gate * v2a_attn_hidden_states
 
         # 4. Feedforward
         norm_hidden_states = self.norm3(hidden_states) * (1 + scale_mlp) + shift_mlp
-        ff_output = self.ff(norm_hidden_states)
+        if checkpoint_ffn:
+            if checkpoint_fn is None:
+                raise ValueError("checkpoint_fn is required when checkpoint_ffn=True")
+            ff_output = checkpoint_fn(self.ff, norm_hidden_states, use_reentrant=False)
+        else:
+            ff_output = self.ff(norm_hidden_states)
         hidden_states = hidden_states + ff_output * gate_mlp
 
         norm_audio_hidden_states = self.audio_norm3(audio_hidden_states) * (1 + audio_scale_mlp) + audio_shift_mlp
-        audio_ff_output = self.audio_ff(norm_audio_hidden_states)
+        if checkpoint_ffn:
+            audio_ff_output = checkpoint_fn(self.audio_ff, norm_audio_hidden_states, use_reentrant=False)
+        else:
+            audio_ff_output = self.audio_ff(norm_audio_hidden_states)
         audio_hidden_states = audio_hidden_states + audio_ff_output * audio_gate_mlp
 
         return hidden_states, audio_hidden_states
@@ -1486,6 +1512,8 @@ class LTX2VideoTransformer3DModel(
     _tread_router: Optional[TREADRouter] = None
     _tread_routes: Optional[List[Dict[str, Any]]] = None
     _supports_gradient_checkpointing = True
+    _supports_ffn_gradient_checkpointing = True
+    _supports_attention_activation_offload = True
     _skip_layerwise_casting_patterns = ["norm"]
     _repeated_blocks = ["LTX2VideoTransformerBlock"]
     _cp_plan = {
@@ -1731,6 +1759,9 @@ class LTX2VideoTransformer3DModel(
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_backend = "torch"
+        self.gradient_checkpointing_offload_attention = False
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
         self.time_sign_embed: Optional[nn.Embedding] = None
         self.audio_time_sign_embed: Optional[nn.Embedding] = None
         if enable_time_sign_embed:
@@ -1767,6 +1798,15 @@ class LTX2VideoTransformer3DModel(
 
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
+
+    def set_gradient_checkpointing_offload_attention(self, enabled: bool):
+        self.gradient_checkpointing_offload_attention = bool(enabled)
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     def set_router(self, router: TREADRouter, routes: Optional[List[Dict[str, Any]]] = None):
         """Attach a TREAD router and route definitions."""
@@ -2313,8 +2353,81 @@ class LTX2VideoTransformer3DModel(
         if musubi_manager is not None:
             musubi_offload_active = musubi_manager.activate(self.transformer_blocks, hidden_states.device, grad_enabled)
 
+        use_segmented_checkpointing = (
+            grad_enabled
+            and self.gradient_checkpointing
+            and self.gradient_checkpointing_interval is not None
+            and self.gradient_checkpointing_interval > 1
+            and not self.gradient_checkpointing_backend.endswith("-ffn")
+            and not use_routing
+            and not musubi_offload_active
+            and grounding_objs is None
+            and hidden_states_buffer is None
+            and not output_hidden_states
+        )
+        segmented_checkpoint_fn = None
+        segmented_checkpoint_kwargs = {"use_reentrant": False}
+        if use_segmented_checkpointing:
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                segmented_checkpoint_fn = offloaded_checkpoint
+            else:
+                segmented_checkpoint_fn = simpletuner_checkpoint
+
         captured_frame_hidden: Optional[torch.Tensor] = None
         for block_idx, block in enumerate(self.transformer_blocks):
+            if use_segmented_checkpointing:
+                if block_idx != 0:
+                    continue
+
+                def run_segmented_block(
+                    _idx,
+                    block,
+                    hidden_states,
+                    audio_hidden_states,
+                ):
+                    return block(
+                        hidden_states,
+                        audio_hidden_states,
+                        encoder_hidden_states,
+                        audio_encoder_hidden_states,
+                        temb,
+                        temb_audio,
+                        video_cross_attn_scale_shift,
+                        audio_cross_attn_scale_shift,
+                        video_cross_attn_a2v_gate,
+                        audio_cross_attn_v2a_gate,
+                        temb_prompt,
+                        temb_prompt_audio,
+                        video_rotary_emb,
+                        audio_rotary_emb,
+                        video_cross_attn_rotary_emb,
+                        audio_cross_attn_rotary_emb,
+                        encoder_attention_mask,
+                        audio_encoder_attention_mask,
+                        self_attention_mask,
+                        audio_self_attention_mask,
+                        a2v_cross_attention_mask,
+                        v2a_cross_attention_mask,
+                        True,
+                        True,
+                        None,
+                        None,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
+                    )
+
+                hidden_states, audio_hidden_states = checkpoint_sequential_state(
+                    self.transformer_blocks,
+                    self.gradient_checkpointing_interval,
+                    (hidden_states, audio_hidden_states),
+                    run_segmented_block,
+                    segmented_checkpoint_fn,
+                    segmented_checkpoint_kwargs,
+                    segment_stride=self.gradient_checkpointing_segment_stride,
+                )
+                continue
+
             if use_routing and route_ptr < len(routes) and block_idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
                 tread_mask_info = router.get_mask(
@@ -2336,7 +2449,7 @@ class LTX2VideoTransformer3DModel(
                 musubi_manager.stream_in(block, hidden_states.device)
 
             if torch.is_grad_enabled() and self.gradient_checkpointing:
-                if self.gradient_checkpointing_backend == "unsloth":
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint
@@ -2388,32 +2501,64 @@ class LTX2VideoTransformer3DModel(
                         True,
                         None,
                         None,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
                     )
 
-                checkpoint_kwargs = {"use_reentrant": False}
-                if checkpoint_fn is simpletuner_checkpoint:
-                    checkpoint_kwargs.update(_transformerengine_checkpoint_kwargs(block))
+                if self.gradient_checkpointing_backend.endswith("-ffn"):
+                    hidden_states, audio_hidden_states = block(
+                        hidden_states=hidden_states,
+                        audio_hidden_states=audio_hidden_states,
+                        encoder_hidden_states=encoder_hidden_states,
+                        audio_encoder_hidden_states=audio_encoder_hidden_states,
+                        temb=temb,
+                        temb_audio=temb_audio,
+                        temb_ca_scale_shift=video_cross_attn_scale_shift,
+                        temb_ca_audio_scale_shift=audio_cross_attn_scale_shift,
+                        temb_ca_gate=video_cross_attn_a2v_gate,
+                        temb_ca_audio_gate=audio_cross_attn_v2a_gate,
+                        temb_prompt=temb_prompt,
+                        temb_prompt_audio=temb_prompt_audio,
+                        video_rotary_emb=current_video_rotary_emb,
+                        audio_rotary_emb=audio_rotary_emb,
+                        ca_video_rotary_emb=current_ca_video_rotary_emb,
+                        ca_audio_rotary_emb=audio_cross_attn_rotary_emb,
+                        encoder_attention_mask=encoder_attention_mask,
+                        audio_encoder_attention_mask=audio_encoder_attention_mask,
+                        self_attention_mask=self_attention_mask,
+                        audio_self_attention_mask=audio_self_attention_mask,
+                        a2v_cross_attention_mask=a2v_cross_attention_mask,
+                        v2a_cross_attention_mask=v2a_cross_attention_mask,
+                        use_a2v_cross_attention=True,
+                        use_v2a_cross_attention=True,
+                        checkpoint_ffn=True,
+                        checkpoint_fn=checkpoint_fn,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
+                    )
+                else:
+                    checkpoint_kwargs = {"use_reentrant": False}
+                    if checkpoint_fn is simpletuner_checkpoint:
+                        checkpoint_kwargs.update(_transformerengine_checkpoint_kwargs(block))
 
-                hidden_states, audio_hidden_states = checkpoint_fn(
-                    _checkpoint_block,
-                    hidden_states,
-                    audio_hidden_states,
-                    encoder_hidden_states,
-                    audio_encoder_hidden_states,
-                    temb,
-                    temb_audio,
-                    video_cross_attn_scale_shift,
-                    audio_cross_attn_scale_shift,
-                    video_cross_attn_a2v_gate,
-                    audio_cross_attn_v2a_gate,
-                    temb_prompt,
-                    temb_prompt_audio,
-                    current_video_rotary_emb,
-                    audio_rotary_emb,
-                    current_ca_video_rotary_emb,
-                    audio_cross_attn_rotary_emb,
-                    **checkpoint_kwargs,
-                )
+                    hidden_states, audio_hidden_states = checkpoint_fn(
+                        _checkpoint_block,
+                        hidden_states,
+                        audio_hidden_states,
+                        encoder_hidden_states,
+                        audio_encoder_hidden_states,
+                        temb,
+                        temb_audio,
+                        video_cross_attn_scale_shift,
+                        audio_cross_attn_scale_shift,
+                        video_cross_attn_a2v_gate,
+                        audio_cross_attn_v2a_gate,
+                        temb_prompt,
+                        temb_prompt_audio,
+                        current_video_rotary_emb,
+                        audio_rotary_emb,
+                        current_ca_video_rotary_emb,
+                        audio_cross_attn_rotary_emb,
+                        **checkpoint_kwargs,
+                    )
             else:
                 hidden_states, audio_hidden_states = block(
                     hidden_states=hidden_states,
@@ -2440,6 +2585,7 @@ class LTX2VideoTransformer3DModel(
                     v2a_cross_attention_mask=v2a_cross_attention_mask,
                     use_a2v_cross_attention=True,
                     use_v2a_cross_attention=True,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
                 )
 
             if grounding_objs is not None and hasattr(block, "fuser"):

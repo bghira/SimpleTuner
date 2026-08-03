@@ -502,7 +502,7 @@ class ErnieImageTransformer2DModel(ModelMixin, ConfigMixin):
                 and self.gradient_checkpointing
                 and (self.gradient_checkpointing_interval is None or layer_idx % self.gradient_checkpointing_interval == 0)
             ):
-                if self.gradient_checkpointing_backend == "unsloth":
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     x = offloaded_checkpoint(layer, x, rotary_pos_emb, temb, attention_mask, use_reentrant=False)

@@ -48,6 +48,7 @@ from simpletuner.helpers.training.attention_backend import maybe_metal_flash_rop
 from simpletuner.helpers.training.checkpointing import checkpoint as simpletuner_checkpoint
 from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
+from simpletuner.helpers.training.offloaded_gradient_checkpointer import activation_offload_context
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import CallableDict, MutableModuleList, PatchableModule
@@ -477,6 +478,7 @@ class FluxSingleTransformerBlock(PatchableModule):
         attention_mask: Optional[torch.Tensor] = None,
         checkpoint_ffn: bool = False,
         checkpoint_fn: Any | None = None,
+        offload_attention: bool = False,
     ):
         residual = hidden_states
         norm_hidden_states, gate = _flux_apply_ada_layer_norm_zero_single(self.norm, hidden_states, temb)
@@ -487,11 +489,12 @@ class FluxSingleTransformerBlock(PatchableModule):
                 attention_mask,
             )
 
-        attn_output = self.attn(
-            hidden_states=norm_hidden_states,
-            image_rotary_emb=image_rotary_emb,
-            attention_mask=attention_mask,
-        )
+        with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+            attn_output = self.attn(
+                hidden_states=norm_hidden_states,
+                image_rotary_emb=image_rotary_emb,
+                attention_mask=attention_mask,
+            )
 
         if checkpoint_ffn:
             if checkpoint_fn is None:
@@ -611,6 +614,7 @@ class FluxTransformerBlock(PatchableModule):
         attention_mask: Optional[torch.Tensor] = None,
         checkpoint_ffn: bool = False,
         checkpoint_fn: Any | None = None,
+        offload_attention: bool = False,
     ):
         if context_temb is None:
             context_temb = temb
@@ -629,12 +633,13 @@ class FluxTransformerBlock(PatchableModule):
             )
 
         # Attention.
-        attention_outputs = self.attn(
-            hidden_states=norm_hidden_states,
-            encoder_hidden_states=norm_encoder_hidden_states,
-            image_rotary_emb=image_rotary_emb,
-            attention_mask=attention_mask,
-        )
+        with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+            attention_outputs = self.attn(
+                hidden_states=norm_hidden_states,
+                encoder_hidden_states=norm_encoder_hidden_states,
+                image_rotary_emb=image_rotary_emb,
+                attention_mask=attention_mask,
+            )
         ip_attn_output = None
         if len(attention_outputs) == 2:
             attn_output, context_attn_output = attention_outputs
@@ -702,6 +707,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
     _supports_gradient_checkpointing = True
     _supports_ffn_gradient_checkpointing = True
+    _supports_attention_activation_offload = True
     # Hint FSDP auto wrap policy to shard per transformer block.
     _no_split_modules = ["FluxTransformerBlock", "FluxSingleTransformerBlock"]
     _cp_plan = {
@@ -808,7 +814,9 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         self.gradient_checkpointing = False
         # optional interval for gradient checkpointing
         self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
         self.gradient_checkpointing_backend = "torch"
+        self.gradient_checkpointing_offload_attention = False
         total_layers = num_layers + num_single_layers
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=total_layers,
@@ -820,8 +828,14 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
     def set_gradient_checkpointing_interval(self, value: int):
         self.gradient_checkpointing_interval = value
 
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
+
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
+
+    def set_gradient_checkpointing_offload_attention(self, enabled: bool):
+        self.gradient_checkpointing_offload_attention = bool(enabled)
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         self._tread_router = router
@@ -1154,33 +1168,45 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
         capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
+            run_gap_eagerly = False
             if use_segmented_checkpointing and controlnet_block_samples is None:
-                if index_block % segment_size != 0:
+                segment_stride = self.gradient_checkpointing_segment_stride or segment_size
+                segment_offset = index_block % segment_stride
+                if segment_offset < segment_size and segment_offset != 0:
                     continue
-                segment_blocks = list(self.transformer_blocks[index_block : index_block + segment_size])
+                if segment_offset >= segment_size:
+                    run_gap_eagerly = True
+                else:
+                    segment_blocks = list(self.transformer_blocks[index_block : index_block + segment_size])
 
-                def run_double_block(_relative_index, segment_block, segment_hidden_states, segment_encoder_hidden_states):
-                    next_encoder_hidden_states, next_hidden_states = segment_block(
-                        hidden_states=segment_hidden_states,
-                        encoder_hidden_states=segment_encoder_hidden_states,
-                        temb=temb_img,
-                        context_temb=temb_txt,
-                        image_rotary_emb=image_rotary_emb,
-                        attention_mask=attention_mask,
+                    def run_double_block(
+                        _relative_index,
+                        segment_block,
+                        segment_hidden_states,
+                        segment_encoder_hidden_states,
+                    ):
+                        next_encoder_hidden_states, next_hidden_states = segment_block(
+                            hidden_states=segment_hidden_states,
+                            encoder_hidden_states=segment_encoder_hidden_states,
+                            temb=temb_img,
+                            context_temb=temb_txt,
+                            image_rotary_emb=image_rotary_emb,
+                            attention_mask=attention_mask,
+                            offload_attention=self.gradient_checkpointing_offload_attention,
+                        )
+                        return next_hidden_states, next_encoder_hidden_states
+
+                    hidden_states, encoder_hidden_states = checkpoint_sequential_state(
+                        segment_blocks,
+                        len(segment_blocks),
+                        (hidden_states, encoder_hidden_states),
+                        run_double_block,
+                        segmented_checkpoint_fn,
+                        segmented_checkpoint_kwargs,
                     )
-                    return next_hidden_states, next_encoder_hidden_states
-
-                hidden_states, encoder_hidden_states = checkpoint_sequential_state(
-                    segment_blocks,
-                    len(segment_blocks),
-                    (hidden_states, encoder_hidden_states),
-                    run_double_block,
-                    segmented_checkpoint_fn,
-                    segmented_checkpoint_kwargs,
-                )
-                global_idx += len(segment_blocks)
-                capture_idx += len(segment_blocks)
-                continue
+                    global_idx += len(segment_blocks)
+                    capture_idx += len(segment_blocks)
+                    continue
 
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
                 musubi_manager.stream_in(block, hidden_states.device)
@@ -1214,16 +1240,14 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             if (
                 self.training
                 and self.gradient_checkpointing
+                and not run_gap_eagerly
                 and (self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0)
             ):
                 checkpoint_ffn = self.gradient_checkpointing_backend.endswith("-ffn")
 
-                def create_custom_forward(module, return_dict=None):
+                def create_custom_forward(module):
                     def custom_forward(*inputs):
-                        if return_dict is not None:
-                            return module(*inputs, return_dict=return_dict)
-                        else:
-                            return module(*inputs)
+                        return module(*inputs, offload_attention=self.gradient_checkpointing_offload_attention)
 
                     return custom_forward
 
@@ -1246,6 +1270,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                         attention_mask=attention_mask,
                         checkpoint_ffn=True,
                         checkpoint_fn=checkpoint_fn,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
                     )
                 else:
                     if is_torch_version(">=", "1.11.0"):
@@ -1269,6 +1294,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                     context_temb=temb_txt,
                     image_rotary_emb=current_rope,
                     attention_mask=attention_mask,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
                 )
 
             if grounding_objs is not None and hasattr(block, "fuser"):
@@ -1307,30 +1333,37 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         txt_len = encoder_hidden_states.shape[1]
 
         for index_block, block in enumerate(self.single_transformer_blocks):
+            run_gap_eagerly = False
             if use_segmented_checkpointing and controlnet_single_block_samples is None:
-                if index_block % segment_size != 0:
+                segment_stride = self.gradient_checkpointing_segment_stride or segment_size
+                segment_offset = index_block % segment_stride
+                if segment_offset < segment_size and segment_offset != 0:
                     continue
-                segment_blocks = list(self.single_transformer_blocks[index_block : index_block + segment_size])
+                if segment_offset >= segment_size:
+                    run_gap_eagerly = True
+                else:
+                    segment_blocks = list(self.single_transformer_blocks[index_block : index_block + segment_size])
 
-                def run_single_block(_relative_index, segment_block, segment_hidden_states):
-                    return segment_block(
-                        hidden_states=segment_hidden_states,
-                        temb=temb_single,
-                        image_rotary_emb=image_rotary_emb,
-                        attention_mask=attention_mask,
+                    def run_single_block(_relative_index, segment_block, segment_hidden_states):
+                        return segment_block(
+                            hidden_states=segment_hidden_states,
+                            temb=temb_single,
+                            image_rotary_emb=image_rotary_emb,
+                            attention_mask=attention_mask,
+                            offload_attention=self.gradient_checkpointing_offload_attention,
+                        )
+
+                    (hidden_states,) = checkpoint_sequential_state(
+                        segment_blocks,
+                        len(segment_blocks),
+                        (hidden_states,),
+                        run_single_block,
+                        segmented_checkpoint_fn,
+                        segmented_checkpoint_kwargs,
                     )
-
-                (hidden_states,) = checkpoint_sequential_state(
-                    segment_blocks,
-                    len(segment_blocks),
-                    (hidden_states,),
-                    run_single_block,
-                    segmented_checkpoint_fn,
-                    segmented_checkpoint_kwargs,
-                )
-                global_idx += len(segment_blocks)
-                capture_idx += len(segment_blocks)
-                continue
+                    global_idx += len(segment_blocks)
+                    capture_idx += len(segment_blocks)
+                    continue
 
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
                 musubi_manager.stream_in(block, hidden_states.device)
@@ -1372,16 +1405,14 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             if (
                 self.training
                 and self.gradient_checkpointing
+                and not run_gap_eagerly
                 and (self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0)
             ):
                 checkpoint_ffn = self.gradient_checkpointing_backend.endswith("-ffn")
 
-                def create_custom_forward(module, return_dict=None):
+                def create_custom_forward(module):
                     def custom_forward(*inputs):
-                        if return_dict is not None:
-                            return module(*inputs, return_dict=return_dict)
-                        else:
-                            return module(*inputs)
+                        return module(*inputs, offload_attention=self.gradient_checkpointing_offload_attention)
 
                     return custom_forward
 
@@ -1402,6 +1433,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                         attention_mask=attention_mask,
                         checkpoint_ffn=True,
                         checkpoint_fn=checkpoint_fn,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
                     )
                 else:
                     if is_torch_version(">=", "1.11.0"):
@@ -1421,6 +1453,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                     temb=temb_single,
                     image_rotary_emb=current_rope,
                     attention_mask=attention_mask,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
                 )
 
             if grounding_objs is not None and hasattr(block, "fuser"):
