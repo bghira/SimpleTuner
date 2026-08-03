@@ -742,10 +742,7 @@ class SaveHookManager:
             self.ema_model.copy_to(trainable_parameters)
             ema_trained_component = unwrap_model(self.accelerator, self.model.get_trained_component())
             lora_save_parameters = {
-                f"{self.model.MODEL_SUBFOLDER}_lora_layers": convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(ema_trained_component),
-                    original_type=StateDictType.PEFT,
-                ),
+                f"{self.model.MODEL_SUBFOLDER}_lora_layers": get_peft_model_state_dict(ema_trained_component),
             }
             ema_modules_to_save = {self.model.MODEL_SUBFOLDER: ema_trained_component}
             ema_metadata = _collate_lora_metadata(ema_modules_to_save)
@@ -792,9 +789,8 @@ class SaveHookManager:
                 modules_to_save["controlnet"] = unwrapped_model
             elif isinstance(unwrapped_model, tuple(trained_component_classes)):
                 # unet_lora_layers or transformer_lora_layers
-                lora_save_parameters[f"{self.model.MODEL_SUBFOLDER}_lora_layers"] = convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(unwrapped_model),
-                    original_type=StateDictType.PEFT,
+                lora_save_parameters[f"{self.model.MODEL_SUBFOLDER}_lora_layers"] = get_peft_model_state_dict(
+                    unwrapped_model
                 )
                 modules_to_save[self.model.MODEL_SUBFOLDER] = unwrapped_model
             elif text_encoder_0_cls is not None and isinstance(unwrapped_model, text_encoder_0_cls):

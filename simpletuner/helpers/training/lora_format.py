@@ -233,24 +233,16 @@ def convert_diffusers_to_comfyui(
 
         if ".lora.down." in new_key:
             new_key = new_key.replace(".lora.down.", ".lora_A.")
+        elif ".lora.up." in new_key:
+            new_key = new_key.replace(".lora.up.", ".lora_B.")
+
+        if ".lora_A." in new_key:
             module_key = new_key[: new_key.rfind(".lora_A.")]
             alpha_value = _resolve_alpha_for_module(
                 module_key.removeprefix(f"{diffusion_prefix}."), weight, adapter_metadata
             )
             if alpha_value is not None and module_key not in alpha_entries:
                 alpha_entries[module_key] = torch.tensor(alpha_value, dtype=torch.float32)
-        elif new_key.endswith(".lora.down.weight"):
-            new_key = new_key.replace(".lora.down.weight", ".lora_A.weight")
-            module_key = new_key[: new_key.rfind(".lora_A.weight")]
-            alpha_value = _resolve_alpha_for_module(
-                module_key.removeprefix(f"{diffusion_prefix}."), weight, adapter_metadata
-            )
-            if alpha_value is not None and module_key not in alpha_entries:
-                alpha_entries[module_key] = torch.tensor(alpha_value, dtype=torch.float32)
-        elif ".lora.up." in new_key:
-            new_key = new_key.replace(".lora.up.", ".lora_B.")
-        elif new_key.endswith(".lora.up.weight"):
-            new_key = new_key.replace(".lora.up.weight", ".lora_B.weight")
 
         converted[new_key] = weight
 
