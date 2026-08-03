@@ -1,7 +1,9 @@
 import logging
 import os
+import tempfile
 import unittest
 from math import ceil
+from types import SimpleNamespace
 
 # Import test configuration to suppress logging/warnings
 try:
@@ -20,16 +22,19 @@ from unittest.mock import MagicMock, Mock, patch
 from accelerate import PartialState
 from PIL import Image
 
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
 from simpletuner.helpers.multiaspect.state import BucketStateManager
+from simpletuner.helpers.training.state_tracker import StateTracker
 from tests.helpers.data import MockDataBackend
 
 
 class TestMultiAspectSampler(unittest.TestCase):
     def setUp(self):
         self.process_state = PartialState()
-        self.accelerator = MagicMock()
+        self.accelerator = MagicMock(num_processes=1, process_index=0)
         self.accelerator.log = MagicMock()
         self.metadata_backend = Mock(spec=DiscoveryMetadataBackend)
         self.metadata_backend.id = "foo"
@@ -105,6 +110,8 @@ class TestMultiAspectSampler(unittest.TestCase):
             "current_bucket": 0,
             "exhausted_buckets": ["old"],
             "seen_images": {"same.jpg": True, "other.jpg": False, "legacy.jpg": True},
+            "dp_size": 1,
+            "dp_rank": 0,
         }
 
         self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["stale.jpg"]}
@@ -121,6 +128,21 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.assertEqual(self.metadata_backend.seen_images["same.jpg"], 2)
         self.assertEqual(self.metadata_backend.seen_images["other.jpg"], 0)
         self.assertTrue(self.metadata_backend.seen_images["legacy.jpg"])
+
+    def test_load_states_keeps_the_fresh_split_when_the_checkpoint_records_no_layout(self):
+        # Checkpoints written before the layout was recorded cannot be attributed to a rank, so
+        # the schedule is left alone. Seen state still loads.
+        self.sampler.state_manager.load_state.return_value = {
+            "aspect_ratio_bucket_indices": {"1.0": ["same.jpg", "same.jpg", "other.jpg"]},
+            "seen_images": {"same.jpg": True},
+        }
+
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["fresh.jpg"]}
+        self.metadata_backend.seen_images = {}
+        self.sampler.load_states(self.state_path)
+
+        self.assertEqual(self.metadata_backend.aspect_ratio_bucket_indices, {"1.0": ["fresh.jpg"]})
+        self.assertTrue(self.metadata_backend.seen_images["same.jpg"])
 
     def test_change_bucket(self):
         self.sampler.buckets = ["1.5"]
@@ -233,6 +255,126 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.assertIn("/fake/dir/image1.jpg", result_paths)
         self.assertIn("/fake/dir/image2.jpg", result_paths)
         self.assertIn("/fake/dir/image4.jpg", result_paths)
+
+
+class TestSamplerResumeSchedule(unittest.TestCase):
+    """A checkpointed schedule is one rank's shard; restoring it must keep the ranks partitioned."""
+
+    @staticmethod
+    def _split(world_size, rank, shuffle_seed, images):
+        backend = MagicMock(spec=MetadataBackend)
+        backend.id = "resume"
+        backend.batch_size = 1
+        backend.repeats = 0
+        backend.bucket_report = None
+        backend.dataset_type = DatasetType.IMAGE
+        backend.aspect_ratio_bucket_indices = {"1.0": list(images)}
+        backend.read_only = False
+        backend.seen_images = {}
+        backend.accelerator = SimpleNamespace(
+            num_processes=world_size,
+            process_index=rank,
+            is_main_process=rank == 0,
+        )
+        with (
+            patch.object(
+                StateTracker,
+                "get_args",
+                return_value=SimpleNamespace(allow_dataset_oversubscription=False, seed=shuffle_seed),
+            ),
+            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+            patch(
+                "simpletuner.helpers.metadata.backends.base.broadcast_object_from_main",
+                side_effect=lambda value: shuffle_seed,
+            ),
+        ):
+            MetadataBackend.split_buckets_between_processes(
+                backend,
+                gradient_accumulation_steps=1,
+                apply_padding=False,
+            )
+        return backend
+
+    @staticmethod
+    def _sampler(backend):
+        sampler = object.__new__(MultiAspectSampler)
+        sampler.id = backend.id
+        sampler.metadata_backend = backend
+        sampler.accelerator = backend.accelerator
+        sampler.batch_size = 1
+        sampler.buckets = list(backend.aspect_ratio_bucket_indices)
+        sampler.exhausted_buckets = []
+        sampler.current_bucket = None
+        sampler.current_epoch = 1
+        sampler.sample_type_strs = "images"
+        sampler.logger = MagicMock()
+        sampler._val_master_list = []
+        sampler.state_manager = BucketStateManager(backend.id)
+        return sampler
+
+    @staticmethod
+    def _state_path(directory, rank):
+        filename = "training_state.json" if rank == 0 else f"training_state-rank{rank}.json"
+        return os.path.join(directory, filename)
+
+    def _resume_shards(self, *, images, save_world_size, saving_ranks, resume_world_size):
+        with tempfile.TemporaryDirectory() as checkpoint_dir:
+            for rank in range(save_world_size):
+                backend = self._split(save_world_size, rank, shuffle_seed=1, images=images)
+                if rank in saving_ranks:
+                    self._sampler(backend).save_state(self._state_path(checkpoint_dir, rank))
+
+            shards = []
+            for rank in range(resume_world_size):
+                # A relaunch without --seed draws a new shuffle seed, so the fresh split differs
+                # from the one the checkpoint was written against.
+                backend = self._split(resume_world_size, rank, shuffle_seed=2, images=images)
+                self._sampler(backend).load_states(self._state_path(checkpoint_dir, rank))
+                shards.append(list(backend.aspect_ratio_bucket_indices["1.0"]))
+            return shards
+
+    def _assert_partitions(self, shards, images):
+        scheduled = [path for shard in shards for path in shard]
+        self.assertEqual(
+            sorted(scheduled),
+            sorted(images),
+            msg=f"ranks no longer partition the dataset: {shards}",
+        )
+
+    def test_resume_after_a_rank_zero_only_save_keeps_the_ranks_partitioned(self):
+        images = [f"image-{index:02d}.jpg" for index in range(12)]
+        shards = self._resume_shards(images=images, save_world_size=4, saving_ranks={0}, resume_world_size=4)
+        self._assert_partitions(shards, images)
+
+    def test_resume_when_every_rank_saved_keeps_the_ranks_partitioned(self):
+        # Control: a complete checkpoint is restorable and stays a partition.
+        images = [f"image-{index:02d}.jpg" for index in range(12)]
+        shards = self._resume_shards(images=images, save_world_size=4, saving_ranks=set(range(4)), resume_world_size=4)
+        self._assert_partitions(shards, images)
+
+    def test_resume_when_no_rank_saved_keeps_the_ranks_partitioned(self):
+        # Control: with nothing to restore the fresh split is already a partition. Together with
+        # the previous control this isolates the mixed state as the cause.
+        images = [f"image-{index:02d}.jpg" for index in range(12)]
+        shards = self._resume_shards(images=images, save_world_size=4, saving_ranks=set(), resume_world_size=4)
+        self._assert_partitions(shards, images)
+
+    def test_resume_when_rank_zero_alone_did_not_save_keeps_the_ranks_partitioned(self):
+        # The completeness check has to cover rank 0 as well: its state file is the one that is
+        # named differently, so scanning only the -rank{N} siblings would miss it.
+        images = [f"image-{index:02d}.jpg" for index in range(12)]
+        shards = self._resume_shards(images=images, save_world_size=4, saving_ranks={1, 2, 3}, resume_world_size=4)
+        self._assert_partitions(shards, images)
+
+    def test_resume_onto_a_smaller_world_size_keeps_the_ranks_partitioned(self):
+        images = [f"image-{index:02d}.jpg" for index in range(16)]
+        shards = self._resume_shards(images=images, save_world_size=8, saving_ranks={0}, resume_world_size=4)
+        self._assert_partitions(shards, images)
+
+    def test_resume_onto_a_larger_world_size_keeps_the_ranks_partitioned(self):
+        images = [f"image-{index:02d}.jpg" for index in range(16)]
+        shards = self._resume_shards(images=images, save_world_size=4, saving_ranks=set(range(4)), resume_world_size=8)
+        self._assert_partitions(shards, images)
 
 
 if __name__ == "__main__":
