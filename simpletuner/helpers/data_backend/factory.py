@@ -809,7 +809,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         is_i2v_flavour = model_flavour.startswith("i2v")
         force_i2v = (
             (model_family == "wan" and model_flavour.startswith("i2v-"))
-            or (model_family == "kandinsky5-video" and is_i2v_flavour)
+            or (model_family in ("kandinsky5-video", "kandinsky5_video") and is_i2v_flavour)
             or (model_family == "hunyuanvideo" and is_i2v_flavour)
         )
 
@@ -1907,7 +1907,7 @@ class FactoryRegistry:
         matching conditioning-image-embed backends when none were supplied explicitly.
         """
         model_family = str(getattr(self.args, "model_family", "") or "")
-        if model_family.lower() not in ["wan", "kandinsky5-video", "hunyuanvideo"]:
+        if model_family.lower() not in ["wan", "kandinsky5-video", "kandinsky5_video", "hunyuanvideo"]:
             return data_backend_config
 
         auto_embed_configs: List[Dict[str, Any]] = []
@@ -3283,7 +3283,7 @@ class FactoryRegistry:
                     f" You have to reduce your batch size, or increase your dataset size (id={init_backend['id']})."
                 )
 
-        apply_padding = True if not self.args.max_train_steps or self.args.max_train_steps == 0 else False
+        apply_padding = not self.args.max_train_steps or self.args.allow_dataset_oversubscription
 
         if backend.get("auto_generated", False):
             # when we're duplicating a metadata set, it's already split between processes.

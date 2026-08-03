@@ -32,9 +32,15 @@ Supported model families में आप कम blocks भी checkpoint कर
 }
 ```
 
-`gradient_checkpointing_interval: 2` हर दूसरे supported block को checkpoint करता है। Higher values कम checkpointing करती हैं और VRAM में ज्यादा activations रखती हैं।
+`gradient_checkpointing_interval: 2` supported whole-block paths पर contiguous दो-block chunks checkpoint करता है। Higher values कम recompute करती हैं और VRAM में ज्यादा activations रखती हैं।
 
-`torch-ffn` और `unsloth-ffn` अभी Flux.1-style blocks और MageFlow support करते हैं। बाकी model families साफ error देंगी जब तक उनके blocks वही safe boundary expose नहीं करते।
+इन segmented paths पर `gradient_checkpointing_segment_stride` भी `unsloth` के साथ काम करता है। इसे fit lever मानें, speed lever नहीं: skipped blocks GPU पर रहते हैं, और checkpointed blocks saved tensors के लिए CPU offload use करते हैं। Torch-only overview और model benchmarks के लिए [Segmented Checkpointing](SEGMENTED_CHECKPOINTING.md) देखें।
+
+`gradient_checkpointing_offload_attention` backend से अलग option है। Supported attention/FFN split blocks पर यह attention-side saved activations offload करता है। यह अकेले चल सकता है या model उस backend को support करे तो `torch`, `torch-ffn`, `unsloth`, या `unsloth-ffn` के साथ combine हो सकता है।
+
+`gradient_checkpointing_offload_pin_memory_max_buckets` offloaded saved tensors के लिए pinned CPU pooling control करता है। default `12` distinct tensor buckets है; normal CPU memory ही इस्तेमाल करने के लिए इसे `0` करें।
+
+`torch-ffn` और `unsloth-ffn` अभी Chroma, Flux, Krea 2, LTXVideo2, MageFlow, Wan, और Z-Image support करते हैं। बाकी model families साफ error देंगी जब तक उनके blocks वही safe boundary expose नहीं करते।
 
 ## Tradeoff
 

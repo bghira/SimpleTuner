@@ -253,6 +253,13 @@ simpletuner configure config/foo/config.json
 - **What**: pretrained Gemma model का path या <https://huggingface.co/models> से उसका identifier.
 - **Why**: Gemma‑based models (जैसे LTX-2, Sana, Lumina2) ट्रेन करते समय आप base diffusion model path बदले बिना Gemma weights का source specify कर सकते हैं।
 
+### `--qwen_text_encoder_model_name_or_path`
+
+- **What**: pretrained Qwen text encoder model का path या <https://huggingface.co/models> से उसका identifier.
+- **Default**: `None` (selected model में defined Qwen text encoder source उपयोग होता है).
+- **Why**: Qwen-based model families में Qwen text encoder को share या replace करने के लिए इसका उपयोग करें, बिना Hugging Face cache edit किए।
+- **Notes**: यह उन model families पर लागू होता है जिनमें एक Qwen text encoder है। अगर कोई model family multiple Qwen encoders define करती है, तो option ignore होता है और SimpleTuner warning log करता है।
+
 ### `--max_grounding_entities`
 - GLIGEN-style spatial annotations के लिए प्रति image grounding entities की अधिकतम संख्या। Default: 0 (disabled)। सामान्य मान: 4-16।
 
@@ -275,8 +282,14 @@ simpletuner configure config/foo/config.json
 
 ### `--gradient_checkpointing_interval`
 
-- **What**: हर *n* blocks पर checkpoint करें, जहाँ *n* शून्य से बड़ा मान है। 1 का मान `--gradient_checkpointing` enabled जैसा है, और 2 हर दूसरे block पर checkpoint करेगा।
-- **Note**: यह विकल्प फिलहाल केवल SDXL और Flux में समर्थित है। SDXL इसमें hackish implementation उपयोग करता है।
+- **What**: Transformer block checkpointing के लिए model-dependent interval। 1 का मान लगभग `--gradient_checkpointing` enabled जैसा है।
+- **Note**: Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Z-Image, और Wan whole-block paths पर *n* contiguous block chunks use करते हैं। इस option को expose करने वाली दूसरी families अभी भी पुराने "हर *n*-th block checkpoint" behavior का उपयोग कर सकती हैं। Higher values recompute overhead घटा सकती हैं, लेकिन आम तौर पर VRAM में ज्यादा activations रखती हैं।
+
+### `--gradient_checkpointing_segment_stride`
+
+- **What**: Supported segmented whole-block paths पर हर *n* blocks में checkpointed segment शुरू करें।
+- **Example**: `--gradient_checkpointing_interval=2` और `--gradient_checkpointing_segment_stride=4` के साथ SimpleTuner दो blocks checkpoint करता है, अगले दो blocks normally चलाता है, और repeat करता है।
+- **Note**: यह केवल उन model families पर प्रभावी होता है जो installed SimpleTuner version में segmented whole-block support expose करती हैं। Unsupported families warning log करती हैं और value ignore करती हैं। stride interval से कम नहीं हो सकता। [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md) देखें।
 
 ### `--gradient_checkpointing_backend`
 
@@ -286,7 +299,27 @@ simpletuner configure config/foo/config.json
   - `torch-ffn`: साफ FFN boundary वाले models पर केवल feed-forward side checkpoint करता है।
   - `unsloth`: पूरे supported block को checkpoint करता है और saved tensors CPU पर offload करता है।
   - `unsloth-ffn`: केवल feed-forward side checkpoint करता है और उसके saved tensors CPU पर offload करता है।
-- **Note**: केवल `--gradient_checkpointing` enabled होने पर प्रभावी। `unsloth` variants के लिए CUDA आवश्यक है। FFN-only variants अभी Flux.1-style blocks और MageFlow support करते हैं, और unsupported scope पर साफ error मिलता है। Measured tradeoffs के लिए [Unsloth-style checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) देखें।
+- **Note**: केवल `--gradient_checkpointing` enabled होने पर प्रभावी। `unsloth` variants के लिए CUDA आवश्यक है। FFN-only variants अभी Chroma, Flux, Krea 2, LTXVideo2, MageFlow, Wan, और Z-Image support करते हैं, और unsupported scope पर साफ error मिलता है। Measured tradeoffs के लिए [Unsloth-style checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) देखें।
+
+### `--gradient_checkpointing_offload_attention`
+
+- **What**: साफ attention/FFN boundary वाले models पर attention-side saved activations CPU पर offload करें।
+- **Why**: जब transfer attention recompute से सस्ता हो, तो full attention rematerialization cost दिए बिना VRAM घट सकती है।
+- **Note**: इसे अकेले enable किया जा सकता है। Model जिस भी checkpoint backend को support करे, उसके साथ भी combine किया जा सकता है। यह केवल उन model families पर प्रभावी होता है जो installed SimpleTuner version में साफ attention/FFN boundary expose करती हैं; unsupported model families साफ error देती हैं।
+
+### `--gradient_checkpointing_offload_pin_memory_max_buckets`
+
+- **Default**: `12`
+- **What**: activation offload द्वारा इस्तेमाल किए जाने वाले अलग-अलग pinned CPU tensor buckets की maximum संख्या।
+- **Why**: pinned memory CPU/GPU transfer में मदद करती है, लेकिन variable resolution और text length rare tensor shapes बना सकते हैं। limit पूरी होने के बाद नए bucket shapes normal CPU memory use करेंगे।
+- **Note**: activation offload के pinned-memory pooling को बंद करने के लिए `0` set करें।
+
+### `--gradient_checkpointing_offload_prefetch`
+
+- **Default**: `false`
+- **What**: offloaded activations के backward restore order को learn करके likely next tensor को GPU पर prefetch करता है।
+- **Why**: JIT H2D restore अक्सर overlap नहीं कर पाता। order stable होने के बाद prefetch transfer के कुछ हिस्से को backward compute के पीछे छिपा सकता है।
+- **Note**: Experimental है और केवल `--gradient_checkpointing_offload_attention` के साथ active होता है।
 
 ### `--refiner_training`
 
@@ -1732,6 +1765,7 @@ usage: train.py [-h] --model_family
                 [--text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
                 [--text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
                 [--gradient_checkpointing_interval GRADIENT_CHECKPOINTING_INTERVAL]
+                [--gradient_checkpointing_segment_stride GRADIENT_CHECKPOINTING_SEGMENT_STRIDE]
                 [--offload_during_startup [OFFLOAD_DURING_STARTUP]]
                 [--quantize_via {cpu,accelerator,pipeline}]
                 [--quantization_config QUANTIZATION_CONFIG]
@@ -1746,6 +1780,7 @@ usage: train.py [-h] --model_family
                 [--pretrained_unet_subfolder PRETRAINED_UNET_SUBFOLDER]
                 [--pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH]
                 [--pretrained_gemma_model_name_or_path PRETRAINED_GEMMA_MODEL_NAME_OR_PATH]
+                [--qwen_text_encoder_model_name_or_path QWEN_TEXT_ENCODER_MODEL_NAME_OR_PATH]
                 [--revision REVISION] [--variant VARIANT]
                 [--base_model_default_dtype {bf16,fp32}]
                 [--unet_attention_slice [UNET_ATTENTION_SLICE]]
@@ -2048,6 +2083,8 @@ options:
                         memory.
   --gradient_checkpointing_interval GRADIENT_CHECKPOINTING_INTERVAL
                         Checkpoint every N transformer blocks
+  --gradient_checkpointing_segment_stride GRADIENT_CHECKPOINTING_SEGMENT_STRIDE
+                        Start a checkpointed segment every N transformer blocks
   --offload_during_startup [OFFLOAD_DURING_STARTUP]
                         Offload text encoders to CPU during VAE caching
   --quantize_via {cpu,accelerator,pipeline}
@@ -2077,6 +2114,8 @@ options:
                         Path to pretrained T5 model
   --pretrained_gemma_model_name_or_path PRETRAINED_GEMMA_MODEL_NAME_OR_PATH
                         Path to pretrained Gemma model
+  --qwen_text_encoder_model_name_or_path QWEN_TEXT_ENCODER_MODEL_NAME_OR_PATH
+                        Path to pretrained Qwen text encoder model
   --revision REVISION   Git branch/tag/commit for model version
   --variant VARIANT     Model variant (e.g., fp16, bf16)
   --base_model_default_dtype {bf16,fp32}

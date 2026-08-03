@@ -14,6 +14,7 @@ from simpletuner.helpers.models.mageflow.vendor.models.mage_flow import MageFlow
 from simpletuner.helpers.models.mageflow.vendor.models.modules._attn_backend import set_attn_backend
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.gradient_checkpointing_interval import (
+    checkpoint_sequential_state,
     get_checkpoint_backend,
     get_checkpoint_backend_scope,
     get_checkpoint_function,
@@ -51,6 +52,7 @@ def _resolve_repo_dir(repo_id_or_path: str, *, revision: Optional[str] = None, l
 class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterMixin):
     _supports_gradient_checkpointing = True
     _supports_ffn_gradient_checkpointing = True
+    _supports_attention_activation_offload = True
     _no_split_modules = ["MageFlowTransformerBlock"]
     _skip_layerwise_casting_patterns = ["pos_embed", "norm"]
 
@@ -128,6 +130,9 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
             torch.nn.init.zeros_(self.time_sign_embed.weight)
         self.gradient_checkpointing_backend = get_checkpoint_backend()
         self.gradient_checkpointing_scope = get_checkpoint_backend_scope()
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
+        self.gradient_checkpointing_offload_attention = False
         self._gradient_checkpointing_func = get_checkpoint_function()
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=depth,
@@ -175,6 +180,15 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
         self.gradient_checkpointing_backend = backend
         self.gradient_checkpointing_scope = get_checkpoint_backend_scope(backend)
         self._gradient_checkpointing_func = get_checkpoint_function()
+
+    def set_gradient_checkpointing_offload_attention(self, enabled: bool):
+        self.gradient_checkpointing_offload_attention = bool(enabled)
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     def enable_gradient_checkpointing(self, gradient_checkpointing_func=None):
         self.checkpoint = True
@@ -256,6 +270,45 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
 
         skip_layers_set = set(skip_layers) if skip_layers is not None else set()
         for index_block, block in enumerate(self.transformer_blocks):
+            if (
+                self.training
+                and self.checkpoint
+                and self.gradient_checkpointing_scope == "layer"
+                and self.gradient_checkpointing_interval is not None
+                and self.gradient_checkpointing_interval > 1
+                and not musubi_offload_active
+                and not skip_layers_set
+                and hidden_states_buffer is None
+            ):
+                if index_block != 0:
+                    continue
+                for segment_block in self.transformer_blocks:
+                    _ensure_module_device(getattr(segment_block, "img_mod", None), img.device)
+                    _ensure_module_device(getattr(segment_block, "txt_mod", None), img.device)
+
+                def run_segment_block(_relative_index, segment_block, segment_txt, segment_img):
+                    return segment_block(
+                        hidden_states=segment_img,
+                        encoder_hidden_states=segment_txt,
+                        txt_cu_lens=txt_cu_seqlens,
+                        img_cu_lens=img_cu_seqlens,
+                        temb=temb,
+                        image_rotary_emb=ms_pe,
+                        joint_attention_kwargs=attention_kwargs,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
+                    )
+
+                txt, img = checkpoint_sequential_state(
+                    self.transformer_blocks,
+                    self.gradient_checkpointing_interval,
+                    (txt, img),
+                    run_segment_block,
+                    self._gradient_checkpointing_func,
+                    {"use_reentrant": False},
+                    segment_stride=self.gradient_checkpointing_segment_stride,
+                )
+                continue
+
             _ensure_module_device(getattr(block, "img_mod", None), img.device)
             _ensure_module_device(getattr(block, "txt_mod", None), img.device)
             if musubi_offload_active and musubi_manager.is_managed_block(index_block):
@@ -273,10 +326,32 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
                     joint_attention_kwargs=attention_kwargs,
                     checkpoint_ffn=True,
                     checkpoint_fn=self._gradient_checkpointing_func,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
                 )
             elif self.training and self.checkpoint:
+
+                def run_checkpointed_block(
+                    checkpoint_img,
+                    checkpoint_txt,
+                    checkpoint_temb,
+                    checkpoint_pe,
+                    checkpoint_txt_cu_seqlens,
+                    checkpoint_img_cu_seqlens,
+                    checkpoint_block=block,
+                ):
+                    return checkpoint_block(
+                        hidden_states=checkpoint_img,
+                        encoder_hidden_states=checkpoint_txt,
+                        txt_cu_lens=checkpoint_txt_cu_seqlens,
+                        img_cu_lens=checkpoint_img_cu_seqlens,
+                        temb=checkpoint_temb,
+                        image_rotary_emb=checkpoint_pe,
+                        joint_attention_kwargs=attention_kwargs,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
+                    )
+
                 txt, img = self._gradient_checkpointing_func(
-                    block,
+                    run_checkpointed_block,
                     img,
                     txt,
                     temb,
@@ -294,6 +369,7 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
                     temb=temb,
                     image_rotary_emb=ms_pe,
                     joint_attention_kwargs=attention_kwargs,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
                 )
             if musubi_offload_active and musubi_manager.is_managed_block(index_block):
                 musubi_manager.stream_out(block)

@@ -297,5 +297,108 @@ class TestVaeCacheAudio(unittest.TestCase):
         self.assertEqual(output["latent_lengths"].shape[0], 1)
 
 
+class TestMetadataFilterOnSplitShard(unittest.TestCase):
+    """A filtered sample must leave this rank's shard the same length as its DP peers'."""
+
+    IMAGES = [f"image-{index}.jpg" for index in range(5)]
+
+    @classmethod
+    def _padded_shard_backend(cls, dp_rank, *, world_size=2, images=None):
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        backend = MagicMock(spec=MetadataBackend)
+        backend.id = "filtered-shard"
+        backend.batch_size = 1
+        backend.repeats = 0
+        backend.bucket_report = None
+        backend.dataset_type = DatasetType.IMAGE
+        backend.aspect_ratio_bucket_indices = {"1.0": list(images or cls.IMAGES)}
+        backend.read_only = False
+        backend.filtering_statistics = None
+        backend.accelerator = SimpleNamespace(
+            num_processes=world_size,
+            process_index=dp_rank,
+            is_main_process=dp_rank == 0,
+        )
+        with (
+            patch.dict("os.environ", {"SIMPLETUNER_SHUFFLE_BUCKETS": "0"}),
+            patch.object(
+                StateTracker,
+                "get_args",
+                return_value=SimpleNamespace(allow_dataset_oversubscription=True),
+            ),
+            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+        ):
+            MetadataBackend.split_buckets_between_processes(
+                backend,
+                gradient_accumulation_steps=1,
+                apply_padding=True,
+            )
+        return backend
+
+    @staticmethod
+    def _cache(metadata_backend):
+        from simpletuner.helpers.caching.vae import VAECache
+
+        cache = object.__new__(VAECache)
+        cache.id = "filtered-shard"
+        cache.metadata_backend = metadata_backend
+        return cache
+
+    def test_padded_shard_keeps_its_length_when_a_duplicate_is_filtered(self):
+        backend = self._padded_shard_backend(1)
+        # Five images over two DP shards: this rank holds three slots, the last of which is a
+        # padding copy of the final global item.
+        self.assertEqual(backend.aspect_ratio_bucket_indices["1.0"], ["image-3.jpg", "image-4.jpg", "image-4.jpg"])
+        self.assertTrue(backend.read_only)
+
+        self._cache(backend)._handle_metadata_filtered_sample(filepath="image-4.jpg", bucket="1.0", reason="problematic")
+
+        shard = backend.aspect_ratio_bucket_indices["1.0"]
+        self.assertNotIn("image-4.jpg", shard)
+        self.assertEqual(len(shard), 3)
+        self.assertEqual(shard, ["image-3.jpg"] * 3)
+
+    def test_padded_shard_keeps_its_length_when_a_unique_sample_is_filtered(self):
+        backend = self._padded_shard_backend(1)
+        self._cache(backend)._handle_metadata_filtered_sample(filepath="image-3.jpg", bucket="1.0", reason="nsfw")
+
+        shard = backend.aspect_ratio_bucket_indices["1.0"]
+        self.assertNotIn("image-3.jpg", shard)
+        self.assertEqual(shard, ["image-4.jpg"] * 3)
+
+    def test_a_shard_made_entirely_of_one_filtered_sample_cannot_be_refilled(self):
+        # Known limitation: with nothing left in the bucket there is no sample to repeat. The
+        # shortened cache is picked up by the next split.
+        backend = self._padded_shard_backend(4, world_size=5, images=[f"image-{index}.jpg" for index in range(9)])
+        self.assertEqual(backend.aspect_ratio_bucket_indices["1.0"], ["image-8.jpg", "image-8.jpg"])
+
+        self._cache(backend)._handle_metadata_filtered_sample(filepath="image-8.jpg", bucket="1.0", reason="problematic")
+
+        self.assertEqual(backend.aspect_ratio_bucket_indices["1.0"], [])
+
+    def test_unsplit_backend_is_not_repadded(self):
+        # Control: before the split the backend holds the dataset, not a shard, so a filtered
+        # sample simply disappears.
+        backend = self._padded_shard_backend(1)
+        backend.aspect_ratio_bucket_indices = {"1.0": list(self.IMAGES)}
+        backend.read_only = False
+
+        self._cache(backend)._handle_metadata_filtered_sample(filepath="image-4.jpg", bucket="1.0", reason="problematic")
+
+        self.assertEqual(backend.aspect_ratio_bucket_indices["1.0"], self.IMAGES[:4])
+
+    def test_filter_action_is_still_queued_for_the_unsplit_cache(self):
+        backend = self._padded_shard_backend(1)
+        cache = self._cache(backend)
+        cache._handle_metadata_filtered_sample(filepath="image-4.jpg", bucket="1.0", reason="problematic")
+
+        self.assertEqual(
+            [(action["filepath"], action["reason"]) for action in cache._deferred_metadata_filter_actions],
+            [("image-4.jpg", "problematic")],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -778,10 +778,17 @@ class MetadataBackend:
         if self.bucket_report:
             self.bucket_report.set_constraints(effective_batch_size=effective_batch_size)
 
+        backend_config = StateTracker.get_data_backend_config(self.id) or {}
+        configured_repeats = int(backend_config.get("repeats") or 0)
+        user_set_repeats = configured_repeats > 0
+        auto_repeat_count = None
+
         # Early validation: check if configuration is mathematically impossible
         buckets_that_will_fail = []
         for bucket, images in self.aspect_ratio_bucket_indices.items():
             total_img_count_incl_repeats = len(images) * (self.repeats + 1)
+            if not images:
+                continue
             if total_img_count_incl_repeats < effective_batch_size:
                 buckets_that_will_fail.append(
                     {
@@ -799,25 +806,22 @@ class MetadataBackend:
                 needed_repeats = ceil(effective_batch_size / images) - 1
                 min_repeats_needed[bucket_info["bucket"]] = needed_repeats
 
+            # The documented repeat setting applies to the whole backend, so
+            # use the maximum requirement and apply it consistently to every
+            # bucket rather than assigning a different repeat count per bucket.
             max_needed_repeats = max(min_repeats_needed.values())
+            allow_oversubscription = StateTracker.get_args().allow_dataset_oversubscription
 
             # Check if dataset oversubscription is allowed
-            args = StateTracker.get_args()
-            allow_oversubscription = args.allow_dataset_oversubscription
-
-            # Check if user manually configured repeats in their backend config
-            backend_config = StateTracker.get_data_backend_config(self.id) or {}
-            user_set_repeats = "repeats" in backend_config
-
             if allow_oversubscription and not user_set_repeats:
                 # Automatically adjust repeats to make training possible
                 original_repeats = self.repeats
-                self.repeats = max_needed_repeats
+                auto_repeat_count = max_needed_repeats
                 logger.warning(
-                    f"(id={self.id}) Dataset oversubscription enabled: automatically increasing repeats from {original_repeats} to {self.repeats}\n"
+                    f"(id={self.id}) Dataset oversubscription enabled: automatically increasing repeats from {original_repeats} to {auto_repeat_count}\n"
                     f"  - This allows training with {total_samples} samples across {num_processes} GPUs\n"
                     f"  - Effective batch size: {effective_batch_size}\n"
-                    f"  - Each sample will be seen {self.repeats + 1} times per epoch"
+                    f"  - Logical repeat factor before per-bucket batch padding: {auto_repeat_count + 1}"
                 )
                 # Validation passed with adjustment, continue
             else:
@@ -874,10 +878,27 @@ class MetadataBackend:
             shuffle_seed = broadcast_object_from_main(shuffle_seed if self.accelerator.is_main_process else None)
 
         for bucket, images in self.aspect_ratio_bucket_indices.items():
+            if not images:
+                new_aspect_ratio_bucket_indices[bucket] = []
+                continue
             if should_shuffle_contents:
                 logger.debug(f"Shuffling bucket {bucket} contents.")
                 images = images.copy()
                 random.Random(f"{shuffle_seed}:{self.id}:{bucket}").shuffle(images)
+
+            if auto_repeat_count is not None:
+                logical_count = len(images) * (auto_repeat_count + 1)
+                scheduled_count = ceil(logical_count / effective_batch_size) * effective_batch_size
+                local_count = scheduled_count // effective_dp_size
+                start_idx = dp_rank * local_count
+                images_split = [images[(start_idx + offset) % len(images)] for offset in range(local_count)]
+                logger.debug(
+                    f"(id={self.id}) Bucket {bucket}: logical samples={logical_count}, "
+                    f"scheduled samples={scheduled_count}, local samples={local_count}"
+                )
+                new_aspect_ratio_bucket_indices[bucket] = images_split
+                continue
+
             total_img_count_incl_repeats = len(images) * (self.repeats + 1)
             num_batches = ceil(total_img_count_incl_repeats / effective_batch_size)
             trim_limit = num_batches * effective_batch_size
@@ -903,33 +924,21 @@ class MetadataBackend:
                         effective_batch_size=effective_batch_size,
                     )
 
-            # Split data by DP rank (not global rank) when context parallelism is enabled.
-            # This ensures all ranks in a CP group get the same data shard.
-            if cp_size > 1:
-                # Custom CP-aware splitting: split by dp_rank instead of process_index
-                chunk_size = ceil(len(trimmed_images) / effective_dp_size) if effective_dp_size > 0 else len(trimmed_images)
-                start_idx = dp_rank * chunk_size
-                end_idx = min(start_idx + chunk_size, len(trimmed_images))
-                images_split = trimmed_images[start_idx:end_idx]
-
-                # Handle padding if requested (for uniform batch sizes)
-                if apply_padding and len(images_split) < chunk_size and len(images_split) > 0:
-                    padding_needed = chunk_size - len(images_split)
-                    # Pad by repeating elements from the split
-                    padding = (images_split * ((padding_needed // len(images_split)) + 1))[:padding_needed]
-                    images_split = images_split + padding
-
-                new_aspect_ratio_bucket_indices[bucket] = images_split
-            else:
-                # Standard splitting when CP is disabled
-                with self.accelerator.split_between_processes(trimmed_images, apply_padding=apply_padding) as images_split:
-                    new_aspect_ratio_bucket_indices[bucket] = images_split
+            samples_per_rank, extra_samples = divmod(len(trimmed_images), effective_dp_size)
+            start_idx = dp_rank * samples_per_rank + min(dp_rank, extra_samples)
+            local_size = samples_per_rank + int(dp_rank < extra_samples)
+            images_split = trimmed_images[start_idx : start_idx + local_size]
+            if apply_padding:
+                target_size = samples_per_rank + int(extra_samples > 0)
+                if trimmed_images and len(images_split) < target_size:
+                    images_split += [trimmed_images[-1]] * (target_size - len(images_split))
+            new_aspect_ratio_bucket_indices[bucket] = images_split
 
         self.aspect_ratio_bucket_indices = new_aspect_ratio_bucket_indices
         post_total = sum([len(bucket) for bucket in self.aspect_ratio_bucket_indices.values()])
         if self.bucket_report:
             self.bucket_report.record_bucket_snapshot("post_split", self.aspect_ratio_bucket_indices)
-        if total_samples != post_total:
+        if self.accelerator.num_processes > 1 or total_samples != post_total:
             self.read_only = True
 
         # Check if this backend has no samples after splitting (can happen with multi-GPU setups)
@@ -944,14 +953,28 @@ class MetadataBackend:
 
         logger.debug(f"Count of items after split: {post_total}")
 
+    def seen_occurrence_count(self, image_path) -> int:
+        """Return consumed occurrences, accepting boolean values from older checkpoints."""
+        value = self.seen_images.get(image_path, 0)
+        if isinstance(value, bool):
+            return int(value)
+        if not isinstance(value, int):
+            raise TypeError(f"Invalid seen occurrence count for {image_path!r}: {value!r}")
+        if value < 0:
+            raise ValueError(f"Seen occurrence count cannot be negative for {image_path!r}: {value}")
+        return int(value)
+
     def mark_as_seen(self, image_path):
-        self.seen_images[image_path] = True
+        self.seen_images[image_path] = self.seen_occurrence_count(image_path) + 1
 
     def mark_batch_as_seen(self, image_paths):
-        self.seen_images.update({image_path: True for image_path in image_paths})
+        for image_path in image_paths:
+            self.mark_as_seen(image_path)
 
-    def is_seen(self, image_path):
-        return self.seen_images.get(image_path, False)
+    def is_seen(self, image_path, occurrence_index: int = 0):
+        if isinstance(self.seen_images.get(image_path, 0), bool):
+            return self.seen_images[image_path]
+        return self.seen_occurrence_count(image_path) > occurrence_index
 
     def reset_seen_images(self):
         self.seen_images.clear()

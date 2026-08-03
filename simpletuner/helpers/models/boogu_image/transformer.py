@@ -28,6 +28,8 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 from einops import rearrange
 
+from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
+
 from .attention_processor import BooguImageAttnProcessor, BooguImageDoubleStreamSelfAttnProcessor
 from .block_lumina2 import (
     Lumina2CombinedTimestepCaptionEmbedding,
@@ -842,6 +844,8 @@ class BooguImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
         self.image_index_embedding = nn.Parameter(torch.randn(5, hidden_size))  # support max 5 ref images
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
 
         self.initialize_weights()
 
@@ -857,6 +861,12 @@ class BooguImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
         self.rescale_func = np.poly1d(coefficients)
 
         self.layers = list(self.double_stream_layers) + list(self.single_stream_layers)
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     def initialize_weights(self) -> None:
         """
@@ -897,6 +907,10 @@ class BooguImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
 
         hidden_states = self.x_embedder(hidden_states)
         ref_image_hidden_states = self.ref_image_patch_embedder(ref_image_hidden_states)
+        if hidden_states.requires_grad:
+            hidden_states = hidden_states.clone()
+        if ref_image_hidden_states.requires_grad:
+            ref_image_hidden_states = ref_image_hidden_states.clone()
 
         for i in range(batch_size):
             shift = 0
@@ -1272,7 +1286,12 @@ class BooguImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
                     else:
                         layer.enable_taylorseer = False
 
-                    if torch.is_grad_enabled() and self.gradient_checkpointing:
+                    if torch.is_grad_enabled() and should_checkpoint_block(
+                        layer_idx,
+                        self.gradient_checkpointing,
+                        self.gradient_checkpointing_interval,
+                        self.gradient_checkpointing_segment_stride,
+                    ):
                         img_hidden_states, instruct_hidden_states = self._gradient_checkpointing_func(
                             layer,
                             img_hidden_states,
@@ -1355,7 +1374,12 @@ class BooguImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
                     layer.enable_taylorseer = True
                     self.current["layer"] = self.num_double_stream_layers + layer_idx
 
-                if torch.is_grad_enabled() and self.gradient_checkpointing:
+                if torch.is_grad_enabled() and should_checkpoint_block(
+                    self.num_double_stream_layers + layer_idx,
+                    self.gradient_checkpointing,
+                    self.gradient_checkpointing_interval,
+                    self.gradient_checkpointing_segment_stride,
+                ):
                     hidden_states = self._gradient_checkpointing_func(
                         layer, hidden_states, joint_attention_mask, rotary_emb, temb
                     )

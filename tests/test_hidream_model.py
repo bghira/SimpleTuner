@@ -67,6 +67,57 @@ class HiDreamModelTests(unittest.TestCase):
         transformer_kwargs = self.model.model.call_args.kwargs
         self.assertTrue(torch.equal(transformer_kwargs["timesteps"], prepared_batch["timesteps"]))
 
+    def test_check_user_config_keeps_bundled_quanto_text_encoder_with_quanto_base(self):
+        self.model.config = SimpleNamespace(
+            base_model_precision="int8-quanto",
+            text_encoder_4_precision="int4-quanto",
+            tokenizer_max_length=0,
+            i_know_what_i_am_doing=False,
+            aspect_bucket_alignment=32,
+        )
+
+        self.model.check_user_config()
+
+        self.assertEqual(self.model.config.text_encoder_4_precision, "int4-quanto")
+
+    def test_check_user_config_disables_bundled_quanto_text_encoder_for_torchao_base(self):
+        self.model.config = SimpleNamespace(
+            base_model_precision="fp8-torchao",
+            text_encoder_4_precision="int4-quanto",
+            tokenizer_max_length=0,
+            i_know_what_i_am_doing=False,
+            aspect_bucket_alignment=32,
+        )
+
+        self.model.check_user_config()
+
+        self.assertEqual(self.model.config.text_encoder_4_precision, "no_change")
+
+    def test_check_user_config_disables_bundled_quanto_text_encoder_for_sdnq_base(self):
+        self.model.config = SimpleNamespace(
+            base_model_precision="int8-sdnq",
+            text_encoder_4_precision="int4-quanto",
+            tokenizer_max_length=0,
+            i_know_what_i_am_doing=False,
+            aspect_bucket_alignment=32,
+        )
+
+        self.model.check_user_config()
+
+        self.assertEqual(self.model.config.text_encoder_4_precision, "no_change")
+
+    def test_check_user_config_rejects_non_default_mixed_text_encoder_backend(self):
+        self.model.config = SimpleNamespace(
+            base_model_precision="fp8-torchao",
+            text_encoder_4_precision="int8-quanto",
+            tokenizer_max_length=0,
+            i_know_what_i_am_doing=False,
+            aspect_bucket_alignment=32,
+        )
+
+        with self.assertRaisesRegex(ValueError, "cannot mix base model precision"):
+            self.model.check_user_config()
+
 
 if __name__ == "__main__":
     unittest.main()

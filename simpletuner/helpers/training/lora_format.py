@@ -34,12 +34,9 @@ def detect_state_dict_format(state_dict: Dict[str, Any]) -> Optional[PEFTLoRAFor
     keys = list(state_dict.keys())
     comfy_prefix_hits = sum(k.startswith("diffusion_model.") for k in keys)
     comfy_alpha_hits = sum(k.endswith(".alpha") for k in keys)
-    comfy_ab_hits = sum(".lora_A" in k or ".lora_B" in k for k in keys)
     diffusers_down_up_hits = sum(".lora.down" in k or ".lora.up" in k for k in keys)
 
     if comfy_prefix_hits or (comfy_alpha_hits and diffusers_down_up_hits == 0):
-        return PEFTLoRAFormat.COMFYUI
-    if comfy_ab_hits and diffusers_down_up_hits == 0 and comfy_prefix_hits >= 0:
         return PEFTLoRAFormat.COMFYUI
     return PEFTLoRAFormat.DIFFUSERS
 
@@ -233,24 +230,16 @@ def convert_diffusers_to_comfyui(
 
         if ".lora.down." in new_key:
             new_key = new_key.replace(".lora.down.", ".lora_A.")
+        elif ".lora.up." in new_key:
+            new_key = new_key.replace(".lora.up.", ".lora_B.")
+
+        if ".lora_A." in new_key:
             module_key = new_key[: new_key.rfind(".lora_A.")]
             alpha_value = _resolve_alpha_for_module(
                 module_key.removeprefix(f"{diffusion_prefix}."), weight, adapter_metadata
             )
             if alpha_value is not None and module_key not in alpha_entries:
                 alpha_entries[module_key] = torch.tensor(alpha_value, dtype=torch.float32)
-        elif new_key.endswith(".lora.down.weight"):
-            new_key = new_key.replace(".lora.down.weight", ".lora_A.weight")
-            module_key = new_key[: new_key.rfind(".lora_A.weight")]
-            alpha_value = _resolve_alpha_for_module(
-                module_key.removeprefix(f"{diffusion_prefix}."), weight, adapter_metadata
-            )
-            if alpha_value is not None and module_key not in alpha_entries:
-                alpha_entries[module_key] = torch.tensor(alpha_value, dtype=torch.float32)
-        elif ".lora.up." in new_key:
-            new_key = new_key.replace(".lora.up.", ".lora_B.")
-        elif new_key.endswith(".lora.up.weight"):
-            new_key = new_key.replace(".lora.up.weight", ".lora_B.weight")
 
         converted[new_key] = weight
 

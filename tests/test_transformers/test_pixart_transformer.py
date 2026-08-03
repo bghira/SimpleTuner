@@ -901,6 +901,57 @@ class TestPixArtTransformer2DModel(TransformerBaseTest, AttentionProcessorTestMi
                 return_dict=False,
             )
 
+    def test_segmented_checkpointing_uses_sequential_state_helper(self):
+        from simpletuner.helpers.models.pixart.transformer import PixArtTransformer2DModel
+
+        model = PixArtTransformer2DModel(
+            num_attention_heads=2,
+            attention_head_dim=8,
+            in_channels=4,
+            out_channels=8,
+            num_layers=4,
+            cross_attention_dim=16,
+            caption_channels=16,
+            sample_size=8,
+            patch_size=2,
+            num_embeds_ada_norm=1000,
+            use_additional_conditions=False,
+        )
+        model.train()
+        model.gradient_checkpointing = True
+        model.gradient_checkpointing_interval = 2
+        model.gradient_checkpointing_segment_stride = 4
+
+        def fake_checkpoint_sequential_state(
+            blocks,
+            segment_size,
+            state,
+            run_block,
+            checkpoint_fn,
+            checkpoint_kwargs=None,
+            segment_stride=None,
+        ):
+            return state
+
+        with patch(
+            "simpletuner.helpers.models.pixart.transformer.checkpoint_sequential_state",
+            side_effect=fake_checkpoint_sequential_state,
+        ) as checkpoint_sequential:
+            output = model(
+                hidden_states=torch.randn(1, 4, 8, 8, requires_grad=True),
+                encoder_hidden_states=torch.randn(1, 3, 16),
+                timestep=torch.tensor([100]),
+                encoder_attention_mask=torch.ones(1, 3),
+                return_dict=False,
+            )[0]
+
+        self.assertEqual(output.shape, (1, 8, 8, 8))
+        checkpoint_sequential.assert_called_once()
+        args, kwargs = checkpoint_sequential.call_args
+        self.assertIs(args[0], model.transformer_blocks)
+        self.assertEqual(args[1], 2)
+        self.assertEqual(kwargs, {"segment_stride": 4})
+
 
 class TestPixArtTransformerIntegration(TransformerBaseTest):
     """Integration tests for PixArtTransformer2DModel with real components."""

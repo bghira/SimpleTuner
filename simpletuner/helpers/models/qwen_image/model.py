@@ -245,8 +245,8 @@ class QwenImage(ImageModelFoundation):
         if processor_cls is None:
             return None
 
-        processor_path = getattr(self.config, "processor_pretrained_model_name_or_path", None) or self._model_config_path()
-        processor_subfolder = getattr(self.config, "processor_subfolder", self.PROCESSOR_SUBFOLDER)
+        processor_path = self._resolve_qwen_processor_path(self._model_config_path())
+        processor_subfolder = self._resolve_qwen_processor_subfolder(self.PROCESSOR_SUBFOLDER)
         processor_revision = getattr(self.config, "processor_revision", getattr(self.config, "revision", None))
 
         processor_kwargs = {"pretrained_model_name_or_path": processor_path}

@@ -490,11 +490,31 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             default_value=None,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Interval must be at least 1")],
             dependencies=[FieldDependency(field="gradient_checkpointing", operator="equals", value=True, action="enable")],
-            help_text="Checkpoint every N transformer blocks (leave blank to disable)",
-            tooltip="Higher values save more memory but increase compute. Clear this field to turn off partial checkpointing (supported for Flux, Sana, SD3, Chroma, AuraFlow, and HunyuanVideo).",
+            help_text="Adjust checkpoint spacing or chunk size for supported transformer blocks (leave blank for per-block checkpointing)",
+            tooltip="Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Z-Image, and Wan whole-block paths use contiguous chunks of N blocks. Other families may checkpoint every N-th block. Higher values can reduce recompute but keep more activations in VRAM.",
             importance=ImportanceLevel.ADVANCED,
             order=16,
             documentation="OPTIONS.md#--gradient_checkpointing_interval",
+        )
+    )
+
+    # Gradient Checkpointing Segment Stride
+    registry._add_field(
+        ConfigField(
+            name="gradient_checkpointing_segment_stride",
+            arg_name="--gradient_checkpointing_segment_stride",
+            ui_label="Gradient Checkpointing Segment Stride",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="memory_optimization",
+            default_value=None,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Stride must be at least 1")],
+            dependencies=[FieldDependency(field="gradient_checkpointing", operator="equals", value=True, action="enable")],
+            help_text="Start a checkpointed segment every N blocks on supported segmented paths",
+            tooltip="Use with interval as segment width. interval=2 and stride=4 checkpoints two blocks, runs the next two blocks normally, and repeats on supported whole-block paths.",
+            importance=ImportanceLevel.ADVANCED,
+            order=17,
+            documentation="OPTIONS.md#--gradient_checkpointing_segment_stride",
         )
     )
 
@@ -511,7 +531,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             help_text="Offload text encoders to CPU during VAE caching",
             tooltip="Useful for large models that OOM during startup. May significantly increase startup time.",
             importance=ImportanceLevel.ADVANCED,
-            order=17,
+            order=18,
             documentation="OPTIONS.md#--offload_during_startup",
         )
     )
@@ -1131,6 +1151,26 @@ def register_model_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Qwen Text Encoder Model Path
+    registry._add_field(
+        ConfigField(
+            name="qwen_text_encoder_model_name_or_path",
+            arg_name="--qwen_text_encoder_model_name_or_path",
+            ui_label="Qwen Model Path",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="model_config",
+            subsection="advanced_paths",
+            default_value=None,
+            placeholder="path/to/qwen",
+            help_text="Path to pretrained Qwen text encoder model",
+            tooltip="HuggingFace model ID or local path for the Qwen text encoder component.",
+            importance=ImportanceLevel.ADVANCED,
+            order=30,
+            documentation="OPTIONS.md#--qwen_text_encoder_model_name_or_path",
+        )
+    )
+
     # Revision
     registry._add_field(
         ConfigField(
@@ -1146,7 +1186,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             help_text="Git branch/tag/commit for model version",
             tooltip="Specific version of the model to load from HuggingFace. Useful for reproducible training.",
             importance=ImportanceLevel.ADVANCED,
-            order=30,
+            order=31,
         )
     )
 
@@ -1165,7 +1205,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             help_text="Model variant (e.g., fp16, bf16)",
             tooltip="Specific variant of the model to load, such as precision variants.",
             importance=ImportanceLevel.ADVANCED,
-            order=31,
+            order=32,
         )
     )
 
@@ -1187,7 +1227,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             help_text="Default precision for quantized base model weights",
             tooltip="Precision for non-quantized weights in quantized models. BF16 recommended for stability.",
             importance=ImportanceLevel.ADVANCED,
-            order=32,
+            order=33,
         )
     )
 
@@ -1208,7 +1248,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             tooltip="Experimental feature for memory savings. May impact training quality. Only available for UNet-based architectures.",
             importance=ImportanceLevel.EXPERIMENTAL,
             model_specific=["sd15", "sd20", "sdxl", "deepfloyd"],
-            order=33,
+            order=34,
         )
     )
 

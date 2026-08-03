@@ -29,6 +29,7 @@ from simpletuner.helpers.models.ideogram.constants import (
     QWEN3_VL_ACTIVATION_LAYERS,
 )
 from simpletuner.helpers.models.ideogram.quantized_loading import Fp8Linear
+from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
 
 
 @dataclass
@@ -336,6 +337,8 @@ class Ideogram4Transformer(nn.Module, PeftAdapterMixin):
         )
         self.gradient_checkpointing = False
         self.gradient_checkpointing_backend = "torch"
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
 
     def enable_gradient_checkpointing(self) -> None:
         self.gradient_checkpointing = True
@@ -345,6 +348,12 @@ class Ideogram4Transformer(nn.Module, PeftAdapterMixin):
 
     def set_gradient_checkpointing_backend(self, backend: str) -> None:
         self.gradient_checkpointing_backend = backend
+
+    def set_gradient_checkpointing_interval(self, interval: int) -> None:
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None) -> None:
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="Ideogram")
@@ -461,15 +470,23 @@ class Ideogram4Transformer(nn.Module, PeftAdapterMixin):
         sin = sin.to(h.dtype)
 
         if torch.is_grad_enabled() and self.gradient_checkpointing:
-            if self.gradient_checkpointing_backend == "unsloth":
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
                 from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                 checkpoint_fn = offloaded_checkpoint
             else:
                 checkpoint_fn = torch.utils.checkpoint.checkpoint
 
-            for layer in self.layers:
-                h = checkpoint_fn(layer, h, segment_ids, cos, sin, adaln_input, use_reentrant=False)
+            for layer_idx, layer in enumerate(self.layers):
+                if should_checkpoint_block(
+                    layer_idx,
+                    True,
+                    self.gradient_checkpointing_interval,
+                    self.gradient_checkpointing_segment_stride,
+                ):
+                    h = checkpoint_fn(layer, h, segment_ids, cos, sin, adaln_input, use_reentrant=False)
+                else:
+                    h = layer(h, segment_ids=segment_ids, cos=cos, sin=sin, adaln_input=adaln_input)
         else:
             for layer in self.layers:
                 h = layer(h, segment_ids=segment_ids, cos=cos, sin=sin, adaln_input=adaln_input)

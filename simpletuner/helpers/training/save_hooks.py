@@ -300,9 +300,30 @@ class SaveHookManager:
 
         self.denoiser_class = self.model.MODEL_CLASS
         self.denoiser_subdir = self.model.MODEL_SUBFOLDER
-        self.pipeline_class = self.model.PIPELINE_CLASSES[
-            (PipelineTypes.IMG2IMG if args.validation_using_datasets else PipelineTypes.TEXT2IMG)
-        ]
+        pipeline_type = getattr(self.model, "DEFAULT_PIPELINE_TYPE", PipelineTypes.TEXT2IMG)
+        if isinstance(pipeline_type, str):
+            try:
+                pipeline_type = PipelineTypes(pipeline_type)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Unsupported DEFAULT_PIPELINE_TYPE for {type(self.model).__name__}: {pipeline_type!r}"
+                ) from exc
+        if args.validation_using_datasets and PipelineTypes.IMG2IMG in self.model.PIPELINE_CLASSES:
+            pipeline_type = PipelineTypes.IMG2IMG
+        if not isinstance(pipeline_type, PipelineTypes):
+            raise ValueError(
+                f"DEFAULT_PIPELINE_TYPE for {type(self.model).__name__} must be a PipelineTypes value, "
+                f"got {pipeline_type!r}."
+            )
+        self.pipeline_class = self.model.PIPELINE_CLASSES.get(pipeline_type)
+        if self.pipeline_class is None:
+            available_pipeline_types = ", ".join(
+                key.value if isinstance(key, PipelineTypes) else repr(key) for key in self.model.PIPELINE_CLASSES
+            )
+            raise ValueError(
+                f"{type(self.model).__name__} does not register a save pipeline for {pipeline_type.value!r}. "
+                f"Available pipeline types: {available_pipeline_types or 'none'}."
+            )
 
         self.ema_model_cls = self.model.get_trained_component().__class__
         self.ema_model_subdir = f"{self.model.MODEL_SUBFOLDER}_ema"
@@ -721,10 +742,7 @@ class SaveHookManager:
             self.ema_model.copy_to(trainable_parameters)
             ema_trained_component = unwrap_model(self.accelerator, self.model.get_trained_component())
             lora_save_parameters = {
-                f"{self.model.MODEL_SUBFOLDER}_lora_layers": convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(ema_trained_component),
-                    original_type=StateDictType.PEFT,
-                ),
+                f"{self.model.MODEL_SUBFOLDER}_lora_layers": get_peft_model_state_dict(ema_trained_component),
             }
             ema_modules_to_save = {self.model.MODEL_SUBFOLDER: ema_trained_component}
             ema_metadata = _collate_lora_metadata(ema_modules_to_save)
@@ -771,9 +789,8 @@ class SaveHookManager:
                 modules_to_save["controlnet"] = unwrapped_model
             elif isinstance(unwrapped_model, tuple(trained_component_classes)):
                 # unet_lora_layers or transformer_lora_layers
-                lora_save_parameters[f"{self.model.MODEL_SUBFOLDER}_lora_layers"] = convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(unwrapped_model),
-                    original_type=StateDictType.PEFT,
+                lora_save_parameters[f"{self.model.MODEL_SUBFOLDER}_lora_layers"] = get_peft_model_state_dict(
+                    unwrapped_model
                 )
                 modules_to_save[self.model.MODEL_SUBFOLDER] = unwrapped_model
             elif text_encoder_0_cls is not None and isinstance(unwrapped_model, text_encoder_0_cls):

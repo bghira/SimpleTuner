@@ -173,6 +173,38 @@ class StableCascadeFlowMapTests(unittest.TestCase):
         self.assertEqual(clone.flowmap_deltatime_type, "r")
         self.assertTrue(has_delta_mapper)
 
+    def test_unet_gradient_checkpointing_interval_and_stride(self):
+        model = self._tiny_attention_unet()
+        sample, timestep_ratio, clip_text_pooled = self._tiny_unet_inputs()
+
+        def checkpointed_block_names(interval=None, stride=None):
+            calls = []
+            model.gradient_checkpointing = True
+            model.set_gradient_checkpointing_interval(interval)
+            model.set_gradient_checkpointing_segment_stride(stride)
+
+            def fake_checkpoint(block, *args):
+                calls.append(block.__class__.__name__)
+                return block(*args)
+
+            model._gradient_checkpointing_func = fake_checkpoint
+            model(
+                sample=sample,
+                timestep_ratio=timestep_ratio,
+                clip_text_pooled=clip_text_pooled,
+            )
+            return calls
+
+        self.assertEqual(len(checkpointed_block_names()), 6)
+        self.assertEqual(
+            checkpointed_block_names(interval=2),
+            ["SDCascadeResBlock", "SDCascadeAttnBlock", "SDCascadeTimestepBlock"],
+        )
+        self.assertEqual(
+            checkpointed_block_names(interval=2, stride=4),
+            ["SDCascadeResBlock", "SDCascadeTimestepBlock", "SDCascadeTimestepBlock", "SDCascadeAttnBlock"],
+        )
+
     def _tiny_unet(self):
         return StableCascadeUNet(
             in_channels=4,
@@ -187,6 +219,29 @@ class StableCascadeFlowMapTests(unittest.TestCase):
             down_blocks_repeat_mappers=(1,),
             up_blocks_repeat_mappers=(1,),
             block_types_per_layer=(("SDCascadeResBlock", "SDCascadeTimestepBlock"),),
+            clip_text_pooled_in_channels=8,
+            clip_text_in_channels=None,
+            clip_image_in_channels=None,
+            clip_seq=1,
+            effnet_in_channels=None,
+            pixel_mapper_in_channels=None,
+            dropout=0.0,
+        )
+
+    def _tiny_attention_unet(self):
+        return StableCascadeUNet(
+            in_channels=4,
+            out_channels=4,
+            timestep_ratio_embedding_dim=8,
+            patch_size=1,
+            conditioning_dim=8,
+            block_out_channels=(8,),
+            num_attention_heads=(1,),
+            down_num_layers_per_block=(1,),
+            up_num_layers_per_block=(1,),
+            down_blocks_repeat_mappers=(1,),
+            up_blocks_repeat_mappers=(1,),
+            block_types_per_layer=(("SDCascadeResBlock", "SDCascadeTimestepBlock", "SDCascadeAttnBlock"),),
             clip_text_pooled_in_channels=8,
             clip_text_in_channels=None,
             clip_image_in_channels=None,

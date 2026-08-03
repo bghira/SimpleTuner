@@ -2517,6 +2517,84 @@ class ModelFoundation(ABC):
         component_name = getattr(component_cls, "__name__", "")
         return "gemma" in component_name.lower()
 
+    @staticmethod
+    def _component_value_mentions_qwen(value) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return "qwen" in value.lower()
+        component_name = getattr(value, "__name__", "")
+        return "qwen" in component_name.lower()
+
+    @staticmethod
+    def _optional_model_path(value) -> Optional[str]:
+        if value is None or value is False:
+            return None
+        if isinstance(value, os.PathLike):
+            return os.fspath(value)
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return None
+
+    def _get_optional_config_model_path(self, name: str) -> Optional[str]:
+        return self._optional_model_path(getattr(self.config, name, None))
+
+    def _is_qwen_text_encoder_config(self, text_encoder_config: dict) -> bool:
+        return any(
+            self._component_value_mentions_qwen(text_encoder_config.get(key))
+            for key in ("name", "model", "tokenizer", "path")
+        )
+
+    def _qwen_text_encoder_config_count(self) -> int:
+        text_encoder_configuration = getattr(self, "TEXT_ENCODER_CONFIGURATION", None) or {}
+        return sum(
+            1
+            for text_encoder_config in text_encoder_configuration.values()
+            if self._is_qwen_text_encoder_config(text_encoder_config)
+        )
+
+    def _warn_qwen_text_encoder_override_ignored(self, qwen_count: int) -> None:
+        if getattr(self, "_qwen_text_encoder_override_warning_emitted", False):
+            return
+        logger.warning(
+            "Ignoring qwen_text_encoder_model_name_or_path for %s because this model defines %s Qwen text encoders.",
+            self.NAME,
+            qwen_count,
+        )
+        self._qwen_text_encoder_override_warning_emitted = True
+
+    def _uses_qwen_text_encoder_override(self, text_encoder_config: dict) -> bool:
+        qwen_path = self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path")
+        if not qwen_path or not self._is_qwen_text_encoder_config(text_encoder_config):
+            return False
+        qwen_count = self._qwen_text_encoder_config_count()
+        if qwen_count == 1:
+            return True
+        if qwen_count > 1:
+            self._warn_qwen_text_encoder_override_ignored(qwen_count)
+        return False
+
+    def _resolve_text_encoder_subfolder(self, text_encoder_config: dict, key: str, default=None):
+        if self._uses_qwen_text_encoder_override(text_encoder_config):
+            return None
+        return text_encoder_config.get(key, default)
+
+    def _resolve_qwen_processor_path(self, default_path: str) -> str:
+        return (
+            self._get_optional_config_model_path("processor_pretrained_model_name_or_path")
+            or self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path")
+            or default_path
+        )
+
+    def _resolve_qwen_processor_subfolder(self, default_subfolder: Optional[str]) -> Optional[str]:
+        processor_subfolder = getattr(self.config, "processor_subfolder", None)
+        if isinstance(processor_subfolder, str):
+            return processor_subfolder
+        if self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path"):
+            return None
+        return default_subfolder
+
     def _resolve_text_encoder_path(self, text_encoder_config: dict) -> str:
         text_encoder_path = get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path)
         config_path = text_encoder_config.get("path", None)
@@ -2525,6 +2603,9 @@ class ModelFoundation(ABC):
         gemma_path = getattr(self.config, "pretrained_gemma_model_name_or_path", None)
         if gemma_path and self._is_gemma_component(text_encoder_config.get("model")):
             text_encoder_path = gemma_path
+        qwen_path = self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path")
+        if qwen_path and self._uses_qwen_text_encoder_override(text_encoder_config):
+            text_encoder_path = qwen_path
         return text_encoder_path
 
     def load_text_tokenizer(self):
@@ -2551,7 +2632,11 @@ class ModelFoundation(ABC):
         for attr_name, text_encoder_config in self.TEXT_ENCODER_CONFIGURATION.items():
             tokenizer_idx += 1
             tokenizer_cls = text_encoder_config.get("tokenizer")
-            tokenizer_kwargs["subfolder"] = text_encoder_config.get("tokenizer_subfolder", "tokenizer")
+            tokenizer_kwargs["subfolder"] = self._resolve_text_encoder_subfolder(
+                text_encoder_config,
+                "tokenizer_subfolder",
+                "tokenizer",
+            )
             tokenizer_kwargs["use_fast"] = text_encoder_config.get("use_fast", False)
             tokenizer_kwargs["pretrained_model_name_or_path"] = self._resolve_text_encoder_path(text_encoder_config)
             logger.info(f"Loading tokenizer {tokenizer_idx}: {tokenizer_cls.__name__} with args: {tokenizer_kwargs}")
@@ -2673,7 +2758,12 @@ class ModelFoundation(ABC):
                     "pretrained_model_name_or_path": text_encoder_path,
                     "variant": self.config.variant,
                     "revision": self.config.revision,
-                    "subfolder": text_encoder_config.get("subfolder", "text_encoder") or "",
+                    "subfolder": self._resolve_text_encoder_subfolder(
+                        text_encoder_config,
+                        "subfolder",
+                        "text_encoder",
+                    )
+                    or "",
                     **extra_kwargs,
                 }
                 accelerator = getattr(self, "accelerator", None)
@@ -3176,16 +3266,61 @@ class ModelFoundation(ABC):
         if checkpoint_backend in {"unsloth", "unsloth-ffn"}:
             logger.info("Using Unsloth-style gradient checkpointing (CPU offload)")
 
+        offload_attention = bool(getattr(self.config, "gradient_checkpointing_offload_attention", False))
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import (
+            normalize_activation_offload_pin_memory_max_buckets,
+            set_activation_offload_pin_memory_max_buckets,
+            set_activation_offload_prefetch_enabled,
+        )
+
+        offload_pin_memory_max_buckets = normalize_activation_offload_pin_memory_max_buckets(
+            getattr(self.config, "gradient_checkpointing_offload_pin_memory_max_buckets", 12)
+        )
+        set_activation_offload_pin_memory_max_buckets(offload_pin_memory_max_buckets)
+        set_activation_offload_prefetch_enabled(bool(getattr(self.config, "gradient_checkpointing_offload_prefetch", False)))
+        if offload_attention:
+            trained_component = self.unwrap_model(model=self.model) if self.model is not None else None
+            if trained_component is None or not getattr(trained_component, "_supports_attention_activation_offload", False):
+                raise ValueError(
+                    "--gradient_checkpointing_offload_attention requires a model with an attention/FFN checkpointing "
+                    f"boundary, but {self.config.model_family} does not expose it."
+                )
+            logger.info("Using attention activation offload for gradient checkpointing")
+
         if self.config.gradient_checkpointing_interval is not None and self.config.gradient_checkpointing_interval > 1:
             if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_interval"):
                 logger.info("Setting gradient checkpointing interval..")
                 self.unwrap_model(model=self.model).set_gradient_checkpointing_interval(
                     int(self.config.gradient_checkpointing_interval)
                 )
+            else:
+                logger.warning(
+                    "--gradient_checkpointing_interval=%s was requested, but %s does not expose interval "
+                    "checkpointing support; the value will be ignored.",
+                    self.config.gradient_checkpointing_interval,
+                    self.config.model_family,
+                )
+
+        gradient_checkpointing_segment_stride = getattr(self.config, "gradient_checkpointing_segment_stride", None)
+        if gradient_checkpointing_segment_stride is not None:
+            if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_segment_stride"):
+                logger.info("Setting gradient checkpointing segment stride..")
+                self.unwrap_model(model=self.model).set_gradient_checkpointing_segment_stride(
+                    int(gradient_checkpointing_segment_stride)
+                )
+            else:
+                logger.warning(
+                    "--gradient_checkpointing_segment_stride=%s was requested, but %s does not expose segmented "
+                    "checkpoint stride support; the value will be ignored.",
+                    gradient_checkpointing_segment_stride,
+                    self.config.model_family,
+                )
 
         # Set gradient checkpointing backend on model if supported
         if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_backend"):
             self.unwrap_model(model=self.model).set_gradient_checkpointing_backend(checkpoint_backend)
+        if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_offload_attention"):
+            self.unwrap_model(model=self.model).set_gradient_checkpointing_offload_attention(offload_attention)
 
         self.fuse_qkv_projections()
         self.post_model_load_setup()

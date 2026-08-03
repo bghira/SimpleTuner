@@ -845,6 +845,13 @@ class LTXVideo2(VideoModelFoundation):
                 self.unwrap_model(model=self.model).set_gradient_checkpointing_interval(
                     int(self.config.gradient_checkpointing_interval)
                 )
+        gradient_checkpointing_segment_stride = getattr(self.config, "gradient_checkpointing_segment_stride", None)
+        if gradient_checkpointing_segment_stride is not None:
+            if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_segment_stride"):
+                logger.info("Setting gradient checkpointing segment stride..")
+                self.unwrap_model(model=self.model).set_gradient_checkpointing_segment_stride(
+                    int(gradient_checkpointing_segment_stride)
+                )
         self.fuse_qkv_projections()
         self.post_model_load_setup()
 

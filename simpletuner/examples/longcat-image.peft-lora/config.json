@@ -1,5 +1,6 @@
 {
     "base_model_precision": "int8-quanto",
+    "attention_mechanism": "native-flash",
     "checkpoint_step_interval": 10,
     "data_backend_config": "config/examples/multidatabackend-small-dreambooth-512px.json",
     "disable_bucket_pruning": true,

@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import torch
 
@@ -157,6 +158,80 @@ class TestSanaVideoTransformer3DModel(unittest.TestCase):
                 guidance=guidance,
                 timestep_sign=timestep_sign,
             )
+
+    def test_segmented_checkpointing_uses_sequential_state_helper(self):
+        model = SanaVideoTransformer3DModel(
+            in_channels=4,
+            out_channels=4,
+            num_attention_heads=2,
+            attention_head_dim=8,
+            num_layers=4,
+            num_cross_attention_heads=2,
+            cross_attention_head_dim=8,
+            cross_attention_dim=16,
+            caption_channels=16,
+            mlp_ratio=2.0,
+            sample_size=2,
+            patch_size=(1, 1, 1),
+            qk_norm="rms_norm_across_heads",
+            rope_max_seq_len=32,
+        )
+        model.train()
+        model.gradient_checkpointing = True
+        model.gradient_checkpointing_interval = 2
+        model.gradient_checkpointing_segment_stride = 4
+
+        def fake_checkpoint_sequential_state(
+            blocks,
+            segment_size,
+            state,
+            run_block,
+            checkpoint_fn,
+            checkpoint_kwargs=None,
+            segment_stride=None,
+        ):
+            return state
+
+        with patch(
+            "simpletuner.helpers.models.sanavideo.transformer.checkpoint_sequential_state",
+            side_effect=fake_checkpoint_sequential_state,
+        ) as checkpoint_sequential:
+            output = model(
+                hidden_states=torch.randn(1, 4, 2, 2, 2, requires_grad=True),
+                encoder_hidden_states=torch.randn(1, 5, 16),
+                timestep=torch.randint(0, 1000, (1, 8)),
+            )
+
+        output_tensor = output.sample if hasattr(output, "sample") else output
+        self.assertEqual(output_tensor.shape, (1, 4, 2, 2, 2))
+        checkpoint_sequential.assert_called_once()
+        args, kwargs = checkpoint_sequential.call_args
+        self.assertIs(args[0], model.transformer_blocks)
+        self.assertEqual(args[1], 2)
+        self.assertEqual(kwargs, {"segment_stride": 4})
+
+    def test_unsloth_backend_uses_offloaded_checkpoint_for_per_block_path(self):
+        self.model.train()
+        self.model.gradient_checkpointing = True
+        self.model.gradient_checkpointing_backend = "unsloth"
+        self.model.gradient_checkpointing_interval = None
+
+        def fake_offloaded_checkpoint(function, *args, **kwargs):
+            return function(*args, **kwargs)
+
+        with patch(
+            "simpletuner.helpers.training.offloaded_gradient_checkpointer.offloaded_checkpoint",
+            side_effect=fake_offloaded_checkpoint,
+        ) as offloaded_checkpoint:
+            output = self.model(
+                hidden_states=torch.randn(1, 4, 2, 2, 2, requires_grad=True),
+                encoder_hidden_states=torch.randn(1, 5, 16),
+                timestep=torch.randint(0, 1000, (1, 8)),
+            )
+
+        output_tensor = output.sample if hasattr(output, "sample") else output
+        self.assertEqual(output_tensor.shape, (1, 4, 2, 2, 2))
+        offloaded_checkpoint.assert_called_once()
 
 
 if __name__ == "__main__":

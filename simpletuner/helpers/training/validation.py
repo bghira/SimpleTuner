@@ -696,6 +696,26 @@ def retrieve_validation_s2v_samples() -> list[ValidationPrompt]:
     args = StateTracker.get_args()
     validation_set = []
 
+    def resolve_video_sample_path(sample_path: str, backend_config: dict, sampler: Any) -> str:
+        if not sample_path:
+            return sample_path
+        if Path(sample_path).is_absolute():
+            return sample_path
+
+        sample_root = backend_config.get("instance_data_dir")
+        if not sample_root:
+            metadata_backend = getattr(sampler, "metadata_backend", None)
+            sample_root = getattr(metadata_backend, "instance_data_dir", None)
+        if not sample_root:
+            return sample_path
+
+        return os.path.join(sample_root, sample_path.lstrip(os.sep))
+
+    def local_audio_path_or_none(audio_path: str | None) -> str | None:
+        if not audio_path:
+            return None
+        return audio_path if Path(audio_path).exists() else None
+
     # Get video backends that have s2v_datasets linked
     video_backends = StateTracker.get_data_backends(_type="video")
     selected_eval_backend_ids = _assert_eval_dataset_exists(args.eval_dataset_id, video_backends, "video validation")
@@ -732,15 +752,14 @@ def retrieve_validation_s2v_samples() -> list[ValidationPrompt]:
             # Find matching audio from s2v_datasets
             audio_path = None
             if sample_path is not None:
-                from pathlib import Path
-
+                resolved_sample_path = resolve_video_sample_path(sample_path, backend_config, sampler)
                 video_stem = Path(sample_path).stem
 
                 for s2v_dataset in s2v_datasets:
                     s2v_config = s2v_dataset.get("config", {})
                     audio_config = s2v_config.get("audio", {})
                     if audio_config.get("source_from_video", False):
-                        audio_path = sample_path
+                        audio_path = local_audio_path_or_none(resolved_sample_path)
                         break
                     audio_root = s2v_config.get("instance_data_dir")
                     if not audio_root:
@@ -791,12 +810,15 @@ def _validation_text_cache_key(args, shortname: str, prompt: str) -> str:
 
 
 def prepare_validation_prompt_list(args, embed_cache, model):
-    precompute_text_embeddings = not getattr(embed_cache, "text_cache_ondemand", False)
+    model_uses_text_cache = True
+    if hasattr(model, "uses_text_embeddings_cache"):
+        model_uses_text_cache = model.uses_text_embeddings_cache()
+    precompute_text_embeddings = model_uses_text_cache and not getattr(embed_cache, "text_cache_ondemand", False)
     validation_prompts: list[PromptLibraryEntry] = (
         [PromptLibraryEntry(prompt="")] if not StateTracker.get_args().validation_disable_unconditional else []
     )
     validation_shortnames = ["unconditional"] if not StateTracker.get_args().validation_disable_unconditional else []
-    if not hasattr(embed_cache, "model_type"):
+    if model_uses_text_cache and not hasattr(embed_cache, "model_type"):
         raise ValueError(
             f"The default text embed cache backend was not found. You must specify 'default: true' on your text embed data backend via {StateTracker.get_args().data_backend_config}."
         )
@@ -810,7 +832,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         }
         if precompute_text_embeddings:
             embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
-    model_type = embed_cache.model_type
+    model_type = getattr(embed_cache, "model_type", None)
     validation_sample_images = None
     deepfloyd_stage2_needs_validation_images = (
         "deepfloyd" in args.model_family
@@ -2095,7 +2117,10 @@ class Validation:
 
     def _pipeline_cls(self):
         if self.model is not None:
-            if self.config.validation_using_datasets:
+            if isinstance(self.model, AudioModelFoundation):
+                if PipelineTypes.TEXT2AUDIO not in self.model.PIPELINE_CLASSES:
+                    raise ValueError(f"Cannot run {self.model.MODEL_CLASS} in Text2Audio mode for validation.")
+            if self.config.validation_using_datasets and not isinstance(self.model, AudioModelFoundation):
                 if PipelineTypes.IMG2IMG not in self.model.PIPELINE_CLASSES:
                     raise ValueError(f"Cannot run {self.model.MODEL_CLASS} in Img2Img mode for validation.")
             if self.config.controlnet:
@@ -2111,6 +2136,8 @@ class Validation:
             return self.model.PIPELINE_CLASSES[PipelineTypes.CONTROLNET]
         if self.config.control:
             return self.model.PIPELINE_CLASSES[PipelineTypes.CONTROL]
+        if isinstance(self.model, AudioModelFoundation):
+            return self.model.PIPELINE_CLASSES[PipelineTypes.TEXT2AUDIO]
         return self.model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
 
     def _gather_prompt_embeds(
@@ -2857,6 +2884,9 @@ class Validation:
             if getattr(self.model, "requires_s2v_validation_inputs", lambda: False)():
                 if PipelineTypes.IMG2VIDEO in self.model.PIPELINE_CLASSES:
                     pipeline_type = PipelineTypes.IMG2VIDEO
+            elif isinstance(self.model, AudioModelFoundation):
+                if PipelineTypes.TEXT2AUDIO in self.model.PIPELINE_CLASSES:
+                    pipeline_type = PipelineTypes.TEXT2AUDIO
             elif self.config.validation_using_datasets:
                 if PipelineTypes.IMG2IMG in self.model.PIPELINE_CLASSES:
                     pipeline_type = PipelineTypes.IMG2IMG
@@ -4333,6 +4363,26 @@ class Validation:
                     "image": validation_input_image_for_resolution,
                     "audio_path": s2v_audio_path,
                 }
+                if resolution[0] > 0 and resolution[1] > 0:
+                    if isinstance(extra_validation_kwargs["image"], list):
+                        extra_validation_kwargs["image"] = [
+                            img.resize(resolution, Image.Resampling.LANCZOS)
+                            for img in extra_validation_kwargs["image"]
+                            if isinstance(img, Image.Image)
+                        ]
+                    elif isinstance(extra_validation_kwargs["image"], Image.Image):
+                        extra_validation_kwargs["image"] = extra_validation_kwargs["image"].resize(
+                            resolution, Image.Resampling.LANCZOS
+                        )
+                    validation_input_image_for_resolution = extra_validation_kwargs["image"]
+                    extra_validation_kwargs["_s2v_conditioning"]["image"] = validation_input_image_for_resolution
+                    validation_resolution_width, validation_resolution_height = resolution
+                elif isinstance(validation_input_image_for_resolution, list) and validation_input_image_for_resolution:
+                    validation_resolution_width, validation_resolution_height = validation_input_image_for_resolution[0].size
+                elif isinstance(validation_input_image_for_resolution, Image.Image):
+                    validation_resolution_width, validation_resolution_height = validation_input_image_for_resolution.size
+                else:
+                    validation_resolution_width, validation_resolution_height = 0, 0
             elif validation_input_image is not None:
                 validation_input_image_for_resolution = _coerce_validation_image_input(validation_input_image)
                 extra_validation_kwargs["image"] = validation_input_image_for_resolution

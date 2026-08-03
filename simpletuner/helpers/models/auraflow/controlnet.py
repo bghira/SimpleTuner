@@ -372,13 +372,7 @@ class AuraFlowControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOri
         for block in self.joint_transformer_blocks:
             if self.training and self.gradient_checkpointing:
 
-                def create_custom_forward(module):
-                    def custom_forward(*inputs):
-                        return module(*inputs)
-
-                    return custom_forward
-
-                if self.gradient_checkpointing_backend == "unsloth":
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint
@@ -386,8 +380,17 @@ class AuraFlowControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOri
                     checkpoint_fn = torch.utils.checkpoint.checkpoint
 
                 ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+
+                def custom_forward(hidden_states, encoder_hidden_states, temb, checkpoint_block=block):
+                    return checkpoint_block(
+                        hidden_states=hidden_states,
+                        encoder_hidden_states=encoder_hidden_states,
+                        temb=temb,
+                        attention_kwargs=attention_kwargs,
+                    )
+
                 encoder_hidden_states, hidden_states = checkpoint_fn(
-                    create_custom_forward(block),
+                    custom_forward,
                     hidden_states,
                     encoder_hidden_states,
                     temb,
@@ -410,13 +413,7 @@ class AuraFlowControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOri
             for block in self.single_transformer_blocks:
                 if self.training and self.gradient_checkpointing:
 
-                    def create_custom_forward(module):
-                        def custom_forward(*inputs):
-                            return module(*inputs)
-
-                        return custom_forward
-
-                    if self.gradient_checkpointing_backend == "unsloth":
+                    if self.gradient_checkpointing_backend.startswith("unsloth"):
                         from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                         checkpoint_fn = offloaded_checkpoint
@@ -424,8 +421,16 @@ class AuraFlowControlNetModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOri
                         checkpoint_fn = torch.utils.checkpoint.checkpoint
 
                     ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+
+                    def custom_forward(hidden_states, temb, checkpoint_block=block):
+                        return checkpoint_block(
+                            hidden_states=hidden_states,
+                            temb=temb,
+                            attention_kwargs=attention_kwargs,
+                        )
+
                     combined_hidden_states = checkpoint_fn(
-                        create_custom_forward(block),
+                        custom_forward,
                         combined_hidden_states,
                         temb,
                         **ckpt_kwargs,

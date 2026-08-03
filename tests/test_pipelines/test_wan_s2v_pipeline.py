@@ -1,5 +1,7 @@
 """Tests for WanS2V (Speech-to-Video) pipeline components."""
 
+import os
+import tempfile
 import unittest
 from unittest import mock
 
@@ -83,6 +85,24 @@ class TestWanS2VModelClass(unittest.TestCase):
             WanS2V.HUGGINGFACE_PATHS["s2v-14b-2.2"],
             "tolgacangoz/Wan2.2-S2V-14B-Diffusers",
         )
+
+    def test_checkpoint_tensor_loader_returns_none_for_missing_or_unreadable_index(self):
+        from simpletuner.helpers.models.wan_s2v.model import WanS2V
+
+        model = WanS2V.__new__(WanS2V)
+        with tempfile.TemporaryDirectory() as tempdir:
+            self.assertIsNone(model._load_checkpoint_tensor(tempdir, "transformer", "missing.weight", {}))
+
+            transformer_dir = os.path.join(tempdir, "transformer")
+            os.makedirs(transformer_dir, exist_ok=True)
+            with open(
+                os.path.join(transformer_dir, "diffusion_pytorch_model.safetensors.index.json"),
+                "w",
+                encoding="utf-8",
+            ) as index_file:
+                index_file.write("{")
+
+            self.assertIsNone(model._load_checkpoint_tensor(tempdir, "transformer", "missing.weight", {}))
 
 
 class TestWanS2VModelMetadata(unittest.TestCase):

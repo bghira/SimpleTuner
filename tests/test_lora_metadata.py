@@ -41,7 +41,8 @@ class _DummyBaseModule:
 
 
 class _DummyTrainedComponent(_DummyBaseModule):
-    pass
+    def parameters(self):
+        return []
 
 
 class _DummyControlNet(_DummyTrainedComponent):
@@ -131,6 +132,14 @@ class _DummySavePipeline:
         save_function(packed, filename)
 
 
+class _DummyDiffusersSavePipeline(_DummySavePipeline):
+    @classmethod
+    def save_lora_weights(cls, save_directory, transformer_lora_layers=None, save_function=None, **kwargs):
+        filename = os.path.join(save_directory, kwargs.get("weight_name") or "pytorch_lora_weights.safetensors")
+        packed = {f"transformer.{key}": value for key, value in (transformer_lora_layers or {}).items()}
+        (save_function or save_file)(packed, filename)
+
+
 class _DummySDXLSavePipeline:
     @classmethod
     def save_lora_weights(
@@ -165,6 +174,20 @@ class _DummySDXLSaveModel(_DummySaveModel):
     PIPELINE_CLASSES = {PipelineTypes.TEXT2IMG: _DummySDXLSavePipeline, PipelineTypes.CONTROLNET: _DummySDXLSavePipeline}
 
 
+class _DummyArtifactModel(_DummyModel):
+    """Routes _save_lora through the real ModelFoundation.save_lora_weights so a file is written."""
+
+    PIPELINE_CLASSES = {
+        PipelineTypes.TEXT2IMG: _DummyDiffusersSavePipeline,
+        PipelineTypes.CONTROLNET: _DummyDiffusersSavePipeline,
+    }
+
+    def __init__(self, trained_component, text_encoder=None):
+        super().__init__(trained_component=trained_component, text_encoder=text_encoder)
+        self.config = SimpleNamespace(model_family="sdxl", lora_format="diffusers", controlnet=False)
+        self.save_lora_weights = lambda *args, **kwargs: ModelFoundation.save_lora_weights(self, *args, **kwargs)
+
+
 _ema_stub = SimpleNamespace(
     store=lambda *args, **kwargs: None, copy_to=lambda *args, **kwargs: None, restore=lambda *args, **kwargs: None
 )
@@ -195,6 +218,27 @@ class SaveHookMetadataTests(unittest.TestCase):
             use_deepspeed_optimizer=False,
         )
         return manager, model, trained_component
+
+    def test_manager_rejects_invalid_default_pipeline_type(self):
+        args = SimpleNamespace(
+            use_ema=False,
+            model_type="lora",
+            lora_type="standard",
+            controlnet=False,
+            validation_using_datasets=False,
+        )
+        trained_component = _DummyTrainedComponent("transformer")
+        model = _DummyModel(trained_component=trained_component)
+        model.DEFAULT_PIPELINE_TYPE = None
+
+        with self.assertRaisesRegex(ValueError, "DEFAULT_PIPELINE_TYPE"):
+            SaveHookManager(
+                args=args,
+                model=model,
+                ema_model=_ema_stub,
+                accelerator=_DummyAccelerator(),
+                use_deepspeed_optimizer=False,
+            )
 
     def test_materialize_state_dict_for_save_expands_dtensor_like_values(self):
         class DTensor:
@@ -413,6 +457,189 @@ class SaveHookMetadataTests(unittest.TestCase):
         self.assertEqual(kwargs["controlnet_lora_adapter_metadata"], {"name": "controlnet"})
         self.assertNotIn("transformer_lora_adapter_metadata", kwargs)
         self.assertIn("text_encoder_lora_adapter_metadata", kwargs)
+
+    def test_save_hook_writes_denoiser_lora_in_peft_naming(self):
+        manager, model, trained_component = self._make_manager()
+
+        lora_state = {
+            "transformer_blocks.0.attn.to_q.lora_A.weight": torch.zeros(4, 8),
+            "transformer_blocks.0.attn.to_q.lora_B.weight": torch.zeros(8, 4),
+            "transformer_blocks.0.ff.up.lora_A.weight": torch.zeros(4, 8),
+            "transformer_blocks.0.ff.up.lora_B.weight": torch.zeros(8, 4),
+        }
+        with patch("simpletuner.helpers.training.save_hooks.get_peft_model_state_dict", return_value=lora_state):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                manager._save_lora(models=[trained_component], weights=[object()], output_dir=tmpdir)
+
+        written = model.save_lora_weights.call_args.kwargs["transformer_lora_layers"]
+        self.assertEqual(set(written), set(lora_state))
+        for key in written:
+            self.assertTrue(key.endswith((".lora_A.weight", ".lora_B.weight")), key)
+            self.assertNotIn(".lora.down", key)
+            self.assertNotIn(".lora.up", key)
+
+    def test_save_hook_never_writes_a_mixed_naming_scheme(self):
+        lora_state = {
+            "transformer_blocks.0.attn.to_q.lora_A.weight": torch.zeros(4, 8),
+            "transformer_blocks.0.attn.to_q.lora_B.weight": torch.zeros(8, 4),
+            "transformer_blocks.0.ff.up.lora_A.weight": torch.zeros(4, 8),
+            "transformer_blocks.0.ff.up.lora_B.weight": torch.zeros(8, 4),
+        }
+
+        for use_ema in (False, True):
+            with self.subTest(use_ema=use_ema):
+                manager, model, trained_component = self._make_manager(args_overrides={"use_ema": use_ema})
+                with patch("simpletuner.helpers.training.save_hooks.get_peft_model_state_dict", return_value=lora_state):
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        manager._save_lora(models=[trained_component], weights=[object()], output_dir=tmpdir)
+
+                calls = model.save_lora_weights.call_args_list
+                self.assertEqual(len(calls), 2 if use_ema else 1)
+                for call in calls:
+                    written = call.kwargs["transformer_lora_layers"]
+                    schemes = {"peft" if (".lora_A." in key or ".lora_B." in key) else "diffusers" for key in written}
+                    self.assertEqual(schemes, {"peft"}, written)
+
+    def test_saved_denoiser_file_uses_peft_naming(self):
+        args = SimpleNamespace(
+            use_ema=False,
+            model_type="lora",
+            lora_type="standard",
+            controlnet=False,
+            validation_using_datasets=False,
+            model_family="sdxl",
+            model_flavour="base-1.0",
+            tracker_run_name="run-name",
+            resolution=1024,
+        )
+        trained_component = _DummyTrainedComponent("transformer")
+        manager = SaveHookManager(
+            args=args,
+            model=_DummyArtifactModel(trained_component=trained_component),
+            ema_model=_ema_stub,
+            accelerator=_DummyAccelerator(),
+            use_deepspeed_optimizer=False,
+        )
+
+        lora_state = {
+            "transformer_blocks.0.attn.to_q.lora_A.weight": torch.zeros(4, 8),
+            "transformer_blocks.0.attn.to_q.lora_B.weight": torch.zeros(8, 4),
+            "transformer_blocks.0.ff.up.lora_A.weight": torch.zeros(4, 8),
+            "transformer_blocks.0.ff.up.lora_B.weight": torch.zeros(8, 4),
+        }
+        with patch("simpletuner.helpers.training.save_hooks.get_peft_model_state_dict", return_value=lora_state):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                manager._save_lora(models=[trained_component], weights=[object()], output_dir=tmpdir)
+                lora_path = os.path.join(tmpdir, "pytorch_lora_weights.safetensors")
+                with safe_open(lora_path, framework="pt", device="cpu") as handle:
+                    written = list(handle.keys())
+
+        self.assertEqual(len(written), len(lora_state))
+        for key in written:
+            self.assertTrue(key.endswith((".lora_A.weight", ".lora_B.weight")), key)
+
+    def test_save_hook_peft_output_loads_through_diffusers_with_model_prefix(self):
+        from diffusers.loaders.peft import PeftAdapterMixin
+        from peft import LoraConfig, inject_adapter_in_model
+        from peft.utils import get_peft_model_state_dict
+
+        class Block(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.to_gate = torch.nn.Linear(8, 8, bias=False)
+                self.to_q = torch.nn.Linear(8, 8, bias=False)
+
+        class Denoiser(PeftAdapterMixin, torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.model = torch.nn.Module()
+                self.model.transformer = torch.nn.Module()
+                self.model.transformer.foo = Block()
+
+        class Pipeline:
+            pass
+
+        class Model:
+            MODEL_CLASS = Denoiser
+            MODEL_SUBFOLDER = "model"
+            PIPELINE_CLASSES = {PipelineTypes.TEXT2IMG: Pipeline}
+
+            def __init__(self, trained_component):
+                self.trained_component = trained_component
+                self.saved_lora_layers = None
+
+            def get_trained_component(self, unwrap_model=False, base_model=False):
+                return self.trained_component
+
+            def get_text_encoder(self, index):
+                return None
+
+            def save_lora_weights(self, output_dir, **kwargs):
+                self.saved_lora_layers = kwargs["model_lora_layers"]
+
+        def make_trained_component():
+            component = Denoiser()
+            inject_adapter_in_model(
+                LoraConfig(r=2, lora_alpha=2, target_modules=["to_gate", "to_q"]),
+                component,
+                adapter_name="default",
+            )
+            return component
+
+        def load_with_diffusers_from_safetensors(state_dict):
+            target = Denoiser()
+            with tempfile.TemporaryDirectory() as tmpdir:
+                save_file(state_dict, os.path.join(tmpdir, "pytorch_lora_weights.safetensors"))
+                target.load_lora_adapter(
+                    tmpdir,
+                    prefix=None,
+                    weight_name="pytorch_lora_weights.safetensors",
+                    use_safetensors=True,
+                    adapter_name="loaded",
+                )
+            return sorted(name for name, module in target.named_modules() if hasattr(module, "lora_A"))
+
+        expected_modules = ["model.transformer.foo.to_gate", "model.transformer.foo.to_q"]
+        raw_peft_state = get_peft_model_state_dict(make_trained_component())
+        self.assertEqual(load_with_diffusers_from_safetensors(raw_peft_state), expected_modules)
+
+        trained_component = make_trained_component()
+        model = Model(trained_component)
+        manager = SaveHookManager(
+            args=SimpleNamespace(use_ema=False, controlnet=False, validation_using_datasets=False),
+            model=model,
+            ema_model=_ema_stub,
+            accelerator=_DummyAccelerator(),
+            use_deepspeed_optimizer=False,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager._save_lora(models=[trained_component], weights=[object()], output_dir=tmpdir, write=True)
+
+        self.assertEqual(load_with_diffusers_from_safetensors(model.saved_lora_layers), expected_modules)
+
+    def test_legacy_mixed_checkpoint_normalises_for_resume(self):
+        from diffusers.utils import convert_unet_state_dict_to_peft
+
+        mixed = {
+            "transformer_blocks.0.attn.to_gate.lora_A.weight": torch.zeros(4, 8),
+            "transformer_blocks.0.attn.to_gate.lora_B.weight": torch.zeros(8, 4),
+            "transformer_blocks.0.attn.to_q.lora.down.weight": torch.zeros(4, 8),
+            "transformer_blocks.0.attn.to_q.lora.up.weight": torch.zeros(8, 4),
+        }
+
+        # safetensors sorts keys, and diffusers' loader gates conversion on the first one alone.
+        self.assertIn("lora_A", sorted(mixed)[0])
+
+        converted = convert_unet_state_dict_to_peft(mixed)
+
+        self.assertEqual(len(converted), len(mixed))
+        for key in converted:
+            self.assertTrue(key.endswith((".lora_A.weight", ".lora_B.weight")), key)
+        self.assertEqual(
+            {key.rsplit(".lora_", 1)[0] for key in converted},
+            {"transformer_blocks.0.attn.to_gate", "transformer_blocks.0.attn.to_q"},
+        )
 
     def test_models_spec_metadata_written_to_lora_file(self):
         manager, _, _ = self._make_manager(
