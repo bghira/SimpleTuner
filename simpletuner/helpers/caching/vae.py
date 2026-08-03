@@ -400,9 +400,17 @@ class VAECache(WebhookMixin):
         delete_from_backend: bool = False,
         details: dict = None,
     ) -> None:
+        buckets = getattr(self.metadata_backend, "aspect_ratio_bucket_indices", None)
+        shard_lengths = (
+            {shard: len(images) for shard, images in buckets.items()}
+            if isinstance(buckets, dict) and getattr(self.metadata_backend, "read_only", False)
+            else None
+        )
         removed = self._remove_image_from_metadata_backend(self.metadata_backend, filepath, bucket)
         if removed:
             self._record_filter_stat(reason, bucket, filepath)
+            if shard_lengths is not None:
+                self._restore_split_shard_lengths(shard_lengths)
         self._queue_metadata_filter_action(
             filepath=filepath,
             bucket=bucket,
@@ -410,6 +418,20 @@ class VAECache(WebhookMixin):
             delete_from_backend=delete_from_backend,
             details=details,
         )
+
+    def _restore_split_shard_lengths(self, shard_lengths: dict) -> None:
+        """Refill a post-split shard the filter just shortened.
+
+        Every data-parallel rank has to schedule the same number of samples, so removing an
+        entry from one rank's shard desynchronises them. The removed slots are refilled by
+        repeating the final surviving sample, which is how the splitter pads. A bucket the
+        filter emptied has nothing to repeat and stays empty until the next split.
+        """
+        for bucket, length in shard_lengths.items():
+            images = self.metadata_backend.aspect_ratio_bucket_indices.get(bucket)
+            if not images or len(images) >= length:
+                continue
+            images.extend([images[-1]] * (length - len(images)))
 
     def _handle_nsfw_rejected_sample(self, filepath: str, bucket: str, classification: dict) -> None:
         rejected_entry = {
