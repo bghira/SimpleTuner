@@ -172,10 +172,92 @@ class FluxSegmentedCheckpointingSupportTests(unittest.TestCase):
             backend=True,
             interval=True,
             stride=True,
-            offload=True,
+            checkpoint_attention_offload=True,
             ffn=True,
             attention_offload=True,
         )
+
+    def test_checkpointing_forwards_attention_offload_to_block_wrappers(self):
+        from unittest.mock import patch
+
+        import torch
+        import torch.nn as nn
+
+        from simpletuner.helpers.models.flux.transformer import FluxTransformer2DModel
+
+        class RecordingDoubleBlock(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.received_offload_attention = None
+
+            def forward(
+                self,
+                hidden_states,
+                encoder_hidden_states,
+                temb,
+                context_temb=None,
+                image_rotary_emb=None,
+                attention_mask=None,
+                checkpoint_ffn=False,
+                checkpoint_fn=None,
+                offload_attention=False,
+            ):
+                self.received_offload_attention = offload_attention
+                return encoder_hidden_states + hidden_states.mean() * 0, hidden_states + temb.mean() * 0
+
+        class RecordingSingleBlock(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.received_offload_attention = None
+
+            def forward(
+                self,
+                hidden_states,
+                temb,
+                image_rotary_emb=None,
+                attention_mask=None,
+                checkpoint_ffn=False,
+                checkpoint_fn=None,
+                offload_attention=False,
+            ):
+                self.received_offload_attention = offload_attention
+                return hidden_states + temb.mean() * 0
+
+        model = FluxTransformer2DModel(
+            patch_size=1,
+            in_channels=4,
+            num_layers=1,
+            num_single_layers=1,
+            attention_head_dim=6,
+            num_attention_heads=2,
+            joint_attention_dim=12,
+            pooled_projection_dim=12,
+            axes_dims_rope=(2, 2, 2),
+        )
+        double_block = RecordingDoubleBlock()
+        single_block = RecordingSingleBlock()
+        model.transformer_blocks[0] = double_block
+        model.single_transformer_blocks[0] = single_block
+        model.train()
+        model.gradient_checkpointing = True
+        model.set_gradient_checkpointing_offload_attention(True)
+
+        def fake_checkpoint(function, *args, **kwargs):
+            return function(*args)
+
+        with patch("simpletuner.helpers.models.flux.transformer.simpletuner_checkpoint", side_effect=fake_checkpoint):
+            model(
+                hidden_states=torch.randn(1, 2, 4, requires_grad=True),
+                encoder_hidden_states=torch.randn(1, 3, 12),
+                pooled_projections=torch.randn(1, 12),
+                timestep=torch.tensor([1.0]),
+                img_ids=torch.zeros(2, 3),
+                txt_ids=torch.zeros(3, 3),
+                return_dict=True,
+            )
+
+        self.assertTrue(double_block.received_offload_attention)
+        self.assertTrue(single_block.received_offload_attention)
 
 
 class FluxBlockCheckpointingScopeTests(unittest.TestCase):

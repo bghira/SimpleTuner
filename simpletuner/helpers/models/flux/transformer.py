@@ -1245,12 +1245,9 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             ):
                 checkpoint_ffn = self.gradient_checkpointing_backend.endswith("-ffn")
 
-                def create_custom_forward(module, return_dict=None):
+                def create_custom_forward(module):
                     def custom_forward(*inputs):
-                        if return_dict is not None:
-                            return module(*inputs, return_dict=return_dict)
-                        else:
-                            return module(*inputs, offload_attention=self.gradient_checkpointing_offload_attention)
+                        return module(*inputs, offload_attention=self.gradient_checkpointing_offload_attention)
 
                     return custom_forward
 
@@ -1413,12 +1410,9 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
             ):
                 checkpoint_ffn = self.gradient_checkpointing_backend.endswith("-ffn")
 
-                def create_custom_forward(module, return_dict=None):
+                def create_custom_forward(module):
                     def custom_forward(*inputs):
-                        if return_dict is not None:
-                            return module(*inputs, return_dict=return_dict)
-                        else:
-                            return module(*inputs, offload_attention=self.gradient_checkpointing_offload_attention)
+                        return module(*inputs, offload_attention=self.gradient_checkpointing_offload_attention)
 
                     return custom_forward
 
