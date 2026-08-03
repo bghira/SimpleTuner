@@ -120,7 +120,7 @@ class LongCatImagePipeline(
         tokenizer: AutoTokenizer,
         text_processor: AutoProcessor,
         transformer,
-        image_encoder: CLIPVisionModelWithProjection,
+        image_encoder: CLIPVisionModelWithProjection = None,
         feature_extractor: CLIPImageProcessor = None,
     ):
         super().__init__()
