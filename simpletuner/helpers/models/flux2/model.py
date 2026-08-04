@@ -425,9 +425,18 @@ class Flux2(ImageModelFoundation):
         return vae
 
     def _is_klein_flavour(self) -> bool:
-        """Check if current model flavour is a Klein variant."""
+        """Check if current model flavour is a Klein variant.
+
+        When the user supplies ``pretrained_model_name_or_path`` directly,
+        ``setup_model_flavour`` never resolves a flavour, leaving
+        ``model_flavour`` as None. Fall back to inspecting the model path so a
+        Klein checkpoint is not silently treated as FLUX.2-dev.
+        """
         flavour = getattr(self.config, "model_flavour", None)
-        return flavour in KLEIN_FLAVOURS
+        if flavour is not None:
+            return flavour in KLEIN_FLAVOURS
+        model_path = str(getattr(self.config, "pretrained_model_name_or_path", "") or "")
+        return "klein" in model_path.lower()
 
     def load_text_tokenizer(self):
         """Tokenizer is loaded alongside the text encoder, so this is a no-op."""
