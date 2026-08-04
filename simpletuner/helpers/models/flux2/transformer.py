@@ -207,16 +207,20 @@ class Flux2AttnProcessor:
         key = key.unflatten(-1, (attn.heads, -1))
         value = value.unflatten(-1, (attn.heads, -1))
 
-        query = attn.norm_q(query)
-        key = attn.norm_k(key)
+        # torch.nn.RMSNorm is on autocast's fp32 promotion list, so under
+        # autocast(bf16/fp16) these return fp32 while `value` stays in half
+        # precision. Attention backends that require a uniform half dtype
+        # (e.g. flash-attn) then reject the mismatched inputs.
+        query = attn.norm_q(query).to(value.dtype)
+        key = attn.norm_k(key).to(value.dtype)
 
         if attn.added_kv_proj_dim is not None:
             encoder_query = encoder_query.unflatten(-1, (attn.heads, -1))
             encoder_key = encoder_key.unflatten(-1, (attn.heads, -1))
             encoder_value = encoder_value.unflatten(-1, (attn.heads, -1))
 
-            encoder_query = attn.norm_added_q(encoder_query)
-            encoder_key = attn.norm_added_k(encoder_key)
+            encoder_query = attn.norm_added_q(encoder_query).to(encoder_value.dtype)
+            encoder_key = attn.norm_added_k(encoder_key).to(encoder_value.dtype)
 
             query = torch.cat([encoder_query, query], dim=1)
             key = torch.cat([encoder_key, key], dim=1)
@@ -397,8 +401,10 @@ class Flux2ParallelSelfAttnProcessor:
         key = key.unflatten(-1, (attn.heads, -1))
         value = value.unflatten(-1, (attn.heads, -1))
 
-        query = attn.norm_q(query)
-        key = attn.norm_k(key)
+        # See Flux2AttnProcessor: RMSNorm is autocast-promoted to fp32, which
+        # breaks attention backends requiring a uniform half dtype.
+        query = attn.norm_q(query).to(value.dtype)
+        key = attn.norm_k(key).to(value.dtype)
 
         parallel_config = self._parallel_config
         cp_active = context_parallel_config(parallel_config) is not None
