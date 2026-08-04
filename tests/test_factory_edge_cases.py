@@ -249,12 +249,13 @@ class TestFactoryEdgeCases(unittest.TestCase):
             model=self.model,
         )
         modes = [
-            ({"vae_cache_ondemand": True}, False),
-            ({"vae_cache_disable": True}, True),
+            ({"vae_cache_ondemand": True}, False, ()),
+            ({"vae_cache_disable": True}, True, ()),
+            ({"vae_cache_ondemand": True}, False, ("vae_cache_disable",)),
         ]
 
-        for backend_mode, expected_disable in modes:
-            with self.subTest(backend_mode=backend_mode):
+        for backend_mode, expected_disable, missing_config_keys in modes:
+            with self.subTest(backend_mode=backend_mode, missing_config_keys=missing_config_keys):
                 backend = {
                     "id": "dataset-ondemand-cache",
                     "type": "local",
@@ -264,6 +265,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     **backend_mode,
                 }
                 init_backend = init_backend_config(backend, self.args, self.accelerator)
+                for key in missing_config_keys:
+                    init_backend["config"].pop(key)
                 init_backend.update(
                     {
                         "data_backend": MagicMock(id=backend["id"], type="local"),
