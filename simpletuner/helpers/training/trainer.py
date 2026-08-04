@@ -5537,12 +5537,15 @@ class Trainer:
                     gradient_accumulation_steps=self.config.gradient_accumulation_steps,
                     apply_padding=(self.config.overrode_max_train_steps or self.config.allow_dataset_oversubscription),
                 )
-                if sum(len(b) for b in backend["metadata_backend"].aspect_ratio_bucket_indices.values()) == 0:
+                local_sample_count = sum(
+                    len(bucket) for bucket in backend["metadata_backend"].aspect_ratio_bucket_indices.values()
+                )
+                if local_sample_count == 0:
                     raise ValueError(
                         f"(id={backend_id}) Dataset produced no usable samples. The epoch rollover"
                         f" re-split left this rank with zero samples, so epoch {epoch} would train"
                         f" against an empty schedule here.\n"
-                        f"This usually means the per-epoch re-bucketing (crop_aspect=random) produced"
+                        f"This usually means per-epoch re-bucketing (e.g., crop_aspect=random) produced"
                         f" buckets too small to divide across the data-parallel ranks, or that samples"
                         f" were filtered out of the cache during the previous epoch.\n"
                         f"Enable --allow_dataset_oversubscription so short buckets are padded across"
