@@ -64,6 +64,16 @@ def _as_bool(value: Any) -> bool:
     return bool(value)
 
 
+def _normalise_vae_cache_config(config: Dict[str, Any]) -> Tuple[bool, bool]:
+    """Normalize optional VAE cache booleans and preserve disable-implies-ondemand."""
+
+    vae_cache_disable = _as_bool(config.get("vae_cache_disable", False))
+    vae_cache_ondemand = _as_bool(config.get("vae_cache_ondemand", False)) or vae_cache_disable
+    config["vae_cache_disable"] = vae_cache_disable
+    config["vae_cache_ondemand"] = vae_cache_ondemand
+    return vae_cache_disable, vae_cache_ondemand
+
+
 def _coerce_bucket_keys(indices: Dict[Any, Iterable]) -> Dict[Any, list]:
     """Return a copy of aspect ratio bucket indices with numeric keys coerced to float."""
     coerced: Dict[Any, list] = {}
@@ -3997,7 +4007,8 @@ class FactoryRegistry:
                 f"{len(init_backend['conditioning_image_embed_cache'].image_path_to_embed_path)} entries."
             )
 
-        if not init_backend["config"]["vae_cache_ondemand"]:
+        _, vae_cache_ondemand = _normalise_vae_cache_config(init_backend["config"])
+        if not vae_cache_ondemand:
             pending_files = init_backend["conditioning_image_embed_cache"].discover_unprocessed_files()
             logger.info(f"Conditioning image embed cache has {len(pending_files)} unprocessed files.")
             if is_i2v_video:
@@ -4135,8 +4146,7 @@ class FactoryRegistry:
             if vae_batch_size is None:
                 vae_batch_size = self.args.vae_batch_size
 
-        dataset_vae_cache_disable = init_backend["config"]["vae_cache_disable"]
-        dataset_vae_cache_ondemand = init_backend["config"]["vae_cache_ondemand"]
+        dataset_vae_cache_disable, dataset_vae_cache_ondemand = _normalise_vae_cache_config(init_backend["config"])
 
         init_backend["vaecache"] = VAECache(
             id=init_backend["id"],
