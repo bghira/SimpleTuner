@@ -5712,6 +5712,42 @@ class Trainer:
             distill_logs.update(gen_logs)
         return loss, loss_logs, diffusion_loss, aux_loss_logs, distill_logs
 
+    @contextmanager
+    def _low_rank_adapter_disabled(self):
+        if self.config.lora_type.lower() == "lycoris":
+            training_logger.debug("Detaching LyCORIS adapter for parent prediction.")
+            self.accelerator._lycoris_wrapped_network.set_multiplier(0.0)
+            try:
+                yield
+            finally:
+                training_logger.debug("Attaching LyCORIS adapter for student prediction.")
+                self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
+            return
+
+        trained_component = self.model.get_trained_component()
+        trained_component.disable_lora()
+        try:
+            yield
+        finally:
+            trained_component.enable_lora()
+
+    def _prepare_regularisation_parent_targets(self, prepared_batch: dict) -> None:
+        training_logger.debug("Predicting parent model residual.")
+        with torch.no_grad(), self._low_rank_adapter_disabled():
+            parent_prediction = self.model_predict(prepared_batch=prepared_batch)
+
+        if isinstance(parent_prediction, dict):
+            prepared_batch["target"] = parent_prediction["model_prediction"].detach()
+            audio_prediction = parent_prediction.get("audio_prediction")
+            if torch.is_tensor(audio_prediction):
+                prepared_batch["audio_target"] = audio_prediction.detach()
+            else:
+                prepared_batch.pop("audio_target", None)
+            return
+
+        prepared_batch["target"] = parent_prediction.detach() if torch.is_tensor(parent_prediction) else parent_prediction
+        prepared_batch.pop("audio_target", None)
+
     def _discard_probe_gradients(self) -> None:
         trained_component = self.model.get_trained_component(unwrap_model=False)
         if trained_component is not None:
@@ -6564,21 +6600,7 @@ class Trainer:
                     # Predict the noise residual and compute loss
                     is_regularisation_data = prepared_batch.get("is_regularisation_data", False)
                     if is_regularisation_data and self.config.model_type == "lora" and self.model.uses_noise_schedule():
-                        training_logger.debug("Predicting parent model residual.")
-                        with torch.no_grad():
-                            if self.config.lora_type.lower() == "lycoris":
-                                training_logger.debug("Detaching LyCORIS adapter for parent prediction.")
-                                self.accelerator._lycoris_wrapped_network.set_multiplier(0.0)
-                            else:
-                                self.model.get_trained_component().disable_lora()
-                            prepared_batch["target"] = self.model_predict(
-                                prepared_batch=prepared_batch,
-                            )["model_prediction"]
-                            if self.config.lora_type.lower() == "lycoris":
-                                training_logger.debug("Attaching LyCORIS adapter for student prediction.")
-                                self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
-                            else:
-                                self.model.get_trained_component().enable_lora()
+                        self._prepare_regularisation_parent_targets(prepared_batch)
 
                     # slider
                     raw_strength = prepared_batch.get("slider_strength", 1.0)

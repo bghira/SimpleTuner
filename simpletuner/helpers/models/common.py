@@ -1528,6 +1528,10 @@ class ModelFoundation(ABC):
     def uses_audio_latents(self) -> bool:
         return False
 
+    def uses_audio_latents_for_data_backend(self, data_backend_id: Optional[str] = None) -> bool:
+        del data_backend_id
+        return self.uses_audio_latents()
+
     def uses_audio_tokens(self) -> bool:
         """
         Override to True for autoregressive audio models that consume discrete token sequences
@@ -5459,6 +5463,19 @@ class ModelFoundation(ABC):
     def requires_validation_i2v_samples(self) -> bool:
         """
         Override for models that need to pair validation videos with their conditioning images.
+        """
+        return False
+
+    def uses_validation_negative_prompt(self) -> bool:
+        """
+        Whether validation should encode and pass a negative prompt branch.
+        """
+        return self.VALIDATION_USES_NEGATIVE_PROMPT
+
+    def validation_negative_prompt_requires_prompt_context(self) -> bool:
+        """
+        Whether validation negative prompts must be encoded per sample with the same
+        image/reference context as the positive prompt.
         """
         return False
 

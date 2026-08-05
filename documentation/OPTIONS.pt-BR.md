@@ -52,6 +52,15 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
   - `diffusers` e o layout padrao PEFT/Diffusers.
   - `comfyui` converte para/de chaves estilo ComfyUI (`diffusion_model.*` com tensores `lora_A/lora_B` e `.alpha`). Flux, Flux2, Lumina2 e Z-Image auto-detectam entradas ComfyUI mesmo se isso ficar em `diffusers`, mas defina `comfyui` para forcar saida ComfyUI ao salvar.
 
+### `--minimax_h3_target_mode`
+
+- **O que**: Controla se MiniMax-H3 inclui linhas de audio alvo.
+- **Opcoes**: `auto`, `video`, `av`
+- **Padrao**: `auto`
+- **Notas**:
+  - `auto` resolve para somente video, pulando cache de audio VAE, collate e linhas de audio alvo para H3.
+  - Defina `minimax_h3_target_mode` ou `h3_target_mode` como `av` em uma entrada de data backend para ativar treino conjunto audio-video em um backend de audio auto-split ou explicito.
+
 ### `--fuse_qkv_projections`
 
 - **O que**: Faz fusao das projecoes QKV nos blocos de atencao do modelo para usar hardware de forma mais eficiente.

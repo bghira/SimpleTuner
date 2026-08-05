@@ -180,6 +180,12 @@ def _denoiser_inputs() -> list[InputParam]:
             type_hint=int,
             description="Last step index that may use real CFG.",
         ),
+        InputParam(
+            name="minimax_h3_reference_mode",
+            type_hint=str,
+            default="vanilla",
+            description="MiniMax-H3 static reference handling mode: vanilla or cached_kv.",
+        ),
         InputParam.template("attention_kwargs"),
     ]
 
@@ -202,6 +208,13 @@ def _state_attr(block_state: BlockState, name: str, prefix: str = ""):
     if value is None and prefix:
         return getattr(block_state, name)
     return value
+
+
+def _state_attr_or(block_state: BlockState, name: str, default, prefix: str = ""):
+    value = getattr(block_state, f"{prefix}{name}", None) if prefix else getattr(block_state, name, None)
+    if value is None and prefix:
+        value = getattr(block_state, name, None)
+    return default if value is None else value
 
 
 def _predict_velocity(
@@ -230,6 +243,9 @@ def _predict_velocity(
         text_indices=_state_attr(block_state, "text_indices", prefix),
         attention_kwargs=getattr(block_state, "attention_kwargs", None),
         skip_layers=skip_layers,
+        num_condition_video_rows=_state_attr_or(block_state, "num_condition_video_rows", 0, prefix),
+        num_condition_audio_rows=_state_attr_or(block_state, "num_condition_audio_rows", 0, prefix),
+        minimax_h3_reference_mode=getattr(block_state, "minimax_h3_reference_mode", "vanilla") or "vanilla",
         return_dict=False,
     )
 

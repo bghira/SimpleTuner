@@ -29,7 +29,7 @@ from simpletuner.helpers.models.common import (
 )
 from simpletuner.helpers.models.minimaxh3.autoencoder import AutoencoderKLMiniMaxH3
 from simpletuner.helpers.models.minimaxh3.autoencoder_audio import AutoencoderKLMiniMaxH3Audio
-from simpletuner.helpers.models.minimaxh3.encoders import MiniMaxH3TextEncoderStep
+from simpletuner.helpers.models.minimaxh3.encoders import MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH, MiniMaxH3TextEncoderStep
 from simpletuner.helpers.models.minimaxh3.modular_blocks_minimax_h3 import MiniMaxH3Blocks, MiniMaxH3Ref2VABlocks
 from simpletuner.helpers.models.minimaxh3.packing import (
     MINIMAX_H3_AUDIO_CHANNELS,
@@ -63,6 +63,8 @@ else:
 
 MINIMAX_H3_BASE_REPO = "MiniMaxAI/MiniMax-H3"
 MINIMAX_H3_SINGLE_FILE_SUFFIXES = (".safetensors", ".sft")
+MINIMAX_H3_TARGET_MODES = ("auto", "video", "av")
+MINIMAX_H3_TARGET_MODE_KEYS = ("minimax_h3_target_mode", "h3_target_mode")
 
 
 def _is_single_file_path(path: Any) -> bool:
@@ -140,6 +142,8 @@ class MiniMaxH3(VideoModelFoundation):
         self.audio_vae = None
         self.processor = None
         self._warned_missing_audio = False
+        self._warned_audio_disabled = False
+        self._warned_image_audio_disabled = False
 
     def supports_crepa_self_flow(self) -> bool:
         return True
@@ -151,6 +155,8 @@ class MiniMaxH3(VideoModelFoundation):
     def adjust_video_frames(cls, num_frames: int) -> int:
         if num_frames < 1:
             raise ValueError(f"`num_frames` must be positive, got {num_frames}.")
+        if num_frames == 1:
+            return 1
         while num_frames % 17 != 5:
             num_frames += 1
         return num_frames
@@ -427,6 +433,9 @@ class MiniMaxH3(VideoModelFoundation):
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         encoded = []
         components = self._text_encoder_components()
+        max_text_length = getattr(self.config, "tokenizer_max_length", None)
+        if max_text_length is None:
+            max_text_length = MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH
         prompt_contexts = getattr(self, "_current_prompt_contexts", None)
         if self.requires_text_embed_image_context():
             if not prompt_contexts or len(prompt_contexts) != len(prompts):
@@ -434,8 +443,16 @@ class MiniMaxH3(VideoModelFoundation):
             prompt_images = self._prepare_prompt_image_batch(prompt_contexts, len(prompts))
         else:
             prompt_images = [None] * len(prompts)
-        for prompt, images in zip(prompts, prompt_images):
-            if prompt == "":
+        if prompt_contexts is None:
+            prompt_contexts = [{} for _ in prompts]
+        for prompt, images, context in zip(prompts, prompt_images, prompt_contexts):
+            null_instruction = False
+            if is_negative_prompt and isinstance(context, dict) and str(prompt).strip() == "":
+                positive_prompt = context.get("positive_prompt")
+                if positive_prompt is not None:
+                    prompt = str(positive_prompt)
+                    null_instruction = True
+            if prompt == "" and not null_instruction:
                 prompt = " "
             prompt_embeds, text_token_tags = MiniMaxH3TextEncoderStep.encode_prompt(
                 components,
@@ -443,6 +460,8 @@ class MiniMaxH3(VideoModelFoundation):
                 images=images,
                 device=self.accelerator.device,
                 dtype=self.config.weight_dtype,
+                null_instruction=null_instruction,
+                max_length=max_text_length,
             )
             encoded.append({"prompt_embeds": prompt_embeds, "text_token_tags": text_token_tags})
         return self.collate_prompt_embeds(encoded)
@@ -636,6 +655,67 @@ class MiniMaxH3(VideoModelFoundation):
     def uses_audio_latents(self) -> bool:
         return True
 
+    @staticmethod
+    def _normalise_h3_target_mode(value: Any, *, source: str = "MiniMax-H3 target mode") -> str:
+        if value is None or value == "":
+            return "auto"
+        mode = str(value).strip().lower()
+        if mode not in MINIMAX_H3_TARGET_MODES:
+            raise ValueError(f"{source} must be one of {', '.join(MINIMAX_H3_TARGET_MODES)}, got {value!r}.")
+        return mode
+
+    def _configured_h3_target_mode(self) -> str:
+        value = getattr(self.config, "minimax_h3_target_mode", None)
+        if value is None:
+            value = getattr(self.config, "h3_target_mode", None)
+        return self._normalise_h3_target_mode(value, source="--minimax_h3_target_mode")
+
+    def _target_mode_from_backend_config(self, data_backend_id: Optional[str]) -> Optional[str]:
+        if not data_backend_id:
+            return None
+        backend_config = StateTracker.get_data_backend_config(data_backend_id) or {}
+        for key in MINIMAX_H3_TARGET_MODE_KEYS:
+            if key in backend_config:
+                return self._normalise_h3_target_mode(backend_config.get(key), source=f"{data_backend_id}.{key}")
+        if backend_config.get("dataset_type") == "audio":
+            source_dataset_id = backend_config.get("source_dataset_id")
+            if source_dataset_id:
+                source_config = StateTracker.get_data_backend_config(source_dataset_id) or {}
+                for key in MINIMAX_H3_TARGET_MODE_KEYS:
+                    if key in source_config:
+                        return self._normalise_h3_target_mode(source_config.get(key), source=f"{source_dataset_id}.{key}")
+        return None
+
+    def _h3_target_mode_for_data_backend(self, data_backend_id: Optional[str] = None) -> str:
+        mode = self._target_mode_from_backend_config(data_backend_id) or self._configured_h3_target_mode()
+        if mode == "auto":
+            return "video"
+        return mode
+
+    @staticmethod
+    def _is_h3_image_latent_batch(batch: dict) -> bool:
+        latents = batch.get("latents")
+        return torch.is_tensor(latents) and latents.ndim == 5 and int(latents.shape[2]) == 1
+
+    def _h3_target_mode_for_training_batch(self, batch: dict) -> str:
+        h3_target_mode = self._h3_target_mode_for_data_backend(batch.get("data_backend_id"))
+        if h3_target_mode != "av" or not self._is_h3_image_latent_batch(batch):
+            return h3_target_mode
+
+        audio_latents = batch.get("audio_latent_batch")
+        if isinstance(audio_latents, dict):
+            audio_latents = audio_latents.get("latents")
+        if torch.is_tensor(audio_latents) and not self._warned_image_audio_disabled:
+            logger.info(
+                "MiniMax-H3 target mode is av, but this batch has one video latent frame; "
+                "ignoring cached audio latents for image-mode training."
+            )
+            self._warned_image_audio_disabled = True
+        return "video"
+
+    def uses_audio_latents_for_data_backend(self, data_backend_id: Optional[str] = None) -> bool:
+        return self._h3_target_mode_for_data_backend(data_backend_id) == "av"
+
     def supports_conditioning_dataset(self) -> bool:
         return True
 
@@ -648,10 +728,17 @@ class MiniMaxH3(VideoModelFoundation):
     def requires_conditioning_latents(self) -> bool:
         return True
 
-    def should_precompute_validation_negative_prompt(self) -> bool:
+    def uses_validation_negative_prompt(self) -> bool:
         return float(getattr(self.config, "validation_guidance_real", 1.0) or 1.0) > 1.0
 
+    def validation_negative_prompt_requires_prompt_context(self) -> bool:
+        return True
+
+    def should_precompute_validation_negative_prompt(self) -> bool:
+        return False
+
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
+        pipeline_kwargs.setdefault("minimax_h3_target_mode", self._configured_h3_target_mode())
         guidance_scale_real = pipeline_kwargs.pop("guidance_scale_real", None)
         if guidance_scale_real is None:
             guidance_scale_real = getattr(self.config, "validation_guidance_real", None)
@@ -677,8 +764,12 @@ class MiniMaxH3(VideoModelFoundation):
 
     @staticmethod
     def _video_frames_from_latent_frames(num_latent_frames: int) -> int:
+        if num_latent_frames == 1:
+            return 1
         if num_latent_frames < 2 or (num_latent_frames - 2) % 5:
-            raise ValueError("MiniMax-H3 video latent frames must be of the form `5 * n + 2`, " f"got {num_latent_frames}.")
+            raise ValueError(
+                "MiniMax-H3 video latent frames must be 1 or of the form `5 * n + 2`, " f"got {num_latent_frames}."
+            )
         return ((num_latent_frames - 2) // 5) * 17 + 5
 
     def _expected_audio_latents(self, video_latents: torch.Tensor) -> int:
@@ -701,6 +792,31 @@ class MiniMaxH3(VideoModelFoundation):
         batch = super().prepare_batch_conditions(batch=batch, state=state)
         target_device = self.accelerator.device
         target_dtype = self.config.weight_dtype
+        h3_target_mode = self._h3_target_mode_for_training_batch(batch)
+        batch["minimax_h3_target_mode"] = h3_target_mode
+        if h3_target_mode == "video":
+            audio_disabled_for_image = (
+                self._is_h3_image_latent_batch(batch)
+                and self._h3_target_mode_for_data_backend(batch.get("data_backend_id")) == "av"
+            )
+            if (
+                torch.is_tensor(batch.get("audio_latent_batch"))
+                and not audio_disabled_for_image
+                and not self._warned_audio_disabled
+            ):
+                logger.info("MiniMax-H3 target mode is video; ignoring cached audio latents for this backend.")
+                self._warned_audio_disabled = True
+            for key in (
+                "audio_latent_batch",
+                "audio_latents",
+                "audio_latent_mask",
+                "audio_noise",
+                "audio_sigmas",
+                "audio_timesteps",
+                "audio_noisy_latents",
+            ):
+                batch.pop(key, None)
+            return batch
 
         audio_latents = batch.get("audio_latent_batch")
         audio_mask = batch.get("audio_latent_mask")
@@ -843,7 +959,15 @@ class MiniMaxH3(VideoModelFoundation):
 
     def model_predict(self, prepared_batch):
         noisy_latents = prepared_batch["noisy_latents"].to(self.accelerator.device, dtype=self.config.weight_dtype)
-        audio_noisy = prepared_batch["audio_noisy_latents"].to(self.accelerator.device, dtype=self.config.weight_dtype)
+        audio_noisy = prepared_batch.get("audio_noisy_latents")
+        h3_target_mode = prepared_batch.get(
+            "minimax_h3_target_mode",
+            "av" if torch.is_tensor(audio_noisy) else "video",
+        )
+        h3_target_mode = self._normalise_h3_target_mode(h3_target_mode, source="prepared_batch.minimax_h3_target_mode")
+        if h3_target_mode == "auto":
+            h3_target_mode = "video"
+        use_audio = h3_target_mode == "av" and torch.is_tensor(audio_noisy)
         encoder_hidden_states = prepared_batch["encoder_hidden_states"].to(
             self.accelerator.device, dtype=self.config.weight_dtype
         )
@@ -858,6 +982,9 @@ class MiniMaxH3(VideoModelFoundation):
         patch_size = tuple(getattr(transformer.config, "patch_size", (1, 2, 2)))
         patch_product = int(patch_size[0] * patch_size[1] * patch_size[2])
         batch_size, channels, latent_frames, latent_height, latent_width = noisy_latents.shape
+        use_audio = use_audio and latent_frames > 1
+        if use_audio:
+            audio_noisy = audio_noisy.to(self.accelerator.device, dtype=self.config.weight_dtype)
         text_token_tags = self._resolve_text_token_tags(
             prepared_batch, encoder_hidden_states.shape[1], self.accelerator.device
         )
@@ -897,8 +1024,12 @@ class MiniMaxH3(VideoModelFoundation):
         else:
             packed_video = packed_target_video
 
-        num_audio_latents = audio_noisy.shape[-1]
-        packed_audio = self._pack_audio_latents(audio_noisy)
+        if use_audio:
+            num_audio_latents = audio_noisy.shape[-1]
+            packed_audio = self._pack_audio_latents(audio_noisy)
+        else:
+            num_audio_latents = 0
+            packed_audio = encoder_hidden_states.new_empty((batch_size, 0, self._audio_latent_channels()))
         layout = build_packed_sequence(
             text_token_tags=text_token_tags.detach().cpu(),
             num_latent_frames=latent_frames,
@@ -909,7 +1040,12 @@ class MiniMaxH3(VideoModelFoundation):
             keyframe_anchors=keyframe_anchors,
         )
         video_timestep = self._scalar_timestep(prepared_batch["timesteps"], "video")
-        audio_timestep = self._scalar_timestep(prepared_batch.get("audio_timesteps", prepared_batch["timesteps"]), "audio")
+        if use_audio:
+            audio_timestep = self._scalar_timestep(
+                prepared_batch.get("audio_timesteps", prepared_batch["timesteps"]), "audio"
+            )
+        else:
+            audio_timestep = video_timestep
         timestep, timestep_indices = build_row_timesteps(
             layout,
             video_timestep=video_timestep,
@@ -961,6 +1097,8 @@ class MiniMaxH3(VideoModelFoundation):
             "hidden_state_layer": capture_block_index,
             "video_hidden_shape": video_hidden_shape,
             "num_condition_video_rows": layout.num_condition_video_rows,
+            "num_condition_audio_rows": layout.num_condition_audio_rows,
+            "minimax_h3_reference_mode": getattr(self.config, "minimax_h3_reference_mode", "vanilla") or "vanilla",
             "return_dict": True,
         }
         if getattr(self.config, "twinflow_enabled", False):
@@ -976,7 +1114,7 @@ class MiniMaxH3(VideoModelFoundation):
             channels=channels,
             patch_size=patch_size,
         )
-        audio_pred = self._unpack_audio_prediction(output.audio_sample, num_audio_latents)
+        audio_pred = self._unpack_audio_prediction(output.audio_sample, num_audio_latents) if use_audio else None
         return {
             "model_prediction": video_pred,
             "audio_prediction": audio_pred,
@@ -1074,11 +1212,23 @@ class MiniMaxH3(VideoModelFoundation):
         audio_pred = model_output.get("audio_prediction")
         if audio_pred is None:
             return video_loss, video_loss, None, 0.0
-        audio_latents = prepared_batch.get("audio_latents")
-        audio_noise = prepared_batch.get("audio_noise")
-        if audio_latents is None or audio_noise is None:
-            return video_loss, video_loss, None, 0.0
-        audio_target = audio_latents - audio_noise
+        audio_target = prepared_batch.get("audio_target")
+        if audio_target is not None:
+            if not torch.is_tensor(audio_target):
+                raise ValueError(f"MiniMax-H3 audio_target must be a tensor, got {type(audio_target)}.")
+            audio_target = audio_target.to(device=audio_pred.device, dtype=audio_pred.dtype)
+            if audio_target.shape != audio_pred.shape:
+                raise ValueError(
+                    f"MiniMax-H3 audio_target shape {tuple(audio_target.shape)} does not match "
+                    f"audio_prediction shape {tuple(audio_pred.shape)}."
+                )
+            audio_target = audio_target.detach()
+        else:
+            audio_latents = prepared_batch.get("audio_latents")
+            audio_noise = prepared_batch.get("audio_noise")
+            if audio_latents is None or audio_noise is None:
+                return video_loss, video_loss, None, 0.0
+            audio_target = audio_latents - audio_noise
         weight = float(getattr(self.config, "audio_loss_weight", 1.0) or 1.0)
         if weight == 0.0:
             return video_loss, video_loss, None, weight

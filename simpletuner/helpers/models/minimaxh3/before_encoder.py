@@ -50,6 +50,9 @@ from .packing_ref2va import (
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
+MINIMAX_H3_TARGET_MODES = ("auto", "video", "av")
+
+
 def _latent_geometry(components, height: int, width: int, num_frames: int) -> tuple[int, int, int, int]:
     r"""The latent geometry the packed layout, the noise draws and the decoders all key off."""
     ratio = components.vae_spatial_compression_ratio
@@ -66,6 +69,35 @@ def _latent_geometry_outputs() -> list[OutputParam]:
     ]
 
 
+def _target_mode_input() -> InputParam:
+    return InputParam(
+        name="minimax_h3_target_mode",
+        type_hint=str,
+        default="auto",
+        description=(
+            "MiniMax-H3 target modality mode. `auto` and `video` omit target audio rows; `av` keeps joint "
+            "audio-video rows."
+        ),
+    )
+
+
+def _resolve_h3_target_mode(value: str | None) -> str:
+    if value is None or value == "":
+        value = "auto"
+    mode = str(value).strip().lower()
+    if mode not in MINIMAX_H3_TARGET_MODES:
+        raise ValueError(f"`minimax_h3_target_mode` must be one of {', '.join(MINIMAX_H3_TARGET_MODES)}, got {value!r}.")
+    if mode == "auto":
+        return "video"
+    return mode
+
+
+def _apply_h3_target_mode(block_state) -> None:
+    block_state.minimax_h3_target_mode = _resolve_h3_target_mode(getattr(block_state, "minimax_h3_target_mode", "auto"))
+    if block_state.minimax_h3_target_mode == "video":
+        block_state.num_audio_latents = 0
+
+
 class MiniMaxH3SetupStep(ModularPipelineBlocks):
     model_name = "minimax-h3"
 
@@ -73,8 +105,8 @@ class MiniMaxH3SetupStep(ModularPipelineBlocks):
     def description(self) -> str:
         return (
             "Resolves the plan shared by the `t2va` and `fl2va` tasks: the canvas (MiniMax-H3's own 768-short-edge "
-            "geometry for the aspect ratio of the first keyframe, or 16:9 without keyframes), the `17 * n + 5` frame "
-            "count the video VAE can decode, the latent geometry every later block keys off, and the keyframes put "
+            "geometry for the aspect ratio of the first keyframe, or 16:9 without keyframes), the image or video "
+            "frame count the VAE can decode, the latent geometry every later block keys off, and the keyframes put "
             "onto that canvas."
         )
 
@@ -93,7 +125,7 @@ class MiniMaxH3SetupStep(ModularPipelineBlocks):
         # to hold for: 346 frames would otherwise pass the check and then be rounded up to 362, i.e. 15.083 seconds.
         aligned_num_frames = align_num_frames(block_state.num_frames)
         duration = aligned_num_frames / MINIMAX_H3_FPS
-        if not MINIMAX_H3_MIN_DURATION <= duration <= MINIMAX_H3_MAX_DURATION:
+        if aligned_num_frames != 1 and not MINIMAX_H3_MIN_DURATION <= duration <= MINIMAX_H3_MAX_DURATION:
             raise ValueError(
                 f"MiniMax-H3 generates between {MINIMAX_H3_MIN_DURATION} and {MINIMAX_H3_MAX_DURATION} seconds at "
                 f"{MINIMAX_H3_FPS} fps, so `num_frames`, rounded up to the next `17 * n + 5` the video VAE can "
@@ -128,10 +160,12 @@ class MiniMaxH3SetupStep(ModularPipelineBlocks):
                 type_hint=int,
                 default=124,
                 description=(
-                    "Number of frames to generate, at the fixed 24 fps. Snapped up to the next `17 * n + 5` the video "
-                    "VAE can decode; the resulting duration must stay between 5 and 15 seconds."
+                    "Number of frames to generate. `1` renders an image; otherwise the fixed 24 fps video frame count "
+                    "is snapped up to the next `17 * n + 5` the video VAE can decode, and the resulting duration must "
+                    "stay between 5 and 15 seconds."
                 ),
             ),
+            _target_mode_input(),
         ]
 
     @property
@@ -139,7 +173,11 @@ class MiniMaxH3SetupStep(ModularPipelineBlocks):
         return [
             OutputParam("height", type_hint=int, description="Resolved height of the generated video in pixels."),
             OutputParam("width", type_hint=int, description="Resolved width of the generated video in pixels."),
-            OutputParam("num_frames", type_hint=int, description="Resolved number of frames, of the form 17 * n + 5."),
+            OutputParam(
+                "num_frames",
+                type_hint=int,
+                description="Resolved number of frames, either 1 or of the form 17 * n + 5.",
+            ),
             *_latent_geometry_outputs(),
             OutputParam(
                 "keyframes",
@@ -174,8 +212,8 @@ class MiniMaxH3SetupStep(ModularPipelineBlocks):
         aligned_num_frames = align_num_frames(block_state.num_frames)
         if aligned_num_frames != block_state.num_frames:
             logger.warning(
-                f"`num_frames` has to be of the form 17 * n + 5 for the video VAE; rounding {block_state.num_frames} "
-                f"up to {aligned_num_frames}."
+                f"`num_frames` has to be 1 or of the form 17 * n + 5 for the video VAE; rounding "
+                f"{block_state.num_frames} up to {aligned_num_frames}."
             )
             block_state.num_frames = aligned_num_frames
 
@@ -185,6 +223,7 @@ class MiniMaxH3SetupStep(ModularPipelineBlocks):
             block_state.latent_width,
             block_state.num_audio_latents,
         ) = _latent_geometry(components, block_state.height, block_state.width, block_state.num_frames)
+        _apply_h3_target_mode(block_state)
 
         block_state.keyframes = [
             prepare_keyframe_image(keyframe, block_state.height, block_state.width, stretch=index == 0)
@@ -220,7 +259,11 @@ class MiniMaxH3Ref2VASetupStep(ModularPipelineBlocks):
         # to hold for: 346 frames would otherwise pass the check and then be rounded up to 362, i.e. 15.083 seconds.
         aligned_num_frames = None if block_state.num_frames is None else align_num_frames(block_state.num_frames)
         duration = None if aligned_num_frames is None else aligned_num_frames / MINIMAX_H3_FPS
-        if duration is not None and not MINIMAX_H3_MIN_DURATION <= duration <= MINIMAX_H3_MAX_DURATION:
+        if (
+            duration is not None
+            and aligned_num_frames != 1
+            and not MINIMAX_H3_MIN_DURATION <= duration <= MINIMAX_H3_MAX_DURATION
+        ):
             raise ValueError(
                 f"MiniMax-H3 generates between {MINIMAX_H3_MIN_DURATION} and {MINIMAX_H3_MAX_DURATION} seconds at "
                 f"{MINIMAX_H3_FPS} fps, so `num_frames`, rounded up to the next `17 * n + 5` the video VAE can "
@@ -272,11 +315,12 @@ class MiniMaxH3Ref2VASetupStep(ModularPipelineBlocks):
                 name="num_frames",
                 type_hint=int,
                 description=(
-                    "Number of frames to generate, at the fixed 24 fps. Snapped up to the next `17 * n + 5` the video "
-                    "VAE can decode. May be left out, but only when exactly one reference carries audio, in which "
-                    "case the duration is that soundtrack's."
+                    "Number of frames to generate. `1` renders an image; otherwise the fixed 24 fps video frame count "
+                    "is snapped up to the next `17 * n + 5` the video VAE can decode. May be left out, but only when "
+                    "exactly one reference carries audio, in which case the duration is that soundtrack's."
                 ),
             ),
+            _target_mode_input(),
         ]
 
     @property
@@ -284,7 +328,11 @@ class MiniMaxH3Ref2VASetupStep(ModularPipelineBlocks):
         return [
             OutputParam("height", type_hint=int, description="Resolved height of the generated video in pixels."),
             OutputParam("width", type_hint=int, description="Resolved width of the generated video in pixels."),
-            OutputParam("num_frames", type_hint=int, description="Resolved number of frames, of the form 17 * n + 5."),
+            OutputParam(
+                "num_frames",
+                type_hint=int,
+                description="Resolved number of frames, either 1 or of the form 17 * n + 5.",
+            ),
             *_latent_geometry_outputs(),
             OutputParam(
                 "prepared_references",
@@ -390,8 +438,8 @@ class MiniMaxH3Ref2VASetupStep(ModularPipelineBlocks):
         )
         if requested_num_frames is not None and requested_num_frames != block_state.num_frames:
             logger.warning(
-                f"`num_frames` has to be of the form 17 * n + 5 for the video VAE; rounding {requested_num_frames} up "
-                f"to {block_state.num_frames}."
+                f"`num_frames` has to be 1 or of the form 17 * n + 5 for the video VAE; rounding "
+                f"{requested_num_frames} up to {block_state.num_frames}."
             )
 
         (
@@ -400,6 +448,7 @@ class MiniMaxH3Ref2VASetupStep(ModularPipelineBlocks):
             block_state.latent_width,
             block_state.num_audio_latents,
         ) = _latent_geometry(components, block_state.height, block_state.width, block_state.num_frames)
+        _apply_h3_target_mode(block_state)
 
         self.set_block_state(state, block_state)
         return components, state

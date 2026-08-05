@@ -49,7 +49,7 @@
   "validation_disable_unconditional": true,
   "validation_guidance": 1.0,
   "validation_guidance_real": 1.0,
-  "validation_negative_prompt": "blurry, cropped, low quality",
+  "validation_negative_prompt": "",
   "validation_num_inference_steps": 30,
   "validation_num_video_frames": 39,
   "validation_prompt": "A cinematic video of a small robot holding a sign that says hello world from MiniMax H3.",

@@ -171,10 +171,14 @@ class MiniMaxH3Blocks(SequentialPipelineBlocks):
           width (`int`, *optional*):
               Width of the generated video in pixels, a multiple of 32.
           num_frames (`int`, *optional*, defaults to 124):
-              Number of frames to generate, at the fixed 24 fps. Snapped up to the next `17 * n + 5` the video VAE can
-              decode; the resulting duration must stay between 5 and 15 seconds.
+              Number of frames to generate. `1` renders an image; otherwise the fixed 24 fps video frame count is
+              snapped up to the next `17 * n + 5` the video VAE can decode, and the resulting duration must stay
+              between 5 and 15 seconds.
           prompt (`str`):
               The prompt to guide generation, a single string.
+          max_sequence_length (`int`, *optional*, defaults to 512):
+              Maximum caption tokens to encode. Keyframe labels and vision blocks are structural and are never
+              truncated. Set to 0 to disable the caption token cap.
           generator (`Generator`, *optional*):
               The generator of the request. The conditioning noise is drawn from it before the target noise of the
               prepare-latents step.
@@ -275,11 +279,14 @@ class MiniMaxH3Ref2VABlocks(SequentialPipelineBlocks):
           width (`int`, *optional*):
               Width of the generated video in pixels, a multiple of 32.
           num_frames (`int`, *optional*):
-              Number of frames to generate, at the fixed 24 fps. Snapped up to the next `17 * n + 5` the video VAE can
-              decode. May be left out, but only when exactly one reference carries audio, in which case the duration is
-              that soundtrack's.
+              Number of frames to generate. `1` renders an image; otherwise the fixed 24 fps video frame count is
+              snapped up to the next `17 * n + 5` the video VAE can decode. May be left out, but only when exactly one
+              reference carries audio, in which case the duration is that soundtrack's.
           prompt (`str`):
               The prompt to guide generation, a single string.
+          max_sequence_length (`int`, *optional*, defaults to 512):
+              Maximum caption tokens to encode. Reference labels and vision blocks are structural and are never
+              truncated. Set to 0 to disable the caption token cap.
           generator (`Generator`, *optional*):
               The generator of the request. The conditioning noise is drawn from it before the target noise of the
               prepare-latents step.

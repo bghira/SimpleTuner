@@ -43,6 +43,8 @@ from .scheduler import MiniMaxH3Scheduler
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
+MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH = 512
+
 
 def _check_prompt(prompt) -> None:
     r"""MiniMax-H3 packs one request into one sequence, so a batch of prompts is not a thing."""
@@ -50,6 +52,34 @@ def _check_prompt(prompt) -> None:
         raise ValueError(
             f"MiniMax-H3 packs one request into one sequence, so `prompt` must be a single string, got {type(prompt)}."
         )
+
+
+def _null_token_id(tokenizer) -> int:
+    null_token_id = getattr(tokenizer, "pad_token_id", None)
+    if null_token_id is None:
+        null_token_id = getattr(tokenizer, "eos_token_id", None)
+    if null_token_id is None:
+        raise ValueError("MiniMax-H3 null conditioning requires a tokenizer pad token or eos token.")
+    return int(null_token_id)
+
+
+def _resolve_max_text_length(max_length: int | None) -> int | None:
+    if max_length is None:
+        return MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH
+    max_length = int(max_length)
+    if max_length <= 0:
+        return None
+    return max_length
+
+
+def _encode_instruction_token_ids(tokenizer, prompt: str, null_instruction: bool, max_length: int | None) -> list[int]:
+    prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+    max_length = _resolve_max_text_length(max_length)
+    if max_length is not None:
+        prompt_ids = prompt_ids[:max_length]
+    if null_instruction:
+        prompt_ids = [_null_token_id(tokenizer)] * len(prompt_ids)
+    return prompt_ids
 
 
 def _conditioner_components() -> list[ComponentSpec]:
@@ -117,6 +147,12 @@ class MiniMaxH3TextEncoderStep(ModularPipelineBlocks):
                 type_hint=list,
                 description="The keyframes put onto the target canvas, in packed order (empty or None for `t2va`).",
             ),
+            InputParam(
+                name="max_sequence_length",
+                type_hint=int,
+                default=MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH,
+                description="Maximum caption tokens to encode. Vision blocks are structural and are never truncated.",
+            ),
         ]
 
     @property
@@ -130,6 +166,8 @@ class MiniMaxH3TextEncoderStep(ModularPipelineBlocks):
         images: list | None = None,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
+        null_instruction: bool = False,
+        max_length: int | None = MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         r"""
         Build MiniMax-H3's presentation of a request and encode it.
@@ -145,6 +183,12 @@ class MiniMaxH3TextEncoderStep(ModularPipelineBlocks):
                 The keyframes, already prepared onto the target canvas, in packed order.
             device (`torch.device`, *optional*): The device to run the conditioner on.
             dtype (`torch.dtype`, *optional*): The dtype of the returned embeddings.
+            null_instruction (`bool`, *optional*):
+                Replace only the final prompt's token ids with tokenizer null tokens while keeping the prompt token
+                count unchanged. This keeps media rotary positions aligned for H3 real-CFG null branches.
+            max_length (`int`, *optional*, defaults to 512):
+                Maximum prompt/caption tokens to encode. Set `0` or a negative value to disable this cap. Keyframe
+                labels and vision blocks are structural conditioning and are never truncated.
 
         Returns:
             `tuple[torch.Tensor, torch.Tensor]`: the `(1, num_text_tokens, 5120)` hidden states and the
@@ -178,9 +222,11 @@ class MiniMaxH3TextEncoderStep(ModularPipelineBlocks):
                 )
                 token_ids += label_ids + vision_ids
                 token_tags += [MINIMAX_H3_TEXT_TAG] * len(label_ids) + [MINIMAX_H3_VIDEO_TAG] * len(vision_ids)
-        prompt_ids = components.tokenizer(prompt, add_special_tokens=False)["input_ids"]
+        prompt_ids = _encode_instruction_token_ids(components.tokenizer, prompt, null_instruction, max_length)
         token_ids += prompt_ids
         token_tags += [MINIMAX_H3_TEXT_TAG] * len(prompt_ids)
+        if not token_ids:
+            raise ValueError("MiniMax-H3 conditioning carries no tokens; conditioning cannot be empty.")
 
         input_ids = torch.tensor([token_ids], dtype=torch.long, device=device)
         # Qwen3-VL lays its 3D rotary positions out per modality run, which it reads off the token type ids the
@@ -221,15 +267,18 @@ class MiniMaxH3TextEncoderStep(ModularPipelineBlocks):
             block_state.keyframes,
             device=components._execution_device,
             dtype=components.text_encoder.dtype,
+            max_length=getattr(block_state, "max_sequence_length", MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH),
         )
         if getattr(block_state, "negative_prompt", None) is not None:
             _check_prompt(block_state.negative_prompt)
             block_state.negative_prompt_embeds, block_state.negative_text_token_tags = self.encode_prompt(
                 components,
-                block_state.negative_prompt,
+                block_state.prompt if block_state.negative_prompt.strip() == "" else block_state.negative_prompt,
                 block_state.keyframes,
                 device=components._execution_device,
                 dtype=components.text_encoder.dtype,
+                null_instruction=block_state.negative_prompt.strip() == "",
+                max_length=getattr(block_state, "max_sequence_length", MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH),
             )
 
         self.set_block_state(state, block_state)
@@ -371,6 +420,12 @@ class MiniMaxH3Ref2VATextEncoderStep(ModularPipelineBlocks):
                 required=True,
                 description="The prepared references, in packed order.",
             ),
+            InputParam(
+                name="max_sequence_length",
+                type_hint=int,
+                default=MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH,
+                description="Maximum caption tokens to encode. Reference labels and vision blocks are never truncated.",
+            ),
         ]
 
     @property
@@ -384,6 +439,8 @@ class MiniMaxH3Ref2VATextEncoderStep(ModularPipelineBlocks):
         references: list[MiniMaxH3PreparedReference],
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
+        null_instruction: bool = False,
+        max_length: int | None = MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         r"""
         Build MiniMax-H3's presentation of a `ref2va` request and encode it.
@@ -402,6 +459,12 @@ class MiniMaxH3Ref2VATextEncoderStep(ModularPipelineBlocks):
                 [`~MiniMaxH3Ref2VASetupStep.prepare_references`].
             device (`torch.device`, *optional*): The device to run the conditioner on.
             dtype (`torch.dtype`, *optional*): The dtype of the returned embeddings.
+            null_instruction (`bool`, *optional*):
+                Replace only the final prompt's token ids with tokenizer null tokens while keeping the prompt token
+                count unchanged. This keeps media rotary positions aligned for H3 real-CFG null branches.
+            max_length (`int`, *optional*, defaults to 512):
+                Maximum prompt/caption tokens to encode. Set `0` or a negative value to disable this cap. Reference
+                labels and vision blocks are structural conditioning and are never truncated.
 
         Returns:
             `tuple[torch.Tensor, torch.Tensor]`: the `(1, num_text_tokens, 5120)` hidden states and the
@@ -446,8 +509,16 @@ class MiniMaxH3Ref2VATextEncoderStep(ModularPipelineBlocks):
                     )
 
         token_ids, token_tags = build_ref2va_presentation(
-            components.tokenizer, prompt, references, image_token_counts, video_block_token_counts
+            components.tokenizer,
+            prompt,
+            references,
+            image_token_counts,
+            video_block_token_counts,
+            null_prompt_token_id=_null_token_id(components.tokenizer) if null_instruction else None,
+            max_prompt_length=max_length,
         )
+        if not token_ids:
+            raise ValueError("MiniMax-H3 conditioning carries no tokens; conditioning cannot be empty.")
         input_ids = torch.tensor([token_ids], dtype=torch.long, device=device)
         # Qwen3-VL lays its 3D rotary positions out per modality run, which it reads off the token type ids the
         # processor derives from the vision pad ids (`0` text, `1` image, `2` video).
@@ -491,15 +562,18 @@ class MiniMaxH3Ref2VATextEncoderStep(ModularPipelineBlocks):
             block_state.prepared_references,
             device=components._execution_device,
             dtype=components.text_encoder.dtype,
+            max_length=getattr(block_state, "max_sequence_length", MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH),
         )
         if getattr(block_state, "negative_prompt", None) is not None:
             _check_prompt(block_state.negative_prompt)
             block_state.negative_prompt_embeds, block_state.negative_text_token_tags = self.encode_prompt(
                 components,
-                block_state.negative_prompt,
+                block_state.prompt if block_state.negative_prompt.strip() == "" else block_state.negative_prompt,
                 block_state.prepared_references,
                 device=components._execution_device,
                 dtype=components.text_encoder.dtype,
+                null_instruction=block_state.negative_prompt.strip() == "",
+                max_length=getattr(block_state, "max_sequence_length", MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH),
             )
 
         self.set_block_state(state, block_state)

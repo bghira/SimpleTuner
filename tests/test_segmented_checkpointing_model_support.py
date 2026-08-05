@@ -1,6 +1,7 @@
 """Model-level segmented checkpointing capability coverage."""
 
 import unittest
+from types import SimpleNamespace
 
 
 def assert_checkpointing_controls(
@@ -495,6 +496,56 @@ class MageFlowSegmentedCheckpointingSupportTests(unittest.TestCase):
             ffn=True,
             attention_offload=True,
         )
+
+
+class MiniMaxH3SegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.minimaxh3.transformer import MiniMaxH3Transformer3DModel
+
+        assert_checkpointing_controls(
+            self,
+            MiniMaxH3Transformer3DModel,
+            backend=True,
+            interval=True,
+            stride=True,
+            checkpoint_attention_offload=True,
+            ffn=True,
+            attention_offload=True,
+        )
+
+    def test_safety_check_allows_segmented_controls(self):
+        from simpletuner.helpers.training.default_settings.safety_check import safety_check
+
+        args = SimpleNamespace(
+            attention_mechanism="native-efficient",
+            base_model_precision="no_change",
+            controlnet=False,
+            eval_epoch_interval=None,
+            eval_steps_interval=None,
+            flow_schedule_auto_shift=False,
+            flow_schedule_shift=None,
+            gradient_checkpointing_interval=2,
+            gradient_checkpointing_offload_attention=True,
+            gradient_checkpointing_offload_pin_memory_max_buckets=12,
+            gradient_checkpointing_offload_prefetch=True,
+            gradient_checkpointing_segment_stride=4,
+            i_know_what_i_am_doing=False,
+            lora_type="standard",
+            model_family="minimaxh3",
+            model_type="lora",
+            musubi_blocks_to_swap=0,
+            quantization_config=None,
+            ramtorch=False,
+            report_to="none",
+            train_text_encoder=False,
+            user_prompt_library=None,
+        )
+
+        safety_check(args, accelerator=None)
+
+        self.assertEqual(args.gradient_checkpointing_interval, 2)
+        self.assertEqual(args.gradient_checkpointing_segment_stride, 4)
+        self.assertTrue(args.gradient_checkpointing_offload_attention)
 
 
 class PixArtSegmentedCheckpointingSupportTests(unittest.TestCase):

@@ -809,6 +809,39 @@ def _validation_text_cache_key(args, shortname: str, prompt: str) -> str:
     return f"{shortname}:{prompt_hash}"
 
 
+def _validation_negative_text_cache_key(args, shortname: str, negative_prompt: str) -> str:
+    prompt_hash = hashlib.md5(str(negative_prompt).encode("utf-8")).hexdigest()
+    return f"{_validation_text_cache_key(args, shortname, negative_prompt)}:__validation_negative__{prompt_hash}"
+
+
+def _validation_negative_prompt_record(
+    args,
+    model,
+    negative_prompt: str,
+    shortname: str,
+    validation_input_image=None,
+    positive_prompt: str | None = None,
+) -> dict[str, Any]:
+    if model.validation_negative_prompt_requires_prompt_context():
+        metadata = (
+            _validation_reference_prompt_metadata(validation_input_image) if validation_input_image is not None else {}
+        )
+        if not metadata:
+            raise ValueError("Validation negative prompt encoding requires image context for this model.")
+        if positive_prompt is not None:
+            metadata["positive_prompt"] = positive_prompt
+        return {
+            "prompt": negative_prompt,
+            "key": _validation_negative_text_cache_key(args, shortname, negative_prompt),
+            "metadata": metadata,
+        }
+    return {
+        "prompt": negative_prompt,
+        "key": f"__validation_negative__{negative_prompt}",
+        "metadata": {},
+    }
+
+
 def prepare_validation_prompt_list(args, embed_cache, model):
     model_uses_text_cache = True
     if hasattr(model, "uses_text_embeddings_cache"):
@@ -1003,18 +1036,31 @@ def prepare_validation_prompt_list(args, embed_cache, model):
     # Compute negative embed for validation prompts, if any are set, so that it's stored before we unload the text encoder.
     if validation_prompts and precompute_text_embeddings:
         negative_prompt = StateTracker.get_args().validation_negative_prompt
-        logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
-        model.log_model_devices()
-        if getattr(args, "model_family", None) == "ideogram":
-            embed_cache.encode_validation_negative_prompt(negative_prompt)
-        elif model.should_precompute_validation_negative_prompt():
-            embed_cache.compute_embeddings_for_prompts(
-                [negative_prompt],
-                is_validation=True,
-                load_from_cache=False,
-            )
-        else:
-            embed_cache.encode_validation_negative_prompt(negative_prompt)
+        if (
+            negative_prompt is not None
+            and str(negative_prompt).strip().lower() != "none"
+            and negative_prompt != ""
+            and model.uses_validation_negative_prompt()
+        ):
+            if getattr(args, "model_family", None) == "ideogram":
+                logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
+                model.log_model_devices()
+                embed_cache.encode_validation_negative_prompt(negative_prompt)
+            elif model.validation_negative_prompt_requires_prompt_context():
+                logger.info("Deferring validation negative prompt encoding; this model needs per-sample prompt context.")
+            elif model.should_precompute_validation_negative_prompt():
+                logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
+                model.log_model_devices()
+                embed_cache.compute_embeddings_for_prompts(
+                    [negative_prompt],
+                    is_validation=True,
+                    load_from_cache=False,
+                    is_negative_prompt=True,
+                )
+            else:
+                logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
+                model.log_model_devices()
+                embed_cache.encode_validation_negative_prompt(negative_prompt)
 
     logger.info("Completed validation prompt gathering.")
     return {
@@ -4534,27 +4580,31 @@ class Validation:
                     pipeline_kwargs["width"] = MultiaspectImage._round_to_nearest_multiple(
                         int(validation_resolution_width), 16
                     )
-                if self.model.VALIDATION_USES_NEGATIVE_PROMPT:
+                if self.model.uses_validation_negative_prompt():
                     if StateTracker.get_args().validation_negative_prompt is None:
                         StateTracker.get_args().validation_negative_prompt = ""
-                    # For models with filename-based cache keys, use sentinel key for negative prompts
                     negative_prompt_text = StateTracker.get_args().validation_negative_prompt
                     if self.embed_cache._requires_path_based_keys:
-                        negative_prompt_record = {
-                            "prompt": negative_prompt_text,
-                            "key": f"__validation_negative__{negative_prompt_text}",
-                            "metadata": {},
-                        }
+                        negative_prompt_record = _validation_negative_prompt_record(
+                            StateTracker.get_args(),
+                            self.model,
+                            negative_prompt_text,
+                            cache_key,
+                            validation_input_image_for_resolution,
+                            positive_prompt=prompt,
+                        )
                         _negative_embed = self.embed_cache.compute_embeddings_for_prompts(
                             [negative_prompt_record],
                             is_validation=True,
                             load_from_cache=True,
+                            is_negative_prompt=True,
                         )
                     else:
                         _negative_embed = self.embed_cache.compute_embeddings_for_prompts(
                             [negative_prompt_text],
                             is_validation=True,
                             load_from_cache=True,
+                            is_negative_prompt=True,
                         )
                     if _negative_embed is not None:
                         negative_embed_data = {}

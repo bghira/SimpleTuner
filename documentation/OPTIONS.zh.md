@@ -52,6 +52,15 @@ simpletuner configure config/foo/config.json
   - `diffusers` 为标准 PEFT/Diffusers 格式。
   - `comfyui` 会转换为 ComfyUI 风格键（`diffusion_model.*`，含 `lora_A/lora_B` 与 `.alpha` 张量）。Flux、Flux2、Lumina2、Z-Image 即便保持 `diffusers` 也会自动识别 ComfyUI 输入，但若希望保存时强制 ComfyUI 输出，请设为 `comfyui`。
 
+### `--minimax_h3_target_mode`
+
+- **内容**：控制 MiniMax-H3 是否包含目标音频行。
+- **选项**：`auto`, `video`, `av`
+- **默认**：`auto`
+- **说明**：
+  - `auto` 会解析为仅视频，跳过 H3 的音频 VAE 缓存、collate 和目标音频行。
+  - 如需让 auto-split 或显式音频 backend 进行联合音视频训练，请在 data backend 条目中将 `minimax_h3_target_mode` 或 `h3_target_mode` 设为 `av`。
+
 ### `--fuse_qkv_projections`
 
 - **内容**：融合注意力块中的 QKV 投影，提高硬件效率。

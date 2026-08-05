@@ -16,6 +16,7 @@ import json
 import os
 import struct
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 from urllib.parse import urlparse
 
@@ -56,6 +57,30 @@ logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 # MiniMax-H3 tags every row of the packed sequence with the modality it belongs to and keeps one set of AdaLN
 # modulation parameters per (timestep, modality) pair: 0 = video, 1 = text, 2 = audio.
 MINIMAX_H3_MODALITY_NUM = 3
+
+
+class H3_REFERENCE_MODE(str, Enum):
+    Vanilla = "vanilla"
+    CachedKV = "cached_kv"
+
+
+def resolve_h3_reference_mode(value: str | H3_REFERENCE_MODE | None) -> H3_REFERENCE_MODE:
+    if value is None:
+        return H3_REFERENCE_MODE.Vanilla
+    if isinstance(value, H3_REFERENCE_MODE):
+        return value
+    normalized = str(value).strip().lower().replace("-", "_")
+    aliases = {
+        "vanilla": H3_REFERENCE_MODE.Vanilla,
+        "cached_kv": H3_REFERENCE_MODE.CachedKV,
+        "cachedkv": H3_REFERENCE_MODE.CachedKV,
+        "cached": H3_REFERENCE_MODE.CachedKV,
+    }
+    try:
+        return aliases[normalized]
+    except KeyError as exc:
+        choices = ", ".join(mode.value for mode in H3_REFERENCE_MODE)
+        raise ValueError(f"MiniMax-H3 reference mode must be one of: {choices}; got {value!r}.") from exc
 
 
 def _resolve_minimax_h3_single_file_path(
@@ -301,6 +326,7 @@ def _infer_minimax_h3_config_from_checkpoint(checkpoint) -> dict[str, Any]:
             ),
             "rope_freq_dim": _get_checkpoint_tensor(checkpoint, "rope.inv_freq").shape[0] if has_rope else 16,
             "adaln_curve_grid": adaln_curve_table.shape[0] if has_adaln_curve else None,
+            "swiglu_gate_first": True,
         }
 
     if "proj_in.weight" in raw_keys:
@@ -397,6 +423,53 @@ def _select_modulation(table: torch.Tensor, indices: torch.Tensor) -> torch.Tens
     return table.index_select(0, indices.reshape(-1)).view(*indices.shape, table.shape[-1])
 
 
+def _is_reduced_adaln_projection_key(key: str) -> bool:
+    return key.startswith("norm_out.linear.") or (key.startswith("transformer_blocks.") and ".adaln_proj.linear." in key)
+
+
+def _slice_sequence_rows(value: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
+    if value.ndim == 2:
+        return value.index_select(0, indices)
+    if value.ndim == 3:
+        return value.index_select(1, indices)
+    raise ValueError(f"MiniMax-H3 sequence tensor must be 2-D or 3-D, got {list(value.shape)}.")
+
+
+def _slice_rotary_emb(
+    rotary_emb: tuple[torch.Tensor, torch.Tensor] | None,
+    indices: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor] | None:
+    if rotary_emb is None:
+        return None
+    return tuple(_slice_sequence_rows(value, indices) for value in rotary_emb)
+
+
+def _cache_tensor_signature(value: torch.Tensor) -> tuple[Any, ...]:
+    detached = value.detach()
+    summary = detached.float()
+    flat = summary.reshape(-1)
+    if flat.numel() == 0:
+        first = last = 0.0
+    else:
+        first = float(flat[0].cpu())
+        last = float(flat[-1].cpu())
+    return (
+        tuple(detached.shape),
+        str(detached.device),
+        str(detached.dtype),
+        float(summary.sum().cpu()),
+        float(summary.square().sum().cpu()),
+        first,
+        last,
+    )
+
+
+def _cache_rotary_signature(rotary_emb: tuple[torch.Tensor, torch.Tensor] | None) -> tuple[Any, ...] | None:
+    if rotary_emb is None:
+        return None
+    return tuple(_cache_tensor_signature(value) for value in rotary_emb)
+
+
 class MiniMaxH3RotaryPosEmbed(nn.Module):
     r"""
     3-axis rotary embedding over the `(t, h, w)` coordinates of the packed sequence.
@@ -445,10 +518,8 @@ class MiniMaxH3AdaLayerNormModulation(nn.Module):
         self.linear = nn.Linear(time_embed_dim, 6 * hidden_size * MINIMAX_H3_MODALITY_NUM, bias=True)
 
     def forward(self, temb: torch.Tensor) -> tuple[torch.Tensor, ...]:
-        # The activation runs at `temb`'s own precision — float32, since `time_embedder` is a float32 module in this
-        # mixed-precision checkpoint — and only its result is cast down to the bfloat16 projection. Every block reads
-        # the same `temb`, so a rounding applied before the activation biases every block's modulation parameters
-        # identically at every sampling step, which accumulates coherently over the denoising trajectory.
+        # The activation runs at `temb`'s own precision and only the projection input is aligned to the projection
+        # weight. Every block reads the same `temb`, so early rounding biases every block's modulation coherently.
         temb = nn.functional.silu(temb) if self.apply_silu else temb
         temb = self.linear(temb.to(self.linear.weight.dtype))
         temb = temb.view(-1, 6 * self.hidden_size)
@@ -476,11 +547,12 @@ class MiniMaxH3AdaLayerNormOut(nn.Module):
         # As in `MiniMaxH3AdaLayerNormModulation`: activate at `temb`'s precision, cast to the projection's dtype after.
         temb = nn.functional.silu(temb) if self.apply_silu else temb
         shift, scale = self.linear(temb.to(self.linear.weight.dtype)).chunk(2, dim=-1)
-        # The modulation itself stays at the block stack's precision; `forward` casts to the output heads' dtype.
+        activation_dtype = hidden_states.dtype
         hidden_states = self.norm(hidden_states)
-        return hidden_states * (1.0 + _select_modulation(scale, timestep_indices)) + _select_modulation(
-            shift, timestep_indices
-        )
+        shift = _select_modulation(shift, timestep_indices).to(dtype=activation_dtype)
+        scale = _select_modulation(scale, timestep_indices).to(dtype=activation_dtype)
+        # The modulation itself stays at the block stack's precision; `forward` casts to the output heads' dtype.
+        return hidden_states * (1.0 + scale) + shift
 
 
 class MiniMaxH3AttnProcessor:
@@ -497,24 +569,92 @@ class MiniMaxH3AttnProcessor:
         hidden_states: torch.Tensor,
         rotary_emb: tuple[torch.Tensor, torch.Tensor] | None = None,
         attention_mask: torch.Tensor | None = None,
+        reference_mask: torch.Tensor | None = None,
+        reference_kv_cache: dict[Any, tuple[torch.Tensor, torch.Tensor]] | None = None,
+        reference_kv_stats: dict[str, int] | None = None,
     ) -> torch.Tensor:
-        if attn.fused_projections:
+        use_reference_cache = (
+            reference_mask is not None
+            and reference_kv_cache is not None
+            and not attn.fused_projections
+            and not torch.is_grad_enabled()
+            and bool(reference_mask.any())
+        )
+        if use_reference_cache:
+            query = attn.to_q(hidden_states)
+            query = query.unflatten(-1, (attn.heads, -1))
+            query = attn.norm_q(query)
+            if rotary_emb is not None:
+                query = _apply_rotary_emb(query, *rotary_emb)
+
+            reference_indices = reference_mask.nonzero(as_tuple=False).flatten()
+            dynamic_indices = (~reference_mask).nonzero(as_tuple=False).flatten()
+            key = query.new_empty(query.shape)
+            value = query.new_empty(query.shape)
+
+            if dynamic_indices.numel() > 0:
+                dynamic_hidden_states = hidden_states.index_select(1, dynamic_indices)
+                dynamic_key = attn.to_k(dynamic_hidden_states).unflatten(-1, (attn.heads, -1))
+                dynamic_value = attn.to_v(dynamic_hidden_states).unflatten(-1, (attn.heads, -1))
+                dynamic_key = attn.norm_k(dynamic_key)
+                dynamic_rotary_emb = _slice_rotary_emb(rotary_emb, dynamic_indices)
+                if dynamic_rotary_emb is not None:
+                    dynamic_key = _apply_rotary_emb(dynamic_key, *dynamic_rotary_emb)
+                key.index_copy_(1, dynamic_indices, dynamic_key)
+                value.index_copy_(1, dynamic_indices, dynamic_value)
+
+            reference_hidden_states = hidden_states.index_select(1, reference_indices)
+            reference_rotary_emb = _slice_rotary_emb(rotary_emb, reference_indices)
+            cache_key = (
+                "kv",
+                id(attn),
+                _cache_tensor_signature(reference_hidden_states),
+                _cache_rotary_signature(reference_rotary_emb),
+            )
+            cached = reference_kv_cache.get(cache_key)
+            if cached is None:
+                reference_key = attn.to_k(reference_hidden_states).unflatten(-1, (attn.heads, -1))
+                reference_value = attn.to_v(reference_hidden_states).unflatten(-1, (attn.heads, -1))
+                reference_key = attn.norm_k(reference_key)
+                if reference_rotary_emb is not None:
+                    reference_key = _apply_rotary_emb(reference_key, *reference_rotary_emb)
+                cached = (reference_key.detach(), reference_value.detach())
+                reference_kv_cache[cache_key] = cached
+                if reference_kv_stats is not None:
+                    reference_kv_stats["misses"] = reference_kv_stats.get("misses", 0) + 1
+            else:
+                if reference_kv_stats is not None:
+                    reference_kv_stats["hits"] = reference_kv_stats.get("hits", 0) + 1
+            reference_key, reference_value = cached
+            key.index_copy_(1, reference_indices, reference_key.to(device=key.device, dtype=key.dtype))
+            value.index_copy_(1, reference_indices, reference_value.to(device=value.device, dtype=value.dtype))
+        elif attn.fused_projections:
             query, key, value = attn.to_qkv(hidden_states).chunk(3, dim=-1)
+            query = query.unflatten(-1, (attn.heads, -1))
+            key = key.unflatten(-1, (attn.heads, -1))
+            value = value.unflatten(-1, (attn.heads, -1))
+
+            query = attn.norm_q(query)
+            key = attn.norm_k(key)
+
+            if rotary_emb is not None:
+                query = _apply_rotary_emb(query, *rotary_emb)
+                key = _apply_rotary_emb(key, *rotary_emb)
         else:
             query = attn.to_q(hidden_states)
             key = attn.to_k(hidden_states)
             value = attn.to_v(hidden_states)
 
-        query = query.unflatten(-1, (attn.heads, -1))
-        key = key.unflatten(-1, (attn.heads, -1))
-        value = value.unflatten(-1, (attn.heads, -1))
+            query = query.unflatten(-1, (attn.heads, -1))
+            key = key.unflatten(-1, (attn.heads, -1))
+            value = value.unflatten(-1, (attn.heads, -1))
 
-        query = attn.norm_q(query)
-        key = attn.norm_k(key)
+            query = attn.norm_q(query)
+            key = attn.norm_k(key)
 
-        if rotary_emb is not None:
-            query = _apply_rotary_emb(query, *rotary_emb)
-            key = _apply_rotary_emb(key, *rotary_emb)
+            if rotary_emb is not None:
+                query = _apply_rotary_emb(query, *rotary_emb)
+                key = _apply_rotary_emb(key, *rotary_emb)
 
         # Without padding rows the packed sequence is a single attention document and no mask is needed (passing an
         # all-zero float mask here would hard-fail the flash / sage backends). When padding rows are present, the
@@ -570,8 +710,19 @@ class MiniMaxH3Attention(nn.Module, AttentionModuleMixin):
         hidden_states: torch.Tensor,
         rotary_emb: tuple[torch.Tensor, torch.Tensor] | None = None,
         attention_mask: torch.Tensor | None = None,
+        reference_mask: torch.Tensor | None = None,
+        reference_kv_cache: dict[Any, tuple[torch.Tensor, torch.Tensor]] | None = None,
+        reference_kv_stats: dict[str, int] | None = None,
     ) -> torch.Tensor:
-        return self.processor(self, hidden_states, rotary_emb, attention_mask)
+        return self.processor(
+            self,
+            hidden_states,
+            rotary_emb,
+            attention_mask,
+            reference_mask=reference_mask,
+            reference_kv_cache=reference_kv_cache,
+            reference_kv_stats=reference_kv_stats,
+        )
 
 
 class MiniMaxH3TokenRefinerBlock(nn.Module):
@@ -587,6 +738,7 @@ class MiniMaxH3TokenRefinerBlock(nn.Module):
         ffn_dim: int,
         norm_eps: float,
         qk_norm_eps: float,
+        swiglu_gate_first: bool = False,
     ):
         super().__init__()
         self.norm1 = nn.RMSNorm(hidden_size, eps=norm_eps)
@@ -597,7 +749,7 @@ class MiniMaxH3TokenRefinerBlock(nn.Module):
             qk_norm_eps=qk_norm_eps,
         )
         self.norm2 = nn.RMSNorm(hidden_size, eps=norm_eps)
-        self.ff = MiniMaxH3FeedForward(hidden_size, inner_dim=ffn_dim, bias=False)
+        self.ff = MiniMaxH3FeedForward(hidden_size, inner_dim=ffn_dim, bias=False, gate_first=swiglu_gate_first)
 
     def forward(
         self,
@@ -632,6 +784,7 @@ class MiniMaxH3TokenRefiner(nn.Module):
         norm_eps: float,
         qk_norm_eps: float,
         final_norm_eps: float,
+        swiglu_gate_first: bool = False,
     ):
         super().__init__()
         self.refiner_blocks = nn.ModuleList(
@@ -643,6 +796,7 @@ class MiniMaxH3TokenRefiner(nn.Module):
                     ffn_dim=ffn_dim,
                     norm_eps=norm_eps,
                     qk_norm_eps=qk_norm_eps,
+                    swiglu_gate_first=swiglu_gate_first,
                 )
                 for _ in range(num_layers)
             ]
@@ -704,6 +858,7 @@ class MiniMaxH3TransformerBlock(nn.Module):
         norm_eps: float,
         qk_norm_eps: float,
         adaln_apply_silu: bool = True,
+        swiglu_gate_first: bool = False,
     ):
         super().__init__()
         self.norm1 = nn.RMSNorm(hidden_size, eps=norm_eps)
@@ -714,7 +869,7 @@ class MiniMaxH3TransformerBlock(nn.Module):
             qk_norm_eps=qk_norm_eps,
         )
         self.norm2 = nn.RMSNorm(hidden_size, eps=norm_eps)
-        self.ff = MiniMaxH3FeedForward(hidden_size, inner_dim=ffn_dim, bias=False)
+        self.ff = MiniMaxH3FeedForward(hidden_size, inner_dim=ffn_dim, bias=False, gate_first=swiglu_gate_first)
         self.adaln_proj = MiniMaxH3AdaLayerNormModulation(
             time_embed_dim=time_embed_dim,
             hidden_size=hidden_size,
@@ -731,20 +886,40 @@ class MiniMaxH3TransformerBlock(nn.Module):
         checkpoint_ffn: bool = False,
         checkpoint_fn: Any | None = None,
         offload_attention: bool = False,
+        reference_mask: torch.Tensor | None = None,
+        reference_kv_cache: dict[Any, tuple[torch.Tensor, torch.Tensor] | torch.Tensor] | None = None,
+        reference_kv_stats: dict[str, int] | None = None,
     ) -> torch.Tensor:
+        cached_reference_hidden_states = None
+        reference_post_cache_key = None
+        if reference_mask is not None and reference_kv_cache is not None and bool(reference_mask.any()):
+            reference_hidden_states = hidden_states[:, reference_mask, :]
+            reference_post_cache_key = ("post", id(self), _cache_tensor_signature(reference_hidden_states))
+            cached_reference_hidden_states = reference_kv_cache.get(reference_post_cache_key)
+            if cached_reference_hidden_states is not None and reference_kv_stats is not None:
+                reference_kv_stats["post_hits"] = reference_kv_stats.get("post_hits", 0) + 1
+
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaln_proj(temb)
-        shift_msa = _select_modulation(shift_msa, adaln_indices)
-        scale_msa = _select_modulation(scale_msa, adaln_indices)
-        gate_msa = _select_modulation(gate_msa, adaln_indices)
-        shift_mlp = _select_modulation(shift_mlp, adaln_indices)
-        scale_mlp = _select_modulation(scale_mlp, adaln_indices)
-        gate_mlp = _select_modulation(gate_mlp, adaln_indices)
+        activation_dtype = hidden_states.dtype
+        shift_msa = _select_modulation(shift_msa, adaln_indices).to(dtype=activation_dtype)
+        scale_msa = _select_modulation(scale_msa, adaln_indices).to(dtype=activation_dtype)
+        gate_msa = _select_modulation(gate_msa, adaln_indices).to(dtype=activation_dtype)
+        shift_mlp = _select_modulation(shift_mlp, adaln_indices).to(dtype=activation_dtype)
+        scale_mlp = _select_modulation(scale_mlp, adaln_indices).to(dtype=activation_dtype)
+        gate_mlp = _select_modulation(gate_mlp, adaln_indices).to(dtype=activation_dtype)
 
         residual = hidden_states
         norm_hidden_states = self.norm1(hidden_states)
         norm_hidden_states = norm_hidden_states * (1.0 + scale_msa) + shift_msa
         with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
-            attn_output = self.attn(norm_hidden_states, rotary_emb, attention_mask)
+            attn_output = self.attn(
+                norm_hidden_states,
+                rotary_emb,
+                attention_mask,
+                reference_mask=reference_mask,
+                reference_kv_cache=reference_kv_cache,
+                reference_kv_stats=reference_kv_stats,
+            )
         hidden_states = residual + gate_msa * attn_output
 
         residual = hidden_states
@@ -757,6 +932,17 @@ class MiniMaxH3TransformerBlock(nn.Module):
         else:
             ff_output = self.ff(norm_hidden_states)
         hidden_states = residual + gate_mlp * ff_output
+
+        if reference_post_cache_key is not None:
+            if cached_reference_hidden_states is None:
+                reference_kv_cache[reference_post_cache_key] = hidden_states[:, reference_mask, :].detach()
+                if reference_kv_stats is not None:
+                    reference_kv_stats["post_misses"] = reference_kv_stats.get("post_misses", 0) + 1
+            else:
+                hidden_states = hidden_states.clone()
+                hidden_states[:, reference_mask, :] = cached_reference_hidden_states.to(
+                    device=hidden_states.device, dtype=hidden_states.dtype
+                )
 
         return hidden_states
 
@@ -874,6 +1060,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         gate_value: float | None = None,
         deltatime_type: str | None = None,
         adaln_curve_grid: int | None = None,
+        swiglu_gate_first: bool = False,
         musubi_blocks_to_swap: int = 0,
         musubi_block_swap_device: str = "cpu",
     ) -> None:
@@ -927,6 +1114,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
             norm_eps=norm_eps,
             qk_norm_eps=qk_norm_eps,
             final_norm_eps=final_norm_eps,
+            swiglu_gate_first=swiglu_gate_first,
         )
 
         # 5. The block stack
@@ -941,6 +1129,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                     norm_eps=norm_eps,
                     qk_norm_eps=qk_norm_eps,
                     adaln_apply_silu=not self.use_adaln_curves,
+                    swiglu_gate_first=swiglu_gate_first,
                 )
                 for _ in range(num_layers)
             ]
@@ -964,12 +1153,59 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         self.gradient_checkpointing_segment_stride = None
         self._tread_router = None
         self._tread_routes = []
+        self._h3_reference_kv_cache: dict[Any, tuple[torch.Tensor, torch.Tensor] | torch.Tensor] = {}
+        self._h3_reference_kv_stats: dict[str, int] = {}
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=num_layers,
             blocks_to_swap=musubi_blocks_to_swap,
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    def clear_h3_reference_kv_cache(self) -> None:
+        self._h3_reference_kv_cache.clear()
+        self._h3_reference_kv_stats.clear()
+
+    def get_h3_reference_kv_stats(self) -> dict[str, int]:
+        return dict(self._h3_reference_kv_stats)
+
+    @staticmethod
+    def _build_reference_mask(
+        sequence_length: int,
+        *,
+        device: torch.device,
+        video_indices: torch.Tensor,
+        audio_indices: torch.Tensor,
+        text_indices: torch.Tensor,
+        num_condition_video_rows: int = 0,
+        num_condition_audio_rows: int = 0,
+    ) -> torch.Tensor | None:
+        num_condition_video_rows = int(num_condition_video_rows or 0)
+        num_condition_audio_rows = int(num_condition_audio_rows or 0)
+        if num_condition_video_rows < 0 or num_condition_audio_rows < 0:
+            raise ValueError("MiniMax-H3 conditioning row counts must be non-negative.")
+        if num_condition_video_rows > int(video_indices.shape[0]):
+            raise ValueError(
+                "MiniMax-H3 num_condition_video_rows exceeds the number of video rows: "
+                f"{num_condition_video_rows} > {int(video_indices.shape[0])}."
+            )
+        if num_condition_audio_rows > int(audio_indices.shape[0]):
+            raise ValueError(
+                "MiniMax-H3 num_condition_audio_rows exceeds the number of audio rows: "
+                f"{num_condition_audio_rows} > {int(audio_indices.shape[0])}."
+            )
+        static_row_count = int(text_indices.shape[0]) + num_condition_video_rows + num_condition_audio_rows
+        if static_row_count == 0:
+            return None
+
+        reference_mask = torch.zeros(sequence_length, dtype=torch.bool, device=device)
+        if text_indices.numel() > 0:
+            reference_mask.index_fill_(0, text_indices.to(device=device), True)
+        if num_condition_video_rows:
+            reference_mask.index_fill_(0, video_indices[:num_condition_video_rows].to(device=device), True)
+        if num_condition_audio_rows:
+            reference_mask.index_fill_(0, audio_indices[:num_condition_audio_rows].to(device=device), True)
+        return reference_mask
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="MiniMax-H3")
@@ -992,7 +1228,8 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
             table = self.adaln_t_table.to(device=timestep.device)
             position = timestep.to(device=timestep.device, dtype=torch.float32).clamp(0.0, 1.0) * (table.shape[0] - 1)
             lower = position.floor().long().clamp(max=table.shape[0] - 2)
-            return torch.lerp(table[lower], table[lower + 1], (position - lower).unsqueeze(1))
+            weight = (position - lower).to(dtype=table.dtype).unsqueeze(1)
+            return torch.lerp(table[lower], table[lower + 1], weight)
 
         dtype = self.time_embedder.linear_1.weight.dtype
         temb = flowmap_timestep_embedding(
@@ -1268,7 +1505,9 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                 raise RuntimeError(
                     f"MiniMax-H3 tensor {key} has shape {tuple(tensor.shape)}, expected {tuple(expected_tensor.shape)}"
                 )
-            if torch_dtype is not None and not any(pattern in key for pattern in keep_fp32_patterns):
+            if model.use_adaln_curves and _is_reduced_adaln_projection_key(key):
+                tensor = tensor.to(torch.float32)
+            elif torch_dtype is not None and not any(pattern in key for pattern in keep_fp32_patterns):
                 tensor = tensor.to(torch_dtype)
             non_quantized_state_dict[key] = tensor
 
@@ -1366,6 +1605,8 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         hidden_state_layer: int | None = None,
         video_hidden_shape: tuple[int, int, int] | None = None,
         num_condition_video_rows: int = 0,
+        num_condition_audio_rows: int = 0,
+        minimax_h3_reference_mode: str | H3_REFERENCE_MODE | None = None,
         return_dict: bool = True,
     ) -> MiniMaxH3TransformerOutput | tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         r"""
@@ -1395,6 +1636,10 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                 Positions of the text rows in the packed sequence.
             attention_kwargs (`dict`, *optional*):
                 A kwargs dictionary that, if specified, may carry a `scale` entry which is applied to the LoRA layers.
+            minimax_h3_reference_mode (`str` or `H3_REFERENCE_MODE`, *optional*):
+                `vanilla` keeps the stock full packed self-attention path. `cached_kv` treats text plus conditioning
+                video/audio rows as static memory during no-grad inference, prevents those rows from attending to
+                denoised rows, and reuses their per-block K/V projections across calls.
             timestep_sign (`torch.Tensor`, *optional*):
                 Signed-time marker for TwinFlow-compatible training. Requires `enable_time_sign_embed=True`.
             r_timestep (`torch.Tensor`, *optional*):
@@ -1460,6 +1705,42 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
 
         parallel_config = getattr(self, "_parallel_config", None)
         cp_active = context_parallel_config(parallel_config) is not None
+        grad_enabled = torch.is_grad_enabled()
+        if grad_enabled and self._h3_reference_kv_cache:
+            self.clear_h3_reference_kv_cache()
+        reference_mode = resolve_h3_reference_mode(minimax_h3_reference_mode)
+        reference_mask = None
+        reference_kv_cache = None
+        reference_kv_stats = None
+        if reference_mode is H3_REFERENCE_MODE.CachedKV and not grad_enabled:
+            if cp_active:
+                raise ValueError("MiniMax-H3 CachedKV reference mode does not support context_parallel_size yet.")
+            reference_mask = self._build_reference_mask(
+                sequence_length,
+                device=token_tags.device,
+                video_indices=video_indices,
+                audio_indices=audio_indices,
+                text_indices=text_indices,
+                num_condition_video_rows=num_condition_video_rows,
+                num_condition_audio_rows=num_condition_audio_rows,
+            )
+            if reference_mask is not None:
+                live_mask = token_tags >= 0
+                dynamic_mask = live_mask & ~reference_mask
+                if bool(dynamic_mask.any()):
+                    reference_attention_mask = torch.ones(
+                        (sequence_length, sequence_length), dtype=torch.bool, device=token_tags.device
+                    )
+                    reference_rows = reference_mask.nonzero(as_tuple=False).flatten()
+                    dynamic_rows = dynamic_mask.nonzero(as_tuple=False).flatten()
+                    reference_attention_mask[reference_rows[:, None], dynamic_rows[None, :]] = False
+                    attention_mask = (
+                        reference_attention_mask
+                        if attention_mask is None
+                        else attention_mask.to(device=token_tags.device) & reference_attention_mask
+                    )
+                reference_kv_cache = self._h3_reference_kv_cache
+                reference_kv_stats = self._h3_reference_kv_stats
         routes = self._tread_routes or []
         router = self._tread_router
         use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
@@ -1508,10 +1789,13 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         capture_layer = int(hidden_state_layer) if hidden_state_layer is not None else None
         block_rotary_emb = rotary_emb
         block_adaln_indices = adaln_indices
+        block_reference_mask = reference_mask
         if cp_active:
             hidden_states = shard_cp_tensor(hidden_states, parallel_config, split_dim=1)
             block_rotary_emb = tuple(shard_cp_tensor(value, parallel_config, split_dim=0) for value in rotary_emb)
             block_adaln_indices = shard_cp_tensor(adaln_indices, parallel_config, split_dim=0)
+            if reference_mask is not None:
+                block_reference_mask = shard_cp_tensor(reference_mask, parallel_config, split_dim=0)
 
         def capture_layer_hidden(block_idx: int, block_hidden_states: torch.Tensor) -> None:
             nonlocal captured_frame_hidden, output_hidden_states
@@ -1534,7 +1818,6 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                     output_hidden_states = False
 
         skip_set = set(skip_layers) if skip_layers is not None else set()
-        grad_enabled = torch.is_grad_enabled()
         musubi_manager = self._musubi_block_swap
         musubi_offload_active = False
         if musubi_manager is not None:
@@ -1566,6 +1849,9 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                     block_adaln_indices,
                     block_rotary_emb,
                     attention_mask,
+                    reference_mask=block_reference_mask,
+                    reference_kv_cache=reference_kv_cache,
+                    reference_kv_stats=reference_kv_stats,
                     offload_attention=self.gradient_checkpointing_offload_attention,
                 )
 
@@ -1646,6 +1932,9 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                             checkpoint_ffn=True,
                             checkpoint_fn=checkpoint_fn,
                             offload_attention=self.gradient_checkpointing_offload_attention,
+                            reference_mask=block_reference_mask,
+                            reference_kv_cache=reference_kv_cache,
+                            reference_kv_stats=reference_kv_stats,
                         )
                     else:
 
@@ -1662,6 +1951,9 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                                 checkpoint_rotary_emb,
                                 attention_mask,
                                 offload_attention=self.gradient_checkpointing_offload_attention,
+                                reference_mask=block_reference_mask,
+                                reference_kv_cache=reference_kv_cache,
+                                reference_kv_stats=reference_kv_stats,
                             )
 
                         hidden_states = checkpoint_fn(run_checkpointed_block, hidden_states, use_reentrant=False)
@@ -1673,7 +1965,13 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                         current_rotary_emb,
                         attention_mask,
                         offload_attention=self.gradient_checkpointing_offload_attention,
+                        reference_mask=block_reference_mask,
+                        reference_kv_cache=reference_kv_cache,
+                        reference_kv_stats=reference_kv_stats,
                     )
+
+                if musubi_offload_active and musubi_manager.is_managed_block(block_idx):
+                    musubi_manager.stream_out(block)
 
                 if routing_now and route_ptr < len(routes) and block_idx == routes[route_ptr]["end_layer_idx"]:
                     hidden_states = router.end_route(hidden_states, tread_mask_info, original_x=saved_tokens)
@@ -1688,8 +1986,15 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         # `_keep_in_fp32_modules`, so they stay float32 while the block stack runs in the requested `torch_dtype`;
         # align the activation with their parameter dtype.
         hidden_states = self.norm_out(hidden_states, temb, timestep_indices).to(self.proj_out.weight.dtype)
-        video_output = self.proj_out(hidden_states).index_select(1, video_indices)
-        audio_output = self.audio_proj_out(hidden_states).index_select(1, audio_indices)
+        video_output = self.proj_out(hidden_states).index_select(1, video_indices.to(hidden_states.device))
+        if audio_indices.numel():
+            audio_output = self.audio_proj_out(hidden_states).index_select(1, audio_indices.to(hidden_states.device))
+        else:
+            audio_output = hidden_states.new_empty(
+                hidden_states.shape[0],
+                0,
+                self.audio_proj_out.out_features,
+            )
 
         if not return_dict:
             if captured_frame_hidden is not None:

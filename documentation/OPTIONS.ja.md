@@ -52,6 +52,15 @@ simpletuner configure config/foo/config.json
   - `diffusers` は標準の PEFT/Diffusers 形式です。
   - `comfyui` は ComfyUI 形式（`diffusion_model.*` と `lora_A/lora_B` + `.alpha`）に変換します。Flux、Flux2、Lumina2、Z-Image は `diffusers` のままでも ComfyUI 入力を自動検出しますが、保存時に ComfyUI 出力を強制したい場合は `comfyui` を指定してください。
 
+### `--minimax_h3_target_mode`
+
+- **内容**: MiniMax-H3 がターゲット音声行を含めるかを制御します。
+- **選択肢**: `auto`, `video`, `av`
+- **既定**: `auto`
+- **注記**:
+  - `auto` は video-only として扱われ、H3 の audio VAE cache、collate、ターゲット音声行を省略します。
+  - auto-split または明示的な audio backend で joint audio-video training を使う場合は、data backend entry に `minimax_h3_target_mode` または `h3_target_mode` を `av` として設定します。
+
 ### `--fuse_qkv_projections`
 
 - **内容**: モデルのアテンションブロック内 QKV 投影を融合し、ハードウェア効率を高めます。

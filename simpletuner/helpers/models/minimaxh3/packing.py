@@ -163,7 +163,7 @@ def resolve_canvas_size(aspect_width: float, aspect_height: float) -> tuple[int,
 
 def align_num_frames(num_frames: int) -> int:
     r"""
-    Snap a frame count up to the next `17 * n + 5` the video VAE can encode.
+    Snap a frame count up to the next `17 * n + 5` the video VAE can encode, except true image mode (`1` frame).
 
     Args:
         num_frames (`int`): The requested number of frames.
@@ -173,6 +173,8 @@ def align_num_frames(num_frames: int) -> int:
     """
     if num_frames < 1:
         raise ValueError(f"`num_frames` must be positive, got {num_frames}.")
+    if num_frames == 1:
+        return 1
     while num_frames % MINIMAX_H3_FRAMES_PER_CHUNK != MINIMAX_H3_LATENTS_PER_CHUNK:
         num_frames += 1
     return num_frames
@@ -180,16 +182,18 @@ def align_num_frames(num_frames: int) -> int:
 
 def video_latent_num_frames(num_frames: int) -> int:
     r"""
-    The number of latent frames the video VAE produces for a `17 * n + 5` frame count.
+    The number of latent frames the video VAE produces for an image or a `17 * n + 5` frame count.
 
     Args:
-        num_frames (`int`): An aligned number of frames.
+        num_frames (`int`): `1` for image mode, or an aligned video frame count.
 
     Returns:
-        `int`: The number of latent frames, `5 * n + 2`.
+        `int`: The number of latent frames, `1` for image mode or `5 * n + 2` for video.
     """
+    if num_frames == 1:
+        return 1
     if num_frames % MINIMAX_H3_FRAMES_PER_CHUNK != MINIMAX_H3_LATENTS_PER_CHUNK:
-        raise ValueError(f"`num_frames` must be of the form 17 * n + 5, got {num_frames}.")
+        raise ValueError(f"`num_frames` must be 1 or of the form 17 * n + 5, got {num_frames}.")
     return (num_frames - MINIMAX_H3_LATENTS_PER_CHUNK) // MINIMAX_H3_FRAMES_PER_CHUNK * MINIMAX_H3_LATENTS_PER_CHUNK + 2
 
 

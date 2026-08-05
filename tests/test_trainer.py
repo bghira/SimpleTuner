@@ -974,6 +974,44 @@ class TestTrainer(unittest.TestCase):
         torch.testing.assert_close(captured["noisy_latents"], torch.tensor([[[[4.0]]], [[[8.0]]]]))
         torch.testing.assert_close(prepared_batch["timesteps"], torch.tensor([10, 20]))
 
+    def test_prepare_regularisation_parent_targets_captures_audio_and_restores_lora(self):
+        trainer = object.__new__(Trainer)
+
+        class _LoraComponent:
+            def __init__(self):
+                self.calls = []
+
+            def disable_lora(self):
+                self.calls.append("disable")
+
+            def enable_lora(self):
+                self.calls.append("enable")
+
+        component = _LoraComponent()
+        trainer.config = SimpleNamespace(lora_type="standard")
+        trainer.accelerator = SimpleNamespace()
+        trainer.model = SimpleNamespace(get_trained_component=lambda: component)
+        trainer.model_predict = Mock(
+            return_value={
+                "model_prediction": torch.ones(1, 1, requires_grad=True),
+                "audio_prediction": torch.full((1, 2, 3, 2), 2.0, requires_grad=True),
+            }
+        )
+        batch = {}
+
+        trainer._prepare_regularisation_parent_targets(batch)
+
+        self.assertEqual(component.calls, ["disable", "enable"])
+        self.assertTrue(torch.equal(batch["target"], torch.ones(1, 1)))
+        self.assertFalse(batch["target"].requires_grad)
+        self.assertTrue(torch.equal(batch["audio_target"], torch.full((1, 2, 3, 2), 2.0)))
+        self.assertFalse(batch["audio_target"].requires_grad)
+
+        trainer.model_predict.side_effect = RuntimeError("parent failed")
+        with self.assertRaisesRegex(RuntimeError, "parent failed"):
+            trainer._prepare_regularisation_parent_targets({})
+        self.assertEqual(component.calls[-2:], ["disable", "enable"])
+
     def test_run_trainer_job_aborts_promptly(self):
         from simpletuner.helpers.training import trainer as trainer_module
 
@@ -1260,9 +1298,7 @@ class TestTrainer(unittest.TestCase):
         logs = {}
         trainer._update_grad_metrics(logs, clone_norm_value=True)
         self.assertIn("grad_absmax", logs)
-        self.assertEqual(
-            logs["grad_absmax"], float(trainer.grad_norm.clone().detach())
-        )
+        self.assertEqual(logs["grad_absmax"], float(trainer.grad_norm.clone().detach()))
 
     def test_update_grad_metrics_clones_norm_value_when_requested(self):
         trainer = self._build_trainer_for_grad_logging(
@@ -1324,9 +1360,7 @@ class TestTrainer(unittest.TestCase):
         )
         metrics = trainer._compose_training_progress_metrics(epoch=1)
         self.assertIn("grad_absmax", metrics)
-        self.assertEqual(
-            metrics["grad_absmax"], float(trainer.grad_norm.clone().detach())
-        )
+        self.assertEqual(metrics["grad_absmax"], float(trainer.grad_norm.clone().detach()))
         self.assertNotIn("grad_norm", metrics)
 
     def test_compose_training_progress_metrics_excludes_grad_with_deepspeed(self):

@@ -25,6 +25,8 @@ class TestModelFieldRegistry(unittest.TestCase):
             "hidream_use_load_balancing_loss",
             "sd3_clip_uncond_behaviour",
             "krea2_reference_latents",
+            "minimax_h3_reference_mode",
+            "minimax_h3_target_mode",
         ]
 
         for field_name in expected_fields:

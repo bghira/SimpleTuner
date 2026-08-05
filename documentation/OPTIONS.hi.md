@@ -52,6 +52,15 @@ simpletuner configure config/foo/config.json
   - `diffusers` standard PEFT/Diffusers layout है।
   - `comfyui` keys को ComfyUI‑style में convert करता है (`diffusion_model.*` के साथ `lora_A/lora_B` और `.alpha` tensors)। Flux, Flux2, Lumina2, और Z‑Image ComfyUI inputs को auto‑detect करेंगे भले ही यह `diffusers` पर हो, लेकिन saving के लिए ComfyUI output force करने के लिए `comfyui` सेट करें।
 
+### `--minimax_h3_target_mode`
+
+- **What**: MiniMax-H3 target audio rows शामिल करे या नहीं, इसे नियंत्रित करता है।
+- **Choices**: `auto`, `video`, `av`
+- **Default**: `auto`
+- **Notes**:
+  - `auto` video-only में resolve होता है, जिससे H3 के लिए audio VAE cache, collate, और target audio rows skip होते हैं।
+  - auto-split या explicit audio backend को joint audio-video training में opt in करने के लिए data backend entry में `minimax_h3_target_mode` या `h3_target_mode` को `av` सेट करें।
+
 ### `--fuse_qkv_projections`
 
 - **What**: मॉडल के attention blocks में QKV projections को fuse करता है ताकि hardware का अधिक कुशल उपयोग हो।

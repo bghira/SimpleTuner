@@ -748,6 +748,8 @@ def build_ref2va_presentation(
     references: list[MiniMaxH3PreparedReference],
     image_token_counts: list[int],
     video_block_token_counts: list[int],
+    null_prompt_token_id: int | None = None,
+    max_prompt_length: int | None = None,
 ) -> tuple[list[int], list[int]]:
     r"""
     Tokenize MiniMax-H3's presentation of a `ref2va` request.
@@ -764,6 +766,10 @@ def build_ref2va_presentation(
         references (`list[MiniMaxH3PreparedReference]`): The prepared references, in packed order.
         image_token_counts (`list[int]`): Number of vision tokens of every image reference's block.
         video_block_token_counts (`list[int]`): Number of vision tokens per block of every video reference.
+        null_prompt_token_id (`int`, *optional*):
+            If set, replace the final prompt's token ids with this token while preserving its token count.
+        max_prompt_length (`int`, *optional*):
+            Maximum final prompt tokens to keep. Reference labels and vision blocks are never truncated.
 
     Returns:
         `tuple[list[int], list[int]]`: the token ids and their modality tags. A vision block is tagged `0` (video) and
@@ -804,7 +810,13 @@ def build_ref2va_presentation(
                 # `"{:.1f}"` rounds half to even, so the mean of a 2 fps pair renders as "<0.2 seconds>".
                 emit(text(f"<{timestamp:.1f} seconds>"))
                 emit(vision("<|video_pad|>", video_block_token_counts[counts["video"] - 1]))
-    emit(text(prompt))
+    prompt_ids, prompt_tags = text(prompt)
+    if max_prompt_length is not None and int(max_prompt_length) > 0:
+        prompt_ids = prompt_ids[: int(max_prompt_length)]
+        prompt_tags = prompt_tags[: int(max_prompt_length)]
+    if null_prompt_token_id is not None:
+        prompt_ids = [null_prompt_token_id] * len(prompt_ids)
+    emit((prompt_ids, prompt_tags))
     return token_ids, token_tags
 
 

@@ -515,7 +515,8 @@ class AutoencoderKLMiniMaxH3(ModelMixin, ConfigMixin, AttentionMixin, Autoencode
     clamp to `[0, 1]` before postprocessing.
 
     The temporal geometry is fixed by `clip_length` (17 pixel frames per encoder chunk) and `token_drop` (3 trailing
-    latent frames dropped per encode): `17 * n + 5` pixel frames map to `5 * n + 2` latent frames.
+    latent frames dropped per encode): `17 * n + 5` pixel frames map to `5 * n + 2` latent frames. A single pixel frame
+    is true image mode and maps to one latent frame.
 
     Unlike most autoencoders in the library, spatial tiling is **on by default**: MiniMax-H3 was released with tiling
     enabled for both encoding and decoding, and the released frames are the blended-tile ones, so disabling tiling
@@ -804,6 +805,11 @@ class AutoencoderKLMiniMaxH3(ModelMixin, ConfigMixin, AttentionMixin, Autoencode
             moments = moments[:, :, : -self.config.token_drop]
         return moments
 
+    def _encode_image_or_video(self, x: torch.Tensor) -> torch.Tensor:
+        if x.shape[2] == 1:
+            return self._encode_clip(x)
+        return self._encode(x)
+
     def _decode(self, z: torch.Tensor) -> torch.Tensor:
         r"""
         Decode a latent video, mirroring the chunking that `_encode` applied.
@@ -812,6 +818,9 @@ class AutoencoderKLMiniMaxH3(ModelMixin, ConfigMixin, AttentionMixin, Autoencode
         `frame_overlap` pixel frames and are linearly cross-faded. Latent frames are repeated at the end when the
         length is not a whole number of chunks; the extra pixel frames are cut off again at the end.
         """
+        if z.shape[2] == 1:
+            return self._decode_clip(torch.cat([z, z], dim=2))[:, :, :1]
+
         tokens_chunk_size = self.tokens_chunk_size
         token_drop = self.config.token_drop
         temporal_ratio = self.temporal_compression_ratio
@@ -872,9 +881,9 @@ class AutoencoderKLMiniMaxH3(ModelMixin, ConfigMixin, AttentionMixin, Autoencode
             `latents_mean` / `latents_std` afterwards.
         """
         if self.use_slicing and x.shape[0] > 1:
-            moments = torch.cat([self._encode(x_slice) for x_slice in x.split(1)])
+            moments = torch.cat([self._encode_image_or_video(x_slice) for x_slice in x.split(1)])
         else:
-            moments = self._encode(x)
+            moments = self._encode_image_or_video(x)
         posterior = DiagonalGaussianDistribution(moments)
         if not return_dict:
             return (posterior,)

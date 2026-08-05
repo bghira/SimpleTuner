@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 import unittest
@@ -9,11 +10,14 @@ from accelerate.utils.operations import convert_to_fp32
 from PIL import Image
 from safetensors.torch import save_file
 
+from simpletuner.helpers.acceleration import AccelerationBackend
 from simpletuner.helpers.models.common import TextEmbedCacheKey
 from simpletuner.helpers.models.ideogram.quantized_loading import Fp8Linear
 from simpletuner.helpers.models.minimaxh3.activations import MiniMaxH3FeedForward
 from simpletuner.helpers.models.minimaxh3.autoencoder import AutoencoderKLMiniMaxH3
+from simpletuner.helpers.models.minimaxh3.before_encoder import MiniMaxH3SetupStep
 from simpletuner.helpers.models.minimaxh3.denoise import _predict_guided_velocity
+from simpletuner.helpers.models.minimaxh3.encoders import MiniMaxH3TextEncoderStep
 from simpletuner.helpers.models.minimaxh3.model import MiniMaxH3
 from simpletuner.helpers.models.minimaxh3.modular_pipeline import (
     MiniMaxH3ModularPipeline,
@@ -23,12 +27,23 @@ from simpletuner.helpers.models.minimaxh3.modular_pipeline import (
 from simpletuner.helpers.models.minimaxh3.packing import (
     MINIMAX_H3_PIXEL_MEAN,
     MINIMAX_H3_PIXEL_STD,
+    MINIMAX_H3_TEXT_ENCODER_LAYER,
     MINIMAX_H3_TEXT_TAG,
+    MINIMAX_H3_VIDEO_TAG,
+    align_num_frames,
     build_packed_sequence,
     build_row_timesteps,
+    video_latent_num_frames,
 )
-from simpletuner.helpers.models.minimaxh3.transformer import MiniMaxH3Transformer3DModel, MiniMaxH3TransformerOutput
+from simpletuner.helpers.models.minimaxh3.packing_ref2va import build_ref2va_presentation
+from simpletuner.helpers.models.minimaxh3.transformer import (
+    H3_REFERENCE_MODE,
+    MiniMaxH3Transformer3DModel,
+    MiniMaxH3TransformerOutput,
+    resolve_h3_reference_mode,
+)
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.training.validation import _validation_negative_prompt_record, prepare_validation_prompt_list
 
 
 def tiny_h3_transformer(num_layers: int = 2, **kwargs) -> MiniMaxH3Transformer3DModel:
@@ -81,6 +96,43 @@ def tiny_inputs(batch_size: int = 1):
         "audio_indices": layout.audio_indices,
         "text_indices": layout.text_indices,
     }
+
+
+def tiny_inputs_with_reference(batch_size: int = 1):
+    text_tags = torch.full((5,), MINIMAX_H3_TEXT_TAG, dtype=torch.long)
+    layout = build_packed_sequence(
+        text_token_tags=text_tags,
+        num_latent_frames=2,
+        latent_height=2,
+        latent_width=2,
+        num_audio_latents=2,
+        patch_size=(1, 2, 2),
+        keyframe_anchors=("first",),
+    )
+    timestep, timestep_indices = build_row_timesteps(
+        layout,
+        video_timestep=0.25,
+        audio_timestep=0.5,
+        condition_video_timestep=0.999,
+        condition_audio_timestep=0.999,
+    )
+    return (
+        {
+            "hidden_states": torch.randn(batch_size, layout.video_indices.shape[0], 8),
+            "audio_hidden_states": torch.randn(batch_size, layout.audio_indices.shape[0], 3),
+            "encoder_hidden_states": torch.randn(batch_size, text_tags.shape[0], 6),
+            "timestep": timestep,
+            "timestep_indices": timestep_indices,
+            "token_tags": layout.token_tags,
+            "position_ids": layout.position_ids,
+            "video_indices": layout.video_indices,
+            "audio_indices": layout.audio_indices,
+            "text_indices": layout.text_indices,
+            "num_condition_video_rows": layout.num_condition_video_rows,
+            "num_condition_audio_rows": layout.num_condition_audio_rows,
+        },
+        layout,
+    )
 
 
 def tiny_block_state_for_guidance():
@@ -160,6 +212,9 @@ class FakeH3Transformer:
         text_indices,
         attention_kwargs=None,
         skip_layers=None,
+        num_condition_video_rows=0,
+        num_condition_audio_rows=0,
+        minimax_h3_reference_mode="vanilla",
         return_dict=False,
     ):
         self.calls.append(
@@ -167,6 +222,9 @@ class FakeH3Transformer:
                 "text_rows": text_indices.shape[0],
                 "sequence_rows": position_ids.shape[0],
                 "skip_layers": skip_layers,
+                "num_condition_video_rows": num_condition_video_rows,
+                "num_condition_audio_rows": num_condition_audio_rows,
+                "minimax_h3_reference_mode": minimax_h3_reference_mode,
             }
         )
         value = float(encoder_hidden_states.mean())
@@ -193,6 +251,62 @@ class FakeVAE:
         return self
 
 
+class FakeH3Tokenizer:
+    pad_token_id = 0
+    eos_token_id = 2
+
+    def __call__(self, text, add_special_tokens=False):
+        return {"input_ids": [100 + index for index, _ in enumerate(str(text).split())]}
+
+    def convert_tokens_to_ids(self, token):
+        return {
+            "<|vision_start|>": 10,
+            "<|image_pad|>": 11,
+            "<|vision_end|>": 12,
+        }[token]
+
+
+class FakeH3Processor:
+    def create_mm_token_type_ids(self, token_batches):
+        return [[0] * len(token_ids) for token_ids in token_batches]
+
+
+class FakeH3TextEncoder:
+    dtype = torch.float32
+    config = SimpleNamespace(text_config=SimpleNamespace(num_hidden_layers=MINIMAX_H3_TEXT_ENCODER_LAYER + 1))
+
+    def __init__(self):
+        self.model = self
+        self.last_input_ids = None
+
+    def __call__(self, **kwargs):
+        self.last_input_ids = kwargs["input_ids"].detach().cpu()
+        sequence_length = self.last_input_ids.shape[1]
+        hidden_states = [None] * (MINIMAX_H3_TEXT_ENCODER_LAYER + 1)
+        hidden_states[MINIMAX_H3_TEXT_ENCODER_LAYER] = torch.ones(1, sequence_length, 2)
+        return SimpleNamespace(hidden_states=hidden_states)
+
+
+class FakeMusubiManager:
+    def __init__(self, managed_block_idx=1):
+        self.managed_block_idx = managed_block_idx
+        self.calls = []
+
+    def activate(self, blocks, compute_device, grad_enabled):
+        self.blocks = list(blocks)
+        self.calls.append(("activate", len(self.blocks), str(compute_device), grad_enabled))
+        return True
+
+    def is_managed_block(self, block_idx):
+        return block_idx == self.managed_block_idx
+
+    def stream_in(self, block, compute_device):
+        self.calls.append(("stream_in", id(block), str(compute_device)))
+
+    def stream_out(self, block):
+        self.calls.append(("stream_out", id(block)))
+
+
 class FakePosterior:
     def mode(self):
         return torch.ones(1, 24, 2, 2, 2)
@@ -216,6 +330,43 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertIn("convrot-int8", model_cls.get_flavour_choices())
         resolved = model_cls.get_real_class() if hasattr(model_cls, "get_real_class") else model_cls
         self.assertIs(resolved, MiniMaxH3)
+
+    def test_image_mode_keeps_single_frame_geometry(self):
+        self.assertEqual(MiniMaxH3.adjust_video_frames(1), 1)
+        self.assertEqual(align_num_frames(1), 1)
+        self.assertEqual(video_latent_num_frames(1), 1)
+        self.assertEqual(MiniMaxH3._video_frames_from_latent_frames(1), 1)
+        MiniMaxH3SetupStep._check_inputs(SimpleNamespace(height=1024, width=1024, num_frames=1))
+
+    def test_video_mode_still_aligns_to_h3_chunk_grid(self):
+        self.assertEqual(MiniMaxH3.adjust_video_frames(6), 22)
+        self.assertEqual(align_num_frames(6), 22)
+        self.assertEqual(video_latent_num_frames(22), 7)
+        self.assertEqual(MiniMaxH3._video_frames_from_latent_frames(7), 22)
+
+    def test_video_vae_encode_uses_single_clip_for_image_mode(self):
+        vae = AutoencoderKLMiniMaxH3.__new__(AutoencoderKLMiniMaxH3)
+        vae.use_slicing = False
+        vae._encode_clip = Mock(return_value=torch.zeros(1, 4, 1, 2, 2))
+        vae._encode = Mock()
+
+        posterior = vae.encode(torch.zeros(1, 3, 1, 16, 16), return_dict=False)[0]
+
+        vae._encode_clip.assert_called_once()
+        vae._encode.assert_not_called()
+        self.assertEqual(posterior.mode().shape, (1, 2, 1, 2, 2))
+
+    def test_video_vae_decode_duplicates_single_latent_for_image_mode(self):
+        vae = AutoencoderKLMiniMaxH3.__new__(AutoencoderKLMiniMaxH3)
+        vae.use_slicing = False
+        decoded_clip = torch.arange(24, dtype=torch.float32).view(1, 3, 8, 1, 1)
+        vae._decode_clip = Mock(return_value=decoded_clip)
+
+        decoded = vae.decode(torch.zeros(1, 2, 1, 1, 1), return_dict=False)[0]
+
+        vae._decode_clip.assert_called_once()
+        self.assertEqual(vae._decode_clip.call_args.args[0].shape[2], 2)
+        self.assertTrue(torch.equal(decoded, decoded_clip[:, :, :1]))
 
     def test_i2v_like_hook_enables_first_frame_conditioning_cache(self):
         model = SimpleNamespace(config=SimpleNamespace(model_flavour="convrot-int8"))
@@ -289,8 +440,31 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertEqual(len(call_kwargs["images"]), 1)
         self.assertIsInstance(call_kwargs["images"][0], Image.Image)
 
-    def test_h3_feedforward_uses_comfy_swiglu_gate_first_order(self):
+    def test_h3_feedforward_uses_diffusers_swiglu_hidden_first_order(self):
         feed_forward = MiniMaxH3FeedForward(2, inner_dim=2, bias=False)
+        with torch.no_grad():
+            feed_forward.net[0].proj.weight.copy_(
+                torch.tensor(
+                    [
+                        [1.0, 0.0],
+                        [0.0, 1.0],
+                        [2.0, 0.0],
+                        [0.0, 3.0],
+                    ]
+                )
+            )
+            feed_forward.net[2].weight.copy_(torch.eye(2))
+
+        hidden_states = torch.tensor([[0.5, -1.0]])
+        result = feed_forward(hidden_states)
+        expected = torch.tensor([[0.5, -1.0]]) * torch.nn.functional.silu(torch.tensor([[1.0, -3.0]]))
+
+        self.assertTrue(torch.allclose(result, expected))
+        self.assertIn("net.0.proj.weight", feed_forward.state_dict())
+        self.assertIn("net.2.weight", feed_forward.state_dict())
+
+    def test_h3_feedforward_can_use_comfy_swiglu_gate_first_order(self):
+        feed_forward = MiniMaxH3FeedForward(2, inner_dim=2, bias=False, gate_first=True)
         with torch.no_grad():
             feed_forward.net[0].proj.weight.copy_(
                 torch.tensor(
@@ -309,8 +483,13 @@ class MiniMaxH3Tests(unittest.TestCase):
         expected = torch.nn.functional.silu(torch.tensor([[0.5, -1.0]])) * torch.tensor([[1.0, -3.0]])
 
         self.assertTrue(torch.allclose(result, expected))
-        self.assertIn("net.0.proj.weight", feed_forward.state_dict())
-        self.assertIn("net.2.weight", feed_forward.state_dict())
+
+    def test_transformer_propagates_comfy_swiglu_gate_first_config(self):
+        model = tiny_h3_transformer(swiglu_gate_first=True)
+
+        self.assertTrue(model.config.swiglu_gate_first)
+        self.assertTrue(model.token_refiner.refiner_blocks[0].ff.net[0].gate_first)
+        self.assertTrue(model.transformer_blocks[0].ff.net[0].gate_first)
 
     def test_transformer_forward_and_ffn_checkpoint(self):
         model = tiny_h3_transformer()
@@ -329,6 +508,100 @@ class MiniMaxH3Tests(unittest.TestCase):
         loss = output.sample.square().mean() + output.audio_sample.square().mean()
         loss.backward()
         self.assertIsNotNone(inputs["hidden_states"].grad)
+
+    def test_minimax_h3_reference_mode_config_field_is_parseable(self):
+        from simpletuner.helpers.configuration.cmd_args import get_argument_parser
+
+        parser = get_argument_parser()
+        args = parser.parse_args(
+            [
+                "--model_family",
+                "minimaxh3",
+                "--output_dir",
+                "/tmp/simpletuner-test",
+                "--model_type",
+                "lora",
+                "--optimizer",
+                "adamw_bf16",
+                "--data_backend_config",
+                "/tmp/backend.json",
+                "--minimax_h3_reference_mode",
+                "cached_kv",
+                "--minimax_h3_target_mode",
+                "av",
+            ]
+        )
+
+        self.assertEqual(args.minimax_h3_reference_mode, "cached_kv")
+        self.assertEqual(args.minimax_h3_target_mode, "av")
+        self.assertIs(resolve_h3_reference_mode("cached-kv"), H3_REFERENCE_MODE.CachedKV)
+
+    def test_minimax_h3_target_mode_uses_video_only_by_default(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(minimax_h3_target_mode="auto")
+
+        with patch("simpletuner.helpers.models.minimaxh3.model.StateTracker.get_data_backend_config", return_value={}):
+            self.assertFalse(wrapper.uses_audio_latents_for_data_backend("video"))
+
+    def test_minimax_h3_target_mode_can_enable_audio_from_source_backend(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(minimax_h3_target_mode="auto")
+        configs = {
+            "video": {"dataset_type": "video", "h3_target_mode": "av"},
+            "audio": {"dataset_type": "audio", "source_dataset_id": "video"},
+        }
+
+        with patch(
+            "simpletuner.helpers.models.minimaxh3.model.StateTracker.get_data_backend_config",
+            side_effect=lambda backend_id: configs.get(backend_id, {}),
+        ):
+            self.assertTrue(wrapper.uses_audio_latents_for_data_backend("audio"))
+
+    def test_transformer_cached_reference_mode_reuses_static_kv(self):
+        model = tiny_h3_transformer(num_layers=1)
+        model.eval()
+        inputs, layout = tiny_inputs_with_reference()
+
+        with torch.no_grad():
+            first = model(**inputs, minimax_h3_reference_mode=H3_REFERENCE_MODE.CachedKV)
+            second = model(**inputs, minimax_h3_reference_mode="cached_kv")
+
+        stats = model.get_h3_reference_kv_stats()
+        self.assertEqual(first.sample.shape, (1, layout.video_indices.shape[0], 8))
+        self.assertEqual(first.audio_sample.shape, (1, layout.audio_indices.shape[0], 3))
+        self.assertTrue(torch.allclose(first.sample, second.sample, atol=1e-6))
+        self.assertTrue(torch.allclose(first.audio_sample, second.audio_sample, atol=1e-6))
+        self.assertGreater(stats.get("hits", 0), 0)
+        self.assertGreater(stats.get("post_hits", 0), 0)
+
+    def test_transformer_musubi_streams_managed_block_back_out(self):
+        model = tiny_h3_transformer(num_layers=3)
+        fake_manager = FakeMusubiManager(managed_block_idx=1)
+        model._musubi_block_swap = fake_manager
+
+        output = model(**tiny_inputs())
+
+        self.assertEqual(output.sample.shape, (1, 2, 8))
+        self.assertEqual(
+            fake_manager.calls,
+            [
+                ("activate", 3, "cpu", True),
+                ("stream_in", id(model.transformer_blocks[1]), "cpu"),
+                ("stream_out", id(model.transformer_blocks[1])),
+            ],
+        )
+
+    def test_acceleration_presets_include_h3_ramtorch_and_musubi_block_swap(self):
+        presets = MiniMaxH3.get_acceleration_presets()
+        ramtorch = next(preset for preset in presets if preset.backend is AccelerationBackend.RAMTORCH)
+        musubi = {preset.level: preset for preset in presets if preset.backend is AccelerationBackend.MUSUBI_BLOCK_SWAP}
+
+        self.assertTrue(ramtorch.config["ramtorch"])
+        self.assertIn("transformer_blocks.0.*", ramtorch.config["ramtorch_target_modules"])
+        self.assertIn("transformer_blocks.24.*", ramtorch.config["ramtorch_target_modules"])
+        self.assertEqual(musubi["light"].config["musubi_blocks_to_swap"], 12)
+        self.assertEqual(musubi["balanced"].config["musubi_blocks_to_swap"], 25)
+        self.assertEqual(musubi["aggressive"].config["musubi_blocks_to_swap"], 37)
 
     def test_transformer_output_supports_accelerate_fp32_conversion(self):
         output = MiniMaxH3TransformerOutput(
@@ -399,6 +672,14 @@ class MiniMaxH3Tests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "TwinFlow"):
             model._time_embedding(torch.tensor([0.5]), timestep_sign=torch.tensor([-1.0]))
 
+    def test_transformer_adaln_curve_table_casts_lerp_weight_to_table_dtype(self):
+        model = tiny_h3_transformer(time_embed_dim=3, adaln_curve_grid=5)
+        model.adaln_t_table.data = torch.arange(15, dtype=torch.bfloat16).view(5, 3)
+
+        temb = model._time_embedding(torch.tensor([0.125], dtype=torch.bfloat16))
+
+        self.assertEqual(temb.dtype, torch.bfloat16)
+
     def test_model_predict_packs_and_unpacks(self):
         wrapper = MiniMaxH3.__new__(MiniMaxH3)
         wrapper.model = tiny_h3_transformer(enable_time_sign_embed=True)
@@ -417,10 +698,55 @@ class MiniMaxH3Tests(unittest.TestCase):
             "text_token_tags": torch.full((1, 5), MINIMAX_H3_TEXT_TAG, dtype=torch.long),
             "twinflow_time_sign": torch.tensor([-1.0]),
             "flowmap_r_timesteps": torch.tensor([0.25]),
+            "minimax_h3_target_mode": "av",
         }
         output = wrapper.model_predict(prepared_batch)
         self.assertEqual(output["model_prediction"].shape, (1, 2, 2, 2, 2))
         self.assertEqual(output["audio_prediction"].shape, (1, 2, 3, 2))
+
+    def test_model_predict_video_target_mode_omits_audio_rows(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.model = tiny_h3_transformer()
+        wrapper.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        wrapper.config = SimpleNamespace(weight_dtype=torch.float32)
+        wrapper.LATENT_CHANNEL_COUNT = 2
+        wrapper.unwrap_model = lambda model=None: model
+
+        prepared_batch = {
+            "noisy_latents": torch.randn(1, 2, 2, 2, 2),
+            "encoder_hidden_states": torch.randn(1, 5, 6),
+            "timesteps": torch.tensor([0.25]),
+            "text_token_tags": torch.full((1, 5), MINIMAX_H3_TEXT_TAG, dtype=torch.long),
+            "minimax_h3_target_mode": "video",
+        }
+
+        output = wrapper.model_predict(prepared_batch)
+
+        self.assertEqual(output["model_prediction"].shape, (1, 2, 2, 2, 2))
+        self.assertIsNone(output["audio_prediction"])
+
+    def test_model_predict_image_latents_ignore_audio_rows_even_when_av_requested(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.model = tiny_h3_transformer()
+        wrapper.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        wrapper.config = SimpleNamespace(weight_dtype=torch.float32)
+        wrapper.LATENT_CHANNEL_COUNT = 2
+        wrapper.unwrap_model = lambda model=None: model
+
+        prepared_batch = {
+            "noisy_latents": torch.randn(1, 2, 1, 2, 2),
+            "audio_noisy_latents": torch.randn(1, 2, 3, 2),
+            "encoder_hidden_states": torch.randn(1, 5, 6),
+            "timesteps": torch.tensor([0.25]),
+            "audio_timesteps": torch.tensor([0.5]),
+            "text_token_tags": torch.full((1, 5), MINIMAX_H3_TEXT_TAG, dtype=torch.long),
+            "minimax_h3_target_mode": "av",
+        }
+
+        output = wrapper.model_predict(prepared_batch)
+
+        self.assertEqual(output["model_prediction"].shape, (1, 2, 1, 2, 2))
+        self.assertIsNone(output["audio_prediction"])
 
     def test_prepare_batch_conditions_maps_audio_to_audio_flow_shift(self):
         wrapper = MiniMaxH3.__new__(MiniMaxH3)
@@ -431,8 +757,10 @@ class MiniMaxH3Tests(unittest.TestCase):
             input_perturbation_steps=None,
             flow_schedule_shift=12.0,
             audio_flow_schedule_shift=3.0,
+            minimax_h3_target_mode="av",
         )
         wrapper._warned_missing_audio = False
+        wrapper._warned_audio_disabled = False
         wrapper._audio_latent_channels = lambda: 3
         wrapper._expected_audio_latents = lambda latents: 2
 
@@ -446,6 +774,94 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertTrue(torch.allclose(result["audio_sigmas"], torch.full((1, 1, 1, 1), 0.2)))
         self.assertTrue(torch.allclose(result["audio_timesteps"], torch.tensor([0.8])))
         self.assertTrue(torch.equal(result["audio_latent_mask"], torch.zeros(1)))
+
+    def test_prepare_batch_conditions_av_target_mode_drops_cached_audio_for_image_latents(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        wrapper.config = SimpleNamespace(
+            weight_dtype=torch.float32,
+            minimax_h3_target_mode="av",
+        )
+        wrapper._warned_audio_disabled = False
+        wrapper._warned_image_audio_disabled = False
+
+        batch = {
+            "latents": torch.zeros(1, 2, 1, 2, 2),
+            "audio_latent_batch": torch.ones(1, 2, 3, 2),
+            "audio_latent_mask": torch.ones(1),
+        }
+
+        result = wrapper.prepare_batch_conditions(batch, state={"global_step": 0})
+
+        self.assertEqual(result["minimax_h3_target_mode"], "video")
+        for key in (
+            "audio_latent_batch",
+            "audio_latents",
+            "audio_latent_mask",
+            "audio_noise",
+            "audio_sigmas",
+            "audio_timesteps",
+            "audio_noisy_latents",
+        ):
+            self.assertNotIn(key, result)
+
+    def test_prepare_batch_conditions_video_target_mode_drops_cached_audio(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        wrapper.config = SimpleNamespace(
+            weight_dtype=torch.float32,
+            minimax_h3_target_mode="video",
+        )
+        wrapper._warned_audio_disabled = False
+
+        batch = {
+            "latents": torch.zeros(1, 2, 2, 2, 2),
+            "audio_latent_batch": torch.ones(1, 2, 3, 2),
+            "audio_latent_mask": torch.ones(1),
+        }
+
+        result = wrapper.prepare_batch_conditions(batch, state={"global_step": 0})
+
+        self.assertEqual(result["minimax_h3_target_mode"], "video")
+        for key in (
+            "audio_latent_batch",
+            "audio_latents",
+            "audio_latent_mask",
+            "audio_noise",
+            "audio_sigmas",
+            "audio_timesteps",
+            "audio_noisy_latents",
+        ):
+            self.assertNotIn(key, result)
+
+    def test_loss_uses_explicit_audio_target_for_regularisation_batches(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(
+            audio_loss_weight=1.0,
+            loss_type="l2",
+            scheduled_sampling_reflexflow=False,
+        )
+        wrapper.diff2flow_bridge = None
+        prepared_batch = {
+            "latents": torch.zeros(1, 2, 1, 1, 1),
+            "noise": torch.zeros(1, 2, 1, 1, 1),
+            "target": torch.zeros(1, 2, 1, 1, 1),
+            "timesteps": torch.tensor([0.5]),
+            "audio_latents": torch.zeros(1, 2, 3, 2),
+            "audio_noise": torch.full((1, 2, 3, 2), 10.0),
+            "audio_target": torch.full((1, 2, 3, 2), 3.0),
+            "audio_latent_mask": torch.ones(1),
+        }
+        model_output = {
+            "model_prediction": torch.zeros(1, 2, 1, 1, 1),
+            "audio_prediction": torch.ones(1, 2, 3, 2),
+        }
+
+        loss, logs = wrapper.loss_with_logs(prepared_batch, model_output)
+
+        self.assertTrue(torch.allclose(loss, torch.tensor(4.0)))
+        self.assertAlmostEqual(logs["video_loss"], 0.0)
+        self.assertAlmostEqual(logs["audio_loss"], 4.0)
 
     def test_load_vae_uses_diffusers_component_subfolder(self):
         wrapper = MiniMaxH3.__new__(MiniMaxH3)
@@ -545,9 +961,158 @@ class MiniMaxH3Tests(unittest.TestCase):
             result = wrapper._encode_prompts([""])
 
         self.assertEqual(encode_prompt.call_args.args[1], " ")
+        self.assertFalse(encode_prompt.call_args.kwargs["null_instruction"])
+        self.assertEqual(encode_prompt.call_args.kwargs["max_length"], 512)
         self.assertEqual(len(encode_prompt.call_args.kwargs["images"]), 1)
         self.assertEqual(result["prompt_embeds"].shape, (1, 1, 2))
         self.assertEqual(result["text_token_tags"].shape, (1, 1))
+
+    def test_encode_prompts_honors_h3_tokenizer_max_length_override(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        wrapper.config = SimpleNamespace(weight_dtype=torch.float32, tokenizer_max_length=128)
+        wrapper._current_prompt_contexts = [{"conditioning_pixel_values": Image.new("RGB", (8, 8), "white")}]
+        wrapper._text_encoder_components = Mock(return_value=object())
+
+        with patch(
+            "simpletuner.helpers.models.minimaxh3.model.MiniMaxH3TextEncoderStep.encode_prompt",
+            return_value=(
+                torch.ones(1, 1, 2),
+                torch.tensor([MINIMAX_H3_TEXT_TAG], dtype=torch.long),
+            ),
+        ) as encode_prompt:
+            wrapper._encode_prompts(["visible prompt"])
+
+        self.assertEqual(encode_prompt.call_args.kwargs["max_length"], 128)
+
+    def test_text_encoder_null_instruction_preserves_prompt_length_with_null_ids(self):
+        text_encoder = FakeH3TextEncoder()
+        components = SimpleNamespace(
+            text_encoder=text_encoder,
+            tokenizer=FakeH3Tokenizer(),
+            processor=FakeH3Processor(),
+            transformer=SimpleNamespace(dtype=torch.float32),
+            _execution_device=torch.device("cpu"),
+        )
+
+        prompt_embeds, text_token_tags = MiniMaxH3TextEncoderStep.encode_prompt(
+            components,
+            "alpha beta gamma",
+            device=torch.device("cpu"),
+            dtype=torch.float32,
+            null_instruction=True,
+        )
+
+        self.assertTrue(torch.equal(text_encoder.last_input_ids, torch.zeros(1, 3, dtype=torch.long)))
+        self.assertEqual(prompt_embeds.shape, (1, 3, 2))
+        self.assertTrue(torch.equal(text_token_tags, torch.full((3,), MINIMAX_H3_TEXT_TAG, dtype=torch.long)))
+
+    def test_text_encoder_caps_caption_tokens_to_512_by_default(self):
+        text_encoder = FakeH3TextEncoder()
+        components = SimpleNamespace(
+            text_encoder=text_encoder,
+            tokenizer=FakeH3Tokenizer(),
+            processor=FakeH3Processor(),
+            transformer=SimpleNamespace(dtype=torch.float32),
+            _execution_device=torch.device("cpu"),
+        )
+        prompt = " ".join(f"token{i}" for i in range(600))
+
+        prompt_embeds, text_token_tags = MiniMaxH3TextEncoderStep.encode_prompt(
+            components,
+            prompt,
+            device=torch.device("cpu"),
+            dtype=torch.float32,
+        )
+
+        self.assertEqual(prompt_embeds.shape, (1, 512, 2))
+        self.assertEqual(text_encoder.last_input_ids.shape, (1, 512))
+        self.assertEqual(text_token_tags.shape, (512,))
+
+    def test_text_encoder_max_length_zero_disables_caption_cap(self):
+        text_encoder = FakeH3TextEncoder()
+        components = SimpleNamespace(
+            text_encoder=text_encoder,
+            tokenizer=FakeH3Tokenizer(),
+            processor=FakeH3Processor(),
+            transformer=SimpleNamespace(dtype=torch.float32),
+            _execution_device=torch.device("cpu"),
+        )
+        prompt = " ".join(f"token{i}" for i in range(600))
+
+        prompt_embeds, _ = MiniMaxH3TextEncoderStep.encode_prompt(
+            components,
+            prompt,
+            device=torch.device("cpu"),
+            dtype=torch.float32,
+            max_length=0,
+        )
+
+        self.assertEqual(prompt_embeds.shape, (1, 600, 2))
+
+    def test_ref2va_prompt_cap_preserves_reference_rows(self):
+        reference = SimpleNamespace(kind="image", has_audio=False)
+
+        token_ids, token_tags = build_ref2va_presentation(
+            FakeH3Tokenizer(),
+            "alpha beta gamma",
+            [reference],
+            [2],
+            [],
+            max_prompt_length=1,
+        )
+
+        self.assertEqual(token_ids, [100, 101, 10, 11, 11, 12, 100])
+        self.assertEqual(
+            token_tags,
+            [
+                MINIMAX_H3_TEXT_TAG,
+                MINIMAX_H3_TEXT_TAG,
+                MINIMAX_H3_VIDEO_TAG,
+                MINIMAX_H3_VIDEO_TAG,
+                MINIMAX_H3_VIDEO_TAG,
+                MINIMAX_H3_VIDEO_TAG,
+                MINIMAX_H3_TEXT_TAG,
+            ],
+        )
+
+    def test_ref2va_null_prompt_replaces_only_final_prompt_rows(self):
+        token_ids, token_tags = build_ref2va_presentation(
+            FakeH3Tokenizer(),
+            "alpha beta",
+            [],
+            [],
+            [],
+            null_prompt_token_id=0,
+        )
+
+        self.assertEqual(token_ids, [0, 0])
+        self.assertEqual(token_tags, [MINIMAX_H3_TEXT_TAG, MINIMAX_H3_TEXT_TAG])
+
+    def test_negative_null_prompt_uses_positive_prompt_context(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        wrapper.config = SimpleNamespace(weight_dtype=torch.float32)
+        wrapper._current_prompt_contexts = [
+            {
+                "conditioning_pixel_values": Image.new("RGB", (8, 8), "white"),
+                "positive_prompt": "wide lens action",
+            }
+        ]
+        wrapper._text_encoder_components = Mock(return_value=object())
+
+        with patch(
+            "simpletuner.helpers.models.minimaxh3.model.MiniMaxH3TextEncoderStep.encode_prompt",
+            return_value=(
+                torch.ones(1, 3, 2),
+                torch.full((3,), MINIMAX_H3_TEXT_TAG, dtype=torch.long),
+            ),
+        ) as encode_prompt:
+            result = wrapper._encode_prompts([""], is_negative_prompt=True)
+
+        self.assertEqual(encode_prompt.call_args.args[1], "wide lens action")
+        self.assertTrue(encode_prompt.call_args.kwargs["null_instruction"])
+        self.assertEqual(result["prompt_embeds"].shape, (1, 3, 2))
 
     def test_guided_velocity_uses_negative_layout_and_skip_layers(self):
         transformer = FakeH3Transformer()
@@ -573,6 +1138,91 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertEqual(result["guidance_scale_real"], 4.0)
         self.assertEqual(result["no_cfg_until_timestep"], 2)
         self.assertEqual(result["negative_text_token_tags"].shape, (1, 3))
+
+    def test_validation_negative_prompt_is_real_cfg_only(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(validation_guidance_real=1.0)
+
+        self.assertFalse(wrapper.uses_validation_negative_prompt())
+        self.assertFalse(wrapper.should_precompute_validation_negative_prompt())
+        self.assertTrue(wrapper.validation_negative_prompt_requires_prompt_context())
+
+        wrapper.config.validation_guidance_real = 2.0
+        self.assertTrue(wrapper.uses_validation_negative_prompt())
+        self.assertFalse(wrapper.should_precompute_validation_negative_prompt())
+
+    def test_validation_negative_prompt_record_uses_image_context_key(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(validation_guidance_real=2.0)
+        args = SimpleNamespace(model_family="minimax_h3")
+        image = Image.new("RGB", (8, 8), "white")
+
+        record = _validation_negative_prompt_record(
+            args,
+            wrapper,
+            "bad blur",
+            "sample-a",
+            image,
+            positive_prompt="visible prompt",
+        )
+
+        prompt_hash = hashlib.md5("bad blur".encode("utf-8")).hexdigest()
+        self.assertEqual(record["prompt"], "bad blur")
+        self.assertEqual(record["key"], f"sample-a:__validation_negative__{prompt_hash}")
+        self.assertIn("conditioning_pixel_values", record["metadata"])
+        self.assertEqual(tuple(record["metadata"]["conditioning_pixel_values"].shape), (3, 8, 8))
+        self.assertEqual(record["metadata"]["positive_prompt"], "visible prompt")
+
+    def test_validation_negative_prompt_record_requires_context(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(validation_guidance_real=2.0)
+        args = SimpleNamespace(model_family="minimax_h3")
+
+        with self.assertRaisesRegex(ValueError, "requires image context"):
+            _validation_negative_prompt_record(args, wrapper, "bad blur", "sample-a", None)
+
+    def test_validation_negative_prompt_precompute_is_skipped_for_h3(self):
+        class DummyEmbedCache:
+            model_type = "minimax_h3"
+            text_cache_ondemand = False
+
+            def __init__(self):
+                self.compute_embeddings_for_prompts = Mock()
+                self.encode_validation_negative_prompt = Mock()
+
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(validation_guidance_real=2.0)
+        wrapper.log_model_devices = Mock()
+        args = SimpleNamespace(
+            model_family="minimax_h3",
+            model_flavour="base",
+            controlnet=False,
+            control=False,
+            validation_using_datasets=False,
+            validation_prompt_library=False,
+            user_prompt_library=None,
+            validation_prompt="visible prompt",
+            validation_negative_prompt="bad blur",
+            validation_disable_unconditional=True,
+            data_backend_config="config.json",
+        )
+        embed_cache = DummyEmbedCache()
+
+        with (
+            patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
+            patch("simpletuner.helpers.training.validation.StateTracker.get_validation_sample_images", return_value=None),
+        ):
+            metadata = prepare_validation_prompt_list(args, embed_cache, wrapper)
+
+        self.assertEqual([entry.prompt for entry in metadata["validation_prompts"]], ["visible prompt"])
+        wrapper.log_model_devices.assert_not_called()
+        embed_cache.encode_validation_negative_prompt.assert_not_called()
+        negative_calls = [
+            call
+            for call in embed_cache.compute_embeddings_for_prompts.call_args_list
+            if call.kwargs.get("is_negative_prompt")
+        ]
+        self.assertEqual(negative_calls, [])
 
     def test_comfy_lora_conversion_maps_h3_names_and_splits_qkv(self):
         qkv_down = torch.randn(4, 16)
@@ -642,6 +1292,7 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertEqual(loaded.config.hidden_size, 16)
         self.assertEqual(loaded.config.num_layers, 1)
         self.assertEqual(tuple(loaded.config.patch_size), (1, 2, 2))
+        self.assertFalse(loaded.config.swiglu_gate_first)
         self.assertFalse(loaded.rope.inv_freq.is_meta)
 
     def test_single_file_loader_accepts_trailing_safetensors_bytes(self):
@@ -663,13 +1314,32 @@ class MiniMaxH3Tests(unittest.TestCase):
             path = f"{tmpdir}/tiny-h3-curve.safetensors"
             state_dict = dict(model.state_dict())
             state_dict["rope.inv_freq"] = rope_inv_freq
+            for key in (
+                "transformer_blocks.0.adaln_proj.linear.weight",
+                "transformer_blocks.0.adaln_proj.linear.bias",
+                "norm_out.linear.weight",
+                "norm_out.linear.bias",
+            ):
+                state_dict[key] = state_dict[key].to(torch.float16)
             save_file(state_dict, path)
-            loaded = MiniMaxH3Transformer3DModel.from_single_file(path, torch_dtype=torch.float32)
+            loaded = MiniMaxH3Transformer3DModel.from_single_file(path, torch_dtype=torch.bfloat16)
         self.assertEqual(loaded.config.adaln_curve_grid, 5)
         self.assertIsNone(loaded.time_embedder)
         self.assertEqual(loaded.transformer_blocks[0].adaln_proj.linear.in_features, 3)
         self.assertTrue(torch.equal(loaded.adaln_t_table, model.adaln_t_table))
         self.assertTrue(torch.equal(loaded.rope.inv_freq, rope_inv_freq))
+        self.assertEqual(loaded.transformer_blocks[0].adaln_proj.linear.weight.dtype, torch.float32)
+        self.assertEqual(loaded.transformer_blocks[0].adaln_proj.linear.bias.dtype, torch.float32)
+        self.assertEqual(loaded.norm_out.linear.weight.dtype, torch.float32)
+        self.assertEqual(loaded.norm_out.linear.bias.dtype, torch.float32)
+        self.assertEqual(loaded.context_embedder.weight.dtype, torch.bfloat16)
+
+        normed = loaded.norm_out(
+            torch.randn(1, 2, 16, dtype=torch.bfloat16),
+            torch.randn(1, 3, dtype=torch.float32),
+            torch.tensor([0, 0], dtype=torch.long),
+        )
+        self.assertEqual(normed.dtype, torch.bfloat16)
 
     def test_single_file_loader_accepts_abiray_convrot_metadata(self):
         model = tiny_h3_transformer(num_layers=1)

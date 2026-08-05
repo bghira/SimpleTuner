@@ -170,6 +170,11 @@ class MiniMaxH3AudioDecodeStep(ModularPipelineBlocks):
     def __call__(self, components: MiniMaxH3ModularPipeline, state: PipelineState) -> PipelineState:
         block_state = self.get_block_state(state)
         device = components._execution_device
+        if int(block_state.num_audio_latents or 0) == 0:
+            block_state.audio = None
+            block_state.sampling_rate = components.audio_sampling_rate
+            self.set_block_state(state, block_state)
+            return components, state
 
         audio_latents = unpack_audio_tokens(
             block_state.audio_latents[block_state.num_condition_audio_rows :], block_state.num_audio_latents

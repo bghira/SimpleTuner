@@ -4080,7 +4080,7 @@ class FactoryRegistry:
         if dataset_type_enum is DatasetType.AUDIO:
             uses_audio_latents = False
             try:
-                uses_audio_latents = bool(self.model.uses_audio_latents())
+                uses_audio_latents = bool(self.model.uses_audio_latents_for_data_backend(init_backend.get("id")))
             except AttributeError:
                 uses_audio_latents = False
             if not uses_audio_latents:

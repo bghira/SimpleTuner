@@ -52,6 +52,15 @@ Where `foo` is your config environment - or just use `config/config.json` if you
   - `diffusers` is the standard PEFT/Diffusers layout.
   - `comfyui` converts to/from ComfyUI-style keys (`diffusion_model.*` with `lora_A/lora_B` and `.alpha` tensors). Flux, Flux2, Lumina2, and Z-Image will auto-detect ComfyUI inputs even if this is left at `diffusers`, but set it to `comfyui` to force ComfyUI output when saving.
 
+### `--minimax_h3_target_mode`
+
+- **What**: Controls whether MiniMax-H3 includes target audio rows.
+- **Choices**: `auto`, `video`, `av`
+- **Default**: `auto`
+- **Notes**:
+  - `auto` resolves to video-only, skipping audio VAE caching, collation, and target audio rows for H3.
+  - Set `minimax_h3_target_mode` or `h3_target_mode` to `av` in a data backend entry to opt an auto-split or explicit audio backend into joint audio-video training.
+
 ### `--fuse_qkv_projections`
 
 - **What**: Fuses the QKV projections in the model's attention blocks to make more efficient use of hardware.

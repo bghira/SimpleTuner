@@ -52,6 +52,15 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
   - `diffusers` es el esquema estándar de PEFT/Diffusers.
   - `comfyui` convierte hacia/desde claves estilo ComfyUI (`diffusion_model.*` con tensores `lora_A/lora_B` y `.alpha`). Flux, Flux2, Lumina2 y Z-Image detectarán automáticamente entradas ComfyUI incluso si esto se deja en `diffusers`, pero cámbialo a `comfyui` para forzar salida ComfyUI al guardar.
 
+### `--minimax_h3_target_mode`
+
+- **Qué**: Controla si MiniMax-H3 incluye filas de audio objetivo.
+- **Opciones**: `auto`, `video`, `av`
+- **Predeterminado**: `auto`
+- **Notas**:
+  - `auto` se resuelve como solo video, omitiendo caché VAE de audio, colación y filas de audio objetivo para H3.
+  - Define `minimax_h3_target_mode` o `h3_target_mode` como `av` en una entrada de data backend para activar entrenamiento conjunto audio-video en un backend de audio auto-split o explícito.
+
 ### `--fuse_qkv_projections`
 
 - **Qué**: Fusiona las proyecciones QKV en los bloques de atención del modelo para un uso más eficiente del hardware.
