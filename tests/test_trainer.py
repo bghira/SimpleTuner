@@ -3253,7 +3253,7 @@ class TestTrainer(unittest.TestCase):
 
         if will_create_dynamo_plugin:
             plugin_kwargs = {"backend": resolved_dynamo_backend}
-            plugin_kwargs["mode"] = "max-autotune"
+            plugin_kwargs["mode"] = "default"
             plugin_kwargs["dynamic"] = True
             plugin_kwargs["use_regional_compilation"] = True
 
@@ -3264,7 +3264,7 @@ class TestTrainer(unittest.TestCase):
         self.assertNotIn("dynamo_backend", accelerator_kwargs)
         mock_dynamo_plugin.assert_called_once()
         call_args = mock_dynamo_plugin.call_args[1]
-        self.assertEqual(call_args["mode"], "max-autotune")
+        self.assertEqual(call_args["mode"], "default")
         self.assertTrue(call_args["dynamic"])
         self.assertTrue(call_args["use_regional_compilation"])
 
