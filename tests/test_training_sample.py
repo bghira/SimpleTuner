@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -5,6 +7,7 @@ import numpy as np
 from PIL import Image
 
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+from simpletuner.helpers.metadata.utils.duplicator import DatasetDuplicator
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
@@ -83,6 +86,30 @@ class TestTrainingSample(unittest.TestCase):
         )
 
         self.assertEqual(sample.training_sample_path(source_backend_id), "17.jpg")
+
+    def test_conditioning_path_translation_does_not_escape_target_for_external_absolute_paths(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = os.path.join(tmpdir, "source")
+            target_dir = os.path.join(tmpdir, "target")
+            inside_path = os.path.join(source_dir, "nested", "clip.mp4")
+            outside_path = os.path.join(tmpdir, "outside", "clip.mp4")
+
+            translated_inside = DatasetDuplicator._translate_conditioning_path(
+                inside_path,
+                source_dir,
+                target_dir,
+                "i2v_first_frame",
+            )
+            translated_outside = DatasetDuplicator._translate_conditioning_path(
+                outside_path,
+                source_dir,
+                target_dir,
+                "i2v_first_frame",
+            )
+
+        self.assertEqual(translated_inside, os.path.join(target_dir, "nested", "clip.png"))
+        self.assertEqual(translated_outside, os.path.join(target_dir, "clip.png"))
+        self.assertEqual(os.path.commonpath([target_dir, translated_outside]), target_dir)
 
     def test_image_downsample(self):
         """Test that downsampling is correctly applied before cropping."""
