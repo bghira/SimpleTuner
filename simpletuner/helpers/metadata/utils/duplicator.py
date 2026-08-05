@@ -17,8 +17,12 @@ class DatasetDuplicator:
         source_dir_abs = os.path.abspath(source_dir)
         target_dir_abs = os.path.abspath(target_dir)
         if os.path.isabs(path):
-            rel_path = os.path.relpath(path, source_dir_abs)
-            new_path = os.path.join(target_dir_abs, rel_path)
+            path_abs = os.path.abspath(path)
+            if os.path.commonpath([path_abs, source_dir_abs]) == source_dir_abs:
+                rel_path = os.path.relpath(path_abs, source_dir_abs)
+                new_path = os.path.join(target_dir_abs, rel_path)
+            else:
+                new_path = os.path.join(target_dir_abs, os.path.basename(path_abs))
         else:
             new_path = os.path.join(target_dir, os.path.basename(path))
         if conditioning_data_type == "i2v_first_frame":
