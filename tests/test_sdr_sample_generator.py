@@ -3,8 +3,10 @@ import unittest
 import numpy as np
 from PIL import Image
 
+from simpletuner.helpers.data_generation.conditioning import DataGenerator
 from simpletuner.helpers.data_generation.sample_generator import (
     GENERATOR_REGISTRY,
+    I2VFirstFrameSampleGenerator,
     SampleGenerator,
     SDRDownsampleSampleGenerator,
 )
@@ -78,6 +80,17 @@ class TestSDRDownsampleSampleGenerator(unittest.TestCase):
         with self.assertLogs("SampleGenerator", level="ERROR"):
             with self.assertRaisesRegex(ValueError, "expects image samples"):
                 generator.transform_batch([video], ["sample.mp4"], [{}], None)
+
+    def test_i2v_first_frame_targets_png_paths(self):
+        generator = DataGenerator.__new__(DataGenerator)
+        generator.source_instance_dir = ""
+        generator.target_instance_dir = "/tmp/conditioning"
+        generator.sample_generator = I2VFirstFrameSampleGenerator({"type": "i2v_first_frame"})
+
+        full_path, filename = generator.generate_target_filename("clip.mp4")
+
+        self.assertEqual(filename, "clip.png")
+        self.assertEqual(full_path, "/tmp/conditioning/clip.png")
 
 
 if __name__ == "__main__":

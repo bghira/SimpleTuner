@@ -293,6 +293,20 @@
         "name": "Mage-Flow",
         "prediction_type": "flow_matching"
     },
+    "minimaxh3": {
+        "class_name": "MiniMaxH3",
+        "flavour_choices": [
+            "fl2va",
+            "ref2va",
+            "convrot-int8",
+            "convrot-int4",
+            "nvfp4",
+            "fp8-e4m3fn"
+        ],
+        "module_path": "simpletuner.helpers.models.minimaxh3.model",
+        "name": "MiniMax H3",
+        "prediction_type": "flow_matching"
+    },
     "omnigen": {
         "class_name": "OmniGen",
         "flavour_choices": [

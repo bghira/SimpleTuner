@@ -61,6 +61,7 @@
 | **LTX Video 2** | 19B | [LTX-2 Community](https://ltx.io/model/license) | शर्तें लागू<sup>10</sup> | [LTX Video 2 गाइड](LTXVIDEO2.md) |
 | **Cosmos3** | 4-65B | [OpenMDW 1.1](https://github.com/OpenMDW/openmdw/blob/main/1.1/LICENSE.OpenMDW-1.1) | हाँ | [Cosmos3 गाइड](COSMOS3.hi.md) |
 | **Hunyuan Video** | 8.3B | [Tencent Hunyuan Community](https://huggingface.co/tencent/HunyuanVideo-1.5/blob/main/LICENSE) | शर्तें लागू<sup>11</sup> | [Hunyuan गाइड](HUNYUANVIDEO.md) |
+| **MiniMax H3** | 33B | [MiniMax H3 Community](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE) | शर्तें लागू<sup>12</sup> | कोई समर्पित गाइड नहीं |
 | **Sana Video** | - | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | हाँ | [Sana Video गाइड](SANAVIDEO.md) |
 | **Kandinsky 5 Video** | - | [MIT](https://opensource.org/license/mit) | हाँ | [Kandinsky Video गाइड](KANDINSKY5_VIDEO.md) |
 | **LongCat Video** | - | [MIT](https://opensource.org/license/mit) | हाँ | [LongCat Video गाइड](LONGCAT_VIDEO.md) |
@@ -89,6 +90,8 @@
 <sup>10</sup> LTX Video 0.9.5 OpenRAIL-M का उपयोग करता है; LTX Video 2 commercial use के लिए revenue threshold वाले LTX community terms का उपयोग करता है।
 
 <sup>11</sup> Tencent Hunyuan Community License में territorial exclusions और बहुत बड़े services के लिए commercial threshold शामिल है।
+
+<sup>12</sup> MiniMax H3 Community License standard applicable territory से United States, European Union, United Kingdom, और South Korea को बाहर रखती है; उन territories में separate authorization चाहिए।
 
 
 ## ऑडियो मॉडल

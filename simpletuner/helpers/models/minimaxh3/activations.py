@@ -1,0 +1,40 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class MiniMaxH3SwiGLU(nn.Module):
+    def __init__(self, dim_in: int, dim_out: int, bias: bool = True):
+        super().__init__()
+        self.proj = nn.Linear(dim_in, dim_out * 2, bias=bias)
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        gate, up = self.proj(hidden_states).chunk(2, dim=-1)
+        return F.silu(gate) * up
+
+
+class MiniMaxH3FeedForward(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        dim_out: int | None = None,
+        mult: int = 4,
+        inner_dim: int | None = None,
+        dropout: float = 0.0,
+        bias: bool = True,
+    ):
+        super().__init__()
+        inner_dim = int(dim * mult) if inner_dim is None else inner_dim
+        dim_out = dim if dim_out is None else dim_out
+        self.net = nn.ModuleList(
+            [
+                MiniMaxH3SwiGLU(dim, inner_dim, bias=bias),
+                nn.Dropout(dropout),
+                nn.Linear(inner_dim, dim_out, bias=bias),
+            ]
+        )
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        for module in self.net:
+            hidden_states = module(hidden_states)
+        return hidden_states

@@ -61,6 +61,7 @@ Step-by-step guides for training each supported model architecture.
 | **LTX Video 2** | 19B | [LTX-2 Community](https://ltx.io/model/license) | Conditions apply<sup>10</sup> | [LTX Video 2 Guide](LTXVIDEO2.md) |
 | **Cosmos3** | 4-65B | [OpenMDW 1.1](https://github.com/OpenMDW/openmdw/blob/main/1.1/LICENSE.OpenMDW-1.1) | Yes | [Cosmos3 Guide](COSMOS3.md) |
 | **Hunyuan Video** | 8.3B | [Tencent Hunyuan Community](https://huggingface.co/tencent/HunyuanVideo-1.5/blob/main/LICENSE) | Conditions apply<sup>11</sup> | [Hunyuan Guide](HUNYUANVIDEO.md) |
+| **MiniMax H3** | 33B | [MiniMax H3 Community](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE) | Conditions apply<sup>12</sup> | No dedicated guide |
 | **Sana Video** | - | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Yes | [Sana Video Guide](SANAVIDEO.md) |
 | **Kandinsky 5 Video** | - | [MIT](https://opensource.org/license/mit) | Yes | [Kandinsky Video Guide](KANDINSKY5_VIDEO.md) |
 | **LongCat Video** | - | [MIT](https://opensource.org/license/mit) | Yes | [LongCat Video Guide](LONGCAT_VIDEO.md) |
@@ -89,6 +90,8 @@ Step-by-step guides for training each supported model architecture.
 <sup>10</sup> LTX Video 0.9.5 uses OpenRAIL-M; LTX Video 2 uses LTX community terms with a revenue threshold for commercial use.
 
 <sup>11</sup> Tencent Hunyuan Community License includes territorial exclusions and a commercial threshold for very large services.
+
+<sup>12</sup> MiniMax H3 Community License excludes the United States, European Union, United Kingdom, and South Korea from the standard applicable territory; those territories require separate authorization.
 
 
 ## Audio Models

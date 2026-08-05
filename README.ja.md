@@ -110,6 +110,7 @@ SimpleTunerは以下のモデルファミリーをサポートしています。
 | **LTX Video 2** | 19B | Apache-2.0 | 可 |
 | **Lumina2** | 2B | Apache-2.0 | 可 |
 | **Mage-Flow** | 4B | MIT | 可 |
+| **MiniMax H3** | 33B | MiniMax H3 Community License | 条件付き（地域除外あり；米国/EU/英国/韓国は認可が必要） |
 | **OmniGen** | 3.8B | MIT | 可 |
 | **PixArt Sigma** | 0.6B-0.9B | OpenRAIL++ | 可（制限あり） |
 | **Qwen Image** | 20B | Apache-2.0 | 可 |

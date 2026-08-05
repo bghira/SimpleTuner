@@ -110,6 +110,7 @@ SimpleTuner suporta as seguintes familias de modelos. O suporte detalhado a recu
 | **LTX Video 2** | 19B | Apache-2.0 | Sim |
 | **Lumina2** | 2B | Apache-2.0 | Sim |
 | **Mage-Flow** | 4B | MIT | Sim |
+| **MiniMax H3** | 33B | MiniMax H3 Community License | Condicoes aplicaveis (exclusoes territoriais; autorizacao exigida nos EUA/UE/Reino Unido/Coreia do Sul) |
 | **OmniGen** | 3.8B | MIT | Sim |
 | **PixArt Sigma** | 0.6B-0.9B | OpenRAIL++ | Sim (restrito) |
 | **Qwen Image** | 20B | Apache-2.0 | Sim |

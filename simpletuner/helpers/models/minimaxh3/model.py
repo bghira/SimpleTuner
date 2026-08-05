@@ -1,0 +1,1163 @@
+import logging
+import os
+from types import SimpleNamespace
+from typing import Any, Dict, Optional
+
+import numpy as np
+import torch
+from diffusers import FlowMatchEulerDiscreteScheduler
+from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
+from diffusers.video_processor import VideoProcessor
+from PIL import Image
+from transformers import Qwen2TokenizerFast, Qwen3VLForConditionalGeneration, Qwen3VLProcessor
+
+from simpletuner.helpers.acceleration import (
+    AccelerationBackend,
+    AccelerationPreset,
+    get_bitsandbytes_presets,
+    get_deepspeed_presets,
+    get_quanto_presets,
+    get_sdnq_presets,
+    get_torchao_presets,
+)
+from simpletuner.helpers.models.common import (
+    ModelTypes,
+    PipelineTypes,
+    PredictionTypes,
+    TextEmbedCacheKey,
+    VideoModelFoundation,
+)
+from simpletuner.helpers.models.minimaxh3.autoencoder import AutoencoderKLMiniMaxH3
+from simpletuner.helpers.models.minimaxh3.autoencoder_audio import AutoencoderKLMiniMaxH3Audio
+from simpletuner.helpers.models.minimaxh3.encoders import MiniMaxH3TextEncoderStep
+from simpletuner.helpers.models.minimaxh3.modular_blocks_minimax_h3 import MiniMaxH3Blocks, MiniMaxH3Ref2VABlocks
+from simpletuner.helpers.models.minimaxh3.packing import (
+    MINIMAX_H3_AUDIO_CHANNELS,
+    MINIMAX_H3_FPS,
+    MINIMAX_H3_KEYFRAME_NOISE_AUG,
+    MINIMAX_H3_PIXEL_MEAN,
+    MINIMAX_H3_PIXEL_STD,
+    MINIMAX_H3_TEXT_TAG,
+    audio_latent_num_frames,
+    build_packed_sequence,
+    build_row_timesteps,
+    patchify_video_latents,
+    unpatchify_video_tokens,
+)
+from simpletuner.helpers.models.minimaxh3.pipeline import MiniMaxH3Pipeline
+from simpletuner.helpers.models.minimaxh3.pipeline_ref import MiniMaxH3Ref2VAPipeline
+from simpletuner.helpers.models.minimaxh3.scheduler import MiniMaxH3Scheduler
+from simpletuner.helpers.models.minimaxh3.transformer import MiniMaxH3Transformer3DModel
+from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
+from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
+from simpletuner.helpers.training.multi_process import should_log
+from simpletuner.helpers.training.state_tracker import StateTracker
+
+logger = logging.getLogger(__name__)
+if should_log():
+    logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
+else:
+    logger.setLevel("ERROR")
+
+
+MINIMAX_H3_BASE_REPO = "MiniMaxAI/MiniMax-H3"
+MINIMAX_H3_SINGLE_FILE_SUFFIXES = (".safetensors", ".sft")
+
+
+def _is_single_file_path(path: Any) -> bool:
+    return isinstance(path, str) and path.lower().split("?", 1)[0].endswith(MINIMAX_H3_SINGLE_FILE_SUFFIXES)
+
+
+class MiniMaxH3(VideoModelFoundation):
+    SUPPORTS_MUON_CLIP = True
+    AUTO_LORA_FORMAT_DETECTION = True
+    NAME = "MiniMax H3"
+    MODEL_DESCRIPTION = "Joint audio-video flow-matching transformer"
+    ENABLED_IN_WIZARD = True
+    VALIDATION_USES_NEGATIVE_PROMPT = True
+    PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
+    MODEL_TYPE = ModelTypes.TRANSFORMER
+    ATTENTION_KWARG_NAME = "attention_kwargs"
+
+    AUTOENCODER_CLASS = AutoencoderKLMiniMaxH3
+    AUDIO_AUTOENCODER_CLASS = AutoencoderKLMiniMaxH3Audio
+    LATENT_CHANNEL_COUNT = 24
+    DEFAULT_NOISE_SCHEDULER = "flow_matching"
+
+    MODEL_CLASS = MiniMaxH3Transformer3DModel
+    MODEL_SUBFOLDER = "transformer"
+    DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2IMG
+    PIPELINE_CLASSES = {
+        PipelineTypes.TEXT2IMG: MiniMaxH3Pipeline,
+        PipelineTypes.IMG2VIDEO: MiniMaxH3Pipeline,
+        PipelineTypes.IMG2IMG: MiniMaxH3Pipeline,
+    }
+
+    DEFAULT_MODEL_FLAVOUR = "fl2va"
+    HUGGINGFACE_PATHS: Dict[str, str] = {
+        "fl2va": MINIMAX_H3_BASE_REPO,
+        "ref2va": MINIMAX_H3_BASE_REPO,
+        "convrot-int8": MINIMAX_H3_BASE_REPO,
+        "convrot-int4": MINIMAX_H3_BASE_REPO,
+        "nvfp4": MINIMAX_H3_BASE_REPO,
+        "fp8-e4m3fn": MINIMAX_H3_BASE_REPO,
+    }
+    TRANSFORMER_PATH_OVERRIDES: Dict[str, str] = {
+        "convrot-int8": (
+            "https://huggingface.co/Abiray/Minimax-H3-nvfp4-INT4-INT8-Convrot/resolve/main/"
+            "MiniMax_H3_FL2VA_pruned_int8_convrot.safetensors"
+        ),
+        "convrot-int4": (
+            "https://huggingface.co/Abiray/Minimax-H3-nvfp4-INT4-INT8-Convrot/resolve/main/"
+            "MiniMax_H3_FL2VA_pruned_int4_convrot.safetensors"
+        ),
+        "nvfp4": ("https://huggingface.co/rockerBOO/minimax-h3-nvfp4/resolve/main/" "minimax_h3_fl2va_nvfp4.safetensors"),
+        "fp8-e4m3fn": (
+            "https://huggingface.co/rzgar/minimax_h3_fl2va_fp8_e4m3fn/resolve/main/"
+            "minimax_h3_fl2va_fp8_e4m3fn.safetensors"
+        ),
+    }
+    MODEL_LICENSE = "minimax-h3-community-license-agreement"
+
+    DEFAULT_LORA_TARGET = ["to_q", "to_k", "to_v", "to_out.0"]
+    DEFAULT_LYCORIS_TARGET = ["MiniMaxH3Attention", "FeedForward"]
+
+    TEXT_ENCODER_CONFIGURATION = {
+        "text_encoder": {
+            "name": "Qwen3-VL",
+            "tokenizer": Qwen2TokenizerFast,
+            "tokenizer_subfolder": "tokenizer",
+            "model": Qwen3VLForConditionalGeneration,
+            "subfolder": "text_encoder",
+        },
+    }
+    PROCESSOR_CLASS = Qwen3VLProcessor
+    PROCESSOR_SUBFOLDER = "processor"
+
+    def __init__(self, config: dict, accelerator):
+        super().__init__(config, accelerator)
+        self.audio_vae = None
+        self.processor = None
+        self._warned_missing_audio = False
+
+    def supports_crepa_self_flow(self) -> bool:
+        return True
+
+    def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
+        return self._prepare_video_crepa_self_flow_batch(batch=batch, state=state)
+
+    @classmethod
+    def adjust_video_frames(cls, num_frames: int) -> int:
+        if num_frames < 1:
+            raise ValueError(f"`num_frames` must be positive, got {num_frames}.")
+        while num_frames % 17 != 5:
+            num_frames += 1
+        return num_frames
+
+    @classmethod
+    def max_swappable_blocks(cls, config=None) -> Optional[int]:
+        return 49
+
+    @classmethod
+    def get_acceleration_presets(cls) -> list[AccelerationPreset]:
+        base_config = {
+            "base_model_precision": "no_change",
+            "gradient_checkpointing": True,
+        }
+        return [
+            AccelerationPreset(
+                backend=AccelerationBackend.RAMTORCH,
+                level="balanced",
+                name="RamTorch - Balanced",
+                description="Streams roughly half of the H3 transformer blocks from CPU RAM.",
+                tab="basic",
+                tradeoff_vram="Substantial VRAM savings for the 33B transformer.",
+                tradeoff_speed="Increases training time from CPU-GPU transfers.",
+                tradeoff_notes="Requires high system RAM.",
+                requires_min_system_ram_gb=256,
+                config={
+                    **base_config,
+                    "ramtorch": True,
+                    "ramtorch_target_modules": ",".join(f"transformer_blocks.{idx}.*" for idx in range(25)),
+                },
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="light",
+                name="Block Swap - Light",
+                description="Swaps 12 of 50 transformer blocks between GPU and CPU.",
+                tab="basic",
+                tradeoff_vram="Reduces VRAM with moderate transfer overhead.",
+                tradeoff_speed="Increases training time from CPU-GPU transfers.",
+                tradeoff_notes="Requires high system RAM.",
+                requires_min_system_ram_gb=192,
+                config={**base_config, "musubi_blocks_to_swap": 12},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="balanced",
+                name="Block Swap - Balanced",
+                description="Swaps 25 of 50 transformer blocks between GPU and CPU.",
+                tab="basic",
+                tradeoff_vram="Large VRAM reduction with higher transfer overhead.",
+                tradeoff_speed="Increases training time from CPU-GPU transfers.",
+                tradeoff_notes="Requires high system RAM.",
+                requires_min_system_ram_gb=256,
+                config={**base_config, "musubi_blocks_to_swap": 25},
+            ),
+            AccelerationPreset(
+                backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
+                level="aggressive",
+                name="Block Swap - Aggressive",
+                description="Swaps 37 of 50 transformer blocks between GPU and CPU.",
+                tab="basic",
+                tradeoff_vram="Maximum block-swap VRAM reduction.",
+                tradeoff_speed="Largest transfer overhead.",
+                tradeoff_notes="Requires high system RAM.",
+                requires_min_system_ram_gb=256,
+                config={**base_config, "musubi_blocks_to_swap": 37},
+            ),
+            *get_deepspeed_presets(base_config),
+            *get_sdnq_presets(base_config),
+            *get_torchao_presets(base_config),
+            *get_quanto_presets(base_config),
+            *get_bitsandbytes_presets(base_config),
+        ]
+
+    def setup_model_flavour(self):
+        super().setup_model_flavour()
+        flavour = getattr(self.config, "model_flavour", None)
+        override_map = getattr(self, "TRANSFORMER_PATH_OVERRIDES", {})
+        if getattr(self.config, "pretrained_transformer_model_name_or_path", None) is None and flavour in override_map:
+            self.config.pretrained_transformer_model_name_or_path = override_map[flavour]
+            self.config.pretrained_transformer_subfolder = None
+        if flavour == "ref2va":
+            self.config.pretrained_transformer_subfolder = "transformer_ref"
+            self.PIPELINE_CLASSES = {
+                PipelineTypes.TEXT2IMG: MiniMaxH3Ref2VAPipeline,
+                PipelineTypes.IMG2VIDEO: MiniMaxH3Ref2VAPipeline,
+                PipelineTypes.IMG2IMG: MiniMaxH3Ref2VAPipeline,
+            }
+        if getattr(self.config, "flow_schedule_shift", None) is None:
+            self.config.flow_schedule_shift = 12.0
+        if getattr(self.config, "audio_flow_schedule_shift", None) is None:
+            self.config.audio_flow_schedule_shift = 3.0
+
+    def _model_config_path(self):
+        model_path = getattr(self.config, "pretrained_model_name_or_path", None)
+        transformer_path = getattr(self.config, "pretrained_transformer_model_name_or_path", None)
+        if _is_single_file_path(model_path) or _is_single_file_path(transformer_path):
+            return MINIMAX_H3_BASE_REPO
+        return super()._model_config_path()
+
+    def setup_training_noise_schedule(self):
+        shift = float(getattr(self.config, "flow_schedule_shift", 12.0) or 12.0)
+        self.noise_schedule = fix_flow_match_euler_schedule_bounds(
+            FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=shift)
+        )
+        self.audio_noise_schedule = MiniMaxH3Scheduler(
+            shift=float(getattr(self.config, "audio_flow_schedule_shift", 3.0) or 3.0)
+        )
+        return self.config, self.noise_schedule
+
+    def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        sigmas, _timesteps = super().sample_flow_sigmas(batch=batch, state=state)
+        return sigmas, 1.0 - sigmas
+
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        args = super().pretrained_load_args(pretrained_load_args)
+        return apply_musubi_pretrained_defaults(self.config, args)
+
+    def _resolve_component_path(self, explicit_path: str | None = None) -> str:
+        path = explicit_path or self.config.pretrained_model_name_or_path
+        if _is_single_file_path(path):
+            return self._model_config_path()
+        return path
+
+    def _resolve_vae_dtype(self):
+        vae_dtype = getattr(self.config, "vae_dtype", None)
+        if vae_dtype == "bf16":
+            return torch.bfloat16
+        if vae_dtype == "fp16":
+            return torch.float16
+        if vae_dtype == "fp32":
+            return torch.float32
+        return self.config.weight_dtype
+
+    def load_vae(self, move_to_device: bool = True):
+        if self.vae is None:
+            vae_path = self._resolve_component_path(getattr(self.config, "pretrained_vae_model_name_or_path", None))
+            self.vae = self.AUTOENCODER_CLASS.from_pretrained(
+                vae_path,
+                subfolder="vae",
+                torch_dtype=self._resolve_vae_dtype(),
+                revision=self.config.revision,
+                variant=self.config.variant,
+                use_safetensors=True,
+            )
+            self.vae.requires_grad_(False)
+        if getattr(self.config, "vae_enable_tiling", False):
+            self.vae.enable_tiling()
+        elif hasattr(self.vae, "disable_tiling"):
+            self.vae.disable_tiling()
+        if getattr(self.config, "vae_enable_slicing", False):
+            self.vae.enable_slicing()
+        elif hasattr(self.vae, "disable_slicing"):
+            self.vae.disable_slicing()
+        if getattr(self.config, "vae_enable_temporal_roll", False) and hasattr(self.vae, "enable_temporal_chunking"):
+            self.vae.enable_temporal_chunking()
+        if move_to_device and self.vae.device != self.accelerator.device:
+            self.vae.to(self.accelerator.device, dtype=self._resolve_vae_dtype())
+        self.post_vae_load_setup()
+        self._load_audio_vae(move_to_device=move_to_device)
+
+    def _load_audio_vae(self, move_to_device: bool = True):
+        if self.audio_vae is not None:
+            return
+        audio_vae_path = self._resolve_component_path(getattr(self.config, "pretrained_audio_vae_model_name_or_path", None))
+        self.audio_vae = self.AUDIO_AUTOENCODER_CLASS.from_pretrained(
+            audio_vae_path,
+            subfolder="audio_vae",
+            torch_dtype=self._resolve_vae_dtype(),
+            revision=self.config.revision,
+            variant=self.config.variant,
+            use_safetensors=True,
+        )
+        self.audio_vae.requires_grad_(False)
+        if move_to_device:
+            self.audio_vae.to(self.accelerator.device, dtype=self._resolve_vae_dtype())
+
+    def _load_processor_for_pipeline(self):
+        if self.processor is not None:
+            return self.processor
+        processor_path = self._resolve_qwen_processor_path(self._model_config_path())
+        processor_subfolder = self._resolve_qwen_processor_subfolder(self.PROCESSOR_SUBFOLDER)
+        processor_kwargs = {
+            "pretrained_model_name_or_path": processor_path,
+            "subfolder": processor_subfolder,
+            "revision": getattr(self.config, "revision", None),
+        }
+        if getattr(self.config, "local_files_only", False):
+            processor_kwargs["local_files_only"] = True
+        self.processor = self.PROCESSOR_CLASS.from_pretrained(**processor_kwargs)
+        return self.processor
+
+    def load_text_tokenizer(self):
+        super().load_text_tokenizer()
+        if self.processor is None:
+            self.processor = self._load_processor_for_pipeline()
+
+    def _text_encoder_components(self):
+        if self.text_encoders is None or len(self.text_encoders) == 0:
+            self.load_text_encoder(move_to_device=True)
+        if self.tokenizers is None or len(self.tokenizers) == 0:
+            self.load_text_tokenizer()
+        processor = self._load_processor_for_pipeline()
+        transformer = (
+            self.unwrap_model(self.model) if self.model is not None else SimpleNamespace(dtype=self.config.weight_dtype)
+        )
+        return SimpleNamespace(
+            text_encoder=self.text_encoders[0],
+            tokenizer=self.tokenizers[0],
+            processor=processor,
+            transformer=transformer,
+            transformer_ref=transformer,
+            _execution_device=self.accelerator.device,
+        )
+
+    def text_embed_cache_key(self) -> TextEmbedCacheKey:
+        return TextEmbedCacheKey.DATASET_AND_FILENAME
+
+    def requires_text_embed_image_context(self) -> bool:
+        return True
+
+    def should_precompute_dropout_caption(self) -> bool:
+        return False
+
+    def use_text_cache_dropout_sentinel(self) -> bool:
+        return False
+
+    def uses_image_context_dropout_caption_cache(self) -> bool:
+        return True
+
+    def text_embed_cache_key_value(self, *, prompt: str, default_key: str, metadata: dict) -> str:
+        del metadata
+        if prompt == "":
+            return f"{default_key}:__caption_dropout__"
+        return default_key
+
+    def text_embed_cache_metadata_for_filepath(
+        self,
+        *,
+        init_backend: dict,
+        image_path: str,
+        prompt: str,
+        data_backend_id: str | None,
+        dataset_relative_path: str | None,
+    ) -> dict:
+        del init_backend, image_path, prompt
+        conditioning_datasets = StateTracker.get_conditioning_datasets(data_backend_id)
+        if not conditioning_datasets:
+            return {}
+
+        image_paths = []
+        data_backend_ids = []
+        for conditioning_backend in conditioning_datasets:
+            conditioning_backend_id = conditioning_backend.get("id")
+            conditioning_config = conditioning_backend.get("config", {})
+            conditioning_root = conditioning_config.get("instance_data_dir")
+            if not conditioning_backend_id or not conditioning_root or not dataset_relative_path:
+                continue
+            conditioning_path = os.path.join(conditioning_root, dataset_relative_path)
+            if (conditioning_config.get("conditioning_config") or {}).get("type") == "i2v_first_frame":
+                conditioning_path = os.path.splitext(conditioning_path)[0] + ".png"
+            image_paths.append(conditioning_path)
+            data_backend_ids.append(conditioning_backend_id)
+
+        if not image_paths:
+            return {}
+        return {
+            "image_paths": image_paths,
+            "data_backend_ids": data_backend_ids,
+            "image_path": image_paths[0],
+            "data_backend_id": data_backend_ids[0],
+        }
+
+    def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
+        encoded = []
+        components = self._text_encoder_components()
+        prompt_contexts = getattr(self, "_current_prompt_contexts", None)
+        if self.requires_text_embed_image_context():
+            if not prompt_contexts or len(prompt_contexts) != len(prompts):
+                raise ValueError("MiniMax-H3 FL2VA text encoding requires image context for each caption.")
+            prompt_images = self._prepare_prompt_image_batch(prompt_contexts, len(prompts))
+        else:
+            prompt_images = [None] * len(prompts)
+        for prompt, images in zip(prompts, prompt_images):
+            if prompt == "":
+                prompt = " "
+            prompt_embeds, text_token_tags = MiniMaxH3TextEncoderStep.encode_prompt(
+                components,
+                prompt,
+                images=images,
+                device=self.accelerator.device,
+                dtype=self.config.weight_dtype,
+            )
+            encoded.append({"prompt_embeds": prompt_embeds, "text_token_tags": text_token_tags})
+        return self.collate_prompt_embeds(encoded)
+
+    def _prepare_prompt_image_batch(self, prompt_contexts: list[dict], batch_size: int) -> list[list[Image.Image]]:
+        if not prompt_contexts or len(prompt_contexts) != batch_size:
+            raise ValueError("MiniMax-H3 FL2VA text encoding requires one image context per caption.")
+        image_batch = []
+        for index, context in enumerate(prompt_contexts):
+            image = self._extract_prompt_image_from_context(context)
+            if image is None:
+                raise ValueError(f"Failed to resolve MiniMax-H3 text conditioning image for caption index {index}.")
+            image_batch.append([image])
+        return image_batch
+
+    def _extract_prompt_image_from_context(self, context: dict) -> Image.Image | None:
+        if not isinstance(context, dict):
+            return None
+        direct_image = context.get("conditioning_pixel_values")
+        if direct_image is not None:
+            return self._coerce_prompt_image(direct_image)
+        image_paths = context.get("image_paths")
+        data_backend_ids = context.get("data_backend_ids")
+        if isinstance(image_paths, (list, tuple)) and image_paths:
+            image_path = image_paths[0]
+            if isinstance(data_backend_ids, (list, tuple)) and data_backend_ids:
+                data_backend_id = data_backend_ids[0]
+            else:
+                data_backend_id = context.get("data_backend_id")
+        else:
+            image_path = context.get("image_path")
+            data_backend_id = context.get("data_backend_id")
+        if not image_path or not data_backend_id:
+            return None
+        backend_entry = StateTracker.get_data_backend(data_backend_id)
+        if backend_entry is None:
+            return None
+        data_backend = backend_entry.get("data_backend")
+        if data_backend is None:
+            return None
+        return self._coerce_prompt_image(data_backend.read_image(image_path))
+
+    @staticmethod
+    def _coerce_prompt_image(image) -> Image.Image | None:
+        if isinstance(image, Image.Image):
+            return image.convert("RGB")
+        if isinstance(image, np.ndarray):
+            array = image[0] if image.ndim == 4 else image
+            if array.ndim == 3 and array.shape[0] in (1, 3):
+                array = np.transpose(array, (1, 2, 0))
+            if array.ndim == 3 and array.shape[2] == 4:
+                array = array[:, :, :3]
+            if array.dtype != np.uint8:
+                array = array.astype(np.float32)
+                if array.max() <= 1.0 and array.min() >= 0.0:
+                    array = array * 255.0
+                elif array.min() < 0.0:
+                    array = (array + 1.0) * 127.5
+                array = np.clip(array, 0.0, 255.0).round().astype(np.uint8)
+            return Image.fromarray(array).convert("RGB")
+        if torch.is_tensor(image):
+            tensor = image.detach().float().cpu()
+            if tensor.dim() == 4 and tensor.shape[0] == 1:
+                tensor = tensor.squeeze(0)
+            if tensor.dim() != 3:
+                return None
+            if tensor.shape[0] in (1, 3):
+                tensor = tensor.permute(1, 2, 0)
+            if tensor.shape[-1] == 4:
+                tensor = tensor[..., :3]
+            if tensor.max().item() <= 1.0 and tensor.min().item() >= 0.0:
+                tensor = tensor * 255.0
+            elif tensor.min().item() < 0.0:
+                tensor = (tensor + 1.0) * 127.5
+            array = tensor.clamp(0.0, 255.0).round().to(torch.uint8).numpy()
+            if array.shape[-1] == 1:
+                array = np.repeat(array, 3, axis=-1)
+            return Image.fromarray(array).convert("RGB")
+        return None
+
+    def convert_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
+        return {
+            "prompt_embeds": text_embedding["prompt_embeds"],
+            "text_token_tags": text_embedding.get("text_token_tags"),
+        }
+
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
+        guidance_scale = float(getattr(self.config, "validation_guidance_real", 1.0) or 1.0)
+        if guidance_scale <= 1.0:
+            return {}
+        result = {
+            "negative_prompt_embeds": text_embedding["prompt_embeds"],
+            "negative_text_token_tags": text_embedding.get("text_token_tags"),
+            "guidance_scale_real": guidance_scale,
+        }
+        no_cfg_until = getattr(self.config, "validation_no_cfg_until_timestep", None)
+        if isinstance(no_cfg_until, int):
+            result["no_cfg_until_timestep"] = no_cfg_until
+        return result
+
+    def collate_prompt_embeds(self, text_encoder_output: list[dict]) -> dict:
+        if not text_encoder_output:
+            return {}
+        embeds = [item["prompt_embeds"] for item in text_encoder_output]
+        tags = [item["text_token_tags"] for item in text_encoder_output]
+        max_seq_len = max(embed.shape[-2] for embed in embeds)
+        padded_embeds = []
+        padded_tags = []
+        for embed, tag in zip(embeds, tags):
+            if embed.dim() == 2:
+                embed = embed.unsqueeze(0)
+            if tag.dim() == 2 and tag.shape[0] == 1:
+                tag = tag.squeeze(0)
+            if tag.dim() != 1:
+                raise ValueError(f"MiniMax-H3 text_token_tags must be 1-D per sample, got {tuple(tag.shape)}.")
+            if embed.shape[1] != tag.shape[0]:
+                raise ValueError(
+                    f"MiniMax-H3 prompt embeds length {embed.shape[1]} does not match tag length {tag.shape[0]}."
+                )
+            if embed.shape[1] < max_seq_len:
+                pad_len = max_seq_len - embed.shape[1]
+                embed = torch.cat([embed, embed.new_zeros(embed.shape[0], pad_len, embed.shape[2])], dim=1)
+                tag = torch.cat([tag, tag.new_full((pad_len,), -1)], dim=0)
+            padded_embeds.append(embed)
+            padded_tags.append(tag.unsqueeze(0))
+        return {
+            "prompt_embeds": torch.cat(padded_embeds, dim=0),
+            "text_token_tags": torch.cat(padded_tags, dim=0),
+        }
+
+    def pre_vae_encode_transform_sample(self, sample):
+        if torch.is_tensor(sample) and sample.ndim == 5 and sample.shape[1] == 3:
+            mean = torch.tensor(MINIMAX_H3_PIXEL_MEAN, device=sample.device, dtype=sample.dtype).view(1, 3, 1, 1, 1)
+            std = torch.tensor(MINIMAX_H3_PIXEL_STD, device=sample.device, dtype=sample.dtype).view(1, 3, 1, 1, 1)
+            sample = (sample + 1.0) * 0.5
+            return (sample - mean) / std
+        return sample
+
+    @staticmethod
+    def _cache_batch_is_i2v_first_frame(metadata_entries: Optional[list]) -> bool:
+        if not metadata_entries:
+            return False
+        matches = [
+            isinstance(entry, dict)
+            and isinstance(entry.get("metadata"), dict)
+            and bool(entry["metadata"].get("training_sample_path"))
+            for entry in metadata_entries
+        ]
+        if any(matches) and not all(matches):
+            raise ValueError(
+                "MiniMax-H3 first-frame conditioning VAE cache batches cannot mix generated keyframes and videos."
+            )
+        return all(matches)
+
+    def encode_cache_batch(self, vae, samples, metadata_entries: Optional[list] = None):
+        if isinstance(vae, AutoencoderKLMiniMaxH3):
+            if self._cache_batch_is_i2v_first_frame(metadata_entries):
+                moments = vae._encode_clip(samples)
+                posterior = DiagonalGaussianDistribution(moments)
+                return posterior.mode()
+            return vae.encode(samples, return_dict=True).latent_dist.mode()
+        if isinstance(vae, AutoencoderKLMiniMaxH3Audio):
+            if samples.ndim != 3 or samples.shape[1] != MINIMAX_H3_AUDIO_CHANNELS:
+                raise ValueError(
+                    "MiniMax-H3 audio VAE caching expects stereo waveform tensors with shape "
+                    f"`[batch, 2, samples]`, got {tuple(samples.shape)}."
+                )
+            batch_size, channels, sample_count = samples.shape
+            flattened = samples.reshape(batch_size * channels, 1, sample_count)
+            output = vae.encode(flattened, return_dict=True)
+            latents = output.latent_dist.mode()
+            return latents.reshape(batch_size, channels, latents.shape[1], latents.shape[2])
+        return super().encode_cache_batch(vae, samples, metadata_entries=metadata_entries)
+
+    def scale_vae_latents_for_cache(self, latents, vae):
+        if not torch.is_tensor(latents):
+            return latents
+        if isinstance(vae, AutoencoderKLMiniMaxH3):
+            mean = torch.tensor(vae.config.latents_mean, device=latents.device, dtype=latents.dtype).view(1, -1, 1, 1, 1)
+            std = torch.tensor(vae.config.latents_std, device=latents.device, dtype=latents.dtype).view(1, -1, 1, 1, 1)
+            return (latents - mean) / std
+        if isinstance(vae, AutoencoderKLMiniMaxH3Audio):
+            mean = torch.tensor(vae.config.latents_mean, device=latents.device, dtype=latents.dtype).view(1, 1, -1, 1)
+            std = torch.tensor(vae.config.latents_std, device=latents.device, dtype=latents.dtype).view(1, 1, -1, 1)
+            return (latents - mean) / std
+        return latents
+
+    def supports_audio_inputs(self) -> bool:
+        return True
+
+    def uses_audio_latents(self) -> bool:
+        return True
+
+    def supports_conditioning_dataset(self) -> bool:
+        return True
+
+    def _is_i2v_like_flavour(self) -> bool:
+        return True
+
+    def requires_conditioning_dataset(self) -> bool:
+        return False
+
+    def requires_conditioning_latents(self) -> bool:
+        return True
+
+    def should_precompute_validation_negative_prompt(self) -> bool:
+        return float(getattr(self.config, "validation_guidance_real", 1.0) or 1.0) > 1.0
+
+    def update_pipeline_call_kwargs(self, pipeline_kwargs):
+        guidance_scale_real = pipeline_kwargs.pop("guidance_scale_real", None)
+        if guidance_scale_real is None:
+            guidance_scale_real = getattr(self.config, "validation_guidance_real", None)
+        if guidance_scale_real is not None and float(guidance_scale_real) > 1.0:
+            pipeline_kwargs["guidance_scale"] = float(guidance_scale_real)
+            if isinstance(getattr(self.config, "validation_no_cfg_until_timestep", None), int):
+                pipeline_kwargs.setdefault("no_cfg_until_timestep", self.config.validation_no_cfg_until_timestep)
+        return pipeline_kwargs
+
+    def _extract_sigmas_1d(self, sigmas: torch.Tensor) -> torch.Tensor:
+        if sigmas.ndim == 1:
+            return sigmas
+        return sigmas.view(sigmas.shape[0], -1)[:, 0]
+
+    @staticmethod
+    def _shift_sigmas_between_schedules(
+        sigmas: torch.Tensor,
+        from_shift: float,
+        to_shift: float,
+    ) -> torch.Tensor:
+        base = sigmas / (from_shift + sigmas * (1.0 - from_shift))
+        return to_shift * base / (1.0 + (to_shift - 1.0) * base)
+
+    @staticmethod
+    def _video_frames_from_latent_frames(num_latent_frames: int) -> int:
+        if num_latent_frames < 2 or (num_latent_frames - 2) % 5:
+            raise ValueError("MiniMax-H3 video latent frames must be of the form `5 * n + 2`, " f"got {num_latent_frames}.")
+        return ((num_latent_frames - 2) // 5) * 17 + 5
+
+    def _expected_audio_latents(self, video_latents: torch.Tensor) -> int:
+        video_frames = self._video_frames_from_latent_frames(int(video_latents.shape[2]))
+        return audio_latent_num_frames(video_frames)
+
+    def _build_empty_audio_latents(self, video_latents: torch.Tensor, device: torch.device, dtype: torch.dtype):
+        audio_len = self._expected_audio_latents(video_latents)
+        audio_channels = self._audio_latent_channels()
+        return torch.zeros(
+            video_latents.shape[0],
+            MINIMAX_H3_AUDIO_CHANNELS,
+            audio_channels,
+            audio_len,
+            device=device,
+            dtype=dtype,
+        )
+
+    def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
+        batch = super().prepare_batch_conditions(batch=batch, state=state)
+        target_device = self.accelerator.device
+        target_dtype = self.config.weight_dtype
+
+        audio_latents = batch.get("audio_latent_batch")
+        audio_mask = batch.get("audio_latent_mask")
+        if isinstance(audio_latents, dict):
+            audio_latents = audio_latents.get("latents")
+        if audio_latents is None:
+            audio_latents = self._build_empty_audio_latents(batch["latents"], target_device, torch.float32)
+            audio_mask = torch.zeros(audio_latents.shape[0], device=target_device, dtype=torch.float32)
+            if not self._warned_missing_audio:
+                logger.warning("MiniMax-H3 received no cached audio latents; using zero audio rows and masking audio loss.")
+                self._warned_missing_audio = True
+        elif not torch.is_tensor(audio_latents):
+            raise ValueError(f"Expected MiniMax-H3 audio latents to be a tensor, got {type(audio_latents)}.")
+        else:
+            audio_latents = audio_latents.to(device=target_device, dtype=torch.float32)
+
+        audio_channels = self._audio_latent_channels()
+        if audio_latents.ndim == 4 and audio_latents.shape[1] == MINIMAX_H3_AUDIO_CHANNELS:
+            if audio_latents.shape[2] != audio_channels and audio_latents.shape[3] == audio_channels:
+                audio_latents = audio_latents.transpose(2, 3).contiguous()
+            if audio_latents.shape[2] != audio_channels:
+                raise ValueError(
+                    f"MiniMax-H3 audio latents must have shape `[batch, 2, {audio_channels}, audio_latents]`, "
+                    f"got {tuple(audio_latents.shape)}."
+                )
+        else:
+            raise ValueError(
+                f"MiniMax-H3 audio latents must have shape `[batch, 2, {audio_channels}, audio_latents]`, "
+                f"got {tuple(audio_latents.shape)}."
+            )
+        expected_audio_latents = self._expected_audio_latents(batch["latents"])
+        if audio_latents.shape[-1] != expected_audio_latents:
+            raise ValueError(
+                f"MiniMax-H3 audio latent length {audio_latents.shape[-1]} does not match the video duration "
+                f"({expected_audio_latents}). Rebuild the audio VAE cache for this dataset."
+            )
+
+        if audio_mask is None:
+            audio_mask = torch.ones(audio_latents.shape[0], device=target_device, dtype=torch.float32)
+        else:
+            audio_mask = audio_mask.to(device=target_device, dtype=torch.float32)
+
+        audio_noise = torch.randn_like(audio_latents)
+        audio_input_noise = audio_noise
+        if self.config.input_perturbation != 0 and (
+            not getattr(self.config, "input_perturbation_steps", None)
+            or state.get("global_step", 0) < self.config.input_perturbation_steps
+        ):
+            input_perturbation = self.config.input_perturbation
+            if getattr(self.config, "input_perturbation_steps", None):
+                input_perturbation *= 1.0 - (state.get("global_step", 0) / self.config.input_perturbation_steps)
+            audio_input_noise = audio_noise + input_perturbation * torch.randn_like(audio_latents)
+
+        audio_sigmas = batch.get("audio_sigmas")
+        if audio_sigmas is None:
+            sigma_1d = self._extract_sigmas_1d(batch["sigmas"]).to(device=target_device, dtype=torch.float32)
+            video_shift = float(getattr(self.config, "flow_schedule_shift", 12.0) or 12.0)
+            audio_shift = float(getattr(self.config, "audio_flow_schedule_shift", 3.0) or 3.0)
+            audio_sigma_1d = self._shift_sigmas_between_schedules(sigma_1d, video_shift, audio_shift)
+            audio_sigmas = audio_sigma_1d.view(audio_sigma_1d.shape[0], 1, 1, 1)
+        else:
+            audio_sigmas = audio_sigmas.to(device=target_device, dtype=torch.float32)
+            if audio_sigmas.ndim == 1:
+                audio_sigmas = audio_sigmas.view(audio_sigmas.shape[0], 1, 1, 1)
+        audio_noisy = (1 - audio_sigmas) * audio_latents + audio_sigmas * audio_input_noise
+
+        batch["audio_latents"] = audio_latents
+        batch["audio_latent_mask"] = audio_mask
+        batch["audio_noise"] = audio_noise
+        batch["audio_sigmas"] = audio_sigmas
+        batch["audio_timesteps"] = (1.0 - audio_sigmas.view(audio_sigmas.shape[0], -1)[:, 0]).to(
+            device=target_device, dtype=torch.float32
+        )
+        batch["audio_noisy_latents"] = audio_noisy.to(device=target_device, dtype=target_dtype)
+        return batch
+
+    def _resolve_text_token_tags(self, prepared_batch: dict, text_seq_len: int, device: torch.device) -> torch.Tensor:
+        tags = prepared_batch.get("text_token_tags")
+        if tags is None:
+            text_output = prepared_batch.get("text_encoder_output")
+            if isinstance(text_output, dict):
+                tags = text_output.get("text_token_tags")
+        if tags is None:
+            return torch.full((text_seq_len,), MINIMAX_H3_TEXT_TAG, dtype=torch.long, device=device)
+        tags = tags.to(device=device, dtype=torch.long)
+        if tags.ndim == 1:
+            if tags.shape[0] != text_seq_len:
+                raise ValueError(f"MiniMax-H3 text_token_tags length {tags.shape[0]} != prompt length {text_seq_len}.")
+            return tags
+        if tags.ndim == 2:
+            if tags.shape[1] != text_seq_len:
+                raise ValueError(f"MiniMax-H3 text_token_tags length {tags.shape[1]} != prompt length {text_seq_len}.")
+            if not torch.all(tags == tags[0:1]):
+                raise ValueError(
+                    "MiniMax-H3 batched training currently requires identical packed text token layouts. "
+                    "Use train_batch_size=1 or group prompts with identical H3 token/tag lengths."
+                )
+            return tags[0]
+        raise ValueError(f"MiniMax-H3 text_token_tags must be 1-D or 2-D, got {tuple(tags.shape)}.")
+
+    def _audio_latent_channels(self) -> int:
+        transformer = getattr(self, "model", None)
+        if transformer is not None:
+            transformer = self.unwrap_model(transformer)
+            channels = getattr(getattr(transformer, "config", None), "audio_in_channels", None)
+            if channels is not None:
+                return int(channels)
+        audio_vae = getattr(self, "audio_vae", None)
+        channels = getattr(getattr(audio_vae, "config", None), "latent_channels", None)
+        return int(channels or 32)
+
+    def _pack_audio_latents(self, audio_latents: torch.Tensor) -> torch.Tensor:
+        audio_channels = self._audio_latent_channels()
+        if (
+            audio_latents.ndim != 4
+            or audio_latents.shape[1] != MINIMAX_H3_AUDIO_CHANNELS
+            or audio_latents.shape[2] != audio_channels
+        ):
+            raise ValueError(
+                f"MiniMax-H3 audio latents must have shape `[batch, 2, {audio_channels}, audio_latents]`, "
+                f"got {tuple(audio_latents.shape)}."
+            )
+        return audio_latents.permute(0, 1, 3, 2).reshape(audio_latents.shape[0], -1, audio_latents.shape[2])
+
+    def _unpack_audio_prediction(self, audio_rows: torch.Tensor, num_audio_latents: int) -> torch.Tensor:
+        return audio_rows.reshape(
+            audio_rows.shape[0], MINIMAX_H3_AUDIO_CHANNELS, num_audio_latents, audio_rows.shape[-1]
+        ).permute(0, 1, 3, 2)
+
+    def _scalar_timestep(self, value: torch.Tensor, name: str) -> float:
+        if not torch.is_tensor(value):
+            return float(value)
+        flat = value.detach().float().view(value.shape[0], -1)[:, 0] if value.ndim > 1 else value.detach().float().flatten()
+        if flat.numel() > 1 and not torch.allclose(flat, flat[0].expand_as(flat)):
+            raise ValueError(
+                f"MiniMax-H3 packed training currently requires one shared {name} timestep per batch. "
+                "Use train_batch_size=1 or disable segmented timestep sampling."
+            )
+        return float(flat[0].item())
+
+    def model_predict(self, prepared_batch):
+        noisy_latents = prepared_batch["noisy_latents"].to(self.accelerator.device, dtype=self.config.weight_dtype)
+        audio_noisy = prepared_batch["audio_noisy_latents"].to(self.accelerator.device, dtype=self.config.weight_dtype)
+        encoder_hidden_states = prepared_batch["encoder_hidden_states"].to(
+            self.accelerator.device, dtype=self.config.weight_dtype
+        )
+
+        if noisy_latents.ndim != 5 or noisy_latents.shape[1] != self.LATENT_CHANNEL_COUNT:
+            raise ValueError(
+                "MiniMax-H3 requires normalized 24-channel video latents shaped `[batch, 24, frames, height, width]`, "
+                f"got {tuple(noisy_latents.shape)}."
+            )
+
+        transformer = self.unwrap_model(self.model)
+        patch_size = tuple(getattr(transformer.config, "patch_size", (1, 2, 2)))
+        patch_product = int(patch_size[0] * patch_size[1] * patch_size[2])
+        batch_size, channels, latent_frames, latent_height, latent_width = noisy_latents.shape
+        text_token_tags = self._resolve_text_token_tags(
+            prepared_batch, encoder_hidden_states.shape[1], self.accelerator.device
+        )
+        packed_target_video = patchify_video_latents(noisy_latents, patch_size).view(
+            batch_size, -1, channels * patch_product
+        )
+        condition_latents = prepared_batch.get("conditioning_latents")
+        keyframe_anchors: tuple[str, ...] = ()
+        force_keep_mask = None
+        if condition_latents is not None:
+            if isinstance(condition_latents, list):
+                raise ValueError("MiniMax-H3 FL2VA training expects one conditioning latent tensor, not a list.")
+            condition_latents = condition_latents.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+            if condition_latents.ndim != 5 or condition_latents.shape[1] != channels or condition_latents.shape[2] != 1:
+                raise ValueError(
+                    "MiniMax-H3 FL2VA currently supports one encoded keyframe shaped `[batch, 24, 1, h, w]`, "
+                    f"got {tuple(condition_latents.shape)}."
+                )
+            if condition_latents.shape[3:] != noisy_latents.shape[3:]:
+                raise ValueError(
+                    "MiniMax-H3 conditioning latents must match target latent height/width. "
+                    f"Got {tuple(condition_latents.shape[3:])} vs {tuple(noisy_latents.shape[3:])}."
+                )
+            condition_noise = prepared_batch.get("h3_conditioning_noise")
+            if condition_noise is None:
+                condition_noise = torch.randn_like(condition_latents)
+            else:
+                condition_noise = condition_noise.to(device=condition_latents.device, dtype=condition_latents.dtype)
+            condition_noisy = (
+                MINIMAX_H3_KEYFRAME_NOISE_AUG * condition_latents + (1.0 - MINIMAX_H3_KEYFRAME_NOISE_AUG) * condition_noise
+            )
+            packed_condition_video = patchify_video_latents(condition_noisy, patch_size).view(
+                batch_size, -1, channels * patch_product
+            )
+            packed_video = torch.cat([packed_condition_video, packed_target_video], dim=1)
+            keyframe_anchors = ("first",)
+        else:
+            packed_video = packed_target_video
+
+        num_audio_latents = audio_noisy.shape[-1]
+        packed_audio = self._pack_audio_latents(audio_noisy)
+        layout = build_packed_sequence(
+            text_token_tags=text_token_tags.detach().cpu(),
+            num_latent_frames=latent_frames,
+            latent_height=latent_height,
+            latent_width=latent_width,
+            num_audio_latents=num_audio_latents,
+            patch_size=patch_size,
+            keyframe_anchors=keyframe_anchors,
+        )
+        video_timestep = self._scalar_timestep(prepared_batch["timesteps"], "video")
+        audio_timestep = self._scalar_timestep(prepared_batch.get("audio_timesteps", prepared_batch["timesteps"]), "audio")
+        timestep, timestep_indices = build_row_timesteps(
+            layout,
+            video_timestep=video_timestep,
+            audio_timestep=audio_timestep,
+            condition_video_timestep=MINIMAX_H3_KEYFRAME_NOISE_AUG,
+            condition_audio_timestep=MINIMAX_H3_KEYFRAME_NOISE_AUG,
+        )
+
+        token_tags = layout.token_tags.to(self.accelerator.device)
+        position_ids = layout.position_ids.to(self.accelerator.device)
+        video_indices = layout.video_indices.to(self.accelerator.device)
+        audio_indices = layout.audio_indices.to(self.accelerator.device)
+        text_indices = layout.text_indices.to(self.accelerator.device)
+        timestep = timestep.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+        timestep_indices = timestep_indices.to(self.accelerator.device)
+        if layout.num_condition_video_rows:
+            force_keep_mask = torch.zeros(layout.sequence_length, device=self.accelerator.device, dtype=torch.bool)
+            force_keep_mask[video_indices[: layout.num_condition_video_rows]] = True
+
+        hidden_states_buffer = self._new_hidden_state_buffer()
+        crepa = getattr(self, "crepa_regularizer", None)
+        capture_block_index = prepared_batch.get(
+            "crepa_capture_block_index",
+            getattr(crepa, "block_index", None),
+        )
+        capture_hidden = bool(crepa and crepa.wants_hidden_states() and capture_block_index is not None)
+        video_hidden_shape = (
+            latent_frames // patch_size[0],
+            latent_height // patch_size[1],
+            latent_width // patch_size[2],
+        )
+
+        transformer_kwargs = {
+            "hidden_states": packed_video,
+            "audio_hidden_states": packed_audio,
+            "encoder_hidden_states": encoder_hidden_states,
+            "timestep": timestep,
+            "timestep_indices": timestep_indices,
+            "token_tags": token_tags,
+            "position_ids": position_ids,
+            "video_indices": video_indices,
+            "audio_indices": audio_indices,
+            "text_indices": text_indices,
+            "attention_kwargs": {},
+            "skip_layers": prepared_batch.get("skip_layers"),
+            "force_keep_mask": force_keep_mask,
+            "hidden_states_buffer": hidden_states_buffer,
+            "output_hidden_states": capture_hidden,
+            "hidden_state_layer": capture_block_index,
+            "video_hidden_shape": video_hidden_shape,
+            "num_condition_video_rows": layout.num_condition_video_rows,
+            "return_dict": True,
+        }
+        if getattr(self.config, "twinflow_enabled", False):
+            transformer_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
+        self._apply_flowmap_r_timestep_kwargs(transformer_kwargs, prepared_batch)
+        output = self.model(**transformer_kwargs)
+        video_rows = output.sample[:, layout.num_condition_video_rows :, :]
+        video_pred = unpatchify_video_tokens(
+            video_rows,
+            num_latent_frames=latent_frames,
+            latent_height=latent_height,
+            latent_width=latent_width,
+            channels=channels,
+            patch_size=patch_size,
+        )
+        audio_pred = self._unpack_audio_prediction(output.audio_sample, num_audio_latents)
+        return {
+            "model_prediction": video_pred,
+            "audio_prediction": audio_pred,
+            "crepa_hidden_states": output.crepa_hidden_states,
+            "hidden_states_buffer": hidden_states_buffer,
+        }
+
+    def get_prediction_target(self, prepared_batch: dict):
+        if prepared_batch.get("target") is not None:
+            return prepared_batch["target"]
+        return prepared_batch["latents"] - prepared_batch["noise"]
+
+    def loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        total_loss, _, _, _ = self._compute_av_loss(
+            prepared_batch=prepared_batch,
+            model_output=model_output,
+            apply_conditioning_mask=apply_conditioning_mask,
+        )
+        return total_loss
+
+    def loss_with_logs(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        total_loss, video_loss, audio_loss, audio_weight = self._compute_av_loss(
+            prepared_batch=prepared_batch,
+            model_output=model_output,
+            apply_conditioning_mask=apply_conditioning_mask,
+        )
+        logs = {"video_loss": video_loss.detach().item()}
+        if audio_loss is not None:
+            logs["audio_loss"] = audio_loss.detach().item()
+            if audio_weight != 1.0:
+                logs["audio_loss_weighted"] = (audio_loss * audio_weight).detach().item()
+        return total_loss, logs
+
+    def _compute_av_loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        video_loss = super().loss(prepared_batch, model_output, apply_conditioning_mask=apply_conditioning_mask)
+        if os.environ.get("SIMPLETUNER_MINIMAXH3_LOSS_DEBUG", "0") == "1":
+            video_pred = model_output.get("model_prediction")
+            latents = prepared_batch.get("latents")
+            noise = prepared_batch.get("noise")
+            if torch.is_tensor(video_pred) and torch.is_tensor(latents) and torch.is_tensor(noise):
+                with torch.no_grad():
+                    current_target = latents - noise
+                    flipped_target = noise - latents
+                    current_loss = (video_pred.detach().float() - current_target.float()).pow(2).mean()
+                    flipped_loss = (video_pred.detach().float() - flipped_target.float()).pow(2).mean()
+                    zero_loss = current_target.float().pow(2).mean()
+                    pred_flat = video_pred.detach().float().flatten()
+                    target_flat = current_target.float().flatten()
+                    pred_target_dot = torch.dot(pred_flat, target_flat)
+                    cosine = pred_target_dot / (pred_flat.norm() * target_flat.norm()).clamp_min(1e-12)
+                    sigmas = prepared_batch.get("sigmas")
+                    timesteps = prepared_batch.get("timesteps")
+                    sigma_mean = sigmas.detach().float().mean().item() if torch.is_tensor(sigmas) else float("nan")
+                    timestep_mean = timesteps.detach().float().mean().item() if torch.is_tensor(timesteps) else float("nan")
+                    conditioning_latents = prepared_batch.get("conditioning_latents")
+                    conditioning_shape = "none"
+                    conditioning_mean = float("nan")
+                    conditioning_std = float("nan")
+                    if isinstance(conditioning_latents, list):
+                        conditioning_shape = f"list[{len(conditioning_latents)}]"
+                        first_conditioning = conditioning_latents[0] if conditioning_latents else None
+                        if torch.is_tensor(first_conditioning):
+                            conditioning_mean = first_conditioning.detach().float().mean().item()
+                            conditioning_std = first_conditioning.detach().float().std().item()
+                    elif torch.is_tensor(conditioning_latents):
+                        conditioning_shape = str(tuple(conditioning_latents.shape))
+                        conditioning_mean = conditioning_latents.detach().float().mean().item()
+                        conditioning_std = conditioning_latents.detach().float().std().item()
+                    logger.info(
+                        "MiniMax-H3 loss debug: current_target_mse=%.6f flipped_target_mse=%.6f "
+                        "zero_target_mse=%.6f pred_target_cosine=%.6f pred_target_dot=%.6f "
+                        "pred_mean=%.6f pred_std=%.6f target_mean=%.6f target_std=%.6f "
+                        "latents_mean=%.6f latents_std=%.6f noise_std=%.6f sigma_mean=%.6f "
+                        "timestep_mean=%.6f conditioning_shape=%s conditioning_mean=%.6f "
+                        "conditioning_std=%.6f conditioning_type=%s",
+                        current_loss.item(),
+                        flipped_loss.item(),
+                        zero_loss.item(),
+                        cosine.item(),
+                        pred_target_dot.item(),
+                        video_pred.detach().float().mean().item(),
+                        video_pred.detach().float().std().item(),
+                        current_target.float().mean().item(),
+                        current_target.float().std().item(),
+                        latents.detach().float().mean().item(),
+                        latents.detach().float().std().item(),
+                        noise.detach().float().std().item(),
+                        sigma_mean,
+                        timestep_mean,
+                        conditioning_shape,
+                        conditioning_mean,
+                        conditioning_std,
+                        prepared_batch.get("conditioning_latents_type"),
+                    )
+        audio_pred = model_output.get("audio_prediction")
+        if audio_pred is None:
+            return video_loss, video_loss, None, 0.0
+        audio_latents = prepared_batch.get("audio_latents")
+        audio_noise = prepared_batch.get("audio_noise")
+        if audio_latents is None or audio_noise is None:
+            return video_loss, video_loss, None, 0.0
+        audio_target = audio_latents - audio_noise
+        weight = float(getattr(self.config, "audio_loss_weight", 1.0) or 1.0)
+        if weight == 0.0:
+            return video_loss, video_loss, None, weight
+        audio_mask = prepared_batch.get("audio_latent_mask")
+        if audio_mask is not None:
+            if torch.all(audio_mask == 0):
+                return video_loss, video_loss, None, weight
+            mask = audio_mask.view(audio_mask.shape[0], *([1] * (audio_pred.ndim - 1)))
+            audio_pred = torch.where(mask > 0, audio_pred, torch.zeros_like(audio_pred))
+            audio_target = torch.where(mask > 0, audio_target, torch.zeros_like(audio_target))
+        audio_loss = (audio_pred.float() - audio_target.float()) ** 2
+        audio_loss = audio_loss.mean()
+        return video_loss + audio_loss * weight, video_loss, audio_loss, weight
+
+    def tread_init(self):
+        from simpletuner.helpers.training.tread import TREADRouter
+
+        tread_cfg = getattr(self.config, "tread_config", None)
+        if not isinstance(tread_cfg, dict) or tread_cfg == {} or tread_cfg.get("routes") is None:
+            logger.error("TREAD training requires you to configure the routes in the TREAD config")
+            import sys
+
+            sys.exit(1)
+
+        self.unwrap_model(model=self.model).set_router(
+            TREADRouter(
+                seed=getattr(self.config, "seed", None) or 42,
+                device=self.accelerator.device,
+            ),
+            tread_cfg["routes"],
+        )
+        logger.info("TREAD training is enabled for MiniMax-H3")
+
+    def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
+        if pipeline_type in self.pipelines:
+            pipeline = self.pipelines[pipeline_type]
+            component_name = "transformer_ref" if getattr(self.config, "model_flavour", None) == "ref2va" else "transformer"
+            setattr(pipeline, component_name, self.unwrap_model(self.model))
+            return pipeline
+        if pipeline_type not in self.PIPELINE_CLASSES:
+            raise NotImplementedError(f"Pipeline type {pipeline_type} not defined in {self.__class__.__name__}.")
+        if load_base_model:
+            if self.model is None:
+                self.load_model(move_to_device=True)
+            if self.vae is None:
+                self.load_vae(move_to_device=True)
+            if self.text_encoders is None:
+                self.load_text_encoder(move_to_device=True)
+            if self.tokenizers is None:
+                self.load_text_tokenizer()
+            self._load_audio_vae(move_to_device=True)
+        processor = self._load_processor_for_pipeline()
+        transformer = self.unwrap_model(self.model) if self.model is not None else None
+        is_ref = getattr(self.config, "model_flavour", None) == "ref2va"
+        pipeline_class = self.PIPELINE_CLASSES[pipeline_type]
+        blocks = MiniMaxH3Ref2VABlocks() if is_ref else MiniMaxH3Blocks()
+        pipeline_kwargs = {
+            "blocks": blocks,
+            "pretrained_model_name_or_path": self._model_config_path(),
+            "vae": self.vae,
+            "audio_vae": self.audio_vae,
+            "scheduler": MiniMaxH3Scheduler(shift=float(getattr(self.config, "flow_schedule_shift", 12.0) or 12.0)),
+            "audio_scheduler": MiniMaxH3Scheduler(
+                shift=float(getattr(self.config, "audio_flow_schedule_shift", 3.0) or 3.0)
+            ),
+            "text_encoder": self.text_encoders[0] if self.text_encoders else None,
+            "tokenizer": self.tokenizers[0] if self.tokenizers else None,
+            "processor": processor,
+            "video_processor": VideoProcessor(
+                do_resize=False,
+                do_normalize=False,
+                vae_scale_factor=16,
+                vae_latent_channels=self.LATENT_CHANNEL_COUNT,
+            ),
+        }
+        pipeline_kwargs["transformer_ref" if is_ref else "transformer"] = transformer
+        pipeline = pipeline_class(**pipeline_kwargs)
+        self.pipelines[pipeline_type] = pipeline
+        return pipeline
+
+
+ModelRegistry.register("minimaxh3", MiniMaxH3)

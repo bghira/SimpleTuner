@@ -116,6 +116,7 @@ flow_matching_model_families = [
     "zlab_i1",
     "ideogram",
     "krea2",
+    "minimaxh3",
 ]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
@@ -133,6 +134,7 @@ upstream_config_sources = {
     "hunyuanvideo": "tencent/HunyuanVideo-1.5",
     "ideogram": "ideogram-ai/ideogram-4-fp8",
     "krea2": "krea/Krea-2-Raw",
+    "minimaxh3": "MiniMaxAI/MiniMax-H3",
 }
 
 

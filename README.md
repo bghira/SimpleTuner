@@ -110,6 +110,7 @@ SimpleTuner supports the following model families. Detailed training feature sup
 | **LTX Video 2** | 19B | Apache-2.0 | Yes |
 | **Lumina2** | 2B | Apache-2.0 | Yes |
 | **Mage-Flow** | 4B | MIT | Yes |
+| **MiniMax H3** | 33B | MiniMax H3 Community License | Conditions apply (territory exclusions; authorization required in US/EU/UK/KR) |
 | **OmniGen** | 3.8B | MIT | Yes |
 | **PixArt Sigma** | 0.6B-0.9B | OpenRAIL++ | Yes (restricted) |
 | **Qwen Image** | 20B | Apache-2.0 | Yes |
