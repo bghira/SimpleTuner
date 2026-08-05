@@ -128,6 +128,9 @@ def _materialize_krea2_meta_buffers(model: nn.Module) -> None:
 
 
 def _load_sdnq_training_symbols():
+    from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
+
+    configure_sdnq_compile_mode()
     try:
         from sdnq.dequantizer import SDNQDequantizer
         from sdnq.layers import get_sdnq_wrapper_class
