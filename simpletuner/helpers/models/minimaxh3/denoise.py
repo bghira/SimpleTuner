@@ -506,12 +506,18 @@ class MiniMaxH3LoopSchedulerStep(ModularPipelineBlocks):
             block_state.latents[num_condition_video_rows:],
             return_dict=False,
         )[0]
-        block_state.audio_latents[num_condition_audio_rows:] = components.audio_scheduler.step(
-            block_state.audio_noise_pred[0, num_condition_audio_rows:].float(),
-            block_state.audio_timesteps[i],
-            block_state.audio_latents[num_condition_audio_rows:],
-            return_dict=False,
-        )[0]
+        has_audio_rows = block_state.audio_latents is not None and int(block_state.audio_latents.shape[0]) > int(
+            num_condition_audio_rows
+        )
+        if has_audio_rows:
+            if components.audio_scheduler is None:
+                raise ValueError("MiniMax-H3 audio rows require an audio scheduler.")
+            block_state.audio_latents[num_condition_audio_rows:] = components.audio_scheduler.step(
+                block_state.audio_noise_pred[0, num_condition_audio_rows:].float(),
+                block_state.audio_timesteps[i],
+                block_state.audio_latents[num_condition_audio_rows:],
+                return_dict=False,
+            )[0]
         return components, block_state
 
 

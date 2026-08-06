@@ -73,7 +73,7 @@ dataset に target audio latents があり joint audio/video training したい�
 
 - VRAM が厳しい場合は 24G RamTorch example を使います。
 - heavy checkpointing の前に `musubi_blocks_to_swap` を試します。
-- VAE tiling、slicing、temporal roll は有効のままにします。
+- SimpleTuner は H3 video VAE の tiling と temporal roll/chunking を強制的に有効化します。tiling geometry は upstream と同じ `256` tile size / `64` overlap です。これらを false にしても無視されます。untiled decode は大きな color shift や halftone artifacts を出すことがあります。
 - 実際の GPU で `attention_mechanism` を benchmark します。
 - `torch.compile` を変えたら smoke test をやり直します。compile cache が VRAM を変えるためです。
 

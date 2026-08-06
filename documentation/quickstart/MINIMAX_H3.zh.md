@@ -73,7 +73,7 @@ Negative prompting 不属于基础 H3 契约。SimpleTuner 为 de-distilled chec
 
 - 显存紧张时使用 24G RamTorch example。
 - 在加重 checkpointing 前测试 `musubi_blocks_to_swap`。
-- 保持 VAE tiling、slicing 和 temporal roll 启用。
+- SimpleTuner 会强制启用 H3 video VAE tiling 和 temporal roll/chunking。tiling 几何与 upstream 一致，使用 `256` tile size 和 `64` overlap；把这些选项设为 false 会被忽略，因为未 tiling 的 decode 可能产生严重偏色和 halftone artifact。
 - 在目标 GPU 上 benchmark `attention_mechanism`。
 - 修改 `torch.compile` 后重新 smoke test，因为 compile cache 可能改变峰值显存。
 

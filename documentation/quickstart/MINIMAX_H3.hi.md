@@ -73,7 +73,7 @@ Negative prompting base H3 contract का हिस्सा नहीं ह�
 
 - VRAM tight हो तो 24G RamTorch example इस्तेमाल करें।
 - ज्यादा checkpointing से पहले `musubi_blocks_to_swap` test करें।
-- VAE tiling, slicing, और temporal roll enabled रखें।
+- SimpleTuner H3 video VAE के लिए VAE tiling और temporal roll/chunking force करता है। Tiling geometry upstream जैसी है: `256` tile size और `64` overlap। इन options को false करने पर ignore किया जाएगा, क्योंकि untiled decode से severe colour shift और halftone artifacts आ सकते हैं।
 - Target GPU पर `attention_mechanism` benchmark करें।
 - `torch.compile` बदलने पर smoke test दोबारा करें, क्योंकि compile cache VRAM बदल सकता है।
 

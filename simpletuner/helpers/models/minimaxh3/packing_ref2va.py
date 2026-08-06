@@ -524,7 +524,7 @@ def build_ref2va_packed_sequence(
     text_indices = torch.arange(num_text_tokens)
 
     token_tags = torch.empty(sequence_length, dtype=torch.long)
-    token_tags[text_indices] = text_token_tags.to(torch.long)
+    token_tags[text_indices] = text_token_tags.to(device=token_tags.device, dtype=torch.long)
     token_tags[audio_indices] = MINIMAX_H3_AUDIO_TAG
     token_tags[video_indices] = MINIMAX_H3_VIDEO_TAG
 

@@ -136,7 +136,36 @@ class MiniMaxH3TextEncoderStep(ModularPipelineBlocks):
     @property
     def inputs(self) -> list[InputParam]:
         return [
-            InputParam.template("prompt", description="The prompt to guide generation, a single string."),
+            InputParam(
+                name="prompt",
+                type_hint=str,
+                default=None,
+                description="The prompt to guide generation, a single string.",
+            ),
+            InputParam(
+                name="prompt_embeds",
+                type_hint=torch.Tensor,
+                default=None,
+                description="Precomputed MiniMax-H3 text conditioning.",
+            ),
+            InputParam(
+                name="text_token_tags",
+                type_hint=torch.Tensor,
+                default=None,
+                description="Per-row modality tags for precomputed `prompt_embeds`.",
+            ),
+            InputParam(
+                name="negative_prompt_embeds",
+                type_hint=torch.Tensor,
+                default=None,
+                description="Optional precomputed negative branch for real CFG.",
+            ),
+            InputParam(
+                name="negative_text_token_tags",
+                type_hint=torch.Tensor,
+                default=None,
+                description="Per-row modality tags for precomputed `negative_prompt_embeds`.",
+            ),
             InputParam(
                 name="negative_prompt",
                 type_hint=str,
@@ -257,6 +286,12 @@ class MiniMaxH3TextEncoderStep(ModularPipelineBlocks):
     @torch.no_grad()
     def __call__(self, components: MiniMaxH3ModularPipeline, state: PipelineState) -> PipelineState:
         block_state = self.get_block_state(state)
+        if getattr(block_state, "prompt_embeds", None) is not None:
+            if getattr(block_state, "text_token_tags", None) is None:
+                raise ValueError("MiniMax-H3 precomputed `prompt_embeds` require `text_token_tags`.")
+            self.set_block_state(state, block_state)
+            return components, state
+
         _check_prompt(block_state.prompt)
 
         # `encode_prompt` defaults the embedding dtype to the denoiser's; a text encoder block has no denoiser of
@@ -408,7 +443,36 @@ class MiniMaxH3Ref2VATextEncoderStep(ModularPipelineBlocks):
     @property
     def inputs(self) -> list[InputParam]:
         return [
-            InputParam.template("prompt", description="The prompt to guide generation, a single string."),
+            InputParam(
+                name="prompt",
+                type_hint=str,
+                default=None,
+                description="The prompt to guide generation, a single string.",
+            ),
+            InputParam(
+                name="prompt_embeds",
+                type_hint=torch.Tensor,
+                default=None,
+                description="Precomputed MiniMax-H3 text conditioning.",
+            ),
+            InputParam(
+                name="text_token_tags",
+                type_hint=torch.Tensor,
+                default=None,
+                description="Per-row modality tags for precomputed `prompt_embeds`.",
+            ),
+            InputParam(
+                name="negative_prompt_embeds",
+                type_hint=torch.Tensor,
+                default=None,
+                description="Optional precomputed negative branch for real CFG.",
+            ),
+            InputParam(
+                name="negative_text_token_tags",
+                type_hint=torch.Tensor,
+                default=None,
+                description="Per-row modality tags for precomputed `negative_prompt_embeds`.",
+            ),
             InputParam(
                 name="negative_prompt",
                 type_hint=str,
@@ -552,6 +616,12 @@ class MiniMaxH3Ref2VATextEncoderStep(ModularPipelineBlocks):
     @torch.no_grad()
     def __call__(self, components: MiniMaxH3Ref2VAModularPipeline, state: PipelineState) -> PipelineState:
         block_state = self.get_block_state(state)
+        if getattr(block_state, "prompt_embeds", None) is not None:
+            if getattr(block_state, "text_token_tags", None) is None:
+                raise ValueError("MiniMax-H3 precomputed `prompt_embeds` require `text_token_tags`.")
+            self.set_block_state(state, block_state)
+            return components, state
+
         _check_prompt(block_state.prompt)
 
         # `encode_prompt` defaults the embedding dtype to the denoiser's; a text encoder block has no denoiser of

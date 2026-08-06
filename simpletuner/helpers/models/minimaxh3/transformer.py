@@ -24,6 +24,7 @@ import torch
 import torch.nn as nn
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import PeftAdapterMixin
+from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
 from diffusers.models.attention import AttentionMixin, AttentionModuleMixin
 from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.cache_utils import CacheMixin
@@ -44,7 +45,7 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
-from simpletuner.helpers.training.context_parallel_tensors import context_parallel_config, shard_cp_tensor, unshard_cp_tensor
+from simpletuner.helpers.training.context_parallel_tensors import context_parallel_config
 from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state, should_checkpoint_block
 from simpletuner.helpers.training.offloaded_gradient_checkpointer import activation_offload_context
 from simpletuner.helpers.training.tread import TREADRouter
@@ -1019,7 +1020,25 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
     _tread_router: TREADRouter | None = None
     _no_split_modules = ["MiniMaxH3TransformerBlock", "MiniMaxH3TokenRefinerBlock", "MiniMaxH3AdaLayerNormOut"]
     _repeated_blocks = ["MiniMaxH3TransformerBlock", "MiniMaxH3TokenRefinerBlock"]
-    _cp_plan = {}
+    # MiniMax-H3 builds one packed sequence inside forward, so CP sharding starts at the first transformer block and
+    # gathers the modality heads before forward selects rows with full-sequence indices.
+    _cp_plan = {
+        "rope": {
+            0: ContextParallelInput(split_dim=0, expected_dims=2, split_output=True),
+            1: ContextParallelInput(split_dim=0, expected_dims=2, split_output=True),
+        },
+        "transformer_blocks.0": {
+            "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
+        },
+        "transformer_blocks.*": {
+            "adaln_indices": ContextParallelInput(split_dim=0, expected_dims=1, split_output=False),
+        },
+        "norm_out": {
+            "timestep_indices": ContextParallelInput(split_dim=0, expected_dims=1, split_output=False),
+        },
+        "proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
+        "audio_proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
+    }
     _skip_layerwise_casting_patterns = ["norm"]
     # MiniMax-H3 ships a mixed-precision checkpoint: the two input patch projections, the timestep MLP and the two
     # output heads are float32 while everything else (including the AdaLN projections) is bfloat16. The `rope.inv_freq`
@@ -1070,8 +1089,6 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         self.use_adaln_curves = adaln_curve_grid is not None
         if self.use_adaln_curves and enable_time_sign_embed:
             raise ValueError("MiniMax-H3 adaln_t_table checkpoints do not support TwinFlow time-sign embeddings.")
-        if self.use_adaln_curves and deltatime_type is not None:
-            raise ValueError("MiniMax-H3 adaln_t_table checkpoints do not support FlowMap/AnyFlow delta embeddings.")
 
         # 1. Per-modality input projections
         self.proj_in = nn.Linear(video_patch_dim, hidden_size, bias=True)
@@ -1209,10 +1226,17 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="MiniMax-H3")
-        if self.delta_time_embedder is None:
+        if self.time_embedder is not None and self.delta_time_embedder is None:
             self.delta_time_embedder = clone_flowmap_embedder(self.time_embedder)
         set_flowmap_gate(self, gate_value)
         register_flowmap_config(self, gate_value, deltatime_type)
+
+    def _adaln_curve_embedding(self, timestep: torch.Tensor) -> torch.Tensor:
+        table = self.adaln_t_table.to(device=timestep.device)
+        position = timestep.to(device=timestep.device, dtype=torch.float32).clamp(0.0, 1.0) * (table.shape[0] - 1)
+        lower = position.floor().long().clamp(max=table.shape[0] - 2)
+        weight = (position - lower).to(dtype=table.dtype).unsqueeze(-1)
+        return torch.lerp(table[lower], table[lower + 1], weight)
 
     def _time_embedding(
         self,
@@ -1223,13 +1247,21 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         if self.time_embedder is None:
             if timestep_sign is not None:
                 raise ValueError("MiniMax-H3 adaln_t_table checkpoints do not support TwinFlow time-sign embeddings.")
+            temb = self._adaln_curve_embedding(timestep)
             if r_timestep is not None:
-                raise ValueError("MiniMax-H3 adaln_t_table checkpoints do not support FlowMap/AnyFlow delta embeddings.")
-            table = self.adaln_t_table.to(device=timestep.device)
-            position = timestep.to(device=timestep.device, dtype=torch.float32).clamp(0.0, 1.0) * (table.shape[0] - 1)
-            lower = position.floor().long().clamp(max=table.shape[0] - 2)
-            weight = (position - lower).to(dtype=table.dtype).unsqueeze(1)
-            return torch.lerp(table[lower], table[lower + 1], weight)
+                if self.flowmap_deltatime_type is None:
+                    raise ValueError(
+                        "MiniMax-H3 FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                    )
+                delta_timestep = prepare_flowmap_delta_timestep(
+                    timestep,
+                    r_timestep,
+                    self.flowmap_deltatime_type,
+                    model_name="MiniMax-H3",
+                )
+                delta_temb = self._adaln_curve_embedding(delta_timestep)
+                temb = blend_flowmap_embeddings(temb, delta_temb, self.flowmap_delta_emb_gate)
+            return temb
 
         dtype = self.time_embedder.linear_1.weight.dtype
         temb = flowmap_timestep_embedding(
@@ -1790,12 +1822,6 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         block_rotary_emb = rotary_emb
         block_adaln_indices = adaln_indices
         block_reference_mask = reference_mask
-        if cp_active:
-            hidden_states = shard_cp_tensor(hidden_states, parallel_config, split_dim=1)
-            block_rotary_emb = tuple(shard_cp_tensor(value, parallel_config, split_dim=0) for value in rotary_emb)
-            block_adaln_indices = shard_cp_tensor(adaln_indices, parallel_config, split_dim=0)
-            if reference_mask is not None:
-                block_reference_mask = shard_cp_tensor(reference_mask, parallel_config, split_dim=0)
 
         def capture_layer_hidden(block_idx: int, block_hidden_states: torch.Tensor) -> None:
             nonlocal captured_frame_hidden, output_hidden_states
@@ -1980,8 +2006,6 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                     routing_now = False
                     route_ptr += 1
                 capture_layer_hidden(block_idx, hidden_states)
-        if cp_active:
-            hidden_states = unshard_cp_tensor(hidden_states, parallel_config, split_dim=1)
         # 5. Both heads run over every row, then the rows of each modality are selected. The heads are listed in
         # `_keep_in_fp32_modules`, so they stay float32 while the block stack runs in the requested `torch_dtype`;
         # align the activation with their parameter dtype.

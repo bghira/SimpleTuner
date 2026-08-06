@@ -453,9 +453,12 @@ class MiniMaxH3SetTimestepsStep(ModularPipelineBlocks):
         device = components._execution_device
 
         components.scheduler.set_timesteps(block_state.num_inference_steps, device=device)
-        components.audio_scheduler.set_timesteps(block_state.num_inference_steps, device=device)
         block_state.timesteps = components.scheduler.timesteps
-        block_state.audio_timesteps = components.audio_scheduler.timesteps
+        if components.audio_scheduler is not None:
+            components.audio_scheduler.set_timesteps(block_state.num_inference_steps, device=device)
+            block_state.audio_timesteps = components.audio_scheduler.timesteps
+        else:
+            block_state.audio_timesteps = block_state.timesteps
 
         block_state.row_timestep_plan = [
             tuple(
@@ -485,6 +488,8 @@ class MiniMaxH3SetTimestepsStep(ModularPipelineBlocks):
                 )
                 for timestep, audio_timestep in zip(block_state.timesteps, block_state.audio_timesteps)
             ]
+        else:
+            block_state.negative_row_timestep_plan = None
 
         self.set_block_state(state, block_state)
         return components, state

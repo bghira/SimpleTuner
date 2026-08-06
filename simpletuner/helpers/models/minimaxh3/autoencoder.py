@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import math
+import re
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -373,13 +375,14 @@ class MiniMaxH3VideoTransformerBlock(nn.Module):
         ffn_mult: int = 4,
         eps: float = 1e-5,
         bias: bool = True,
+        swiglu_gate_first: bool = True,
     ) -> None:
         super().__init__()
         self.norm1 = nn.RMSNorm(dim, eps=eps, elementwise_affine=True)
         self.attn = MiniMaxH3VideoAttention(dim=dim, heads=heads, dim_head=dim_head, eps=eps, bias=bias)
         self.scale1 = nn.Parameter(torch.zeros(dim))
         self.norm2 = nn.RMSNorm(dim, eps=eps, elementwise_affine=True)
-        self.ff = MiniMaxH3FeedForward(dim, mult=ffn_mult, bias=bias)
+        self.ff = MiniMaxH3FeedForward(dim, mult=ffn_mult, bias=bias, gate_first=swiglu_gate_first)
         self.scale2 = nn.Parameter(torch.zeros(dim))
 
     def forward(
@@ -413,6 +416,7 @@ class MiniMaxH3VideoViTDecoder3d(nn.Module):
         attention_head_dim: int = 64,
         num_register_tokens: int = 4,
         ffn_mult: int = 4,
+        swiglu_gate_first: bool = True,
         rope_theta: float = 100.0,
         rope_dim_ratio: float = 0.75,
         norm_eps: float = 1e-5,
@@ -435,6 +439,7 @@ class MiniMaxH3VideoViTDecoder3d(nn.Module):
                     dim_head=attention_head_dim,
                     ffn_mult=ffn_mult,
                     eps=norm_eps,
+                    swiglu_gate_first=swiglu_gate_first,
                 )
                 for _ in range(num_layers)
             ]
@@ -498,6 +503,232 @@ class MiniMaxH3VideoViTDecoder3d(nn.Module):
         )
 
 
+_MINIMAX_H3_VAE_DEFAULT_SPATIAL_DOWNSAMPLE_FACTORS = (2, 2, 2, 2, 1, 1)
+_MINIMAX_H3_VAE_DEFAULT_TEMPORAL_DOWNSAMPLE_FACTORS = (1, 2, 2, 1, 1, 1)
+
+
+def _strip_minimax_h3_vae_checkpoint_prefix(key: str) -> str:
+    for prefix in ("vae.", "first_stage_model.", "model.first_stage_model.", "model.vae."):
+        if key.startswith(prefix):
+            return key[len(prefix) :]
+    return key
+
+
+def _map_minimax_h3_vae_comfy_key_to_diffusers(key: str) -> list[str]:
+    from simpletuner.helpers.models.minimaxh3.transformer import _COMFY_QUANT_METADATA_SUFFIXES
+
+    if key.endswith(_COMFY_QUANT_METADATA_SUFFIXES):
+        return []
+    if key in {"decoder.mask_token", "latents_mean", "latents_std", "pixel_mean", "pixel_std"}:
+        return []
+    if key == "decoder.pos_embed.inv_freq":
+        return ["decoder.rope.inv_freq"]
+
+    block_match = re.match(r"^encoder\.down\.(\d+)\.block\.(\d+)\.(.+)$", key)
+    if block_match is not None:
+        level, block, rest = block_match.groups()
+        rest = rest.replace("nin_shortcut.", "conv_shortcut.", 1)
+        return [f"encoder.down_blocks.{level}.resnets.{block}.{rest}"]
+
+    downsample_match = re.match(r"^encoder\.down\.(\d+)\.downsample\.conv\.(.+)$", key)
+    if downsample_match is not None:
+        level, rest = downsample_match.groups()
+        return [f"encoder.down_blocks.{level}.downsamplers.0.conv.{rest}"]
+
+    key = key.replace("decoder.x_embedder.", "decoder.proj_in.", 1)
+    key = re.sub(r"\.attn\.to_out\.(?!0\.)", ".attn.to_out.0.", key)
+    key = key.replace(".ff.w1.", ".ff.net.0.proj.")
+    key = key.replace(".ff.w2.", ".ff.net.2.")
+    if key.endswith(".attn.to_qkv.weight"):
+        base = key.removesuffix(".attn.to_qkv.weight")
+        return [
+            f"{base}.attn.to_q.weight",
+            f"{base}.attn.to_k.weight",
+            f"{base}.attn.to_v.weight",
+        ]
+    if key.endswith(".attn.to_qkv.bias"):
+        base = key.removesuffix(".attn.to_qkv.bias")
+        return [
+            f"{base}.attn.to_q.bias",
+            f"{base}.attn.to_k.bias",
+            f"{base}.attn.to_v.bias",
+        ]
+    return [key]
+
+
+def _count_minimax_h3_vae_indexed_blocks(keys: set[str], prefix: str) -> int:
+    indices = set()
+    for key in keys:
+        if not key.startswith(prefix):
+            continue
+        index = key[len(prefix) :].split(".", 1)[0]
+        if index.isdigit():
+            indices.add(int(index))
+    return max(indices) + 1 if indices else 0
+
+
+def _get_minimax_h3_vae_checkpoint_tensor(checkpoint, stripped_key: str) -> torch.Tensor:
+    for raw_key in checkpoint.keys():
+        if _strip_minimax_h3_vae_checkpoint_prefix(raw_key) == stripped_key:
+            return checkpoint.get_tensor(raw_key)
+    raise RuntimeError(f"MiniMax-H3 VAE checkpoint is missing required tensor: {stripped_key}")
+
+
+def _infer_minimax_h3_vae_config_from_checkpoint(checkpoint) -> dict[str, Any]:
+    raw_keys = {_strip_minimax_h3_vae_checkpoint_prefix(key) for key in checkpoint.keys()}
+    if "encoder.conv_in.weight" not in raw_keys:
+        raise RuntimeError("MiniMax-H3 VAE single-file checkpoint does not contain recognized encoder keys.")
+
+    conv_in = _get_minimax_h3_vae_checkpoint_tensor(checkpoint, "encoder.conv_in.weight")
+    conv_out = _get_minimax_h3_vae_checkpoint_tensor(checkpoint, "encoder.conv_out.weight")
+    post_quant = _get_minimax_h3_vae_checkpoint_tensor(checkpoint, "post_quant_conv.weight")
+    decoder_proj_in_key = (
+        "decoder.x_embedder.weight" if "decoder.x_embedder.weight" in raw_keys else "decoder.proj_in.weight"
+    )
+    decoder_proj_in = _get_minimax_h3_vae_checkpoint_tensor(checkpoint, decoder_proj_in_key)
+    decoder_proj_out = _get_minimax_h3_vae_checkpoint_tensor(checkpoint, "decoder.proj_out.weight")
+
+    block_out_channels = []
+    level_count = _count_minimax_h3_vae_indexed_blocks(raw_keys, "encoder.down.")
+    diffusers_level_count = _count_minimax_h3_vae_indexed_blocks(raw_keys, "encoder.down_blocks.")
+    for index in range(max(level_count, diffusers_level_count)):
+        comfy_key = f"encoder.down.{index}.block.0.conv2.weight"
+        diffusers_key = f"encoder.down_blocks.{index}.resnets.0.conv2.weight"
+        if comfy_key in raw_keys:
+            block_out_channels.append(_get_minimax_h3_vae_checkpoint_tensor(checkpoint, comfy_key).shape[0])
+        elif diffusers_key in raw_keys:
+            block_out_channels.append(_get_minimax_h3_vae_checkpoint_tensor(checkpoint, diffusers_key).shape[0])
+    if not block_out_channels:
+        block_out_channels = [conv_in.shape[0]]
+
+    layers_per_block = _count_minimax_h3_vae_indexed_blocks(raw_keys, "encoder.down.0.block.")
+    if layers_per_block == 0:
+        layers_per_block = _count_minimax_h3_vae_indexed_blocks(raw_keys, "encoder.down_blocks.0.resnets.")
+    layers_per_block = layers_per_block or 2
+
+    num_levels = len(block_out_channels)
+    if num_levels == len(_MINIMAX_H3_VAE_DEFAULT_SPATIAL_DOWNSAMPLE_FACTORS):
+        spatial_downsample_factors = _MINIMAX_H3_VAE_DEFAULT_SPATIAL_DOWNSAMPLE_FACTORS
+        temporal_downsample_factors = _MINIMAX_H3_VAE_DEFAULT_TEMPORAL_DOWNSAMPLE_FACTORS
+    else:
+        spatial_downsample_factors = tuple(
+            (
+                2
+                if (
+                    f"encoder.down.{index}.downsample.conv.weight" in raw_keys
+                    or f"encoder.down_blocks.{index}.downsamplers.0.conv.weight" in raw_keys
+                )
+                else 1
+            )
+            for index in range(num_levels)
+        )
+        temporal_downsample_factors = (1,) * num_levels
+
+    decoder_hidden_size = decoder_proj_in.shape[0]
+    if "decoder.transformer_blocks.0.attn.to_qkv.weight" in raw_keys:
+        decoder_qkv = _get_minimax_h3_vae_checkpoint_tensor(checkpoint, "decoder.transformer_blocks.0.attn.to_qkv.weight")
+        decoder_hidden_size = decoder_qkv.shape[1]
+    elif "decoder.transformer_blocks.0.attn.to_q.weight" in raw_keys:
+        decoder_hidden_size = _get_minimax_h3_vae_checkpoint_tensor(
+            checkpoint, "decoder.transformer_blocks.0.attn.to_q.weight"
+        ).shape[1]
+
+    if decoder_hidden_size % 64 == 0:
+        decoder_attention_head_dim = 64
+    else:
+        decoder_attention_head_dim = decoder_hidden_size
+    decoder_num_attention_heads = decoder_hidden_size // decoder_attention_head_dim
+
+    has_raw_swiglu = "decoder.transformer_blocks.0.ff.w1.weight" in raw_keys
+    has_diffusers_swiglu = "decoder.transformer_blocks.0.ff.net.0.proj.weight" in raw_keys
+    if has_raw_swiglu and has_diffusers_swiglu:
+        raise RuntimeError("MiniMax-H3 VAE checkpoint mixes raw and Diffusers SwiGLU key layouts.")
+    if has_raw_swiglu:
+        ffn_weight = _get_minimax_h3_vae_checkpoint_tensor(checkpoint, "decoder.transformer_blocks.0.ff.w1.weight")
+    else:
+        ffn_weight = _get_minimax_h3_vae_checkpoint_tensor(checkpoint, "decoder.transformer_blocks.0.ff.net.0.proj.weight")
+    decoder_ffn_mult = max(ffn_weight.shape[0] // (2 * decoder_hidden_size), 1)
+
+    decoder_num_register_tokens = 4
+    if "decoder.register_tokens" in raw_keys:
+        decoder_num_register_tokens = _get_minimax_h3_vae_checkpoint_tensor(checkpoint, "decoder.register_tokens").shape[1]
+
+    latent_channels = decoder_proj_in.shape[1]
+    norm_num_groups = 32
+    if any(channel % norm_num_groups != 0 for channel in block_out_channels):
+        norm_num_groups = 1
+    inferred_config: dict[str, Any] = {
+        "in_channels": conv_in.shape[1],
+        "out_channels": 3,
+        "latent_channels": latent_channels,
+        "block_out_channels": tuple(block_out_channels),
+        "layers_per_block": layers_per_block,
+        "spatial_downsample_factors": tuple(spatial_downsample_factors),
+        "temporal_downsample_factors": tuple(temporal_downsample_factors),
+        "norm_num_groups": norm_num_groups,
+        "decoder_num_layers": _count_minimax_h3_vae_indexed_blocks(raw_keys, "decoder.transformer_blocks."),
+        "decoder_num_attention_heads": decoder_num_attention_heads,
+        "decoder_attention_head_dim": decoder_attention_head_dim,
+        "decoder_num_register_tokens": decoder_num_register_tokens,
+        "decoder_ffn_mult": decoder_ffn_mult,
+        # The official Diffusers conversion swaps raw `[gate; up]` tensors to `[up; gate]`.
+        "decoder_swiglu_gate_first": has_raw_swiglu,
+    }
+    if tuple(conv_out.shape[:2]) != (2 * latent_channels, block_out_channels[-1]):
+        raise RuntimeError(
+            "MiniMax-H3 VAE checkpoint uses unsupported encoder/decoder latent channel wiring: "
+            f"encoder.conv_out has shape {tuple(conv_out.shape)}, decoder.proj_in has {latent_channels} channels."
+        )
+    if tuple(post_quant.shape[:2]) != (latent_channels, latent_channels):
+        raise RuntimeError(
+            "MiniMax-H3 VAE checkpoint uses unsupported post_quant_conv shape "
+            f"{tuple(post_quant.shape)}; SimpleTuner expects matching embed/z channels."
+        )
+    if inferred_config["decoder_num_layers"] <= 0:
+        raise RuntimeError("MiniMax-H3 VAE checkpoint does not contain decoder transformer blocks.")
+
+    for config_key in ("latents_mean", "latents_std"):
+        if config_key not in raw_keys:
+            continue
+        value = _get_minimax_h3_vae_checkpoint_tensor(checkpoint, config_key).to(torch.float32).flatten()
+        if value.shape[0] != latent_channels:
+            raise RuntimeError(
+                f"MiniMax-H3 VAE checkpoint {config_key} has {value.shape[0]} values, expected {latent_channels}."
+            )
+        inferred_config[config_key] = tuple(float(item) for item in value.tolist())
+    inferred_config.setdefault("latents_mean", (0.0,) * latent_channels)
+    inferred_config.setdefault("latents_std", (1.0,) * latent_channels)
+
+    # Comfy fixes the decoder output channels at RGB. Allow explicit test/config overrides for nonstandard fixtures.
+    patch_volume = math.prod(inferred_config["spatial_downsample_factors"]) ** 2 * math.prod(
+        inferred_config["temporal_downsample_factors"]
+    )
+    if decoder_proj_out.shape[0] % patch_volume == 0:
+        inferred_config["out_channels"] = decoder_proj_out.shape[0] // patch_volume
+    return inferred_config
+
+
+def _set_minimax_h3_vae_module_buffer(root: nn.Module, buffer_name: str, value: torch.Tensor) -> None:
+    module = root
+    parts = buffer_name.split(".")
+    for part in parts[:-1]:
+        module = getattr(module, part)
+    module._buffers[parts[-1]] = value
+
+
+def _normalize_minimax_h3_vae_convrot_scale(scale: torch.Tensor, out_features: int, key: str) -> torch.Tensor:
+    scale = scale.to(torch.float32)
+    if scale.ndim == 0 or scale.numel() == 1:
+        return scale.reshape(1, 1).expand(out_features, 1).contiguous()
+    if tuple(scale.shape) == (out_features,):
+        return scale.reshape(out_features, 1).contiguous()
+    if tuple(scale.shape) == (out_features, 1):
+        return scale.contiguous()
+    raise RuntimeError(
+        f"MiniMax-H3 VAE ConvRot tensor {key}_scale has shape {tuple(scale.shape)}, " f"expected {(out_features, 1)}."
+    )
+
+
 class AutoencoderKLMiniMaxH3(ModelMixin, ConfigMixin, AttentionMixin, AutoencoderMixin):
     r"""
     A VAE model with a causal 3D CNN encoder and a non-causal ViT decoder, used in
@@ -550,6 +781,7 @@ class AutoencoderKLMiniMaxH3(ModelMixin, ConfigMixin, AttentionMixin, Autoencode
         decoder_attention_head_dim: int = 64,
         decoder_num_register_tokens: int = 4,
         decoder_ffn_mult: int = 4,
+        decoder_swiglu_gate_first: bool = False,
         decoder_rope_theta: float = 100.0,
         decoder_rope_dim_ratio: float = 0.75,
         decoder_norm_eps: float = 1e-5,
@@ -586,6 +818,7 @@ class AutoencoderKLMiniMaxH3(ModelMixin, ConfigMixin, AttentionMixin, Autoencode
             attention_head_dim=decoder_attention_head_dim,
             num_register_tokens=decoder_num_register_tokens,
             ffn_mult=decoder_ffn_mult,
+            swiglu_gate_first=decoder_swiglu_gate_first,
             rope_theta=decoder_rope_theta,
             rope_dim_ratio=decoder_rope_dim_ratio,
             norm_eps=decoder_norm_eps,
@@ -615,6 +848,186 @@ class AutoencoderKLMiniMaxH3(ModelMixin, ConfigMixin, AttentionMixin, Autoencode
         self.tile_sample_min_width = 256
         self.tile_sample_min_overlap_height = 64
         self.tile_sample_min_overlap_width = 64
+
+    @classmethod
+    def from_single_file(
+        cls,
+        pretrained_model_link_or_path: str,
+        *args: Any,
+        filename: str | None = None,
+        subfolder: str | None = None,
+        revision: str | None = None,
+        torch_dtype: torch.dtype | None = None,
+        **kwargs: Any,
+    ) -> "AutoencoderKLMiniMaxH3":
+        del args
+        from simpletuner.helpers.models.minimaxh3.transformer import (
+            _COMFY_QUANT_METADATA_SUFFIXES,
+            _open_minimax_h3_single_file,
+            _resolve_minimax_h3_single_file_path,
+        )
+
+        checkpoint_path = _resolve_minimax_h3_single_file_path(
+            pretrained_model_link_or_path,
+            filename=filename,
+            subfolder=subfolder,
+            revision=revision,
+        )
+        non_quantized_state_dict: dict[str, torch.Tensor] = {}
+        quantized_weights: dict[str, tuple[torch.Tensor, torch.Tensor, int]] = {}
+
+        with _open_minimax_h3_single_file(checkpoint_path) as checkpoint:
+            inferred_config = _infer_minimax_h3_vae_config_from_checkpoint(checkpoint)
+            init_config = {**inferred_config, **kwargs}
+            with torch.device("meta"):
+                model = cls(**init_config)
+            expected_state_dict = model.state_dict()
+            checkpoint_keys = set(checkpoint.keys())
+
+            for raw_key in checkpoint.keys():
+                key = _strip_minimax_h3_vae_checkpoint_prefix(raw_key)
+                if key.endswith(_COMFY_QUANT_METADATA_SUFFIXES):
+                    continue
+                mapped_keys = _map_minimax_h3_vae_comfy_key_to_diffusers(key)
+                if not mapped_keys:
+                    continue
+
+                tensor = checkpoint.get_tensor(raw_key)
+                if tensor.dtype == torch.int8:
+                    from simpletuner.helpers.models.z_image.quantized_loading import _decode_comfy_quant
+
+                    scale_key = f"{raw_key}_scale"
+                    if scale_key not in checkpoint_keys:
+                        raise RuntimeError(f"MiniMax-H3 VAE ConvRot tensor {raw_key} is missing weight_scale")
+                    quant_key = f"{raw_key.removesuffix('.weight')}.comfy_quant"
+                    if quant_key not in checkpoint_keys:
+                        raise RuntimeError(f"MiniMax-H3 VAE ConvRot tensor {raw_key} is missing comfy_quant metadata")
+                    quant_metadata = _decode_comfy_quant(checkpoint.get_tensor(quant_key))
+                    if not quant_metadata.get("convrot", False):
+                        raise RuntimeError(f"MiniMax-H3 VAE INT8 tensor {raw_key} is not marked as ConvRot")
+                    hadamard_group_size = int(quant_metadata.get("convrot_groupsize", 0))
+                    if hadamard_group_size <= 0:
+                        raise RuntimeError(f"MiniMax-H3 VAE ConvRot tensor {raw_key} has invalid convrot_groupsize")
+
+                    scale = checkpoint.get_tensor(scale_key)
+                    if len(mapped_keys) == 3:
+                        if tensor.shape[0] % 3 != 0:
+                            raise RuntimeError(f"MiniMax-H3 VAE ConvRot tensor {raw_key} cannot split into q/k/v tensors")
+                        scale = _normalize_minimax_h3_vae_convrot_scale(scale, tensor.shape[0], raw_key)
+                        for mapped_key, qkv_tensor, qkv_scale in zip(
+                            mapped_keys,
+                            tensor.split(tensor.shape[0] // 3, dim=0),
+                            scale.split(scale.shape[0] // 3, dim=0),
+                        ):
+                            quantized_weights[mapped_key] = (
+                                qkv_tensor.contiguous(),
+                                qkv_scale.contiguous(),
+                                hadamard_group_size,
+                            )
+                    elif len(mapped_keys) == 1:
+                        scale = _normalize_minimax_h3_vae_convrot_scale(scale, tensor.shape[0], raw_key)
+                        quantized_weights[mapped_keys[0]] = (tensor.contiguous(), scale, hadamard_group_size)
+                    else:
+                        raise RuntimeError(f"MiniMax-H3 VAE ConvRot tensor {raw_key} maps to multiple targets unexpectedly")
+                    continue
+
+                if not torch.is_floating_point(tensor):
+                    raise RuntimeError(
+                        f"MiniMax-H3 VAE tensor {raw_key} has unsupported dtype {tensor.dtype}. "
+                        "Only floating-point and INT8 ConvRot single-file VAE tensors are supported."
+                    )
+
+                if len(mapped_keys) == 3:
+                    if tensor.shape[0] % 3 != 0:
+                        raise RuntimeError(f"MiniMax-H3 VAE fused QKV tensor {raw_key} cannot split into q/k/v tensors")
+                    for mapped_key, qkv_tensor in zip(mapped_keys, tensor.split(tensor.shape[0] // 3, dim=0)):
+                        non_quantized_state_dict[mapped_key] = qkv_tensor.contiguous()
+                elif len(mapped_keys) == 1:
+                    non_quantized_state_dict[mapped_keys[0]] = tensor
+                else:
+                    raise RuntimeError(f"MiniMax-H3 VAE tensor {raw_key} maps to multiple targets unexpectedly")
+
+        decoder_rope_inv_freq = non_quantized_state_dict.pop("decoder.rope.inv_freq", None)
+        if decoder_rope_inv_freq is not None and tuple(decoder_rope_inv_freq.shape) != tuple(
+            model.decoder.rope.inv_freq.shape
+        ):
+            raise RuntimeError(
+                f"MiniMax-H3 VAE tensor decoder.rope.inv_freq has shape {tuple(decoder_rope_inv_freq.shape)}, "
+                f"expected {tuple(model.decoder.rope.inv_freq.shape)}"
+            )
+
+        expected_quantized_keys = set(quantized_weights)
+        keep_fp32_patterns = tuple(getattr(cls, "_keep_in_fp32_modules", ()))
+        for key, tensor in list(non_quantized_state_dict.items()):
+            if key not in expected_state_dict:
+                raise RuntimeError(f"MiniMax-H3 VAE checkpoint has unexpected tensor: {key}")
+            expected_tensor = expected_state_dict[key]
+            if tuple(tensor.shape) != tuple(expected_tensor.shape):
+                raise RuntimeError(
+                    f"MiniMax-H3 VAE tensor {key} has shape {tuple(tensor.shape)}, expected {tuple(expected_tensor.shape)}"
+                )
+            if torch_dtype is not None and not any(pattern in key for pattern in keep_fp32_patterns):
+                tensor = tensor.to(torch_dtype)
+            non_quantized_state_dict[key] = tensor
+
+        missing, unexpected = model.load_state_dict(non_quantized_state_dict, strict=False, assign=True)
+        real_missing = [key for key in missing if key not in expected_quantized_keys]
+        if real_missing or unexpected:
+            raise RuntimeError(
+                "MiniMax-H3 VAE checkpoint does not match autoencoder architecture. "
+                f"Missing: {len(real_missing)}, Unexpected: {len(unexpected)}"
+            )
+
+        hadamard_group_sizes: set[int] = set()
+        if quantized_weights:
+            from simpletuner.helpers.models.z_image.quantized_loading import _wrap_convrot_linear
+
+            for weight_key, (weight, scale, hadamard_group_size) in quantized_weights.items():
+                if weight_key not in expected_state_dict:
+                    raise RuntimeError(f"MiniMax-H3 VAE ConvRot checkpoint has unexpected tensor: {weight_key}")
+                expected_tensor = expected_state_dict[weight_key]
+                if tuple(weight.shape) != tuple(expected_tensor.shape):
+                    raise RuntimeError(
+                        f"MiniMax-H3 VAE ConvRot tensor {weight_key} has shape {tuple(weight.shape)}, "
+                        f"expected {tuple(expected_tensor.shape)}"
+                    )
+                hadamard_group_sizes.add(hadamard_group_size)
+                _wrap_convrot_linear(
+                    model,
+                    weight_key.removesuffix(".weight"),
+                    weight,
+                    scale,
+                    result_dtype=torch_dtype or torch.bfloat16,
+                    hadamard_group_size=hadamard_group_size,
+                )
+            if len(hadamard_group_sizes) != 1:
+                raise RuntimeError(
+                    "MiniMax-H3 VAE ConvRot checkpoint uses multiple Hadamard group sizes: "
+                    f"{sorted(hadamard_group_sizes)}"
+                )
+            group_size = hadamard_group_sizes.pop()
+            model.quantization_method = "minimax_h3_vae_comfy_convrot_sdnq"
+            model.quantization_config = {
+                "quant_method": "sdnq_training",
+                "weights_dtype": "int8",
+                "quantized_matmul_dtype": "int8",
+                "use_hadamard": True,
+                "hadamard_group_size": group_size,
+                "group_size": -1,
+                "source_format": "comfy_minimax_h3_vae_convrot",
+            }
+
+        if decoder_rope_inv_freq is not None:
+            _set_minimax_h3_vae_module_buffer(model, "decoder.rope.inv_freq", decoder_rope_inv_freq.to(torch.float32))
+        elif model.decoder.rope.inv_freq.is_meta:
+            rope_dim = int(model.config.decoder_attention_head_dim * model.config.decoder_rope_dim_ratio)
+            inv_freq = MiniMaxH3VideoRotaryPosEmbed(
+                rope_dim,
+                theta=getattr(model.config, "decoder_rope_theta", 100.0),
+            ).inv_freq
+            _set_minimax_h3_vae_module_buffer(model, "decoder.rope.inv_freq", inv_freq)
+
+        return model
 
     def enable_tiling(
         self,
@@ -807,7 +1220,7 @@ class AutoencoderKLMiniMaxH3(ModelMixin, ConfigMixin, AttentionMixin, Autoencode
 
     def _encode_image_or_video(self, x: torch.Tensor) -> torch.Tensor:
         if x.shape[2] == 1:
-            return self._encode_clip(x)
+            return self._encode_clip(x)[:, :, -1:, :, :]
         return self._encode(x)
 
     def _decode(self, z: torch.Tensor) -> torch.Tensor:
@@ -819,7 +1232,7 @@ class AutoencoderKLMiniMaxH3(ModelMixin, ConfigMixin, AttentionMixin, Autoencode
         length is not a whole number of chunks; the extra pixel frames are cut off again at the end.
         """
         if z.shape[2] == 1:
-            return self._decode_clip(torch.cat([z, z], dim=2))[:, :, :1]
+            return self._decode_clip(z)[:, :, -1:, :, :]
 
         tokens_chunk_size = self.tokens_chunk_size
         token_drop = self.config.token_drop

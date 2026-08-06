@@ -73,7 +73,7 @@ Usa `"av"` solo si el dataset tiene latentes de audio y quieres training conjunt
 
 - Usa el ejemplo 24G con RamTorch si la VRAM es limitada.
 - Prueba `musubi_blocks_to_swap` antes de subir mucho el checkpointing.
-- Mantén VAE tiling, slicing y temporal roll activados.
+- SimpleTuner fuerza VAE tiling y temporal roll/chunking para el video VAE de H3. La geometría usa el upstream `256` tile size con `64` overlap; poner esas opciones en false se ignora porque el decode sin tiling puede producir cambios fuertes de color y patrones halftone.
 - Benchmarkea `attention_mechanism` en la GPU real.
 - Repite el smoke test si cambias `torch.compile`, porque las cachés pueden aumentar VRAM.
 

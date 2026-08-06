@@ -73,7 +73,7 @@ Use `"av"` only when the dataset has target audio latents and you want joint aud
 
 - Use the 24G RamTorch example when VRAM is tight.
 - Use `musubi_blocks_to_swap` when block swap is faster than heavier checkpointing on your GPU.
-- Keep VAE tiling, slicing, and temporal roll enabled for the video VAE.
+- SimpleTuner forces H3 video VAE tiling and temporal roll/chunking on. The tiling geometry is the upstream `256` tile size with `64` overlap; setting those options false is ignored because untiled decode can produce severe colour shifts and halftone artifacts.
 - Benchmark `attention_mechanism` values on the target GPU; H3 shapes may prefer a different backend than Wan or LTX Video.
 - Re-test after changing `torch.compile` mode because compile caches can change peak VRAM.
 

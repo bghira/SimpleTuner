@@ -20,17 +20,32 @@ from diffusers.loaders.lora_base import LoraBaseMixin, _fetch_state_dict
 from diffusers.modular_pipelines.modular_pipeline import ModularPipeline
 from diffusers.utils import USE_PEFT_BACKEND, is_peft_version, logging
 
-from simpletuner.helpers.training.lora_format import PEFTLoRAFormat, detect_state_dict_format, normalize_lora_format
+from simpletuner.helpers.training.lora_format import (
+    PEFTLoRAFormat,
+    collect_lora_alphas,
+    detect_state_dict_format,
+    normalize_lora_format,
+    synthesize_missing_lora_alphas_from_ranks,
+)
 
 from .transformer import _map_minimax_h3_comfy_key_to_diffusers
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
-_LORA_A_SUFFIXES = (".lora_A.weight", ".lora.down.weight")
-_LORA_B_SUFFIXES = (".lora_B.weight", ".lora.up.weight")
+_LORA_A_SUFFIXES = (".lora_A.weight", ".lora.down.weight", ".lora_down.weight")
+_LORA_B_SUFFIXES = (".lora_B.weight", ".lora.up.weight", ".lora_up.weight")
 _COMPONENT_PREFIXES = ("text_encoder.", "text_encoder_2.", "controlnet.", "unet.", "transformer.", "transformer_ref.")
 _COMFY_PREFIXES = ("model.diffusion_model.", "diffusion_model.")
+_MINIMAX_H3_NATIVE_LORA_PREFIXES = (
+    "blocks.",
+    "token_refiner.blocks.",
+    "final_layer.",
+    "video_patch_proj.",
+    "audio_patch_proj.",
+    "condition_proj.",
+    "time_embedder.",
+)
 
 
 def _strip_comfy_lora_prefix(key: str) -> str:
@@ -50,6 +65,16 @@ def _split_lora_suffix(key: str) -> tuple[str, str] | None:
     return None
 
 
+def _is_minimax_h3_native_lora_state_dict(state_dict: Dict[str, Any]) -> bool:
+    for raw_key in state_dict:
+        key = _strip_comfy_lora_prefix(raw_key)
+        if ".lora" not in key:
+            continue
+        if key.startswith(_MINIMAX_H3_NATIVE_LORA_PREFIXES):
+            return True
+    return False
+
+
 def _map_comfy_lora_module(module_key: str, target_prefix: str) -> list[str]:
     if module_key.startswith(f"{target_prefix}."):
         return [module_key]
@@ -65,6 +90,7 @@ def _convert_minimax_h3_comfy_lora_to_diffusers(
     state_dict: Dict[str, Any],
     *,
     target_prefix: str,
+    target_swiglu_gate_first: bool = False,
 ) -> tuple[Dict[str, Any], Dict[str, float]]:
     converted: Dict[str, Any] = {}
     network_alphas: Dict[str, float] = {}
@@ -93,6 +119,16 @@ def _convert_minimax_h3_comfy_lora_to_diffusers(
             if value.shape[0] % 3 != 0:
                 raise ValueError(f"MiniMax-H3 fused QKV LoRA tensor {raw_key} cannot be split into q/k/v tensors.")
             values = value.split(value.shape[0] // 3, dim=0)
+        elif (
+            target_suffix == ".lora.up.weight"
+            and module_key.endswith(".mlp.fc1")
+            and not target_swiglu_gate_first
+            and torch.is_tensor(value)
+        ):
+            if value.shape[0] % 2 != 0:
+                raise ValueError(f"MiniMax-H3 SwiGLU LoRA tensor {raw_key} cannot be split into gate/value tensors.")
+            gate, hidden = value.split(value.shape[0] // 2, dim=0)
+            values = (torch.cat([hidden, gate], dim=0).contiguous(),)
         else:
             values = (value,) * len(mapped_modules)
 
@@ -107,6 +143,11 @@ def _convert_minimax_h3_comfy_lora_to_diffusers(
 class MiniMaxH3LoraLoaderMixin(LoraBaseMixin):
     _lora_loadable_modules = ["transformer"]
     transformer_name = "transformer"
+
+    @staticmethod
+    def _transformer_uses_gate_first_swiglu(transformer) -> bool:
+        config = getattr(transformer, "config", None)
+        return bool(getattr(config, "swiglu_gate_first", False))
 
     @classmethod
     def lora_state_dict(
@@ -173,8 +214,14 @@ class MiniMaxH3LoraLoaderMixin(LoraBaseMixin):
         if not isinstance(state_dict, dict):
             raise ValueError("MiniMax-H3 LoRA checkpoint did not return a state dict.")
 
+        transformer = getattr(self, self.transformer_name, None)
+        if transformer is None:
+            raise ValueError(f"MiniMax-H3 pipeline has no `{self.transformer_name}` component to load LoRA weights into.")
+
         detected_format = detect_state_dict_format(state_dict)
-        if lora_format == PEFTLoRAFormat.DIFFUSERS and detected_format == PEFTLoRAFormat.COMFYUI:
+        if lora_format == PEFTLoRAFormat.DIFFUSERS and (
+            detected_format == PEFTLoRAFormat.COMFYUI or _is_minimax_h3_native_lora_state_dict(state_dict)
+        ):
             lora_format = PEFTLoRAFormat.COMFYUI
 
         network_alphas = None
@@ -182,6 +229,7 @@ class MiniMaxH3LoraLoaderMixin(LoraBaseMixin):
             state_dict, network_alphas = _convert_minimax_h3_comfy_lora_to_diffusers(
                 state_dict,
                 target_prefix=self.transformer_name,
+                target_swiglu_gate_first=self._transformer_uses_gate_first_swiglu(transformer),
             )
 
         transformer_prefix = f"{self.transformer_name}."
@@ -197,9 +245,17 @@ class MiniMaxH3LoraLoaderMixin(LoraBaseMixin):
         if not transformer_state_dict:
             raise ValueError("No transformer LoRA weights found for MiniMax-H3.")
 
-        transformer = getattr(self, self.transformer_name, None)
-        if transformer is None:
-            raise ValueError(f"MiniMax-H3 pipeline has no `{self.transformer_name}` component to load LoRA weights into.")
+        if not network_alphas:
+            explicit_alphas = collect_lora_alphas(transformer_state_dict)
+            if explicit_alphas:
+                network_alphas = {f"{module_key}.alpha": alpha for module_key, alpha in explicit_alphas.items()}
+        if not network_alphas:
+            inferred_alphas = synthesize_missing_lora_alphas_from_ranks(transformer_state_dict)
+            if inferred_alphas:
+                network_alphas = inferred_alphas
+        transformer_state_dict = {
+            key: value for key, value in transformer_state_dict.items() if not key.endswith((".alpha", ".lora_alpha"))
+        }
 
         transformer.load_lora_adapter(
             transformer_state_dict,
