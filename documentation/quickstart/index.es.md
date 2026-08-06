@@ -61,7 +61,7 @@ Guías paso a paso para entrenar cada arquitectura de modelo compatible.
 | **LTX Video 2** | 19B | [LTX-2 Community](https://ltx.io/model/license) | Aplican condiciones<sup>10</sup> | [Guía de LTX Video 2](LTXVIDEO2.md) |
 | **Cosmos3** | 4-65B | [OpenMDW 1.1](https://github.com/OpenMDW/openmdw/blob/main/1.1/LICENSE.OpenMDW-1.1) | Sí | [Guía de Cosmos3](COSMOS3.es.md) |
 | **Hunyuan Video** | 8.3B | [Tencent Hunyuan Community](https://huggingface.co/tencent/HunyuanVideo-1.5/blob/main/LICENSE) | Aplican condiciones<sup>11</sup> | [Guía de Hunyuan](HUNYUANVIDEO.md) |
-| **MiniMax H3** | 33B | [MiniMax H3 Community](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE) | Aplican condiciones<sup>12</sup> | Sin guía dedicada |
+| **MiniMax H3** | 33B | [MiniMax H3 Community](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE) | Aplican condiciones<sup>12</sup> | [Guía de MiniMax H3](MINIMAX_H3.es.md) |
 | **Sana Video** | - | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Sí | [Guía de Sana Video](SANAVIDEO.md) |
 | **Kandinsky 5 Video** | - | [MIT](https://opensource.org/license/mit) | Sí | [Guía de Kandinsky Video](KANDINSKY5_VIDEO.md) |
 | **LongCat Video** | - | [MIT](https://opensource.org/license/mit) | Sí | [Guía de LongCat Video](LONGCAT_VIDEO.md) |

@@ -61,7 +61,7 @@
 | **LTX Video 2** | 19B | [LTX-2 Community](https://ltx.io/model/license) | 有条件<sup>10</sup> | [LTX Video 2 指南](LTXVIDEO2.md) |
 | **Cosmos3** | 4-65B | [OpenMDW 1.1](https://github.com/OpenMDW/openmdw/blob/main/1.1/LICENSE.OpenMDW-1.1) | 是 | [Cosmos3 指南](COSMOS3.zh.md) |
 | **Hunyuan Video** | 8.3B | [Tencent Hunyuan Community](https://huggingface.co/tencent/HunyuanVideo-1.5/blob/main/LICENSE) | 有条件<sup>11</sup> | [Hunyuan 指南](HUNYUANVIDEO.md) |
-| **MiniMax H3** | 33B | [MiniMax H3 Community](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE) | 有条件<sup>12</sup> | 无专用指南 |
+| **MiniMax H3** | 33B | [MiniMax H3 Community](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE) | 有条件<sup>12</sup> | [MiniMax H3 指南](MINIMAX_H3.zh.md) |
 | **Sana Video** | - | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 是 | [Sana Video 指南](SANAVIDEO.md) |
 | **Kandinsky 5 Video** | - | [MIT](https://opensource.org/license/mit) | 是 | [Kandinsky Video 指南](KANDINSKY5_VIDEO.md) |
 | **LongCat Video** | - | [MIT](https://opensource.org/license/mit) | 是 | [LongCat Video 指南](LONGCAT_VIDEO.md) |

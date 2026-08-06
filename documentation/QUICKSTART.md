@@ -31,7 +31,7 @@
 | LTX Video 2 | 19B | [LTXVIDEO2.md](/documentation/quickstart/LTXVIDEO2.md) |
 | Lumina2 | 2B | [LUMINA2.md](/documentation/quickstart/LUMINA2.md) |
 | Mage-Flow | 4B | [MAGEFLOW.md](/documentation/quickstart/MAGEFLOW.md) |
-| MiniMax H3 | 33B | No dedicated guide |
+| MiniMax H3 | 33B | [MINIMAX_H3.md](/documentation/quickstart/MINIMAX_H3.md) |
 | OmniGen | 3.8B | [OMNIGEN.md](/documentation/quickstart/OMNIGEN.md) |
 | PixArt Sigma | 0.6B-0.9B | [SIGMA.md](/documentation/quickstart/SIGMA.md) |
 | Qwen Image | 20B | [QWEN_IMAGE.md](/documentation/quickstart/QWEN_IMAGE.md)<br>[QWEN_EDIT.md](/documentation/quickstart/QWEN_EDIT.md) |
