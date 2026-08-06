@@ -9,6 +9,18 @@ _IMPORT_WARNING_EMITTED = False
 _CONFIGURED_MODE: str | None = None
 
 
+def _get_sdnq_compile_mode_from_args(args: Any) -> Any:
+    if args is None:
+        return "auto"
+    try:
+        args_dict = vars(args)
+    except TypeError:
+        return getattr(args, "sdnq_compile_mode", "auto")
+    if isinstance(args_dict, dict) and "sdnq_compile_mode" not in args_dict:
+        return "auto"
+    return getattr(args, "sdnq_compile_mode", "auto")
+
+
 def configure_sdnq_compile_mode(sdnq_compile_mode: Any = None) -> None:
     global _CONFIGURED_MODE, _IMPORT_WARNING_EMITTED
 
@@ -16,7 +28,7 @@ def configure_sdnq_compile_mode(sdnq_compile_mode: Any = None) -> None:
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         args = StateTracker.get_args()
-        sdnq_compile_mode = getattr(args, "sdnq_compile_mode", "auto") if args is not None else "auto"
+        sdnq_compile_mode = _get_sdnq_compile_mode_from_args(args)
 
     if sdnq_compile_mode is None:
         return

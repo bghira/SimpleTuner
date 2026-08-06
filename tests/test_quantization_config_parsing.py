@@ -3,7 +3,7 @@ import os
 import sys
 import unittest
 from types import ModuleType, SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from simpletuner.helpers.configuration.cmd_args import parse_cmdline_args
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -103,6 +103,16 @@ class TestQuantizationConfigParsing(unittest.TestCase):
         configure_sdnq_compile_mode()
 
         self.assertEqual(os.environ["SDNQ_USE_TORCH_COMPILE"], "1")
+
+    def test_sdnq_compile_mode_defaults_when_config_lacks_attribute(self):
+        from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
+
+        StateTracker.set_args(Mock())
+        os.environ.pop("SDNQ_USE_TORCH_COMPILE", None)
+
+        configure_sdnq_compile_mode()
+
+        self.assertNotIn("SDNQ_USE_TORCH_COMPILE", os.environ)
 
     def test_sdnq_compile_mode_does_not_warn_after_prior_configuration(self):
         from simpletuner.helpers.training import sdnq_compile
