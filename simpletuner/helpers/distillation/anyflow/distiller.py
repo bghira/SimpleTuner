@@ -91,7 +91,7 @@ class AnyFlowDistiller(DistillationBase):
         r_timesteps = self._timesteps_from_sigmas(r_sigmas, timesteps)
         r_timesteps = r_timesteps.to(device=batch["timesteps"].device, dtype=batch["timesteps"].dtype)
 
-        target = self._base_flow_target(batch)
+        target = self._base_flow_target(batch, model=model)
         if self.config["target_mode"] == "online_teacher":
             target = self._online_teacher_average_velocity(
                 prepared_batch=batch,
@@ -261,12 +261,28 @@ class AnyFlowDistiller(DistillationBase):
                 "or use a sampler that leaves a positive interval."
             )
 
-    @staticmethod
-    def _base_flow_target(prepared_batch: Dict[str, Any]) -> torch.Tensor:
+    def _base_flow_target(self, prepared_batch: Dict[str, Any], model=None) -> torch.Tensor:
+        target_model = model or self.student_model or self.teacher_model
+        get_target = getattr(target_model, "get_flow_matching_target", None)
+        if callable(get_target):
+            target = get_target(prepared_batch, prefer_explicit_target=True)
+            return target.to(device=prepared_batch["latents"].device, dtype=prepared_batch["latents"].dtype)
         flow_target = prepared_batch.get("flow_target")
         if torch.is_tensor(flow_target):
             return flow_target.to(device=prepared_batch["latents"].device, dtype=prepared_batch["latents"].dtype)
         return prepared_batch["noise"] - prepared_batch["latents"]
+
+    def _teacher_prediction_to_noiseward_flow(self, prediction: torch.Tensor) -> torch.Tensor:
+        converter = getattr(self.teacher_model, "prediction_to_noiseward_flow", None)
+        if callable(converter):
+            return converter(prediction)
+        return prediction
+
+    def _noiseward_flow_to_student_prediction(self, flow: torch.Tensor) -> torch.Tensor:
+        converter = getattr(self.student_model, "noiseward_flow_to_prediction", None)
+        if callable(converter):
+            return converter(flow)
+        return flow
 
     def _online_teacher_average_velocity(
         self,
@@ -287,15 +303,17 @@ class AnyFlowDistiller(DistillationBase):
                     teacher_batch = self._teacher_batch(prepared_batch, current_latents, current_sigmas)
                     teacher_prediction = self.teacher_model.model_predict(teacher_batch)["model_prediction"]
                     teacher_prediction = teacher_prediction.to(device=current_latents.device, dtype=current_latents.dtype)
+                    noiseward_prediction = self._teacher_prediction_to_noiseward_flow(teacher_prediction)
                     step = self._broadcast_time(next_sigmas - current_sigmas, current_latents)
-                    current_latents = current_latents + step * teacher_prediction
+                    current_latents = current_latents + step * noiseward_prediction
                     current_sigmas = next_sigmas
         finally:
             self.toggle_adapter(enable=True)
 
         denominator = self._broadcast_time(r_sigmas - t_sigmas, current_latents)
         average_velocity = (current_latents - start_latents) / denominator
-        return average_velocity.to(device=base_target.device, dtype=base_target.dtype)
+        target = self._noiseward_flow_to_student_prediction(average_velocity)
+        return target.to(device=base_target.device, dtype=base_target.dtype)
 
     def _rollout_sigma_schedule(self, t_sigmas: torch.Tensor, r_sigmas: torch.Tensor):
         steps = int(self.config["teacher_rollout_steps"])

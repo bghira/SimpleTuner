@@ -85,6 +85,7 @@ class DMDDistiller(DistillationBase):
             self.fake_score_transformer,
             self.scheduler_adapter,
             self.weight_dtype,
+            foundation=self.teacher_model,
         )
 
         self.denoising_steps = self._parse_denoising_steps(self.config["dmd_denoising_steps"])

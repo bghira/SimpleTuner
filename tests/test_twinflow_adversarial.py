@@ -26,6 +26,29 @@ def _twinflow_settings_for(**config_values):
     return model._twinflow_settings()
 
 
+def _flow_contract_model(direction: float):
+    from simpletuner.helpers.models.common import ModelFoundation
+
+    class _Model(ModelFoundation):
+        def _encode_prompts(self, *args, **kwargs):
+            raise NotImplementedError
+
+        def convert_negative_text_embed_for_pipeline(self, *args, **kwargs):
+            raise NotImplementedError
+
+        def convert_text_embed_for_pipeline(self, *args, **kwargs):
+            raise NotImplementedError
+
+        def model_predict(self, *args, **kwargs):
+            raise NotImplementedError
+
+        def flow_matching_target_direction(self) -> float:
+            return direction
+
+    model = object.__new__(_Model)
+    return model
+
+
 class TwinFlowAdversarialTest(unittest.TestCase):
     """Tests for TwinFlow adversarial losses (L_adv and L_rectify)."""
 
@@ -124,6 +147,21 @@ class TwinFlowAdversarialTest(unittest.TestCase):
         # Verify target is the velocity from x_fake to z
         self.assertEqual(target_fake.shape, x_fake.shape)
         self.assertTrue(torch.allclose(x_fake + target_fake, z))
+
+    def test_inverse_flow_target_and_reconstruction_use_prediction_convention(self):
+        model = _flow_contract_model(direction=-1.0)
+        latents = torch.zeros(1, 1, 1, 1)
+        noise = torch.ones_like(latents)
+        sigma = torch.full((1, 1, 1, 1), 0.25)
+        x_t = (1 - sigma) * latents + sigma * noise
+        prediction = latents - noise
+
+        target = model.get_flow_matching_target({"latents": latents, "noise": noise}, prefer_explicit_target=False)
+        x_hat, z_hat = model._twinflow_reconstruct_states(x_t, sigma, prediction)
+
+        self.assertTrue(torch.equal(target, prediction))
+        self.assertTrue(torch.allclose(x_hat, latents))
+        self.assertTrue(torch.allclose(z_hat, noise))
 
     def test_rectify_loss_gradient_computation(self):
         """Test that rectify loss computes F_grad = F_neg - F_pos correctly."""
