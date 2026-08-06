@@ -8,6 +8,16 @@
   "data_backend_config": "simpletuner/examples/multidatabackend-minimaxh3-disney-fl2va-480p+39f.json",
   "disable_benchmark": false,
   "disable_bucket_pruning": true,
+  "distillation_config": {
+    "h3_drift": {
+      "audio_weight": 1.0,
+      "balance": "token",
+      "loss_weight": 0.5,
+      "sft_loss_weight": 1.0,
+      "video_weight": 1.0
+    }
+  },
+  "distillation_method": "h3_drift",
   "gradient_accumulation_steps": 1,
   "gradient_checkpointing": true,
   "gradient_checkpointing_backend": "torch",

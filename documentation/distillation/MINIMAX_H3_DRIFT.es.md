@@ -49,6 +49,32 @@ Los ejemplos incluidos lo activan por defecto con `loss_weight: 0.5`. Es un punt
 - `balance`: `token` promedia por elementos válidos; `modality` promedia por modalidad después de aplicar pesos.
 - `video_weight`: peso de la deriva de video.
 - `audio_weight`: peso de la deriva de audio.
+- `inner_distillation_method`: distiller opcional que se ejecuta dentro de `h3_drift`, por ejemplo `anyflow`, `dmd`, `perflow`, `flow_dpo` o `self_forcing`.
+- `inner_distillation_config`: configuración que se pasa al distiller interno.
+
+## Componer otro distiller
+
+`h3_drift` puede envolver otro distiller para usar step distillation o un objetivo de preferencia sin dejar de conservar el comportamiento base de MiniMax H3:
+
+```json
+{
+  "distillation_method": "h3_drift",
+  "distillation_config": {
+    "h3_drift": {
+      "loss_weight": 0.5,
+      "sft_loss_weight": 1.0,
+      "inner_distillation_method": "anyflow",
+      "inner_distillation_config": {
+        "target_mode": "linear",
+        "r_timestep_sampler": "zero",
+        "loss_weight": 1.0
+      }
+    }
+  }
+}
+```
+
+El wrapper delega preparación de batches, scheduler de validación, caché de distillation, batches de captions y hooks de ciclo de vida al distiller interno. El distiller interno mantiene sus propias comprobaciones de compatibilidad.
 
 ## Audio y video
 
@@ -64,7 +90,7 @@ SimpleTuner soporta CFG real y negative prompt para checkpoints que la comunidad
 
 ## Logs y coste
 
-Los logs importantes son `h3_drift_loss`, `h3_drift_video_loss`, `h3_drift_audio_loss`, los contadores de elementos, `h3_drift_weighted_loss`, `h3_drift_sft_loss` y `total`.
+Los logs importantes son `h3_drift_loss`, `h3_drift_video_loss`, `h3_drift_audio_loss`, los contadores de elementos, `h3_drift_weighted_loss`, `h3_drift_sft_loss`, `h3_drift_inner_total` cuando hay distiller interno, y `total`.
 
 El coste es una pasada forward adicional por step, sin cargar un segundo transformer. Sigue siendo compatible con ConvRot, RamTorch, musubi block swap, gradient checkpointing y attention offload, pero cada preset debe medirse porque el forward extra puede cambiar el backend más rápido.
 

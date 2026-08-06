@@ -49,6 +49,32 @@ Full-rank では未対応です。transformer 全体を更新する場合、比�
 - `balance`: `token` は valid element 数で平均、`modality` は video/audio の modality mean を重み付きで平均。
 - `video_weight`: video drift term の倍率。
 - `audio_weight`: audio drift term の倍率。
+- `inner_distillation_method`: `h3_drift` の内側で実行する optional distiller。例: `anyflow`、`dmd`、`perflow`、`flow_dpo`、`self_forcing`。
+- `inner_distillation_config`: inner distiller に渡す config。
+
+## 他の Distiller との合成
+
+`h3_drift` は、MiniMax H3 の frozen-base behavior を保ちながら step distillation や preference objective を使うために、別の distiller を wrap できます。
+
+```json
+{
+  "distillation_method": "h3_drift",
+  "distillation_config": {
+    "h3_drift": {
+      "loss_weight": 0.5,
+      "sft_loss_weight": 1.0,
+      "inner_distillation_method": "anyflow",
+      "inner_distillation_config": {
+        "target_mode": "linear",
+        "r_timestep_sampler": "zero",
+        "loss_weight": 1.0
+      }
+    }
+  }
+}
+```
+
+Wrapper は batch preparation、validation scheduler、distillation cache、caption batch support、generator/discriminator lifecycle hooks を inner distiller に委譲します。inner distiller の compatibility check はそのまま有効です。
 
 ## Video と Audio
 
@@ -64,7 +90,7 @@ SimpleTuner は real CFG と negative prompt encoding に対応しています�
 
 ## Logs と Cost
 
-主な logs は `h3_drift_loss`、`h3_drift_video_loss`、`h3_drift_audio_loss`、element counts、`h3_drift_weighted_loss`、`h3_drift_sft_loss`、`total` です。
+主な logs は `h3_drift_loss`、`h3_drift_video_loss`、`h3_drift_audio_loss`、element counts、`h3_drift_weighted_loss`、`h3_drift_sft_loss`、inner distiller 有効時の `h3_drift_inner_total`、`total` です。
 
 各 step に extra forward pass が 1 回追加されますが、2 つ目の transformer は保持しません。ConvRot、RamTorch、musubi block swap、gradient checkpointing、attention offload と併用できます。ただし extra forward により fastest backend が変わるため、preset ごとに benchmark してください。
 

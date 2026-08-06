@@ -61,8 +61,34 @@ The checked-in MiniMax H3 example configs enable this by default. `loss_weight: 
 - `balance`: `token` or `modality`. `token` averages by valid element count, so video naturally dominates video/audio batches. `modality` averages the video and audio modality means after applying `video_weight` and `audio_weight`.
 - `video_weight`: multiplier for the video prediction drift term.
 - `audio_weight`: multiplier for the audio prediction drift term.
+- `inner_distillation_method`: optional nested SimpleTuner distiller to run inside H3 drift, such as `anyflow`, `dmd`, `perflow`, `flow_dpo`, or `self_forcing`.
+- `inner_distillation_config`: configuration mapping passed to the nested distiller.
 
 The defaults are `loss_weight: 1.0`, `sft_loss_weight: 1.0`, `balance: "token"`, and equal video/audio weights. The examples set a lighter drift value because most downstream LoRAs still need the dataset target to move the adapter.
+
+## Composing Another Distiller
+
+`h3_drift` can wrap another distiller when you want a step-distillation or preference objective while still preserving MiniMax H3's frozen-base behavior. For example, this runs AnyFlow target preparation first, then adds the H3 drift reference loss:
+
+```json
+{
+  "distillation_method": "h3_drift",
+  "distillation_config": {
+    "h3_drift": {
+      "loss_weight": 0.5,
+      "sft_loss_weight": 1.0,
+      "inner_distillation_method": "anyflow",
+      "inner_distillation_config": {
+        "target_mode": "linear",
+        "r_timestep_sampler": "zero",
+        "loss_weight": 1.0
+      }
+    }
+  }
+}
+```
+
+The wrapper delegates batch preparation, validation scheduler hooks, distillation cache generation, caption-batch support, and discriminator/generator lifecycle hooks to the inner distiller. The inner distiller still performs its own compatibility checks, so a method that does not support MiniMax H3 will fail during setup instead of silently falling back.
 
 ## Video And Audio Modes
 
@@ -101,6 +127,7 @@ The distiller adds separate log values:
 - `h3_drift_video_elements` and `h3_drift_audio_elements`: valid element counts after masks;
 - `h3_drift_weighted_loss`: `h3_drift_loss * loss_weight`;
 - `h3_drift_sft_loss`: normal MiniMax H3 loss after `sft_loss_weight`;
+- `h3_drift_inner_total`: the nested distiller's `total` value, when `inner_distillation_method` is enabled;
 - `total`: final loss returned to the trainer.
 
 Use these values to diagnose whether the adapter is learning the dataset or mostly fighting the reference. If `h3_drift_loss` climbs while validation quality gets more erratic, increase `loss_weight` or reduce learning rate. If the adapter barely learns the concept, reduce `loss_weight`, raise rank, or train longer.

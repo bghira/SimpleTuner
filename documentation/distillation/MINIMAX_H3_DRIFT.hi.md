@@ -49,6 +49,32 @@ Checked-in H3 examples इसे default रूप से enable करते �
 - `balance`: `token` valid elements से average करता है; `modality` video और audio means को modality level पर balance करता है।
 - `video_weight`: video drift term का multiplier।
 - `audio_weight`: audio drift term का multiplier।
+- `inner_distillation_method`: optional distiller जो `h3_drift` के अंदर चलेगा, जैसे `anyflow`, `dmd`, `perflow`, `flow_dpo`, या `self_forcing`।
+- `inner_distillation_config`: inner distiller को दी जाने वाली config।
+
+## दूसरा Distiller Compose करना
+
+`h3_drift` किसी और distiller को wrap कर सकता है, ताकि step distillation या preference objective के साथ MiniMax H3 का frozen-base behavior भी preserve रहे।
+
+```json
+{
+  "distillation_method": "h3_drift",
+  "distillation_config": {
+    "h3_drift": {
+      "loss_weight": 0.5,
+      "sft_loss_weight": 1.0,
+      "inner_distillation_method": "anyflow",
+      "inner_distillation_config": {
+        "target_mode": "linear",
+        "r_timestep_sampler": "zero",
+        "loss_weight": 1.0
+      }
+    }
+  }
+}
+```
+
+Wrapper batch preparation, validation scheduler, distillation cache, caption batches, और generator/discriminator lifecycle hooks inner distiller को delegate करता है। Inner distiller की compatibility checks फिर भी लागू रहती हैं।
 
 ## Video और Audio Modes
 
@@ -64,7 +90,7 @@ SimpleTuner real CFG और negative prompt encode कर सकता है �
 
 ## Logs और Cost
 
-मुख्य logs: `h3_drift_loss`, `h3_drift_video_loss`, `h3_drift_audio_loss`, element counts, `h3_drift_weighted_loss`, `h3_drift_sft_loss`, और `total`।
+मुख्य logs: `h3_drift_loss`, `h3_drift_video_loss`, `h3_drift_audio_loss`, element counts, `h3_drift_weighted_loss`, `h3_drift_sft_loss`, inner distiller enabled होने पर `h3_drift_inner_total`, और `total`।
 
 हर step में एक extra forward pass लगता है, लेकिन दूसरा transformer memory में नहीं रखा जाता। ConvRot, RamTorch, musubi block swap, gradient checkpointing, और attention offload के साथ यह compatible है; फिर भी presets benchmark करें क्योंकि extra forward fastest backend बदल सकता है।
 

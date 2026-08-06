@@ -49,6 +49,32 @@ Os exemplos H3 incluídos ativam isso por padrão. `loss_weight: 0.5` mantém o 
 - `balance`: `token` faz média por elementos válidos; `modality` faz média por modalidade depois dos pesos.
 - `video_weight`: peso do termo de drift de video.
 - `audio_weight`: peso do termo de drift de audio.
+- `inner_distillation_method`: distiller opcional executado dentro de `h3_drift`, por exemplo `anyflow`, `dmd`, `perflow`, `flow_dpo` ou `self_forcing`.
+- `inner_distillation_config`: configuração passada para o distiller interno.
+
+## Compor outro distiller
+
+`h3_drift` pode envolver outro distiller para usar step distillation ou objetivo de preferência enquanto preserva o comportamento base do MiniMax H3:
+
+```json
+{
+  "distillation_method": "h3_drift",
+  "distillation_config": {
+    "h3_drift": {
+      "loss_weight": 0.5,
+      "sft_loss_weight": 1.0,
+      "inner_distillation_method": "anyflow",
+      "inner_distillation_config": {
+        "target_mode": "linear",
+        "r_timestep_sampler": "zero",
+        "loss_weight": 1.0
+      }
+    }
+  }
+}
+```
+
+O wrapper delega preparação de batches, scheduler de validação, cache de distillation, batches de captions e hooks de ciclo de vida ao distiller interno. O distiller interno mantém suas próprias validações de compatibilidade.
 
 ## Video e Audio
 
@@ -64,7 +90,7 @@ SimpleTuner suporta real CFG e negative prompt encoding porque a comunidade pode
 
 ## Logs e custo
 
-Logs principais: `h3_drift_loss`, `h3_drift_video_loss`, `h3_drift_audio_loss`, element counts, `h3_drift_weighted_loss`, `h3_drift_sft_loss` e `total`.
+Logs principais: `h3_drift_loss`, `h3_drift_video_loss`, `h3_drift_audio_loss`, element counts, `h3_drift_weighted_loss`, `h3_drift_sft_loss`, `h3_drift_inner_total` quando houver distiller interno, e `total`.
 
 Cada step ganha um forward pass extra, mas não mantém um segundo transformer na memória. Funciona com ConvRot, RamTorch, musubi block swap, gradient checkpointing e attention offload; ainda assim, benchmark cada preset porque o forward extra pode mudar o backend mais rápido.
 

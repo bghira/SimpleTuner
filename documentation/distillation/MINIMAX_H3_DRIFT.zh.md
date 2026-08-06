@@ -49,6 +49,32 @@ Full-rank 不支持 H3 drift。更新整个 transformer 时，不再存在可比
 - `balance`：`token` 按有效元素数平均；`modality` 按 video/audio 模态均值加权平均。
 - `video_weight`：video drift term 权重。
 - `audio_weight`：audio drift term 权重。
+- `inner_distillation_method`：可选的内部 distiller，会在 `h3_drift` 内执行，例如 `anyflow`、`dmd`、`perflow`、`flow_dpo` 或 `self_forcing`。
+- `inner_distillation_config`：传给内部 distiller 的配置。
+
+## 组合另一个 distiller
+
+`h3_drift` 可以包裹另一个 distiller，在使用 step distillation 或偏好目标的同时继续保持 MiniMax H3 的冻结 base 行为：
+
+```json
+{
+  "distillation_method": "h3_drift",
+  "distillation_config": {
+    "h3_drift": {
+      "loss_weight": 0.5,
+      "sft_loss_weight": 1.0,
+      "inner_distillation_method": "anyflow",
+      "inner_distillation_config": {
+        "target_mode": "linear",
+        "r_timestep_sampler": "zero",
+        "loss_weight": 1.0
+      }
+    }
+  }
+}
+```
+
+该 wrapper 会把 batch preparation、validation scheduler hook、distillation cache、caption batch 支持以及 generator/discriminator 生命周期 hook 委托给内部 distiller。内部 distiller 仍会执行自己的兼容性检查。
 
 ## 视频与音频
 
@@ -64,7 +90,7 @@ SimpleTuner 支持 real CFG 和 negative prompt encoding，是因为社区可能
 
 ## 日志与成本
 
-主要日志包括 `h3_drift_loss`、`h3_drift_video_loss`、`h3_drift_audio_loss`、元素计数、`h3_drift_weighted_loss`、`h3_drift_sft_loss` 和 `total`。
+主要日志包括 `h3_drift_loss`、`h3_drift_video_loss`、`h3_drift_audio_loss`、元素计数、`h3_drift_weighted_loss`、`h3_drift_sft_loss`、启用内部 distiller 时的 `h3_drift_inner_total` 和 `total`。
 
 每个 step 会增加一次 forward pass，但不会在显存中保存第二个 transformer。它可与 ConvRot、RamTorch、musubi block swap、gradient checkpointing 和 attention offload 一起使用；不过额外 forward 可能改变最快 backend，因此每个 preset 都应重新 benchmark。
 
