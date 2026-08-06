@@ -160,6 +160,16 @@ class ValidationSchedulerCacheTests(unittest.TestCase):
         self.assertTrue(kwargs["local_files_only"])
         self.assertEqual(kwargs["prediction_type"], "epsilon")
 
+    def test_special_scheduler_models_skip_distiller_scheduler_replacement(self):
+        validation = self._validation(scheduler=LoadedScheduler())
+        validation.model.requires_special_scheduler_setup = lambda: True
+        validation.distiller = SimpleNamespace(get_scheduler=MagicMock(return_value=object()))
+
+        scheduler = validation.setup_scheduler()
+
+        self.assertIsNone(scheduler)
+        validation.distiller.get_scheduler.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

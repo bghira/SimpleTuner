@@ -2441,7 +2441,7 @@ class Validation:
                     export_to_video(
                         image,
                         os.path.join(base_model_benchmark, filename),
-                        fps=self.config.framerate,
+                        fps=int(getattr(self.config, "framerate", None) or 16),
                     )
 
     def _update_state(self):
@@ -2822,6 +2822,10 @@ class Validation:
         return kwargs
 
     def setup_scheduler(self):
+        if self.model.requires_special_scheduler_setup():
+            # allow the model's pipeline to initialise the scheduler itself
+            return
+
         if self.distiller is not None:
             distillation_scheduler = self.distiller.get_scheduler()
             if distillation_scheduler is not None:
@@ -2843,10 +2847,6 @@ class Validation:
                 self.model.pipeline.scheduler = scheduler
             logger.info(f"TwinFlow validation using UCGM scheduler for {twinflow_steps}-step generation")
             return scheduler
-
-        if self.model.requires_special_scheduler_setup():
-            # allow the model's pipeline to initialise the scheduler itself
-            return
 
         scheduler_args = {
             "prediction_type": self.config.prediction_type,
@@ -3697,6 +3697,11 @@ class Validation:
     def _prepare_pipeline_kwarg_for_inference(self, key: str, value: Any) -> Any:
         if not hasattr(value, "to") or not hasattr(value, "dtype"):
             return value
+        if getattr(self.config, "model_family", None) == "minimaxh3" and key in (
+            "text_token_tags",
+            "negative_text_token_tags",
+        ):
+            return value.to(device=self.inference_device)
         if value.dtype not in (torch.bfloat16, torch.float16, torch.float32):
             return value
         if getattr(self.config, "model_family", None) == "ideogram" and key in (
@@ -3738,6 +3743,18 @@ class Validation:
                 removed_kwargs,
             )
         return pipeline_kwargs
+
+    @staticmethod
+    def _extract_pipeline_media(pipeline_result, *, audio_only: bool = False):
+        for field_name in ("frames", "images", "audios", "audio", "videos"):
+            if not hasattr(pipeline_result, field_name):
+                continue
+            current_results = getattr(pipeline_result, field_name)
+            if current_results is not None:
+                return current_results
+            if field_name == "frames" and audio_only:
+                return []
+        return None
 
     def _prepare_validation_work_items(self, content: list[Any] | None) -> list[_ValidationWorkItem]:
         if content is None:
@@ -4788,20 +4805,13 @@ class Validation:
                                 )
                             else:
                                 pipeline_result = self.model.pipeline(**filtered_pipeline_kwargs)
-                        current_results = None
-                        if hasattr(pipeline_result, "frames"):
-                            current_results = pipeline_result.frames
-                            if current_results is None and getattr(self.config, "validation_audio_only", False):
-                                current_results = []
-                        elif hasattr(pipeline_result, "images"):
-                            current_results = pipeline_result.images
-                        elif hasattr(pipeline_result, "audios"):
-                            current_results = pipeline_result.audios
-                        elif hasattr(pipeline_result, "audio"):
-                            current_results = pipeline_result.audio
+                        current_results = self._extract_pipeline_media(
+                            pipeline_result,
+                            audio_only=bool(getattr(self.config, "validation_audio_only", False)),
+                        )
                         if current_results is None:
                             logger.error(
-                                "Pipeline result does not have 'frames', 'images', 'audios', or 'audio': %s",
+                                "Pipeline result does not have 'frames', 'images', 'videos', 'audios', or 'audio': %s",
                                 pipeline_result,
                             )
                             current_results = []
@@ -5014,7 +5024,7 @@ class Validation:
             export_to_video(
                 validation_image,
                 video_path,
-                fps=self.config.framerate,
+                fps=int(getattr(self.config, "framerate", None) or 16),
             )
             video_paths.append(video_path)
             validation_img_idx += 1
