@@ -1,8 +1,27 @@
+import math
+
 import peft
 import safetensors.torch
 import torch
 
 ANYFLOW_SIDECAR_PREFIXES = ("condition_embedder.delta_embedder.",)
+
+
+def _alpha_value(value):
+    if torch.is_tensor(value):
+        return float(value.detach().float().cpu().item())
+    return float(value)
+
+
+def _set_lora_alpha(layer, adapter_name: str, alpha) -> None:
+    alpha = _alpha_value(alpha)
+    layer.lora_alpha[adapter_name] = alpha
+    rank_map = getattr(layer, "r", {})
+    rank = rank_map.get(adapter_name) if isinstance(rank_map, dict) else rank_map
+    if not rank:
+        return
+    scaling = alpha / math.sqrt(rank) if getattr(layer, "use_rslora", False) else alpha / rank
+    layer.scaling[adapter_name] = scaling
 
 
 def determine_adapter_target_modules(args, unet, transformer):
@@ -97,9 +116,10 @@ def determine_adapter_target_modules(args, unet, transformer):
 
 
 @torch.no_grad()
-def load_lora_weights(dictionary, filename, loraKey="default", use_dora=False):
+def load_lora_weights(dictionary, filename, loraKey="default", use_dora=False, state_dict=None):
     additional_keys = set()
-    state_dict = safetensors.torch.load_file(filename)
+    if state_dict is None:
+        state_dict = safetensors.torch.load_file(filename)
     for prefix, model in dictionary.items():
         lora_layers = {
             (prefix + "." + x): y for (x, y) in model.named_modules() if isinstance(y, peft.tuners.lora.layer.Linear)
@@ -130,11 +150,14 @@ def load_lora_weights(dictionary, filename, loraKey="default", use_dora=False):
         + [x + ".lora_B.weight" for x in lora_layers.keys()]
         + ([x + ".lora_magnitude_vector.weight" for x in lora_layers.keys()] if use_dora else [])
     )
+    loaded_ranks = {}
+    explicit_alpha_keys = False
     for k, v in state_dict.items():
         if "lora_A" in k:
             kk = k.replace(".lora_A.weight", "")
             if kk in lora_layers:
                 lora_layers[kk].lora_A[loraKey].weight.copy_(v)
+                loaded_ranks[kk] = int(v.shape[0])
                 missing_keys.remove(k)
             else:
                 additional_keys.add(k)
@@ -142,13 +165,15 @@ def load_lora_weights(dictionary, filename, loraKey="default", use_dora=False):
             kk = k.replace(".lora_B.weight", "")
             if kk in lora_layers:
                 lora_layers[kk].lora_B[loraKey].weight.copy_(v)
+                loaded_ranks[kk] = int(v.shape[1])
                 missing_keys.remove(k)
             else:
                 additional_keys.add(k)
         elif ".alpha" in k or ".lora_alpha" in k:
+            explicit_alpha_keys = True
             kk = k.replace(".lora_alpha", "").replace(".alpha", "")
             if kk in lora_layers:
-                lora_layers[kk].lora_alpha[loraKey] = v
+                _set_lora_alpha(lora_layers[kk], loraKey, v)
         elif ".lora_magnitude_vector" in k:
             kk = k.replace(".lora_magnitude_vector.weight", "")
             if kk in lora_layers:
@@ -156,4 +181,8 @@ def load_lora_weights(dictionary, filename, loraKey="default", use_dora=False):
                 missing_keys.remove(k)
             else:
                 additional_keys.add(k)
+    if not explicit_alpha_keys and len(set(loaded_ranks.values())) > 1:
+        for kk, rank in loaded_ranks.items():
+            if kk in lora_layers:
+                _set_lora_alpha(lora_layers[kk], loraKey, rank)
     return (additional_keys, missing_keys)

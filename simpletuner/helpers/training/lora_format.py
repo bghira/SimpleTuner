@@ -1,7 +1,12 @@
+from collections import Counter
 from enum import Enum
 from typing import Any, Dict, Optional, Tuple
 
 import torch
+
+_LORA_DOWN_WEIGHT_SUFFIXES = (".lora.down.weight", ".lora_A.weight", ".lora_down.weight")
+_LORA_UP_WEIGHT_SUFFIXES = (".lora.up.weight", ".lora_B.weight", ".lora_up.weight")
+_LORA_ALPHA_SUFFIXES = (".alpha", ".lora_alpha")
 
 
 class PEFTLoRAFormat(str, Enum):
@@ -32,7 +37,7 @@ def detect_state_dict_format(state_dict: Dict[str, Any]) -> Optional[PEFTLoRAFor
         return None
 
     keys = list(state_dict.keys())
-    comfy_prefix_hits = sum(k.startswith("diffusion_model.") for k in keys)
+    comfy_prefix_hits = sum(k.startswith(("diffusion_model.", "model.diffusion_model.")) for k in keys)
     comfy_alpha_hits = sum(k.endswith(".alpha") for k in keys)
     diffusers_down_up_hits = sum(".lora.down" in k or ".lora.up" in k for k in keys)
 
@@ -45,6 +50,126 @@ def _as_float(value: Any) -> float:
     if torch.is_tensor(value):
         return float(value.detach().float().cpu().item())
     return float(value)
+
+
+def _strip_prefix(key: str, prefix_to_strip: Optional[str]) -> str:
+    if prefix_to_strip and key.startswith(prefix_to_strip):
+        return key[len(prefix_to_strip) :]
+    return key
+
+
+def _most_common(values: list[Any]) -> Any:
+    return Counter(values).most_common(1)[0][0]
+
+
+def collect_lora_ranks(state_dict: Dict[str, Any], *, prefix_to_strip: Optional[str] = None) -> Dict[str, int]:
+    ranks: Dict[str, int] = {}
+    for key, value in state_dict.items():
+        if not hasattr(value, "shape"):
+            continue
+        stripped_key = _strip_prefix(key, prefix_to_strip)
+        module_key = None
+        rank = None
+        for suffix in _LORA_DOWN_WEIGHT_SUFFIXES:
+            if stripped_key.endswith(suffix):
+                module_key = stripped_key[: -len(suffix)]
+                rank = int(value.shape[0])
+                break
+        if module_key is None:
+            for suffix in _LORA_UP_WEIGHT_SUFFIXES:
+                if stripped_key.endswith(suffix):
+                    module_key = stripped_key[: -len(suffix)]
+                    rank = int(value.shape[1])
+                    break
+        if module_key is None or rank is None:
+            continue
+        existing_rank = ranks.get(module_key)
+        if existing_rank is not None and existing_rank != rank:
+            raise ValueError(f"LoRA checkpoint has conflicting ranks for `{module_key}`: {existing_rank} and {rank}.")
+        ranks[module_key] = rank
+    return ranks
+
+
+def collect_lora_alphas(state_dict: Dict[str, Any], *, prefix_to_strip: Optional[str] = None) -> Dict[str, float]:
+    alphas: Dict[str, float] = {}
+    for key, value in state_dict.items():
+        stripped_key = _strip_prefix(key, prefix_to_strip)
+        for suffix in _LORA_ALPHA_SUFFIXES:
+            if stripped_key.endswith(suffix):
+                alphas[stripped_key[: -len(suffix)]] = _as_float(value)
+                break
+    return alphas
+
+
+def synthesize_missing_lora_alphas_from_ranks(
+    state_dict: Dict[str, Any],
+    *,
+    existing_alphas: Optional[Dict[str, Any]] = None,
+    prefix_to_strip: Optional[str] = None,
+) -> Dict[str, float]:
+    """
+    For mixed-rank LoRAs with no alpha data, synthesize alpha=rank per module.
+    Uniform-rank LoRAs keep the caller's configured/global alpha.
+    """
+    if existing_alphas:
+        return {}
+    if collect_lora_alphas(state_dict, prefix_to_strip=prefix_to_strip):
+        return {}
+
+    ranks = collect_lora_ranks(state_dict, prefix_to_strip=prefix_to_strip)
+    if len(set(ranks.values())) <= 1:
+        return {}
+    return {f"{module_key}.alpha": float(rank) for module_key, rank in ranks.items()}
+
+
+def peft_lora_config_kwargs_from_state_dict(
+    state_dict: Dict[str, Any],
+    *,
+    prefix_to_strip: Optional[str] = None,
+) -> Dict[str, Any]:
+    ranks = collect_lora_ranks(state_dict, prefix_to_strip=prefix_to_strip)
+    if not ranks:
+        return {}
+
+    default_rank = _most_common(list(ranks.values()))
+    rank_pattern = {module_key: rank for module_key, rank in ranks.items() if rank != default_rank}
+    alphas = collect_lora_alphas(state_dict, prefix_to_strip=prefix_to_strip)
+    if alphas:
+        default_alpha = _most_common(list(alphas.values()))
+        alpha_pattern = {
+            module_key: alpha for module_key, alpha in alphas.items() if module_key in ranks and alpha != default_alpha
+        }
+    else:
+        default_alpha = float(default_rank)
+        alpha_pattern = (
+            {module_key: float(rank) for module_key, rank in ranks.items() if rank != default_rank}
+            if len(set(ranks.values())) > 1
+            else {}
+        )
+
+    kwargs: Dict[str, Any] = {
+        "r": default_rank,
+        "lora_alpha": default_alpha,
+    }
+    if rank_pattern:
+        kwargs["rank_pattern"] = rank_pattern
+    if alpha_pattern:
+        kwargs["alpha_pattern"] = alpha_pattern
+    return kwargs
+
+
+def get_peft_kwargs(rank, network_alpha_dict=None, peft_state_dict=None, *args, **kwargs):
+    from diffusers.utils import get_peft_kwargs as diffusers_get_peft_kwargs
+
+    if peft_state_dict is not None and not network_alpha_dict:
+        explicit_alphas = collect_lora_alphas(peft_state_dict)
+        if explicit_alphas:
+            network_alpha_dict = {f"{module_key}.alpha": alpha for module_key, alpha in explicit_alphas.items()}
+        else:
+            inferred_alphas = synthesize_missing_lora_alphas_from_ranks(peft_state_dict)
+            if inferred_alphas:
+                network_alpha_dict = inferred_alphas
+    return diffusers_get_peft_kwargs(rank, network_alpha_dict, peft_state_dict, *args, **kwargs)
 
 
 def convert_comfyui_to_diffusers(
