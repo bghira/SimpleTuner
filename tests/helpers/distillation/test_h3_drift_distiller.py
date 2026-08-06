@@ -19,12 +19,26 @@ class _Adapter:
         self.calls.append(self.multiplier)
 
 
+class _FlowMapComponent(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.flowmap_enabled = False
+        self.flowmap_gate_value = None
+        self.flowmap_deltatime_type = None
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
+        self.flowmap_enabled = True
+        self.flowmap_gate_value = gate_value
+        self.flowmap_deltatime_type = deltatime_type
+
+
 class _H3Model:
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     NAME = "MiniMax H3"
 
     def __init__(self, adapter: _Adapter):
         self.adapter = adapter
+        self.component = _FlowMapComponent()
         self.raise_when_disabled = False
         self.config = SimpleNamespace(lora_type="lycoris")
         self.accelerator = SimpleNamespace(
@@ -32,6 +46,37 @@ class _H3Model:
             num_processes=1,
             _lycoris_wrapped_network=adapter,
         )
+
+    def get_trained_component(self, unwrap_model=False):
+        del unwrap_model
+        return self.component
+
+    def flow_matching_target_direction(self) -> float:
+        return -1.0
+
+    def noiseward_flow_to_prediction(self, flow: torch.Tensor) -> torch.Tensor:
+        return -flow
+
+    def prediction_to_noiseward_flow(self, prediction: torch.Tensor) -> torch.Tensor:
+        return -prediction
+
+    def get_flow_matching_target(
+        self,
+        prepared_batch: dict,
+        *,
+        latents: torch.Tensor | None = None,
+        noise: torch.Tensor | None = None,
+        prefer_explicit_target: bool = True,
+    ) -> torch.Tensor:
+        if prefer_explicit_target and prepared_batch.get("target") is not None:
+            return prepared_batch["target"]
+        if prefer_explicit_target and prepared_batch.get("flow_target") is not None:
+            return prepared_batch["flow_target"]
+        if latents is None:
+            latents = prepared_batch["latents"]
+        if noise is None:
+            noise = prepared_batch["noise"]
+        return latents - noise
 
     def model_predict(self, batch):
         if self.raise_when_disabled and self.adapter.multiplier == 0.0:
@@ -135,6 +180,65 @@ class H3DriftDistillerTests(unittest.TestCase):
                 teacher_model=model,
                 noise_scheduler=None,
                 config={"model_type": "lora", "model_family": "flux"},
+            )
+
+    def test_wraps_anyflow_and_preserves_h3_target_sign(self):
+        adapter = _Adapter()
+        model = _H3Model(adapter)
+        distiller = H3DriftDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={
+                "model_type": "lora",
+                "model_family": "minimaxh3",
+                "loss_weight": 0.5,
+                "sft_loss_weight": 0.25,
+                "inner_distillation_method": "anyflow",
+                "inner_distillation_config": {
+                    "target_mode": "linear",
+                    "r_timestep_sampler": "zero",
+                    "loss_weight": 2.0,
+                },
+            },
+        )
+        latents = torch.zeros(2, 1, 2, 2)
+        noise = torch.ones_like(latents)
+        sigmas = torch.tensor([1.0, 0.5]).view(2, 1, 1, 1)
+        batch = {
+            "latents": latents,
+            "noise": noise,
+            "input_noise": noise.clone(),
+            "sigmas": sigmas,
+            "timesteps": torch.tensor([1.0, 0.5]),
+            "noisy_latents": (1 - sigmas) * latents + sigmas * noise,
+            "include_audio": False,
+        }
+
+        prepared = distiller.prepare_batch(batch, model=model, state={})
+        model_output = model.model_predict(prepared)
+        loss, logs = distiller.compute_distill_loss(prepared, model_output, torch.tensor(4.0))
+
+        self.assertTrue(model.component.flowmap_enabled)
+        self.assertTrue(torch.equal(prepared["target"], latents - noise))
+        self.assertAlmostEqual(float(loss), 4.0)
+        self.assertAlmostEqual(logs["anyflow_loss"], 2.0)
+        self.assertAlmostEqual(logs["h3_drift_inner_total"], 2.0)
+        self.assertAlmostEqual(logs["h3_drift_weighted_loss"], 2.0)
+        self.assertEqual(adapter.calls, [0.0, 1.0])
+
+    def test_rejects_recursive_inner_h3_drift(self):
+        adapter = _Adapter()
+        model = _H3Model(adapter)
+
+        with self.assertRaisesRegex(ValueError, "may not wrap"):
+            H3DriftDistiller(
+                teacher_model=model,
+                noise_scheduler=None,
+                config={
+                    "model_type": "lora",
+                    "model_family": "minimaxh3",
+                    "inner_distillation_method": "h3_drift",
+                },
             )
 
 

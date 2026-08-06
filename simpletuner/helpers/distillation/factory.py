@@ -8,7 +8,7 @@ import simpletuner.helpers.distillation.anyflow  # noqa: F401
 import simpletuner.helpers.distillation.flow_dpo  # noqa: F401
 import simpletuner.helpers.distillation.h3_drift  # noqa: F401
 import simpletuner.helpers.distillation.perflow.distiller  # noqa: F401
-import simpletuner.helpers.distillation.self_forcing  # noqa: F401
+import simpletuner.helpers.distillation.self_forcing.distiller  # noqa: F401
 from simpletuner.helpers.distillation.common import DistillationBase, validate_distillation_text_encoder_training
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 

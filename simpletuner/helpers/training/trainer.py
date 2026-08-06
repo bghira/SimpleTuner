@@ -50,7 +50,7 @@ from simpletuner.helpers.data_backend.factory import (
 from simpletuner.helpers.data_backend.runtime import random_dataloader_iterator
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
 from simpletuner.helpers.data_backend.runtime.schedule import normalize_start_epoch, normalize_start_step
-from simpletuner.helpers.distillation.registry import DistillationRegistry
+from simpletuner.helpers.distillation.composition import resolve_configured_distiller_requirement_profile
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.publishing import PublishingManager
@@ -3342,7 +3342,7 @@ class Trainer:
             self.distiller_requirement_profile = EMPTY_PROFILE
             return EMPTY_PROFILE
 
-        profile = DistillationRegistry.get_requirement_profile(method)
+        profile = resolve_configured_distiller_requirement_profile(self.config)
         self.distiller_requirement_profile = profile
         StateTracker.set_distiller_profile(method, profile)
         return profile
@@ -3481,7 +3481,7 @@ class Trainer:
             method = getattr(self.config, "distillation_method", None)
             if method:
                 try:
-                    profile = DistillationRegistry.get_requirement_profile(method)
+                    profile = resolve_configured_distiller_requirement_profile(self.config)
                     caption_batches_supported = profile.requires_dataset_type(DatasetType.CAPTION)
                 except Exception:
                     caption_batches_supported = False

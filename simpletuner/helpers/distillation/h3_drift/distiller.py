@@ -35,6 +35,8 @@ class H3DriftDistiller(DistillationBase):
         "balance": "token",
         "video_weight": 1.0,
         "audio_weight": 1.0,
+        "inner_distillation_method": None,
+        "inner_distillation_config": {},
     }
 
     def __init__(
@@ -72,6 +74,77 @@ class H3DriftDistiller(DistillationBase):
             raise ValueError("H3 drift video/audio weights must be non-negative and not both zero.")
         self.config["video_weight"] = video_weight
         self.config["audio_weight"] = audio_weight
+        self.inner_distiller = self._create_inner_distiller()
+
+    def _create_inner_distiller(self):
+        raw_method = self.config.get("inner_distillation_method")
+        if raw_method in (None, "", False):
+            return None
+
+        method = str(raw_method).strip().lower()
+        if method in {"none", "false", "0"}:
+            return None
+        if method == "h3_drift":
+            raise ValueError("H3 drift may not wrap another h3_drift distiller.")
+
+        inner_config = self.config.get("inner_distillation_config") or {}
+        if not isinstance(inner_config, dict):
+            raise ValueError("H3 drift inner_distillation_config must be a mapping.")
+
+        from simpletuner.helpers.distillation.factory import DistillerFactory
+
+        return DistillerFactory.create_distiller(
+            method,
+            teacher_model=self.teacher_model,
+            noise_scheduler=self.noise_scheduler,
+            config={
+                "distillation_config": {method: inner_config},
+                "train_text_encoder": bool(self.config.get("train_text_encoder", False)),
+            },
+            model_type=str(self.config.get("model_type") or "lora"),
+            model_family=self.config.get("model_family"),
+            prediction_type=self.config.get("prediction_type"),
+            student_model=None if self.low_rank_distillation else self.student_model,
+        )
+
+    def requires_distillation_cache(self) -> bool:
+        return bool(self.inner_distiller and self.inner_distiller.requires_distillation_cache())
+
+    def get_required_distillation_cache_type(self) -> Optional[str]:
+        if self.inner_distiller is None:
+            return None
+        return self.inner_distiller.get_required_distillation_cache_type()
+
+    def get_ode_generator_provider(self):
+        if self.inner_distiller is None:
+            return None
+        return self.inner_distiller.get_ode_generator_provider()
+
+    def get_scheduler(self, scheduler=None):
+        if self.inner_distiller is None:
+            return super().get_scheduler(scheduler)
+        return self.inner_distiller.get_scheduler(scheduler)
+
+    def prepare_batch(self, batch, model, state):
+        if self.inner_distiller is None:
+            return batch
+        return self.inner_distiller.prepare_batch(batch, model, state)
+
+    def consumes_caption_batches(self) -> bool:
+        return bool(self.inner_distiller and self.inner_distiller.consumes_caption_batches())
+
+    def prepare_caption_batch(self, caption_batch: Dict[str, Any], model, state) -> Dict[str, Any]:
+        if self.inner_distiller is None:
+            return super().prepare_caption_batch(caption_batch, model, state)
+        return self.inner_distiller.prepare_caption_batch(caption_batch, model, state)
+
+    def pre_training_step(self, model, step):
+        if self.inner_distiller is not None:
+            self.inner_distiller.pre_training_step(model, step)
+
+    def post_training_step(self, model, step):
+        if self.inner_distiller is not None:
+            self.inner_distiller.post_training_step(model, step)
 
     def compute_distill_loss(
         self,
@@ -101,22 +174,71 @@ class H3DriftDistiller(DistillationBase):
             audio_weight=self.config["audio_weight"],
         )
 
-        drift_loss = joint_loss.loss * float(self.config.get("loss_weight", 1.0))
         sft_loss_weight = float(self.config.get("sft_loss_weight", 1.0))
-        loss = drift_loss + original_loss * sft_loss_weight
+        current_loss = original_loss * sft_loss_weight
+        logs = {}
+        if self.inner_distiller is not None:
+            current_loss, logs = self.inner_distiller.compute_distill_loss(prepared_batch, model_output, current_loss)
+            logs = self._inner_logs(logs)
 
-        logs = {
-            "h3_drift_loss": float(joint_loss.loss.detach()),
-            "h3_drift_video_loss": float(joint_loss.video_loss.detach()),
-            "h3_drift_audio_loss": float(joint_loss.audio_loss.detach()),
-            "h3_drift_video_elements": float(joint_loss.video_elements),
-            "h3_drift_audio_elements": float(joint_loss.audio_elements),
-            "h3_drift_weighted_loss": float(drift_loss.detach()),
-            "total": float(loss.detach()),
-        }
+        drift_loss = joint_loss.loss * float(self.config.get("loss_weight", 1.0))
+        loss = current_loss + drift_loss
+
+        logs.update(
+            {
+                "h3_drift_loss": float(joint_loss.loss.detach()),
+                "h3_drift_video_loss": float(joint_loss.video_loss.detach()),
+                "h3_drift_audio_loss": float(joint_loss.audio_loss.detach()),
+                "h3_drift_video_elements": float(joint_loss.video_elements),
+                "h3_drift_audio_elements": float(joint_loss.audio_elements),
+                "h3_drift_weighted_loss": float(drift_loss.detach()),
+                "total": float(loss.detach()),
+            }
+        )
         if sft_loss_weight != 0.0:
             logs["h3_drift_sft_loss"] = float((original_loss * sft_loss_weight).detach())
         return loss, logs
+
+    @staticmethod
+    def _inner_logs(logs: Dict[str, Any]) -> Dict[str, float]:
+        inner_logs: Dict[str, float] = {}
+        for key, value in logs.items():
+            log_key = "h3_drift_inner_total" if key == "total" else key
+            if torch.is_tensor(value):
+                value = float(value.detach())
+            inner_logs[log_key] = float(value)
+        return inner_logs
+
+    def generator_loss_step(
+        self,
+        prepared_batch: Dict[str, Any],
+        model_output: Dict[str, Any],
+        current_loss: torch.Tensor,
+    ):
+        if self.inner_distiller is None:
+            return current_loss, {}
+        loss, logs = self.inner_distiller.generator_loss_step(prepared_batch, model_output, current_loss)
+        return loss, self._inner_logs(logs)
+
+    def discriminator_step(self, prepared_batch: Dict[str, Any], **kwargs):
+        if self.inner_distiller is not None:
+            return self.inner_distiller.discriminator_step(prepared_batch=prepared_batch, **kwargs)
+        return None
+
+    def on_load_checkpoint(self, ckpt_dir: str):
+        if self.inner_distiller is not None:
+            return self.inner_distiller.on_load_checkpoint(ckpt_dir)
+        return None
+
+    def on_save_checkpoint(self, step: int, ckpt_dir: str):
+        if self.inner_distiller is not None:
+            return self.inner_distiller.on_save_checkpoint(step, ckpt_dir)
+        return None
+
+    def on_epoch_end(self, epoch: int):
+        if self.inner_distiller is not None:
+            return self.inner_distiller.on_epoch_end(epoch)
+        return None
 
     @staticmethod
     def _prediction_from_output(output: Dict[str, Any]) -> _H3Prediction:

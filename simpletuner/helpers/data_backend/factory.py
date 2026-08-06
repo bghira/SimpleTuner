@@ -124,7 +124,7 @@ from simpletuner.helpers.data_backend.runtime.schedule import (
 )
 from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
 from simpletuner.helpers.distillation.common import DistillationBase
-from simpletuner.helpers.distillation.registry import DistillationRegistry
+from simpletuner.helpers.distillation.composition import resolve_configured_distiller_requirement_profile
 from simpletuner.helpers.distillation.requirements import (
     EMPTY_PROFILE,
     DistillerRequirementProfile,
@@ -1736,7 +1736,12 @@ class FactoryRegistry:
         method = self.distillation_method or getattr(self.args, "distillation_method", None)
         if method:
             try:
-                method_profile = DistillationRegistry.get_requirement_profile(method)
+                method_profile = resolve_configured_distiller_requirement_profile(
+                    {
+                        "distillation_method": method,
+                        "distillation_config": getattr(self.args, "distillation_config", None),
+                    }
+                )
                 if method_profile.requires_dataset_type(DatasetType.CAPTION):
                     return True
             except Exception:
