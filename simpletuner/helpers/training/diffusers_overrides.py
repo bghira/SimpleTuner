@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from functools import wraps
 from typing import Dict, Iterable, Optional
 
 import torch
@@ -477,6 +478,42 @@ def patch_attention_flexible():
     logger.info(f"Patched Attention with flexible fusion (permanent={PERMANENT_FUSION})")
 
 
+def _collect_physically_merged_lora_adapters(pipeline) -> set[str]:
+    from peft.tuners.tuners_utils import BaseTunerLayer
+
+    merged_adapters: set[str] = set()
+    for component_name in getattr(pipeline, "_lora_loadable_modules", []):
+        component = getattr(pipeline, component_name, None)
+        if not isinstance(component, nn.Module):
+            continue
+        for module in component.modules():
+            if isinstance(module, BaseTunerLayer):
+                merged_adapters.update(adapter for adapter in module.merged_adapters if adapter)
+    return merged_adapters
+
+
+def patch_lora_unfuse_merged_adapters_tracking():
+    from diffusers.loaders.lora_base import LoraBaseMixin
+
+    if getattr(LoraBaseMixin, "_simpletuner_unfuse_lora_tracking_patch", False):
+        return
+
+    original_unfuse_lora = LoraBaseMixin.unfuse_lora
+
+    @wraps(original_unfuse_lora)
+    def unfuse_lora_with_merged_adapter_resync(self, components: list[str] = [], **kwargs):
+        tracked_before = set(getattr(self, "_merged_adapters", set()) or set())
+        result = original_unfuse_lora(self, components=components, **kwargs)
+        physically_merged = _collect_physically_merged_lora_adapters(self)
+        currently_tracked = set(getattr(self, "_merged_adapters", set()) or set())
+        self._merged_adapters = (currently_tracked | tracked_before) & physically_merged
+        return result
+
+    LoraBaseMixin.unfuse_lora = unfuse_lora_with_merged_adapter_resync
+    LoraBaseMixin._simpletuner_unfuse_lora_tracking_patch = True
+    LoraBaseMixin._simpletuner_original_unfuse_lora = original_unfuse_lora
+
+
 # Convenience functions for different use cases
 def enable_permanent_fusion():
     """Enable permanent fusion mode globally"""
@@ -495,6 +532,7 @@ def enable_reversible_fusion():
 patch_flash_attn2_hub_kernel_attrs()
 patch_ring_anything_attention_lse_shape()
 patch_attention_flexible()
+patch_lora_unfuse_merged_adapters_tracking()
 
 
 def _pad_qwen_hidden_states_to_fixed_length(
