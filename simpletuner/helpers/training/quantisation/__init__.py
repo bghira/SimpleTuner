@@ -1059,8 +1059,12 @@ def _sdnq_model(
         logging.getLogger("sdnq").setLevel(logging.WARNING)
         import sdnq.common as sdnq_common
         from sdnq.training import sdnq_training_post_load_quant
+
+        from simpletuner.helpers.training.sdnq_workarounds import apply_sdnq_workarounds
     except ImportError as e:
         raise ImportError(f"To use SDNQ, please install the sdnq library: `pip install sdnq`: {e}")
+
+    apply_sdnq_workarounds()
 
     sdnq_fp8_mm_supported = getattr(sdnq_common, "is_fp8_mm_supported", False)
     if callable(sdnq_fp8_mm_supported):
