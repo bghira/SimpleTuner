@@ -53,11 +53,14 @@ from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedul
 from simpletuner.helpers.training.layersync import LayerSyncRegularizer
 from simpletuner.helpers.training.lora_format import (
     PEFTLoRAFormat,
+    collect_lora_alphas,
     convert_comfyui_to_diffusers,
     convert_diffusers_to_comfyui,
     convert_diffusers_to_comfyui_sd_lora,
     detect_state_dict_format,
     normalize_lora_format,
+    peft_lora_config_kwargs_from_state_dict,
+    synthesize_missing_lora_alphas_from_ranks,
 )
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank
@@ -951,9 +954,35 @@ class ModelFoundation(ABC):
                 combined.append(target)
         return combined
 
+    def _prepare_init_lora_state_dict(self, state_dict: dict) -> dict:
+        return state_dict
+
+    def _load_init_lora_state_dict(self) -> dict | None:
+        init_lora_path = getattr(self.config, "init_lora", None)
+        if not init_lora_path or not isinstance(init_lora_path, str) or not os.path.isfile(init_lora_path):
+            return None
+
+        import safetensors.torch
+
+        try:
+            state_dict = safetensors.torch.load_file(init_lora_path)
+        except Exception as exc:
+            raise ValueError(f"Unable to inspect init_lora checkpoint `{init_lora_path}` for LoRA rank metadata.") from exc
+        return self._prepare_init_lora_state_dict(state_dict)
+
+    def _init_lora_config_kwargs(self, state_dict: dict | None = None) -> dict:
+        state_dict = self._load_init_lora_state_dict() if state_dict is None else state_dict
+        if not state_dict:
+            return {}
+        key_to_replace = (
+            self.CONTROLNET_LORA_STATE_DICT_PREFIX if getattr(self.config, "controlnet", False) else self.MODEL_TYPE.value
+        )
+        return peft_lora_config_kwargs_from_state_dict(state_dict, prefix_to_strip=f"{key_to_replace}.")
+
     def add_lora_adapter(self):
         from peft import LoraConfig
 
+        init_lora_state_dict = self._load_init_lora_state_dict()
         target_modules = self.get_lora_target_layers()
         save_modules = self.get_lora_save_layers()
         addkeys, misskeys = [], []
@@ -989,9 +1018,15 @@ class ModelFoundation(ABC):
 
                     logger.info("Enabling SingLoRA for LoRA training.")
                     setup_singlora()
+            lora_config_kwargs.update(self._init_lora_config_kwargs(init_lora_state_dict))
+            lora_rank = lora_config_kwargs.pop("r", self.config.lora_rank)
+            lora_alpha = lora_config_kwargs.pop(
+                "lora_alpha",
+                self.config.lora_alpha if self.config.lora_alpha is not None else lora_rank,
+            )
             self.lora_config = lora_config_cls(
-                r=self.config.lora_rank,
-                lora_alpha=(self.config.lora_alpha if self.config.lora_alpha is not None else self.config.lora_rank),
+                r=lora_rank,
+                lora_alpha=lora_alpha,
                 lora_dropout=self.config.lora_dropout,
                 init_lora_weights=self.config.lora_initialisation_style,
                 target_modules=target_modules,
@@ -1020,6 +1055,7 @@ class ModelFoundation(ABC):
                 {self.MODEL_TYPE.value: (self.controlnet if getattr(self.config, "controlnet", False) else self.model)},
                 self.config.init_lora,
                 use_dora=use_dora,
+                state_dict=init_lora_state_dict,
             )
 
         return addkeys, misskeys
@@ -1865,6 +1901,15 @@ class ModelFoundation(ABC):
         from diffusers.utils import convert_unet_state_dict_to_peft
 
         denoiser_sd = convert_unet_state_dict_to_peft(denoiser_sd)
+        if not alpha_map:
+            explicit_alphas = collect_lora_alphas(denoiser_sd)
+            if explicit_alphas:
+                alpha_map.update(
+                    _normalise_alpha_map({f"{module_key}.alpha": alpha for module_key, alpha in explicit_alphas.items()})
+                )
+        if not alpha_map:
+            alpha_map.update(_normalise_alpha_map(synthesize_missing_lora_alphas_from_ranks(denoiser_sd)))
+        denoiser_sd = {key: value for key, value in denoiser_sd.items() if not key.endswith((".alpha", ".lora_alpha"))}
 
         from peft.utils import set_peft_model_state_dict
 

@@ -9,7 +9,6 @@ from diffusers.utils import (
     USE_PEFT_BACKEND,
     convert_unet_state_dict_to_peft,
     get_adapter_name,
-    get_peft_kwargs,
     is_peft_available,
     is_peft_version,
     is_torch_version,
@@ -19,6 +18,7 @@ from diffusers.utils import (
 )
 from huggingface_hub.utils import validate_hf_hub_args
 
+from simpletuner.helpers.training.lora_format import get_peft_kwargs
 from simpletuner.helpers.utils.offloading import restore_offload_state, unpack_offload_state
 
 _LOW_CPU_MEM_USAGE_DEFAULT_LORA = False

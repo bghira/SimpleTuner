@@ -12,7 +12,7 @@ from typing import Callable, Optional, Sequence
 
 import torch
 from diffusers.loaders.lora_base import LoraBaseMixin, _fetch_state_dict
-from diffusers.utils import USE_PEFT_BACKEND, get_adapter_name, get_peft_kwargs, is_peft_version
+from diffusers.utils import USE_PEFT_BACKEND, get_adapter_name, is_peft_version
 from huggingface_hub import hf_hub_download
 from huggingface_hub.errors import EntryNotFoundError
 from PIL import Image
@@ -54,6 +54,7 @@ from simpletuner.helpers.models.ideogram.scheduler import (
     make_step_intervals,
 )
 from simpletuner.helpers.models.ideogram.transformer import Ideogram4Config, Ideogram4Transformer
+from simpletuner.helpers.training.lora_format import get_peft_kwargs
 
 
 def _load_subfolder_state_dict(repo_id: str, subfolder: str, basename: str) -> dict[str, torch.Tensor]:
