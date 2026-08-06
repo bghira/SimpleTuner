@@ -61,6 +61,32 @@ class _EpsilonModel(_FlowModel):
     PREDICTION_TYPE = PredictionTypes.EPSILON
 
 
+class _InverseFlowModel(_FlowModel):
+    def get_flow_matching_target(
+        self,
+        prepared_batch,
+        *,
+        latents=None,
+        noise=None,
+        prefer_explicit_target=True,
+    ):
+        if prefer_explicit_target and prepared_batch.get("target") is not None:
+            return prepared_batch["target"]
+        if prefer_explicit_target and prepared_batch.get("flow_target") is not None:
+            return prepared_batch["flow_target"]
+        if latents is None:
+            latents = prepared_batch["latents"]
+        if noise is None:
+            noise = prepared_batch["noise"]
+        return latents - noise
+
+    def prediction_to_noiseward_flow(self, prediction):
+        return -prediction
+
+    def noiseward_flow_to_prediction(self, flow):
+        return -flow
+
+
 class _NoFlowMapModel(_FlowModel):
     def __init__(self):
         super().__init__()
@@ -139,6 +165,19 @@ class AnyFlowDistillerTests(unittest.TestCase):
 
         self.assertTrue(torch.equal(batch["flowmap_r_timesteps"], torch.zeros(2)))
         self.assertTrue(torch.equal(batch["target"], torch.ones_like(batch["latents"])))
+        self.assertIs(batch["flow_target"], batch["target"])
+
+    def test_linear_prepare_batch_uses_model_flow_target_convention(self):
+        model = _InverseFlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "target_mode": "linear", "r_timestep_sampler": "zero"},
+        )
+
+        batch = distiller.prepare_batch(_prepared_batch(), model=model, state={})
+
+        self.assertTrue(torch.equal(batch["target"], -torch.ones_like(batch["latents"])))
         self.assertIs(batch["flow_target"], batch["target"])
 
     def test_linear_prepare_batch_preserves_normalized_timestep_parameterization(self):

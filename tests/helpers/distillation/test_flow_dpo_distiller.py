@@ -45,6 +45,23 @@ class _FlowModel:
         return {"model_prediction": target + offset * torch.ones_like(target)}
 
 
+class _InverseFlowModel(_FlowModel):
+    def get_flow_matching_target(
+        self,
+        prepared_batch,
+        *,
+        latents=None,
+        noise=None,
+        prefer_explicit_target=True,
+    ):
+        del prefer_explicit_target
+        if latents is None:
+            latents = prepared_batch["latents"]
+        if noise is None:
+            noise = prepared_batch["noise"]
+        return latents - noise
+
+
 class _ConfigCaptureDistiller:
     last_config = None
 
@@ -237,6 +254,20 @@ class FlowDPODistillerTests(unittest.TestCase):
 
         expected = (1 - batch["sigmas"]) * rejected_latents + batch["sigmas"] * batch["input_noise"]
         torch.testing.assert_close(rejected_batch["noisy_latents"], expected)
+
+    def test_flow_target_uses_model_convention(self):
+        adapter = _Adapter()
+        model = _InverseFlowModel(adapter)
+        distiller = FlowDPODistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "auto_beta": False},
+        )
+        batch = _prepared_batch()
+
+        target = distiller._flow_target(batch, batch["latents"])
+
+        self.assertTrue(torch.equal(target, batch["latents"] - batch["noise"]))
 
     def test_mask_for_loss_handles_video_mask_and_dilation(self):
         adapter = _Adapter()
