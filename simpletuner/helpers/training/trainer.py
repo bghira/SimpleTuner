@@ -2828,7 +2828,9 @@ class Trainer:
                 if self.config.controlnet:
                     logger.info(f"Moving ControlNet to dtype={self.config.base_weight_dtype}, device={quantization_device}")
                     self.model.controlnet.to(quantization_device, dtype=self.config.base_weight_dtype)
-        if self.config.is_quanto:
+        # SDNQ base models may still use Quanto text encoders. Let the SDNQ
+        # branch handle that mixed setup so the base model is not quantized twice.
+        if self.config.is_quanto and not self.config.is_sdnq:
             with self.accelerator.local_main_process_first():
                 if ema_only:
                     if not pipeline_base_quantization:
