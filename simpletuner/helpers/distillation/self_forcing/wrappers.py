@@ -61,9 +61,11 @@ class FoundationModelWrapper:
         prediction = self.foundation.model_predict(prepared)["model_prediction"]
 
         flow_pred = prediction
+        converter = getattr(self.foundation, "prediction_to_noiseward_flow", None)
+        scheduler_flow = converter(flow_pred) if callable(converter) else flow_pred
         latent_shape = flow_pred.shape
 
-        flat_flow, _ = _flatten_video(flow_pred)
+        flat_flow, _ = _flatten_video(scheduler_flow)
         flat_xt, _ = _flatten_video(noisy_latents)
         flat_timestep = timesteps.reshape(-1)
 
@@ -81,12 +83,13 @@ class FoundationModelWrapper:
 @dataclass
 class ModuleWrapper:
     """
-    Wraps a raw Wan transformer module (teacher/fake score) to expose the same API.
+    Wraps a raw transformer module (teacher/fake score) to expose the same API.
     """
 
     module: torch.nn.Module
     scheduler: FlowMatchingSchedulerAdapter
     weight_dtype: torch.dtype
+    foundation: object | None = None
 
     def forward(
         self,
@@ -117,10 +120,14 @@ class ModuleWrapper:
                 kwargs[f"{key}"] = conditional_dict[key].to(dtype=self.weight_dtype)
 
         outputs = self.module(**kwargs)
-        flow_pred = outputs[0]
+        raw_prediction = outputs[0]
+        converter = getattr(self.foundation, "raw_model_prediction_to_model_prediction", None)
+        flow_pred = converter(raw_prediction) if callable(converter) else raw_prediction
+        noiseward_converter = getattr(self.foundation, "prediction_to_noiseward_flow", None)
+        scheduler_flow = noiseward_converter(flow_pred) if callable(noiseward_converter) else flow_pred
         latent_shape = flow_pred.shape
 
-        flat_flow, _ = _flatten_video(flow_pred)
+        flat_flow, _ = _flatten_video(scheduler_flow)
         flat_xt, _ = _flatten_video(latents)
         flat_timestep = timesteps.reshape(-1)
 

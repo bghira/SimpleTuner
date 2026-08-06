@@ -4254,6 +4254,63 @@ class ModelFoundation(ABC):
         self.diff2flow_bridge = DiffusionToFlowBridge(alphas_cumprod=alphas_cumprod)
         self.diff2flow_bridge.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
 
+    def flow_matching_target_direction(self) -> float:
+        """
+        Return +1 for the common noise-ward velocity convention (`noise - latents`),
+        or -1 for models trained on the inverse data-ward convention.
+        """
+        return 1.0
+
+    def raw_model_prediction_to_model_prediction(self, raw_prediction: torch.Tensor) -> torch.Tensor:
+        """
+        Convert the denoiser's raw output into SimpleTuner's public `model_prediction`
+        convention. Most models already emit the public convention.
+        """
+        return raw_prediction
+
+    def noiseward_flow_to_prediction(self, flow: torch.Tensor) -> torch.Tensor:
+        direction = float(self.flow_matching_target_direction())
+        if direction == 1.0:
+            return flow
+        if direction == -1.0:
+            return -flow
+        return flow * direction
+
+    def prediction_to_noiseward_flow(self, prediction: torch.Tensor) -> torch.Tensor:
+        direction = float(self.flow_matching_target_direction())
+        if direction == 1.0:
+            return prediction
+        if direction == -1.0:
+            return -prediction
+        if direction == 0.0:
+            raise ValueError("Flow-matching target direction may not be zero.")
+        return prediction / direction
+
+    def flow_matching_target(self, latents: torch.Tensor, noise: torch.Tensor) -> torch.Tensor:
+        return self.noiseward_flow_to_prediction(noise - latents)
+
+    def get_flow_matching_target(
+        self,
+        prepared_batch: dict,
+        *,
+        latents: Optional[torch.Tensor] = None,
+        noise: Optional[torch.Tensor] = None,
+        prefer_explicit_target: bool = True,
+    ) -> torch.Tensor:
+        if prefer_explicit_target:
+            target = prepared_batch.get("target")
+            if target is not None:
+                return target
+            flow_target = prepared_batch.get("flow_target")
+            if flow_target is not None:
+                return flow_target
+
+        if latents is None:
+            latents = prepared_batch["latents"]
+        if noise is None:
+            noise = prepared_batch["noise"]
+        return self.flow_matching_target(latents, noise)
+
     def get_prediction_target(self, prepared_batch: dict):
         """
         Returns the target used in the loss function.
@@ -4264,7 +4321,7 @@ class ModelFoundation(ABC):
             # Parent-student training
             target = prepared_batch["target"]
         elif self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
-            target = prepared_batch["noise"] - prepared_batch["latents"]
+            target = self.get_flow_matching_target(prepared_batch, prefer_explicit_target=False)
         elif self.PREDICTION_TYPE is PredictionTypes.EPSILON:
             target = prepared_batch["noise"]
         elif self.PREDICTION_TYPE is PredictionTypes.V_PREDICTION:
@@ -4885,8 +4942,8 @@ class ModelFoundation(ABC):
                 use_grad=False,
             )
 
-        # Integrate one step: x_fake = z - F_fake (from t=1 to t=0)
-        x_fake = z - F_fake
+        # Integrate one step from t=1 to t=0 using the canonical noise-ward velocity.
+        x_fake = z - self.prediction_to_noiseward_flow(F_fake)
         return x_fake.detach(), z
 
     def _twinflow_compute_adversarial_loss(
@@ -4913,8 +4970,8 @@ class ModelFoundation(ABC):
         # Construct fake trajectory interpolation
         x_t_fake = t_b * z + (1 - t_b) * x_fake
 
-        # Target velocity for fake trajectory
-        target_fake = z - x_fake
+        # Target velocity for fake trajectory in this model's prediction convention.
+        target_fake = self.noiseward_flow_to_prediction(z - x_fake)
 
         # Forward with NEGATIVE time (sign embedding handles distinction)
         neg_t = -t
@@ -5176,15 +5233,15 @@ class ModelFoundation(ABC):
 
         return pred
 
-    @staticmethod
-    def _twinflow_reconstruct_states(x_t: torch.Tensor, sigma: torch.Tensor, flow_pred: torch.Tensor):
+    def _twinflow_reconstruct_states(self, x_t: torch.Tensor, sigma: torch.Tensor, flow_pred: torch.Tensor):
         """
         Recover x_hat and z_hat from the predicted flow under linear interpolation x_t = t*z + (1-t)*x.
         """
         sigma_b = ModelFoundation._twinflow_match_time_shape(sigma, x_t)
         gamma = 1 - sigma_b
-        x_hat = x_t - sigma_b * flow_pred
-        z_hat = x_t + gamma * flow_pred
+        noiseward_flow = self.prediction_to_noiseward_flow(flow_pred)
+        x_hat = x_t - sigma_b * noiseward_flow
+        z_hat = x_t + gamma * noiseward_flow
         return x_hat, z_hat
 
     def _twinflow_rcgm_target(
@@ -5330,7 +5387,9 @@ class ModelFoundation(ABC):
         batch["noise"] = noise
 
         if getattr(self.config, "diff2flow_enabled", False):
-            batch["flow_target"] = (batch["noise"] - batch["latents"]).to(**target_device_kwargs)
+            batch["flow_target"] = self.get_flow_matching_target(batch, prefer_explicit_target=False).to(
+                **target_device_kwargs
+            )
 
         # Possibly add input perturbation to input noise only
         if self.config.input_perturbation != 0 and (
@@ -5881,7 +5940,9 @@ class ModelFoundation(ABC):
             rcgm_latents = (1 - sigmas) * latents + sigmas * noise
         prepared_batch["twinflow_tt"] = tt
 
-        target = (noise - latents).to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+        target = self.get_flow_matching_target(prepared_batch, prefer_explicit_target=False).to(
+            device=self.accelerator.device, dtype=self.config.weight_dtype
+        )
 
         if self._twinflow_diffusion_bridge:
             if self.diff2flow_bridge is None:

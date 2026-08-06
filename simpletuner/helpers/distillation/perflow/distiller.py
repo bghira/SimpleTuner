@@ -249,15 +249,15 @@ class PerFlowDistiller(DistillationBase):
         noisy_latents = self._distillation_scheduler.add_noise(latents.float(), noise.float(), timesteps).to(
             device=device, dtype=dtype
         )
-        flow_target = noise - latents
-
         batch["latents"] = latents
         batch["clean_latents"] = latents
         batch["noise"] = noise
         batch["input_noise"] = noise
         batch["timesteps"] = timesteps
         batch["noisy_latents"] = noisy_latents
+        flow_target = self._flow_target(batch)
         batch["flow_target"] = flow_target
+        batch["target"] = flow_target
         batch["distillation_metadata"] = [entry.get("metadata", {}) for entry in cache_entries]
         batch["distillation_cache_entries"] = cache_entries
         return batch
@@ -284,7 +284,7 @@ class PerFlowDistiller(DistillationBase):
 
         flow_target = prepared_batch.get("flow_target")
         if flow_target is None:
-            flow_target = prepared_batch["noise"] - prepared_batch["latents"]
+            flow_target = self._flow_target(prepared_batch)
 
         loss_type = str(self.config.get("loss_type", "l2")).lower()
         if loss_type in ("huber", "smooth_l1"):
@@ -302,6 +302,14 @@ class PerFlowDistiller(DistillationBase):
             "total": float(loss.detach()),
         }
         return loss, logs
+
+    def _flow_target(self, prepared_batch: Dict[str, Any]) -> torch.Tensor:
+        latents = prepared_batch["latents"]
+        get_target = getattr(self.student_model, "get_flow_matching_target", None)
+        if callable(get_target):
+            target = get_target(prepared_batch, prefer_explicit_target=False)
+            return target.to(device=latents.device, dtype=latents.dtype)
+        return prepared_batch["noise"] - latents
 
 
 DistillationRegistry.register(

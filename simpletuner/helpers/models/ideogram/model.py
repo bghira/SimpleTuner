@@ -64,6 +64,9 @@ class Ideogram4(ImageModelFoundation):
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
         return 33
 
+    def raw_model_prediction_to_model_prediction(self, raw_prediction: torch.Tensor) -> torch.Tensor:
+        return raw_prediction * -1
+
     def setup_model_flavour(self):
         super().setup_model_flavour()
         flavour = getattr(self.config, "model_flavour", None) or self.DEFAULT_MODEL_FLAVOUR
@@ -662,7 +665,7 @@ class Ideogram4(ImageModelFoundation):
         )
         packed_prediction = model_output[:, text_tokens:]
         model_prediction = self._unpack_latents(packed_prediction, latent_height, latent_width)
-        return {"model_prediction": model_prediction * -1}
+        return {"model_prediction": self.raw_model_prediction_to_model_prediction(model_prediction)}
 
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         bsz = batch["latents"].shape[0]

@@ -161,6 +161,9 @@ class OmniGen(ImageModelFoundation):
     def supports_crepa_self_flow(self) -> bool:
         return True
 
+    def flow_matching_target_direction(self) -> float:
+        return -1.0
+
     def uses_text_embeddings_cache(self) -> bool:
         return False
 
@@ -326,7 +329,7 @@ class OmniGen(ImageModelFoundation):
         model_pred = model_output["model_prediction"]
 
         # Calculate target as in OmniGen
-        target = prepared_batch["latents"] - prepared_batch["noise"]
+        target = self.get_flow_matching_target(prepared_batch)
         # print(f"Model pred: min={model_pred.min().item():.4f}, max={model_pred.max().item():.4f}, mean={model_pred.mean().item():.4f}, std={model_pred.std().item():.4f}")
         # print(f"Target: min={target.min().item():.4f}, max={target.max().item():.4f}, mean={target.mean().item():.4f}, std={target.std().item():.4f}")
         # print(f"Loss contribution: {((model_pred - target)**2).mean().item():.4f}")
