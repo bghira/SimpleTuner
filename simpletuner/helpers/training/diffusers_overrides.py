@@ -514,6 +514,74 @@ def patch_lora_unfuse_merged_adapters_tracking():
     LoraBaseMixin._simpletuner_original_unfuse_lora = original_unfuse_lora
 
 
+def _patched_cudnn_attention_backward_op(ctx, grad_out: torch.Tensor, *args, **kwargs):
+    query, key, value, out, lse, cum_seq_q, cum_seq_k, philox_seed, philox_offset = ctx.saved_tensors
+
+    grad_out = grad_out.transpose(1, 2).contiguous()
+
+    grad_query, grad_key, grad_value = torch.ops.aten._scaled_dot_product_cudnn_attention_backward(
+        grad_out,
+        query,
+        key,
+        value,
+        out,
+        logsumexp=lse,
+        philox_seed=philox_seed,
+        philox_offset=philox_offset,
+        attn_bias=ctx.attn_mask,
+        cum_seq_q=cum_seq_q,
+        cum_seq_k=cum_seq_k,
+        max_q=ctx.max_q,
+        max_k=ctx.max_k,
+        dropout_p=ctx.dropout_p,
+        is_causal=ctx.is_causal,
+        scale=ctx.scale,
+    )
+    grad_query, grad_key, grad_value = (x.transpose(1, 2).contiguous() for x in (grad_query, grad_key, grad_value))
+
+    return grad_query, grad_key, grad_value
+
+
+def _patched_native_flash_attention_backward_op(ctx, grad_out: torch.Tensor, *args, **kwargs):
+    query, key, value, out, lse, cum_seq_q, cum_seq_k, philox_seed, philox_offset = ctx.saved_tensors
+
+    grad_out = grad_out.transpose(1, 2).contiguous()
+
+    grad_query, grad_key, grad_value = torch.ops.aten._scaled_dot_product_flash_attention_backward(
+        grad_out,
+        query,
+        key,
+        value,
+        out,
+        logsumexp=lse,
+        philox_seed=philox_seed,
+        philox_offset=philox_offset,
+        cum_seq_q=cum_seq_q,
+        cum_seq_k=cum_seq_k,
+        max_q=ctx.max_q,
+        max_k=ctx.max_k,
+        dropout_p=ctx.dropout_p,
+        is_causal=ctx.is_causal,
+        scale=ctx.scale,
+    )
+    grad_query, grad_key, grad_value = (x.transpose(1, 2).contiguous() for x in (grad_query, grad_key, grad_value))
+
+    return grad_query, grad_key, grad_value
+
+
+def patch_templated_attention_backward_layout():
+    if getattr(attention_dispatch, "_simpletuner_templated_attention_backward_layout_patch", False):
+        return
+
+    attention_dispatch._simpletuner_original_cudnn_attention_backward_op = attention_dispatch._cudnn_attention_backward_op
+    attention_dispatch._simpletuner_original_native_flash_attention_backward_op = (
+        attention_dispatch._native_flash_attention_backward_op
+    )
+    attention_dispatch._cudnn_attention_backward_op = _patched_cudnn_attention_backward_op
+    attention_dispatch._native_flash_attention_backward_op = _patched_native_flash_attention_backward_op
+    attention_dispatch._simpletuner_templated_attention_backward_layout_patch = True
+
+
 # Convenience functions for different use cases
 def enable_permanent_fusion():
     """Enable permanent fusion mode globally"""
@@ -533,6 +601,7 @@ patch_flash_attn2_hub_kernel_attrs()
 patch_ring_anything_attention_lse_shape()
 patch_attention_flexible()
 patch_lora_unfuse_merged_adapters_tracking()
+patch_templated_attention_backward_layout()
 
 
 def _pad_qwen_hidden_states_to_fixed_length(
