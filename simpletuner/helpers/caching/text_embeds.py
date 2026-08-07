@@ -19,6 +19,7 @@ from simpletuner.helpers.prompts import PromptHandler
 from simpletuner.helpers.training.multi_process import rank_info
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.wrappers import gather_dict_of_tensors_shapes, move_dict_of_tensors_to_device
+from simpletuner.helpers.utils.pathing import canonicalize_data_uri
 from simpletuner.helpers.webhooks.mixin import WebhookMixin
 
 logger = logging.getLogger("TextEmbeddingCache")
@@ -129,8 +130,9 @@ class TextEmbeddingCache(WebhookMixin):
             if "://" not in normalized:
                 normalized = os.path.normcase(os.path.abspath(os.path.normpath(normalized)))
         elif self.key_type is TextEmbedCacheKey.DATASET_AND_FILENAME:
-            # Keys already include dataset identifiers; leave as-is.
-            pass
+            dataset_id, separator, data_path = normalized.partition(":")
+            if separator:
+                normalized = f"{dataset_id}:{canonicalize_data_uri(data_path)}"
         return normalized
 
     def create_hash(self, key_value):

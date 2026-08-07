@@ -2,6 +2,13 @@ import os
 from urllib.parse import urlparse
 
 
+def canonicalize_data_uri(path: str) -> str:
+    """Repair URI identifiers that pathlib normalizes to a single slash."""
+    if path.startswith("webshart:/") and not path.startswith("webshart://"):
+        return f"webshart://{path[len('webshart:/') :]}"
+    return path
+
+
 def _is_uri(path: str) -> bool:
     if not isinstance(path, str):
         return False
@@ -14,6 +21,7 @@ def normalize_data_path(path: str, root: str | None = None) -> str:
     if not isinstance(path, str):
         return ""
 
+    path = canonicalize_data_uri(path)
     if _is_uri(path):
         return path
 

@@ -29,6 +29,9 @@ class WebshartBackendBuilder(BaseBackendBuilder):
         is_mock_backend = hasattr(backend_cls, "_mock_children")
 
         webshart_config = getattr(config, "webshart", None) or {}
+        shard_cache_gb = getattr(config, "webshart_shard_cache_gb", None)
+        if shard_cache_gb is None:
+            shard_cache_gb = 25.0
         cache_dir = getattr(config, "webshart_cache_dir", None)
         if not cache_dir:
             cache_dir = self._default_cache_dir(config)
@@ -45,7 +48,7 @@ class WebshartBackendBuilder(BaseBackendBuilder):
             "cache_dir": str(cache_dir) if cache_dir is not None else None,
             "metadata_cache_dir": webshart_config.get("metadata_cache_dir"),
             "shard_cache_dir": webshart_config.get("shard_cache_dir"),
-            "shard_cache_gb": getattr(config, "webshart_shard_cache_gb", None) or 25.0,
+            "shard_cache_gb": shard_cache_gb,
             "parallel_downloads": getattr(config, "webshart_parallel_downloads", None) or 4,
             "buffer_size": getattr(config, "webshart_buffer_size", None) or 100,
             "max_file_size": getattr(config, "webshart_max_file_size", None) or 500 * 1024 * 1024,
