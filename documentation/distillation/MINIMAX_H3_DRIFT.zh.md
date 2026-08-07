@@ -14,6 +14,12 @@ MiniMax H3 是已经蒸馏过的 flow-matching 视频/音频模型。普通 LoRA
 total = sft_loss_weight * normal_h3_loss + loss_weight * frozen_base_prediction_mse
 ```
 
+启用内部 distiller 时：
+
+```text
+total = inner_distiller_loss + sft_loss_weight * normal_h3_loss + loss_weight * frozen_base_prediction_mse
+```
+
 ## 何时使用
 
 除非你明确想移除或替换原始蒸馏行为，否则 MiniMax H3 LoRA / LyCORIS 训练建议启用它。它适合 style/concept LoRA、FL2VA/Ref2VA、联合音视频训练，以及 `convrot-int8` / `convrot-int4` 等量化 flavour。
@@ -76,6 +82,8 @@ Full-rank 不支持 H3 drift。更新整个 transformer 时，不再存在可比
 
 该 wrapper 会把 batch preparation、validation scheduler hook、distillation cache、caption batch 支持以及 generator/discriminator 生命周期 hook 委托给内部 distiller。内部 distiller 仍会执行自己的兼容性检查。
 
+即使内部 distiller 重写了 `target`，`sft_loss_weight` 仍表示正常 MiniMax H3 目标。如果内部 distiller 添加 FlowMap/AnyFlow timestep conditioning，H3 drift 会先移除内部 timestep key，再额外运行一次 adapter-enabled forward 来计算 SFT 项。这样 step-distilled 路径可以训练，同时标准 30-step H3 推理路径仍被锚定。
+
 ## 视频与音频
 
 `minimax_h3_target_mode: "auto"` 会解析为 video-only。使用 `"video"` 跳过音频目标行，使用 `"av"` 训练联合音视频目标行。也可以在 data backend 中设置 `h3_target_mode` 或 `minimax_h3_target_mode`。
@@ -92,7 +100,7 @@ SimpleTuner 支持 real CFG 和 negative prompt encoding，是因为社区可能
 
 主要日志包括 `h3_drift_loss`、`h3_drift_video_loss`、`h3_drift_audio_loss`、元素计数、`h3_drift_weighted_loss`、`h3_drift_sft_loss`、启用内部 distiller 时的 `h3_drift_inner_total` 和 `total`。
 
-每个 step 会增加一次 forward pass，但不会在显存中保存第二个 transformer。它可与 ConvRot、RamTorch、musubi block swap、gradient checkpointing 和 attention offload 一起使用；不过额外 forward 可能改变最快 backend，因此每个 preset 都应重新 benchmark。
+每个 step 会增加一次 forward pass，但不会在显存中保存第二个 transformer。若包裹 FlowMap/AnyFlow 内部 distiller 且启用 `sft_loss_weight`，还会为 SFT 锚点运行一次正常 adapter forward。它可与 ConvRot、RamTorch、musubi block swap、gradient checkpointing 和 attention offload 一起使用；不过额外 forward 可能改变最快 backend，因此每个 preset 都应重新 benchmark。
 
 ## 排错
 

@@ -218,6 +218,23 @@ def comfy_quant_metadata_tensor(metadata: dict) -> torch.Tensor:
     return torch.tensor(list(json.dumps(metadata).encode("utf-8")), dtype=torch.uint8)
 
 
+def comfy_head_interleaved_qkv(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, head_dim: int) -> torch.Tensor:
+    inner_dim = q.shape[0]
+    heads = inner_dim // head_dim
+    return (
+        torch.stack(
+            [
+                q.reshape(heads, head_dim, *q.shape[1:]),
+                k.reshape(heads, head_dim, *k.shape[1:]),
+                v.reshape(heads, head_dim, *v.shape[1:]),
+            ],
+            dim=1,
+        )
+        .reshape(inner_dim * 3, *q.shape[1:])
+        .contiguous()
+    )
+
+
 class FakeH3Transformer:
     def __init__(self):
         self.calls = []
@@ -312,6 +329,22 @@ class FakeH3Tokenizer:
 
 
 class FakeH3Processor:
+    class ImageProcessor:
+        merge_size = 1
+
+        def __init__(self):
+            self.calls = []
+
+        def __call__(self, images, return_tensors):
+            self.calls.append((images, return_tensors))
+            return {
+                "pixel_values": torch.ones(len(images), 2),
+                "image_grid_thw": torch.ones(len(images), 3, dtype=torch.long),
+            }
+
+    def __init__(self):
+        self.image_processor = self.ImageProcessor()
+
     def create_mm_token_type_ids(self, token_batches):
         return [[0] * len(token_ids) for token_ids in token_batches]
 
@@ -323,12 +356,14 @@ class FakeH3TextEncoder:
     def __init__(self):
         self.model = self
         self.last_input_ids = None
+        self.last_attention_mask = None
 
     def __call__(self, **kwargs):
         self.last_input_ids = kwargs["input_ids"].detach().cpu()
-        sequence_length = self.last_input_ids.shape[1]
+        self.last_attention_mask = kwargs["attention_mask"].detach().cpu()
+        batch_size, sequence_length = self.last_input_ids.shape
         hidden_states = [None] * (MINIMAX_H3_TEXT_ENCODER_LAYER + 1)
-        hidden_states[MINIMAX_H3_TEXT_ENCODER_LAYER] = torch.ones(1, sequence_length, 2)
+        hidden_states[MINIMAX_H3_TEXT_ENCODER_LAYER] = torch.ones(batch_size, sequence_length, 2)
         return SimpleNamespace(hidden_states=hidden_states)
 
 
@@ -517,6 +552,32 @@ class MiniMaxH3Tests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Failed to resolve MiniMax-H3 text conditioning image"):
             model._encode_prompts(["caption"])
 
+    def test_encode_prompts_batches_multiple_h3_conditioner_requests(self):
+        model = MiniMaxH3.__new__(MiniMaxH3)
+        model.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model.config = SimpleNamespace(weight_dtype=torch.float32)
+        model._current_prompt_contexts = [
+            {"conditioning_pixel_values": Image.new("RGB", (8, 8), "white")},
+            {"conditioning_pixel_values": Image.new("RGB", (8, 8), "black")},
+        ]
+        model._text_encoder_components = lambda: SimpleNamespace(transformer=SimpleNamespace(dtype=torch.float32))
+        batch_outputs = [
+            (torch.zeros(1, 2, 4), torch.tensor([1, 0], dtype=torch.long)),
+            (torch.ones(1, 3, 4), torch.tensor([1, 0, 1], dtype=torch.long)),
+        ]
+
+        with patch(
+            "simpletuner.helpers.models.minimaxh3.model.MiniMaxH3TextEncoderStep.encode_prompt_batch",
+            return_value=batch_outputs,
+        ) as encode_prompt_batch:
+            encoded = model._encode_prompts(["short", "a longer caption"])
+
+        self.assertEqual(encoded["prompt_embeds"].shape, (2, 3, 4))
+        self.assertEqual(encoded["text_token_tags"].tolist(), [[1, 0, -1], [1, 0, 1]])
+        self.assertEqual(encode_prompt_batch.call_count, 1)
+        self.assertEqual(encode_prompt_batch.call_args.args[1], ["short", "a longer caption"])
+        self.assertEqual(len(encode_prompt_batch.call_args.kwargs["image_batches"]), 2)
+
     def test_text_encoder_block_accepts_precomputed_validation_embeds(self):
         step = MiniMaxH3TextEncoderStep()
         state = object()
@@ -677,11 +738,14 @@ class MiniMaxH3Tests(unittest.TestCase):
                 "cached_kv",
                 "--minimax_h3_target_mode",
                 "av",
+                "--audio_flow_schedule_shift",
+                "3.0",
             ]
         )
 
         self.assertEqual(args.minimax_h3_reference_mode, "cached_kv")
         self.assertEqual(args.minimax_h3_target_mode, "av")
+        self.assertEqual(args.audio_flow_schedule_shift, 3.0)
         self.assertIs(resolve_h3_reference_mode("cached-kv"), H3_REFERENCE_MODE.CachedKV)
 
     def test_minimax_h3_target_mode_uses_video_only_by_default(self):
@@ -819,6 +883,26 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertTrue(torch.equal(temb[2], model.adaln_t_table[-1]))
         with self.assertRaisesRegex(ValueError, "TwinFlow"):
             model._time_embedding(torch.tensor([0.5]), timestep_sign=torch.tensor([-1.0]))
+
+    def test_transformer_adaln_curve_uses_positive_dataward_flowmap_interval(self):
+        model = tiny_h3_transformer(time_embed_dim=3, adaln_curve_grid=5)
+        model.adaln_t_table.copy_(torch.arange(15, dtype=torch.float32).view(5, 3))
+        model.enable_flowmap_time_conditioning(gate_value=1.0, deltatime_type="t-r")
+
+        temb = model._time_embedding(torch.tensor([0.25]), r_timestep=torch.tensor([0.75]))
+
+        self.assertTrue(torch.equal(temb[0], model.adaln_t_table[2]))
+
+    def test_flow_matching_timesteps_use_h3_dataward_convention(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        sigmas = torch.tensor([0.0, 0.25, 1.0])
+
+        timesteps = wrapper.flow_matching_timesteps_from_sigmas(
+            sigmas,
+            reference_timesteps=torch.tensor([0.0, 250.0, 1000.0]),
+        )
+
+        self.assertTrue(torch.equal(timesteps, torch.tensor([1.0, 0.75, 0.0])))
 
     def test_transformer_adaln_curve_table_casts_lerp_weight_to_table_dtype(self):
         model = tiny_h3_transformer(time_embed_dim=3, adaln_curve_grid=5)
@@ -982,6 +1066,24 @@ class MiniMaxH3Tests(unittest.TestCase):
         ):
             self.assertNotIn(key, result)
 
+    def test_prepare_batch_conditions_pins_keyframe_noise_for_repeated_predictions(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        wrapper.config = SimpleNamespace(weight_dtype=torch.float32, minimax_h3_target_mode="video")
+        wrapper._warned_audio_disabled = False
+        conditioning_latents = torch.zeros(1, 2, 1, 2, 2)
+
+        result = wrapper.prepare_batch_conditions(
+            {
+                "latents": torch.zeros(1, 2, 2, 2, 2),
+                "conditioning_latents": conditioning_latents,
+            },
+            state={"global_step": 0},
+        )
+
+        self.assertEqual(result["h3_conditioning_noise"].shape, conditioning_latents.shape)
+        self.assertEqual(result["h3_conditioning_noise"].dtype, conditioning_latents.dtype)
+
     def test_loss_uses_explicit_audio_target_for_regularisation_batches(self):
         wrapper = MiniMaxH3.__new__(MiniMaxH3)
         wrapper.config = SimpleNamespace(
@@ -1103,6 +1205,8 @@ class MiniMaxH3Tests(unittest.TestCase):
             vae_path=None,
             vae_enable_tiling=False,
             vae_enable_temporal_roll=False,
+            flow_schedule_shift=3.0,
+            audio_flow_schedule_shift=None,
             framerate=None,
             validation_seed=None,
             seed=42,
@@ -1113,6 +1217,8 @@ class MiniMaxH3Tests(unittest.TestCase):
 
         self.assertTrue(wrapper.config.vae_enable_tiling)
         self.assertTrue(wrapper.config.vae_enable_temporal_roll)
+        self.assertEqual(wrapper.config.flow_schedule_shift, 12.0)
+        self.assertEqual(wrapper.config.audio_flow_schedule_shift, 3.0)
         self.assertEqual(wrapper.config.framerate, MINIMAX_H3_FPS)
 
     def test_convrot_int8_flavour_defaults_to_convrot_vae_checkpoint(self):
@@ -1158,9 +1264,13 @@ class MiniMaxH3Tests(unittest.TestCase):
         wrapper.unwrap_model = Mock(side_effect=lambda model: model)
         wrapper._load_processor_for_pipeline = Mock(return_value=object())
         wrapper._model_config_path = Mock(return_value="/tmp/minimax-h3")
+        wrapper.get_vae = Mock(return_value=wrapper.vae)
+        wrapper._load_audio_vae = Mock()
 
         pipeline = wrapper.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
 
+        wrapper.get_vae.assert_called_once_with()
+        wrapper._load_audio_vae.assert_called_once_with(move_to_device=True)
         self.assertEqual(set(pipeline.init_kwargs), {"blocks", "pretrained_model_name_or_path"})
         self.assertIs(pipeline.updated_components["vae"], wrapper.vae)
         self.assertIs(pipeline.updated_components["audio_vae"], wrapper.audio_vae)
@@ -1169,6 +1279,53 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertIs(pipeline.updated_components["transformer"], wrapper.model)
         self.assertIn("scheduler", pipeline.updated_components)
         self.assertIn("audio_scheduler", pipeline.updated_components)
+
+    def test_get_pipeline_refreshes_cached_validation_decoders(self):
+        class RecordingPipeline:
+            def __init__(self):
+                self.updated_components = {}
+
+            def update_components(self, **kwargs):
+                self.updated_components.update(kwargs)
+
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(model_flavour=None)
+        pipeline = RecordingPipeline()
+        wrapper.pipelines = {PipelineTypes.TEXT2IMG: pipeline}
+        wrapper.vae = object()
+        wrapper.audio_vae = object()
+        wrapper.model = object()
+        wrapper.get_vae = Mock(return_value=wrapper.vae)
+        wrapper._load_audio_vae = Mock()
+        wrapper.unwrap_model = Mock(return_value=wrapper.model)
+
+        result = wrapper.get_pipeline(PipelineTypes.TEXT2IMG, load_base_model=False)
+
+        self.assertIs(result, pipeline)
+        self.assertIs(pipeline.updated_components["transformer"], wrapper.model)
+        self.assertIs(pipeline.updated_components["vae"], wrapper.vae)
+        self.assertIs(pipeline.updated_components["audio_vae"], wrapper.audio_vae)
+
+    def test_unload_vae_detaches_cached_validation_decoders(self):
+        class RecordingPipeline:
+            def __init__(self):
+                self.updated_components = {}
+
+            def update_components(self, **kwargs):
+                self.updated_components.update(kwargs)
+
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        pipeline = RecordingPipeline()
+        wrapper.pipelines = {PipelineTypes.TEXT2IMG: pipeline}
+        wrapper.vae = FakeVAE()
+        wrapper.audio_vae = FakeVAE()
+
+        wrapper.unload_vae()
+
+        self.assertIsNone(wrapper.vae)
+        self.assertIsNone(wrapper.audio_vae)
+        self.assertIsNone(pipeline.updated_components["vae"])
+        self.assertIsNone(pipeline.updated_components["audio_vae"])
 
     def test_check_user_config_defaults_to_h3_fps(self):
         wrapper = MiniMaxH3.__new__(MiniMaxH3)
@@ -1318,6 +1475,56 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertEqual(prompt_embeds.shape, (1, 512, 2))
         self.assertEqual(text_encoder.last_input_ids.shape, (1, 512))
         self.assertEqual(text_token_tags.shape, (512,))
+
+    def test_text_encoder_batch_pads_qwen_input_and_returns_true_lengths(self):
+        text_encoder = FakeH3TextEncoder()
+        components = SimpleNamespace(
+            text_encoder=text_encoder,
+            tokenizer=FakeH3Tokenizer(),
+            processor=FakeH3Processor(),
+            transformer=SimpleNamespace(dtype=torch.float32),
+            _execution_device=torch.device("cpu"),
+        )
+
+        encoded = MiniMaxH3TextEncoderStep.encode_prompt_batch(
+            components,
+            ["alpha", "alpha beta gamma"],
+            device=torch.device("cpu"),
+            dtype=torch.float32,
+        )
+
+        self.assertEqual(text_encoder.last_input_ids.shape, (2, 3))
+        self.assertTrue(
+            torch.equal(text_encoder.last_attention_mask, torch.tensor([[1, 0, 0], [1, 1, 1]], dtype=torch.long))
+        )
+        self.assertEqual(encoded[0][0].shape, (1, 1, 2))
+        self.assertEqual(encoded[0][1].shape, (1,))
+        self.assertEqual(encoded[1][0].shape, (1, 3, 2))
+        self.assertEqual(encoded[1][1].shape, (3,))
+
+    def test_text_encoder_batch_preprocesses_all_request_images_together(self):
+        text_encoder = FakeH3TextEncoder()
+        processor = FakeH3Processor()
+        components = SimpleNamespace(
+            text_encoder=text_encoder,
+            tokenizer=FakeH3Tokenizer(),
+            processor=processor,
+            transformer=SimpleNamespace(dtype=torch.float32),
+            _execution_device=torch.device("cpu"),
+        )
+        images = [Image.new("RGB", (8, 8), "white"), Image.new("RGB", (8, 8), "black")]
+
+        encoded = MiniMaxH3TextEncoderStep.encode_prompt_batch(
+            components,
+            ["first", "second"],
+            image_batches=[[images[0]], [images[1]]],
+            device=torch.device("cpu"),
+            dtype=torch.float32,
+        )
+
+        self.assertEqual(len(processor.image_processor.calls), 1)
+        self.assertEqual(processor.image_processor.calls[0][0], images)
+        self.assertEqual(len(encoded), 2)
 
     def test_text_encoder_max_length_zero_disables_caption_cap(self):
         text_encoder = FakeH3TextEncoder()
@@ -1744,6 +1951,46 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertTrue(loaded.config.decoder_swiglu_gate_first)
         self.assertTrue(loaded.decoder.transformer_blocks[0].ff.net[0].gate_first)
 
+    def test_video_vae_single_file_loader_splits_comfy_head_interleaved_qkv(self):
+        model = tiny_h3_vae()
+        state_dict = dict(model.state_dict())
+        head_dim = model.config.decoder_attention_head_dim
+        q_weight = state_dict.pop("decoder.transformer_blocks.0.attn.to_q.weight")
+        k_weight = state_dict.pop("decoder.transformer_blocks.0.attn.to_k.weight")
+        v_weight = state_dict.pop("decoder.transformer_blocks.0.attn.to_v.weight")
+        q_bias = state_dict.pop("decoder.transformer_blocks.0.attn.to_q.bias")
+        k_bias = state_dict.pop("decoder.transformer_blocks.0.attn.to_k.bias")
+        v_bias = state_dict.pop("decoder.transformer_blocks.0.attn.to_v.bias")
+        q_weight = torch.arange(q_weight.numel(), dtype=torch.float32).reshape_as(q_weight)
+        k_weight = torch.arange(k_weight.numel(), dtype=torch.float32).reshape_as(k_weight) + 1_000.0
+        v_weight = torch.arange(v_weight.numel(), dtype=torch.float32).reshape_as(v_weight) + 2_000.0
+        q_bias = torch.arange(q_bias.numel(), dtype=torch.float32).reshape_as(q_bias)
+        k_bias = torch.arange(k_bias.numel(), dtype=torch.float32).reshape_as(k_bias) + 100.0
+        v_bias = torch.arange(v_bias.numel(), dtype=torch.float32).reshape_as(v_bias) + 200.0
+        state_dict["decoder.transformer_blocks.0.attn.to_qkv.weight"] = comfy_head_interleaved_qkv(
+            q_weight, k_weight, v_weight, head_dim
+        )
+        state_dict["decoder.transformer_blocks.0.attn.to_qkv.bias"] = comfy_head_interleaved_qkv(
+            q_bias, k_bias, v_bias, head_dim
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = f"{tmpdir}/tiny-h3-vae-comfy-qkv.safetensors"
+            save_file(state_dict, path)
+            loaded = AutoencoderKLMiniMaxH3.from_single_file(
+                path,
+                torch_dtype=torch.float32,
+                decoder_num_attention_heads=model.config.decoder_num_attention_heads,
+                decoder_attention_head_dim=head_dim,
+            )
+
+        self.assertTrue(torch.equal(loaded.decoder.transformer_blocks[0].attn.to_q.weight, q_weight))
+        self.assertTrue(torch.equal(loaded.decoder.transformer_blocks[0].attn.to_k.weight, k_weight))
+        self.assertTrue(torch.equal(loaded.decoder.transformer_blocks[0].attn.to_v.weight, v_weight))
+        self.assertTrue(torch.equal(loaded.decoder.transformer_blocks[0].attn.to_q.bias, q_bias))
+        self.assertTrue(torch.equal(loaded.decoder.transformer_blocks[0].attn.to_k.bias, k_bias))
+        self.assertTrue(torch.equal(loaded.decoder.transformer_blocks[0].attn.to_v.bias, v_bias))
+
     def test_video_vae_single_file_loader_accepts_comfy_convrot_to_out(self):
         model = tiny_h3_vae()
         state_dict = dict(model.state_dict())
@@ -1774,10 +2021,17 @@ class MiniMaxH3Tests(unittest.TestCase):
         q_weight = state_dict.pop("decoder.transformer_blocks.0.attn.to_q.weight")
         k_weight = state_dict.pop("decoder.transformer_blocks.0.attn.to_k.weight")
         v_weight = state_dict.pop("decoder.transformer_blocks.0.attn.to_v.weight")
+        q_weight = torch.full(q_weight.shape, 1, dtype=torch.int8)
+        k_weight = torch.full(k_weight.shape, 2, dtype=torch.int8)
+        v_weight = torch.full(v_weight.shape, 3, dtype=torch.int8)
+        q_scale = torch.full((q_weight.shape[0], 1), 1.0, dtype=torch.float32)
+        k_scale = torch.full((k_weight.shape[0], 1), 2.0, dtype=torch.float32)
+        v_scale = torch.full((v_weight.shape[0], 1), 3.0, dtype=torch.float32)
         source_key = "decoder.transformer_blocks.0.attn.to_qkv.weight"
-        fused_weight = torch.cat([q_weight, k_weight, v_weight], dim=0)
-        state_dict[source_key] = torch.zeros(fused_weight.shape, dtype=torch.int8)
-        state_dict[f"{source_key}_scale"] = torch.ones(fused_weight.shape[0], dtype=torch.float32)
+        head_dim = model.config.decoder_attention_head_dim
+        fused_weight = comfy_head_interleaved_qkv(q_weight, k_weight, v_weight, head_dim)
+        state_dict[source_key] = fused_weight
+        state_dict[f"{source_key}_scale"] = comfy_head_interleaved_qkv(q_scale, k_scale, v_scale, head_dim)
         state_dict["decoder.transformer_blocks.0.attn.to_qkv.comfy_quant"] = comfy_quant_metadata_tensor(
             {"format": "int8_tensorwise", "convrot": True, "convrot_groupsize": 128}
         )
@@ -1786,7 +2040,12 @@ class MiniMaxH3Tests(unittest.TestCase):
             path = f"{tmpdir}/tiny-h3-vae-convrot-qkv.safetensors"
             save_file(state_dict, path)
             with patch("simpletuner.helpers.models.z_image.quantized_loading._wrap_convrot_linear") as wrap_convrot:
-                AutoencoderKLMiniMaxH3.from_single_file(path, torch_dtype=torch.bfloat16)
+                AutoencoderKLMiniMaxH3.from_single_file(
+                    path,
+                    torch_dtype=torch.bfloat16,
+                    decoder_num_attention_heads=model.config.decoder_num_attention_heads,
+                    decoder_attention_head_dim=head_dim,
+                )
 
         self.assertEqual(wrap_convrot.call_count, 3)
         self.assertEqual(
@@ -1797,6 +2056,12 @@ class MiniMaxH3Tests(unittest.TestCase):
                 "decoder.transformer_blocks.0.attn.to_v",
             ],
         )
+        self.assertTrue(torch.equal(wrap_convrot.call_args_list[0].args[2], q_weight))
+        self.assertTrue(torch.equal(wrap_convrot.call_args_list[1].args[2], k_weight))
+        self.assertTrue(torch.equal(wrap_convrot.call_args_list[2].args[2], v_weight))
+        self.assertTrue(torch.equal(wrap_convrot.call_args_list[0].args[3], q_scale))
+        self.assertTrue(torch.equal(wrap_convrot.call_args_list[1].args[3], k_scale))
+        self.assertTrue(torch.equal(wrap_convrot.call_args_list[2].args[3], v_scale))
         self.assertTrue(all(call.kwargs["hadamard_group_size"] == 128 for call in wrap_convrot.call_args_list))
 
     def test_single_file_diffusers_loader_infers_tiny_config(self):
@@ -1948,6 +2213,21 @@ class MiniMaxH3Tests(unittest.TestCase):
         )
         self.assertEqual(result["prompt_embeds"].shape, (2, 3, 4))
         self.assertEqual(result["text_token_tags"][0, -1].item(), -1)
+
+    def test_slice_text_embedding_for_cache_removes_batch_padding(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        output = {
+            "prompt_embeds": torch.arange(24, dtype=torch.float32).reshape(2, 3, 4),
+            "text_token_tags": torch.tensor([[1, 0, -1], [1, 0, 1]], dtype=torch.long),
+        }
+
+        first = wrapper.slice_text_embedding_for_cache(output, batch_index=0, batch_size=2)
+        second = wrapper.slice_text_embedding_for_cache(output, batch_index=1, batch_size=2)
+
+        self.assertEqual(first["prompt_embeds"].shape, (1, 2, 4))
+        self.assertEqual(first["text_token_tags"].tolist(), [[1, 0]])
+        self.assertEqual(second["prompt_embeds"].shape, (1, 3, 4))
+        self.assertEqual(second["text_token_tags"].tolist(), [[1, 0, 1]])
 
 
 if __name__ == "__main__":

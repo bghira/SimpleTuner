@@ -1253,12 +1253,21 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                     raise ValueError(
                         "MiniMax-H3 FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
                     )
-                delta_timestep = prepare_flowmap_delta_timestep(
-                    timestep,
-                    r_timestep,
-                    self.flowmap_deltatime_type,
-                    model_name="MiniMax-H3",
-                )
+                if self.flowmap_deltatime_type == "t-r":
+                    # H3 time is data-ward, so a denoising endpoint r is greater than the current t.
+                    delta_timestep = prepare_flowmap_delta_timestep(
+                        r_timestep,
+                        timestep,
+                        self.flowmap_deltatime_type,
+                        model_name="MiniMax-H3",
+                    )
+                else:
+                    delta_timestep = prepare_flowmap_delta_timestep(
+                        timestep,
+                        r_timestep,
+                        self.flowmap_deltatime_type,
+                        model_name="MiniMax-H3",
+                    )
                 delta_temb = self._adaln_curve_embedding(delta_timestep)
                 temb = blend_flowmap_embeddings(temb, delta_temb, self.flowmap_delta_emb_gate)
             return temb

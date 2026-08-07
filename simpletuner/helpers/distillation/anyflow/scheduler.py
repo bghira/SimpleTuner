@@ -151,14 +151,6 @@ class AnyFlowValidationScheduler:
             return timesteps.detach().to(device=device, dtype=torch.float32).reshape(-1)
         return torch.tensor(list(timesteps), device=device, dtype=torch.float32).reshape(-1)
 
-    def _scheduler_sigmas(self, device: torch.device) -> Optional[torch.Tensor]:
-        sigmas = getattr(self.scheduler, "sigmas", None)
-        if sigmas is None:
-            return None
-        if torch.is_tensor(sigmas):
-            return sigmas.detach().to(device=device, dtype=torch.float32).reshape(-1)
-        return torch.tensor(list(sigmas), device=device, dtype=torch.float32).reshape(-1)
-
     def _train_timestep_scale(self, schedule: torch.Tensor) -> float:
         if self.num_train_timesteps is not None:
             return float(self.num_train_timesteps)
@@ -176,13 +168,8 @@ class AnyFlowValidationScheduler:
         train_scale: float,
         device: torch.device,
     ) -> torch.Tensor:
-        sigmas = self._scheduler_sigmas(device)
-        if sigmas is not None and sigmas.numel() == schedule.numel() + 1:
-            sigma_max = torch.max(torch.abs(sigmas)).item()
-            endpoint_schedule = sigmas[1:] * train_scale if sigma_max <= 1.5 else sigmas[1:]
-            return endpoint_schedule.to(device=device, dtype=torch.float32)
-
-        final_raw_timestep = 0.0 if schedule[0] >= schedule[-1] else train_scale
+        schedule_scale = 1.0 if torch.max(torch.abs(schedule)).item() <= 1.5 else train_scale
+        final_raw_timestep = 0.0 if schedule[0] >= schedule[-1] else schedule_scale
         final = torch.tensor([final_raw_timestep], device=device, dtype=torch.float32)
         return torch.cat([schedule[1:], final])
 

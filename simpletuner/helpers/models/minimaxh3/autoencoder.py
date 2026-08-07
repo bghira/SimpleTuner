@@ -729,6 +729,31 @@ def _normalize_minimax_h3_vae_convrot_scale(scale: torch.Tensor, out_features: i
     )
 
 
+def _split_minimax_h3_vae_comfy_qkv_tensor(
+    tensor: torch.Tensor,
+    mapped_keys: list[str],
+    expected_state_dict: dict[str, torch.Tensor],
+    head_dim: int,
+    key: str,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if len(mapped_keys) != 3:
+        raise RuntimeError(f"MiniMax-H3 VAE fused QKV tensor {key} maps to {len(mapped_keys)} targets, expected 3.")
+    q_shape = expected_state_dict[mapped_keys[0]].shape
+    inner_dim = q_shape[0]
+    if inner_dim % head_dim != 0:
+        raise RuntimeError(
+            f"MiniMax-H3 VAE fused QKV tensor {key} has inner dim {inner_dim}, "
+            f"which is not divisible by decoder_attention_head_dim={head_dim}."
+        )
+    if tensor.shape[0] != inner_dim * 3:
+        raise RuntimeError(
+            f"MiniMax-H3 VAE fused QKV tensor {key} has first dimension {tensor.shape[0]}, " f"expected {inner_dim * 3}."
+        )
+    heads = inner_dim // head_dim
+    qkv = tensor.reshape(heads, 3, head_dim, *tensor.shape[1:])
+    return tuple(part.reshape(inner_dim, *tensor.shape[1:]).contiguous() for part in qkv.unbind(dim=1))
+
+
 class AutoencoderKLMiniMaxH3(ModelMixin, ConfigMixin, AttentionMixin, AutoencoderMixin):
     r"""
     A VAE model with a causal 3D CNN encoder and a non-causal ViT decoder, used in
@@ -911,17 +936,29 @@ class AutoencoderKLMiniMaxH3(ModelMixin, ConfigMixin, AttentionMixin, Autoencode
 
                     scale = checkpoint.get_tensor(scale_key)
                     if len(mapped_keys) == 3:
-                        if tensor.shape[0] % 3 != 0:
-                            raise RuntimeError(f"MiniMax-H3 VAE ConvRot tensor {raw_key} cannot split into q/k/v tensors")
                         scale = _normalize_minimax_h3_vae_convrot_scale(scale, tensor.shape[0], raw_key)
+                        qkv_tensors = _split_minimax_h3_vae_comfy_qkv_tensor(
+                            tensor,
+                            mapped_keys,
+                            expected_state_dict,
+                            int(model.config.decoder_attention_head_dim),
+                            raw_key,
+                        )
+                        qkv_scales = _split_minimax_h3_vae_comfy_qkv_tensor(
+                            scale,
+                            mapped_keys,
+                            expected_state_dict,
+                            int(model.config.decoder_attention_head_dim),
+                            f"{raw_key}_scale",
+                        )
                         for mapped_key, qkv_tensor, qkv_scale in zip(
                             mapped_keys,
-                            tensor.split(tensor.shape[0] // 3, dim=0),
-                            scale.split(scale.shape[0] // 3, dim=0),
+                            qkv_tensors,
+                            qkv_scales,
                         ):
                             quantized_weights[mapped_key] = (
-                                qkv_tensor.contiguous(),
-                                qkv_scale.contiguous(),
+                                qkv_tensor,
+                                qkv_scale,
                                 hadamard_group_size,
                             )
                     elif len(mapped_keys) == 1:
@@ -938,10 +975,15 @@ class AutoencoderKLMiniMaxH3(ModelMixin, ConfigMixin, AttentionMixin, Autoencode
                     )
 
                 if len(mapped_keys) == 3:
-                    if tensor.shape[0] % 3 != 0:
-                        raise RuntimeError(f"MiniMax-H3 VAE fused QKV tensor {raw_key} cannot split into q/k/v tensors")
-                    for mapped_key, qkv_tensor in zip(mapped_keys, tensor.split(tensor.shape[0] // 3, dim=0)):
-                        non_quantized_state_dict[mapped_key] = qkv_tensor.contiguous()
+                    qkv_tensors = _split_minimax_h3_vae_comfy_qkv_tensor(
+                        tensor,
+                        mapped_keys,
+                        expected_state_dict,
+                        int(model.config.decoder_attention_head_dim),
+                        raw_key,
+                    )
+                    for mapped_key, qkv_tensor in zip(mapped_keys, qkv_tensors):
+                        non_quantized_state_dict[mapped_key] = qkv_tensor
                 elif len(mapped_keys) == 1:
                     non_quantized_state_dict[mapped_keys[0]] = tensor
                 else:

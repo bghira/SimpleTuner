@@ -28,6 +28,11 @@ class _H3JointLoss:
 class H3DriftDistiller(DistillationBase):
     """Regularize MiniMax-H3 LoRA/LyCORIS training against the frozen base prediction."""
 
+    _FLOWMAP_BATCH_KEYS = (
+        "flowmap_r_timesteps",
+        "anyflow_r_timesteps",
+        "anyflow_timestep_interval",
+    )
     _DEFAULTS: Dict[str, Any] = {
         "distillation_type": "h3_drift",
         "loss_weight": 1.0,
@@ -175,11 +180,15 @@ class H3DriftDistiller(DistillationBase):
         )
 
         sft_loss_weight = float(self.config.get("sft_loss_weight", 1.0))
-        current_loss = original_loss * sft_loss_weight
         logs = {}
         if self.inner_distiller is not None:
-            current_loss, logs = self.inner_distiller.compute_distill_loss(prepared_batch, model_output, current_loss)
+            current_loss, logs = self.inner_distiller.compute_distill_loss(prepared_batch, model_output, original_loss)
             logs = self._inner_logs(logs)
+            sft_loss = self._normal_h3_loss(prepared_batch, model_output, original_loss) * sft_loss_weight
+            current_loss = current_loss + sft_loss
+        else:
+            sft_loss = original_loss * sft_loss_weight
+            current_loss = sft_loss
 
         drift_loss = joint_loss.loss * float(self.config.get("loss_weight", 1.0))
         loss = current_loss + drift_loss
@@ -196,8 +205,90 @@ class H3DriftDistiller(DistillationBase):
             }
         )
         if sft_loss_weight != 0.0:
-            logs["h3_drift_sft_loss"] = float((original_loss * sft_loss_weight).detach())
+            logs["h3_drift_sft_loss"] = float(sft_loss.detach())
         return loss, logs
+
+    def _normal_h3_loss(
+        self,
+        prepared_batch: Dict[str, Any],
+        model_output: Dict[str, Any],
+        original_loss: torch.Tensor,
+    ) -> torch.Tensor:
+        sft_loss_weight = float(self.config.get("sft_loss_weight", 1.0))
+        if sft_loss_weight == 0.0:
+            return original_loss * 0.0
+        if self.inner_distiller is None:
+            return original_loss
+
+        normal_batch = self._normal_h3_batch(prepared_batch)
+        if self._has_inner_timestep_conditioning(prepared_batch):
+            normal_output = self.teacher_model.model_predict(normal_batch)
+            try:
+                return self.teacher_model.loss(
+                    normal_batch,
+                    normal_output,
+                    apply_conditioning_mask=True,
+                )
+            finally:
+                self._clear_reference_buffers(normal_output)
+
+        return self.teacher_model.loss(
+            normal_batch,
+            model_output,
+            apply_conditioning_mask=True,
+        )
+
+    def _normal_h3_batch(self, prepared_batch: Dict[str, Any]) -> Dict[str, Any]:
+        normal_batch = dict(prepared_batch)
+        for key in self._inner_timestep_conditioning_keys():
+            normal_batch.pop(key, None)
+
+        video_target = self._normal_video_target(prepared_batch)
+        normal_batch["target"] = video_target
+        normal_batch["flow_target"] = video_target
+
+        audio_target = self._normal_audio_target(prepared_batch)
+        if audio_target is None:
+            normal_batch.pop("audio_target", None)
+        else:
+            normal_batch["audio_target"] = audio_target
+        return normal_batch
+
+    def _normal_video_target(self, prepared_batch: Dict[str, Any]) -> torch.Tensor:
+        get_target = getattr(self.teacher_model, "get_flow_matching_target", None)
+        if not callable(get_target):
+            raise ValueError("H3 drift requires MiniMax-H3 get_flow_matching_target() to compute normal SFT loss.")
+
+        target = get_target(prepared_batch, prefer_explicit_target=False)
+        if not torch.is_tensor(target):
+            raise ValueError(f"H3 drift normal video target must be a tensor, got {type(target)}.")
+        return target.detach()
+
+    @staticmethod
+    def _normal_audio_target(prepared_batch: Dict[str, Any]) -> Optional[torch.Tensor]:
+        audio_target = prepared_batch.get("audio_target")
+        if audio_target is not None:
+            if not torch.is_tensor(audio_target):
+                raise ValueError(f"H3 drift audio_target must be a tensor, got {type(audio_target)}.")
+            return audio_target.detach()
+
+        audio_latents = prepared_batch.get("audio_latents")
+        audio_noise = prepared_batch.get("audio_noise")
+        if audio_latents is None and audio_noise is None:
+            return None
+        if not torch.is_tensor(audio_latents) or not torch.is_tensor(audio_noise):
+            raise ValueError("H3 drift audio SFT loss requires tensor audio_latents and audio_noise.")
+        return (audio_latents - audio_noise).detach()
+
+    def _has_inner_timestep_conditioning(self, prepared_batch: Dict[str, Any]) -> bool:
+        return any(prepared_batch.get(key) is not None for key in self._inner_timestep_conditioning_keys())
+
+    def _inner_timestep_conditioning_keys(self) -> tuple[str, ...]:
+        keys = list(self._FLOWMAP_BATCH_KEYS)
+        flowmap_key = getattr(self.teacher_model, "FLOWMAP_R_TIMESTEP_BATCH_KEY", None)
+        if isinstance(flowmap_key, str) and flowmap_key not in keys:
+            keys.append(flowmap_key)
+        return tuple(keys)
 
     @staticmethod
     def _inner_logs(logs: Dict[str, Any]) -> Dict[str, float]:

@@ -14,6 +14,12 @@ MiniMax H3 एक distilled flow-matching video/audio model है। साम�
 total = sft_loss_weight * normal_h3_loss + loss_weight * frozen_base_prediction_mse
 ```
 
+Inner distiller enabled हो तो:
+
+```text
+total = inner_distiller_loss + sft_loss_weight * normal_h3_loss + loss_weight * frozen_base_prediction_mse
+```
+
 ## कब इस्तेमाल करें
 
 MiniMax H3 LoRA या LyCORIS training में इसे default रखें, जब तक आपका लक्ष्य original distillation को हटाना न हो। यह style/concept LoRAs, FL2VA/Ref2VA, joint audio/video training, और `convrot-int8` / `convrot-int4` जैसे quantized flavours के लिए उपयोगी है।
@@ -76,6 +82,8 @@ Checked-in H3 examples इसे default रूप से enable करते �
 
 Wrapper batch preparation, validation scheduler, distillation cache, caption batches, और generator/discriminator lifecycle hooks inner distiller को delegate करता है। Inner distiller की compatibility checks फिर भी लागू रहती हैं।
 
+Inner distiller `target` rewrite करे तब भी `sft_loss_weight` normal MiniMax H3 objective ही रहता है। अगर inner distiller FlowMap/AnyFlow timestep conditioning जोड़ता है, तो H3 drift inner timestep keys हटाकर adapter-enabled forward फिर चलाता है और SFT term निकालता है। इससे step-distilled path train होता है, लेकिन normal 30-step H3 inference path anchored रहता है।
+
 ## Video और Audio Modes
 
 `minimax_h3_target_mode: "auto"` video-only बनता है। `"video"` audio target rows बंद रखता है। `"av"` joint audio/video rows train करता है। इसे global config में या data backend में `h3_target_mode` / `minimax_h3_target_mode` से set कर सकते हैं।
@@ -92,7 +100,7 @@ SimpleTuner real CFG और negative prompt encode कर सकता है �
 
 मुख्य logs: `h3_drift_loss`, `h3_drift_video_loss`, `h3_drift_audio_loss`, element counts, `h3_drift_weighted_loss`, `h3_drift_sft_loss`, inner distiller enabled होने पर `h3_drift_inner_total`, और `total`।
 
-हर step में एक extra forward pass लगता है, लेकिन दूसरा transformer memory में नहीं रखा जाता। ConvRot, RamTorch, musubi block swap, gradient checkpointing, और attention offload के साथ यह compatible है; फिर भी presets benchmark करें क्योंकि extra forward fastest backend बदल सकता है।
+हर step में एक extra forward pass लगता है, लेकिन दूसरा transformer memory में नहीं रखा जाता। FlowMap/AnyFlow inner distiller को `sft_loss_weight` enabled के साथ wrap करने पर SFT anchor के लिए normal adapter forward भी चलता है। ConvRot, RamTorch, musubi block swap, gradient checkpointing, और attention offload के साथ यह compatible है; फिर भी presets benchmark करें क्योंकि extra forwards fastest backend बदल सकते हैं।
 
 ## Troubleshooting
 

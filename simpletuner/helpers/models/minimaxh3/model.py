@@ -283,16 +283,32 @@ class MiniMaxH3(VideoModelFoundation):
                 PipelineTypes.IMG2VIDEO: MiniMaxH3Ref2VAPipeline,
                 PipelineTypes.IMG2IMG: MiniMaxH3Ref2VAPipeline,
             }
-        if getattr(self.config, "flow_schedule_shift", None) is None:
-            self.config.flow_schedule_shift = 12.0
-        if getattr(self.config, "audio_flow_schedule_shift", None) is None:
-            self.config.audio_flow_schedule_shift = 3.0
+        self._apply_h3_schedule_defaults()
 
     def check_user_config(self):
         super().check_user_config()
         if getattr(self.config, "framerate", None) is None:
             self.config.framerate = MINIMAX_H3_FPS
+        self._apply_h3_schedule_defaults()
         self._force_video_vae_reference_settings()
+
+    def _apply_h3_schedule_defaults(self):
+        video_shift = getattr(self.config, "flow_schedule_shift", None)
+        if video_shift is None:
+            self.config.flow_schedule_shift = 12.0
+        else:
+            try:
+                video_shift_float = float(video_shift)
+            except (TypeError, ValueError):
+                video_shift_float = None
+            if video_shift_float is not None and abs(video_shift_float - 3.0) <= 1e-9:
+                logger.warning(
+                    "MiniMax-H3 uses video flow_schedule_shift=12.0. "
+                    "Overriding inherited global default flow_schedule_shift=3.0."
+                )
+                self.config.flow_schedule_shift = 12.0
+        if getattr(self.config, "audio_flow_schedule_shift", None) is None:
+            self.config.audio_flow_schedule_shift = 3.0
 
     def _force_video_vae_reference_settings(self):
         if getattr(self.config, "vae_enable_tiling", None) is not True:
@@ -328,7 +344,16 @@ class MiniMaxH3(VideoModelFoundation):
 
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         sigmas, _timesteps = super().sample_flow_sigmas(batch=batch, state=state)
-        return sigmas, 1.0 - sigmas
+        return sigmas, self.flow_matching_timesteps_from_sigmas(sigmas)
+
+    def flow_matching_timesteps_from_sigmas(
+        self,
+        sigmas: torch.Tensor,
+        *,
+        reference_timesteps: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        del reference_timesteps
+        return 1.0 - sigmas
 
     def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
         args = super().pretrained_load_args(pretrained_load_args)
@@ -410,6 +435,19 @@ class MiniMaxH3(VideoModelFoundation):
         self.audio_vae.requires_grad_(False)
         if move_to_device:
             self.audio_vae.to(self.accelerator.device, dtype=self._resolve_vae_dtype())
+
+    def unload_vae(self):
+        for pipeline in getattr(self, "pipelines", {}).values():
+            if hasattr(pipeline, "update_components"):
+                pipeline.update_components(vae=None, audio_vae=None)
+            else:
+                setattr(pipeline, "vae", None)
+                setattr(pipeline, "audio_vae", None)
+        super().unload_vae()
+        if self.audio_vae is not None:
+            if hasattr(self.audio_vae, "to"):
+                self.audio_vae.to("meta")
+            self.audio_vae = None
 
     def _load_processor_for_pipeline(self):
         if self.processor is not None:
@@ -577,7 +615,9 @@ class MiniMaxH3(VideoModelFoundation):
             prompt_images = [None] * len(prompts)
         if prompt_contexts is None:
             prompt_contexts = [{} for _ in prompts]
-        for prompt, images, context in zip(prompts, prompt_images, prompt_contexts):
+        prepared_prompts = []
+        null_instructions = []
+        for prompt, context in zip(prompts, prompt_contexts):
             null_instruction = False
             if is_negative_prompt and isinstance(context, dict) and str(prompt).strip() == "":
                 positive_prompt = context.get("positive_prompt")
@@ -586,16 +626,34 @@ class MiniMaxH3(VideoModelFoundation):
                     null_instruction = True
             if prompt == "" and not null_instruction:
                 prompt = " "
+            prepared_prompts.append(prompt)
+            null_instructions.append(null_instruction)
+
+        if len(prepared_prompts) == 1:
             prompt_embeds, text_token_tags = MiniMaxH3TextEncoderStep.encode_prompt(
                 components,
-                prompt,
-                images=images,
+                prepared_prompts[0],
+                images=prompt_images[0],
                 device=self.accelerator.device,
                 dtype=self.config.weight_dtype,
-                null_instruction=null_instruction,
+                null_instruction=null_instructions[0],
                 max_length=max_text_length,
             )
-            encoded.append({"prompt_embeds": prompt_embeds, "text_token_tags": text_token_tags})
+            encoded = [{"prompt_embeds": prompt_embeds, "text_token_tags": text_token_tags}]
+        else:
+            batch_outputs = MiniMaxH3TextEncoderStep.encode_prompt_batch(
+                components,
+                prepared_prompts,
+                image_batches=prompt_images,
+                device=self.accelerator.device,
+                dtype=self.config.weight_dtype,
+                null_instructions=null_instructions,
+                max_length=max_text_length,
+            )
+            encoded = [
+                {"prompt_embeds": prompt_embeds, "text_token_tags": text_token_tags}
+                for prompt_embeds, text_token_tags in batch_outputs
+            ]
         return self.collate_prompt_embeds(encoded)
 
     def _prepare_prompt_image_batch(
@@ -746,6 +804,21 @@ class MiniMaxH3(VideoModelFoundation):
         return {
             "prompt_embeds": torch.cat(padded_embeds, dim=0),
             "text_token_tags": torch.cat(padded_tags, dim=0),
+        }
+
+    def slice_text_embedding_for_cache(self, text_encoder_output: dict, batch_index: int, batch_size: int) -> dict | None:
+        tags = text_encoder_output.get("text_token_tags")
+        embeds = text_encoder_output.get("prompt_embeds")
+        if not isinstance(tags, torch.Tensor) or not isinstance(embeds, torch.Tensor):
+            return None
+        if tags.ndim != 2 or embeds.ndim != 3 or tags.shape[0] != batch_size or embeds.shape[0] != batch_size:
+            raise ValueError(
+                "MiniMax-H3 batched cache output must contain prompt_embeds and text_token_tags with matching batches."
+            )
+        true_length = int((tags[batch_index] != -1).sum().item())
+        return {
+            "prompt_embeds": embeds[batch_index : batch_index + 1, :true_length].clone().contiguous(),
+            "text_token_tags": tags[batch_index : batch_index + 1, :true_length].clone().contiguous(),
         }
 
     def pre_vae_encode_transform_sample(self, sample):
@@ -950,6 +1023,11 @@ class MiniMaxH3(VideoModelFoundation):
         target_dtype = self.config.weight_dtype
         h3_target_mode = self._h3_target_mode_for_training_batch(batch)
         batch["minimax_h3_target_mode"] = h3_target_mode
+        conditioning_latents = batch.get("conditioning_latents")
+        if torch.is_tensor(conditioning_latents) and batch.get("h3_conditioning_noise") is None:
+            # Distillation evaluates the same prepared batch multiple times. Keep keyframe augmentation identical
+            # across the student, online teacher, and adapter-disabled H3 drift reference passes.
+            batch["h3_conditioning_noise"] = torch.randn_like(conditioning_latents)
         if h3_target_mode == "video":
             audio_disabled_for_image = (
                 self._is_h3_image_latent_batch(batch)
@@ -1420,34 +1498,43 @@ class MiniMaxH3(VideoModelFoundation):
 
     def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2IMG, load_base_model: bool = True):
         _register_minimax_h3_diffusers_components()
+        # Validation constructs the pipeline with load_base_model=False after preprocessing
+        # has unloaded the VAEs. Decoders are still required by every non-latent pipeline call.
+        vae = self.get_vae()
+        self._load_audio_vae(move_to_device=True)
         if pipeline_type in self.pipelines:
             pipeline = self.pipelines[pipeline_type]
             component_name = "transformer_ref" if getattr(self.config, "model_flavour", None) == "ref2va" else "transformer"
             transformer = self.unwrap_model(self.model)
             if hasattr(pipeline, "update_components"):
-                pipeline.update_components(**{component_name: transformer})
+                pipeline.update_components(
+                    **{
+                        component_name: transformer,
+                        "vae": vae,
+                        "audio_vae": self.audio_vae,
+                    }
+                )
             else:
                 setattr(pipeline, component_name, transformer)
+                setattr(pipeline, "vae", vae)
+                setattr(pipeline, "audio_vae", self.audio_vae)
             return pipeline
         if pipeline_type not in self.PIPELINE_CLASSES:
             raise NotImplementedError(f"Pipeline type {pipeline_type} not defined in {self.__class__.__name__}.")
         if load_base_model:
             if self.model is None:
                 self.load_model(move_to_device=True)
-            if self.vae is None:
-                self.load_vae(move_to_device=True)
             if self.text_encoders is None:
                 self.load_text_encoder(move_to_device=True)
             if self.tokenizers is None:
                 self.load_text_tokenizer()
-            self._load_audio_vae(move_to_device=True)
         processor = self._load_processor_for_pipeline()
         transformer = self.unwrap_model(self.model) if self.model is not None else None
         is_ref = getattr(self.config, "model_flavour", None) == "ref2va"
         pipeline_class = self.PIPELINE_CLASSES[pipeline_type]
         blocks = MiniMaxH3Ref2VABlocks() if is_ref else MiniMaxH3Blocks()
         component_kwargs = {
-            "vae": self.vae,
+            "vae": vae,
             "audio_vae": self.audio_vae,
             "scheduler": MiniMaxH3Scheduler(shift=float(getattr(self.config, "flow_schedule_shift", 12.0) or 12.0)),
             "audio_scheduler": MiniMaxH3Scheduler(

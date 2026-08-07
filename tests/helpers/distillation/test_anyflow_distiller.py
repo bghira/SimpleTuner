@@ -87,6 +87,12 @@ class _InverseFlowModel(_FlowModel):
         return -flow
 
 
+class _DatawardTimeFlowModel(_FlowModel):
+    def flow_matching_timesteps_from_sigmas(self, sigmas, *, reference_timesteps=None):
+        del reference_timesteps
+        return 1.0 - sigmas
+
+
 class _NoFlowMapModel(_FlowModel):
     def __init__(self):
         super().__init__()
@@ -108,6 +114,12 @@ class _ValidationScheduler:
         self.step_args = args
         self.step_kwargs = kwargs
         return ("stepped",)
+
+
+class _DatawardValidationScheduler(_ValidationScheduler):
+    def __init__(self):
+        super().__init__()
+        self.timesteps = torch.tensor([0.0, 0.5])
 
 
 class _TParameterComponent(torch.nn.Module):
@@ -194,6 +206,41 @@ class AnyFlowDistillerTests(unittest.TestCase):
 
         self.assertTrue(torch.equal(batch["flowmap_r_timesteps"], torch.zeros(2)))
         self.assertTrue(torch.equal(batch["anyflow_timestep_interval"], torch.tensor([1.0, 0.5])))
+
+    def test_prepare_batch_uses_model_specific_dataward_timesteps(self):
+        model = _DatawardTimeFlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "target_mode": "linear", "r_timestep_sampler": "zero"},
+        )
+        batch = _prepared_batch()
+        batch["timesteps"] = torch.tensor([0.0, 0.5])
+
+        batch = distiller.prepare_batch(batch, model=model, state={})
+
+        self.assertTrue(torch.equal(batch["flowmap_r_timesteps"], torch.ones(2)))
+        self.assertTrue(torch.equal(batch["anyflow_timestep_interval"], torch.tensor([1.0, 0.5])))
+
+    def test_online_teacher_uses_model_specific_dataward_timesteps(self):
+        model = _DatawardTimeFlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={
+                "model_type": "lora",
+                "target_mode": "online_teacher",
+                "r_timestep_sampler": "zero",
+                "teacher_rollout_steps": 2,
+            },
+        )
+        batch = _prepared_batch()
+        batch["timesteps"] = torch.tensor([0.0, 0.5])
+
+        distiller.prepare_batch(batch, model=model, state={})
+
+        self.assertTrue(torch.equal(model.teacher_timesteps[0], torch.tensor([0.0, 0.5])))
+        self.assertTrue(torch.equal(model.teacher_timesteps[1], torch.tensor([0.5, 0.75])))
 
     def test_online_teacher_target_uses_disabled_adapter(self):
         model = _FlowModel()
@@ -306,6 +353,15 @@ class AnyFlowDistillerTests(unittest.TestCase):
         r_timestep = scheduler.r_timestep_for(torch.tensor([0.5]))
 
         self.assertTrue(torch.equal(r_timestep, torch.tensor([1.0])))
+
+    def test_validation_scheduler_advances_native_dataward_timestep(self):
+        scheduler = AnyFlowValidationScheduler(_DatawardValidationScheduler(), num_train_timesteps=1000)
+
+        first_endpoint = scheduler.r_timestep_for(torch.tensor([0.0]))
+        final_endpoint = scheduler.r_timestep_for(torch.tensor([0.5]))
+
+        self.assertTrue(torch.equal(first_endpoint, torch.tensor([0.5])))
+        self.assertTrue(torch.equal(final_endpoint, torch.tensor([1.0])))
 
     def test_validation_scheduler_wraps_t_parameter_component(self):
         scheduler = AnyFlowValidationScheduler(_ValidationScheduler())

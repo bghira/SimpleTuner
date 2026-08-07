@@ -24,6 +24,8 @@ MiniMax H3 是 33B flow-matching 视频/音频模型。SimpleTuner 通过 `minim
   "mixed_precision": "bf16",
   "base_model_precision": "no_change",
   "text_encoder_1_precision": "int8-quanto",
+  "flow_schedule_shift": 12.0,
+  "audio_flow_schedule_shift": 3.0,
   "validation_disable_unconditional": true,
   "validation_guidance": 1.0,
   "validation_guidance_real": 1.0
@@ -73,6 +75,7 @@ Negative prompting 不属于基础 H3 契约。SimpleTuner 为 de-distilled chec
 
 - 显存紧张时使用 24G RamTorch example。
 - 在加重 checkpointing 前测试 `musubi_blocks_to_swap`。
+- video `flow_schedule_shift` 保持 `12.0`，`audio_flow_schedule_shift` 保持 `3.0`。H3 helper 会修正继承来的全局 video 默认值 `3.0`，因为它不匹配 MiniMax H3 schedule。
 - SimpleTuner 会强制启用 H3 video VAE tiling 和 temporal roll/chunking。tiling 几何与 upstream 一致，使用 `256` tile size 和 `64` overlap；把这些选项设为 false 会被忽略，因为未 tiling 的 decode 可能产生严重偏色和 halftone artifact。
 - 在目标 GPU 上 benchmark `attention_mechanism`。
 - 修改 `torch.compile` 后重新 smoke test，因为 compile cache 可能改变峰值显存。

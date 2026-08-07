@@ -24,6 +24,8 @@ Use the closest VRAM preset first, then adjust resolution, frame count, attentio
   "mixed_precision": "bf16",
   "base_model_precision": "no_change",
   "text_encoder_1_precision": "int8-quanto",
+  "flow_schedule_shift": 12.0,
+  "audio_flow_schedule_shift": 3.0,
   "validation_disable_unconditional": true,
   "validation_guidance": 1.0,
   "validation_guidance_real": 1.0
@@ -73,6 +75,7 @@ Use `"av"` only when the dataset has target audio latents and you want joint aud
 
 - Use the 24G RamTorch example when VRAM is tight.
 - Use `musubi_blocks_to_swap` when block swap is faster than heavier checkpointing on your GPU.
+- Keep video `flow_schedule_shift` at `12.0` and audio `audio_flow_schedule_shift` at `3.0`. The H3 helper corrects the inherited global `3.0` video default because it does not match the MiniMax H3 schedule.
 - SimpleTuner forces H3 video VAE tiling and temporal roll/chunking on. The tiling geometry is the upstream `256` tile size with `64` overlap; setting those options false is ignored because untiled decode can produce severe colour shifts and halftone artifacts.
 - Benchmark `attention_mechanism` values on the target GPU; H3 shapes may prefer a different backend than Wan or LTX Video.
 - Re-test after changing `torch.compile` mode because compile caches can change peak VRAM.

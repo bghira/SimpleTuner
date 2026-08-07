@@ -5857,9 +5857,8 @@ class Trainer:
             device=reference_device if reference_device is not None else self.accelerator.device,
             dtype=reference_dtype,
         )
-        overridden_batch["timesteps"] = custom_timesteps_tensor
-
         if not self.model.uses_noise_schedule():
+            overridden_batch["timesteps"] = custom_timesteps_tensor
             return overridden_batch
 
         latents = prepared_batch.get("latents")
@@ -5873,6 +5872,13 @@ class Trainer:
             if torch.max(sigma_values) > 1.0:
                 sigma_values = sigma_values / max_timestep
             sigma_values = sigma_values.clamp(0.0, 1.0)
+            overridden_batch["timesteps"] = self.model.flow_matching_timesteps_from_sigmas(
+                sigma_values,
+                reference_timesteps=custom_timesteps_tensor,
+            ).to(
+                device=reference_device if reference_device is not None else self.accelerator.device,
+                dtype=reference_dtype,
+            )
 
             reference_sigmas = prepared_batch.get("sigmas")
             if torch.is_tensor(reference_sigmas) and reference_sigmas.ndim > sigma_values.ndim:
@@ -5915,7 +5921,10 @@ class Trainer:
                     audio_sigma_for_noise = audio_sigma_for_noise.unsqueeze(-1)
                 audio_sigma_for_noise = audio_sigma_for_noise.to(device=audio_latents.device, dtype=audio_latents.dtype)
                 overridden_batch["audio_sigmas"] = audio_sigma_for_model
-                overridden_batch["audio_timesteps"] = custom_timesteps_tensor.to(
+                overridden_batch["audio_timesteps"] = self.model.flow_matching_timesteps_from_sigmas(
+                    audio_sigma_values,
+                    reference_timesteps=custom_timesteps_tensor,
+                ).to(
                     device=audio_latents.device,
                     dtype=(
                         prepared_batch.get("audio_timesteps", custom_timesteps_tensor).dtype

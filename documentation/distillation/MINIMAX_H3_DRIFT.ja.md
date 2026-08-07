@@ -14,6 +14,12 @@ MiniMax H3 は distilled flow-matching の video/audio モデルです。通常�
 total = sft_loss_weight * normal_h3_loss + loss_weight * frozen_base_prediction_mse
 ```
 
+inner distiller を使う場合:
+
+```text
+total = inner_distiller_loss + sft_loss_weight * normal_h3_loss + loss_weight * frozen_base_prediction_mse
+```
+
 ## 使う場面
 
 MiniMax H3 の LoRA / LyCORIS training では、元の distillation behavior を意図的に外す場合を除き有効化してください。style/concept LoRA、FL2VA/Ref2VA、joint audio/video training、`convrot-int8` / `convrot-int4` などの quantized flavour に向いています。
@@ -76,6 +82,8 @@ Full-rank では未対応です。transformer 全体を更新する場合、比�
 
 Wrapper は batch preparation、validation scheduler、distillation cache、caption batch support、generator/discriminator lifecycle hooks を inner distiller に委譲します。inner distiller の compatibility check はそのまま有効です。
 
+inner distiller が `target` を書き換えても、`sft_loss_weight` は通常の MiniMax H3 objective のままです。inner distiller が FlowMap/AnyFlow timestep conditioning を追加する場合、H3 drift は inner timestep key を外したうえで adapter 有効の forward をもう一度実行し、SFT term を計算します。これにより step-distilled path を学習しながら、標準の 30-step H3 inference path を維持できます。
+
 ## Video と Audio
 
 `minimax_h3_target_mode: "auto"` は video-only に解決されます。`"video"` は audio target rows を使わず、`"av"` は joint audio/video rows を学習します。global config または data backend の `h3_target_mode` / `minimax_h3_target_mode` で指定できます。
@@ -92,7 +100,7 @@ SimpleTuner は real CFG と negative prompt encoding に対応しています�
 
 主な logs は `h3_drift_loss`、`h3_drift_video_loss`、`h3_drift_audio_loss`、element counts、`h3_drift_weighted_loss`、`h3_drift_sft_loss`、inner distiller 有効時の `h3_drift_inner_total`、`total` です。
 
-各 step に extra forward pass が 1 回追加されますが、2 つ目の transformer は保持しません。ConvRot、RamTorch、musubi block swap、gradient checkpointing、attention offload と併用できます。ただし extra forward により fastest backend が変わるため、preset ごとに benchmark してください。
+各 step に extra forward pass が 1 回追加されますが、2 つ目の transformer は保持しません。FlowMap/AnyFlow inner distiller を `sft_loss_weight` 有効で wrap する場合、SFT anchor 用の通常 adapter forward も追加されます。ConvRot、RamTorch、musubi block swap、gradient checkpointing、attention offload と併用できます。ただし extra forward により fastest backend が変わるため、preset ごとに benchmark してください。
 
 ## Troubleshooting
 

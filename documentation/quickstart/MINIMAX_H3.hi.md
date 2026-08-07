@@ -24,6 +24,8 @@ MiniMax H3 एक 33B flow-matching video/audio model है। SimpleTuner `min
   "mixed_precision": "bf16",
   "base_model_precision": "no_change",
   "text_encoder_1_precision": "int8-quanto",
+  "flow_schedule_shift": 12.0,
+  "audio_flow_schedule_shift": 3.0,
   "validation_disable_unconditional": true,
   "validation_guidance": 1.0,
   "validation_guidance_real": 1.0
@@ -73,6 +75,7 @@ Negative prompting base H3 contract का हिस्सा नहीं ह�
 
 - VRAM tight हो तो 24G RamTorch example इस्तेमाल करें।
 - ज्यादा checkpointing से पहले `musubi_blocks_to_swap` test करें।
+- video `flow_schedule_shift` को `12.0` और `audio_flow_schedule_shift` को `3.0` रखें। H3 helper inherited global video default `3.0` को ठीक करता है क्योंकि वह MiniMax H3 schedule से match नहीं करता।
 - SimpleTuner H3 video VAE के लिए VAE tiling और temporal roll/chunking force करता है। Tiling geometry upstream जैसी है: `256` tile size और `64` overlap। इन options को false करने पर ignore किया जाएगा, क्योंकि untiled decode से severe colour shift और halftone artifacts आ सकते हैं।
 - Target GPU पर `attention_mechanism` benchmark करें।
 - `torch.compile` बदलने पर smoke test दोबारा करें, क्योंकि compile cache VRAM बदल सकता है।

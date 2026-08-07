@@ -16,6 +16,12 @@ The combined objective is:
 total = sft_loss_weight * normal_h3_loss + loss_weight * frozen_base_prediction_mse
 ```
 
+When an inner distiller is configured, the objective becomes:
+
+```text
+total = inner_distiller_loss + sft_loss_weight * normal_h3_loss + loss_weight * frozen_base_prediction_mse
+```
+
 This makes the adapter learn the dataset while being penalized for changing unrelated base behavior too aggressively.
 
 ## When To Use It
@@ -90,6 +96,8 @@ The defaults are `loss_weight: 1.0`, `sft_loss_weight: 1.0`, `balance: "token"`,
 
 The wrapper delegates batch preparation, validation scheduler hooks, distillation cache generation, caption-batch support, and discriminator/generator lifecycle hooks to the inner distiller. The inner distiller still performs its own compatibility checks, so a method that does not support MiniMax H3 will fail during setup instead of silently falling back.
 
+`sft_loss_weight` remains the normal MiniMax H3 objective even when the inner distiller rewrites `target`. If the inner distiller adds FlowMap/AnyFlow timestep conditioning, H3 drift computes that SFT term with an additional adapter-enabled forward pass after removing the inner timestep keys. That keeps the standard 30-step H3 inference path anchored while the inner distiller trains the step-distilled path.
+
 ## Video And Audio Modes
 
 MiniMax H3 can train video-only targets or joint audio/video targets:
@@ -134,7 +142,7 @@ Use these values to diagnose whether the adapter is learning the dataset or most
 
 ## Cost And Memory
 
-H3 drift distillation adds one extra forward pass per training step, but it does not keep a second transformer in memory. The reference pass reuses the same model with adapters disabled and no gradients. Peak VRAM still increases because activations, compilation caches, and temporary buffers can overlap with the normal step, but the cost is closer to an additional inference pass than a second trainable model.
+H3 drift distillation adds one extra forward pass per training step, but it does not keep a second transformer in memory. The reference pass reuses the same model with adapters disabled and no gradients. When wrapping an inner FlowMap/AnyFlow distiller with `sft_loss_weight` enabled, it also runs a normal-path adapter forward for the SFT anchor. Peak VRAM still increases because activations, compilation caches, and temporary buffers can overlap with the normal step, but the cost is closer to extra forwards than a second trainable model.
 
 This makes it compatible with the usual MiniMax H3 memory features: quantized ConvRot checkpoints, RamTorch, musubi block swap, gradient checkpointing, and attention offload. Benchmark each preset after enabling the distiller because the extra forward can change which checkpointing or attention backend is fastest.
 

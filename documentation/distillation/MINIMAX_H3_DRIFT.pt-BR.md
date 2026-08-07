@@ -14,6 +14,12 @@ MiniMax H3 é um modelo de video/audio flow-matching já destilado. Em training 
 total = sft_loss_weight * normal_h3_loss + loss_weight * frozen_base_prediction_mse
 ```
 
+Com um distiller interno:
+
+```text
+total = inner_distiller_loss + sft_loss_weight * normal_h3_loss + loss_weight * frozen_base_prediction_mse
+```
+
 ## Quando usar
 
 Use em LoRA ou LyCORIS de MiniMax H3, a menos que você queira remover a destilação original. É útil para LoRAs de estilo/conceito, FL2VA/Ref2VA, training conjunto audio/video e flavours quantizados como `convrot-int8` e `convrot-int4`.
@@ -76,6 +82,8 @@ Os exemplos H3 incluídos ativam isso por padrão. `loss_weight: 0.5` mantém o 
 
 O wrapper delega preparação de batches, scheduler de validação, cache de distillation, batches de captions e hooks de ciclo de vida ao distiller interno. O distiller interno mantém suas próprias validações de compatibilidade.
 
+`sft_loss_weight` continua sendo o objetivo normal do MiniMax H3 mesmo quando o distiller interno reescreve `target`. Se o distiller interno adiciona conditioning de timestep FlowMap/AnyFlow, H3 drift calcula esse termo SFT com outro forward do adapter, removendo antes as chaves internas de timestep. Isso mantém a rota normal de inferência H3 em 30 steps ancorada enquanto a rota step-distilled é treinada.
+
 ## Video e Audio
 
 `minimax_h3_target_mode: "auto"` vira video-only. Use `"video"` para não treinar audio target rows, ou `"av"` para joint audio/video. Também pode ser definido por data backend com `h3_target_mode` ou `minimax_h3_target_mode`.
@@ -92,7 +100,7 @@ SimpleTuner suporta real CFG e negative prompt encoding porque a comunidade pode
 
 Logs principais: `h3_drift_loss`, `h3_drift_video_loss`, `h3_drift_audio_loss`, element counts, `h3_drift_weighted_loss`, `h3_drift_sft_loss`, `h3_drift_inner_total` quando houver distiller interno, e `total`.
 
-Cada step ganha um forward pass extra, mas não mantém um segundo transformer na memória. Funciona com ConvRot, RamTorch, musubi block swap, gradient checkpointing e attention offload; ainda assim, benchmark cada preset porque o forward extra pode mudar o backend mais rápido.
+Cada step ganha um forward pass extra, mas não mantém um segundo transformer na memória. Ao envolver um distiller FlowMap/AnyFlow interno com `sft_loss_weight` ativo, também executa um forward normal do adapter para a âncora SFT. Funciona com ConvRot, RamTorch, musubi block swap, gradient checkpointing e attention offload; ainda assim, benchmark cada preset porque os forwards extra podem mudar o backend mais rápido.
 
 ## Troubleshooting
 

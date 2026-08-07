@@ -24,6 +24,8 @@ VRAM に近い preset を選び、smoke test 後に resolution、frame count、a
   "mixed_precision": "bf16",
   "base_model_precision": "no_change",
   "text_encoder_1_precision": "int8-quanto",
+  "flow_schedule_shift": 12.0,
+  "audio_flow_schedule_shift": 3.0,
   "validation_disable_unconditional": true,
   "validation_guidance": 1.0,
   "validation_guidance_real": 1.0
@@ -73,6 +75,7 @@ dataset に target audio latents があり joint audio/video training したい�
 
 - VRAM が厳しい場合は 24G RamTorch example を使います。
 - heavy checkpointing の前に `musubi_blocks_to_swap` を試します。
+- video `flow_schedule_shift` は `12.0`、`audio_flow_schedule_shift` は `3.0` のままにします。H3 helper は、MiniMax H3 schedule と一致しない継承された global video default `3.0` を修正します。
 - SimpleTuner は H3 video VAE の tiling と temporal roll/chunking を強制的に有効化します。tiling geometry は upstream と同じ `256` tile size / `64` overlap です。これらを false にしても無視されます。untiled decode は大きな color shift や halftone artifacts を出すことがあります。
 - 実際の GPU で `attention_mechanism` を benchmark します。
 - `torch.compile` を変えたら smoke test をやり直します。compile cache が VRAM を変えるためです。

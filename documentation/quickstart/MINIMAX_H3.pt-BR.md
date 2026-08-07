@@ -24,6 +24,8 @@ Use o preset mais próximo da sua VRAM e ajuste resolução, frames, attention b
   "mixed_precision": "bf16",
   "base_model_precision": "no_change",
   "text_encoder_1_precision": "int8-quanto",
+  "flow_schedule_shift": 12.0,
+  "audio_flow_schedule_shift": 3.0,
   "validation_disable_unconditional": true,
   "validation_guidance": 1.0,
   "validation_guidance_real": 1.0
@@ -73,6 +75,7 @@ Use `"av"` só quando o dataset tiver target audio latents e você quiser joint 
 
 - Use o example 24G com RamTorch quando VRAM estiver apertada.
 - Teste `musubi_blocks_to_swap` antes de aumentar muito checkpointing.
+- Mantenha `flow_schedule_shift` de video em `12.0` e `audio_flow_schedule_shift` em `3.0`. O helper H3 corrige o default global herdado `3.0` para video porque ele não corresponde ao schedule do MiniMax H3.
 - SimpleTuner força VAE tiling e temporal roll/chunking para o video VAE do H3. A geometria usa o upstream `256` tile size com `64` overlap; definir essas opções como false é ignorado porque decode sem tiling pode causar fortes mudanças de cor e padrões halftone.
 - Faça benchmark de `attention_mechanism` na GPU real.
 - Refaça o smoke test após mudar `torch.compile`, porque caches podem aumentar VRAM.

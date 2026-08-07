@@ -103,7 +103,7 @@ class AnyFlowDistiller(DistillationBase):
         flowmap_key = getattr(model, "FLOWMAP_R_TIMESTEP_BATCH_KEY", self.FLOWMAP_R_TIMESTEP_BATCH_KEY)
         batch[flowmap_key] = r_timesteps
         batch["anyflow_r_timesteps"] = r_timesteps
-        batch["anyflow_timestep_interval"] = batch["timesteps"].to(dtype=r_timesteps.dtype) - r_timesteps
+        batch["anyflow_timestep_interval"] = (batch["timesteps"].to(dtype=r_timesteps.dtype) - r_timesteps).abs()
         batch["target"] = target.detach()
         batch["flow_target"] = batch["target"]
         return batch
@@ -125,9 +125,10 @@ class AnyFlowDistiller(DistillationBase):
         }
         if r_timesteps is not None:
             logs["anyflow_r_timestep"] = float(torch.mean(r_timesteps.float()).detach())
-            logs["anyflow_interval"] = float(
-                torch.mean((prepared_batch["timesteps"].float() - r_timesteps.float())).detach()
-            )
+            interval = prepared_batch.get("anyflow_timestep_interval")
+            if interval is None:
+                interval = (prepared_batch["timesteps"].float() - r_timesteps.float()).abs()
+            logs["anyflow_interval"] = float(torch.mean(interval.float()).detach())
         return loss, logs
 
     def get_scheduler(self, scheduler=None):
@@ -238,6 +239,9 @@ class AnyFlowDistiller(DistillationBase):
         return sigmas.reshape(batch_size, -1)[:, 0].clamp(0.0, 1.0)
 
     def _timesteps_from_sigmas(self, sigmas: torch.Tensor, reference_timesteps: torch.Tensor) -> torch.Tensor:
+        converter = getattr(self.teacher_model, "flow_matching_timesteps_from_sigmas", None)
+        if callable(converter):
+            return converter(sigmas, reference_timesteps=reference_timesteps)
         if torch.max(reference_timesteps.detach().float()) <= 1.0:
             return sigmas
         return sigmas * self.num_train_timesteps

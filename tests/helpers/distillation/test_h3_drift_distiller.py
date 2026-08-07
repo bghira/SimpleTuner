@@ -40,6 +40,8 @@ class _H3Model:
         self.adapter = adapter
         self.component = _FlowMapComponent()
         self.raise_when_disabled = False
+        self.predict_batches = []
+        self.loss_batches = []
         self.config = SimpleNamespace(lora_type="lycoris")
         self.accelerator = SimpleNamespace(
             device=torch.device("cpu"),
@@ -81,6 +83,13 @@ class _H3Model:
     def model_predict(self, batch):
         if self.raise_when_disabled and self.adapter.multiplier == 0.0:
             raise RuntimeError("reference pass failed")
+        self.predict_batches.append(
+            {
+                "adapter_multiplier": self.adapter.multiplier,
+                "has_flowmap": "flowmap_r_timesteps" in batch,
+                "has_anyflow": "anyflow_r_timesteps" in batch,
+            }
+        )
         offset = 3.0 if self.adapter.multiplier > 0.0 else 1.0
         video = torch.zeros(2, 1, 2, 2) + offset
         output = {
@@ -92,6 +101,17 @@ class _H3Model:
         else:
             output["audio_prediction"] = None
         return output
+
+    def loss(self, prepared_batch, model_output, apply_conditioning_mask: bool = True):
+        del apply_conditioning_mask
+        self.loss_batches.append(
+            {
+                "has_flowmap": "flowmap_r_timesteps" in prepared_batch,
+                "has_anyflow": "anyflow_r_timesteps" in prepared_batch,
+            }
+        )
+        target = self.get_flow_matching_target(prepared_batch)
+        return (model_output["model_prediction"].float() - target.float()).square().mean()
 
 
 class H3DriftDistillerTests(unittest.TestCase):
@@ -182,7 +202,7 @@ class H3DriftDistillerTests(unittest.TestCase):
                 config={"model_type": "lora", "model_family": "flux"},
             )
 
-    def test_wraps_anyflow_and_preserves_h3_target_sign(self):
+    def test_wraps_anyflow_and_preserves_normal_h3_anchor(self):
         adapter = _Adapter()
         model = _H3Model(adapter)
         distiller = H3DriftDistiller(
@@ -195,7 +215,7 @@ class H3DriftDistillerTests(unittest.TestCase):
                 "sft_loss_weight": 0.25,
                 "inner_distillation_method": "anyflow",
                 "inner_distillation_config": {
-                    "target_mode": "linear",
+                    "target_mode": "online_teacher",
                     "r_timestep_sampler": "zero",
                     "loss_weight": 2.0,
                 },
@@ -219,12 +239,24 @@ class H3DriftDistillerTests(unittest.TestCase):
         loss, logs = distiller.compute_distill_loss(prepared, model_output, torch.tensor(4.0))
 
         self.assertTrue(model.component.flowmap_enabled)
-        self.assertTrue(torch.equal(prepared["target"], latents - noise))
-        self.assertAlmostEqual(float(loss), 4.0)
-        self.assertAlmostEqual(logs["anyflow_loss"], 2.0)
-        self.assertAlmostEqual(logs["h3_drift_inner_total"], 2.0)
+        self.assertTrue(torch.equal(prepared["target"], torch.ones_like(latents)))
+        self.assertTrue(
+            torch.equal(
+                model.get_flow_matching_target(prepared, prefer_explicit_target=False),
+                latents - noise,
+            )
+        )
+        self.assertAlmostEqual(float(loss), 14.0)
+        self.assertAlmostEqual(logs["anyflow_loss"], 8.0)
+        self.assertAlmostEqual(logs["h3_drift_inner_total"], 8.0)
+        self.assertAlmostEqual(logs["h3_drift_sft_loss"], 4.0)
         self.assertAlmostEqual(logs["h3_drift_weighted_loss"], 2.0)
-        self.assertEqual(adapter.calls, [0.0, 1.0])
+        self.assertEqual(adapter.calls, [0.0, 1.0, 0.0, 1.0])
+        self.assertEqual(
+            [entry["has_flowmap"] for entry in model.predict_batches],
+            [False, True, True, False],
+        )
+        self.assertEqual(model.loss_batches, [{"has_flowmap": False, "has_anyflow": False}])
 
     def test_rejects_recursive_inner_h3_drift(self):
         adapter = _Adapter()

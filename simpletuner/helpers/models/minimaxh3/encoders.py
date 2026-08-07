@@ -223,6 +223,38 @@ class MiniMaxH3TextEncoderStep(ModularPipelineBlocks):
             `tuple[torch.Tensor, torch.Tensor]`: the `(1, num_text_tokens, 5120)` hidden states and the
             `(num_text_tokens,)` per-row modality tags.
         """
+        return MiniMaxH3TextEncoderStep.encode_prompt_batch(
+            components,
+            [prompt],
+            image_batches=[images],
+            device=device,
+            dtype=dtype,
+            null_instructions=[null_instruction],
+            max_length=max_length,
+        )[0]
+
+    @staticmethod
+    def encode_prompt_batch(
+        components,
+        prompts: list[str],
+        image_batches: list[list | None] | None = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+        null_instructions: list[bool] | None = None,
+        max_length: int | None = MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH,
+    ) -> list[tuple[torch.Tensor, torch.Tensor]]:
+        """Encode multiple independently packed H3 requests in one padded Qwen3-VL forward."""
+        if not prompts:
+            return []
+        for prompt in prompts:
+            _check_prompt(prompt)
+        if image_batches is None:
+            image_batches = [None] * len(prompts)
+        if null_instructions is None:
+            null_instructions = [False] * len(prompts)
+        if len(image_batches) != len(prompts) or len(null_instructions) != len(prompts):
+            raise ValueError("MiniMax-H3 batched text encoding requires one image and null-instruction entry per prompt.")
+
         device = device or components._execution_device
         dtype = dtype or components.transformer.dtype
 
@@ -235,34 +267,55 @@ class MiniMaxH3TextEncoderStep(ModularPipelineBlocks):
                 f"{MINIMAX_H3_TEXT_ENCODER_LAYER} layers is post-norm and is not the conditioning MiniMax-H3 expects."
             )
 
-        pixel_values, image_grid_thw = None, None
-        token_ids, token_tags = [], []
-        if images:
-            vision = components.processor.image_processor(images=images, return_tensors="pt")
-            pixel_values, image_grid_thw = vision["pixel_values"], vision["image_grid_thw"]
-            merge_size = components.processor.image_processor.merge_size**2
-            for index in range(len(images)):
-                num_image_tokens = int(image_grid_thw[index].prod()) // merge_size
-                label_ids = components.tokenizer(f"<Picture {index + 1}>: ", add_special_tokens=False)["input_ids"]
-                vision_ids = (
-                    [components.tokenizer.convert_tokens_to_ids("<|vision_start|>")]
-                    + [components.tokenizer.convert_tokens_to_ids("<|image_pad|>")] * num_image_tokens
-                    + [components.tokenizer.convert_tokens_to_ids("<|vision_end|>")]
-                )
-                token_ids += label_ids + vision_ids
-                token_tags += [MINIMAX_H3_TEXT_TAG] * len(label_ids) + [MINIMAX_H3_VIDEO_TAG] * len(vision_ids)
-        prompt_ids = _encode_instruction_token_ids(components.tokenizer, prompt, null_instruction, max_length)
-        token_ids += prompt_ids
-        token_tags += [MINIMAX_H3_TEXT_TAG] * len(prompt_ids)
-        if not token_ids:
-            raise ValueError("MiniMax-H3 conditioning carries no tokens; conditioning cannot be empty.")
+        presentations = []
+        flattened_images = [image for images in image_batches if images for image in images]
+        if flattened_images:
+            vision = components.processor.image_processor(images=flattened_images, return_tensors="pt")
+            pixel_values = vision["pixel_values"]
+            image_grid_thw = vision["image_grid_thw"]
+        else:
+            pixel_values, image_grid_thw = None, None
+        image_grid_offset = 0
+        for prompt, images, null_instruction in zip(prompts, image_batches, null_instructions):
+            token_ids, token_tags = [], []
+            if images:
+                request_image_grid_thw = image_grid_thw[image_grid_offset : image_grid_offset + len(images)]
+                image_grid_offset += len(images)
+                merge_size = components.processor.image_processor.merge_size**2
+                for index in range(len(images)):
+                    num_image_tokens = int(request_image_grid_thw[index].prod()) // merge_size
+                    label_ids = components.tokenizer(f"<Picture {index + 1}>: ", add_special_tokens=False)["input_ids"]
+                    vision_ids = (
+                        [components.tokenizer.convert_tokens_to_ids("<|vision_start|>")]
+                        + [components.tokenizer.convert_tokens_to_ids("<|image_pad|>")] * num_image_tokens
+                        + [components.tokenizer.convert_tokens_to_ids("<|vision_end|>")]
+                    )
+                    token_ids += label_ids + vision_ids
+                    token_tags += [MINIMAX_H3_TEXT_TAG] * len(label_ids) + [MINIMAX_H3_VIDEO_TAG] * len(vision_ids)
+            prompt_ids = _encode_instruction_token_ids(components.tokenizer, prompt, null_instruction, max_length)
+            token_ids += prompt_ids
+            token_tags += [MINIMAX_H3_TEXT_TAG] * len(prompt_ids)
+            if not token_ids:
+                raise ValueError("MiniMax-H3 conditioning carries no tokens; conditioning cannot be empty.")
+            presentations.append((token_ids, token_tags))
 
-        input_ids = torch.tensor([token_ids], dtype=torch.long, device=device)
-        # Qwen3-VL lays its 3D rotary positions out per modality run, which it reads off the token type ids the
-        # processor derives from the vision pad ids (`0` text, `1` image, `2` video).
-        mm_token_type_ids = torch.tensor(
-            components.processor.create_mm_token_type_ids([token_ids]), dtype=torch.long, device=device
+        max_sequence_length = max(len(token_ids) for token_ids, _ in presentations)
+        input_ids = torch.full(
+            (len(prompts), max_sequence_length),
+            _null_token_id(components.tokenizer),
+            dtype=torch.long,
+            device=device,
         )
+        attention_mask = torch.zeros_like(input_ids)
+        mm_token_type_ids = torch.zeros_like(input_ids)
+        for batch_index, (token_ids, _) in enumerate(presentations):
+            sequence_length = len(token_ids)
+            input_ids[batch_index, :sequence_length] = torch.tensor(token_ids, dtype=torch.long, device=device)
+            attention_mask[batch_index, :sequence_length] = 1
+            # Qwen3-VL reads these token types to construct per-sample multimodal rotary positions.
+            token_type_ids = components.processor.create_mm_token_type_ids([token_ids])[0]
+            mm_token_type_ids[batch_index, :sequence_length] = torch.tensor(token_type_ids, dtype=torch.long, device=device)
+
         # `text_encoder.model` is a submodule, and a CPU-offload hook — accelerate's or the one the
         # `ComponentsManager` attaches — wraps the *top-level* module's `forward` alone, so calling the submodule
         # directly would leave the conditioner on the CPU. Fire the hook by hand instead of routing through
@@ -273,15 +326,21 @@ class MiniMaxH3TextEncoderStep(ModularPipelineBlocks):
             hook.pre_forward(components.text_encoder)
         outputs = components.text_encoder.model(
             input_ids=input_ids,
-            attention_mask=torch.ones_like(input_ids),
+            attention_mask=attention_mask,
             mm_token_type_ids=mm_token_type_ids,
             pixel_values=None if pixel_values is None else pixel_values.to(device, components.text_encoder.dtype),
             image_grid_thw=None if image_grid_thw is None else image_grid_thw.to(device),
             use_cache=False,
             output_hidden_states=True,
         )
-        prompt_embeds = outputs.hidden_states[MINIMAX_H3_TEXT_ENCODER_LAYER].to(device=device, dtype=dtype)
-        return prompt_embeds, torch.tensor(token_tags, dtype=torch.long)
+        hidden_states = outputs.hidden_states[MINIMAX_H3_TEXT_ENCODER_LAYER]
+        return [
+            (
+                hidden_states[batch_index : batch_index + 1, : len(token_ids)].to(device=device, dtype=dtype),
+                torch.tensor(token_tags, dtype=torch.long),
+            )
+            for batch_index, (token_ids, token_tags) in enumerate(presentations)
+        ]
 
     @torch.no_grad()
     def __call__(self, components: MiniMaxH3ModularPipeline, state: PipelineState) -> PipelineState:

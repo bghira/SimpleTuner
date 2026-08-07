@@ -1,5 +1,6 @@
 {
   "attention_mechanism": "native-efficient",
+  "audio_flow_schedule_shift": 3.0,
   "base_model_precision": "no_change",
   "caption_dropout_probability": 0.1,
   "checkpoint_step_interval": 100,
@@ -18,6 +19,7 @@
     }
   },
   "distillation_method": "h3_drift",
+  "flow_schedule_shift": 12.0,
   "gradient_accumulation_steps": 1,
   "gradient_checkpointing": false,
   "hub_model_id": "simpletuner-minimaxh3-fl2va-convrot-int8-80g-lora-test",
