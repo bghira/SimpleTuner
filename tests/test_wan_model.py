@@ -8,6 +8,29 @@ from simpletuner.helpers.models.common import PipelineTypes, VideoModelFoundatio
 from simpletuner.helpers.models.wan.model import Wan, add_first_frame_latent_conditioning
 
 
+class _RecordingWanTransformer(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.last_kwargs = None
+
+    def forward(
+        self,
+        hidden_states,
+        encoder_hidden_states,
+        timestep,
+        r_timestep=None,
+        **kwargs,
+    ):
+        self.last_kwargs = {
+            "hidden_states": hidden_states,
+            "encoder_hidden_states": encoder_hidden_states,
+            "timestep": timestep,
+            "r_timestep": r_timestep,
+            **kwargs,
+        }
+        return (torch.zeros_like(hidden_states),)
+
+
 class WanModelTests(unittest.TestCase):
     def _animegen_config(self, flavour: str):
         return SimpleNamespace(
@@ -238,6 +261,37 @@ class WanModelTests(unittest.TestCase):
         self.assertTrue(torch.equal(conditioned[:, 20:, :1], clean_latents[:, :, :1]))
         self.assertTrue(torch.all(conditioned[:, 20:, 1:] == 0))
         warning.assert_not_called()
+
+    def test_model_predict_forwards_anyflow_r_timestep(self):
+        model = object.__new__(Wan)
+        transformer = _RecordingWanTransformer()
+        model.model = transformer
+        model.config = SimpleNamespace(
+            controlnet=False,
+            weight_dtype=torch.float32,
+            twinflow_enabled=False,
+            tread_config=None,
+        )
+        model.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model.crepa_regularizer = None
+        model.unwrap_model = MagicMock(side_effect=lambda model=None, **_: model)
+        model._new_hidden_state_buffer = MagicMock(return_value={})
+        model._build_grounding_position_net_kwargs = MagicMock(return_value=None)
+        model._apply_i2v_conditioning_to_kwargs = MagicMock()
+        r_timesteps = torch.tensor([0.25])
+
+        result = Wan.model_predict(
+            model,
+            {
+                "noisy_latents": torch.randn(1, 16, 1, 2, 2),
+                "encoder_hidden_states": torch.randn(1, 4, 8),
+                "timesteps": torch.tensor([0.75]),
+                Wan.FLOWMAP_R_TIMESTEP_BATCH_KEY: r_timesteps,
+            },
+        )
+
+        self.assertIs(transformer.last_kwargs["r_timestep"], r_timesteps)
+        self.assertEqual(result["model_prediction"].shape, (1, 16, 1, 2, 2))
 
 
 if __name__ == "__main__":
