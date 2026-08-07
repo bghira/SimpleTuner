@@ -225,6 +225,20 @@ class TestMaxNumSamplesLimit(unittest.TestCase):
         self.assertEqual(result1, result2)
         self.assertEqual(result2, result3)
 
+    def test_max_num_samples_is_independent_of_discovery_order(self):
+        """Equivalent listings should produce the same bounded subset regardless of order."""
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+
+        mock_backend = MagicMock(spec=MetadataBackend)
+        mock_backend.id = "ordered_sample_limit"
+        mock_backend.max_num_samples = 3
+        file_list = [f"image_{index}.jpg" for index in range(10)]
+
+        forward = MetadataBackend._apply_max_num_samples_limit(mock_backend, file_list)
+        reversed_order = MetadataBackend._apply_max_num_samples_limit(mock_backend, list(reversed(file_list)))
+
+        self.assertEqual(forward, reversed_order)
+
     def test_max_num_samples_different_ids_different_selection(self):
         """Different dataset IDs should produce different selections."""
         from simpletuner.helpers.metadata.backends.base import MetadataBackend
@@ -483,10 +497,7 @@ class TestDistributedBucketPadding(unittest.TestCase):
 
     def test_cp_padding_fills_empty_dp_shards_from_final_global_item(self):
         images = ["img0", "img1", "img2", "img3"]
-        shards = [
-            self._split_rank(images, rank, cp_size=2, apply_padding=True, repeats=1)
-            for rank in range(8)
-        ]
+        shards = [self._split_rank(images, rank, cp_size=2, apply_padding=True, repeats=1) for rank in range(8)]
 
         self.assertEqual([len(shard) for shard in shards], [1] * 8)
         self.assertEqual([item for shard in shards for item in shard], images + ["img3"] * 4)
@@ -511,6 +522,33 @@ class TestDistributedBucketPadding(unittest.TestCase):
 
         self.assertEqual([len(shard) for shard in shards], [1] * 8)
         self.assertEqual([item for shard in shards for item in shard], images)
+
+    def test_shuffled_split_is_independent_of_input_order(self):
+        images = [f"img{index:02d}" for index in range(16)]
+        shards = []
+        for rank in range(8):
+            rank_images = images if rank % 2 == 0 else list(reversed(images))
+            backend = self._backend(rank_images)
+            backend.accelerator.is_main_process = rank == 0
+            with (
+                patch.dict("os.environ", {"SIMPLETUNER_SHUFFLE_BUCKETS": "1"}),
+                patch.object(
+                    StateTracker,
+                    "get_args",
+                    return_value=SimpleNamespace(allow_dataset_oversubscription=False, seed=42),
+                ),
+                patch.object(StateTracker, "get_data_backend_config", return_value={}),
+                patch(
+                    "simpletuner.helpers.metadata.backends.base.get_cp_aware_dp_info",
+                    return_value=(8, rank, 1),
+                ),
+            ):
+                MetadataBackend.split_buckets_between_processes(backend)
+            shards.append(backend.aspect_ratio_bucket_indices["1.0"])
+
+        flattened = [item for shard in shards for item in shard]
+        self.assertEqual(len(flattened), len(images))
+        self.assertEqual(set(flattened), set(images))
 
     def test_padding_non_divisible_preserves_qr_boundaries(self):
         images = [f"img{index}" for index in range(10)]

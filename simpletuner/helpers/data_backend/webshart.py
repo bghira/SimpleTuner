@@ -6,6 +6,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, List, Optional, Tuple, Union
 
+import requests
 import torch
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
@@ -199,6 +200,61 @@ class WebshartDataBackend(BaseDataBackend):
         sample_ref = self.parse_sample_id(identifier)
         entry = self.loader.load_sample(sample_ref.shard_idx, sample_ref.sample_idx)
         return bytes(entry.data)
+
+    def read_sample_head_tail(
+        self,
+        identifier: Union[str, Path],
+        *,
+        file_metadata: Optional[dict] = None,
+        head_bytes: int = 4096,
+        tail_bytes: int = 131072,
+    ) -> tuple[bytes, bytes, int]:
+        """Range-read the beginning and end of a sample without loading its full TAR member."""
+        sample_ref = self.parse_sample_id(identifier)
+        metadata = file_metadata or self.get_shard_metadata(sample_ref.shard_idx).get(sample_ref.filename, {})
+        offset = metadata.get("offset")
+        length = metadata.get("length", metadata.get("size"))
+        shard_info = self.dataset.get_shard_info(sample_ref.shard_idx)
+        tar_path = shard_info.get("tar_path") if isinstance(shard_info, dict) else None
+        if offset is None or length is None or not str(tar_path or "").startswith(("http://", "https://")):
+            raise ValueError(f"Range metadata is unavailable for Webshart sample {identifier}.")
+
+        offset = int(offset)
+        length = int(length)
+        if length <= 0:
+            raise ValueError(f"Invalid Webshart sample length for {identifier}: {length}")
+
+        token = self.hf_token
+        if token is True:
+            from huggingface_hub import get_token
+
+            token = get_token()
+        base_headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+        def _read_range(relative_start: int, relative_end: int) -> bytes:
+            absolute_start = offset + relative_start
+            absolute_end = offset + relative_end
+            headers = {**base_headers, "Range": f"bytes={absolute_start}-{absolute_end}"}
+            response = requests.get(str(tar_path), headers=headers, stream=True, timeout=(10, 60))
+            try:
+                if response.status_code != 206:
+                    raise IOError(f"Range request for {identifier} returned HTTP {response.status_code} instead of 206.")
+                payload = response.content
+            finally:
+                response.close()
+            expected_size = relative_end - relative_start + 1
+            if len(payload) != expected_size:
+                raise IOError(f"Range request for {identifier} returned {len(payload)} bytes; expected {expected_size}.")
+            return payload
+
+        head_size = min(max(1, int(head_bytes)), length)
+        tail_size = min(max(1, int(tail_bytes)), length)
+        head = _read_range(0, head_size - 1)
+        if tail_size == length:
+            tail = head if head_size == length else _read_range(0, length - 1)
+        else:
+            tail = _read_range(length - tail_size, length - 1)
+        return head, tail, length
 
     def _sample_index_for_filename(self, shard_idx: int, filename: str) -> Optional[int]:
         shard_idx = int(shard_idx)

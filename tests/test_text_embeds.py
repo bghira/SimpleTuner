@@ -273,6 +273,40 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         )
         self.assertEqual(len(saved), 1)
 
+    @patch("simpletuner.helpers.caching.text_embeds.StateTracker.get_text_cache_files", return_value={})
+    def test_compute_embeddings_does_not_resplit_rank_local_records(self, _mock_cache_files):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION)
+        cache.split_prompt_records_between_processes = MagicMock(return_value=[])
+        cache.save_to_cache = MagicMock()
+
+        class BatchModel(_DummyModel):
+            TEXT_ENCODER_CONFIGURATION = {"text_encoder": {}}
+
+            def __init__(self):
+                super().__init__(TextEmbedCacheKey.CAPTION)
+                self.encode_text_batch = MagicMock(
+                    side_effect=lambda prompts, **_kwargs: {
+                        "prompt_embeds": torch.ones(len(prompts), 2, 3),
+                        "attention_mask": torch.ones(len(prompts), 2, dtype=torch.bool),
+                    }
+                )
+
+        cache.model = BatchModel()
+
+        cache.compute_embeddings_for_prompts(
+            [
+                {"prompt": "rank-local one", "key": "one"},
+                {"prompt": "rank-local two", "key": "two"},
+            ],
+            return_concat=False,
+            load_from_cache=False,
+            split_between_processes=False,
+        )
+
+        cache.split_prompt_records_between_processes.assert_not_called()
+        self.assertEqual(cache.model.encode_text_batch.call_count, 2)
+        self.assertEqual(cache.save_to_cache.call_count, 2)
+
     def test_batched_encode_saves_trimmed_per_caption_outputs(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION)
         saved = []

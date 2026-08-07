@@ -11,6 +11,30 @@ from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBacke
 
 
 class TestWebshartDataBackend(unittest.TestCase):
+    @patch("simpletuner.helpers.data_backend.webshart.requests.get")
+    def test_read_sample_head_tail_uses_tar_member_ranges(self, requests_get):
+        head_response = Mock(status_code=206, content=b"head")
+        tail_response = Mock(status_code=206, content=b"tailtail")
+        requests_get.side_effect = [head_response, tail_response]
+        backend = WebshartDataBackend.__new__(WebshartDataBackend)
+        backend.hf_token = None
+        backend.dataset = Mock()
+        backend.dataset.get_shard_info.return_value = {"tar_path": "https://example.test/shard.tar"}
+        file_metadata = {"offset": 1000, "length": 200000}
+
+        head, tail, length = backend.read_sample_head_tail(
+            "webshart://2/7/sample.mp4",
+            file_metadata=file_metadata,
+            head_bytes=4,
+            tail_bytes=8,
+        )
+
+        self.assertEqual((head, tail, length), (b"head", b"tailtail", 200000))
+        self.assertEqual(requests_get.call_args_list[0].kwargs["headers"]["Range"], "bytes=1000-1003")
+        self.assertEqual(requests_get.call_args_list[1].kwargs["headers"]["Range"], "bytes=200992-200999")
+        head_response.close.assert_called_once()
+        tail_response.close.assert_called_once()
+
     def test_zero_shard_cache_size_disables_whole_shard_cache(self):
         dataset = Mock()
         loader = Mock()
@@ -128,6 +152,22 @@ class TestWebshartDataBackend(unittest.TestCase):
         self.assertEqual(metadata["fps"], 24.0)
         self.assertEqual(metadata["video_duration"], 2.67)
         self.assertEqual(metadata["captions"], "A moving subject.")
+
+    @patch("simpletuner.helpers.metadata.backends.webshart.shutil.which", return_value="/usr/bin/ffprobe")
+    def test_video_metadata_probe_prefers_sparse_range_payload(self, _which):
+        backend = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
+        backend.data_backend = Mock()
+        backend.data_backend.parse_sample_id.return_value = Mock(filename="sample.mp4")
+        backend.data_backend.read_sample_head_tail.return_value = (b"head", b"tail", 1024 * 1024)
+        backend._ffprobe_video_path = Mock(return_value={"original_size": (1920, 1080), "num_frames": 64})
+
+        metadata = backend._probe_video_metadata("webshart://0/3/sample.mp4", file_metadata={"offset": 10})
+
+        self.assertEqual(metadata["original_size"], (1920, 1080))
+        backend.data_backend.read_sample_head_tail.assert_called_once_with(
+            "webshart://0/3/sample.mp4", file_metadata={"offset": 10}
+        )
+        backend.data_backend.read.assert_not_called()
 
 
 if __name__ == "__main__":
