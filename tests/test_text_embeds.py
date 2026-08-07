@@ -171,6 +171,14 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             cache._resolve_cache_key_value(record)
 
+    def test_dataset_filename_hash_canonicalizes_path_normalized_webshart_uri(self):
+        cache = _make_cache(TextEmbedCacheKey.DATASET_AND_FILENAME)
+
+        canonical = cache.create_hash("dataset-1:webshart://0/3/sample.mp4")
+        path_normalized = cache.create_hash("dataset-1:webshart:/0/3/sample.mp4")
+
+        self.assertEqual(path_normalized, canonical)
+
     def test_normalize_prompts_infers_key_from_metadata(self):
         cache = _make_cache(TextEmbedCacheKey.DATASET_AND_FILENAME)
         record = {

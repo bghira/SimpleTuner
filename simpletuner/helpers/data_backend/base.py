@@ -136,6 +136,7 @@ class BaseDataBackend(ABC):
                 decompressed_data = file.read()
             except Exception as e:
                 # Handle decompression errors
+                gzip_data.seek(0)
                 return gzip_data
         return BytesIO(decompressed_data)
 

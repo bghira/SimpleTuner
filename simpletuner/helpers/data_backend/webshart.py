@@ -10,7 +10,8 @@ import torch
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
-from simpletuner.helpers.image_manipulation.load import load_image
+from simpletuner.helpers.image_manipulation.load import load_image, load_video
+from simpletuner.helpers.training import video_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
 
 logger = logging.getLogger("WebshartDataBackend")
@@ -29,6 +30,7 @@ class WebshartSampleRef:
 
 class WebshartDataBackend(BaseDataBackend):
     SAMPLE_PREFIX = "webshart://"
+    PATH_NORMALIZED_SAMPLE_PREFIX = "webshart:/"
     CACHE_EXTENSIONS = {".json", ".pt", ".msgpack", ".safetensors"}
 
     def __init__(
@@ -69,8 +71,12 @@ class WebshartDataBackend(BaseDataBackend):
         self.metadata_cache_dir = (
             str(metadata_cache_dir) if metadata_cache_dir else str(Path(self.cache_dir) / "metadata_cache")
         )
-        self.shard_cache_dir = str(shard_cache_dir) if shard_cache_dir else str(Path(self.cache_dir) / "shard_cache")
         self.shard_cache_gb = float(shard_cache_gb)
+        if self.shard_cache_gb < 0:
+            raise ValueError("shard_cache_gb must be non-negative; use 0 to disable whole-shard caching.")
+        self.shard_cache_dir = str(shard_cache_dir) if shard_cache_dir else str(Path(self.cache_dir) / "shard_cache")
+        if self.shard_cache_gb == 0:
+            self.shard_cache_dir = None
         self.parallel_downloads = int(parallel_downloads)
         self.buffer_size = int(buffer_size)
         self.max_file_size = int(max_file_size)
@@ -88,7 +94,7 @@ class WebshartDataBackend(BaseDataBackend):
             metadata=self.metadata,
         )
         self.dataset.enable_metadata_cache(location=self.metadata_cache_dir)
-        if self.shard_cache_dir:
+        if self.shard_cache_dir is not None:
             Path(self.shard_cache_dir).mkdir(parents=True, exist_ok=True)
             self.dataset.enable_shard_cache(
                 location=self.shard_cache_dir,
@@ -117,6 +123,10 @@ class WebshartDataBackend(BaseDataBackend):
         marker = value.find(cls.SAMPLE_PREFIX)
         if marker >= 0:
             return value[marker:]
+        marker = value.find(cls.PATH_NORMALIZED_SAMPLE_PREFIX)
+        if marker >= 0:
+            remainder = value[marker + len(cls.PATH_NORMALIZED_SAMPLE_PREFIX) :]
+            return f"{cls.SAMPLE_PREFIX}{remainder}"
         return value
 
     @classmethod
@@ -137,10 +147,9 @@ class WebshartDataBackend(BaseDataBackend):
 
     @classmethod
     def is_sample_id(cls, identifier: Union[str, Path]) -> bool:
-        value = str(identifier)
-        if cls.SAMPLE_PREFIX not in value:
+        sample_id = cls.normalize_sample_id(identifier)
+        if not sample_id.startswith(cls.SAMPLE_PREFIX):
             return False
-        sample_id = cls.normalize_sample_id(value)
         filename = sample_id.split("/", 2)[-1] if "/" in sample_id else sample_id
         return Path(filename).suffix.lower() not in {".pt", ".safetensors"}
 
@@ -205,6 +214,11 @@ class WebshartDataBackend(BaseDataBackend):
             return None
 
         sample_ref = self.parse_sample_id(image_path)
+        sample_metadata = self.get_shard_metadata(sample_ref.shard_idx).get(sample_ref.filename, {}) or {}
+        caption = sample_metadata.get("captions")
+        if caption:
+            return str(caption).strip()
+
         caption_filename = Path(sample_ref.filename).with_suffix(".txt").name
         caption_sample_idx = self._sample_index_for_filename(sample_ref.shard_idx, caption_filename)
         if caption_sample_idx is None:
@@ -296,7 +310,9 @@ class WebshartDataBackend(BaseDataBackend):
 
     def read_image(self, filepath: str, delete_problematic_images: bool = False):
         try:
-            return load_image(self.read(filepath, as_byteIO=True))
+            file_extension = Path(self.normalize_sample_id(filepath)).suffix.lower().strip(".")
+            loader = load_video if file_extension in video_file_extensions else load_image
+            return loader(self.read(filepath, as_byteIO=True))
         except Exception as exc:
             logger.error("Error opening webshart sample %s: %s", filepath, exc)
             if delete_problematic_images:
@@ -322,6 +338,7 @@ class WebshartDataBackend(BaseDataBackend):
         data = self.read(filename, as_byteIO=True)
         if self.compress_cache:
             data = self._decompress_torch(data)
+        data.seek(0)
         return torch.load(data, map_location="cpu")
 
     def torch_save(self, data, filename):
