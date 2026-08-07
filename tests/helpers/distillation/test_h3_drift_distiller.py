@@ -215,8 +215,9 @@ class H3DriftDistillerTests(unittest.TestCase):
                 "sft_loss_weight": 0.25,
                 "inner_distillation_method": "anyflow",
                 "inner_distillation_config": {
-                    "target_mode": "online_teacher",
-                    "r_timestep_sampler": "zero",
+                    "stage": "forward",
+                    "diffusion_ratio": 0.5,
+                    "consistency_ratio": 0.5,
                     "loss_weight": 2.0,
                 },
             },
@@ -239,22 +240,25 @@ class H3DriftDistillerTests(unittest.TestCase):
         loss, logs = distiller.compute_distill_loss(prepared, model_output, torch.tensor(4.0))
 
         self.assertTrue(model.component.flowmap_enabled)
-        self.assertTrue(torch.equal(prepared["target"], torch.ones_like(latents)))
+        self.assertTrue(torch.equal(prepared["target"], -torch.ones_like(latents)))
         self.assertTrue(
             torch.equal(
                 model.get_flow_matching_target(prepared, prefer_explicit_target=False),
                 latents - noise,
             )
         )
-        self.assertAlmostEqual(float(loss), 14.0)
-        self.assertAlmostEqual(logs["anyflow_loss"], 8.0)
-        self.assertAlmostEqual(logs["h3_drift_inner_total"], 8.0)
+        self.assertGreater(logs["anyflow_forward_loss"], 0.0)
+        self.assertAlmostEqual(logs["h3_drift_inner_total"], logs["anyflow_forward_loss"])
         self.assertAlmostEqual(logs["h3_drift_sft_loss"], 4.0)
         self.assertAlmostEqual(logs["h3_drift_weighted_loss"], 2.0)
-        self.assertEqual(adapter.calls, [0.0, 1.0, 0.0, 1.0])
+        self.assertAlmostEqual(
+            float(loss),
+            logs["h3_drift_inner_total"] + logs["h3_drift_sft_loss"] + logs["h3_drift_weighted_loss"],
+        )
+        self.assertEqual(adapter.calls, [0.0, 1.0])
         self.assertEqual(
             [entry["has_flowmap"] for entry in model.predict_batches],
-            [False, True, True, False],
+            [True, True, True, True, False],
         )
         self.assertEqual(model.loss_batches, [{"has_flowmap": False, "has_anyflow": False}])
 
@@ -271,8 +275,9 @@ class H3DriftDistillerTests(unittest.TestCase):
                 "sft_loss_weight": 0.25,
                 "inner_distillation_method": "anyflow",
                 "inner_distillation_config": {
-                    "target_mode": "online_teacher",
-                    "r_timestep_sampler": "zero",
+                    "stage": "forward",
+                    "diffusion_ratio": 0.5,
+                    "consistency_ratio": 0.5,
                     "loss_weight": 2.0,
                 },
             },
@@ -294,15 +299,20 @@ class H3DriftDistillerTests(unittest.TestCase):
         model_output = model.model_predict(prepared)
         loss, logs = distiller.compute_distill_loss(prepared, model_output, torch.tensor(4.0))
 
-        self.assertAlmostEqual(float(loss), 12.0)
+        self.assertGreater(logs["anyflow_forward_loss"], 0.0)
+        self.assertAlmostEqual(logs["h3_drift_inner_total"], logs["anyflow_forward_loss"])
+        self.assertAlmostEqual(
+            float(loss),
+            logs["h3_drift_inner_total"] + logs["h3_drift_sft_loss"],
+        )
         self.assertEqual(logs["h3_drift_loss"], 0.0)
         self.assertEqual(logs["h3_drift_weighted_loss"], 0.0)
         self.assertEqual(logs["h3_drift_video_elements"], 0.0)
         self.assertEqual(logs["h3_drift_audio_elements"], 0.0)
-        self.assertEqual(adapter.calls, [0.0, 1.0])
+        self.assertEqual(adapter.calls, [])
         self.assertEqual(
             [entry["has_flowmap"] for entry in model.predict_batches],
-            [False, True, False],
+            [True, True, True, False],
         )
         self.assertEqual(model.loss_batches, [{"has_flowmap": False, "has_anyflow": False}])
 

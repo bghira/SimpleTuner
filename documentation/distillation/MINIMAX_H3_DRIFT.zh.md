@@ -71,8 +71,10 @@ Full-rank 不支持 H3 drift。更新整个 transformer 时，不再存在可比
       "sft_loss_weight": 1.0,
       "inner_distillation_method": "anyflow",
       "inner_distillation_config": {
-        "target_mode": "linear",
-        "r_timestep_sampler": "zero",
+        "stage": "forward",
+        "diffusion_ratio": 0.5,
+        "consistency_ratio": 0.25,
+        "central_difference_epsilon": 0.005,
         "loss_weight": 1.0
       }
     }

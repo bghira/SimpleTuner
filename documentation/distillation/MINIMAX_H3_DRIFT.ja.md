@@ -71,8 +71,10 @@ Full-rank では未対応です。transformer 全体を更新する場合、比�
       "sft_loss_weight": 1.0,
       "inner_distillation_method": "anyflow",
       "inner_distillation_config": {
-        "target_mode": "linear",
-        "r_timestep_sampler": "zero",
+        "stage": "forward",
+        "diffusion_ratio": 0.5,
+        "consistency_ratio": 0.25,
+        "central_difference_epsilon": 0.005,
         "loss_weight": 1.0
       }
     }
