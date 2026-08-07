@@ -1,6 +1,9 @@
 import inspect
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import torch
 
@@ -15,6 +18,9 @@ class _FlowMapComponent(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.adapter_enabled = True
+        self.active_adapter = "default"
+        self.adapter_params = torch.nn.ParameterDict({"default": torch.nn.Parameter(torch.tensor([5.0]))})
+        self.peft_config = {"default": SimpleNamespace(name="default")}
         self.flowmap_enabled = False
         self.flowmap_gate_value = None
         self.flowmap_deltatime_type = None
@@ -29,6 +35,15 @@ class _FlowMapComponent(torch.nn.Module):
 
     def disable_lora(self):
         self.adapter_enabled = False
+
+    def add_adapter(self, adapter_config, adapter_name="default"):
+        self.peft_config[adapter_name] = adapter_config
+        self.adapter_params[adapter_name] = torch.nn.Parameter(torch.zeros(1))
+
+    def set_adapter(self, adapter_name):
+        self.active_adapter = adapter_name
+        for name, parameter in self.adapter_params.items():
+            parameter.requires_grad_(name == adapter_name)
 
     def forward(self, timestep=None, r_timestep=None, **kwargs):
         del kwargs
@@ -45,7 +60,12 @@ class _FlowModel:
         self.teacher_adapter_states = []
         self.teacher_timesteps = []
         self.config = SimpleNamespace(lora_type="standard", weight_dtype=torch.float32)
-        self.accelerator = SimpleNamespace(device=torch.device("cpu"), num_processes=1)
+        self.accelerator = SimpleNamespace(
+            device=torch.device("cpu"),
+            is_main_process=True,
+            num_processes=1,
+            process_index=0,
+        )
 
     def get_trained_component(self, unwrap_model=False):
         return self.component
@@ -53,8 +73,13 @@ class _FlowModel:
     def model_predict(self, batch):
         self.teacher_adapter_states.append(self.component.adapter_enabled)
         self.teacher_timesteps.append(batch["timesteps"].detach().clone())
-        value = 7.0 if self.component.adapter_enabled else 2.0
-        return {"model_prediction": torch.full_like(batch["noisy_latents"], value)}
+        value = batch["noisy_latents"].new_tensor(2.0)
+        if self.component.adapter_enabled:
+            value = value + self.component.adapter_params[self.component.active_adapter]
+        return {"model_prediction": torch.ones_like(batch["noisy_latents"]) * value}
+
+    def flow_matching_target(self, latents, noise):
+        return noise - latents
 
 
 class _EpsilonModel(_FlowModel):
@@ -86,6 +111,41 @@ class _InverseFlowModel(_FlowModel):
     def noiseward_flow_to_prediction(self, flow):
         return -flow
 
+    def flow_matching_target(self, latents, noise):
+        return latents - noise
+
+
+class _DatawardTimeFlowModel(_FlowModel):
+    def flow_matching_timesteps_from_sigmas(self, sigmas, *, reference_timesteps=None):
+        del reference_timesteps
+        return 1.0 - sigmas
+
+
+class _SigmaPredictionFlowModel(_FlowModel):
+    def model_predict(self, batch):
+        return {"model_prediction": batch["noisy_latents"].clone()}
+
+
+class _DatawardSigmaPredictionFlowModel(_InverseFlowModel):
+    def flow_matching_timesteps_from_sigmas(self, sigmas, *, reference_timesteps=None):
+        del reference_timesteps
+        return 1.0 - sigmas
+
+    def model_predict(self, batch):
+        return {"model_prediction": -batch["noisy_latents"].clone()}
+
+
+class _DatawardRoleFlowModel(_InverseFlowModel):
+    def flow_matching_timesteps_from_sigmas(self, sigmas, *, reference_timesteps=None):
+        del reference_timesteps
+        return 1.0 - sigmas
+
+    def model_predict(self, batch):
+        value = batch["noisy_latents"].new_tensor(2.0)
+        if self.component.adapter_enabled:
+            value = value + self.component.adapter_params[self.component.active_adapter]
+        return {"model_prediction": -torch.ones_like(batch["noisy_latents"]) * value}
+
 
 class _NoFlowMapModel(_FlowModel):
     def __init__(self):
@@ -108,6 +168,12 @@ class _ValidationScheduler:
         self.step_args = args
         self.step_kwargs = kwargs
         return ("stepped",)
+
+
+class _DatawardValidationScheduler(_ValidationScheduler):
+    def __init__(self):
+        super().__init__()
+        self.timesteps = torch.tensor([0.0, 0.5])
 
 
 class _TParameterComponent(torch.nn.Module):
@@ -146,7 +212,7 @@ class AnyFlowDistillerTests(unittest.TestCase):
         distiller = AnyFlowDistiller(
             teacher_model=model,
             noise_scheduler=None,
-            config={"model_type": "lora", "gate_value": 0.5, "deltatime_type": "t-r", "target_mode": "linear"},
+            config={"model_type": "lora", "gate_value": 0.5, "deltatime_type": "t-r"},
         )
 
         self.assertIs(distiller._flowmap_component, model.component)
@@ -154,97 +220,249 @@ class AnyFlowDistillerTests(unittest.TestCase):
         self.assertEqual(model.component.flowmap_gate_value, 0.5)
         self.assertEqual(model.component.flowmap_deltatime_type, "t-r")
 
-    def test_linear_prepare_batch_sets_r_timesteps_and_target(self):
-        model = _FlowModel()
-        distiller = AnyFlowDistiller(
-            teacher_model=model,
-            noise_scheduler=None,
-            config={"model_type": "lora", "target_mode": "linear", "r_timestep_sampler": "zero"},
-        )
-        batch = distiller.prepare_batch(_prepared_batch(), model=model, state={})
+    def test_removed_legacy_target_modes_are_rejected(self):
+        for target_mode in ("online_teacher", "linear"):
+            with self.subTest(target_mode=target_mode), self.assertRaisesRegex(ValueError, "target_mode was removed"):
+                AnyFlowDistiller(
+                    teacher_model=_FlowModel(),
+                    noise_scheduler=None,
+                    config={"model_type": "lora", "target_mode": target_mode},
+                )
 
-        self.assertTrue(torch.equal(batch["flowmap_r_timesteps"], torch.zeros(2)))
-        self.assertTrue(torch.equal(batch["target"], torch.ones_like(batch["latents"])))
-        self.assertIs(batch["flow_target"], batch["target"])
-
-    def test_linear_prepare_batch_uses_model_flow_target_convention(self):
-        model = _InverseFlowModel()
-        distiller = AnyFlowDistiller(
-            teacher_model=model,
-            noise_scheduler=None,
-            config={"model_type": "lora", "target_mode": "linear", "r_timestep_sampler": "zero"},
-        )
-
-        batch = distiller.prepare_batch(_prepared_batch(), model=model, state={})
-
-        self.assertTrue(torch.equal(batch["target"], -torch.ones_like(batch["latents"])))
-        self.assertIs(batch["flow_target"], batch["target"])
-
-    def test_linear_prepare_batch_preserves_normalized_timestep_parameterization(self):
-        model = _FlowModel()
-        distiller = AnyFlowDistiller(
-            teacher_model=model,
-            noise_scheduler=None,
-            config={"model_type": "lora", "target_mode": "linear", "r_timestep_sampler": "zero"},
-        )
-        batch = _prepared_batch()
-        batch["timesteps"] = torch.tensor([1.0, 0.5])
-
-        batch = distiller.prepare_batch(batch, model=model, state={})
-
-        self.assertTrue(torch.equal(batch["flowmap_r_timesteps"], torch.zeros(2)))
-        self.assertTrue(torch.equal(batch["anyflow_timestep_interval"], torch.tensor([1.0, 0.5])))
-
-    def test_online_teacher_target_uses_disabled_adapter(self):
+    def test_meanflow_uses_official_interval_mixture_and_central_target(self):
         model = _FlowModel()
         distiller = AnyFlowDistiller(
             teacher_model=model,
             noise_scheduler=None,
             config={
                 "model_type": "lora",
-                "target_mode": "online_teacher",
-                "r_timestep_sampler": "zero",
-                "teacher_rollout_steps": 3,
+                "diffusion_ratio": 0.5,
+                "consistency_ratio": 0.5,
             },
         )
+        draws = [
+            torch.tensor([0.8, 0.7]),
+            torch.tensor([0.2, 0.4]),
+        ]
 
-        batch = distiller.prepare_batch(_prepared_batch(), model=model, state={})
+        with patch("torch.rand", side_effect=draws):
+            batch = distiller.prepare_batch(_prepared_batch(), model=model, state={})
 
-        self.assertTrue(torch.allclose(batch["target"], torch.full_like(batch["latents"], 2.0)))
-        self.assertEqual(model.teacher_adapter_states, [False, False, False])
+        self.assertTrue(torch.equal(batch["anyflow_diffusion_mask"], torch.tensor([True, False])))
+        self.assertTrue(torch.equal(batch["anyflow_consistency_mask"], torch.tensor([False, True])))
+        self.assertTrue(torch.equal(batch["anyflow_arbitrary_mask"], torch.tensor([False, False])))
+        self.assertTrue(torch.allclose(batch["anyflow_t_base"], torch.tensor([0.8, 0.7])))
+        self.assertTrue(torch.allclose(batch["anyflow_r_base"], torch.tensor([0.8, 0.0])))
+        self.assertTrue(torch.allclose(batch["target"], torch.ones_like(batch["latents"])))
+        self.assertEqual(len(model.teacher_timesteps), 2)
         self.assertTrue(model.component.adapter_enabled)
-        self.assertEqual(len(model.teacher_timesteps), 3)
 
-    def test_compute_distill_loss_scales_precomputed_training_loss(self):
+    def test_meanflow_central_difference_uses_noise_sigma_coordinate(self):
+        model = _SigmaPredictionFlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={
+                "model_type": "lora",
+                "diffusion_ratio": 0.0,
+                "consistency_ratio": 1.0,
+                "central_difference_epsilon": 0.01,
+            },
+        )
+        draws = [
+            torch.tensor([0.8, 0.7]),
+            torch.tensor([0.2, 0.4]),
+        ]
+
+        with patch("torch.rand", side_effect=draws):
+            batch = distiller.prepare_batch(_prepared_batch(), model=model, state={})
+
+        expected = 1.0 - torch.tensor([0.8, 0.7]).view(2, 1, 1, 1)
+        self.assertTrue(torch.allclose(batch["target"], expected.expand_as(batch["target"]), atol=1e-5))
+
+    def test_meanflow_preserves_h3_dataward_prediction_convention(self):
+        model = _DatawardSigmaPredictionFlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={
+                "model_type": "lora",
+                "diffusion_ratio": 0.0,
+                "consistency_ratio": 1.0,
+                "central_difference_epsilon": 0.01,
+            },
+        )
+        draws = [
+            torch.tensor([0.8, 0.7]),
+            torch.tensor([0.2, 0.4]),
+        ]
+
+        with patch("torch.rand", side_effect=draws):
+            batch = distiller.prepare_batch(_prepared_batch(), model=model, state={})
+
+        expected = -1.0 + torch.tensor([0.8, 0.7]).view(2, 1, 1, 1)
+        self.assertTrue(torch.allclose(batch["target"], expected.expand_as(batch["target"]), atol=1e-5))
+        self.assertTrue(torch.allclose(batch["timesteps"], torch.tensor([0.2, 0.3])))
+
+    def test_meanflow_rejects_joint_audio_video_batch(self):
         model = _FlowModel()
         distiller = AnyFlowDistiller(
             teacher_model=model,
             noise_scheduler=None,
-            config={"model_type": "lora", "target_mode": "linear", "loss_weight": 0.5},
+            config={"model_type": "lora"},
         )
         batch = _prepared_batch()
-        batch["anyflow_r_timesteps"] = torch.zeros(2)
+        batch["audio_latents"] = torch.zeros(2, 2, 3, 4)
 
-        loss, logs = distiller.compute_distill_loss(batch, {}, torch.tensor(4.0))
-
-        self.assertEqual(float(loss), 2.0)
-        self.assertEqual(logs["anyflow_loss"], 2.0)
-        self.assertIn("anyflow_interval", logs)
-
-    def test_zero_length_interval_is_rejected(self):
-        model = _FlowModel()
-        distiller = AnyFlowDistiller(
-            teacher_model=model,
-            noise_scheduler=None,
-            config={"model_type": "lora", "target_mode": "linear", "r_timestep_sampler": "zero"},
-        )
-        batch = _prepared_batch()
-        batch["timesteps"] = torch.tensor([0.0, 500.0])
-        batch["sigmas"][0] = 0.0
-        batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch["sigmas"] * batch["noise"]
-
-        with self.assertRaisesRegex(ValueError, "r_timestep < timestep"):
+        with self.assertRaisesRegex(ValueError, "joint audio-video"):
             distiller.prepare_batch(batch, model=model, state={})
+
+    def test_meanflow_loss_uses_per_sample_target_and_interval_logs(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={
+                "model_type": "lora",
+                "diffusion_ratio": 0.5,
+                "consistency_ratio": 0.5,
+                "meanflow_weight_type": "uniform",
+                "meanflow_adaptive_weighting": False,
+                "loss_weight": 0.5,
+            },
+        )
+        draws = [
+            torch.tensor([0.8, 0.7]),
+            torch.tensor([0.2, 0.4]),
+        ]
+        with patch("torch.rand", side_effect=draws):
+            batch = distiller.prepare_batch(_prepared_batch(), model=model, state={})
+        prediction = batch["target"] + 2.0
+
+        loss, logs = distiller.compute_distill_loss(
+            batch,
+            {"model_prediction": prediction},
+            original_loss=torch.tensor(99.0),
+        )
+
+        self.assertAlmostEqual(float(loss), 2.0)
+        self.assertAlmostEqual(logs["anyflow_diffusion_fraction"], 0.5)
+        self.assertAlmostEqual(logs["anyflow_consistency_fraction"], 0.5)
+        self.assertAlmostEqual(logs["anyflow_arbitrary_fraction"], 0.0)
+
+    def test_onpolicy_initializes_separate_discriminator_adapter_and_optimizer(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "stage": "onpolicy", "rollout_step_counts": [2]},
+        )
+
+        self.assertIn("anyflow_discriminator", model.component.peft_config)
+        self.assertEqual(model.component.active_adapter, "default")
+        self.assertIsNotNone(distiller.discriminator_optimizer)
+        self.assertEqual(distiller.discriminator_optimizer.defaults["betas"], (0.0, 0.999))
+
+    def test_onpolicy_rollout_integrates_h3_dataward_predictions_in_noise_coordinate(self):
+        model = _DatawardRoleFlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "stage": "onpolicy", "rollout_step_counts": [2]},
+        )
+        batch = _prepared_batch()
+        batch["timesteps"] = torch.tensor([0.0, 0.5])
+
+        with patch("torch.randn_like", return_value=torch.zeros_like(batch["latents"])):
+            with distiller._adapter_role("student"):
+                result = distiller._training_rollout(batch, step_count=2)
+
+        self.assertTrue(torch.allclose(result, torch.full_like(result, -7.0)))
+        self.assertEqual(model.component.active_adapter, "default")
+
+    def test_onpolicy_generator_loss_backpropagates_only_to_student_adapter(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "stage": "onpolicy", "rollout_step_counts": [2]},
+        )
+        model.component.adapter_params["anyflow_discriminator"].data.fill_(1.0)
+        batch = _prepared_batch()
+
+        loss, logs = distiller._onpolicy_generator_loss(batch)
+        loss.backward()
+
+        self.assertGreater(float(loss.detach()), 0.0)
+        self.assertIsNotNone(model.component.adapter_params["default"].grad)
+        self.assertIsNone(model.component.adapter_params["anyflow_discriminator"].grad)
+        self.assertEqual(logs["anyflow_rollout_steps"], 2.0)
+        self.assertEqual(model.component.active_adapter, "default")
+
+    def test_onpolicy_discriminator_step_updates_only_discriminator_adapter(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={
+                "model_type": "lora",
+                "stage": "onpolicy",
+                "rollout_step_counts": [1],
+                "discriminator_lr": 0.1,
+            },
+        )
+        batch = _prepared_batch()
+        student_before = model.component.adapter_params["default"].detach().clone()
+        discriminator_before = model.component.adapter_params["anyflow_discriminator"].detach().clone()
+
+        distiller.discriminator_step(batch)
+
+        self.assertTrue(torch.equal(model.component.adapter_params["default"], student_before))
+        self.assertFalse(torch.equal(model.component.adapter_params["anyflow_discriminator"], discriminator_before))
+        self.assertEqual(model.component.active_adapter, "default")
+
+    def test_onpolicy_discriminator_gradients_are_averaged_across_ddp_ranks(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "stage": "onpolicy", "rollout_step_counts": [1]},
+        )
+        parameter = distiller._discriminator_parameters[0]
+        parameter.grad = torch.full_like(parameter, 3.0)
+
+        def sum_across_two_ranks(gradient, **kwargs):
+            self.assertEqual(kwargs["op"], torch.distributed.ReduceOp.SUM)
+            gradient.mul_(2.0)
+
+        with (
+            patch("torch.distributed.is_available", return_value=True),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_world_size", return_value=2),
+            patch("torch.distributed.all_reduce", side_effect=sum_across_two_ranks) as all_reduce,
+        ):
+            distiller._sync_discriminator_gradients()
+
+        all_reduce.assert_called_once()
+        self.assertTrue(torch.equal(parameter.grad, torch.full_like(parameter, 3.0)))
+
+    def test_onpolicy_discriminator_checkpoint_round_trip(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "stage": "onpolicy", "rollout_step_counts": [1]},
+        )
+        model.component.adapter_params["anyflow_discriminator"].data.fill_(3.0)
+
+        with tempfile.TemporaryDirectory() as directory:
+            distiller.on_save_checkpoint(12, directory)
+            model.component.adapter_params["anyflow_discriminator"].data.zero_()
+            distiller.on_load_checkpoint(directory)
+
+            self.assertTrue(torch.equal(model.component.adapter_params["anyflow_discriminator"], torch.tensor([3.0])))
+            self.assertTrue((Path(directory) / "anyflow_discriminator.safetensors").is_file())
+            self.assertTrue((Path(directory) / "anyflow_discriminator_optim.pt").is_file())
 
     def test_factory_creates_anyflow_distiller(self):
         model = _FlowModel()
@@ -253,13 +471,13 @@ class AnyFlowDistillerTests(unittest.TestCase):
             "anyflow",
             teacher_model=model,
             noise_scheduler=None,
-            config={"distillation_config": {"anyflow": {"target_mode": "linear", "r_timestep_sampler": "zero"}}},
+            config={"distillation_config": {"anyflow": {"stage": "forward"}}},
             model_type="lora",
             prediction_type="flow_matching",
         )
 
         self.assertIsInstance(distiller, AnyFlowDistiller)
-        self.assertEqual(distiller.config["target_mode"], "linear")
+        self.assertEqual(distiller.config["stage"], "forward")
         self.assertTrue(model.component.flowmap_enabled)
 
     def test_requires_flow_matching_model(self):
@@ -307,6 +525,15 @@ class AnyFlowDistillerTests(unittest.TestCase):
 
         self.assertTrue(torch.equal(r_timestep, torch.tensor([1.0])))
 
+    def test_validation_scheduler_advances_native_dataward_timestep(self):
+        scheduler = AnyFlowValidationScheduler(_DatawardValidationScheduler(), num_train_timesteps=1000)
+
+        first_endpoint = scheduler.r_timestep_for(torch.tensor([0.0]))
+        final_endpoint = scheduler.r_timestep_for(torch.tensor([0.5]))
+
+        self.assertTrue(torch.equal(first_endpoint, torch.tensor([0.5])))
+        self.assertTrue(torch.equal(final_endpoint, torch.tensor([1.0])))
+
     def test_validation_scheduler_wraps_t_parameter_component(self):
         scheduler = AnyFlowValidationScheduler(_ValidationScheduler())
         component = _TParameterComponent()
@@ -340,7 +567,7 @@ class AnyFlowDistillerTests(unittest.TestCase):
         distiller = AnyFlowDistiller(
             teacher_model=model,
             noise_scheduler=None,
-            config={"model_type": "lora", "target_mode": "linear"},
+            config={"model_type": "lora"},
         )
 
         scheduler = distiller.get_scheduler(model.pipeline.scheduler)
@@ -355,7 +582,7 @@ class AnyFlowDistillerTests(unittest.TestCase):
         distiller = AnyFlowDistiller(
             teacher_model=model,
             noise_scheduler=None,
-            config={"model_type": "lora", "target_mode": "linear"},
+            config={"model_type": "lora"},
         )
 
         scheduler = distiller.get_scheduler(model.pipeline.scheduler)

@@ -42,10 +42,10 @@ Empieza con la configuración normal de Wan y cambia los campos de modelo y dest
   "distillation_method": "anyflow",
   "distillation_config": {
     "anyflow": {
-      "target_mode": "online_teacher",
-      "teacher_rollout_steps": 1,
-      "r_timestep_sampler": "uniform",
-      "min_interval_ratio": 0.02,
+      "stage": "forward",
+      "diffusion_ratio": 0.5,
+      "consistency_ratio": 0.25,
+      "central_difference_epsilon": 0.005,
       "gate_value": 0.25,
       "deltatime_type": "r",
       "loss_weight": 1.0
@@ -104,4 +104,4 @@ Es una aproximación dependiente del rank. El target por defecto coincide con lo
 
 - La licencia pública de los modelos NVIDIA AnyFlow es no comercial; revisa la model card antes de publicar adaptadores derivados.
 - La validación AnyFlow está conectada mediante el hook de scheduler del distiller para pipelines registrados con soporte FlowMap. Las rutas de validación custom o externas aún deben pasar `r_timestep` o `timestep_r` al componente del modelo.
-- La continuación full-rank con online teacher aún necesita cableado separado de student y teacher. Por ahora, LoRA es la ruta soportada.
+- La etapa on-policy actualmente requiere un LoRA PEFT estándar para que su discriminador pueda compartir el transformer base congelado.
