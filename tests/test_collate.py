@@ -13,6 +13,7 @@ from simpletuner.helpers.training.collate import (
     collate_fn,
     compute_latents,
     compute_prompt_embeddings,
+    compute_single_embedding,
     describe_missing_conditioning_pairs,
 )
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -238,6 +239,22 @@ class CollateFunctionTests(unittest.TestCase):
         executor.assert_not_called()
         self.assertEqual(compute_one.call_count, 2)
         self.assertEqual(result["prompt_embeds"].shape, torch.Size([2, 1, 1]))
+
+    def test_empty_prompt_uses_active_model_dropout_cache_policy(self):
+        dataset_cache = MagicMock()
+        default_cache = MagicMock()
+        default_cache._requires_path_based_keys = True
+        default_cache.model = SimpleNamespace()
+        default_cache.compute_prompt_embeddings_with_model.return_value = {"prompt_embeds": torch.ones(1, 1, 1)}
+        model = MagicMock()
+        model.use_text_cache_dropout_sentinel.return_value = False
+        prompt_entry = {"prompt": "", "key": "dataset:sample.mp4", "metadata": {"context": "sample"}}
+
+        with patch.object(StateTracker, "get_default_text_embed_cache", return_value=default_cache):
+            compute_single_embedding(prompt_entry, dataset_cache, model)
+
+        self.assertEqual(prompt_entry["key"], "dataset:sample.mp4")
+        default_cache.compute_prompt_embeddings_with_model.assert_called_once_with(prompt_records=[prompt_entry])
 
     def test_collate_fn_stacks_conditioning_image_embeds(self):
         conditioning_tensor = torch.ones(2, 4)
