@@ -157,7 +157,11 @@ def load_lora_weights(dictionary, filename, loraKey="default", use_dora=False, s
             kk = k.replace(".lora_A.weight", "")
             if kk in lora_layers:
                 lora_layers[kk].lora_A[loraKey].weight.copy_(v)
-                loaded_ranks[kk] = int(v.shape[0])
+                rank = int(v.shape[0])
+                existing_rank = loaded_ranks.get(kk)
+                if existing_rank is not None and existing_rank != rank:
+                    raise ValueError(f"LoRA checkpoint has conflicting ranks for `{kk}`: {existing_rank} and {rank}.")
+                loaded_ranks[kk] = rank
                 missing_keys.remove(k)
             else:
                 additional_keys.add(k)
@@ -165,14 +169,18 @@ def load_lora_weights(dictionary, filename, loraKey="default", use_dora=False, s
             kk = k.replace(".lora_B.weight", "")
             if kk in lora_layers:
                 lora_layers[kk].lora_B[loraKey].weight.copy_(v)
-                loaded_ranks[kk] = int(v.shape[1])
+                rank = int(v.shape[1])
+                existing_rank = loaded_ranks.get(kk)
+                if existing_rank is not None and existing_rank != rank:
+                    raise ValueError(f"LoRA checkpoint has conflicting ranks for `{kk}`: {existing_rank} and {rank}.")
+                loaded_ranks[kk] = rank
                 missing_keys.remove(k)
             else:
                 additional_keys.add(k)
         elif ".alpha" in k or ".lora_alpha" in k:
-            explicit_alpha_keys = True
             kk = k.replace(".lora_alpha", "").replace(".alpha", "")
             if kk in lora_layers:
+                explicit_alpha_keys = True
                 _set_lora_alpha(lora_layers[kk], loraKey, v)
         elif ".lora_magnitude_vector" in k:
             kk = k.replace(".lora_magnitude_vector.weight", "")

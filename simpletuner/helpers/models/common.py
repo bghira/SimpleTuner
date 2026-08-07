@@ -4325,6 +4325,8 @@ class ModelFoundation(ABC):
             return flow
         if direction == -1.0:
             return -flow
+        if direction == 0.0:
+            raise ValueError("Flow-matching target direction may not be zero.")
         return flow * direction
 
     def prediction_to_noiseward_flow(self, prediction: torch.Tensor) -> torch.Tensor:

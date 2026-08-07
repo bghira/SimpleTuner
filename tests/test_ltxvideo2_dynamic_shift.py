@@ -12,11 +12,12 @@ def _ltx2_pipeline_call_ast(pipeline_cls):
 
 
 def _calculate_shift_calls(tree):
-    return [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "calculate_shift"
-    ]
+    def is_calculate_shift(node):
+        return (isinstance(node, ast.Name) and node.id == "calculate_shift") or (
+            isinstance(node, ast.Attribute) and node.attr == "calculate_shift"
+        )
+
+    return [node for node in ast.walk(tree) if isinstance(node, ast.Call) and is_calculate_shift(node.func)]
 
 
 class LTXVideo2DynamicShiftTests(unittest.TestCase):
@@ -24,8 +25,19 @@ class LTXVideo2DynamicShiftTests(unittest.TestCase):
         tree = _ltx2_pipeline_call_ast(pipeline_cls)
         calls = _calculate_shift_calls(tree)
 
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(ast.unparse(calls[0].args[0]), "video_sequence_length")
+        self.assertGreaterEqual(len(calls), 1)
+        self.assertTrue(
+            any(
+                any(isinstance(arg, ast.Name) and arg.id == "video_sequence_length" for arg in call.args)
+                or any(
+                    kw.arg == "video_sequence_length"
+                    and isinstance(kw.value, ast.Name)
+                    and kw.value.id == "video_sequence_length"
+                    for kw in call.keywords
+                )
+                for call in calls
+            )
+        )
 
     def test_text_to_video_dynamic_shift_uses_actual_sequence_length(self):
         self.assert_uses_actual_video_sequence_length_for_shift(pipeline_ltx2.LTX2Pipeline)

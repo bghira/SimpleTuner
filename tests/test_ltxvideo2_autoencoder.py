@@ -63,6 +63,23 @@ class TestLTX2VideoAutoencoder(unittest.TestCase):
 
         self.assertEqual(output.shape, (1, 32, 7, 16, 16))
 
+    def test_up_block_without_upsampling_projects_to_resnet_width(self):
+        up_block = LTX2VideoUpBlock3d(
+            in_channels=64,
+            out_channels=32,
+            num_layers=1,
+            spatio_temporal_scale=False,
+            upscale_factor=2,
+        )
+
+        self.assertIsNotNone(up_block.conv_in)
+
+        sample = torch.randn(1, 64, 4, 8, 8)
+        with torch.no_grad():
+            output = up_block(sample, causal=False)
+
+        self.assertEqual(output.shape, (1, 32, 4, 8, 8))
+
     def test_decoder_accepts_non_nominal_constant_width_blocks(self):
         decoder = LTX2VideoDecoder3d(
             in_channels=4,
