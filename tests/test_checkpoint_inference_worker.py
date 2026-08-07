@@ -111,6 +111,32 @@ class TestCheckpointInferenceWorker(unittest.TestCase):
             sidecar = output_path.with_suffix(".png.json")
             self.assertEqual(json.loads(sidecar.read_text(encoding="utf-8"))["prompt"], "a test prompt")
 
+    def test_video_export_falls_back_when_framerate_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            runtime = object.__new__(CheckpointInferenceRuntime)
+            runtime.checkpoint_name = "checkpoint-100"
+            runtime.session_dir = Path(temporary_directory) / "session-one"
+            runtime.trainer = SimpleNamespace(config=SimpleNamespace(framerate=None))
+            frames = [Image.new("RGB", (8, 8), color=(10, 20, 30))]
+
+            def fake_export(_frames, output_path, fps):
+                self.assertEqual(fps, 16)
+                Path(output_path).write_bytes(b"video")
+
+            with patch("diffusers.utils.export_utils.export_to_video", side_effect=fake_export):
+                metadata = runtime._save_media(
+                    frames,
+                    prompt="a test prompt",
+                    shortname="custom_001",
+                    seed=42,
+                    style="compact",
+                    index=0,
+                    settings={"seed": 42},
+                )
+
+            self.assertEqual(metadata["media_type"], "video")
+            self.assertTrue((runtime.session_dir / "checkpoint-100" / metadata["filename"]).is_file())
+
     @patch("simpletuner.inference.CheckpointInferenceRuntime")
     def test_batch_worker_unloads_between_checkpoints(self, runtime_class: MagicMock) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

@@ -13,6 +13,23 @@ else:
 
 class DatasetDuplicator:
     @staticmethod
+    def _translate_conditioning_path(path: str, source_dir: str, target_dir: str, conditioning_data_type: str | None) -> str:
+        source_dir_abs = os.path.abspath(source_dir)
+        target_dir_abs = os.path.abspath(target_dir)
+        if os.path.isabs(path):
+            path_abs = os.path.abspath(path)
+            if os.path.commonpath([path_abs, source_dir_abs]) == source_dir_abs:
+                rel_path = os.path.relpath(path_abs, source_dir_abs)
+                new_path = os.path.join(target_dir_abs, rel_path)
+            else:
+                new_path = os.path.join(target_dir_abs, os.path.basename(path_abs))
+        else:
+            new_path = os.path.join(target_dir, os.path.basename(path))
+        if conditioning_data_type == "i2v_first_frame":
+            new_path = os.path.splitext(new_path)[0] + ".png"
+        return new_path
+
+    @staticmethod
     def copy_metadata(source_backend, target_backend):
         """Copy metadata from source backend to target backend with path updates."""
         source_meta = source_backend.get("metadata_backend", None)
@@ -27,29 +44,27 @@ class DatasetDuplicator:
         # Get the instance directories for path translation
         source_dir = source_backend.get("instance_data_dir", "")
         target_dir = target_backend.get("instance_data_dir", "")
+        target_config = target_backend.get("config", {}) or {}
+        conditioning_config = target_config.get("conditioning_config") or target_backend.get("conditioning_config") or {}
+        conditioning_data_type = conditioning_config.get("type")
 
         # Check if we need to update paths (for conditioning datasets)
         needs_path_update = source_dir != target_dir and target_backend.get("dataset_type") == "conditioning"
 
         if needs_path_update:
             logger.info(f"Copying metadata with path translation: '{source_dir}' -> '{target_dir}'")
-            source_dir_abs = os.path.abspath(source_dir)
-            target_dir_abs = os.path.abspath(target_dir)
 
             # Copy and update bucket indices
             target_meta.aspect_ratio_bucket_indices = {}
             for bucket, paths in source_meta.aspect_ratio_bucket_indices.items():
                 updated_paths = []
                 for path in paths:
-                    # Update the path to point to the target directory
-                    # Handle both absolute and relative paths
-                    if os.path.isabs(path):
-                        # For absolute paths, replace the directory
-                        rel_path = os.path.relpath(path, source_dir_abs)
-                        new_path = os.path.join(target_dir_abs, rel_path)
-                    else:
-                        # For relative paths, just prepend the new directory
-                        new_path = os.path.join(target_dir, os.path.basename(path))
+                    new_path = DatasetDuplicator._translate_conditioning_path(
+                        path,
+                        source_dir,
+                        target_dir,
+                        conditioning_data_type,
+                    )
                     updated_paths.append(new_path)
                 target_meta.aspect_ratio_bucket_indices[bucket] = updated_paths
 
@@ -57,13 +72,17 @@ class DatasetDuplicator:
             if hasattr(source_meta, "image_metadata") and source_meta.image_metadata:
                 target_meta.image_metadata = {}
                 for path, metadata in source_meta.image_metadata.items():
-                    # Update paths in image metadata too
-                    if os.path.isabs(path):
-                        rel_path = os.path.relpath(path, source_dir_abs)
-                        new_path = os.path.join(target_dir_abs, rel_path)
-                    else:
-                        new_path = os.path.join(target_dir, os.path.basename(path))
-                    target_meta.image_metadata[new_path] = metadata
+                    new_path = DatasetDuplicator._translate_conditioning_path(
+                        path,
+                        source_dir,
+                        target_dir,
+                        conditioning_data_type,
+                    )
+                    copied_metadata = dict(metadata)
+                    if conditioning_data_type == "i2v_first_frame":
+                        copied_metadata["training_sample_path"] = path
+                        copied_metadata["image_path"] = new_path
+                    target_meta.image_metadata[new_path] = copied_metadata
                 logger.debug(f"Copied {len(target_meta.image_metadata)} image_metadata entries")
             else:
                 logger.debug("No image_metadata to copy from source")
@@ -79,7 +98,6 @@ class DatasetDuplicator:
             target_meta.set_metadata(metadata_backend=source_meta, update_json=False)
 
         source_config = source_backend.get("config", {}) or {}
-        target_config = target_backend.get("config", {}) or {}
         conditioning_type = target_config.get("conditioning_type") or target_backend.get("conditioning_type")
 
         propagated_fields = [
@@ -118,6 +136,9 @@ class DatasetDuplicator:
             target_meta.target_downsample_size = target_config["target_downsample_size"]
 
         target_meta.config = target_config
+
+        if conditioning_data_type == "i2v_first_frame" and hasattr(target_meta, "save_cache"):
+            target_meta.save_cache()
 
         # Bucket indices may be rank-local here; do not overwrite the canonical target cache.
         target_meta.set_readonly()
@@ -209,6 +230,8 @@ class DatasetDuplicator:
         target_cfg.pop("audio", None)
         target_cfg.pop("s2v_datasets", None)
         target_cfg.pop("_s2v_audio_autoinjected", None)
+        if conditioning_data_type == "i2v_first_frame":
+            target_cfg.pop("video", None)
 
         # Set core fields
         target_cfg["auto_generated"] = True

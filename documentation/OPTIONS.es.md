@@ -52,6 +52,15 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
   - `diffusers` es el esquema estándar de PEFT/Diffusers.
   - `comfyui` convierte hacia/desde claves estilo ComfyUI (`diffusion_model.*` con tensores `lora_A/lora_B` y `.alpha`). Flux, Flux2, Lumina2 y Z-Image detectarán automáticamente entradas ComfyUI incluso si esto se deja en `diffusers`, pero cámbialo a `comfyui` para forzar salida ComfyUI al guardar.
 
+### `--minimax_h3_target_mode`
+
+- **Qué**: Controla si MiniMax-H3 incluye filas de audio objetivo.
+- **Opciones**: `auto`, `video`, `av`
+- **Predeterminado**: `auto`
+- **Notas**:
+  - `auto` se resuelve como solo video, omitiendo caché VAE de audio, colación y filas de audio objetivo para H3.
+  - Define `minimax_h3_target_mode` o `h3_target_mode` como `av` en una entrada de data backend para activar entrenamiento conjunto audio-video en un backend de audio auto-split o explícito.
+
 ### `--fuse_qkv_projections`
 
 - **Qué**: Fusiona las proyecciones QKV en los bloques de atención del modelo para un uso más eficiente del hardware.
@@ -1880,6 +1889,7 @@ usage: train.py [-h] --model_family
                 [--flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
                 [--flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]]
+                [--audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT]
                 [--flow_custom_timesteps FLOW_CUSTOM_TIMESTEPS]
                 [--flow_timesteps_mode {fixed-list,round-robin}]
                 [--flux_guidance_mode {constant,random-range}]
@@ -2000,7 +2010,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -2351,6 +2361,9 @@ options:
                         Shift the noise schedule for flow-matching models
   --flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]
                         Auto-adjust schedule shift based on image resolution
+  --audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT
+                        Shift the audio noise schedule for flow-matching
+                        models with audio latents
   --flow_custom_timesteps FLOW_CUSTOM_TIMESTEPS
                         Override flow-matching timestep sampling with a fixed
                         comma-separated list. The list is interpreted as
@@ -2733,7 +2746,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}
                         Method for model distillation
                         Distillation methods cannot be combined with
                         --train_text_encoder.

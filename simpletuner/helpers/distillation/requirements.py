@@ -138,6 +138,34 @@ def parse_distiller_requirement_profile(metadata: Mapping[str, Any] | None) -> D
     )
 
 
+def merge_distiller_requirement_profiles(
+    *profiles: Optional[DistillerRequirementProfile],
+) -> DistillerRequirementProfile:
+    """Merge multiple distiller requirement profiles while preserving declaration order."""
+    requirements: list[DataRequirement] = []
+    notes: list[str] = []
+    is_data_generator = False
+
+    for profile in profiles:
+        if profile is None:
+            continue
+        is_data_generator = is_data_generator or profile.is_data_generator
+        for requirement in profile.requirements:
+            if requirement not in requirements:
+                requirements.append(requirement)
+        for note in profile.notes:
+            if note not in notes:
+                notes.append(note)
+
+    if not requirements and not is_data_generator and not notes:
+        return EMPTY_PROFILE
+    return DistillerRequirementProfile(
+        requirements=tuple(requirements),
+        is_data_generator=is_data_generator,
+        notes=tuple(notes),
+    )
+
+
 def _entry_disabled(entry: Any) -> bool:
     return isinstance(entry, Mapping) and bool(entry.get("disabled") or entry.get("disable"))
 

@@ -50,7 +50,7 @@ from simpletuner.helpers.data_backend.factory import (
 from simpletuner.helpers.data_backend.runtime import random_dataloader_iterator
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
 from simpletuner.helpers.data_backend.runtime.schedule import normalize_start_epoch, normalize_start_step
-from simpletuner.helpers.distillation.registry import DistillationRegistry
+from simpletuner.helpers.distillation.composition import resolve_configured_distiller_requirement_profile
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.publishing import PublishingManager
@@ -95,6 +95,7 @@ from simpletuner.helpers.training.quantisation import (
     mark_transformerengine_ddp_ignore_params,
 )
 from simpletuner.helpers.training.script_runner import run_hook_script
+from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
 from simpletuner.helpers.training.wrappers import unwrap_model
@@ -1100,6 +1101,7 @@ class Trainer:
 
         StateTracker.set_accelerator(self.accelerator)
         StateTracker.set_args(self.config)
+        configure_sdnq_compile_mode()
         StateTracker.set_weight_dtype(self.config.weight_dtype)
         self.set_model_family()
 
@@ -3340,7 +3342,7 @@ class Trainer:
             self.distiller_requirement_profile = EMPTY_PROFILE
             return EMPTY_PROFILE
 
-        profile = DistillationRegistry.get_requirement_profile(method)
+        profile = resolve_configured_distiller_requirement_profile(self.config)
         self.distiller_requirement_profile = profile
         StateTracker.set_distiller_profile(method, profile)
         return profile
@@ -3479,7 +3481,7 @@ class Trainer:
             method = getattr(self.config, "distillation_method", None)
             if method:
                 try:
-                    profile = DistillationRegistry.get_requirement_profile(method)
+                    profile = resolve_configured_distiller_requirement_profile(self.config)
                     caption_batches_supported = profile.requires_dataset_type(DatasetType.CAPTION)
                 except Exception:
                     caption_batches_supported = False
@@ -5712,6 +5714,42 @@ class Trainer:
             distill_logs.update(gen_logs)
         return loss, loss_logs, diffusion_loss, aux_loss_logs, distill_logs
 
+    @contextmanager
+    def _low_rank_adapter_disabled(self):
+        if self.config.lora_type.lower() == "lycoris":
+            training_logger.debug("Detaching LyCORIS adapter for parent prediction.")
+            self.accelerator._lycoris_wrapped_network.set_multiplier(0.0)
+            try:
+                yield
+            finally:
+                training_logger.debug("Attaching LyCORIS adapter for student prediction.")
+                self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
+            return
+
+        trained_component = self.model.get_trained_component()
+        trained_component.disable_lora()
+        try:
+            yield
+        finally:
+            trained_component.enable_lora()
+
+    def _prepare_regularisation_parent_targets(self, prepared_batch: dict) -> None:
+        training_logger.debug("Predicting parent model residual.")
+        with torch.no_grad(), self._low_rank_adapter_disabled():
+            parent_prediction = self.model_predict(prepared_batch=prepared_batch)
+
+        if isinstance(parent_prediction, dict):
+            prepared_batch["target"] = parent_prediction["model_prediction"].detach()
+            audio_prediction = parent_prediction.get("audio_prediction")
+            if torch.is_tensor(audio_prediction):
+                prepared_batch["audio_target"] = audio_prediction.detach()
+            else:
+                prepared_batch.pop("audio_target", None)
+            return
+
+        prepared_batch["target"] = parent_prediction.detach() if torch.is_tensor(parent_prediction) else parent_prediction
+        prepared_batch.pop("audio_target", None)
+
     def _discard_probe_gradients(self) -> None:
         trained_component = self.model.get_trained_component(unwrap_model=False)
         if trained_component is not None:
@@ -5819,9 +5857,8 @@ class Trainer:
             device=reference_device if reference_device is not None else self.accelerator.device,
             dtype=reference_dtype,
         )
-        overridden_batch["timesteps"] = custom_timesteps_tensor
-
         if not self.model.uses_noise_schedule():
+            overridden_batch["timesteps"] = custom_timesteps_tensor
             return overridden_batch
 
         latents = prepared_batch.get("latents")
@@ -5835,6 +5872,13 @@ class Trainer:
             if torch.max(sigma_values) > 1.0:
                 sigma_values = sigma_values / max_timestep
             sigma_values = sigma_values.clamp(0.0, 1.0)
+            overridden_batch["timesteps"] = self.model.flow_matching_timesteps_from_sigmas(
+                sigma_values,
+                reference_timesteps=custom_timesteps_tensor,
+            ).to(
+                device=reference_device if reference_device is not None else self.accelerator.device,
+                dtype=reference_dtype,
+            )
 
             reference_sigmas = prepared_batch.get("sigmas")
             if torch.is_tensor(reference_sigmas) and reference_sigmas.ndim > sigma_values.ndim:
@@ -5877,7 +5921,10 @@ class Trainer:
                     audio_sigma_for_noise = audio_sigma_for_noise.unsqueeze(-1)
                 audio_sigma_for_noise = audio_sigma_for_noise.to(device=audio_latents.device, dtype=audio_latents.dtype)
                 overridden_batch["audio_sigmas"] = audio_sigma_for_model
-                overridden_batch["audio_timesteps"] = custom_timesteps_tensor.to(
+                overridden_batch["audio_timesteps"] = self.model.flow_matching_timesteps_from_sigmas(
+                    audio_sigma_values,
+                    reference_timesteps=custom_timesteps_tensor,
+                ).to(
                     device=audio_latents.device,
                     dtype=(
                         prepared_batch.get("audio_timesteps", custom_timesteps_tensor).dtype
@@ -6564,21 +6611,7 @@ class Trainer:
                     # Predict the noise residual and compute loss
                     is_regularisation_data = prepared_batch.get("is_regularisation_data", False)
                     if is_regularisation_data and self.config.model_type == "lora" and self.model.uses_noise_schedule():
-                        training_logger.debug("Predicting parent model residual.")
-                        with torch.no_grad():
-                            if self.config.lora_type.lower() == "lycoris":
-                                training_logger.debug("Detaching LyCORIS adapter for parent prediction.")
-                                self.accelerator._lycoris_wrapped_network.set_multiplier(0.0)
-                            else:
-                                self.model.get_trained_component().disable_lora()
-                            prepared_batch["target"] = self.model_predict(
-                                prepared_batch=prepared_batch,
-                            )["model_prediction"]
-                            if self.config.lora_type.lower() == "lycoris":
-                                training_logger.debug("Attaching LyCORIS adapter for student prediction.")
-                                self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
-                            else:
-                                self.model.get_trained_component().enable_lora()
+                        self._prepare_regularisation_parent_targets(prepared_batch)
 
                     # slider
                     raw_strength = prepared_batch.get("slider_strength", 1.0)

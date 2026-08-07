@@ -17,11 +17,7 @@ def _calculate_shift_calls(tree):
             isinstance(node, ast.Attribute) and node.attr == "calculate_shift"
         )
 
-    return [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and is_calculate_shift(node.func)
-    ]
+    return [node for node in ast.walk(tree) if isinstance(node, ast.Call) and is_calculate_shift(node.func)]
 
 
 class LTXVideo2DynamicShiftTests(unittest.TestCase):
@@ -34,7 +30,9 @@ class LTXVideo2DynamicShiftTests(unittest.TestCase):
             any(
                 any(isinstance(arg, ast.Name) and arg.id == "video_sequence_length" for arg in call.args)
                 or any(
-                    kw.arg == "video_sequence_length" and isinstance(kw.value, ast.Name) and kw.value.id == "video_sequence_length"
+                    kw.arg == "video_sequence_length"
+                    and isinstance(kw.value, ast.Name)
+                    and kw.value.id == "video_sequence_length"
                     for kw in call.keywords
                 )
                 for call in calls

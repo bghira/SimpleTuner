@@ -276,6 +276,7 @@ nav:
       - LTX Video 2: quickstart/LTXVIDEO2.md
       - Cosmos3: quickstart/COSMOS3.md
       - Hunyuan Video: quickstart/HUNYUANVIDEO.md
+      - MiniMax H3: quickstart/MINIMAX_H3.md
       - Sana Video: quickstart/SANAVIDEO.md
       - Kandinsky 5 Video: quickstart/KANDINSKY5_VIDEO.md
       - LongCat Video: quickstart/LONGCAT_VIDEO.md
@@ -301,6 +302,7 @@ nav:
       - TwinFlow (RCGM): distillation/TWINFLOW.md
       - SDXL LCM: distillation/SDXL_LCM.md
       - Wan DCM: distillation/WAN_DCM.md
+      - MiniMax H3 Drift: distillation/MINIMAX_H3_DRIFT.md
       - FastWan DMD: distillation/FASTWAN_DMD.md
       - GLANCE: distillation/GLANCE.md
     - Evaluation:

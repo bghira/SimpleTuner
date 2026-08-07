@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -5,6 +7,7 @@ import numpy as np
 from PIL import Image
 
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
+from simpletuner.helpers.metadata.utils.duplicator import DatasetDuplicator
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
@@ -83,6 +86,117 @@ class TestTrainingSample(unittest.TestCase):
         )
 
         self.assertEqual(sample.training_sample_path(source_backend_id), "17.jpg")
+
+    def test_training_sample_path_uses_explicit_pairing_metadata(self):
+        class SourceBackend:
+            def get_abs_path(self, sample_path):
+                return sample_path if sample_path == "17.mp4" else None
+
+        source_backend_id = "source"
+        conditioning_backend_id = "conditioning"
+        original_get_data_backend = StateTracker.get_data_backend
+        StateTracker.get_data_backend = MagicMock(
+            side_effect=lambda backend_id: {
+                source_backend_id: {
+                    "config": {"instance_data_dir": ""},
+                    "data_backend": SourceBackend(),
+                },
+                conditioning_backend_id: {
+                    "config": {"instance_data_dir": "/tmp/simpletuner-conditioning"},
+                    "data_backend": MagicMock(),
+                },
+            }[backend_id]
+        )
+        self.addCleanup(setattr, StateTracker, "get_data_backend", original_get_data_backend)
+
+        sample = TrainingSample(
+            self.image,
+            conditioning_backend_id,
+            {**self.image_metadata, "training_sample_path": "17.mp4"},
+            image_path="/tmp/simpletuner-conditioning/17.png",
+        )
+
+        self.assertEqual(sample.training_sample_path(source_backend_id), "17.mp4")
+
+    def test_i2v_first_frame_metadata_copy_targets_png_and_preserves_pairing_path(self):
+        class FakeMetadata:
+            def __init__(self):
+                self.aspect_ratio_bucket_indices = {"1.0": ["25.mp4"]}
+                self.image_metadata = {"25.mp4": {"original_size": (480, 270), "aspect_ratio": 1.83}}
+                self.config = {}
+                self.cache_saved = False
+
+            def reload_cache(self, set_config=False):
+                return None
+
+            def set_readonly(self):
+                self.read_only = True
+
+            def save_image_metadata(self):
+                return None
+
+            def save_cache(self):
+                self.cache_saved = True
+
+            def print_debug_info(self):
+                return None
+
+        source_meta = FakeMetadata()
+        target_meta = FakeMetadata()
+        target_meta.aspect_ratio_bucket_indices = {}
+        target_meta.image_metadata = {}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_backend = {
+                "id": "source",
+                "dataset_type": "video",
+                "instance_data_dir": "",
+                "metadata_backend": source_meta,
+                "config": {"resolution": 480, "resolution_type": "pixel_area"},
+            }
+            target_backend = {
+                "id": "conditioning",
+                "dataset_type": "conditioning",
+                "instance_data_dir": tmpdir,
+                "metadata_backend": target_meta,
+                "conditioning_type": "reference_strict",
+                "config": {
+                    "conditioning_type": "reference_strict",
+                    "conditioning_config": {"type": "i2v_first_frame"},
+                },
+            }
+            with patch.object(StateTracker, "set_data_backend_config"):
+                DatasetDuplicator.copy_metadata(source_backend, target_backend)
+
+            expected_path = os.path.join(tmpdir, "25.png")
+            self.assertEqual(target_meta.aspect_ratio_bucket_indices["1.0"], [expected_path])
+            self.assertIn(expected_path, target_meta.image_metadata)
+            self.assertEqual(target_meta.image_metadata[expected_path]["training_sample_path"], "25.mp4")
+            self.assertEqual(target_meta.image_metadata[expected_path]["image_path"], expected_path)
+            self.assertTrue(target_meta.cache_saved)
+
+    def test_conditioning_path_translation_does_not_escape_target_for_external_absolute_paths(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = os.path.join(tmpdir, "source")
+            target_dir = os.path.join(tmpdir, "target")
+            inside_path = os.path.join(source_dir, "nested", "clip.mp4")
+            outside_path = os.path.join(tmpdir, "outside", "clip.mp4")
+
+            translated_inside = DatasetDuplicator._translate_conditioning_path(
+                inside_path,
+                source_dir,
+                target_dir,
+                "i2v_first_frame",
+            )
+            translated_outside = DatasetDuplicator._translate_conditioning_path(
+                outside_path,
+                source_dir,
+                target_dir,
+                "i2v_first_frame",
+            )
+
+        self.assertEqual(translated_inside, os.path.join(target_dir, "nested", "clip.png"))
+        self.assertEqual(translated_outside, os.path.join(target_dir, "clip.png"))
+        self.assertEqual(os.path.commonpath([target_dir, translated_outside]), target_dir)
 
     def test_image_downsample(self):
         """Test that downsampling is correctly applied before cropping."""

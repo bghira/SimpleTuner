@@ -307,6 +307,78 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         self.assertEqual(cache.model.encode_text_batch.call_count, 2)
         self.assertEqual(cache.save_to_cache.call_count, 2)
 
+    @patch("simpletuner.helpers.caching.text_embeds.StateTracker.get_text_cache_files", return_value={})
+    def test_validation_encode_marks_model_context(self, _mock_cache_files):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION)
+        cache.save_to_cache = MagicMock()
+
+        class ValidationAwareModel(_DummyModel):
+            TEXT_ENCODER_CONFIGURATION = {"text_encoder": {}}
+
+            def __init__(self):
+                super().__init__(TextEmbedCacheKey.CAPTION)
+                self.validation_markers = []
+
+            def encode_text_batch(self, prompts, is_negative_prompt=False, prompt_contexts=None):
+                self.validation_markers.append(getattr(self, "_current_prompt_is_validation", None))
+                return {
+                    "prompt_embeds": torch.ones(1, 2, 3),
+                    "attention_mask": torch.ones(1, 2, dtype=torch.bool),
+                }
+
+        cache.model = ValidationAwareModel()
+
+        cache.compute_embeddings_for_prompts(
+            [{"prompt": "a validation prompt", "key": "validation"}],
+            is_validation=True,
+            load_from_cache=False,
+        )
+
+        self.assertEqual(cache.model.validation_markers, [True])
+        self.assertFalse(hasattr(cache.model, "_current_prompt_is_validation"))
+
+    def test_multi_record_return_uses_model_collator_for_extra_tensors(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION)
+
+        class CollatingModel(_DummyModel):
+            TEXT_ENCODER_CONFIGURATION = {"text_encoder": {}}
+
+            def __init__(self):
+                super().__init__(TextEmbedCacheKey.CAPTION)
+
+            def unpack_text_embeddings_from_cache(self, embeddings):
+                return embeddings
+
+            def collate_prompt_embeds(self, text_encoder_output):
+                return {
+                    "prompt_embeds": torch.cat([item["prompt_embeds"] for item in text_encoder_output], dim=0),
+                    "text_token_tags": torch.cat([item["text_token_tags"] for item in text_encoder_output], dim=0),
+                }
+
+        cache.model = CollatingModel()
+        cache.load_from_cache = MagicMock(
+            side_effect=[
+                {
+                    "prompt_embeds": torch.full((1, 2, 3), 1.0),
+                    "text_token_tags": torch.tensor([[1, 1]], dtype=torch.long),
+                },
+                {
+                    "prompt_embeds": torch.full((1, 2, 3), 2.0),
+                    "text_token_tags": torch.tensor([[2, 2]], dtype=torch.long),
+                },
+            ]
+        )
+
+        output = cache.compute_prompt_embeddings_with_model(
+            prompt_records=[
+                {"prompt": "first", "key": "first", "metadata": {}},
+                {"prompt": "second", "key": "second", "metadata": {}},
+            ],
+        )
+
+        self.assertEqual(output["prompt_embeds"].shape, torch.Size([2, 2, 3]))
+        self.assertEqual(output["text_token_tags"].tolist(), [[1, 1], [2, 2]])
+
     def test_batched_encode_saves_trimmed_per_caption_outputs(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION)
         saved = []
