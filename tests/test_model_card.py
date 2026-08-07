@@ -5,6 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.publishing.metadata import *
 from simpletuner.helpers.publishing.metadata import (
     _guidance_rescale,
@@ -202,6 +203,76 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.model_card_note = ""
         output = model_card_note(self.args)
         self.assertEqual(output.strip(), "")
+
+    def test_hub_commit_message_omits_diffusion_schedule_fields_for_flow_matching(self):
+        hub_manager = object.__new__(HubManager)
+        hub_manager.collected_data_backend_str = "['alt-embed-cache', 'h3-drift0-anyflow-openvid-39f-480']"
+        hub_manager.model = SimpleNamespace(PREDICTION_TYPE=SimpleNamespace(value="flow_matching"))
+        hub_manager.config = SimpleNamespace(
+            learning_rate=6e-5,
+            train_batch_size=1,
+            gradient_accumulation_steps=1,
+            prediction_type=None,
+            rescale_betas_zero_snr=False,
+            training_scheduler_timestep_spacing="trailing",
+            distillation_method="h3_drift",
+            distillation_config={
+                "h3_drift": {
+                    "loss_weight": 0.5,
+                    "inner_distillation_method": "anyflow",
+                    "inner_distillation_config": {"stage": "forward"},
+                }
+            },
+            pretrained_model_name_or_path="MiniMaxAI/MiniMax-H3",
+            pretrained_vae_model_name_or_path=(
+                "https://huggingface.co/Kijai/MiniMax-H3-experimental/resolve/main/"
+                "minimax_h3_video_vae_int8_convrot.safetensors"
+            ),
+            model_type="lora",
+        )
+
+        message = hub_manager._commit_message(global_step=1000, epoch=2)
+
+        self.assertIn("Learning rate 6e-05 and batch size 1.", message)
+        self.assertIn("Training objective: flow matching.", message)
+        self.assertIn("Distillation method: h3_drift.", message)
+        self.assertIn('"inner_distillation_method": "anyflow"', message)
+        self.assertIn('"stage": "forward"', message)
+        self.assertNotIn("gradient accumulation", message)
+        self.assertNotIn("None prediction type", message)
+        self.assertNotIn("rescaled_betas_zero_snr", message)
+        self.assertNotIn("timestep spacing", message)
+
+    def test_hub_commit_message_keeps_diffusion_schedule_fields_for_epsilon_models(self):
+        hub_manager = object.__new__(HubManager)
+        hub_manager.collected_data_backend_str = "['dataset']"
+        hub_manager.model = SimpleNamespace(PREDICTION_TYPE=SimpleNamespace(value="epsilon"))
+        hub_manager.config = SimpleNamespace(
+            learning_rate=1e-4,
+            train_batch_size=2,
+            gradient_accumulation_steps=4,
+            prediction_type="epsilon",
+            rescale_betas_zero_snr=True,
+            training_scheduler_timestep_spacing="trailing",
+            distillation_method=None,
+            distillation_config=None,
+            pretrained_model_name_or_path="base-model",
+            pretrained_vae_model_name_or_path="base-vae",
+            model_type="lora",
+        )
+
+        message = hub_manager._commit_message(global_step=20, epoch=2)
+
+        self.assertIn(
+            "Learning rate 0.0001, batch size 2, and 4 gradient accumulation steps.",
+            message,
+        )
+        self.assertIn(
+            "Trained with epsilon prediction type and rescaled_betas_zero_snr=True",
+            message,
+        )
+        self.assertIn("Using 'trailing' timestep spacing.", message)
+        self.assertNotIn("Distillation method:", message)
 
     def test_save_model_card(self):
         # Mocking StateTracker methods
