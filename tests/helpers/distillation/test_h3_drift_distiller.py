@@ -258,6 +258,54 @@ class H3DriftDistillerTests(unittest.TestCase):
         )
         self.assertEqual(model.loss_batches, [{"has_flowmap": False, "has_anyflow": False}])
 
+    def test_zero_drift_weight_skips_reference_pass(self):
+        adapter = _Adapter()
+        model = _H3Model(adapter)
+        distiller = H3DriftDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={
+                "model_type": "lora",
+                "model_family": "minimaxh3",
+                "loss_weight": 0.0,
+                "sft_loss_weight": 0.25,
+                "inner_distillation_method": "anyflow",
+                "inner_distillation_config": {
+                    "target_mode": "online_teacher",
+                    "r_timestep_sampler": "zero",
+                    "loss_weight": 2.0,
+                },
+            },
+        )
+        latents = torch.zeros(2, 1, 2, 2)
+        noise = torch.ones_like(latents)
+        sigmas = torch.tensor([1.0, 0.5]).view(2, 1, 1, 1)
+        batch = {
+            "latents": latents,
+            "noise": noise,
+            "input_noise": noise.clone(),
+            "sigmas": sigmas,
+            "timesteps": torch.tensor([1.0, 0.5]),
+            "noisy_latents": (1 - sigmas) * latents + sigmas * noise,
+            "include_audio": False,
+        }
+
+        prepared = distiller.prepare_batch(batch, model=model, state={})
+        model_output = model.model_predict(prepared)
+        loss, logs = distiller.compute_distill_loss(prepared, model_output, torch.tensor(4.0))
+
+        self.assertAlmostEqual(float(loss), 12.0)
+        self.assertEqual(logs["h3_drift_loss"], 0.0)
+        self.assertEqual(logs["h3_drift_weighted_loss"], 0.0)
+        self.assertEqual(logs["h3_drift_video_elements"], 0.0)
+        self.assertEqual(logs["h3_drift_audio_elements"], 0.0)
+        self.assertEqual(adapter.calls, [0.0, 1.0])
+        self.assertEqual(
+            [entry["has_flowmap"] for entry in model.predict_batches],
+            [False, True, False],
+        )
+        self.assertEqual(model.loss_batches, [{"has_flowmap": False, "has_anyflow": False}])
+
     def test_rejects_recursive_inner_h3_drift(self):
         adapter = _Adapter()
         model = _H3Model(adapter)

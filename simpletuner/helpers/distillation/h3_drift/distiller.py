@@ -157,27 +157,38 @@ class H3DriftDistiller(DistillationBase):
         model_output: Dict[str, Any],
         original_loss: torch.Tensor,
     ):
-        prediction = self._prediction_from_output(model_output)
-        try:
-            self.toggle_adapter(enable=False)
-            with torch.no_grad():
-                reference_output = self.teacher_model.model_predict(prepared_batch)
-        finally:
-            self.toggle_adapter(enable=True)
+        drift_loss_weight = float(self.config.get("loss_weight", 1.0))
+        if drift_loss_weight == 0.0:
+            zero = original_loss.detach() * 0.0
+            joint_loss = _H3JointLoss(
+                loss=zero,
+                video_loss=zero,
+                audio_loss=zero,
+                video_elements=0,
+                audio_elements=0,
+            )
+        else:
+            prediction = self._prediction_from_output(model_output)
+            try:
+                self.toggle_adapter(enable=False)
+                with torch.no_grad():
+                    reference_output = self.teacher_model.model_predict(prepared_batch)
+            finally:
+                self.toggle_adapter(enable=True)
 
-        reference = self._prediction_from_output(reference_output)
-        self._clear_reference_buffers(reference_output)
+            reference = self._prediction_from_output(reference_output)
+            self._clear_reference_buffers(reference_output)
 
-        joint_loss = self._joint_prediction_loss(
-            prediction,
-            reference,
-            video_mask=self._video_mask_for_loss(prepared_batch, prediction.video),
-            audio_mask=prepared_batch.get("audio_latent_mask"),
-            sample_weight=prepared_batch.get("sample_weight"),
-            balance=self.config["balance"],
-            video_weight=self.config["video_weight"],
-            audio_weight=self.config["audio_weight"],
-        )
+            joint_loss = self._joint_prediction_loss(
+                prediction,
+                reference,
+                video_mask=self._video_mask_for_loss(prepared_batch, prediction.video),
+                audio_mask=prepared_batch.get("audio_latent_mask"),
+                sample_weight=prepared_batch.get("sample_weight"),
+                balance=self.config["balance"],
+                video_weight=self.config["video_weight"],
+                audio_weight=self.config["audio_weight"],
+            )
 
         sft_loss_weight = float(self.config.get("sft_loss_weight", 1.0))
         logs = {}
@@ -190,7 +201,7 @@ class H3DriftDistiller(DistillationBase):
             sft_loss = original_loss * sft_loss_weight
             current_loss = sft_loss
 
-        drift_loss = joint_loss.loss * float(self.config.get("loss_weight", 1.0))
+        drift_loss = joint_loss.loss * drift_loss_weight
         loss = current_loss + drift_loss
 
         logs.update(
