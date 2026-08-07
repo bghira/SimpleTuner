@@ -664,10 +664,11 @@ class LTX2VideoUpBlock3d(nn.Module):
 
         self.conv_in = None
         upsampler_in_channels = out_channels * upscale_factor
-        if in_channels != upsampler_in_channels:
+        conv_in_out_channels = upsampler_in_channels if spatio_temporal_scale else out_channels
+        if in_channels != conv_in_out_channels:
             self.conv_in = LTX2VideoResnetBlock3d(
                 in_channels=in_channels,
-                out_channels=upsampler_in_channels,
+                out_channels=conv_in_out_channels,
                 dropout=dropout,
                 eps=resnet_eps,
                 non_linearity=resnet_act_fn,
