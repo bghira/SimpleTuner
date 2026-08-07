@@ -59,7 +59,7 @@ def _strip_prefix(key: str, prefix_to_strip: Optional[str]) -> str:
 
 
 def _most_common(values: list[Any]) -> Any:
-    return Counter(values).most_common(1)[0][0]
+    return max(Counter(values).items(), key=lambda item: (item[1], item[0]))[0]
 
 
 def collect_lora_ranks(state_dict: Dict[str, Any], *, prefix_to_strip: Optional[str] = None) -> Dict[str, int]:
