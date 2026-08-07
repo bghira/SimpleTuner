@@ -478,11 +478,12 @@ def patch_attention_flexible():
     logger.info(f"Patched Attention with flexible fusion (permanent={PERMANENT_FUSION})")
 
 
-def _collect_physically_merged_lora_adapters(pipeline) -> set[str]:
+def _collect_physically_merged_lora_adapters(pipeline, components: Optional[Iterable[str]] = None) -> set[str]:
     from peft.tuners.tuners_utils import BaseTunerLayer
 
     merged_adapters: set[str] = set()
-    for component_name in getattr(pipeline, "_lora_loadable_modules", []):
+    component_names = components if components is not None else getattr(pipeline, "_lora_loadable_modules", [])
+    for component_name in component_names:
         component = getattr(pipeline, component_name, None)
         if not isinstance(component, nn.Module):
             continue
@@ -501,10 +502,20 @@ def patch_lora_unfuse_merged_adapters_tracking():
     original_unfuse_lora = LoraBaseMixin.unfuse_lora
 
     @wraps(original_unfuse_lora)
-    def unfuse_lora_with_merged_adapter_resync(self, components: list[str] = [], **kwargs):
+    def unfuse_lora_with_merged_adapter_resync(self, components: Optional[list[str]] = None, **kwargs):
+        components = components or []
         tracked_before = set(getattr(self, "_merged_adapters", set()) or set())
         result = original_unfuse_lora(self, components=components, **kwargs)
-        physically_merged = _collect_physically_merged_lora_adapters(self)
+        if components:
+            components_to_unfuse = set(components)
+            remaining_components = [
+                component_name
+                for component_name in getattr(self, "_lora_loadable_modules", [])
+                if component_name not in components_to_unfuse
+            ]
+        else:
+            remaining_components = None
+        physically_merged = _collect_physically_merged_lora_adapters(self, remaining_components)
         currently_tracked = set(getattr(self, "_merged_adapters", set()) or set())
         self._merged_adapters = (currently_tracked | tracked_before) & physically_merged
         return result

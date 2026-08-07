@@ -46,7 +46,7 @@ class DiffusersTemplatedAttentionBackwardOverrideTests(unittest.TestCase):
             captured["value_shape"] = tuple(value.shape)
             return torch.zeros_like(query), torch.zeros_like(key), torch.zeros_like(value)
 
-        with patch.object(torch.ops.aten, aten_op_name, fake_aten_backward):
+        with patch.object(torch.ops.aten, aten_op_name, fake_aten_backward, create=True):
             grad_query, grad_key, grad_value = backward_op(ctx, grad_out)
 
         self.assertEqual(captured["grad_out_shape"], (2, 3, 5, 7))
