@@ -682,8 +682,8 @@ For example, with 4 GPUs, `train_batch_size=4`, and `gradient_accumulation_steps
 To automatically adjust `repeats` when your dataset is smaller than the effective batch size, use the `--allow_dataset_oversubscription` flag (documented in [OPTIONS.md](OPTIONS.md#--allow_dataset_oversubscription)).
 
 When enabled, SimpleTuner will:
-- Calculate the minimum repeats needed for training
-- Automatically increase `repeats` to meet the requirement
+- Calculate the minimum repeats needed for each undersized aspect bucket
+- Pad only those buckets to meet the effective batch size
 - Log a warning showing the adjustment
 - **Respect manually-set repeats values** - if you explicitly configure `repeats` in your dataset config, the automatic adjustment will be skipped
 

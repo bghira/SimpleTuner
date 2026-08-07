@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import torch
@@ -11,6 +12,20 @@ from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBacke
 
 
 class TestWebshartDataBackend(unittest.TestCase):
+    @patch("simpletuner.helpers.data_backend.webshart.random.uniform", return_value=0.0)
+    @patch("simpletuner.helpers.data_backend.webshart.time.sleep")
+    def test_read_sample_bytes_retries_rate_limit(self, sleep, _uniform):
+        backend = WebshartDataBackend.__new__(WebshartDataBackend)
+        backend.loader = Mock(
+            load_sample=Mock(side_effect=[RuntimeError("Rate limit exceeded"), SimpleNamespace(data=b"sample")])
+        )
+
+        result = backend._read_sample_bytes("webshart://2/7/sample.mp4")
+
+        self.assertEqual(result, b"sample")
+        self.assertEqual(backend.loader.load_sample.call_count, 2)
+        sleep.assert_called_once_with(1.0)
+
     @patch("simpletuner.helpers.data_backend.webshart.requests.get")
     def test_read_sample_head_tail_uses_tar_member_ranges(self, requests_get):
         head_response = Mock(status_code=206, content=b"head")
