@@ -487,6 +487,7 @@ class TextEmbeddingCache(WebhookMixin):
         load_from_cache: bool = True,
         is_negative_prompt: bool = False,
         progress_callback=None,
+        split_between_processes: bool = True,
     ):
         if self.model is None:
             self.model = StateTracker.get_model()
@@ -569,6 +570,7 @@ class TextEmbeddingCache(WebhookMixin):
                 load_from_cache=load_from_cache,
                 is_negative_prompt=is_negative_prompt,
                 progress_callback=progress_callback,
+                split_between_processes=split_between_processes,
             )
         else:
             raise ValueError(f"No such text encoding backend for model type '{self.model_type}'")
@@ -593,12 +595,13 @@ class TextEmbeddingCache(WebhookMixin):
         load_from_cache: bool = True,
         is_negative_prompt: bool = False,
         progress_callback=None,
+        split_between_processes: bool = True,
     ):
         prompt_embeds_all = []
         should_encode = not load_from_cache
         args = StateTracker.get_args()
         records = self._normalize_prompt_records(prompt_records) if prompt_records is not None else self.prompt_records
-        if should_encode:
+        if should_encode and split_between_processes:
             local_records = self.split_prompt_records_between_processes(records)
         else:
             local_records = records

@@ -3239,11 +3239,10 @@ class FactoryRegistry:
         if self._is_multi_process():
             self.accelerator.wait_for_everyone()
 
-        # When the main process rebuilds buckets (e.g., after cache deletion), ensure
-        # other ranks reload the freshly written cache before splitting buckets.
+        # When the main process rebuilds buckets, make every rank partition the same
+        # serialized cache rather than mixing rank 0's in-memory order with reloaded order.
         if (
             self._is_multi_process()
-            and not self.accelerator.is_main_process
             and not backend.get("auto_generated", False)
             and "aspect" not in self.args.skip_file_discovery
             and "aspect" not in backend.get("skip_file_discovery", "")
@@ -3763,7 +3762,10 @@ class FactoryRegistry:
                 )
 
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
-                prompt_records, return_concat=False, load_from_cache=False
+                prompt_records,
+                return_concat=False,
+                load_from_cache=False,
+                split_between_processes=False,
             )
             info_log(f"(id={init_backend['id']}) Completed processing {len(captions)} captions.")
 
@@ -3897,7 +3899,10 @@ class FactoryRegistry:
                 self._append_image_context_dropout_prompt_record(prompt_records, key_value, metadata)
 
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
-                prompt_records, return_concat=False, load_from_cache=False
+                prompt_records,
+                return_concat=False,
+                load_from_cache=False,
+                split_between_processes=False,
             )
             info_log(f"(id={dataset_id}) Completed processing {len(captions)} captions with image context.")
 

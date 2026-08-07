@@ -1273,6 +1273,41 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     apply_padding=expected,
                 )
 
+    def test_main_process_reloads_refreshed_bucket_cache_before_split(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        self.accelerator.num_processes = 8
+        self.accelerator.is_main_process = True
+        self.accelerator.is_local_main_process = True
+        self.args.skip_file_discovery = ""
+        self.args.eval_dataset_id = None
+        self.args.max_train_steps = 100
+        self.args.allow_dataset_oversubscription = False
+        metadata_backend = MagicMock()
+        metadata_backend.aspect_ratio_bucket_indices = {"1.0": [f"sample-{index}" for index in range(8)]}
+        init_backend = {
+            "id": "train",
+            "config": {},
+            "dataset_type": "image",
+            "metadata_backend": metadata_backend,
+        }
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        factory._handle_config_versioning = MagicMock()
+
+        factory._handle_bucket_operations(
+            backend={"id": "train"},
+            init_backend=init_backend,
+            conditioning_type=None,
+        )
+
+        metadata_backend.reload_cache.assert_called_once_with()
+
     def test_image_embeds_backend_configuration(self):
         """Image embed configuration should not instantiate VAE cache directly."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
