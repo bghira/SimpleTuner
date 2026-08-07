@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from pathlib import Path
@@ -80,15 +81,69 @@ class HubManager:
         else:
             return f"\nVAE: {self.config.pretrained_vae_model_name_or_path}"
 
+    def _resolved_prediction_type(self) -> str | None:
+        configured = getattr(self.config, "prediction_type", None)
+        if configured:
+            return str(getattr(configured, "value", configured))
+        model_prediction_type = getattr(self.model, "PREDICTION_TYPE", None)
+        if model_prediction_type is None:
+            return None
+        return str(getattr(model_prediction_type, "value", model_prediction_type))
+
+    def _training_batch_string(self) -> str:
+        batch_size = self.config.train_batch_size
+        gradient_accumulation_steps = int(getattr(self.config, "gradient_accumulation_steps", 1) or 1)
+        if gradient_accumulation_steps > 1:
+            return (
+                f"\nLearning rate {self.config.learning_rate}, batch size {batch_size}, "
+                f"and {gradient_accumulation_steps} gradient accumulation steps."
+            )
+        return f"\nLearning rate {self.config.learning_rate} and batch size {batch_size}."
+
+    def _prediction_schedule_string(self) -> str:
+        prediction_type = self._resolved_prediction_type()
+        if prediction_type in {"epsilon", "v_prediction"}:
+            return (
+                f"\nTrained with {prediction_type} prediction type and "
+                f"rescaled_betas_zero_snr={self.config.rescale_betas_zero_snr}"
+                f"\nUsing '{self.config.training_scheduler_timestep_spacing}' timestep spacing."
+            )
+        if prediction_type == "flow_matching":
+            return "\nTraining objective: flow matching."
+        if prediction_type:
+            return f"\nTraining objective: {prediction_type}."
+        return ""
+
+    def _distillation_string(self) -> str:
+        distillation_method = getattr(self.config, "distillation_method", None)
+        if distillation_method is None:
+            return ""
+        distillation_method = str(getattr(distillation_method, "value", distillation_method))
+        if distillation_method.lower() in {"", "none", "null"}:
+            return ""
+
+        lines = [f"Distillation method: {distillation_method}."]
+        distillation_config = getattr(self.config, "distillation_config", None)
+        if distillation_config:
+            lines.append(
+                "Distillation config: "
+                + json.dumps(
+                    distillation_config,
+                    sort_keys=True,
+                    default=str,
+                )
+            )
+        return "\n" + "\n".join(lines)
+
     def _commit_message(self, global_step: int = None, epoch: int = None):
         resolved_epoch = (epoch - 1) if epoch is not None else (StateTracker.get_epoch() - 1)
         resolved_step = global_step if global_step is not None else StateTracker.get_global_step()
         return (
             f"Trained for {resolved_epoch} epochs and {resolved_step} steps."
             f"\nTrained with datasets {self.collected_data_backend_str}"
-            f"\nLearning rate {self.config.learning_rate}, batch size {self.config.train_batch_size}, and {self.config.gradient_accumulation_steps} gradient accumulation steps."
-            f"\nTrained with {self.config.prediction_type} prediction type and rescaled_betas_zero_snr={self.config.rescale_betas_zero_snr}"
-            f"\nUsing '{self.config.training_scheduler_timestep_spacing}' timestep spacing."
+            f"{self._training_batch_string()}"
+            f"{self._prediction_schedule_string()}"
+            f"{self._distillation_string()}"
             f"\nBase model: {self.config.pretrained_model_name_or_path}"
             f"{self._vae_string()}"
         )
