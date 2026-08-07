@@ -1370,7 +1370,7 @@ Webshart datasets load WebDataset-style tar shards through the `webshart` packag
 - `metadata` is optional and points to a separate metadata location when captions or shard metadata are stored outside the shard source. For Hugging Face metadata repos such as `webshart/conceptual-captions-12m-webdataset-metadata`, pass the repo id; Webshart follows the source shard subfolder layout such as `data/`.
 - `metadata_backend` must be `webshart`; it reads dimensions and captions from Webshart metadata.
 - `caption_strategy` should be `webshart` to train from metadata captions, or `instanceprompt` to ignore stored captions.
-- `webshart.cache_dir` stores SimpleTuner metadata plus Webshart metadata and shard caches. `shard_cache_gb` and `parallel_downloads` are passed to Webshart's shard cache.
+- `webshart.cache_dir` stores SimpleTuner metadata plus Webshart metadata and shard caches. `shard_cache_gb` and `parallel_downloads` are passed to Webshart's shard cache; set `shard_cache_gb` to `0` to disable whole-shard caching and retain indexed range reads.
 
 This backend requires a Webshart build with `TarDataLoader.list_shard_sample_aspect_buckets()`.
 

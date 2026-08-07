@@ -1,5 +1,6 @@
 import os
 import unittest
+from pathlib import Path
 
 from simpletuner.helpers.utils.pathing import normalize_data_path
 
@@ -18,6 +19,11 @@ class NormalizeDataPathTests(unittest.TestCase):
     def test_relative_with_root_returns_relative_to_root(self):
         result = normalize_data_path("subdir/img.png", "/dataset/root")
         self.assertEqual(result, os.path.normcase("subdir/img.png"))
+
+    def test_path_normalized_webshart_uri_is_canonicalized(self):
+        path_normalized_id = str(Path("webshart://0/3/sample.mp4"))
+
+        self.assertEqual(normalize_data_path(path_normalized_id), "webshart://0/3/sample.mp4")
 
 
 if __name__ == "__main__":

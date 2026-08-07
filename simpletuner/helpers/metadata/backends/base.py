@@ -191,7 +191,7 @@ class MetadataBackend:
 
         # Use dataset ID as seed for deterministic selection
         rng = random.Random(self.id)
-        shuffled = list(file_list)
+        shuffled = sorted(file_list, key=str)
         rng.shuffle(shuffled)
         limited = shuffled[: self.max_num_samples]
         logger.info(f"({self.id}) Applied max_num_samples limit: selected {len(limited)} of {len(file_list)} samples")
@@ -873,9 +873,10 @@ class MetadataBackend:
         if should_shuffle_contents:
             # Process-specific RNG seeding must not change the split input across ranks.
             shuffle_seed = getattr(StateTracker.get_args(), "seed", None)
-            if self.accelerator.is_main_process and shuffle_seed is None:
-                shuffle_seed = random.SystemRandom().getrandbits(64)
-            shuffle_seed = broadcast_object_from_main(shuffle_seed if self.accelerator.is_main_process else None)
+            if shuffle_seed is None:
+                if self.accelerator.is_main_process:
+                    shuffle_seed = random.SystemRandom().getrandbits(64)
+                shuffle_seed = broadcast_object_from_main(shuffle_seed if self.accelerator.is_main_process else None)
 
         for bucket, images in self.aspect_ratio_bucket_indices.items():
             if not images:
@@ -883,7 +884,9 @@ class MetadataBackend:
                 continue
             if should_shuffle_contents:
                 logger.debug(f"Shuffling bucket {bucket} contents.")
-                images = images.copy()
+                # Cache builders and cache reloads can preserve the same set in different
+                # orders. Canonicalize first so every rank shuffles an identical sequence.
+                images = sorted(images, key=str)
                 random.Random(f"{shuffle_seed}:{self.id}:{bucket}").shuffle(images)
 
             if auto_repeat_count is not None:

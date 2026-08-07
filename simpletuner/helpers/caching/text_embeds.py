@@ -19,6 +19,7 @@ from simpletuner.helpers.prompts import PromptHandler
 from simpletuner.helpers.training.multi_process import rank_info
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.wrappers import gather_dict_of_tensors_shapes, move_dict_of_tensors_to_device
+from simpletuner.helpers.utils.pathing import canonicalize_data_uri
 from simpletuner.helpers.webhooks.mixin import WebhookMixin
 
 logger = logging.getLogger("TextEmbeddingCache")
@@ -129,8 +130,9 @@ class TextEmbeddingCache(WebhookMixin):
             if "://" not in normalized:
                 normalized = os.path.normcase(os.path.abspath(os.path.normpath(normalized)))
         elif self.key_type is TextEmbedCacheKey.DATASET_AND_FILENAME:
-            # Keys already include dataset identifiers; leave as-is.
-            pass
+            dataset_id, separator, data_path = normalized.partition(":")
+            if separator:
+                normalized = f"{dataset_id}:{canonicalize_data_uri(data_path)}"
         return normalized
 
     def create_hash(self, key_value):
@@ -455,6 +457,7 @@ class TextEmbeddingCache(WebhookMixin):
         load_from_cache: bool = True,
         is_negative_prompt: bool = False,
         progress_callback=None,
+        split_between_processes: bool = True,
     ):
         if self.model is None:
             self.model = StateTracker.get_model()
@@ -533,6 +536,7 @@ class TextEmbeddingCache(WebhookMixin):
                 load_from_cache=load_from_cache,
                 is_negative_prompt=is_negative_prompt,
                 progress_callback=progress_callback,
+                split_between_processes=split_between_processes,
             )
         else:
             raise ValueError(f"No such text encoding backend for model type '{self.model_type}'")
@@ -557,12 +561,13 @@ class TextEmbeddingCache(WebhookMixin):
         load_from_cache: bool = True,
         is_negative_prompt: bool = False,
         progress_callback=None,
+        split_between_processes: bool = True,
     ):
         prompt_embeds_all = []
         should_encode = not load_from_cache
         args = StateTracker.get_args()
         records = self._normalize_prompt_records(prompt_records) if prompt_records is not None else self.prompt_records
-        if should_encode:
+        if should_encode and split_between_processes:
             local_records = self.split_prompt_records_between_processes(records)
         else:
             local_records = records

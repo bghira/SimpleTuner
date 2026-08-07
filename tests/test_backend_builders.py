@@ -726,6 +726,24 @@ class TestWebshartBackendBuilder(unittest.TestCase):
         self.assertEqual(Path(call_kwargs["cache_dir"]), expected_cache)
         self.assertEqual(Path(config.webshart_cache_dir), expected_cache)
 
+    @patch("simpletuner.helpers.data_backend.builders.webshart.WebshartDataBackend")
+    def test_build_preserves_zero_shard_cache_size(self, mock_webshart_backend_class):
+        mock_webshart_backend_class.return_value = Mock()
+        config = ImageBackendConfig.from_dict(
+            {
+                "id": "test_webshart",
+                "type": "webshart",
+                "source": "/datasets/shards",
+                "webshart": {"shard_cache_gb": 0},
+            },
+            self.args,
+        )
+
+        self.builder.build(config)
+
+        call_kwargs = mock_webshart_backend_class.call_args[1]
+        self.assertEqual(call_kwargs["shard_cache_gb"], 0)
+
     def test_validate_webshart_config_success(self):
         """Test Webshart config validation with valid configuration"""
         config = ImageBackendConfig.from_dict(
