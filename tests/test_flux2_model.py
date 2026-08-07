@@ -7,6 +7,37 @@ import torch
 from simpletuner.helpers.models.flux2.model import Flux2
 
 
+class _RecordingFlux2Transformer(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.last_kwargs = None
+
+    def forward(
+        self,
+        hidden_states,
+        encoder_hidden_states=None,
+        timestep=None,
+        r_timestep=None,
+        img_ids=None,
+        txt_ids=None,
+        guidance=None,
+        return_dict=True,
+        **kwargs,
+    ):
+        del return_dict
+        self.last_kwargs = {
+            "hidden_states": hidden_states,
+            "encoder_hidden_states": encoder_hidden_states,
+            "timestep": timestep,
+            "r_timestep": r_timestep,
+            "img_ids": img_ids,
+            "txt_ids": txt_ids,
+            "guidance": guidance,
+            **kwargs,
+        }
+        return SimpleNamespace(sample=torch.zeros_like(hidden_states))
+
+
 class Flux2ModelTests(unittest.TestCase):
     def setUp(self):
         self.model = Flux2.__new__(Flux2)
@@ -76,6 +107,25 @@ class Flux2ModelTests(unittest.TestCase):
                 torch.tensor([[0.1, 0.9, 0.5, 0.7]], dtype=torch.float32),
             )
         )
+
+    def test_model_predict_forwards_anyflow_r_timestep(self):
+        transformer = _RecordingFlux2Transformer()
+        self.model.model = transformer
+        self.model.unwrap_model = MagicMock(side_effect=lambda model=None, **_: model)
+        r_timesteps = torch.tensor([0.25])
+
+        result = self.model.model_predict(
+            {
+                "noisy_latents": torch.randn(1, 128, 2, 2),
+                "latents": torch.randn(1, 128, 2, 2),
+                "timesteps": torch.tensor([250.0]),
+                "prompt_embeds": torch.randn(1, 3, 16),
+                Flux2.FLOWMAP_R_TIMESTEP_BATCH_KEY: r_timesteps,
+            }
+        )
+
+        self.assertIs(transformer.last_kwargs["r_timestep"], r_timesteps)
+        self.assertEqual(result["model_prediction"].shape, (1, 128, 2, 2))
 
     def test_model_predict_appends_clean_conditioning_timesteps(self):
         hidden_states_buffer = {}

@@ -1,9 +1,57 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import torch
 
-from simpletuner.helpers.models.ltxvideo2.model import _align_ltx2_connector_attention_mask, _pad_ltx2_audio_sequence_for_cp
+from simpletuner.helpers.models.ltxvideo2.model import (
+    LTXVideo2,
+    _align_ltx2_connector_attention_mask,
+    _pad_ltx2_audio_sequence_for_cp,
+)
 from simpletuner.helpers.models.ltxvideo2.transformer import LTX2AudioVideoAttnProcessor, LTX2PerturbedAttnProcessor
+
+
+class _FakeLTX2Connectors:
+    def __call__(self, encoder_hidden_states, additive_attention_mask, additive_mask=False):
+        del additive_attention_mask, additive_mask
+        batch_size = encoder_hidden_states.shape[0]
+        device = encoder_hidden_states.device
+        dtype = encoder_hidden_states.dtype
+        video_embeds = torch.zeros(batch_size, 2, 8, device=device, dtype=dtype)
+        audio_embeds = torch.zeros(batch_size, 3, 8, device=device, dtype=dtype)
+        attention_mask = torch.ones(batch_size, 3, device=device, dtype=torch.bool)
+        return video_embeds, audio_embeds, attention_mask
+
+
+class _RecordingLTX2Transformer(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.config = SimpleNamespace(patch_size=1, patch_size_t=1)
+        self.last_kwargs = None
+
+    def forward(
+        self,
+        hidden_states,
+        audio_hidden_states,
+        encoder_hidden_states,
+        audio_encoder_hidden_states,
+        timestep,
+        audio_timestep,
+        r_timestep=None,
+        **kwargs,
+    ):
+        self.last_kwargs = {
+            "hidden_states": hidden_states,
+            "audio_hidden_states": audio_hidden_states,
+            "encoder_hidden_states": encoder_hidden_states,
+            "audio_encoder_hidden_states": audio_encoder_hidden_states,
+            "timestep": timestep,
+            "audio_timestep": audio_timestep,
+            "r_timestep": r_timestep,
+            **kwargs,
+        }
+        return torch.zeros_like(hidden_states), torch.zeros_like(audio_hidden_states)
 
 
 class TestLTXVideo2ModelHelpers(unittest.TestCase):
@@ -50,6 +98,45 @@ class TestLTXVideo2ModelHelpers(unittest.TestCase):
             LTX2PerturbedAttnProcessor._flatten_attention_output,
             LTX2AudioVideoAttnProcessor._flatten_attention_output,
         )
+
+    def test_model_predict_forwards_anyflow_r_timestep(self):
+        model = LTXVideo2.__new__(LTXVideo2)
+        transformer = _RecordingLTX2Transformer()
+        model.model = transformer
+        model.config = SimpleNamespace(
+            controlnet=False,
+            weight_dtype=torch.float32,
+            framerate=None,
+            tread_config=None,
+            twinflow_enabled=False,
+            context_parallel_size=1,
+            context_parallel_comm_strategy="allgather",
+            ltx2_intrinsic_conditioning=None,
+        )
+        model.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model.connectors = _FakeLTX2Connectors()
+        model.crepa_regularizer = None
+        model.unwrap_model = MagicMock(side_effect=lambda model=None, **_: model)
+        model._load_connectors = MagicMock()
+        model._new_hidden_state_buffer = MagicMock(return_value={})
+        model._build_grounding_position_net_kwargs = MagicMock(return_value=None)
+        r_timesteps = torch.tensor([0.25])
+
+        result = LTXVideo2.model_predict(
+            model,
+            {
+                "noisy_latents": torch.randn(1, 128, 1, 2, 2),
+                "audio_latents": torch.randn(1, 8, 3, 4),
+                "audio_noisy_latents": torch.randn(1, 8, 3, 4),
+                "encoder_hidden_states": torch.randn(1, 4, 8),
+                "timesteps": torch.tensor([0.75]),
+                LTXVideo2.FLOWMAP_R_TIMESTEP_BATCH_KEY: r_timesteps,
+            },
+        )
+
+        self.assertIs(transformer.last_kwargs["r_timestep"], r_timesteps)
+        self.assertEqual(result["model_prediction"].shape, (1, 128, 1, 2, 2))
+        self.assertEqual(result["audio_prediction"].shape, (1, 8, 3, 4))
 
 
 if __name__ == "__main__":

@@ -42,10 +42,10 @@ FAR checkpoints (`nvidia/AnyFlow-FAR-*`) 使用 causal AnyFlow transformer archi
   "distillation_method": "anyflow",
   "distillation_config": {
     "anyflow": {
-      "target_mode": "online_teacher",
-      "teacher_rollout_steps": 1,
-      "r_timestep_sampler": "uniform",
-      "min_interval_ratio": 0.02,
+      "stage": "forward",
+      "diffusion_ratio": 0.5,
+      "consistency_ratio": 0.25,
+      "central_difference_epsilon": 0.005,
       "gate_value": 0.25,
       "deltatime_type": "r",
       "loss_weight": 1.0
@@ -104,4 +104,4 @@ LyCORIS/LoCon 可使用 `scripts/extract_lycoris_adapter.py`，参数相同并�
 
 - NVIDIA AnyFlow 公开模型 license 是 noncommercial；发布 derived adapters 前请检查 upstream model card。
 - AnyFlow validation 已通过 distiller scheduler hook 为已注册的 FlowMap-capable pipeline 接入。自定义或 external validation path 仍需把 `r_timestep` 或 `timestep_r` 传入 model component。
-- full-rank online-teacher continuation 仍需要单独的 student/teacher wiring。目前支持的路径是 LoRA continuation。
+- on-policy 阶段目前需要标准 PEFT LoRA，这样它的 discriminator 才能共享冻结的 base transformer。
