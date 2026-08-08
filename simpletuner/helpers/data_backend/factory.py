@@ -2544,7 +2544,16 @@ class FactoryRegistry:
                 StateTracker.set_default_text_embed_cache(init_backend["text_embed_cache"])
                 logger.debug(f"Set the default text embed cache to {init_backend['id']}.")
 
-                should_precompute_dropout = getattr(self.args, "caption_dropout_probability", 0.1) > 0.0
+                from simpletuner.helpers.distillation.factory import DistillerFactory
+
+                distillation_requirements = DistillerFactory.training_batch_requirements(
+                    getattr(self.args, "distillation_method", None),
+                    {"distillation_config": getattr(self.args, "distillation_config", {})},
+                )
+                should_precompute_dropout = (
+                    getattr(self.args, "caption_dropout_probability", 0.1) > 0.0
+                    or "unconditional_text_embeddings" in distillation_requirements
+                )
                 should_precompute_dropout = (
                     should_precompute_dropout
                     and getattr(
@@ -3915,7 +3924,14 @@ class FactoryRegistry:
         default_key: str,
         metadata: Dict[str, Any],
     ) -> None:
-        if getattr(self.args, "caption_dropout_probability", 0.1) <= 0.0:
+        from simpletuner.helpers.distillation.factory import DistillerFactory
+
+        distillation_requirements = DistillerFactory.training_batch_requirements(
+            getattr(self.args, "distillation_method", None),
+            {"distillation_config": getattr(self.args, "distillation_config", {})},
+        )
+        needs_unconditional_embedding = "unconditional_text_embeddings" in distillation_requirements
+        if getattr(self.args, "caption_dropout_probability", 0.1) <= 0.0 and not needs_unconditional_embedding:
             return
         if not getattr(self.model, "uses_image_context_dropout_caption_cache", lambda: False)():
             return

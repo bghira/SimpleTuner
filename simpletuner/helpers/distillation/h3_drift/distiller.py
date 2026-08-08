@@ -44,6 +44,45 @@ class H3DriftDistiller(DistillationBase):
         "inner_distillation_config": {},
     }
 
+    @classmethod
+    def prepare_model_for_adapter(cls, model, config: Dict[str, Any]) -> None:
+        method = config.get("inner_distillation_method")
+        if method in (None, "", False):
+            return
+        method = str(method).strip().lower()
+        if method in {"none", "false", "0"}:
+            return
+        if method == "h3_drift":
+            raise ValueError("H3 drift may not wrap another h3_drift distiller.")
+
+        from simpletuner.helpers.distillation.factory import DistillerFactory
+
+        inner_config = config.get("inner_distillation_config") or {}
+        if not isinstance(inner_config, dict):
+            raise ValueError("H3 drift inner_distillation_config must be a mapping.")
+        DistillerFactory.prepare_model_for_adapter(
+            method,
+            model,
+            {"distillation_config": {method: inner_config}},
+        )
+
+    @classmethod
+    def training_batch_requirements(cls, config: Dict[str, Any]) -> set[str]:
+        method = config.get("inner_distillation_method")
+        if method in (None, "", False):
+            return set()
+        method = str(method).strip().lower()
+        if method in {"none", "false", "0"}:
+            return set()
+
+        from simpletuner.helpers.distillation.factory import DistillerFactory
+
+        inner_config = config.get("inner_distillation_config") or {}
+        return DistillerFactory.training_batch_requirements(
+            method,
+            {"distillation_config": {method: inner_config}},
+        )
+
     def __init__(
         self,
         teacher_model,
@@ -129,6 +168,9 @@ class H3DriftDistiller(DistillationBase):
         if self.inner_distiller is None:
             return super().get_scheduler(scheduler)
         return self.inner_distiller.get_scheduler(scheduler)
+
+    def supports_special_scheduler_validation(self) -> bool:
+        return bool(self.inner_distiller and self.inner_distiller.supports_special_scheduler_validation())
 
     def prepare_batch(self, batch, model, state):
         if self.inner_distiller is None:

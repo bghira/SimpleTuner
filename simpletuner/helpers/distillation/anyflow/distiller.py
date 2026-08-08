@@ -35,6 +35,7 @@ class AnyFlowDistiller(DistillationBase):
         "diffusion_ratio": 0.5,
         "consistency_ratio": 0.25,
         "central_difference_epsilon": 0.005,
+        "fuse_guidance_scale": 3.0,
         "meanflow_weight_type": "beta08",
         "meanflow_adaptive_weighting": True,
         "cotrain_forward": True,
@@ -52,6 +53,25 @@ class AnyFlowDistiller(DistillationBase):
         "student_adapter_name": None,
         "discriminator_adapter_name": DISCRIMINATOR_ADAPTER_NAME,
     }
+
+    @classmethod
+    def prepare_model_for_adapter(cls, model, config: Dict[str, Any]) -> None:
+        component = cls._get_trained_component(model)
+        enable_flowmap = getattr(component, "enable_flowmap_time_conditioning", None)
+        if not callable(enable_flowmap):
+            raise ValueError(
+                "AnyFlow requires model-specific FlowMap interval conditioning. "
+                "Add enable_flowmap_time_conditioning() to the trained component before enabling AnyFlow."
+            )
+        enable_flowmap(
+            gate_value=float(config.get("gate_value", cls._DEFAULTS["gate_value"])),
+            deltatime_type=str(config.get("deltatime_type", cls._DEFAULTS["deltatime_type"])),
+        )
+
+    @classmethod
+    def training_batch_requirements(cls, config: Dict[str, Any]) -> set[str]:
+        guidance_scale = float(config.get("fuse_guidance_scale", cls._DEFAULTS["fuse_guidance_scale"]))
+        return {"unconditional_text_embeddings"} if guidance_scale != 1.0 else set()
 
     def __init__(
         self,
@@ -215,6 +235,9 @@ class AnyFlowDistiller(DistillationBase):
             )
         return validation_scheduler
 
+    def supports_special_scheduler_validation(self) -> bool:
+        return True
+
     # ------------------------------------------------------------------
     # Configuration and adapter roles
     # ------------------------------------------------------------------
@@ -244,6 +267,11 @@ class AnyFlowDistiller(DistillationBase):
         if epsilon <= 0.0 or epsilon >= 0.5:
             raise ValueError("AnyFlow central_difference_epsilon must be in (0.0, 0.5).")
         self.config["central_difference_epsilon"] = epsilon
+
+        guidance_scale = float(self.config["fuse_guidance_scale"])
+        if guidance_scale <= 0.0:
+            raise ValueError("AnyFlow fuse_guidance_scale must be greater than zero.")
+        self.config["fuse_guidance_scale"] = guidance_scale
 
         weight_type = str(self.config["meanflow_weight_type"]).strip().lower()
         if weight_type not in {"beta08", "uniform"}:
@@ -412,7 +440,7 @@ class AnyFlowDistiller(DistillationBase):
             device=plus_prediction.device,
             dtype=plus_prediction.dtype,
         )
-        total_derivative = (plus_prediction - minus_prediction) / denominator
+        total_derivative = (plus_prediction - minus_prediction) / (denominator * float(self.config["fuse_guidance_scale"]))
         interval = self._broadcast_time(t_sigmas - r_sigmas, total_derivative).to(
             device=total_derivative.device,
             dtype=total_derivative.dtype,
@@ -430,6 +458,7 @@ class AnyFlowDistiller(DistillationBase):
                 f"AnyFlow MeanFlow target shape {tuple(target.shape)} does not match prediction {tuple(prediction.shape)}."
             )
 
+        prediction = self._fuse_guidance_prediction(prepared_batch, prediction)
         per_sample = (prediction.float() - target.float()).square().flatten(1).mean(dim=1)
         t_sigmas = self._scalar_sigmas(prepared_batch).to(device=per_sample.device, dtype=per_sample.dtype)
         per_sample = per_sample * self._meanflow_timestep_weight(t_sigmas)
@@ -463,9 +492,13 @@ class AnyFlowDistiller(DistillationBase):
     # ------------------------------------------------------------------
     def _onpolicy_generator_loss(self, prepared_batch: Dict[str, Any]) -> tuple[torch.Tensor, Dict[str, float]]:
         dmd_batch = self._slice_batch(prepared_batch, int(self.config["dmd_batch_size"]))
-        step_count = self._distributed_rollout_step_count()
+        step_count, grad_timestep = self._distributed_rollout_schedule()
         with self._adapter_role("student"):
-            generated = self._training_rollout(dmd_batch, step_count=step_count)
+            generated = self._training_rollout(
+                dmd_batch,
+                step_count=step_count,
+                grad_timestep=grad_timestep,
+            )
 
         sigma = self._sample_dmd_sigma(generated.shape[0], logit_normal=False, device=generated.device)
         noise = torch.randn_like(generated)
@@ -491,14 +524,19 @@ class AnyFlowDistiller(DistillationBase):
             "anyflow_dmd_gradient_norm": float(gradient.float().abs().mean().detach()),
             "anyflow_dmd_sigma": float(sigma.float().mean().detach()),
             "anyflow_rollout_steps": float(step_count),
+            "anyflow_rollout_grad_timestep": float(grad_timestep),
         }
         return loss, logs
 
     def _onpolicy_discriminator_loss(self, prepared_batch: Dict[str, Any]) -> torch.Tensor:
         dmd_batch = self._slice_batch(prepared_batch, int(self.config["dmd_batch_size"]))
-        step_count = self._distributed_rollout_step_count()
+        step_count, grad_timestep = self._distributed_rollout_schedule()
         with torch.no_grad(), self._adapter_role("student"):
-            generated = self._training_rollout(dmd_batch, step_count=step_count).detach()
+            generated = self._training_rollout(
+                dmd_batch,
+                step_count=step_count,
+                grad_timestep=grad_timestep,
+            ).detach()
 
         sigma = self._sample_dmd_sigma(generated.shape[0], logit_normal=True, device=generated.device)
         noise = torch.randn_like(generated)
@@ -508,13 +546,30 @@ class AnyFlowDistiller(DistillationBase):
         target = self._flow_target(generated, noise).to(device=prediction.device, dtype=prediction.dtype)
         return (prediction.float() - target.float()).square().flatten(1).mean(dim=1).mean()
 
-    def _training_rollout(self, prepared_batch: Dict[str, Any], *, step_count: int) -> torch.Tensor:
+    def _training_rollout(
+        self,
+        prepared_batch: Dict[str, Any],
+        *,
+        step_count: int,
+        grad_timestep: int,
+    ) -> torch.Tensor:
+        if grad_timestep < 0 or grad_timestep >= step_count:
+            raise ValueError(f"AnyFlow grad_timestep must be in [0, {step_count}), got {grad_timestep}.")
+
         latents = torch.randn_like(prepared_batch["latents"])
         base_sigmas = torch.linspace(1.0, 0.0, step_count + 1, device=latents.device, dtype=torch.float32)
         sigmas = self._apply_scheduler_shift(base_sigmas)
-        for index in range(step_count):
-            t_sigma = sigmas[index].expand(latents.shape[0])
-            r_sigma = sigmas[index + 1].expand(latents.shape[0])
+
+        intervals = (
+            (sigmas[0], sigmas[grad_timestep]),
+            (sigmas[grad_timestep], sigmas[grad_timestep + 1]),
+            (sigmas[grad_timestep + 1], sigmas[-1]),
+        )
+        for t_value, r_value in intervals:
+            if bool(t_value == r_value):
+                continue
+            t_sigma = t_value.expand(latents.shape[0])
+            r_sigma = r_value.expand(latents.shape[0])
             prediction = self._predict_at_sigmas(prepared_batch, latents, t_sigma, r_sigma)
             velocity = self._prediction_to_noiseward_flow(prediction)
             step = self._broadcast_time(r_sigma - t_sigma, latents).to(dtype=latents.dtype)
@@ -553,7 +608,7 @@ class AnyFlowDistiller(DistillationBase):
         unconditional_x0 = self._score_x0(unconditional_batch, noisy_latents, sigmas)
         return conditional_x0 + (conditional_x0 - unconditional_x0) * guidance
 
-    def _distributed_rollout_step_count(self) -> int:
+    def _distributed_rollout_schedule(self) -> tuple[int, int]:
         steps = self.config["rollout_step_counts"]
         device = self._device
         if torch.distributed.is_available() and torch.distributed.is_initialized():
@@ -562,8 +617,17 @@ class AnyFlowDistiller(DistillationBase):
             else:
                 index = torch.zeros(1, device=device, dtype=torch.long)
             torch.distributed.broadcast(index, src=0)
-            return int(steps[int(index.item())])
-        return int(steps[int(torch.randint(len(steps), (1,)).item())])
+            step_count = int(steps[int(index.item())])
+            if torch.distributed.get_rank() == 0:
+                grad_timestep = torch.randint(step_count, (1,), device=device, dtype=torch.long)
+            else:
+                grad_timestep = torch.zeros(1, device=device, dtype=torch.long)
+            torch.distributed.broadcast(grad_timestep, src=0)
+            return step_count, int(grad_timestep.item())
+
+        step_count = int(steps[int(torch.randint(len(steps), (1,)).item())])
+        grad_timestep = int(torch.randint(step_count, (1,)).item())
+        return step_count, grad_timestep
 
     def _sample_dmd_sigma(self, batch_size: int, *, logit_normal: bool, device: torch.device) -> torch.Tensor:
         base = (
@@ -606,6 +670,38 @@ class AnyFlowDistiller(DistillationBase):
         self._clear_prediction_buffers(output)
         return prediction
 
+    def _fuse_guidance_prediction(
+        self,
+        prepared_batch: Dict[str, Any],
+        conditional_prediction: torch.Tensor,
+    ) -> torch.Tensor:
+        guidance_scale = float(self.config["fuse_guidance_scale"])
+        if guidance_scale == 1.0:
+            return conditional_prediction
+
+        unconditional_batch = self._unconditional_batch(prepared_batch)
+        with torch.no_grad():
+            output = self.teacher_model.model_predict(unconditional_batch)
+            unconditional_prediction = output["model_prediction"].detach()
+            self._clear_prediction_buffers(output)
+        return (conditional_prediction - (1.0 - guidance_scale) * unconditional_prediction) / guidance_scale
+
+    @staticmethod
+    def _unconditional_batch(prepared_batch: Dict[str, Any]) -> Dict[str, Any]:
+        negative = prepared_batch.get("negative_encoder_hidden_states")
+        if not torch.is_tensor(negative):
+            raise ValueError("AnyFlow fuse_guidance_scale != 1 requires cached unconditional text embeddings.")
+
+        batch = dict(prepared_batch)
+        batch["encoder_hidden_states"] = negative
+        negative_tags = prepared_batch.get("negative_text_token_tags")
+        if torch.is_tensor(negative_tags):
+            batch["text_token_tags"] = negative_tags
+        negative_mask = prepared_batch.get("negative_encoder_attention_mask")
+        if torch.is_tensor(negative_mask):
+            batch["encoder_attention_mask"] = negative_mask
+        return batch
+
     def _slice_batch(self, prepared_batch: Dict[str, Any], requested_batch_size: int) -> Dict[str, Any]:
         source_batch_size = int(prepared_batch["latents"].shape[0])
         batch_size = min(source_batch_size, requested_batch_size)
@@ -626,6 +722,7 @@ class AnyFlowDistiller(DistillationBase):
             "anyflow_timestep": float(prepared_batch["timesteps"].float().mean().detach()),
             "anyflow_r_timestep": float(r_timesteps.float().mean().detach()),
             "anyflow_interval": float(prepared_batch["anyflow_timestep_interval"].float().mean().detach()),
+            "anyflow_fuse_guidance_scale": float(self.config["fuse_guidance_scale"]),
         }
         for branch in ("diffusion", "consistency", "arbitrary"):
             mask = prepared_batch[f"anyflow_{branch}_mask"]
