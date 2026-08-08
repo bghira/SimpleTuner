@@ -131,7 +131,10 @@ def blend_flowmap_embeddings(
     delta_embedding: torch.Tensor,
     gate: torch.Tensor,
 ) -> torch.Tensor:
-    gate = gate.to(device=base_embedding.device, dtype=base_embedding.dtype)
+    # DDP broadcasts buffers in place before every forward. AnyFlow builds one
+    # backward graph from several forwards, so snapshot the gate before autograd
+    # saves it for the trainable delta branch.
+    gate = gate.to(device=base_embedding.device, dtype=base_embedding.dtype).clone()
     return (1.0 - gate) * base_embedding + gate * delta_embedding.to(
         device=base_embedding.device, dtype=base_embedding.dtype
     )

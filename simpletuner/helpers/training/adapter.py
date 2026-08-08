@@ -4,7 +4,10 @@ import peft
 import safetensors.torch
 import torch
 
-ANYFLOW_SIDECAR_PREFIXES = ("condition_embedder.delta_embedder.",)
+ANYFLOW_SIDECAR_PREFIXES = (
+    "condition_embedder.delta_embedder.",
+    "delta_adaln_embedder.",
+)
 
 
 def _alpha_value(value):
@@ -22,6 +25,17 @@ def _set_lora_alpha(layer, adapter_name: str, alpha) -> None:
         return
     scaling = alpha / math.sqrt(rank) if getattr(layer, "use_rslora", False) else alpha / rank
     layer.scaling[adapter_name] = scaling
+
+
+def _sidecar_destination(model_state: dict, model_key: str, adapter_name: str):
+    destination = model_state.get(model_key)
+    if destination is not None:
+        return destination
+
+    module_name, separator, parameter_name = model_key.rpartition(".")
+    if not separator:
+        return None
+    return model_state.get(f"{module_name}.modules_to_save.{adapter_name}.{parameter_name}")
 
 
 def determine_adapter_target_modules(args, unet, transformer):
@@ -132,13 +146,12 @@ def load_lora_weights(dictionary, filename, loraKey="default", use_dora=False, s
             model_key = key.removeprefix(sidecar_prefix)
             if not model_key.startswith(ANYFLOW_SIDECAR_PREFIXES):
                 continue
-            try:
-                destination = model_state[model_key]
-            except KeyError as exc:
+            destination = _sidecar_destination(model_state, model_key, loraKey)
+            if destination is None:
                 raise ValueError(
                     f"LoRA file contains AnyFlow sidecar tensor `{key}`, but `{prefix}` does not have `{model_key}`. "
                     "Call enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type='r') before loading this LoRA."
-                ) from exc
+                )
             if destination.shape != tensor.shape:
                 raise ValueError(
                     f"Shape mismatch for AnyFlow sidecar tensor `{key}`: "
