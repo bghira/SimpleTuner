@@ -1848,6 +1848,7 @@ class Trainer:
                     self.init_tread_model,
                     self.init_gligen_layers,
                     self.init_freeze_models,
+                    self.init_distillation_adapter_modules,
                     self.init_trainable_peft_adapter,
                     self.init_lyrics_embedder_training,
                 ]
@@ -3344,6 +3345,19 @@ class Trainer:
         self.distiller_requirement_profile = profile
         StateTracker.set_distiller_profile(method, profile)
         return profile
+
+    def init_distillation_adapter_modules(self):
+        """Initialize distillation modules that must exist before PEFT wraps the model."""
+        from simpletuner.helpers.distillation.factory import DistillerFactory
+
+        method = getattr(self.config, "distillation_method", None)
+        if method is None:
+            return
+        DistillerFactory.prepare_model_for_adapter(
+            method=method,
+            model=self.model,
+            config=vars(self.config),
+        )
 
     def init_distillation(self):
         """Initialize distillation using the factory pattern."""

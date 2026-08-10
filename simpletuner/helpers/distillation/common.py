@@ -22,6 +22,11 @@ def validate_distillation_text_encoder_training(method, train_text_encoder: bool
 class DistillationBase:
     """Base class for model distillation techniques."""
 
+    @classmethod
+    def prepare_model_for_adapter(cls, model, config: Dict[str, Any]) -> None:
+        """Create distillation-specific modules that must exist before PEFT wrapping."""
+        del model, config
+
     def __init__(
         self,
         teacher_model,

@@ -126,6 +126,13 @@ class TrainEntryCleanupTest(unittest.TestCase):
             trainer.cleanup_called,
             "train.py did not invoke trainer.cleanup() after a training failure",
         )
+        self.assertIn(
+            "distillation_adapter_modules",
+            trainer.init_order,
+            "distillation adapter module setup was not called",
+        )
+        self.assertIn("peft_adapter", trainer.init_order, "PEFT adapter setup was not called")
+        self.assertIn("distillation", trainer.init_order, "distillation setup was not called")
         self.assertLess(
             trainer.init_order.index("distillation_adapter_modules"),
             trainer.init_order.index("peft_adapter"),

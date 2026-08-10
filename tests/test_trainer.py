@@ -1260,9 +1260,7 @@ class TestTrainer(unittest.TestCase):
         logs = {}
         trainer._update_grad_metrics(logs, clone_norm_value=True)
         self.assertIn("grad_absmax", logs)
-        self.assertEqual(
-            logs["grad_absmax"], float(trainer.grad_norm.clone().detach())
-        )
+        self.assertEqual(logs["grad_absmax"], float(trainer.grad_norm.clone().detach()))
 
     def test_update_grad_metrics_clones_norm_value_when_requested(self):
         trainer = self._build_trainer_for_grad_logging(
@@ -1324,9 +1322,7 @@ class TestTrainer(unittest.TestCase):
         )
         metrics = trainer._compose_training_progress_metrics(epoch=1)
         self.assertIn("grad_absmax", metrics)
-        self.assertEqual(
-            metrics["grad_absmax"], float(trainer.grad_norm.clone().detach())
-        )
+        self.assertEqual(metrics["grad_absmax"], float(trainer.grad_norm.clone().detach()))
         self.assertNotIn("grad_norm", metrics)
 
     def test_compose_training_progress_metrics_excludes_grad_with_deepspeed(self):
@@ -1490,6 +1486,25 @@ class TestTrainer(unittest.TestCase):
         trainer._place_ema_model(is_fsdp2_run=True)
 
         trainer.ema_model.to.assert_not_called()
+
+    def test_init_distillation_adapter_modules_delegates_to_factory(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            distillation_method="anyflow",
+            distillation_config={"anyflow": {"gate_value": 0.25}},
+        )
+        trainer.model = Mock()
+
+        with patch(
+            "simpletuner.helpers.distillation.factory.DistillerFactory.prepare_model_for_adapter"
+        ) as prepare_model_for_adapter:
+            trainer.init_distillation_adapter_modules()
+
+        prepare_model_for_adapter.assert_called_once_with(
+            method="anyflow",
+            model=trainer.model,
+            config=vars(trainer.config),
+        )
 
     @patch("simpletuner.helpers.training.trainer.Validation")
     def test_init_validations_enabled_for_fsdp_full_shard(self, mock_validation):
