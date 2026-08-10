@@ -95,6 +95,7 @@ from simpletuner.helpers.training.quantisation import (
     mark_transformerengine_ddp_ignore_params,
 )
 from simpletuner.helpers.training.script_runner import run_hook_script
+from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
 from simpletuner.helpers.training.wrappers import unwrap_model
@@ -1125,6 +1126,7 @@ class Trainer:
 
         StateTracker.set_accelerator(self.accelerator)
         StateTracker.set_args(self.config)
+        configure_sdnq_compile_mode()
         StateTracker.set_weight_dtype(self.config.weight_dtype)
         self.set_model_family()
 
