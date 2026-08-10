@@ -64,6 +64,33 @@ class TestMultiAspectSampler(unittest.TestCase):
     def test_len(self):
         self.assertEqual(len(self.sampler), 2)
 
+    def test_model_card_video_overview_honors_sample_cap_and_nested_video_config(self):
+        sampler = object.__new__(MultiAspectSampler)
+        sampler.id = "video-dataset"
+        sampler.metadata_backend = SimpleNamespace(seen_images={str(i): True for i in range(1000)})
+        sampler._get_unseen_images = MagicMock(return_value=[None] * 3997)
+        sampler.accelerator = SimpleNamespace(num_processes=8)
+        sampler.logger = MagicMock()
+        sampler.sample_type_strs = "videos"
+        sampler.buckets = ["0.75", "1.0", "1.25", "1.5", "1.75"]
+        sampler.is_regularisation_data = False
+        sampler.conditioning_type = None
+
+        with (
+            patch.object(
+                StateTracker,
+                "get_data_backend_config",
+                return_value={"max_num_samples": 4096, "video": {"num_frames": 39}},
+            ),
+            patch.object(StateTracker, "get_dataset_schedule", return_value={"reached": True}),
+        ):
+            overview = sampler.log_state(show_rank=False, alt_stats=True)
+
+        self.assertIn("- Total number of videos: 4096", overview)
+        self.assertIn("- Target frame count: 39", overview)
+        self.assertIn("- FPS: unknown", overview)
+        self.assertNotIn("~39976", overview)
+
     def test_save_state(self):
         with patch.object(self.sampler.state_manager, "save_state") as mock_save_state:
             self.sampler.save_state(self.state_path)
