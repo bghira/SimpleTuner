@@ -36,14 +36,18 @@ class ResumeLRSchedulerTests(unittest.TestCase):
             trainer.accelerator.load_state = Mock()
             trainer.accelerator.wait_for_everyone = Mock()
             trainer.state = {"global_step": 0, "first_epoch": 1, "current_epoch": 1}
-            trainer.optimizer = Mock(param_groups=[{"lr": 0.25}])
+            trainer.optimizer = Mock(param_groups=[{"lr": 0.001}, {"lr": 0.0002}])
             trainer.distiller = None
             trainer.job_id = "test-job"
             trainer._emit_event = Mock()
             trainer.checkpoint_manager = CheckpointManager(tmpdir)
-            scheduler_state = {"base_lrs": [0.25], "_last_lr": [0.25]}
+            scheduler_state = {"base_lrs": [0.25, 0.25], "_last_lr": [0.25, 0.25]}
             lr_scheduler = Mock()
             lr_scheduler.state_dict.return_value = scheduler_state
+            trainer.accelerator.load_state.side_effect = lambda _checkpoint: trainer.optimizer.param_groups.__setitem__(
+                slice(None),
+                [{"lr": 0.25}, {"lr": 0.25}],
+            )
 
             with (
                 patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}),
@@ -56,8 +60,9 @@ class ResumeLRSchedulerTests(unittest.TestCase):
                 trainer.init_resume_checkpoint(lr_scheduler=lr_scheduler)
 
             self.assertEqual(trainer.optimizer.param_groups[0]["lr"], 0.001)
-            self.assertEqual(scheduler_state["base_lrs"], [0.001])
-            self.assertEqual(scheduler_state["_last_lr"], [0.001])
+            self.assertEqual(trainer.optimizer.param_groups[1]["lr"], 0.0002)
+            self.assertEqual(scheduler_state["base_lrs"], [0.001, 0.0002])
+            self.assertEqual(scheduler_state["_last_lr"], [0.001, 0.0002])
             trainer.accelerator.load_state.assert_called_once_with(str(checkpoint_dir))
             mock_attention_backend.assert_called_once_with(str(checkpoint_dir))
 
