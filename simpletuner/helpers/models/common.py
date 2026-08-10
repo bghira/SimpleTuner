@@ -5396,6 +5396,12 @@ class ModelFoundation(ABC):
         # Ensure the encoder hidden states are on device
         if batch["prompt_embeds"] is not None and hasattr(batch["prompt_embeds"], "to"):
             batch["encoder_hidden_states"] = batch["prompt_embeds"].to(**target_device_kwargs)
+        negative_prompt_embeds = batch.get("negative_prompt_embeds")
+        if negative_prompt_embeds is not None and hasattr(negative_prompt_embeds, "to"):
+            batch["negative_encoder_hidden_states"] = negative_prompt_embeds.to(**target_device_kwargs)
+        negative_attention_mask = batch.get("negative_encoder_attention_mask")
+        if negative_attention_mask is not None and hasattr(negative_attention_mask, "to"):
+            batch["negative_encoder_attention_mask"] = negative_attention_mask.to(device=self.accelerator.device)
 
         # Process additional conditioning if provided
         pooled_embeds = batch.get("add_text_embeds")

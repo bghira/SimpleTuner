@@ -219,6 +219,7 @@ class H3DriftDistillerTests(unittest.TestCase):
                     "diffusion_ratio": 0.5,
                     "consistency_ratio": 0.5,
                     "loss_weight": 2.0,
+                    "fuse_guidance_scale": 1.0,
                 },
             },
         )
@@ -279,6 +280,7 @@ class H3DriftDistillerTests(unittest.TestCase):
                     "diffusion_ratio": 0.5,
                     "consistency_ratio": 0.5,
                     "loss_weight": 2.0,
+                    "fuse_guidance_scale": 1.0,
                 },
             },
         )

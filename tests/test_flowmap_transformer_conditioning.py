@@ -4,7 +4,11 @@ import warnings
 import torch
 from diffusers.models.embeddings import CombinedTimestepTextProjEmbeddings
 
-from simpletuner.helpers.models.flowmap import clone_flowmap_embedder, prepare_flowmap_delta_timestep
+from simpletuner.helpers.models.flowmap import (
+    blend_flowmap_embeddings,
+    clone_flowmap_embedder,
+    prepare_flowmap_delta_timestep,
+)
 from simpletuner.helpers.models.flux2.transformer import Flux2TimestepGuidanceEmbeddings
 from simpletuner.helpers.models.flux.transformer import _flux_tokenwise_conditioning, _flux_tokenwise_flowmap_conditioning
 from simpletuner.helpers.models.sd3.transformer import _sd3_tokenwise_conditioning, _sd3_tokenwise_flowmap_conditioning
@@ -12,6 +16,20 @@ from simpletuner.helpers.models.unet_flowmap import FlowMapUNet2DConditionModel
 
 
 class TestFlowMapTransformerConditioning(unittest.TestCase):
+    def test_blend_snapshots_gate_across_repeated_forwards(self):
+        gate = torch.tensor([0.25])
+        base = torch.ones(1, 2)
+        first_delta = torch.full((1, 2), 2.0, requires_grad=True)
+        second_delta = torch.full((1, 2), 3.0, requires_grad=True)
+
+        first = blend_flowmap_embeddings(base, first_delta, gate)
+        gate.copy_(torch.tensor([0.25]))
+        second = blend_flowmap_embeddings(base, second_delta, gate)
+        (first.sum() + second.sum()).backward()
+
+        self.assertTrue(torch.equal(first_delta.grad, torch.full_like(first_delta, 0.25)))
+        self.assertTrue(torch.equal(second_delta.grad, torch.full_like(second_delta, 0.25)))
+
     def test_prepare_delta_timestep_supports_batch_and_tokenwise(self):
         timestep = torch.tensor([0.8, 0.4])
         r_timestep = torch.tensor([0.2])
