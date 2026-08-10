@@ -675,15 +675,14 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - サンプル数が不足しているアスペクトバケット
 - 各バケットに必要な最小 repeats
 - 推奨される解決策
-- 推奨される解決策
 
 ##### データセットの自動オーバーサブスクリプション
 
 データセットが実効バッチサイズより小さい場合に `repeats` を自動調整するには、`--allow_dataset_oversubscription` フラグを使用します（[OPTIONS.md](OPTIONS.md#--allow_dataset_oversubscription) 参照）。
 
 有効化すると、SimpleTuner は次を行います:
-- 学習に必要な最小 repeats を計算
-- 要件を満たすように `repeats` を自動的に増加
+- サンプル数が不足している aspect bucket ごとに必要な最小 repeats を計算
+- 実効バッチサイズを満たすため、その bucket だけをパディング
 - 調整内容を警告ログで出力
 - **手動設定された repeats を尊重** - データセット設定で明示的に `repeats` を設定している場合、自動調整はスキップされます
 
@@ -1326,7 +1325,7 @@ Webshart データセットは `webshart` パッケージで WebDataset 形式�
 - `source` は必須で、Webshart が discover できる dataset source を指定します。
 - `metadata` は任意で、captions を含む別 metadata location を指定できます。`webshart/conceptual-captions-12m-webdataset-metadata` のような Hugging Face metadata repo では repo id だけを渡します。Webshart は source shard の `data/` などのサブフォルダ構成に従います。
 - `metadata_backend` は `webshart`、`caption_strategy` は `webshart` または `instanceprompt` にします。
-- `webshart.cache_dir` は SimpleTuner metadata と Webshart caches を保存します。
+- `webshart.cache_dir` は SimpleTuner metadata と Webshart caches を保存します。`shard_cache_gb` と `parallel_downloads` は Webshart の shard cache に渡されます。`shard_cache_gb` を `0` にすると、shard 全体の cache を無効にし、index 付き range read を維持します。
 
 `TarDataLoader.list_shard_sample_aspect_buckets()` を提供する Webshart build が必要です。
 

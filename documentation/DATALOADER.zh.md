@@ -675,15 +675,14 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 - 样本不足的纵横比桶
 - 每个桶所需的最小 repeats
 - 建议的解决方案
-- 建议的解决方案
 
 ##### 自动数据集超订
 
 当数据集小于有效批大小时，可使用 `--allow_dataset_oversubscription` 标志自动调整 `repeats`（见 [OPTIONS.md](OPTIONS.md#--allow_dataset_oversubscription)）。
 
 启用后，SimpleTuner 将：
-- 计算训练所需的最小 repeats
-- 自动增加 `repeats` 以满足要求
+- 为每个样本不足的 aspect bucket 计算所需的最小 repeats
+- 只填充这些 bucket 以满足有效批大小
 - 记录一条警告日志说明调整
 - **尊重手动设置的 repeats** —— 若在数据集配置中显式设置了 `repeats`，则跳过自动调整
 
@@ -1326,7 +1325,7 @@ Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。
 - `source` 必填，指向 Webshart 可 discover 的 dataset source。
 - `metadata` 可选，可指向包含 captions 的独立 metadata location。对于 `webshart/conceptual-captions-12m-webdataset-metadata` 这样的 Hugging Face metadata repo，传 repo id 即可；Webshart 会跟随 source shard 的 `data/` 等子目录布局。
 - `metadata_backend` 必须为 `webshart`；`caption_strategy` 应为 `webshart` 或 `instanceprompt`。
-- `webshart.cache_dir` 存储 SimpleTuner metadata 与 Webshart caches。
+- `webshart.cache_dir` 存储 SimpleTuner metadata 与 Webshart caches。`shard_cache_gb` 和 `parallel_downloads` 会传给 Webshart 的 shard cache；将 `shard_cache_gb` 设为 `0` 可禁用整 shard cache，并保留基于索引的 range reads。
 
 需要提供 `TarDataLoader.list_shard_sample_aspect_buckets()` 的 Webshart build。
 

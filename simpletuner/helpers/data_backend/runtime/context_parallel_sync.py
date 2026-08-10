@@ -20,6 +20,8 @@ The synchronization addresses two key issues:
 import logging
 import numbers
 import os
+import random
+from contextlib import contextmanager
 from typing import Any, Optional, Tuple
 
 import torch
@@ -162,6 +164,14 @@ def sync_batch_for_context_parallel(
         if not data_enabled:
             return batch
 
+        parallelism_config = getattr(accelerator, "parallelism_config", None)
+        dp_shard_size = _normalize_parallel_size(getattr(parallelism_config, "dp_shard_size", 1), "dp_shard_size")
+        if dp_shard_size == 1:
+            leader_global_rank = data_rank * data_group_size
+            batch_list = [batch if data_local_rank == 0 else None]
+            dist.broadcast_object_list(batch_list, src=leader_global_rank, group=cp_group)
+            return batch_list[0]
+
         replica_batch = None
         for replica_rank in range(data_parallel_size):
             leader_global_rank = replica_rank * data_group_size
@@ -284,6 +294,33 @@ class ContextParallelBatchSynchronizer:
         """
         self._ensure_initialized()
         return sync_batch_for_context_parallel(batch, self.accelerator, self._cp_info)
+
+    @contextmanager
+    def synchronized_rng(self, base_seed: Optional[int], step: int):
+        """Use one RNG stream for every model-parallel rank in a data replica."""
+        self._ensure_initialized()
+        if not self._cp_info[0]:
+            yield
+            return
+
+        _, data_rank, _, _, data_parallel_size = get_model_replica_data_info(self.accelerator, self._cp_info)
+        replica_seed = (int(base_seed or 0) + int(step) * data_parallel_size + data_rank) % (2**63 - 1)
+        python_rng_state = random.getstate()
+        device = getattr(self.accelerator, "device", torch.device("cpu"))
+        cuda_devices = []
+        if isinstance(device, torch.device) and device.type == "cuda":
+            cuda_devices = [device.index if device.index is not None else torch.cuda.current_device()]
+
+        try:
+            with torch.random.fork_rng(devices=cuda_devices):
+                random.seed(replica_seed)
+                torch.default_generator.manual_seed(replica_seed)
+                for device_index in cuda_devices:
+                    with torch.cuda.device(device_index):
+                        torch.cuda.manual_seed(replica_seed)
+                yield
+        finally:
+            random.setstate(python_rng_state)
 
     def fetch_batch(self, iterator_fn, step: int, *iterator_args) -> Any:
         """

@@ -412,10 +412,13 @@ class WebshartMetadataBackend(MetadataBackend):
             "skipped": {
                 "already_exists": 0,
                 "metadata_missing": 0,
+                "caption_missing": 0,
                 "too_small": 0,
                 "error": 0,
             },
         }
+        backend_config = StateTracker.get_data_backend_config(self.id) or {}
+        require_captions = str(backend_config.get("caption_strategy", "")).lower() == "webshart"
 
         if not ignore_existing_cache:
             self.reload_cache()
@@ -508,6 +511,9 @@ class WebshartMetadataBackend(MetadataBackend):
                                 statistics["skipped"]["metadata_missing"] += 1
                             continue
                         bucket_key, sample_metadata = prepared
+                        if require_captions and not sample_metadata.get("captions"):
+                            statistics["skipped"]["caption_missing"] += 1
+                            continue
                         aspect_ratio_bucket_updates.setdefault(bucket_key, []).append(sample_path)
                         metadata_updates[sample_path] = sample_metadata
                         if sample_metadata.get("captions"):

@@ -189,6 +189,7 @@ from simpletuner.helpers.training.context_parallel import (
     normalize_context_parallel_size,
     normalize_context_parallel_strategy,
     resolve_context_parallel_world_size,
+    scale_standalone_context_parallel_loss,
 )
 
 try:
@@ -5775,7 +5776,8 @@ class Trainer:
         loss, _loss_logs, _diffusion_loss, _aux_loss_logs, _distill_logs = self._compute_model_prediction_loss(
             dict(prepared_batch)
         )
-        self.accelerator.backward(loss)
+        context_parallel_topology = getattr(self, "_context_parallel_topology", None)
+        self.accelerator.backward(scale_standalone_context_parallel_loss(loss, context_parallel_topology))
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         elapsed = time.perf_counter() - start_time
@@ -6532,7 +6534,8 @@ class Trainer:
                 self._write_train_stage_breadcrumb("fetch_batch:start", step)
                 raw_batch = cp_batch_synchronizer.fetch_batch(iterator_fn, step, *iterator_args)
                 self._write_train_stage_breadcrumb("fetch_batch:done", step)
-                prepared_batch = self.prepare_batch(raw_batch)
+                with cp_batch_synchronizer.synchronized_rng(getattr(self.config, "seed", None), step):
+                    prepared_batch = self.prepare_batch(raw_batch)
                 training_logger.debug(f"Iterator: {iterator_fn}")
                 if self.config.lr_scheduler == "cosine_with_restarts":
                     self.extra_lr_scheduler_kwargs["step"] = self.state["global_step"]
@@ -6704,7 +6707,8 @@ class Trainer:
                         training_logger.debug("Backwards pass.")
                         if self._ramtorch_sync_enabled():
                             torch.cuda.synchronize()
-                        self.accelerator.backward(loss)
+                        backward_loss = scale_standalone_context_parallel_loss(loss, self._context_parallel_topology)
+                        self.accelerator.backward(backward_loss)
                         if self._ramtorch_sync_enabled():
                             torch.cuda.synchronize()
 
