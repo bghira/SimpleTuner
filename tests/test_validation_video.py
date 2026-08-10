@@ -65,8 +65,9 @@ class TestValidationVideoTrackerLogging(unittest.TestCase):
         accelerator.get_tracker = MagicMock(return_value=tensorboard)
         return accelerator, tensorboard
 
+    @patch("simpletuner.helpers.training.validation_video._tensorboard_video_supported", return_value=True)
     @patch("simpletuner.helpers.training.validation_video.StateTracker.get_global_step", return_value=123)
-    def test_tensorboard_logs_5d_video_tensor_with_add_video(self, _global_step):
+    def test_tensorboard_logs_5d_video_tensor_with_add_video(self, _global_step, _video_supported):
         from simpletuner.helpers.training import validation_video
 
         accelerator, tensorboard = self._accelerator()
@@ -86,8 +87,9 @@ class TestValidationVideoTrackerLogging(unittest.TestCase):
         self.assertEqual(tensorboard.writer.add_video.call_args.kwargs, {"global_step": 123, "fps": 12})
         tensorboard.log_images.assert_not_called()
 
+    @patch("simpletuner.helpers.training.validation_video._tensorboard_video_supported", return_value=True)
     @patch("simpletuner.helpers.training.validation_video.StateTracker.get_global_step", return_value=123)
-    def test_tensorboard_logs_channel_last_5d_video_tensor_with_add_video(self, _global_step):
+    def test_tensorboard_logs_channel_last_5d_video_tensor_with_add_video(self, _global_step, _video_supported):
         from simpletuner.helpers.training import validation_video
 
         accelerator, tensorboard = self._accelerator()
@@ -102,6 +104,26 @@ class TestValidationVideoTrackerLogging(unittest.TestCase):
 
         logged_video = tensorboard.writer.add_video.call_args.args[1]
         self.assertEqual(logged_video.shape, torch.Size([1, 4, 3, 8, 8]))
+
+    @patch("simpletuner.helpers.training.validation_video._tensorboard_video_supported", return_value=False)
+    @patch("simpletuner.helpers.training.validation_video.StateTracker.get_global_step", return_value=123)
+    def test_tensorboard_falls_back_to_first_frame_without_moviepy(self, _global_step, _video_supported):
+        from simpletuner.helpers.training import validation_video
+
+        accelerator, tensorboard = self._accelerator()
+        video = torch.zeros(1, 4, 8, 8, 3)
+
+        validation_video.log_videos_to_trackers(
+            accelerator,
+            {"sample": [video]},
+            [(8, 8)],
+            SimpleNamespace(framerate=12),
+        )
+
+        tensorboard.writer.add_video.assert_not_called()
+        tensorboard.log_images.assert_called_once()
+        payload = tensorboard.log_images.call_args.args[0]
+        self.assertEqual(payload["sample - (8, 8)"].shape, (1, 3, 8, 8))
 
     @patch("simpletuner.helpers.training.validation_video.StateTracker.get_global_step", return_value=124)
     def test_tensorboard_falls_back_to_image_logging_for_static_image(self, _global_step):

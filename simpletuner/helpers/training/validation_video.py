@@ -1,8 +1,10 @@
 import base64
+import importlib.util
 import logging
 import os
 import shutil
 import subprocess
+from functools import lru_cache
 from io import BytesIO
 
 import numpy as np
@@ -269,6 +271,15 @@ def _tensorboard_video(media):
     return tensor
 
 
+@lru_cache(maxsize=1)
+def _tensorboard_video_supported() -> bool:
+    """TensorBoard's video writer requires the legacy moviepy.editor module."""
+    try:
+        return importlib.util.find_spec("moviepy.editor") is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
+
+
 def _wandb_video(media):
     video = _video_to_thwc_array(media)
     if video is None:
@@ -308,15 +319,21 @@ def log_videos_to_trackers(accelerator, validation_images, validation_resolution
         elif tracker.name == "tensorboard":
             tracker = accelerator.get_tracker("tensorboard")
             image_logs = {}
+            video_supported = _tensorboard_video_supported()
             for shortname, media_list in validation_images.items():
                 for idx, media in enumerate(media_list):
                     res_label = validation_resolutions[idx] if idx < len(validation_resolutions) else "unknown"
                     tag = f"{shortname} - {res_label}"
-                    video = _tensorboard_video(media)
-                    if video is not None:
-                        tracker.writer.add_video(tag, video, global_step=global_step, fps=fps)
-                        continue
+                    if video_supported:
+                        video = _tensorboard_video(media)
+                        if video is not None:
+                            tracker.writer.add_video(tag, video, global_step=global_step, fps=fps)
+                            continue
                     image = _image_to_chw_batch(media)
+                    if image is None and not video_supported:
+                        first_frame = _first_frame_image(media)
+                        if first_frame is not None:
+                            image = _image_to_chw_batch(first_frame)
                     if image is not None:
                         image_logs[tag] = image
             if image_logs:
