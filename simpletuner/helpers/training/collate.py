@@ -1080,29 +1080,35 @@ def collate_fn(batch):
             backend_config = backend_config or {}
             dataset_root = backend_config.get("instance_data_dir")
             normalized_identifier = normalize_data_path(example_path, dataset_root)
-            metadata = {
-                "image_path": example_path,
-                "data_backend_id": example_backend_id,
-                "prompt": caption,
-                "dataset_relative_path": normalized_identifier,
-            }
             metadata_builder = getattr(model, "text_embed_cache_metadata_for_sample", None)
-            if callable(metadata_builder):
-                metadata.update(
-                    metadata_builder(
-                        example=example,
-                        latent=latent_batch[idx],
-                        prompt=caption,
-                        data_backend_id=example_backend_id,
-                        dataset_relative_path=normalized_identifier,
+
+            def _build_prompt_metadata(prompt):
+                prompt_metadata = {
+                    "image_path": example_path,
+                    "data_backend_id": example_backend_id,
+                    "prompt": prompt,
+                    "dataset_relative_path": normalized_identifier,
+                }
+                if callable(metadata_builder):
+                    prompt_metadata.update(
+                        metadata_builder(
+                            example=example,
+                            latent=latent_batch[idx],
+                            prompt=prompt,
+                            data_backend_id=example_backend_id,
+                            dataset_relative_path=normalized_identifier,
+                        )
                     )
-                )
+                return prompt_metadata
+
+            metadata = _build_prompt_metadata(caption)
             # Only include conditioning pixels for text embedding when using a single
             # conditioning image. With multiple backends in combined mode, skip image
             # context in embeddings and rely solely on latent references.
             # (In random mode with multiple backends, only one image is selected, so
             # we can still use it for text embedding context.)
             has_multiple_combined_refs = len(conditioning_backends) > 1 and is_combined_mode
+            pixel_value = None
             if not has_multiple_combined_refs:
                 pixel_value = _conditioning_pixel_value_for_example(idx)
                 if pixel_value is not None:
@@ -1119,15 +1125,20 @@ def collate_fn(batch):
                 key_value = key_builder(prompt=caption, default_key=key_value, metadata=metadata)
             prompt_requests.append({"prompt": caption, "key": key_value, "metadata": metadata})
             if load_unconditional_embeddings:
+                unconditional_metadata = _build_prompt_metadata("")
+                if pixel_value is not None:
+                    unconditional_metadata["conditioning_pixel_values"] = pixel_value
                 unconditional_default_key = default_key if key_type is not TextEmbedCacheKey.CAPTION else ""
                 unconditional_key = unconditional_default_key
                 if callable(key_builder):
                     unconditional_key = key_builder(
                         prompt="",
                         default_key=unconditional_default_key,
-                        metadata=metadata,
+                        metadata=unconditional_metadata,
                     )
-                unconditional_prompt_requests.append({"prompt": "", "key": unconditional_key, "metadata": metadata})
+                unconditional_prompt_requests.append(
+                    {"prompt": "", "key": unconditional_key, "metadata": unconditional_metadata}
+                )
 
     if text_embed_cache is not None and not text_embed_cache.disabled:
         all_text_encoder_outputs = compute_prompt_embeddings(prompt_requests, text_embed_cache, StateTracker.get_model())
