@@ -54,6 +54,7 @@ class Flux(ImageModelFoundation):
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTO_LORA_FORMAT_DETECTION = True
+    COMFYUI_LORA_PRESERVE_COMPONENT_PREFIXES = {"transformer"}
     # Flux Dev uses dynamic shifting (use_dynamic_shifting: true in scheduler config).
     # Schnell has use_dynamic_shifting: false, so the flag here just prevents static override.
     USES_DYNAMIC_SHIFT = True
