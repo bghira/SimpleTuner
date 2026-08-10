@@ -1053,7 +1053,14 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     args.logging_dir = os.path.join(args.output_dir, args.logging_dir)
     args.accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=args.logging_dir)
     # Create the custom configuration
-    process_group_timeout = int(os.environ.get("SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS", "5400"))
+    process_group_timeout_raw = os.environ.get("SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS", "5400")
+    try:
+        process_group_timeout = int(process_group_timeout_raw)
+    except ValueError as exc:
+        raise ValueError(
+            "SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS must be a positive integer; "
+            f"received {process_group_timeout_raw!r}."
+        ) from exc
     if process_group_timeout < 1:
         raise ValueError("SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS must be a positive integer.")
     args.process_group_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=process_group_timeout))

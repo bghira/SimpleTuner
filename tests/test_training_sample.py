@@ -14,6 +14,19 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 class TestTrainingSample(unittest.TestCase):
 
     def setUp(self):
+        self._state_tracker_original_args = StateTracker.get_args()
+        self._state_tracker_original_attrs = {
+            name: StateTracker.__dict__[name]
+            for name in (
+                "get_args",
+                "get_data_backend",
+                "get_data_backend_config",
+                "get_resolution_by_aspect",
+                "set_resolution_by_aspect",
+                "_save_to_disk",
+            )
+        }
+
         # Create a simple image for testing
         self.image = Image.new("RGB", (1024, 768), "white")
         self.data_backend_id = "test_backend"
@@ -49,6 +62,11 @@ class TestTrainingSample(unittest.TestCase):
         # Make sure to isolate your test config from others
         self.original_get_data_backend_config = StateTracker.get_data_backend_config
         StateTracker.get_data_backend_config = lambda x: self.default_config
+
+    def tearDown(self):
+        for name, value in self._state_tracker_original_attrs.items():
+            setattr(StateTracker, name, value)
+        StateTracker.set_args(self._state_tracker_original_args)
 
     def test_image_initialization(self):
         """Test that the image is correctly initialized and converted."""
@@ -180,6 +198,7 @@ class TestTrainingSample(unittest.TestCase):
             target_dir = os.path.join(tmpdir, "target")
             inside_path = os.path.join(source_dir, "nested", "clip.mp4")
             outside_path = os.path.join(tmpdir, "outside", "clip.mp4")
+            relative_path = os.path.join("relative", "clip.mp4")
 
             translated_inside = DatasetDuplicator._translate_conditioning_path(
                 inside_path,
@@ -193,10 +212,33 @@ class TestTrainingSample(unittest.TestCase):
                 target_dir,
                 "i2v_first_frame",
             )
+            translated_relative = DatasetDuplicator._translate_conditioning_path(
+                relative_path,
+                source_dir,
+                target_dir,
+                "i2v_first_frame",
+            )
 
         self.assertEqual(translated_inside, os.path.join(target_dir, "nested", "clip.png"))
         self.assertEqual(translated_outside, os.path.join(target_dir, "clip.png"))
+        self.assertEqual(translated_relative, os.path.join(target_dir, "clip.png"))
         self.assertEqual(os.path.commonpath([target_dir, translated_outside]), target_dir)
+
+    def test_conditioning_path_translation_handles_commonpath_root_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = os.path.join(tmpdir, "source")
+            target_dir = os.path.join(tmpdir, "target")
+            external_path = os.path.join(tmpdir, "outside", "clip.mp4")
+
+            with patch("simpletuner.helpers.metadata.utils.duplicator.os.path.commonpath", side_effect=ValueError):
+                translated = DatasetDuplicator._translate_conditioning_path(
+                    external_path,
+                    source_dir,
+                    target_dir,
+                    "i2v_first_frame",
+                )
+
+        self.assertEqual(translated, os.path.join(target_dir, "clip.png"))
 
     def test_image_downsample(self):
         """Test that downsampling is correctly applied before cropping."""

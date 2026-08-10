@@ -192,6 +192,33 @@ class _DummyArtifactModel(_DummyModel):
         self.save_lora_weights = lambda *args, **kwargs: ModelFoundation.save_lora_weights(self, *args, **kwargs)
 
 
+class _DummyLoadPipeline:
+    @staticmethod
+    def lora_state_dict(_input_dir):
+        return {"transformer.bad_adapter.lora_A.weight": torch.ones(1, 1)}
+
+
+class _DummyLoadModel:
+    PIPELINE_CLASSES = {PipelineTypes.TEXT2IMG: _DummyLoadPipeline}
+    MODEL_TYPE = SimpleNamespace(value="transformer")
+    CONTROLNET_LORA_STATE_DICT_PREFIX = "controlnet"
+    AUTO_LORA_FORMAT_DETECTION = False
+    _collect_wrapped_component_classes = ModelFoundation._collect_wrapped_component_classes
+    _convert_lora_state_dict_from_comfyui = ModelFoundation._convert_lora_state_dict_from_comfyui
+
+    def __init__(self):
+        self.model = torch.nn.Linear(1, 1)
+        self.controlnet = None
+        self.text_encoders = []
+        self.config = SimpleNamespace(controlnet=False, lora_format="diffusers", train_text_encoder=False)
+
+    def unwrap_model(self, model):
+        return model
+
+    def _apply_alpha_scaling(self, *_args, **_kwargs):
+        return None
+
+
 _ema_stub = SimpleNamespace(
     store=lambda *args, **kwargs: None, copy_to=lambda *args, **kwargs: None, restore=lambda *args, **kwargs: None
 )
@@ -541,6 +568,19 @@ class SaveHookMetadataTests(unittest.TestCase):
         self.assertEqual(len(written), len(lora_state))
         for key in written:
             self.assertTrue(key.endswith((".lora_A.weight", ".lora_B.weight")), key)
+
+    def test_load_lora_rejects_when_every_denoiser_tensor_is_unexpected(self):
+        model = _DummyLoadModel()
+
+        with (
+            patch("diffusers.utils.convert_unet_state_dict_to_peft", side_effect=lambda state_dict: state_dict),
+            patch(
+                "peft.utils.set_peft_model_state_dict",
+                return_value=SimpleNamespace(unexpected_keys=["bad_adapter.lora_A.weight"]),
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, "rejected every denoiser tensor"):
+                ModelFoundation.load_lora_weights(model, [model.model], "unused")
 
     def test_save_hook_peft_output_loads_through_diffusers_with_model_prefix(self):
         from diffusers.loaders.peft import PeftAdapterMixin

@@ -169,7 +169,7 @@ def _move_module_without_swapping_quantized_params(module: nn.Module, device: to
 
 
 def prepare_musubi_model_for_ddp(module: nn.Module, device: torch.device) -> tuple[int, int]:
-    """Keep trainable state local while excluding streamed frozen state from DDP."""
+    """Move trainable params to the rank device and exclude frozen params plus buffers from DDP."""
     target_device = torch.device(device)
     moved_trainable = 0
     for param in module.parameters():

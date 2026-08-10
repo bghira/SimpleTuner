@@ -199,6 +199,10 @@ class CollateFunctionTests(unittest.TestCase):
             "config": {"instance_data_dir": "/train"},
         }
         model = _StubModel(requires_conditioning=False)
+        model.text_embed_cache_metadata_for_sample = lambda **kwargs: {
+            "prompt_signature": f"sig:{kwargs['prompt'] or 'empty'}"
+        }
+        model.text_embed_cache_key_value = lambda prompt, default_key, metadata: metadata["prompt_signature"]
         patchers, _ = self._patch_state_tracker(
             model=model,
             data_backend=backend_dict,
@@ -215,9 +219,13 @@ class CollateFunctionTests(unittest.TestCase):
         self.assertTrue(torch.equal(result["prompt_embeds"], positive["prompt_embeds"]))
         self.assertTrue(torch.equal(result["negative_prompt_embeds"], unconditional["prompt_embeds"]))
         self.assertEqual(embed_mock.call_count, 2)
+        conditional_requests = embed_mock.call_args_list[0].args[0]
         unconditional_requests = embed_mock.call_args_list[1].args[0]
+        self.assertEqual(conditional_requests[0]["metadata"]["prompt_signature"], "sig:caption")
+        self.assertEqual(unconditional_requests[0]["metadata"]["prompt_signature"], "sig:empty")
+        self.assertIsNot(conditional_requests[0]["metadata"], unconditional_requests[0]["metadata"])
         self.assertEqual(unconditional_requests[0]["prompt"], "")
-        self.assertEqual(unconditional_requests[0]["key"], "")
+        self.assertEqual(unconditional_requests[0]["key"], "sig:empty")
 
     def test_collate_fn_preserves_prompts_without_text_cache(self):
         backend_dict = {
@@ -274,13 +282,19 @@ class CollateFunctionTests(unittest.TestCase):
         self.assertEqual(result["prompt_embeds"].shape, torch.Size([2, 1, 1]))
 
     def test_empty_prompt_uses_active_model_dropout_cache_policy(self):
+        class FalseyModel:
+            def __bool__(self):
+                return False
+
+            def use_text_cache_dropout_sentinel(self):
+                return False
+
         dataset_cache = MagicMock()
         default_cache = MagicMock()
         default_cache._requires_path_based_keys = True
         default_cache.model = SimpleNamespace()
         default_cache.compute_prompt_embeddings_with_model.return_value = {"prompt_embeds": torch.ones(1, 1, 1)}
-        model = MagicMock()
-        model.use_text_cache_dropout_sentinel.return_value = False
+        model = FalseyModel()
         prompt_entry = {"prompt": "", "key": "dataset:sample.mp4", "metadata": {"context": "sample"}}
 
         with patch.object(StateTracker, "get_default_text_embed_cache", return_value=default_cache):

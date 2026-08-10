@@ -23,6 +23,13 @@ class TestQuantizationConfigParsing(unittest.TestCase):
     def setUp(self):
         self.original_args = StateTracker.get_args()
         self.original_sdnq_compile = os.environ.get("SDNQ_USE_TORCH_COMPILE")
+        from simpletuner.helpers.training import sdnq_compile
+
+        self.sdnq_compile = sdnq_compile
+        self.original_configured_mode = sdnq_compile._CONFIGURED_MODE
+        self.original_import_warning_emitted = sdnq_compile._IMPORT_WARNING_EMITTED
+        sdnq_compile._CONFIGURED_MODE = None
+        sdnq_compile._IMPORT_WARNING_EMITTED = False
 
     def tearDown(self):
         StateTracker.set_args(self.original_args)
@@ -30,6 +37,8 @@ class TestQuantizationConfigParsing(unittest.TestCase):
             os.environ.pop("SDNQ_USE_TORCH_COMPILE", None)
         else:
             os.environ["SDNQ_USE_TORCH_COMPILE"] = self.original_sdnq_compile
+        self.sdnq_compile._CONFIGURED_MODE = self.original_configured_mode
+        self.sdnq_compile._IMPORT_WARNING_EMITTED = self.original_import_warning_emitted
 
     def test_pipeline_quantize_via_rejects_manual_precision(self):
         args_list = _base_args() + ["--quantize_via=pipeline", "--base_model_precision=int8-sdnq"]
@@ -87,6 +96,14 @@ class TestQuantizationConfigParsing(unittest.TestCase):
         self.assertEqual(args.sdnq_modules_to_not_convert, ["proj_out", "norm_out"])
         self.assertEqual(args.sdnq_modules_dtype_dict, {"minimum_6bit": ["x_embedder"]})
         self.assertEqual(args.sdnq_modules_quant_config, {"attn": {"group_size": -1}})
+
+    def test_sdnq_fake_mode_detection_is_best_effort(self):
+        from simpletuner.helpers.training.sdnq_workarounds import _detect_fake_mode
+
+        guards = ModuleType("torch._guards")
+        guards.detect_fake_mode = lambda _tensor: (_ for _ in ()).throw(RuntimeError("fake-mode unavailable"))
+        with patch.dict(sys.modules, {"torch._guards": guards}):
+            self.assertIsNone(_detect_fake_mode(object()))
 
     def test_sdnq_compile_mode_sets_env_before_import(self):
         from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode

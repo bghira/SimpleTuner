@@ -113,7 +113,7 @@ class HubManager:
         if prediction_type in {"epsilon", "v_prediction"}:
             return (
                 f"\nTrained with {prediction_type} prediction type and "
-                f"rescaled_betas_zero_snr={self.config.rescale_betas_zero_snr}"
+                f"rescale_betas_zero_snr={self.config.rescale_betas_zero_snr}"
                 f"\nUsing '{self.config.training_scheduler_timestep_spacing}' timestep spacing."
             )
         if prediction_type == "flow_matching":
@@ -143,7 +143,7 @@ class HubManager:
             )
         return "\n" + "\n".join(lines)
 
-    def _commit_message(self, global_step: int = None, epoch: int = None):
+    def _commit_message(self, global_step: int | None = None, epoch: int | None = None):
         resolved_epoch = (epoch - 1) if epoch is not None else (StateTracker.get_epoch() - 1)
         resolved_step = global_step if global_step is not None else StateTracker.get_global_step()
         return (
@@ -307,7 +307,7 @@ class HubManager:
             self._hub_api.upload_folder(
                 repo_id=self._repo_id,
                 folder_path=override_path or folder_path,
-                path_in_repo=repo_subfolder,
+                path_in_repo=self._path_in_repo("", repo_subfolder),
                 commit_message=self._commit_message(global_step=global_step, epoch=epoch),
                 token=self.hub_token,
             )

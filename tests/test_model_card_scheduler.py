@@ -1,3 +1,4 @@
+import unittest
 from types import SimpleNamespace
 
 from simpletuner.helpers.publishing.metadata import _validation_scheduler_label
@@ -13,21 +14,26 @@ def _args(**overrides):
     return SimpleNamespace(**values)
 
 
-def test_special_model_scheduler_label_is_not_replaced_by_generic_flow_scheduler():
-    model = SimpleNamespace(
-        PREDICTION_TYPE=SimpleNamespace(value="flow_matching"),
-        VALIDATION_SCHEDULER_NAME="MiniMaxH3Scheduler",
-    )
+class ModelCardSchedulerTests(unittest.TestCase):
+    def test_special_model_scheduler_label_is_not_replaced_by_generic_flow_scheduler(self):
+        model = SimpleNamespace(
+            PREDICTION_TYPE=SimpleNamespace(value="flow_matching"),
+            VALIDATION_SCHEDULER_NAME="MiniMaxH3Scheduler",
+        )
 
-    assert _validation_scheduler_label(model, _args()) == "MiniMaxH3Scheduler"
+        self.assertEqual("MiniMaxH3Scheduler", _validation_scheduler_label(model, _args()))
+
+    def test_anyflow_scheduler_label_describes_native_scheduler_wrapper(self):
+        model = SimpleNamespace(
+            PREDICTION_TYPE=SimpleNamespace(value="flow_matching"),
+            VALIDATION_SCHEDULER_NAME="MiniMaxH3Scheduler",
+        )
+
+        self.assertEqual(
+            "AnyFlowValidationScheduler (MiniMaxH3Scheduler)",
+            _validation_scheduler_label(model, _args(distillation_method="anyflow")),
+        )
 
 
-def test_anyflow_scheduler_label_describes_native_scheduler_wrapper():
-    model = SimpleNamespace(
-        PREDICTION_TYPE=SimpleNamespace(value="flow_matching"),
-        VALIDATION_SCHEDULER_NAME="MiniMaxH3Scheduler",
-    )
-
-    assert _validation_scheduler_label(model, _args(distillation_method="anyflow")) == (
-        "AnyFlowValidationScheduler (MiniMaxH3Scheduler)"
-    )
+if __name__ == "__main__":
+    unittest.main()

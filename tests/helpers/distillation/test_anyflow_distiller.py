@@ -239,7 +239,7 @@ class AnyFlowDistillerTests(unittest.TestCase):
         self.assertEqual(model.component.flowmap_gate_value, 0.4)
         self.assertEqual(model.component.flowmap_deltatime_type, "t-r")
 
-    def test_factory_reports_guidance_conditioning_for_direct_and_nested_anyflow(self):
+    def test_factory_reports_guidance_conditioning_for_method_config_shapes(self):
         direct = DistillerFactory.training_batch_requirements(
             "anyflow",
             {"distillation_config": {"anyflow": {"fuse_guidance_scale": 3.0}}},
@@ -255,8 +255,13 @@ class AnyFlowDistillerTests(unittest.TestCase):
                 }
             },
         )
+        unwrapped = DistillerFactory.training_batch_requirements(
+            "anyflow",
+            {"distillation_config": {"fuse_guidance_scale": 3.0}},
+        )
 
         self.assertEqual(direct, {"unconditional_text_embeddings"})
+        self.assertEqual(unwrapped, direct)
         self.assertEqual(nested, direct)
 
     def test_removed_legacy_target_modes_are_rejected(self):

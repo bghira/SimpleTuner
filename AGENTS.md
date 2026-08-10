@@ -41,9 +41,11 @@ Never publish local machine identity in public text. This includes commit messag
 Forbidden public text includes:
 - Local absolute home-directory paths
 - Local account names or workstation usernames
+- Co-author trailers (e.g., `Co-authored-by:`) that include personal names/emails
 - Temp/cache paths that include local identity
 - Raw terminal output containing local identity
 - Pod/workspace paths unless they are intentionally public infrastructure paths
+- Co-author, reviewer, or attribution trailers that expose local identity
 
 Use repo-relative paths and generic commands instead:
 - Good: `.venv/bin/python -m unittest -v -f tests.test_model_card`

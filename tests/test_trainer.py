@@ -825,7 +825,7 @@ class TestTrainer(unittest.TestCase):
         trainer._run_intermediary_validation = MagicMock(return_value=True)
 
         with patch("simpletuner.helpers.training.trainer.logger.info") as log_info:
-            result = trainer._run_startup_validation()
+            result = trainer.run_startup_validation()
 
         self.assertTrue(result)
         log_info.assert_called_once_with("Running startup validation at restored global step %d.", 500)
@@ -837,10 +837,23 @@ class TestTrainer(unittest.TestCase):
         trainer.state = {"global_step": 500}
         trainer._run_intermediary_validation = MagicMock()
 
-        result = trainer._run_startup_validation()
+        result = trainer.run_startup_validation()
 
         self.assertFalse(result)
         trainer._run_intermediary_validation.assert_not_called()
+
+    def test_run_startup_validation_uses_lazy_global_step_fallback(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(validation_on_startup=True)
+        trainer.validation = MagicMock()
+        trainer.state = {"global_step": None}
+        trainer._run_intermediary_validation = MagicMock(return_value=True)
+
+        with patch("simpletuner.helpers.training.trainer.StateTracker.get_global_step", return_value=None):
+            result = trainer.run_startup_validation()
+
+        self.assertTrue(result)
+        trainer._run_intermediary_validation.assert_called_once_with(0, manual_validation_requested=True)
 
     @patch("simpletuner.helpers.training.trainer.load_config")
     @patch("simpletuner.helpers.training.trainer.safety_check")
@@ -1550,6 +1563,25 @@ class TestTrainer(unittest.TestCase):
 
         trainer.ema_model.to.assert_not_called()
 
+    def test_init_distillation_adapter_modules_delegates_to_factory(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            distillation_method="anyflow",
+            distillation_config={"anyflow": {"gate_value": 0.25}},
+        )
+        trainer.model = Mock()
+
+        with patch(
+            "simpletuner.helpers.distillation.factory.DistillerFactory.prepare_model_for_adapter"
+        ) as prepare_model_for_adapter:
+            trainer.init_distillation_adapter_modules()
+
+        prepare_model_for_adapter.assert_called_once_with(
+            method="anyflow",
+            model=trainer.model,
+            config=vars(trainer.config),
+        )
+
     def test_init_benchmark_base_model_uses_eval_mode_and_restores_training(self):
         trainer = object.__new__(Trainer)
         trainer.config = SimpleNamespace(disable_benchmark=False, validation_multigpu="batch-parallel")
@@ -1594,6 +1626,26 @@ class TestTrainer(unittest.TestCase):
         trained_component.train.assert_called_once_with()
         trainer.accelerator.autocast.assert_called_once_with()
         trainer.validation.save_benchmark.assert_not_called()
+
+    def test_init_benchmark_base_model_preserves_eval_mode(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(disable_benchmark=False, validation_multigpu="batch-parallel")
+        trainer.accelerator = MagicMock()
+        trainer.accelerator.is_main_process = True
+        trainer.validation = MagicMock()
+        trainer.validation.benchmark_exists.return_value = False
+        trainer._emit_event = MagicMock()
+        trainer.job_id = None
+        trained_component = MagicMock()
+        trained_component.training = False
+        trainer.model = MagicMock()
+        trainer.model.get_trained_component.return_value = trained_component
+
+        trainer.init_benchmark_base_model()
+
+        trained_component.eval.assert_called_once_with()
+        trained_component.train.assert_not_called()
+        trainer.validation.run_validations.assert_called_once_with(validation_type="base_model", step=0)
 
     @patch("simpletuner.helpers.training.trainer.Validation")
     def test_init_validations_enabled_for_fsdp_full_shard(self, mock_validation):

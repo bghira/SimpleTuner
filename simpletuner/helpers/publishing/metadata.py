@@ -718,8 +718,9 @@ def save_model_card(
         else:
             gallery_intro = "You can find some example images in the following gallery:"
     sage_usage = getattr(args.sageattention_usage, "value", args.sageattention_usage)
+    license_metadata = _license_metadata(model)
     yaml_content = f"""---
-{_license_metadata(model)}
+{license_metadata}
 base_model: "{base_model}"
 tags:
   - {_model_card_family_tag(model_family)}

@@ -296,7 +296,7 @@ class ContextParallelBatchSynchronizer:
         return sync_batch_for_context_parallel(batch, self.accelerator, self._cp_info)
 
     @contextmanager
-    def synchronized_rng(self, base_seed: int, step: int):
+    def synchronized_rng(self, base_seed: Optional[int], step: int):
         """Use one RNG stream for every model-parallel rank in a data replica."""
         self._ensure_initialized()
         if not self._cp_info[0]:
@@ -316,7 +316,8 @@ class ContextParallelBatchSynchronizer:
                 random.seed(replica_seed)
                 torch.default_generator.manual_seed(replica_seed)
                 for device_index in cuda_devices:
-                    torch.cuda.default_generators[device_index].manual_seed(replica_seed)
+                    with torch.cuda.device(device_index):
+                        torch.cuda.manual_seed(replica_seed)
                 yield
         finally:
             random.setstate(python_rng_state)

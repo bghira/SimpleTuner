@@ -1042,8 +1042,8 @@ def _sdnq_model(
     if weights_dtype is None:
         raise ValueError(f"Invalid SDNQ precision level: {model_precision}")
 
+    configure_sdnq_compile_mode()
     args = StateTracker.get_args()
-    configure_sdnq_compile_mode(getattr(args, "sdnq_compile_mode", "auto"))
 
     try:
         # Silence sdnq startup logs
