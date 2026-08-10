@@ -65,6 +65,9 @@ class _FakeTrainer:
     def init_freeze_models(self, *_, **__):
         return None
 
+    def init_distillation_adapter_modules(self, *_, **__):
+        return None
+
     def init_trainable_peft_adapter(self, *_, **__):
         return None
 
