@@ -115,6 +115,24 @@ for _model, _license in licenses.items():
         licenses[_model] = "other"
 
 
+def _validation_scheduler_label(model, args) -> str:
+    scheduler_name = getattr(model, "VALIDATION_SCHEDULER_NAME", None)
+    if scheduler_name is None:
+        scheduler_name = (
+            "FlowMatchEulerDiscreteScheduler"
+            if model.PREDICTION_TYPE.value == "flow_matching"
+            else args.validation_noise_scheduler
+        )
+
+    distillation_method = getattr(args, "distillation_method", None)
+    distillation_method = getattr(distillation_method, "value", distillation_method)
+    inner_distillation_method = getattr(args, "inner_distillation_method", None)
+    inner_distillation_method = getattr(inner_distillation_method, "value", inner_distillation_method)
+    if distillation_method == "anyflow" or (distillation_method == "h3_drift" and inner_distillation_method == "anyflow"):
+        return f"AnyFlowValidationScheduler ({scheduler_name})"
+    return str(scheduler_name)
+
+
 def _model_imports(args):
     output = "import torch\n"
     output += "from diffusers import DiffusionPipeline"
@@ -199,7 +217,7 @@ def _gligen_injection_code(model):
 def _model_load(args, repo_id: str = None, model=None):
     model_component_name = _model_component_name(model)
     hf_user_name = StateTracker.get_hf_username()
-    if hf_user_name is not None:
+    if hf_user_name is not None and repo_id and "/" not in repo_id:
         repo_id = f"{hf_user_name}/{repo_id}" if hf_user_name else repo_id
     gligen_code = _gligen_injection_code(model)
     if "lora" in args.model_type:
@@ -453,7 +471,28 @@ def _model_card_family_tag(model_family: str):
 
 
 def _pipeline_tag(args):
-    return "text-to-image" if args.model_family not in ["ltxvideo", "ltxvideo2"] else "text-to-video"
+    video_model_families = {
+        "hunyuanvideo",
+        "longcat_video",
+        "ltxvideo",
+        "ltxvideo2",
+        "minimaxh3",
+        "sanavideo",
+        "wan",
+        "wan_s2v",
+    }
+    return "text-to-video" if args.model_family in video_model_families else "text-to-image"
+
+
+def _license_metadata(model: ModelFoundation) -> str:
+    metadata = f"license: {model.MODEL_LICENSE}"
+    license_name = getattr(model, "MODEL_LICENSE_NAME", None)
+    license_link = getattr(model, "MODEL_LICENSE_LINK", None)
+    if isinstance(license_name, str) and license_name:
+        metadata += f"\nlicense_name: {json.dumps(license_name)}"
+    if isinstance(license_link, str) and license_link:
+        metadata += f"\nlicense_link: {json.dumps(license_link)}"
+    return metadata
 
 
 def _format_sample_rate(value: Any) -> Optional[str]:
@@ -666,11 +705,7 @@ def save_model_card(
                 widget_str += "\n  parameters:"
                 widget_str += f"\n    negative_prompt: '{negative_prompt_text}'"
                 widget_str += "\n  output:"
-                if image_extension == "mp4" and args.push_to_hub and repo_id:
-                    repo_slug = repo_id.strip("/")
-                    widget_url = f"https://huggingface.co/{repo_slug}/resolve/main/assets/{asset_filename}"
-                else:
-                    widget_url = f"./assets/{asset_filename}"
+                widget_url = f"./assets/{asset_filename}"
                 widget_str += f"\n    url: {widget_url}"
                 idx += 1
                 sub_idx += 1
@@ -683,14 +718,15 @@ def save_model_card(
         else:
             gallery_intro = "You can find some example images in the following gallery:"
     sage_usage = getattr(args.sageattention_usage, "value", args.sageattention_usage)
+    license_metadata = _license_metadata(model)
     yaml_content = f"""---
-license: {model.MODEL_LICENSE}
+{license_metadata}
 base_model: "{base_model}"
 tags:
   - {_model_card_family_tag(model_family)}
   - {f'{_model_card_family_tag(model_family)}-diffusers' if 'deepfloyd' not in args.model_type else 'deepfloyd-if-diffusers'}
   - {_pipeline_tag(args)}
-  - {'image-to-image' if args.model_family not in ["ltxvideo", "ltxvideo2"] else 'image-to-video'}
+  - {'image-to-video' if _pipeline_tag(args) == 'text-to-video' else 'image-to-image'}
   - diffusers
   - simpletuner
   - {'not-for-all-audiences' if not args.model_card_safe_for_work else 'safe-for-work'}
@@ -719,7 +755,7 @@ This is a {model_type(args)} derived from [{base_model}](https://huggingface.co/
 - CFG: `{StateTracker.get_args().validation_guidance}`
 - CFG Rescale: `{StateTracker.get_args().validation_guidance_rescale}`
 - Steps: `{StateTracker.get_args().validation_num_inference_steps}`
-- Sampler: `{'FlowMatchEulerDiscreteScheduler' if model.PREDICTION_TYPE.value == "flow_matching" else StateTracker.get_args().validation_noise_scheduler}`
+- Sampler: `{_validation_scheduler_label(model, StateTracker.get_args())}`
 - Seed: `{StateTracker.get_args().validation_seed}`
 - Resolution{'s' if ',' in str(StateTracker.get_args().validation_resolution) else ''}: `{str(StateTracker.get_args().validation_resolution)}`
 {f"- Skip-layer guidance: {_skip_layers(args)}" if args.model_family in ['sd3', 'flux'] else ''}

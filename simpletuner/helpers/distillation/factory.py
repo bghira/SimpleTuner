@@ -54,14 +54,34 @@ class DistillerFactory:
         model,
         config: Dict[str, Any],
     ) -> None:
+        """Let a distiller create model modules before the PEFT adapter is initialized."""
         if isinstance(method, str):
             method = DistillationMethod.from_string(method)
         if method is None:
             return
+
         distiller_cls = DistillationRegistry.get(method.value)
         if distiller_cls is None:
             return
         distiller_cls.prepare_model_for_adapter(model, DistillerFactory._method_config(method, config))
+
+    @staticmethod
+    def training_batch_requirements(
+        method: Union[str, DistillationMethod, None],
+        config: Dict[str, Any],
+    ) -> set[str]:
+        """Return cached inputs required by a configured distillation method."""
+        if isinstance(method, str):
+            if method.strip().lower() in {"", "none", "false", "0"}:
+                return set()
+            method = DistillationMethod.from_string(method)
+        if method is None:
+            return set()
+
+        distiller_cls = DistillationRegistry.get(method.value)
+        if distiller_cls is None:
+            return set()
+        return set(distiller_cls.training_batch_requirements(DistillerFactory._method_config(method, config)))
 
     @staticmethod
     def create_distiller(

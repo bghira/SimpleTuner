@@ -681,8 +681,8 @@ Por ejemplo, con 4 GPUs, `train_batch_size=4` y `gradient_accumulation_steps=1`,
 Para ajustar automáticamente `repeats` cuando tu dataset es más pequeño que el tamaño efectivo de batch, usa el flag `--allow_dataset_oversubscription` (documentado en [OPTIONS.md](OPTIONS.md#--allow_dataset_oversubscription)).
 
 Cuando está habilitado, SimpleTuner:
-- Calcula los repeats mínimos necesarios para el entrenamiento
-- Aumenta automáticamente `repeats` para cumplir el requisito
+- Calcula los repeats mínimos necesarios para cada bucket de aspecto insuficiente
+- Rellena solo esos buckets para cumplir el tamaño efectivo de batch
 - Registra una advertencia mostrando el ajuste
 - **Respeta valores de repeats configurados manualmente** - si configuras `repeats` explícitamente en tu configuración de dataset, se omitirá el ajuste automático
 
@@ -1324,7 +1324,7 @@ Los datasets Webshart cargan shards tar estilo WebDataset mediante el paquete `w
 - `source` es obligatorio y apunta a una fuente que Webshart pueda descubrir.
 - `metadata` es opcional y puede apuntar a metadatos separados con captions. Para repositorios Hugging Face de metadata como `webshart/conceptual-captions-12m-webdataset-metadata`, pasa el repo id; Webshart sigue el layout de subcarpetas del source, como `data/`.
 - `metadata_backend` debe ser `webshart`; `caption_strategy` debe ser `webshart` o `instanceprompt`.
-- `webshart.cache_dir` almacena la metadata de SimpleTuner y las caches de Webshart.
+- `webshart.cache_dir` almacena la metadata de SimpleTuner y las caches de Webshart. `shard_cache_gb` y `parallel_downloads` se pasan a la cache de shards de Webshart; define `shard_cache_gb` como `0` para desactivar la cache de shards completos y mantener lecturas por rango indexadas.
 
 Requiere un build de Webshart con `TarDataLoader.list_shard_sample_aspect_buckets()`.
 
