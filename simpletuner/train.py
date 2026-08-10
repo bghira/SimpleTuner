@@ -5,6 +5,20 @@ import logging
 from os import environ
 from pathlib import Path
 
+
+def _configure_rank_local_inductor_cache() -> None:
+    cache_root = environ.get("SIMPLETUNER_RANK_LOCAL_INDUCTOR_CACHE_ROOT")
+    if not cache_root:
+        return
+
+    rank = environ.get("LOCAL_RANK", environ.get("RANK", "unknown"))
+    cache_dir = Path(cache_root) / f"rank-{rank}"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    environ["TORCHINDUCTOR_CACHE_DIR"] = str(cache_dir)
+
+
+_configure_rank_local_inductor_cache()
+
 # Import WebhookLogger setup FIRST before creating any loggers
 from simpletuner.helpers.logging import get_logger
 
@@ -37,6 +51,33 @@ if hasattr(log_format, "configure_third_party_loggers"):
     log_format.configure_third_party_loggers()
 
 logger = get_logger("SimpleTuner")
+_faulthandler_stream = None
+
+
+def _configure_faulthandler() -> None:
+    output_dir = environ.get("SIMPLETUNER_FAULTHANDLER_DIR")
+    if not output_dir:
+        return
+
+    import faulthandler
+    import signal
+
+    global _faulthandler_stream
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    rank = environ.get("RANK", environ.get("LOCAL_RANK", "unknown"))
+    _faulthandler_stream = (output_path / f"rank-{rank}.log").open("a", buffering=1)
+    faulthandler.enable(file=_faulthandler_stream, all_threads=True)
+    if hasattr(signal, "SIGUSR1"):
+        faulthandler.register(signal.SIGUSR1, file=_faulthandler_stream, all_threads=True)
+    timeout_seconds = int(environ.get("SIMPLETUNER_FAULTHANDLER_TIMEOUT_SECONDS", "0"))
+    if timeout_seconds > 0:
+        faulthandler.dump_traceback_later(
+            timeout_seconds,
+            repeat=True,
+            file=_faulthandler_stream,
+            exit=False,
+        )
 
 
 def _run_training(trainer: Trainer) -> None:
@@ -205,6 +246,7 @@ def _configure_last_ditch_webhook():
 
 
 if __name__ == "__main__":
+    _configure_faulthandler()
     trainer = None
 
     def _cleanup_trainer():
