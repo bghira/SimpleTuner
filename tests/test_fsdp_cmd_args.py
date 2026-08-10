@@ -154,16 +154,18 @@ class TestFSDPCmdArgs(unittest.TestCase):
         tmp_dir = tempfile.mkdtemp()
         self.addCleanup(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
 
-        args = parse_cmdline_args(
-            input_args=[
-                "--model_family=sdxl",
-                "--model_type=full",
-                f"--output_dir={tmp_dir}",
-                "--optimizer=adamw_bf16",
-                "--data_backend_config=dummy",
-            ],
-            exit_on_error=False,
-        )
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS", None)
+            args = parse_cmdline_args(
+                input_args=[
+                    "--model_family=sdxl",
+                    "--model_type=full",
+                    f"--output_dir={tmp_dir}",
+                    "--optimizer=adamw_bf16",
+                    "--data_backend_config=dummy",
+                ],
+                exit_on_error=False,
+            )
 
         self.assertEqual(args.process_group_kwargs.timeout.total_seconds(), 5400)
 
@@ -191,6 +193,23 @@ class TestFSDPCmdArgs(unittest.TestCase):
 
         with patch.dict(os.environ, {"SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS": "0"}, clear=False):
             with self.assertRaisesRegex(ValueError, "positive integer"):
+                parse_cmdline_args(
+                    input_args=[
+                        "--model_family=sdxl",
+                        "--model_type=full",
+                        f"--output_dir={tmp_dir}",
+                        "--optimizer=adamw_bf16",
+                        "--data_backend_config=dummy",
+                    ],
+                    exit_on_error=False,
+                )
+
+    def test_process_group_timeout_rejects_non_integer_override(self):
+        tmp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
+
+        with patch.dict(os.environ, {"SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS": "abc"}, clear=False):
+            with self.assertRaisesRegex(ValueError, "SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS.*'abc'"):
                 parse_cmdline_args(
                     input_args=[
                         "--model_family=sdxl",
