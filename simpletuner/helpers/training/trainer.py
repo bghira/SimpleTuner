@@ -4735,6 +4735,12 @@ class Trainer:
         delete_invalid_checkpoints = bool(delete_invalid_value)
         resume_latest = resume_value == "latest"
         deleted_checkpoint_names: set[str] = set()
+        optimizer_param_groups = []
+        if getattr(self, "optimizer", None) is not None:
+            raw_param_groups = getattr(self.optimizer, "param_groups", None)
+            if isinstance(raw_param_groups, list):
+                optimizer_param_groups = raw_param_groups
+        configured_param_group_lrs = [group.get("lr") for group in optimizer_param_groups]
 
         while True:
             checkpoint_dir = None
@@ -4807,13 +4813,17 @@ class Trainer:
             logger.info(f"Loading DCM checkpoint states..")
             self.distiller.on_load_checkpoint(checkpoint_dir)
         try:
-            if "constant" == self.config.lr_scheduler and not self.config.is_schedulefree:
-                for g in self.optimizer.param_groups:
-                    if "lr" in g:
-                        g["lr"] = self.config.learning_rate
+            if self.config.lr_scheduler in ("constant", "constant_with_warmup") and not self.config.is_schedulefree:
+                for group_index, group in enumerate(optimizer_param_groups):
+                    if "lr" not in group:
+                        continue
+                    if group_index < len(configured_param_group_lrs) and configured_param_group_lrs[group_index] is not None:
+                        group["lr"] = configured_param_group_lrs[group_index]
                 for k, v in lr_scheduler.state_dict().items():
                     if k in ("base_lrs", "_last_lr"):
-                        v[0] = self.config.learning_rate
+                        for group_index, configured_lr in enumerate(configured_param_group_lrs):
+                            if configured_lr is not None and group_index < len(v):
+                                v[group_index] = configured_lr
         except Exception as e:
             event = notification_event(
                 message="Could not update learning rate scheduler LR value.",
