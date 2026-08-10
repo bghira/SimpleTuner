@@ -22,6 +22,20 @@ class _Transformer(torch.nn.Module):
         self.condition_embedder = _ConditionEmbedder(with_delta=with_delta)
 
 
+class _H3Transformer(torch.nn.Module):
+    def __init__(self, *, with_delta: bool):
+        super().__init__()
+        if with_delta:
+            self.delta_adaln_embedder = torch.nn.Embedding(2, 2)
+
+
+class _ModulesToSave(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.original_module = torch.nn.Embedding(2, 2)
+        self.modules_to_save = torch.nn.ModuleDict({"default": torch.nn.Embedding(2, 2)})
+
+
 class AnyFlowLoraSidecarTests(unittest.TestCase):
     def _write_sidecar(self, directory: Path) -> Path:
         path = directory / "adapter.safetensors"
@@ -51,6 +65,40 @@ class AnyFlowLoraSidecarTests(unittest.TestCase):
 
             self.assertTrue(torch.equal(model.condition_embedder.delta_embedder.linear_1.weight, torch.full((2, 2), 3.0)))
             self.assertTrue(torch.equal(model.condition_embedder.delta_embedder.linear_1.bias, torch.full((2,), 4.0)))
+
+    def test_anyflow_sidecar_loads_h3_delta_adaln_table(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "adapter.safetensors"
+            save_file(
+                {"transformer.delta_adaln_embedder.weight": torch.full((2, 2), 5.0)},
+                str(path),
+            )
+            model = _H3Transformer(with_delta=True)
+
+            load_lora_weights({"transformer": model}, str(path))
+
+            self.assertTrue(torch.equal(model.delta_adaln_embedder.weight, torch.full((2, 2), 5.0)))
+
+    def test_anyflow_sidecar_loads_h3_peft_modules_to_save_table(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "adapter.safetensors"
+            save_file(
+                {"transformer.delta_adaln_embedder.weight": torch.full((2, 2), 5.0)},
+                str(path),
+            )
+            model = _H3Transformer(with_delta=False)
+            model.delta_adaln_embedder = _ModulesToSave()
+            original = model.delta_adaln_embedder.original_module.weight.detach().clone()
+
+            load_lora_weights({"transformer": model}, str(path))
+
+            self.assertTrue(
+                torch.equal(
+                    model.delta_adaln_embedder.modules_to_save["default"].weight,
+                    torch.full((2, 2), 5.0),
+                )
+            )
+            self.assertTrue(torch.equal(model.delta_adaln_embedder.original_module.weight, original))
 
 
 if __name__ == "__main__":
