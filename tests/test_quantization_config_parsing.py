@@ -23,6 +23,13 @@ class TestQuantizationConfigParsing(unittest.TestCase):
     def setUp(self):
         self.original_args = StateTracker.get_args()
         self.original_sdnq_compile = os.environ.get("SDNQ_USE_TORCH_COMPILE")
+        from simpletuner.helpers.training import sdnq_compile
+
+        self.sdnq_compile = sdnq_compile
+        self.original_configured_mode = sdnq_compile._CONFIGURED_MODE
+        self.original_import_warning_emitted = sdnq_compile._IMPORT_WARNING_EMITTED
+        sdnq_compile._CONFIGURED_MODE = None
+        sdnq_compile._IMPORT_WARNING_EMITTED = False
 
     def tearDown(self):
         StateTracker.set_args(self.original_args)
@@ -30,6 +37,8 @@ class TestQuantizationConfigParsing(unittest.TestCase):
             os.environ.pop("SDNQ_USE_TORCH_COMPILE", None)
         else:
             os.environ["SDNQ_USE_TORCH_COMPILE"] = self.original_sdnq_compile
+        self.sdnq_compile._CONFIGURED_MODE = self.original_configured_mode
+        self.sdnq_compile._IMPORT_WARNING_EMITTED = self.original_import_warning_emitted
 
     def test_pipeline_quantize_via_rejects_manual_precision(self):
         args_list = _base_args() + ["--quantize_via=pipeline", "--base_model_precision=int8-sdnq"]
