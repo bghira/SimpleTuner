@@ -373,6 +373,11 @@ class Trainer:
         except Exception:
             return False
 
+    @staticmethod
+    def _ramtorch_shared_parameters_enabled() -> bool:
+        value = os.environ.get("SIMPLETUNER_RAMTORCH_SHARED_PARAMETERS", "1").strip().lower()
+        return value not in {"0", "false", "no", "off"}
+
     def _distributed_collectives_ready(self) -> bool:
         try:
             num_processes = int(getattr(self.accelerator, "num_processes", 1) or 1)
@@ -4176,9 +4181,10 @@ class Trainer:
         attach_shared_ramtorch_parameters = None
         if self._ramtorch_distributed() and primary_model is not None:
             ramtorch_utils.ensure_available()
-            from simpletuner.helpers.ramtorch.utils import (
-                attach_shared_ramtorch_parameters as attach_shared_ramtorch_parameters,
-            )
+            if self._ramtorch_shared_parameters_enabled():
+                from simpletuner.helpers.ramtorch.utils import (
+                    attach_shared_ramtorch_parameters as attach_shared_ramtorch_parameters,
+                )
 
             moved = ramtorch_utils.move_embeddings_to_device(primary_model, self.accelerator.device)
             if moved:
@@ -4186,9 +4192,14 @@ class Trainer:
             ignored = ramtorch_utils.mark_ddp_ignore_params(primary_model)
             if ignored:
                 logger.info("Marking %s RamTorch parameters to ignore for DDP.", ignored)
-            attached = attach_shared_ramtorch_parameters(primary_model)
-            if attached:
-                logger.info("Attached %s shared RamTorch parameters across ranks.", attached)
+            if attach_shared_ramtorch_parameters is not None:
+                attached = attach_shared_ramtorch_parameters(primary_model)
+                if attached:
+                    logger.info("Attached %s shared RamTorch parameters across ranks.", attached)
+            else:
+                logger.warning(
+                    "RamTorch shared parameters are disabled; each rank will retain its own CPU copy of streamed weights."
+                )
         if primary_model is not None and "torchao" in str(getattr(self.config, "base_model_precision", "")):
             ignored = mark_torchao_ddp_ignore_params(primary_model)
             if ignored:

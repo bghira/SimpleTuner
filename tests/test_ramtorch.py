@@ -175,6 +175,40 @@ class RamTorchUtilsTests(unittest.TestCase):
         self.assertIn("weight", dict(model[0].named_buffers(recurse=False)))
         self.assertTrue(getattr(model[0].weight, "is_ramtorch", False))
 
+    def test_replace_scaled_fp8_linear_preserves_scale_and_output(self):
+        from simpletuner.helpers.models.ideogram.quantized_loading import FP8_WEIGHT_DTYPE, Fp8Linear
+        from simpletuner.helpers.ramtorch_extensions import CPUBouncingFp8Linear
+
+        source = Fp8Linear(3, 2, bias=True, compute_dtype=torch.float32)
+        source.weight.copy_(torch.tensor([[1.0, -2.0, 0.5], [2.0, 1.0, -1.0]]).to(FP8_WEIGHT_DTYPE))
+        source.weight_scale.copy_(torch.tensor([0.25, 2.0]))
+        source.bias.copy_(torch.tensor([0.5, -0.25]))
+        model = nn.Sequential(source)
+        x = torch.tensor([[1.0, 2.0, -1.0]], requires_grad=True)
+        expected = source(x)
+        expected.sum().backward()
+        expected_grad = x.grad.detach().clone()
+
+        x.grad = None
+        with patch.object(
+            ramtorch_utils,
+            "ensure_available",
+            return_value=self._build_stub_imports(lambda mod, device=None: None),
+        ):
+            replaced = ramtorch_utils.replace_linear_layers_with_ramtorch(model, device="cpu")
+
+        self.assertEqual(replaced, 1)
+        self.assertIsInstance(model[0], CPUBouncingFp8Linear)
+        self.assertEqual(model[0].weight.dtype, FP8_WEIGHT_DTYPE)
+        self.assertEqual(model[0].weight_scale.dtype, torch.float32)
+        self.assertTrue(getattr(model[0].weight, "is_ramtorch", False))
+        self.assertTrue(getattr(model[0].weight_scale, "is_ramtorch", False))
+
+        actual = model(x)
+        actual.sum().backward()
+        torch.testing.assert_close(actual, expected)
+        torch.testing.assert_close(x.grad, expected_grad)
+
     def test_move_embeddings_to_device_skips_ramtorch_buffers(self):
         class _BufferModel(nn.Module):
             def __init__(self):
