@@ -8,9 +8,10 @@ _PATCHED_FROM_FLOAT_ATTR = "_simpletuner_patched_from_float"
 def _detect_fake_mode(tensor) -> object | None:
     try:
         from torch._guards import detect_fake_mode
-    except ImportError:
+
+        return detect_fake_mode(tensor)
+    except Exception:
         return None
-    return detect_fake_mode(tensor)
 
 
 def apply_sdnq_workarounds() -> None:

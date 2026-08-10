@@ -97,6 +97,14 @@ class TestQuantizationConfigParsing(unittest.TestCase):
         self.assertEqual(args.sdnq_modules_dtype_dict, {"minimum_6bit": ["x_embedder"]})
         self.assertEqual(args.sdnq_modules_quant_config, {"attn": {"group_size": -1}})
 
+    def test_sdnq_fake_mode_detection_is_best_effort(self):
+        from simpletuner.helpers.training.sdnq_workarounds import _detect_fake_mode
+
+        guards = ModuleType("torch._guards")
+        guards.detect_fake_mode = lambda _tensor: (_ for _ in ()).throw(RuntimeError("fake-mode unavailable"))
+        with patch.dict(sys.modules, {"torch._guards": guards}):
+            self.assertIsNone(_detect_fake_mode(object()))
+
     def test_sdnq_compile_mode_sets_env_before_import(self):
         from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
 
