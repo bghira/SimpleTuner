@@ -10,6 +10,7 @@ from simpletuner.helpers.training.context_parallel import (
     configure_cp_only_accelerator,
     normalize_context_parallel_size,
     normalize_context_parallel_strategy,
+    scale_standalone_context_parallel_loss,
 )
 
 
@@ -66,6 +67,18 @@ class ContextParallelTopologyTests(unittest.TestCase):
             normalize_context_parallel_size("nope")
         with self.assertRaises(ValueError):
             normalize_context_parallel_strategy("ring")
+
+    def test_standalone_context_parallel_scales_loss_before_world_ddp_average(self):
+        loss = torch.tensor(2.0)
+        topology = ContextParallelTopology(cp_size=2, dp_replicate_size=4, dp_shard_size=1, strategy="alltoall")
+
+        self.assertEqual(scale_standalone_context_parallel_loss(loss, topology).item(), 4.0)
+
+    def test_fsdp_context_parallel_does_not_scale_loss(self):
+        loss = torch.tensor(2.0)
+        topology = ContextParallelTopology(cp_size=2, dp_replicate_size=1, dp_shard_size=4, strategy="alltoall")
+
+        self.assertIs(scale_standalone_context_parallel_loss(loss, topology), loss)
 
 
 class ContextParallelAcceleratorAttachTests(unittest.TestCase):
