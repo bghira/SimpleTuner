@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -37,6 +38,18 @@ class TestValidationStitching(unittest.TestCase):
 
         self.assertIsInstance(stitched, Image.Image)
         self.assertEqual(stitched.size, (10 + 12 + 5 + 8 + 5 + 6, 12))
+
+    @patch("simpletuner.helpers.training.validation.StateTracker.get_global_step", return_value=321)
+    def test_ema_comparison_labels_hot_weights_when_display_is_unlabelled(self, _global_step):
+        labels = self.validation._ema_comparison_labels(display_has_checkpoint_label=False)
+
+        self.assertEqual(labels, ["step 321", "EMA"])
+
+    @patch("simpletuner.helpers.training.validation.StateTracker.get_global_step", return_value=321)
+    def test_ema_comparison_keeps_existing_hot_weight_label(self, _global_step):
+        labels = self.validation._ema_comparison_labels(display_has_checkpoint_label=True)
+
+        self.assertEqual(labels, [None, "EMA"])
 
 
 if __name__ == "__main__":
