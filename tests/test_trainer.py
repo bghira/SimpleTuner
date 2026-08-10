@@ -1550,6 +1550,51 @@ class TestTrainer(unittest.TestCase):
 
         trainer.ema_model.to.assert_not_called()
 
+    def test_init_benchmark_base_model_uses_eval_mode_and_restores_training(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(disable_benchmark=False, validation_multigpu="batch-parallel")
+        trainer.accelerator = MagicMock()
+        trainer.accelerator.is_main_process = True
+        trainer.validation = MagicMock()
+        trainer.validation.benchmark_exists.return_value = False
+        trainer._emit_event = MagicMock()
+        trainer.job_id = None
+        trained_component = MagicMock()
+        trained_component.training = True
+        trainer.model = MagicMock()
+        trainer.model.get_trained_component.return_value = trained_component
+
+        trainer.init_benchmark_base_model()
+
+        trained_component.eval.assert_called_once_with()
+        trained_component.train.assert_called_once_with()
+        trainer.accelerator.autocast.assert_called_once_with()
+        trainer.validation.run_validations.assert_called_once_with(validation_type="base_model", step=0)
+        trainer.validation.save_benchmark.assert_called_once_with("base_model")
+
+    def test_init_benchmark_base_model_restores_training_after_validation_error(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(disable_benchmark=False, validation_multigpu="batch-parallel")
+        trainer.accelerator = MagicMock()
+        trainer.accelerator.is_main_process = True
+        trainer.validation = MagicMock()
+        trainer.validation.benchmark_exists.return_value = False
+        trainer.validation.run_validations.side_effect = RuntimeError("validation failed")
+        trainer._emit_event = MagicMock()
+        trainer.job_id = None
+        trained_component = MagicMock()
+        trained_component.training = True
+        trainer.model = MagicMock()
+        trainer.model.get_trained_component.return_value = trained_component
+
+        with self.assertRaisesRegex(RuntimeError, "validation failed"):
+            trainer.init_benchmark_base_model()
+
+        trained_component.eval.assert_called_once_with()
+        trained_component.train.assert_called_once_with()
+        trainer.accelerator.autocast.assert_called_once_with()
+        trainer.validation.save_benchmark.assert_not_called()
+
     @patch("simpletuner.helpers.training.trainer.Validation")
     def test_init_validations_enabled_for_fsdp_full_shard(self, mock_validation):
         """Test that FSDP with reshard_after_forward now supports validation"""
