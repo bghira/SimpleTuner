@@ -2262,6 +2262,13 @@ class Validation:
 
         return None
 
+    def _validation_step_label(self):
+        return f"step {StateTracker.get_global_step()}"
+
+    def _ema_comparison_labels(self, display_has_checkpoint_label: bool):
+        checkpoint_label = None if display_has_checkpoint_label else self._validation_step_label()
+        return [checkpoint_label, "EMA"]
+
     def stitch_benchmark_image(
         self,
         validation_image_result,
@@ -4887,14 +4894,18 @@ class Validation:
 
                     if has_input_stitching and not will_add_benchmark:
                         # Only input stitching, no benchmark
+                        step_label = self._validation_step_label()
                         display_validation_results = [
                             self.stitch_validation_input_image(
                                 validation_image_result=img,
                                 validation_input_image=validation_input_image_for_resolution,
-                                labels=(["input", f"step {StateTracker.get_global_step()}"]),
+                                labels=(["input", step_label]),
                             )
                             for img in display_validation_results
                         ]
+                        display_has_checkpoint_label = True
+                    else:
+                        display_has_checkpoint_label = False
 
                     # Apply controlnet stitching if needed (using original results)
                     if any([self.config.controlnet, self.config.control]):
@@ -4906,13 +4917,14 @@ class Validation:
 
                     # Apply benchmark stitching if we determined we have a benchmark
                     if will_add_benchmark:
+                        step_label = self._validation_step_label()
                         if has_input_stitching:
                             # Three-way stitch: input | output | benchmark
                             for idx, original_img in enumerate(original_validation_image_results):
                                 labels_to_use = [
                                     "input",
                                     "base model",
-                                    f"step {StateTracker.get_global_step()}",
+                                    step_label,
                                 ]
 
                                 display_validation_results[idx] = self.stitch_three_images(
@@ -4929,9 +4941,10 @@ class Validation:
                                     benchmark_image=benchmark_image,
                                     labels=[
                                         "base model",
-                                        f"step {StateTracker.get_global_step()}",
+                                        step_label,
                                     ],
                                 )
+                        display_has_checkpoint_label = True
 
                     # Handle EMA comparison stitching
                     if self.config.use_ema and self.config.ema_validation == "comparison" and ema_image_results is not None:
@@ -4945,7 +4958,7 @@ class Validation:
                             ema_stitched = self.stitch_benchmark_image(
                                 validation_image_result=ema_img,
                                 benchmark_image=display_img,
-                                labels=[None, "EMA"],
+                                labels=self._ema_comparison_labels(display_has_checkpoint_label),
                             )
                             ema_display_results.append(ema_stitched)
 
