@@ -936,3 +936,22 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             documentation="OPTIONS.md#--ema_decay",
         )
     )
+
+    registry._add_field(
+        ConfigField(
+            name="ema_warmup_steps",
+            arg_name="--ema_warmup_steps",
+            ui_label="EMA Copy-Through Steps",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="ema_config",
+            default_value=0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="use_ema", operator="equals", value=True, action="show")],
+            help_text="Copy current weights into EMA until this optimizer step, then use the configured decay.",
+            tooltip="Matches recipes that defer EMA smoothing while preserving current weights during warmup.",
+            importance=ImportanceLevel.ADVANCED,
+            order=6,
+            documentation="OPTIONS.md#--ema_warmup_steps",
+        )
+    )
