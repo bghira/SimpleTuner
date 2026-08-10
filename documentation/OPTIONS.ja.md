@@ -52,6 +52,30 @@ simpletuner configure config/foo/config.json
   - `diffusers` は標準の PEFT/Diffusers 形式です。
   - `comfyui` は ComfyUI 形式（`diffusion_model.*` と `lora_A/lora_B` + `.alpha`）に変換します。Flux、Flux2、Lumina2、Z-Image は `diffusers` のままでも ComfyUI 入力を自動検出しますが、保存時に ComfyUI 出力を強制したい場合は `comfyui` を指定してください。
 
+### `--minimax_h3_target_mode`
+
+- **内容**: MiniMax-H3 がターゲット音声行を含めるかを制御します。
+- **選択肢**: `auto`, `video`, `av`
+- **既定**: `auto`
+- **注記**:
+  - `auto` は video-only として扱われ、H3 の audio VAE cache、collate、ターゲット音声行を省略します。
+  - auto-split または明示的な audio backend で joint audio-video training を使う場合は、data backend entry に `minimax_h3_target_mode` または `h3_target_mode` を `av` として設定します。
+
+### `--minimax_h3_sparse_attention`
+
+- **内容**: MiniMax-H3 の target-video tokens に、training-aware な実験的 3D block sparse attention を有効にします。
+- **選択肢**: `disabled`, `moba3d`
+- **デフォルト**: `disabled`
+- **関連オプション**:
+  - `minimax_h3_sparse_block_shape`: 積が 128 になる `(T,H,W)` dimensions。comma または `x` 区切りです。デフォルト: `1,8,16`。
+  - `minimax_h3_sparse_video_kv_fraction`: target-video query block ごとに選択する target-video KV blocks の割合。デフォルト: `0.5`。
+  - `minimax_h3_sparse_share_heads`: attention heads 間で routes を共有します。デフォルト: `false`。
+  - `minimax_h3_sparse_start_layer`: これより前の transformer layers を dense attention のままにします。デフォルト: `0`。
+- **メモ**:
+  - text、audio、reference context、non-target queries は dense のままです。
+  - CUDA FlexAttention が必要です。Ulysses context parallelism は `context_parallel_strategy=alltoall` で対応します。ring context parallelism と TREAD は非対応です。
+  - MiniMax は H3 の正確な sparse routing 設定を公開していません。この近似は controlled fine-tuning experiments 向けであり、performance improvement を保証しません。
+
 ### `--fuse_qkv_projections`
 
 - **内容**: モデルのアテンションブロック内 QKV 投影を融合し、ハードウェア効率を高めます。
@@ -1204,6 +1228,11 @@ Flux Kontext の検証もこのコンディショニングベースの経路を�
 - **内容**: EMA 更新時の平滑化係数を制御します。
 - **理由**: 高い値（例: `0.999`）は反応が遅い代わりに非常に安定した重みを生成します。低い値（例: `0.99`）は新しい学習信号への追随が速くなります。
 
+### `--ema_warmup_steps`
+
+- **内容**: 指定した optimizer step までは現在の重みを EMA にコピーし、その後すぐに `--ema_decay` を使用します。
+- **理由**: 初期化時の EMA を固定したままにせず、EMA smoothing を遅らせる training recipe に合わせます。デフォルトの `0` は SimpleTuner の既存 EMA ramp を保持します。
+
 ### `--snr_gamma`
 
 - **内容**: min-SNR 重み付き損失係数を使用します。
@@ -1881,6 +1910,7 @@ usage: train.py [-h] --model_family
                 [--flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
                 [--flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]]
+                [--audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT]
                 [--flow_custom_timesteps FLOW_CUSTOM_TIMESTEPS]
                 [--flow_timesteps_mode {fixed-list,round-robin}]
                 [--flux_guidance_mode {constant,random-range}]
@@ -2001,7 +2031,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -2351,6 +2381,9 @@ options:
                         Shift the noise schedule for flow-matching models
   --flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]
                         Auto-adjust schedule shift based on image resolution
+  --audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT
+                        Shift the audio noise schedule for flow-matching
+                        models with audio latents
   --flow_custom_timesteps FLOW_CUSTOM_TIMESTEPS
                         Override flow-matching timestep sampling with a fixed
                         comma-separated list. The list is interpreted as
@@ -2733,7 +2766,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}
                         Method for model distillation
                         Distillation methods cannot be combined with
                         --train_text_encoder.

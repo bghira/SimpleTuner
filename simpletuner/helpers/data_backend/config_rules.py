@@ -12,9 +12,8 @@ from simpletuner.helpers.configuration.registry import (
     make_required_rule,
 )
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
-from simpletuner.helpers.distillation.registry import DistillationRegistry
+from simpletuner.helpers.distillation.composition import resolve_configured_distiller_requirement_profile
 from simpletuner.helpers.distillation.requirements import (
-    EMPTY_PROFILE,
     DistillerRequirementProfile,
     describe_requirement_groups,
     evaluate_requirement_profile,
@@ -207,10 +206,7 @@ def _distillation_method_from_config(config: dict) -> Optional[str]:
 
 
 def _resolve_distiller_profile(config: dict) -> DistillerRequirementProfile:
-    method = _distillation_method_from_config(config)
-    if not method:
-        return EMPTY_PROFILE
-    return DistillationRegistry.get_requirement_profile(method)
+    return resolve_configured_distiller_requirement_profile(config)
 
 
 def _relaxes_training_requirement(profile: DistillerRequirementProfile) -> bool:

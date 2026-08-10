@@ -96,7 +96,7 @@ Note: This sweep did not produce a usable ACE Step throughput row. The status-on
 
 ### AnyFlow Distillation on Anima
 
-Example: `anima-anyflow.peft-lora`. Resolution: 1024x1024. This row measures AnyFlow distillation using Anima, not the plain Anima LoRA example. Use `anima.peft-lora` for plain 1024x1024 Anima image training.
+Example: `anima-anyflow-stage1.peft-lora`. Resolution: 1024x1024. This row measures AnyFlow distillation using Anima, not the plain Anima LoRA example. Use `anima.peft-lora` for plain 1024x1024 Anima image training.
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |

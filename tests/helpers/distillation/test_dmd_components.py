@@ -8,6 +8,7 @@ import torch.nn as nn
 from simpletuner.helpers.distillation.dmd.distiller import DMDDistiller
 from simpletuner.helpers.distillation.self_forcing.pipeline import SelfForcingTrainingPipeline
 from simpletuner.helpers.distillation.self_forcing.scheduler import FlowMatchingSchedulerAdapter
+from simpletuner.helpers.distillation.self_forcing.wrappers import FoundationModelWrapper, ModuleWrapper
 from simpletuner.helpers.models.common import PredictionTypes
 
 
@@ -69,6 +70,98 @@ class PipelineTests(unittest.TestCase):
         self.assertIsNotNone(denoised_to)
         self.assertTrue(torch.all(torch.isfinite(output)))
         self.assertFalse(torch.allclose(output, noise))
+
+
+class _InverseFlowFoundation:
+    def model_predict(self, prepared_batch):
+        return {"model_prediction": -torch.ones_like(prepared_batch["noisy_latents"])}
+
+    def prediction_to_noiseward_flow(self, prediction):
+        return -prediction
+
+
+class _RawInvertedFoundation:
+    def raw_model_prediction_to_model_prediction(self, raw_prediction):
+        return -raw_prediction
+
+
+class _RawInverseFlowFoundation:
+    def raw_model_prediction_to_model_prediction(self, raw_prediction):
+        return raw_prediction
+
+    def prediction_to_noiseward_flow(self, prediction):
+        return -prediction
+
+
+class _ConstantRawModule(nn.Module):
+    def __init__(self, value: float):
+        super().__init__()
+        self.value = value
+
+    def forward(self, hidden_states, **_kwargs):
+        return (torch.full_like(hidden_states, self.value),)
+
+
+class FoundationWrapperTests(unittest.TestCase):
+    def test_inverse_flow_prediction_reconstructs_clean_latents(self):
+        scheduler = FlowMatchingSchedulerAdapter(_StubScheduler())
+        foundation = _InverseFlowFoundation()
+        wrapper = FoundationModelWrapper(foundation, scheduler)
+        clean = torch.zeros(1, 2, 1, 4, 4)
+        noise = torch.ones_like(clean)
+        timesteps = torch.full((1, 1), 500, dtype=torch.long)
+        noisy = scheduler.add_noise(
+            clean.reshape(1, 2, 4, 4),
+            noise.reshape(1, 2, 4, 4),
+            timesteps.reshape(-1),
+        ).reshape_as(clean)
+
+        _, pred_x0 = wrapper.forward(noisy, timesteps, {"prompt_embeds": torch.zeros(1, 1)})
+
+        torch.testing.assert_close(pred_x0, clean, atol=1e-5, rtol=1e-5)
+
+
+class ModuleWrapperTests(unittest.TestCase):
+    def _noisy_latents(self, scheduler):
+        clean = torch.zeros(1, 2, 1, 4, 4)
+        noise = torch.ones_like(clean)
+        timesteps = torch.full((1, 1), 500, dtype=torch.long)
+        noisy = scheduler.add_noise(
+            clean.reshape(1, 2, 4, 4),
+            noise.reshape(1, 2, 4, 4),
+            timesteps.reshape(-1),
+        ).reshape_as(clean)
+        return clean, noisy, timesteps
+
+    def test_raw_inverted_prediction_reconstructs_clean_latents(self):
+        scheduler = FlowMatchingSchedulerAdapter(_StubScheduler())
+        clean, noisy, timesteps = self._noisy_latents(scheduler)
+        wrapper = ModuleWrapper(
+            _ConstantRawModule(value=-1.0),
+            scheduler,
+            torch.float32,
+            foundation=_RawInvertedFoundation(),
+        )
+
+        flow_pred, pred_x0 = wrapper.forward(noisy, timesteps, {"prompt_embeds": torch.zeros(1, 1)})
+
+        torch.testing.assert_close(flow_pred, torch.ones_like(noisy))
+        torch.testing.assert_close(pred_x0, clean, atol=1e-5, rtol=1e-5)
+
+    def test_inverse_flow_prediction_reconstructs_clean_latents(self):
+        scheduler = FlowMatchingSchedulerAdapter(_StubScheduler())
+        clean, noisy, timesteps = self._noisy_latents(scheduler)
+        wrapper = ModuleWrapper(
+            _ConstantRawModule(value=-1.0),
+            scheduler,
+            torch.float32,
+            foundation=_RawInverseFlowFoundation(),
+        )
+
+        flow_pred, pred_x0 = wrapper.forward(noisy, timesteps, {"prompt_embeds": torch.zeros(1, 1)})
+
+        torch.testing.assert_close(flow_pred, -torch.ones_like(noisy))
+        torch.testing.assert_close(pred_x0, clean, atol=1e-5, rtol=1e-5)
 
 
 class _StubTransformer(nn.Module):

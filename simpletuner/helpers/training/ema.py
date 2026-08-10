@@ -57,6 +57,10 @@ class EMAModel:
         replicated = tensor.redistribute(tensor.device_mesh, placements=[Replicate()])
         return replicated.to_local()
 
+    @staticmethod
+    def _normalise_warmup_steps(value: Any) -> int:
+        return max(0, int(value))
+
     def __init__(
         self,
         args,
@@ -65,6 +69,7 @@ class EMAModel:
         decay: float = 0.9999,
         min_decay: float = 0.0,
         update_after_step: int = 0,
+        warmup_steps: int = 0,
         use_ema_warmup: bool = False,
         inv_gamma: Union[float, int] = 1.0,
         power: Union[float, int] = 2 / 3,
@@ -79,6 +84,8 @@ class EMAModel:
             decay (float): The decay factor for the exponential moving average.
             min_decay (float): The minimum decay factor for the exponential moving average.
             update_after_step (int): The number of steps to wait before starting to update the EMA weights.
+            warmup_steps (int): Copy current weights into EMA before this optimizer step, then switch directly to
+                the configured fixed decay. A value of 0 preserves the existing EMA decay schedule.
             use_ema_warmup (bool): Whether to use EMA warmup.
             inv_gamma (float):
                 Inverse multiplicative factor of EMA warmup. Default: 1. Only used if `use_ema_warmup` is True.
@@ -135,6 +142,7 @@ class EMAModel:
         self.decay = decay
         self.min_decay = min_decay
         self.update_after_step = update_after_step
+        self.warmup_steps = self._normalise_warmup_steps(warmup_steps)
         self.use_ema_warmup = use_ema_warmup
         self.inv_gamma = inv_gamma
         self.power = power
@@ -254,6 +262,7 @@ class EMAModel:
         self.min_decay = state_dict.get("min_decay", self.min_decay)
         self.optimization_step = state_dict.get("optimization_step", self.optimization_step)
         self.update_after_step = state_dict.get("update_after_step", self.update_after_step)
+        self.warmup_steps = self._normalise_warmup_steps(state_dict.get("warmup_steps", self.warmup_steps))
         self.use_ema_warmup = state_dict.get("use_ema_warmup", self.use_ema_warmup)
         self.inv_gamma = state_dict.get("inv_gamma", self.inv_gamma)
         self.power = state_dict.get("power", self.power)
@@ -318,6 +327,13 @@ class EMAModel:
             optimization_step = self.optimization_step
 
         step = max(0, optimization_step - self.update_after_step - 1)
+
+        # Some upstream training recipes copy current weights through an initial
+        # warmup, then switch directly to their configured fixed EMA decay.
+        if self.warmup_steps > 0:
+            if optimization_step < self.warmup_steps:
+                return 0.0
+            return self.decay
 
         if step <= 0:
             return 0.0
@@ -490,6 +506,7 @@ class EMAModel:
             "min_decay": self.min_decay,
             "optimization_step": self.optimization_step,
             "update_after_step": self.update_after_step,
+            "warmup_steps": self.warmup_steps,
             "use_ema_warmup": self.use_ema_warmup,
             "inv_gamma": self.inv_gamma,
             "power": self.power,

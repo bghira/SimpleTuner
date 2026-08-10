@@ -1,19 +1,18 @@
 # AnyFlow
 
-AnyFlow is an experimental distillation mode for flow-matching models. It trains the model to condition on a pair of flow times, the normal training timestep `t` and a lower reference timestep `r`, so the network learns a flow map across an interval instead of only a single rectified-flow velocity.
+SimpleTuner implements NVIDIA AnyFlow as two explicit training stages for flow-matching models. Both stages train a
+model that receives the current flow time `t` and an interval endpoint `r`.
 
-SimpleTuner implements this through the existing FlowMap model hooks:
+- `stage=forward` implements NVIDIA's forward MeanFlow objective.
+- `stage=onpolicy` implements Flow Map Backward Simulation and on-policy DMD while co-training the forward objective.
 
-- `--distillation_method=anyflow` enables the `AnyFlowDistiller`.
-- The distiller calls `enable_flowmap_time_conditioning()` on the trained component during startup.
-- Each prepared batch receives `flowmap_r_timesteps`.
-- The normal training target is replaced with an AnyFlow target before the model loss is computed.
+The removed `online_teacher` and `linear` target modes were SimpleTuner-specific objectives and are no longer
+accepted.
 
-AnyFlow is online in SimpleTuner. It does not require a precomputed ODE cache.
+For a Wan continuation example using NVIDIA's released checkpoints, see
+[AnyFlow Continuation Quickstart](/documentation/quickstart/ANYFLOW.md).
 
-For a Wan continuation example using NVIDIA's released AnyFlow checkpoints, see [AnyFlow Continuation Quickstart](/documentation/quickstart/ANYFLOW.md).
-
-## Quick Setup
+## Forward Stage
 
 ```json
 {
@@ -21,10 +20,13 @@ For a Wan continuation example using NVIDIA's released AnyFlow checkpoints, see 
   "distillation_method": "anyflow",
   "distillation_config": {
     "anyflow": {
-      "target_mode": "online_teacher",
-      "teacher_rollout_steps": 1,
-      "r_timestep_sampler": "uniform",
-      "min_interval_ratio": 0.02,
+      "stage": "forward",
+      "diffusion_ratio": 0.5,
+      "consistency_ratio": 0.25,
+      "central_difference_epsilon": 0.005,
+      "fuse_guidance_scale": 3.0,
+      "meanflow_weight_type": "beta08",
+      "meanflow_adaptive_weighting": true,
       "gate_value": 0.25,
       "deltatime_type": "r",
       "loss_weight": 1.0
@@ -33,58 +35,98 @@ For a Wan continuation example using NVIDIA's released AnyFlow checkpoints, see 
 }
 ```
 
-Text encoder training is blocked for all SimpleTuner distillation methods, including AnyFlow.
+For each global batch, the forward stage:
 
-## How It Works
+1. Samples two uniform flow times and sorts them into `t >= r`.
+2. Assigns 50% of samples to diffusion intervals (`r=t`), 25% to endpoint intervals (`r=0`), and the remainder to
+   arbitrary intervals.
+3. Applies the model scheduler's flow shift to both endpoints.
+4. Evaluates a central difference along the straight latent flow path.
+5. Fuses the trainable conditional prediction with a detached unconditional pass at `fuse_guidance_scale`, while
+   retaining the raw flow velocity as the MeanFlow target.
+6. Builds the MeanFlow tangent target and applies NVIDIA's normalized `beta08` timestep weighting.
+7. Balances each non-diffusion sample against the global diffusion-branch loss mean.
 
-For each flow-matching batch, SimpleTuner:
+Guidance fusion requires cached unconditional text embeddings. SimpleTuner loads the caption-dropout embedding for
+each sample and uses the same image context for models such as MiniMax-H3. Set `fuse_guidance_scale=1.0` only when the
+student should retain external CFG instead of learning AnyFlow's guidance-distilled conditional field.
 
-1. Uses the model's normal `prepare_batch()` path to sample `sigmas`, `timesteps`, `noisy_latents`, and the base flow target.
-2. Samples `r < t` from the current sigma interval.
-3. Writes `flowmap_r_timesteps` into the batch so model wrappers can pass it as `r_timestep`.
-4. Builds the training target.
-5. Lets the normal model loss compare the prediction to that target.
+## On-Policy Stage
 
-In `target_mode=online_teacher`, the target is an average velocity from the current noisy latent at `t` toward `r`. For LoRA and LyCORIS training, the distiller temporarily disables the adapter for the teacher rollout and re-enables it afterward.
+Start this stage from a forward-stage AnyFlow adapter by setting `init_lora` or resuming its checkpoint:
 
-In `target_mode=linear`, no teacher rollout is used. The target is the straight flow target `noise - latents`. This is useful for smoke tests and controlled ablations, but it is not the full AnyFlow teacher-map objective.
+```json
+{
+  "model_type": "lora",
+  "lora_type": "standard",
+  "init_lora": "path-or-repo-to-forward-anyflow-adapter",
+  "learning_rate": 0.000002,
+  "optimizer_beta1": 0.0,
+  "optimizer_beta2": 0.999,
+  "optimizer_weight_decay": 0.0,
+  "distillation_method": "anyflow",
+  "distillation_config": {
+    "anyflow": {
+      "stage": "onpolicy",
+      "cotrain_forward": true,
+      "rollout_step_counts": [2, 4, 8, 16, 50],
+      "dmd_weight": 1.0,
+      "dmd_batch_size": 1,
+      "real_score_guidance_scale": 0.0,
+      "discriminator_lr": 0.000002,
+      "discriminator_betas": [0.0, 0.999],
+      "discriminator_weight_decay": 0.0,
+      "discriminator_grad_clip": 1.0
+    }
+  }
+}
+```
 
-## Configuration
+The on-policy stage uses three score roles. Standard LoRA training shares one frozen base transformer between them:
 
-Common `distillation_config.anyflow` keys:
+- The loaded AnyFlow adapter is the generator.
+- The base model with adapters disabled is the frozen real score.
+- A separately optimized `anyflow_discriminator` adapter is the fake score.
 
-- `target_mode`: `online_teacher` or `linear`. Default: `online_teacher`.
-- `teacher_rollout_steps`: number of online teacher Euler steps between `t` and `r`. Default: `1`.
-- `r_timestep_sampler`: `uniform` or `zero`. Default: `uniform`.
-- `min_interval_ratio`: minimum normalized interval left between `t` and `r`. Default: `0.02`.
-- `gate_value`: blend weight for the FlowMap delta timestep embedding. Default: `0.25`.
-- `deltatime_type`: `r` or `t-r`, matching the model FlowMap embedding mode. Default: `r`.
-- `loss_weight`: multiplier applied to the already-computed training loss. Default: `1.0`.
-- `timestep_scale`: override for models that use a custom timestep scale. Leave unset for normal operation.
+Each generator update selects a rollout budget and one gradient grid index. It then performs at most three FlowMap
+jumps: start to the selected index, one fine grid step, and the following index to the endpoint. The generated latent is
+noised at a shifted uniform time before applying NVIDIA's normalized DMD gradient. Each discriminator
+update performs a no-grad student rollout, samples a logit-normal shifted time, and trains the fake score on the normal
+flow target. The discriminator adapter and optimizer are saved beside every SimpleTuner checkpoint as
+`anyflow_discriminator.safetensors` and `anyflow_discriminator_optim.pt`.
 
-`r_timestep_sampler=zero` always maps toward the clean endpoint. It is deterministic and useful for debugging. `uniform` samples inside the available interval.
+MiniMax-H3 already contains CFG distillation, so its on-policy runs should normally keep
+`real_score_guidance_scale=0`. Models that require an external real-score CFG pass must cache negative text embeddings
+and can set the scale explicitly.
 
-## Supported Models
+## Shared Configuration
 
-AnyFlow requires a flow-matching model whose trained component implements `enable_flowmap_time_conditioning()` and whose model wrapper forwards `flowmap_r_timesteps` to the model as `r_timestep`.
-
-The current implementation covers the registered FlowMap-capable transformer families and the legacy Diffusers UNet families that use `FlowMapUNet2DConditionModel`.
+- `stage`: `forward` or `onpolicy`. Default: `forward`.
+- `diffusion_ratio`: global batch fraction using `r=t`. Default: `0.5`.
+- `consistency_ratio`: global batch fraction using `r=0`. Default: `0.25`.
+- `central_difference_epsilon`: normalized shifted-time offset. Default: `0.005`, matching NVIDIA's `5/1000`.
+- `fuse_guidance_scale`: guidance scale distilled into the conditional student prediction. Default: `3.0`.
+- `meanflow_weight_type`: `beta08` or `uniform`. Default: `beta08`.
+- `meanflow_adaptive_weighting`: balance non-diffusion samples against the diffusion branch. Default: `true`.
+- `gate_value`: FlowMap delta-timestep embedding blend. Default: `0.25`.
+- `deltatime_type`: `r` or `t-r`. Default: `r`.
+- `loss_weight`: forward MeanFlow loss multiplier. Default: `1.0`.
 
 ## Limits
 
-- Requires a flow-matching prediction type.
-- Requires scalar per-sample timesteps. Tokenwise AnyFlow intervals are not wired yet.
-- Requires `r_timestep < timestep`; timestep zero is rejected for AnyFlow training.
-- The default online teacher mode is intended for LoRA/LyCORIS in the current trainer path. Full-rank online teacher training needs a separate student/teacher wiring pass.
-- Validation is wired through the AnyFlow distiller scheduler hook. The active pipeline scheduler is proxied, and the validation transformer/UNet receives the next interval endpoint as `r_timestep` or `timestep_r`. This covers registered FlowMap-capable validation pipelines; custom or external validation paths still need to pass the FlowMap timestep kwarg themselves.
+- AnyFlow requires a flow-matching model with model-specific FlowMap interval conditioning.
+- On-policy training currently requires standard PEFT LoRA. Sharing the base avoids allocating generator, real-score,
+  and discriminator copies of a large transformer on every DDP rank.
+- Joint MiniMax-H3 audio-video training is rejected. Video uses schedule shift 12 while audio uses shift 3; native
+  dual-schedule MeanFlow targets and rollouts need to be implemented before AV training is valid.
+- Text encoder training is disabled for all SimpleTuner distillation methods. Guidance fusion loads cached
+  unconditional embeddings and does not run the text encoder in the training loop.
+- Validation uses `AnyFlowValidationScheduler`, which supplies the next interval endpoint to registered FlowMap model
+  components.
 
 ## Logs
 
-AnyFlow adds:
-
-- `anyflow_loss`
-- `anyflow_timestep`
-- `anyflow_r_timestep`
-- `anyflow_interval`
-
-These are emitted alongside the normal training loss metrics.
+Forward training adds `anyflow_forward_loss`, `anyflow_fuse_guidance_scale`, timestep and interval values, and global
+branch fractions. On-policy
+training also adds `anyflow_dmd_loss`, `anyflow_dmd_gradient_norm`, `anyflow_dmd_sigma`, and
+`anyflow_rollout_steps` and `anyflow_rollout_grad_timestep`.

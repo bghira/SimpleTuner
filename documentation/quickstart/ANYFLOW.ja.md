@@ -42,10 +42,10 @@ FAR checkpoints (`nvidia/AnyFlow-FAR-*`) は causal AnyFlow transformer architec
   "distillation_method": "anyflow",
   "distillation_config": {
     "anyflow": {
-      "target_mode": "online_teacher",
-      "teacher_rollout_steps": 1,
-      "r_timestep_sampler": "uniform",
-      "min_interval_ratio": 0.02,
+      "stage": "forward",
+      "diffusion_ratio": 0.5,
+      "consistency_ratio": 0.25,
+      "central_difference_epsilon": 0.005,
       "gate_value": 0.25,
       "deltatime_type": "r",
       "loss_weight": 1.0
@@ -104,4 +104,4 @@ conversion は matching Wan base transformer と AnyFlow transformer を読み�
 
 - public NVIDIA AnyFlow model license は noncommercial です。derived adapters を公開する前に upstream model card を確認してください。
 - AnyFlow validation は registered FlowMap-capable pipelines 向けに distiller scheduler hook で接続されています。custom/external validation path では `r_timestep` または `timestep_r` を model component に渡す必要があります。
-- full-rank online-teacher continuation には separate student/teacher wiring が必要です。現時点の supported path は LoRA continuation です。
+- on-policy stage は現在、その discriminator が凍結 base transformer を共有できるように、標準 PEFT LoRA を必要とします。

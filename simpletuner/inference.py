@@ -138,7 +138,7 @@ class CheckpointInferenceRuntime:
         )
         StateTracker.set_default_text_embed_cache(self.embed_cache)
         self.embed_cache.discover_all_files()
-        if trainer.model.VALIDATION_USES_NEGATIVE_PROMPT:
+        if trainer.model.uses_validation_negative_prompt():
             negative_prompt = trainer.config.validation_negative_prompt or ""
             if trainer.config.model_family == "ideogram":
                 self.embed_cache.encode_validation_negative_prompt(negative_prompt)
@@ -268,7 +268,7 @@ class CheckpointInferenceRuntime:
 
             extension = ".mp4"
             output_path = output_dir / f"{stem}{extension}"
-            export_to_video(media, str(output_path), fps=int(getattr(self.trainer.config, "framerate", 16)))
+            export_to_video(media, str(output_path), fps=int(getattr(self.trainer.config, "framerate", None) or 16))
             media_type = "video"
         else:
             raise TypeError(f"Unsupported inference output type: {type(media).__name__}")

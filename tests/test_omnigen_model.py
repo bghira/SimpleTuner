@@ -38,6 +38,23 @@ class OmniGenModelTests(unittest.TestCase):
     def test_model_does_not_use_text_embedding_cache(self):
         self.assertFalse(self.model.uses_text_embeddings_cache())
 
+    def test_flow_matching_target_uses_omnigen_direction(self):
+        latents = torch.tensor([1.0, 2.0])
+        noise = torch.tensor([3.0, 5.0])
+
+        target = self.model.get_flow_matching_target({"latents": latents, "noise": noise})
+
+        self.assertTrue(torch.equal(target, latents - noise))
+
+    def test_loss_uses_flow_matching_target_helper(self):
+        latents = torch.tensor([1.0, 2.0])
+        noise = torch.tensor([3.0, 5.0])
+        prediction = latents - noise
+
+        loss = self.model.loss({"latents": latents, "noise": noise}, {"model_prediction": prediction})
+
+        self.assertEqual(loss.item(), 0.0)
+
     def test_prepare_crepa_self_flow_batch_creates_tokenwise_timesteps(self):
         self.model.config.crepa_self_flow_mask_ratio = 0.5
         batch = {

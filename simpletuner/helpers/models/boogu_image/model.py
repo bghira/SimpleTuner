@@ -173,10 +173,13 @@ class BooguImage(ImageModelFoundation):
         boogu_timesteps = 1.0 - noise_sigmas
         return noise_sigmas, boogu_timesteps
 
+    def flow_matching_target_direction(self) -> float:
+        return -1.0
+
     def get_prediction_target(self, prepared_batch: dict):
         if prepared_batch.get("target") is not None:
             return prepared_batch["target"]
-        return prepared_batch["latents"] - prepared_batch["noise"]
+        return self.get_flow_matching_target(prepared_batch, prefer_explicit_target=False)
 
     def text_embed_cache_key(self):
         if self._is_edit_flavour():

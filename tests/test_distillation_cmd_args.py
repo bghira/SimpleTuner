@@ -43,7 +43,7 @@ class DistillationCmdArgsTests(unittest.TestCase):
         self.assertTrue(args.strict_epoch_limit)
 
     def test_distillation_rejects_text_encoder_training(self):
-        for method in ("lcm", "dcm", "dmd", "perflow", "flow_dpo", "anyflow"):
+        for method in ("lcm", "dcm", "dmd", "perflow", "flow_dpo", "anyflow", "h3_drift"):
             with self.subTest(method=method):
                 args_list = _base_args() + [f"--distillation_method={method}", "--train_text_encoder"]
 
@@ -51,7 +51,7 @@ class DistillationCmdArgsTests(unittest.TestCase):
                     parse_cmdline_args(input_args=args_list, exit_on_error=True)
 
     def test_distillation_text_encoder_guard_covers_registry_methods(self):
-        for method in ("lcm", "dcm", "dmd", "perflow", "self_forcing", "flow_dpo", "anyflow"):
+        for method in ("lcm", "dcm", "dmd", "perflow", "self_forcing", "flow_dpo", "anyflow", "h3_drift"):
             with self.subTest(method=method):
                 with self.assertRaisesRegex(ValueError, "train_text_encoder"):
                     validate_distillation_text_encoder_training(method, True)
@@ -65,19 +65,19 @@ class DistillationCmdArgsTests(unittest.TestCase):
     def test_distillation_config_json_string_is_parsed(self):
         args_list = _base_args() + [
             "--distillation_method=anyflow",
-            '--distillation_config={"anyflow":{"target_mode":"linear","teacher_rollout_steps":2}}',
+            '--distillation_config={"anyflow":{"stage":"onpolicy","rollout_step_counts":[2,4,8]}}',
         ]
 
         args = parse_cmdline_args(input_args=args_list, exit_on_error=True)
 
         self.assertEqual(
             args.distillation_config,
-            {"anyflow": {"target_mode": "linear", "teacher_rollout_steps": 2}},
+            {"anyflow": {"stage": "onpolicy", "rollout_step_counts": [2, 4, 8]}},
         )
 
     def test_distillation_config_file_is_loaded(self):
         with NamedTemporaryFile("w", suffix=".json") as handle:
-            handle.write('{"anyflow":{"target_mode":"linear","r_timestep_sampler":"zero"}}')
+            handle.write('{"anyflow":{"stage":"forward","diffusion_ratio":0.5}}')
             handle.flush()
 
             args = parse_cmdline_args(
@@ -87,19 +87,34 @@ class DistillationCmdArgsTests(unittest.TestCase):
 
         self.assertEqual(
             args.distillation_config,
-            {"anyflow": {"target_mode": "linear", "r_timestep_sampler": "zero"}},
+            {"anyflow": {"stage": "forward", "diffusion_ratio": 0.5}},
         )
+
+    def test_find_unused_parameters_accepts_explicit_boolean_values(self):
+        enabled = parse_cmdline_args(
+            input_args=_base_args() + ["--find_unused_parameters"],
+            exit_on_error=True,
+        )
+        disabled = parse_cmdline_args(
+            input_args=_base_args() + ["--find_unused_parameters=false"],
+            exit_on_error=True,
+        )
+        default = parse_cmdline_args(input_args=_base_args(), exit_on_error=True)
+
+        self.assertTrue(enabled.find_unused_parameters)
+        self.assertFalse(disabled.find_unused_parameters)
+        self.assertIsNone(default.find_unused_parameters)
 
     def test_mapping_to_cli_args_preserves_distillation_config_mapping(self):
         cli_args = mapping_to_cli_args(
             {
                 "distillation_method": "anyflow",
-                "distillation_config": {"anyflow": {"target_mode": "linear"}},
+                "distillation_config": {"anyflow": {"stage": "forward"}},
             }
         )
 
         self.assertIn("--distillation_method=anyflow", cli_args)
-        self.assertIn('--distillation_config={"anyflow": {"target_mode": "linear"}}', cli_args)
+        self.assertIn('--distillation_config={"anyflow": {"stage": "forward"}}', cli_args)
 
 
 if __name__ == "__main__":

@@ -52,6 +52,30 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
   - `diffusers` es el esquema estándar de PEFT/Diffusers.
   - `comfyui` convierte hacia/desde claves estilo ComfyUI (`diffusion_model.*` con tensores `lora_A/lora_B` y `.alpha`). Flux, Flux2, Lumina2 y Z-Image detectarán automáticamente entradas ComfyUI incluso si esto se deja en `diffusers`, pero cámbialo a `comfyui` para forzar salida ComfyUI al guardar.
 
+### `--minimax_h3_target_mode`
+
+- **Qué**: Controla si MiniMax-H3 incluye filas de audio objetivo.
+- **Opciones**: `auto`, `video`, `av`
+- **Predeterminado**: `auto`
+- **Notas**:
+  - `auto` se resuelve como solo video, omitiendo caché VAE de audio, colación y filas de audio objetivo para H3.
+  - Define `minimax_h3_target_mode` o `h3_target_mode` como `av` en una entrada de data backend para activar entrenamiento conjunto audio-video en un backend de audio auto-split o explícito.
+
+### `--minimax_h3_sparse_attention`
+
+- **Qué**: Activa atención sparse 3D experimental, consciente del entrenamiento, para los tokens de video objetivo de MiniMax-H3.
+- **Opciones**: `disabled`, `moba3d`
+- **Predeterminado**: `disabled`
+- **Opciones relacionadas**:
+  - `minimax_h3_sparse_block_shape`: dimensiones `(T,H,W)` separadas por coma o `x` cuyo producto es 128. Predeterminado: `1,8,16`.
+  - `minimax_h3_sparse_video_kv_fraction`: fracción de bloques KV de video objetivo seleccionada por cada bloque query de video objetivo. Predeterminado: `0.5`.
+  - `minimax_h3_sparse_share_heads`: comparte rutas entre heads de atención. Predeterminado: `false`.
+  - `minimax_h3_sparse_start_layer`: mantiene las capas anteriores en atención densa. Predeterminado: `0`.
+- **Notas**:
+  - El texto, audio, contexto de referencia y queries que no son objetivo permanecen densos.
+  - Requiere CUDA FlexAttention. Ulysses context parallelism funciona con `context_parallel_strategy=alltoall`; ring context parallelism y TREAD son incompatibles.
+  - MiniMax no ha publicado la configuración exacta de sparse routing para H3. Esta aproximación es para experimentos controlados de fine-tuning y no garantiza mejor rendimiento.
+
 ### `--fuse_qkv_projections`
 
 - **Qué**: Fusiona las proyecciones QKV en los bloques de atención del modelo para un uso más eficiente del hardware.
@@ -1203,6 +1227,11 @@ Consulta la guía [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscripti
 - **Qué**: Controla el factor de suavizado usado al aplicar actualizaciones EMA.
 - **Por qué**: Valores más altos (p. ej., `0.999`) hacen que la EMA responda lentamente pero produce pesos muy estables. Valores más bajos (p. ej., `0.99`) se adaptan más rápido a nuevas señales de entrenamiento.
 
+### `--ema_warmup_steps`
+
+- **Qué**: Copia los pesos actuales en la EMA antes del paso de optimizador configurado y luego cambia directamente a `--ema_decay`.
+- **Por qué**: Coincide con recetas de entrenamiento que retrasan el suavizado EMA sin dejar la EMA congelada en la inicialización. El valor predeterminado `0` conserva la rampa EMA existente de SimpleTuner.
+
 ### `--snr_gamma`
 
 - **Qué**: Utiliza un factor de pérdida ponderado por min-SNR.
@@ -1880,6 +1909,7 @@ usage: train.py [-h] --model_family
                 [--flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
                 [--flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]]
+                [--audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT]
                 [--flow_custom_timesteps FLOW_CUSTOM_TIMESTEPS]
                 [--flow_timesteps_mode {fixed-list,round-robin}]
                 [--flux_guidance_mode {constant,random-range}]
@@ -2000,7 +2030,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -2351,6 +2381,9 @@ options:
                         Shift the noise schedule for flow-matching models
   --flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]
                         Auto-adjust schedule shift based on image resolution
+  --audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT
+                        Shift the audio noise schedule for flow-matching
+                        models with audio latents
   --flow_custom_timesteps FLOW_CUSTOM_TIMESTEPS
                         Override flow-matching timestep sampling with a fixed
                         comma-separated list. The list is interpreted as
@@ -2733,7 +2766,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}
                         Method for model distillation
                         Distillation methods cannot be combined with
                         --train_text_encoder.

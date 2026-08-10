@@ -29,6 +29,7 @@ from simpletuner.helpers.training.attention_backend import (
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.optimizer_param import is_optimizer_deprecated, is_optimizer_grad_fp32
 from simpletuner.helpers.training.quantisation import MANUAL_QUANTIZATION_PRESETS, PIPELINE_QUANTIZATION_PRESETS
+from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.simpletuner_sdk.server.services.field_registry.types import (
     ConfigField,
@@ -806,6 +807,8 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             else:
                 raise ValueError(f"{option_name} must be a JSON object or a path to a JSON object.")
 
+    configure_sdnq_compile_mode(getattr(args, "sdnq_compile_mode", "auto"))
+
     manual_quant_precisions = set(MANUAL_QUANTIZATION_PRESETS)
     pipeline_quant_precisions = set(PIPELINE_QUANTIZATION_PRESETS)
     manual_only_precisions = manual_quant_precisions - pipeline_quant_precisions
@@ -1050,7 +1053,17 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     args.logging_dir = os.path.join(args.output_dir, args.logging_dir)
     args.accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=args.logging_dir)
     # Create the custom configuration
-    args.process_group_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=5400))  # 1.5 hours
+    process_group_timeout_raw = os.environ.get("SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS", "5400")
+    try:
+        process_group_timeout = int(process_group_timeout_raw)
+    except ValueError as exc:
+        raise ValueError(
+            "SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS must be a positive integer; "
+            f"received {process_group_timeout_raw!r}."
+        ) from exc
+    if process_group_timeout < 1:
+        raise ValueError("SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS must be a positive integer.")
+    args.process_group_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=process_group_timeout))
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices

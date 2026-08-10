@@ -143,6 +143,7 @@ def safety_check(args, accelerator):
     gradient_checkpointing_interval_supported_models = [
         "flux",
         "ace_step",
+        "anima",
         "sana",
         "sd3",
         "chroma",
@@ -165,6 +166,7 @@ def safety_check(args, accelerator):
         "ltxvideo2",
         "lumina2",
         "pixart",
+        "minimaxh3",
         "qwen_image",
         "sanavideo",
         "stable_cascade",
@@ -175,6 +177,7 @@ def safety_check(args, accelerator):
     ]
     gradient_checkpointing_segment_stride_supported_models = [
         "ace_step",
+        "anima",
         "auraflow",
         "boogu_image",
         "chroma",
@@ -195,6 +198,7 @@ def safety_check(args, accelerator):
         "ltxvideo2",
         "lumina2",
         "mageflow",
+        "minimaxh3",
         "pixart",
         "qwen_image",
         "sana",
@@ -220,6 +224,7 @@ def safety_check(args, accelerator):
         "longcat_video",
         "ltxvideo2",
         "mageflow",
+        "minimaxh3",
         "sd3",
         "wan",
         "z_image",

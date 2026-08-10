@@ -1,11 +1,17 @@
 import base64
+import importlib.util
 import logging
 import os
 import shutil
 import subprocess
+from functools import lru_cache
 from io import BytesIO
 
+import numpy as np
+import torch
+import wandb
 from diffusers.utils.export_utils import export_to_video
+from PIL import Image
 
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training import validation_audio
@@ -156,7 +162,7 @@ def save_videos(
             export_to_video(
                 validation_image,
                 video_path,
-                fps=config.framerate,
+                fps=int(getattr(config, "framerate", None) or 16),
             )
             video_paths.append(video_path)
             if audio_list is not None:
@@ -167,6 +173,193 @@ def save_videos(
         validation_img_idx += 1
 
     return video_paths
+
+
+def _frame_to_rgb_array(frame):
+    if isinstance(frame, Image.Image):
+        return np.array(frame.convert("RGB"))
+    if torch.is_tensor(frame):
+        frame = frame.detach().cpu()
+        if frame.ndim == 3 and frame.shape[0] in (1, 3, 4):
+            frame = frame.permute(1, 2, 0)
+        frame = frame.numpy()
+    array = np.asarray(frame)
+    if array.ndim == 2:
+        array = array[..., np.newaxis]
+    if array.ndim != 3:
+        raise ValueError(f"Expected a video frame with 2 or 3 dimensions, got shape {array.shape}.")
+    if array.shape[-1] == 1:
+        array = np.repeat(array, 3, axis=-1)
+    elif array.shape[-1] == 4:
+        array = array[..., :3]
+    elif array.shape[-1] != 3:
+        raise ValueError(f"Expected RGB-like video frame data, got shape {array.shape}.")
+    return _normalise_array_to_uint8(array)
+
+
+def _normalise_array_to_uint8(array: np.ndarray) -> np.ndarray:
+    if np.issubdtype(array.dtype, np.integer):
+        return np.clip(array, 0, 255).astype(np.uint8)
+    array = array.astype(np.float32, copy=False)
+    if array.size and float(np.nanmin(array)) < 0.0:
+        array = (array + 1.0) / 2.0
+    if array.size and float(np.nanmax(array)) > 1.0:
+        array = array / 255.0
+    return np.clip(array * 255.0, 0, 255).astype(np.uint8)
+
+
+def _video_to_thwc_array(media):
+    if isinstance(media, Image.Image):
+        return None
+    if isinstance(media, list):
+        if not media:
+            return None
+        return np.stack([_frame_to_rgb_array(frame) for frame in media], axis=0)
+    if torch.is_tensor(media):
+        media = media.detach().cpu()
+        if media.ndim == 5:
+            if media.shape[-1] in (1, 3, 4):  # B, T, H, W, C
+                media = media[0]
+            elif media.shape[1] in (1, 3, 4):  # B, C, T, H, W
+                media = media[0].permute(1, 0, 2, 3)
+            elif media.shape[2] in (1, 3, 4):  # B, T, C, H, W
+                media = media[0]
+            else:
+                return None
+        media = media.numpy()
+    array = np.asarray(media)
+    if array.ndim == 5:
+        if array.shape[-1] in (1, 3, 4):  # B, T, H, W, C
+            array = array[0]
+        elif array.shape[1] in (1, 3, 4):  # B, C, T, H, W
+            array = np.moveaxis(array[0], 0, -1)
+        elif array.shape[2] in (1, 3, 4):  # B, T, C, H, W
+            array = np.moveaxis(array[0], 1, -1)
+        else:
+            return None
+    elif array.ndim == 4:
+        if array.shape[-1] in (1, 3, 4):  # T, H, W, C
+            pass
+        elif array.shape[1] in (1, 3, 4):  # T, C, H, W
+            array = np.moveaxis(array, 1, -1)
+        elif array.shape[0] in (1, 3, 4):  # C, T, H, W
+            array = np.moveaxis(array, 0, -1)
+        else:
+            return None
+    else:
+        return None
+    return np.stack([_frame_to_rgb_array(frame) for frame in array], axis=0)
+
+
+def _image_to_chw_batch(media):
+    if isinstance(media, list):
+        if not media:
+            return None
+        media = media[0]
+    try:
+        image = _frame_to_rgb_array(media)
+    except Exception:
+        return None
+    return np.moveaxis(image, -1, 0)[np.newaxis, ...]
+
+
+def _tensorboard_video(media):
+    video = _video_to_thwc_array(media)
+    if video is None:
+        return None
+    tensor = torch.from_numpy(video).permute(0, 3, 1, 2).unsqueeze(0).float() / 255.0
+    return tensor
+
+
+@lru_cache(maxsize=1)
+def _tensorboard_video_supported() -> bool:
+    """TensorBoard's video writer requires the legacy moviepy.editor module."""
+    try:
+        return importlib.util.find_spec("moviepy.editor") is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
+
+
+def _wandb_video(media):
+    video = _video_to_thwc_array(media)
+    if video is None:
+        return None
+    return np.moveaxis(video, -1, 1)
+
+
+def _first_frame_image(media):
+    video = _video_to_thwc_array(media)
+    if video is not None and len(video) > 0:
+        return Image.fromarray(video[0])
+    try:
+        return Image.fromarray(_frame_to_rgb_array(media))
+    except Exception:
+        return None
+
+
+def log_videos_to_trackers(accelerator, validation_images, validation_resolutions, config):
+    """
+    Log validation video media to trackers.
+
+    TensorBoard's image path expects NCHW and rejects 5D video tensors, so video
+    samples are sent through SummaryWriter.add_video as N,T,C,H,W.
+    """
+    fps = int(getattr(config, "framerate", None) or 16)
+    global_step = StateTracker.get_global_step()
+    for tracker in accelerator.trackers:
+        if tracker.name == "comet_ml":
+            experiment = accelerator.get_tracker("comet_ml").tracker
+            for shortname, media_list in validation_images.items():
+                for idx, media in enumerate(media_list):
+                    image = _first_frame_image(media)
+                    if image is None:
+                        continue
+                    res_label = str(validation_resolutions[idx]) if idx < len(validation_resolutions) else "unknown"
+                    experiment.log_image(image, name=f"{shortname} - {res_label} - frame 0")
+        elif tracker.name == "tensorboard":
+            tracker = accelerator.get_tracker("tensorboard")
+            image_logs = {}
+            video_supported = _tensorboard_video_supported()
+            for shortname, media_list in validation_images.items():
+                for idx, media in enumerate(media_list):
+                    res_label = validation_resolutions[idx] if idx < len(validation_resolutions) else "unknown"
+                    tag = f"{shortname} - {res_label}"
+                    if video_supported:
+                        video = _tensorboard_video(media)
+                        if video is not None:
+                            tracker.writer.add_video(tag, video, global_step=global_step, fps=fps)
+                            continue
+                    image = _image_to_chw_batch(media)
+                    if image is None and not video_supported:
+                        first_frame = _first_frame_image(media)
+                        if first_frame is not None:
+                            image = _image_to_chw_batch(first_frame)
+                    if image is not None:
+                        image_logs[tag] = image
+            if image_logs:
+                tracker.log_images(image_logs, step=global_step)
+        elif tracker.name == "wandb":
+            resolution_list = []
+            for res in validation_resolutions:
+                if isinstance(res, tuple):
+                    resolution_list.append(f"{res[0]}x{res[1]}")
+                else:
+                    resolution_list.append(str(res))
+
+            logs = {}
+            for shortname, media_list in validation_images.items():
+                for idx, media in enumerate(media_list):
+                    res_label = resolution_list[idx] if idx < len(resolution_list) else "unknown"
+                    caption = f"{shortname} - {res_label}"
+                    video = _wandb_video(media)
+                    if video is not None:
+                        logs[caption] = wandb.Video(video, fps=fps, format="mp4", caption=caption)
+                    else:
+                        image = _first_frame_image(media)
+                        if image is not None:
+                            logs[caption] = wandb.Image(image, caption=caption)
+            if logs:
+                tracker.log(logs, step=global_step)
 
 
 def log_videos_to_webhook(validation_images, validation_video_paths, validation_shortname, validation_prompt, eval_scores):

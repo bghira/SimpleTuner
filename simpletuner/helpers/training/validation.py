@@ -809,6 +809,39 @@ def _validation_text_cache_key(args, shortname: str, prompt: str) -> str:
     return f"{shortname}:{prompt_hash}"
 
 
+def _validation_negative_text_cache_key(args, shortname: str, negative_prompt: str) -> str:
+    prompt_hash = hashlib.md5(str(negative_prompt).encode("utf-8")).hexdigest()
+    return f"{_validation_text_cache_key(args, shortname, negative_prompt)}:__validation_negative__{prompt_hash}"
+
+
+def _validation_negative_prompt_record(
+    args,
+    model,
+    negative_prompt: str,
+    shortname: str,
+    validation_input_image=None,
+    positive_prompt: str | None = None,
+) -> dict[str, Any]:
+    if model.validation_negative_prompt_requires_prompt_context():
+        metadata = (
+            _validation_reference_prompt_metadata(validation_input_image) if validation_input_image is not None else {}
+        )
+        if not metadata:
+            raise ValueError("Validation negative prompt encoding requires image context for this model.")
+        if positive_prompt is not None:
+            metadata["positive_prompt"] = positive_prompt
+        return {
+            "prompt": negative_prompt,
+            "key": _validation_negative_text_cache_key(args, shortname, negative_prompt),
+            "metadata": metadata,
+        }
+    return {
+        "prompt": negative_prompt,
+        "key": f"__validation_negative__{negative_prompt}",
+        "metadata": {},
+    }
+
+
 def prepare_validation_prompt_list(args, embed_cache, model):
     model_uses_text_cache = True
     if hasattr(model, "uses_text_embeddings_cache"):
@@ -1003,18 +1036,31 @@ def prepare_validation_prompt_list(args, embed_cache, model):
     # Compute negative embed for validation prompts, if any are set, so that it's stored before we unload the text encoder.
     if validation_prompts and precompute_text_embeddings:
         negative_prompt = StateTracker.get_args().validation_negative_prompt
-        logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
-        model.log_model_devices()
-        if getattr(args, "model_family", None) == "ideogram":
-            embed_cache.encode_validation_negative_prompt(negative_prompt)
-        elif model.should_precompute_validation_negative_prompt():
-            embed_cache.compute_embeddings_for_prompts(
-                [negative_prompt],
-                is_validation=True,
-                load_from_cache=False,
-            )
-        else:
-            embed_cache.encode_validation_negative_prompt(negative_prompt)
+        if (
+            negative_prompt is not None
+            and str(negative_prompt).strip().lower() != "none"
+            and negative_prompt != ""
+            and model.uses_validation_negative_prompt()
+        ):
+            if getattr(args, "model_family", None) == "ideogram":
+                logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
+                model.log_model_devices()
+                embed_cache.encode_validation_negative_prompt(negative_prompt)
+            elif model.validation_negative_prompt_requires_prompt_context():
+                logger.info("Deferring validation negative prompt encoding; this model needs per-sample prompt context.")
+            elif model.should_precompute_validation_negative_prompt():
+                logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
+                model.log_model_devices()
+                embed_cache.compute_embeddings_for_prompts(
+                    [negative_prompt],
+                    is_validation=True,
+                    load_from_cache=False,
+                    is_negative_prompt=True,
+                )
+            else:
+                logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
+                model.log_model_devices()
+                embed_cache.encode_validation_negative_prompt(negative_prompt)
 
     logger.info("Completed validation prompt gathering.")
     return {
@@ -2216,6 +2262,13 @@ class Validation:
 
         return None
 
+    def _validation_step_label(self):
+        return f"step {StateTracker.get_global_step()}"
+
+    def _ema_comparison_labels(self, display_has_checkpoint_label: bool):
+        checkpoint_label = None if display_has_checkpoint_label else self._validation_step_label()
+        return [checkpoint_label, "EMA"]
+
     def stitch_benchmark_image(
         self,
         validation_image_result,
@@ -2335,9 +2388,9 @@ class Validation:
         """
         Determines whether the base model benchmark outputs already exist.
         """
-        base_model_benchmark = self._benchmark_path()
+        base_model_benchmark = self._benchmark_path(benchmark=benchmark)
 
-        return os.path.exists(base_model_benchmark)
+        return os.path.isdir(base_model_benchmark) and bool(os.listdir(base_model_benchmark))
 
     def _benchmark_path(self, benchmark: str = "base_model"):
         # does the benchmark directory exist?
@@ -2395,7 +2448,7 @@ class Validation:
                     export_to_video(
                         image,
                         os.path.join(base_model_benchmark, filename),
-                        fps=self.config.framerate,
+                        fps=int(getattr(self.config, "framerate", None) or 16),
                     )
 
     def _update_state(self):
@@ -2568,7 +2621,7 @@ class Validation:
                         logger.error("Not able to run validations, we did not obtain a valid pipeline.")
                         self.validation_images = None
                         return self
-                    self.setup_scheduler()
+                    self.setup_scheduler(validation_type=validation_type)
                     master_validation_images: dict = {}
                     master_validation_audios: dict = {}
                     self.validation_prompt_dict = {}
@@ -2775,12 +2828,25 @@ class Validation:
 
         return kwargs
 
-    def setup_scheduler(self):
-        if self.distiller is not None:
+    def setup_scheduler(self, validation_type: str | None = None):
+        special_scheduler_setup = self.model.requires_special_scheduler_setup()
+        distiller_supports_special_scheduler = bool(
+            self.distiller is not None and getattr(self.distiller, "supports_special_scheduler_validation", lambda: False)()
+        )
+        if special_scheduler_setup and not distiller_supports_special_scheduler:
+            # allow the model's pipeline to initialise the scheduler itself
+            return
+
+        if self.distiller is not None and validation_type != "base_model":
             distillation_scheduler = self.distiller.get_scheduler()
             if distillation_scheduler is not None:
                 self.model.pipeline.scheduler = distillation_scheduler
                 return distillation_scheduler
+
+        if special_scheduler_setup:
+            # Base-model benchmarks and unsupported distillers keep the scheduler
+            # installed by the model's pipeline.
+            return
 
         # TwinFlow uses its own UCGM-style scheduler (supports flow and diff2flow bridge)
         if getattr(self.config, "twinflow_enabled", False) and (
@@ -2797,10 +2863,6 @@ class Validation:
                 self.model.pipeline.scheduler = scheduler
             logger.info(f"TwinFlow validation using UCGM scheduler for {twinflow_steps}-step generation")
             return scheduler
-
-        if self.model.requires_special_scheduler_setup():
-            # allow the model's pipeline to initialise the scheduler itself
-            return
 
         scheduler_args = {
             "prediction_type": self.config.prediction_type,
@@ -3651,6 +3713,11 @@ class Validation:
     def _prepare_pipeline_kwarg_for_inference(self, key: str, value: Any) -> Any:
         if not hasattr(value, "to") or not hasattr(value, "dtype"):
             return value
+        if getattr(self.config, "model_family", None) == "minimaxh3" and key in (
+            "text_token_tags",
+            "negative_text_token_tags",
+        ):
+            return value.to(device=self.inference_device)
         if value.dtype not in (torch.bfloat16, torch.float16, torch.float32):
             return value
         if getattr(self.config, "model_family", None) == "ideogram" and key in (
@@ -3692,6 +3759,18 @@ class Validation:
                 removed_kwargs,
             )
         return pipeline_kwargs
+
+    @staticmethod
+    def _extract_pipeline_media(pipeline_result, *, audio_only: bool = False):
+        for field_name in ("frames", "images", "audios", "audio", "videos"):
+            if not hasattr(pipeline_result, field_name):
+                continue
+            current_results = getattr(pipeline_result, field_name)
+            if current_results is not None:
+                return current_results
+            if field_name == "frames" and audio_only:
+                return []
+        return None
 
     def _prepare_validation_work_items(self, content: list[Any] | None) -> list[_ValidationWorkItem]:
         if content is None:
@@ -4534,27 +4613,31 @@ class Validation:
                     pipeline_kwargs["width"] = MultiaspectImage._round_to_nearest_multiple(
                         int(validation_resolution_width), 16
                     )
-                if self.model.VALIDATION_USES_NEGATIVE_PROMPT:
+                if self.model.uses_validation_negative_prompt():
                     if StateTracker.get_args().validation_negative_prompt is None:
                         StateTracker.get_args().validation_negative_prompt = ""
-                    # For models with filename-based cache keys, use sentinel key for negative prompts
                     negative_prompt_text = StateTracker.get_args().validation_negative_prompt
                     if self.embed_cache._requires_path_based_keys:
-                        negative_prompt_record = {
-                            "prompt": negative_prompt_text,
-                            "key": f"__validation_negative__{negative_prompt_text}",
-                            "metadata": {},
-                        }
+                        negative_prompt_record = _validation_negative_prompt_record(
+                            StateTracker.get_args(),
+                            self.model,
+                            negative_prompt_text,
+                            cache_key,
+                            validation_input_image_for_resolution,
+                            positive_prompt=prompt,
+                        )
                         _negative_embed = self.embed_cache.compute_embeddings_for_prompts(
                             [negative_prompt_record],
                             is_validation=True,
                             load_from_cache=True,
+                            is_negative_prompt=True,
                         )
                     else:
                         _negative_embed = self.embed_cache.compute_embeddings_for_prompts(
                             [negative_prompt_text],
                             is_validation=True,
                             load_from_cache=True,
+                            is_negative_prompt=True,
                         )
                     if _negative_embed is not None:
                         negative_embed_data = {}
@@ -4738,20 +4821,13 @@ class Validation:
                                 )
                             else:
                                 pipeline_result = self.model.pipeline(**filtered_pipeline_kwargs)
-                        current_results = None
-                        if hasattr(pipeline_result, "frames"):
-                            current_results = pipeline_result.frames
-                            if current_results is None and getattr(self.config, "validation_audio_only", False):
-                                current_results = []
-                        elif hasattr(pipeline_result, "images"):
-                            current_results = pipeline_result.images
-                        elif hasattr(pipeline_result, "audios"):
-                            current_results = pipeline_result.audios
-                        elif hasattr(pipeline_result, "audio"):
-                            current_results = pipeline_result.audio
+                        current_results = self._extract_pipeline_media(
+                            pipeline_result,
+                            audio_only=bool(getattr(self.config, "validation_audio_only", False)),
+                        )
                         if current_results is None:
                             logger.error(
-                                "Pipeline result does not have 'frames', 'images', 'audios', or 'audio': %s",
+                                "Pipeline result does not have 'frames', 'images', 'videos', 'audios', or 'audio': %s",
                                 pipeline_result,
                             )
                             current_results = []
@@ -4818,14 +4894,18 @@ class Validation:
 
                     if has_input_stitching and not will_add_benchmark:
                         # Only input stitching, no benchmark
+                        step_label = self._validation_step_label()
                         display_validation_results = [
                             self.stitch_validation_input_image(
                                 validation_image_result=img,
                                 validation_input_image=validation_input_image_for_resolution,
-                                labels=(["input", f"step {StateTracker.get_global_step()}"]),
+                                labels=(["input", step_label]),
                             )
                             for img in display_validation_results
                         ]
+                        display_has_checkpoint_label = True
+                    else:
+                        display_has_checkpoint_label = False
 
                     # Apply controlnet stitching if needed (using original results)
                     if any([self.config.controlnet, self.config.control]):
@@ -4837,13 +4917,14 @@ class Validation:
 
                     # Apply benchmark stitching if we determined we have a benchmark
                     if will_add_benchmark:
+                        step_label = self._validation_step_label()
                         if has_input_stitching:
                             # Three-way stitch: input | output | benchmark
                             for idx, original_img in enumerate(original_validation_image_results):
                                 labels_to_use = [
                                     "input",
                                     "base model",
-                                    f"step {StateTracker.get_global_step()}",
+                                    step_label,
                                 ]
 
                                 display_validation_results[idx] = self.stitch_three_images(
@@ -4860,9 +4941,10 @@ class Validation:
                                     benchmark_image=benchmark_image,
                                     labels=[
                                         "base model",
-                                        f"step {StateTracker.get_global_step()}",
+                                        step_label,
                                     ],
                                 )
+                        display_has_checkpoint_label = True
 
                     # Handle EMA comparison stitching
                     if self.config.use_ema and self.config.ema_validation == "comparison" and ema_image_results is not None:
@@ -4876,7 +4958,7 @@ class Validation:
                             ema_stitched = self.stitch_benchmark_image(
                                 validation_image_result=ema_img,
                                 benchmark_image=display_img,
-                                labels=[None, "EMA"],
+                                labels=self._ema_comparison_labels(display_has_checkpoint_label),
                             )
                             ema_display_results.append(ema_stitched)
 
@@ -4964,7 +5046,7 @@ class Validation:
             export_to_video(
                 validation_image,
                 video_path,
-                fps=self.config.framerate,
+                fps=int(getattr(self.config, "framerate", None) or 16),
             )
             video_paths.append(video_path)
             validation_img_idx += 1
@@ -4989,7 +5071,7 @@ class Validation:
                         sample_rate=sample_rate,
                     )
         elif isinstance(self.model, VideoModelFoundation):
-            validation_images_utils.log_images_to_trackers(
+            validation_video.log_videos_to_trackers(
                 self.accelerator,
                 validation_images,
                 self.validation_resolutions,

@@ -5,13 +5,20 @@ from diffusers.models._modeling_parallel import ContextParallelInput, ContextPar
 
 def _get_submodule(module, path: str):
     if path == "":
-        return module
-    current = module
+        return [module]
+    current = [module]
     for atom in path.split("."):
-        if atom.isdigit():
-            current = current[int(atom)]
-        else:
-            current = getattr(current, atom)
+        next_modules = []
+        for item in current:
+            if atom == "*":
+                next_modules.extend(list(item))
+            elif atom.isdigit():
+                next_modules.append(item[int(atom)])
+            else:
+                next_modules.append(getattr(item, atom))
+        current = next_modules
+        if not current:
+            raise AssertionError(f"Context parallel plan path {path!r} resolved to no modules at {atom!r}.")
     return current
 
 
@@ -137,6 +144,38 @@ class ContextParallelPlanTests(unittest.TestCase):
         self.assertEqual(rope_plan[0].split_dim, 2)
         self.assertEqual(rope_plan[0].expected_dims, 4)
         self.assertTrue(rope_plan[0].split_output)
+
+    def test_minimax_h3_cp_plan_targets_exist(self):
+        from simpletuner.helpers.models.minimaxh3.transformer import MiniMaxH3Transformer3DModel
+
+        model = MiniMaxH3Transformer3DModel(
+            num_attention_heads=2,
+            attention_head_dim=8,
+            hidden_size=16,
+            num_layers=2,
+            num_refiner_layers=1,
+            ffn_dim=32,
+            in_channels=2,
+            audio_in_channels=3,
+            patch_size=(1, 2, 2),
+            text_dim=6,
+            freq_dim=8,
+            time_embed_hidden_dim=16,
+            time_embed_dim=16,
+            rope_freq_dim=1,
+        )
+
+        _assert_valid_cp_plan(self, model)
+        rope_plan = model._cp_plan["rope"]
+        self.assertEqual(tuple(rope_plan.keys()), (0, 1))
+        self.assertEqual(rope_plan[0].split_dim, 0)
+        self.assertEqual(rope_plan[0].expected_dims, 2)
+        self.assertTrue(rope_plan[0].split_output)
+        self.assertEqual(model._cp_plan["transformer_blocks.0"]["hidden_states"].split_dim, 1)
+        self.assertEqual(model._cp_plan["transformer_blocks.*"]["adaln_indices"].split_dim, 0)
+        self.assertEqual(model._cp_plan["norm_out"]["timestep_indices"].split_dim, 0)
+        self.assertNotIn("proj_out", model._cp_plan)
+        self.assertNotIn("audio_proj_out", model._cp_plan)
 
     def test_zlab_i1_cp_plan_targets_exist(self):
         from simpletuner.helpers.models.zlab_i1.transformer import ZlabI1Transformer2DModel

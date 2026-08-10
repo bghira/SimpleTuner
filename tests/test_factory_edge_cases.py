@@ -390,6 +390,48 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertEqual(conditioning_cfg.get("type"), "canny")
         self.assertEqual(conditioning_cfg.get("conditioning_type"), "controlnet")
 
+    def test_i2v_video_without_conditioning_uses_first_frame_generator(self):
+        """I2V video datasets should generate local first-frame conditioning when no conditioning is provided."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        config = [
+            {
+                "id": "h3_video",
+                "type": "huggingface",
+                "dataset_type": "video",
+                "cache_dir_vae": "/tmp/vae/h3_video",
+                "video": {
+                    "is_i2v": True,
+                    "num_frames": 39,
+                },
+            }
+        ]
+
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+
+        processed = factory.process_conditioning_datasets(deepcopy(config))
+
+        self.assertEqual(len(processed), 2)
+        primary = next(entry for entry in processed if entry["id"] == "h3_video")
+        generated = next(entry for entry in processed if entry["id"] == "h3_video_conditioning_i2v_first_frame")
+        self.assertNotIn("conditioning", primary)
+        self.assertEqual(primary.get("conditioning_data"), ["h3_video_conditioning_i2v_first_frame"])
+        self.assertEqual(generated.get("dataset_type"), "conditioning")
+        self.assertTrue(generated.get("auto_generated"))
+        self.assertEqual(generated.get("type"), "local")
+        self.assertEqual(generated.get("metadata_backend"), "discovery")
+        self.assertEqual(generated.get("source_dataset_id"), "h3_video")
+        self.assertNotIn("video", generated)
+        conditioning_cfg = generated.get("conditioning_config") or {}
+        self.assertEqual(conditioning_cfg.get("type"), "i2v_first_frame")
+        self.assertEqual(conditioning_cfg.get("conditioning_type"), "reference_strict")
+
     def test_huggingface_metadata_paths_without_instance_data_dir(self):
         """Huggingface metadata backend should allow missing instance_data_dir."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
@@ -1230,6 +1272,41 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     gradient_accumulation_steps=factory.args.gradient_accumulation_steps,
                     apply_padding=expected,
                 )
+
+    def test_main_process_reloads_refreshed_bucket_cache_before_split(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        self.accelerator.num_processes = 8
+        self.accelerator.is_main_process = True
+        self.accelerator.is_local_main_process = True
+        self.args.skip_file_discovery = ""
+        self.args.eval_dataset_id = None
+        self.args.max_train_steps = 100
+        self.args.allow_dataset_oversubscription = False
+        metadata_backend = MagicMock()
+        metadata_backend.aspect_ratio_bucket_indices = {"1.0": [f"sample-{index}" for index in range(8)]}
+        init_backend = {
+            "id": "train",
+            "config": {},
+            "dataset_type": "image",
+            "metadata_backend": metadata_backend,
+        }
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        factory._handle_config_versioning = MagicMock()
+
+        factory._handle_bucket_operations(
+            backend={"id": "train"},
+            init_backend=init_backend,
+            conditioning_type=None,
+        )
+
+        metadata_backend.reload_cache.assert_called_once_with()
 
     def test_image_embeds_backend_configuration(self):
         """Image embed configuration should not instantiate VAE cache directly."""

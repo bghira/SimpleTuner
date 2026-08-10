@@ -36,6 +36,22 @@ def _flow_dpo_requires_reference_latents() -> bool:
     return isinstance(method, str) and method.lower() == "flow_dpo"
 
 
+def _distillation_training_batch_requirements() -> set[str]:
+    method = getattr(StateTracker.get_args(), "distillation_method", None)
+    if method is None:
+        method = StateTracker.get_distillation_method()
+    method = getattr(method, "value", method)
+    if method in (None, "", "none"):
+        return set()
+
+    from simpletuner.helpers.distillation.factory import DistillerFactory
+
+    return DistillerFactory.training_batch_requirements(
+        method,
+        {"distillation_config": getattr(StateTracker.get_args(), "distillation_config", {})},
+    )
+
+
 def debug_log(msg: str):
     logger.debug(f"{rank_text}{msg}")
 
@@ -327,7 +343,7 @@ def compute_latents(filepaths, data_backend_id: str, model):
     return latents
 
 
-def compute_single_embedding(prompt_entry, text_embed_cache):
+def compute_single_embedding(prompt_entry, text_embed_cache, model=None):
     """Worker function to compute embedding for a single caption."""
     if not isinstance(prompt_entry, dict):
         prompt_entry = {"prompt": prompt_entry, "key": prompt_entry, "metadata": {}}
@@ -336,7 +352,8 @@ def compute_single_embedding(prompt_entry, text_embed_cache):
         # Grab the default text embed backend for null caption.
         text_embed_cache = StateTracker.get_default_text_embed_cache()
         # Use sentinel key for filename-based caches to match encode_dropout_caption()
-        use_dropout_sentinel = getattr(text_embed_cache.model, "use_text_cache_dropout_sentinel", lambda: True)()
+        cache_model = model if model is not None else getattr(text_embed_cache, "model", None)
+        use_dropout_sentinel = getattr(cache_model, "use_text_cache_dropout_sentinel", lambda: True)()
         if text_embed_cache._requires_path_based_keys and use_dropout_sentinel:
             prompt_entry["key"] = "__caption_dropout__"
         debug_log(
@@ -376,7 +393,7 @@ def compute_prompt_embeddings(prompt_entries, text_embed_cache, model):
         default_cache, "text_cache_ondemand", False
     )
     if getattr(text_embed_cache, "text_cache_ondemand", False) or empty_prompt_uses_ondemand:
-        text_encoder_output = [compute_single_embedding(entry, text_embed_cache) for entry in normalized_entries]
+        text_encoder_output = [compute_single_embedding(entry, text_embed_cache, model) for entry in normalized_entries]
     else:
         with ThreadPoolExecutor() as executor:
             text_encoder_output = list(
@@ -384,6 +401,7 @@ def compute_prompt_embeddings(prompt_entries, text_embed_cache, model):
                     compute_single_embedding,
                     normalized_entries,
                     [text_embed_cache] * len(normalized_entries),
+                    [model] * len(normalized_entries),
                 )
             )
     prompt_embeds, pooled_prompt_embeds, attn_masks, time_ids = [], [], [], []
@@ -1045,6 +1063,8 @@ def collate_fn(batch):
         else:
             text_embed_cache = StateTracker.get_data_backend(data_backend_id)["text_embed_cache"]
     prompt_requests = []
+    unconditional_prompt_requests = []
+    load_unconditional_embeddings = "unconditional_text_embeddings" in _distillation_training_batch_requirements()
     key_type = TextEmbedCacheKey.CAPTION
     getter = getattr(model, "text_embed_cache_key", None)
     if callable(getter):
@@ -1062,48 +1082,79 @@ def collate_fn(batch):
             backend_config = backend_config or {}
             dataset_root = backend_config.get("instance_data_dir")
             normalized_identifier = normalize_data_path(example_path, dataset_root)
-            metadata = {
-                "image_path": example_path,
-                "data_backend_id": example_backend_id,
-                "prompt": caption,
-                "dataset_relative_path": normalized_identifier,
-            }
             metadata_builder = getattr(model, "text_embed_cache_metadata_for_sample", None)
-            if callable(metadata_builder):
-                metadata.update(
-                    metadata_builder(
-                        example=example,
-                        latent=latent_batch[idx],
-                        prompt=caption,
-                        data_backend_id=example_backend_id,
-                        dataset_relative_path=normalized_identifier,
+
+            def _build_prompt_metadata(prompt):
+                prompt_metadata = {
+                    "image_path": example_path,
+                    "data_backend_id": example_backend_id,
+                    "prompt": prompt,
+                    "dataset_relative_path": normalized_identifier,
+                }
+                if callable(metadata_builder):
+                    prompt_metadata.update(
+                        metadata_builder(
+                            example=example,
+                            latent=latent_batch[idx],
+                            prompt=prompt,
+                            data_backend_id=example_backend_id,
+                            dataset_relative_path=normalized_identifier,
+                        )
                     )
-                )
+                return prompt_metadata
+
+            metadata = _build_prompt_metadata(caption)
             # Only include conditioning pixels for text embedding when using a single
             # conditioning image. With multiple backends in combined mode, skip image
             # context in embeddings and rely solely on latent references.
             # (In random mode with multiple backends, only one image is selected, so
             # we can still use it for text embedding context.)
             has_multiple_combined_refs = len(conditioning_backends) > 1 and is_combined_mode
+            pixel_value = None
             if not has_multiple_combined_refs:
                 pixel_value = _conditioning_pixel_value_for_example(idx)
                 if pixel_value is not None:
                     metadata["conditioning_pixel_values"] = pixel_value
             if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME and example_backend_id and example_path:
-                key_value = f"{example_backend_id}:{normalized_identifier}"
+                default_key = f"{example_backend_id}:{normalized_identifier}"
             elif key_type is TextEmbedCacheKey.FILENAME and example_path:
-                key_value = normalize_data_path(example_path, None)
+                default_key = normalize_data_path(example_path, None)
             else:
-                key_value = caption
+                default_key = caption
+            key_value = default_key
             key_builder = getattr(model, "text_embed_cache_key_value", None)
             if callable(key_builder):
                 key_value = key_builder(prompt=caption, default_key=key_value, metadata=metadata)
             prompt_requests.append({"prompt": caption, "key": key_value, "metadata": metadata})
+            if load_unconditional_embeddings:
+                unconditional_metadata = _build_prompt_metadata("")
+                if pixel_value is not None:
+                    unconditional_metadata["conditioning_pixel_values"] = pixel_value
+                unconditional_default_key = default_key if key_type is not TextEmbedCacheKey.CAPTION else ""
+                unconditional_key = unconditional_default_key
+                if callable(key_builder):
+                    unconditional_key = key_builder(
+                        prompt="",
+                        default_key=unconditional_default_key,
+                        metadata=unconditional_metadata,
+                    )
+                unconditional_prompt_requests.append(
+                    {"prompt": "", "key": unconditional_key, "metadata": unconditional_metadata}
+                )
 
     if text_embed_cache is not None and not text_embed_cache.disabled:
         all_text_encoder_outputs = compute_prompt_embeddings(prompt_requests, text_embed_cache, StateTracker.get_model())
+        if unconditional_prompt_requests:
+            unconditional_text_encoder_outputs = compute_prompt_embeddings(
+                unconditional_prompt_requests,
+                text_embed_cache,
+                StateTracker.get_model(),
+            )
+        else:
+            unconditional_text_encoder_outputs = {}
     else:
         all_text_encoder_outputs = {}
+        unconditional_text_encoder_outputs = {}
     # TODO: Remove model-specific logic from collate.
     if StateTracker.get_model_family() in ["sdxl", "kolors"]:
         debug_log("Compute and stack SDXL time ids")
@@ -1184,7 +1235,7 @@ def collate_fn(batch):
     uses_audio_latents = False
     if model is not None:
         try:
-            uses_audio_latents = bool(model.uses_audio_latents())
+            uses_audio_latents = bool(model.uses_audio_latents_for_data_backend(batch_backend_id))
         except AttributeError:
             uses_audio_latents = False
     if uses_audio_latents and any(s2v_audio_paths):
@@ -1281,6 +1332,9 @@ def collate_fn(batch):
         "prompts": captions,
         "text_encoder_output": all_text_encoder_outputs,
         "prompt_embeds": all_text_encoder_outputs.get("prompt_embeds"),
+        "negative_prompt_embeds": unconditional_text_encoder_outputs.get("prompt_embeds"),
+        "negative_text_token_tags": unconditional_text_encoder_outputs.get("text_token_tags"),
+        "negative_encoder_attention_mask": unconditional_text_encoder_outputs.get("attention_masks"),
         "add_text_embeds": all_text_encoder_outputs.get("pooled_prompt_embeds"),
         "t5xxl_ids": all_text_encoder_outputs.get("t5xxl_ids"),
         "t5xxl_weights": all_text_encoder_outputs.get("t5xxl_weights"),

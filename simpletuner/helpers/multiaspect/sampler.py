@@ -202,11 +202,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 for image_path in images:
                     occurrence_counts[image_path] = occurrence_counts.get(image_path, 0) + 1
             normalized_seen = {
-                image_path: (
-                    (occurrence_counts.get(image_path, True) if value else 0)
-                    if isinstance(value, bool)
-                    else value
-                )
+                image_path: ((occurrence_counts.get(image_path, True) if value else 0) if isinstance(value, bool) else value)
                 for image_path, value in previous_state["seen_images"].items()
             }
             self.metadata_backend.seen_images.clear()
@@ -583,12 +579,19 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         if alt_stats:
             # Return an overview instead of a snapshot.
             # Eg. return totals, and not "as it is now"
+            data_backend_config = StateTracker.get_data_backend_config(self.id)
             total_image_count = len(self.metadata_backend.seen_images) + len(self._get_unseen_images())
-            if self.accelerator.num_processes > 1:
+            configured_max_samples = data_backend_config.get("max_num_samples")
+            try:
+                configured_max_samples = int(configured_max_samples)
+            except (TypeError, ValueError):
+                configured_max_samples = None
+            if configured_max_samples is not None and configured_max_samples > 0:
+                total_image_count = min(total_image_count * self.accelerator.num_processes, configured_max_samples)
+            elif self.accelerator.num_processes > 1:
                 # We don't know the direct count without more work, so we'll estimate it here for multi-GPU training.
                 total_image_count *= self.accelerator.num_processes
                 total_image_count = f"~{total_image_count}"
-            data_backend_config = StateTracker.get_data_backend_config(self.id)
             printed_state = [f"- Repeats: {data_backend_config.get('repeats', 0)}"]
             printed_state.append(f"- Total number of {self.sample_type_strs}: {total_image_count}")
             printed_state.append(f"- Total number of aspect buckets: {len(self.buckets)}")
@@ -617,8 +620,13 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     f"- Crop aspect: {'None' if not data_backend_config.get('crop') else data_backend_config.get('crop_aspect')}"
                 )
             elif self.sample_type_strs == "videos":
-                printed_state.append(f"- Target frame count: {data_backend_config.get('frames_per_video')}")
-                printed_state.append(f"- FPS: {data_backend_config.get('fps')}")
+                video_config = data_backend_config.get("video") or {}
+                target_frame_count = data_backend_config.get("frames_per_video") or video_config.get("num_frames")
+                fps = data_backend_config.get("fps") or video_config.get("fps")
+                printed_state.append(
+                    f"- Target frame count: {target_frame_count if target_frame_count is not None else 'unknown'}"
+                )
+                printed_state.append(f"- FPS: {fps if fps is not None else 'unknown'}")
             elif self.sample_type_strs == "audio":
                 sample_rate = data_backend_config.get("sample_rate") or data_backend_config.get("audio_sample_rate")
                 target_len = data_backend_config.get("sample_size") or data_backend_config.get("audio_samples")
@@ -707,6 +715,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 full_path = os.path.join(conditioning_dir, sample_path)
             else:
                 full_path = sample_path
+        conditioning_config = StateTracker.get_data_backend_config(self.id).get("conditioning_config") or {}
+        if conditioning_config.get("type") == "i2v_first_frame":
+            full_path = os.path.splitext(full_path)[0] + ".png"
         try:
             conditioning_sample_data = self.data_backend.read_image(full_path)
         except Exception as e:

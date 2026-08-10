@@ -42,7 +42,6 @@ from diffusers.utils import (
     convert_state_dict_to_peft,
     convert_unet_state_dict_to_peft,
     get_adapter_name,
-    get_peft_kwargs,
     is_peft_available,
     is_peft_version,
     is_torch_version,
@@ -70,6 +69,7 @@ from simpletuner.helpers.training.lora_format import (
     PEFTLoRAFormat,
     convert_comfyui_to_diffusers,
     detect_state_dict_format,
+    get_peft_kwargs,
     normalize_lora_format,
 )
 from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask

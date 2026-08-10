@@ -274,6 +274,7 @@ class SaveHookManager:
         "min_decay",
         "optimization_step",
         "update_after_step",
+        "warmup_steps",
         "use_ema_warmup",
         "inv_gamma",
         "power",

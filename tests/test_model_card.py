@@ -5,12 +5,15 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.publishing.metadata import *
 from simpletuner.helpers.publishing.metadata import (
     _guidance_rescale,
+    _license_metadata,
     _model_imports,
     _model_load,
     _negative_prompt,
+    _pipeline_tag,
     _skip_layers,
     _torch_device,
     _validation_resolution,
@@ -114,6 +117,10 @@ class TestMetadataFunctions(unittest.TestCase):
             self.assertIn("pipeline.load_lora_weights", output)
             self.assertIn("adapter_id = 'testuser/repo-id'", output)
 
+            output = _model_load(self.args, repo_id="testuser/repo-id", model=self.mock_model)
+            self.assertIn("adapter_id = 'testuser/repo-id'", output)
+            self.assertNotIn("testuser/testuser/repo-id", output)
+
         with patch(
             "simpletuner.helpers.publishing.metadata.StateTracker.get_model",
             return_value=None,
@@ -203,6 +210,92 @@ class TestMetadataFunctions(unittest.TestCase):
         output = model_card_note(self.args)
         self.assertEqual(output.strip(), "")
 
+    def test_minimax_h3_model_card_metadata(self):
+        self.args.model_family = "minimaxh3"
+        model = SimpleNamespace(
+            MODEL_LICENSE="other",
+            MODEL_LICENSE_NAME="minimax-h3-community-license-agreement",
+            MODEL_LICENSE_LINK="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+        )
+
+        self.assertEqual("text-to-video", _pipeline_tag(self.args))
+        self.assertEqual(
+            "license: other\n"
+            'license_name: "minimax-h3-community-license-agreement"\n'
+            'license_link: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE"',
+            _license_metadata(model),
+        )
+
+    def test_hub_commit_message_omits_diffusion_schedule_fields_for_flow_matching(self):
+        hub_manager = object.__new__(HubManager)
+        hub_manager.collected_data_backend_str = "['alt-embed-cache', 'h3-drift0-anyflow-openvid-39f-480']"
+        hub_manager.model = SimpleNamespace(PREDICTION_TYPE=SimpleNamespace(value="flow_matching"))
+        hub_manager.config = SimpleNamespace(
+            learning_rate=6e-5,
+            train_batch_size=1,
+            gradient_accumulation_steps=1,
+            prediction_type=None,
+            rescale_betas_zero_snr=False,
+            training_scheduler_timestep_spacing="trailing",
+            distillation_method="h3_drift",
+            distillation_config={
+                "h3_drift": {
+                    "loss_weight": 0.5,
+                    "inner_distillation_method": "anyflow",
+                    "inner_distillation_config": {"stage": "forward"},
+                }
+            },
+            pretrained_model_name_or_path="MiniMaxAI/MiniMax-H3",
+            pretrained_vae_model_name_or_path=(
+                "https://huggingface.co/Kijai/MiniMax-H3-experimental/resolve/main/"
+                "minimax_h3_video_vae_int8_convrot.safetensors"
+            ),
+            model_type="lora",
+        )
+
+        message = hub_manager._commit_message(global_step=1000, epoch=2)
+
+        self.assertIn("Learning rate 6e-05 and batch size 1.", message)
+        self.assertIn("Training objective: flow matching.", message)
+        self.assertIn("Distillation method: h3_drift.", message)
+        self.assertIn('"inner_distillation_method": "anyflow"', message)
+        self.assertIn('"stage": "forward"', message)
+        self.assertNotIn("gradient accumulation", message)
+        self.assertNotIn("None prediction type", message)
+        self.assertNotIn("rescale_betas_zero_snr", message)
+        self.assertNotIn("timestep spacing", message)
+
+    def test_hub_commit_message_keeps_diffusion_schedule_fields_for_epsilon_models(self):
+        hub_manager = object.__new__(HubManager)
+        hub_manager.collected_data_backend_str = "['dataset']"
+        hub_manager.model = SimpleNamespace(PREDICTION_TYPE=SimpleNamespace(value="epsilon"))
+        hub_manager.config = SimpleNamespace(
+            learning_rate=1e-4,
+            train_batch_size=2,
+            gradient_accumulation_steps=4,
+            prediction_type="epsilon",
+            rescale_betas_zero_snr=True,
+            training_scheduler_timestep_spacing="trailing",
+            distillation_method=None,
+            distillation_config=None,
+            pretrained_model_name_or_path="base-model",
+            pretrained_vae_model_name_or_path="base-vae",
+            model_type="lora",
+        )
+
+        message = hub_manager._commit_message(global_step=20, epoch=2)
+
+        self.assertIn(
+            "Learning rate 0.0001, batch size 2, and 4 gradient accumulation steps.",
+            message,
+        )
+        self.assertIn(
+            "Trained with epsilon prediction type and rescale_betas_zero_snr=True",
+            message,
+        )
+        self.assertIn("Using 'trailing' timestep spacing.", message)
+        self.assertNotIn("Distillation method:", message)
+
     def test_save_model_card(self):
         # Mocking StateTracker methods
         self.args.model_family = "flux"
@@ -230,6 +323,12 @@ class TestMetadataFunctions(unittest.TestCase):
                             return_value=self.args,
                         ):
                             with patch("builtins.open", unittest.mock.mock_open()) as mock_file:
+                                model = MagicMock(
+                                    MODEL_LICENSE="other",
+                                    MODEL_LICENSE_NAME="minimax-h3-community-license-agreement",
+                                    MODEL_LICENSE_LINK="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+                                )
+                                model.custom_model_card_schedule_info.return_value = ""
                                 save_model_card(
                                     repo_id="test-repo",
                                     images=None,
@@ -239,7 +338,7 @@ class TestMetadataFunctions(unittest.TestCase):
                                     validation_prompts=["Test prompt"],
                                     validation_shortnames=["shortname"],
                                     repo_folder="test-folder",
-                                    model=MagicMock(),
+                                    model=model,
                                     global_step=1000,
                                     epoch=1,
                                 )
@@ -249,6 +348,24 @@ class TestMetadataFunctions(unittest.TestCase):
                                     "w",
                                     encoding="utf-8",
                                 )
+                                written = mock_file().write.call_args.args[0]
+                                self.assertIn("license: other\n", written)
+                                self.assertIn('license_name: "minimax-h3-community-license-agreement"\n', written)
+                                self.assertNotIn(" license_name:", written)
+                                self.assertNotIn(" license_link:", written)
+
+    def test_upload_full_model_uses_empty_repo_path_for_top_level_uploads(self):
+        hub_manager = object.__new__(HubManager)
+        hub_manager.config = SimpleNamespace(push_to_hub=True, output_dir="output")
+        hub_manager._repo_id = "owner/model"
+        hub_manager.hub_token = "token"
+        hub_manager._hub_api = MagicMock()
+        hub_manager._commit_message = MagicMock(return_value="message")
+
+        hub_manager.upload_full_model()
+
+        hub_manager._hub_api.upload_folder.assert_called_once()
+        self.assertEqual(hub_manager._hub_api.upload_folder.call_args.kwargs["path_in_repo"], "")
 
     def test_save_training_config_sanitizes_public_export(self):
         config = SimpleNamespace(

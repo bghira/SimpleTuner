@@ -124,7 +124,7 @@ from simpletuner.helpers.data_backend.runtime.schedule import (
 )
 from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
 from simpletuner.helpers.distillation.common import DistillationBase
-from simpletuner.helpers.distillation.registry import DistillationRegistry
+from simpletuner.helpers.distillation.composition import resolve_configured_distiller_requirement_profile
 from simpletuner.helpers.distillation.requirements import (
     EMPTY_PROFILE,
     DistillerRequirementProfile,
@@ -1736,7 +1736,12 @@ class FactoryRegistry:
         method = self.distillation_method or getattr(self.args, "distillation_method", None)
         if method:
             try:
-                method_profile = DistillationRegistry.get_requirement_profile(method)
+                method_profile = resolve_configured_distiller_requirement_profile(
+                    {
+                        "distillation_method": method,
+                        "distillation_config": getattr(self.args, "distillation_config", None),
+                    }
+                )
                 if method_profile.requires_dataset_type(DatasetType.CAPTION):
                     return True
             except Exception:
@@ -2307,38 +2312,16 @@ class FactoryRegistry:
                         f"instance_data_dir={backend.get('instance_data_dir')}"
                     )
                     if conditioning_spec_count == 0 and len(linked_conditioning) == 0:
-                        virtual_id = f"{backend['id']}_conditioning_i2v"
-                        if any(cfg.get("id") == virtual_id for cfg in data_backend_config):
-                            info_log(
-                                f"(id={backend['id']}) I2V conditioning dataset {virtual_id} already present; skipping regeneration."
-                            )
-                        else:
-                            info_log(
-                                f"(id={backend['id']}) No explicit conditioning datasets provided; creating virtual I2V conditioning dataset {virtual_id}."
-                            )
-                            virtual_backend = deepcopy(backend)
-                            virtual_backend["id"] = virtual_id
-                            virtual_backend["dataset_type"] = "conditioning"
-                            virtual_backend.pop("conditioning", None)
-                            # Conditioning datasets don't use audio - remove audio settings
-                            # (e.g., IC-LoRA reference videos are visual-only conditioning)
-                            virtual_backend.pop("audio", None)
-                            virtual_backend.pop("s2v_datasets", None)
-                            virtual_backend.pop("_s2v_audio_autoinjected", None)
-                            virtual_backend["conditioning_data"] = []
-                            virtual_backend["conditioning_type"] = "reference_strict"
-                            virtual_backend["source_dataset_id"] = backend["id"]
-                            virtual_backend["auto_generated"] = False
-                            # ensure video stanza exists for downstream size alignment
-                            if isinstance(virtual_backend.get("video"), dict):
-                                virtual_backend["video"] = dict(virtual_backend["video"])
-                                virtual_backend["video"].setdefault("is_i2v", True)
-                            if backend.get("cache_dir_vae"):
-                                virtual_backend["cache_dir_vae"] = os.path.join(backend["cache_dir_vae"], virtual_id)
-                            else:
-                                virtual_backend["cache_dir_vae"] = os.path.join(self.args.cache_dir, "vae", virtual_id)
-                            backend.setdefault("conditioning_data", []).append(virtual_id)
-                            conditioning_datasets.append(virtual_backend)
+                        info_log(
+                            f"(id={backend['id']}) No explicit conditioning datasets provided; "
+                            "creating first-frame I2V conditioning data."
+                        )
+                        backend["conditioning"] = [
+                            {
+                                "type": "i2v_first_frame",
+                                "conditioning_type": "reference_strict",
+                            }
+                        ]
 
             conditioning_block = backend.get("conditioning", None)
             has_explicit_conditioning = conditioning_block not in (None, [], {})
@@ -2561,7 +2544,16 @@ class FactoryRegistry:
                 StateTracker.set_default_text_embed_cache(init_backend["text_embed_cache"])
                 logger.debug(f"Set the default text embed cache to {init_backend['id']}.")
 
-                should_precompute_dropout = getattr(self.args, "caption_dropout_probability", 0.1) > 0.0
+                from simpletuner.helpers.distillation.factory import DistillerFactory
+
+                distillation_requirements = DistillerFactory.training_batch_requirements(
+                    getattr(self.args, "distillation_method", None),
+                    {"distillation_config": getattr(self.args, "distillation_config", {})},
+                )
+                should_precompute_dropout = (
+                    getattr(self.args, "caption_dropout_probability", 0.1) > 0.0
+                    or "unconditional_text_embeddings" in distillation_requirements
+                )
                 should_precompute_dropout = (
                     should_precompute_dropout
                     and getattr(
@@ -2573,7 +2565,9 @@ class FactoryRegistry:
                 if text_cache_ondemand:
                     info_log("Skipping null embedding pre-computation for on-demand text cache.")
                 elif not should_precompute_dropout:
-                    info_log("Skipping null embedding pre-computation because caption dropout is disabled.")
+                    info_log(
+                        "Skipping global null embedding pre-computation because caption dropout is disabled or model-specific."
+                    )
                 else:
                     info_log("Pre-computing null embedding")
                 logger.debug(f"rank {get_rank()} may skip computing the embedding..")
@@ -3254,11 +3248,10 @@ class FactoryRegistry:
         if self._is_multi_process():
             self.accelerator.wait_for_everyone()
 
-        # When the main process rebuilds buckets (e.g., after cache deletion), ensure
-        # other ranks reload the freshly written cache before splitting buckets.
+        # When the main process rebuilds buckets, make every rank partition the same
+        # serialized cache rather than mixing rank 0's in-memory order with reloaded order.
         if (
             self._is_multi_process()
-            and not self.accelerator.is_main_process
             and not backend.get("auto_generated", False)
             and "aspect" not in self.args.skip_file_discovery
             and "aspect" not in backend.get("skip_file_discovery", "")
@@ -3420,6 +3413,23 @@ class FactoryRegistry:
                                 f"Key {key} not found in the current backend config, using the existing value '{prev_config[key]}'."
                             )
                         init_backend["config"][key] = prev_config[key]
+
+        runtime_linkage_keys = (
+            "conditioning_data",
+            "conditioning",
+            "video",
+            "s2v_datasets",
+            "_s2v_audio_autoinjected",
+        )
+        for key in runtime_linkage_keys:
+            if key in backend:
+                init_backend["config"][key] = backend[key]
+                if isinstance(getattr(init_backend["metadata_backend"], "config", None), dict):
+                    init_backend["metadata_backend"].config[key] = backend[key]
+            else:
+                init_backend["config"].pop(key, None)
+                if isinstance(getattr(init_backend["metadata_backend"], "config", None), dict):
+                    init_backend["metadata_backend"].config.pop(key, None)
 
         # For Hugging Face datasets, always honor the active caption_strategy (e.g., switching from textfile/filename).
         if backend.get("type") == "huggingface":
@@ -3733,6 +3743,7 @@ class FactoryRegistry:
                 if callable(key_builder):
                     key_value = key_builder(prompt=caption, default_key=key_value, metadata=metadata)
                 prompt_records.append({"prompt": caption, "key": key_value, "metadata": metadata})
+                self._append_image_context_dropout_prompt_record(prompt_records, key_value, metadata)
 
             # Add entity label records for images with grounding annotations
             grounding_label_count = 0
@@ -3760,7 +3771,10 @@ class FactoryRegistry:
                 )
 
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
-                prompt_records, return_concat=False, load_from_cache=False
+                prompt_records,
+                return_concat=False,
+                load_from_cache=False,
+                split_between_processes=False,
             )
             info_log(f"(id={init_backend['id']}) Completed processing {len(captions)} captions.")
 
@@ -3869,21 +3883,64 @@ class FactoryRegistry:
                     metadata["image_path"] = image_paths[0]
                     metadata["data_backend_id"] = data_backend_ids[0]
 
+                metadata_builder = getattr(self.model, "text_embed_cache_metadata_for_filepath", None)
+                if callable(metadata_builder):
+                    metadata.update(
+                        metadata_builder(
+                            init_backend=init_backend,
+                            image_path=image_path_str,
+                            prompt=caption,
+                            data_backend_id=dataset_id,
+                            dataset_relative_path=normalized_identifier,
+                        )
+                    )
+
                 if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME:
                     key_value = f"{dataset_id}:{normalized_identifier}"
                 elif key_type is TextEmbedCacheKey.FILENAME:
                     key_value = normalize_data_path(image_path_str, None)
                 else:
                     key_value = caption
+                key_builder = getattr(self.model, "text_embed_cache_key_value", None)
+                if callable(key_builder):
+                    key_value = key_builder(prompt=caption, default_key=key_value, metadata=metadata)
                 prompt_records.append({"prompt": caption, "key": key_value, "metadata": metadata})
+                self._append_image_context_dropout_prompt_record(prompt_records, key_value, metadata)
 
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
-                prompt_records, return_concat=False, load_from_cache=False
+                prompt_records,
+                return_concat=False,
+                load_from_cache=False,
+                split_between_processes=False,
             )
             info_log(f"(id={dataset_id}) Completed processing {len(captions)} captions with image context.")
 
         # Clear the deferred queue
         self._deferred_text_embed_backends.clear()
+
+    def _append_image_context_dropout_prompt_record(
+        self,
+        prompt_records: List[Dict[str, Any]],
+        default_key: str,
+        metadata: Dict[str, Any],
+    ) -> None:
+        from simpletuner.helpers.distillation.factory import DistillerFactory
+
+        distillation_requirements = DistillerFactory.training_batch_requirements(
+            getattr(self.args, "distillation_method", None),
+            {"distillation_config": getattr(self.args, "distillation_config", {})},
+        )
+        needs_unconditional_embedding = "unconditional_text_embeddings" in distillation_requirements
+        if getattr(self.args, "caption_dropout_probability", 0.1) <= 0.0 and not needs_unconditional_embedding:
+            return
+        if not getattr(self.model, "uses_image_context_dropout_caption_cache", lambda: False)():
+            return
+        dropout_metadata = dict(metadata)
+        key_builder = getattr(self.model, "text_embed_cache_key_value", None)
+        key_value = default_key
+        if callable(key_builder):
+            key_value = key_builder(prompt="", default_key=default_key, metadata=dropout_metadata)
+        prompt_records.append({"prompt": "", "key": key_value, "metadata": dropout_metadata})
 
     def _handle_auto_generated_dataset(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
         """Handle auto-generated reference datasets."""
@@ -4049,7 +4106,7 @@ class FactoryRegistry:
         if dataset_type_enum is DatasetType.AUDIO:
             uses_audio_latents = False
             try:
-                uses_audio_latents = bool(self.model.uses_audio_latents())
+                uses_audio_latents = bool(self.model.uses_audio_latents_for_data_backend(init_backend.get("id")))
             except AttributeError:
                 uses_audio_latents = False
             if not uses_audio_latents:

@@ -1,7 +1,11 @@
 import os
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
+
+import torch
+from safetensors.torch import save_file
 
 # Add project root to path
 sys.path.append(os.getcwd())
@@ -87,6 +91,32 @@ class TestLoraLoadingRegression(unittest.TestCase):
         key = keys[0]
         self.assertIsInstance(key, str, f"Key passed to load_lora_weights must be str, got {type(key)}")
         self.assertEqual(key, "unet")
+
+    @patch("simpletuner.helpers.models.common.load_lora_weights")
+    def test_init_lora_mixed_rank_checkpoint_sets_peft_patterns(self, mock_load_lora_weights):
+        mock_load_lora_weights.return_value = (set(), set())
+        model_instance = TestModel()
+        model_instance.config.lora_alpha = None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            init_lora_path = os.path.join(tmpdir, "mixed-rank.safetensors")
+            save_file(
+                {
+                    "unet.to_k.lora_A.weight": torch.zeros(64, 8),
+                    "unet.to_k.lora_B.weight": torch.zeros(8, 64),
+                    "unet.to_v.lora_A.weight": torch.zeros(16, 8),
+                    "unet.to_v.lora_B.weight": torch.zeros(8, 16),
+                },
+                init_lora_path,
+            )
+            model_instance.config.init_lora = init_lora_path
+
+            model_instance.add_lora_adapter()
+
+        self.assertEqual(model_instance.lora_config.r, 64)
+        self.assertEqual(model_instance.lora_config.lora_alpha, 64.0)
+        self.assertEqual(model_instance.lora_config.rank_pattern, {"to_v": 16})
+        self.assertEqual(model_instance.lora_config.alpha_pattern, {"to_v": 16.0})
 
 
 if __name__ == "__main__":

@@ -42,10 +42,10 @@ normal Wan quickstart config से शुरू करें और model त�
   "distillation_method": "anyflow",
   "distillation_config": {
     "anyflow": {
-      "target_mode": "online_teacher",
-      "teacher_rollout_steps": 1,
-      "r_timestep_sampler": "uniform",
-      "min_interval_ratio": 0.02,
+      "stage": "forward",
+      "diffusion_ratio": 0.5,
+      "consistency_ratio": 0.25,
+      "central_difference_epsilon": 0.005,
       "gate_value": 0.25,
       "deltatime_type": "r",
       "loss_weight": 1.0
@@ -104,4 +104,4 @@ conversion matching Wan base transformer और AnyFlow transformer load कर�
 
 - public NVIDIA AnyFlow model license noncommercial है; derived adapters publish करने से पहले upstream model card देखें।
 - AnyFlow validation registered FlowMap-capable pipelines के लिए distiller scheduler hook से wired है। custom या external validation paths को model component में `r_timestep` या `timestep_r` pass करना होगा।
-- full-rank online-teacher continuation के लिए अलग student और teacher wiring चाहिए। अभी supported path LoRA continuation है।
+- on-policy stage अभी standard PEFT LoRA मांगता है, ताकि उसका discriminator frozen base transformer share कर सके।

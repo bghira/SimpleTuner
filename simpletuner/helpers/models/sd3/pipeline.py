@@ -37,7 +37,6 @@ from diffusers.utils import (
     convert_state_dict_to_peft,
     convert_unet_state_dict_to_peft,
     get_adapter_name,
-    get_peft_kwargs,
     is_peft_available,
     is_peft_version,
     is_torch_version,
@@ -53,6 +52,7 @@ from diffusers.utils.torch_utils import randn_tensor
 from huggingface_hub.utils import validate_hf_hub_args
 from transformers import CLIPTextModelWithProjection, CLIPTokenizer, T5EncoderModel, T5TokenizerFast
 
+from simpletuner.helpers.training.lora_format import get_peft_kwargs
 from simpletuner.helpers.training.lycoris import apply_tlora_inference_mask, clear_tlora_mask
 from simpletuner.helpers.utils.offloading import restore_offload_state, unpack_offload_state
 

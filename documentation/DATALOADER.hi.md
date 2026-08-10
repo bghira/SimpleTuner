@@ -681,8 +681,8 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 यदि आपका dataset effective batch size से छोटा है और `repeats` स्वतः समायोजित करना चाहते हैं, तो `--allow_dataset_oversubscription` फ़्लैग का उपयोग करें ([OPTIONS.md](OPTIONS.md#--allow_dataset_oversubscription) में दस्तावेज़ित)।
 
 सक्षम होने पर, SimpleTuner:
-- training के लिए न्यूनतम repeats की गणना करेगा
-- आवश्यकता पूरी करने के लिए `repeats` स्वतः बढ़ाएगा
+- हर undersized aspect bucket के लिए आवश्यक न्यूनतम repeats की गणना करेगा
+- effective batch size पूरा करने के लिए केवल उन्हीं buckets को pad करेगा
 - adjustment दिखाने के लिए warning लॉग करेगा
 - **manually‑set repeats का सम्मान करेगा** — यदि आपने dataset config में `repeats` स्पष्ट रूप से सेट किया है, तो auto adjustment skip होगा
 
@@ -1324,7 +1324,7 @@ Webshart datasets `webshart` package के जरिए WebDataset-style tar sh
 - `source` required है और Webshart-discoverable dataset source को point करता है।
 - `metadata` optional है और captions वाले separate metadata location को point कर सकता है। `webshart/conceptual-captions-12m-webdataset-metadata` जैसे Hugging Face metadata repos के लिए repo id दें; Webshart source shard के `data/` जैसे subfolder layout को follow करता है।
 - `metadata_backend` को `webshart` होना चाहिए; `caption_strategy` `webshart` या `instanceprompt` हो सकता है।
-- `webshart.cache_dir` SimpleTuner metadata और Webshart caches store करता है।
+- `webshart.cache_dir` SimpleTuner metadata और Webshart caches store करता है। `shard_cache_gb` और `parallel_downloads` Webshart shard cache को pass किए जाते हैं; whole-shard caching disable करने और indexed range reads बनाए रखने के लिए `shard_cache_gb` को `0` सेट करें।
 
 इसके लिए `TarDataLoader.list_shard_sample_aspect_buckets()` वाला Webshart build चाहिए।
 

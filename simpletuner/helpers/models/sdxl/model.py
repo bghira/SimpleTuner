@@ -58,6 +58,22 @@ class SDXL(ImageModelFoundation):
     # Only training the Attention blocks by default seems to help more with SD3.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
 
+    def _convert_lora_state_dict_to_comfyui(
+        self,
+        weights: dict,
+        *,
+        adapter_metadata=None,
+        component_adapter_metadata=None,
+    ) -> dict:
+        from simpletuner.helpers.training.lora_format import convert_diffusers_to_comfyui_sd_lora
+
+        return convert_diffusers_to_comfyui_sd_lora(
+            weights,
+            adapter_metadata=adapter_metadata,
+            component_adapter_metadata=component_adapter_metadata,
+            sdxl=True,
+        )
+
     MODEL_CLASS = UNet2DConditionModel
     MODEL_SUBFOLDER = "unet"
     PIPELINE_CLASSES = {

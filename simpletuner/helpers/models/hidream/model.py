@@ -48,6 +48,7 @@ class HiDream(ImageModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    COMFYUI_LORA_PRESERVE_COMPONENT_PREFIXES = {"transformer"}
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 16
     MAXIMUM_CANVAS_SIZE = 1024**2  # H*W cannot exceed this value.
@@ -117,6 +118,9 @@ class HiDream(ImageModelFoundation):
 
     def supports_crepa_self_flow(self) -> bool:
         return True
+
+    def raw_model_prediction_to_model_prediction(self, raw_prediction: torch.Tensor) -> torch.Tensor:
+        return raw_prediction * -1
 
     def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
         patch_size = int(max(getattr(self.unwrap_model(model=self.model).config, "patch_size", 2), 1))
@@ -739,7 +743,7 @@ class HiDream(ImageModelFoundation):
         # Forward pass through the transformer with ControlNet residuals
         model_pred = self.model(**hidream_transformer_kwargs)[0]
 
-        return {"model_prediction": model_pred * -1}  # the model is trained with inverted velocity :(
+        return {"model_prediction": self.raw_model_prediction_to_model_prediction(model_pred)}
 
     def get_lora_target_layers(self):
         manual_targets = self._get_peft_lora_target_modules()

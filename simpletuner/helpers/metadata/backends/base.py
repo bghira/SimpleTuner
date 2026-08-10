@@ -191,7 +191,7 @@ class MetadataBackend:
 
         # Use dataset ID as seed for deterministic selection
         rng = random.Random(self.id)
-        shuffled = list(file_list)
+        shuffled = sorted(file_list, key=str)
         rng.shuffle(shuffled)
         limited = shuffled[: self.max_num_samples]
         logger.info(f"({self.id}) Applied max_num_samples limit: selected {len(limited)} of {len(file_list)} samples")
@@ -781,7 +781,7 @@ class MetadataBackend:
         backend_config = StateTracker.get_data_backend_config(self.id) or {}
         configured_repeats = int(backend_config.get("repeats") or 0)
         user_set_repeats = configured_repeats > 0
-        auto_repeat_count = None
+        auto_repeat_counts = {}
 
         # Early validation: check if configuration is mathematically impossible
         buckets_that_will_fail = []
@@ -806,22 +806,19 @@ class MetadataBackend:
                 needed_repeats = ceil(effective_batch_size / images) - 1
                 min_repeats_needed[bucket_info["bucket"]] = needed_repeats
 
-            # The documented repeat setting applies to the whole backend, so
-            # use the maximum requirement and apply it consistently to every
-            # bucket rather than assigning a different repeat count per bucket.
             max_needed_repeats = max(min_repeats_needed.values())
             allow_oversubscription = StateTracker.get_args().allow_dataset_oversubscription
 
             # Check if dataset oversubscription is allowed
             if allow_oversubscription and not user_set_repeats:
-                # Automatically adjust repeats to make training possible
-                original_repeats = self.repeats
-                auto_repeat_count = max_needed_repeats
+                # Pad only undersized buckets. Applying the rarest bucket's repeat
+                # count backend-wide can multiply an otherwise large dataset.
+                auto_repeat_counts = min_repeats_needed
                 logger.warning(
-                    f"(id={self.id}) Dataset oversubscription enabled: automatically increasing repeats from {original_repeats} to {auto_repeat_count}\n"
+                    f"(id={self.id}) Dataset oversubscription enabled: automatically padding {len(auto_repeat_counts)} undersized bucket(s)\n"
                     f"  - This allows training with {total_samples} samples across {num_processes} GPUs\n"
                     f"  - Effective batch size: {effective_batch_size}\n"
-                    f"  - Logical repeat factor before per-bucket batch padding: {auto_repeat_count + 1}"
+                    f"  - Maximum per-bucket repeat factor: {max_needed_repeats + 1}"
                 )
                 # Validation passed with adjustment, continue
             else:
@@ -873,9 +870,10 @@ class MetadataBackend:
         if should_shuffle_contents:
             # Process-specific RNG seeding must not change the split input across ranks.
             shuffle_seed = getattr(StateTracker.get_args(), "seed", None)
-            if self.accelerator.is_main_process and shuffle_seed is None:
-                shuffle_seed = random.SystemRandom().getrandbits(64)
-            shuffle_seed = broadcast_object_from_main(shuffle_seed if self.accelerator.is_main_process else None)
+            if shuffle_seed is None:
+                if self.accelerator.is_main_process:
+                    shuffle_seed = random.SystemRandom().getrandbits(64)
+                shuffle_seed = broadcast_object_from_main(shuffle_seed if self.accelerator.is_main_process else None)
 
         for bucket, images in self.aspect_ratio_bucket_indices.items():
             if not images:
@@ -883,9 +881,12 @@ class MetadataBackend:
                 continue
             if should_shuffle_contents:
                 logger.debug(f"Shuffling bucket {bucket} contents.")
-                images = images.copy()
+                # Cache builders and cache reloads can preserve the same set in different
+                # orders. Canonicalize first so every rank shuffles an identical sequence.
+                images = sorted(images, key=str)
                 random.Random(f"{shuffle_seed}:{self.id}:{bucket}").shuffle(images)
 
+            auto_repeat_count = auto_repeat_counts.get(bucket)
             if auto_repeat_count is not None:
                 logical_count = len(images) * (auto_repeat_count + 1)
                 scheduled_count = ceil(logical_count / effective_batch_size) * effective_batch_size

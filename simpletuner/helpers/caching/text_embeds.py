@@ -19,6 +19,7 @@ from simpletuner.helpers.prompts import PromptHandler
 from simpletuner.helpers.training.multi_process import rank_info
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.wrappers import gather_dict_of_tensors_shapes, move_dict_of_tensors_to_device
+from simpletuner.helpers.utils.pathing import canonicalize_data_uri
 from simpletuner.helpers.webhooks.mixin import WebhookMixin
 
 logger = logging.getLogger("TextEmbeddingCache")
@@ -129,8 +130,9 @@ class TextEmbeddingCache(WebhookMixin):
             if "://" not in normalized:
                 normalized = os.path.normcase(os.path.abspath(os.path.normpath(normalized)))
         elif self.key_type is TextEmbedCacheKey.DATASET_AND_FILENAME:
-            # Keys already include dataset identifiers; leave as-is.
-            pass
+            dataset_id, separator, data_path = normalized.partition(":")
+            if separator:
+                normalized = f"{dataset_id}:{canonicalize_data_uri(data_path)}"
         return normalized
 
     def create_hash(self, key_value):
@@ -258,11 +260,15 @@ class TextEmbeddingCache(WebhookMixin):
         pending_records: List[PromptCacheRecord],
         pending_filenames: List[str],
         is_negative_prompt: bool = False,
+        is_validation: bool = False,
     ) -> None:
         prompts = [record.get("prompt") for record in pending_records]
         prompt_contexts = [record.get("metadata") or {} for record in pending_records]
-        text_encoder_output = self.model.encode_text_batch(
-            prompts, is_negative_prompt=is_negative_prompt, prompt_contexts=prompt_contexts
+        text_encoder_output = self._encode_text_batch(
+            prompts,
+            is_negative_prompt=is_negative_prompt,
+            prompt_contexts=prompt_contexts,
+            is_validation=is_validation,
         )
         if not isinstance(text_encoder_output, dict):
             raise TypeError(f"encode_text_batch returned {type(text_encoder_output)}; expected a dict.")
@@ -285,6 +291,32 @@ class TextEmbeddingCache(WebhookMixin):
                 filename,
                 self._slice_batch_output_for_cache(text_encoder_output, index, batch_size),
             )
+
+    def _encode_text_batch(
+        self,
+        prompts: list,
+        *,
+        is_negative_prompt: bool,
+        prompt_contexts: Optional[List[dict]],
+        is_validation: bool,
+    ):
+        had_validation_marker = hasattr(self.model, "_current_prompt_is_validation")
+        previous_validation_marker = getattr(self.model, "_current_prompt_is_validation", None)
+        self.model._current_prompt_is_validation = bool(is_validation)
+        try:
+            return self.model.encode_text_batch(
+                prompts,
+                is_negative_prompt=is_negative_prompt,
+                prompt_contexts=prompt_contexts,
+            )
+        finally:
+            if had_validation_marker:
+                self.model._current_prompt_is_validation = previous_validation_marker
+            else:
+                try:
+                    delattr(self.model, "_current_prompt_is_validation")
+                except AttributeError:
+                    pass
 
     def discover_all_files(self):
         """Identify all files in the data backend."""
@@ -455,6 +487,7 @@ class TextEmbeddingCache(WebhookMixin):
         load_from_cache: bool = True,
         is_negative_prompt: bool = False,
         progress_callback=None,
+        split_between_processes: bool = True,
     ):
         if self.model is None:
             self.model = StateTracker.get_model()
@@ -512,7 +545,7 @@ class TextEmbeddingCache(WebhookMixin):
         should_encode = not load_from_cache
         if requires_context and uncached_records and should_encode:
             contextless_records = [record for record in raw_records if not record.get("metadata")]
-            if contextless_records:
+            if contextless_records and not is_validation:
                 logger.warning(
                     f"{self.rank_info}(id={self.id}) Prompt records require image context but metadata "
                     f"was missing for {len(contextless_records)} entries. "
@@ -523,6 +556,10 @@ class TextEmbeddingCache(WebhookMixin):
                 raw_records = [record for record in raw_records if record.get("metadata")]
                 if not raw_records:
                     return None
+            elif contextless_records:
+                self.debug_log(
+                    "Encoding contextless validation prompt(s) for a model that normally requires image metadata."
+                )
 
         output = None
         if self.model is not None:
@@ -533,6 +570,7 @@ class TextEmbeddingCache(WebhookMixin):
                 load_from_cache=load_from_cache,
                 is_negative_prompt=is_negative_prompt,
                 progress_callback=progress_callback,
+                split_between_processes=split_between_processes,
             )
         else:
             raise ValueError(f"No such text encoding backend for model type '{self.model_type}'")
@@ -557,12 +595,13 @@ class TextEmbeddingCache(WebhookMixin):
         load_from_cache: bool = True,
         is_negative_prompt: bool = False,
         progress_callback=None,
+        split_between_processes: bool = True,
     ):
         prompt_embeds_all = []
         should_encode = not load_from_cache
         args = StateTracker.get_args()
         records = self._normalize_prompt_records(prompt_records) if prompt_records is not None else self.prompt_records
-        if should_encode:
+        if should_encode and split_between_processes:
             local_records = self.split_prompt_records_between_processes(records)
         else:
             local_records = records
@@ -652,6 +691,7 @@ class TextEmbeddingCache(WebhookMixin):
                             pending_records,
                             pending_filenames,
                             is_negative_prompt=is_negative_prompt,
+                            is_validation=is_validation,
                         )
                         pending_records = []
                         pending_filenames = []
@@ -661,8 +701,11 @@ class TextEmbeddingCache(WebhookMixin):
                     encoder_device = self.text_encoders[0].device if self.text_encoders else "model"
                     self.debug_log(f"Encoding filename {filename} :: device {encoder_device} :: prompt {prompt}")
                     prompt_contexts = [record.get("metadata") or {}]
-                    text_encoder_output = self.model.encode_text_batch(
-                        [prompt], is_negative_prompt=is_negative_prompt, prompt_contexts=prompt_contexts
+                    text_encoder_output = self._encode_text_batch(
+                        [prompt],
+                        is_negative_prompt=is_negative_prompt,
+                        prompt_contexts=prompt_contexts,
+                        is_validation=is_validation,
                     )
                     logger.debug(
                         f"Filename {filename} prompt embeds: {gather_dict_of_tensors_shapes(tensors=text_encoder_output)}, keys: {text_encoder_output.keys()}"
@@ -710,6 +753,7 @@ class TextEmbeddingCache(WebhookMixin):
                     pending_records,
                     pending_filenames,
                     is_negative_prompt=is_negative_prompt,
+                    is_validation=is_validation,
                 )
 
             while self.write_queue.qsize() > 0:
@@ -735,6 +779,10 @@ class TextEmbeddingCache(WebhookMixin):
             # If only one embedding, return it directly without concatenation
             if len(prompt_embeds_all) == 1:
                 return prompt_embeds_all[0]
+
+            transformed_encoder_output = self.model.collate_prompt_embeds(prompt_embeds_all)
+            if transformed_encoder_output:
+                return transformed_encoder_output
 
             # Concatenate multiple embeddings
             if prompt_embeds_all and "prompt_embeds" in prompt_embeds_all[0]:

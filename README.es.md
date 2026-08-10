@@ -110,6 +110,7 @@ SimpleTuner es compatible con las siguientes familias de modelos. El soporte det
 | **LTX Video 2** | 19B | Apache-2.0 | Sí |
 | **Lumina2** | 2B | Apache-2.0 | Sí |
 | **Mage-Flow** | 4B | MIT | Sí |
+| **MiniMax H3** | 33B | MiniMax H3 Community License | Aplican condiciones (exclusiones territoriales; autorización requerida en EE. UU./UE/Reino Unido/Corea del Sur) |
 | **OmniGen** | 3.8B | MIT | Sí |
 | **PixArt Sigma** | 0.6B-0.9B | OpenRAIL++ | Sí (restringido) |
 | **Qwen Image** | 20B | Apache-2.0 | Sí |
