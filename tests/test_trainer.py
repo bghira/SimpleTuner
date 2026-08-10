@@ -1525,6 +1525,25 @@ class TestTrainer(unittest.TestCase):
 
         trainer.ema_model.to.assert_not_called()
 
+    def test_init_distillation_adapter_modules_delegates_to_factory(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            distillation_method="anyflow",
+            distillation_config={"anyflow": {"gate_value": 0.25}},
+        )
+        trainer.model = Mock()
+
+        with patch(
+            "simpletuner.helpers.distillation.factory.DistillerFactory.prepare_model_for_adapter"
+        ) as prepare_model_for_adapter:
+            trainer.init_distillation_adapter_modules()
+
+        prepare_model_for_adapter.assert_called_once_with(
+            method="anyflow",
+            model=trainer.model,
+            config=vars(trainer.config),
+        )
+
     def test_init_benchmark_base_model_uses_eval_mode_and_restores_training(self):
         trainer = object.__new__(Trainer)
         trainer.config = SimpleNamespace(disable_benchmark=False, validation_multigpu="batch-parallel")

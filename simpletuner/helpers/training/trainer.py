@@ -3393,6 +3393,19 @@ class Trainer:
         StateTracker.set_distiller_profile(method, profile)
         return profile
 
+    def init_distillation_adapter_modules(self):
+        """Initialize distillation modules that must exist before PEFT wraps the model."""
+        from simpletuner.helpers.distillation.factory import DistillerFactory
+
+        method = getattr(self.config, "distillation_method", None)
+        if method is None:
+            return
+        DistillerFactory.prepare_model_for_adapter(
+            method=method,
+            model=self.model,
+            config=vars(self.config),
+        )
+
     def init_distillation(self):
         """Initialize distillation using the factory pattern."""
         from simpletuner.helpers.distillation.factory import DistillerFactory
