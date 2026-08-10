@@ -123,6 +123,7 @@ def _run_training(trainer: Trainer) -> None:
     trainer.resume_and_prepare()
 
     trainer.init_trackers()
+    trainer._run_startup_validation()
     trainer.train()
 
 
