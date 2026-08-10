@@ -1895,6 +1895,7 @@ class Trainer:
             self.resume_and_prepare()
             self._exit_on_signal()
             self.init_trackers()
+            self.run_startup_validation()
 
             # Start the training process
             self.train()
@@ -4500,9 +4501,17 @@ class Trainer:
                 job_id=self.job_id,
             )
         )
-        # we'll run validation on base model if it hasn't already.
-        self.validation.run_validations(validation_type="base_model", step=0)
-        self.validation.save_benchmark("base_model")
+        trained_component = self.model.get_trained_component(unwrap_model=False)
+        was_training = trained_component.training
+        trained_component.eval()
+        try:
+            # Run validation on the base model if it has not already been benchmarked.
+            with self.accelerator.autocast():
+                self.validation.run_validations(validation_type="base_model", step=0)
+            self.validation.save_benchmark("base_model")
+        finally:
+            if was_training:
+                trained_component.train()
         self._emit_event(
             lifecycle_stage_event(
                 key="benchmark_base_model",
@@ -6396,6 +6405,19 @@ class Trainer:
             self.mark_optimizer_train()
 
         return should_validate
+
+    def run_startup_validation(self) -> bool:
+        if not bool(getattr(self.config, "validation_on_startup", False)) or getattr(self, "validation", None) is None:
+            return False
+        step = self.state.get("global_step")
+        if step is None:
+            step = StateTracker.get_global_step()
+        step = int(step or 0)
+        logger.info("Running startup validation at restored global step %d.", step)
+        return self._run_intermediary_validation(step, manual_validation_requested=True)
+
+    def _run_startup_validation(self) -> bool:
+        return self.run_startup_validation()
 
     def _create_torch_profiler(self):
         trace_dir = os.environ.get("SIMPLETUNER_TORCH_PROFILER_DIR")
