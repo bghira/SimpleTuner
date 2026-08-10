@@ -93,6 +93,7 @@ class TestTrainingSample(unittest.TestCase):
             target_dir = os.path.join(tmpdir, "target")
             inside_path = os.path.join(source_dir, "nested", "clip.mp4")
             outside_path = os.path.join(tmpdir, "outside", "clip.mp4")
+            relative_path = os.path.join("relative", "clip.mp4")
 
             translated_inside = DatasetDuplicator._translate_conditioning_path(
                 inside_path,
@@ -106,10 +107,33 @@ class TestTrainingSample(unittest.TestCase):
                 target_dir,
                 "i2v_first_frame",
             )
+            translated_relative = DatasetDuplicator._translate_conditioning_path(
+                relative_path,
+                source_dir,
+                target_dir,
+                "i2v_first_frame",
+            )
 
         self.assertEqual(translated_inside, os.path.join(target_dir, "nested", "clip.png"))
         self.assertEqual(translated_outside, os.path.join(target_dir, "clip.png"))
+        self.assertEqual(translated_relative, os.path.join(target_dir, "clip.png"))
         self.assertEqual(os.path.commonpath([target_dir, translated_outside]), target_dir)
+
+    def test_conditioning_path_translation_handles_commonpath_root_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = os.path.join(tmpdir, "source")
+            target_dir = os.path.join(tmpdir, "target")
+            external_path = os.path.join(tmpdir, "outside", "clip.mp4")
+
+            with patch("simpletuner.helpers.metadata.utils.duplicator.os.path.commonpath", side_effect=ValueError):
+                translated = DatasetDuplicator._translate_conditioning_path(
+                    external_path,
+                    source_dir,
+                    target_dir,
+                    "i2v_first_frame",
+                )
+
+        self.assertEqual(translated, os.path.join(target_dir, "clip.png"))
 
     def test_image_downsample(self):
         """Test that downsampling is correctly applied before cropping."""
