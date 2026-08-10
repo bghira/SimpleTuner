@@ -1,5 +1,8 @@
+import os
 import runpy
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 try:
@@ -100,6 +103,61 @@ class _FakeTrainer:
 
 
 class TrainEntryCleanupTest(unittest.TestCase):
+    def test_rank_local_inductor_cache_uses_local_rank(self):
+        import simpletuner.train as train_module
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.dict(
+                os.environ,
+                {
+                    "SIMPLETUNER_RANK_LOCAL_INDUCTOR_CACHE_ROOT": tmp_dir,
+                    "LOCAL_RANK": "2",
+                },
+                clear=False,
+            ):
+                os.environ.pop("TORCHINDUCTOR_CACHE_DIR", None)
+
+                train_module._configure_rank_local_inductor_cache()
+
+                expected_cache_dir = Path(tmp_dir) / "rank-2"
+                self.assertEqual(os.environ["TORCHINDUCTOR_CACHE_DIR"], str(expected_cache_dir))
+                self.assertTrue(expected_cache_dir.is_dir())
+
+    def test_faulthandler_uses_rank_local_output_and_timeout(self):
+        import simpletuner.train as train_module
+
+        previous_stream = train_module._faulthandler_stream
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "SIMPLETUNER_FAULTHANDLER_DIR": tmp_dir,
+                        "SIMPLETUNER_FAULTHANDLER_TIMEOUT_SECONDS": "11",
+                        "RANK": "3",
+                    },
+                    clear=False,
+                ),
+                patch("faulthandler.enable") as mock_enable,
+                patch("faulthandler.register") as mock_register,
+                patch("faulthandler.dump_traceback_later") as mock_dump_traceback_later,
+            ):
+                try:
+                    train_module._faulthandler_stream = None
+                    train_module._configure_faulthandler()
+
+                    output_file = Path(tmp_dir) / "rank-3.log"
+                    self.assertTrue(output_file.exists())
+                    self.assertEqual(train_module._faulthandler_stream.name, str(output_file))
+                    mock_enable.assert_called_once()
+                    mock_register.assert_called_once()
+                    mock_dump_traceback_later.assert_called_once()
+                    self.assertEqual(mock_dump_traceback_later.call_args.args[0], 11)
+                finally:
+                    if train_module._faulthandler_stream is not None:
+                        train_module._faulthandler_stream.close()
+                    train_module._faulthandler_stream = previous_stream
+
     def test_train_main_invokes_cleanup_on_failure(self):
         """Train entrypoint should call trainer.cleanup when a failure occurs."""
         _FakeTrainer.instances.clear()
