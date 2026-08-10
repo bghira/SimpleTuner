@@ -408,6 +408,9 @@ class DataGenerator:
     def generate_target_filename(self, source_filepath: str) -> Tuple[str, str]:
         """map source path to target path, preserving structure"""
         base, ext = os.path.splitext(os.path.basename(source_filepath))
+        target_extension = getattr(self.sample_generator, "target_extension", None)
+        if target_extension:
+            ext = target_extension if str(target_extension).startswith(".") else f".{target_extension}"
         filename = f"{base}{ext}"
 
         subpath = ""
@@ -488,6 +491,7 @@ class DataGenerator:
                         "errors": 0,
                         "total": len(files),
                     }
+                    dispatched = 0
                     last_report = 0
 
                     for fp in tqdm(files, desc=f"Bucket {bucket}", position=self.rank, leave=False):
@@ -506,6 +510,7 @@ class DataGenerator:
                                 if self.gpu_mode and sent:
                                     stats["processed"] += sent
                                 elif sent:
+                                    dispatched += sent
                                     self.debug_log(f"Dispatched batch {batch_id} ({sent} items)")
 
                             if not self.gpu_mode:
@@ -537,12 +542,22 @@ class DataGenerator:
                     futures = self._process_futures(futures, executor)
                     while self.process_queue.qsize():
                         batch_id += 1
-                        self._process_images_in_batch(batch_id)
+                        sent = self._process_images_in_batch(batch_id)
+                        if self.gpu_mode and sent:
+                            stats["processed"] += sent
+                        elif sent:
+                            dispatched += sent
                     if not self.gpu_mode:
                         start = time.time()
-                        while (self.transform_queue.qsize() or not self.done_queue.empty()) and time.time() - start < 30:
-                            stats["processed"] += self._check_completion_queue()
+                        while stats["processed"] < dispatched and time.time() - start < 300:
+                            completed = self._check_completion_queue()
+                            if completed:
+                                stats["processed"] += completed
                             time.sleep(0.1)
+                        if stats["processed"] < dispatched:
+                            missing = dispatched - stats["processed"]
+                            stats["errors"] += missing
+                            logger.error(f"(id={self.id}) Timed out waiting for {missing} generated conditioning samples.")
                     msg = f"(id={self.id}) Bucket {bucket} done: {stats}"
                     if self.rank == 0:
                         logger.info(msg)

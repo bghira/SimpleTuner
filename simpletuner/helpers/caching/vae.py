@@ -1059,6 +1059,7 @@ class VAECache(WebhookMixin):
             "kandinsky5_video",
             "hunyuanvideo",
             "longcat_video",
+            "minimaxh3",
         ]:
             if samples.ndim == 4:
                 original_shape = samples.shape

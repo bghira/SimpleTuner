@@ -110,6 +110,7 @@ SimpleTuner 支持以下模型系列。详细的训练功能支持请参阅[快�
 | **LTX Video 2** | 19B | Apache-2.0 | 是 |
 | **Lumina2** | 2B | Apache-2.0 | 是 |
 | **Mage-Flow** | 4B | MIT | 是 |
+| **MiniMax H3** | 33B | MiniMax H3 Community License | 有条件（含地区排除；美国/EU/英国/韩国需要授权） |
 | **OmniGen** | 3.8B | MIT | 是 |
 | **PixArt Sigma** | 0.6B-0.9B | OpenRAIL++ | 是（受限） |
 | **Qwen Image** | 20B | Apache-2.0 | 是 |

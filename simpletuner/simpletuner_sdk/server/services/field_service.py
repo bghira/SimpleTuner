@@ -82,6 +82,7 @@ class FieldService:
         "flow_beta_schedule_beta",
         "flow_schedule_shift",
         "flow_schedule_auto_shift",
+        "audio_flow_schedule_shift",
         "flow_custom_timesteps",
         "flow_timesteps_mode",
     }

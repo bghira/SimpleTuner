@@ -118,6 +118,7 @@ flow_matching_model_families = [
     "zlab_i1",
     "ideogram",
     "krea2",
+    "minimaxh3",
 ]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
@@ -135,6 +136,7 @@ upstream_config_sources = {
     "hunyuanvideo": "tencent/HunyuanVideo-1.5",
     "ideogram": "ideogram-ai/ideogram-4-fp8",
     "krea2": "krea/Krea-2-Raw",
+    "minimaxh3": "MiniMaxAI/MiniMax-H3",
 }
 
 
@@ -1561,6 +1563,10 @@ class ModelFoundation(ABC):
 
     def uses_audio_latents(self) -> bool:
         return False
+
+    def uses_audio_latents_for_data_backend(self, data_backend_id: Optional[str] = None) -> bool:
+        del data_backend_id
+        return self.uses_audio_latents()
 
     def uses_audio_tokens(self) -> bool:
         """
@@ -4715,6 +4721,19 @@ class ModelFoundation(ABC):
         timesteps = sigmas * 1000.0
         return sigmas, timesteps
 
+    def flow_matching_timesteps_from_sigmas(
+        self,
+        sigmas: torch.Tensor,
+        *,
+        reference_timesteps: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Convert noise-ward flow sigmas to the timestep convention consumed by this model."""
+        if reference_timesteps is not None and torch.max(reference_timesteps.detach().float()) <= 1.0:
+            return sigmas
+        scheduler_config = getattr(getattr(self, "noise_schedule", None), "config", None)
+        num_train_timesteps = float(getattr(scheduler_config, "num_train_timesteps", 1000) or 1000)
+        return sigmas * num_train_timesteps
+
     def _validate_twinflow_config(self) -> None:
         """
         Validate TwinFlow configuration and record common flags.
@@ -5570,6 +5589,19 @@ class ModelFoundation(ABC):
     def requires_validation_i2v_samples(self) -> bool:
         """
         Override for models that need to pair validation videos with their conditioning images.
+        """
+        return False
+
+    def uses_validation_negative_prompt(self) -> bool:
+        """
+        Whether validation should encode and pass a negative prompt branch.
+        """
+        return self.VALIDATION_USES_NEGATIVE_PROMPT
+
+    def validation_negative_prompt_requires_prompt_context(self) -> bool:
+        """
+        Whether validation negative prompts must be encoded per sample with the same
+        image/reference context as the positive prompt.
         """
         return False
 

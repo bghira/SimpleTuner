@@ -52,6 +52,30 @@ simpletuner configure config/foo/config.json
   - `diffusers` 为标准 PEFT/Diffusers 格式。
   - `comfyui` 会转换为 ComfyUI 风格键（`diffusion_model.*`，含 `lora_A/lora_B` 与 `.alpha` 张量）。Flux、Flux2、Lumina2、Z-Image 即便保持 `diffusers` 也会自动识别 ComfyUI 输入，但若希望保存时强制 ComfyUI 输出，请设为 `comfyui`。
 
+### `--minimax_h3_target_mode`
+
+- **内容**：控制 MiniMax-H3 是否包含目标音频行。
+- **选项**：`auto`, `video`, `av`
+- **默认**：`auto`
+- **说明**：
+  - `auto` 会解析为仅视频，跳过 H3 的音频 VAE 缓存、collate 和目标音频行。
+  - 如需让 auto-split 或显式音频 backend 进行联合音视频训练，请在 data backend 条目中将 `minimax_h3_target_mode` 或 `h3_target_mode` 设为 `av`。
+
+### `--minimax_h3_sparse_attention`
+
+- **内容**：为 MiniMax-H3 目标视频 token 启用实验性的、training-aware 的 3D block sparse attention。
+- **选项**：`disabled`、`moba3d`
+- **默认值**：`disabled`
+- **相关选项**：
+  - `minimax_h3_sparse_block_shape`：用逗号或 `x` 分隔的 `(T,H,W)` 维度，乘积必须为 128。默认值：`1,8,16`。
+  - `minimax_h3_sparse_video_kv_fraction`：每个目标视频 query block 选择的目标视频 KV blocks 比例。默认值：`0.5`。
+  - `minimax_h3_sparse_share_heads`：在 attention heads 之间共享路由。默认值：`false`。
+  - `minimax_h3_sparse_start_layer`：保持更早的 transformer layers 使用 dense attention。默认值：`0`。
+- **说明**：
+  - 文本、音频、reference context 和非目标 queries 保持 dense。
+  - 需要 CUDA FlexAttention。Ulysses context parallelism 支持 `context_parallel_strategy=alltoall`；ring context parallelism 和 TREAD 不兼容。
+  - MiniMax 尚未公开 H3 的精确 sparse routing 配置。该近似实现用于可控 fine-tuning 实验，不保证性能提升。
+
 ### `--fuse_qkv_projections`
 
 - **内容**：融合注意力块中的 QKV 投影，提高硬件效率。
@@ -1888,6 +1912,7 @@ usage: train.py [-h] --model_family
                 [--flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
                 [--flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]]
+                [--audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT]
                 [--flow_custom_timesteps FLOW_CUSTOM_TIMESTEPS]
                 [--flow_timesteps_mode {fixed-list,round-robin}]
                 [--flux_guidance_mode {constant,random-range}]
@@ -2008,7 +2033,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -2358,6 +2383,9 @@ options:
                         Shift the noise schedule for flow-matching models
   --flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]
                         Auto-adjust schedule shift based on image resolution
+  --audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT
+                        Shift the audio noise schedule for flow-matching
+                        models with audio latents
   --flow_custom_timesteps FLOW_CUSTOM_TIMESTEPS
                         Override flow-matching timestep sampling with a fixed
                         comma-separated list. The list is interpreted as
@@ -2740,7 +2768,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}
                         Method for model distillation
                         Distillation methods cannot be combined with
                         --train_text_encoder.

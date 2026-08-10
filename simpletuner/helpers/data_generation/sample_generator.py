@@ -1195,6 +1195,8 @@ class I2VFirstFrameSampleGenerator(SampleGenerator):
     self-contained I2V conditioning datasets.
     """
 
+    target_extension = ".png"
+
     def transform_batch(
         self,
         images: List[Any],

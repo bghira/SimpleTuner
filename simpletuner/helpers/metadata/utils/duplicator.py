@@ -48,6 +48,9 @@ class DatasetDuplicator:
         # Get the instance directories for path translation
         source_dir = source_backend.get("instance_data_dir", "")
         target_dir = target_backend.get("instance_data_dir", "")
+        target_config = target_backend.get("config", {}) or {}
+        conditioning_config = target_config.get("conditioning_config") or target_backend.get("conditioning_config") or {}
+        conditioning_data_type = conditioning_config.get("type")
 
         # Check if we need to update paths (for conditioning datasets)
         needs_path_update = source_dir != target_dir and target_backend.get("dataset_type") == "conditioning"
@@ -64,7 +67,7 @@ class DatasetDuplicator:
                         path,
                         source_dir,
                         target_dir,
-                        None,
+                        conditioning_data_type,
                     )
                     updated_paths.append(new_path)
                 target_meta.aspect_ratio_bucket_indices[bucket] = updated_paths
@@ -77,9 +80,13 @@ class DatasetDuplicator:
                         path,
                         source_dir,
                         target_dir,
-                        None,
+                        conditioning_data_type,
                     )
-                    target_meta.image_metadata[new_path] = metadata
+                    copied_metadata = dict(metadata)
+                    if conditioning_data_type == "i2v_first_frame":
+                        copied_metadata["training_sample_path"] = path
+                        copied_metadata["image_path"] = new_path
+                    target_meta.image_metadata[new_path] = copied_metadata
                 logger.debug(f"Copied {len(target_meta.image_metadata)} image_metadata entries")
             else:
                 logger.debug("No image_metadata to copy from source")
@@ -95,7 +102,6 @@ class DatasetDuplicator:
             target_meta.set_metadata(metadata_backend=source_meta, update_json=False)
 
         source_config = source_backend.get("config", {}) or {}
-        target_config = target_backend.get("config", {}) or {}
         conditioning_type = target_config.get("conditioning_type") or target_backend.get("conditioning_type")
 
         propagated_fields = [
@@ -134,6 +140,9 @@ class DatasetDuplicator:
             target_meta.target_downsample_size = target_config["target_downsample_size"]
 
         target_meta.config = target_config
+
+        if conditioning_data_type == "i2v_first_frame" and hasattr(target_meta, "save_cache"):
+            target_meta.save_cache()
 
         # Bucket indices may be rank-local here; do not overwrite the canonical target cache.
         target_meta.set_readonly()
@@ -225,6 +234,8 @@ class DatasetDuplicator:
         target_cfg.pop("audio", None)
         target_cfg.pop("s2v_datasets", None)
         target_cfg.pop("_s2v_audio_autoinjected", None)
+        if conditioning_data_type == "i2v_first_frame":
+            target_cfg.pop("video", None)
 
         # Set core fields
         target_cfg["auto_generated"] = True

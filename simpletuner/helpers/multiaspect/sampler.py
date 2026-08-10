@@ -202,11 +202,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 for image_path in images:
                     occurrence_counts[image_path] = occurrence_counts.get(image_path, 0) + 1
             normalized_seen = {
-                image_path: (
-                    (occurrence_counts.get(image_path, True) if value else 0)
-                    if isinstance(value, bool)
-                    else value
-                )
+                image_path: ((occurrence_counts.get(image_path, True) if value else 0) if isinstance(value, bool) else value)
                 for image_path, value in previous_state["seen_images"].items()
             }
             self.metadata_backend.seen_images.clear()
@@ -719,6 +715,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 full_path = os.path.join(conditioning_dir, sample_path)
             else:
                 full_path = sample_path
+        conditioning_config = StateTracker.get_data_backend_config(self.id).get("conditioning_config") or {}
+        if conditioning_config.get("type") == "i2v_first_frame":
+            full_path = os.path.splitext(full_path)[0] + ".png"
         try:
             conditioning_sample_data = self.data_backend.read_image(full_path)
         except Exception as e:

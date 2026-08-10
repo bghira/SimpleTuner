@@ -244,6 +244,17 @@ class AnyFlowDistillerTests(unittest.TestCase):
             "anyflow",
             {"distillation_config": {"anyflow": {"fuse_guidance_scale": 3.0}}},
         )
+        nested = DistillerFactory.training_batch_requirements(
+            "h3_drift",
+            {
+                "distillation_config": {
+                    "h3_drift": {
+                        "inner_distillation_method": "anyflow",
+                        "inner_distillation_config": {"fuse_guidance_scale": 3.0},
+                    }
+                }
+            },
+        )
         unwrapped = DistillerFactory.training_batch_requirements(
             "anyflow",
             {"distillation_config": {"fuse_guidance_scale": 3.0}},
@@ -251,6 +262,7 @@ class AnyFlowDistillerTests(unittest.TestCase):
 
         self.assertEqual(direct, {"unconditional_text_embeddings"})
         self.assertEqual(unwrapped, direct)
+        self.assertEqual(nested, direct)
 
     def test_removed_legacy_target_modes_are_rejected(self):
         for target_mode in ("online_teacher", "linear"):

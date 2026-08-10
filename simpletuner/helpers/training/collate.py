@@ -1235,7 +1235,7 @@ def collate_fn(batch):
     uses_audio_latents = False
     if model is not None:
         try:
-            uses_audio_latents = bool(model.uses_audio_latents())
+            uses_audio_latents = bool(model.uses_audio_latents_for_data_backend(batch_backend_id))
         except AttributeError:
             uses_audio_latents = False
     if uses_audio_latents and any(s2v_audio_paths):

@@ -110,6 +110,7 @@ SimpleTuner निम्नलिखित मॉडल families का सम�
 | **LTX Video 2** | 19B | Apache-2.0 | हाँ |
 | **Lumina2** | 2B | Apache-2.0 | हाँ |
 | **Mage-Flow** | 4B | MIT | हाँ |
+| **MiniMax H3** | 33B | MiniMax H3 Community License | शर्तें लागू (territory exclusions; US/EU/UK/KR में authorization आवश्यक) |
 | **OmniGen** | 3.8B | MIT | हाँ |
 | **PixArt Sigma** | 0.6B-0.9B | OpenRAIL++ | हाँ (restricted) |
 | **Qwen Image** | 20B | Apache-2.0 | हाँ |

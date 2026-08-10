@@ -162,7 +162,7 @@ def save_videos(
             export_to_video(
                 validation_image,
                 video_path,
-                fps=config.framerate,
+                fps=int(getattr(config, "framerate", None) or 16),
             )
             video_paths.append(video_path)
             if audio_list is not None:

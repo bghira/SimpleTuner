@@ -130,6 +130,58 @@ class TestMultiAspectSampler(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "Invalid seen occurrence count"):
             metadata_backend.seen_occurrence_count("same.jpg")
 
+    def test_i2v_first_frame_conditioning_sample_maps_video_to_png(self):
+        sampler = object.__new__(MultiAspectSampler)
+        sampler.id = "conditioning"
+        sampler.model = None
+        sampler.metadata_backend = SimpleNamespace(instance_data_dir="/conditioning")
+        sampler.conditioning_type = "reference_strict"
+        sampler.source_dataset_id = None
+        sampler.caption_strategy = "filename"
+        sampler.instance_prompt = None
+        sampler.prepend_instance_prompt = False
+        sampler.use_captions = True
+        sampler.disable_multiline_split = False
+        sampler.logger = MagicMock()
+        sampler.debug_log = MagicMock()
+
+        read_paths = []
+
+        def read_image(path):
+            read_paths.append(path)
+            return Image.new("RGB", (8, 8))
+
+        metadata = {
+            "original_size": (8, 8),
+            "target_size": (8, 8),
+            "intermediary_size": (8, 8),
+            "crop_coordinates": (0, 0),
+            "aspect_ratio": 1.0,
+            "training_sample_path": "11.mp4",
+        }
+
+        sampler.data_backend = SimpleNamespace(read_image=read_image)
+        sampler.metadata_backend.get_metadata_by_filepath = lambda path: metadata if path == "/conditioning/11.png" else None
+        backend_config = {
+            "conditioning_config": {"type": "i2v_first_frame"},
+            "crop": False,
+            "crop_style": "random",
+            "resolution": 8,
+            "resolution_type": "pixel",
+        }
+
+        with (
+            patch.object(StateTracker, "get_data_backend_config", return_value=backend_config),
+            patch.object(StateTracker, "get_model", return_value=None),
+            patch("simpletuner.helpers.multiaspect.sampler.PromptHandler.magic_prompt", return_value="caption"),
+        ):
+            conditioning_sample = sampler.get_conditioning_sample("/training/11.mp4")
+
+        self.assertEqual(read_paths, ["/conditioning/11.png"])
+        self.assertIsNotNone(conditioning_sample)
+        self.assertEqual(conditioning_sample.image_path(), "/conditioning/11.png")
+        self.assertEqual(conditioning_sample.caption, "caption")
+
     def test_load_states_restores_schedule_before_normalizing_legacy_seen_flags(self):
         self.sampler.state_manager.load_state.return_value = {
             "aspect_ratio_bucket_indices": {"1.0": ["same.jpg", "same.jpg", "other.jpg"]},

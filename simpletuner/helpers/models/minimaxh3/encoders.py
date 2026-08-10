@@ -1,0 +1,865 @@
+# Copyright 2026 The MiniMax and HuggingFace Teams. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import numpy as np
+import torch
+from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
+from diffusers.modular_pipelines.modular_pipeline import ModularPipelineBlocks, PipelineState
+from diffusers.modular_pipelines.modular_pipeline_utils import ComponentSpec, InputParam, OutputParam
+from diffusers.utils import logging
+from transformers import Qwen2TokenizerFast, Qwen3VLForConditionalGeneration, Qwen3VLProcessor
+
+from .autoencoder import AutoencoderKLMiniMaxH3
+from .autoencoder_audio import AutoencoderKLMiniMaxH3Audio
+from .modular_pipeline import MiniMaxH3ModularPipeline, MiniMaxH3Ref2VAModularPipeline
+from .packing import (
+    MINIMAX_H3_KEYFRAME_NOISE_AUG,
+    MINIMAX_H3_PIXEL_MEAN,
+    MINIMAX_H3_PIXEL_STD,
+    MINIMAX_H3_TEXT_ENCODER_LAYER,
+    MINIMAX_H3_TEXT_TAG,
+    MINIMAX_H3_VIDEO_TAG,
+    keyframe_condition_noise,
+    patchify_video_latents,
+)
+from .packing_ref2va import (
+    MiniMaxH3PreparedReference,
+    build_ref2va_presentation,
+    sample_reference_video_frames,
+    trim_reference_num_frames,
+)
+from .scheduler import MiniMaxH3Scheduler
+
+logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH = 512
+
+
+def _check_prompt(prompt) -> None:
+    r"""MiniMax-H3 packs one request into one sequence, so a batch of prompts is not a thing."""
+    if not isinstance(prompt, str):
+        raise ValueError(
+            f"MiniMax-H3 packs one request into one sequence, so `prompt` must be a single string, got {type(prompt)}."
+        )
+
+
+def _null_token_id(tokenizer) -> int:
+    null_token_id = getattr(tokenizer, "pad_token_id", None)
+    if null_token_id is None:
+        null_token_id = getattr(tokenizer, "eos_token_id", None)
+    if null_token_id is None:
+        raise ValueError("MiniMax-H3 null conditioning requires a tokenizer pad token or eos token.")
+    return int(null_token_id)
+
+
+def _resolve_max_text_length(max_length: int | None) -> int | None:
+    if max_length is None:
+        return MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH
+    max_length = int(max_length)
+    if max_length <= 0:
+        return None
+    return max_length
+
+
+def _encode_instruction_token_ids(tokenizer, prompt: str, null_instruction: bool, max_length: int | None) -> list[int]:
+    prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
+    max_length = _resolve_max_text_length(max_length)
+    if max_length is not None:
+        prompt_ids = prompt_ids[:max_length]
+    if null_instruction:
+        prompt_ids = [_null_token_id(tokenizer)] * len(prompt_ids)
+    return prompt_ids
+
+
+def _conditioner_components() -> list[ComponentSpec]:
+    r"""MiniMax-H3's conditioner: a Qwen3-VL read at its 50th decoder layer, with its language-model head unused."""
+    return [
+        ComponentSpec("text_encoder", Qwen3VLForConditionalGeneration),
+        ComponentSpec("tokenizer", Qwen2TokenizerFast),
+        ComponentSpec("processor", Qwen3VLProcessor),
+    ]
+
+
+def _conditioner_outputs() -> list[OutputParam]:
+    return [
+        OutputParam.template(
+            "prompt_embeds",
+            description=(
+                "The hidden state MiniMax-H3 conditions on, of shape `(1, num_text_tokens, 5120)`, read after the "
+                "50th decoder layer of the Qwen3-VL conditioner."
+            ),
+        ),
+        OutputParam(
+            "text_token_tags",
+            type_hint=torch.Tensor,
+            description="The per-row modality tag of every row of `prompt_embeds`; a vision block is tagged as video.",
+        ),
+        OutputParam(
+            "negative_prompt_embeds",
+            type_hint=torch.Tensor,
+            description="Optional negative-branch hidden states for real CFG.",
+        ),
+        OutputParam(
+            "negative_text_token_tags",
+            type_hint=torch.Tensor,
+            description="Optional per-row modality tags for `negative_prompt_embeds`.",
+        ),
+    ]
+
+
+class MiniMaxH3TextEncoderStep(ModularPipelineBlocks):
+    model_name = "minimax-h3"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Encodes MiniMax-H3's presentation of a `t2va` / `fl2va` request: the prompt verbatim, preceded by a "
+            '`"<Picture i>: "` label and a vision block per keyframe, with no chat template and no special tokens. '
+            "The checkpoint is guidance-distilled, so there is no negative prompt and no unconditional branch."
+        )
+
+    @property
+    def expected_components(self) -> list[ComponentSpec]:
+        return _conditioner_components()
+
+    @property
+    def inputs(self) -> list[InputParam]:
+        return [
+            InputParam(
+                name="prompt",
+                type_hint=str,
+                default=None,
+                description="The prompt to guide generation, a single string.",
+            ),
+            InputParam(
+                name="prompt_embeds",
+                type_hint=torch.Tensor,
+                default=None,
+                description="Precomputed MiniMax-H3 text conditioning.",
+            ),
+            InputParam(
+                name="text_token_tags",
+                type_hint=torch.Tensor,
+                default=None,
+                description="Per-row modality tags for precomputed `prompt_embeds`.",
+            ),
+            InputParam(
+                name="negative_prompt_embeds",
+                type_hint=torch.Tensor,
+                default=None,
+                description="Optional precomputed negative branch for real CFG.",
+            ),
+            InputParam(
+                name="negative_text_token_tags",
+                type_hint=torch.Tensor,
+                default=None,
+                description="Per-row modality tags for precomputed `negative_prompt_embeds`.",
+            ),
+            InputParam(
+                name="negative_prompt",
+                type_hint=str,
+                description="Optional negative prompt used only when real CFG is enabled.",
+            ),
+            InputParam(
+                name="keyframes",
+                type_hint=list,
+                description="The keyframes put onto the target canvas, in packed order (empty or None for `t2va`).",
+            ),
+            InputParam(
+                name="max_sequence_length",
+                type_hint=int,
+                default=MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH,
+                description="Maximum caption tokens to encode. Vision blocks are structural and are never truncated.",
+            ),
+        ]
+
+    @property
+    def intermediate_outputs(self) -> list[OutputParam]:
+        return _conditioner_outputs()
+
+    @staticmethod
+    def encode_prompt(
+        components,
+        prompt: str,
+        images: list | None = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+        null_instruction: bool = False,
+        max_length: int | None = MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        r"""
+        Build MiniMax-H3's presentation of a request and encode it.
+
+        The presentation is the verbatim prompt for `t2va`. Every keyframe prepends a `"<Picture i>: "` label and a
+        vision block (`<|vision_start|>`, one `<|image_pad|>` per vision patch, `<|vision_end|>`) — no chat template
+        and no special tokens. The rows of a vision block are tagged as *video* rather than text, which is what the
+        transformer's AdaLN modulation keys off.
+
+        Args:
+            prompt (`str`): The prompt to encode.
+            images (`list[PIL.Image.Image]`, *optional*):
+                The keyframes, already prepared onto the target canvas, in packed order.
+            device (`torch.device`, *optional*): The device to run the conditioner on.
+            dtype (`torch.dtype`, *optional*): The dtype of the returned embeddings.
+            null_instruction (`bool`, *optional*):
+                Replace only the final prompt's token ids with tokenizer null tokens while keeping the prompt token
+                count unchanged. This keeps media rotary positions aligned for H3 real-CFG null branches.
+            max_length (`int`, *optional*, defaults to 512):
+                Maximum prompt/caption tokens to encode. Set `0` or a negative value to disable this cap. Keyframe
+                labels and vision blocks are structural conditioning and are never truncated.
+
+        Returns:
+            `tuple[torch.Tensor, torch.Tensor]`: the `(1, num_text_tokens, 5120)` hidden states and the
+            `(num_text_tokens,)` per-row modality tags.
+        """
+        return MiniMaxH3TextEncoderStep.encode_prompt_batch(
+            components,
+            [prompt],
+            image_batches=[images],
+            device=device,
+            dtype=dtype,
+            null_instructions=[null_instruction],
+            max_length=max_length,
+        )[0]
+
+    @staticmethod
+    def encode_prompt_batch(
+        components,
+        prompts: list[str],
+        image_batches: list[list | None] | None = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+        null_instructions: list[bool] | None = None,
+        max_length: int | None = MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH,
+    ) -> list[tuple[torch.Tensor, torch.Tensor]]:
+        """Encode multiple independently packed H3 requests in one padded Qwen3-VL forward."""
+        if not prompts:
+            return []
+        for prompt in prompts:
+            _check_prompt(prompt)
+        if image_batches is None:
+            image_batches = [None] * len(prompts)
+        if null_instructions is None:
+            null_instructions = [False] * len(prompts)
+        if len(image_batches) != len(prompts) or len(null_instructions) != len(prompts):
+            raise ValueError("MiniMax-H3 batched text encoding requires one image and null-instruction entry per prompt.")
+
+        device = device or components._execution_device
+        dtype = dtype or components.transformer.dtype
+
+        num_layers = components.text_encoder.config.text_config.num_hidden_layers
+        if num_layers <= MINIMAX_H3_TEXT_ENCODER_LAYER:
+            raise ValueError(
+                f"MiniMax-H3 conditions on `hidden_states[{MINIMAX_H3_TEXT_ENCODER_LAYER}]` of its Qwen3-VL "
+                f"conditioner, which needs more than {MINIMAX_H3_TEXT_ENCODER_LAYER} decoder layers, but "
+                f"`text_encoder` has {num_layers}. The last hidden state of a stack truncated to exactly "
+                f"{MINIMAX_H3_TEXT_ENCODER_LAYER} layers is post-norm and is not the conditioning MiniMax-H3 expects."
+            )
+
+        presentations = []
+        flattened_images = [image for images in image_batches if images for image in images]
+        if flattened_images:
+            vision = components.processor.image_processor(images=flattened_images, return_tensors="pt")
+            pixel_values = vision["pixel_values"]
+            image_grid_thw = vision["image_grid_thw"]
+        else:
+            pixel_values, image_grid_thw = None, None
+        image_grid_offset = 0
+        for prompt, images, null_instruction in zip(prompts, image_batches, null_instructions):
+            token_ids, token_tags = [], []
+            if images:
+                request_image_grid_thw = image_grid_thw[image_grid_offset : image_grid_offset + len(images)]
+                image_grid_offset += len(images)
+                merge_size = components.processor.image_processor.merge_size**2
+                for index in range(len(images)):
+                    num_image_tokens = int(request_image_grid_thw[index].prod()) // merge_size
+                    label_ids = components.tokenizer(f"<Picture {index + 1}>: ", add_special_tokens=False)["input_ids"]
+                    vision_ids = (
+                        [components.tokenizer.convert_tokens_to_ids("<|vision_start|>")]
+                        + [components.tokenizer.convert_tokens_to_ids("<|image_pad|>")] * num_image_tokens
+                        + [components.tokenizer.convert_tokens_to_ids("<|vision_end|>")]
+                    )
+                    token_ids += label_ids + vision_ids
+                    token_tags += [MINIMAX_H3_TEXT_TAG] * len(label_ids) + [MINIMAX_H3_VIDEO_TAG] * len(vision_ids)
+            prompt_ids = _encode_instruction_token_ids(components.tokenizer, prompt, null_instruction, max_length)
+            token_ids += prompt_ids
+            token_tags += [MINIMAX_H3_TEXT_TAG] * len(prompt_ids)
+            if not token_ids:
+                raise ValueError("MiniMax-H3 conditioning carries no tokens; conditioning cannot be empty.")
+            presentations.append((token_ids, token_tags))
+
+        max_sequence_length = max(len(token_ids) for token_ids, _ in presentations)
+        input_ids = torch.full(
+            (len(prompts), max_sequence_length),
+            _null_token_id(components.tokenizer),
+            dtype=torch.long,
+            device=device,
+        )
+        attention_mask = torch.zeros_like(input_ids)
+        mm_token_type_ids = torch.zeros_like(input_ids)
+        for batch_index, (token_ids, _) in enumerate(presentations):
+            sequence_length = len(token_ids)
+            input_ids[batch_index, :sequence_length] = torch.tensor(token_ids, dtype=torch.long, device=device)
+            attention_mask[batch_index, :sequence_length] = 1
+            # Qwen3-VL reads these token types to construct per-sample multimodal rotary positions.
+            token_type_ids = components.processor.create_mm_token_type_ids([token_ids])[0]
+            mm_token_type_ids[batch_index, :sequence_length] = torch.tensor(token_type_ids, dtype=torch.long, device=device)
+
+        # `text_encoder.model` is a submodule, and a CPU-offload hook — accelerate's or the one the
+        # `ComponentsManager` attaches — wraps the *top-level* module's `forward` alone, so calling the submodule
+        # directly would leave the conditioner on the CPU. Fire the hook by hand instead of routing through
+        # `text_encoder(...)`: MiniMax-H3 reads `hidden_states[50]` and never uses the language-model head, whose
+        # vocabulary-wide projection over every token is all the top-level forward would add.
+        hook = getattr(components.text_encoder, "_hf_hook", None)
+        if hook is not None and hasattr(hook, "pre_forward"):
+            hook.pre_forward(components.text_encoder)
+        outputs = components.text_encoder.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            mm_token_type_ids=mm_token_type_ids,
+            pixel_values=None if pixel_values is None else pixel_values.to(device, components.text_encoder.dtype),
+            image_grid_thw=None if image_grid_thw is None else image_grid_thw.to(device),
+            use_cache=False,
+            output_hidden_states=True,
+        )
+        hidden_states = outputs.hidden_states[MINIMAX_H3_TEXT_ENCODER_LAYER]
+        return [
+            (
+                hidden_states[batch_index : batch_index + 1, : len(token_ids)].to(device=device, dtype=dtype),
+                torch.tensor(token_tags, dtype=torch.long),
+            )
+            for batch_index, (token_ids, token_tags) in enumerate(presentations)
+        ]
+
+    @torch.no_grad()
+    def __call__(self, components: MiniMaxH3ModularPipeline, state: PipelineState) -> PipelineState:
+        block_state = self.get_block_state(state)
+        if getattr(block_state, "prompt_embeds", None) is not None:
+            if getattr(block_state, "text_token_tags", None) is None:
+                raise ValueError("MiniMax-H3 precomputed `prompt_embeds` require `text_token_tags`.")
+            self.set_block_state(state, block_state)
+            return components, state
+
+        _check_prompt(block_state.prompt)
+
+        # `encode_prompt` defaults the embedding dtype to the denoiser's; a text encoder block has no denoiser of
+        # its own — it is meant to run on its own — so it emits the conditioner's dtype, as every other model does.
+        block_state.prompt_embeds, block_state.text_token_tags = self.encode_prompt(
+            components,
+            block_state.prompt,
+            block_state.keyframes,
+            device=components._execution_device,
+            dtype=components.text_encoder.dtype,
+            max_length=getattr(block_state, "max_sequence_length", MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH),
+        )
+        if getattr(block_state, "negative_prompt", None) is not None:
+            _check_prompt(block_state.negative_prompt)
+            block_state.negative_prompt_embeds, block_state.negative_text_token_tags = self.encode_prompt(
+                components,
+                block_state.prompt if block_state.negative_prompt.strip() == "" else block_state.negative_prompt,
+                block_state.keyframes,
+                device=components._execution_device,
+                dtype=components.text_encoder.dtype,
+                null_instruction=block_state.negative_prompt.strip() == "",
+                max_length=getattr(block_state, "max_sequence_length", MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH),
+            )
+
+        self.set_block_state(state, block_state)
+        return components, state
+
+
+class MiniMaxH3KeyframeVaeEncoderStep(ModularPipelineBlocks):
+    model_name = "minimax-h3"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Encodes the `fl2va` keyframes into packed conditioning rows and noises them to MiniMax-H3's "
+            "conditioning level. The rows are the anchors of the whole denoising loop: the loop only ever writes the "
+            "generated rows, so they are never updated again."
+        )
+
+    @property
+    def expected_components(self) -> list[ComponentSpec]:
+        return [
+            ComponentSpec("vae", AutoencoderKLMiniMaxH3),
+            ComponentSpec("scheduler", MiniMaxH3Scheduler),
+        ]
+
+    @property
+    def inputs(self) -> list[InputParam]:
+        return [
+            InputParam(
+                name="keyframes",
+                type_hint=list,
+                required=True,
+                description="The keyframes put onto the target canvas, in packed order.",
+            ),
+            InputParam(name="latent_height", type_hint=int, required=True, description="Height of the video latents."),
+            InputParam(name="latent_width", type_hint=int, required=True, description="Width of the video latents."),
+            InputParam.template(
+                "generator",
+                description=(
+                    "The generator of the request. The conditioning noise is drawn from it before the target noise "
+                    "of the prepare-latents step."
+                ),
+            ),
+        ]
+
+    @property
+    def intermediate_outputs(self) -> list[OutputParam]:
+        return [
+            OutputParam(
+                "condition_latents",
+                type_hint=torch.Tensor,
+                description="The noise-augmented video conditioning rows, in packed order.",
+            )
+        ]
+
+    @staticmethod
+    def encode_keyframes(components, images: list, device: torch.device | None = None) -> torch.Tensor:
+        r"""
+        Encode the `fl2va` keyframes into packed conditioning rows.
+
+        The keyframes go through the video VAE's spatial encoder only — they are single frames, so none of its
+        17-frame temporal chunking applies — and the posterior mean is used, matching ComfyUI's MiniMax-H3 VAE path.
+
+        Args:
+            images (`list[PIL.Image.Image]`):
+                The keyframes, already prepared onto the target canvas, in packed order.
+            device (`torch.device`, *optional*): The device to run the VAE on.
+
+        Returns:
+            `torch.Tensor` of shape `(num_condition_rows, latent_channels * prod(patch_size))`: the float32
+            conditioning rows.
+        """
+        device = device or components._execution_device
+        latents_mean = torch.tensor(components.vae.config.latents_mean).view(1, -1, 1, 1, 1)
+        latents_std = torch.tensor(components.vae.config.latents_std).view(1, -1, 1, 1, 1)
+        pixel_mean = torch.tensor(MINIMAX_H3_PIXEL_MEAN, device=device).view(1, -1, 1, 1, 1)
+        pixel_std = torch.tensor(MINIMAX_H3_PIXEL_STD, device=device).view(1, -1, 1, 1, 1)
+
+        rows = []
+        for image in images:
+            pixels = torch.from_numpy(np.array(image)).to(device).permute(2, 0, 1)[None, :, None]
+            pixels = (pixels.to(torch.float32).div(255.0) - pixel_mean) / pixel_std
+            # `vae.encode` chunks along time for videos; a keyframe is one frame and is encoded by the (tiled)
+            # spatial encoder alone, which is what the released model conditions on.
+            moments = components.vae._encode_clip(pixels)
+            posterior = DiagonalGaussianDistribution(moments)
+            latents = posterior.mode().float().cpu()
+            rows.append(patchify_video_latents((latents - latents_mean) / latents_std, components.patch_size))
+        return torch.cat(rows)
+
+    @torch.no_grad()
+    def __call__(self, components: MiniMaxH3ModularPipeline, state: PipelineState) -> PipelineState:
+        block_state = self.get_block_state(state)
+        device = components._execution_device
+
+        condition_latents = self.encode_keyframes(components, block_state.keyframes, device=device)
+        noise = keyframe_condition_noise(
+            ((1, block_state.latent_height, block_state.latent_width),) * len(block_state.keyframes),
+            components.patch_size,
+            components.vae_latent_channels,
+            generator=block_state.generator,
+            device=device,
+        )
+        block_state.condition_latents = components.scheduler.scale_noise(
+            condition_latents.to(device), MINIMAX_H3_KEYFRAME_NOISE_AUG, noise
+        )
+
+        self.set_block_state(state, block_state)
+        return components, state
+
+
+class MiniMaxH3Ref2VATextEncoderStep(ModularPipelineBlocks):
+    model_name = "minimax-h3-ref2va"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Encodes MiniMax-H3's presentation of a `ref2va` request: a label per reference, numbered per modality "
+            '(`"<Picture i>: "` plus a vision block, `"<Audio j>: "` alone, `"<Video k>: "` plus one timestamped '
+            "vision block per merged frame pair), then the prompt verbatim. The checkpoint is guidance-distilled, so "
+            "there is no negative prompt and no unconditional branch."
+        )
+
+    @property
+    def expected_components(self) -> list[ComponentSpec]:
+        return _conditioner_components()
+
+    @property
+    def inputs(self) -> list[InputParam]:
+        return [
+            InputParam(
+                name="prompt",
+                type_hint=str,
+                default=None,
+                description="The prompt to guide generation, a single string.",
+            ),
+            InputParam(
+                name="prompt_embeds",
+                type_hint=torch.Tensor,
+                default=None,
+                description="Precomputed MiniMax-H3 text conditioning.",
+            ),
+            InputParam(
+                name="text_token_tags",
+                type_hint=torch.Tensor,
+                default=None,
+                description="Per-row modality tags for precomputed `prompt_embeds`.",
+            ),
+            InputParam(
+                name="negative_prompt_embeds",
+                type_hint=torch.Tensor,
+                default=None,
+                description="Optional precomputed negative branch for real CFG.",
+            ),
+            InputParam(
+                name="negative_text_token_tags",
+                type_hint=torch.Tensor,
+                default=None,
+                description="Per-row modality tags for precomputed `negative_prompt_embeds`.",
+            ),
+            InputParam(
+                name="negative_prompt",
+                type_hint=str,
+                description="Optional negative prompt used only when real CFG is enabled.",
+            ),
+            InputParam(
+                name="prepared_references",
+                type_hint=list[MiniMaxH3PreparedReference],
+                required=True,
+                description="The prepared references, in packed order.",
+            ),
+            InputParam(
+                name="max_sequence_length",
+                type_hint=int,
+                default=MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH,
+                description="Maximum caption tokens to encode. Reference labels and vision blocks are never truncated.",
+            ),
+        ]
+
+    @property
+    def intermediate_outputs(self) -> list[OutputParam]:
+        return _conditioner_outputs()
+
+    @staticmethod
+    def encode_prompt(
+        components,
+        prompt: str,
+        references: list[MiniMaxH3PreparedReference],
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+        null_instruction: bool = False,
+        max_length: int | None = MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        r"""
+        Build MiniMax-H3's presentation of a `ref2va` request and encode it.
+
+        Every reference prepends a label, in request order and numbered per modality: `"<Picture i>: "` plus a vision
+        block for an image, `"<Audio j>: "` alone for audio (a waveform never reaches the conditioner), and
+        `"<Video k>: "` plus one timestamped vision block per merged frame pair for a video. A video that carries
+        sound is labelled `"<Audio j>: "` *before* `"<Video k>: "`, mirroring the order its rows are packed in. The
+        prompt then follows, verbatim, with no chat template and no special tokens. The rows of a vision block are
+        tagged as *video* rather than text, which is what the transformer's AdaLN modulation keys off.
+
+        Args:
+            prompt (`str`): The prompt to encode.
+            references (`list[MiniMaxH3PreparedReference]`):
+                The prepared references, in packed order, as returned by
+                [`~MiniMaxH3Ref2VASetupStep.prepare_references`].
+            device (`torch.device`, *optional*): The device to run the conditioner on.
+            dtype (`torch.dtype`, *optional*): The dtype of the returned embeddings.
+            null_instruction (`bool`, *optional*):
+                Replace only the final prompt's token ids with tokenizer null tokens while keeping the prompt token
+                count unchanged. This keeps media rotary positions aligned for H3 real-CFG null branches.
+            max_length (`int`, *optional*, defaults to 512):
+                Maximum prompt/caption tokens to encode. Set `0` or a negative value to disable this cap. Reference
+                labels and vision blocks are structural conditioning and are never truncated.
+
+        Returns:
+            `tuple[torch.Tensor, torch.Tensor]`: the `(1, num_text_tokens, 5120)` hidden states and the
+            `(num_text_tokens,)` per-row modality tags.
+        """
+        device = device or components._execution_device
+        dtype = dtype or components.transformer_ref.dtype
+
+        num_layers = components.text_encoder.config.text_config.num_hidden_layers
+        if num_layers <= MINIMAX_H3_TEXT_ENCODER_LAYER:
+            raise ValueError(
+                f"MiniMax-H3 conditions on `hidden_states[{MINIMAX_H3_TEXT_ENCODER_LAYER}]` of its Qwen3-VL "
+                f"conditioner, which needs more than {MINIMAX_H3_TEXT_ENCODER_LAYER} decoder layers, but "
+                f"`text_encoder` has {num_layers}. The last hidden state of a stack truncated to exactly "
+                f"{MINIMAX_H3_TEXT_ENCODER_LAYER} layers is post-norm and is not the conditioning MiniMax-H3 expects."
+            )
+
+        merge_size = components.processor.image_processor.merge_size**2
+        pixel_values, image_grid_thw, image_token_counts = None, None, []
+        images = [reference.image for reference in references if reference.kind == "image"]
+        if images:
+            vision = components.processor.image_processor(images=images, return_tensors="pt")
+            pixel_values, image_grid_thw = vision["pixel_values"], vision["image_grid_thw"]
+            image_token_counts = [int(grid.prod()) // merge_size for grid in image_grid_thw]
+
+        pixel_values_videos, video_grid_thw, video_block_token_counts = None, None, []
+        videos = [reference for reference in references if reference.kind == "video"]
+        if videos:
+            sampled = [sample_reference_video_frames(reference.frames) for reference in videos]
+            for reference, (_, block_timestamps) in zip(videos, sampled):
+                reference.block_timestamps = block_timestamps
+            vision = components.processor.video_processor(
+                videos=[np.stack(frames) for frames, _ in sampled], do_sample_frames=False, return_tensors="pt"
+            )
+            pixel_values_videos, video_grid_thw = vision["pixel_values_videos"], vision["video_grid_thw"]
+            video_block_token_counts = [int(grid[1]) * int(grid[2]) // merge_size for grid in video_grid_thw]
+            for reference, grid in zip(videos, video_grid_thw):
+                if int(grid[0]) != len(reference.block_timestamps):
+                    raise ValueError(
+                        f"The processor merged a reference video into {int(grid[0])} vision blocks, but MiniMax-H3 "
+                        f"labels {len(reference.block_timestamps)} of them."
+                    )
+
+        token_ids, token_tags = build_ref2va_presentation(
+            components.tokenizer,
+            prompt,
+            references,
+            image_token_counts,
+            video_block_token_counts,
+            null_prompt_token_id=_null_token_id(components.tokenizer) if null_instruction else None,
+            max_prompt_length=max_length,
+        )
+        if not token_ids:
+            raise ValueError("MiniMax-H3 conditioning carries no tokens; conditioning cannot be empty.")
+        input_ids = torch.tensor([token_ids], dtype=torch.long, device=device)
+        # Qwen3-VL lays its 3D rotary positions out per modality run, which it reads off the token type ids the
+        # processor derives from the vision pad ids (`0` text, `1` image, `2` video).
+        mm_token_type_ids = torch.tensor(
+            components.processor.create_mm_token_type_ids([token_ids]), dtype=torch.long, device=device
+        )
+        # `text_encoder.model` is a submodule, and a CPU-offload hook — accelerate's or the one the
+        # `ComponentsManager` attaches — wraps the *top-level* module's `forward` alone, so calling the submodule
+        # directly would leave the conditioner on the CPU. Fire the hook by hand instead of routing through
+        # `text_encoder(...)`: MiniMax-H3 reads `hidden_states[50]` and never uses the language-model head, whose
+        # vocabulary-wide projection over every token is all the top-level forward would add.
+        hook = getattr(components.text_encoder, "_hf_hook", None)
+        if hook is not None and hasattr(hook, "pre_forward"):
+            hook.pre_forward(components.text_encoder)
+        outputs = components.text_encoder.model(
+            input_ids=input_ids,
+            attention_mask=torch.ones_like(input_ids),
+            mm_token_type_ids=mm_token_type_ids,
+            pixel_values=None if pixel_values is None else pixel_values.to(device, components.text_encoder.dtype),
+            image_grid_thw=None if image_grid_thw is None else image_grid_thw.to(device),
+            pixel_values_videos=(
+                None if pixel_values_videos is None else pixel_values_videos.to(device, components.text_encoder.dtype)
+            ),
+            video_grid_thw=None if video_grid_thw is None else video_grid_thw.to(device),
+            use_cache=False,
+            output_hidden_states=True,
+        )
+        prompt_embeds = outputs.hidden_states[MINIMAX_H3_TEXT_ENCODER_LAYER].to(device=device, dtype=dtype)
+        return prompt_embeds, torch.tensor(token_tags, dtype=torch.long)
+
+    @torch.no_grad()
+    def __call__(self, components: MiniMaxH3Ref2VAModularPipeline, state: PipelineState) -> PipelineState:
+        block_state = self.get_block_state(state)
+        if getattr(block_state, "prompt_embeds", None) is not None:
+            if getattr(block_state, "text_token_tags", None) is None:
+                raise ValueError("MiniMax-H3 precomputed `prompt_embeds` require `text_token_tags`.")
+            self.set_block_state(state, block_state)
+            return components, state
+
+        _check_prompt(block_state.prompt)
+
+        # `encode_prompt` defaults the embedding dtype to the denoiser's; a text encoder block has no denoiser of
+        # its own — it is meant to run on its own — so it emits the conditioner's dtype, as every other model does.
+        block_state.prompt_embeds, block_state.text_token_tags = self.encode_prompt(
+            components,
+            block_state.prompt,
+            block_state.prepared_references,
+            device=components._execution_device,
+            dtype=components.text_encoder.dtype,
+            max_length=getattr(block_state, "max_sequence_length", MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH),
+        )
+        if getattr(block_state, "negative_prompt", None) is not None:
+            _check_prompt(block_state.negative_prompt)
+            block_state.negative_prompt_embeds, block_state.negative_text_token_tags = self.encode_prompt(
+                components,
+                block_state.prompt if block_state.negative_prompt.strip() == "" else block_state.negative_prompt,
+                block_state.prepared_references,
+                device=components._execution_device,
+                dtype=components.text_encoder.dtype,
+                null_instruction=block_state.negative_prompt.strip() == "",
+                max_length=getattr(block_state, "max_sequence_length", MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH),
+            )
+
+        self.set_block_state(state, block_state)
+        return components, state
+
+
+class MiniMaxH3Ref2VAReferenceEncoderStep(ModularPipelineBlocks):
+    model_name = "minimax-h3-ref2va"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Encodes the `ref2va` references into packed conditioning rows — image and video references through the "
+            "video VAE, soundtracks through the audio VAE — and noises the visual ones to MiniMax-H3's conditioning "
+            "level. Audio references ride along clean, at `t = 1.0`. Both are anchors of the whole denoising loop, "
+            "which only ever writes the generated rows. The latent geometry of every reference is resolved here, so "
+            "this runs before the packed layout is built."
+        )
+
+    @property
+    def expected_components(self) -> list[ComponentSpec]:
+        return [
+            ComponentSpec("vae", AutoencoderKLMiniMaxH3),
+            ComponentSpec("audio_vae", AutoencoderKLMiniMaxH3Audio),
+            ComponentSpec("scheduler", MiniMaxH3Scheduler),
+        ]
+
+    @property
+    def inputs(self) -> list[InputParam]:
+        return [
+            InputParam(
+                name="prepared_references",
+                type_hint=list[MiniMaxH3PreparedReference],
+                required=True,
+                description="The prepared references, in packed order. Their latent geometry is filled in here.",
+            ),
+            InputParam.template(
+                "generator",
+                description=(
+                    "The generator of the request. The conditioning noise is drawn from it before the target noise "
+                    "of the prepare-latents step."
+                ),
+            ),
+        ]
+
+    @property
+    def intermediate_outputs(self) -> list[OutputParam]:
+        return [
+            OutputParam(
+                "condition_latents",
+                type_hint=torch.Tensor,
+                description=(
+                    "The noise-augmented video conditioning rows of the image and video references, in packed order, "
+                    "or None when the references carry none."
+                ),
+            ),
+            OutputParam(
+                "audio_condition_latents",
+                type_hint=torch.Tensor,
+                description=(
+                    "The clean audio conditioning rows of the reference soundtracks, in packed order, or None when "
+                    "the references carry none."
+                ),
+            ),
+        ]
+
+    @staticmethod
+    def encode_references(
+        components, references: list[MiniMaxH3PreparedReference], device: torch.device | None = None
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        r"""
+        Encode the references into packed conditioning rows, and resolve their latent geometry.
+
+        Image and video references go through the video VAE with the same recipe the `fl2va` keyframes use: the
+        posterior mean is used for visual references, matching ComfyUI's MiniMax-H3 VAE path. An image is a single
+        frame and is encoded by the spatial encoder alone, while a video reference goes through the
+        17-frames-per-5-latents temporal chunking. Reference soundtracks also take the posterior mean.
+
+        Args:
+            references (`list[MiniMaxH3PreparedReference]`):
+                The prepared references, in packed order. Their latent geometry is filled in here.
+            device (`torch.device`, *optional*): The device to run the VAEs on.
+
+        Returns:
+            `tuple[torch.Tensor, torch.Tensor]`: the `(num_condition_video_rows, latent_channels * prod(patch_size))`
+            video rows and the `(num_condition_audio_rows, audio_latent_channels)` audio rows, both float32 on CPU and
+            both `None` when the references carry no such rows.
+        """
+        device = device or components._execution_device
+        latents_mean = torch.tensor(components.vae.config.latents_mean).view(1, -1, 1, 1, 1)
+        latents_std = torch.tensor(components.vae.config.latents_std).view(1, -1, 1, 1, 1)
+        pixel_mean = torch.tensor(MINIMAX_H3_PIXEL_MEAN, device=device).view(1, -1, 1, 1, 1)
+        pixel_std = torch.tensor(MINIMAX_H3_PIXEL_STD, device=device).view(1, -1, 1, 1, 1)
+        audio_latents_mean = torch.tensor(components.audio_vae.config.latents_mean).view(1, 1, -1)
+        audio_latents_std = torch.tensor(components.audio_vae.config.latents_std).view(1, 1, -1)
+
+        video_rows, audio_rows = [], []
+        for reference in references:
+            if reference.kind != "audio":
+                if reference.kind == "image":
+                    pixels = torch.from_numpy(np.array(reference.image)).to(device).permute(2, 0, 1)[None, :, None]
+                else:
+                    frames = reference.frames[: trim_reference_num_frames(reference.frames.shape[0])]
+                    pixels = torch.from_numpy(frames.copy()).to(device).permute(3, 0, 1, 2)[None]
+                pixels = (pixels.to(torch.float32).div(255.0) - pixel_mean) / pixel_std
+                # A single frame is encoded by the (tiled) spatial encoder alone; a video goes through the temporal
+                # chunking, which is what turns `17 * n + 5` frames into `5 * n + 2` latent frames.
+                moments = (
+                    components.vae._encode_clip(pixels) if reference.kind == "image" else components.vae._encode(pixels)
+                )
+                posterior = DiagonalGaussianDistribution(moments)
+                latents = posterior.mode().float().cpu()
+                reference.num_latent_frames = latents.shape[2]
+                reference.latent_height, reference.latent_width = latents.shape[3], latents.shape[4]
+                video_rows.append(patchify_video_latents((latents - latents_mean) / latents_std, components.patch_size))
+
+            if reference.has_audio:
+                posterior = components.audio_vae.encode(reference.waveform.to(device)[:, None], return_dict=False)[0]
+                # Channel-major rows: the two stereo channels are two batch items of the mono audio VAE.
+                latents = posterior.mode().float().cpu().transpose(1, 2)
+                reference.num_audio_latents = latents.shape[1]
+                normalized = (latents - audio_latents_mean) / audio_latents_std
+                audio_rows.append(normalized.reshape(-1, components.audio_latent_channels))
+
+        return (
+            torch.cat(video_rows) if video_rows else None,
+            torch.cat(audio_rows) if audio_rows else None,
+        )
+
+    @torch.no_grad()
+    def __call__(self, components: MiniMaxH3Ref2VAModularPipeline, state: PipelineState) -> PipelineState:
+        block_state = self.get_block_state(state)
+        device = components._execution_device
+
+        condition_latents, audio_condition_latents = self.encode_references(
+            components, block_state.prepared_references, device=device
+        )
+        if condition_latents is not None:
+            noise = keyframe_condition_noise(
+                tuple(
+                    (reference.num_latent_frames, reference.latent_height, reference.latent_width)
+                    for reference in block_state.prepared_references
+                    if reference.kind != "audio"
+                ),
+                components.patch_size,
+                components.vae_latent_channels,
+                generator=block_state.generator,
+                device=device,
+            )
+            condition_latents = components.scheduler.scale_noise(
+                condition_latents.to(device), MINIMAX_H3_KEYFRAME_NOISE_AUG, noise
+            )
+        if audio_condition_latents is not None:
+            audio_condition_latents = audio_condition_latents.to(device)
+
+        block_state.condition_latents = condition_latents
+        block_state.audio_condition_latents = audio_condition_latents
+
+        self.set_block_state(state, block_state)
+        return components, state

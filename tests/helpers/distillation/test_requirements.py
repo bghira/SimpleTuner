@@ -1,7 +1,11 @@
 import unittest
 
+import simpletuner.helpers.distillation.anyflow  # noqa: F401
+import simpletuner.helpers.distillation.h3_drift  # noqa: F401
+import simpletuner.helpers.distillation.self_forcing  # noqa: F401
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.distillation.common import DistillationBase
+from simpletuner.helpers.distillation.composition import resolve_configured_distiller_requirement_profile
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import (
     EMPTY_PROFILE,
@@ -38,6 +42,21 @@ class TestRequirementParsing(unittest.TestCase):
         self.assertFalse(result.fulfilled)
         self.assertEqual(len(result.missing_requirements), 1)
         self.assertIn("caption", describe_requirement_groups(result.missing_requirements))
+
+    def test_h3_drift_profile_includes_inner_distiller_requirements(self):
+        profile = resolve_configured_distiller_requirement_profile(
+            {
+                "distillation_method": "h3_drift",
+                "distillation_config": {
+                    "h3_drift": {
+                        "inner_distillation_method": "self_forcing",
+                    },
+                },
+            }
+        )
+
+        self.assertTrue(profile.is_data_generator)
+        self.assertTrue(profile.requires_dataset_type(DatasetType.CAPTION))
 
 
 class DummyDistiller(DistillationBase):

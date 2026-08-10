@@ -376,64 +376,67 @@ class TestConditioningDatasetAudioIsolation(unittest.TestCase):
 
     def test_virtual_conditioning_excludes_audio(self):
         """Test that virtual I2V conditioning datasets don't inherit audio settings."""
+        import os
+        import tempfile
         from copy import deepcopy
 
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
 
-        args = MagicMock()
-        args.cache_dir = "/tmp/cache"
-        args.output_dir = "/tmp/output"
-        args.model_family = "wan"
-        args.resolution = 512
-        args.resolution_type = "pixel"
-        args.train_batch_size = 1
-        args.controlnet = False
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args = MagicMock()
+            args.cache_dir = os.path.join(tmpdir, "cache")
+            args.output_dir = os.path.join(tmpdir, "output")
+            args.model_family = "wan"
+            args.resolution = 512
+            args.resolution_type = "pixel"
+            args.train_batch_size = 1
+            args.controlnet = False
 
-        model = MagicMock()
-        model.requires_s2v_datasets.return_value = True
+            model = MagicMock()
+            model.requires_s2v_datasets.return_value = True
 
-        factory = FactoryRegistry(args, MagicMock(), None, None, model)
+            factory = FactoryRegistry(args, MagicMock(), None, None, model)
 
-        # Simulate a video backend with audio config (as would be set by _inject_s2v_audio_configs)
-        backend = {
-            "id": "test-videos",
-            "type": "local",
-            "dataset_type": "video",
-            "instance_data_dir": "/data/videos",
-            "cache_dir_vae": "/cache/vae/videos",
-            "video": {"is_i2v": True},
-            "audio": {
-                "auto_split": True,
-                "sample_rate": 16000,
-                "channels": 1,
-            },
-            "s2v_datasets": ["test-videos_audio"],
-            "_s2v_audio_autoinjected": True,
-        }
+            # Simulate a video backend with audio config (as would be set by _inject_s2v_audio_configs)
+            backend = {
+                "id": "test-videos",
+                "type": "local",
+                "dataset_type": "video",
+                "instance_data_dir": os.path.join(tmpdir, "data/videos"),
+                "cache_dir_vae": os.path.join(tmpdir, "cache/vae/videos"),
+                "video": {"is_i2v": True},
+                "audio": {
+                    "auto_split": True,
+                    "sample_rate": 16000,
+                    "channels": 1,
+                },
+                "s2v_datasets": ["test-videos_audio"],
+                "_s2v_audio_autoinjected": True,
+            }
 
-        data_backend_config = [backend]
-        result = factory.process_conditioning_datasets(deepcopy(data_backend_config))
+            data_backend_config = [backend]
+            result = factory.process_conditioning_datasets(deepcopy(data_backend_config))
 
-        # Find the generated conditioning dataset
-        conditioning_backends = [b for b in result if b.get("dataset_type") == "conditioning"]
+            # Find the generated conditioning dataset
+            conditioning_backends = [b for b in result if b.get("dataset_type") == "conditioning"]
 
-        # Should have created a virtual conditioning dataset
-        self.assertGreaterEqual(len(conditioning_backends), 1)
+            # Should have created a virtual conditioning dataset
+            self.assertGreaterEqual(len(conditioning_backends), 1)
 
-        # Conditioning dataset should NOT have audio settings
-        for cond_backend in conditioning_backends:
-            self.assertIsNone(
-                cond_backend.get("audio"),
-                f"Conditioning dataset {cond_backend['id']} should not have audio config",
-            )
-            self.assertIsNone(
-                cond_backend.get("s2v_datasets"),
-                f"Conditioning dataset {cond_backend['id']} should not have s2v_datasets",
-            )
-            self.assertIsNone(
-                cond_backend.get("_s2v_audio_autoinjected"),
-                f"Conditioning dataset {cond_backend['id']} should not have _s2v_audio_autoinjected",
-            )
+            # Conditioning dataset should NOT have audio settings
+            for cond_backend in conditioning_backends:
+                self.assertIsNone(
+                    cond_backend.get("audio"),
+                    f"Conditioning dataset {cond_backend['id']} should not have audio config",
+                )
+                self.assertIsNone(
+                    cond_backend.get("s2v_datasets"),
+                    f"Conditioning dataset {cond_backend['id']} should not have s2v_datasets",
+                )
+                self.assertIsNone(
+                    cond_backend.get("_s2v_audio_autoinjected"),
+                    f"Conditioning dataset {cond_backend['id']} should not have _s2v_audio_autoinjected",
+                )
 
     def test_duplicator_conditioning_excludes_audio(self):
         """Test that DatasetDuplicator strips audio settings from conditioning configs."""

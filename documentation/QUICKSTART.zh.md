@@ -31,6 +31,7 @@
 | LTX Video 2 | 19B | [LTXVIDEO2.zh.md](quickstart/LTXVIDEO2.zh.md) |
 | Lumina2 | 2B | [LUMINA2.zh.md](quickstart/LUMINA2.zh.md) |
 | Mage-Flow | 4B | [MAGEFLOW.zh.md](quickstart/MAGEFLOW.zh.md) |
+| MiniMax H3 | 33B | [MINIMAX_H3.zh.md](/documentation/quickstart/MINIMAX_H3.zh.md) |
 | OmniGen | 3.8B | [OMNIGEN.zh.md](quickstart/OMNIGEN.zh.md) |
 | PixArt Sigma | 0.6B-0.9B | [SIGMA.zh.md](quickstart/SIGMA.zh.md) |
 | Qwen Image | 20B | [QWEN_IMAGE.zh.md](quickstart/QWEN_IMAGE.zh.md)<br>[QWEN_EDIT.zh.md](quickstart/QWEN_EDIT.zh.md) |
@@ -80,6 +81,7 @@
 | LTX Video 2 | ✓ | ✓ | ✓* | ✗ | ✓ opt |
 | Lumina2 | ✓ | ✓ | ✓ | ✗ | ✗ |
 | Mage-Flow | ✓ | ✓ | ✓* | ✗ | ✓ edit |
+| MiniMax H3 | ✓ | ✓ | ✓* | ✗ | ✓ opt (FL2VA/Ref2VA) |
 | OmniGen | ✓ | ✓ | ✓ | ✗ | ✗ |
 | PixArt Sigma | ✗ | ✓ | ✓ | ✓ | ✗ |
 | Qwen Image | ✓ | ✓ | ✓* | ✗ | ✓ req (Edit) |
@@ -127,6 +129,7 @@
 | LTX Video 2 | int8/fp8 optional | bf16 |
 | Lumina2 | int8 optional | bf16 |
 | Mage-Flow | fp8 optional | bf16 |
+| MiniMax H3 | int8/fp8 optional; convrot-int8 | bf16 |
 | OmniGen | int8/fp8 optional | bf16 |
 | PixArt Sigma | int8 optional | bf16 |
 | Qwen Image | required (int8/nf4) | bf16 |
@@ -174,6 +177,7 @@
 | LTX Video 2 | ✓ | ✓ | ✓ | ✓ |
 | Lumina2 | ✓ | ✓ | ✓ | ✗ |
 | Mage-Flow | ✓ | ✓ | ✓ | ✓ |
+| MiniMax H3 | ✓ | ✓ | ✓ | ✓ |
 | OmniGen | ✓ | ✗ | ✗ | ✗ |
 | PixArt Sigma | ✓ | ✓ | ✓ | ✗ |
 | Qwen Image | ✓ | ✓ | ✓ | ✗ |
@@ -221,6 +225,7 @@
 | LTX Video 2 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Lumina2 | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ |
 | Mage-Flow | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ |
+| MiniMax H3 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
 | OmniGen | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ |
 | PixArt Sigma | epsilon | ✗ | ✗ | ✓ | ✓ | ✓ |
 | Qwen Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -268,6 +273,7 @@
 | LTX Video 2 | Gemma3 | not specified | LTX Video 2 VAE |
 | Lumina2 | Gemma2 | 2B | AutoencoderKL |
 | Mage-Flow | Qwen3-VL | not specified | Mage-VAE |
+| MiniMax H3 | Qwen3-VL | not specified | MiniMax H3 Video VAE + Audio VAE |
 | OmniGen | Integrated OmniGen encoder | not specified | AutoencoderKL |
 | PixArt Sigma | T5 XXL v1.1 | 11B | AutoencoderKL |
 | Qwen Image | Qwen2.5-VL | 7B | Qwen Image VAE |
