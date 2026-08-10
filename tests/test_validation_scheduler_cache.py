@@ -163,11 +163,44 @@ class ValidationSchedulerCacheTests(unittest.TestCase):
     def test_special_scheduler_models_skip_distiller_scheduler_replacement(self):
         validation = self._validation(scheduler=LoadedScheduler())
         validation.model.requires_special_scheduler_setup = lambda: True
-        validation.distiller = SimpleNamespace(get_scheduler=MagicMock(return_value=object()))
+        validation.distiller = SimpleNamespace(
+            get_scheduler=MagicMock(return_value=object()),
+            supports_special_scheduler_validation=lambda: False,
+        )
 
         scheduler = validation.setup_scheduler()
 
         self.assertIsNone(scheduler)
+        validation.distiller.get_scheduler.assert_not_called()
+
+    def test_special_scheduler_models_allow_compatible_distiller_wrapper(self):
+        validation = self._validation(scheduler=LoadedScheduler())
+        validation.model.requires_special_scheduler_setup = lambda: True
+        wrapped_scheduler = object()
+        validation.distiller = SimpleNamespace(
+            get_scheduler=MagicMock(return_value=wrapped_scheduler),
+            supports_special_scheduler_validation=lambda: True,
+        )
+
+        scheduler = validation.setup_scheduler(validation_type="intermediary")
+
+        self.assertIs(scheduler, wrapped_scheduler)
+        self.assertIs(validation.model.pipeline.scheduler, wrapped_scheduler)
+        validation.distiller.get_scheduler.assert_called_once_with()
+
+    def test_base_model_validation_keeps_model_owned_scheduler(self):
+        loaded_scheduler = LoadedScheduler()
+        validation = self._validation(scheduler=loaded_scheduler)
+        validation.model.requires_special_scheduler_setup = lambda: True
+        validation.distiller = SimpleNamespace(
+            get_scheduler=MagicMock(return_value=object()),
+            supports_special_scheduler_validation=lambda: True,
+        )
+
+        scheduler = validation.setup_scheduler(validation_type="base_model")
+
+        self.assertIsNone(scheduler)
+        self.assertIs(validation.model.pipeline.scheduler, loaded_scheduler)
         validation.distiller.get_scheduler.assert_not_called()
 
 
