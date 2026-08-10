@@ -182,6 +182,8 @@ class DistillerFactory:
                     "model_type": model_type,
                     "model_family": model_family,
                     "prediction_type": prediction_type,
+                    "seed": config.get("seed"),
+                    "seed_for_each_device": config.get("seed_for_each_device", False),
                 },
                 student_model=student_model,
             )
@@ -195,6 +197,8 @@ class DistillerFactory:
                     "model_type": model_type,
                     "model_family": model_family,
                     "prediction_type": prediction_type,
+                    "seed": config.get("seed"),
+                    "seed_for_each_device": config.get("seed_for_each_device", False),
                 },
                 student_model=student_model,
             )

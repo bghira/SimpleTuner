@@ -109,6 +109,7 @@ class CheckpointInferenceRuntime:
         trainer.init_tread_model()
         trainer.init_precision()
         trainer.init_freeze_models()
+        trainer.init_distillation_adapter_modules()
         trainer.init_trainable_peft_adapter()
         trainer.init_ema_model()
         trainer.init_precision(ema_only=True)

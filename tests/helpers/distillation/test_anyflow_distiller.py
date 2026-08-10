@@ -404,6 +404,22 @@ class AnyFlowDistillerTests(unittest.TestCase):
         self.assertEqual(len(model.teacher_timesteps), 2)
         self.assertTrue(model.component.adapter_enabled)
 
+    def test_seeded_meanflow_pair_uses_isolated_rng_stream(self):
+        torch.manual_seed(1234)
+        expected_next = torch.rand(4)
+        torch.manual_seed(1234)
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "seed": 987},
+        )
+
+        distiller.prepare_batch(_prepared_batch(), model=model, state={})
+        actual_next = torch.rand(4)
+
+        self.assertTrue(torch.equal(actual_next, expected_next))
+
     def test_meanflow_branch_assignment_uses_data_replica_rank_with_context_parallelism(self):
         model = _FlowModel()
         model.accelerator.num_processes = 8
@@ -596,7 +612,7 @@ class AnyFlowDistillerTests(unittest.TestCase):
         batch = _prepared_batch()
         batch["timesteps"] = torch.tensor([0.0, 0.5])
 
-        with patch("torch.randn_like", return_value=torch.zeros_like(batch["latents"])):
+        with patch.object(distiller, "_randn_like", return_value=torch.zeros_like(batch["latents"])):
             with distiller._adapter_role("student"):
                 result = distiller._training_rollout(batch, step_count=2, grad_timestep=1)
 
@@ -623,6 +639,38 @@ class AnyFlowDistillerTests(unittest.TestCase):
         self.assertEqual(logs["anyflow_rollout_steps"], 2.0)
         self.assertIn(logs["anyflow_rollout_grad_timestep"], (0.0, 1.0))
         self.assertEqual(model.component.active_adapter, "default")
+
+    def test_distributed_rollout_schedule_consumes_rank_local_draws_before_broadcast(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "stage": "onpolicy", "rollout_step_counts": [2, 4, 8]},
+        )
+        broadcast_values = [0, 1]
+
+        def broadcast_from_rank_zero(tensor, src):
+            self.assertEqual(src, 0)
+            tensor.fill_(broadcast_values.pop(0))
+
+        with (
+            patch("torch.distributed.is_available", return_value=True),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.broadcast", side_effect=broadcast_from_rank_zero) as broadcast,
+            patch.object(
+                distiller,
+                "_randint",
+                side_effect=[torch.tensor([2], dtype=torch.long), torch.tensor([0], dtype=torch.long)],
+            ) as randint,
+        ):
+            step_count, grad_timestep = distiller._distributed_rollout_schedule()
+
+        self.assertEqual(step_count, 2)
+        self.assertEqual(grad_timestep, 1)
+        self.assertEqual(broadcast.call_count, 2)
+        self.assertEqual(randint.call_count, 2)
+        self.assertEqual(randint.call_args_list[0].args, (3, (1,)))
+        self.assertEqual(randint.call_args_list[1].args, (2, (1,)))
 
     def test_onpolicy_discriminator_step_updates_only_discriminator_adapter(self):
         model = _FlowModel()
@@ -696,13 +744,14 @@ class AnyFlowDistillerTests(unittest.TestCase):
             "anyflow",
             teacher_model=model,
             noise_scheduler=None,
-            config={"distillation_config": {"anyflow": {"stage": "forward"}}},
+            config={"seed": 123, "distillation_config": {"anyflow": {"stage": "forward"}}},
             model_type="lora",
             prediction_type="flow_matching",
         )
 
         self.assertIsInstance(distiller, AnyFlowDistiller)
         self.assertEqual(distiller.config["stage"], "forward")
+        self.assertEqual(distiller._rng_seed, 123)
         self.assertTrue(model.component.flowmap_enabled)
 
     def test_requires_flow_matching_model(self):

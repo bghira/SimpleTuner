@@ -111,6 +111,8 @@ class AnyFlowDistiller(DistillationBase):
         self._delta_initial_parameters = {
             name: parameter.detach().float().cpu().clone() for name, parameter in self._trainable_delta_parameters()
         }
+        self._rng_seed = self._resolve_rng_seed()
+        self._rng_generators: Dict[str, torch.Generator] = {}
 
         self._student_adapter_name: Optional[str] = None
         self._discriminator_adapter_name: Optional[str] = None
@@ -253,6 +255,92 @@ class AnyFlowDistiller(DistillationBase):
     # ------------------------------------------------------------------
     # Configuration and adapter roles
     # ------------------------------------------------------------------
+    def _resolve_rng_seed(self) -> Optional[int]:
+        seed = self.config.get("seed")
+        if seed in (None, "", 0):
+            seed = getattr(getattr(self.teacher_model, "config", None), "seed", None)
+        if seed in (None, "", 0):
+            return None
+
+        seed = int(seed)
+        seed_for_each_device = self.config.get("seed_for_each_device")
+        if seed_for_each_device is None:
+            seed_for_each_device = getattr(getattr(self.teacher_model, "config", None), "seed_for_each_device", False)
+        if bool(seed_for_each_device):
+            accelerator = getattr(self.teacher_model, "accelerator", None)
+            seed += int(getattr(accelerator, "process_index", 0) or 0)
+        return seed
+
+    @staticmethod
+    def _canonical_rng_device(device: torch.device | str) -> torch.device:
+        torch_device = torch.device(device)
+        if torch_device.type == "cuda" and torch_device.index is None and torch.cuda.is_available():
+            return torch.device("cuda", torch.cuda.current_device())
+        return torch_device
+
+    def _rng_generator(self, device: torch.device | str) -> Optional[torch.Generator]:
+        if self._rng_seed is None:
+            return None
+
+        torch_device = self._canonical_rng_device(device)
+        key = str(torch_device)
+        generator = self._rng_generators.get(key)
+        if generator is None:
+            generator = torch.Generator(device=torch_device)
+            generator.manual_seed(self._rng_seed)
+            self._rng_generators[key] = generator
+        return generator
+
+    def _rand(
+        self,
+        size: Sequence[int] | torch.Size,
+        *,
+        device: torch.device | str,
+        dtype: Optional[torch.dtype] = None,
+    ) -> torch.Tensor:
+        torch_device = self._canonical_rng_device(device)
+        kwargs: Dict[str, Any] = {"device": torch_device}
+        if dtype is not None:
+            kwargs["dtype"] = dtype
+        generator = self._rng_generator(torch_device)
+        if generator is not None:
+            kwargs["generator"] = generator
+        return torch.rand(size, **kwargs)
+
+    def _randn(
+        self,
+        size: Sequence[int] | torch.Size,
+        *,
+        device: torch.device | str,
+        dtype: Optional[torch.dtype] = None,
+    ) -> torch.Tensor:
+        torch_device = self._canonical_rng_device(device)
+        kwargs: Dict[str, Any] = {"device": torch_device}
+        if dtype is not None:
+            kwargs["dtype"] = dtype
+        generator = self._rng_generator(torch_device)
+        if generator is not None:
+            kwargs["generator"] = generator
+        return torch.randn(size, **kwargs)
+
+    def _randn_like(self, tensor: torch.Tensor) -> torch.Tensor:
+        return self._randn(tuple(tensor.shape), device=tensor.device, dtype=tensor.dtype)
+
+    def _randint(
+        self,
+        high: int,
+        size: Sequence[int] | torch.Size,
+        *,
+        device: torch.device | str,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        torch_device = self._canonical_rng_device(device)
+        kwargs: Dict[str, Any] = {"device": torch_device, "dtype": dtype}
+        generator = self._rng_generator(torch_device)
+        if generator is not None:
+            kwargs["generator"] = generator
+        return torch.randint(high, size, **kwargs)
+
     @property
     def _device(self) -> torch.device:
         accelerator = getattr(self.teacher_model, "accelerator", None)
@@ -416,8 +504,8 @@ class AnyFlowDistiller(DistillationBase):
         latents = prepared_batch["latents"]
         batch_size = int(latents.shape[0])
         device = latents.device
-        first = torch.rand(batch_size, device=device, dtype=torch.float32)
-        second = torch.rand(batch_size, device=device, dtype=torch.float32)
+        first = self._rand((batch_size,), device=device, dtype=torch.float32)
+        second = self._rand((batch_size,), device=device, dtype=torch.float32)
         t_base = torch.maximum(first, second)
         r_base = torch.minimum(first, second)
 
@@ -551,7 +639,7 @@ class AnyFlowDistiller(DistillationBase):
             )
 
         sigma = self._sample_dmd_sigma(generated.shape[0], logit_normal=False, device=generated.device)
-        noise = torch.randn_like(generated)
+        noise = self._randn_like(generated)
         sigma_broadcast = self._broadcast_time(sigma, generated).to(generated.dtype)
         noisy = ((1.0 - sigma_broadcast) * generated + sigma_broadcast * noise).detach()
 
@@ -589,7 +677,7 @@ class AnyFlowDistiller(DistillationBase):
             ).detach()
 
         sigma = self._sample_dmd_sigma(generated.shape[0], logit_normal=True, device=generated.device)
-        noise = torch.randn_like(generated)
+        noise = self._randn_like(generated)
         sigma_broadcast = self._broadcast_time(sigma, generated).to(generated.dtype)
         noisy = (1.0 - sigma_broadcast) * generated + sigma_broadcast * noise
         prediction = self._predict_at_sigmas(dmd_batch, noisy, sigma, sigma)
@@ -606,7 +694,7 @@ class AnyFlowDistiller(DistillationBase):
         if grad_timestep < 0 or grad_timestep >= step_count:
             raise ValueError(f"AnyFlow grad_timestep must be in [0, {step_count}), got {grad_timestep}.")
 
-        latents = torch.randn_like(prepared_batch["latents"])
+        latents = self._randn_like(prepared_batch["latents"])
         base_sigmas = torch.linspace(1.0, 0.0, step_count + 1, device=latents.device, dtype=torch.float32)
         sigmas = self._apply_scheduler_shift(base_sigmas)
 
@@ -662,26 +750,22 @@ class AnyFlowDistiller(DistillationBase):
         steps = self.config["rollout_step_counts"]
         device = self._device
         if torch.distributed.is_available() and torch.distributed.is_initialized():
-            if torch.distributed.get_rank() == 0:
-                index = torch.randint(len(steps), (1,), device=device, dtype=torch.long)
-            else:
-                index = torch.zeros(1, device=device, dtype=torch.long)
+            index = self._randint(len(steps), (1,), device=device, dtype=torch.long)
             torch.distributed.broadcast(index, src=0)
             step_count = int(steps[int(index.item())])
-            if torch.distributed.get_rank() == 0:
-                grad_timestep = torch.randint(step_count, (1,), device=device, dtype=torch.long)
-            else:
-                grad_timestep = torch.zeros(1, device=device, dtype=torch.long)
+            grad_timestep = self._randint(step_count, (1,), device=device, dtype=torch.long)
             torch.distributed.broadcast(grad_timestep, src=0)
             return step_count, int(grad_timestep.item())
 
-        step_count = int(steps[int(torch.randint(len(steps), (1,)).item())])
-        grad_timestep = int(torch.randint(step_count, (1,)).item())
+        step_count = int(steps[int(self._randint(len(steps), (1,), device=device, dtype=torch.long).item())])
+        grad_timestep = int(self._randint(step_count, (1,), device=device, dtype=torch.long).item())
         return step_count, grad_timestep
 
     def _sample_dmd_sigma(self, batch_size: int, *, logit_normal: bool, device: torch.device) -> torch.Tensor:
         base = (
-            torch.sigmoid(torch.randn(batch_size, device=device)) if logit_normal else torch.rand(batch_size, device=device)
+            torch.sigmoid(self._randn((batch_size,), device=device))
+            if logit_normal
+            else self._rand((batch_size,), device=device)
         )
         sigma = self._apply_scheduler_shift(base)
         return sigma.clamp(

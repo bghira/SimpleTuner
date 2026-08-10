@@ -99,6 +99,10 @@ MiniMax-H3 already contains CFG distillation, so its on-policy runs should norma
 `real_score_guidance_scale=0`. Models that require an external real-score CFG pass must cache negative text embeddings
 and can set the scale explicitly.
 
+When `--seed` is set, AnyFlow samples MeanFlow intervals, rollout schedules, rollout latents, DMD noise, and DMD sigmas
+from an isolated per-device Torch generator. This keeps AnyFlow samples stable when unrelated training code consumes the
+global Torch RNG. It does not make CUDA attention backward bit-stable.
+
 ## Shared Configuration
 
 - `stage`: `forward` or `onpolicy`. Default: `forward`.

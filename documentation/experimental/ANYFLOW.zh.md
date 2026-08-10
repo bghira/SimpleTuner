@@ -86,6 +86,10 @@ checkpoint 保存为 `anyflow_discriminator.safetensors` 和 `anyflow_discrimina
 MiniMax-H3 已经包含 CFG distillation，因此它的 on-policy 运行通常应保持 `real_score_guidance_scale=0`。需要外部 real-score
 CFG pass 的模型必须缓存 negative text embeddings，并可以显式设置该 scale。
 
+设置 `--seed` 时，AnyFlow 会从按设备隔离的 Torch generator 中采样 MeanFlow 区间、rollout schedule、rollout latent、DMD
+noise 和 DMD sigma。这样即使无关训练代码消耗了全局 Torch RNG，AnyFlow 样本也会保持稳定。这不会让 CUDA attention
+backward 达到 bit-stable。
+
 ## 共享配置
 
 - `stage`: `forward` 或 `onpolicy`。默认：`forward`。
