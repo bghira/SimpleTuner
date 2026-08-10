@@ -2335,9 +2335,9 @@ class Validation:
         """
         Determines whether the base model benchmark outputs already exist.
         """
-        base_model_benchmark = self._benchmark_path()
+        base_model_benchmark = self._benchmark_path(benchmark=benchmark)
 
-        return os.path.exists(base_model_benchmark) and bool(os.listdir(base_model_benchmark))
+        return os.path.isdir(base_model_benchmark) and bool(os.listdir(base_model_benchmark))
 
     def _benchmark_path(self, benchmark: str = "base_model"):
         # does the benchmark directory exist?
