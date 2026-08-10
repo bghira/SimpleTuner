@@ -4487,9 +4487,17 @@ class Trainer:
                 job_id=self.job_id,
             )
         )
-        # we'll run validation on base model if it hasn't already.
-        self.validation.run_validations(validation_type="base_model", step=0)
-        self.validation.save_benchmark("base_model")
+        trained_component = self.model.get_trained_component(unwrap_model=False)
+        was_training = trained_component.training
+        trained_component.eval()
+        try:
+            # Run validation on the base model if it has not already been benchmarked.
+            with self.accelerator.autocast():
+                self.validation.run_validations(validation_type="base_model", step=0)
+            self.validation.save_benchmark("base_model")
+        finally:
+            if was_training:
+                trained_component.train()
         self._emit_event(
             lifecycle_stage_event(
                 key="benchmark_base_model",

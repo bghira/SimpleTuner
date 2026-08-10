@@ -1260,9 +1260,7 @@ class TestTrainer(unittest.TestCase):
         logs = {}
         trainer._update_grad_metrics(logs, clone_norm_value=True)
         self.assertIn("grad_absmax", logs)
-        self.assertEqual(
-            logs["grad_absmax"], float(trainer.grad_norm.clone().detach())
-        )
+        self.assertEqual(logs["grad_absmax"], float(trainer.grad_norm.clone().detach()))
 
     def test_update_grad_metrics_clones_norm_value_when_requested(self):
         trainer = self._build_trainer_for_grad_logging(
@@ -1324,9 +1322,7 @@ class TestTrainer(unittest.TestCase):
         )
         metrics = trainer._compose_training_progress_metrics(epoch=1)
         self.assertIn("grad_absmax", metrics)
-        self.assertEqual(
-            metrics["grad_absmax"], float(trainer.grad_norm.clone().detach())
-        )
+        self.assertEqual(metrics["grad_absmax"], float(trainer.grad_norm.clone().detach()))
         self.assertNotIn("grad_norm", metrics)
 
     def test_compose_training_progress_metrics_excludes_grad_with_deepspeed(self):
@@ -1490,6 +1486,71 @@ class TestTrainer(unittest.TestCase):
         trainer._place_ema_model(is_fsdp2_run=True)
 
         trainer.ema_model.to.assert_not_called()
+
+    def test_init_benchmark_base_model_uses_eval_mode_and_restores_training(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(disable_benchmark=False, validation_multigpu="batch-parallel")
+        trainer.accelerator = MagicMock()
+        trainer.accelerator.is_main_process = True
+        trainer.validation = MagicMock()
+        trainer.validation.benchmark_exists.return_value = False
+        trainer._emit_event = MagicMock()
+        trainer.job_id = None
+        trained_component = MagicMock()
+        trained_component.training = True
+        trainer.model = MagicMock()
+        trainer.model.get_trained_component.return_value = trained_component
+
+        trainer.init_benchmark_base_model()
+
+        trained_component.eval.assert_called_once_with()
+        trained_component.train.assert_called_once_with()
+        trainer.accelerator.autocast.assert_called_once_with()
+        trainer.validation.run_validations.assert_called_once_with(validation_type="base_model", step=0)
+        trainer.validation.save_benchmark.assert_called_once_with("base_model")
+
+    def test_init_benchmark_base_model_restores_training_after_validation_error(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(disable_benchmark=False, validation_multigpu="batch-parallel")
+        trainer.accelerator = MagicMock()
+        trainer.accelerator.is_main_process = True
+        trainer.validation = MagicMock()
+        trainer.validation.benchmark_exists.return_value = False
+        trainer.validation.run_validations.side_effect = RuntimeError("validation failed")
+        trainer._emit_event = MagicMock()
+        trainer.job_id = None
+        trained_component = MagicMock()
+        trained_component.training = True
+        trainer.model = MagicMock()
+        trainer.model.get_trained_component.return_value = trained_component
+
+        with self.assertRaisesRegex(RuntimeError, "validation failed"):
+            trainer.init_benchmark_base_model()
+
+        trained_component.eval.assert_called_once_with()
+        trained_component.train.assert_called_once_with()
+        trainer.accelerator.autocast.assert_called_once_with()
+        trainer.validation.save_benchmark.assert_not_called()
+
+    def test_init_benchmark_base_model_preserves_eval_mode(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(disable_benchmark=False, validation_multigpu="batch-parallel")
+        trainer.accelerator = MagicMock()
+        trainer.accelerator.is_main_process = True
+        trainer.validation = MagicMock()
+        trainer.validation.benchmark_exists.return_value = False
+        trainer._emit_event = MagicMock()
+        trainer.job_id = None
+        trained_component = MagicMock()
+        trained_component.training = False
+        trainer.model = MagicMock()
+        trainer.model.get_trained_component.return_value = trained_component
+
+        trainer.init_benchmark_base_model()
+
+        trained_component.eval.assert_called_once_with()
+        trained_component.train.assert_not_called()
+        trainer.validation.run_validations.assert_called_once_with(validation_type="base_model", step=0)
 
     @patch("simpletuner.helpers.training.trainer.Validation")
     def test_init_validations_enabled_for_fsdp_full_shard(self, mock_validation):
