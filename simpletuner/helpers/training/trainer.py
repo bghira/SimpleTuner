@@ -1895,6 +1895,7 @@ class Trainer:
             self.resume_and_prepare()
             self._exit_on_signal()
             self.init_trackers()
+            self.run_startup_validation()
 
             # Start the training process
             self.train()
@@ -6391,6 +6392,19 @@ class Trainer:
             self.mark_optimizer_train()
 
         return should_validate
+
+    def run_startup_validation(self) -> bool:
+        if not bool(getattr(self.config, "validation_on_startup", False)) or getattr(self, "validation", None) is None:
+            return False
+        step = self.state.get("global_step")
+        if step is None:
+            step = StateTracker.get_global_step()
+        step = int(step or 0)
+        logger.info("Running startup validation at restored global step %d.", step)
+        return self._run_intermediary_validation(step, manual_validation_requested=True)
+
+    def _run_startup_validation(self) -> bool:
+        return self.run_startup_validation()
 
     def _create_torch_profiler(self):
         trace_dir = os.environ.get("SIMPLETUNER_TORCH_PROFILER_DIR")

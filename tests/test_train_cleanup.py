@@ -21,6 +21,7 @@ class _FakeTrainer:
 
     def __init__(self, *args, **kwargs):
         self.cleanup_called = False
+        self.startup_validation_called = False
         self.bf = _DummyFetcher()
         self.config = MagicMock()
         _FakeTrainer.instances.append(self)
@@ -91,6 +92,9 @@ class _FakeTrainer:
     def init_trackers(self, *_, **__):
         return None
 
+    def run_startup_validation(self, *_, **__):
+        self.startup_validation_called = True
+
     def train(self, *_, **__):
         # Simulate a runtime failure after initial setup
         raise RuntimeError("simulated training failure")
@@ -117,6 +121,10 @@ class TrainEntryCleanupTest(unittest.TestCase):
         self.assertTrue(
             trainer.cleanup_called,
             "train.py did not invoke trainer.cleanup() after a training failure",
+        )
+        self.assertTrue(
+            trainer.startup_validation_called,
+            "train.py did not dispatch startup validation before training",
         )
 
 

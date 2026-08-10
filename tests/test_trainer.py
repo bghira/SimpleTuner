@@ -817,6 +817,44 @@ class TestTrainer(unittest.TestCase):
             epoch_end=True,
         )
 
+    def test_run_startup_validation_uses_restored_global_step(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(validation_on_startup=True)
+        trainer.validation = MagicMock()
+        trainer.state = {"global_step": 500}
+        trainer._run_intermediary_validation = MagicMock(return_value=True)
+
+        with patch("simpletuner.helpers.training.trainer.logger.info") as log_info:
+            result = trainer.run_startup_validation()
+
+        self.assertTrue(result)
+        log_info.assert_called_once_with("Running startup validation at restored global step %d.", 500)
+        trainer._run_intermediary_validation.assert_called_once_with(500, manual_validation_requested=True)
+
+    def test_run_startup_validation_is_disabled_by_default(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace()
+        trainer.state = {"global_step": 500}
+        trainer._run_intermediary_validation = MagicMock()
+
+        result = trainer.run_startup_validation()
+
+        self.assertFalse(result)
+        trainer._run_intermediary_validation.assert_not_called()
+
+    def test_run_startup_validation_uses_lazy_global_step_fallback(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(validation_on_startup=True)
+        trainer.validation = MagicMock()
+        trainer.state = {"global_step": None}
+        trainer._run_intermediary_validation = MagicMock(return_value=True)
+
+        with patch("simpletuner.helpers.training.trainer.StateTracker.get_global_step", return_value=None):
+            result = trainer.run_startup_validation()
+
+        self.assertTrue(result)
+        trainer._run_intermediary_validation.assert_called_once_with(0, manual_validation_requested=True)
+
     @patch("simpletuner.helpers.training.trainer.load_config")
     @patch("simpletuner.helpers.training.trainer.safety_check")
     @patch("simpletuner.helpers.training.state_tracker.StateTracker")
