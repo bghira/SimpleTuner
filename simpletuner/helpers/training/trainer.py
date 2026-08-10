@@ -6467,7 +6467,7 @@ class Trainer:
                 # This ensures all ranks in a CP group receive the same batch before the
                 # model's _cp_plan splits it along the sequence dimension.
                 raw_batch = cp_batch_synchronizer.fetch_batch(iterator_fn, step, *iterator_args)
-                with cp_batch_synchronizer.synchronized_rng(self.config.seed, step):
+                with cp_batch_synchronizer.synchronized_rng(getattr(self.config, "seed", None), step):
                     prepared_batch = self.prepare_batch(raw_batch)
                 training_logger.debug(f"Iterator: {iterator_fn}")
                 if self.config.lr_scheduler == "cosine_with_restarts":
