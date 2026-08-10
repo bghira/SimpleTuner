@@ -495,6 +495,35 @@ def build_row_timesteps(
     return torch.unique(row_timesteps, sorted=True, return_inverse=True)
 
 
+def build_row_timestep_intervals(
+    layout: MiniMaxH3PackedSequence,
+    video_timestep: float,
+    audio_timestep: float,
+    condition_video_timestep: float,
+    condition_audio_timestep: float,
+    video_r_timestep: float,
+    audio_r_timestep: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Build distinct timestep embeddings for every current/endpoint pair in an H3 packed sequence."""
+    row_timesteps = torch.full((layout.sequence_length,), video_timestep, dtype=torch.float32)
+    row_r_timesteps = torch.full((layout.sequence_length,), video_r_timestep, dtype=torch.float32)
+
+    condition_video_indices = layout.video_indices[: layout.num_condition_video_rows]
+    generated_audio_indices = layout.audio_indices[layout.num_condition_audio_rows :]
+    condition_audio_indices = layout.audio_indices[: layout.num_condition_audio_rows]
+
+    row_timesteps[condition_video_indices] = condition_video_timestep
+    row_r_timesteps[condition_video_indices] = condition_video_timestep
+    row_timesteps[generated_audio_indices] = audio_timestep
+    row_r_timesteps[generated_audio_indices] = audio_r_timestep
+    row_timesteps[condition_audio_indices] = condition_audio_timestep
+    row_r_timesteps[condition_audio_indices] = condition_audio_timestep
+
+    timestep_pairs = torch.stack((row_timesteps, row_r_timesteps), dim=-1)
+    unique_pairs, timestep_indices = torch.unique(timestep_pairs, dim=0, sorted=True, return_inverse=True)
+    return unique_pairs[:, 0], unique_pairs[:, 1], timestep_indices
+
+
 def keyframe_condition_noise(
     condition_latent_shapes: tuple[tuple[int, int, int], ...],
     patch_size: tuple[int, int, int],

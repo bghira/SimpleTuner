@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import math
 import os
 import struct
 from dataclasses import dataclass
@@ -24,9 +25,9 @@ import torch
 import torch.nn as nn
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import PeftAdapterMixin
-from diffusers.models._modeling_parallel import ContextParallelInput, ContextParallelOutput
+from diffusers.models._modeling_parallel import ContextParallelInput
 from diffusers.models.attention import AttentionMixin, AttentionModuleMixin
-from diffusers.models.attention_dispatch import dispatch_attention_fn
+from diffusers.models.attention_dispatch import AttentionBackendName, _AttentionBackendRegistry, dispatch_attention_fn
 from diffusers.models.cache_utils import CacheMixin
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_utils import ModelMixin
@@ -45,12 +46,18 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
-from simpletuner.helpers.training.context_parallel_tensors import context_parallel_config
+from simpletuner.helpers.training.context_parallel_tensors import context_parallel_config, prepare_cp_attention_mask
 from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state, should_checkpoint_block
 from simpletuner.helpers.training.offloaded_gradient_checkpointer import activation_offload_context
 from simpletuner.helpers.training.tread import TREADRouter
 
 from .activations import MiniMaxH3FeedForward
+from .sparse_attention import (
+    MiniMaxH3SparseAttentionConfig,
+    MiniMaxH3SparseAttentionLayout,
+    minimax_h3_sparse_attention,
+    minimax_h3_sparse_attention_ulysses,
+)
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -60,12 +67,83 @@ logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 MINIMAX_H3_MODALITY_NUM = 3
 
 
+class _MiniMaxH3AllGather(torch.autograd.Function):
+    """Gather sequence shards without PyTorch's unsupported NCCL coalesced path."""
+
+    @staticmethod
+    def forward(ctx, tensor: torch.Tensor, dim: int, group):
+        ctx.dim = dim
+        ctx.group = group
+        ctx.world_size = torch.distributed.get_world_size(group)
+        ctx.rank = torch.distributed.get_rank(group)
+        shards = [torch.empty_like(tensor) for _ in range(ctx.world_size)]
+        torch.distributed.all_gather(shards, tensor.contiguous(), group=group)
+        return torch.cat(shards, dim=dim)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        local_gradient = torch.chunk(grad_output, ctx.world_size, dim=ctx.dim)[ctx.rank]
+        return local_gradient.contiguous(), None, None
+
+
+def _gather_h3_context_parallel_output(tensor: torch.Tensor, context_config: Any, dim: int = 1) -> torch.Tensor:
+    if context_config is None:
+        return tensor
+    mesh = getattr(context_config, "_flattened_mesh", None)
+    if mesh is None:
+        raise RuntimeError("MiniMax-H3 context parallel output gathering requires an initialized flattened CP mesh.")
+    group = mesh.get_group()
+    if torch.distributed.get_world_size(group) <= 1:
+        return tensor
+    return _MiniMaxH3AllGather.apply(tensor, dim, group)
+
+
+def _pad_h3_context_parallel_layout(
+    position_ids: torch.Tensor,
+    token_tags: torch.Tensor,
+    timestep_indices: torch.Tensor,
+    degree: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Pad packed layout rows so Diffusers can shard them evenly across the CP mesh."""
+    if degree < 1:
+        raise ValueError(f"MiniMax-H3 context parallel degree must be positive, got {degree}.")
+    padding = (-position_ids.shape[0]) % degree
+    if padding == 0:
+        return position_ids, token_tags, timestep_indices
+
+    position_ids = torch.cat([position_ids, position_ids.new_zeros((padding, position_ids.shape[1]))], dim=0)
+    token_tags = torch.cat([token_tags, token_tags.new_full((padding,), -1)], dim=0)
+    timestep_indices = torch.cat([timestep_indices, timestep_indices.new_zeros((padding,))], dim=0)
+    return position_ids, token_tags, timestep_indices
+
+
+def _interpolate_adaln_curve(table: torch.Tensor, timestep: torch.Tensor) -> torch.Tensor:
+    table = table.to(device=timestep.device)
+    position = timestep.to(device=timestep.device, dtype=torch.float32).clamp(0.0, 1.0) * (table.shape[0] - 1)
+    lower = position.floor().long().clamp(max=table.shape[0] - 2)
+    weight = (position - lower).to(dtype=table.dtype).unsqueeze(-1)
+    return torch.lerp(table[lower], table[lower + 1], weight)
+
+
+class MiniMaxH3AdaLNCurveEmbedder(nn.Module):
+    """Independent trainable copy of H3's sampled AdaLN timestep curve."""
+
+    def __init__(self, table: torch.Tensor) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(table.detach().clone())
+
+    def forward(self, timestep: torch.Tensor) -> torch.Tensor:
+        return _interpolate_adaln_curve(self.weight, timestep)
+
+
 class H3_REFERENCE_MODE(str, Enum):
     Vanilla = "vanilla"
     CachedKV = "cached_kv"
 
 
-def resolve_h3_reference_mode(value: str | H3_REFERENCE_MODE | None) -> H3_REFERENCE_MODE:
+def resolve_h3_reference_mode(
+    value: str | H3_REFERENCE_MODE | None,
+) -> H3_REFERENCE_MODE:
     if value is None:
         return H3_REFERENCE_MODE.Vanilla
     if isinstance(value, H3_REFERENCE_MODE):
@@ -228,7 +306,12 @@ def _open_minimax_h3_single_file(path: str):
 
 
 def _strip_minimax_h3_checkpoint_prefix(key: str) -> str:
-    for prefix in ("transformer.", "transformer_ref.", "model.diffusion_model.", "diffusion_model."):
+    for prefix in (
+        "transformer.",
+        "transformer_ref.",
+        "model.diffusion_model.",
+        "diffusion_model.",
+    ):
         if key.startswith(prefix):
             return key[len(prefix) :]
     return key
@@ -465,7 +548,9 @@ def _cache_tensor_signature(value: torch.Tensor) -> tuple[Any, ...]:
     )
 
 
-def _cache_rotary_signature(rotary_emb: tuple[torch.Tensor, torch.Tensor] | None) -> tuple[Any, ...] | None:
+def _cache_rotary_signature(
+    rotary_emb: tuple[torch.Tensor, torch.Tensor] | None,
+) -> tuple[Any, ...] | None:
     if rotary_emb is None:
         return None
     return tuple(_cache_tensor_signature(value) for value in rotary_emb)
@@ -489,7 +574,8 @@ class MiniMaxH3RotaryPosEmbed(nn.Module):
     def forward(self, position_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         # position_ids: (seq_len, 3) -> cos/sin: (seq_len, 2 * 3 * rope_freq_dim)
         position_ids = position_ids.to(torch.float32)
-        freqs = position_ids.unsqueeze(-1) * self.inv_freq.view(1, 1, -1)  # (seq_len, 3, rope_freq_dim)
+        inv_freq = self.inv_freq.to(device=position_ids.device)
+        freqs = position_ids.unsqueeze(-1) * inv_freq.view(1, 1, -1)  # (seq_len, 3, rope_freq_dim)
         freqs_t, freqs_h, freqs_w = freqs.unbind(dim=1)
         freqs = torch.cat((freqs_t, freqs_h, freqs_w), dim=-1)
         freqs = torch.cat((freqs, freqs), dim=-1)
@@ -544,7 +630,12 @@ class MiniMaxH3AdaLayerNormOut(nn.Module):
         self.norm = nn.RMSNorm(hidden_size, eps=eps)
         self.linear = nn.Linear(time_embed_dim, 2 * hidden_size, bias=True)
 
-    def forward(self, hidden_states: torch.Tensor, temb: torch.Tensor, timestep_indices: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        temb: torch.Tensor,
+        timestep_indices: torch.Tensor,
+    ) -> torch.Tensor:
         # As in `MiniMaxH3AdaLayerNormModulation`: activate at `temb`'s precision, cast to the projection's dtype after.
         temb = nn.functional.silu(temb) if self.apply_silu else temb
         shift, scale = self.linear(temb.to(self.linear.weight.dtype)).chunk(2, dim=-1)
@@ -573,6 +664,7 @@ class MiniMaxH3AttnProcessor:
         reference_mask: torch.Tensor | None = None,
         reference_kv_cache: dict[Any, tuple[torch.Tensor, torch.Tensor]] | None = None,
         reference_kv_stats: dict[str, int] | None = None,
+        sparse_attention_layout: MiniMaxH3SparseAttentionLayout | None = None,
     ) -> torch.Tensor:
         use_reference_cache = (
             reference_mask is not None
@@ -627,8 +719,16 @@ class MiniMaxH3AttnProcessor:
                 if reference_kv_stats is not None:
                     reference_kv_stats["hits"] = reference_kv_stats.get("hits", 0) + 1
             reference_key, reference_value = cached
-            key.index_copy_(1, reference_indices, reference_key.to(device=key.device, dtype=key.dtype))
-            value.index_copy_(1, reference_indices, reference_value.to(device=value.device, dtype=value.dtype))
+            key.index_copy_(
+                1,
+                reference_indices,
+                reference_key.to(device=key.device, dtype=key.dtype),
+            )
+            value.index_copy_(
+                1,
+                reference_indices,
+                reference_value.to(device=value.device, dtype=value.dtype),
+            )
         elif attn.fused_projections:
             query, key, value = attn.to_qkv(hidden_states).chunk(3, dim=-1)
             query = query.unflatten(-1, (attn.heads, -1))
@@ -661,16 +761,53 @@ class MiniMaxH3AttnProcessor:
         # all-zero float mask here would hard-fail the flash / sage backends). When padding rows are present, the
         # caller supplies a boolean mask that keeps them in their own attention document, mirroring the reference's
         # `cu_seqlens = [0, used, S]` split; masked backends (SDPA & co.) are required in that case.
-        hidden_states = dispatch_attention_fn(
-            query,
-            key,
-            value,
-            attn_mask=attention_mask,
-            dropout_p=0.0,
-            is_causal=False,
-            backend=self._attention_backend,
-            parallel_config=self._parallel_config,
+        if attention_mask is not None and context_parallel_config(self._parallel_config) is not None:
+            attention_mask = prepare_cp_attention_mask(
+                attention_mask,
+                query.shape[1],
+                self._parallel_config,
+                model_name="MiniMax-H3",
+            )
+        sparse_config = getattr(attn, "_h3_sparse_attention_config", None)
+        sparse_layer_index = int(getattr(attn, "_h3_sparse_layer_index", -1))
+        use_sparse_attention = (
+            sparse_attention_layout is not None
+            and sparse_config is not None
+            and sparse_config.enabled
+            and sparse_layer_index >= sparse_config.start_layer
         )
+        if use_sparse_attention:
+            cp_config = context_parallel_config(self._parallel_config)
+            if attention_mask is not None and cp_config is None:
+                raise ValueError("MiniMax-H3 sparse attention cannot be combined with a packed attention mask yet.")
+            if cp_config is not None:
+                hidden_states = minimax_h3_sparse_attention_ulysses(
+                    query,
+                    key,
+                    value,
+                    layout=sparse_attention_layout,
+                    config=sparse_config,
+                    process_group=cp_config._ulysses_mesh.get_group(),
+                )
+            else:
+                hidden_states = minimax_h3_sparse_attention(
+                    query,
+                    key,
+                    value,
+                    layout=sparse_attention_layout,
+                    config=sparse_config,
+                )
+        else:
+            hidden_states = dispatch_attention_fn(
+                query,
+                key,
+                value,
+                attn_mask=attention_mask,
+                dropout_p=0.0,
+                is_causal=False,
+                backend=self._attention_backend,
+                parallel_config=self._parallel_config,
+            )
         hidden_states = hidden_states.flatten(2, 3).type_as(query)
         hidden_states = attn.to_out[0](hidden_states)
         hidden_states = attn.to_out[1](hidden_states)
@@ -714,6 +851,7 @@ class MiniMaxH3Attention(nn.Module, AttentionModuleMixin):
         reference_mask: torch.Tensor | None = None,
         reference_kv_cache: dict[Any, tuple[torch.Tensor, torch.Tensor]] | None = None,
         reference_kv_stats: dict[str, int] | None = None,
+        sparse_attention_layout: MiniMaxH3SparseAttentionLayout | None = None,
     ) -> torch.Tensor:
         return self.processor(
             self,
@@ -723,6 +861,7 @@ class MiniMaxH3Attention(nn.Module, AttentionModuleMixin):
             reference_mask=reference_mask,
             reference_kv_cache=reference_kv_cache,
             reference_kv_stats=reference_kv_stats,
+            sparse_attention_layout=sparse_attention_layout,
         )
 
 
@@ -890,12 +1029,17 @@ class MiniMaxH3TransformerBlock(nn.Module):
         reference_mask: torch.Tensor | None = None,
         reference_kv_cache: dict[Any, tuple[torch.Tensor, torch.Tensor] | torch.Tensor] | None = None,
         reference_kv_stats: dict[str, int] | None = None,
+        sparse_attention_layout: MiniMaxH3SparseAttentionLayout | None = None,
     ) -> torch.Tensor:
         cached_reference_hidden_states = None
         reference_post_cache_key = None
         if reference_mask is not None and reference_kv_cache is not None and bool(reference_mask.any()):
             reference_hidden_states = hidden_states[:, reference_mask, :]
-            reference_post_cache_key = ("post", id(self), _cache_tensor_signature(reference_hidden_states))
+            reference_post_cache_key = (
+                "post",
+                id(self),
+                _cache_tensor_signature(reference_hidden_states),
+            )
             cached_reference_hidden_states = reference_kv_cache.get(reference_post_cache_key)
             if cached_reference_hidden_states is not None and reference_kv_stats is not None:
                 reference_kv_stats["post_hits"] = reference_kv_stats.get("post_hits", 0) + 1
@@ -920,6 +1064,7 @@ class MiniMaxH3TransformerBlock(nn.Module):
                 reference_mask=reference_mask,
                 reference_kv_cache=reference_kv_cache,
                 reference_kv_stats=reference_kv_stats,
+                sparse_attention_layout=sparse_attention_layout,
             )
         hidden_states = residual + gate_msa * attn_output
 
@@ -1018,10 +1163,15 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
     _supports_ffn_gradient_checkpointing = True
     _supports_attention_activation_offload = True
     _tread_router: TREADRouter | None = None
-    _no_split_modules = ["MiniMaxH3TransformerBlock", "MiniMaxH3TokenRefinerBlock", "MiniMaxH3AdaLayerNormOut"]
+    _no_split_modules = [
+        "MiniMaxH3TransformerBlock",
+        "MiniMaxH3TokenRefinerBlock",
+        "MiniMaxH3AdaLayerNormOut",
+    ]
     _repeated_blocks = ["MiniMaxH3TransformerBlock", "MiniMaxH3TokenRefinerBlock"]
-    # MiniMax-H3 builds one packed sequence inside forward, so CP sharding starts at the first transformer block and
-    # gathers the modality heads before forward selects rows with full-sequence indices.
+    # MiniMax-H3 builds one packed sequence inside forward, so CP sharding starts at the first transformer block.
+    # The modality heads are gathered explicitly in forward because Diffusers' generic output hook uses a functional
+    # coalesced all-gather that NCCL does not support for hybrid CP subgroups in current PyTorch releases.
     _cp_plan = {
         "rope": {
             0: ContextParallelInput(split_dim=0, expected_dims=2, split_output=True),
@@ -1036,8 +1186,6 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         "norm_out": {
             "timestep_indices": ContextParallelInput(split_dim=0, expected_dims=1, split_output=False),
         },
-        "proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
-        "audio_proj_out": ContextParallelOutput(gather_dim=1, expected_dims=3),
     }
     _skip_layerwise_casting_patterns = ["norm"]
     # MiniMax-H3 ships a mixed-precision checkpoint: the two input patch projections, the timestep MLP and the two
@@ -1048,6 +1196,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         "proj_in",
         "audio_proj_in",
         "adaln_t_table",
+        "delta_adaln_embedder",
         "time_embedder",
         "proj_out",
         "audio_proj_out",
@@ -1099,17 +1248,23 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         if self.use_adaln_curves:
             self.time_proj = None
             self.time_embedder = None
-            self.register_buffer("adaln_t_table", torch.empty(adaln_curve_grid, time_embed_dim, dtype=torch.float32))
+            self.register_buffer(
+                "adaln_t_table",
+                torch.empty(adaln_curve_grid, time_embed_dim, dtype=torch.float32),
+            )
         else:
             self.time_proj = Timesteps(num_channels=freq_dim, flip_sin_to_cos=True, downscale_freq_shift=0)
             self.time_embedder = TimestepEmbedding(
-                in_channels=freq_dim, time_embed_dim=time_embed_hidden_dim, out_dim=time_embed_dim
+                in_channels=freq_dim,
+                time_embed_dim=time_embed_hidden_dim,
+                out_dim=time_embed_dim,
             )
         self.time_sign_embed = None
         if enable_time_sign_embed:
             self.time_sign_embed = nn.Embedding(2, time_embed_dim)
             nn.init.zeros_(self.time_sign_embed.weight)
         self.delta_time_embedder = None
+        self.delta_adaln_embedder = None
         self.flowmap_deltatime_type = None
         register_flowmap_gate_buffer(self, gate_value=0.25 if gate_value is None else float(gate_value))
         if deltatime_type is not None:
@@ -1151,6 +1306,10 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                 for _ in range(num_layers)
             ]
         )
+        self._h3_sparse_attention_config = MiniMaxH3SparseAttentionConfig()
+        for layer_index, block in enumerate(self.transformer_blocks):
+            block.attn._h3_sparse_layer_index = layer_index
+            block.attn._h3_sparse_attention_config = self._h3_sparse_attention_config
 
         # 6. Shared output norm and the two per-modality output heads. Both heads run over every row of the packed
         # sequence; the rows of each modality are selected afterwards.
@@ -1185,6 +1344,53 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
 
     def get_h3_reference_kv_stats(self) -> dict[str, int]:
         return dict(self._h3_reference_kv_stats)
+
+    def configure_h3_sparse_attention(
+        self,
+        *,
+        mode: str = "disabled",
+        block_shape: str | tuple[int, int, int] | list[int] = (1, 8, 16),
+        video_kv_fraction: float = 0.5,
+        share_across_heads: bool = False,
+        start_layer: int = 0,
+    ) -> MiniMaxH3SparseAttentionConfig:
+        config = MiniMaxH3SparseAttentionConfig(
+            mode=mode,
+            block_shape=block_shape,
+            video_kv_fraction=video_kv_fraction,
+            share_across_heads=share_across_heads,
+            start_layer=start_layer,
+        )
+        if config.start_layer >= len(self.transformer_blocks) and config.enabled:
+            raise ValueError(
+                f"MiniMax-H3 sparse start layer {config.start_layer} is outside the "
+                f"{len(self.transformer_blocks)}-layer transformer."
+            )
+        self._h3_sparse_attention_config = config
+        for layer_index, block in enumerate(self.transformer_blocks):
+            block.attn._h3_sparse_layer_index = layer_index
+            block.attn._h3_sparse_attention_config = config
+        return config
+
+    def enable_parallelism(self, *, config, cp_plan=None):
+        context_config = getattr(config, "context_parallel_config", None)
+        if context_config is None and hasattr(config, "ring_degree"):
+            context_config = config
+        if context_config is not None:
+            processor = self.transformer_blocks[0].attn.processor
+            backend = processor._attention_backend
+            if backend is None:
+                backend, _ = _AttentionBackendRegistry.get_active_backend()
+            else:
+                backend = AttentionBackendName(backend)
+            if not _AttentionBackendRegistry._is_context_parallel_available(backend):
+                logger.warning(
+                    "MiniMax-H3 context parallelism cannot use attention backend %s; "
+                    "falling back to the native FlashAttention backend.",
+                    backend.value,
+                )
+                self.set_attention_backend("_native_flash")
+        return super().enable_parallelism(config=config, cp_plan=cp_plan)
 
     @staticmethod
     def _build_reference_mask(
@@ -1226,17 +1432,15 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="MiniMax-H3")
-        if self.time_embedder is not None and self.delta_time_embedder is None:
+        if self.time_embedder is None and self.delta_adaln_embedder is None:
+            self.delta_adaln_embedder = MiniMaxH3AdaLNCurveEmbedder(self.adaln_t_table)
+        elif self.time_embedder is not None and self.delta_time_embedder is None:
             self.delta_time_embedder = clone_flowmap_embedder(self.time_embedder)
         set_flowmap_gate(self, gate_value)
         register_flowmap_config(self, gate_value, deltatime_type)
 
     def _adaln_curve_embedding(self, timestep: torch.Tensor) -> torch.Tensor:
-        table = self.adaln_t_table.to(device=timestep.device)
-        position = timestep.to(device=timestep.device, dtype=torch.float32).clamp(0.0, 1.0) * (table.shape[0] - 1)
-        lower = position.floor().long().clamp(max=table.shape[0] - 2)
-        weight = (position - lower).to(dtype=table.dtype).unsqueeze(-1)
-        return torch.lerp(table[lower], table[lower + 1], weight)
+        return _interpolate_adaln_curve(self.adaln_t_table, timestep)
 
     def _time_embedding(
         self,
@@ -1268,7 +1472,11 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                         self.flowmap_deltatime_type,
                         model_name="MiniMax-H3",
                     )
-                delta_temb = self._adaln_curve_embedding(delta_timestep)
+                if self.delta_adaln_embedder is None:
+                    raise ValueError(
+                        "MiniMax-H3 FlowMap conditioning requires `enable_flowmap_time_conditioning()` before training."
+                    )
+                delta_temb = self.delta_adaln_embedder(delta_timestep)
                 temb = blend_flowmap_embeddings(temb, delta_temb, self.flowmap_delta_emb_gate)
             return temb
 
@@ -1359,7 +1567,11 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                 value = value.unsqueeze(0).expand(info.ids_shuffle.shape[0], -1, -1)
             if value.ndim != 3:
                 raise ValueError(f"MiniMax-H3 rotary tensors must be 2-D or 3-D, got {list(value.shape)}.")
-            routed = torch.take_along_dim(value, info.ids_shuffle.unsqueeze(-1).expand(-1, -1, value.shape[-1]), dim=1)
+            routed = torch.take_along_dim(
+                value,
+                info.ids_shuffle.unsqueeze(-1).expand(-1, -1, value.shape[-1]),
+                dim=1,
+            )
             return routed[:, :keep_len]
 
         return tuple(route_one(value) for value in rotary_emb)
@@ -1424,7 +1636,10 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                     if quant_key not in checkpoint_keys:
                         raise RuntimeError(f"MiniMax-H3 FP8 tensor {raw_key} is missing comfy_quant metadata")
                     quant_metadata = _decode_comfy_quant(checkpoint.get_tensor(quant_key))
-                    if quant_metadata.get("format") not in {"float8_e4m3fn", "float8_e5m2"}:
+                    if quant_metadata.get("format") not in {
+                        "float8_e4m3fn",
+                        "float8_e5m2",
+                    }:
                         raise RuntimeError(
                             f"MiniMax-H3 FP8 tensor {raw_key} has unsupported comfy_quant format "
                             f"{quant_metadata.get('format')!r}"
@@ -1484,7 +1699,11 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                                 hadamard_group_size,
                             )
                     elif len(mapped_keys) == 1:
-                        quantized_weights[mapped_keys[0]] = (tensor, scale, hadamard_group_size)
+                        quantized_weights[mapped_keys[0]] = (
+                            tensor,
+                            scale,
+                            hadamard_group_size,
+                        )
                     else:
                         raise RuntimeError(f"MiniMax-H3 ConvRot tensor {raw_key} maps to multiple targets unexpectedly")
                     continue
@@ -1571,7 +1790,11 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         if quantized_weights:
             from simpletuner.helpers.models.z_image.quantized_loading import _wrap_convrot_linear
 
-            for weight_key, (weight, scale, hadamard_group_size) in quantized_weights.items():
+            for weight_key, (
+                weight,
+                scale,
+                hadamard_group_size,
+            ) in quantized_weights.items():
                 if weight_key not in expected_state_dict:
                     raise RuntimeError(f"MiniMax-H3 ConvRot checkpoint has unexpected tensor: {weight_key}")
                 expected_tensor = expected_state_dict[weight_key]
@@ -1704,6 +1927,29 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                 f"{list(token_tags.shape)} and {list(timestep_indices.shape)} for seq_len={sequence_length}."
             )
 
+        parallel_config = getattr(self, "_parallel_config", None)
+        cp_config = context_parallel_config(parallel_config)
+        cp_active = cp_config is not None
+        sparse_config = self._h3_sparse_attention_config
+        if sparse_config.enabled and cp_active:
+            ring_degree = int(getattr(cp_config, "ring_degree", 1) or 1)
+            ulysses_degree = int(getattr(cp_config, "ulysses_degree", 1) or 1)
+            if ring_degree != 1 or ulysses_degree <= 1:
+                raise ValueError(
+                    "MiniMax-H3 sparse attention supports context parallelism only with "
+                    "context_parallel_strategy=alltoall."
+                )
+        unpadded_sequence_length = sequence_length
+        if cp_active:
+            cp_degree = int(getattr(cp_config, "ring_degree", 1) or 1) * int(getattr(cp_config, "ulysses_degree", 1) or 1)
+            position_ids, token_tags, timestep_indices = _pad_h3_context_parallel_layout(
+                position_ids,
+                token_tags,
+                timestep_indices,
+                cp_degree,
+            )
+            sequence_length = position_ids.shape[0]
+
         rotary_emb = self.rope(position_ids)
 
         # 1. Project each modality and scatter the rows into the packed sequence buffer. The checkpoint is
@@ -1738,14 +1984,16 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         # 4. Padding rows (tag `-1`) must not exchange attention with live rows: the reference keeps the padding tail
         # as a separate attention document (`cu_seqlens = [0, used, S]`). A boolean mask that pairs live rows with live
         # rows and padding rows with padding rows reproduces that split exactly. Padless sequences keep `None` so the
-        # unmasked fast paths (flash & co.) stay available.
+        # unmasked fast paths (flash & co.) stay available. Under CP, a key-only mask is sufficient: padding queries
+        # are discarded, and excluding padding keys keeps every live row exact.
         attention_mask = None
         is_pad = token_tags < 0
         if bool(is_pad.any()):
-            attention_mask = is_pad[None, :] == is_pad[:, None]
+            if cp_active:
+                attention_mask = (~is_pad)[None, None, None, :]
+            else:
+                attention_mask = is_pad[None, :] == is_pad[:, None]
 
-        parallel_config = getattr(self, "_parallel_config", None)
-        cp_active = context_parallel_config(parallel_config) is not None
         grad_enabled = torch.is_grad_enabled()
         if grad_enabled and self._h3_reference_kv_cache:
             self.clear_h3_reference_kv_cache()
@@ -1770,7 +2018,9 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                 dynamic_mask = live_mask & ~reference_mask
                 if bool(dynamic_mask.any()):
                     reference_attention_mask = torch.ones(
-                        (sequence_length, sequence_length), dtype=torch.bool, device=token_tags.device
+                        (sequence_length, sequence_length),
+                        dtype=torch.bool,
+                        device=token_tags.device,
                     )
                     reference_rows = reference_mask.nonzero(as_tuple=False).flatten()
                     dynamic_rows = dynamic_mask.nonzero(as_tuple=False).flatten()
@@ -1787,8 +2037,6 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         use_routing = self.training and len(routes) > 0 and torch.is_grad_enabled()
         if cp_active and use_routing:
             raise ValueError("MiniMax-H3 TREAD routing is not supported together with context_parallel_size.")
-        if cp_active and attention_mask is not None:
-            raise ValueError("MiniMax-H3 context parallelism does not support padded packed sequences.")
         if use_routing and router is None:
             raise ValueError("TREAD routing requested but no router has been configured. Call set_router before training.")
         if use_routing and attention_mask is not None:
@@ -1807,6 +2055,26 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                 }
                 for route in routes
             ]
+
+        sparse_attention_layout = None
+        if sparse_config.enabled:
+            if video_hidden_shape is None:
+                raise ValueError("MiniMax-H3 sparse attention requires `video_hidden_shape`.")
+            target_shape = tuple(int(dim) for dim in video_hidden_shape)
+            target_video_rows = int(video_indices.shape[0]) - int(num_condition_video_rows or 0)
+            expected_target_rows = math.prod(target_shape)
+            if target_video_rows != expected_target_rows:
+                raise ValueError(
+                    "MiniMax-H3 sparse attention target shape does not match the packed target-video rows: "
+                    f"shape={target_shape} ({expected_target_rows} rows), packed={target_video_rows}."
+                )
+            sparse_attention_layout = MiniMaxH3SparseAttentionLayout(
+                target_start=unpadded_sequence_length - target_video_rows,
+                target_shape=target_shape,
+                trailing_padding=sequence_length - unpadded_sequence_length,
+            )
+            if use_routing:
+                raise ValueError("MiniMax-H3 sparse attention cannot be combined with TREAD routing yet.")
 
         need_hidden_state_capture = hidden_states_buffer is not None or output_hidden_states
         captured_frame_hidden = None
@@ -1831,6 +2099,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         block_rotary_emb = rotary_emb
         block_adaln_indices = adaln_indices
         block_reference_mask = reference_mask
+        block_sparse_attention_layout = sparse_attention_layout
 
         def capture_layer_hidden(block_idx: int, block_hidden_states: torch.Tensor) -> None:
             nonlocal captured_frame_hidden, output_hidden_states
@@ -1887,6 +2156,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                     reference_mask=block_reference_mask,
                     reference_kv_cache=reference_kv_cache,
                     reference_kv_stats=reference_kv_stats,
+                    sparse_attention_layout=block_sparse_attention_layout,
                     offload_attention=self.gradient_checkpointing_offload_attention,
                 )
 
@@ -1970,6 +2240,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                             reference_mask=block_reference_mask,
                             reference_kv_cache=reference_kv_cache,
                             reference_kv_stats=reference_kv_stats,
+                            sparse_attention_layout=block_sparse_attention_layout,
                         )
                     else:
 
@@ -1989,6 +2260,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                                 reference_mask=block_reference_mask,
                                 reference_kv_cache=reference_kv_cache,
                                 reference_kv_stats=reference_kv_stats,
+                                sparse_attention_layout=block_sparse_attention_layout,
                             )
 
                         hidden_states = checkpoint_fn(run_checkpointed_block, hidden_states, use_reentrant=False)
@@ -2003,6 +2275,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                         reference_mask=block_reference_mask,
                         reference_kv_cache=reference_kv_cache,
                         reference_kv_stats=reference_kv_stats,
+                        sparse_attention_layout=block_sparse_attention_layout,
                     )
 
                 if musubi_offload_active and musubi_manager.is_managed_block(block_idx):
@@ -2019,9 +2292,13 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         # `_keep_in_fp32_modules`, so they stay float32 while the block stack runs in the requested `torch_dtype`;
         # align the activation with their parameter dtype.
         hidden_states = self.norm_out(hidden_states, temb, timestep_indices).to(self.proj_out.weight.dtype)
-        video_output = self.proj_out(hidden_states).index_select(1, video_indices.to(hidden_states.device))
+        video_output = _gather_h3_context_parallel_output(self.proj_out(hidden_states), cp_config, dim=1).index_select(
+            1, video_indices.to(hidden_states.device)
+        )
         if audio_indices.numel():
-            audio_output = self.audio_proj_out(hidden_states).index_select(1, audio_indices.to(hidden_states.device))
+            audio_output = _gather_h3_context_parallel_output(
+                self.audio_proj_out(hidden_states), cp_config, dim=1
+            ).index_select(1, audio_indices.to(hidden_states.device))
         else:
             audio_output = hidden_states.new_empty(
                 hidden_states.shape[0],

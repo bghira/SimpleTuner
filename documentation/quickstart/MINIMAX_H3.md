@@ -71,6 +71,24 @@ By default, `minimax_h3_target_mode: "auto"` resolves to video-only and avoids a
 
 Use `"av"` only when the dataset has target audio latents and you want joint audio/video training. You can set `h3_target_mode` or `minimax_h3_target_mode` inside a data backend entry to opt only selected backends into audio.
 
+## Experimental Sparse Attention
+
+MiniMax reports that H3 used train-aware, MoBA-style 3D sparse attention for video tokens during its final training stage. The initial public release uses dense attention, and MiniMax has not yet published the exact H3 block shape, retention budget, layer schedule, or production kernel. SimpleTuner therefore keeps its experimental approximation disabled by default.
+
+```json
+{
+  "minimax_h3_sparse_attention": "moba3d",
+  "minimax_h3_sparse_block_shape": "1,8,16",
+  "minimax_h3_sparse_video_kv_fraction": 0.25,
+  "minimax_h3_sparse_share_heads": false,
+  "minimax_h3_sparse_start_layer": 0
+}
+```
+
+The implementation mean-pools 3D query/key video blocks for parameter-free top-k routing. Target-video queries retain dense access to text, audio, and reference context; non-target queries remain dense. The block dimensions must multiply to 128. A video KV fraction of `1.0` is the dense-connectivity numerical control through FlexAttention.
+
+This mode currently requires CUDA and introduces a Dynamo graph boundary around FlexAttention. Ulysses context parallelism is supported with `context_parallel_strategy=alltoall`; ring context parallelism and TREAD are not supported. At 480px, sparse routing may use more memory than FlashAttention because the target lattice and packed context must be padded and reordered. Treat it as a fine-tuning ablation until MiniMax publishes its reference implementation, not as a guaranteed speedup.
+
 ## Memory Knobs
 
 - Use the 24G RamTorch example when VRAM is tight.

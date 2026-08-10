@@ -40,6 +40,7 @@ from simpletuner.helpers.models.minimaxh3.packing import (
     MINIMAX_H3_TEXT_TAG,
     audio_latent_num_frames,
     build_packed_sequence,
+    build_row_timestep_intervals,
     build_row_timesteps,
     patchify_video_latents,
     unpatchify_video_tokens,
@@ -108,6 +109,7 @@ class MiniMaxH3(VideoModelFoundation):
     AUDIO_AUTOENCODER_CLASS = AutoencoderKLMiniMaxH3Audio
     LATENT_CHANNEL_COUNT = 24
     DEFAULT_NOISE_SCHEDULER = "flow_matching"
+    VALIDATION_SCHEDULER_NAME = "MiniMaxH3Scheduler"
 
     MODEL_CLASS = MiniMaxH3Transformer3DModel
     MODEL_SUBFOLDER = "transformer"
@@ -148,7 +150,9 @@ class MiniMaxH3(VideoModelFoundation):
             "minimax_h3_video_vae_int8_convrot.safetensors"
         ),
     }
-    MODEL_LICENSE = "minimax-h3-community-license-agreement"
+    MODEL_LICENSE = "other"
+    MODEL_LICENSE_NAME = "minimax-h3-community-license-agreement"
+    MODEL_LICENSE_LINK = "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE"
 
     DEFAULT_LORA_TARGET = ["to_q", "to_k", "to_v", "to_out.0"]
     DEFAULT_LYCORIS_TARGET = ["MiniMaxH3Attention", "FeedForward"]
@@ -173,6 +177,28 @@ class MiniMaxH3(VideoModelFoundation):
         self._warned_audio_disabled = False
         self._warned_image_audio_disabled = False
 
+    def post_model_load_setup(self):
+        super().post_model_load_setup()
+        transformer = self.unwrap_model(self.model)
+        sparse_config = transformer.configure_h3_sparse_attention(
+            mode=getattr(self.config, "minimax_h3_sparse_attention", "disabled") or "disabled",
+            block_shape=getattr(self.config, "minimax_h3_sparse_block_shape", "1,8,16") or "1,8,16",
+            video_kv_fraction=getattr(self.config, "minimax_h3_sparse_video_kv_fraction", 0.5),
+            share_across_heads=getattr(self.config, "minimax_h3_sparse_share_heads", False),
+            start_layer=getattr(self.config, "minimax_h3_sparse_start_layer", 0),
+        )
+        if sparse_config.enabled:
+            logger.warning(
+                "Enabled experimental MiniMax-H3 %s sparse attention: block_shape=%s, video_kv_fraction=%.3f, "
+                "share_across_heads=%s, start_layer=%d. MiniMax has not released its exact production routing "
+                "configuration yet.",
+                sparse_config.mode,
+                sparse_config.block_shape,
+                sparse_config.video_kv_fraction,
+                sparse_config.share_across_heads,
+                sparse_config.start_layer,
+            )
+
     def supports_crepa_self_flow(self) -> bool:
         return True
 
@@ -181,6 +207,50 @@ class MiniMaxH3(VideoModelFoundation):
 
     def flow_matching_target_direction(self) -> float:
         return -1.0
+
+    def _configured_anyflow(self) -> bool:
+        method = str(getattr(self.config, "distillation_method", "") or "").strip().lower()
+        configured = getattr(self.config, "distillation_config", None)
+        configured = configured if isinstance(configured, dict) else {}
+        if method == "anyflow":
+            return True
+        if method != "h3_drift":
+            return False
+        h3_config = configured.get("h3_drift", configured)
+        return str(h3_config.get("inner_distillation_method", "") or "").strip().lower() == "anyflow"
+
+    def _anyflow_distillation_config(self) -> dict:
+        configured = getattr(self.config, "distillation_config", None)
+        configured = configured if isinstance(configured, dict) else {}
+        anyflow_config = configured.get("anyflow", configured)
+        return anyflow_config if isinstance(anyflow_config, dict) else {}
+
+    def _get_additional_lora_targets(self) -> list[str]:
+        targets = super()._get_additional_lora_targets()
+        if not self._configured_anyflow():
+            return targets
+
+        anyflow_config = self._anyflow_distillation_config()
+        train_delta_embedder = bool(anyflow_config.get("train_delta_embedder", True))
+        targets.extend(["ff.net.0.proj", "ff.net.2"])
+        if bool(anyflow_config.get("lora_target_adaln", False)):
+            targets.append("adaln_proj.linear")
+        transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
+        if transformer is not None and getattr(transformer, "time_embedder", None) is not None:
+            targets.extend(["time_embedder.linear_1", "time_embedder.linear_2"])
+            if train_delta_embedder:
+                targets.extend(["delta_time_embedder.linear_1", "delta_time_embedder.linear_2"])
+        return list(dict.fromkeys(targets))
+
+    def get_lora_save_layers(self):
+        if not self._configured_anyflow():
+            return super().get_lora_save_layers()
+        if not bool(self._anyflow_distillation_config().get("train_delta_embedder", True)):
+            return super().get_lora_save_layers()
+        transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
+        if transformer is not None and getattr(transformer, "delta_adaln_embedder", None) is not None:
+            return ["delta_adaln_embedder"]
+        return super().get_lora_save_layers()
 
     @classmethod
     def adjust_video_frames(cls, num_frames: int) -> int:
@@ -274,7 +344,10 @@ class MiniMaxH3(VideoModelFoundation):
         if explicit_vae_path is None and flavour in vae_override_map:
             vae_override = vae_override_map[flavour]
             self.config.pretrained_vae_model_name_or_path = vae_override
-            if getattr(self.config, "vae_path", None) in (None, self.config.pretrained_model_name_or_path):
+            if getattr(self.config, "vae_path", None) in (
+                None,
+                self.config.pretrained_model_name_or_path,
+            ):
                 self.config.vae_path = vae_override
         if flavour == "ref2va":
             self.config.pretrained_transformer_subfolder = "transformer_ref"
@@ -471,6 +544,35 @@ class MiniMaxH3(VideoModelFoundation):
         transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
         return bool(getattr(getattr(transformer, "config", None), "swiglu_gate_first", False))
 
+    def _convert_lora_state_dict_to_comfyui(
+        self,
+        weights: dict,
+        *,
+        adapter_metadata: Optional[dict] = None,
+        component_adapter_metadata: Optional[dict] = None,
+    ) -> dict:
+        from simpletuner.helpers.models.minimaxh3.modular_pipeline import _convert_minimax_h3_diffusers_lora_to_comfyui
+
+        return _convert_minimax_h3_diffusers_lora_to_comfyui(
+            weights,
+            adapter_metadata=adapter_metadata,
+            source_swiglu_gate_first=self._h3_transformer_uses_gate_first_swiglu(),
+        )
+
+    def _convert_lora_state_dict_from_comfyui(
+        self,
+        weights: dict,
+        *,
+        target_prefix: str,
+    ) -> tuple[dict, dict]:
+        from simpletuner.helpers.models.minimaxh3.modular_pipeline import _convert_minimax_h3_comfy_lora_to_diffusers
+
+        return _convert_minimax_h3_comfy_lora_to_diffusers(
+            weights,
+            target_prefix=target_prefix,
+            target_swiglu_gate_first=self._h3_transformer_uses_gate_first_swiglu(),
+        )
+
     def _prepare_init_lora_state_dict(self, state_dict: dict) -> dict:
         from simpletuner.helpers.models.minimaxh3.modular_pipeline import (
             _convert_minimax_h3_comfy_lora_to_diffusers,
@@ -485,12 +587,21 @@ class MiniMaxH3(VideoModelFoundation):
             lora_format = PEFTLoRAFormat.COMFYUI
         if lora_format != PEFTLoRAFormat.COMFYUI:
             return state_dict
-        converted, _network_alphas = _convert_minimax_h3_comfy_lora_to_diffusers(
+        converted, network_alphas = _convert_minimax_h3_comfy_lora_to_diffusers(
             state_dict,
             target_prefix=self._h3_lora_component_name(),
             target_swiglu_gate_first=self._h3_transformer_uses_gate_first_swiglu(),
         )
-        return converted
+        prepared = {}
+        for key, value in converted.items():
+            if key.endswith(".lora.down.weight"):
+                key = f"{key[: -len('.lora.down.weight')]}.lora_A.weight"
+            elif key.endswith(".lora.up.weight"):
+                key = f"{key[: -len('.lora.up.weight')]}.lora_B.weight"
+            prepared[key] = value
+        for key, alpha in network_alphas.items():
+            prepared[key] = torch.tensor(alpha, dtype=torch.float32)
+        return prepared
 
     def get_lora_target_layers(self):
         manual_targets = self._get_peft_lora_target_modules()
@@ -797,7 +908,10 @@ class MiniMaxH3(VideoModelFoundation):
                 )
             if embed.shape[1] < max_seq_len:
                 pad_len = max_seq_len - embed.shape[1]
-                embed = torch.cat([embed, embed.new_zeros(embed.shape[0], pad_len, embed.shape[2])], dim=1)
+                embed = torch.cat(
+                    [embed, embed.new_zeros(embed.shape[0], pad_len, embed.shape[2])],
+                    dim=1,
+                )
                 tag = torch.cat([tag, tag.new_full((pad_len,), -1)], dim=0)
             padded_embeds.append(embed)
             padded_tags.append(tag.unsqueeze(0))
@@ -974,7 +1088,10 @@ class MiniMaxH3(VideoModelFoundation):
         if guidance_scale_real is not None and float(guidance_scale_real) > 1.0:
             pipeline_kwargs["guidance_scale"] = float(guidance_scale_real)
             if isinstance(getattr(self.config, "validation_no_cfg_until_timestep", None), int):
-                pipeline_kwargs.setdefault("no_cfg_until_timestep", self.config.validation_no_cfg_until_timestep)
+                pipeline_kwargs.setdefault(
+                    "no_cfg_until_timestep",
+                    self.config.validation_no_cfg_until_timestep,
+                )
         return pipeline_kwargs
 
     def _extract_sigmas_1d(self, sigmas: torch.Tensor) -> torch.Tensor:
@@ -1177,7 +1294,10 @@ class MiniMaxH3(VideoModelFoundation):
 
     def _unpack_audio_prediction(self, audio_rows: torch.Tensor, num_audio_latents: int) -> torch.Tensor:
         return audio_rows.reshape(
-            audio_rows.shape[0], MINIMAX_H3_AUDIO_CHANNELS, num_audio_latents, audio_rows.shape[-1]
+            audio_rows.shape[0],
+            MINIMAX_H3_AUDIO_CHANNELS,
+            num_audio_latents,
+            audio_rows.shape[-1],
         ).permute(0, 1, 3, 2)
 
     def _scalar_timestep(self, value: torch.Tensor, name: str) -> float:
@@ -1276,17 +1396,42 @@ class MiniMaxH3(VideoModelFoundation):
         video_timestep = self._scalar_timestep(prepared_batch["timesteps"], "video")
         if use_audio:
             audio_timestep = self._scalar_timestep(
-                prepared_batch.get("audio_timesteps", prepared_batch["timesteps"]), "audio"
+                prepared_batch.get("audio_timesteps", prepared_batch["timesteps"]),
+                "audio",
             )
         else:
             audio_timestep = video_timestep
-        timestep, timestep_indices = build_row_timesteps(
-            layout,
-            video_timestep=video_timestep,
-            audio_timestep=audio_timestep,
-            condition_video_timestep=MINIMAX_H3_KEYFRAME_NOISE_AUG,
-            condition_audio_timestep=MINIMAX_H3_KEYFRAME_NOISE_AUG,
-        )
+        flowmap_r_timesteps = prepared_batch.get(self.FLOWMAP_R_TIMESTEP_BATCH_KEY)
+        r_timestep = None
+        if flowmap_r_timesteps is not None:
+            video_r_timestep = self._scalar_timestep(flowmap_r_timesteps, "video r")
+            if use_audio:
+                video_r_sigma = torch.tensor([1.0 - video_r_timestep], dtype=torch.float32)
+                audio_r_sigma = self._shift_sigmas_between_schedules(
+                    video_r_sigma,
+                    float(getattr(self.config, "flow_schedule_shift", 12.0) or 12.0),
+                    float(getattr(self.config, "audio_flow_schedule_shift", 3.0) or 3.0),
+                )
+                audio_r_timestep = float(1.0 - audio_r_sigma[0].item())
+            else:
+                audio_r_timestep = video_r_timestep
+            timestep, r_timestep, timestep_indices = build_row_timestep_intervals(
+                layout,
+                video_timestep=video_timestep,
+                audio_timestep=audio_timestep,
+                condition_video_timestep=MINIMAX_H3_KEYFRAME_NOISE_AUG,
+                condition_audio_timestep=MINIMAX_H3_KEYFRAME_NOISE_AUG,
+                video_r_timestep=video_r_timestep,
+                audio_r_timestep=audio_r_timestep,
+            )
+        else:
+            timestep, timestep_indices = build_row_timesteps(
+                layout,
+                video_timestep=video_timestep,
+                audio_timestep=audio_timestep,
+                condition_video_timestep=MINIMAX_H3_KEYFRAME_NOISE_AUG,
+                condition_audio_timestep=MINIMAX_H3_KEYFRAME_NOISE_AUG,
+            )
 
         token_tags = layout.token_tags.to(self.accelerator.device)
         position_ids = layout.position_ids.to(self.accelerator.device)
@@ -1294,6 +1439,8 @@ class MiniMaxH3(VideoModelFoundation):
         audio_indices = layout.audio_indices.to(self.accelerator.device)
         text_indices = layout.text_indices.to(self.accelerator.device)
         timestep = timestep.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+        if r_timestep is not None:
+            r_timestep = r_timestep.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
         timestep_indices = timestep_indices.to(self.accelerator.device)
         if layout.num_condition_video_rows:
             force_keep_mask = torch.zeros(layout.sequence_length, device=self.accelerator.device, dtype=torch.bool)
@@ -1337,7 +1484,10 @@ class MiniMaxH3(VideoModelFoundation):
         }
         if getattr(self.config, "twinflow_enabled", False):
             transformer_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
-        self._apply_flowmap_r_timestep_kwargs(transformer_kwargs, prepared_batch)
+        if r_timestep is not None:
+            transformer_kwargs[self.FLOWMAP_R_TIMESTEP_KWARG] = r_timestep
+        else:
+            self._apply_flowmap_r_timestep_kwargs(transformer_kwargs, prepared_batch)
         output = self.model(**transformer_kwargs)
         video_rows = output.sample[:, layout.num_condition_video_rows :, :]
         video_pred = unpatchify_video_tokens(
@@ -1383,7 +1533,11 @@ class MiniMaxH3(VideoModelFoundation):
         return total_loss, logs
 
     def _compute_av_loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
-        video_loss = super().loss(prepared_batch, model_output, apply_conditioning_mask=apply_conditioning_mask)
+        video_loss = super().loss(
+            prepared_batch,
+            model_output,
+            apply_conditioning_mask=apply_conditioning_mask,
+        )
         if os.environ.get("SIMPLETUNER_MINIMAXH3_LOSS_DEBUG", "0") == "1":
             video_pred = model_output.get("model_prediction")
             latents = prepared_batch.get("latents")

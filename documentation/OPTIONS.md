@@ -61,6 +61,21 @@ Where `foo` is your config environment - or just use `config/config.json` if you
   - `auto` resolves to video-only, skipping audio VAE caching, collation, and target audio rows for H3.
   - Set `minimax_h3_target_mode` or `h3_target_mode` to `av` in a data backend entry to opt an auto-split or explicit audio backend into joint audio-video training.
 
+### `--minimax_h3_sparse_attention`
+
+- **What**: Enables experimental train-aware 3D block sparse attention for MiniMax-H3 target-video tokens.
+- **Choices**: `disabled`, `moba3d`
+- **Default**: `disabled`
+- **Related options**:
+  - `minimax_h3_sparse_block_shape`: comma- or `x`-separated `(T,H,W)` dimensions whose product is 128. Default: `1,8,16`.
+  - `minimax_h3_sparse_video_kv_fraction`: fraction of target-video KV blocks selected per target-video query block. Default: `0.5`.
+  - `minimax_h3_sparse_share_heads`: share routes across attention heads. Default: `false`.
+  - `minimax_h3_sparse_start_layer`: keep earlier transformer layers dense. Default: `0`.
+- **Notes**:
+  - Text, audio, reference context, and non-target queries remain dense.
+  - Requires CUDA FlexAttention. Ulysses context parallelism is supported with `context_parallel_strategy=alltoall`; ring context parallelism and TREAD are incompatible.
+  - MiniMax has not released its exact H3 sparse routing configuration. This approximation is intended for controlled fine-tuning experiments and is not a guaranteed performance optimization.
+
 ### `--fuse_qkv_projections`
 
 - **What**: Fuses the QKV projections in the model's attention blocks to make more efficient use of hardware.

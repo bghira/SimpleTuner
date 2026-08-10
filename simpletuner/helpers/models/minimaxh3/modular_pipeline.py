@@ -22,6 +22,7 @@ from diffusers.utils import USE_PEFT_BACKEND, is_peft_version, logging
 
 from simpletuner.helpers.training.lora_format import (
     PEFTLoRAFormat,
+    _resolve_alpha_for_module,
     collect_lora_alphas,
     detect_state_dict_format,
     normalize_lora_format,
@@ -95,13 +96,80 @@ def _convert_minimax_h3_comfy_lora_to_diffusers(
     converted: Dict[str, Any] = {}
     network_alphas: Dict[str, float] = {}
 
+    lora_pairs: dict[str, dict[str, torch.Tensor]] = {}
+    for raw_key, value in state_dict.items():
+        if not torch.is_tensor(value):
+            continue
+        split_key = _split_lora_suffix(_strip_comfy_lora_prefix(raw_key))
+        if split_key is None:
+            continue
+        module_key, target_suffix = split_key
+        lora_pairs.setdefault(module_key, {})[target_suffix] = value
+
+    split_qkv: dict[str, dict[str, list[torch.Tensor] | list[int]]] = {}
+    for module_key, tensors in lora_pairs.items():
+        down = tensors.get(".lora.down.weight")
+        up = tensors.get(".lora.up.weight")
+        mapped_modules = _map_comfy_lora_module(module_key, target_prefix)
+        if (
+            len(mapped_modules) != 3
+            or down is None
+            or up is None
+            or down.ndim != 2
+            or up.ndim != 2
+            or up.shape[0] % 3 != 0
+            or up.shape[1] != down.shape[0]
+        ):
+            continue
+
+        up_chunks = list(up.chunk(3, dim=0))
+        total_rank = int(down.shape[0])
+        rank_indices = None
+
+        if total_rank % 3 == 0:
+            rank = total_rank // 3
+            equal_indices = [torch.arange(index * rank, (index + 1) * rank, device=up.device) for index in range(3)]
+            is_block_diagonal = True
+            for projection_index, chunk in enumerate(up_chunks):
+                outside = torch.ones(total_rank, dtype=torch.bool, device=up.device)
+                outside[equal_indices[projection_index]] = False
+                if torch.count_nonzero(chunk[:, outside]).item() != 0:
+                    is_block_diagonal = False
+                    break
+            if is_block_diagonal:
+                rank_indices = equal_indices
+
+        if rank_indices is None:
+            active_columns = [torch.any(chunk != 0, dim=0) for chunk in up_chunks]
+            active_count = torch.stack(active_columns).sum(dim=0)
+            if torch.all(active_count == 1).item():
+                inferred_indices = [torch.nonzero(mask, as_tuple=False).flatten() for mask in active_columns]
+                if all(indices.numel() > 0 for indices in inferred_indices):
+                    rank_indices = inferred_indices
+
+        if rank_indices is None:
+            continue
+
+        split_qkv[module_key] = {
+            ".lora.down.weight": [down.index_select(0, indices).contiguous() for indices in rank_indices],
+            ".lora.up.weight": [
+                chunk.index_select(1, indices).contiguous() for chunk, indices in zip(up_chunks, rank_indices)
+            ],
+            "ranks": [int(indices.numel()) for indices in rank_indices],
+        }
+
     for raw_key, value in state_dict.items():
         key = _strip_comfy_lora_prefix(raw_key)
         split_key = _split_lora_suffix(key)
         if split_key is None:
             if key.endswith(".alpha"):
                 module_key = key[: -len(".alpha")]
-                for mapped_module in _map_comfy_lora_module(module_key, target_prefix):
+                mapped_modules = _map_comfy_lora_module(module_key, target_prefix)
+                qkv_split = split_qkv.get(module_key)
+                for index, mapped_module in enumerate(mapped_modules):
+                    if qkv_split is not None:
+                        network_alphas[f"{mapped_module}.alpha"] = float(qkv_split["ranks"][index])
+                        continue
                     if torch.is_tensor(value):
                         network_alphas[f"{mapped_module}.alpha"] = float(value.detach().float().cpu().item())
                     else:
@@ -115,7 +183,10 @@ def _convert_minimax_h3_comfy_lora_to_diffusers(
 
         module_key, target_suffix = split_key
         mapped_modules = _map_comfy_lora_module(module_key, target_prefix)
-        if len(mapped_modules) == 3 and target_suffix == ".lora.up.weight":
+        qkv_split = split_qkv.get(module_key)
+        if qkv_split is not None:
+            values = qkv_split[target_suffix]
+        elif len(mapped_modules) == 3 and target_suffix == ".lora.up.weight":
             if value.shape[0] % 3 != 0:
                 raise ValueError(f"MiniMax-H3 fused QKV LoRA tensor {raw_key} cannot be split into q/k/v tensors.")
             values = value.split(value.shape[0] // 3, dim=0)
@@ -138,6 +209,157 @@ def _convert_minimax_h3_comfy_lora_to_diffusers(
             )
 
     return converted, network_alphas
+
+
+def _map_minimax_h3_diffusers_lora_module_to_native(module_key: str) -> str:
+    for prefix in ("transformer.", "transformer_ref."):
+        if module_key.startswith(prefix):
+            module_key = module_key[len(prefix) :]
+            break
+
+    direct_map = {
+        "proj_in": "video_patch_proj",
+        "audio_proj_in": "audio_patch_proj",
+        "context_embedder": "condition_proj",
+        "time_embedder.linear_1": "time_embedder.proj_in",
+        "time_embedder.linear_2": "time_embedder.proj_out",
+        "norm_out.norm": "final_layer.norm",
+        "norm_out.linear": "final_layer.adaln_proj.linear",
+        "proj_out": "final_layer.video_out",
+        "audio_proj_out": "final_layer.audio_out",
+    }
+    for source, target in direct_map.items():
+        if module_key == source or module_key.startswith(f"{source}."):
+            return f"{target}{module_key[len(source):]}"
+
+    if module_key.startswith("token_refiner.refiner_blocks."):
+        module_key = module_key.replace("token_refiner.refiner_blocks.", "token_refiner.blocks.", 1)
+    elif module_key.startswith("transformer_blocks."):
+        module_key = module_key.replace("transformer_blocks.", "blocks.", 1)
+    module_key = module_key.replace(".attn.norm_q", ".attn.q_norm")
+    module_key = module_key.replace(".attn.norm_k", ".attn.k_norm")
+    module_key = module_key.replace(".attn.to_qkv", ".attn.qkv_proj")
+    module_key = module_key.replace(".attn.to_out.0", ".attn.out_proj")
+    module_key = module_key.replace(".ff.net.0.proj", ".mlp.fc1")
+    module_key = module_key.replace(".ff.net.2", ".mlp.fc2")
+    return module_key
+
+
+def _convert_minimax_h3_diffusers_lora_to_comfyui(
+    state_dict: Dict[str, Any],
+    *,
+    adapter_metadata: Optional[dict] = None,
+    source_swiglu_gate_first: bool = False,
+) -> Dict[str, Any]:
+    """Convert split Diffusers H3 LoRA weights to the native fused ComfyUI layout without approximation."""
+    lora_modules: dict[str, dict[str, torch.Tensor]] = {}
+    passthrough: dict[str, Any] = {}
+    suffixes = {
+        ".lora.down.weight": "down",
+        ".lora_A.weight": "down",
+        ".lora.up.weight": "up",
+        ".lora_B.weight": "up",
+    }
+    for key, value in state_dict.items():
+        matched_suffix = next((suffix for suffix in suffixes if key.endswith(suffix)), None)
+        if matched_suffix is None:
+            if not key.endswith((".alpha", ".lora_alpha")):
+                native_key = _map_minimax_h3_diffusers_lora_module_to_native(key)
+                passthrough[f"diffusion_model.{native_key}"] = value
+            continue
+        module_key = key[: -len(matched_suffix)]
+        lora_modules.setdefault(module_key, {})[suffixes[matched_suffix]] = value
+
+    converted: dict[str, Any] = dict(passthrough)
+    qkv_groups: dict[str, dict[str, tuple[str, dict[str, torch.Tensor]]]] = {}
+    regular_modules: list[tuple[str, dict[str, torch.Tensor]]] = []
+    for module_key, tensors in lora_modules.items():
+        projection = next((name for name in ("to_q", "to_k", "to_v") if module_key.endswith(f".attn.{name}")), None)
+        if projection is None:
+            regular_modules.append((module_key, tensors))
+            continue
+        group_key = module_key.removesuffix(f".{projection}")
+        qkv_groups.setdefault(group_key, {})[projection] = (module_key, tensors)
+
+    def module_alpha(module_key: str, down: torch.Tensor) -> float:
+        stripped_module_key = module_key
+        for prefix in ("transformer.", "transformer_ref."):
+            if stripped_module_key.startswith(prefix):
+                stripped_module_key = stripped_module_key[len(prefix) :]
+                break
+        alpha = _resolve_alpha_for_module(stripped_module_key, down, adapter_metadata)
+        return float(down.shape[0] if alpha is None else alpha)
+
+    for module_key, tensors in regular_modules:
+        if "down" not in tensors or "up" not in tensors:
+            raise ValueError(f"Incomplete MiniMax-H3 LoRA module `{module_key}` while exporting ComfyUI weights.")
+        down, up = tensors["down"], tensors["up"]
+        native_module = _map_minimax_h3_diffusers_lora_module_to_native(module_key)
+        if native_module.endswith(".mlp.fc1") and not source_swiglu_gate_first:
+            if up.shape[0] % 2 != 0:
+                raise ValueError(f"MiniMax-H3 SwiGLU LoRA tensor for `{module_key}` has an odd output size.")
+            hidden, gate = up.chunk(2, dim=0)
+            up = torch.cat((gate, hidden), dim=0).contiguous()
+        prefix = f"diffusion_model.{native_module}"
+        converted[f"{prefix}.lora_A.weight"] = down
+        converted[f"{prefix}.lora_B.weight"] = up
+        converted[f"{prefix}.alpha"] = torch.tensor(module_alpha(module_key, down), dtype=torch.float32)
+
+    for group_key, projections in qkv_groups.items():
+        ordered = [projections.get(name) for name in ("to_q", "to_k", "to_v")]
+        present = [entry for entry in ordered if entry is not None]
+        if not present:
+            continue
+        for module_key, tensors in present:
+            if "down" not in tensors or "up" not in tensors:
+                raise ValueError(f"Incomplete MiniMax-H3 LoRA module `{module_key}` while exporting fused QKV weights.")
+
+        output_sizes = {int(tensors["up"].shape[0]) for _module_key, tensors in present}
+        input_sizes = {int(tensors["down"].shape[1]) for _module_key, tensors in present}
+        if len(output_sizes) != 1 or len(input_sizes) != 1:
+            raise ValueError(f"MiniMax-H3 QKV LoRA modules under `{group_key}` have incompatible dimensions.")
+        output_size = output_sizes.pop()
+        input_size = input_sizes.pop()
+
+        shared_down = len(present) == 3 and all(
+            torch.equal(present[0][1]["down"], entry[1]["down"]) for entry in present[1:]
+        )
+        scales = [module_alpha(module_key, tensors["down"]) / tensors["down"].shape[0] for module_key, tensors in present]
+        shared_scale = shared_down and all(abs(scales[0] - scale) <= 1e-12 for scale in scales[1:])
+        if shared_scale:
+            fused_down = present[0][1]["down"]
+            fused_up = torch.cat([entry[1]["up"] for entry in present], dim=0)
+            fused_alpha = scales[0] * fused_down.shape[0]
+        else:
+            ranks = [int(tensors["down"].shape[0]) for _module_key, tensors in present]
+            total_rank = sum(ranks)
+            fused_down = torch.cat([tensors["down"] for _module_key, tensors in present], dim=0)
+            fused_up = present[0][1]["up"].new_zeros((3 * output_size, total_rank))
+            rank_offset = 0
+            for projection_index, entry in enumerate(ordered):
+                if entry is None:
+                    continue
+                module_key, tensors = entry
+                rank = int(tensors["down"].shape[0])
+                scale = module_alpha(module_key, tensors["down"]) / rank
+                fused_up[
+                    projection_index * output_size : (projection_index + 1) * output_size,
+                    rank_offset : rank_offset + rank,
+                ] = (
+                    tensors["up"] * scale
+                )
+                rank_offset += rank
+            fused_alpha = float(total_rank)
+        if fused_down.shape[1] != input_size:
+            raise ValueError(f"MiniMax-H3 fused QKV LoRA under `{group_key}` has an invalid input dimension.")
+
+        native_group = _map_minimax_h3_diffusers_lora_module_to_native(group_key)
+        prefix = f"diffusion_model.{native_group}.qkv_proj"
+        converted[f"{prefix}.lora_A.weight"] = fused_down.contiguous()
+        converted[f"{prefix}.lora_B.weight"] = fused_up.contiguous()
+        converted[f"{prefix}.alpha"] = torch.tensor(fused_alpha, dtype=torch.float32)
+
+    return converted
 
 
 class MiniMaxH3LoraLoaderMixin(LoraBaseMixin):

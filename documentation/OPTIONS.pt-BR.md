@@ -61,6 +61,21 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
   - `auto` resolve para somente video, pulando cache de audio VAE, collate e linhas de audio alvo para H3.
   - Defina `minimax_h3_target_mode` ou `h3_target_mode` como `av` em uma entrada de data backend para ativar treino conjunto audio-video em um backend de audio auto-split ou explicito.
 
+### `--minimax_h3_sparse_attention`
+
+- **O que**: Ativa atencao sparse 3D experimental, aware de treinamento, para tokens de video alvo do MiniMax-H3.
+- **Opcoes**: `disabled`, `moba3d`
+- **Padrao**: `disabled`
+- **Opcoes relacionadas**:
+  - `minimax_h3_sparse_block_shape`: dimensoes `(T,H,W)` separadas por virgula ou `x` cujo produto e 128. Padrao: `1,8,16`.
+  - `minimax_h3_sparse_video_kv_fraction`: fracao dos blocos KV de video alvo selecionada por bloco query de video alvo. Padrao: `0.5`.
+  - `minimax_h3_sparse_share_heads`: compartilha rotas entre attention heads. Padrao: `false`.
+  - `minimax_h3_sparse_start_layer`: mantem camadas anteriores em atencao densa. Padrao: `0`.
+- **Notas**:
+  - Texto, audio, contexto de referencia e queries que nao sao alvo continuam densos.
+  - Requer CUDA FlexAttention. Ulysses context parallelism e suportado com `context_parallel_strategy=alltoall`; ring context parallelism e TREAD sao incompativeis.
+  - A MiniMax nao publicou a configuracao exata de sparse routing do H3. Esta aproximacao e para experimentos controlados de fine-tuning e nao garante ganho de performance.
+
 ### `--fuse_qkv_projections`
 
 - **O que**: Faz fusao das projecoes QKV nos blocos de atencao do modelo para usar hardware de forma mais eficiente.

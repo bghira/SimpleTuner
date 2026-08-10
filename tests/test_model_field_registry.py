@@ -27,6 +27,11 @@ class TestModelFieldRegistry(unittest.TestCase):
             "krea2_reference_latents",
             "minimax_h3_reference_mode",
             "minimax_h3_target_mode",
+            "minimax_h3_sparse_attention",
+            "minimax_h3_sparse_block_shape",
+            "minimax_h3_sparse_video_kv_fraction",
+            "minimax_h3_sparse_share_heads",
+            "minimax_h3_sparse_start_layer",
         ]
 
         for field_name in expected_fields:

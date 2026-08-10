@@ -61,6 +61,21 @@ simpletuner configure config/foo/config.json
   - `auto` は video-only として扱われ、H3 の audio VAE cache、collate、ターゲット音声行を省略します。
   - auto-split または明示的な audio backend で joint audio-video training を使う場合は、data backend entry に `minimax_h3_target_mode` または `h3_target_mode` を `av` として設定します。
 
+### `--minimax_h3_sparse_attention`
+
+- **内容**: MiniMax-H3 の target-video tokens に、training-aware な実験的 3D block sparse attention を有効にします。
+- **選択肢**: `disabled`, `moba3d`
+- **デフォルト**: `disabled`
+- **関連オプション**:
+  - `minimax_h3_sparse_block_shape`: 積が 128 になる `(T,H,W)` dimensions。comma または `x` 区切りです。デフォルト: `1,8,16`。
+  - `minimax_h3_sparse_video_kv_fraction`: target-video query block ごとに選択する target-video KV blocks の割合。デフォルト: `0.5`。
+  - `minimax_h3_sparse_share_heads`: attention heads 間で routes を共有します。デフォルト: `false`。
+  - `minimax_h3_sparse_start_layer`: これより前の transformer layers を dense attention のままにします。デフォルト: `0`。
+- **メモ**:
+  - text、audio、reference context、non-target queries は dense のままです。
+  - CUDA FlexAttention が必要です。Ulysses context parallelism は `context_parallel_strategy=alltoall` で対応します。ring context parallelism と TREAD は非対応です。
+  - MiniMax は H3 の正確な sparse routing 設定を公開していません。この近似は controlled fine-tuning experiments 向けであり、performance improvement を保証しません。
+
 ### `--fuse_qkv_projections`
 
 - **内容**: モデルのアテンションブロック内 QKV 投影を融合し、ハードウェア効率を高めます。

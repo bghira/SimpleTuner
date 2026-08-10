@@ -71,6 +71,24 @@ Negative prompting não faz parte do contrato base do H3. SimpleTuner mantém re
 
 Use `"av"` só quando o dataset tiver target audio latents e você quiser joint audio/video training. Também pode configurar por backend com `h3_target_mode` ou `minimax_h3_target_mode`.
 
+## Atenção sparse experimental
+
+A MiniMax informa que o H3 usou atenção sparse 3D estilo MoBA durante a etapa final de treinamento. O release público inicial usa atenção densa, e a MiniMax ainda não publicou o block shape, retention budget, layer schedule ou kernel de produção exatos. Por isso o SimpleTuner deixa esta aproximação experimental desativada por padrão.
+
+```json
+{
+  "minimax_h3_sparse_attention": "moba3d",
+  "minimax_h3_sparse_block_shape": "1,8,16",
+  "minimax_h3_sparse_video_kv_fraction": 0.25,
+  "minimax_h3_sparse_share_heads": false,
+  "minimax_h3_sparse_start_layer": 0
+}
+```
+
+A implementação faz mean-pooling de blocos 3D de query/key para routing top-k sem parâmetros. Queries de video alvo mantêm acesso denso a texto, audio e contexto de referência; queries que não são alvo continuam densas. As dimensões do bloco devem multiplicar 128. Uma fração KV de video `1.0` é o controle numérico de conectividade densa via FlexAttention.
+
+Este modo requer CUDA e introduz uma fronteira de grafo Dynamo ao redor do FlexAttention. Ulysses context parallelism é suportado com `context_parallel_strategy=alltoall`; ring context parallelism e TREAD não são compatíveis. Em 480px, sparse routing pode usar mais memória que FlashAttention porque a lattice alvo e o contexto empacotado precisam de padding e reordenação. Trate como uma ablação de fine-tuning até a MiniMax publicar a implementação de referência.
+
 ## Memória
 
 - Use o example 24G com RamTorch quando VRAM estiver apertada.

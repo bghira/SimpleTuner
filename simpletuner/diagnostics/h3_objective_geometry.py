@@ -36,6 +36,8 @@ class GeometryPoint:
     drift_reference_prediction: torch.Tensor
     normal_batch: dict[str, Any]
     prepared_batch: dict[str, Any]
+    branch: str = "arbitrary"
+    guidance_scale: float = 1.0
 
 
 def _flat_float(tensor: torch.Tensor) -> torch.Tensor:
@@ -81,6 +83,8 @@ def trajectory_metrics(
     flowmap_base_residual = point.drift_reference_prediction - point.base_prediction
     return {
         "adapter": adapter_label,
+        "branch": point.branch,
+        "guidance_scale": point.guidance_scale,
         "timestep": point.timestep,
         "sigma": point.sigma,
         "model_timestep": point.model_timestep,
@@ -176,11 +180,28 @@ def _without_flowmap_conditioning(batch: dict[str, Any]) -> dict[str, Any]:
     return normal_batch
 
 
-def _adapter_prediction(model, distiller, batch: dict[str, Any], *, enabled: bool) -> torch.Tensor:
+def _adapter_prediction(
+    model,
+    distiller,
+    batch: dict[str, Any],
+    *,
+    enabled: bool,
+    objective_space: bool = False,
+) -> torch.Tensor:
     distiller.toggle_adapter(enable=enabled)
     try:
         with torch.no_grad():
-            return _prediction_tensor(model.model_predict(batch)).float().cpu()
+            prediction = _prediction_tensor(model.model_predict(batch))
+            if objective_space:
+                anyflow_distiller = (
+                    distiller
+                    if distiller.__class__.__name__ == "AnyFlowDistiller"
+                    else getattr(distiller, "inner_distiller", None)
+                )
+                if anyflow_distiller is None or anyflow_distiller.__class__.__name__ != "AnyFlowDistiller":
+                    raise ValueError("Objective-space prediction requires an AnyFlow distiller.")
+                prediction = anyflow_distiller._fuse_guidance_prediction(batch, prediction)
+            return prediction.float().cpu()
     finally:
         distiller.toggle_adapter(enable=True)
 
@@ -200,53 +221,152 @@ def _scalar_batch_value(batch: dict[str, Any], key: str, fallback: float) -> flo
     return float(value.detach().float().reshape(-1)[0].cpu())
 
 
-def prepare_geometry_points(trainer, prepared_batch: dict[str, Any], timesteps: list[float], seed: int):
+def _explicit_anyflow_batch(
+    inner_distiller,
+    normal_batch: dict[str, Any],
+    model,
+    branch: str,
+    t_sigmas: torch.Tensor | None = None,
+) -> dict[str, Any]:
+    anyflow_batch = dict(normal_batch)
+    if t_sigmas is None:
+        t_sigmas = inner_distiller._scalar_sigmas(anyflow_batch)
+    else:
+        t_sigmas = t_sigmas.to(device=anyflow_batch["latents"].device, dtype=torch.float32)
+    if branch == "diffusion":
+        r_sigmas = t_sigmas.clone()
+    elif branch == "consistency":
+        r_sigmas = torch.zeros_like(t_sigmas)
+    elif branch == "midpoint":
+        r_sigmas = t_sigmas * 0.5
+    else:
+        raise ValueError(f"Unknown AnyFlow diagnostic branch: {branch!r}.")
+
+    inner_distiller._set_batch_sigma_path(anyflow_batch, t_sigmas)
+    r_timesteps = inner_distiller._timesteps_from_sigmas(r_sigmas, anyflow_batch["timesteps"]).to(
+        device=anyflow_batch["timesteps"].device,
+        dtype=anyflow_batch["timesteps"].dtype,
+    )
+    flowmap_key = getattr(model, "FLOWMAP_R_TIMESTEP_BATCH_KEY", inner_distiller.FLOWMAP_R_TIMESTEP_BATCH_KEY)
+    anyflow_batch[flowmap_key] = r_timesteps
+    anyflow_batch["anyflow_r_timesteps"] = r_timesteps
+    anyflow_batch["anyflow_timestep_interval"] = (anyflow_batch["timesteps"] - r_timesteps).abs()
+    anyflow_batch["anyflow_t_sigmas"] = t_sigmas
+    anyflow_batch["anyflow_r_sigmas"] = r_sigmas
+    for candidate in ("diffusion", "consistency", "arbitrary"):
+        selected = candidate == branch or (candidate == "arbitrary" and branch == "midpoint")
+        anyflow_batch[f"anyflow_{candidate}_mask"] = torch.full_like(t_sigmas, selected, dtype=torch.bool)
+
+    base_target = inner_distiller._base_flow_target(anyflow_batch, model=model)
+    anyflow_batch["target"] = inner_distiller._meanflow_target(
+        prepared_batch=anyflow_batch,
+        model=model,
+        t_sigmas=t_sigmas,
+        r_sigmas=r_sigmas,
+        base_target=base_target,
+    ).detach()
+    anyflow_batch["flow_target"] = anyflow_batch["target"]
+    return anyflow_batch
+
+
+def prepare_geometry_points(
+    trainer,
+    prepared_batch: dict[str, Any],
+    timesteps: list[float],
+    branches: list[str],
+    seed: int,
+):
     distiller = trainer.distiller
-    inner_distiller = getattr(distiller, "inner_distiller", None)
-    if inner_distiller is None or inner_distiller.__class__.__name__ != "AnyFlowDistiller":
-        raise ValueError("H3 objective geometry requires h3_drift with inner_distillation_method=anyflow.")
+    if distiller.__class__.__name__ == "AnyFlowDistiller":
+        inner_distiller = distiller
+        drift_weight = 0.0
+        sft_weight = 0.0
+    else:
+        inner_distiller = getattr(distiller, "inner_distiller", None)
+        if inner_distiller is None or inner_distiller.__class__.__name__ != "AnyFlowDistiller":
+            raise ValueError("H3 objective geometry requires AnyFlow directly or wrapped by H3_DRIFT.")
+        drift_weight = float(distiller.config.get("loss_weight", 1.0))
+        sft_weight = float(distiller.config.get("sft_loss_weight", 1.0))
 
     points = []
     anyflow_weight = float(inner_distiller.config.get("loss_weight", 1.0))
-    drift_weight = float(distiller.config.get("loss_weight", 1.0))
-    sft_weight = float(distiller.config.get("sft_loss_weight", 1.0))
+    guidance_scale = float(inner_distiller.config.get("fuse_guidance_scale", 1.0))
     flowmap_weight = anyflow_weight + drift_weight
     if flowmap_weight <= 0.0:
         raise ValueError("H3 objective geometry requires a positive AnyFlow or H3_DRIFT loss weight.")
     for index, timestep in enumerate(timesteps):
         normal_batch = trainer._prepare_custom_timestep_batch(prepared_batch, [timestep])
         normal_batch = _without_flowmap_conditioning(normal_batch)
-        normal_target = distiller._normal_video_target(normal_batch).float().cpu()
-
-        _seed_everything(seed + index)
-        anyflow_batch = inner_distiller.prepare_batch(dict(normal_batch), trainer.model, trainer.state)
-        anyflow_target = anyflow_batch["target"].detach().float().cpu()
-
-        base_prediction = _adapter_prediction(trainer.model, distiller, normal_batch, enabled=False)
-        drift_reference = _adapter_prediction(trainer.model, distiller, anyflow_batch, enabled=False)
-        flowmap_objective_target = (anyflow_weight * anyflow_target + drift_weight * drift_reference) / flowmap_weight
-        sigma = _scalar_batch_value(normal_batch, "sigmas", timestep / 1000.0)
-        model_timestep = _scalar_batch_value(normal_batch, "timesteps", 1.0 - sigma)
-        r_timestep = _scalar_batch_value(anyflow_batch, "anyflow_r_timesteps", float("nan"))
-        points.append(
-            GeometryPoint(
-                timestep=float(timestep),
-                sigma=sigma,
-                model_timestep=model_timestep,
-                r_timestep=r_timestep,
-                r_sigma=1.0 - r_timestep,
-                anyflow_weight=anyflow_weight,
-                drift_weight=drift_weight,
-                sft_weight=sft_weight,
-                normal_target=normal_target,
-                anyflow_target=anyflow_target,
-                flowmap_objective_target=flowmap_objective_target,
-                base_prediction=base_prediction,
-                drift_reference_prediction=drift_reference,
-                normal_batch=normal_batch,
-                prepared_batch=anyflow_batch,
-            )
+        timestep_scale = float(getattr(inner_distiller, "num_train_timesteps", 1000.0) or 1000.0)
+        requested_sigma = float(timestep) / timestep_scale if float(timestep) > 1.0 else float(timestep)
+        explicit_t_sigmas = torch.full(
+            (normal_batch["latents"].shape[0],),
+            requested_sigma,
+            device=normal_batch["latents"].device,
+            dtype=torch.float32,
         )
+        if hasattr(distiller, "_normal_video_target"):
+            normal_target = distiller._normal_video_target(normal_batch).float().cpu()
+        else:
+            normal_target = (
+                trainer.model.get_flow_matching_target(
+                    normal_batch,
+                    prefer_explicit_target=False,
+                )
+                .float()
+                .cpu()
+            )
+
+        base_prediction = _adapter_prediction(
+            trainer.model,
+            distiller,
+            normal_batch,
+            enabled=False,
+            objective_space=True,
+        )
+        sigma = requested_sigma
+        model_timestep = _scalar_batch_value(normal_batch, "timesteps", 1.0 - sigma)
+        for branch_index, branch in enumerate(branches):
+            _seed_everything(seed + index * len(branches) + branch_index)
+            anyflow_batch = _explicit_anyflow_batch(
+                inner_distiller,
+                normal_batch,
+                trainer.model,
+                branch,
+                t_sigmas=explicit_t_sigmas,
+            )
+            anyflow_target = anyflow_batch["target"].detach().float().cpu()
+            drift_reference = _adapter_prediction(
+                trainer.model,
+                distiller,
+                anyflow_batch,
+                enabled=False,
+                objective_space=True,
+            )
+            flowmap_objective_target = (anyflow_weight * anyflow_target + drift_weight * drift_reference) / flowmap_weight
+            r_timestep = _scalar_batch_value(anyflow_batch, "anyflow_r_timesteps", float("nan"))
+            r_sigma = _scalar_batch_value(anyflow_batch, "anyflow_r_sigmas", 1.0 - r_timestep)
+            points.append(
+                GeometryPoint(
+                    timestep=float(timestep),
+                    sigma=sigma,
+                    model_timestep=model_timestep,
+                    r_timestep=r_timestep,
+                    r_sigma=r_sigma,
+                    anyflow_weight=anyflow_weight,
+                    drift_weight=drift_weight,
+                    sft_weight=sft_weight,
+                    normal_target=normal_target,
+                    anyflow_target=anyflow_target,
+                    flowmap_objective_target=flowmap_objective_target,
+                    base_prediction=base_prediction,
+                    drift_reference_prediction=drift_reference,
+                    normal_batch=normal_batch,
+                    prepared_batch=anyflow_batch,
+                    branch=branch,
+                    guidance_scale=guidance_scale,
+                )
+            )
     return points
 
 
@@ -289,8 +409,11 @@ def initialize_trainer(config: dict[str, Any]):
     trainer.init_tread_model()
     trainer.init_precision()
     trainer.init_freeze_models()
+    trainer.init_distillation_adapter_modules()
     trainer.init_trainable_peft_adapter()
     trainer.move_models(destination="accelerator")
+    if (getattr(trainer.config, "musubi_blocks_to_swap", 0) or 0) > 0:
+        trainer._move_model_with_block_swap(trainer.model.get_trained_component(unwrap_model=False))
     trainer.init_distillation()
     AttentionBackendController.apply(trainer.config, AttentionPhase.TRAIN)
     trainer.model.get_trained_component(unwrap_model=False).eval()
@@ -337,6 +460,16 @@ def _parse_timesteps(value: str) -> list[float]:
     return timesteps
 
 
+def _parse_branches(value: str) -> list[str]:
+    branches = [item.strip().lower() for item in value.split(",") if item.strip()]
+    supported = {"diffusion", "consistency", "midpoint"}
+    unsupported = sorted(set(branches) - supported)
+    if not branches or unsupported:
+        choices = ", ".join(sorted(supported))
+        raise argparse.ArgumentTypeError(f"Branches must be selected from {choices}; got {unsupported or branches}.")
+    return branches
+
+
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
@@ -347,14 +480,14 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 def _write_npz(
     path: Path,
     points: list[GeometryPoint],
-    adapter_vectors: dict[tuple[str, float, str], torch.Tensor],
+    adapter_vectors: dict[tuple[str, float, str, str], torch.Tensor],
     max_vector_elements: int,
 ) -> tuple[list[str], list[np.ndarray]]:
     arrays: dict[str, np.ndarray] = {}
     pca_labels: list[str] = []
     pca_vectors: list[np.ndarray] = []
     for point in points:
-        timestep_name = f"t{point.timestep:g}"
+        timestep_name = f"{point.branch}:t{point.timestep:g}"
         for kind, tensor in (
             ("normal_target", point.normal_target),
             ("anyflow_target", point.anyflow_target),
@@ -367,8 +500,8 @@ def _write_npz(
             arrays[_safe_name(label)] = vector
             pca_labels.append(label)
             pca_vectors.append(vector)
-    for (adapter_label, timestep, branch), tensor in adapter_vectors.items():
-        label = f"adapter_prediction:{branch}:{adapter_label}:t{timestep:g}"
+    for (adapter_label, timestep, interval_branch, prediction_branch), tensor in adapter_vectors.items():
+        label = f"adapter_prediction:{prediction_branch}:{interval_branch}:{adapter_label}:t{timestep:g}"
         vector = sample_vector(tensor, max_vector_elements)
         arrays[_safe_name(label)] = vector
         pca_labels.append(label)
@@ -410,50 +543,54 @@ def _write_plots(
     plt.close(figure)
 
     figure, axes = plt.subplots(2, 1, figsize=(11, 9), sharex=True)
-    adapter_labels = list(dict.fromkeys(str(row["adapter"]) for row in rows))
-    for adapter_label in adapter_labels:
+    adapter_groups = list(dict.fromkeys((str(row["adapter"]), str(row["branch"])) for row in rows))
+    for adapter_label, branch in adapter_groups:
         adapter_rows = sorted(
-            (row for row in rows if row["adapter"] == adapter_label), key=lambda row: float(row["timestep"])
+            (row for row in rows if row["adapter"] == adapter_label and row["branch"] == branch),
+            key=lambda row: float(row["timestep"]),
         )
         timesteps = [float(row["timestep"]) for row in adapter_rows]
         axes[0].plot(
             timesteps,
             [float(row["cos_adapter_flowmap_objective"]) for row in adapter_rows],
             marker="o",
-            label=f"{adapter_label}: FlowMap/objective cosine",
+            label=f"{adapter_label}/{branch}: objective cosine",
         )
         axes[1].plot(
             timesteps,
             [float(row["adapter_residual_base_norm_ratio"]) for row in adapter_rows],
             marker="o",
-            label=f"{adapter_label}: residual/base norm",
+            label=f"{adapter_label}/{branch}: residual/base norm",
         )
         axes[1].plot(
             timesteps,
             [float(row["normal_adapter_residual_base_norm_ratio"]) for row in adapter_rows],
             marker="x",
             linestyle=":",
-            label=f"{adapter_label}: normal residual/base norm",
+            label=f"{adapter_label}/{branch}: normal residual/base norm",
         )
     first_by_timestep = {}
     for row in rows:
-        first_by_timestep.setdefault(float(row["timestep"]), row)
-    target_rows = [first_by_timestep[key] for key in sorted(first_by_timestep)]
-    target_timesteps = [float(row["timestep"]) for row in target_rows]
-    axes[0].plot(
-        target_timesteps,
-        [float(row["cos_anyflow_normal_target"]) for row in target_rows],
-        color="black",
-        linestyle="--",
-        label="AnyFlow/normal target cosine",
-    )
-    axes[1].plot(
-        target_timesteps,
-        [float(row["anyflow_normal_target_norm_ratio"]) for row in target_rows],
-        color="black",
-        linestyle="--",
-        label="AnyFlow/normal target norm",
-    )
+        first_by_timestep.setdefault((str(row["branch"]), float(row["timestep"])), row)
+    target_branches = list(dict.fromkeys(branch for branch, _ in first_by_timestep))
+    for branch in target_branches:
+        target_rows = [
+            first_by_timestep[key]
+            for key in sorted((key for key in first_by_timestep if key[0] == branch), key=lambda key: key[1])
+        ]
+        target_timesteps = [float(row["timestep"]) for row in target_rows]
+        axes[0].plot(
+            target_timesteps,
+            [float(row["cos_anyflow_normal_target"]) for row in target_rows],
+            linestyle="--",
+            label=f"{branch}: AnyFlow/normal cosine",
+        )
+        axes[1].plot(
+            target_timesteps,
+            [float(row["anyflow_normal_target_norm_ratio"]) for row in target_rows],
+            linestyle="--",
+            label=f"{branch}: AnyFlow/normal norm",
+        )
     axes[0].set_ylabel("Cosine similarity")
     axes[1].set_ylabel("Norm ratio")
     axes[1].set_xlabel("Timestep")
@@ -474,10 +611,11 @@ def run_diagnostic(args: argparse.Namespace) -> None:
         _seed_everything(args.seed)
         raw_batch = _first_raw_batch()
         prepared_batch = trainer.model.prepare_batch(raw_batch, state=trainer.state)
-        points = prepare_geometry_points(trainer, prepared_batch, args.timesteps, args.seed)
+        points = prepare_geometry_points(trainer, prepared_batch, args.timesteps, args.branches, args.seed)
 
         rows = []
-        adapter_vectors: dict[tuple[str, float, str], torch.Tensor] = {}
+        adapter_vectors: dict[tuple[str, float, str, str], torch.Tensor] = {}
+        normal_prediction_cache: dict[tuple[str, float], torch.Tensor] = {}
         adapters = [("base", None), *args.adapter]
         for adapter_label, checkpoint_dir in adapters:
             if checkpoint_dir is not None:
@@ -488,13 +626,18 @@ def run_diagnostic(args: argparse.Namespace) -> None:
                     trainer.distiller,
                     point.prepared_batch,
                     enabled=checkpoint_dir is not None,
+                    objective_space=True,
                 )
-                normal_adapter_prediction = _adapter_prediction(
-                    trainer.model,
-                    trainer.distiller,
-                    point.normal_batch,
-                    enabled=checkpoint_dir is not None,
-                )
+                normal_cache_key = (adapter_label, point.timestep)
+                if normal_cache_key not in normal_prediction_cache:
+                    normal_prediction_cache[normal_cache_key] = _adapter_prediction(
+                        trainer.model,
+                        trainer.distiller,
+                        point.normal_batch,
+                        enabled=checkpoint_dir is not None,
+                        objective_space=True,
+                    )
+                normal_adapter_prediction = normal_prediction_cache[normal_cache_key]
                 rows.append(
                     trajectory_metrics(
                         adapter_label=adapter_label,
@@ -503,8 +646,8 @@ def run_diagnostic(args: argparse.Namespace) -> None:
                         normal_adapter_prediction=normal_adapter_prediction,
                     )
                 )
-                adapter_vectors[(adapter_label, point.timestep, "flowmap")] = adapter_prediction
-                adapter_vectors[(adapter_label, point.timestep, "normal")] = normal_adapter_prediction
+                adapter_vectors[(adapter_label, point.timestep, point.branch, "flowmap")] = adapter_prediction
+                adapter_vectors[(adapter_label, point.timestep, point.branch, "normal")] = normal_adapter_prediction
 
         _write_csv(args.output_dir / "trajectory_metrics.csv", rows)
         pca_labels, pca_vectors = _write_npz(
@@ -520,6 +663,7 @@ def run_diagnostic(args: argparse.Namespace) -> None:
                     "config": str(args.config),
                     "adapters": [(label, None if path is None else str(path)) for label, path in adapters],
                     "timesteps": args.timesteps,
+                    "branches": args.branches,
                     "seed": args.seed,
                     "max_vector_elements": args.max_vector_elements,
                     "batch": {
@@ -550,6 +694,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--timesteps",
         type=_parse_timesteps,
         default=_parse_timesteps("50,100,250,500,750,900,975"),
+    )
+    parser.add_argument(
+        "--branches",
+        type=_parse_branches,
+        default=_parse_branches("diffusion,consistency,midpoint"),
+        help="Comma-separated explicit AnyFlow intervals to inspect.",
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-vector-elements", type=int, default=65536)

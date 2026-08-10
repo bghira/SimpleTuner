@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 import torch
 from accelerate.utils.operations import convert_to_fp32
 from PIL import Image
-from safetensors.torch import save_file
+from safetensors.torch import load_file, save_file
 
 from simpletuner.helpers.acceleration import AccelerationBackend
 from simpletuner.helpers.models.common import PipelineTypes, TextEmbedCacheKey
@@ -17,13 +17,14 @@ from simpletuner.helpers.models.minimaxh3.activations import MiniMaxH3FeedForwar
 from simpletuner.helpers.models.minimaxh3.autoencoder import AutoencoderKLMiniMaxH3
 from simpletuner.helpers.models.minimaxh3.before_denoise import MiniMaxH3SetTimestepsStep
 from simpletuner.helpers.models.minimaxh3.before_encoder import MiniMaxH3SetupStep
-from simpletuner.helpers.models.minimaxh3.denoise import _predict_guided_velocity
+from simpletuner.helpers.models.minimaxh3.denoise import _denoiser_inputs, _predict_guided_velocity
 from simpletuner.helpers.models.minimaxh3.encoders import MiniMaxH3TextEncoderStep
 from simpletuner.helpers.models.minimaxh3.model import MiniMaxH3
 from simpletuner.helpers.models.minimaxh3.modular_pipeline import (
     MiniMaxH3ModularPipeline,
     MiniMaxH3Ref2VAModularPipeline,
     _convert_minimax_h3_comfy_lora_to_diffusers,
+    _convert_minimax_h3_diffusers_lora_to_comfyui,
 )
 from simpletuner.helpers.models.minimaxh3.packing import (
     MINIMAX_H3_FPS,
@@ -34,14 +35,27 @@ from simpletuner.helpers.models.minimaxh3.packing import (
     MINIMAX_H3_VIDEO_TAG,
     align_num_frames,
     build_packed_sequence,
+    build_row_timestep_intervals,
     build_row_timesteps,
     video_latent_num_frames,
 )
 from simpletuner.helpers.models.minimaxh3.packing_ref2va import build_ref2va_presentation
+from simpletuner.helpers.models.minimaxh3.sparse_attention import (
+    MiniMaxH3SparseAttentionConfig,
+    MiniMaxH3SparseAttentionLayout,
+    _build_reordered_layout,
+    _reorder_qkv,
+    _restore_output,
+    minimax_h3_sparse_attention,
+    parse_h3_sparse_block_shape,
+)
 from simpletuner.helpers.models.minimaxh3.transformer import (
     H3_REFERENCE_MODE,
+    MiniMaxH3RotaryPosEmbed,
     MiniMaxH3Transformer3DModel,
     MiniMaxH3TransformerOutput,
+    _gather_h3_context_parallel_output,
+    _pad_h3_context_parallel_layout,
     resolve_h3_reference_mode,
 )
 from simpletuner.helpers.models.registry import ModelRegistry
@@ -91,6 +105,33 @@ def tiny_h3_vae(**kwargs) -> AutoencoderKLMiniMaxH3:
     return AutoencoderKLMiniMaxH3(**config)
 
 
+class H3ContextParallelOutputGatherTests(unittest.TestCase):
+    def test_uses_legacy_all_gather_and_selects_local_gradient_shard(self):
+        tensor = torch.arange(6, dtype=torch.float32).reshape(1, 2, 3).requires_grad_()
+        expected_group = object()
+        mesh = Mock()
+        mesh.get_group.return_value = expected_group
+        context_config = SimpleNamespace(_flattened_mesh=mesh)
+
+        def gather(shards, local_tensor, group=None):
+            self.assertIs(group, expected_group)
+            shards[0].copy_(local_tensor)
+            shards[1].copy_(local_tensor + 10)
+
+        with (
+            patch("torch.distributed.get_world_size", return_value=2),
+            patch("torch.distributed.get_rank", return_value=1),
+            patch("torch.distributed.all_gather", side_effect=gather) as all_gather,
+        ):
+            gathered = _gather_h3_context_parallel_output(tensor, context_config)
+            gathered.sum().backward()
+
+        all_gather.assert_called_once()
+        self.assertTrue(torch.equal(gathered[:, :2], tensor.detach()))
+        self.assertTrue(torch.equal(gathered[:, 2:], tensor.detach() + 10))
+        self.assertTrue(torch.equal(tensor.grad, torch.ones_like(tensor)))
+
+
 def tiny_inputs(batch_size: int = 1):
     text_tags = torch.full((5,), MINIMAX_H3_TEXT_TAG, dtype=torch.long)
     layout = build_packed_sequence(
@@ -120,6 +161,243 @@ def tiny_inputs(batch_size: int = 1):
         "audio_indices": layout.audio_indices,
         "text_indices": layout.text_indices,
     }
+
+
+class TestMiniMaxH3RotaryPosEmbed(unittest.TestCase):
+    def test_moves_inv_freq_to_position_device(self):
+        rope = MiniMaxH3RotaryPosEmbed(rope_freq_dim=2)
+        position_ids = torch.empty((4, 3), dtype=torch.long, device="meta")
+
+        cos, sin = rope(position_ids)
+
+        self.assertEqual(cos.device.type, "meta")
+        self.assertEqual(sin.device.type, "meta")
+        self.assertEqual(cos.shape, (4, 12))
+        self.assertEqual(sin.shape, (4, 12))
+
+
+class TestMiniMaxH3ContextParallelLayout(unittest.TestCase):
+    def test_pads_odd_layout_to_context_parallel_degree(self):
+        position_ids = torch.arange(15, dtype=torch.long).view(5, 3)
+        token_tags = torch.tensor([1, 1, 0, 0, 2], dtype=torch.long)
+        timestep_indices = torch.tensor([0, 0, 1, 1, 2], dtype=torch.long)
+
+        padded_positions, padded_tags, padded_timesteps = _pad_h3_context_parallel_layout(
+            position_ids,
+            token_tags,
+            timestep_indices,
+            degree=2,
+        )
+
+        self.assertEqual(padded_positions.shape, (6, 3))
+        self.assertTrue(torch.equal(padded_positions[:5], position_ids))
+        self.assertEqual(padded_positions[-1].tolist(), [0, 0, 0])
+        self.assertEqual(padded_tags.tolist(), [1, 1, 0, 0, 2, -1])
+        self.assertEqual(padded_timesteps.tolist(), [0, 0, 1, 1, 2, 0])
+
+    def test_leaves_divisible_layout_storage_unchanged(self):
+        position_ids = torch.zeros((6, 3), dtype=torch.long)
+        token_tags = torch.zeros(6, dtype=torch.long)
+        timestep_indices = torch.zeros(6, dtype=torch.long)
+
+        result = _pad_h3_context_parallel_layout(position_ids, token_tags, timestep_indices, degree=2)
+
+        self.assertIs(result[0], position_ids)
+        self.assertIs(result[1], token_tags)
+        self.assertIs(result[2], timestep_indices)
+
+    def test_rejects_non_positive_degree(self):
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            _pad_h3_context_parallel_layout(
+                torch.zeros((1, 3), dtype=torch.long),
+                torch.zeros(1, dtype=torch.long),
+                torch.zeros(1, dtype=torch.long),
+                degree=0,
+            )
+
+    def test_padding_rows_do_not_change_live_outputs(self):
+        model = tiny_h3_transformer(num_layers=1).eval()
+        inputs = tiny_inputs()
+        padded_inputs = dict(inputs)
+        (
+            padded_inputs["position_ids"],
+            padded_inputs["token_tags"],
+            padded_inputs["timestep_indices"],
+        ) = _pad_h3_context_parallel_layout(
+            inputs["position_ids"],
+            inputs["token_tags"],
+            inputs["timestep_indices"],
+            degree=inputs["position_ids"].shape[0] + 1,
+        )
+
+        with torch.no_grad():
+            base = model(**inputs)
+            padded = model(**padded_inputs)
+
+        self.assertTrue(torch.allclose(base.sample, padded.sample, atol=1e-6))
+        self.assertTrue(torch.allclose(base.audio_sample, padded.audio_sample, atol=1e-6))
+
+
+class TestMiniMaxH3SparseAttention(unittest.TestCase):
+    def test_denoiser_declares_sparse_lattice_geometry(self):
+        input_names = {input_param.name for input_param in _denoiser_inputs()}
+
+        self.assertTrue({"num_latent_frames", "latent_height", "latent_width"}.issubset(input_names))
+
+    def test_parses_3d_128_token_block_shapes(self):
+        self.assertEqual(parse_h3_sparse_block_shape("1x8x16"), (1, 8, 16))
+        self.assertEqual(parse_h3_sparse_block_shape([2, 8, 8]), (2, 8, 8))
+
+        with self.assertRaisesRegex(ValueError, "exactly 128"):
+            parse_h3_sparse_block_shape("1,8,8")
+
+    def test_reorder_round_trip_preserves_non_divisible_lattice(self):
+        sparse_layout = MiniMaxH3SparseAttentionLayout(target_start=7, target_shape=(2, 9, 17))
+        reordered_layout = _build_reordered_layout(sparse_layout, (1, 8, 16), torch.device("cpu"))
+        value = torch.arange(2 * 3 * (7 + 2 * 9 * 17) * 4, dtype=torch.float32).reshape(2, 3, 7 + 2 * 9 * 17, 4)
+
+        restored = _restore_output(_reorder_qkv(value, reordered_layout), reordered_layout)
+
+        self.assertTrue(torch.equal(restored, value))
+
+    def test_reorder_round_trip_preserves_context_parallel_tail_padding(self):
+        sparse_layout = MiniMaxH3SparseAttentionLayout(
+            target_start=7,
+            target_shape=(2, 9, 17),
+            trailing_padding=5,
+        )
+        reordered_layout = _build_reordered_layout(sparse_layout, (1, 8, 16), torch.device("cpu"))
+        sequence_length = 7 + 2 * 9 * 17 + 5
+        value = torch.arange(2 * 3 * sequence_length * 4, dtype=torch.float32).reshape(2, 3, sequence_length, 4)
+
+        restored = _restore_output(_reorder_qkv(value, reordered_layout), reordered_layout)
+
+        self.assertTrue(torch.equal(restored, value))
+
+    def test_configuration_propagates_to_transformer_layers(self):
+        model = tiny_h3_transformer(num_layers=3)
+        config = model.configure_h3_sparse_attention(
+            mode="moba",
+            block_shape="4,4,8",
+            video_kv_fraction=0.25,
+            share_across_heads=True,
+            start_layer=1,
+        )
+
+        self.assertEqual(config, MiniMaxH3SparseAttentionConfig("moba3d", (4, 4, 8), 0.25, True, 1))
+        self.assertTrue(all(block.attn._h3_sparse_attention_config is config for block in model.transformer_blocks))
+        self.assertEqual(
+            [block.attn._h3_sparse_layer_index for block in model.transformer_blocks],
+            [0, 1, 2],
+        )
+
+    def test_sparse_forward_requires_target_video_shape(self):
+        model = tiny_h3_transformer(num_layers=1)
+        model.configure_h3_sparse_attention(mode="moba3d")
+
+        with self.assertRaisesRegex(ValueError, "video_hidden_shape"):
+            model(**tiny_inputs())
+
+    def test_context_parallel_replaces_an_incompatible_dense_backend(self):
+        model = tiny_h3_transformer(num_layers=1)
+        model.transformer_blocks[0].attn.processor._attention_backend = "_native_efficient"
+
+        with (
+            patch.object(model, "set_attention_backend") as set_backend,
+            patch(
+                "diffusers.models.modeling_utils.ModelMixin.enable_parallelism",
+                return_value="enabled",
+            ) as enable_parallelism,
+        ):
+            result = model.enable_parallelism(config=SimpleNamespace(ring_degree=1, ulysses_degree=2))
+
+        self.assertEqual(result, "enabled")
+        set_backend.assert_called_once_with("_native_flash")
+        enable_parallelism.assert_called_once()
+
+    @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA FlexAttention")
+    def test_full_video_budget_matches_dense_forward_and_backward(self):
+        torch.manual_seed(7)
+        device = torch.device("cuda")
+        layout = MiniMaxH3SparseAttentionLayout(target_start=35, target_shape=(2, 9, 17))
+        config = MiniMaxH3SparseAttentionConfig(
+            mode="moba3d",
+            block_shape=(1, 8, 16),
+            video_kv_fraction=1.0,
+        )
+        tensors = [
+            torch.randn(
+                1,
+                35 + 2 * 9 * 17,
+                2,
+                64,
+                device=device,
+                dtype=torch.bfloat16,
+                requires_grad=True,
+            )
+            for _ in range(3)
+        ]
+        sparse = minimax_h3_sparse_attention(*tensors, layout=layout, config=config)
+        dense = torch.nn.functional.scaled_dot_product_attention(
+            *(tensor.permute(0, 2, 1, 3) for tensor in tensors)
+        ).permute(0, 2, 1, 3)
+
+        self.assertTrue(torch.allclose(sparse, dense, atol=3e-2, rtol=3e-2))
+        upstream = torch.randn_like(sparse)
+        sparse_grads = torch.autograd.grad(sparse, tensors, upstream, retain_graph=True)
+        dense_grads = torch.autograd.grad(dense, tensors, upstream)
+        for sparse_grad, dense_grad in zip(sparse_grads, dense_grads):
+            self.assertTrue(torch.allclose(sparse_grad, dense_grad, atol=4e-2, rtol=4e-2))
+
+    @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA FlexAttention")
+    def test_sparse_video_route_compiles_and_backpropagates(self):
+        torch.manual_seed(11)
+        device = torch.device("cuda")
+        layout = MiniMaxH3SparseAttentionLayout(target_start=128, target_shape=(2, 8, 16))
+        config = MiniMaxH3SparseAttentionConfig(
+            mode="moba3d",
+            block_shape=(1, 8, 16),
+            video_kv_fraction=0.5,
+        )
+
+        def sparse_forward(query, key, value):
+            return minimax_h3_sparse_attention(query, key, value, layout=layout, config=config)
+
+        compiled_forward = torch.compile(sparse_forward, fullgraph=False, dynamic=False)
+        tensors = [torch.randn(1, 384, 2, 64, device=device, dtype=torch.bfloat16, requires_grad=True) for _ in range(3)]
+        output = compiled_forward(*tensors)
+        output.float().square().mean().backward()
+
+        self.assertEqual(output.shape, tensors[0].shape)
+        self.assertTrue(torch.isfinite(output).all())
+        self.assertTrue(all(tensor.grad is not None and torch.isfinite(tensor.grad).all() for tensor in tensors))
+
+    def test_row_timestep_intervals_keep_video_and_audio_endpoints_distinct(self):
+        text_tags = torch.full((2,), MINIMAX_H3_TEXT_TAG, dtype=torch.long)
+        layout = build_packed_sequence(
+            text_token_tags=text_tags,
+            num_latent_frames=1,
+            latent_height=2,
+            latent_width=2,
+            num_audio_latents=1,
+            patch_size=(1, 2, 2),
+        )
+
+        timestep, r_timestep, timestep_indices = build_row_timestep_intervals(
+            layout,
+            video_timestep=0.0,
+            audio_timestep=0.0,
+            condition_video_timestep=0.999,
+            condition_audio_timestep=0.999,
+            video_r_timestep=0.1,
+            audio_r_timestep=0.25,
+        )
+
+        row_timesteps = timestep[timestep_indices]
+        row_r_timesteps = r_timestep[timestep_indices]
+        self.assertTrue(torch.all(row_r_timesteps[layout.video_indices] == 0.1))
+        self.assertTrue(torch.all(row_r_timesteps[layout.audio_indices] == 0.25))
+        self.assertTrue(torch.all(row_timesteps == 0.0))
 
 
 def tiny_inputs_with_reference(batch_size: int = 1):
@@ -513,7 +791,10 @@ class MiniMaxH3Tests(unittest.TestCase):
 
         with patch(
             "simpletuner.helpers.models.minimaxh3.model.MiniMaxH3TextEncoderStep.encode_prompt",
-            return_value=(torch.zeros(1, 3, 4), torch.tensor([1, 0, 1], dtype=torch.long)),
+            return_value=(
+                torch.zeros(1, 3, 4),
+                torch.tensor([1, 0, 1], dtype=torch.long),
+            ),
         ) as encode_prompt:
             encoded = model._encode_prompts(["caption"])
 
@@ -535,7 +816,10 @@ class MiniMaxH3Tests(unittest.TestCase):
 
         with patch(
             "simpletuner.helpers.models.minimaxh3.model.MiniMaxH3TextEncoderStep.encode_prompt",
-            return_value=(torch.zeros(1, 3, 4), torch.tensor([1, 1, 1], dtype=torch.long)),
+            return_value=(
+                torch.zeros(1, 3, 4),
+                torch.tensor([1, 1, 1], dtype=torch.long),
+            ),
         ) as encode_prompt:
             encoded = model._encode_prompts(["caption"])
 
@@ -613,7 +897,12 @@ class MiniMaxH3Tests(unittest.TestCase):
             torch.set_default_device(previous_device)
 
         self.assertEqual(layout.token_tags.device.type, "cuda")
-        self.assertTrue(torch.equal(layout.token_tags[layout.text_indices].cpu(), torch.full((3,), MINIMAX_H3_TEXT_TAG)))
+        self.assertTrue(
+            torch.equal(
+                layout.token_tags[layout.text_indices].cpu(),
+                torch.full((3,), MINIMAX_H3_TEXT_TAG),
+            )
+        )
 
     def test_set_timesteps_allows_video_only_pipeline_without_audio_scheduler(self):
         step = MiniMaxH3SetTimestepsStep()
@@ -626,7 +915,11 @@ class MiniMaxH3Tests(unittest.TestCase):
                 timesteps.to(device),
             ),
         )
-        components = SimpleNamespace(_execution_device=torch.device("cpu"), scheduler=scheduler, audio_scheduler=None)
+        components = SimpleNamespace(
+            _execution_device=torch.device("cpu"),
+            scheduler=scheduler,
+            audio_scheduler=None,
+        )
         layout = build_packed_sequence(
             text_token_tags=torch.full((3,), MINIMAX_H3_TEXT_TAG, dtype=torch.long),
             num_latent_frames=1,
@@ -738,6 +1031,15 @@ class MiniMaxH3Tests(unittest.TestCase):
                 "cached_kv",
                 "--minimax_h3_target_mode",
                 "av",
+                "--minimax_h3_sparse_attention",
+                "moba3d",
+                "--minimax_h3_sparse_block_shape",
+                "2,8,8",
+                "--minimax_h3_sparse_video_kv_fraction",
+                "0.25",
+                "--minimax_h3_sparse_share_heads",
+                "--minimax_h3_sparse_start_layer",
+                "2",
                 "--audio_flow_schedule_shift",
                 "3.0",
             ]
@@ -745,6 +1047,11 @@ class MiniMaxH3Tests(unittest.TestCase):
 
         self.assertEqual(args.minimax_h3_reference_mode, "cached_kv")
         self.assertEqual(args.minimax_h3_target_mode, "av")
+        self.assertEqual(args.minimax_h3_sparse_attention, "moba3d")
+        self.assertEqual(args.minimax_h3_sparse_block_shape, "2,8,8")
+        self.assertEqual(args.minimax_h3_sparse_video_kv_fraction, 0.25)
+        self.assertTrue(args.minimax_h3_sparse_share_heads)
+        self.assertEqual(args.minimax_h3_sparse_start_layer, 2)
         self.assertEqual(args.audio_flow_schedule_shift, 3.0)
         self.assertIs(resolve_h3_reference_mode("cached-kv"), H3_REFERENCE_MODE.CachedKV)
 
@@ -752,7 +1059,10 @@ class MiniMaxH3Tests(unittest.TestCase):
         wrapper = MiniMaxH3.__new__(MiniMaxH3)
         wrapper.config = SimpleNamespace(minimax_h3_target_mode="auto")
 
-        with patch("simpletuner.helpers.models.minimaxh3.model.StateTracker.get_data_backend_config", return_value={}):
+        with patch(
+            "simpletuner.helpers.models.minimaxh3.model.StateTracker.get_data_backend_config",
+            return_value={},
+        ):
             self.assertFalse(wrapper.uses_audio_latents_for_data_backend("video"))
 
     def test_minimax_h3_target_mode_can_enable_audio_from_source_backend(self):
@@ -893,6 +1203,75 @@ class MiniMaxH3Tests(unittest.TestCase):
 
         self.assertTrue(torch.equal(temb[0], model.adaln_t_table[2]))
 
+    def test_transformer_adaln_curve_uses_independent_trainable_delta_table(self):
+        model = tiny_h3_transformer(time_embed_dim=3, adaln_curve_grid=5)
+        model.adaln_t_table.copy_(torch.arange(15, dtype=torch.float32).view(5, 3))
+        model.enable_flowmap_time_conditioning(gate_value=1.0, deltatime_type="r")
+
+        self.assertIsNotNone(model.delta_adaln_embedder)
+        self.assertNotEqual(model.delta_adaln_embedder.weight.data_ptr(), model.adaln_t_table.data_ptr())
+        with torch.no_grad():
+            model.delta_adaln_embedder.weight.add_(100.0)
+
+        base = model._time_embedding(torch.tensor([0.25]))
+        flowmap = model._time_embedding(torch.tensor([0.25]), r_timestep=torch.tensor([0.5]))
+
+        self.assertTrue(torch.equal(base[0], model.adaln_t_table[1]))
+        self.assertTrue(torch.equal(flowmap[0], model.adaln_t_table[2] + 100.0))
+
+    def test_anyflow_lora_targets_ffn_and_available_time_embedders(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(
+            distillation_method="anyflow",
+            distillation_config={"anyflow": {}},
+            lora_type="standard",
+            peft_lora_target_modules=None,
+            slider_lora_target=False,
+            controlnet=False,
+        )
+        wrapper.model = tiny_h3_transformer()
+        wrapper.model.enable_flowmap_time_conditioning()
+        wrapper.accelerator = SimpleNamespace(unwrap_model=lambda model, keep_fp32_wrapper=True: model)
+
+        targets = wrapper.get_lora_target_layers()
+
+        self.assertIn("ff.net.0.proj", targets)
+        self.assertIn("ff.net.2", targets)
+        self.assertIn("time_embedder.linear_1", targets)
+        self.assertIn("delta_time_embedder.linear_1", targets)
+        self.assertIsNone(wrapper.get_lora_save_layers())
+
+    def test_anyflow_curve_checkpoint_saves_delta_table_with_adapter(self):
+        from peft import LoraConfig
+        from peft.utils import get_peft_model_state_dict
+
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(
+            distillation_method="anyflow",
+            distillation_config={"anyflow": {}},
+            lora_type="standard",
+            peft_lora_target_modules=None,
+            slider_lora_target=False,
+            controlnet=False,
+        )
+        wrapper.model = tiny_h3_transformer(time_embed_dim=3, adaln_curve_grid=5)
+        wrapper.model.enable_flowmap_time_conditioning()
+        wrapper.accelerator = SimpleNamespace(unwrap_model=lambda model, keep_fp32_wrapper=True: model)
+        wrapper.model.add_adapter(
+            LoraConfig(
+                r=2,
+                lora_alpha=2,
+                target_modules=["to_q"],
+                modules_to_save=wrapper.get_lora_save_layers(),
+            )
+        )
+
+        state_dict = get_peft_model_state_dict(wrapper.model)
+
+        self.assertIn("delta_adaln_embedder.weight", state_dict)
+        self.assertTrue(wrapper.model.delta_adaln_embedder.modules_to_save.default.weight.requires_grad)
+        self.assertFalse(wrapper.model.delta_adaln_embedder.original_module.weight.requires_grad)
+
     def test_flow_matching_timesteps_use_h3_dataward_convention(self):
         wrapper = MiniMaxH3.__new__(MiniMaxH3)
         sigmas = torch.tensor([0.0, 0.25, 1.0])
@@ -1007,7 +1386,9 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertTrue(torch.allclose(result["audio_timesteps"], torch.tensor([0.8])))
         self.assertTrue(torch.equal(result["audio_latent_mask"], torch.zeros(1)))
 
-    def test_prepare_batch_conditions_av_target_mode_drops_cached_audio_for_image_latents(self):
+    def test_prepare_batch_conditions_av_target_mode_drops_cached_audio_for_image_latents(
+        self,
+    ):
         wrapper = MiniMaxH3.__new__(MiniMaxH3)
         wrapper.accelerator = SimpleNamespace(device=torch.device("cpu"))
         wrapper.config = SimpleNamespace(
@@ -1066,7 +1447,9 @@ class MiniMaxH3Tests(unittest.TestCase):
         ):
             self.assertNotIn(key, result)
 
-    def test_prepare_batch_conditions_pins_keyframe_noise_for_repeated_predictions(self):
+    def test_prepare_batch_conditions_pins_keyframe_noise_for_repeated_predictions(
+        self,
+    ):
         wrapper = MiniMaxH3.__new__(MiniMaxH3)
         wrapper.accelerator = SimpleNamespace(device=torch.device("cpu"))
         wrapper.config = SimpleNamespace(weight_dtype=torch.float32, minimax_h3_target_mode="video")
@@ -1240,7 +1623,10 @@ class MiniMaxH3Tests(unittest.TestCase):
             "MiniMax_H3_FL2VA_pruned_int8_convrot.safetensors",
             wrapper.config.pretrained_transformer_model_name_or_path,
         )
-        self.assertIn("minimax_h3_video_vae_int8_convrot.safetensors", wrapper.config.pretrained_vae_model_name_or_path)
+        self.assertIn(
+            "minimax_h3_video_vae_int8_convrot.safetensors",
+            wrapper.config.pretrained_vae_model_name_or_path,
+        )
         self.assertIn("minimax_h3_video_vae_int8_convrot.safetensors", wrapper.config.vae_path)
 
     def test_get_pipeline_registers_modular_components_after_init(self):
@@ -1361,7 +1747,9 @@ class MiniMaxH3Tests(unittest.TestCase):
         vae.encode.assert_called_once()
         self.assertTrue(vae.encode.call_args.kwargs["return_dict"])
 
-    def test_i2v_first_frame_vae_cache_uses_spatial_keyframe_encode_and_posterior_mode(self):
+    def test_i2v_first_frame_vae_cache_uses_spatial_keyframe_encode_and_posterior_mode(
+        self,
+    ):
         wrapper = MiniMaxH3.__new__(MiniMaxH3)
         vae = AutoencoderKLMiniMaxH3.__new__(AutoencoderKLMiniMaxH3)
         vae.encode = Mock()
@@ -1495,7 +1883,10 @@ class MiniMaxH3Tests(unittest.TestCase):
 
         self.assertEqual(text_encoder.last_input_ids.shape, (2, 3))
         self.assertTrue(
-            torch.equal(text_encoder.last_attention_mask, torch.tensor([[1, 0, 0], [1, 1, 1]], dtype=torch.long))
+            torch.equal(
+                text_encoder.last_attention_mask,
+                torch.tensor([[1, 0, 0], [1, 1, 1]], dtype=torch.long),
+            )
         )
         self.assertEqual(encoded[0][0].shape, (1, 1, 2))
         self.assertEqual(encoded[0][1].shape, (1,))
@@ -1620,7 +2011,10 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertTrue(torch.allclose(video, torch.full_like(video, 4.7)))
         self.assertTrue(torch.allclose(audio, torch.full_like(audio, 14.7)))
         self.assertEqual([call["text_rows"] for call in transformer.calls], [5, 3, 5])
-        self.assertEqual(transformer.calls[1]["sequence_rows"], block_state.negative_position_ids.shape[0])
+        self.assertEqual(
+            transformer.calls[1]["sequence_rows"],
+            block_state.negative_position_ids.shape[0],
+        )
         self.assertEqual(transformer.calls[2]["skip_layers"], [1])
 
     def test_convert_negative_text_embed_for_pipeline_enables_real_cfg(self):
@@ -1706,12 +2100,21 @@ class MiniMaxH3Tests(unittest.TestCase):
         embed_cache = DummyEmbedCache()
 
         with (
-            patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
-            patch("simpletuner.helpers.training.validation.StateTracker.get_validation_sample_images", return_value=None),
+            patch(
+                "simpletuner.helpers.training.validation.StateTracker.get_args",
+                return_value=args,
+            ),
+            patch(
+                "simpletuner.helpers.training.validation.StateTracker.get_validation_sample_images",
+                return_value=None,
+            ),
         ):
             metadata = prepare_validation_prompt_list(args, embed_cache, wrapper)
 
-        self.assertEqual([entry.prompt for entry in metadata["validation_prompts"]], ["visible prompt"])
+        self.assertEqual(
+            [entry.prompt for entry in metadata["validation_prompts"]],
+            ["visible prompt"],
+        )
         wrapper.log_model_devices.assert_not_called()
         embed_cache.encode_validation_negative_prompt.assert_not_called()
         negative_calls = [
@@ -1743,13 +2146,236 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertTrue(torch.equal(converted[q_key], qkv_down))
         self.assertTrue(torch.equal(converted[k_key], qkv_down))
         self.assertTrue(torch.equal(converted[v_key], qkv_down))
-        self.assertTrue(torch.equal(converted["transformer.transformer_blocks.0.attn.to_q.lora.up.weight"], qkv_up[:16]))
-        self.assertTrue(torch.equal(converted["transformer.transformer_blocks.0.attn.to_k.lora.up.weight"], qkv_up[16:32]))
-        self.assertTrue(torch.equal(converted["transformer.transformer_blocks.0.attn.to_v.lora.up.weight"], qkv_up[32:]))
+        self.assertTrue(
+            torch.equal(
+                converted["transformer.transformer_blocks.0.attn.to_q.lora.up.weight"],
+                qkv_up[:16],
+            )
+        )
+        self.assertTrue(
+            torch.equal(
+                converted["transformer.transformer_blocks.0.attn.to_k.lora.up.weight"],
+                qkv_up[16:32],
+            )
+        )
+        self.assertTrue(
+            torch.equal(
+                converted["transformer.transformer_blocks.0.attn.to_v.lora.up.weight"],
+                qkv_up[32:],
+            )
+        )
         self.assertIn("transformer.proj_in.lora.down.weight", converted)
         self.assertEqual(network_alphas["transformer.transformer_blocks.0.attn.to_q.alpha"], 4.0)
         self.assertEqual(network_alphas["transformer.transformer_blocks.0.attn.to_k.alpha"], 4.0)
         self.assertEqual(network_alphas["transformer.transformer_blocks.0.attn.to_v.alpha"], 4.0)
+
+    def test_comfy_lora_export_fuses_independent_qkv_without_changing_delta(self):
+        state_dict = {}
+        expected_deltas = []
+        for index, projection in enumerate(("to_q", "to_k", "to_v"), start=1):
+            down = torch.full((2, 3), float(index))
+            up = torch.full((4, 2), float(index + 3))
+            prefix = f"transformer.transformer_blocks.0.attn.{projection}"
+            state_dict[f"{prefix}.lora_A.weight"] = down
+            state_dict[f"{prefix}.lora_B.weight"] = up
+            expected_deltas.append(up @ down)
+
+        converted = _convert_minimax_h3_diffusers_lora_to_comfyui(state_dict)
+
+        prefix = "diffusion_model.blocks.0.attn.qkv_proj"
+        fused_down = converted[f"{prefix}.lora_A.weight"]
+        fused_up = converted[f"{prefix}.lora_B.weight"]
+        self.assertEqual(tuple(fused_down.shape), (6, 3))
+        self.assertEqual(tuple(fused_up.shape), (12, 6))
+        self.assertEqual(converted[f"{prefix}.alpha"].item(), 6.0)
+        self.assertTrue(torch.equal(fused_up @ fused_down, torch.cat(expected_deltas, dim=0)))
+
+    def test_comfy_lora_round_trip_restores_independent_qkv_ranks(self):
+        state_dict = {}
+        for index, projection in enumerate(("to_q", "to_k", "to_v"), start=1):
+            down = torch.full((2, 3), float(index))
+            up = torch.full((4, 2), float(index + 3))
+            prefix = f"transformer.transformer_blocks.0.attn.{projection}"
+            state_dict[f"{prefix}.lora_A.weight"] = down
+            state_dict[f"{prefix}.lora_B.weight"] = up
+
+        comfy = _convert_minimax_h3_diffusers_lora_to_comfyui(state_dict)
+        restored, alphas = _convert_minimax_h3_comfy_lora_to_diffusers(
+            comfy,
+            target_prefix="transformer",
+        )
+
+        for projection in ("to_q", "to_k", "to_v"):
+            prefix = f"transformer.transformer_blocks.0.attn.{projection}"
+            self.assertTrue(
+                torch.equal(
+                    restored[f"{prefix}.lora.down.weight"],
+                    state_dict[f"{prefix}.lora_A.weight"],
+                )
+            )
+            self.assertTrue(
+                torch.equal(
+                    restored[f"{prefix}.lora.up.weight"],
+                    state_dict[f"{prefix}.lora_B.weight"],
+                )
+            )
+            self.assertEqual(alphas[f"{prefix}.alpha"], 2.0)
+
+    def test_comfy_lora_export_keeps_shared_qkv_rank_and_maps_mlp(self):
+        shared_down = torch.randn(2, 3)
+        state_dict = {}
+        for projection in ("to_q", "to_k", "to_v"):
+            prefix = f"transformer.transformer_blocks.0.attn.{projection}"
+            state_dict[f"{prefix}.lora.down.weight"] = shared_down.clone()
+            state_dict[f"{prefix}.lora.up.weight"] = torch.randn(4, 2)
+        hidden = torch.full((2, 2), 2.0)
+        gate = torch.full((2, 2), 1.0)
+        mlp_prefix = "transformer.transformer_blocks.0.ff.net.0.proj"
+        state_dict[f"{mlp_prefix}.lora.down.weight"] = torch.randn(2, 3)
+        state_dict[f"{mlp_prefix}.lora.up.weight"] = torch.cat((hidden, gate), dim=0)
+
+        converted = _convert_minimax_h3_diffusers_lora_to_comfyui(state_dict)
+
+        qkv_prefix = "diffusion_model.blocks.0.attn.qkv_proj"
+        self.assertEqual(tuple(converted[f"{qkv_prefix}.lora_A.weight"].shape), (2, 3))
+        self.assertEqual(tuple(converted[f"{qkv_prefix}.lora_B.weight"].shape), (12, 2))
+        mlp_up = converted["diffusion_model.blocks.0.mlp.fc1.lora_B.weight"]
+        self.assertTrue(torch.equal(mlp_up, torch.cat((gate, hidden), dim=0)))
+
+    def test_comfy_lora_export_maps_direct_fused_qkv_projection(self):
+        prefix = "transformer.transformer_blocks.0.attn.to_qkv"
+        down = torch.randn(4, 8)
+        up = torch.randn(24, 4)
+
+        converted = _convert_minimax_h3_diffusers_lora_to_comfyui(
+            {
+                f"{prefix}.lora_A.weight": down,
+                f"{prefix}.lora_B.weight": up,
+            }
+        )
+
+        native_prefix = "diffusion_model.blocks.0.attn.qkv_proj"
+        self.assertTrue(torch.equal(converted[f"{native_prefix}.lora_A.weight"], down))
+        self.assertTrue(torch.equal(converted[f"{native_prefix}.lora_B.weight"], up))
+        self.assertEqual(converted[f"{native_prefix}.alpha"].item(), 4.0)
+
+    def test_model_comfy_lora_save_uses_native_h3_exporter(self):
+        model = object.__new__(MiniMaxH3)
+        model.config = SimpleNamespace(
+            controlnet=False,
+            lora_format="comfyui",
+            model_family="minimaxh3",
+        )
+        pipeline_class = model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(pipeline_class, "save_lora_weights") as save_lora_weights:
+            model.save_lora_weights(
+                tmpdir,
+                transformer_lora_layers={"transformer_blocks.0.attn.to_q.lora_A.weight": torch.ones(2, 3)},
+            )
+            save_function = save_lora_weights.call_args.kwargs["save_function"]
+            output_path = f"{tmpdir}/h3-comfy.safetensors"
+            shared_down = torch.randn(2, 3)
+            weights = {}
+            for projection in ("to_q", "to_k", "to_v"):
+                prefix = f"transformer.transformer_blocks.0.attn.{projection}"
+                weights[f"{prefix}.lora_A.weight"] = shared_down.clone()
+                weights[f"{prefix}.lora_B.weight"] = torch.randn(4, 2)
+            save_function(weights, output_path)
+            saved = load_file(output_path)
+
+        self.assertIn("diffusion_model.blocks.0.attn.qkv_proj.lora_A.weight", saved)
+        self.assertNotIn("diffusion_model.transformer_blocks.0.attn.to_q.lora_A.weight", saved)
+
+    def test_training_resume_imports_native_comfy_lora_keys(self):
+        wrapper = object.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(
+            controlnet=False,
+            lora_format="comfyui",
+            model_flavour="fl2va",
+        )
+        wrapper.model = tiny_h3_transformer(swiglu_gate_first=False)
+        wrapper.controlnet = None
+        wrapper.text_encoders = []
+        wrapper.accelerator = SimpleNamespace(
+            unwrap_model=lambda model, keep_fp32_wrapper=True: model,
+        )
+        source_qkv = {}
+        for projection in ("to_q", "to_k", "to_v"):
+            prefix = f"transformer.transformer_blocks.0.attn.{projection}"
+            source_qkv[f"{prefix}.lora_A.weight"] = torch.randn(2, 8)
+            source_qkv[f"{prefix}.lora_B.weight"] = torch.randn(8, 2)
+        native_state_dict = _convert_minimax_h3_diffusers_lora_to_comfyui(source_qkv)
+        native_state_dict.update(
+            {
+                "diffusion_model.blocks.0.mlp.fc1.lora_A.weight": torch.randn(4, 8),
+                "diffusion_model.blocks.0.mlp.fc1.lora_B.weight": torch.cat(
+                    (torch.full((4, 4), 1.0), torch.full((4, 4), 2.0)),
+                    dim=0,
+                ),
+                "diffusion_model.time_embedder.proj_in.lora_A.weight": torch.randn(4, 8),
+                "diffusion_model.time_embedder.proj_in.lora_B.weight": torch.randn(16, 4),
+            }
+        )
+        pipeline_class = wrapper.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
+
+        with (
+            patch.object(pipeline_class, "lora_state_dict", return_value=native_state_dict),
+            patch("peft.utils.set_peft_model_state_dict") as set_peft_state,
+        ):
+            set_peft_state.return_value = SimpleNamespace(unexpected_keys=[])
+            wrapper.load_lora_weights([wrapper.model], "unused")
+
+        loaded = set_peft_state.call_args.args[1]
+        for projection in ("to_q", "to_k", "to_v"):
+            prefix = f"transformer_blocks.0.attn.{projection}"
+            source_prefix = f"transformer.{prefix}"
+            self.assertTrue(
+                torch.equal(
+                    loaded[f"{prefix}.lora_A.weight"],
+                    source_qkv[f"{source_prefix}.lora_A.weight"],
+                )
+            )
+            self.assertTrue(
+                torch.equal(
+                    loaded[f"{prefix}.lora_B.weight"],
+                    source_qkv[f"{source_prefix}.lora_B.weight"],
+                )
+            )
+        self.assertIn("transformer_blocks.0.ff.net.0.proj.lora_A.weight", loaded)
+        self.assertIn("transformer_blocks.0.ff.net.0.proj.lora_B.weight", loaded)
+        self.assertIn("time_embedder.linear_1.lora_A.weight", loaded)
+        self.assertIn("time_embedder.linear_1.lora_B.weight", loaded)
+        self.assertNotIn("blocks.0.attn.qkv_proj.lora_A.weight", loaded)
+
+    def test_training_resume_fails_when_peft_rejects_every_lora_key(self):
+        wrapper = object.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(
+            controlnet=False,
+            lora_format="comfyui",
+            model_flavour="fl2va",
+        )
+        wrapper.model = tiny_h3_transformer(swiglu_gate_first=False)
+        wrapper.controlnet = None
+        wrapper.text_encoders = []
+        wrapper.accelerator = SimpleNamespace(
+            unwrap_model=lambda model, keep_fp32_wrapper=True: model,
+        )
+        native_state_dict = {
+            "diffusion_model.time_embedder.proj_in.lora_A.weight": torch.randn(4, 8),
+            "diffusion_model.time_embedder.proj_in.lora_B.weight": torch.randn(16, 4),
+        }
+        pipeline_class = wrapper.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
+
+        def reject_all(_model, state_dict, adapter_name):
+            del adapter_name
+            return SimpleNamespace(unexpected_keys=list(state_dict))
+
+        with (
+            patch.object(pipeline_class, "lora_state_dict", return_value=native_state_dict),
+            patch("peft.utils.set_peft_model_state_dict", side_effect=reject_all),
+            self.assertRaisesRegex(ValueError, "rejected every denoiser tensor"),
+        ):
+            wrapper.load_lora_weights([wrapper.model], "unused")
 
     def test_comfy_lora_conversion_swaps_swiglu_rows_for_hidden_first_target(self):
         fc1_down = torch.randn(4, 16)
@@ -1766,7 +2392,12 @@ class MiniMaxH3Tests(unittest.TestCase):
             target_swiglu_gate_first=False,
         )
 
-        self.assertTrue(torch.equal(converted["transformer.transformer_blocks.0.ff.net.0.proj.lora.down.weight"], fc1_down))
+        self.assertTrue(
+            torch.equal(
+                converted["transformer.transformer_blocks.0.ff.net.0.proj.lora.down.weight"],
+                fc1_down,
+            )
+        )
         self.assertTrue(
             torch.equal(
                 converted["transformer.transformer_blocks.0.ff.net.0.proj.lora.up.weight"],
@@ -1789,7 +2420,12 @@ class MiniMaxH3Tests(unittest.TestCase):
             target_swiglu_gate_first=True,
         )
 
-        self.assertTrue(torch.equal(converted["transformer.transformer_blocks.0.ff.net.0.proj.lora.up.weight"], fc1_up))
+        self.assertTrue(
+            torch.equal(
+                converted["transformer.transformer_blocks.0.ff.net.0.proj.lora.up.weight"],
+                fc1_up,
+            )
+        )
 
     def test_lora_loader_detects_bare_h3_native_layout(self):
         pipe = MiniMaxH3ModularPipeline.__new__(MiniMaxH3ModularPipeline)
@@ -1805,7 +2441,10 @@ class MiniMaxH3Tests(unittest.TestCase):
         pipe.load_lora_weights("unused", adapter_name="h3")
 
         loaded_state_dict, kwargs = pipe.transformer.calls[0]
-        self.assertIn("transformer.transformer_blocks.0.ff.net.0.proj.lora.down.weight", loaded_state_dict)
+        self.assertIn(
+            "transformer.transformer_blocks.0.ff.net.0.proj.lora.down.weight",
+            loaded_state_dict,
+        )
         self.assertTrue(
             torch.equal(
                 loaded_state_dict["transformer.transformer_blocks.0.ff.net.0.proj.lora.up.weight"],
@@ -1823,6 +2462,7 @@ class MiniMaxH3Tests(unittest.TestCase):
                 {
                     "blocks.0.mlp.fc1.lora_A.weight": torch.randn(4, 16),
                     "blocks.0.mlp.fc1.lora_B.weight": torch.cat([gate, hidden], dim=0),
+                    "blocks.0.mlp.fc1.alpha": torch.tensor(2.0),
                 },
                 init_lora_path,
             )
@@ -1844,10 +2484,12 @@ class MiniMaxH3Tests(unittest.TestCase):
 
         self.assertTrue(
             torch.equal(
-                prepared["transformer.transformer_blocks.0.ff.net.0.proj.lora.up.weight"],
+                prepared["transformer.transformer_blocks.0.ff.net.0.proj.lora_B.weight"],
                 torch.cat([hidden, gate], dim=0),
             )
         )
+        self.assertIn("transformer.transformer_blocks.0.ff.net.0.proj.lora_A.weight", prepared)
+        self.assertEqual(prepared["transformer.transformer_blocks.0.ff.net.0.proj.alpha"].item(), 2.0)
         self.assertEqual(targets, ["transformer_blocks.0.ff.net.0.proj"])
 
     def test_ref2va_lora_loader_retargets_transformer_prefix(self):
@@ -1879,7 +2521,10 @@ class MiniMaxH3Tests(unittest.TestCase):
         pipe.load_lora_weights("unused", adapter_name="h3")
 
         _, kwargs = pipe.transformer.calls[0]
-        self.assertEqual(kwargs["network_alphas"]["transformer.transformer_blocks.0.attn.to_q.alpha"], 64.0)
+        self.assertEqual(
+            kwargs["network_alphas"]["transformer.transformer_blocks.0.attn.to_q.alpha"],
+            64.0,
+        )
         self.assertEqual(kwargs["network_alphas"]["transformer.proj_in.alpha"], 16.0)
 
     def test_lora_loader_preserves_explicit_state_dict_alphas(self):
@@ -1899,7 +2544,10 @@ class MiniMaxH3Tests(unittest.TestCase):
         loaded_state_dict, kwargs = pipe.transformer.calls[0]
         self.assertNotIn("transformer.transformer_blocks.0.attn.to_q.alpha", loaded_state_dict)
         self.assertNotIn("transformer.proj_in.alpha", loaded_state_dict)
-        self.assertEqual(kwargs["network_alphas"]["transformer.transformer_blocks.0.attn.to_q.alpha"], 32.0)
+        self.assertEqual(
+            kwargs["network_alphas"]["transformer.transformer_blocks.0.attn.to_q.alpha"],
+            32.0,
+        )
         self.assertEqual(kwargs["network_alphas"]["transformer.proj_in.alpha"], 8.0)
 
     def test_lora_saver_packs_transformer_weights(self):

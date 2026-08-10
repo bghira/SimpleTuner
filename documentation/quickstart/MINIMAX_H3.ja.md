@@ -71,6 +71,24 @@ Negative prompting は base H3 contract の一部ではありません。SimpleT
 
 dataset に target audio latents があり joint audio/video training したい場合だけ `"av"` を使います。data backend ごとに `h3_target_mode` または `minimax_h3_target_mode` でも設定できます。
 
+## Experimental Sparse Attention
+
+MiniMax は、H3 の最終 training stage で MoBA-style 3D sparse attention を video tokens に使ったと述べています。初期 public release は dense attention を使っており、MiniMax は正確な block shape、retention budget、layer schedule、production kernel をまだ公開していません。そのため SimpleTuner ではこの experimental approximation をデフォルトで無効にしています。
+
+```json
+{
+  "minimax_h3_sparse_attention": "moba3d",
+  "minimax_h3_sparse_block_shape": "1,8,16",
+  "minimax_h3_sparse_video_kv_fraction": 0.25,
+  "minimax_h3_sparse_share_heads": false,
+  "minimax_h3_sparse_start_layer": 0
+}
+```
+
+この実装は 3D query/key video blocks を mean-pool し、parameter-free top-k routing を行います。target-video queries は text、audio、reference context への dense access を保持し、non-target queries は dense のままです。block dimensions の積は 128 である必要があります。video KV fraction `1.0` は FlexAttention 経由の dense-connectivity numerical control です。
+
+この mode は CUDA を必要とし、FlexAttention の周囲に Dynamo graph boundary を導入します。Ulysses context parallelism は `context_parallel_strategy=alltoall` で対応します。ring context parallelism と TREAD は非対応です。480px では、target lattice と packed context の padding/reordering が必要なため、sparse routing が FlashAttention より多くの memory を使う場合があります。MiniMax が reference implementation を公開するまでは、speedup 保証ではなく fine-tuning ablation として扱ってください。
+
 ## Memory Knobs
 
 - VRAM が厳しい場合は 24G RamTorch example を使います。

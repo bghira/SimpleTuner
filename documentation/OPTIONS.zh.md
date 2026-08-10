@@ -61,6 +61,21 @@ simpletuner configure config/foo/config.json
   - `auto` 会解析为仅视频，跳过 H3 的音频 VAE 缓存、collate 和目标音频行。
   - 如需让 auto-split 或显式音频 backend 进行联合音视频训练，请在 data backend 条目中将 `minimax_h3_target_mode` 或 `h3_target_mode` 设为 `av`。
 
+### `--minimax_h3_sparse_attention`
+
+- **内容**：为 MiniMax-H3 目标视频 token 启用实验性的、training-aware 的 3D block sparse attention。
+- **选项**：`disabled`、`moba3d`
+- **默认值**：`disabled`
+- **相关选项**：
+  - `minimax_h3_sparse_block_shape`：用逗号或 `x` 分隔的 `(T,H,W)` 维度，乘积必须为 128。默认值：`1,8,16`。
+  - `minimax_h3_sparse_video_kv_fraction`：每个目标视频 query block 选择的目标视频 KV blocks 比例。默认值：`0.5`。
+  - `minimax_h3_sparse_share_heads`：在 attention heads 之间共享路由。默认值：`false`。
+  - `minimax_h3_sparse_start_layer`：保持更早的 transformer layers 使用 dense attention。默认值：`0`。
+- **说明**：
+  - 文本、音频、reference context 和非目标 queries 保持 dense。
+  - 需要 CUDA FlexAttention。Ulysses context parallelism 支持 `context_parallel_strategy=alltoall`；ring context parallelism 和 TREAD 不兼容。
+  - MiniMax 尚未公开 H3 的精确 sparse routing 配置。该近似实现用于可控 fine-tuning 实验，不保证性能提升。
+
 ### `--fuse_qkv_projections`
 
 - **内容**：融合注意力块中的 QKV 投影，提高硬件效率。

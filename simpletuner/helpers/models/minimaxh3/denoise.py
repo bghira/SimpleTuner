@@ -50,6 +50,24 @@ def _denoiser_inputs() -> list[InputParam]:
             required=True,
             description="The channel-major audio rows of the packed sequence, reference rows first.",
         ),
+        InputParam(
+            name="num_latent_frames",
+            type_hint=int,
+            required=True,
+            description="Number of target video latent frames before transformer patchification.",
+        ),
+        InputParam(
+            name="latent_height",
+            type_hint=int,
+            required=True,
+            description="Target video latent height before transformer patchification.",
+        ),
+        InputParam(
+            name="latent_width",
+            type_hint=int,
+            required=True,
+            description="Target video latent width before transformer patchification.",
+        ),
         InputParam.template("prompt_embeds"),
         InputParam(
             name="negative_prompt_embeds",
@@ -62,7 +80,12 @@ def _denoiser_inputs() -> list[InputParam]:
             required=True,
             description="One `(timestep, timestep_indices)` pair per step.",
         ),
-        InputParam(name="token_tags", type_hint=torch.Tensor, required=True, description="The modality tag of every row."),
+        InputParam(
+            name="token_tags",
+            type_hint=torch.Tensor,
+            required=True,
+            description="The modality tag of every row.",
+        ),
         InputParam(
             name="position_ids",
             type_hint=torch.Tensor,
@@ -117,7 +140,12 @@ def _denoiser_inputs() -> list[InputParam]:
             type_hint=torch.Tensor,
             description="Optional negative-branch sequence positions of the text rows.",
         ),
-        InputParam(name="guidance_scale", type_hint=float, default=1.0, description="Real CFG scale."),
+        InputParam(
+            name="guidance_scale",
+            type_hint=float,
+            default=1.0,
+            description="Real CFG scale.",
+        ),
         InputParam(
             name="guidance_scale_real",
             type_hint=float,
@@ -193,7 +221,9 @@ def _denoiser_inputs() -> list[InputParam]:
 def _denoiser_outputs() -> list[OutputParam]:
     return [
         OutputParam(
-            "noise_pred", type_hint=torch.Tensor, description="Predicted velocity of the video rows of the sequence."
+            "noise_pred",
+            type_hint=torch.Tensor,
+            description="Predicted velocity of the video rows of the sequence.",
         ),
         OutputParam(
             "audio_noise_pred",
@@ -230,24 +260,36 @@ def _predict_velocity(
     row_timestep_plan = _state_attr(block_state, "row_timestep_plan", prefix)
     unique_timesteps, timestep_indices = row_timestep_plan[i]
     prompt_embeds = block_state.prompt_embeds if prompt_embeds is None else prompt_embeds
-    return transformer(
-        hidden_states=block_state.latents[None],
-        audio_hidden_states=block_state.audio_latents[None],
-        encoder_hidden_states=prompt_embeds,
-        timestep=unique_timesteps,
-        timestep_indices=timestep_indices,
-        token_tags=_state_attr(block_state, "token_tags", prefix),
-        position_ids=_state_attr(block_state, "position_ids", prefix),
-        video_indices=_state_attr(block_state, "video_indices", prefix),
-        audio_indices=_state_attr(block_state, "audio_indices", prefix),
-        text_indices=_state_attr(block_state, "text_indices", prefix),
-        attention_kwargs=getattr(block_state, "attention_kwargs", None),
-        skip_layers=skip_layers,
-        num_condition_video_rows=_state_attr_or(block_state, "num_condition_video_rows", 0, prefix),
-        num_condition_audio_rows=_state_attr_or(block_state, "num_condition_audio_rows", 0, prefix),
-        minimax_h3_reference_mode=getattr(block_state, "minimax_h3_reference_mode", "vanilla") or "vanilla",
-        return_dict=False,
-    )
+    video_hidden_shape = None
+    sparse_config = getattr(transformer, "_h3_sparse_attention_config", None)
+    if sparse_config is not None and sparse_config.enabled:
+        patch_t, patch_h, patch_w = transformer.config.patch_size
+        video_hidden_shape = (
+            block_state.num_latent_frames // patch_t,
+            block_state.latent_height // patch_h,
+            block_state.latent_width // patch_w,
+        )
+    transformer_kwargs = {
+        "hidden_states": block_state.latents[None],
+        "audio_hidden_states": block_state.audio_latents[None],
+        "encoder_hidden_states": prompt_embeds,
+        "timestep": unique_timesteps,
+        "timestep_indices": timestep_indices,
+        "token_tags": _state_attr(block_state, "token_tags", prefix),
+        "position_ids": _state_attr(block_state, "position_ids", prefix),
+        "video_indices": _state_attr(block_state, "video_indices", prefix),
+        "audio_indices": _state_attr(block_state, "audio_indices", prefix),
+        "text_indices": _state_attr(block_state, "text_indices", prefix),
+        "attention_kwargs": getattr(block_state, "attention_kwargs", None),
+        "skip_layers": skip_layers,
+        "num_condition_video_rows": _state_attr_or(block_state, "num_condition_video_rows", 0, prefix),
+        "num_condition_audio_rows": _state_attr_or(block_state, "num_condition_audio_rows", 0, prefix),
+        "minimax_h3_reference_mode": getattr(block_state, "minimax_h3_reference_mode", "vanilla") or "vanilla",
+        "return_dict": False,
+    }
+    if video_hidden_shape is not None:
+        transformer_kwargs["video_hidden_shape"] = video_hidden_shape
+    return transformer(**transformer_kwargs)
 
 
 def _resolve_guidance_scale(block_state: BlockState) -> float:
@@ -379,7 +421,13 @@ class MiniMaxH3LoopDenoiser(ModularPipelineBlocks):
         return _denoiser_outputs()
 
     @torch.no_grad()
-    def __call__(self, components: MiniMaxH3ModularPipeline, block_state: BlockState, i: int, t: torch.Tensor):
+    def __call__(
+        self,
+        components: MiniMaxH3ModularPipeline,
+        block_state: BlockState,
+        i: int,
+        t: torch.Tensor,
+    ):
         block_state.noise_pred, block_state.audio_noise_pred = _predict_guided_velocity(
             components.transformer, block_state, i, len(block_state.timesteps)
         )
@@ -409,7 +457,13 @@ class MiniMaxH3Ref2VALoopDenoiser(ModularPipelineBlocks):
         return _denoiser_outputs()
 
     @torch.no_grad()
-    def __call__(self, components: MiniMaxH3Ref2VAModularPipeline, block_state: BlockState, i: int, t: torch.Tensor):
+    def __call__(
+        self,
+        components: MiniMaxH3Ref2VAModularPipeline,
+        block_state: BlockState,
+        i: int,
+        t: torch.Tensor,
+    ):
         block_state.noise_pred, block_state.audio_noise_pred = _predict_guided_velocity(
             components.transformer_ref, block_state, i, len(block_state.timesteps)
         )
@@ -496,7 +550,13 @@ class MiniMaxH3LoopSchedulerStep(ModularPipelineBlocks):
         ]
 
     @torch.no_grad()
-    def __call__(self, components: MiniMaxH3ModularPipeline, block_state: BlockState, i: int, t: torch.Tensor):
+    def __call__(
+        self,
+        components: MiniMaxH3ModularPipeline,
+        block_state: BlockState,
+        i: int,
+        t: torch.Tensor,
+    ):
         num_condition_video_rows = block_state.num_condition_video_rows
         num_condition_audio_rows = block_state.num_condition_audio_rows
 
@@ -538,7 +598,11 @@ class MiniMaxH3DenoiseLoopWrapper(LoopSequentialPipelineBlocks):
     @property
     def loop_inputs(self) -> list[InputParam]:
         return [
-            InputParam.template("timesteps", required=True, description="Timesteps of the video schedule."),
+            InputParam.template(
+                "timesteps",
+                required=True,
+                description="Timesteps of the video schedule.",
+            ),
         ]
 
     @torch.no_grad()

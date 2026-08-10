@@ -71,6 +71,24 @@ Negative prompting 不属于基础 H3 契约。SimpleTuner 为 de-distilled chec
 
 只有当 dataset 有 target audio latents 并需要联合音视频训练时才使用 `"av"`。也可以在 data backend 中设置 `h3_target_mode` 或 `minimax_h3_target_mode`。
 
+## 实验性 Sparse Attention
+
+MiniMax 表示 H3 在最终训练阶段对视频 token 使用了 MoBA 风格的 3D sparse attention。初始公开版本使用 dense attention，MiniMax 还没有发布准确的 block shape、retention budget、layer schedule 或生产 kernel。因此 SimpleTuner 默认关闭这个实验性近似实现。
+
+```json
+{
+  "minimax_h3_sparse_attention": "moba3d",
+  "minimax_h3_sparse_block_shape": "1,8,16",
+  "minimax_h3_sparse_video_kv_fraction": 0.25,
+  "minimax_h3_sparse_share_heads": false,
+  "minimax_h3_sparse_start_layer": 0
+}
+```
+
+该实现会对 3D query/key 视频块做 mean-pooling，然后进行无参数 top-k routing。目标视频 queries 仍然对文本、音频和 reference context 保持 dense access；非目标 queries 仍然是 dense。block dimensions 的乘积必须为 128。video KV fraction 为 `1.0` 时，是通过 FlexAttention 的 dense-connectivity 数值对照。
+
+该模式当前需要 CUDA，并会在 FlexAttention 周围引入 Dynamo graph boundary。Ulysses context parallelism 支持 `context_parallel_strategy=alltoall`；ring context parallelism 和 TREAD 不支持。在 480px 下，由于目标 lattice 和 packed context 必须 padding 和 reorder，sparse routing 可能比 FlashAttention 使用更多显存。在 MiniMax 发布参考实现前，请把它视为 fine-tuning ablation，而不是确定的加速选项。
+
 ## 显存选项
 
 - 显存紧张时使用 24G RamTorch example。

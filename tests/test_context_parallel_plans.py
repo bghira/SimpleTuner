@@ -174,8 +174,8 @@ class ContextParallelPlanTests(unittest.TestCase):
         self.assertEqual(model._cp_plan["transformer_blocks.0"]["hidden_states"].split_dim, 1)
         self.assertEqual(model._cp_plan["transformer_blocks.*"]["adaln_indices"].split_dim, 0)
         self.assertEqual(model._cp_plan["norm_out"]["timestep_indices"].split_dim, 0)
-        self.assertEqual(model._cp_plan["proj_out"].gather_dim, 1)
-        self.assertEqual(model._cp_plan["audio_proj_out"].gather_dim, 1)
+        self.assertNotIn("proj_out", model._cp_plan)
+        self.assertNotIn("audio_proj_out", model._cp_plan)
 
     def test_zlab_i1_cp_plan_targets_exist(self):
         from simpletuner.helpers.models.zlab_i1.transformer import ZlabI1Transformer2DModel
