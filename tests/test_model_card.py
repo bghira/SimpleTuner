@@ -240,7 +240,7 @@ class TestMetadataFunctions(unittest.TestCase):
         self.assertIn('"stage": "forward"', message)
         self.assertNotIn("gradient accumulation", message)
         self.assertNotIn("None prediction type", message)
-        self.assertNotIn("rescaled_betas_zero_snr", message)
+        self.assertNotIn("rescale_betas_zero_snr", message)
         self.assertNotIn("timestep spacing", message)
 
     def test_hub_commit_message_keeps_diffusion_schedule_fields_for_epsilon_models(self):
@@ -268,7 +268,7 @@ class TestMetadataFunctions(unittest.TestCase):
             message,
         )
         self.assertIn(
-            "Trained with epsilon prediction type and rescaled_betas_zero_snr=True",
+            "Trained with epsilon prediction type and rescale_betas_zero_snr=True",
             message,
         )
         self.assertIn("Using 'trailing' timestep spacing.", message)
