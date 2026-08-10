@@ -6610,7 +6610,7 @@ class Trainer:
                 self._write_train_stage_breadcrumb("fetch_batch:start", step)
                 raw_batch = cp_batch_synchronizer.fetch_batch(iterator_fn, step, *iterator_args)
                 self._write_train_stage_breadcrumb("fetch_batch:done", step)
-                with cp_batch_synchronizer.synchronized_rng(self.config.seed, step):
+                with cp_batch_synchronizer.synchronized_rng(getattr(self.config, "seed", None), step):
                     prepared_batch = self.prepare_batch(raw_batch)
                 training_logger.debug(f"Iterator: {iterator_fn}")
                 if self.config.lr_scheduler == "cosine_with_restarts":
