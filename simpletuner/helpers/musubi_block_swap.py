@@ -4,7 +4,11 @@ from typing import Iterable, List, Optional
 import torch
 import torch.nn as nn
 
-__all__ = ["MusubiBlockSwapManager", "apply_musubi_pretrained_defaults"]
+__all__ = [
+    "MusubiBlockSwapManager",
+    "apply_musubi_pretrained_defaults",
+    "prepare_musubi_model_for_ddp",
+]
 
 
 def _module_on_device(module: nn.Module, device: torch.device) -> bool:
@@ -162,6 +166,26 @@ def _move_module_without_swapping_quantized_params(module: nn.Module, device: to
             _move_sdnq_tensor_to_device(buffer, device)
         elif not _same_device(buffer.device, device):
             module._buffers[key] = buffer.to(device, non_blocking=True)
+
+
+def prepare_musubi_model_for_ddp(module: nn.Module, device: torch.device) -> tuple[int, int]:
+    """Keep trainable state local while excluding streamed frozen state from DDP."""
+    target_device = torch.device(device)
+    moved_trainable = 0
+    for param in module.parameters():
+        if not param.requires_grad or _same_device(param.device, target_device):
+            continue
+        param.data = param.data.to(target_device, non_blocking=True)
+        if param.grad is not None:
+            param.grad = param.grad.to(target_device, non_blocking=True)
+        moved_trainable += 1
+
+    ignored_names = {name for name, param in module.named_parameters() if not param.requires_grad}
+    ignored_names.update(name for name, _buffer in module.named_buffers())
+    existing = set(getattr(module, "_ddp_params_and_buffers_to_ignore", set()))
+    newly_ignored = ignored_names - existing
+    module._ddp_params_and_buffers_to_ignore = existing | ignored_names
+    return moved_trainable, len(newly_ignored)
 
 
 class MusubiBlockSwapManager:
