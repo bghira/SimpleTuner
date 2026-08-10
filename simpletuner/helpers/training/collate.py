@@ -336,7 +336,7 @@ def compute_single_embedding(prompt_entry, text_embed_cache, model=None):
         # Grab the default text embed backend for null caption.
         text_embed_cache = StateTracker.get_default_text_embed_cache()
         # Use sentinel key for filename-based caches to match encode_dropout_caption()
-        cache_model = model or getattr(text_embed_cache, "model", None)
+        cache_model = model if model is not None else getattr(text_embed_cache, "model", None)
         use_dropout_sentinel = getattr(cache_model, "use_text_cache_dropout_sentinel", lambda: True)()
         if text_embed_cache._requires_path_based_keys and use_dropout_sentinel:
             prompt_entry["key"] = "__caption_dropout__"
