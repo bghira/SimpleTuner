@@ -13,7 +13,7 @@ import unittest
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 import torch
 
@@ -817,6 +817,44 @@ class TestTrainer(unittest.TestCase):
             epoch_end=True,
         )
 
+    def test_run_startup_validation_uses_restored_global_step(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(validation_on_startup=True)
+        trainer.validation = MagicMock()
+        trainer.state = {"global_step": 500}
+        trainer._run_intermediary_validation = MagicMock(return_value=True)
+
+        with patch("simpletuner.helpers.training.trainer.logger.info") as log_info:
+            result = trainer.run_startup_validation()
+
+        self.assertTrue(result)
+        log_info.assert_called_once_with("Running startup validation at restored global step %d.", 500)
+        trainer._run_intermediary_validation.assert_called_once_with(500, manual_validation_requested=True)
+
+    def test_run_startup_validation_is_disabled_by_default(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace()
+        trainer.state = {"global_step": 500}
+        trainer._run_intermediary_validation = MagicMock()
+
+        result = trainer.run_startup_validation()
+
+        self.assertFalse(result)
+        trainer._run_intermediary_validation.assert_not_called()
+
+    def test_run_startup_validation_uses_lazy_global_step_fallback(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(validation_on_startup=True)
+        trainer.validation = MagicMock()
+        trainer.state = {"global_step": None}
+        trainer._run_intermediary_validation = MagicMock(return_value=True)
+
+        with patch("simpletuner.helpers.training.trainer.StateTracker.get_global_step", return_value=None):
+            result = trainer.run_startup_validation()
+
+        self.assertTrue(result)
+        trainer._run_intermediary_validation.assert_called_once_with(0, manual_validation_requested=True)
+
     @patch("simpletuner.helpers.training.trainer.load_config")
     @patch("simpletuner.helpers.training.trainer.safety_check")
     @patch("simpletuner.helpers.training.state_tracker.StateTracker")
@@ -1260,9 +1298,7 @@ class TestTrainer(unittest.TestCase):
         logs = {}
         trainer._update_grad_metrics(logs, clone_norm_value=True)
         self.assertIn("grad_absmax", logs)
-        self.assertEqual(
-            logs["grad_absmax"], float(trainer.grad_norm.clone().detach())
-        )
+        self.assertEqual(logs["grad_absmax"], float(trainer.grad_norm.clone().detach()))
 
     def test_update_grad_metrics_clones_norm_value_when_requested(self):
         trainer = self._build_trainer_for_grad_logging(
@@ -1324,9 +1360,7 @@ class TestTrainer(unittest.TestCase):
         )
         metrics = trainer._compose_training_progress_metrics(epoch=1)
         self.assertIn("grad_absmax", metrics)
-        self.assertEqual(
-            metrics["grad_absmax"], float(trainer.grad_norm.clone().detach())
-        )
+        self.assertEqual(metrics["grad_absmax"], float(trainer.grad_norm.clone().detach()))
         self.assertNotIn("grad_norm", metrics)
 
     def test_compose_training_progress_metrics_excludes_grad_with_deepspeed(self):
@@ -1490,6 +1524,71 @@ class TestTrainer(unittest.TestCase):
         trainer._place_ema_model(is_fsdp2_run=True)
 
         trainer.ema_model.to.assert_not_called()
+
+    def test_init_benchmark_base_model_uses_eval_mode_and_restores_training(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(disable_benchmark=False, validation_multigpu="batch-parallel")
+        trainer.accelerator = MagicMock()
+        trainer.accelerator.is_main_process = True
+        trainer.validation = MagicMock()
+        trainer.validation.benchmark_exists.return_value = False
+        trainer._emit_event = MagicMock()
+        trainer.job_id = None
+        trained_component = MagicMock()
+        trained_component.training = True
+        trainer.model = MagicMock()
+        trainer.model.get_trained_component.return_value = trained_component
+
+        trainer.init_benchmark_base_model()
+
+        trained_component.eval.assert_called_once_with()
+        trained_component.train.assert_called_once_with()
+        trainer.accelerator.autocast.assert_called_once_with()
+        trainer.validation.run_validations.assert_called_once_with(validation_type="base_model", step=0)
+        trainer.validation.save_benchmark.assert_called_once_with("base_model")
+
+    def test_init_benchmark_base_model_restores_training_after_validation_error(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(disable_benchmark=False, validation_multigpu="batch-parallel")
+        trainer.accelerator = MagicMock()
+        trainer.accelerator.is_main_process = True
+        trainer.validation = MagicMock()
+        trainer.validation.benchmark_exists.return_value = False
+        trainer.validation.run_validations.side_effect = RuntimeError("validation failed")
+        trainer._emit_event = MagicMock()
+        trainer.job_id = None
+        trained_component = MagicMock()
+        trained_component.training = True
+        trainer.model = MagicMock()
+        trainer.model.get_trained_component.return_value = trained_component
+
+        with self.assertRaisesRegex(RuntimeError, "validation failed"):
+            trainer.init_benchmark_base_model()
+
+        trained_component.eval.assert_called_once_with()
+        trained_component.train.assert_called_once_with()
+        trainer.accelerator.autocast.assert_called_once_with()
+        trainer.validation.save_benchmark.assert_not_called()
+
+    def test_init_benchmark_base_model_preserves_eval_mode(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(disable_benchmark=False, validation_multigpu="batch-parallel")
+        trainer.accelerator = MagicMock()
+        trainer.accelerator.is_main_process = True
+        trainer.validation = MagicMock()
+        trainer.validation.benchmark_exists.return_value = False
+        trainer._emit_event = MagicMock()
+        trainer.job_id = None
+        trained_component = MagicMock()
+        trained_component.training = False
+        trainer.model = MagicMock()
+        trainer.model.get_trained_component.return_value = trained_component
+
+        trainer.init_benchmark_base_model()
+
+        trained_component.eval.assert_called_once_with()
+        trained_component.train.assert_not_called()
+        trainer.validation.run_validations.assert_called_once_with(validation_type="base_model", step=0)
 
     @patch("simpletuner.helpers.training.trainer.Validation")
     def test_init_validations_enabled_for_fsdp_full_shard(self, mock_validation):
@@ -2509,10 +2608,9 @@ class TestTrainer(unittest.TestCase):
             incoming_checkpoint.mkdir()
 
             hub_manager = object.__new__(HubManager)
-            hub_manager.config = SimpleNamespace(output_dir=tmpdir)
+            hub_manager.config = SimpleNamespace(output_dir=tmpdir, push_checkpoints_to_hub=True)
             hub_manager.find_latest_checkpoint = Mock(return_value=Path(tmpdir, "checkpoint-200"))
-            hub_manager.upload_model = Mock(return_value="repo-url")
-            hub_manager._repo_url = Mock(return_value="remote/checkpoint-110")
+            hub_manager.upload_model = Mock(side_effect=["remote/checkpoint-110", "repo-url"])
 
             result = hub_manager.upload_latest_checkpoint(
                 validation_images=None,
@@ -2524,14 +2622,26 @@ class TestTrainer(unittest.TestCase):
 
             self.assertEqual(("remote/checkpoint-110", str(incoming_checkpoint), "repo-url"), result)
             hub_manager.find_latest_checkpoint.assert_not_called()
-            hub_manager.upload_model.assert_called_once_with(
-                validation_images=None,
-                override_path=incoming_checkpoint,
-                webhook_handler=None,
-                global_step=110,
-                epoch=1,
+            self.assertEqual(
+                [
+                    call(
+                        validation_images=None,
+                        override_path=incoming_checkpoint,
+                        webhook_handler=None,
+                        global_step=110,
+                        epoch=1,
+                        repo_subfolder="checkpoint-110",
+                    ),
+                    call(
+                        validation_images=None,
+                        override_path=incoming_checkpoint,
+                        webhook_handler=None,
+                        global_step=110,
+                        epoch=1,
+                    ),
+                ],
+                hub_manager.upload_model.call_args_list,
             )
-            hub_manager._repo_url.assert_called_once_with("checkpoint-110")
 
     def test_rolling_checkpoint_rotation_preserves_recovery_and_new_save(self):
         for use_checkpoint_manager in (True, False):

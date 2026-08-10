@@ -18,6 +18,7 @@ import torch.nn.functional as F
 from torch.profiler import record_function
 
 from simpletuner.helpers.ramtorch import profiling as ramtorch_profile
+from simpletuner.helpers.ramtorch.modules.linear import CPUBouncingLinear
 
 # Per-device state for async transfers (shared with ramtorch)
 _DEVICE_STATE = {}
@@ -235,6 +236,101 @@ def _next_transfer_stream(state, device):
     selected = int(state.get("transfer_stream_clk", 0)) % len(streams)
     state["transfer_stream_clk"] = selected + 1
     return streams[selected]
+
+
+class _FrozenFp8BouncingLinearFn(torch.autograd.Function):
+    """Stream a frozen scaled-FP8 weight without retaining it for backward."""
+
+    @staticmethod
+    def forward(ctx, x, weight_cpu, weight_scale_cpu, bias_cpu, module):
+        weight, weight_scale, bias = _transfer_forward_tensors(
+            module,
+            weight_cpu,
+            weight_scale_cpu,
+            bias_cpu,
+        )
+        compute_dtype = x.dtype
+        weight = weight.to(compute_dtype) * weight_scale.to(compute_dtype).unsqueeze(1)
+        bias = bias.to(compute_dtype) if bias is not None else None
+
+        ctx.module = module
+        ctx.save_for_backward(weight_cpu, weight_scale_cpu)
+        return F.linear(x, weight, bias)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        weight_cpu, weight_scale_cpu = ctx.saved_tensors
+        weight, weight_scale = _transfer_forward_tensors(
+            ctx.module,
+            weight_cpu,
+            weight_scale_cpu,
+        )
+        compute_dtype = grad_output.dtype
+        weight = weight.to(compute_dtype) * weight_scale.to(compute_dtype).unsqueeze(1)
+        grad_input = grad_output.matmul(weight)
+        return grad_input, None, None, None, None
+
+
+class CPUBouncingFp8Linear(CPUBouncingLinear):
+    """RamTorch linear for frozen FP8 weights with a per-output-row scale."""
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        *,
+        weight: torch.Tensor,
+        weight_scale: torch.Tensor,
+        bias: torch.Tensor | None,
+        device,
+        compute_dtype: torch.dtype | None = None,
+    ) -> None:
+        nn.Module.__init__(self)
+        self.in_features = in_features
+        self.out_features = out_features
+        self.device = device
+        self.compute_dtype = compute_dtype
+        self.is_ramtorch = True
+
+        weight = _to_cpu_pinned(weight.detach().to("cpu"))
+        weight_scale = _to_cpu_pinned(weight_scale.detach().to("cpu", dtype=torch.float32))
+        self.register_buffer("weight", weight)
+        self.register_buffer("weight_scale", weight_scale)
+        if bias is not None:
+            self.register_buffer("bias", _to_cpu_pinned(bias.detach().to("cpu")))
+        else:
+            self.bias = None
+
+        self.weight.is_ramtorch = True
+        self.weight_scale.is_ramtorch = True
+        if self.bias is not None:
+            self.bias.is_ramtorch = True
+
+    def _apply(self, fn):
+        # Scaled FP8 storage must remain FP8/FP32 on CPU. Only the ephemeral
+        # dequantized weight follows the activation dtype on the target device.
+        return self
+
+    def cuda(self, device=None):
+        return self
+
+    def cpu(self):
+        return self
+
+    def forward(self, x):
+        return _FrozenFp8BouncingLinearFn.apply(
+            x,
+            self.weight,
+            self.weight_scale,
+            self.bias,
+            self,
+        )
+
+    def prefetch_forward(self) -> bool:
+        return _prefetch_forward_tensors(self, self.weight, self.weight_scale, self.bias)
+
+    def ramtorch_forward_bytes(self) -> int:
+        return ramtorch_profile.tensor_bytes((self.weight, self.weight_scale, self.bias))
 
 
 class CPUBouncingEmbedding(nn.Module):

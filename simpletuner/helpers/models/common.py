@@ -56,7 +56,6 @@ from simpletuner.helpers.training.lora_format import (
     collect_lora_alphas,
     convert_comfyui_to_diffusers,
     convert_diffusers_to_comfyui,
-    convert_diffusers_to_comfyui_sd_lora,
     detect_state_dict_format,
     normalize_lora_format,
     peft_lora_config_kwargs_from_state_dict,
@@ -492,6 +491,7 @@ class ModelFoundation(ABC):
     DDP_FIND_UNUSED_PARAMETERS = False
     DEFAULT_AUDIO_CHANNELS = 1
     DEFAULT_LORA_EXCLUDE_TARGETS = None  # regex, not list
+    COMFYUI_LORA_PRESERVE_COMPONENT_PREFIXES = None
 
     # Acceleration backend support - models declare what they DON'T support
     UNSUPPORTED_BACKENDS: set = set()  # Empty = supports all backends
@@ -1887,7 +1887,10 @@ class ModelFoundation(ABC):
                 active_format = PEFTLoRAFormat.COMFYUI
         alpha_map = {}
         if active_format == PEFTLoRAFormat.COMFYUI:
-            lora_state_dict, comfy_alphas = convert_comfyui_to_diffusers(lora_state_dict, target_prefix=key_to_replace)
+            lora_state_dict, comfy_alphas = self._convert_lora_state_dict_from_comfyui(
+                lora_state_dict,
+                target_prefix=key_to_replace,
+            )
             alpha_map.update(_normalise_alpha_map(comfy_alphas))
         if network_alphas:
             alpha_map.update(_normalise_alpha_map(network_alphas))
@@ -1924,6 +1927,11 @@ class ModelFoundation(ABC):
         if incompatible_keys is not None:
             unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
             if unexpected_keys:
+                if len(unexpected_keys) == len(denoiser_sd):
+                    raise ValueError(
+                        "LoRA checkpoint loading rejected every denoiser tensor. "
+                        "The checkpoint naming or adapter configuration is incompatible with the model."
+                    )
                 logger.warning(f"LoRA loading found unexpected keys not in the denoiser model: {unexpected_keys}")
 
         if getattr(self.config, "train_text_encoder", False):
@@ -1948,6 +1956,27 @@ class ModelFoundation(ABC):
                 )
 
         logger.info("Finished loading LoRA weights successfully.")
+
+    def _convert_lora_state_dict_from_comfyui(
+        self,
+        weights: dict,
+        *,
+        target_prefix: str,
+    ) -> tuple[dict, dict]:
+        return convert_comfyui_to_diffusers(weights, target_prefix=target_prefix)
+
+    def _convert_lora_state_dict_to_comfyui(
+        self,
+        weights: dict,
+        *,
+        adapter_metadata: Optional[dict] = None,
+        component_adapter_metadata: Optional[dict] = None,
+    ) -> dict:
+        return convert_diffusers_to_comfyui(
+            weights,
+            adapter_metadata=adapter_metadata,
+            preserve_component_prefixes=self.COMFYUI_LORA_PRESERVE_COMPONENT_PREFIXES,
+        )
 
     def save_lora_weights(self, *args, **kwargs):
         """
@@ -1978,22 +2007,6 @@ class ModelFoundation(ABC):
             import safetensors.torch
             from diffusers.loaders.lora_base import LORA_ADAPTER_METADATA_KEY
 
-            comfy_preserve_prefix_families = {
-                "flux",
-                "flux2",
-                "lumina2",
-                "sd3",
-                "auraflow",
-                "pixart_sigma",
-                "hidream",
-            }
-            preserve_component_prefixes = (
-                {"transformer"} if self.config.model_family in comfy_preserve_prefix_families else None
-            )
-
-            # Use model-specific converters where available
-            model_family = self.config.model_family
-
             def comfyui_save_function(weights, filename):
                 metadata = {"format": "pt"}
                 if adapter_metadata:
@@ -2002,23 +2015,11 @@ class ModelFoundation(ABC):
                     except Exception:
                         pass
 
-                if model_family == "flux2":
-                    from simpletuner.helpers.models.flux2.pipeline import _convert_diffusers_flux2_lora_to_comfyui
-
-                    converted = _convert_diffusers_flux2_lora_to_comfyui(weights, adapter_metadata=adapter_metadata)
-                elif model_family in {"sd1x", "sdxl"}:
-                    converted = convert_diffusers_to_comfyui_sd_lora(
-                        weights,
-                        adapter_metadata=adapter_metadata,
-                        component_adapter_metadata=component_adapter_metadata,
-                        sdxl=(model_family == "sdxl"),
-                    )
-                else:
-                    converted = convert_diffusers_to_comfyui(
-                        weights,
-                        adapter_metadata=adapter_metadata,
-                        preserve_component_prefixes=preserve_component_prefixes,
-                    )
+                converted = self._convert_lora_state_dict_to_comfyui(
+                    weights,
+                    adapter_metadata=adapter_metadata,
+                    component_adapter_metadata=component_adapter_metadata,
+                )
                 safetensors.torch.save_file(converted, filename, metadata=metadata)
 
             kwargs["save_function"] = comfyui_save_function
@@ -5376,6 +5377,12 @@ class ModelFoundation(ABC):
         # Ensure the encoder hidden states are on device
         if batch["prompt_embeds"] is not None and hasattr(batch["prompt_embeds"], "to"):
             batch["encoder_hidden_states"] = batch["prompt_embeds"].to(**target_device_kwargs)
+        negative_prompt_embeds = batch.get("negative_prompt_embeds")
+        if negative_prompt_embeds is not None and hasattr(negative_prompt_embeds, "to"):
+            batch["negative_encoder_hidden_states"] = negative_prompt_embeds.to(**target_device_kwargs)
+        negative_attention_mask = batch.get("negative_encoder_attention_mask")
+        if negative_attention_mask is not None and hasattr(negative_attention_mask, "to"):
+            batch["negative_encoder_attention_mask"] = negative_attention_mask.to(device=self.accelerator.device)
 
         # Process additional conditioning if provided
         pooled_embeds = batch.get("add_text_embeds")

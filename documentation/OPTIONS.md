@@ -1207,6 +1207,11 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 - **What**: Controls the smoothing factor used when applying EMA updates.
 - **Why**: Higher values (e.g. `0.999`) make the EMA respond slowly but produce very stable weights. Lower values (e.g. `0.99`) adapt faster to new training signals.
 
+### `--ema_warmup_steps`
+
+- **What**: Copies current weights into EMA before the configured optimizer step, then switches directly to `--ema_decay`.
+- **Why**: Matches training recipes that defer EMA smoothing without leaving the EMA frozen at initialization. The default `0` preserves SimpleTuner's existing EMA decay ramp.
+
 ### `--snr_gamma`
 
 - **What**: Utilising min-SNR weighted loss factor.

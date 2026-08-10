@@ -1201,6 +1201,11 @@ Multi‑GPU training के लिए dataset sizing पर अधिक वि�
 - **What**: EMA updates लागू करते समय smoothing factor नियंत्रित करता है।
 - **Why**: उच्च मान (उदा. `0.999`) EMA को धीरे प्रतिक्रिया देने देते हैं लेकिन बहुत स्थिर weights देते हैं। कम मान (उदा. `0.99`) नए training signals के साथ तेज़ adapt होते हैं।
 
+### `--ema_warmup_steps`
+
+- **What**: Configured optimizer step से पहले current weights को EMA में copy करता है, फिर सीधे `--ema_decay` पर switch करता है।
+- **Why**: उन training recipes से match करता है जो EMA smoothing delay करती हैं पर EMA को initialization पर frozen नहीं छोड़ना चाहतीं। Default `0` SimpleTuner का existing EMA ramp preserve करता है।
+
 ### `--snr_gamma`
 
 - **What**: min‑SNR weighted loss factor उपयोग करता है।

@@ -101,6 +101,21 @@ class DistillationBase:
         self.logger.warning("No distillation scheduler provided. Using default.")
         return None
 
+    def supports_special_scheduler_validation(self) -> bool:
+        """Return whether this distiller can wrap a model-owned inference scheduler."""
+        return False
+
+    @classmethod
+    def prepare_model_for_adapter(cls, model, config: Dict[str, Any]) -> None:
+        """Create distillation-specific modules that must exist before PEFT wrapping."""
+        del model, config
+
+    @classmethod
+    def training_batch_requirements(cls, config: Dict[str, Any]) -> set[str]:
+        """Describe extra cached inputs that the training collator must provide."""
+        del config
+        return set()
+
     def toggle_adapter(self, enable=False):
         """
         Toggle the adapter on/off when using the same model for teacher and student.

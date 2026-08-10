@@ -1,6 +1,5 @@
 import logging
 import os
-import sys
 from contextlib import nullcontext
 from functools import partial
 from inspect import Parameter, signature
@@ -10,6 +9,7 @@ import torch
 
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.quantisation.fp8_native import mark_fp8_native_ddp_ignore_params
+from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
@@ -1042,17 +1042,8 @@ def _sdnq_model(
     if weights_dtype is None:
         raise ValueError(f"Invalid SDNQ precision level: {model_precision}")
 
+    configure_sdnq_compile_mode()
     args = StateTracker.get_args()
-    sdnq_compile_mode = getattr(args, "sdnq_compile_mode", "auto")
-    if sdnq_compile_mode not in (None, "auto"):
-        if "sdnq.common" in sys.modules:
-            logger.warning(
-                "SDNQ was already imported before --sdnq_compile_mode=%s could be applied. "
-                "Set SDNQ_USE_TORCH_COMPILE before process startup to force this mode.",
-                sdnq_compile_mode,
-            )
-        else:
-            os.environ["SDNQ_USE_TORCH_COMPILE"] = "1" if sdnq_compile_mode == "compile" else "0"
 
     try:
         # Silence sdnq startup logs

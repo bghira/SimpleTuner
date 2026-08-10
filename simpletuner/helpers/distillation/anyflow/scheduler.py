@@ -27,7 +27,16 @@ class _AnyFlowValidationComponent(torch.nn.Module):
     def forward(self, *args, **kwargs):
         if kwargs.get(self._anyflow_kwarg_name) is None:
             timestep = self._extract_timestep(args, kwargs)
-            kwargs[self._anyflow_kwarg_name] = self._anyflow_scheduler.r_timestep_for(timestep)
+            timestep, r_timestep, timestep_indices = self._anyflow_scheduler.component_timesteps(timestep, kwargs)
+            if self._anyflow_timestep_name in kwargs:
+                kwargs[self._anyflow_timestep_name] = timestep
+            elif timestep_indices is not None and self._anyflow_timestep_index is not None:
+                positional_args = list(args)
+                positional_args[self._anyflow_timestep_index] = timestep
+                args = tuple(positional_args)
+            if timestep_indices is not None:
+                kwargs["timestep_indices"] = timestep_indices
+            kwargs[self._anyflow_kwarg_name] = r_timestep
         return self._anyflow_component(*args, **kwargs)
 
     def _extract_timestep(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
@@ -70,6 +79,7 @@ class AnyFlowValidationScheduler:
         self.scheduler = scheduler
         self.num_train_timesteps = num_train_timesteps
         self._timestep_transform_name: Optional[str] = None
+        self._audio_scheduler: Optional[AnyFlowValidationScheduler] = None
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.scheduler, name)
@@ -80,6 +90,12 @@ class AnyFlowValidationScheduler:
         *,
         component_names: Sequence[str] = ("transformer", "unet"),
     ) -> None:
+        audio_scheduler = getattr(pipeline, "audio_scheduler", None)
+        if audio_scheduler is not None:
+            self._audio_scheduler = AnyFlowValidationScheduler(
+                audio_scheduler,
+                num_train_timesteps=self.num_train_timesteps,
+            )
         for component_name in component_names:
             component = getattr(pipeline, component_name, None)
             if component is None:
@@ -101,6 +117,46 @@ class AnyFlowValidationScheduler:
         raise ValueError(
             "AnyFlow validation could not find a pipeline component accepting `r_timestep` or `timestep_r` "
             f"among: {names}."
+        )
+
+    def component_timesteps(
+        self,
+        timestep: Any,
+        component_kwargs: dict[str, Any],
+    ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        timestep_tensor = self._to_tensor(timestep)
+        timestep_indices = component_kwargs.get("timestep_indices")
+        audio_indices = component_kwargs.get("audio_indices")
+        if self._audio_scheduler is None or timestep_indices is None or audio_indices is None:
+            return timestep_tensor, self.r_timestep_for(timestep_tensor), None
+
+        timestep_indices = timestep_indices.to(device=timestep_tensor.device, dtype=torch.long)
+        row_timesteps = timestep_tensor[timestep_indices]
+        row_r_timesteps = self.r_timestep_for(row_timesteps)
+
+        audio_indices = audio_indices.to(device=timestep_tensor.device, dtype=torch.long)
+        num_condition_audio_rows = int(component_kwargs.get("num_condition_audio_rows", 0) or 0)
+        generated_audio_indices = audio_indices[num_condition_audio_rows:]
+        if generated_audio_indices.numel() > 0:
+            row_r_timesteps[generated_audio_indices] = self._audio_scheduler.r_timestep_for(
+                row_timesteps[generated_audio_indices]
+            )
+
+        video_indices = component_kwargs.get("video_indices")
+        if video_indices is not None:
+            video_indices = video_indices.to(device=timestep_tensor.device, dtype=torch.long)
+            num_condition_video_rows = int(component_kwargs.get("num_condition_video_rows", 0) or 0)
+            condition_video_indices = video_indices[:num_condition_video_rows]
+            row_r_timesteps[condition_video_indices] = row_timesteps[condition_video_indices]
+        condition_audio_indices = audio_indices[:num_condition_audio_rows]
+        row_r_timesteps[condition_audio_indices] = row_timesteps[condition_audio_indices]
+
+        timestep_pairs = torch.stack((row_timesteps.float(), row_r_timesteps.float()), dim=-1)
+        unique_pairs, remapped_indices = torch.unique(timestep_pairs, dim=0, sorted=True, return_inverse=True)
+        return (
+            unique_pairs[:, 0].to(dtype=timestep_tensor.dtype),
+            unique_pairs[:, 1].to(dtype=timestep_tensor.dtype),
+            remapped_indices.to(device=timestep_indices.device, dtype=timestep_indices.dtype),
         )
 
     def r_timestep_for(self, timestep: Any) -> torch.Tensor:

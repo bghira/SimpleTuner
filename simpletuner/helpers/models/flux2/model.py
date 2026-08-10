@@ -88,6 +88,7 @@ class Flux2(ImageModelFoundation):
     MODEL_TYPE = ModelTypes.TRANSFORMER
     AUTO_LORA_FORMAT_DETECTION = True
     NATIVE_COMFYUI_LORA_SUPPORT = True  # Flux2 has native ComfyUI LoRA support, no conversion needed
+    COMFYUI_LORA_PRESERVE_COMPONENT_PREFIXES = {"transformer"}
     AUTOENCODER_CLASS = AutoencoderKLFlux2
     LATENT_CHANNEL_COUNT = 128  # 32 VAE channels × 4 (2×2 pixel shuffle) = 128 transformer channels
     VAE_SCALE_FACTOR = 16  # 8x spatial + 2x pixel shuffle
@@ -114,6 +115,18 @@ class Flux2(ImageModelFoundation):
         "attn.to_qkv_mlp_proj",
         # "attn.to_out",
     ]
+
+    def _convert_lora_state_dict_to_comfyui(
+        self,
+        weights: dict,
+        *,
+        adapter_metadata=None,
+        component_adapter_metadata=None,
+    ) -> dict:
+        from simpletuner.helpers.models.flux2.pipeline import _convert_diffusers_flux2_lora_to_comfyui
+
+        return _convert_diffusers_flux2_lora_to_comfyui(weights, adapter_metadata=adapter_metadata)
+
     SLIDER_LORA_TARGET = [
         # Restrict to image/self-stream attention; avoid add_* context projections
         "attn.to_q",
