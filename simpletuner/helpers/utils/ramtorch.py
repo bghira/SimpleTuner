@@ -108,6 +108,16 @@ def _is_replaceable_linear(module: nn.Module) -> bool:
     return _is_quanto_linear(module) and hasattr(module, "in_features") and hasattr(module, "out_features")
 
 
+def _is_scaled_fp8_linear(module: nn.Module) -> bool:
+    weight = getattr(module, "weight", None)
+    weight_scale = getattr(module, "weight_scale", None)
+    if not torch.is_tensor(weight) or not torch.is_tensor(weight_scale):
+        return False
+    if not str(weight.dtype).startswith("torch.float8_"):
+        return False
+    return weight.ndim == 2 and weight_scale.shape == (weight.shape[0],)
+
+
 def _move_peft_lora_adapters_to_device(peft_layer: Any, device: torch.device | None) -> None:
     if device is None or getattr(peft_layer, "disable_adapters", False):
         return
@@ -292,6 +302,23 @@ def replace_linear_layers_with_ramtorch(
 
         child_bias = getattr(child, "bias", None)
         child_weight = getattr(child, "weight")
+        if _is_scaled_fp8_linear(child):
+            from simpletuner.helpers.ramtorch_extensions import CPUBouncingFp8Linear
+
+            new_layer = CPUBouncingFp8Linear(
+                int(child.in_features),
+                int(child.out_features),
+                weight=child_weight,
+                weight_scale=child.weight_scale,
+                bias=child_bias,
+                device=resolved_device,
+                compute_dtype=getattr(child, "compute_dtype", None),
+            )
+            new_layer.train(child.training)
+            setattr(parent, child_name, new_layer)
+            replaced += 1
+            continue
+
         new_layer = ramtorch_linear(
             int(child.in_features),
             int(child.out_features),

@@ -1797,6 +1797,24 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="find_unused_parameters",
+            arg_name="--find_unused_parameters",
+            ui_label="Find Unused DDP Parameters",
+            field_type=FieldType.CHECKBOX,
+            tab="hardware",
+            section="accelerate",
+            subsection="advanced",
+            default_value=None,
+            help_text="Enable DistributedDataParallel unused-parameter detection for conditional training graphs.",
+            tooltip="Leave unset for the model default. Enable when some trainable parameters do not participate in every backward pass.",
+            importance=ImportanceLevel.ADVANCED,
+            order=19,
+            platform_specific=["cuda"],
+        )
+    )
+
     # Training Num Processes
     registry._add_field(
         ConfigField(

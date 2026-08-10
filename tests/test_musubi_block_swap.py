@@ -5,10 +5,35 @@ from unittest.mock import patch
 import torch
 from torch import nn
 
-from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager, _module_on_device
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager, _module_on_device, prepare_musubi_model_for_ddp
 
 
 class MusubiBlockSwapTests(unittest.TestCase):
+    def test_prepare_for_ddp_ignores_only_frozen_state(self):
+        module = nn.Sequential(nn.Linear(4, 4), nn.Linear(4, 4))
+        module[0].weight.requires_grad_(False)
+        module[0].bias.requires_grad_(False)
+        module.register_buffer("frozen_scale", torch.ones(1))
+
+        moved, ignored = prepare_musubi_model_for_ddp(module, torch.device("cpu"))
+
+        self.assertEqual(moved, 0)
+        self.assertEqual(ignored, 3)
+        self.assertEqual(
+            module._ddp_params_and_buffers_to_ignore,
+            {"0.weight", "0.bias", "frozen_scale"},
+        )
+
+    def test_prepare_for_ddp_preserves_existing_ignore_names(self):
+        module = nn.Linear(4, 4)
+        module.weight.requires_grad_(False)
+        module._ddp_params_and_buffers_to_ignore = {"existing"}
+
+        _moved, ignored = prepare_musubi_model_for_ddp(module, torch.device("cpu"))
+
+        self.assertEqual(ignored, 1)
+        self.assertEqual(module._ddp_params_and_buffers_to_ignore, {"existing", "weight"})
+
     def _accelerator_device(self):
         if torch.cuda.is_available():
             return torch.device("cuda")

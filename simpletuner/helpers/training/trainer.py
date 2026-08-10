@@ -53,6 +53,7 @@ from simpletuner.helpers.data_backend.runtime.schedule import normalize_start_ep
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.musubi_block_swap import prepare_musubi_model_for_ddp
 from simpletuner.helpers.publishing import PublishingManager
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.publishing.providers.s3 import S3PublishingProvider
@@ -374,6 +375,11 @@ class Trainer:
             return self._ramtorch_enabled() and getattr(self.accelerator, "num_processes", 1) > 1
         except Exception:
             return False
+
+    @staticmethod
+    def _ramtorch_shared_parameters_enabled() -> bool:
+        value = os.environ.get("SIMPLETUNER_RAMTORCH_SHARED_PARAMETERS", "1").strip().lower()
+        return value not in {"0", "false", "no", "off"}
 
     def _distributed_collectives_ready(self) -> bool:
         try:
@@ -956,11 +962,14 @@ class Trainer:
                 kwargs_handlers=accelerator_custom_config,
             )
 
+            ddp_kwargs = {}
             find_unused_parameters = self._resolve_ddp_find_unused_parameters()
             if find_unused_parameters is not None:
-                accelerator_custom_config.append(
-                    DistributedDataParallelKwargs(find_unused_parameters=find_unused_parameters)
-                )
+                ddp_kwargs["find_unused_parameters"] = find_unused_parameters
+            if (getattr(self.config, "musubi_blocks_to_swap", 0) or 0) > 0:
+                ddp_kwargs["gradient_as_bucket_view"] = True
+            if ddp_kwargs:
+                accelerator_custom_config.append(DistributedDataParallelKwargs(**ddp_kwargs))
 
             if not will_create_dynamo_plugin and dynamo_backend_env != "no":
                 accelerator_kwargs["dynamo_backend"] = dynamo_backend_env
@@ -4216,9 +4225,10 @@ class Trainer:
         attach_shared_ramtorch_parameters = None
         if self._ramtorch_distributed() and primary_model is not None:
             ramtorch_utils.ensure_available()
-            from simpletuner.helpers.ramtorch.utils import (
-                attach_shared_ramtorch_parameters as attach_shared_ramtorch_parameters,
-            )
+            if self._ramtorch_shared_parameters_enabled():
+                from simpletuner.helpers.ramtorch.utils import (
+                    attach_shared_ramtorch_parameters as attach_shared_ramtorch_parameters,
+                )
 
             moved = ramtorch_utils.move_embeddings_to_device(primary_model, self.accelerator.device)
             if moved:
@@ -4226,9 +4236,14 @@ class Trainer:
             ignored = ramtorch_utils.mark_ddp_ignore_params(primary_model)
             if ignored:
                 logger.info("Marking %s RamTorch parameters to ignore for DDP.", ignored)
-            attached = attach_shared_ramtorch_parameters(primary_model)
-            if attached:
-                logger.info("Attached %s shared RamTorch parameters across ranks.", attached)
+            if attach_shared_ramtorch_parameters is not None:
+                attached = attach_shared_ramtorch_parameters(primary_model)
+                if attached:
+                    logger.info("Attached %s shared RamTorch parameters across ranks.", attached)
+            else:
+                logger.warning(
+                    "RamTorch shared parameters are disabled; each rank will retain its own CPU copy of streamed weights."
+                )
         if primary_model is not None and "torchao" in str(getattr(self.config, "base_model_precision", "")):
             ignored = mark_torchao_ddp_ignore_params(primary_model)
             if ignored:
@@ -4287,6 +4302,16 @@ class Trainer:
         ramtorch_enabled = getattr(self.config, "ramtorch", False)
         group_offload_requested = bool(getattr(self.config, "enable_group_offload", False))
         skip_model_device_placement = musubi_block_swap_active or ramtorch_enabled or group_offload_requested
+        if musubi_block_swap_active and self.accelerator.distributed_type == DistributedType.MULTI_GPU:
+            self._move_model_with_block_swap(primary_model)
+            moved_trainable, ignored_frozen = prepare_musubi_model_for_ddp(primary_model, self.accelerator.device)
+            logger.info(
+                "Prepared Musubi block swap model for DDP: moved %s trainable parameters to %s and ignored %s "
+                "frozen parameters/buffers.",
+                moved_trainable,
+                self.accelerator.device,
+                ignored_frozen,
+            )
         if skip_model_device_placement:
             logger.info(
                 "Skipping automatic device placement for primary model during accelerator.prepare() "
