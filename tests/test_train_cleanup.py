@@ -1,5 +1,6 @@
 import os
 import runpy
+import signal
 import tempfile
 import unittest
 from pathlib import Path
@@ -150,13 +151,34 @@ class TrainEntryCleanupTest(unittest.TestCase):
                     self.assertTrue(output_file.exists())
                     self.assertEqual(train_module._faulthandler_stream.name, str(output_file))
                     mock_enable.assert_called_once()
-                    mock_register.assert_called_once()
+                    if hasattr(signal, "SIGUSR1"):
+                        mock_register.assert_called_once()
+                    else:
+                        mock_register.assert_not_called()
                     mock_dump_traceback_later.assert_called_once()
                     self.assertEqual(mock_dump_traceback_later.call_args.args[0], 11)
                 finally:
                     if train_module._faulthandler_stream is not None:
                         train_module._faulthandler_stream.close()
                     train_module._faulthandler_stream = previous_stream
+
+    def test_faulthandler_rejects_invalid_timeout(self):
+        import simpletuner.train as train_module
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch.dict(
+                os.environ,
+                {
+                    "SIMPLETUNER_FAULTHANDLER_DIR": tmp_dir,
+                    "SIMPLETUNER_FAULTHANDLER_TIMEOUT_SECONDS": "abc",
+                },
+                clear=False,
+            ):
+                with self.assertRaisesRegex(ValueError, "SIMPLETUNER_FAULTHANDLER_TIMEOUT_SECONDS.*'abc'"):
+                    train_module._configure_faulthandler()
+                if train_module._faulthandler_stream is not None:
+                    train_module._faulthandler_stream.close()
+                    train_module._faulthandler_stream = None
 
     def test_train_main_invokes_cleanup_on_failure(self):
         """Train entrypoint should call trainer.cleanup when a failure occurs."""

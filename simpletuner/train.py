@@ -62,6 +62,14 @@ def _configure_faulthandler() -> None:
     import faulthandler
     import signal
 
+    timeout_seconds_raw = environ.get("SIMPLETUNER_FAULTHANDLER_TIMEOUT_SECONDS", "0")
+    try:
+        timeout_seconds = int(timeout_seconds_raw)
+    except ValueError as exc:
+        raise ValueError(
+            "SIMPLETUNER_FAULTHANDLER_TIMEOUT_SECONDS must be an integer; " f"received {timeout_seconds_raw!r}."
+        ) from exc
+
     global _faulthandler_stream
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -70,7 +78,6 @@ def _configure_faulthandler() -> None:
     faulthandler.enable(file=_faulthandler_stream, all_threads=True)
     if hasattr(signal, "SIGUSR1"):
         faulthandler.register(signal.SIGUSR1, file=_faulthandler_stream, all_threads=True)
-    timeout_seconds = int(environ.get("SIMPLETUNER_FAULTHANDLER_TIMEOUT_SECONDS", "0"))
     if timeout_seconds > 0:
         faulthandler.dump_traceback_later(
             timeout_seconds,
