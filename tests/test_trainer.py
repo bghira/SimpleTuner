@@ -13,7 +13,7 @@ import unittest
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 import torch
 
@@ -2543,10 +2543,9 @@ class TestTrainer(unittest.TestCase):
             incoming_checkpoint.mkdir()
 
             hub_manager = object.__new__(HubManager)
-            hub_manager.config = SimpleNamespace(output_dir=tmpdir)
+            hub_manager.config = SimpleNamespace(output_dir=tmpdir, push_checkpoints_to_hub=True)
             hub_manager.find_latest_checkpoint = Mock(return_value=Path(tmpdir, "checkpoint-200"))
-            hub_manager.upload_model = Mock(return_value="repo-url")
-            hub_manager._repo_url = Mock(return_value="remote/checkpoint-110")
+            hub_manager.upload_model = Mock(side_effect=["remote/checkpoint-110", "repo-url"])
 
             result = hub_manager.upload_latest_checkpoint(
                 validation_images=None,
@@ -2558,14 +2557,26 @@ class TestTrainer(unittest.TestCase):
 
             self.assertEqual(("remote/checkpoint-110", str(incoming_checkpoint), "repo-url"), result)
             hub_manager.find_latest_checkpoint.assert_not_called()
-            hub_manager.upload_model.assert_called_once_with(
-                validation_images=None,
-                override_path=incoming_checkpoint,
-                webhook_handler=None,
-                global_step=110,
-                epoch=1,
+            self.assertEqual(
+                [
+                    call(
+                        validation_images=None,
+                        override_path=incoming_checkpoint,
+                        webhook_handler=None,
+                        global_step=110,
+                        epoch=1,
+                        repo_subfolder="checkpoint-110",
+                    ),
+                    call(
+                        validation_images=None,
+                        override_path=incoming_checkpoint,
+                        webhook_handler=None,
+                        global_step=110,
+                        epoch=1,
+                    ),
+                ],
+                hub_manager.upload_model.call_args_list,
             )
-            hub_manager._repo_url.assert_called_once_with("checkpoint-110")
 
     def test_rolling_checkpoint_rotation_preserves_recovery_and_new_save(self):
         for use_checkpoint_manager in (True, False):
