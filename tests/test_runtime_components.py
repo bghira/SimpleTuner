@@ -928,6 +928,26 @@ class TestContextParallelBatchSynchronizer(unittest.TestCase):
         self.assertTrue(torch.equal(draws[0][0], draws[1][0]))
         self.assertEqual(draws[0][1], draws[1][1])
 
+    def test_synchronized_rng_accepts_missing_base_seed(self):
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+
+        parallelism_config = MagicMock(cp_size=2, cp_enabled=True, dp_replicate_size=1, dp_shard_size=1)
+        mesh = MagicMock()
+        mesh.get_group.return_value = MagicMock()
+        mesh.get_local_rank.return_value = 0
+        accelerator = MagicMock(
+            parallelism_config=parallelism_config,
+            torch_device_mesh=mesh,
+            num_processes=2,
+            process_index=0,
+            device=torch.device("cpu"),
+        )
+
+        synchronizer = ContextParallelBatchSynchronizer(accelerator)
+
+        with synchronizer.synchronized_rng(base_seed=None, step=7):
+            self.assertIsInstance(torch.rand(1), torch.Tensor)
+
     def test_synchronized_rng_differs_between_data_replicas(self):
         from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
 
