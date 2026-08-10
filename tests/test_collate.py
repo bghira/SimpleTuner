@@ -103,6 +103,8 @@ class CollateFunctionTests(unittest.TestCase):
             vae_cache_ondemand=False,
             data_aesthetic_score=0.0,
             conditioning_multidataset_sampling=None,
+            distillation_method=None,
+            distillation_config={},
         )
         self.base_batch = [
             {
@@ -184,6 +186,45 @@ class CollateFunctionTests(unittest.TestCase):
         self.assertTrue(torch.equal(result["add_text_embeds"], text_outputs["pooled_prompt_embeds"]))
         backend_mock = active_mocks[5]
         backend_mock.assert_called()
+
+    def test_collate_fn_loads_anyflow_unconditional_embeddings(self):
+        self.base_args.distillation_method = "anyflow"
+        self.base_args.distillation_config = {"anyflow": {"fuse_guidance_scale": 3.0}}
+        positive = {"prompt_embeds": torch.ones(1, 1)}
+        unconditional = {"prompt_embeds": torch.zeros(1, 1)}
+        backend_dict = {
+            "text_embed_cache": SimpleNamespace(disabled=False),
+            "data_backend": _make_stub_data_backend(),
+            "config": {"instance_data_dir": "/train"},
+        }
+        model = _StubModel(requires_conditioning=False)
+        model.text_embed_cache_metadata_for_sample = lambda **kwargs: {
+            "prompt_signature": f"sig:{kwargs['prompt'] or 'empty'}"
+        }
+        model.text_embed_cache_key_value = lambda prompt, default_key, metadata: metadata["prompt_signature"]
+        patchers, _ = self._patch_state_tracker(
+            model=model,
+            data_backend=backend_dict,
+            text_outputs=positive,
+            backend_lookup={"backend-1": backend_dict},
+        )
+
+        with ExitStack() as stack:
+            active_mocks = [stack.enter_context(patcher) for patcher in patchers]
+            embed_mock = active_mocks[9]
+            embed_mock.side_effect = [positive, unconditional]
+            result = collate_fn(self.base_batch)
+
+        self.assertTrue(torch.equal(result["prompt_embeds"], positive["prompt_embeds"]))
+        self.assertTrue(torch.equal(result["negative_prompt_embeds"], unconditional["prompt_embeds"]))
+        self.assertEqual(embed_mock.call_count, 2)
+        conditional_requests = embed_mock.call_args_list[0].args[0]
+        unconditional_requests = embed_mock.call_args_list[1].args[0]
+        self.assertEqual(conditional_requests[0]["metadata"]["prompt_signature"], "sig:caption")
+        self.assertEqual(unconditional_requests[0]["metadata"]["prompt_signature"], "sig:empty")
+        self.assertIsNot(conditional_requests[0]["metadata"], unconditional_requests[0]["metadata"])
+        self.assertEqual(unconditional_requests[0]["prompt"], "")
+        self.assertEqual(unconditional_requests[0]["key"], "sig:empty")
 
     def test_collate_fn_preserves_prompts_without_text_cache(self):
         backend_dict = {

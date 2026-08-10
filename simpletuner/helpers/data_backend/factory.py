@@ -2561,7 +2561,16 @@ class FactoryRegistry:
                 StateTracker.set_default_text_embed_cache(init_backend["text_embed_cache"])
                 logger.debug(f"Set the default text embed cache to {init_backend['id']}.")
 
-                should_precompute_dropout = getattr(self.args, "caption_dropout_probability", 0.1) > 0.0
+                from simpletuner.helpers.distillation.factory import DistillerFactory
+
+                distillation_requirements = DistillerFactory.training_batch_requirements(
+                    getattr(self.args, "distillation_method", None),
+                    {"distillation_config": getattr(self.args, "distillation_config", {})},
+                )
+                should_precompute_dropout = (
+                    getattr(self.args, "caption_dropout_probability", 0.1) > 0.0
+                    or "unconditional_text_embeddings" in distillation_requirements
+                )
                 should_precompute_dropout = (
                     should_precompute_dropout
                     and getattr(
@@ -3889,6 +3898,30 @@ class FactoryRegistry:
 
         # Clear the deferred queue
         self._deferred_text_embed_backends.clear()
+
+    def _append_image_context_dropout_prompt_record(
+        self,
+        prompt_records: List[Dict[str, Any]],
+        default_key: str,
+        metadata: Dict[str, Any],
+    ) -> None:
+        from simpletuner.helpers.distillation.factory import DistillerFactory
+
+        distillation_requirements = DistillerFactory.training_batch_requirements(
+            getattr(self.args, "distillation_method", None),
+            {"distillation_config": getattr(self.args, "distillation_config", {})},
+        )
+        needs_unconditional_embedding = "unconditional_text_embeddings" in distillation_requirements
+        if getattr(self.args, "caption_dropout_probability", 0.1) <= 0.0 and not needs_unconditional_embedding:
+            return
+        if not getattr(self.model, "uses_image_context_dropout_caption_cache", lambda: False)():
+            return
+        dropout_metadata = dict(metadata)
+        key_builder = getattr(self.model, "text_embed_cache_key_value", None)
+        key_value = default_key
+        if callable(key_builder):
+            key_value = key_builder(prompt="", default_key=default_key, metadata=dropout_metadata)
+        prompt_records.append({"prompt": "", "key": key_value, "metadata": dropout_metadata})
 
     def _handle_auto_generated_dataset(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
         """Handle auto-generated reference datasets."""

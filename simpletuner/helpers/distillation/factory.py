@@ -41,6 +41,49 @@ class DistillerFactory:
     """Factory class for creating distillers based on configuration."""
 
     @staticmethod
+    def _method_config(method: DistillationMethod, config: Dict[str, Any]) -> Dict[str, Any]:
+        configured = config.get("distillation_config")
+        if not isinstance(configured, dict):
+            return {}
+        method_config = configured.get(method.value, configured)
+        return method_config if isinstance(method_config, dict) else {}
+
+    @staticmethod
+    def prepare_model_for_adapter(
+        method: Union[str, DistillationMethod, None],
+        model,
+        config: Dict[str, Any],
+    ) -> None:
+        """Let a distiller create model modules before the PEFT adapter is initialized."""
+        if isinstance(method, str):
+            method = DistillationMethod.from_string(method)
+        if method is None:
+            return
+
+        distiller_cls = DistillationRegistry.get(method.value)
+        if distiller_cls is None:
+            return
+        distiller_cls.prepare_model_for_adapter(model, DistillerFactory._method_config(method, config))
+
+    @staticmethod
+    def training_batch_requirements(
+        method: Union[str, DistillationMethod, None],
+        config: Dict[str, Any],
+    ) -> set[str]:
+        """Return cached inputs required by a configured distillation method."""
+        if isinstance(method, str):
+            if method.strip().lower() in {"", "none", "false", "0"}:
+                return set()
+            method = DistillationMethod.from_string(method)
+        if method is None:
+            return set()
+
+        distiller_cls = DistillationRegistry.get(method.value)
+        if distiller_cls is None:
+            return set()
+        return set(distiller_cls.training_batch_requirements(DistillerFactory._method_config(method, config)))
+
+    @staticmethod
     def create_distiller(
         method: Union[str, DistillationMethod],
         teacher_model,
@@ -75,14 +118,7 @@ class DistillerFactory:
 
         validate_distillation_text_encoder_training(method, bool(config.get("train_text_encoder")))
 
-        distill_config = {}
-        if config.get("distillation_config") is not None:
-            # Check for method-specific config first
-            if method.value in config["distillation_config"]:
-                distill_config = config["distillation_config"][method.value]
-            else:
-                # Fall back to general distillation config
-                distill_config = config["distillation_config"]
+        distill_config = DistillerFactory._method_config(method, config)
 
         if method == DistillationMethod.DCM:
             return DistillerFactory._create_dcm_distiller(

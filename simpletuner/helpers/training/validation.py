@@ -2568,7 +2568,7 @@ class Validation:
                         logger.error("Not able to run validations, we did not obtain a valid pipeline.")
                         self.validation_images = None
                         return self
-                    self.setup_scheduler()
+                    self.setup_scheduler(validation_type=validation_type)
                     master_validation_images: dict = {}
                     master_validation_audios: dict = {}
                     self.validation_prompt_dict = {}
@@ -2775,12 +2775,25 @@ class Validation:
 
         return kwargs
 
-    def setup_scheduler(self):
-        if self.distiller is not None:
+    def setup_scheduler(self, validation_type: str | None = None):
+        special_scheduler_setup = self.model.requires_special_scheduler_setup()
+        distiller_supports_special_scheduler = bool(
+            self.distiller is not None and getattr(self.distiller, "supports_special_scheduler_validation", lambda: False)()
+        )
+        if special_scheduler_setup and not distiller_supports_special_scheduler:
+            # allow the model's pipeline to initialise the scheduler itself
+            return
+
+        if self.distiller is not None and validation_type != "base_model":
             distillation_scheduler = self.distiller.get_scheduler()
             if distillation_scheduler is not None:
                 self.model.pipeline.scheduler = distillation_scheduler
                 return distillation_scheduler
+
+        if special_scheduler_setup:
+            # Base-model benchmarks and unsupported distillers keep the scheduler
+            # installed by the model's pipeline.
+            return
 
         # TwinFlow uses its own UCGM-style scheduler (supports flow and diff2flow bridge)
         if getattr(self.config, "twinflow_enabled", False) and (
@@ -2797,10 +2810,6 @@ class Validation:
                 self.model.pipeline.scheduler = scheduler
             logger.info(f"TwinFlow validation using UCGM scheduler for {twinflow_steps}-step generation")
             return scheduler
-
-        if self.model.requires_special_scheduler_setup():
-            # allow the model's pipeline to initialise the scheduler itself
-            return
 
         scheduler_args = {
             "prediction_type": self.config.prediction_type,

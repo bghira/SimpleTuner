@@ -456,6 +456,12 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         self.core.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)
         register_flowmap_config(self, gate_value, deltatime_type)
 
+    def set_gradient_checkpointing_interval(self, interval: int) -> None:
+        self.core.set_gradient_checkpointing_interval(interval)
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None) -> None:
+        self.core.set_gradient_checkpointing_segment_stride(segment_stride)
+
     def set_adapters(
         self,
         adapter_names: list[str] | str,

@@ -419,6 +419,30 @@ class Trainer:
         torch.distributed.all_reduce(local_flag, op=torch.distributed.ReduceOp.MAX)
         return bool(local_flag.item())
 
+    def _write_train_stage_breadcrumb(self, stage: str, step: int) -> None:
+        output_dir = os.environ.get("SIMPLETUNER_TRAIN_STAGE_TRACE_DIR")
+        if not output_dir:
+            return
+
+        rank = os.environ.get("RANK", os.environ.get("LOCAL_RANK", "unknown"))
+        payload = {
+            "rank": rank,
+            "pid": os.getpid(),
+            "step": int(step),
+            "stage": stage,
+            "timestamp": time.time(),
+        }
+        try:
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+            destination = output_path / f"rank-{rank}.json"
+            temporary = output_path / f"rank-{rank}.{os.getpid()}.tmp"
+            temporary.write_text(json.dumps(payload), encoding="utf-8")
+            os.replace(temporary, destination)
+        except Exception:
+            # Diagnostics must not affect the training path.
+            pass
+
     def _register_optimizer_attention_params(self, optimizer) -> None:
         try:
             from simpletuner.helpers.training.optimizers.muon import MuonClip
@@ -1849,6 +1873,7 @@ class Trainer:
                     self.init_tread_model,
                     self.init_gligen_layers,
                     self.init_freeze_models,
+                    self.init_distillation_adapter_modules,
                     self.init_trainable_peft_adapter,
                     self.init_lyrics_embedder_training,
                 ]
@@ -3103,6 +3128,16 @@ class Trainer:
         )
         logger.info("GLIGEN layers injected into model")
         self.accelerator.wait_for_everyone()
+
+    def init_distillation_adapter_modules(self):
+        """Create distillation-owned model modules before PEFT chooses its targets."""
+        method = getattr(self.config, "distillation_method", None)
+        if method is None:
+            return
+
+        from simpletuner.helpers.distillation.factory import DistillerFactory
+
+        DistillerFactory.prepare_model_for_adapter(method, self.model, vars(self.config))
 
     def init_trainable_peft_adapter(self):
         if "lora" not in self.config.model_type:
@@ -5232,7 +5267,38 @@ class Trainer:
         except Exception as err:  # pragma: no cover - best-effort persistence
             logger.warning(f"Failed to write epoch {epoch_value} to {training_state_path}: {err}")
 
-    def _run_standard_checkpoint(self, webhook_message: str | None, parent_loss, epoch: int, *, upload_to_hub: bool = False):
+    def _schedule_checkpoint_hub_upload(self, checkpoint_path: str) -> None:
+        if not checkpoint_path or self.hub_manager is None or not self.accelerator.is_main_process:
+            return
+
+        validation_images = getattr(self.validation, "validation_images") if self.validation is not None else None
+        captured_step = self.state["global_step"]
+        captured_epoch = self.state["current_epoch"]
+
+        def _upload_latest_checkpoint():
+            return self.hub_manager.upload_latest_checkpoint(
+                validation_images=validation_images,
+                webhook_handler=self.webhook_handler,
+                global_step=captured_step,
+                epoch=captured_epoch,
+                checkpoint_path=checkpoint_path,
+            )
+
+        description = f"checkpoint step {captured_step}"
+        try:
+            self._schedule_hub_upload(description, _upload_latest_checkpoint)
+        except Exception as e:
+            logger.error(f"Error uploading to hub: {e}, continuing training.")
+
+    def _run_standard_checkpoint(
+        self,
+        webhook_message: str | None,
+        parent_loss,
+        epoch: int,
+        *,
+        upload_to_hub: bool = False,
+        defer_hub_upload: bool = False,
+    ):
         if webhook_message:
             self._send_webhook_msg(
                 message=f"Checkpoint: `{webhook_message}`",
@@ -5270,29 +5336,10 @@ class Trainer:
             )
 
         hub_upload_planned = upload_to_hub and self.hub_manager is not None
-        if hub_upload_planned:
-            if self.accelerator.is_main_process:
-                validation_images = getattr(self.validation, "validation_images") if self.validation is not None else None
-                captured_step = self.state["global_step"]
-                captured_epoch = self.state["current_epoch"]
-
-                def _upload_latest_checkpoint():
-                    remote_path, local_path, repo_url = self.hub_manager.upload_latest_checkpoint(
-                        validation_images=validation_images,
-                        webhook_handler=self.webhook_handler,
-                        global_step=captured_step,
-                        epoch=captured_epoch,
-                        checkpoint_path=save_path,
-                    )
-                    return remote_path, local_path, repo_url
-
-                description = f"checkpoint step {self.state.get('global_step')}"
-                try:
-                    self._schedule_hub_upload(description, _upload_latest_checkpoint)
-                except Exception as e:
-                    logger.error(f"Error uploading to hub: {e}, continuing training.")
+        if hub_upload_planned and not defer_hub_upload:
+            self._schedule_checkpoint_hub_upload(save_path)
         else:
-            if save_path:
+            if save_path and not hub_upload_planned:
                 self._run_post_upload_script(local_path=save_path, remote_path=None)
         return save_path
 
@@ -5838,6 +5885,19 @@ class Trainer:
                 sigma_values = sigma_values / max_timestep
             sigma_values = sigma_values.clamp(0.0, 1.0)
 
+            def flow_matching_timesteps_from_sigmas(sigmas: torch.Tensor) -> torch.Tensor:
+                model_converter = getattr(self.model, "flow_matching_timesteps_from_sigmas", None)
+                if callable(model_converter):
+                    return model_converter(sigmas, reference_timesteps=custom_timesteps_tensor)
+                if torch.max(custom_timesteps_tensor.detach().float()) <= 1.0:
+                    return sigmas
+                return sigmas * max_timestep
+
+            overridden_batch["timesteps"] = flow_matching_timesteps_from_sigmas(sigma_values).to(
+                device=reference_device if reference_device is not None else self.accelerator.device,
+                dtype=reference_dtype,
+            )
+
             reference_sigmas = prepared_batch.get("sigmas")
             if torch.is_tensor(reference_sigmas) and reference_sigmas.ndim > sigma_values.ndim:
                 sigma_for_model = sigma_values
@@ -5879,7 +5939,7 @@ class Trainer:
                     audio_sigma_for_noise = audio_sigma_for_noise.unsqueeze(-1)
                 audio_sigma_for_noise = audio_sigma_for_noise.to(device=audio_latents.device, dtype=audio_latents.dtype)
                 overridden_batch["audio_sigmas"] = audio_sigma_for_model
-                overridden_batch["audio_timesteps"] = custom_timesteps_tensor.to(
+                overridden_batch["audio_timesteps"] = flow_matching_timesteps_from_sigmas(audio_sigma_values).to(
                     device=audio_latents.device,
                     dtype=(
                         prepared_batch.get("audio_timesteps", custom_timesteps_tensor).dtype
@@ -5958,10 +6018,15 @@ class Trainer:
         if dataset_type is DatasetType.CAPTION:
             return self._prepare_caption_generated_batch(batch)
 
+        breadcrumb_step = int(self.state.get("global_step", 0)) + 1
+        self._write_train_stage_breadcrumb("model_prepare:start", breadcrumb_step)
         prepared_batch = self.model.prepare_batch(batch, state=self.state)
+        self._write_train_stage_breadcrumb("model_prepare:done", breadcrumb_step)
 
         if getattr(self, "distiller", None) is not None:
+            self._write_train_stage_breadcrumb("distiller_prepare:start", breadcrumb_step)
             prepared_batch = self.distiller.prepare_batch(prepared_batch, self.model, self.state)
+            self._write_train_stage_breadcrumb("distiller_prepare:done", breadcrumb_step)
 
         return prepared_batch
 
@@ -6466,7 +6531,9 @@ class Trainer:
                 # enabled, only the CP leader samples; non-leaders receive via broadcast.
                 # This ensures all ranks in a CP group receive the same batch before the
                 # model's _cp_plan splits it along the sequence dimension.
+                self._write_train_stage_breadcrumb("fetch_batch:start", step)
                 raw_batch = cp_batch_synchronizer.fetch_batch(iterator_fn, step, *iterator_args)
+                self._write_train_stage_breadcrumb("fetch_batch:done", step)
                 with cp_batch_synchronizer.synchronized_rng(getattr(self.config, "seed", None), step):
                     prepared_batch = self.prepare_batch(raw_batch)
                 training_logger.debug(f"Iterator: {iterator_fn}")
@@ -6479,7 +6546,9 @@ class Trainer:
                     )
 
                 local_epoch_end = prepared_batch is False
+                self._write_train_stage_breadcrumb("epoch_end_sync:start", step)
                 epoch_end_reached = self._any_rank_reached_epoch_end(local_epoch_end)
+                self._write_train_stage_breadcrumb("epoch_end_sync:done", step)
                 # If any rank receives False from the enumerator, all ranks must leave the step loop together.
                 if epoch_end_reached:
                     if not local_epoch_end:
@@ -6938,6 +7007,7 @@ class Trainer:
                     checkpoint_step_interval = self._checkpoint_step_interval()
                     upload_to_hub = (
                         self.hub_manager is not None
+                        and bool(getattr(self.config, "push_checkpoints_to_hub", False))
                         and step % self.config.gradient_accumulation_steps == 0
                         and self.state["global_step"] > self.state["global_resume_step"]
                     )
@@ -6957,6 +7027,7 @@ class Trainer:
                             parent_loss=parent_loss,
                             epoch=epoch,
                             upload_to_hub=upload_to_hub,
+                            defer_hub_upload=upload_to_hub,
                         )
                         checkpoint_saved_this_step = True
                     elif (
@@ -7062,9 +7133,11 @@ class Trainer:
                         step,
                         manual_validation_requested=manual_validation_requested,
                     )
-                    if step_checkpoint_path:
-                        self._populate_checkpoint_assets(step_checkpoint_path)
+                if step_checkpoint_path:
+                    self._populate_checkpoint_assets(step_checkpoint_path)
                 self.accelerator.wait_for_everyone()
+                if step_checkpoint_path and upload_to_hub:
+                    self._schedule_checkpoint_hub_upload(step_checkpoint_path)
                 if torch_profiler is not None:
                     torch_profiler.step()
 
@@ -7078,16 +7151,20 @@ class Trainer:
                     # Note: training_complete event is emitted after final validation and model save
                     break
             epoch_checkpoint_dir = None
+            epoch_upload_to_hub = False
             if epoch_checkpoint_pending:
                 epoch_message = f"Epoch {epoch} completed at step {self.state['global_step']}"
-                epoch_upload_to_hub = self.hub_manager is not None and (
-                    self.state["global_step"] > self.state["global_resume_step"]
+                epoch_upload_to_hub = (
+                    self.hub_manager is not None
+                    and (self.state["global_step"] > self.state["global_resume_step"])
+                    and bool(getattr(self.config, "push_checkpoints_to_hub", False))
                 )
                 epoch_checkpoint_dir = self._run_standard_checkpoint(
                     webhook_message=epoch_message,
                     parent_loss=parent_loss,
                     epoch=epoch,
                     upload_to_hub=epoch_upload_to_hub,
+                    defer_hub_upload=epoch_upload_to_hub,
                 )
                 if epoch_checkpoint_dir:
                     self._write_checkpoint_epoch(epoch_checkpoint_dir, epoch + 1)
@@ -7095,6 +7172,9 @@ class Trainer:
                 self._run_intermediary_validation(step, epoch_end=True)
             if epoch_checkpoint_dir:
                 self._populate_checkpoint_assets(epoch_checkpoint_dir)
+            self.accelerator.wait_for_everyone()
+            if epoch_checkpoint_dir and epoch_upload_to_hub:
+                self._schedule_checkpoint_hub_upload(epoch_checkpoint_dir)
 
             if self.state["global_step"] >= self.config.max_train_steps or (
                 epoch > self.config.num_train_epochs and self.config.strict_epoch_limit

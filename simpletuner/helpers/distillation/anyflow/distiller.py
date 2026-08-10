@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from safetensors.torch import load_file, save_file
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_model_replica_data_info
 from simpletuner.helpers.distillation.anyflow.scheduler import AnyFlowValidationScheduler
 from simpletuner.helpers.distillation.common import DistillationBase
 from simpletuner.helpers.distillation.registry import DistillationRegistry
@@ -32,11 +33,15 @@ class AnyFlowDistiller(DistillationBase):
         "deltatime_type": "r",
         "loss_weight": 1.0,
         "timestep_scale": None,
+        "schedule_shift": None,
         "diffusion_ratio": 0.5,
         "consistency_ratio": 0.25,
         "central_difference_epsilon": 0.005,
+        "central_difference_boundary_mode": "extrapolate",
+        "fuse_guidance_scale": 3.0,
         "meanflow_weight_type": "beta08",
         "meanflow_adaptive_weighting": True,
+        "meanflow_non_diffusion_max_sigma": 1.0,
         "cotrain_forward": True,
         "rollout_step_counts": (2, 4, 8, 16, 50),
         "dmd_weight": 1.0,
@@ -52,6 +57,25 @@ class AnyFlowDistiller(DistillationBase):
         "student_adapter_name": None,
         "discriminator_adapter_name": DISCRIMINATOR_ADAPTER_NAME,
     }
+
+    @classmethod
+    def prepare_model_for_adapter(cls, model, config: Dict[str, Any]) -> None:
+        component = cls._get_trained_component(model)
+        enable_flowmap = getattr(component, "enable_flowmap_time_conditioning", None)
+        if not callable(enable_flowmap):
+            raise ValueError(
+                "AnyFlow requires model-specific FlowMap interval conditioning. "
+                "Add enable_flowmap_time_conditioning() to the trained component before enabling AnyFlow."
+            )
+        enable_flowmap(
+            gate_value=float(config.get("gate_value", cls._DEFAULTS["gate_value"])),
+            deltatime_type=str(config.get("deltatime_type", cls._DEFAULTS["deltatime_type"])),
+        )
+
+    @classmethod
+    def training_batch_requirements(cls, config: Dict[str, Any]) -> set[str]:
+        guidance_scale = float(config.get("fuse_guidance_scale", cls._DEFAULTS["fuse_guidance_scale"]))
+        return {"unconditional_text_embeddings"} if guidance_scale != 1.0 else set()
 
     def __init__(
         self,
@@ -84,6 +108,9 @@ class AnyFlowDistiller(DistillationBase):
         )
         self._validate_forward_config()
         self._flowmap_component = self._enable_flowmap_time_conditioning()
+        self._delta_initial_parameters = {
+            name: parameter.detach().float().cpu().clone() for name, parameter in self._trainable_delta_parameters()
+        }
 
         self._student_adapter_name: Optional[str] = None
         self._discriminator_adapter_name: Optional[str] = None
@@ -117,14 +144,19 @@ class AnyFlowDistiller(DistillationBase):
         batch["anyflow_timestep_interval"] = (batch["timesteps"].to(r_timesteps.dtype) - r_timesteps).abs()
 
         base_target = self._base_flow_target(batch, model=model)
-        batch["target"] = self._meanflow_target(
+        target = self._meanflow_target(
             prepared_batch=batch,
             model=model,
             t_sigmas=t_sigmas,
             r_sigmas=r_sigmas,
             base_target=base_target,
         ).detach()
-        batch["flow_target"] = batch["target"]
+        batch["target"] = target
+        batch["flow_target"] = target
+
+        target_base_cosine, target_base_norm_ratio = self._chunked_per_sample_geometry(target, base_target)
+        batch["_anyflow_target_base_cosine"] = target_base_cosine
+        batch["_anyflow_target_base_norm_ratio"] = target_base_norm_ratio
         return batch
 
     def compute_distill_loss(
@@ -215,6 +247,9 @@ class AnyFlowDistiller(DistillationBase):
             )
         return validation_scheduler
 
+    def supports_special_scheduler_validation(self) -> bool:
+        return True
+
     # ------------------------------------------------------------------
     # Configuration and adapter roles
     # ------------------------------------------------------------------
@@ -240,10 +275,32 @@ class AnyFlowDistiller(DistillationBase):
         self.config["diffusion_ratio"] = diffusion_ratio
         self.config["consistency_ratio"] = consistency_ratio
 
+        schedule_shift = self.config.get("schedule_shift")
+        if schedule_shift not in (None, ""):
+            schedule_shift = float(schedule_shift)
+            if schedule_shift <= 0.0:
+                raise ValueError("AnyFlow schedule_shift must be greater than zero.")
+            self.config["schedule_shift"] = schedule_shift
+
         epsilon = float(self.config["central_difference_epsilon"])
         if epsilon <= 0.0 or epsilon >= 0.5:
             raise ValueError("AnyFlow central_difference_epsilon must be in (0.0, 0.5).")
         self.config["central_difference_epsilon"] = epsilon
+
+        boundary_mode = str(self.config["central_difference_boundary_mode"]).strip().lower()
+        if boundary_mode not in {"extrapolate", "clamp"}:
+            raise ValueError("AnyFlow central_difference_boundary_mode must be one of: extrapolate, clamp.")
+        self.config["central_difference_boundary_mode"] = boundary_mode
+
+        non_diffusion_max_sigma = float(self.config["meanflow_non_diffusion_max_sigma"])
+        if non_diffusion_max_sigma <= 0.0 or non_diffusion_max_sigma > 1.0:
+            raise ValueError("AnyFlow meanflow_non_diffusion_max_sigma must be in (0.0, 1.0].")
+        self.config["meanflow_non_diffusion_max_sigma"] = non_diffusion_max_sigma
+
+        guidance_scale = float(self.config["fuse_guidance_scale"])
+        if guidance_scale <= 0.0:
+            raise ValueError("AnyFlow fuse_guidance_scale must be greater than zero.")
+        self.config["fuse_guidance_scale"] = guidance_scale
 
         weight_type = str(self.config["meanflow_weight_type"]).strip().lower()
         if weight_type not in {"beta08", "uniform"}:
@@ -367,6 +424,10 @@ class AnyFlowDistiller(DistillationBase):
         accelerator = getattr(model, "accelerator", getattr(self.teacher_model, "accelerator", None))
         process_index = int(getattr(accelerator, "process_index", 0) or 0)
         num_processes = int(getattr(accelerator, "num_processes", 1) or 1)
+        data_parallel_enabled, data_rank, _, _, data_parallel_size = get_model_replica_data_info(accelerator)
+        if data_parallel_enabled:
+            process_index = data_rank
+            num_processes = data_parallel_size
         global_batch_size = batch_size * num_processes
         global_indices = process_index * batch_size + torch.arange(batch_size, device=device)
         diffusion_count = round(float(self.config["diffusion_ratio"]) * global_batch_size)
@@ -374,6 +435,13 @@ class AnyFlowDistiller(DistillationBase):
         diffusion_mask = global_indices < diffusion_count
         consistency_mask = (global_indices >= diffusion_count) & (global_indices < diffusion_count + consistency_count)
         arbitrary_mask = ~(diffusion_mask | consistency_mask)
+
+        non_diffusion_max_sigma = float(self.config["meanflow_non_diffusion_max_sigma"])
+        if non_diffusion_max_sigma < 1.0:
+            non_diffusion_max_base = self._invert_scheduler_shift(non_diffusion_max_sigma)
+            non_diffusion_mask = ~diffusion_mask
+            t_base = torch.where(non_diffusion_mask, t_base * non_diffusion_max_base, t_base)
+            r_base = torch.where(non_diffusion_mask, r_base * non_diffusion_max_base, r_base)
         r_base = torch.where(diffusion_mask, t_base, r_base)
         r_base = torch.where(consistency_mask, torch.zeros_like(r_base), r_base)
 
@@ -384,6 +452,8 @@ class AnyFlowDistiller(DistillationBase):
         prepared_batch["anyflow_arbitrary_mask"] = arbitrary_mask
         prepared_batch["anyflow_t_base"] = t_base
         prepared_batch["anyflow_r_base"] = r_base
+        prepared_batch["anyflow_t_sigmas"] = t_sigmas
+        prepared_batch["anyflow_r_sigmas"] = r_sigmas
         self._set_batch_sigma_path(prepared_batch, t_sigmas)
         return t_sigmas, r_sigmas
 
@@ -399,6 +469,9 @@ class AnyFlowDistiller(DistillationBase):
         epsilon = float(self.config["central_difference_epsilon"])
         plus_sigmas = t_sigmas + epsilon
         minus_sigmas = t_sigmas - epsilon
+        if self.config["central_difference_boundary_mode"] == "clamp":
+            plus_sigmas = plus_sigmas.clamp(0.0, 1.0)
+            minus_sigmas = minus_sigmas.clamp(0.0, 1.0)
 
         with torch.no_grad():
             plus_output = model.model_predict(self._batch_at_sigmas(prepared_batch, plus_sigmas))
@@ -412,7 +485,7 @@ class AnyFlowDistiller(DistillationBase):
             device=plus_prediction.device,
             dtype=plus_prediction.dtype,
         )
-        total_derivative = (plus_prediction - minus_prediction) / denominator
+        total_derivative = (plus_prediction - minus_prediction) / (denominator * float(self.config["fuse_guidance_scale"]))
         interval = self._broadcast_time(t_sigmas - r_sigmas, total_derivative).to(
             device=total_derivative.device,
             dtype=total_derivative.dtype,
@@ -430,9 +503,12 @@ class AnyFlowDistiller(DistillationBase):
                 f"AnyFlow MeanFlow target shape {tuple(target.shape)} does not match prediction {tuple(prediction.shape)}."
             )
 
+        prediction = self._fuse_guidance_prediction(prepared_batch, prediction)
         per_sample = (prediction.float() - target.float()).square().flatten(1).mean(dim=1)
         t_sigmas = self._scalar_sigmas(prepared_batch).to(device=per_sample.device, dtype=per_sample.dtype)
         per_sample = per_sample * self._meanflow_timestep_weight(t_sigmas)
+        prepared_batch["_anyflow_pre_adaptive_loss"] = per_sample.detach()
+        adaptive_scale = torch.ones_like(per_sample)
 
         diffusion_mask = prepared_batch.get("anyflow_diffusion_mask")
         if bool(self.config["meanflow_adaptive_weighting"]) and torch.is_tensor(diffusion_mask):
@@ -444,8 +520,11 @@ class AnyFlowDistiller(DistillationBase):
                 non_diffusion_mask = ~diffusion_mask
                 if bool(non_diffusion_mask.any()):
                     scale = diffusion_mean / (per_sample.detach()[non_diffusion_mask] + 1e-5)
+                    adaptive_scale[non_diffusion_mask] = scale
                     per_sample = per_sample.clone()
                     per_sample[non_diffusion_mask] = per_sample[non_diffusion_mask] * scale
+        prepared_batch["_anyflow_adaptive_scale"] = adaptive_scale.detach()
+        prepared_batch["_anyflow_post_adaptive_loss"] = per_sample.detach()
         return per_sample.mean()
 
     def _meanflow_timestep_weight(self, t_sigmas: torch.Tensor) -> torch.Tensor:
@@ -463,9 +542,13 @@ class AnyFlowDistiller(DistillationBase):
     # ------------------------------------------------------------------
     def _onpolicy_generator_loss(self, prepared_batch: Dict[str, Any]) -> tuple[torch.Tensor, Dict[str, float]]:
         dmd_batch = self._slice_batch(prepared_batch, int(self.config["dmd_batch_size"]))
-        step_count = self._distributed_rollout_step_count()
+        step_count, grad_timestep = self._distributed_rollout_schedule()
         with self._adapter_role("student"):
-            generated = self._training_rollout(dmd_batch, step_count=step_count)
+            generated = self._training_rollout(
+                dmd_batch,
+                step_count=step_count,
+                grad_timestep=grad_timestep,
+            )
 
         sigma = self._sample_dmd_sigma(generated.shape[0], logit_normal=False, device=generated.device)
         noise = torch.randn_like(generated)
@@ -491,14 +574,19 @@ class AnyFlowDistiller(DistillationBase):
             "anyflow_dmd_gradient_norm": float(gradient.float().abs().mean().detach()),
             "anyflow_dmd_sigma": float(sigma.float().mean().detach()),
             "anyflow_rollout_steps": float(step_count),
+            "anyflow_rollout_grad_timestep": float(grad_timestep),
         }
         return loss, logs
 
     def _onpolicy_discriminator_loss(self, prepared_batch: Dict[str, Any]) -> torch.Tensor:
         dmd_batch = self._slice_batch(prepared_batch, int(self.config["dmd_batch_size"]))
-        step_count = self._distributed_rollout_step_count()
+        step_count, grad_timestep = self._distributed_rollout_schedule()
         with torch.no_grad(), self._adapter_role("student"):
-            generated = self._training_rollout(dmd_batch, step_count=step_count).detach()
+            generated = self._training_rollout(
+                dmd_batch,
+                step_count=step_count,
+                grad_timestep=grad_timestep,
+            ).detach()
 
         sigma = self._sample_dmd_sigma(generated.shape[0], logit_normal=True, device=generated.device)
         noise = torch.randn_like(generated)
@@ -508,13 +596,30 @@ class AnyFlowDistiller(DistillationBase):
         target = self._flow_target(generated, noise).to(device=prediction.device, dtype=prediction.dtype)
         return (prediction.float() - target.float()).square().flatten(1).mean(dim=1).mean()
 
-    def _training_rollout(self, prepared_batch: Dict[str, Any], *, step_count: int) -> torch.Tensor:
+    def _training_rollout(
+        self,
+        prepared_batch: Dict[str, Any],
+        *,
+        step_count: int,
+        grad_timestep: int,
+    ) -> torch.Tensor:
+        if grad_timestep < 0 or grad_timestep >= step_count:
+            raise ValueError(f"AnyFlow grad_timestep must be in [0, {step_count}), got {grad_timestep}.")
+
         latents = torch.randn_like(prepared_batch["latents"])
         base_sigmas = torch.linspace(1.0, 0.0, step_count + 1, device=latents.device, dtype=torch.float32)
         sigmas = self._apply_scheduler_shift(base_sigmas)
-        for index in range(step_count):
-            t_sigma = sigmas[index].expand(latents.shape[0])
-            r_sigma = sigmas[index + 1].expand(latents.shape[0])
+
+        intervals = (
+            (sigmas[0], sigmas[grad_timestep]),
+            (sigmas[grad_timestep], sigmas[grad_timestep + 1]),
+            (sigmas[grad_timestep + 1], sigmas[-1]),
+        )
+        for t_value, r_value in intervals:
+            if bool(t_value == r_value):
+                continue
+            t_sigma = t_value.expand(latents.shape[0])
+            r_sigma = r_value.expand(latents.shape[0])
             prediction = self._predict_at_sigmas(prepared_batch, latents, t_sigma, r_sigma)
             velocity = self._prediction_to_noiseward_flow(prediction)
             step = self._broadcast_time(r_sigma - t_sigma, latents).to(dtype=latents.dtype)
@@ -553,7 +658,7 @@ class AnyFlowDistiller(DistillationBase):
         unconditional_x0 = self._score_x0(unconditional_batch, noisy_latents, sigmas)
         return conditional_x0 + (conditional_x0 - unconditional_x0) * guidance
 
-    def _distributed_rollout_step_count(self) -> int:
+    def _distributed_rollout_schedule(self) -> tuple[int, int]:
         steps = self.config["rollout_step_counts"]
         device = self._device
         if torch.distributed.is_available() and torch.distributed.is_initialized():
@@ -562,8 +667,17 @@ class AnyFlowDistiller(DistillationBase):
             else:
                 index = torch.zeros(1, device=device, dtype=torch.long)
             torch.distributed.broadcast(index, src=0)
-            return int(steps[int(index.item())])
-        return int(steps[int(torch.randint(len(steps), (1,)).item())])
+            step_count = int(steps[int(index.item())])
+            if torch.distributed.get_rank() == 0:
+                grad_timestep = torch.randint(step_count, (1,), device=device, dtype=torch.long)
+            else:
+                grad_timestep = torch.zeros(1, device=device, dtype=torch.long)
+            torch.distributed.broadcast(grad_timestep, src=0)
+            return step_count, int(grad_timestep.item())
+
+        step_count = int(steps[int(torch.randint(len(steps), (1,)).item())])
+        grad_timestep = int(torch.randint(step_count, (1,)).item())
+        return step_count, grad_timestep
 
     def _sample_dmd_sigma(self, batch_size: int, *, logit_normal: bool, device: torch.device) -> torch.Tensor:
         base = (
@@ -606,6 +720,38 @@ class AnyFlowDistiller(DistillationBase):
         self._clear_prediction_buffers(output)
         return prediction
 
+    def _fuse_guidance_prediction(
+        self,
+        prepared_batch: Dict[str, Any],
+        conditional_prediction: torch.Tensor,
+    ) -> torch.Tensor:
+        guidance_scale = float(self.config["fuse_guidance_scale"])
+        if guidance_scale == 1.0:
+            return conditional_prediction
+
+        unconditional_batch = self._unconditional_batch(prepared_batch)
+        with torch.no_grad():
+            output = self.teacher_model.model_predict(unconditional_batch)
+            unconditional_prediction = output["model_prediction"].detach()
+            self._clear_prediction_buffers(output)
+        return (conditional_prediction - (1.0 - guidance_scale) * unconditional_prediction) / guidance_scale
+
+    @staticmethod
+    def _unconditional_batch(prepared_batch: Dict[str, Any]) -> Dict[str, Any]:
+        negative = prepared_batch.get("negative_encoder_hidden_states")
+        if not torch.is_tensor(negative):
+            raise ValueError("AnyFlow fuse_guidance_scale != 1 requires cached unconditional text embeddings.")
+
+        batch = dict(prepared_batch)
+        batch["encoder_hidden_states"] = negative
+        negative_tags = prepared_batch.get("negative_text_token_tags")
+        if torch.is_tensor(negative_tags):
+            batch["text_token_tags"] = negative_tags
+        negative_mask = prepared_batch.get("negative_encoder_attention_mask")
+        if torch.is_tensor(negative_mask):
+            batch["encoder_attention_mask"] = negative_mask
+        return batch
+
     def _slice_batch(self, prepared_batch: Dict[str, Any], requested_batch_size: int) -> Dict[str, Any]:
         source_batch_size = int(prepared_batch["latents"].shape[0])
         batch_size = min(source_batch_size, requested_batch_size)
@@ -621,16 +767,62 @@ class AnyFlowDistiller(DistillationBase):
 
     def _forward_logs(self, prepared_batch: Dict[str, Any], loss: torch.Tensor) -> Dict[str, float]:
         r_timesteps = prepared_batch["anyflow_r_timesteps"]
+        global_timesteps = self._gather_detached(prepared_batch["timesteps"].float().reshape(-1))
+        global_r_timesteps = self._gather_detached(r_timesteps.float().reshape(-1))
+        global_intervals = self._gather_detached(prepared_batch["anyflow_timestep_interval"].float().reshape(-1))
         logs = {
             "anyflow_forward_loss": float(loss.detach()),
-            "anyflow_timestep": float(prepared_batch["timesteps"].float().mean().detach()),
-            "anyflow_r_timestep": float(r_timesteps.float().mean().detach()),
-            "anyflow_interval": float(prepared_batch["anyflow_timestep_interval"].float().mean().detach()),
+            "anyflow_timestep": float(global_timesteps.mean()),
+            "anyflow_r_timestep": float(global_r_timesteps.mean()),
+            "anyflow_interval": float(global_intervals.mean()),
+            "anyflow_fuse_guidance_scale": float(self.config["fuse_guidance_scale"]),
+            "anyflow_meanflow_non_diffusion_max_sigma": float(self.config["meanflow_non_diffusion_max_sigma"]),
+        }
+        metric_tensors = {
+            "t_sigma": prepared_batch.get("anyflow_t_sigmas"),
+            "r_sigma": prepared_batch.get("anyflow_r_sigmas"),
+            "target_base_cosine": prepared_batch.get("_anyflow_target_base_cosine"),
+            "target_base_norm_ratio": prepared_batch.get("_anyflow_target_base_norm_ratio"),
+            "pre_adaptive_loss": prepared_batch.get("_anyflow_pre_adaptive_loss"),
+            "adaptive_scale": prepared_batch.get("_anyflow_adaptive_scale"),
+            "post_adaptive_loss": prepared_batch.get("_anyflow_post_adaptive_loss"),
+        }
+        global_metrics = {
+            name: self._gather_detached(value.float().reshape(-1))
+            for name, value in metric_tensors.items()
+            if torch.is_tensor(value)
         }
         for branch in ("diffusion", "consistency", "arbitrary"):
-            mask = prepared_batch[f"anyflow_{branch}_mask"]
-            logs[f"anyflow_{branch}_fraction"] = float(mask.float().mean().detach())
+            mask = self._gather_detached(prepared_batch[f"anyflow_{branch}_mask"].reshape(-1)).bool()
+            logs[f"anyflow_{branch}_fraction"] = float(mask.float().mean())
+            if bool(mask.any()):
+                for metric_name, values in global_metrics.items():
+                    logs[f"anyflow_{branch}_{metric_name}"] = float(values[mask].mean())
+        logs.update(self._delta_parameter_logs())
         return logs
+
+    def _trainable_delta_parameters(self):
+        for name, parameter in self._flowmap_component.named_parameters():
+            if ".original_module." in name or not parameter.requires_grad:
+                continue
+            if "delta_adaln_embedder" in name or "delta_time_embedder" in name:
+                yield name, parameter
+
+    def _delta_parameter_logs(self) -> Dict[str, float]:
+        if not self._delta_initial_parameters:
+            return {}
+        norm_sq = 0.0
+        drift_sq = 0.0
+        for name, parameter in self._trainable_delta_parameters():
+            current = parameter.detach().float()
+            norm_sq += float(current.square().sum())
+            reference = self._delta_initial_parameters.get(name)
+            if reference is not None:
+                drift_sq += float((current.cpu() - reference).square().sum())
+        return {
+            "anyflow_delta_weight_norm": norm_sq**0.5,
+            "anyflow_delta_drift": drift_sq**0.5,
+        }
 
     def _validation_component_names(self) -> tuple[str, ...]:
         names: list[str] = []
@@ -701,6 +893,33 @@ class AnyFlowDistiller(DistillationBase):
         return time_tensor
 
     @staticmethod
+    @torch.no_grad()
+    def _chunked_per_sample_geometry(
+        left: torch.Tensor,
+        right: torch.Tensor,
+        *,
+        chunk_elements: int = 262_144,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        left_flat = left.reshape(left.shape[0], -1)
+        right_flat = right.reshape(right.shape[0], -1)
+        dot = torch.zeros(left.shape[0], device=left.device, dtype=torch.float32)
+        left_squared = torch.zeros_like(dot)
+        right_squared = torch.zeros_like(dot)
+        for start in range(0, left_flat.shape[1], chunk_elements):
+            end = min(start + chunk_elements, left_flat.shape[1])
+            left_chunk = left_flat[:, start:end].float()
+            right_chunk = right_flat[:, start:end].float()
+            dot.add_((left_chunk * right_chunk).sum(dim=1))
+            left_squared.add_(left_chunk.square().sum(dim=1))
+            right_squared.add_(right_chunk.square().sum(dim=1))
+        epsilon = torch.finfo(dot.dtype).eps
+        left_norm = left_squared.sqrt()
+        right_norm = right_squared.sqrt()
+        cosine = dot / (left_norm * right_norm).clamp_min(epsilon)
+        norm_ratio = left_norm / right_norm.clamp_min(epsilon)
+        return cosine.detach(), norm_ratio.detach()
+
+    @staticmethod
     def _scalar_sigmas(prepared_batch: Dict[str, Any]) -> torch.Tensor:
         sigmas = prepared_batch["sigmas"]
         batch_size = prepared_batch["latents"].shape[0]
@@ -720,16 +939,28 @@ class AnyFlowDistiller(DistillationBase):
         return sigmas * self.num_train_timesteps
 
     def _apply_scheduler_shift(self, sigmas: torch.Tensor) -> torch.Tensor:
-        scheduler_config = getattr(self.noise_scheduler, "config", None)
-        shift = (
-            scheduler_config.get("shift", 1.0)
-            if isinstance(scheduler_config, dict)
-            else getattr(scheduler_config, "shift", 1.0)
-        )
-        shift = float(shift or 1.0)
+        shift = self._scheduler_shift_value()
         if shift == 1.0:
             return sigmas
         return shift * sigmas / (1.0 + (shift - 1.0) * sigmas)
+
+    def _invert_scheduler_shift(self, sigmas: float | torch.Tensor) -> float | torch.Tensor:
+        shift = self._scheduler_shift_value()
+        if shift == 1.0:
+            return sigmas
+        return sigmas / (shift + (1.0 - shift) * sigmas)
+
+    def _scheduler_shift_value(self) -> float:
+        scheduler_config = getattr(self.noise_scheduler, "config", None)
+        shift = self.config.get("schedule_shift")
+        if shift in (None, ""):
+            shift = (
+                scheduler_config.get("shift", 1.0)
+                if isinstance(scheduler_config, dict)
+                else getattr(scheduler_config, "shift", 1.0)
+            )
+        shift = float(shift or 1.0)
+        return shift
 
     def _set_batch_sigma_path(self, batch: Dict[str, Any], sigmas: torch.Tensor) -> None:
         latents = batch["latents"]
