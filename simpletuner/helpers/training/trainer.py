@@ -4649,9 +4649,12 @@ class Trainer:
         delete_invalid_checkpoints = bool(delete_invalid_value)
         resume_latest = resume_value == "latest"
         deleted_checkpoint_names: set[str] = set()
-        configured_param_group_lrs = []
+        optimizer_param_groups = []
         if getattr(self, "optimizer", None) is not None:
-            configured_param_group_lrs = [group.get("lr") for group in getattr(self.optimizer, "param_groups", [])]
+            raw_param_groups = getattr(self.optimizer, "param_groups", None)
+            if isinstance(raw_param_groups, list):
+                optimizer_param_groups = raw_param_groups
+        configured_param_group_lrs = [group.get("lr") for group in optimizer_param_groups]
 
         while True:
             checkpoint_dir = None
@@ -4725,7 +4728,7 @@ class Trainer:
             self.distiller.on_load_checkpoint(checkpoint_dir)
         try:
             if self.config.lr_scheduler in ("constant", "constant_with_warmup") and not self.config.is_schedulefree:
-                for group_index, group in enumerate(self.optimizer.param_groups):
+                for group_index, group in enumerate(optimizer_param_groups):
                     if "lr" not in group:
                         continue
                     if group_index < len(configured_param_group_lrs) and configured_param_group_lrs[group_index] is not None:
