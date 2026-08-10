@@ -11,6 +11,7 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 
 from simpletuner.helpers.models.common import ModelFoundation, ModelTypes, PipelineTypes
+from simpletuner.helpers.models.sdxl.model import SDXL
 from simpletuner.helpers.training.save_hooks import (
     MODEL_SPEC_VERSION,
     SaveHookManager,
@@ -165,6 +166,8 @@ class _DummySDXLSavePipeline:
 
 class _DummySaveModel:
     PIPELINE_CLASSES = {PipelineTypes.TEXT2IMG: _DummySavePipeline, PipelineTypes.CONTROLNET: _DummySavePipeline}
+    COMFYUI_LORA_PRESERVE_COMPONENT_PREFIXES = None
+    _convert_lora_state_dict_to_comfyui = ModelFoundation._convert_lora_state_dict_to_comfyui
 
     def __init__(self, model_family, lora_format="comfyui", controlnet=False):
         self.config = SimpleNamespace(model_family=model_family, lora_format=lora_format, controlnet=controlnet)
@@ -172,6 +175,7 @@ class _DummySaveModel:
 
 class _DummySDXLSaveModel(_DummySaveModel):
     PIPELINE_CLASSES = {PipelineTypes.TEXT2IMG: _DummySDXLSavePipeline, PipelineTypes.CONTROLNET: _DummySDXLSavePipeline}
+    _convert_lora_state_dict_to_comfyui = SDXL._convert_lora_state_dict_to_comfyui
 
 
 class _DummyArtifactModel(_DummyModel):
