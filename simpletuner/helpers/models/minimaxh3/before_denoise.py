@@ -89,6 +89,36 @@ def _layout_outputs() -> list[OutputParam]:
             type_hint=int,
             description="How many leading audio rows are reference rows rather than generated rows.",
         ),
+        OutputParam(
+            "negative_layout",
+            type_hint=MiniMaxH3PackedSequence,
+            description="Optional negative-branch packed layout for real CFG.",
+        ),
+        OutputParam(
+            "negative_position_ids",
+            type_hint=torch.Tensor,
+            description="Optional negative-branch rotary coordinates.",
+        ),
+        OutputParam(
+            "negative_token_tags",
+            type_hint=torch.Tensor,
+            description="Optional negative-branch modality tags.",
+        ),
+        OutputParam(
+            "negative_video_indices",
+            type_hint=torch.Tensor,
+            description="Optional negative-branch video row positions.",
+        ),
+        OutputParam(
+            "negative_audio_indices",
+            type_hint=torch.Tensor,
+            description="Optional negative-branch audio row positions.",
+        ),
+        OutputParam(
+            "negative_text_indices",
+            type_hint=torch.Tensor,
+            description="Optional negative-branch text row positions.",
+        ),
     ]
 
 
@@ -110,6 +140,18 @@ def _set_layout_state(block_state, layout: MiniMaxH3PackedSequence, device: torc
     if not prefix:
         block_state.num_condition_video_rows = layout.num_condition_video_rows
         block_state.num_condition_audio_rows = layout.num_condition_audio_rows
+
+
+def _clear_negative_layout_state(block_state) -> None:
+    for name in (
+        "layout",
+        "position_ids",
+        "token_tags",
+        "video_indices",
+        "audio_indices",
+        "text_indices",
+    ):
+        setattr(block_state, f"negative_{name}", None)
 
 
 class MiniMaxH3PrepareLayoutStep(ModularPipelineBlocks):
@@ -172,6 +214,8 @@ class MiniMaxH3PrepareLayoutStep(ModularPipelineBlocks):
                 block_state.keyframe_anchors,
             )
             _set_layout_state(block_state, negative_layout, components._execution_device, prefix="negative_")
+        else:
+            _clear_negative_layout_state(block_state)
 
         self.set_block_state(state, block_state)
         return components, state
@@ -237,6 +281,8 @@ class MiniMaxH3Ref2VAPrepareLayoutStep(ModularPipelineBlocks):
                 components.patch_size,
             )
             _set_layout_state(block_state, negative_layout, components._execution_device, prefix="negative_")
+        else:
+            _clear_negative_layout_state(block_state)
 
         self.set_block_state(state, block_state)
         return components, state

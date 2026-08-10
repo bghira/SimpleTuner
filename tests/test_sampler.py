@@ -69,7 +69,10 @@ class TestMultiAspectSampler(unittest.TestCase):
         sampler.id = "video-dataset"
         sampler.metadata_backend = SimpleNamespace(seen_images={str(i): True for i in range(1000)})
         sampler._get_unseen_images = MagicMock(return_value=[None] * 3997)
-        sampler.accelerator = SimpleNamespace(num_processes=8)
+        sampler.metadata_backend.aspect_ratio_bucket_indices = {"1.0": [None] * 600}
+        sampler.metadata_backend.max_num_samples = 4096
+        sampler.metadata_backend.bucket_report = None
+        sampler.accelerator = SimpleNamespace(num_processes=8, process_index=0)
         sampler.logger = MagicMock()
         sampler.sample_type_strs = "videos"
         sampler.buckets = ["0.75", "1.0", "1.25", "1.5", "1.75"]
@@ -80,7 +83,7 @@ class TestMultiAspectSampler(unittest.TestCase):
             patch.object(
                 StateTracker,
                 "get_data_backend_config",
-                return_value={"max_num_samples": 4096, "video": {"num_frames": 39}},
+                return_value={"max_num_samples": "not-an-int", "video": {"num_frames": 39}},
             ),
             patch.object(StateTracker, "get_dataset_schedule", return_value={"reached": True}),
         ):
@@ -90,6 +93,91 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.assertIn("- Target frame count: 39", overview)
         self.assertIn("- FPS: unknown", overview)
         self.assertNotIn("~39976", overview)
+        self.assertNotIn("~4800", overview)
+
+    def test_model_card_overview_uses_bucket_count_not_seen_progress(self):
+        sampler = object.__new__(MultiAspectSampler)
+        sampler.id = "video-dataset"
+        sampler.metadata_backend = SimpleNamespace(
+            aspect_ratio_bucket_indices={"1.0": [None] * 65536},
+            bucket_report=None,
+            max_num_samples=None,
+            seen_images={str(i): True for i in range(5740)},
+        )
+        sampler._get_unseen_images = MagicMock(return_value=[None] * 65536)
+        sampler.accelerator = SimpleNamespace(num_processes=4, process_index=0)
+        sampler.logger = MagicMock()
+        sampler.sample_type_strs = "videos"
+        sampler.buckets = ["1.0"]
+        sampler.is_regularisation_data = False
+        sampler.conditioning_type = None
+
+        with (
+            patch.object(StateTracker, "get_data_backend_config", return_value={"video": {"num_frames": 39}}),
+            patch.object(StateTracker, "get_dataset_schedule", return_value={"reached": True}),
+            patch("simpletuner.helpers.multiaspect.sampler.get_cp_aware_dp_info", return_value=(1, 0, 4)),
+        ):
+            overview = sampler.log_state(show_rank=False, alt_stats=True)
+
+        self.assertIn("- Total number of videos: 65536", overview)
+        self.assertNotIn("285096", overview)
+        self.assertNotIn("~", overview)
+
+    def test_model_card_overview_scales_data_parallel_bucket_shard_without_seen_progress(self):
+        sampler = object.__new__(MultiAspectSampler)
+        sampler.id = "video-dataset"
+        sampler.metadata_backend = SimpleNamespace(
+            aspect_ratio_bucket_indices={"1.0": [None] * 8192},
+            bucket_report=None,
+            max_num_samples=None,
+            seen_images={str(i): True for i in range(250)},
+        )
+        sampler._get_unseen_images = MagicMock(return_value=[None] * 7942)
+        sampler.accelerator = SimpleNamespace(num_processes=8, process_index=0)
+        sampler.logger = MagicMock()
+        sampler.sample_type_strs = "videos"
+        sampler.buckets = ["1.0"]
+        sampler.is_regularisation_data = False
+        sampler.conditioning_type = None
+
+        with (
+            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+            patch.object(StateTracker, "get_dataset_schedule", return_value={"reached": True}),
+            patch("simpletuner.helpers.multiaspect.sampler.get_cp_aware_dp_info", return_value=(8, 0, 1)),
+        ):
+            overview = sampler.log_state(show_rank=False, alt_stats=True)
+
+        self.assertIn("- Total number of videos: ~65536", overview)
+        self.assertNotIn("67536", overview)
+
+    def test_model_card_overview_prefers_exact_bucket_report_total(self):
+        sampler = object.__new__(MultiAspectSampler)
+        sampler.id = "image-dataset"
+        sampler.metadata_backend = SimpleNamespace(
+            aspect_ratio_bucket_indices={"1.0": [None] * 16},
+            bucket_report=SimpleNamespace(bucket_summaries={"post_refresh": {"total_samples": 123}}),
+            max_num_samples=None,
+            seen_images={str(i): True for i in range(7)},
+        )
+        sampler._get_unseen_images = MagicMock(return_value=[None] * 16)
+        sampler.accelerator = SimpleNamespace(num_processes=8, process_index=0)
+        sampler.logger = MagicMock()
+        sampler.sample_type_strs = "images"
+        sampler.buckets = ["1.0"]
+        sampler.is_regularisation_data = False
+        sampler.conditioning_type = None
+        sampler.resolution = 512
+        sampler.resolution_type = "pixel"
+
+        with (
+            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+            patch.object(StateTracker, "get_dataset_schedule", return_value={"reached": True}),
+            patch("simpletuner.helpers.multiaspect.sampler.get_cp_aware_dp_info", return_value=(8, 0, 1)),
+        ):
+            overview = sampler.log_state(show_rank=False, alt_stats=True)
+
+        self.assertIn("- Total number of images: 123", overview)
+        self.assertNotIn("~128", overview)
 
     def test_save_state(self):
         with patch.object(self.sampler.state_manager, "save_state") as mock_save_state:
