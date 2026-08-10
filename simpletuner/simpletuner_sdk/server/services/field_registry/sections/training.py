@@ -948,7 +948,7 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             default_value=0,
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
             dependencies=[FieldDependency(field="use_ema", operator="equals", value=True, action="show")],
-            help_text="Copy current weights into EMA until this optimizer step, then use the configured decay.",
+            help_text="Copy current weights into EMA before this optimizer step, then use the configured decay.",
             tooltip="Matches recipes that defer EMA smoothing while preserving current weights during warmup.",
             importance=ImportanceLevel.ADVANCED,
             order=6,

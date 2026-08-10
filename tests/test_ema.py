@@ -109,6 +109,7 @@ class TestEMAModel(unittest.TestCase):
     def test_save_and_load_state_dict(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = os.path.join(temp_dir, "ema_model_state.pth")
+            self.ema_model.warmup_steps = 7
 
             # Save the state
             self.ema_model.save_state_dict(temp_path)
@@ -125,6 +126,18 @@ class TestEMAModel(unittest.TestCase):
             # Check that the new EMA model's shadow parameters match the saved state
             for shadow_param, new_shadow_param in zip(self.ema_model.shadow_params, new_ema_model.shadow_params):
                 self.assertTrue(torch.equal(shadow_param, new_shadow_param))
+            self.assertEqual(new_ema_model.warmup_steps, 7)
+
+    def test_load_state_dict_normalises_warmup_steps(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = os.path.join(temp_dir, "ema_model_state.pth")
+            state_dict = self.ema_model.state_dict()
+            state_dict["warmup_steps"] = -4
+            torch.save(state_dict, temp_path)
+
+            self.ema_model.load_state_dict(temp_path)
+
+            self.assertEqual(self.ema_model.warmup_steps, 0)
 
     def test_state_dict_gathers_dtensor_before_detach(self):
         class FakeDTensor:
