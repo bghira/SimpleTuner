@@ -1053,7 +1053,10 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     args.logging_dir = os.path.join(args.output_dir, args.logging_dir)
     args.accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=args.logging_dir)
     # Create the custom configuration
-    args.process_group_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=5400))  # 1.5 hours
+    process_group_timeout = int(os.environ.get("SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS", "5400"))
+    if process_group_timeout < 1:
+        raise ValueError("SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS must be a positive integer.")
+    args.process_group_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=process_group_timeout))
 
     # Enable TF32 for faster training on Ampere GPUs,
     # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
