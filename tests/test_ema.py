@@ -74,6 +74,38 @@ class TestEMAModel(unittest.TestCase):
                 f"Shadow parameter does not match expected value.",
             )
 
+    def test_copy_through_warmup_then_fixed_decay(self):
+        parameter = torch.nn.Parameter(torch.tensor([0.0]))
+        ema_model = EMAModel(
+            args=self.args,
+            accelerator=None,
+            parameters=[parameter],
+            decay=0.9,
+            warmup_steps=3,
+            foreach=False,
+        )
+
+        with torch.no_grad():
+            parameter.fill_(1.0)
+        ema_model.step([parameter], global_step=1)
+        self.assertEqual(ema_model.cur_decay_value, 0.0)
+        self.assertTrue(torch.equal(ema_model.shadow_params[0], parameter))
+
+        with torch.no_grad():
+            parameter.fill_(2.0)
+        ema_model.step([parameter], global_step=2)
+        self.assertEqual(ema_model.cur_decay_value, 0.0)
+        self.assertTrue(torch.equal(ema_model.shadow_params[0], parameter))
+
+        with torch.no_grad():
+            parameter.fill_(3.0)
+        ema_model.step([parameter], global_step=3)
+        self.assertEqual(ema_model.cur_decay_value, 0.9)
+        self.assertTrue(torch.allclose(ema_model.shadow_params[0], torch.tensor([2.1])))
+
+        state_dict = ema_model.state_dict(exclude_params=True)
+        self.assertEqual(state_dict["warmup_steps"], 3)
+
     def test_save_and_load_state_dict(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = os.path.join(temp_dir, "ema_model_state.pth")

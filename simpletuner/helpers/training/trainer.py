@@ -4087,6 +4087,7 @@ class Trainer:
                 model_cls=ema_model_cls,
                 model_config=ema_model_config,
                 decay=self.config.ema_decay,
+                warmup_steps=getattr(self.config, "ema_warmup_steps", 0),
                 foreach=not self.config.ema_foreach_disable,
             )
             if should_log:
