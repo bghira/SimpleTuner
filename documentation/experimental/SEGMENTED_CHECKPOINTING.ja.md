@@ -96,7 +96,7 @@ Note: This sweep did not produce a usable ACE Step throughput row. The status-on
 
 ### Anima 上の AnyFlow 蒸留
 
-例: `anima-anyflow.peft-lora`。解像度: 1024x1024。この行は Anima を使った AnyFlow 蒸留の測定で、通常の Anima LoRA 例ではありません。通常の 1024x1024 Anima 画像 training には `anima.peft-lora` を使ってください。
+例: `anima-anyflow-stage1.peft-lora`。解像度: 1024x1024。この行は Anima を使った AnyFlow 蒸留の測定で、通常の Anima LoRA 例ではありません。通常の 1024x1024 Anima 画像 training には `anima.peft-lora` を使ってください。
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |

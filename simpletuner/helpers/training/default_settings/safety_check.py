@@ -143,6 +143,7 @@ def safety_check(args, accelerator):
     gradient_checkpointing_interval_supported_models = [
         "flux",
         "ace_step",
+        "anima",
         "sana",
         "sd3",
         "chroma",
@@ -176,6 +177,7 @@ def safety_check(args, accelerator):
     ]
     gradient_checkpointing_segment_stride_supported_models = [
         "ace_step",
+        "anima",
         "auraflow",
         "boogu_image",
         "chroma",

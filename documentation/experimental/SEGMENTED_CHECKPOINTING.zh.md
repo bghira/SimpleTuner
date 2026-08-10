@@ -96,7 +96,7 @@ Note: This sweep did not produce a usable ACE Step throughput row. The status-on
 
 ### 基于 Anima 的 AnyFlow 蒸馏
 
-示例：`anima-anyflow.peft-lora`。分辨率：1024x1024。此行测量的是使用 Anima 的 AnyFlow 蒸馏，不是普通 Anima LoRA 示例。普通 1024x1024 Anima 图像训练请使用 `anima.peft-lora`。
+示例：`anima-anyflow-stage1.peft-lora`。分辨率：1024x1024。此行测量的是使用 Anima 的 AnyFlow 蒸馏，不是普通 Anima LoRA 示例。普通 1024x1024 Anima 图像训练请使用 `anima.peft-lora`。
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |
