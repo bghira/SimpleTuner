@@ -88,6 +88,13 @@ def build_context_parallel_topology(config: Any, world_size: int, cp_size: int, 
     )
 
 
+def scale_standalone_context_parallel_loss(loss: torch.Tensor, topology: ContextParallelTopology | None) -> torch.Tensor:
+    """Compensate for DDP averaging CP-partitioned gradients over the full world."""
+    if topology is None or topology.cp_size <= 1 or topology.dp_shard_size != 1:
+        return loss
+    return loss * topology.cp_size
+
+
 def _accelerator_state(accelerator: Any) -> Any:
     state = getattr(accelerator, "state", None)
     if state is None:

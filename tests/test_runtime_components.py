@@ -7,11 +7,14 @@ system during training.
 """
 
 import queue
+import random
 import threading
 import time
 import unittest
 from typing import Any, Dict
 from unittest.mock import MagicMock, Mock, patch
+
+import torch
 
 from simpletuner.helpers.data_backend.runtime import BatchFetcher
 from simpletuner.helpers.data_backend.runtime import dataloader_iterator as dataloader_module
@@ -830,6 +833,37 @@ class TestContextParallelBatchSynchronizer(unittest.TestCase):
             mock_iterator.assert_not_called()
             self.assertEqual(result, {"broadcasted": True})
 
+    def test_standalone_cp_broadcasts_only_within_its_replica_group(self):
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+
+        parallelism_config = MagicMock()
+        parallelism_config.cp_size = 2
+        parallelism_config.cp_enabled = True
+        parallelism_config.dp_replicate_size = 4
+        parallelism_config.dp_shard_size = 1
+
+        cp_group = MagicMock()
+        mesh = MagicMock()
+        mesh.get_group.return_value = cp_group
+        mesh.get_local_rank.return_value = 0
+
+        accelerator = MagicMock()
+        accelerator.parallelism_config = parallelism_config
+        accelerator.torch_device_mesh = mesh
+        accelerator.num_processes = 8
+        accelerator.process_index = 6
+
+        synchronizer = ContextParallelBatchSynchronizer(accelerator)
+        iterator = MagicMock(return_value={"replica": 3})
+        with patch("simpletuner.helpers.data_backend.runtime.context_parallel_sync.dist") as mock_dist:
+            result = synchronizer.fetch_batch(iterator, 10)
+
+        self.assertEqual(result, {"replica": 3})
+        mock_dist.broadcast_object_list.assert_called_once()
+        _, kwargs = mock_dist.broadcast_object_list.call_args
+        self.assertEqual(kwargs["src"], 6)
+        self.assertIs(kwargs["group"], cp_group)
+
     def test_fetch_batch_fsdp_shard_rank_skips_iterator(self):
         """FSDP shard ranks are model-parallel ranks, not independent samplers."""
         from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
@@ -864,6 +898,63 @@ class TestContextParallelBatchSynchronizer(unittest.TestCase):
 
         mock_iterator.assert_not_called()
         self.assertEqual(result, {"broadcasted": True})
+
+    def test_synchronized_rng_matches_within_data_replica(self):
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+
+        def accelerator_for_rank(rank):
+            parallelism_config = MagicMock()
+            parallelism_config.cp_size = 2
+            parallelism_config.cp_enabled = True
+            parallelism_config.dp_replicate_size = 2
+            parallelism_config.dp_shard_size = 1
+            mesh = MagicMock()
+            mesh.get_group.return_value = MagicMock()
+            mesh.get_local_rank.return_value = rank % 2
+            accelerator = MagicMock()
+            accelerator.parallelism_config = parallelism_config
+            accelerator.torch_device_mesh = mesh
+            accelerator.num_processes = 4
+            accelerator.process_index = rank
+            accelerator.device = torch.device("cpu")
+            return accelerator
+
+        draws = []
+        for rank in (0, 1):
+            synchronizer = ContextParallelBatchSynchronizer(accelerator_for_rank(rank))
+            with synchronizer.synchronized_rng(base_seed=42, step=7):
+                draws.append((torch.rand(4), random.random()))
+
+        self.assertTrue(torch.equal(draws[0][0], draws[1][0]))
+        self.assertEqual(draws[0][1], draws[1][1])
+
+    def test_synchronized_rng_differs_between_data_replicas(self):
+        from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+
+        def accelerator_for_rank(rank):
+            parallelism_config = MagicMock()
+            parallelism_config.cp_size = 2
+            parallelism_config.cp_enabled = True
+            parallelism_config.dp_replicate_size = 2
+            parallelism_config.dp_shard_size = 1
+            mesh = MagicMock()
+            mesh.get_group.return_value = MagicMock()
+            mesh.get_local_rank.return_value = rank % 2
+            accelerator = MagicMock()
+            accelerator.parallelism_config = parallelism_config
+            accelerator.torch_device_mesh = mesh
+            accelerator.num_processes = 4
+            accelerator.process_index = rank
+            accelerator.device = torch.device("cpu")
+            return accelerator
+
+        draws = []
+        for rank in (0, 2):
+            synchronizer = ContextParallelBatchSynchronizer(accelerator_for_rank(rank))
+            with synchronizer.synchronized_rng(base_seed=42, step=7):
+                draws.append(torch.rand(4))
+
+        self.assertFalse(torch.equal(draws[0], draws[1]))
 
 
 class TestContextParallelDataParallelInfo(unittest.TestCase):
