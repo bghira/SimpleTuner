@@ -5729,7 +5729,8 @@ class Trainer:
         loss, _loss_logs, _diffusion_loss, _aux_loss_logs, _distill_logs = self._compute_model_prediction_loss(
             dict(prepared_batch)
         )
-        self.accelerator.backward(scale_standalone_context_parallel_loss(loss, self._context_parallel_topology))
+        context_parallel_topology = getattr(self, "_context_parallel_topology", None)
+        self.accelerator.backward(scale_standalone_context_parallel_loss(loss, context_parallel_topology))
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         elapsed = time.perf_counter() - start_time
