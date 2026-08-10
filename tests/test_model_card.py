@@ -317,6 +317,12 @@ class TestMetadataFunctions(unittest.TestCase):
                             return_value=self.args,
                         ):
                             with patch("builtins.open", unittest.mock.mock_open()) as mock_file:
+                                model = MagicMock(
+                                    MODEL_LICENSE="other",
+                                    MODEL_LICENSE_NAME="minimax-h3-community-license-agreement",
+                                    MODEL_LICENSE_LINK="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+                                )
+                                model.custom_model_card_schedule_info.return_value = ""
                                 save_model_card(
                                     repo_id="test-repo",
                                     images=None,
@@ -326,7 +332,7 @@ class TestMetadataFunctions(unittest.TestCase):
                                     validation_prompts=["Test prompt"],
                                     validation_shortnames=["shortname"],
                                     repo_folder="test-folder",
-                                    model=MagicMock(),
+                                    model=model,
                                     global_step=1000,
                                     epoch=1,
                                 )
@@ -336,6 +342,24 @@ class TestMetadataFunctions(unittest.TestCase):
                                     "w",
                                     encoding="utf-8",
                                 )
+                                written = mock_file().write.call_args.args[0]
+                                self.assertIn("license: other\n", written)
+                                self.assertIn('license_name: "minimax-h3-community-license-agreement"\n', written)
+                                self.assertNotIn(" license_name:", written)
+                                self.assertNotIn(" license_link:", written)
+
+    def test_upload_full_model_uses_empty_repo_path_for_top_level_uploads(self):
+        hub_manager = object.__new__(HubManager)
+        hub_manager.config = SimpleNamespace(push_to_hub=True, output_dir="output")
+        hub_manager._repo_id = "owner/model"
+        hub_manager.hub_token = "token"
+        hub_manager._hub_api = MagicMock()
+        hub_manager._commit_message = MagicMock(return_value="message")
+
+        hub_manager.upload_full_model()
+
+        hub_manager._hub_api.upload_folder.assert_called_once()
+        self.assertEqual(hub_manager._hub_api.upload_folder.call_args.kwargs["path_in_repo"], "")
 
     def test_save_training_config_sanitizes_public_export(self):
         config = SimpleNamespace(

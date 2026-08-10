@@ -307,7 +307,7 @@ class HubManager:
             self._hub_api.upload_folder(
                 repo_id=self._repo_id,
                 folder_path=override_path or folder_path,
-                path_in_repo=repo_subfolder,
+                path_in_repo=self._path_in_repo("", repo_subfolder),
                 commit_message=self._commit_message(global_step=global_step, epoch=epoch),
                 token=self.hub_token,
             )
