@@ -90,6 +90,21 @@ class DistillationCmdArgsTests(unittest.TestCase):
             {"anyflow": {"stage": "forward", "diffusion_ratio": 0.5}},
         )
 
+    def test_find_unused_parameters_accepts_explicit_boolean_values(self):
+        enabled = parse_cmdline_args(
+            input_args=_base_args() + ["--find_unused_parameters"],
+            exit_on_error=True,
+        )
+        disabled = parse_cmdline_args(
+            input_args=_base_args() + ["--find_unused_parameters=false"],
+            exit_on_error=True,
+        )
+        default = parse_cmdline_args(input_args=_base_args(), exit_on_error=True)
+
+        self.assertTrue(enabled.find_unused_parameters)
+        self.assertFalse(disabled.find_unused_parameters)
+        self.assertIsNone(default.find_unused_parameters)
+
     def test_mapping_to_cli_args_preserves_distillation_config_mapping(self):
         cli_args = mapping_to_cli_args(
             {
