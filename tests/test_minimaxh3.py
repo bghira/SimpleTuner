@@ -15,7 +15,7 @@ from simpletuner.helpers.models.common import PipelineTypes, TextEmbedCacheKey
 from simpletuner.helpers.models.ideogram.quantized_loading import Fp8Linear
 from simpletuner.helpers.models.minimaxh3.activations import MiniMaxH3FeedForward
 from simpletuner.helpers.models.minimaxh3.autoencoder import AutoencoderKLMiniMaxH3
-from simpletuner.helpers.models.minimaxh3.before_denoise import MiniMaxH3SetTimestepsStep
+from simpletuner.helpers.models.minimaxh3.before_denoise import MiniMaxH3PrepareLayoutStep, MiniMaxH3SetTimestepsStep
 from simpletuner.helpers.models.minimaxh3.before_encoder import MiniMaxH3SetupStep
 from simpletuner.helpers.models.minimaxh3.denoise import _denoiser_inputs, _predict_guided_velocity
 from simpletuner.helpers.models.minimaxh3.encoders import MiniMaxH3TextEncoderStep
@@ -826,11 +826,34 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertEqual(encoded["prompt_embeds"].shape, (1, 3, 4))
         self.assertIsNone(encode_prompt.call_args.kwargs["images"])
 
-    def test_nonvalidation_prompt_still_requires_image_context(self):
+    def test_t2v_training_prompt_ignores_source_video_as_image_context(self):
         model = MiniMaxH3.__new__(MiniMaxH3)
         model.accelerator = SimpleNamespace(device=torch.device("cpu"))
         model.config = SimpleNamespace(weight_dtype=torch.float32)
-        model._current_prompt_contexts = [{}]
+        model._current_prompt_contexts = [
+            {
+                "image_path": "/dataset/target.mp4",
+                "data_backend_id": "openvid",
+            }
+        ]
+        model._text_encoder_components = lambda: SimpleNamespace(transformer=SimpleNamespace(dtype=torch.float32))
+
+        with patch(
+            "simpletuner.helpers.models.minimaxh3.model.MiniMaxH3TextEncoderStep.encode_prompt",
+            return_value=(
+                torch.zeros(1, 3, 4),
+                torch.tensor([1, 1, 1], dtype=torch.long),
+            ),
+        ) as encode_prompt:
+            model._encode_prompts(["caption"])
+
+        self.assertIsNone(encode_prompt.call_args.kwargs["images"])
+
+    def test_declared_reference_context_still_requires_resolvable_image(self):
+        model = MiniMaxH3.__new__(MiniMaxH3)
+        model.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model.config = SimpleNamespace(weight_dtype=torch.float32)
+        model._current_prompt_contexts = [{"image_paths": ["/missing/reference.png"]}]
         model._text_encoder_components = lambda: SimpleNamespace(transformer=SimpleNamespace(dtype=torch.float32))
 
         with self.assertRaisesRegex(ValueError, "Failed to resolve MiniMax-H3 text conditioning image"):
@@ -2017,6 +2040,59 @@ class MiniMaxH3Tests(unittest.TestCase):
         )
         self.assertEqual(transformer.calls[2]["skip_layers"], [1])
 
+    def test_prepare_layout_persists_negative_branch_outputs(self):
+        output_names = {output.name for output in MiniMaxH3PrepareLayoutStep().intermediate_outputs}
+
+        self.assertTrue(
+            {
+                "negative_layout",
+                "negative_position_ids",
+                "negative_token_tags",
+                "negative_video_indices",
+                "negative_audio_indices",
+                "negative_text_indices",
+            }.issubset(output_names)
+        )
+
+    def test_prepare_layout_sets_absent_negative_branch_outputs_to_none(self):
+        step = MiniMaxH3PrepareLayoutStep()
+        block_state = SimpleNamespace(
+            text_token_tags=torch.full((3,), MINIMAX_H3_TEXT_TAG, dtype=torch.long),
+            negative_text_token_tags=None,
+            num_latent_frames=1,
+            latent_height=2,
+            latent_width=2,
+            num_audio_latents=0,
+            keyframe_anchors=(),
+        )
+        step.get_block_state = Mock(return_value=block_state)
+        step.set_block_state = Mock()
+        components = SimpleNamespace(patch_size=(1, 2, 2), _execution_device=torch.device("cpu"))
+
+        step(components, object())
+
+        for name in (
+            "negative_layout",
+            "negative_position_ids",
+            "negative_token_tags",
+            "negative_video_indices",
+            "negative_audio_indices",
+            "negative_text_indices",
+        ):
+            self.assertIsNone(getattr(block_state, name))
+
+    def test_guided_velocity_supports_deguidance(self):
+        transformer = FakeH3Transformer()
+        block_state = tiny_block_state_for_guidance()
+        block_state.guidance_scale = 1.0 / 3.0
+        block_state.skip_guidance_layers = []
+
+        video, audio = _predict_guided_velocity(transformer, block_state, i=0, num_steps=1)
+
+        self.assertTrue(torch.allclose(video, torch.full_like(video, 4.0 / 3.0)))
+        self.assertTrue(torch.allclose(audio, torch.full_like(audio, 34.0 / 3.0)))
+        self.assertEqual([call["text_rows"] for call in transformer.calls], [5, 3])
+
     def test_convert_negative_text_embed_for_pipeline_enables_real_cfg(self):
         wrapper = MiniMaxH3.__new__(MiniMaxH3)
         wrapper.config = SimpleNamespace(validation_guidance_real=4.0, validation_no_cfg_until_timestep=2)
@@ -2041,6 +2117,9 @@ class MiniMaxH3Tests(unittest.TestCase):
         wrapper.config.validation_guidance_real = 2.0
         self.assertTrue(wrapper.uses_validation_negative_prompt())
         self.assertFalse(wrapper.should_precompute_validation_negative_prompt())
+
+        wrapper.config.validation_guidance_real = 1.0 / 3.0
+        self.assertTrue(wrapper.uses_validation_negative_prompt())
 
     def test_validation_negative_prompt_record_uses_image_context_key(self):
         wrapper = MiniMaxH3.__new__(MiniMaxH3)
@@ -2069,10 +2148,26 @@ class MiniMaxH3Tests(unittest.TestCase):
         wrapper.config = SimpleNamespace(validation_guidance_real=2.0)
         args = SimpleNamespace(model_family="minimax_h3")
 
-        with self.assertRaisesRegex(ValueError, "requires image context"):
+        with self.assertRaisesRegex(ValueError, "requires prompt or image context"):
             _validation_negative_prompt_record(args, wrapper, "bad blur", "sample-a", None)
 
-    def test_validation_negative_prompt_precompute_is_skipped_for_h3(self):
+    def test_validation_negative_prompt_record_accepts_t2v_prompt_context(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(validation_guidance_real=2.0)
+        args = SimpleNamespace(model_family="minimax_h3")
+
+        record = _validation_negative_prompt_record(
+            args,
+            wrapper,
+            "",
+            "sample-a",
+            None,
+            positive_prompt="visible prompt",
+        )
+
+        self.assertEqual(record["metadata"], {"positive_prompt": "visible prompt"})
+
+    def test_validation_negative_prompt_is_precomputed_for_h3(self):
         class DummyEmbedCache:
             model_type = "minimax_h3"
             text_cache_ondemand = False
@@ -2093,7 +2188,7 @@ class MiniMaxH3Tests(unittest.TestCase):
             validation_prompt_library=False,
             user_prompt_library=None,
             validation_prompt="visible prompt",
-            validation_negative_prompt="bad blur",
+            validation_negative_prompt="",
             validation_disable_unconditional=True,
             data_backend_config="config.json",
         )
@@ -2115,14 +2210,18 @@ class MiniMaxH3Tests(unittest.TestCase):
             [entry.prompt for entry in metadata["validation_prompts"]],
             ["visible prompt"],
         )
-        wrapper.log_model_devices.assert_not_called()
+        wrapper.log_model_devices.assert_called_once_with()
         embed_cache.encode_validation_negative_prompt.assert_not_called()
         negative_calls = [
             call
             for call in embed_cache.compute_embeddings_for_prompts.call_args_list
             if call.kwargs.get("is_negative_prompt")
         ]
-        self.assertEqual(negative_calls, [])
+        self.assertEqual(len(negative_calls), 1)
+        negative_record = negative_calls[0].args[0][0]
+        self.assertEqual(negative_record["prompt"], "")
+        self.assertEqual(negative_record["metadata"], {"positive_prompt": "visible prompt"})
+        self.assertFalse(negative_calls[0].kwargs["load_from_cache"])
 
     def test_comfy_lora_conversion_maps_h3_names_and_splits_qkv(self):
         qkv_down = torch.randn(4, 16)

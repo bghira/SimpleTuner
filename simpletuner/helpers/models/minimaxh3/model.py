@@ -709,19 +709,12 @@ class MiniMaxH3(VideoModelFoundation):
         if max_text_length is None:
             max_text_length = MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH
         prompt_contexts = getattr(self, "_current_prompt_contexts", None)
-        allow_contextless_validation = bool(getattr(self, "_current_prompt_is_validation", False))
         if self.requires_text_embed_image_context():
             if not prompt_contexts or len(prompt_contexts) != len(prompts):
-                if not allow_contextless_validation:
-                    raise ValueError("MiniMax-H3 FL2VA text encoding requires image context for each caption.")
                 prompt_contexts = [{} for _ in prompts]
                 prompt_images = [None] * len(prompts)
             else:
-                prompt_images = self._prepare_prompt_image_batch(
-                    prompt_contexts,
-                    len(prompts),
-                    allow_contextless_validation=allow_contextless_validation,
-                )
+                prompt_images = self._prepare_prompt_image_batch(prompt_contexts, len(prompts))
         else:
             prompt_images = [None] * len(prompts)
         if prompt_contexts is None:
@@ -771,16 +764,14 @@ class MiniMaxH3(VideoModelFoundation):
         self,
         prompt_contexts: list[dict],
         batch_size: int,
-        *,
-        allow_contextless_validation: bool = False,
     ) -> list[list[Image.Image] | None]:
         if not prompt_contexts or len(prompt_contexts) != batch_size:
-            raise ValueError("MiniMax-H3 FL2VA text encoding requires one image context per caption.")
+            raise ValueError("MiniMax-H3 text encoding requires one context record per caption.")
         image_batch = []
         for index, context in enumerate(prompt_contexts):
             image = self._extract_prompt_image_from_context(context)
             if image is None:
-                if allow_contextless_validation and not self._prompt_context_declares_image(context):
+                if not self._prompt_context_declares_image(context):
                     image_batch.append(None)
                     continue
                 raise ValueError(f"Failed to resolve MiniMax-H3 text conditioning image for caption index {index}.")
@@ -795,10 +786,7 @@ class MiniMaxH3(VideoModelFoundation):
             context.get(key) is not None
             for key in (
                 "conditioning_pixel_values",
-                "image_path",
                 "image_paths",
-                "data_backend_id",
-                "data_backend_ids",
             )
         )
 
@@ -817,8 +805,9 @@ class MiniMaxH3(VideoModelFoundation):
             else:
                 data_backend_id = context.get("data_backend_id")
         else:
-            image_path = context.get("image_path")
-            data_backend_id = context.get("data_backend_id")
+            # `image_path` alone identifies the target sample in ordinary T2V
+            # backends. Only plural paths or direct pixels denote reference context.
+            return None
         if not image_path or not data_backend_id:
             return None
         backend_entry = StateTracker.get_data_backend(data_backend_id)
@@ -875,7 +864,7 @@ class MiniMaxH3(VideoModelFoundation):
 
     def convert_negative_text_embed_for_pipeline(self, text_embedding: dict) -> dict:
         guidance_scale = float(getattr(self.config, "validation_guidance_real", 1.0) or 1.0)
-        if guidance_scale <= 1.0:
+        if guidance_scale == 1.0:
             return {}
         result = {
             "negative_prompt_embeds": text_embedding["prompt_embeds"],
@@ -1072,7 +1061,7 @@ class MiniMaxH3(VideoModelFoundation):
         return True
 
     def uses_validation_negative_prompt(self) -> bool:
-        return float(getattr(self.config, "validation_guidance_real", 1.0) or 1.0) > 1.0
+        return float(getattr(self.config, "validation_guidance_real", 1.0) or 1.0) != 1.0
 
     def validation_negative_prompt_requires_prompt_context(self) -> bool:
         return True
@@ -1085,7 +1074,7 @@ class MiniMaxH3(VideoModelFoundation):
         guidance_scale_real = pipeline_kwargs.pop("guidance_scale_real", None)
         if guidance_scale_real is None:
             guidance_scale_real = getattr(self.config, "validation_guidance_real", None)
-        if guidance_scale_real is not None and float(guidance_scale_real) > 1.0:
+        if guidance_scale_real is not None and float(guidance_scale_real) != 1.0:
             pipeline_kwargs["guidance_scale"] = float(guidance_scale_real)
             if isinstance(getattr(self.config, "validation_no_cfg_until_timestep", None), int):
                 pipeline_kwargs.setdefault(

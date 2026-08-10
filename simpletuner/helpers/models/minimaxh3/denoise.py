@@ -364,7 +364,7 @@ def _predict_guided_velocity(
     video_velocity, audio_velocity = positive_video, positive_audio
 
     guidance_scale = _resolve_guidance_scale(block_state)
-    apply_cfg = guidance_scale > 1.0 and _within_cfg_window(block_state, i)
+    apply_cfg = guidance_scale != 1.0 and _within_cfg_window(block_state, i)
     if apply_cfg:
         negative_prompt_embeds = _validate_negative_branch(block_state)
         negative_video, negative_audio = _predict_velocity(

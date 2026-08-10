@@ -826,10 +826,10 @@ def _validation_negative_prompt_record(
         metadata = (
             _validation_reference_prompt_metadata(validation_input_image) if validation_input_image is not None else {}
         )
-        if not metadata:
-            raise ValueError("Validation negative prompt encoding requires image context for this model.")
         if positive_prompt is not None:
             metadata["positive_prompt"] = positive_prompt
+        if not metadata:
+            raise ValueError("Validation negative prompt encoding requires prompt or image context for this model.")
         return {
             "prompt": negative_prompt,
             "key": _validation_negative_text_cache_key(args, shortname, negative_prompt),
@@ -851,6 +851,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         [PromptLibraryEntry(prompt="")] if not StateTracker.get_args().validation_disable_unconditional else []
     )
     validation_shortnames = ["unconditional"] if not StateTracker.get_args().validation_disable_unconditional else []
+    validation_prompt_inputs: dict[str, Any] = {}
     if model_uses_text_cache and not hasattr(embed_cache, "model_type"):
         raise ValueError(
             f"The default text embed cache backend was not found. You must specify 'default: true' on your text embed data backend via {StateTracker.get_args().data_backend_config}."
@@ -941,6 +942,8 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                         embed_cache.compute_embeddings_for_prompts([prompt_record], load_from_cache=False)
                 sample_prompts.append(PromptLibraryEntry(prompt=validation_prompt))
                 sample_shortnames.append(shortname)
+                if reference_images:
+                    validation_prompt_inputs[shortname] = reference_images
             if sample_prompts:
                 validation_prompts.extend(sample_prompts)
                 validation_shortnames.extend(sample_shortnames)
@@ -1036,18 +1039,37 @@ def prepare_validation_prompt_list(args, embed_cache, model):
     # Compute negative embed for validation prompts, if any are set, so that it's stored before we unload the text encoder.
     if validation_prompts and precompute_text_embeddings:
         negative_prompt = StateTracker.get_args().validation_negative_prompt
+        needs_context = model.validation_negative_prompt_requires_prompt_context()
         if (
             negative_prompt is not None
             and str(negative_prompt).strip().lower() != "none"
-            and negative_prompt != ""
+            and (negative_prompt != "" or needs_context)
             and model.uses_validation_negative_prompt()
         ):
             if getattr(args, "model_family", None) == "ideogram":
                 logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
                 model.log_model_devices()
                 embed_cache.encode_validation_negative_prompt(negative_prompt)
-            elif model.validation_negative_prompt_requires_prompt_context():
-                logger.info("Deferring validation negative prompt encoding; this model needs per-sample prompt context.")
+            elif needs_context:
+                logger.info("Precomputing context-dependent negative prompt embeds for validations.")
+                model.log_model_devices()
+                for entry, shortname in zip(validation_prompts, validation_shortnames):
+                    if shortname == "unconditional":
+                        continue
+                    negative_prompt_record = _validation_negative_prompt_record(
+                        args,
+                        model,
+                        negative_prompt,
+                        shortname,
+                        validation_prompt_inputs.get(shortname),
+                        positive_prompt=entry.prompt,
+                    )
+                    embed_cache.compute_embeddings_for_prompts(
+                        [negative_prompt_record],
+                        is_validation=True,
+                        load_from_cache=False,
+                        is_negative_prompt=True,
+                    )
             elif model.should_precompute_validation_negative_prompt():
                 logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
                 model.log_model_devices()
