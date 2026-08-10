@@ -343,7 +343,7 @@ def compute_latents(filepaths, data_backend_id: str, model):
     return latents
 
 
-def compute_single_embedding(prompt_entry, text_embed_cache):
+def compute_single_embedding(prompt_entry, text_embed_cache, model=None):
     """Worker function to compute embedding for a single caption."""
     if not isinstance(prompt_entry, dict):
         prompt_entry = {"prompt": prompt_entry, "key": prompt_entry, "metadata": {}}
@@ -352,7 +352,8 @@ def compute_single_embedding(prompt_entry, text_embed_cache):
         # Grab the default text embed backend for null caption.
         text_embed_cache = StateTracker.get_default_text_embed_cache()
         # Use sentinel key for filename-based caches to match encode_dropout_caption()
-        use_dropout_sentinel = getattr(text_embed_cache.model, "use_text_cache_dropout_sentinel", lambda: True)()
+        cache_model = model if model is not None else getattr(text_embed_cache, "model", None)
+        use_dropout_sentinel = getattr(cache_model, "use_text_cache_dropout_sentinel", lambda: True)()
         if text_embed_cache._requires_path_based_keys and use_dropout_sentinel:
             prompt_entry["key"] = "__caption_dropout__"
         debug_log(
@@ -392,7 +393,7 @@ def compute_prompt_embeddings(prompt_entries, text_embed_cache, model):
         default_cache, "text_cache_ondemand", False
     )
     if getattr(text_embed_cache, "text_cache_ondemand", False) or empty_prompt_uses_ondemand:
-        text_encoder_output = [compute_single_embedding(entry, text_embed_cache) for entry in normalized_entries]
+        text_encoder_output = [compute_single_embedding(entry, text_embed_cache, model) for entry in normalized_entries]
     else:
         with ThreadPoolExecutor() as executor:
             text_encoder_output = list(
@@ -400,6 +401,7 @@ def compute_prompt_embeddings(prompt_entries, text_embed_cache, model):
                     compute_single_embedding,
                     normalized_entries,
                     [text_embed_cache] * len(normalized_entries),
+                    [model] * len(normalized_entries),
                 )
             )
     prompt_embeds, pooled_prompt_embeds, attn_masks, time_ids = [], [], [], []
