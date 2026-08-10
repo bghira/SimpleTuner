@@ -48,6 +48,7 @@ class HiDream(ImageModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    COMFYUI_LORA_PRESERVE_COMPONENT_PREFIXES = {"transformer"}
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 16
     MAXIMUM_CANVAS_SIZE = 1024**2  # H*W cannot exceed this value.

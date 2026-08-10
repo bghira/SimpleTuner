@@ -48,6 +48,7 @@ class PixartSigma(ImageModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.EPSILON
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    COMFYUI_LORA_PRESERVE_COMPONENT_PREFIXES = {"transformer"}
     ATTENTION_KWARG_NAME = "cross_attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 4
