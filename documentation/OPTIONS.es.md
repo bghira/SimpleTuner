@@ -1212,6 +1212,11 @@ Consulta la guía [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscripti
 - **Qué**: Controla el factor de suavizado usado al aplicar actualizaciones EMA.
 - **Por qué**: Valores más altos (p. ej., `0.999`) hacen que la EMA responda lentamente pero produce pesos muy estables. Valores más bajos (p. ej., `0.99`) se adaptan más rápido a nuevas señales de entrenamiento.
 
+### `--ema_warmup_steps`
+
+- **Qué**: Copia los pesos actuales en la EMA antes del paso de optimizador configurado y luego cambia directamente a `--ema_decay`.
+- **Por qué**: Coincide con recetas de entrenamiento que retrasan el suavizado EMA sin dejar la EMA congelada en la inicialización. El valor predeterminado `0` conserva la rampa EMA existente de SimpleTuner.
+
 ### `--snr_gamma`
 
 - **Qué**: Utiliza un factor de pérdida ponderado por min-SNR.

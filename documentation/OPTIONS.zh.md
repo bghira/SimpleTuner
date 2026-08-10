@@ -1215,6 +1215,11 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 - **内容**：控制 EMA 更新时的平滑系数。
 - **原因**：较高值（例如 `0.999`）响应更慢但更稳定；较低值（例如 `0.99`）更快适应新信号。
 
+### `--ema_warmup_steps`
+
+- **内容**：在配置的 optimizer step 之前把当前权重复制到 EMA，然后直接切换到 `--ema_decay`。
+- **原因**：匹配那些推迟 EMA smoothing、但不希望 EMA 停留在初始化权重上的训练配方。默认值 `0` 保留 SimpleTuner 现有的 EMA ramp。
+
 ### `--snr_gamma`
 
 - **内容**：使用 min-SNR 加权损失因子。
