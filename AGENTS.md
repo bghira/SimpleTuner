@@ -44,6 +44,7 @@ Forbidden public text includes:
 - Temp/cache paths that include local identity
 - Raw terminal output containing local identity
 - Pod/workspace paths unless they are intentionally public infrastructure paths
+- Co-author, reviewer, or attribution trailers that expose local identity
 
 Use repo-relative paths and generic commands instead:
 - Good: `.venv/bin/python -m unittest -v -f tests.test_model_card`
