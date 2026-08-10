@@ -185,5 +185,72 @@ class TestWebshartDataBackend(unittest.TestCase):
         backend.data_backend.read.assert_not_called()
 
 
+class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
+    def _build_backend(self, entries):
+        backend = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
+        backend.id = "test-backend"
+        backend.dataset_type = DatasetType.IMAGE
+        backend.max_num_samples = None
+        backend.metadata_update_interval = 3600
+        backend.aspect_ratio_bucket_indices = {}
+        backend.caption_cache = {}
+        backend.bucket_report = None
+        backend.data_backend = Mock(parallel_downloads=1)
+        backend.data_backend.get_shard_metadata = Mock(return_value={})
+        backend.reload_cache = Mock()
+        backend.load_image_metadata = Mock()
+        backend.save_cache = Mock()
+        backend.save_image_metadata = Mock()
+        backend._save_caption_cache = Mock()
+        backend._sync_image_files_with_buckets = Mock()
+        backend.set_metadata_by_filepath = Mock()
+        backend._all_shard_indices = Mock(return_value=[0])
+        backend._entries_for_shard = Mock(return_value=entries)
+        backend._sample_id_from_entry = Mock(side_effect=lambda shard_idx, entry: f"webshart://0/0/{entry['path']}")
+        backend._prepare_bucket_entry = Mock(
+            side_effect=lambda shard_metadata, entry, sample_path: (
+                {"captions": entry.get("captions")},
+                ("1.0", {"captions": entry.get("captions")}),
+                None,
+            )
+        )
+        return backend
+
+    def _entries(self):
+        return [
+            {"path": "captioned.webp", "captions": ["a caption"]},
+            {"path": "uncaptioned.webp", "captions": None},
+        ]
+
+    def test_webshart_caption_strategy_skips_caption_less_samples(self):
+        backend = self._build_backend(self._entries())
+        with patch(
+            "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_data_backend_config",
+            return_value={"caption_strategy": "webshart"},
+        ):
+            backend.compute_aspect_ratio_bucket_indices()
+
+        self.assertEqual(
+            backend.aspect_ratio_bucket_indices,
+            {"1.0": ["webshart://0/0/captioned.webp"]},
+        )
+        self.assertEqual(backend.filtering_statistics["skipped"]["caption_missing"], 1)
+        self.assertEqual(backend.filtering_statistics["total_processed"], 1)
+
+    def test_other_caption_strategies_keep_caption_less_samples(self):
+        backend = self._build_backend(self._entries())
+        with patch(
+            "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_data_backend_config",
+            return_value={"caption_strategy": "filename"},
+        ):
+            backend.compute_aspect_ratio_bucket_indices()
+
+        self.assertEqual(
+            backend.aspect_ratio_bucket_indices["1.0"],
+            ["webshart://0/0/captioned.webp", "webshart://0/0/uncaptioned.webp"],
+        )
+        self.assertEqual(backend.filtering_statistics["skipped"]["caption_missing"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
