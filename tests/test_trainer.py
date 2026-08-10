@@ -825,7 +825,7 @@ class TestTrainer(unittest.TestCase):
         trainer._run_intermediary_validation = MagicMock(return_value=True)
 
         with patch("simpletuner.helpers.training.trainer.logger.info") as log_info:
-            result = trainer._run_startup_validation()
+            result = trainer.run_startup_validation()
 
         self.assertTrue(result)
         log_info.assert_called_once_with("Running startup validation at restored global step %d.", 500)
@@ -837,10 +837,23 @@ class TestTrainer(unittest.TestCase):
         trainer.state = {"global_step": 500}
         trainer._run_intermediary_validation = MagicMock()
 
-        result = trainer._run_startup_validation()
+        result = trainer.run_startup_validation()
 
         self.assertFalse(result)
         trainer._run_intermediary_validation.assert_not_called()
+
+    def test_run_startup_validation_uses_lazy_global_step_fallback(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(validation_on_startup=True)
+        trainer.validation = MagicMock()
+        trainer.state = {"global_step": None}
+        trainer._run_intermediary_validation = MagicMock(return_value=True)
+
+        with patch("simpletuner.helpers.training.trainer.StateTracker.get_global_step", return_value=None):
+            result = trainer.run_startup_validation()
+
+        self.assertTrue(result)
+        trainer._run_intermediary_validation.assert_called_once_with(0, manual_validation_requested=True)
 
     @patch("simpletuner.helpers.training.trainer.load_config")
     @patch("simpletuner.helpers.training.trainer.safety_check")
@@ -1285,9 +1298,7 @@ class TestTrainer(unittest.TestCase):
         logs = {}
         trainer._update_grad_metrics(logs, clone_norm_value=True)
         self.assertIn("grad_absmax", logs)
-        self.assertEqual(
-            logs["grad_absmax"], float(trainer.grad_norm.clone().detach())
-        )
+        self.assertEqual(logs["grad_absmax"], float(trainer.grad_norm.clone().detach()))
 
     def test_update_grad_metrics_clones_norm_value_when_requested(self):
         trainer = self._build_trainer_for_grad_logging(
@@ -1349,9 +1360,7 @@ class TestTrainer(unittest.TestCase):
         )
         metrics = trainer._compose_training_progress_metrics(epoch=1)
         self.assertIn("grad_absmax", metrics)
-        self.assertEqual(
-            metrics["grad_absmax"], float(trainer.grad_norm.clone().detach())
-        )
+        self.assertEqual(metrics["grad_absmax"], float(trainer.grad_norm.clone().detach()))
         self.assertNotIn("grad_norm", metrics)
 
     def test_compose_training_progress_metrics_excludes_grad_with_deepspeed(self):

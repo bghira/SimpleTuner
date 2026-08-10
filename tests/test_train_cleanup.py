@@ -92,7 +92,7 @@ class _FakeTrainer:
     def init_trackers(self, *_, **__):
         return None
 
-    def _run_startup_validation(self, *_, **__):
+    def run_startup_validation(self, *_, **__):
         self.startup_validation_called = True
 
     def train(self, *_, **__):
