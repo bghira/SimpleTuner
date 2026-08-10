@@ -4989,7 +4989,7 @@ class Validation:
                         sample_rate=sample_rate,
                     )
         elif isinstance(self.model, VideoModelFoundation):
-            validation_images_utils.log_images_to_trackers(
+            validation_video.log_videos_to_trackers(
                 self.accelerator,
                 validation_images,
                 self.validation_resolutions,
