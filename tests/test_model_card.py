@@ -9,9 +9,11 @@ from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.publishing.metadata import *
 from simpletuner.helpers.publishing.metadata import (
     _guidance_rescale,
+    _license_metadata,
     _model_imports,
     _model_load,
     _negative_prompt,
+    _pipeline_tag,
     _skip_layers,
     _torch_device,
     _validation_resolution,
@@ -115,6 +117,10 @@ class TestMetadataFunctions(unittest.TestCase):
             self.assertIn("pipeline.load_lora_weights", output)
             self.assertIn("adapter_id = 'testuser/repo-id'", output)
 
+            output = _model_load(self.args, repo_id="testuser/repo-id", model=self.mock_model)
+            self.assertIn("adapter_id = 'testuser/repo-id'", output)
+            self.assertNotIn("testuser/testuser/repo-id", output)
+
         with patch(
             "simpletuner.helpers.publishing.metadata.StateTracker.get_model",
             return_value=None,
@@ -204,6 +210,22 @@ class TestMetadataFunctions(unittest.TestCase):
         output = model_card_note(self.args)
         self.assertEqual(output.strip(), "")
 
+    def test_minimax_h3_model_card_metadata(self):
+        self.args.model_family = "minimaxh3"
+        model = SimpleNamespace(
+            MODEL_LICENSE="other",
+            MODEL_LICENSE_NAME="minimax-h3-community-license-agreement",
+            MODEL_LICENSE_LINK="https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE",
+        )
+
+        self.assertEqual("text-to-video", _pipeline_tag(self.args))
+        self.assertEqual(
+            "license: other\n"
+            'license_name: "minimax-h3-community-license-agreement"\n'
+            'license_link: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE"',
+            _license_metadata(model),
+        )
+
     def test_hub_commit_message_omits_diffusion_schedule_fields_for_flow_matching(self):
         hub_manager = object.__new__(HubManager)
         hub_manager.collected_data_backend_str = "['alt-embed-cache', 'h3-drift0-anyflow-openvid-39f-480']"
@@ -263,14 +285,8 @@ class TestMetadataFunctions(unittest.TestCase):
 
         message = hub_manager._commit_message(global_step=20, epoch=2)
 
-        self.assertIn(
-            "Learning rate 0.0001, batch size 2, and 4 gradient accumulation steps.",
-            message,
-        )
-        self.assertIn(
-            "Trained with epsilon prediction type and rescaled_betas_zero_snr=True",
-            message,
-        )
+        self.assertIn("Learning rate 0.0001, batch size 2, and 4 gradient accumulation steps.", message)
+        self.assertIn("Trained with epsilon prediction type and rescaled_betas_zero_snr=True", message)
         self.assertIn("Using 'trailing' timestep spacing.", message)
         self.assertNotIn("Distillation method:", message)
 
