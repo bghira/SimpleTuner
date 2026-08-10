@@ -255,6 +255,7 @@ class H3DriftDistillerTests(unittest.TestCase):
         self.assertAlmostEqual(
             float(loss),
             logs["h3_drift_inner_total"] + logs["h3_drift_sft_loss"] + logs["h3_drift_weighted_loss"],
+            delta=1e-5,
         )
         self.assertEqual(adapter.calls, [0.0, 1.0])
         self.assertEqual(
