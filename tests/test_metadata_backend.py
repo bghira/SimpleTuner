@@ -640,7 +640,7 @@ class TestAutomaticOversubscriptionLogicalSequence(unittest.TestCase):
             images + images + images[:14],
         )
 
-    def test_auto_repeat_count_is_backend_wide_across_buckets(self):
+    def test_auto_repeat_count_is_scoped_to_undersized_buckets(self):
         backend = self._backend([], dp_size=2, rank=0, batch_size=4)
         backend._aspect_ratio_bucket_indices = {
             "small": ["s0", "s1", "s2"],
@@ -651,7 +651,7 @@ class TestAutomaticOversubscriptionLogicalSequence(unittest.TestCase):
         self.assertEqual(backend.repeats, 0)
         self.assertEqual(
             {bucket: len(values) for bucket, values in backend.aspect_ratio_bucket_indices.items()},
-            {"small": 8, "large": 12},
+            {"small": 8, "large": 8},
         )
         self.assertEqual(
             backend.aspect_ratio_bucket_indices["small"],
@@ -659,7 +659,7 @@ class TestAutomaticOversubscriptionLogicalSequence(unittest.TestCase):
         )
         self.assertEqual(
             backend.aspect_ratio_bucket_indices["large"],
-            ["l0", "l1", "l2", "l3", "l4", "l5", "l6", "l0", "l1", "l2", "l3", "l4"],
+            ["l0", "l1", "l2", "l3", "l4", "l5", "l6", "l0"],
         )
 
     def test_manual_repeats_are_not_materialised(self):

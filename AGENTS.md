@@ -34,6 +34,43 @@
 
 - Do not remove untracked files from the repository unless explicitly instructed to do so
 
+## Public text privacy
+
+Never publish local machine identity in public text. This includes commit messages, PR titles, PR bodies, PR comments, issue comments, release notes, model cards, Hub commit messages, generated metadata, and validation summaries.
+
+Forbidden public text includes:
+- Local absolute home-directory paths
+- Local account names or workstation usernames
+- Co-author trailers (e.g., `Co-authored-by:`) that include personal names/emails
+- Temp/cache paths that include local identity
+- Raw terminal output containing local identity
+- Pod/workspace paths unless they are intentionally public infrastructure paths
+- Co-author, reviewer, or attribution trailers that expose local identity
+
+Use repo-relative paths and generic commands instead:
+- Good: `.venv/bin/python -m unittest -v -f tests.test_model_card`
+- Good: `simpletuner/helpers/publishing/huggingface.py`
+- Bad: any absolute local path from this machine
+
+Before creating a commit, PR, PR comment, issue comment, Hub commit, model card, or any other public text, scan the exact text that will be sent. If the scan cannot be performed, stop and ask before publishing.
+
+When a privacy guard blocks content, do not print the matched secret, username, path, or offending line. Report only: `Blocked: local machine identity was found in public text.`
+
+Do not copy validation commands directly from shell history if they contain absolute paths. Rewrite them to repo-relative form first.
+
+GitHub Actions are too late for PR body/comment privacy because notifications may already be sent. Client-side scanning is required before using `gh pr create`, `gh pr edit`, `gh pr comment`, connector PR tools, or any API that publishes text.
+
+## Publishing workflow
+
+Before any push or PR creation:
+1. Inspect the staged diff.
+2. Inspect the commit message.
+3. Inspect the exact PR title/body/comment text.
+4. Confirm none contain local machine identity.
+5. Only then push or publish.
+
+Do not include absolute local paths in validation notes. Use repo-relative commands.
+
 ## Problem solving
 
 - It's always tempting to jump right into declaring an answer, but the best solutions come from carefully-developed understanding of the root cause

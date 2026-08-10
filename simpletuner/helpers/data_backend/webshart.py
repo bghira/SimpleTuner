@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import random
+import time
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -198,8 +200,37 @@ class WebshartDataBackend(BaseDataBackend):
 
     def _read_sample_bytes(self, identifier: Union[str, Path]) -> bytes:
         sample_ref = self.parse_sample_id(identifier)
-        entry = self.loader.load_sample(sample_ref.shard_idx, sample_ref.sample_idx)
-        return bytes(entry.data)
+        max_attempts = 6
+        for attempt in range(max_attempts):
+            try:
+                entry = self.loader.load_sample(sample_ref.shard_idx, sample_ref.sample_idx)
+                return bytes(entry.data)
+            except Exception as exc:
+                message = str(exc).lower()
+                retryable = any(
+                    marker in message
+                    for marker in (
+                        "rate limit",
+                        "http 429",
+                        "status code 429",
+                        "connection reset",
+                        "temporarily unavailable",
+                        "timed out",
+                        "timeout",
+                    )
+                )
+                if not retryable or attempt + 1 >= max_attempts:
+                    raise
+                delay = min(30.0, 2.0**attempt) + random.uniform(0.0, 1.0)
+                logger.warning(
+                    "Transient error reading Webshart sample %s; retrying in %.1fs (%d/%d): %s",
+                    identifier,
+                    delay,
+                    attempt + 1,
+                    max_attempts,
+                    exc,
+                )
+                time.sleep(delay)
 
     def read_sample_head_tail(
         self,
