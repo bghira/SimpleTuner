@@ -4721,7 +4721,7 @@ class Trainer:
             logger.info(f"Loading DCM checkpoint states..")
             self.distiller.on_load_checkpoint(checkpoint_dir)
         try:
-            if "constant" == self.config.lr_scheduler and not self.config.is_schedulefree:
+            if self.config.lr_scheduler in ("constant", "constant_with_warmup") and not self.config.is_schedulefree:
                 for g in self.optimizer.param_groups:
                     if "lr" in g:
                         g["lr"] = self.config.learning_rate
