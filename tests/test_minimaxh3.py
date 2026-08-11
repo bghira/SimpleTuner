@@ -1264,6 +1264,33 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertIn("delta_time_embedder.linear_1", targets)
         self.assertIsNone(wrapper.get_lora_save_layers())
 
+    def test_anyflow_lora_targets_can_freeze_time_embedders(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(
+            distillation_method="anyflow",
+            distillation_config={
+                "anyflow": {
+                    "train_time_embedder": False,
+                    "train_delta_embedder": False,
+                }
+            },
+            lora_type="standard",
+            peft_lora_target_modules=None,
+            slider_lora_target=False,
+            controlnet=False,
+        )
+        wrapper.model = tiny_h3_transformer()
+        wrapper.model.enable_flowmap_time_conditioning()
+        wrapper.accelerator = SimpleNamespace(unwrap_model=lambda model, keep_fp32_wrapper=True: model)
+
+        targets = wrapper.get_lora_target_layers()
+
+        self.assertIn("ff.net.0.proj", targets)
+        self.assertIn("ff.net.2", targets)
+        self.assertNotIn("time_embedder.linear_1", targets)
+        self.assertNotIn("delta_time_embedder.linear_1", targets)
+        self.assertIsNone(wrapper.get_lora_save_layers())
+
     def test_anyflow_curve_checkpoint_saves_delta_table_with_adapter(self):
         from peft import LoraConfig
         from peft.utils import get_peft_model_state_dict
