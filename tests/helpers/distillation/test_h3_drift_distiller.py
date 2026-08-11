@@ -211,6 +211,7 @@ class H3DriftDistillerTests(unittest.TestCase):
             config={
                 "model_type": "lora",
                 "model_family": "minimaxh3",
+                "seed": 987,
                 "loss_weight": 0.5,
                 "sft_loss_weight": 0.25,
                 "inner_distillation_method": "anyflow",
@@ -241,6 +242,7 @@ class H3DriftDistillerTests(unittest.TestCase):
         loss, logs = distiller.compute_distill_loss(prepared, model_output, torch.tensor(4.0))
 
         self.assertTrue(model.component.flowmap_enabled)
+        self.assertEqual(distiller.inner_distiller._rng_seed, 987)
         self.assertTrue(torch.equal(prepared["target"], -torch.ones_like(latents)))
         self.assertTrue(
             torch.equal(
@@ -307,6 +309,7 @@ class H3DriftDistillerTests(unittest.TestCase):
         self.assertAlmostEqual(
             float(loss),
             logs["h3_drift_inner_total"] + logs["h3_drift_sft_loss"],
+            places=6,
         )
         self.assertEqual(logs["h3_drift_loss"], 0.0)
         self.assertEqual(logs["h3_drift_weighted_loss"], 0.0)

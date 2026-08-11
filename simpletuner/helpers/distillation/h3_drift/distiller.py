@@ -144,6 +144,8 @@ class H3DriftDistiller(DistillationBase):
             config={
                 "distillation_config": {method: inner_config},
                 "train_text_encoder": bool(self.config.get("train_text_encoder", False)),
+                "seed": self.config.get("seed"),
+                "seed_for_each_device": self.config.get("seed_for_each_device", False),
             },
             model_type=str(self.config.get("model_type") or "lora"),
             model_family=self.config.get("model_family"),

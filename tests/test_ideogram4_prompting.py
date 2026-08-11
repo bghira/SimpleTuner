@@ -515,6 +515,9 @@ class Ideogram4PromptingTests(unittest.TestCase):
             def uses_validation_negative_prompt(self):
                 return True
 
+            def validation_negative_prompt_requires_prompt_context(self):
+                return False
+
             def should_precompute_validation_negative_prompt(self):
                 return True
 
@@ -557,6 +560,9 @@ class Ideogram4PromptingTests(unittest.TestCase):
 
             def uses_validation_negative_prompt(self):
                 return True
+
+            def validation_negative_prompt_requires_prompt_context(self):
+                return False
 
             def should_precompute_validation_negative_prompt(self):
                 return True
@@ -605,6 +611,9 @@ class Ideogram4PromptingTests(unittest.TestCase):
 
             def uses_validation_negative_prompt(self):
                 return True
+
+            def validation_negative_prompt_requires_prompt_context(self):
+                return False
 
             def should_precompute_validation_negative_prompt(self):
                 return True

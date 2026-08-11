@@ -88,6 +88,10 @@ adapter と optimizer は、各 SimpleTuner checkpoint の横に `anyflow_discri
 MiniMax-H3 はすでに CFG distillation を含むため、on-policy run では通常 `real_score_guidance_scale=0` のままにします。
 外部 real-score CFG pass が必要なモデルでは negative text embeddings を cache し、scale を明示的に設定できます。
 
+`--seed` が設定されている場合、AnyFlow は MeanFlow interval、rollout schedule、rollout latent、DMD noise、DMD
+sigma を device ごとに隔離された Torch generator から sample します。これにより、無関係な training code が global
+Torch RNG を消費しても AnyFlow sample は安定します。CUDA attention backward を bit-stable にするものではありません。
+
 ## 共通設定
 
 - `stage`: `forward` または `onpolicy`。デフォルト: `forward`。
