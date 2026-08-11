@@ -613,7 +613,10 @@ class SaveHookManager:
         return metadata
 
     def _build_modelspec_metadata(self, checkpoint_dir: str | None = None) -> dict[str, str]:
-        metadata = {"modelspec.sai_model_spec": MODEL_SPEC_VERSION}
+        metadata = {
+            "modelspec.sai_model_spec": MODEL_SPEC_VERSION,
+            "global_step": str(int(StateTracker.get_global_step() or 0)),
+        }
 
         architecture = self._derive_modelspec_architecture()
         if architecture:

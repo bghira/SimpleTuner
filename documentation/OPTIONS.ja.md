@@ -1716,6 +1716,20 @@ LayerSync は同一 Transformer 内の「学生」レイヤーを、より強い
 
 > ℹ️ PixArt、SD3、Hunyuan などの Transformer モデルは `transformer` と `transformer_ema` のサブフォルダ名を使用します。
 
+### `--init_lora_step`
+
+- **内容**: `--init_lora` で読み込んだモデル重みのみの adapter から、global step の計数を継続します。
+- **使用時**: 完全な trainer checkpoint は利用できないが、LoRA 重みが残っている場合にのみ使用します。
+- **自動推論**: このオプションを省略すると、ローカルの `--init_lora` safetensors file に `global_step` metadata がある場合、SimpleTuner はその値を使用します。`0` を含む明示的な値は metadata を上書きします。
+- **要件**: 0 以上かつ `--max_train_steps` 未満である必要があります。`--init_lora` が必須で、`--resume_from_checkpoint` とは併用できません。
+- **状態**: checkpoint と validation の間隔はこの step から継続しますが、optimizer、sampler、RNG state は新規に開始します。`constant` と `constant_with_warmup` の learning-rate schedule は対応する step に復元されます。
+
+### `--init_lora_ema`
+
+- **内容**: `--init_lora` に対応する SimpleTuner の raw `ema_model.pt` state を読み込みます。
+- **要件**: `--init_lora` と `--use_ema=true` の両方が必要です。
+- **注記**: exported EMA LoRA safetensors file ではなく、checkpoint と共に保存された raw EMA state を指定します。
+
 ### `--delete_invalid_checkpoints`
 
 - **内容**: 再開時に読み込めないローカルチェックポイントを削除します。
@@ -1842,7 +1856,9 @@ usage: train.py [-h] --model_family
                 [--peft_lora_mode {standard,singlora}]
                 [--peft_lora_target_modules PEFT_LORA_TARGET_MODULES]
                 [--singlora_ramp_up_steps SINGLORA_RAMP_UP_STEPS]
-                [--init_lora INIT_LORA] [--lycoris_config LYCORIS_CONFIG]
+                [--init_lora INIT_LORA] [--init_lora_step INIT_LORA_STEP]
+                [--init_lora_ema INIT_LORA_EMA]
+                [--lycoris_config LYCORIS_CONFIG]
                 [--init_lokr_norm INIT_LOKR_NORM]
                 [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano,controlnet,all+ffs+embedder,all+ffs+embedder+controlnet}]
                 [--use_dora [USE_DORA]]
@@ -2228,6 +2244,11 @@ options:
   --init_lora INIT_LORA
                         Specify an existing LoRA or LyCORIS safetensors file
                         to initialize the adapter
+  --init_lora_step INIT_LORA_STEP
+                        Continue global-step accounting from a model-only LoRA
+                        checkpoint without optimizer state
+  --init_lora_ema INIT_LORA_EMA
+                        Load a raw SimpleTuner EMA state alongside init_lora
   --lycoris_config LYCORIS_CONFIG
                         Path to LyCORIS configuration JSON file
   --init_lokr_norm INIT_LOKR_NORM

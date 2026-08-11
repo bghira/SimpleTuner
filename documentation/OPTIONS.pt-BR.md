@@ -1711,6 +1711,20 @@ Mapeamento de opcoes upstream (LayerSync → SimpleTuner):
 
 > ℹ️ Modelos transformer como PixArt, SD3 ou Hunyuan usam os subdiretorios `transformer` e `transformer_ema`.
 
+### `--init_lora_step`
+
+- **O que**: Continua a contagem do passo global a partir do adapter somente de modelo carregado por `--init_lora`.
+- **Quando**: Use somente quando o checkpoint completo do trainer nao estiver disponivel, mas os pesos LoRA tiverem sobrevivido.
+- **Inferencia automatica**: Quando esta opcao e omitida, o SimpleTuner usa o metadata `global_step` de um arquivo safetensors local fornecido por `--init_lora`, quando presente. Um valor explicito, incluindo `0`, substitui o metadata.
+- **Requisitos**: Deve ser nao negativo e menor que `--max_train_steps`; exige `--init_lora` e nao pode ser combinado com `--resume_from_checkpoint`.
+- **Estado**: A cadencia de checkpoints e validacao continua a partir desse passo, mas os estados do optimizer, sampler e RNG recomecam. Os schedules de learning rate `constant` e `constant_with_warmup` sao restaurados para o passo correspondente.
+
+### `--init_lora_ema`
+
+- **O que**: Carrega o estado raw `ema_model.pt` do SimpleTuner associado a `--init_lora`.
+- **Requisitos**: Exige `--init_lora` e `--use_ema=true`.
+- **Nota**: Espera o estado EMA raw salvo com o checkpoint, nao um arquivo safetensors LoRA EMA exportado.
+
 ### `--delete_invalid_checkpoints`
 
 - **O que**: Remove checkpoints locais que nao podem ser carregados ao retomar.
@@ -1837,7 +1851,9 @@ usage: train.py [-h] --model_family
                 [--peft_lora_mode {standard,singlora}]
                 [--peft_lora_target_modules PEFT_LORA_TARGET_MODULES]
                 [--singlora_ramp_up_steps SINGLORA_RAMP_UP_STEPS]
-                [--init_lora INIT_LORA] [--lycoris_config LYCORIS_CONFIG]
+                [--init_lora INIT_LORA] [--init_lora_step INIT_LORA_STEP]
+                [--init_lora_ema INIT_LORA_EMA]
+                [--lycoris_config LYCORIS_CONFIG]
                 [--init_lokr_norm INIT_LOKR_NORM]
                 [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano,controlnet,all+ffs+embedder,all+ffs+embedder+controlnet}]
                 [--use_dora [USE_DORA]]
@@ -2223,6 +2239,11 @@ options:
   --init_lora INIT_LORA
                         Specify an existing LoRA or LyCORIS safetensors file
                         to initialize the adapter
+  --init_lora_step INIT_LORA_STEP
+                        Continue global-step accounting from a model-only LoRA
+                        checkpoint without optimizer state
+  --init_lora_ema INIT_LORA_EMA
+                        Load a raw SimpleTuner EMA state alongside init_lora
   --lycoris_config LYCORIS_CONFIG
                         Path to LyCORIS configuration JSON file
   --init_lokr_norm INIT_LOKR_NORM

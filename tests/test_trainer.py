@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, call, patch
 
 import torch
+from safetensors.torch import save_file
 
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.publishing.providers.s3 import S3PublishingProvider
@@ -2264,6 +2265,140 @@ class TestTrainer(unittest.TestCase):
                 trainer.init_resume_checkpoint(lr_scheduler=lr_scheduler)
                 mock_logger.info.assert_called()
                 trainer.accelerator.load_state.assert_called_with("/path/to/output/checkpoint-200")
+
+    def test_initial_lora_step_rejects_full_checkpoint_resume(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            init_lora="adapter.safetensors",
+            init_lora_step=1500,
+            resume_from_checkpoint="latest",
+            max_train_steps=25000,
+        )
+
+        with self.assertRaisesRegex(ValueError, "cannot be combined"):
+            trainer._initial_lora_step()
+
+    def test_initial_lora_step_uses_safetensors_metadata_when_unspecified(self):
+        with tempfile.NamedTemporaryFile(suffix=".safetensors") as lora_file:
+            save_file({"weight": torch.ones(1)}, lora_file.name, metadata={"global_step": "1500"})
+            trainer = object.__new__(Trainer)
+            trainer.config = SimpleNamespace(
+                init_lora=lora_file.name,
+                init_lora_step=None,
+                resume_from_checkpoint=None,
+                max_train_steps=25000,
+            )
+
+            self.assertEqual(trainer._initial_lora_step(), 1500)
+            self.assertEqual(trainer.config.init_lora_step, 1500)
+
+    def test_initial_lora_step_explicit_zero_overrides_safetensors_metadata(self):
+        with tempfile.NamedTemporaryFile(suffix=".safetensors") as lora_file:
+            save_file({"weight": torch.ones(1)}, lora_file.name, metadata={"global_step": "1500"})
+            trainer = object.__new__(Trainer)
+            trainer.config = SimpleNamespace(
+                init_lora=lora_file.name,
+                init_lora_step=0,
+                resume_from_checkpoint=None,
+                max_train_steps=25000,
+            )
+
+            self.assertEqual(trainer._initial_lora_step(), 0)
+
+    def test_initial_lora_step_rejects_invalid_safetensors_metadata(self):
+        with tempfile.NamedTemporaryFile(suffix=".safetensors") as lora_file:
+            save_file({"weight": torch.ones(1)}, lora_file.name, metadata={"global_step": "not-a-step"})
+            trainer = object.__new__(Trainer)
+            trainer.config = SimpleNamespace(
+                init_lora=lora_file.name,
+                init_lora_step=None,
+                resume_from_checkpoint=None,
+                max_train_steps=25000,
+            )
+
+            with self.assertRaisesRegex(ValueError, "non-negative integer"):
+                trainer._initial_lora_step()
+
+    def test_init_lora_step_continues_accounting_with_fresh_optimizer(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            init_lora="adapter.safetensors",
+            init_lora_step=1500,
+            resume_from_checkpoint=None,
+            max_train_steps=25000,
+            total_steps_remaining_at_start=0,
+            lr_scheduler="constant_with_warmup",
+            lr_warmup_steps=1000,
+            is_schedulefree=False,
+        )
+        trainer.state = {"global_step": 1500, "global_resume_step": 1500, "first_epoch": 1}
+        trainer.accelerator = Mock(num_processes=8)
+        trainer.optimizer = Mock(param_groups=[{"lr": 0.0, "initial_lr": 5e-5}])
+        trainer.model = Mock()
+        scheduler_state = {
+            "base_lrs": [5e-5],
+            "last_epoch": 0,
+            "_step_count": 1,
+            "_last_lr": [0.0],
+        }
+        lr_scheduler = Mock(split_batches=False)
+        lr_scheduler.state_dict.return_value = scheduler_state
+
+        with (
+            patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=1500),
+            patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"),
+        ):
+            result = trainer.init_resume_checkpoint(lr_scheduler)
+
+        self.assertIs(result, lr_scheduler)
+        self.assertEqual(trainer.state["global_step"], 1500)
+        self.assertEqual(trainer.state["global_resume_step"], 1500)
+        self.assertEqual(trainer.config.total_steps_remaining_at_start, 23500)
+        self.assertEqual(trainer.optimizer.param_groups[0]["lr"], 5e-5)
+        self.assertEqual(scheduler_state["last_epoch"], 12000)
+        self.assertEqual(scheduler_state["_step_count"], 12001)
+        trainer.model.reset_flow_custom_timestep_cursor.assert_called_once_with(1500)
+
+    def test_init_lora_step_restores_constant_scheduler_inside_warmup(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            lr_scheduler="constant_with_warmup",
+            lr_warmup_steps=1000,
+            is_schedulefree=False,
+        )
+        trainer.accelerator = Mock(num_processes=8)
+        optimizer_param_groups = [{"lr": 0.0, "initial_lr": 5e-5}]
+        scheduler_state = {
+            "base_lrs": [5e-5],
+            "last_epoch": 0,
+            "_step_count": 1,
+            "_last_lr": [0.0],
+        }
+        lr_scheduler = Mock(split_batches=False)
+        lr_scheduler.state_dict.return_value = scheduler_state
+
+        trainer._restore_constant_scheduler_lr(lr_scheduler, optimizer_param_groups, [5e-5], global_step=500)
+
+        self.assertEqual(optimizer_param_groups[0]["lr"], 2.5e-5)
+        self.assertEqual(scheduler_state["_last_lr"], [2.5e-5])
+        self.assertEqual(scheduler_state["last_epoch"], 4000)
+        self.assertEqual(scheduler_state["_step_count"], 4001)
+        lr_scheduler.load_state_dict.assert_called_once_with(scheduler_state)
+
+    def test_load_initial_lora_ema_state(self):
+        with tempfile.NamedTemporaryFile() as ema_file:
+            trainer = object.__new__(Trainer)
+            trainer.config = SimpleNamespace(
+                init_lora="adapter.safetensors",
+                init_lora_ema=ema_file.name,
+                use_ema=True,
+            )
+            trainer.accelerator = Mock(is_main_process=True)
+            trainer.ema_model = Mock()
+
+            trainer._load_initial_lora_ema_state()
+
+            trainer.ema_model.load_state_dict.assert_called_once_with(ema_file.name)
 
     @patch("simpletuner.helpers.training.trainer.PublishingManager")
     @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_load_checkpoint")
