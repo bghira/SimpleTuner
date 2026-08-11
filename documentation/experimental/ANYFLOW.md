@@ -48,8 +48,30 @@ For each global batch, the forward stage:
 7. Balances each non-diffusion sample against the global diffusion-branch loss mean.
 
 Guidance fusion requires cached unconditional text embeddings. SimpleTuner loads the caption-dropout embedding for
-each sample and uses the same image context for models such as MiniMax-H3. Set `fuse_guidance_scale=1.0` only when the
-student should retain external CFG instead of learning AnyFlow's guidance-distilled conditional field.
+each sample and uses the same image context. Set `fuse_guidance_scale=1.0` when the student should retain external CFG
+or the base model's conditional path already contains guidance distillation.
+
+### Guidance-Distilled Base Models
+
+MiniMax-H3's conditional prediction already contains its distilled guidance field and does not have a calibrated
+unconditional branch for AnyFlow to fuse. Its forward-stage configuration should therefore use:
+
+```json
+{
+  "fuse_guidance_scale": 1.0,
+  "diffusion_target": "base_prediction"
+}
+```
+
+`fuse_guidance_scale=1.0` disables the unconditional pass, but by itself it leaves the `r=t` branch targeting the raw
+sample velocity. That branch can train a guidance-distilled base away from its useful conditional field. With
+`diffusion_target=base_prediction`, SimpleTuner instead evaluates the same noisy latent at `r=t` with the adapter
+disabled and uses that frozen-base prediction only for diffusion samples. Consistency and arbitrary intervals retain
+the AnyFlow tangent target.
+
+The frozen-base/raw-flow residual supplies the adaptive-weighting reference when the anchored diffusion loss starts at
+zero. This prevents adaptive weighting from zeroing every interval loss at adapter initialization. No second
+transformer is allocated, but the frozen-base evaluation adds one no-grad forward per training step.
 
 ## On-Policy Stage
 
@@ -112,6 +134,8 @@ global Torch RNG. It does not make CUDA attention backward bit-stable.
 - `fuse_guidance_scale`: guidance scale distilled into the conditional student prediction. Default: `3.0`.
 - `meanflow_weight_type`: `beta08` or `uniform`. Default: `beta08`.
 - `meanflow_adaptive_weighting`: balance non-diffusion samples against the diffusion branch. Default: `true`.
+- `diffusion_target`: `flow` for NVIDIA's raw-flow objective or `base_prediction` for an already guidance-distilled
+  conditional field. Default: `flow`. `base_prediction` requires adapter training and `fuse_guidance_scale=1.0`.
 - `gate_value`: FlowMap delta-timestep embedding blend. Default: `0.25`.
 - `deltatime_type`: `r` or `t-r`. Default: `r`.
 - `loss_weight`: forward MeanFlow loss multiplier. Default: `1.0`.
@@ -119,6 +143,10 @@ global Torch RNG. It does not make CUDA attention backward bit-stable.
 ## Limits
 
 - AnyFlow requires a flow-matching model with model-specific FlowMap interval conditioning.
+- AnyFlow adapter training requires `lora_dropout=0`. Independent dropout masks in the two finite-difference forwards
+  are divided by the small central-difference interval and corrupt the derivative target. SimpleTuner overrides the
+  general LoRA default for distillation unless the user explicitly forces a different value, and AnyFlow rejects a
+  nonzero value during model preparation.
 - On-policy training currently requires standard PEFT LoRA. Sharing the base avoids allocating generator, real-score,
   and discriminator copies of a large transformer on every DDP rank.
 - Joint MiniMax-H3 audio-video training is rejected. Video uses schedule shift 12 while audio uses shift 3; native

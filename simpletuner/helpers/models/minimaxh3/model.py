@@ -231,13 +231,15 @@ class MiniMaxH3(VideoModelFoundation):
             return targets
 
         anyflow_config = self._anyflow_distillation_config()
+        train_time_embedder = bool(anyflow_config.get("train_time_embedder", True))
         train_delta_embedder = bool(anyflow_config.get("train_delta_embedder", True))
         targets.extend(["ff.net.0.proj", "ff.net.2"])
         if bool(anyflow_config.get("lora_target_adaln", False)):
             targets.append("adaln_proj.linear")
         transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
         if transformer is not None and getattr(transformer, "time_embedder", None) is not None:
-            targets.extend(["time_embedder.linear_1", "time_embedder.linear_2"])
+            if train_time_embedder:
+                targets.extend(["time_embedder.linear_1", "time_embedder.linear_2"])
             if train_delta_embedder:
                 targets.extend(["delta_time_embedder.linear_1", "delta_time_embedder.linear_2"])
         return list(dict.fromkeys(targets))

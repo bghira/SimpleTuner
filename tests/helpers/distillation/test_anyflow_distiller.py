@@ -416,6 +416,82 @@ class AnyFlowDistillerTests(unittest.TestCase):
         self.assertEqual(len(model.teacher_timesteps), 2)
         self.assertTrue(model.component.adapter_enabled)
 
+    def test_meanflow_can_anchor_only_diffusion_samples_to_frozen_base_prediction(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={
+                "model_type": "lora",
+                "diffusion_ratio": 0.5,
+                "consistency_ratio": 0.5,
+                "diffusion_target": "base_prediction",
+                "fuse_guidance_scale": 1.0,
+            },
+        )
+        draws = [
+            torch.tensor([0.8, 0.7]),
+            torch.tensor([0.2, 0.4]),
+        ]
+
+        with patch("torch.rand", side_effect=draws):
+            batch = distiller.prepare_batch(_prepared_batch(), model=model, state={})
+
+        expected = torch.ones_like(batch["target"])
+        expected[0] = 2.0
+        self.assertTrue(torch.equal(batch["target"], expected))
+        self.assertEqual(model.teacher_adapter_states, [False, True, True])
+        self.assertTrue(model.component.adapter_enabled)
+        self.assertTrue(model.component.training)
+        self.assertTrue(torch.equal(batch["_anyflow_base_prediction_flow_norm_ratio"], torch.full((2,), 2.0)))
+
+    def test_meanflow_diffusion_target_is_validated(self):
+        with self.assertRaisesRegex(ValueError, "diffusion_target"):
+            AnyFlowDistiller(
+                teacher_model=_FlowModel(),
+                noise_scheduler=None,
+                config={"model_type": "lora", "diffusion_target": "unknown"},
+            )
+
+        with self.assertRaisesRegex(ValueError, "requires fuse_guidance_scale=1.0"):
+            AnyFlowDistiller(
+                teacher_model=_FlowModel(),
+                noise_scheduler=None,
+                config={"model_type": "lora", "diffusion_target": "base_prediction"},
+            )
+
+    def test_frozen_base_target_uses_base_flow_residual_for_adaptive_weighting(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={
+                "model_type": "lora",
+                "diffusion_ratio": 0.5,
+                "consistency_ratio": 0.5,
+                "diffusion_target": "base_prediction",
+                "meanflow_weight_type": "uniform",
+                "fuse_guidance_scale": 1.0,
+            },
+        )
+        draws = [
+            torch.tensor([0.8, 0.7]),
+            torch.tensor([0.2, 0.4]),
+        ]
+
+        with patch("torch.rand", side_effect=draws):
+            batch = distiller.prepare_batch(_prepared_batch(), model=model, state={})
+
+        prediction = batch["target"].clone()
+        prediction[1] += 2.0
+        loss = distiller._meanflow_loss(batch, {"model_prediction": prediction})
+
+        self.assertAlmostEqual(float(batch["_anyflow_pre_adaptive_loss"][0]), 0.0)
+        self.assertAlmostEqual(float(batch["_anyflow_adaptive_reference_loss"][0]), 1.0)
+        self.assertAlmostEqual(float(batch["_anyflow_adaptive_scale"][1]), 0.25, places=5)
+        self.assertAlmostEqual(float(batch["_anyflow_post_adaptive_loss"][1]), 1.0, places=5)
+        self.assertAlmostEqual(float(loss), 0.5, places=5)
+
     def test_seeded_meanflow_pair_uses_isolated_rng_stream(self):
         torch.manual_seed(1234)
         expected_next = torch.rand(4)
