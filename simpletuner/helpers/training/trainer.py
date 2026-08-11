@@ -4719,6 +4719,44 @@ class Trainer:
             f"missing checkpoint completion guard {CHECKPOINT_GUARD_FILENAME}",
         )
 
+    def _restore_constant_scheduler_lr(
+        self,
+        lr_scheduler,
+        optimizer_param_groups: list[dict[str, Any]],
+        configured_base_lrs: list[float | None],
+        global_step: int,
+    ) -> None:
+        if self.config.lr_scheduler not in ("constant", "constant_with_warmup") or self.config.is_schedulefree:
+            return
+
+        process_multiplier = 1 if getattr(lr_scheduler, "split_batches", False) else self.accelerator.num_processes
+        scheduler_step = int(global_step) * max(1, int(process_multiplier))
+        warmup_steps = 0
+        if self.config.lr_scheduler == "constant_with_warmup":
+            warmup_steps = int(getattr(self.config, "lr_warmup_steps", 0)) * max(1, int(process_multiplier))
+        warmup_scale = min(1.0, scheduler_step / max(1, warmup_steps)) if warmup_steps > 0 else 1.0
+
+        restored_lrs = [float(base_lr) * warmup_scale if base_lr is not None else None for base_lr in configured_base_lrs]
+        scheduler_state = lr_scheduler.state_dict()
+        scheduler_state["base_lrs"] = list(configured_base_lrs)
+        scheduler_state["_last_lr"] = list(restored_lrs)
+        if "last_epoch" in scheduler_state:
+            scheduler_state["last_epoch"] = scheduler_step
+        if "_step_count" in scheduler_state:
+            scheduler_state["_step_count"] = scheduler_step + 1
+        lr_scheduler.load_state_dict(scheduler_state)
+
+        for group_index, group in enumerate(optimizer_param_groups):
+            if group_index >= len(restored_lrs) or restored_lrs[group_index] is None:
+                continue
+            group["initial_lr"] = configured_base_lrs[group_index]
+            group["lr"] = restored_lrs[group_index]
+
+        logger.info(
+            f"Restored {self.config.lr_scheduler} scheduler at global step {global_step} "
+            f"(scheduler step {scheduler_step}) with learning rates {restored_lrs}."
+        )
+
     def init_resume_checkpoint(self, lr_scheduler):
         # Potentially load in the weights and states from a previous save
         self.config.total_steps_remaining_at_start = self.config.max_train_steps
@@ -4740,7 +4778,7 @@ class Trainer:
             raw_param_groups = getattr(self.optimizer, "param_groups", None)
             if isinstance(raw_param_groups, list):
                 optimizer_param_groups = raw_param_groups
-        configured_param_group_lrs = [group.get("lr") for group in optimizer_param_groups]
+        configured_param_group_lrs = [group.get("initial_lr", group.get("lr")) for group in optimizer_param_groups]
 
         while True:
             checkpoint_dir = None
@@ -4812,29 +4850,6 @@ class Trainer:
         if getattr(self, "distiller", None) is not None:
             logger.info(f"Loading DCM checkpoint states..")
             self.distiller.on_load_checkpoint(checkpoint_dir)
-        try:
-            if self.config.lr_scheduler in ("constant", "constant_with_warmup") and not self.config.is_schedulefree:
-                for group_index, group in enumerate(optimizer_param_groups):
-                    if "lr" not in group:
-                        continue
-                    if group_index < len(configured_param_group_lrs) and configured_param_group_lrs[group_index] is not None:
-                        group["lr"] = configured_param_group_lrs[group_index]
-                for k, v in lr_scheduler.state_dict().items():
-                    if k in ("base_lrs", "_last_lr"):
-                        for group_index, configured_lr in enumerate(configured_param_group_lrs):
-                            if configured_lr is not None and group_index < len(v):
-                                v[group_index] = configured_lr
-        except Exception as e:
-            event = notification_event(
-                message="Could not update learning rate scheduler LR value.",
-                severity="warning",
-                job_id=self.job_id,
-            )
-            self._emit_event(event)
-            logger.error(
-                f"Could not update lr_scheduler {self.config.lr_scheduler} learning rate to {self.config.learning_rate} upon resume: {e}"
-            )
-
         event = lifecycle_stage_event(
             key="init_resume_checkpoint",
             label="Resume Checkpoint",
@@ -4854,6 +4869,23 @@ class Trainer:
                 )
         self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
+        try:
+            self._restore_constant_scheduler_lr(
+                lr_scheduler,
+                optimizer_param_groups,
+                configured_param_group_lrs,
+                self.state["global_resume_step"],
+            )
+        except Exception as e:
+            event = notification_event(
+                message="Could not update learning rate scheduler LR value.",
+                severity="warning",
+                job_id=self.job_id,
+            )
+            self._emit_event(event)
+            logger.error(
+                f"Could not update lr_scheduler {self.config.lr_scheduler} learning rate to {self.config.learning_rate} upon resume: {e}"
+            )
         if hasattr(self.model, "load_flow_custom_timestep_state"):
             self.model.load_flow_custom_timestep_state(
                 checkpoint_dir,
