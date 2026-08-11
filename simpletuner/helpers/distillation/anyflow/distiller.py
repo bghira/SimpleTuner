@@ -42,6 +42,7 @@ class AnyFlowDistiller(DistillationBase):
         "meanflow_weight_type": "beta08",
         "meanflow_adaptive_weighting": True,
         "meanflow_non_diffusion_max_sigma": 1.0,
+        "diffusion_target": "flow",
         "cotrain_forward": True,
         "rollout_step_counts": (2, 4, 8, 16, 50),
         "dmd_weight": 1.0,
@@ -147,12 +148,17 @@ class AnyFlowDistiller(DistillationBase):
         batch["anyflow_timestep_interval"] = (batch["timesteps"].to(r_timesteps.dtype) - r_timesteps).abs()
 
         base_target = self._base_flow_target(batch, model=model)
+        meanflow_base_target = self._meanflow_base_target(
+            prepared_batch=batch,
+            t_sigmas=t_sigmas,
+            base_target=base_target,
+        )
         target = self._meanflow_target(
             prepared_batch=batch,
             model=model,
             t_sigmas=t_sigmas,
             r_sigmas=r_sigmas,
-            base_target=base_target,
+            base_target=meanflow_base_target,
         ).detach()
         batch["target"] = target
         batch["flow_target"] = target
@@ -386,9 +392,18 @@ class AnyFlowDistiller(DistillationBase):
             raise ValueError("AnyFlow meanflow_non_diffusion_max_sigma must be in (0.0, 1.0].")
         self.config["meanflow_non_diffusion_max_sigma"] = non_diffusion_max_sigma
 
+        diffusion_target = str(self.config["diffusion_target"]).strip().lower()
+        if diffusion_target not in {"flow", "base_prediction"}:
+            raise ValueError("AnyFlow diffusion_target must be one of: flow, base_prediction.")
+        if diffusion_target == "base_prediction" and not self.low_rank_distillation:
+            raise ValueError("AnyFlow diffusion_target=base_prediction currently requires adapter distillation.")
+        self.config["diffusion_target"] = diffusion_target
+
         guidance_scale = float(self.config["fuse_guidance_scale"])
         if guidance_scale <= 0.0:
             raise ValueError("AnyFlow fuse_guidance_scale must be greater than zero.")
+        if diffusion_target == "base_prediction" and guidance_scale != 1.0:
+            raise ValueError("AnyFlow diffusion_target=base_prediction requires fuse_guidance_scale=1.0.")
         self.config["fuse_guidance_scale"] = guidance_scale
 
         weight_type = str(self.config["meanflow_weight_type"]).strip().lower()
@@ -501,6 +516,53 @@ class AnyFlowDistiller(DistillationBase):
     # ------------------------------------------------------------------
     # NVIDIA forward MeanFlow stage
     # ------------------------------------------------------------------
+    @contextmanager
+    def _frozen_base_adapter(self) -> Iterator[None]:
+        if self.config["stage"] == "onpolicy":
+            with self._adapter_role("real"):
+                yield
+            return
+
+        component = self._flowmap_component
+        was_training = component.training
+        try:
+            self.toggle_adapter(enable=False)
+            component.eval()
+            yield
+        finally:
+            self.toggle_adapter(enable=True)
+            component.train(was_training)
+
+    def _meanflow_base_target(
+        self,
+        *,
+        prepared_batch: Dict[str, Any],
+        t_sigmas: torch.Tensor,
+        base_target: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.config["diffusion_target"] == "flow":
+            return base_target
+
+        with self._frozen_base_adapter(), torch.no_grad():
+            base_prediction = self._predict_at_sigmas(
+                prepared_batch,
+                prepared_batch["noisy_latents"],
+                t_sigmas,
+                t_sigmas,
+            ).detach()
+
+        base_prediction = base_prediction.to(device=base_target.device, dtype=base_target.dtype)
+        cosine, norm_ratio = self._chunked_per_sample_geometry(base_prediction, base_target)
+        prepared_batch["_anyflow_base_prediction_flow_cosine"] = cosine
+        prepared_batch["_anyflow_base_prediction_flow_norm_ratio"] = norm_ratio
+        prepared_batch["_anyflow_base_prediction_flow_mse"] = (
+            (base_prediction.float() - base_target.float()).square().flatten(1).mean(dim=1).detach()
+        )
+
+        diffusion_mask = prepared_batch["anyflow_diffusion_mask"].to(device=base_target.device, dtype=torch.bool)
+        diffusion_mask = self._broadcast_time(diffusion_mask, base_target)
+        return torch.where(diffusion_mask, base_prediction, base_target)
+
     def _prepare_meanflow_pair(self, prepared_batch: Dict[str, Any], model) -> tuple[torch.Tensor, torch.Tensor]:
         latents = prepared_batch["latents"]
         batch_size = int(latents.shape[0])
@@ -595,7 +657,8 @@ class AnyFlowDistiller(DistillationBase):
         prediction = self._fuse_guidance_prediction(prepared_batch, prediction)
         per_sample = (prediction.float() - target.float()).square().flatten(1).mean(dim=1)
         t_sigmas = self._scalar_sigmas(prepared_batch).to(device=per_sample.device, dtype=per_sample.dtype)
-        per_sample = per_sample * self._meanflow_timestep_weight(t_sigmas)
+        timestep_weight = self._meanflow_timestep_weight(t_sigmas)
+        per_sample = per_sample * timestep_weight
         prepared_batch["_anyflow_pre_adaptive_loss"] = per_sample.detach()
         adaptive_scale = torch.ones_like(per_sample)
 
@@ -606,6 +669,21 @@ class AnyFlowDistiller(DistillationBase):
             global_diffusion_mask = self._gather_detached(diffusion_mask)
             if bool(global_diffusion_mask.any()):
                 diffusion_mean = global_loss[global_diffusion_mask].mean()
+                base_prediction_flow_mse = prepared_batch.get("_anyflow_base_prediction_flow_mse")
+                if torch.is_tensor(base_prediction_flow_mse):
+                    adaptive_reference = (
+                        base_prediction_flow_mse.to(
+                            device=per_sample.device,
+                            dtype=per_sample.dtype,
+                        )
+                        * timestep_weight
+                    )
+                    prepared_batch["_anyflow_adaptive_reference_loss"] = adaptive_reference.detach()
+                    global_adaptive_reference = self._gather_detached(adaptive_reference)
+                    diffusion_mean = torch.maximum(
+                        diffusion_mean,
+                        global_adaptive_reference[global_diffusion_mask].mean(),
+                    )
                 non_diffusion_mask = ~diffusion_mask
                 if bool(non_diffusion_mask.any()):
                     scale = diffusion_mean / (per_sample.detach()[non_diffusion_mask] + 1e-5)
@@ -865,12 +943,16 @@ class AnyFlowDistiller(DistillationBase):
             "anyflow_interval": float(global_intervals.mean()),
             "anyflow_fuse_guidance_scale": float(self.config["fuse_guidance_scale"]),
             "anyflow_meanflow_non_diffusion_max_sigma": float(self.config["meanflow_non_diffusion_max_sigma"]),
+            "anyflow_diffusion_target_is_base_prediction": float(self.config["diffusion_target"] == "base_prediction"),
         }
         metric_tensors = {
             "t_sigma": prepared_batch.get("anyflow_t_sigmas"),
             "r_sigma": prepared_batch.get("anyflow_r_sigmas"),
             "target_base_cosine": prepared_batch.get("_anyflow_target_base_cosine"),
             "target_base_norm_ratio": prepared_batch.get("_anyflow_target_base_norm_ratio"),
+            "base_prediction_flow_cosine": prepared_batch.get("_anyflow_base_prediction_flow_cosine"),
+            "base_prediction_flow_norm_ratio": prepared_batch.get("_anyflow_base_prediction_flow_norm_ratio"),
+            "adaptive_reference_loss": prepared_batch.get("_anyflow_adaptive_reference_loss"),
             "pre_adaptive_loss": prepared_batch.get("_anyflow_pre_adaptive_loss"),
             "adaptive_scale": prepared_batch.get("_anyflow_adaptive_scale"),
             "post_adaptive_loss": prepared_batch.get("_anyflow_post_adaptive_loss"),
