@@ -21,6 +21,33 @@ from simpletuner.helpers.training.error_handling import validate_deepspeed_compa
 
 
 def safety_check(args, accelerator):
+    if getattr(args, "distillation_method", None):
+        from simpletuner.helpers.distillation.factory import DistillerFactory
+
+        dropout_override = DistillerFactory.adapter_dropout_override(args.distillation_method)
+        current_dropout = getattr(args, "lora_dropout", 0.0)
+        if dropout_override is not None and current_dropout != dropout_override:
+            force_enabled = os.environ.get("SIMPLETUNER_LORA_DROPOUT_FORCE_ENABLED", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+            if force_enabled:
+                logger.warning(
+                    f"Keeping --lora_dropout={current_dropout} for {args.distillation_method} distillation because "
+                    "SIMPLETUNER_LORA_DROPOUT_FORCE_ENABLED is set; the reference implementation trains with "
+                    f"lora_dropout={dropout_override}."
+                )
+            else:
+                logger.warning(
+                    f"{args.distillation_method} distillation reference implementations train adapters with "
+                    f"lora_dropout={dropout_override}; overriding --lora_dropout={current_dropout}. Set "
+                    "SIMPLETUNER_LORA_DROPOUT_FORCE_ENABLED=1 to keep the configured value. Adapter dropout also "
+                    "injects amplified noise into finite-difference distillation targets."
+                )
+                args.lora_dropout = dropout_override
+
     if accelerator is not None and accelerator.num_processes > 1:
         # mulit-gpu safety checks & warnings
         if args.model_type == "lora" and args.lora_type == "standard":

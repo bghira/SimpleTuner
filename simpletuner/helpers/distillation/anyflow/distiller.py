@@ -60,6 +60,18 @@ class AnyFlowDistiller(DistillationBase):
 
     @classmethod
     def prepare_model_for_adapter(cls, model, config: Dict[str, Any]) -> None:
+        model_config = getattr(model, "config", None)
+        if isinstance(model_config, dict):
+            lora_dropout = model_config.get("lora_dropout", 0.0)
+        else:
+            lora_dropout = getattr(model_config, "lora_dropout", 0.0)
+        lora_dropout = float(lora_dropout or 0.0)
+        if lora_dropout != 0.0:
+            raise ValueError(
+                "AnyFlow requires lora_dropout=0.0. Independent dropout masks in the finite-difference forwards "
+                "corrupt the derivative target."
+            )
+
         component = cls._get_trained_component(model)
         enable_flowmap = getattr(component, "enable_flowmap_time_conditioning", None)
         if not callable(enable_flowmap):

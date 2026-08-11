@@ -68,6 +68,20 @@ class DistillerFactory:
         distiller_cls.prepare_model_for_adapter(model, DistillerFactory._method_config(method, config))
 
     @staticmethod
+    def adapter_dropout_override(method: Union[str, DistillationMethod, None]) -> Optional[float]:
+        """Return the LoRA dropout a configured distillation method requires, or None."""
+        if isinstance(method, str):
+            if method.strip().lower() in {"", "none", "false", "0"}:
+                return None
+            method = DistillationMethod.from_string(method)
+        if method is None:
+            return None
+        distiller_cls = DistillationRegistry.get(method.value)
+        if distiller_cls is None:
+            return None
+        return distiller_cls.adapter_dropout_override()
+
+    @staticmethod
     def training_batch_requirements(
         method: Union[str, DistillationMethod, None],
         config: Dict[str, Any],

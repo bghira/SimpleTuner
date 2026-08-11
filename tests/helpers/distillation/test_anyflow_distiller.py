@@ -239,6 +239,13 @@ class AnyFlowDistillerTests(unittest.TestCase):
         self.assertEqual(model.component.flowmap_gate_value, 0.4)
         self.assertEqual(model.component.flowmap_deltatime_type, "t-r")
 
+    def test_adapter_preparation_rejects_lora_dropout(self):
+        model = _FlowModel()
+        model.config.lora_dropout = 0.1
+
+        with self.assertRaisesRegex(ValueError, "lora_dropout=0.0"):
+            AnyFlowDistiller.prepare_model_for_adapter(model, {})
+
     def test_factory_reports_guidance_conditioning_for_method_config_shapes(self):
         direct = DistillerFactory.training_batch_requirements(
             "anyflow",
