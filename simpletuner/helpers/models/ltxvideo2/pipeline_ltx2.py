@@ -886,7 +886,7 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
     ) -> torch.Tensor:
         duration_s = num_frames / frame_rate
         latents_per_second = float(sampling_rate) / float(hop_length) / float(self.audio_vae_temporal_compression_ratio)
-        latent_length = int(duration_s * latents_per_second)
+        latent_length = round(duration_s * latents_per_second)
 
         if latents is not None:
             latents = latents.to(device=device, dtype=dtype)
@@ -915,12 +915,16 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
         return self._guidance_scale
 
     @property
+    def audio_guidance_scale(self):
+        return self._audio_guidance_scale
+
+    @property
     def guidance_rescale(self):
         return self._guidance_rescale
 
     @property
     def do_classifier_free_guidance(self):
-        return self._guidance_scale > 1.0
+        return max(float(self._guidance_scale), float(self._audio_guidance_scale)) > 1.0
 
     @property
     def num_timesteps(self):
@@ -951,6 +955,7 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
         num_inference_steps: int = 40,
         timesteps: List[int] = None,
         guidance_scale: float = 3.0,
+        audio_guidance_scale: Optional[float] = None,
         guidance_rescale: float = 0.0,
         num_videos_per_prompt: Optional[int] = 1,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
@@ -1002,6 +1007,8 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
                 of [Imagen Paper](https://huggingface.co/papers/2205.11487). Guidance scale is enabled by setting
                 `guidance_scale > 1`. Higher guidance scale encourages to generate images that are closely linked to
                 the text `prompt`, usually at the expense of lower image quality.
+            audio_guidance_scale (`float`, *optional*):
+                Separate CFG guidance scale for the audio latent stream. Defaults to `guidance_scale`.
             guidance_rescale (`float`, *optional*, defaults to 0.0):
                 Guidance rescale factor proposed by [Common Diffusion Noise Schedules and Sample Steps are
                 Flawed](https://huggingface.co/papers/2305.08891) `guidance_scale` is defined as `φ` in equation 16. of
@@ -1085,6 +1092,7 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
         )
 
         self._guidance_scale = guidance_scale
+        self._audio_guidance_scale = guidance_scale if audio_guidance_scale is None else audio_guidance_scale
         self._guidance_rescale = guidance_rescale
         self._attention_kwargs = attention_kwargs
         self._interrupt = False
@@ -1253,7 +1261,10 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
         import logging
 
         _debug_logger = logging.getLogger(__name__)
-        _debug_logger.info(f"[LTX2 DEBUG] guidance_scale={self.guidance_scale}, do_cfg={self.do_classifier_free_guidance}")
+        _debug_logger.info(
+            f"[LTX2 DEBUG] guidance_scale={self.guidance_scale}, "
+            f"audio_guidance_scale={self.audio_guidance_scale}, do_cfg={self.do_classifier_free_guidance}"
+        )
         _debug_logger.info(f"[LTX2 DEBUG] connector_prompt_embeds shape={connector_prompt_embeds.shape}")
         # Log embedding fingerprints to verify we're using the right embeddings
         _debug_logger.info(
@@ -1345,7 +1356,7 @@ class LTX2Pipeline(DiffusionPipeline, FromSingleFileMixin, LTXVideoLoraLoaderMix
                         )
 
                     noise_pred_audio_uncond, noise_pred_audio_text = noise_pred_audio.chunk(2)
-                    noise_pred_audio = noise_pred_audio_uncond + self.guidance_scale * (
+                    noise_pred_audio = noise_pred_audio_uncond + self.audio_guidance_scale * (
                         noise_pred_audio_text - noise_pred_audio_uncond
                     )
 

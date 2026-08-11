@@ -1101,6 +1101,7 @@ Flux Kontext の検証もこのコンディショニングベースの経路を�
 - **`--ltx2_validation_pipeline_mode`**: LTX-2 validation で trained model だけを実行するか（`trained-stage`）、2 段の spatial upscaler validation pipeline を実行するか（`spatial-upscale`）を選びます。
 - **`--ltx2_validation_spatial_upsampler_model`**: LTX-2 spatial latent upsampler の Hugging Face repo、ローカルディレクトリ、またはローカル `.safetensors` ファイル。既定値は `Lightricks/LTX-2.3` です。
 - **`--ltx2_validation_spatial_upsampler_filename`**: model option が repo または directory を指す場合の upsampler filename。既定値は `ltx-2.3-spatial-upscaler-x2-1.1.safetensors` です。
+- **`--ltx2_validation_audio_guidance`**: LTX-2 audio latents の validation 用に任意で指定する個別 CFG guidance scale。未指定なら `--validation_guidance` を再利用します。Comfy 形式の dual CFG で video/audio に別々の scale を使いたい場合に設定します。
 - **spatial-upscale の動作**: Stage 1 は指定 validation resolution の半分で video latents を生成し、spatial upsampler が latents を 2 倍にし、stage 2 が LTX-2 stage-2 sigma schedule で指定 resolution に re-denoise します。
 - **制限**: Spatial-upscale validation は video 用です。`--validation_audio_only` では通常の single-stage validation path を使います。
 

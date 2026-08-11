@@ -11,7 +11,7 @@ from accelerate import init_empty_weights
 from diffusers import FlowMatchEulerDiscreteScheduler
 from huggingface_hub import hf_hub_download
 from huggingface_hub.utils import EntryNotFoundError
-from transformers import Gemma3ForConditionalGeneration, GemmaTokenizerFast
+from transformers import AutoTokenizer, Gemma3ForConditionalGeneration, GemmaTokenizerFast
 
 from simpletuner.helpers.models.common import (
     ModelTypes,
@@ -35,10 +35,12 @@ from simpletuner.helpers.models.ltxvideo2.checkpoint_loader import (
     convert_ltx2_transformer,
     convert_ltx2_video_vae,
     convert_ltx2_vocoder,
+    is_ltx2_diffusion_video_vae_state_dict,
     load_ltx2_metadata_config,
     load_ltx2_state_dict_from_checkpoint,
 )
 from simpletuner.helpers.models.ltxvideo2.connectors import LTX2TextConnectors
+from simpletuner.helpers.models.ltxvideo2.na_diffusion_decoder import AutoencoderKLLTX2VideoDiffusionDecoder
 from simpletuner.helpers.models.ltxvideo2.pipeline_ltx2 import LTX2Pipeline
 from simpletuner.helpers.models.ltxvideo2.pipeline_ltx2_image2video import LTX2ImageToVideoPipeline
 from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
@@ -164,6 +166,8 @@ class LTXVideo2(VideoModelFoundation):
         "dev-fp8": "Lightricks/LTX-2",
         "2.3-dev": "dg845/LTX-2.3-Diffusers",
         "2.3-distilled": "dg845/LTX-2.3-Distilled-Diffusers",
+        "2.5-dev": "Lightricks/LTX-2.5",
+        "2.5-distilled": "Lightricks/LTX-2.5",
     }
     MODEL_LICENSE = "apache-2.0"
 
@@ -181,6 +185,7 @@ class LTXVideo2(VideoModelFoundation):
 
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
+        self._configure_ltx2_text_encoder()
         self._configure_gemma_path()
         self.audio_vae = None
         self.connectors = None
@@ -339,6 +344,29 @@ class LTXVideo2(VideoModelFoundation):
         text_encoder_config["path"] = gemma_path
         self.TEXT_ENCODER_CONFIGURATION = {"text_encoder": text_encoder_config}
 
+    def _configure_ltx2_text_encoder(self) -> None:
+        if self._resolve_ltx2_version() != "2.5":
+            self.TEXT_ENCODER_CONFIGURATION = dict(self.TEXT_ENCODER_CONFIGURATION)
+            return
+        from transformers import Gemma4ForConditionalGeneration
+
+        self.TEXT_ENCODER_CONFIGURATION = {
+            "text_encoder": {
+                "name": "Gemma4",
+                "tokenizer": AutoTokenizer,
+                "use_fast": True,
+                "model": Gemma4ForConditionalGeneration,
+            },
+        }
+
+    def _resolve_text_encoder_path(self, text_encoder_config: dict) -> str:
+        text_encoder_path = super()._resolve_text_encoder_path(text_encoder_config)
+        if self._resolve_ltx2_version() == "2.5" and text_encoder_path == "Lightricks/LTX-2":
+            flavour = getattr(self.config, "model_flavour", None) or "2.5-dev"
+            flavour_key = str(flavour).strip().lower()
+            text_encoder_path = self.HUGGINGFACE_PATHS.get(flavour_key, "Lightricks/LTX-2.5")
+        return text_encoder_path
+
     def _detect_diffusers_layout(self, model_path: Optional[str]) -> bool:
         if not model_path:
             return False
@@ -386,6 +414,8 @@ class LTXVideo2(VideoModelFoundation):
             flavour_value = str(flavour).strip().lower()
             if flavour_value in {"2.0", "2"}:
                 self.config.model_flavour = "dev"
+            elif flavour_value == "2.5":
+                self.config.model_flavour = "2.5-dev"
         super().setup_model_flavour()
 
     @classmethod
@@ -451,6 +481,8 @@ class LTXVideo2(VideoModelFoundation):
             return "2.0"
         if flavour_value in {"2.3-dev", "2.3-distilled"}:
             return "2.3"
+        if flavour_value in {"2.5", "2.5-dev", "2.5-distilled"}:
+            return "2.5"
         if flavour_value == "test":
             return "test"
         raise ValueError(f"Unsupported LTX-2 model flavour '{flavour}'.")
@@ -463,6 +495,11 @@ class LTXVideo2(VideoModelFoundation):
             return filename
         flavour = getattr(self.config, "model_flavour", None) or self.DEFAULT_MODEL_FLAVOUR
         flavour_key = str(flavour).strip().lower() if flavour is not None else ""
+        if flavour_key in {"2.5", "2.5-dev", "2.5-distilled"}:
+            raise ValueError(
+                "LTX-2.5 checkpoint filename is not known. Pass a checkpoint file directly or set "
+                "ltx2_checkpoint_filename."
+            )
         return LTX2_FLAVOUR_FILENAMES.get(flavour_key, LTX2_COMBINED_FILENAME)
 
     def _uses_combined_checkpoint(self) -> bool:
@@ -633,7 +670,7 @@ class LTXVideo2(VideoModelFoundation):
             else:
                 model_path = self._model_config_path()
                 logger.info("Loading LTX-2 vocoder from %s", model_path)
-                vocoder_cls = LTX2VocoderWithBWE if self._resolve_ltx2_version() == "2.3" else LTX2Vocoder
+                vocoder_cls = LTX2VocoderWithBWE if self._resolve_ltx2_version() in {"2.3", "2.5"} else LTX2Vocoder
                 vocoder = vocoder_cls.from_pretrained(
                     model_path,
                     subfolder="vocoder",
@@ -707,12 +744,21 @@ class LTXVideo2(VideoModelFoundation):
         if vae_path is None:
             raise ValueError("Unable to resolve video VAE path for LTX-2.")
 
-        logger.info("Loading LTX-2 video VAE from Diffusers source %s with corrected 2.3 config", vae_path)
+        version = self._resolve_ltx2_version()
+        logger.info("Loading LTX-2 video VAE from Diffusers source %s with corrected %s config", vae_path, version)
         weight_path = self._resolve_diffusers_component_weight_file(vae_path, "vae")
         state_dict = safetensors.torch.load_file(weight_path, device="cpu")
-        diffusers_config = _get_ltx2_video_vae_config("2.3")
-        with init_empty_weights():
-            vae = self.AUTOENCODER_CLASS.from_config(diffusers_config)
+        diffusers_config = _get_ltx2_video_vae_config(version)
+        if is_ltx2_diffusion_video_vae_state_dict(state_dict):
+            if version != "2.5":
+                raise ValueError("LTX-2 diffusion video VAE decoder weights require the LTX-2.5 VAE config.")
+            with init_empty_weights():
+                vae = AutoencoderKLLTX2VideoDiffusionDecoder(**diffusers_config)
+        else:
+            with init_empty_weights():
+                vae = self.AUTOENCODER_CLASS.from_config(
+                    {key: value for key, value in diffusers_config.items() if not key.startswith("diffusion_decoder_")}
+                )
         vae.load_state_dict(state_dict, strict=True, assign=True)
         vae.register_to_config(_name_or_path=vae_path)
         self.vae = vae
@@ -768,7 +814,7 @@ class LTXVideo2(VideoModelFoundation):
             self._load_video_vae_from_combined()
             self._configure_video_vae_settings(move_to_device=move_to_device)
             self.post_vae_load_setup()
-        elif self._resolve_ltx2_version() == "2.3":
+        elif self._resolve_ltx2_version() in {"2.3", "2.5"}:
             self._load_video_vae_from_diffusers_repo()
             self._configure_video_vae_settings(move_to_device=move_to_device)
             self.post_vae_load_setup()
@@ -1144,6 +1190,9 @@ class LTXVideo2(VideoModelFoundation):
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         pipeline_kwargs["num_frames"] = min(125, self.config.validation_num_video_frames or 125)
         pipeline_kwargs["frame_rate"] = self.config.framerate or 25
+        audio_guidance = getattr(self.config, "ltx2_validation_audio_guidance", None)
+        if audio_guidance is not None:
+            pipeline_kwargs["audio_guidance_scale"] = float(audio_guidance)
         video_conditioning = self._ltx2_validation_video_conditioning()
         if video_conditioning:
             pipeline_kwargs["video_conditioning"] = video_conditioning
@@ -1331,7 +1380,7 @@ class LTXVideo2(VideoModelFoundation):
         sampling_rate = getattr(self.audio_vae.config, "sample_rate", 16000)
         hop_length = getattr(self.audio_vae.config, "mel_hop_length", 160)
         latents_per_second = float(sampling_rate) / float(hop_length) / float(temporal_compression)
-        latent_length = max(1, int(duration_s * latents_per_second))
+        latent_length = max(1, round(duration_s * latents_per_second))
         shape = (video_latents.shape[0], latent_channels, latent_length, latent_mel_bins)
         return torch.zeros(shape, device=device, dtype=dtype)
 
@@ -1420,7 +1469,7 @@ class LTXVideo2(VideoModelFoundation):
         hop_length = getattr(self.audio_vae.config, "mel_hop_length", 160)
         temporal_compression = getattr(self.audio_vae, "temporal_compression_ratio", 4)
         latents_per_second = float(sampling_rate) / float(hop_length) / float(temporal_compression)
-        expected_latent_length = max(1, int(duration_s * latents_per_second))
+        expected_latent_length = max(1, round(duration_s * latents_per_second))
 
         return expected_latent_length
 

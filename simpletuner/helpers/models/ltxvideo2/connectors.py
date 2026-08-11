@@ -156,6 +156,7 @@ class LTX2TransformerBlock1d(nn.Module):
         eps: float = 1e-6,
         rope_type: str = "interleaved",
         apply_gated_attention: bool = False,
+        ff_bias: bool = True,
     ):
         super().__init__()
 
@@ -171,7 +172,7 @@ class LTX2TransformerBlock1d(nn.Module):
         )
 
         self.norm2 = torch.nn.RMSNorm(dim, eps=eps, elementwise_affine=False)
-        self.ff = FeedForward(dim, activation_fn=activation_fn)
+        self.ff = FeedForward(dim, activation_fn=activation_fn, bias=ff_bias)
 
     def forward(
         self,
@@ -205,6 +206,7 @@ class LTX2ConnectorTransformer1d(nn.Module):
         causal_temporal_positioning: bool = False,
         rope_type: str = "interleaved",
         gated_attention: bool = False,
+        connector_ff_bias: bool = True,
     ):
         super().__init__()
         self.num_attention_heads = num_attention_heads
@@ -234,6 +236,7 @@ class LTX2ConnectorTransformer1d(nn.Module):
                     attention_head_dim=attention_head_dim,
                     rope_type=rope_type,
                     apply_gated_attention=gated_attention,
+                    ff_bias=connector_ff_bias,
                 )
                 for _ in range(num_layers)
             ]
@@ -319,6 +322,7 @@ class LTX2TextConnectors(ModelMixin, PeftAdapterMixin, ConfigMixin):
         video_hidden_dim: int = 4096,
         audio_hidden_dim: int = 2048,
         proj_bias: bool = False,
+        connector_ff_bias: bool = True,
     ):
         super().__init__()
         text_encoder_dim = caption_channels * text_proj_in_factor
@@ -339,6 +343,7 @@ class LTX2TextConnectors(ModelMixin, PeftAdapterMixin, ConfigMixin):
             causal_temporal_positioning=causal_temporal_positioning,
             rope_type=rope_type,
             gated_attention=video_gated_attn,
+            connector_ff_bias=connector_ff_bias,
         )
         self.audio_connector = LTX2ConnectorTransformer1d(
             num_attention_heads=audio_connector_num_attention_heads,
@@ -351,6 +356,7 @@ class LTX2TextConnectors(ModelMixin, PeftAdapterMixin, ConfigMixin):
             causal_temporal_positioning=causal_temporal_positioning,
             rope_type=rope_type,
             gated_attention=audio_gated_attn,
+            connector_ff_bias=connector_ff_bias,
         )
 
     def forward(

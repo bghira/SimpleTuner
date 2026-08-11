@@ -1103,6 +1103,7 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 - **`--ltx2_validation_pipeline_mode`**：选择 LTX-2 validation 只运行 trained model（`trained-stage`），还是运行两阶段 spatial upscaler validation pipeline（`spatial-upscale`）。
 - **`--ltx2_validation_spatial_upsampler_model`**：LTX-2 spatial latent upsampler 的 Hugging Face repo、本地目录或本地 `.safetensors` 文件。默认 `Lightricks/LTX-2.3`。
 - **`--ltx2_validation_spatial_upsampler_filename`**：当 model 选项指向 repo 或目录时使用的 upsampler 文件名。默认 `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`。
+- **`--ltx2_validation_audio_guidance`**：验证时用于 LTX-2 音频 latents 的可选独立 CFG guidance scale。未设置时复用 `--validation_guidance`；需要 Comfy 风格 dual CFG 的视频/音频独立 scale 时设置它。
 - **spatial-upscale 的行为**：Stage 1 以请求的验证分辨率一半生成 video latents，spatial upsampler 将 latents 放大 2 倍，stage 2 使用 LTX-2 stage-2 sigma schedule 在请求分辨率重新去噪。
 - **限制**：Spatial-upscale validation 只用于 video；`--validation_audio_only` 会保持常规单阶段 validation 路径。
 

@@ -1,11 +1,11 @@
 # LTX Video 2 快速入门
 
-本示例将使用 LTX-2 视频/音频 VAE 与 Gemma3 文本编码器训练 LTX Video 2 LoRA。
+本示例将使用 LTX-2 视频/音频 VAE 与所选 LTX-2 版本匹配的 Gemma 文本编码器训练 LTX Video 2 LoRA。
 
 ## 硬件要求
 
 LTX Video 2 是重量级 **19B** 模型，由以下组件组成：
-1.  **Gemma3**：文本编码器。
+1.  **Gemma3 / Gemma4**：文本编码器。LTX-2.0 与 LTX-2.3 使用 Gemma3；LTX-2.5 使用 Gemma4。
 2.  **LTX-2 Video VAE**（音频条件时还会使用 Audio VAE）。
 3.  **19B Video Transformer**：大型 DiT 主干。
 
@@ -23,7 +23,7 @@ LTX Video 2 是重量级 **19B** 模型，由以下组件组成：
 - **RamTorch（含文本编码器）**：AMD 7900XTX 上 VRAM 约 13 GB。
   - NVIDIA 3090/4090/5090+ 应有相近或更好的 VRAM 余量。
 - **不使用 offload（int8 TorchAO）**：VRAM 约 29-30 GB；建议 32 GB 显存。
-  - 系统内存峰值：先加载 bf16 Gemma3 再量化到 int8（VRAM ~32 GB）时约 46 GB。
+  - 系统内存峰值：先加载 bf16 Gemma 文本编码器再量化到 int8（VRAM ~32 GB）时约 46 GB。
   - 系统内存峰值：先加载 bf16 LTX-2 transformer 再量化到 int8（VRAM ~30 GB）时约 34 GB。
 - **不使用 offload（完整 bf16）**：无任何 offload 训练约需 48 GB VRAM。
 - **吞吐**：
@@ -98,8 +98,8 @@ cp config/config.json.example config/config.json
 LTX Video 2 的关键设置：
 
 - `model_family`: `ltxvideo2`
-- `model_flavour`: `dev`（默认）、`dev-fp4`、`dev-fp8`、`2.3-dev` 或 `2.3-distilled`。
-- `pretrained_model_name_or_path`: `Lightricks/LTX-2`、`dg845/LTX-2.3-Diffusers`、`dg845/LTX-2.3-Distilled-Diffusers` 或本地 `.safetensors` 文件。
+- `model_flavour`: `dev`（默认）、`dev-fp4`、`dev-fp8`、`2.3-dev`、`2.3-distilled`、`2.5-dev` 或 `2.5-distilled`。
+- `pretrained_model_name_or_path`: `Lightricks/LTX-2`、`dg845/LTX-2.3-Diffusers`、`dg845/LTX-2.3-Distilled-Diffusers`、`Lightricks/LTX-2.5` 或本地 `.safetensors` 文件。
 - `train_batch_size`: `1`。除非有 A100/H100，否则不要提高。
 - `validation_resolution`:
   - `512x768` 是安全的测试默认值。
@@ -108,6 +108,7 @@ LTX Video 2 的关键设置：
   - 5 秒（约 12-24fps）：使用 `61` 或 `49`。
   - 公式：`(frames - 1) % 4 == 0`。
 - `validation_guidance`: `5.0`。
+- `ltx2_validation_audio_guidance`: 验证时可选的独立音频 CFG scale。未设置时音频会复用 `validation_guidance`；LTX-2.5 AV validation 中，ComfyUI dual-CFG 节点默认 video CFG 为 `3.0`、audio CFG 为 `7.0`。
 - `ltx2_validation_pipeline_mode`: 常规验证保持 `trained-stage`。使用 `spatial-upscale` 可运行 LTX-2 两阶段 spatial upscaler 路径：半分辨率 latent 生成、spatial latent upscaling，然后以完整分辨率重新去噪。
   - `spatial-upscale` 要求 `validation_resolution` 可被 64 整除。
   - 可选覆盖：`ltx2_validation_spatial_upsampler_model` 与 `ltx2_validation_spatial_upsampler_filename`。默认值为 `Lightricks/LTX-2.3` 和 `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`。
@@ -116,6 +117,9 @@ LTX Video 2 的关键设置：
 LTX-2 2.0 变体以单个 `.safetensors` checkpoint 形式发布，包含 transformer、视频 VAE、音频 VAE 和 vocoder。
 对于 LTX-2.3，SimpleTuner 会根据 `model_flavour` 加载对应的 Diffusers 仓库
 （`2.3-dev` 或 `2.3-distilled`）。
+对于 LTX-2.5，SimpleTuner 假定 Diffusers 仓库路径为 `Lightricks/LTX-2.5`，并将文本编码器路由到 Gemma4。如果加载本地 single-file LTX-2.5 checkpoint，请保持 `model_flavour` 为 `2.5-dev` 或 `2.5-distilled`；除非用本地路径覆盖，SimpleTuner 会使用 `Lightricks/LTX-2.5` 作为组件/配置来源。
+
+LTX-2 AV validation 的 dual CFG 使用普通的 conditional 与 unconditional predictions，并对视频和音频 latent stream 应用不同 scale。它本身不会增加额外的模型 pass。STG、modality guidance 或 reference-audio identity guidance 等额外 guidance 功能启用后会各自增加额外 pass。
 
 ### 可选：VRAM 优化
 
@@ -239,7 +243,7 @@ simpletuner train
 
 ### 验证视频质量
 
-- **黑/噪声视频**：通常是 `validation_guidance` 过高（> 6.0）或过低（< 2.0）。建议保持在 `5.0`。
+- **黑/噪声视频**：通常是 CFG 过高或过低。LTX-2.0/2.3 从 `validation_guidance: 5.0` 开始；LTX-2.5 AV validation 从 video CFG `3.0` 和 `ltx2_validation_audio_guidance: 7.0` 开始。
 - **运动抖动**：检查数据集帧率是否与模型训练帧率一致（通常 25fps）。
 - **静止视频**：模型可能训练不足，或提示词未描述运动。可使用 “camera pans right”“zoom in”“running”等。
 

@@ -70,6 +70,28 @@ def register_fields(registry) -> None:
 
     registry._add_field(
         ConfigField(
+            name="ltx2_validation_audio_guidance",
+            arg_name="--ltx2_validation_audio_guidance",
+            ui_label="LTX-2 Validation Audio Guidance",
+            field_type=FieldType.NUMBER,
+            tab="validation",
+            section="validation_guidance",
+            model_specific=["ltxvideo2"],
+            default_value=None,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative"),
+                ValidationRule(ValidationRuleType.MAX, value=100.0, message="Guidance >100 may cause artifacts"),
+            ],
+            help_text="Optional separate CFG guidance scale for LTX-2 audio latents during validation. Leave unset to reuse validation_guidance.",
+            tooltip="Matches LTXV dual CFG behavior: validation_guidance controls video, this value controls audio, using the same cond/uncond pass.",
+            importance=ImportanceLevel.ADVANCED,
+            order=22,
+            documentation="OPTIONS.md#--ltx2_validation_audio_guidance",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="ltx2_intrinsic_conditioning",
             arg_name="--ltx2_intrinsic_conditioning",
             ui_label="LTX-2 Intrinsic Conditioning",
