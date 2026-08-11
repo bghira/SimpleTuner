@@ -248,6 +248,52 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="init_lora_step",
+            arg_name="--init_lora_step",
+            ui_label="Initial LoRA Training Step",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="lora_config",
+            subsection="advanced",
+            default_value=0,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0, message="Initial LoRA training step must be non-negative")
+            ],
+            dependencies=[
+                FieldDependency(field="model_type", value="lora"),
+            ],
+            help_text="Continue global-step accounting from a model-only LoRA checkpoint without optimizer state",
+            tooltip="Use only when a full trainer checkpoint is unavailable. Optimizer, sampler, and RNG state start fresh.",
+            documentation="OPTIONS.md#--init_lora_step",
+            importance=ImportanceLevel.ADVANCED,
+            order=9,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="init_lora_ema_path",
+            arg_name="--init_lora_ema_path",
+            ui_label="Initial LoRA EMA State",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="lora_config",
+            subsection="advanced",
+            placeholder="path/to/ema_model.pt",
+            dependencies=[
+                FieldDependency(field="model_type", value="lora"),
+                FieldDependency(field="use_ema", value=True),
+            ],
+            help_text="Load a raw SimpleTuner EMA state alongside init_lora",
+            tooltip="Use the ema_model.pt saved with the same model-only LoRA checkpoint.",
+            documentation="OPTIONS.md#--init_lora_ema_path",
+            importance=ImportanceLevel.ADVANCED,
+            order=10,
+        )
+    )
+
     assistant_dependencies = [
         FieldDependency(field="model_type", value="lora"),
         FieldDependency(field="model_family", operator="in", values=["flux", "z_image", "ernie"]),

@@ -2235,6 +2235,29 @@ class Trainer:
             self._hub_upload_executor.shutdown(wait=True)
             self._hub_upload_executor = None
 
+    def _initial_lora_step(self) -> int:
+        raw_step = getattr(self.config, "init_lora_step", 0)
+        if isinstance(raw_step, unittest_mock.Mock):
+            raw_step = 0
+        try:
+            initial_step = int(raw_step or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"init_lora_step must be a non-negative integer, received {raw_step!r}.") from exc
+
+        if initial_step < 0 or (isinstance(raw_step, float) and not raw_step.is_integer()):
+            raise ValueError(f"init_lora_step must be a non-negative integer, received {raw_step!r}.")
+        if initial_step == 0:
+            return 0
+        if not getattr(self.config, "init_lora", None):
+            raise ValueError("init_lora_step requires init_lora.")
+        if getattr(self.config, "resume_from_checkpoint", None):
+            raise ValueError("init_lora_step cannot be combined with resume_from_checkpoint.")
+
+        max_train_steps = getattr(self.config, "max_train_steps", None)
+        if max_train_steps not in (None, 0) and initial_step >= int(max_train_steps):
+            raise ValueError(f"init_lora_step ({initial_step}) must be smaller than max_train_steps ({max_train_steps}).")
+        return initial_step
+
     def _misc_init(self):
         """things that do not really need an order."""
         torch.set_num_threads(self.config.torch_num_threads)
@@ -2248,8 +2271,9 @@ class Trainer:
         #  takes into account the number of gradient_accumulation_steps. If we use 1 gradient_accumulation_step,
         #  then global_step and step will be the same throughout training. However, if we use
         #  2 gradient_accumulation_steps, then global_step will be twice as large as step, and so on.
-        self.state["global_step"] = 0
-        self.state["global_resume_step"] = 0
+        initial_lora_step = self._initial_lora_step()
+        self.state["global_step"] = initial_lora_step
+        self.state["global_resume_step"] = initial_lora_step
         self.state["first_epoch"] = 1
         self.state["args"] = self.config.__dict__
         self.timesteps_buffer = []
@@ -2266,6 +2290,7 @@ class Trainer:
         self.extra_lr_scheduler_kwargs = {}
         self.iteration_tracker = IterationTracker()
         StateTracker.set_global_step(self.state["global_step"])
+        StateTracker.set_global_resume_step(self.state["global_resume_step"])
         self._init_publishing_manager()
         self.config.use_deepspeed_optimizer, self.config.use_deepspeed_scheduler = prepare_model_for_deepspeed(
             self.accelerator, self.config
@@ -4098,6 +4123,25 @@ class Trainer:
         _init_lyrics_scheduler()
         return lr_scheduler
 
+    def _load_initial_lora_ema_state(self) -> None:
+        init_ema_path = getattr(self.config, "init_lora_ema_path", None)
+        if isinstance(init_ema_path, unittest_mock.Mock):
+            init_ema_path = None
+        if not init_ema_path:
+            return
+        if not getattr(self.config, "init_lora", None):
+            raise ValueError("init_lora_ema_path requires init_lora.")
+        if not getattr(self.config, "use_ema", False):
+            raise ValueError("init_lora_ema_path requires use_ema=true.")
+        if not os.path.isfile(init_ema_path):
+            raise FileNotFoundError(f"Initial LoRA EMA state does not exist: {init_ema_path}")
+        if self.ema_model is None:
+            return
+
+        self.ema_model.load_state_dict(init_ema_path)
+        if self.accelerator.is_main_process:
+            logger.info(f"Loaded initial LoRA EMA state from {init_ema_path}")
+
     def init_ema_model(self):
         # Create EMA for the model.
         self.ema_model = None
@@ -4151,8 +4195,12 @@ class Trainer:
                 warmup_steps=getattr(self.config, "ema_warmup_steps", 0),
                 foreach=not self.config.ema_foreach_disable,
             )
+            self._load_initial_lora_ema_state()
             if should_log:
                 logger.info(f"EMA model creation completed with {self.ema_model.parameter_count():,} parameters")
+
+        if not instantiate_on_rank:
+            self._load_initial_lora_ema_state()
 
         self.accelerator.wait_for_everyone()
         # same about running on all processes to ensure alignment.
@@ -4726,7 +4774,26 @@ class Trainer:
         self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
         if not self.config.resume_from_checkpoint:
-            logger.info(f"Not resuming from checkpoint.")
+            initial_lora_step = self._initial_lora_step()
+            if initial_lora_step:
+                optimizer_param_groups = getattr(getattr(self, "optimizer", None), "param_groups", [])
+                configured_param_group_lrs = [group.get("initial_lr", group.get("lr")) for group in optimizer_param_groups]
+                self._restore_constant_scheduler_lr(
+                    lr_scheduler,
+                    optimizer_param_groups,
+                    configured_param_group_lrs,
+                    initial_lora_step,
+                )
+                self.config.total_steps_remaining_at_start -= initial_lora_step
+                if hasattr(self.model, "reset_flow_custom_timestep_cursor"):
+                    self.model.reset_flow_custom_timestep_cursor(initial_lora_step)
+                logger.warning(
+                    "Continuing from init_lora at global step %s with fresh optimizer, sampler, and RNG state. "
+                    "Use resume_from_checkpoint when full trainer state is available.",
+                    initial_lora_step,
+                )
+            else:
+                logger.info("Not resuming from checkpoint.")
             return lr_scheduler
         resume_value = str(self.config.resume_from_checkpoint)
         delete_invalid_value = getattr(self.config, "delete_invalid_checkpoints", False)
