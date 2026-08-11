@@ -74,8 +74,9 @@ class AnyFlowDistiller(DistillationBase):
 
     @classmethod
     def training_batch_requirements(cls, config: Dict[str, Any]) -> set[str]:
-        guidance_scale = float(config.get("fuse_guidance_scale", cls._DEFAULTS["fuse_guidance_scale"]))
-        return {"unconditional_text_embeddings"} if guidance_scale != 1.0 else set()
+        fuse_guidance = float(config.get("fuse_guidance_scale", cls._DEFAULTS["fuse_guidance_scale"]))
+        real_guidance = float(config.get("real_score_guidance_scale", cls._DEFAULTS["real_score_guidance_scale"]))
+        return {"unconditional_text_embeddings"} if fuse_guidance != 1.0 or real_guidance != 0.0 else set()
 
     def __init__(
         self,
@@ -743,6 +744,9 @@ class AnyFlowDistiller(DistillationBase):
         negative_tags = prepared_batch.get("negative_text_token_tags")
         if torch.is_tensor(negative_tags):
             unconditional_batch["text_token_tags"] = negative_tags
+        negative_mask = prepared_batch.get("negative_encoder_attention_mask")
+        if torch.is_tensor(negative_mask):
+            unconditional_batch["encoder_attention_mask"] = negative_mask
         unconditional_x0 = self._score_x0(unconditional_batch, noisy_latents, sigmas)
         return conditional_x0 + (conditional_x0 - unconditional_x0) * guidance
 

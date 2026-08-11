@@ -259,9 +259,14 @@ class AnyFlowDistillerTests(unittest.TestCase):
             "anyflow",
             {"distillation_config": {"fuse_guidance_scale": 3.0}},
         )
+        real_guidance_only = DistillerFactory.training_batch_requirements(
+            "anyflow",
+            {"distillation_config": {"fuse_guidance_scale": 1.0, "real_score_guidance_scale": 0.5}},
+        )
 
         self.assertEqual(direct, {"unconditional_text_embeddings"})
         self.assertEqual(unwrapped, direct)
+        self.assertEqual(real_guidance_only, direct)
         self.assertEqual(nested, direct)
 
     def test_removed_legacy_target_modes_are_rejected(self):
@@ -588,6 +593,38 @@ class AnyFlowDistillerTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "cached unconditional text embeddings"):
             distiller._meanflow_loss(batch, {"model_prediction": torch.ones_like(batch["latents"])})
+
+    def test_real_score_guidance_uses_negative_tags_and_attention_mask(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "real_score_guidance_scale": 0.5},
+        )
+        batch = _prepared_batch()
+        batch["encoder_hidden_states"] = torch.ones(2, 5, 1)
+        batch["negative_encoder_hidden_states"] = torch.zeros(2, 3, 1)
+        batch["text_token_tags"] = torch.ones(2, 5, dtype=torch.long)
+        batch["negative_text_token_tags"] = torch.full((2, 3), 2, dtype=torch.long)
+        batch["encoder_attention_mask"] = torch.ones(2, 5, dtype=torch.long)
+        batch["negative_encoder_attention_mask"] = torch.tensor([[1, 1, 0], [1, 0, 0]], dtype=torch.long)
+        conditional_x0 = torch.ones_like(batch["latents"])
+        unconditional_x0 = torch.zeros_like(batch["latents"])
+
+        with patch.object(distiller, "_score_x0", return_value=unconditional_x0) as score_x0:
+            result = distiller._apply_real_score_guidance(
+                batch,
+                batch["noisy_latents"],
+                batch["timesteps"],
+                conditional_x0,
+            )
+
+        score_x0.assert_called_once()
+        unconditional_batch = score_x0.call_args.args[0]
+        self.assertIs(unconditional_batch["encoder_hidden_states"], batch["negative_encoder_hidden_states"])
+        self.assertIs(unconditional_batch["text_token_tags"], batch["negative_text_token_tags"])
+        self.assertIs(unconditional_batch["encoder_attention_mask"], batch["negative_encoder_attention_mask"])
+        self.assertTrue(torch.equal(result, torch.full_like(conditional_x0, 1.5)))
 
     def test_onpolicy_initializes_separate_discriminator_adapter_and_optimizer(self):
         model = _FlowModel()
