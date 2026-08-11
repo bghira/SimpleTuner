@@ -7,6 +7,7 @@ import random
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from types import MethodType
 from typing import Any, Iterable
 
 import numpy as np
@@ -390,7 +391,17 @@ def _first_raw_batch():
     return raw_batch
 
 
-def initialize_trainer(config: dict[str, Any]):
+def _forbid_text_encoder_load(model, *args, **kwargs):
+    del model, args, kwargs
+    raise RuntimeError("H3 objective geometry attempted to load the text encoder while --skip-text-encoder is active.")
+
+
+def _forbid_text_encoding(model, *args, **kwargs):
+    del model, args, kwargs
+    raise RuntimeError("H3 objective geometry missed the prepared text embedding cache.")
+
+
+def initialize_trainer(config: dict[str, Any], *, skip_text_encoder: bool = False):
     from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
     from simpletuner.helpers.training.trainer import Trainer
 
@@ -398,10 +409,16 @@ def initialize_trainer(config: dict[str, Any]):
     trainer.init_noise_schedule()
     trainer.init_seed()
     trainer.init_huggingface_hub()
-    trainer.init_preprocessing_models()
+    if skip_text_encoder:
+        trainer.init_vae()
+        trainer.model.load_text_encoder = MethodType(_forbid_text_encoder_load, trainer.model)
+        trainer.model.encode_text_batch = MethodType(_forbid_text_encoding, trainer.model)
+    else:
+        trainer.init_preprocessing_models()
     trainer.init_precision(preprocessing_models_only=True)
     trainer.init_data_backend()
-    trainer.init_unload_text_encoder()
+    if not skip_text_encoder:
+        trainer.init_unload_text_encoder()
     trainer.init_unload_vae()
     trainer.init_load_base_model()
     trainer.init_delete_model_caches()
@@ -606,7 +623,9 @@ def _write_plots(
 def run_diagnostic(args: argparse.Namespace) -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     config = _diagnostic_config(args.config, args.output_dir)
-    trainer = initialize_trainer(config)
+    if args.skip_text_encoder:
+        config["validation_disable"] = True
+    trainer = initialize_trainer(config, skip_text_encoder=args.skip_text_encoder)
     try:
         _seed_everything(args.seed)
         raw_batch = _first_raw_batch()
@@ -703,6 +722,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-vector-elements", type=int, default=65536)
+    parser.add_argument(
+        "--skip-text-encoder",
+        action="store_true",
+        help="Require prepared text embeddings and never load or invoke the text encoder.",
+    )
     return parser
 
 
