@@ -1722,10 +1722,11 @@ LayerSync 通过在同一 Transformer 内让“学生”层对齐更强的“教
 
 - **内容**：从 `--init_lora` 加载的纯模型 adapter 继续全局步数计数。
 - **使用时机**：仅在完整 trainer checkpoint 不可用、但 LoRA 权重仍然保留时使用。
+- **自动推断**：省略此选项时，如果本地 `--init_lora` safetensors 文件包含 `global_step` metadata，SimpleTuner 会使用该值。显式值（包括 `0`）会覆盖 metadata。
 - **要求**：必须为非负数且小于 `--max_train_steps`；需要 `--init_lora`，且不能与 `--resume_from_checkpoint` 同时使用。
 - **状态**：checkpoint 与 validation 的节奏从该步数继续，但 optimizer、sampler 和 RNG state 会重新开始。`constant` 与 `constant_with_warmup` learning-rate schedule 会恢复到对应步数。
 
-### `--init_lora_ema_path`
+### `--init_lora_ema`
 
 - **内容**：加载与 `--init_lora` 对应的 SimpleTuner 原始 `ema_model.pt` state。
 - **要求**：需要 `--init_lora` 和 `--use_ema=true`。
@@ -1858,7 +1859,7 @@ usage: train.py [-h] --model_family
                 [--peft_lora_target_modules PEFT_LORA_TARGET_MODULES]
                 [--singlora_ramp_up_steps SINGLORA_RAMP_UP_STEPS]
                 [--init_lora INIT_LORA] [--init_lora_step INIT_LORA_STEP]
-                [--init_lora_ema_path INIT_LORA_EMA_PATH]
+                [--init_lora_ema INIT_LORA_EMA]
                 [--lycoris_config LYCORIS_CONFIG]
                 [--init_lokr_norm INIT_LOKR_NORM]
                 [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano,controlnet,all+ffs+embedder,all+ffs+embedder+controlnet}]
@@ -2248,7 +2249,7 @@ options:
   --init_lora_step INIT_LORA_STEP
                         Continue global-step accounting from a model-only LoRA
                         checkpoint without optimizer state
-  --init_lora_ema_path INIT_LORA_EMA_PATH
+  --init_lora_ema INIT_LORA_EMA
                         Load a raw SimpleTuner EMA state alongside init_lora
   --lycoris_config LYCORIS_CONFIG
                         Path to LyCORIS configuration JSON file

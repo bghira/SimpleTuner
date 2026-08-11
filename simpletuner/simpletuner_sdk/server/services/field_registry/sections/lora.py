@@ -257,7 +257,7 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
             tab="model",
             section="lora_config",
             subsection="advanced",
-            default_value=0,
+            default_value=None,
             validation_rules=[
                 ValidationRule(ValidationRuleType.MIN, value=0, message="Initial LoRA training step must be non-negative")
             ],
@@ -265,7 +265,10 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
                 FieldDependency(field="model_type", value="lora"),
             ],
             help_text="Continue global-step accounting from a model-only LoRA checkpoint without optimizer state",
-            tooltip="Use only when a full trainer checkpoint is unavailable. Optimizer, sampler, and RNG state start fresh.",
+            tooltip=(
+                "When omitted, use global_step metadata from a local init_lora safetensors file. "
+                "Optimizer, sampler, and RNG state start fresh."
+            ),
             documentation="OPTIONS.md#--init_lora_step",
             importance=ImportanceLevel.ADVANCED,
             order=9,
@@ -274,8 +277,8 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
-            name="init_lora_ema_path",
-            arg_name="--init_lora_ema_path",
+            name="init_lora_ema",
+            arg_name="--init_lora_ema",
             ui_label="Initial LoRA EMA State",
             field_type=FieldType.TEXT,
             tab="model",
@@ -288,7 +291,7 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
             ],
             help_text="Load a raw SimpleTuner EMA state alongside init_lora",
             tooltip="Use the ema_model.pt saved with the same model-only LoRA checkpoint.",
-            documentation="OPTIONS.md#--init_lora_ema_path",
+            documentation="OPTIONS.md#--init_lora_ema",
             importance=ImportanceLevel.ADVANCED,
             order=10,
         )

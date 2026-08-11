@@ -1717,10 +1717,11 @@ Upstream option mapping (LayerSync → SimpleTuner):
 
 - **What**: `--init_lora` से load किए गए model-only adapter के global-step accounting को जारी रखें।
 - **When**: इसका उपयोग केवल तभी करें जब full trainer checkpoint उपलब्ध न हो, लेकिन LoRA weights उपलब्ध हों।
+- **Automatic inference**: यह option न देने पर, local `--init_lora` safetensors file में `global_step` metadata मौजूद हो तो SimpleTuner उसका उपयोग करता है। `0` सहित कोई explicit value metadata को override करती है।
 - **Requirements**: मान non-negative और `--max_train_steps` से छोटा होना चाहिए; `--init_lora` आवश्यक है और इसे `--resume_from_checkpoint` के साथ उपयोग नहीं किया जा सकता।
 - **State**: Checkpoint और validation cadence इस step से जारी रहते हैं, लेकिन optimizer, sampler और RNG state नए सिरे से शुरू होते हैं। `constant` और `constant_with_warmup` learning-rate schedules संबंधित step पर restore होते हैं।
 
-### `--init_lora_ema_path`
+### `--init_lora_ema`
 
 - **What**: `--init_lora` से संबंधित raw SimpleTuner `ema_model.pt` state load करें।
 - **Requirements**: `--init_lora` और `--use_ema=true` दोनों आवश्यक हैं।
@@ -1853,7 +1854,7 @@ usage: train.py [-h] --model_family
                 [--peft_lora_target_modules PEFT_LORA_TARGET_MODULES]
                 [--singlora_ramp_up_steps SINGLORA_RAMP_UP_STEPS]
                 [--init_lora INIT_LORA] [--init_lora_step INIT_LORA_STEP]
-                [--init_lora_ema_path INIT_LORA_EMA_PATH]
+                [--init_lora_ema INIT_LORA_EMA]
                 [--lycoris_config LYCORIS_CONFIG]
                 [--init_lokr_norm INIT_LOKR_NORM]
                 [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano,controlnet,all+ffs+embedder,all+ffs+embedder+controlnet}]
@@ -2244,7 +2245,7 @@ options:
   --init_lora_step INIT_LORA_STEP
                         Continue global-step accounting from a model-only LoRA
                         checkpoint without optimizer state
-  --init_lora_ema_path INIT_LORA_EMA_PATH
+  --init_lora_ema INIT_LORA_EMA
                         Load a raw SimpleTuner EMA state alongside init_lora
   --lycoris_config LYCORIS_CONFIG
                         Path to LyCORIS configuration JSON file

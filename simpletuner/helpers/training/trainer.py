@@ -2235,10 +2235,29 @@ class Trainer:
             self._hub_upload_executor.shutdown(wait=True)
             self._hub_upload_executor = None
 
+    def _init_lora_metadata_global_step(self) -> str | None:
+        init_lora = getattr(self.config, "init_lora", None)
+        if not isinstance(init_lora, (str, os.PathLike)) or not os.path.isfile(init_lora):
+            return None
+
+        from safetensors import safe_open
+
+        try:
+            with safe_open(os.fspath(init_lora), framework="pt", device="cpu") as handle:
+                metadata = handle.metadata() or {}
+        except Exception as exc:
+            raise ValueError(f"Unable to inspect init_lora checkpoint metadata: {init_lora}") from exc
+        return metadata.get("global_step")
+
     def _initial_lora_step(self) -> int:
-        raw_step = getattr(self.config, "init_lora_step", 0)
+        raw_step = getattr(self.config, "init_lora_step", None)
         if isinstance(raw_step, unittest_mock.Mock):
-            raw_step = 0
+            raw_step = None
+        inferred_from_metadata = raw_step is None
+        if inferred_from_metadata:
+            raw_step = self._init_lora_metadata_global_step()
+        if raw_step is None:
+            return 0
         try:
             initial_step = int(raw_step or 0)
         except (TypeError, ValueError) as exc:
@@ -2256,7 +2275,54 @@ class Trainer:
         max_train_steps = getattr(self.config, "max_train_steps", None)
         if max_train_steps not in (None, 0) and initial_step >= int(max_train_steps):
             raise ValueError(f"init_lora_step ({initial_step}) must be smaller than max_train_steps ({max_train_steps}).")
+        if inferred_from_metadata:
+            self.config.init_lora_step = initial_step
+            logger.info("Using global step %s from init_lora safetensors metadata.", initial_step)
         return initial_step
+
+    def _restore_constant_scheduler_lr(
+        self,
+        lr_scheduler,
+        optimizer_param_groups: list[dict],
+        configured_param_group_lrs: list[float | None],
+        global_step: int,
+    ) -> None:
+        if (
+            lr_scheduler is None
+            or self.config.lr_scheduler not in ("constant", "constant_with_warmup")
+            or self.config.is_schedulefree
+        ):
+            return
+
+        scheduler_steps = global_step
+        if not getattr(lr_scheduler, "split_batches", False):
+            scheduler_steps *= self.accelerator.num_processes
+
+        warmup_steps = int(getattr(self.config, "lr_warmup_steps", 0) or 0) * self.accelerator.num_processes
+        lr_scale = 1.0
+        if self.config.lr_scheduler == "constant_with_warmup" and warmup_steps > 0:
+            lr_scale = min(float(scheduler_steps) / float(warmup_steps), 1.0)
+
+        restored_lrs = []
+        for group_index, group in enumerate(optimizer_param_groups):
+            configured_lr = configured_param_group_lrs[group_index]
+            if configured_lr is None:
+                restored_lrs.append(group.get("lr"))
+                continue
+            restored_lr = configured_lr * lr_scale
+            group["lr"] = restored_lr
+            restored_lrs.append(restored_lr)
+
+        scheduler_state = lr_scheduler.state_dict()
+        if "base_lrs" in scheduler_state:
+            scheduler_state["base_lrs"] = list(configured_param_group_lrs)
+        if "_last_lr" in scheduler_state:
+            scheduler_state["_last_lr"] = restored_lrs
+        if "last_epoch" in scheduler_state:
+            scheduler_state["last_epoch"] = scheduler_steps
+        if "_step_count" in scheduler_state:
+            scheduler_state["_step_count"] = scheduler_steps + 1
+        lr_scheduler.load_state_dict(scheduler_state)
 
     def _misc_init(self):
         """things that do not really need an order."""
@@ -4124,15 +4190,15 @@ class Trainer:
         return lr_scheduler
 
     def _load_initial_lora_ema_state(self) -> None:
-        init_ema_path = getattr(self.config, "init_lora_ema_path", None)
+        init_ema_path = getattr(self.config, "init_lora_ema", None)
         if isinstance(init_ema_path, unittest_mock.Mock):
             init_ema_path = None
         if not init_ema_path:
             return
         if not getattr(self.config, "init_lora", None):
-            raise ValueError("init_lora_ema_path requires init_lora.")
+            raise ValueError("init_lora_ema requires init_lora.")
         if not getattr(self.config, "use_ema", False):
-            raise ValueError("init_lora_ema_path requires use_ema=true.")
+            raise ValueError("init_lora_ema requires use_ema=true.")
         if not os.path.isfile(init_ema_path):
             raise FileNotFoundError(f"Initial LoRA EMA state does not exist: {init_ema_path}")
         if self.ema_model is None:
