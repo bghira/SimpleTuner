@@ -4,8 +4,8 @@
 
 ## Requirements
 
-- Apple Silicon with MPS available.
-- Xcode command line tools with the Metal toolchain.
+- macOS 15+ on Apple Silicon with MPS available.
+- Git, Swift 6+, and Xcode 16+ or matching command line tools with the Metal toolchain.
 - SimpleTuner installed with the Apple dependency set. The Apple extra requires PyTorch `>=2.13.0`.
 - A UMFA build that exposes `metal_flash_attention_autograd`, registers the PyTorch `MPS` dispatch key, and exposes `clear_quantization_mode`. The quantized aliases also require `metal_quantized_flash_attention_autograd`, `set_quantization_mode`, `QUANT_INT8`, `QUANT_INT4`, and `QUANT_BLOCK_WISE`.
 
@@ -21,15 +21,31 @@ export UMFA_ROOT=/path/to/universal-metal-flash-attention
 export PYTHON="$ST_ROOT/.venv/bin/python"
 ```
 
+SimpleTuner includes a helper that checks the local toolchain, Python environment, UMFA checkout, MFA+ submodule, Swift FFI library, Python FFI binding, and SimpleTuner backend probes:
+
+```bash
+cd "$ST_ROOT"
+scripts/apple-metal-flash-attention.sh --check --umfa-root "$UMFA_ROOT" --python "$PYTHON"
+```
+
+To let the helper clone/build/install UMFA into that Python environment, run:
+
+```bash
+scripts/apple-metal-flash-attention.sh --install --umfa-root "$UMFA_ROOT" --python "$PYTHON"
+```
+
+The install path clones UMFA if needed, initializes UMFA's `metal-flash-attention` MFA+ submodule, builds the `MFAFFI` Swift product, builds the PyTorch custom-op extension in place, and installs the `metal_sdpa_extension` binding into the selected Python environment.
+
 Build the Swift package and install the PyTorch FFI package:
 
 ```bash
 cd "$UMFA_ROOT"
 git submodule update --init --recursive
-swift build -c release
+swift build -c release --product MFAFFI
 
 cd "$UMFA_ROOT/examples/pytorch-custom-op-ffi"
 "$PYTHON" -m pip install --upgrade pip setuptools wheel pybind11 numpy
+"$PYTHON" setup.py build_ext --inplace
 "$PYTHON" -m pip install --force-reinstall --no-deps --no-build-isolation --no-cache-dir .
 ```
 
