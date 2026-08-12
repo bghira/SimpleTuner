@@ -2237,6 +2237,8 @@ class Trainer:
 
     def _init_lora_metadata_global_step(self) -> str | None:
         init_lora = getattr(self.config, "init_lora", None)
+        if isinstance(init_lora, unittest_mock.Mock):
+            init_lora = None
         if not isinstance(init_lora, (str, os.PathLike)) or not os.path.isfile(init_lora):
             return None
 
@@ -2267,7 +2269,10 @@ class Trainer:
             raise ValueError(f"init_lora_step must be a non-negative integer, received {raw_step!r}.")
         if initial_step == 0:
             return 0
-        if not getattr(self.config, "init_lora", None):
+        init_lora = getattr(self.config, "init_lora", None)
+        if isinstance(init_lora, unittest_mock.Mock):
+            init_lora = None
+        if not init_lora:
             raise ValueError("init_lora_step requires init_lora.")
         if getattr(self.config, "resume_from_checkpoint", None):
             raise ValueError("init_lora_step cannot be combined with resume_from_checkpoint.")

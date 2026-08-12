@@ -1404,6 +1404,7 @@ class AttentionBackendController:
             raise RuntimeError(message)
 
         patched_kernel_modules: list[tuple[Any, Any]] = []
+        patched_hf_api = None
         if trust_remote_code and backend_key.endswith("-hub"):
             for module_name in ("kernels", "kernels.utils"):
                 try:
@@ -1431,6 +1432,24 @@ class AttentionBackendController:
                 setattr(kernel_module, "get_kernel", patched_get_kernel)
                 patched_kernel_modules.append((kernel_module, original_get_kernel))
 
+            # kernels<=0.15 passes an empty user-agent suffix when HF telemetry is
+            # disabled. huggingface_hub rejects the resulting trailing header
+            # separator before a cached Hub kernel can be resolved.
+            try:
+                kernels_utils = importlib.import_module("kernels.utils")
+                original_hf_api = getattr(kernels_utils, "HfApi", None)
+                if callable(original_hf_api):
+
+                    def telemetry_safe_hf_api(*args, **kwargs):
+                        if kwargs.get("user_agent") == "":
+                            kwargs["user_agent"] = None
+                        return original_hf_api(*args, **kwargs)
+
+                    setattr(kernels_utils, "HfApi", telemetry_safe_hf_api)
+                    patched_hf_api = (kernels_utils, original_hf_api)
+            except ModuleNotFoundError:
+                pass
+
         try:
             try:
                 _check_attention_backend_requirements(backend_enum)
@@ -1450,6 +1469,9 @@ class AttentionBackendController:
         finally:
             for kernel_module, original_get_kernel in patched_kernel_modules:
                 setattr(kernel_module, "get_kernel", original_get_kernel)
+            if patched_hf_api is not None:
+                kernels_utils, original_hf_api = patched_hf_api
+                setattr(kernels_utils, "HfApi", original_hf_api)
 
         cls._diffusers_backend_context = context
         cls._diffusers_backend_name = backend_key
