@@ -51,6 +51,19 @@ class Worker:
         """Check if this is a persistent worker."""
         return self.worker_type == WorkerType.PERSISTENT
 
+    @property
+    def is_job_bound(self) -> bool:
+        """Check whether Kubeflow provisioned this Worker for exactly one job.
+
+        Returns:
+            True when the ephemeral Worker must retain its assigned job.
+        """
+        return (
+            self.worker_type == WorkerType.EPHEMERAL
+            and self.provider == "kubeflow"
+            and self.current_job_id is not None
+        )
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {

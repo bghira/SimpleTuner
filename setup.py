@@ -386,6 +386,7 @@ extras_require = {
     "state-mysql": ["aiomysql>=0.2.0"],
     "state-redis": ["redis>=5.0.0"],
     "state-all": ["asyncpg>=0.29.0", "aiomysql>=0.2.0", "redis>=5.0.0"],
+    "kubernetes": ["kubernetes>=36.0.3,<37.0.0"],
     # All non-platform extras combined
     "all": [
         "pillow-jxl-plugin>=1.3.1",
