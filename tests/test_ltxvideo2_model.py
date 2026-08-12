@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import torch
 
+from simpletuner.helpers.models.ltxvideo2 import ltx2_rope_freqs_dtype
 from simpletuner.helpers.models.ltxvideo2.model import (
     LTXVideo2,
     _align_ltx2_connector_attention_mask,
@@ -98,6 +99,11 @@ class TestLTXVideo2ModelHelpers(unittest.TestCase):
             LTX2PerturbedAttnProcessor._flatten_attention_output,
             LTX2AudioVideoAttnProcessor._flatten_attention_output,
         )
+
+    def test_rope_freqs_dtype_keeps_double_precision_off_mps(self):
+        self.assertEqual(ltx2_rope_freqs_dtype(True, torch.device("cpu")), torch.float64)
+        self.assertEqual(ltx2_rope_freqs_dtype(True, torch.device("mps")), torch.float32)
+        self.assertEqual(ltx2_rope_freqs_dtype(False, torch.device("mps")), torch.float32)
 
     def test_model_predict_forwards_anyflow_r_timestep(self):
         model = LTXVideo2.__new__(LTXVideo2)
