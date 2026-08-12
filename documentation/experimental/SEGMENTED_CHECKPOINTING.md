@@ -31,7 +31,7 @@ For finer VRAM control, add a stride:
 
 That checkpoints blocks `0-1`, runs `2-3` normally, checkpoints `4-5`, runs `6-7` normally, and repeats. The stride must be at least the interval; overlapping schedules are not valid.
 
-Supported segmented whole-block paths: Flux.1, Flux.2, HunyuanVideo, Krea 2, LongCat Image, LongCat Video, LTXVideo 0.9, LTXVideo2, Lumina2, MageFlow, PixArt, SD3, SanaVideo, Z-Image, ZLab I1, and Wan.
+Supported segmented whole-block paths: Flux.1, Flux.2, HunyuanVideo, Krea 2, LongCat Image, LongCat Video, LTXVideo 0.9, LTXVideo2, Lumina2, MageFlow, MiniMax H3, PixArt, SD3, SanaVideo, Z-Image, ZLab I1, and Wan.
 
 Stable Cascade stage C also supports interval and stride control, but it applies the schedule to the UNet Res/Timestep/Attention micro-block sequence instead of transformer whole-block groups.
 
