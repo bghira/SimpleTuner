@@ -79,13 +79,14 @@ MiniMax-H3 examples:
 
 Large multi-GPU video examples are split from the standard 24G examples:
 
+- `wan2.1-t2v-1.3b-480p-141g.peft-lora+anyflow` reproduces NVIDIA's 480p, 81-frame Wan 2.1 1.3B AnyFlow forward stage on 8x141GB GPUs. It uses DDP, global batch 32, rank-256 LoRA, and no activation checkpointing.
 - `wan2.1-t2v-14b-480p-8xh100.peft-lora+cp-fa3`
 - `wan2.1-i2v-14b-480p-8xh100.peft-lora+cp-fa3`
 - `wan2.1-i2v-14b-720p-8xh100.peft-lora+cp-fa3`
 - `ltxvideo2-2.3-dev-720p-8xh100.peft-lora+cp-fa3`
 - `ltxvideo2-2.3-dev-1080p-8xh100.peft-lora+cp-fa3`
 
-These profiles assume 8xH100-class hardware, BF16 weights, `context_parallel_size=2`, and the Hugging Face FlashAttention 3 varlen backend. On A100-class systems, copy the example and change `attention_mechanism` to `flash-attn-varlen-hub` before benchmarking.
+The 14B Wan and LTX-Video profiles assume 8xH100-class hardware, BF16 weights, `context_parallel_size=2`, and the Hugging Face FlashAttention 3 varlen backend. The 1.3B AnyFlow profile instead uses data parallelism across 8x141GB GPUs and the FlashAttention 3 backend selected by an H200 performance sweep. On A100-class systems, copy the relevant example and benchmark `flash-attn-varlen-hub` before training.
 
 ### Modifying and extending an example
 

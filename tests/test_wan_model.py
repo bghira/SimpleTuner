@@ -1,11 +1,13 @@
 import unittest
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import torch
 
 from simpletuner.helpers.models.common import PipelineTypes, VideoModelFoundation
-from simpletuner.helpers.models.wan.model import Wan, add_first_frame_latent_conditioning
+from simpletuner.helpers.models.wan.model import Wan, add_first_frame_latent_conditioning, time_text_monkeypatch
+from simpletuner.helpers.models.wan.transformer import WanTimeTextImageEmbedding
 
 
 class _RecordingWanTransformer(torch.nn.Module):
@@ -32,6 +34,80 @@ class _RecordingWanTransformer(torch.nn.Module):
 
 
 class WanModelTests(unittest.TestCase):
+    def test_flowmap_gate_survives_ddp_buffer_broadcast_during_accumulation(self):
+        for use_monkeypatch in (False, True):
+            with self.subTest(use_monkeypatch=use_monkeypatch):
+                embedder = WanTimeTextImageEmbedding(
+                    dim=8,
+                    time_freq_dim=4,
+                    time_proj_dim=48,
+                    text_embed_dim=6,
+                )
+                embedder.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+                if use_monkeypatch:
+                    embedder.forward = partial(time_text_monkeypatch, embedder)
+
+                timestep = torch.tensor([0.75])
+                r_timestep = torch.tensor([0.25])
+                encoder_hidden_states = torch.randn(1, 2, 6)
+                first_temb = embedder(timestep, encoder_hidden_states, r_timestep=r_timestep)[0]
+
+                # DDP broadcasts model buffers in place before each forward.
+                with torch.no_grad():
+                    embedder.flowmap_delta_emb_gate.copy_(embedder.flowmap_delta_emb_gate)
+
+                second_temb = embedder(timestep, encoder_hidden_states, r_timestep=r_timestep)[0]
+                (first_temb.sum() + second_temb.sum()).backward()
+
+                self.assertIsNotNone(embedder.delta_embedder.linear_1.weight.grad)
+
+    def _lora_target_model(self, *, distillation_method=None, anyflow_config=None):
+        model = object.__new__(Wan)
+        model.config = SimpleNamespace(
+            distillation_method=distillation_method,
+            distillation_config={"anyflow": anyflow_config or {}},
+            lora_type="standard",
+            peft_lora_target_modules=None,
+            slider_lora_target=False,
+            controlnet=False,
+        )
+        return model
+
+    def test_anyflow_lora_targets_match_wan_reference_scope(self):
+        model = self._lora_target_model(distillation_method="anyflow")
+
+        self.assertEqual(
+            model.get_lora_target_layers(),
+            [
+                "attn1.to_q",
+                "attn1.to_k",
+                "attn1.to_v",
+                "attn1.to_out.0",
+                "ffn.net.0.proj",
+                "ffn.net.2",
+                "condition_embedder.time_embedder.linear_1",
+                "condition_embedder.time_embedder.linear_2",
+                "condition_embedder.delta_embedder.linear_1",
+                "condition_embedder.delta_embedder.linear_2",
+            ],
+        )
+
+    def test_anyflow_lora_targets_respect_time_embedder_flags(self):
+        model = self._lora_target_model(
+            distillation_method="anyflow",
+            anyflow_config={"train_time_embedder": False, "train_delta_embedder": False},
+        )
+
+        targets = model.get_lora_target_layers()
+
+        self.assertIn("ffn.net.0.proj", targets)
+        self.assertFalse(any("time_embedder" in target for target in targets))
+
+    def test_standard_wan_lora_targets_are_unchanged(self):
+        model = self._lora_target_model()
+
+        self.assertEqual(model.get_lora_target_layers(), Wan.DEFAULT_LORA_TARGET)
+
     def _animegen_config(self, flavour: str):
         return SimpleNamespace(
             model_family="wan",
