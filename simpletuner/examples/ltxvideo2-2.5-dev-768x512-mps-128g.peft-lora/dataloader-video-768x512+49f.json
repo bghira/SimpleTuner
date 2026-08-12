@@ -1,0 +1,37 @@
+[
+  {
+    "id": "ltxvideo2-2.5-disney-video-768x512-49f",
+    "type": "huggingface",
+    "dataset_type": "video",
+    "dataset_name": "sayakpaul/video-dataset-disney-organized",
+    "crop": true,
+    "crop_style": "random",
+    "crop_aspect": "closest",
+    "crop_aspect_buckets": [1.5],
+    "minimum_image_size": 128,
+    "maximum_image_size": 768,
+    "target_downsample_size": 768,
+    "resolution": 512,
+    "resolution_type": "pixel",
+    "max_num_samples": 4,
+    "cache_file_suffix": "ltxvideo2-2.5-disney-video-768x512-49f",
+    "metadata_backend": "huggingface",
+    "caption_strategy": "huggingface",
+    "video": {
+      "num_frames": 49,
+      "min_frames": 49
+    },
+    "huggingface": {
+      "video_column": "video",
+      "caption_column": "prompt"
+    },
+    "cache_dir_vae": "cache/vae/{model_family}/ltxvideo2-2.5-disney-video-768x512-49f"
+  },
+  {
+    "id": "alt-embed-cache",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "type": "local",
+    "cache_dir": "cache/text/{model_family}"
+  }
+]
