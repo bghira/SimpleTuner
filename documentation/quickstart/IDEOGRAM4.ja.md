@@ -14,7 +14,7 @@ simpletuner/examples/ideogram-fp8.peft-lora/config.json
 
 - **標準:** FP8 ベース重み、bf16 の LoRA 学習重み、rank 16-32。
 - **低VRAM:** ベースモデルに NF4 を使う。
-- **高VRAM:** 十分なVRAMがある場合は bf16-upcast 重みで量子化ロードを避ける。
+- **高VRAM:** 十分なVRAMがある場合は bf16-upcast 重み（`ideogram_fp8_base_upcast=true`）で量子化ロードを避ける。ロード時にネイティブFP8チェックポイントを学習dtypeへ逆量子化します（transformerは約18 GiB）。
 
 H100 80GB での実測値です。native FP8（`base_model_precision=fp8-torchao`、`quantize_via=pipeline`）、rank 32 LoRA、bf16 mixed precision、gradient checkpointing 有効、1024px square、validation 無効のトレーニングピーク:
 

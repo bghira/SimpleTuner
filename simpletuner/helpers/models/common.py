@@ -3292,6 +3292,17 @@ class ModelFoundation(ABC):
 
         self.configure_chunked_feed_forward()
 
+        self.apply_gradient_checkpointing_settings()
+
+        self.fuse_qkv_projections()
+        self.post_model_load_setup()
+
+    def apply_gradient_checkpointing_settings(self):
+        """Wire configured gradient-checkpointing backend/interval/stride onto the loaded model.
+
+        Called from the base load_model; model families that override load_model must call this
+        themselves after constructing self.model.
+        """
         # Set gradient checkpointing backend
         checkpoint_backend = (getattr(self.config, "gradient_checkpointing_backend", None) or "torch").lower()
         if checkpoint_backend not in ["torch", "torch-ffn", "unsloth", "unsloth-ffn"]:
@@ -3373,9 +3384,6 @@ class ModelFoundation(ABC):
             self.unwrap_model(model=self.model).set_gradient_checkpointing_backend(checkpoint_backend)
         if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_offload_attention"):
             self.unwrap_model(model=self.model).set_gradient_checkpointing_offload_attention(offload_attention)
-
-        self.fuse_qkv_projections()
-        self.post_model_load_setup()
 
     def post_model_load_setup(self):
         """

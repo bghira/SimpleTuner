@@ -14,7 +14,7 @@ simpletuner/examples/ideogram-fp8.peft-lora/config.json
 
 - **默认选择：** FP8 基础权重，bf16 LoRA 可训练权重，rank 16-32。
 - **低显存：** 基础模型使用 NF4。
-- **高显存：** 如果显存充足，可以使用 bf16-upcast 权重以避免量化加载开销。
+- **高显存：** 如果显存充足，可以使用 bf16-upcast 权重（`ideogram_fp8_base_upcast=true`）以避免量化加载开销。该选项会在加载时将原生 FP8 checkpoint 反量化为训练 dtype（transformer 约 18 GiB）。
 
 在 H100 80GB 上实测，原生 FP8（`base_model_precision=fp8-torchao`、`quantize_via=pipeline`）、rank 32 LoRA、bf16 mixed precision、启用梯度检查点、1024px 方图、关闭 validation 时的训练峰值显存为：
 

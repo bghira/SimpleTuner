@@ -16,7 +16,7 @@ Recommended starting points:
 
 - **Best default:** FP8 base weights, bf16 trainable LoRA weights, rank 16-32.
 - **Low VRAM fallback:** NF4 quantisation for the base model.
-- **High VRAM / fastest iteration:** bf16-upcast transformer weights if you have enough VRAM and want to avoid quantised base loading.
+- **High VRAM / fastest iteration:** bf16-upcast transformer weights (`ideogram_fp8_base_upcast=true`) if you have enough VRAM and want to avoid quantised base loading. This dequantizes the native FP8 checkpoint to the training dtype at load time (~18 GiB transformer).
 
 Expected memory varies with rank, optimiser, resolution, validation, and offload strategy. Measured on an H100 80GB with native FP8 (`base_model_precision=fp8-torchao`, `quantize_via=pipeline`), rank 32 LoRA, bf16 mixed precision, gradient checkpointing enabled, 1024px square training, and validation disabled:
 
