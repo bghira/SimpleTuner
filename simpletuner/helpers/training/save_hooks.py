@@ -507,7 +507,14 @@ class SaveHookManager:
         Scan all training captions and build frequency dict of trigger words.
         Only includes tags that appear in more than 50% of all captions.
         Returns dict of dataset_id -> {tag: count}.
+
+        The dataset is fixed for the duration of a run, so the result is computed once
+        and memoized; recomputing per checkpoint can cost hours on remote-read backends.
         """
+        cached = getattr(self, "_tag_frequency_cache", None)
+        if cached is not None:
+            return cached
+
         import re
 
         from simpletuner.helpers.prompts import PromptHandler
@@ -523,6 +530,22 @@ class SaveHookManager:
             config = backend.get("config", {})
             caption_strategy = config.get("caption_strategy")
             if not caption_strategy:
+                continue
+            if caption_strategy == "webshart":
+                # Webshart captions may only exist as remote tar members; enumerating
+                # them here would issue one range-read per sample at checkpoint time.
+                metadata_backend = backend.get("metadata_backend")
+                cached_captions = list(getattr(metadata_backend, "caption_cache", {}).values()) if metadata_backend else []
+                flattened = []
+                for value in cached_captions:
+                    if isinstance(value, list):
+                        flattened.extend(str(item) for item in value)
+                    elif value:
+                        flattened.append(str(value))
+                if flattened:
+                    valid = [c for c in flattened if c and c != "__caption_dropout__"]
+                    backend_captions[backend_id] = valid
+                    all_captions.extend(valid)
                 continue
 
             prepend_instance_prompt = config.get(
@@ -555,6 +578,7 @@ class SaveHookManager:
             all_captions.extend(valid_captions)
 
         if not all_captions:
+            self._tag_frequency_cache = {}
             return {}
 
         # Count how many captions each tag appears in (presence-based)
@@ -573,6 +597,7 @@ class SaveHookManager:
         frequent_tags = {tag for tag, count in tag_caption_count.items() if count > threshold}
 
         if not frequent_tags:
+            self._tag_frequency_cache = {}
             return {}
 
         # Build per-backend frequency dict with only frequent tags
@@ -589,6 +614,7 @@ class SaveHookManager:
             if tag_counts:
                 ss_tag_frequency[backend_id] = tag_counts
 
+        self._tag_frequency_cache = ss_tag_frequency
         return ss_tag_frequency
 
     def _build_trigger_words_metadata(self) -> dict[str, str]:
