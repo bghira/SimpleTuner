@@ -218,8 +218,8 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
 
     def _entries(self):
         return [
-            {"path": "captioned.webp", "captions": ["a caption"]},
-            {"path": "uncaptioned.webp", "captions": None},
+            {"path": "captioned.webp", "filename": "captioned.webp", "captions": ["a caption"]},
+            {"path": "uncaptioned.webp", "filename": "uncaptioned.webp", "captions": None},
         ]
 
     def test_webshart_caption_strategy_skips_caption_less_samples(self):
@@ -236,6 +236,24 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
         )
         self.assertEqual(backend.filtering_statistics["skipped"]["caption_missing"], 1)
         self.assertEqual(backend.filtering_statistics["total_processed"], 1)
+
+    def test_webshart_caption_strategy_accepts_txt_sidecar_samples(self):
+        backend = self._build_backend(self._entries())
+        backend.data_backend.get_shard_metadata = Mock(
+            return_value={"files": {"uncaptioned.txt": {"offset": 0, "length": 10}}}
+        )
+        with patch(
+            "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_data_backend_config",
+            return_value={"caption_strategy": "webshart"},
+        ):
+            backend.compute_aspect_ratio_bucket_indices()
+
+        self.assertEqual(
+            backend.aspect_ratio_bucket_indices["1.0"],
+            ["webshart://0/0/captioned.webp", "webshart://0/0/uncaptioned.webp"],
+        )
+        self.assertEqual(backend.filtering_statistics["skipped"]["caption_missing"], 0)
+        self.assertEqual(backend.filtering_statistics["total_processed"], 2)
 
     def test_other_caption_strategies_keep_caption_less_samples(self):
         backend = self._build_backend(self._entries())
