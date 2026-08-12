@@ -579,7 +579,35 @@ class MiniMaxH3(VideoModelFoundation):
             target_swiglu_gate_first=self._h3_transformer_uses_gate_first_swiglu(),
         )
 
-    def _prepare_init_lora_state_dict(self, state_dict: dict) -> dict:
+    def _prepare_plain_h3_lora_swiglu_layout(self, state_dict: dict, metadata: Optional[dict]) -> dict:
+        from simpletuner.helpers.models.minimaxh3.modular_pipeline import (
+            _convert_minimax_h3_diffusers_swiglu_lora_layout,
+            _minimax_h3_swiglu_gate_first_from_metadata,
+        )
+
+        source_gate_first = _minimax_h3_swiglu_gate_first_from_metadata(
+            metadata,
+            target_prefix=self._h3_lora_component_name(),
+        )
+        if source_gate_first is None:
+            return state_dict
+        return _convert_minimax_h3_diffusers_swiglu_lora_layout(
+            state_dict,
+            source_gate_first=source_gate_first,
+            target_gate_first=self._h3_transformer_uses_gate_first_swiglu(),
+        )
+
+    def _lora_state_dict_load_kwargs(self) -> dict:
+        return {"return_lora_metadata": True}
+
+    def _prepare_loaded_lora_state_dict(self, state_dict: dict, metadata: Optional[dict] = None) -> dict:
+        from simpletuner.helpers.models.minimaxh3.modular_pipeline import _is_minimax_h3_native_lora_state_dict
+
+        if _is_minimax_h3_native_lora_state_dict(state_dict):
+            return state_dict
+        return self._prepare_plain_h3_lora_swiglu_layout(state_dict, metadata)
+
+    def _prepare_init_lora_state_dict(self, state_dict: dict, metadata: Optional[dict] = None) -> dict:
         from simpletuner.helpers.models.minimaxh3.modular_pipeline import (
             _convert_minimax_h3_comfy_lora_to_diffusers,
             _is_minimax_h3_native_lora_state_dict,
@@ -592,7 +620,7 @@ class MiniMaxH3(VideoModelFoundation):
         ):
             lora_format = PEFTLoRAFormat.COMFYUI
         if lora_format != PEFTLoRAFormat.COMFYUI:
-            return state_dict
+            return self._prepare_plain_h3_lora_swiglu_layout(state_dict, metadata)
         converted, network_alphas = _convert_minimax_h3_comfy_lora_to_diffusers(
             state_dict,
             target_prefix=self._h3_lora_component_name(),
@@ -608,6 +636,18 @@ class MiniMaxH3(VideoModelFoundation):
         for key, alpha in network_alphas.items():
             prepared[key] = torch.tensor(alpha, dtype=torch.float32)
         return prepared
+
+    def save_lora_weights(self, *args, **kwargs):
+        from simpletuner.helpers.models.minimaxh3.modular_pipeline import MINIMAX_H3_SWIGLU_GATE_FIRST_METADATA_KEY
+
+        metadata_key = f"{self.MODEL_SUBFOLDER}_lora_adapter_metadata"
+        adapter_metadata = dict(kwargs.get(metadata_key) or {})
+        lora_format = normalize_lora_format(getattr(self.config, "lora_format", None))
+        adapter_metadata[MINIMAX_H3_SWIGLU_GATE_FIRST_METADATA_KEY] = (
+            lora_format == PEFTLoRAFormat.COMFYUI or self._h3_transformer_uses_gate_first_swiglu()
+        )
+        kwargs[metadata_key] = adapter_metadata
+        return super().save_lora_weights(*args, **kwargs)
 
     def get_lora_target_layers(self):
         manual_targets = self._get_peft_lora_target_modules()
