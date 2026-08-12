@@ -97,6 +97,13 @@ class TestMetadataFunctions(unittest.TestCase):
             output = _model_imports(self.args)
             self.assertIn("from lycoris import create_lycoris_from_weights", output)
 
+    def test_hub_manager_loads_standard_environment_token(self):
+        manager = object.__new__(HubManager)
+        manager.config = SimpleNamespace(push_to_hub=True)
+
+        with patch.dict(os.environ, {"HF_TOKEN": "environment-token"}, clear=False):
+            self.assertEqual(manager._load_hub_token(), "environment-token")
+
     def test_model_load(self):
         self.args.pretrained_model_name_or_path = "pretrained-model"
         self.args.output_dir = "output-dir"

@@ -630,6 +630,43 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         AttentionBackendController.restore_default()
         self.assertIsNone(AttentionBackendController._diffusers_backend_name)
 
+    def test_hub_backend_omits_empty_kernel_user_agent(self):
+        if not attention_backend_module._DIFFUSERS_BACKEND_ALIASES:
+            self.skipTest("Diffusers attention backend helpers unavailable in this environment.")
+
+        calls = []
+        kernels_module = ModuleType("kernels")
+        kernels_utils_module = ModuleType("kernels.utils")
+
+        def fake_hf_api(*args, **kwargs):
+            calls.append(dict(kwargs))
+            return object()
+
+        kernels_module.get_kernel = lambda *args, **kwargs: object()
+        kernels_utils_module.get_kernel = lambda *args, **kwargs: object()
+        kernels_utils_module.HfApi = fake_hf_api
+
+        class DummyContext:
+            def __enter__(self):
+                kernels_utils_module.HfApi(library_name="kernels", user_agent="")
+
+            def __exit__(self, *args):
+                return None
+
+        with (
+            patch.dict(sys.modules, {"kernels": kernels_module, "kernels.utils": kernels_utils_module}),
+            patch.object(attention_backend_module, "_check_attention_backend_requirements"),
+            patch.object(attention_backend_module, "diffusers_attention_backend", return_value=DummyContext()),
+        ):
+            AttentionBackendController._enable_diffusers_backend(
+                "flash-attn-3-hub",
+                object(),
+                trust_remote_code=True,
+            )
+
+        self.assertEqual(calls, [{"library_name": "kernels", "user_agent": None}])
+        self.assertIs(kernels_utils_module.HfApi, fake_hf_api)
+
     def test_packed_backend_dispatches_fixed_qkvpacked(self):
         class DummyKernel:
             @staticmethod

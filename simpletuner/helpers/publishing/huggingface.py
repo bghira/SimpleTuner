@@ -159,6 +159,9 @@ class HubManager:
     def _load_hub_token(self):
         if not self.config.push_to_hub:
             return None
+        environment_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        if environment_token:
+            return environment_token.strip()
         token_path = os.path.join(
             os.environ.get("HF_HOME", os.path.join(os.path.expanduser("~"), ".cache/huggingface")), "token"
         )

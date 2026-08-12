@@ -2278,6 +2278,16 @@ class TestTrainer(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot be combined"):
             trainer._initial_lora_step()
 
+    def test_initial_lora_step_ignores_mock_init_lora_metadata_path(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = MagicMock(resume_from_checkpoint=None, max_train_steps=25000)
+
+        with (
+            patch("simpletuner.helpers.training.trainer.os.path.isfile", return_value=True),
+            patch("safetensors.safe_open", side_effect=AssertionError("safe_open should not be called")),
+        ):
+            self.assertEqual(trainer._initial_lora_step(), 0)
+
     def test_initial_lora_step_uses_safetensors_metadata_when_unspecified(self):
         with tempfile.NamedTemporaryFile(suffix=".safetensors") as lora_file:
             save_file({"weight": torch.ones(1)}, lora_file.name, metadata={"global_step": "1500"})
