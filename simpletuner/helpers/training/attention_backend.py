@@ -43,15 +43,15 @@ _METAL_FLASH_ATTENTION_PROFILES = {
     "universal-metal-flash-attention": MetalFlashAttentionProfile(),
     "metal-flash-attention-int8": MetalFlashAttentionProfile(
         target_precision=3,
-        quant_mode=2,
+        quant_mode=0,
         target_precision_constant="QUANT_INT8",
-        quant_mode_constant="QUANT_BLOCK_WISE",
+        quant_mode_constant="QUANT_TENSOR_WISE",
     ),
     "metal-flash-attention-int4": MetalFlashAttentionProfile(
         target_precision=4,
-        quant_mode=2,
+        quant_mode=0,
         target_precision_constant="QUANT_INT4",
-        quant_mode_constant="QUANT_BLOCK_WISE",
+        quant_mode_constant="QUANT_TENSOR_WISE",
     ),
 }
 
@@ -936,9 +936,9 @@ def check_shape_growth_cache():
     torch.manual_seed(123)
     for seq_len in (512, 1024):
         shape = (1, 4, seq_len, 128)
-        query = torch.randn(shape, dtype=torch.float32, device="mps") * 0.02
-        key = torch.randn(shape, dtype=torch.float32, device="mps") * 0.02
-        value = torch.randn(shape, dtype=torch.float32, device="mps") * 0.02
+        query = (torch.randn(shape, dtype=torch.float32, device="mps") * 0.02).requires_grad_(True)
+        key = (torch.randn(shape, dtype=torch.float32, device="mps") * 0.02).requires_grad_(True)
+        value = (torch.randn(shape, dtype=torch.float32, device="mps") * 0.02).requires_grad_(True)
         torch.mps.synchronize()
         observed = selected_impl(
             query,
@@ -963,6 +963,11 @@ def check_shape_growth_cache():
                 + " observed_std="
                 + str(observed_std)
             )
+        observed.float().square().mean().backward()
+        torch.mps.synchronize()
+        for name, tensor in (("query", query), ("key", key), ("value", value)):
+            if tensor.grad is None or not torch.isfinite(tensor.grad).all().item():
+                raise SystemExit("Quantized UMFA shape-growth check produced invalid gradient for " + name)
 
 
 check_shape_growth_cache()
