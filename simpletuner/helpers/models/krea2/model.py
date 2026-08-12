@@ -178,8 +178,8 @@ class Krea2(ImageModelFoundation):
         if self.processor is not None:
             return self.processor
 
-        processor_path = getattr(self.config, "processor_pretrained_model_name_or_path", None) or self.PROCESSOR_PATH
-        processor_subfolder = getattr(self.config, "processor_subfolder", self.PROCESSOR_SUBFOLDER)
+        processor_path = self._resolve_qwen_processor_path(self.PROCESSOR_PATH)
+        processor_subfolder = self._resolve_qwen_processor_subfolder(self.PROCESSOR_SUBFOLDER)
         processor_revision = getattr(self.config, "processor_revision", getattr(self.config, "revision", None))
 
         processor_kwargs = {"pretrained_model_name_or_path": processor_path}

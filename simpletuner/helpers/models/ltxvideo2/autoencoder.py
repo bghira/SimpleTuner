@@ -611,7 +611,7 @@ class LTX2VideoMidBlock3d(nn.Module):
         return hidden_states
 
 
-# Like LTXVideoUpBlock3d but with no conv_in and the updated LTX2VideoResnetBlock3d
+# Like LTXVideoUpBlock3d but with the updated LTX2VideoResnetBlock3d
 class LTX2VideoUpBlock3d(nn.Module):
     r"""
     Up block used in the LTXVideo model.
@@ -663,10 +663,12 @@ class LTX2VideoUpBlock3d(nn.Module):
             self.time_embedder = PixArtAlphaCombinedTimestepSizeEmbeddings(in_channels * 4, 0)
 
         self.conv_in = None
-        if in_channels != out_channels:
+        upsampler_in_channels = out_channels * upscale_factor
+        conv_in_out_channels = upsampler_in_channels if spatio_temporal_scale else out_channels
+        if in_channels != conv_in_out_channels:
             self.conv_in = LTX2VideoResnetBlock3d(
                 in_channels=in_channels,
-                out_channels=out_channels,
+                out_channels=conv_in_out_channels,
                 dropout=dropout,
                 eps=resnet_eps,
                 non_linearity=resnet_act_fn,
@@ -986,7 +988,7 @@ class LTX2VideoDecoder3d(nn.Module):
         num_block_out_channels = len(block_out_channels)
         self.up_blocks = nn.ModuleList([])
         for i in range(num_block_out_channels):
-            input_channel = output_channel // upsample_factor[i]
+            input_channel = output_channel
             output_channel = block_out_channels[i] // upsample_factor[i]
 
             up_block = LTX2VideoUpBlock3d(

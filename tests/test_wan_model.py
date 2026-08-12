@@ -2,8 +2,33 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import torch
+
 from simpletuner.helpers.models.common import PipelineTypes, VideoModelFoundation
-from simpletuner.helpers.models.wan.model import Wan
+from simpletuner.helpers.models.wan.model import Wan, add_first_frame_latent_conditioning
+
+
+class _RecordingWanTransformer(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.last_kwargs = None
+
+    def forward(
+        self,
+        hidden_states,
+        encoder_hidden_states,
+        timestep,
+        r_timestep=None,
+        **kwargs,
+    ):
+        self.last_kwargs = {
+            "hidden_states": hidden_states,
+            "encoder_hidden_states": encoder_hidden_states,
+            "timestep": timestep,
+            "r_timestep": r_timestep,
+            **kwargs,
+        }
+        return (torch.zeros_like(hidden_states),)
 
 
 class WanModelTests(unittest.TestCase):
@@ -190,6 +215,83 @@ class WanModelTests(unittest.TestCase):
 
         super_unload.assert_called_once_with(model)
         self.assertEqual(model._wan_cached_stage_modules, {})
+
+    def test_latent_i2v_conditioning_builds_36_channel_input(self):
+        latent_model_input = torch.zeros(1, 16, 3, 4, 5)
+        clean_latents = torch.arange(1 * 16 * 3 * 4 * 5, dtype=torch.float32).view(1, 16, 3, 4, 5)
+        vae = SimpleNamespace(config=SimpleNamespace(temperal_downsample=[1, 1]))
+
+        conditioned = add_first_frame_latent_conditioning(latent_model_input, clean_latents, vae)
+
+        self.assertEqual(tuple(conditioned.shape), (1, 36, 3, 4, 5))
+        self.assertTrue(torch.equal(conditioned[:, :16], latent_model_input))
+        self.assertTrue(torch.all(conditioned[:, 16:20, 0] == 1))
+        self.assertTrue(torch.all(conditioned[:, 16:20, 1:] == 0))
+        self.assertTrue(torch.equal(conditioned[:, 20:, :1], clean_latents[:, :, :1]))
+        self.assertTrue(torch.all(conditioned[:, 20:, 1:] == 0))
+
+    def test_latent_i2v_conditioning_uses_config_temporal_downsample(self):
+        latent_model_input = torch.zeros(1, 16, 3, 4, 5)
+        clean_latents = torch.zeros(1, 16, 3, 4, 5)
+        vae = SimpleNamespace(config=SimpleNamespace(temperal_downsample=[0, 1]))
+
+        conditioned = add_first_frame_latent_conditioning(latent_model_input, clean_latents, vae)
+
+        self.assertEqual(tuple(conditioned.shape), (1, 34, 3, 4, 5))
+        self.assertTrue(torch.all(conditioned[:, 16:18, 0] == 1))
+        self.assertTrue(torch.all(conditioned[:, 16:18, 1:] == 0))
+
+    def test_i2v_conditioning_uses_cached_latents_without_warning(self):
+        model = object.__new__(Wan)
+        model._is_i2v_like_flavour = MagicMock(return_value=False)
+        model._extract_conditioning_frames = MagicMock(return_value=(None, None))
+        model.get_vae = MagicMock(return_value=SimpleNamespace(config=SimpleNamespace(temperal_downsample=[1, 1])))
+
+        hidden_states = torch.zeros(1, 16, 3, 4, 5)
+        clean_latents = torch.arange(1 * 16 * 3 * 4 * 5, dtype=torch.float32).view(1, 16, 3, 4, 5)
+        transformer_kwargs = {"hidden_states": hidden_states.clone()}
+        prepared_batch = {"is_i2v_data": True, "latents": clean_latents}
+
+        with patch("simpletuner.helpers.models.wan.model.logger.warning") as warning:
+            Wan._apply_i2v_conditioning_to_kwargs(model, prepared_batch, transformer_kwargs)
+
+        conditioned = transformer_kwargs["hidden_states"]
+        self.assertEqual(tuple(conditioned.shape), (1, 36, 3, 4, 5))
+        self.assertTrue(torch.equal(conditioned[:, :16], hidden_states))
+        self.assertTrue(torch.equal(conditioned[:, 20:, :1], clean_latents[:, :, :1]))
+        self.assertTrue(torch.all(conditioned[:, 20:, 1:] == 0))
+        warning.assert_not_called()
+
+    def test_model_predict_forwards_anyflow_r_timestep(self):
+        model = object.__new__(Wan)
+        transformer = _RecordingWanTransformer()
+        model.model = transformer
+        model.config = SimpleNamespace(
+            controlnet=False,
+            weight_dtype=torch.float32,
+            twinflow_enabled=False,
+            tread_config=None,
+        )
+        model.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model.crepa_regularizer = None
+        model.unwrap_model = MagicMock(side_effect=lambda model=None, **_: model)
+        model._new_hidden_state_buffer = MagicMock(return_value={})
+        model._build_grounding_position_net_kwargs = MagicMock(return_value=None)
+        model._apply_i2v_conditioning_to_kwargs = MagicMock()
+        r_timesteps = torch.tensor([0.25])
+
+        result = Wan.model_predict(
+            model,
+            {
+                "noisy_latents": torch.randn(1, 16, 1, 2, 2),
+                "encoder_hidden_states": torch.randn(1, 4, 8),
+                "timesteps": torch.tensor([0.75]),
+                Wan.FLOWMAP_R_TIMESTEP_BATCH_KEY: r_timesteps,
+            },
+        )
+
+        self.assertIs(transformer.last_kwargs["r_timestep"], r_timesteps)
+        self.assertEqual(result["model_prediction"].shape, (1, 16, 1, 2, 2))
 
 
 if __name__ == "__main__":

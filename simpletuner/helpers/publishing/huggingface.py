@@ -1,5 +1,7 @@
+import json
 import logging
 import os
+import posixpath
 from pathlib import Path
 
 from huggingface_hub import HfApi
@@ -74,21 +76,82 @@ class HubManager:
             return f"{base}/tree/main/{clean}"
         return base
 
+    @staticmethod
+    def _path_in_repo(filename: str, repo_subfolder: str | None = None) -> str:
+        clean_filename = filename.strip("/")
+        if not repo_subfolder:
+            return clean_filename
+        return posixpath.join(repo_subfolder.strip("/"), clean_filename)
+
     def _vae_string(self):
         if "deepfloyd" in self.config.model_type:
             return "\nDeepFloyd Pixel diffusion (no VAE)."
         else:
             return f"\nVAE: {self.config.pretrained_vae_model_name_or_path}"
 
-    def _commit_message(self, global_step: int = None, epoch: int = None):
+    def _resolved_prediction_type(self) -> str | None:
+        configured = getattr(self.config, "prediction_type", None)
+        if configured:
+            return str(getattr(configured, "value", configured))
+        model_prediction_type = getattr(self.model, "PREDICTION_TYPE", None)
+        if model_prediction_type is None:
+            return None
+        return str(getattr(model_prediction_type, "value", model_prediction_type))
+
+    def _training_batch_string(self) -> str:
+        batch_size = self.config.train_batch_size
+        gradient_accumulation_steps = int(getattr(self.config, "gradient_accumulation_steps", 1) or 1)
+        if gradient_accumulation_steps > 1:
+            return (
+                f"\nLearning rate {self.config.learning_rate}, batch size {batch_size}, "
+                f"and {gradient_accumulation_steps} gradient accumulation steps."
+            )
+        return f"\nLearning rate {self.config.learning_rate} and batch size {batch_size}."
+
+    def _prediction_schedule_string(self) -> str:
+        prediction_type = self._resolved_prediction_type()
+        if prediction_type in {"epsilon", "v_prediction"}:
+            return (
+                f"\nTrained with {prediction_type} prediction type and "
+                f"rescale_betas_zero_snr={self.config.rescale_betas_zero_snr}"
+                f"\nUsing '{self.config.training_scheduler_timestep_spacing}' timestep spacing."
+            )
+        if prediction_type == "flow_matching":
+            return "\nTraining objective: flow matching."
+        if prediction_type:
+            return f"\nTraining objective: {prediction_type}."
+        return ""
+
+    def _distillation_string(self) -> str:
+        distillation_method = getattr(self.config, "distillation_method", None)
+        if distillation_method is None:
+            return ""
+        distillation_method = str(getattr(distillation_method, "value", distillation_method))
+        if distillation_method.lower() in {"", "none", "null"}:
+            return ""
+
+        lines = [f"Distillation method: {distillation_method}."]
+        distillation_config = getattr(self.config, "distillation_config", None)
+        if distillation_config:
+            lines.append(
+                "Distillation config: "
+                + json.dumps(
+                    distillation_config,
+                    sort_keys=True,
+                    default=str,
+                )
+            )
+        return "\n" + "\n".join(lines)
+
+    def _commit_message(self, global_step: int | None = None, epoch: int | None = None):
         resolved_epoch = (epoch - 1) if epoch is not None else (StateTracker.get_epoch() - 1)
         resolved_step = global_step if global_step is not None else StateTracker.get_global_step()
         return (
             f"Trained for {resolved_epoch} epochs and {resolved_step} steps."
             f"\nTrained with datasets {self.collected_data_backend_str}"
-            f"\nLearning rate {self.config.learning_rate}, batch size {self.config.train_batch_size}, and {self.config.gradient_accumulation_steps} gradient accumulation steps."
-            f"\nTrained with {self.config.prediction_type} prediction type and rescaled_betas_zero_snr={self.config.rescale_betas_zero_snr}"
-            f"\nUsing '{self.config.training_scheduler_timestep_spacing}' timestep spacing."
+            f"{self._training_batch_string()}"
+            f"{self._prediction_schedule_string()}"
+            f"{self._distillation_string()}"
             f"\nBase model: {self.config.pretrained_model_name_or_path}"
             f"{self._vae_string()}"
         )
@@ -110,7 +173,7 @@ class HubManager:
         self.validation_prompts = validation_prompts.get("validation_prompts", [])
         self.validation_shortnames = validation_prompts.get("validation_shortnames", [])
 
-    def upload_validation_folder(self, webhook_handler=None, override_path=None):
+    def upload_validation_folder(self, webhook_handler=None, override_path=None, repo_subfolder: str | None = None):
         if webhook_handler:
             webhook_handler.send(
                 message=f"Uploading {'model' if override_path is None else 'intermediary checkpoint'} validation samples to Hugging Face Hub as `{self.repo_id}`."
@@ -123,11 +186,15 @@ class HubManager:
             )
         if not self.config.push_to_hub:
             return
+        assets_path = os.path.join(override_path or self.config.output_dir, "assets")
+        if not os.path.isdir(assets_path) or not any(Path(assets_path).iterdir()):
+            logger.debug("No validation assets found at %s; skipping upload.", assets_path)
+            return
         try:
             self._hub_api.upload_folder(
                 repo_id=self._repo_id,
-                folder_path=os.path.join(override_path or self.config.output_dir, "assets"),
-                path_in_repo="assets/",
+                folder_path=assets_path,
+                path_in_repo=self._path_in_repo("assets", repo_subfolder),
                 commit_message="Validation images auto-generated by SimpleTuner",
                 token=self.hub_token,
             )
@@ -135,7 +202,13 @@ class HubManager:
             logger.error(f"Error uploading validation images to Hugging Face Hub: {e}")
 
     def upload_model(
-        self, validation_images, webhook_handler=None, override_path=None, global_step: int = None, epoch: int = None
+        self,
+        validation_images,
+        webhook_handler=None,
+        override_path=None,
+        global_step: int = None,
+        epoch: int = None,
+        repo_subfolder: str | None = None,
     ):
         repo_folder = override_path or os.path.join(
             self.config.output_dir,
@@ -169,7 +242,11 @@ class HubManager:
             )
 
         try:
-            self.upload_validation_folder(webhook_handler=webhook_handler, override_path=override_path)
+            self.upload_validation_folder(
+                webhook_handler=webhook_handler,
+                override_path=override_path,
+                repo_subfolder=repo_subfolder,
+            )
         except:
             logger.error("Error uploading validation images to Hugging Face Hub.")
 
@@ -178,11 +255,21 @@ class HubManager:
             attempt += 1
             try:
                 if "lora" not in self.config.model_type:
-                    self.upload_full_model(override_path=override_path, global_step=global_step, epoch=epoch)
+                    self.upload_full_model(
+                        override_path=override_path,
+                        global_step=global_step,
+                        epoch=epoch,
+                        repo_subfolder=repo_subfolder,
+                    )
                 else:
-                    self.upload_lora_model(override_path=override_path, global_step=global_step, epoch=epoch)
+                    self.upload_lora_model(
+                        override_path=override_path,
+                        global_step=global_step,
+                        epoch=epoch,
+                        repo_subfolder=repo_subfolder,
+                    )
                     if self.config.use_ema:
-                        self.upload_ema_model(override_path=override_path)
+                        self.upload_ema_model(override_path=override_path, repo_subfolder=repo_subfolder)
                 break
             except Exception as e:
                 if webhook_handler:
@@ -195,7 +282,7 @@ class HubManager:
                         message_level="info",
                         job_id=StateTracker.get_job_id(),
                     )
-        repo_url = self._repo_url()
+        repo_url = self._repo_url(repo_subfolder)
         if webhook_handler:
             webhook_handler.send(message=f"Model is now available [on Hugging Face Hub]({repo_url}).")
             webhook_handler.send_raw(
@@ -206,7 +293,13 @@ class HubManager:
             )
         return repo_url
 
-    def upload_full_model(self, override_path=None, global_step: int = None, epoch: int = None):
+    def upload_full_model(
+        self,
+        override_path=None,
+        global_step: int = None,
+        epoch: int = None,
+        repo_subfolder: str | None = None,
+    ):
         if not self.config.push_to_hub:
             return
         folder_path = os.path.join(self.config.output_dir, "pipeline")
@@ -214,13 +307,20 @@ class HubManager:
             self._hub_api.upload_folder(
                 repo_id=self._repo_id,
                 folder_path=override_path or folder_path,
+                path_in_repo=self._path_in_repo("", repo_subfolder),
                 commit_message=self._commit_message(global_step=global_step, epoch=epoch),
                 token=self.hub_token,
             )
         except Exception as e:
             logger.error(f"Failed to upload pipeline to hub: {e}")
 
-    def upload_lora_model(self, override_path=None, global_step: int = None, epoch: int = None):
+    def upload_lora_model(
+        self,
+        override_path=None,
+        global_step: int = None,
+        epoch: int = None,
+        repo_subfolder: str | None = None,
+    ):
         if not self.config.push_to_hub:
             return
         checkpoint_root = override_path or self.config.output_dir
@@ -231,7 +331,7 @@ class HubManager:
         try:
             self._hub_api.upload_file(
                 repo_id=self._repo_id,
-                path_in_repo=f"/{LORA_SAFETENSORS_FILENAME}",
+                path_in_repo=self._path_in_repo(LORA_SAFETENSORS_FILENAME, repo_subfolder),
                 path_or_fileobj=lora_weights_path,
                 commit_message=self._commit_message(global_step=global_step, epoch=epoch),
                 token=self.hub_token,
@@ -239,7 +339,7 @@ class HubManager:
             if os.path.exists(sla_path):
                 self._hub_api.upload_file(
                     repo_id=self._repo_id,
-                    path_in_repo=f"/{SLA_ATTENTION_FILENAME}",
+                    path_in_repo=self._path_in_repo(SLA_ATTENTION_FILENAME, repo_subfolder),
                     path_or_fileobj=sla_path,
                     commit_message="SLA attention state auto-generated by SimpleTuner",
                     token=self.hub_token,
@@ -249,16 +349,25 @@ class HubManager:
             readme_path = os.path.join(checkpoint_root, "README.md")
             self._hub_api.upload_file(
                 repo_id=self._repo_id,
-                path_in_repo="/README.md",
+                path_in_repo=self._path_in_repo("README.md", repo_subfolder),
                 path_or_fileobj=readme_path,
                 commit_message="Model card auto-generated by SimpleTuner",
                 token=self.hub_token,
             )
+            config_path = os.path.join(checkpoint_root, "simpletuner_config.json")
+            if os.path.exists(config_path):
+                self._hub_api.upload_file(
+                    repo_id=self._repo_id,
+                    path_in_repo=self._path_in_repo("simpletuner_config.json", repo_subfolder),
+                    path_or_fileobj=config_path,
+                    commit_message="Training config auto-generated by SimpleTuner",
+                    token=self.hub_token,
+                )
         except Exception as e:
             logger.error(f"Failed to upload LoRA artifacts to hub: {e}")
             raise
 
-    def upload_ema_model(self, override_path=None):
+    def upload_ema_model(self, override_path=None, repo_subfolder: str | None = None):
         if not self.config.push_to_hub or not self.config.use_ema:
             return
         try:
@@ -272,7 +381,7 @@ class HubManager:
                     self._hub_api.upload_folder(
                         repo_id=self._repo_id,
                         folder_path=ema_path,
-                        path_in_repo="/ema",
+                        path_in_repo=self._path_in_repo("ema", repo_subfolder),
                         commit_message="LoRA EMA checkpoint auto-generated by SimpleTuner",
                         token=self.hub_token,
                     )
@@ -296,9 +405,14 @@ class HubManager:
         return highest_checkpoint
 
     def upload_latest_checkpoint(
-        self, validation_images: dict, webhook_handler=None, global_step: int = None, epoch: int = None
+        self,
+        validation_images: dict,
+        webhook_handler=None,
+        global_step: int = None,
+        epoch: int = None,
+        checkpoint_path: str = None,
     ):
-        checkpoint_path = self.find_latest_checkpoint()
+        checkpoint_path = Path(checkpoint_path) if checkpoint_path else self.find_latest_checkpoint()
         if checkpoint_path:
             logging.info(f"Checkpoint path: {checkpoint_path}")
             try:
@@ -347,6 +461,16 @@ class HubManager:
                 # images in the model card.
                 images_to_upload = filtered_images if filtered_images else None
 
+                remote_path = None
+                if bool(getattr(self.config, "push_checkpoints_to_hub", False)):
+                    remote_path = self.upload_model(
+                        validation_images=images_to_upload,
+                        override_path=checkpoint_path,
+                        webhook_handler=webhook_handler,
+                        global_step=global_step,
+                        epoch=epoch,
+                        repo_subfolder=checkpoint_path.name,
+                    )
                 repo_url = self.upload_model(
                     validation_images=images_to_upload,
                     override_path=checkpoint_path,
@@ -354,7 +478,7 @@ class HubManager:
                     global_step=global_step,
                     epoch=epoch,
                 )
-                remote_path = self._repo_url(checkpoint_path.name)
+                remote_path = remote_path or repo_url
                 return remote_path, str(checkpoint_path), repo_url
             except Exception as e:
                 logger.error(f"Failed to upload latest checkpoint: {e}")

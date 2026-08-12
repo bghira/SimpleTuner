@@ -67,6 +67,30 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
   - `diffusers` es el esquema estándar de PEFT/Diffusers.
   - `comfyui` convierte hacia/desde claves estilo ComfyUI (`diffusion_model.*` con tensores `lora_A/lora_B` y `.alpha`). Flux, Flux2, Lumina2 y Z-Image detectarán automáticamente entradas ComfyUI incluso si esto se deja en `diffusers`, pero cámbialo a `comfyui` para forzar salida ComfyUI al guardar.
 
+### `--minimax_h3_target_mode`
+
+- **Qué**: Controla si MiniMax-H3 incluye filas de audio objetivo.
+- **Opciones**: `auto`, `video`, `av`
+- **Predeterminado**: `auto`
+- **Notas**:
+  - `auto` se resuelve como solo video, omitiendo caché VAE de audio, colación y filas de audio objetivo para H3.
+  - Define `minimax_h3_target_mode` o `h3_target_mode` como `av` en una entrada de data backend para activar entrenamiento conjunto audio-video en un backend de audio auto-split o explícito.
+
+### `--minimax_h3_sparse_attention`
+
+- **Qué**: Activa atención sparse 3D experimental, consciente del entrenamiento, para los tokens de video objetivo de MiniMax-H3.
+- **Opciones**: `disabled`, `moba3d`
+- **Predeterminado**: `disabled`
+- **Opciones relacionadas**:
+  - `minimax_h3_sparse_block_shape`: dimensiones `(T,H,W)` separadas por coma o `x` cuyo producto es 128. Predeterminado: `1,8,16`.
+  - `minimax_h3_sparse_video_kv_fraction`: fracción de bloques KV de video objetivo seleccionada por cada bloque query de video objetivo. Predeterminado: `0.5`.
+  - `minimax_h3_sparse_share_heads`: comparte rutas entre heads de atención. Predeterminado: `false`.
+  - `minimax_h3_sparse_start_layer`: mantiene las capas anteriores en atención densa. Predeterminado: `0`.
+- **Notas**:
+  - El texto, audio, contexto de referencia y queries que no son objetivo permanecen densos.
+  - Requiere CUDA FlexAttention. Ulysses context parallelism funciona con `context_parallel_strategy=alltoall`; ring context parallelism y TREAD son incompatibles.
+  - MiniMax no ha publicado la configuración exacta de sparse routing para H3. Esta aproximación es para experimentos controlados de fine-tuning y no garantiza mejor rendimiento.
+
 ### `--fuse_qkv_projections`
 
 - **Qué**: Fusiona las proyecciones QKV en los bloques de atención del modelo para un uso más eficiente del hardware.
@@ -268,6 +292,13 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 - **Qué**: Ruta al modelo Gemma preentrenado o su identificador en <https://huggingface.co/models>.
 - **Por qué**: Al entrenar modelos basados en Gemma (por ejemplo LTX-2, Sana o Lumina2), puedes apuntar a un checkpoint Gemma compartido sin cambiar la ruta del modelo base de difusión.
 
+### `--qwen_text_encoder_model_name_or_path`
+
+- **Qué**: Ruta a un codificador de texto Qwen preentrenado o su identificador en <https://huggingface.co/models>.
+- **Predeterminado**: `None` (usa la fuente del codificador de texto Qwen definida por el modelo seleccionado).
+- **Por qué**: Úsalo para compartir o reemplazar el codificador de texto Qwen en familias de modelos basadas en Qwen sin editar la caché de Hugging Face.
+- **Notas**: Se aplica a familias de modelos con un solo codificador de texto Qwen. Si una familia define varios codificadores Qwen, la opción se ignora y SimpleTuner registra una advertencia.
+
 ### `--max_grounding_entities`
 - Numero maximo de entidades de grounding por imagen para anotaciones espaciales estilo GLIGEN. Por defecto: 0 (deshabilitado). Valores tipicos: 4-16.
 
@@ -290,16 +321,44 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 
 ### `--gradient_checkpointing_interval`
 
-- **Qué**: Hace checkpoint cada *n* bloques, donde *n* es un valor mayor que cero. Un valor de 1 es equivalente a dejar `--gradient_checkpointing` habilitado, y un valor de 2 hará checkpoint en bloques alternos.
-- **Nota**: SDXL y Flux son actualmente los únicos modelos que soportan esta opción. SDXL usa una implementación algo improvisada.
+- **Qué**: Intervalo dependiente del modelo para checkpointing de bloques transformer. Un valor de 1 equivale básicamente a dejar `--gradient_checkpointing` habilitado.
+- **Nota**: Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Z-Image y Wan usan chunks contiguos de *n* bloques en rutas whole-block. Otras familias que exponen esta opción pueden seguir usando el comportamiento anterior de "checkpoint cada *n* bloques". Valores más altos pueden reducir recompute, pero normalmente dejan más activaciones en VRAM.
+
+### `--gradient_checkpointing_segment_stride`
+
+- **Qué**: Inicia un segmento con checkpoint cada *n* bloques en rutas segmented whole-block compatibles.
+- **Ejemplo**: Con `--gradient_checkpointing_interval=2` y `--gradient_checkpointing_segment_stride=4`, SimpleTuner checkpointa dos bloques, ejecuta los dos siguientes normalmente y repite.
+- **Nota**: Solo tiene efecto en familias de modelos que exponen soporte segmented whole-block en la version instalada de SimpleTuner. Las familias no soportadas registran una advertencia e ignoran el valor. El stride debe ser al menos igual al interval. Consulta [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md).
 
 ### `--gradient_checkpointing_backend`
 
-- **Opciones**: `torch`, `unsloth`
-- **Qué**: Selecciona la implementación para gradient checkpointing.
-  - `torch` (por defecto): Checkpointing estándar de PyTorch que recalcula activaciones durante el backward pass. ~20% de overhead de tiempo.
-  - `unsloth`: Descarga activaciones a CPU de forma asíncrona en lugar de recalcular. ~30% más ahorro de memoria con solo ~2% de overhead. Requiere ancho de banda PCIe rápido.
-- **Nota**: Solo efectivo cuando `--gradient_checkpointing` está habilitado. El backend `unsloth` requiere CUDA.
+- **Opciones**: `torch`, `torch-ffn`, `unsloth`, `unsloth-ffn`
+- **Qué**: Selecciona implementación y scope para gradient checkpointing.
+  - `torch` (por defecto): checkpoint del bloque completo compatible y recompute en backward.
+  - `torch-ffn`: checkpoint solo del lado feed-forward en modelos con un límite FFN limpio.
+  - `unsloth`: checkpoint del bloque completo compatible y offload de tensores guardados a CPU.
+  - `unsloth-ffn`: checkpoint solo del lado feed-forward y offload de sus tensores guardados a CPU.
+- **Nota**: Solo efectivo cuando `--gradient_checkpointing` está habilitado. Las variantes `unsloth` requieren CUDA. Las variantes FFN-only soportan actualmente Chroma, Flux, Krea 2, LTXVideo2, MageFlow, Wan y Z-Image, y fallan de forma explícita si no existe ese scope. Consulta [Unsloth-style checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) para tradeoffs medidos.
+
+### `--gradient_checkpointing_offload_attention`
+
+- **Qué**: Hace offload a CPU de las activaciones guardadas del lado attention en modelos con un límite attention/FFN limpio.
+- **Por qué**: Cuando transferir es más barato que recomputar attention, reduce VRAM sin pagar todo el coste de rematerializar attention.
+- **Nota**: Puede activarse por si solo. Tambien puede combinarse con cualquier checkpoint backend que soporte el modelo. Solo tiene efecto en familias de modelos que exponen una frontera attention/FFN limpia en la version instalada de SimpleTuner; las familias no soportadas fallan de forma explicita.
+
+### `--gradient_checkpointing_offload_pin_memory_max_buckets`
+
+- **Predeterminado**: `12`
+- **Qué**: Número máximo de buckets distintos de tensores CPU pinned usados por activation offload.
+- **Por qué**: Pinned memory mejora las transferencias CPU/GPU, pero resoluciones y longitudes de texto variables pueden crear formas raras. Al alcanzar este límite, las nuevas formas de bucket usan memoria CPU normal.
+- **Nota**: Usa `0` para desactivar el pooling de pinned memory para activation offload.
+
+### `--gradient_checkpointing_offload_prefetch`
+
+- **Predeterminado**: `false`
+- **Qué**: Aprende el orden de restore en backward para activations offloaded y precarga en GPU el tensor que probablemente venga después.
+- **Por qué**: El restore H2D justo a tiempo casi no se puede solapar. Con un orden estable, prefetch puede ocultar parte de la transferencia detrás del backward compute.
+- **Nota**: Experimental y solo activo con `--gradient_checkpointing_offload_attention`.
 
 ### `--refiner_training`
 
@@ -1058,6 +1117,7 @@ Diferentes modelos esperan diferentes datos de conditioning:
 - **`--ltx2_validation_pipeline_mode`**: Elige si la validación LTX-2 ejecuta solo el modelo entrenado (`trained-stage`) o una pipeline de validación en dos etapas con spatial upscaler (`spatial-upscale`).
 - **`--ltx2_validation_spatial_upsampler_model`**: Repo de Hugging Face, directorio local o archivo `.safetensors` local para el spatial latent upsampler de LTX-2. Predeterminado: `Lightricks/LTX-2.3`.
 - **`--ltx2_validation_spatial_upsampler_filename`**: Nombre de archivo del upsampler cuando la opción de modelo apunta a un repo o directorio. Predeterminado: `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`.
+- **`--ltx2_validation_audio_guidance`**: Escala CFG de audio separada opcional para latentes de audio LTX-2 durante la validación. Déjala sin definir para reutilizar `--validation_guidance`; úsala cuando quieras dual CFG estilo Comfy con escalas separadas para video y audio.
 - **Qué hace spatial-upscale**: Stage 1 genera video latents a la mitad de la resolución de validación solicitada, el spatial upsampler duplica esos latents, y stage 2 vuelve a denoising en la resolución solicitada con el stage-2 sigma schedule de LTX-2.
 - **Límite**: Spatial-upscale validation es para video; `--validation_audio_only` conserva la ruta normal de validación single-stage.
 
@@ -1182,6 +1242,11 @@ Consulta la guía [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscripti
 
 - **Qué**: Controla el factor de suavizado usado al aplicar actualizaciones EMA.
 - **Por qué**: Valores más altos (p. ej., `0.999`) hacen que la EMA responda lentamente pero produce pesos muy estables. Valores más bajos (p. ej., `0.99`) se adaptan más rápido a nuevas señales de entrenamiento.
+
+### `--ema_warmup_steps`
+
+- **Qué**: Copia los pesos actuales en la EMA antes del paso de optimizador configurado y luego cambia directamente a `--ema_decay`.
+- **Por qué**: Coincide con recetas de entrenamiento que retrasan el suavizado EMA sin dejar la EMA congelada en la inicialización. El valor predeterminado `0` conserva la rampa EMA existente de SimpleTuner.
 
 ### `--snr_gamma`
 
@@ -1666,6 +1731,20 @@ Mapeo de opciones upstream (LayerSync → SimpleTuner):
 
 > ℹ️ Los modelos transformer como PixArt, SD3 o Hunyuan usan los nombres de subcarpeta `transformer` y `transformer_ema`.
 
+### `--init_lora_step`
+
+- **Qué**: Continúa la contabilidad del paso global desde el adaptador de solo modelo cargado mediante `--init_lora`.
+- **Cuándo**: Úsalo solo cuando el checkpoint completo del entrenador no esté disponible pero hayan sobrevivido sus pesos LoRA.
+- **Inferencia automática**: Si se omite esta opción, SimpleTuner usa los metadatos `global_step` de un archivo safetensors local indicado por `--init_lora`, cuando estén presentes. Un valor explícito, incluido `0`, reemplaza los metadatos.
+- **Requisitos**: Debe ser no negativo y menor que `--max_train_steps`; requiere `--init_lora` y no puede combinarse con `--resume_from_checkpoint`.
+- **Estado**: La cadencia de checkpoints y validación continúa desde este paso, pero el optimizador, el muestreador y el estado RNG comienzan de nuevo. Los schedules de learning rate `constant` y `constant_with_warmup` se restauran al paso correspondiente.
+
+### `--init_lora_ema`
+
+- **Qué**: Carga el estado nativo `ema_model.pt` de SimpleTuner asociado con `--init_lora`.
+- **Requisitos**: Requiere `--init_lora` y `--use_ema=true`.
+- **Nota**: Espera el estado EMA nativo guardado con el checkpoint, no un archivo safetensors LoRA EMA exportado.
+
 ### `--delete_invalid_checkpoints`
 
 - **Qué**: Elimina checkpoints locales que no puedan cargarse al reanudar.
@@ -1747,6 +1826,7 @@ usage: train.py [-h] --model_family
                 [--text_encoder_3_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
                 [--text_encoder_4_precision {no_change,int8-quanto,int4-quanto,int2-quanto,int8-torchao,int8dq-torchao,int8dq-int4-torchao,nf4-bnb,int4-torchao,fp8-quanto,fp8uz-quanto,fp8-native,fp8-torchao,fp8wo-torchao,fp8-int4-torchao,fp8-transformerengine}]
                 [--gradient_checkpointing_interval GRADIENT_CHECKPOINTING_INTERVAL]
+                [--gradient_checkpointing_segment_stride GRADIENT_CHECKPOINTING_SEGMENT_STRIDE]
                 [--offload_during_startup [OFFLOAD_DURING_STARTUP]]
                 [--quantize_via {cpu,accelerator,pipeline}]
                 [--quantization_config QUANTIZATION_CONFIG]
@@ -1761,6 +1841,7 @@ usage: train.py [-h] --model_family
                 [--pretrained_unet_subfolder PRETRAINED_UNET_SUBFOLDER]
                 [--pretrained_t5_model_name_or_path PRETRAINED_T5_MODEL_NAME_OR_PATH]
                 [--pretrained_gemma_model_name_or_path PRETRAINED_GEMMA_MODEL_NAME_OR_PATH]
+                [--qwen_text_encoder_model_name_or_path QWEN_TEXT_ENCODER_MODEL_NAME_OR_PATH]
                 [--revision REVISION] [--variant VARIANT]
                 [--base_model_default_dtype {bf16,fp32}]
                 [--unet_attention_slice [UNET_ATTENTION_SLICE]]
@@ -1790,7 +1871,9 @@ usage: train.py [-h] --model_family
                 [--peft_lora_mode {standard,singlora}]
                 [--peft_lora_target_modules PEFT_LORA_TARGET_MODULES]
                 [--singlora_ramp_up_steps SINGLORA_RAMP_UP_STEPS]
-                [--init_lora INIT_LORA] [--lycoris_config LYCORIS_CONFIG]
+                [--init_lora INIT_LORA] [--init_lora_step INIT_LORA_STEP]
+                [--init_lora_ema INIT_LORA_EMA]
+                [--lycoris_config LYCORIS_CONFIG]
                 [--init_lokr_norm INIT_LOKR_NORM]
                 [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano,controlnet,all+ffs+embedder,all+ffs+embedder+controlnet}]
                 [--use_dora [USE_DORA]]
@@ -1858,6 +1941,7 @@ usage: train.py [-h] --model_family
                 [--flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
                 [--flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]]
+                [--audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT]
                 [--flow_custom_timesteps FLOW_CUSTOM_TIMESTEPS]
                 [--flow_timesteps_mode {fixed-list,round-robin}]
                 [--flux_guidance_mode {constant,random-range}]
@@ -1978,7 +2062,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -2063,6 +2147,8 @@ options:
                         memory.
   --gradient_checkpointing_interval GRADIENT_CHECKPOINTING_INTERVAL
                         Checkpoint every N transformer blocks
+  --gradient_checkpointing_segment_stride GRADIENT_CHECKPOINTING_SEGMENT_STRIDE
+                        Start a checkpointed segment every N transformer blocks
   --offload_during_startup [OFFLOAD_DURING_STARTUP]
                         Offload text encoders to CPU during VAE caching
   --quantize_via {cpu,accelerator,pipeline}
@@ -2092,6 +2178,8 @@ options:
                         Path to pretrained T5 model
   --pretrained_gemma_model_name_or_path PRETRAINED_GEMMA_MODEL_NAME_OR_PATH
                         Path to pretrained Gemma model
+  --qwen_text_encoder_model_name_or_path QWEN_TEXT_ENCODER_MODEL_NAME_OR_PATH
+                        Path to pretrained Qwen text encoder model
   --revision REVISION   Git branch/tag/commit for model version
   --variant VARIANT     Model variant (e.g., fp16, bf16)
   --base_model_default_dtype {bf16,fp32}
@@ -2172,6 +2260,11 @@ options:
   --init_lora INIT_LORA
                         Specify an existing LoRA or LyCORIS safetensors file
                         to initialize the adapter
+  --init_lora_step INIT_LORA_STEP
+                        Continue global-step accounting from a model-only LoRA
+                        checkpoint without optimizer state
+  --init_lora_ema INIT_LORA_EMA
+                        Load a raw SimpleTuner EMA state alongside init_lora
   --lycoris_config LYCORIS_CONFIG
                         Path to LyCORIS configuration JSON file
   --init_lokr_norm INIT_LOKR_NORM
@@ -2325,6 +2418,9 @@ options:
                         Shift the noise schedule for flow-matching models
   --flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]
                         Auto-adjust schedule shift based on image resolution
+  --audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT
+                        Shift the audio noise schedule for flow-matching
+                        models with audio latents
   --flow_custom_timesteps FLOW_CUSTOM_TIMESTEPS
                         Override flow-matching timestep sampling with a fixed
                         comma-separated list. The list is interpreted as
@@ -2707,7 +2803,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}
                         Method for model distillation
                         Distillation methods cannot be combined with
                         --train_text_encoder.

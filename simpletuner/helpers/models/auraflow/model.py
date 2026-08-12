@@ -36,6 +36,7 @@ class Auraflow(ImageModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    COMFYUI_LORA_PRESERVE_COMPONENT_PREFIXES = {"transformer"}
     ATTENTION_KWARG_NAME = "attention_kwargs"
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 4

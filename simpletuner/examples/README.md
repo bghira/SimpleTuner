@@ -54,6 +54,8 @@ LTX-2 conditioning examples are split by conditioning style:
 - `ltxvideo2-19b-t2v.peft-lora+intrinsic-conditioning` shows the explicit `ltx2_intrinsic_conditioning` object list.
 - `ltxvideo2-19b-t2v.peft-lora+reference-conditioning` shows IC-LoRA reference conditioning with coordinate scale overrides.
 - `ltxvideo2-2.3-dev-720p-single-gpu.peft-lora+ramtorch` adapts the LTX-2.3 720p profile for one GPU with RamTorch transformer-block streaming.
+- `ltxvideo2-2.5-dev-768x512-mps-48g.peft-lora` targets the released split LTX-2.5 pack on Apple Silicon with UMFA INT8 attention for a 48G 768x512 MPS training example.
+- `ltxvideo2-2.5-dev-768x512-mps-128g.peft-lora` targets the released split LTX-2.5 pack on Apple Silicon with UMFA BF16 attention for a 128G 768x512 MPS training example.
 
 Z-Image conditioning examples:
 
@@ -69,6 +71,11 @@ Cosmos3 examples:
 - `cosmos3-video.lycoris-lokr` uses `sayakpaul/video-dataset-disney-organized`.
 - `cosmos3-video-audio.lycoris-lokr` uses local synchronized drumming files with `audio.auto_split`.
 - `cosmos3-super-i2v.lycoris-lokr` uses `nvidia/Cosmos3-Super-Image2Video` with `video.is_i2v`.
+
+MiniMax-H3 examples:
+
+- `minimaxh3-t2v-fp8-141g.peft-lora+anyflow` is an H200-class AnyFlow forward-stage profile using resident FP8
+  weights, sparse FlexAttention, 8-GPU DDP with batch 1 per rank, and segmented checkpointing interval 2 / stride 10.
 
 Large multi-GPU video examples are split from the standard 24G examples:
 

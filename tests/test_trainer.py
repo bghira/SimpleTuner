@@ -10,12 +10,15 @@ import tempfile
 import time
 import types
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 import torch
+from safetensors.torch import save_file
 
+from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.publishing.providers.s3 import S3PublishingProvider
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
@@ -763,6 +766,41 @@ class TestTrainer(unittest.TestCase):
 
         mock_all_reduce.assert_called_once()
 
+    def test_fsdp2_full_export_failure_guard_raises_when_peer_rank_failed(self):
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(num_processes=2, device=torch.device("cpu"))
+
+        def mark_remote_failure(tensor, op=None):
+            tensor.fill_(1)
+
+        with (
+            patch("simpletuner.helpers.training.trainer.torch.distributed.is_available", return_value=True),
+            patch("simpletuner.helpers.training.trainer.torch.distributed.is_initialized", return_value=True),
+            patch(
+                "simpletuner.helpers.training.trainer.torch.distributed.all_reduce",
+                side_effect=mark_remote_failure,
+            ) as mock_all_reduce,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "failed on another rank"):
+                with trainer._fsdp2_full_export_failure_guard(True):
+                    pass
+
+        mock_all_reduce.assert_called_once()
+
+    def test_fsdp2_full_export_failure_guard_allows_successful_collective(self):
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(num_processes=2, device=torch.device("cpu"))
+
+        with (
+            patch("simpletuner.helpers.training.trainer.torch.distributed.is_available", return_value=True),
+            patch("simpletuner.helpers.training.trainer.torch.distributed.is_initialized", return_value=True),
+            patch("simpletuner.helpers.training.trainer.torch.distributed.all_reduce") as mock_all_reduce,
+        ):
+            with trainer._fsdp2_full_export_failure_guard(True):
+                pass
+
+        mock_all_reduce.assert_called_once()
+
     def test_run_intermediary_validation_passes_step_to_would_validate(self):
         trainer = object.__new__(Trainer)
         validation = MagicMock()
@@ -779,6 +817,44 @@ class TestTrainer(unittest.TestCase):
             force_evaluation=False,
             epoch_end=True,
         )
+
+    def test_run_startup_validation_uses_restored_global_step(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(validation_on_startup=True)
+        trainer.validation = MagicMock()
+        trainer.state = {"global_step": 500}
+        trainer._run_intermediary_validation = MagicMock(return_value=True)
+
+        with patch("simpletuner.helpers.training.trainer.logger.info") as log_info:
+            result = trainer.run_startup_validation()
+
+        self.assertTrue(result)
+        log_info.assert_called_once_with("Running startup validation at restored global step %d.", 500)
+        trainer._run_intermediary_validation.assert_called_once_with(500, manual_validation_requested=True)
+
+    def test_run_startup_validation_is_disabled_by_default(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace()
+        trainer.state = {"global_step": 500}
+        trainer._run_intermediary_validation = MagicMock()
+
+        result = trainer.run_startup_validation()
+
+        self.assertFalse(result)
+        trainer._run_intermediary_validation.assert_not_called()
+
+    def test_run_startup_validation_uses_lazy_global_step_fallback(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(validation_on_startup=True)
+        trainer.validation = MagicMock()
+        trainer.state = {"global_step": None}
+        trainer._run_intermediary_validation = MagicMock(return_value=True)
+
+        with patch("simpletuner.helpers.training.trainer.StateTracker.get_global_step", return_value=None):
+            result = trainer.run_startup_validation()
+
+        self.assertTrue(result)
+        trainer._run_intermediary_validation.assert_called_once_with(0, manual_validation_requested=True)
 
     @patch("simpletuner.helpers.training.trainer.load_config")
     @patch("simpletuner.helpers.training.trainer.safety_check")
@@ -936,6 +1012,44 @@ class TestTrainer(unittest.TestCase):
         torch.testing.assert_close(captured["timesteps"], torch.tensor([3, 7]))
         torch.testing.assert_close(captured["noisy_latents"], torch.tensor([[[[4.0]]], [[[8.0]]]]))
         torch.testing.assert_close(prepared_batch["timesteps"], torch.tensor([10, 20]))
+
+    def test_prepare_regularisation_parent_targets_captures_audio_and_restores_lora(self):
+        trainer = object.__new__(Trainer)
+
+        class _LoraComponent:
+            def __init__(self):
+                self.calls = []
+
+            def disable_lora(self):
+                self.calls.append("disable")
+
+            def enable_lora(self):
+                self.calls.append("enable")
+
+        component = _LoraComponent()
+        trainer.config = SimpleNamespace(lora_type="standard")
+        trainer.accelerator = SimpleNamespace()
+        trainer.model = SimpleNamespace(get_trained_component=lambda: component)
+        trainer.model_predict = Mock(
+            return_value={
+                "model_prediction": torch.ones(1, 1, requires_grad=True),
+                "audio_prediction": torch.full((1, 2, 3, 2), 2.0, requires_grad=True),
+            }
+        )
+        batch = {}
+
+        trainer._prepare_regularisation_parent_targets(batch)
+
+        self.assertEqual(component.calls, ["disable", "enable"])
+        self.assertTrue(torch.equal(batch["target"], torch.ones(1, 1)))
+        self.assertFalse(batch["target"].requires_grad)
+        self.assertTrue(torch.equal(batch["audio_target"], torch.full((1, 2, 3, 2), 2.0)))
+        self.assertFalse(batch["audio_target"].requires_grad)
+
+        trainer.model_predict.side_effect = RuntimeError("parent failed")
+        with self.assertRaisesRegex(RuntimeError, "parent failed"):
+            trainer._prepare_regularisation_parent_targets({})
+        self.assertEqual(component.calls[-2:], ["disable", "enable"])
 
     def test_run_trainer_job_aborts_promptly(self):
         from simpletuner.helpers.training import trainer as trainer_module
@@ -1214,6 +1328,17 @@ class TestTrainer(unittest.TestCase):
         self.assertIn("grad_absmax", logs)
         self.assertIs(logs["grad_absmax"], trainer.grad_norm)
 
+    def test_update_grad_metrics_clones_absmax_value_when_requested(self):
+        trainer = self._build_trainer_for_grad_logging(
+            grad_clip_method="value",
+            use_deepspeed=False,
+            grad_value=torch.tensor(1.2),
+        )
+        logs = {}
+        trainer._update_grad_metrics(logs, clone_norm_value=True)
+        self.assertIn("grad_absmax", logs)
+        self.assertEqual(logs["grad_absmax"], float(trainer.grad_norm.clone().detach()))
+
     def test_update_grad_metrics_clones_norm_value_when_requested(self):
         trainer = self._build_trainer_for_grad_logging(
             grad_clip_method="norm",
@@ -1274,7 +1399,7 @@ class TestTrainer(unittest.TestCase):
         )
         metrics = trainer._compose_training_progress_metrics(epoch=1)
         self.assertIn("grad_absmax", metrics)
-        self.assertIs(metrics["grad_absmax"], trainer.grad_norm)
+        self.assertEqual(metrics["grad_absmax"], float(trainer.grad_norm.clone().detach()))
         self.assertNotIn("grad_norm", metrics)
 
     def test_compose_training_progress_metrics_excludes_grad_with_deepspeed(self):
@@ -1335,6 +1460,46 @@ class TestTrainer(unittest.TestCase):
         )
 
         with self.assertRaises(ValueError):
+            trainer._load_fsdp_plugin()
+
+    def test_load_fsdp_plugin_rejects_cpu_offload_with_torchao_optimizer_offload(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            fsdp_enable=True,
+            fsdp_version=2,
+            fsdp_reshard_after_forward=True,
+            fsdp_cpu_ram_efficient_loading=False,
+            fsdp_cpu_offload=True,
+            fsdp_state_dict_type="SHARDED_STATE_DICT",
+            fsdp_auto_wrap_policy="transformer_based_wrap",
+            fsdp_transformer_layer_cls_to_wrap=None,
+            optimizer="adamw_bf16",
+            optimizer_cpu_offload_method="torchao",
+            optimizer_release_gradients=False,
+            deepspeed_config=None,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "post-accumulate gradient hook"):
+            trainer._load_fsdp_plugin()
+
+    def test_load_fsdp_plugin_rejects_cpu_offload_with_optimi_gradient_release(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            fsdp_enable=True,
+            fsdp_version=2,
+            fsdp_reshard_after_forward=True,
+            fsdp_cpu_ram_efficient_loading=False,
+            fsdp_cpu_offload=True,
+            fsdp_state_dict_type="SHARDED_STATE_DICT",
+            fsdp_auto_wrap_policy="transformer_based_wrap",
+            fsdp_transformer_layer_cls_to_wrap=None,
+            optimizer="optimi-adamw",
+            optimizer_cpu_offload_method="none",
+            optimizer_release_gradients=True,
+            deepspeed_config=None,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "post-accumulate gradient hook"):
             trainer._load_fsdp_plugin()
 
     def test_resume_and_prepare_initializes_ema_after_prepare(self):
@@ -1398,6 +1563,90 @@ class TestTrainer(unittest.TestCase):
         trainer._place_ema_model(is_fsdp2_run=True)
 
         trainer.ema_model.to.assert_not_called()
+
+    def test_init_distillation_adapter_modules_delegates_to_factory(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            distillation_method="anyflow",
+            distillation_config={"anyflow": {"gate_value": 0.25}},
+        )
+        trainer.model = Mock()
+
+        with patch(
+            "simpletuner.helpers.distillation.factory.DistillerFactory.prepare_model_for_adapter"
+        ) as prepare_model_for_adapter:
+            trainer.init_distillation_adapter_modules()
+
+        prepare_model_for_adapter.assert_called_once_with(
+            method="anyflow",
+            model=trainer.model,
+            config=vars(trainer.config),
+        )
+
+    def test_init_benchmark_base_model_uses_eval_mode_and_restores_training(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(disable_benchmark=False, validation_multigpu="batch-parallel")
+        trainer.accelerator = MagicMock()
+        trainer.accelerator.is_main_process = True
+        trainer.validation = MagicMock()
+        trainer.validation.benchmark_exists.return_value = False
+        trainer._emit_event = MagicMock()
+        trainer.job_id = None
+        trained_component = MagicMock()
+        trained_component.training = True
+        trainer.model = MagicMock()
+        trainer.model.get_trained_component.return_value = trained_component
+
+        trainer.init_benchmark_base_model()
+
+        trained_component.eval.assert_called_once_with()
+        trained_component.train.assert_called_once_with()
+        trainer.accelerator.autocast.assert_called_once_with()
+        trainer.validation.run_validations.assert_called_once_with(validation_type="base_model", step=0)
+        trainer.validation.save_benchmark.assert_called_once_with("base_model")
+
+    def test_init_benchmark_base_model_restores_training_after_validation_error(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(disable_benchmark=False, validation_multigpu="batch-parallel")
+        trainer.accelerator = MagicMock()
+        trainer.accelerator.is_main_process = True
+        trainer.validation = MagicMock()
+        trainer.validation.benchmark_exists.return_value = False
+        trainer.validation.run_validations.side_effect = RuntimeError("validation failed")
+        trainer._emit_event = MagicMock()
+        trainer.job_id = None
+        trained_component = MagicMock()
+        trained_component.training = True
+        trainer.model = MagicMock()
+        trainer.model.get_trained_component.return_value = trained_component
+
+        with self.assertRaisesRegex(RuntimeError, "validation failed"):
+            trainer.init_benchmark_base_model()
+
+        trained_component.eval.assert_called_once_with()
+        trained_component.train.assert_called_once_with()
+        trainer.accelerator.autocast.assert_called_once_with()
+        trainer.validation.save_benchmark.assert_not_called()
+
+    def test_init_benchmark_base_model_preserves_eval_mode(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(disable_benchmark=False, validation_multigpu="batch-parallel")
+        trainer.accelerator = MagicMock()
+        trainer.accelerator.is_main_process = True
+        trainer.validation = MagicMock()
+        trainer.validation.benchmark_exists.return_value = False
+        trainer._emit_event = MagicMock()
+        trainer.job_id = None
+        trained_component = MagicMock()
+        trained_component.training = False
+        trainer.model = MagicMock()
+        trainer.model.get_trained_component.return_value = trained_component
+
+        trainer.init_benchmark_base_model()
+
+        trained_component.eval.assert_called_once_with()
+        trained_component.train.assert_not_called()
+        trainer.validation.run_validations.assert_called_once_with(validation_type="base_model", step=0)
 
     @patch("simpletuner.helpers.training.trainer.Validation")
     def test_init_validations_enabled_for_fsdp_full_shard(self, mock_validation):
@@ -1747,6 +1996,121 @@ class TestTrainer(unittest.TestCase):
             self.assertEqual(trainer.state["current_epoch"], 2)
             self.assertEqual(trainer.extra_lr_scheduler_kwargs["epoch"], 2)
 
+    def test_epoch_rollover_reuses_initial_bucket_padding_policy(self):
+        cases = (
+            ("fixed_steps", False, False, False),
+            ("epoch_driven", True, False, True),
+            ("oversubscribed_fixed_steps", False, True, True),
+        )
+
+        for name, overrode_max_train_steps, allow_oversubscription, expected in cases:
+            with self.subTest(name=name):
+                trainer = object.__new__(Trainer)
+                trainer.state = {"first_epoch": 1, "current_epoch": 1}
+                trainer.accelerator = MagicMock(is_main_process=True)
+                trainer.extra_lr_scheduler_kwargs = {}
+                trainer.get_steps_per_epoch_for_epoch = MagicMock(return_value=100)
+                trainer.config = SimpleNamespace(
+                    num_train_epochs=5,
+                    aspect_bucket_disable_rebuild=False,
+                    lr_scheduler="constant",
+                    num_update_steps_per_epoch=100,
+                    gradient_accumulation_steps=3,
+                    overrode_max_train_steps=overrode_max_train_steps,
+                    allow_dataset_oversubscription=allow_oversubscription,
+                )
+                metadata_backend = MagicMock(read_only=True)
+                metadata_backend.aspect_ratio_bucket_indices = {"1.0": ["image-0.jpg"]}
+                backends = {"train": {"metadata_backend": metadata_backend}}
+                backend_config = {
+                    "crop": True,
+                    "crop_aspect": "random",
+                }
+
+                with (
+                    patch("simpletuner.helpers.training.trainer.StateTracker.set_epoch"),
+                    patch(
+                        "simpletuner.helpers.training.trainer.StateTracker.get_data_backends",
+                        return_value=backends,
+                    ),
+                    patch(
+                        "simpletuner.helpers.training.trainer.StateTracker.get_data_backend_config",
+                        return_value=backend_config,
+                    ),
+                ):
+                    trainer._epoch_rollover(2)
+
+                metadata_backend.split_buckets_between_processes.assert_called_once_with(
+                    gradient_accumulation_steps=3,
+                    apply_padding=expected,
+                )
+
+    def _rollover_fixture(self, bucket_contents, usable_batches):
+        trainer = object.__new__(Trainer)
+        trainer.state = {"first_epoch": 1, "current_epoch": 1}
+        trainer.accelerator = MagicMock(is_main_process=True)
+        trainer.extra_lr_scheduler_kwargs = {}
+        trainer.get_steps_per_epoch_for_epoch = MagicMock(return_value=100)
+        trainer.config = SimpleNamespace(
+            num_train_epochs=5,
+            aspect_bucket_disable_rebuild=False,
+            lr_scheduler="constant",
+            num_update_steps_per_epoch=100,
+            gradient_accumulation_steps=1,
+            overrode_max_train_steps=False,
+            allow_dataset_oversubscription=False,
+        )
+        metadata_backend = MagicMock(read_only=True, batch_size=4)
+        metadata_backend.aspect_ratio_bucket_indices = bucket_contents
+        metadata_backend.__len__.return_value = usable_batches
+        vaecache = MagicMock()
+        backends = {"train": {"metadata_backend": metadata_backend, "vaecache": vaecache}}
+        return trainer, metadata_backend, vaecache, backends
+
+    @contextmanager
+    def _rollover_patches(self, backends):
+        with (
+            patch("simpletuner.helpers.training.trainer.StateTracker.set_epoch"),
+            patch(
+                "simpletuner.helpers.training.trainer.StateTracker.get_data_backends",
+                return_value=backends,
+            ),
+            patch(
+                "simpletuner.helpers.training.trainer.StateTracker.get_data_backend_config",
+                return_value={"crop": True, "crop_aspect": "random"},
+            ),
+        ):
+            yield
+
+    def test_epoch_rollover_rejects_a_rank_the_resplit_left_empty(self):
+        trainer, metadata_backend, vaecache, backends = self._rollover_fixture(
+            bucket_contents={"1.0": [], "1.5": []}, usable_batches=0
+        )
+
+        with self._rollover_patches(backends):
+            with self.assertRaises(ValueError) as context:
+                trainer._epoch_rollover(2)
+
+        self.assertIn("Dataset produced no usable samples", str(context.exception))
+        # The rejection must land after the re-split and before anything downstream
+        # consumes the new schedule.
+        metadata_backend.split_buckets_between_processes.assert_called_once()
+        vaecache.rebuild_cache.assert_not_called()
+
+    def test_epoch_rollover_keeps_a_rank_that_cannot_fill_a_batch(self):
+        # One sample against batch_size=4, so the startup guard's len() would read 0 here.
+        # This guard asks only whether the shard is empty, and this rank keeps training on
+        # recycled samples exactly as it does today.
+        trainer, metadata_backend, vaecache, backends = self._rollover_fixture(
+            bucket_contents={"1.0": ["image-0.jpg"]}, usable_batches=0
+        )
+
+        with self._rollover_patches(backends):
+            trainer._epoch_rollover(2)
+
+        metadata_backend.split_buckets_between_processes.assert_called_once()
+        vaecache.rebuild_cache.assert_called_once()
+
     @patch(
         "simpletuner.helpers.training.trainer.Trainer.parse_arguments",
         return_value=Mock(),
@@ -1903,7 +2267,6 @@ class TestTrainer(unittest.TestCase):
                 trainer.accelerator.load_state.assert_called_with("/path/to/output/checkpoint-200")
 
     def test_publish_final_artifacts_uploads_output_directory(self):
-        """Final publishing should run after model files are materialized."""
         trainer = object.__new__(Trainer)
         trainer.publishing_manager = Mock(configured=True)
         trainer.publishing_manager.providers = []
@@ -1924,6 +2287,140 @@ class TestTrainer(unittest.TestCase):
         self.assertEqual(args[0], output_dir)
         self.assertEqual(kwargs["artifact_name"], "output")
         self.assertEqual(kwargs["metadata"]["job_id"], "job-123")
+
+    def test_initial_lora_step_rejects_full_checkpoint_resume(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            init_lora="adapter.safetensors",
+            init_lora_step=1500,
+            resume_from_checkpoint="latest",
+            max_train_steps=25000,
+        )
+
+        with self.assertRaisesRegex(ValueError, "cannot be combined"):
+            trainer._initial_lora_step()
+
+    def test_initial_lora_step_uses_safetensors_metadata_when_unspecified(self):
+        with tempfile.NamedTemporaryFile(suffix=".safetensors") as lora_file:
+            save_file({"weight": torch.ones(1)}, lora_file.name, metadata={"global_step": "1500"})
+            trainer = object.__new__(Trainer)
+            trainer.config = SimpleNamespace(
+                init_lora=lora_file.name,
+                init_lora_step=None,
+                resume_from_checkpoint=None,
+                max_train_steps=25000,
+            )
+
+            self.assertEqual(trainer._initial_lora_step(), 1500)
+            self.assertEqual(trainer.config.init_lora_step, 1500)
+
+    def test_initial_lora_step_explicit_zero_overrides_safetensors_metadata(self):
+        with tempfile.NamedTemporaryFile(suffix=".safetensors") as lora_file:
+            save_file({"weight": torch.ones(1)}, lora_file.name, metadata={"global_step": "1500"})
+            trainer = object.__new__(Trainer)
+            trainer.config = SimpleNamespace(
+                init_lora=lora_file.name,
+                init_lora_step=0,
+                resume_from_checkpoint=None,
+                max_train_steps=25000,
+            )
+
+            self.assertEqual(trainer._initial_lora_step(), 0)
+
+    def test_initial_lora_step_rejects_invalid_safetensors_metadata(self):
+        with tempfile.NamedTemporaryFile(suffix=".safetensors") as lora_file:
+            save_file({"weight": torch.ones(1)}, lora_file.name, metadata={"global_step": "not-a-step"})
+            trainer = object.__new__(Trainer)
+            trainer.config = SimpleNamespace(
+                init_lora=lora_file.name,
+                init_lora_step=None,
+                resume_from_checkpoint=None,
+                max_train_steps=25000,
+            )
+
+            with self.assertRaisesRegex(ValueError, "non-negative integer"):
+                trainer._initial_lora_step()
+
+    def test_init_lora_step_continues_accounting_with_fresh_optimizer(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            init_lora="adapter.safetensors",
+            init_lora_step=1500,
+            resume_from_checkpoint=None,
+            max_train_steps=25000,
+            total_steps_remaining_at_start=0,
+            lr_scheduler="constant_with_warmup",
+            lr_warmup_steps=1000,
+            is_schedulefree=False,
+        )
+        trainer.state = {"global_step": 1500, "global_resume_step": 1500, "first_epoch": 1}
+        trainer.accelerator = Mock(num_processes=8)
+        trainer.optimizer = Mock(param_groups=[{"lr": 0.0, "initial_lr": 5e-5}])
+        trainer.model = Mock()
+        scheduler_state = {
+            "base_lrs": [5e-5],
+            "last_epoch": 0,
+            "_step_count": 1,
+            "_last_lr": [0.0],
+        }
+        lr_scheduler = Mock(split_batches=False)
+        lr_scheduler.state_dict.return_value = scheduler_state
+
+        with (
+            patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=1500),
+            patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"),
+        ):
+            result = trainer.init_resume_checkpoint(lr_scheduler)
+
+        self.assertIs(result, lr_scheduler)
+        self.assertEqual(trainer.state["global_step"], 1500)
+        self.assertEqual(trainer.state["global_resume_step"], 1500)
+        self.assertEqual(trainer.config.total_steps_remaining_at_start, 23500)
+        self.assertEqual(trainer.optimizer.param_groups[0]["lr"], 5e-5)
+        self.assertEqual(scheduler_state["last_epoch"], 12000)
+        self.assertEqual(scheduler_state["_step_count"], 12001)
+        trainer.model.reset_flow_custom_timestep_cursor.assert_called_once_with(1500)
+
+    def test_init_lora_step_restores_constant_scheduler_inside_warmup(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            lr_scheduler="constant_with_warmup",
+            lr_warmup_steps=1000,
+            is_schedulefree=False,
+        )
+        trainer.accelerator = Mock(num_processes=8)
+        optimizer_param_groups = [{"lr": 0.0, "initial_lr": 5e-5}]
+        scheduler_state = {
+            "base_lrs": [5e-5],
+            "last_epoch": 0,
+            "_step_count": 1,
+            "_last_lr": [0.0],
+        }
+        lr_scheduler = Mock(split_batches=False)
+        lr_scheduler.state_dict.return_value = scheduler_state
+
+        trainer._restore_constant_scheduler_lr(lr_scheduler, optimizer_param_groups, [5e-5], global_step=500)
+
+        self.assertEqual(optimizer_param_groups[0]["lr"], 2.5e-5)
+        self.assertEqual(scheduler_state["_last_lr"], [2.5e-5])
+        self.assertEqual(scheduler_state["last_epoch"], 4000)
+        self.assertEqual(scheduler_state["_step_count"], 4001)
+        lr_scheduler.load_state_dict.assert_called_once_with(scheduler_state)
+
+    def test_load_initial_lora_ema_state(self):
+        with tempfile.NamedTemporaryFile() as ema_file:
+            trainer = object.__new__(Trainer)
+            trainer.config = SimpleNamespace(
+                init_lora="adapter.safetensors",
+                init_lora_ema=ema_file.name,
+                use_ema=True,
+            )
+            trainer.accelerator = Mock(is_main_process=True)
+            trainer.ema_model = Mock()
+
+            trainer._load_initial_lora_ema_state()
+
+            trainer.ema_model.load_state_dict.assert_called_once_with(ema_file.name)
 
     @patch("simpletuner.helpers.training.trainer.PublishingManager")
     @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_load_checkpoint")
@@ -2097,6 +2594,349 @@ class TestTrainer(unittest.TestCase):
             self.assertFalse(Path(tmpdir, "checkpoint-200").exists())
             trainer.accelerator.load_state.assert_called_once_with(os.path.join(tmpdir, "checkpoint-100"))
 
+    def _build_standard_checkpoint_test_trainer(self, output_dir, limit, use_checkpoint_manager):
+        trainer = object.__new__(Trainer)
+        trainer.job_id = None
+        trainer.hub_manager = None
+        trainer.webhook_handler = None
+        trainer.validation = None
+        trainer._prepare_training_progress_payload = Mock(return_value=({}, {}))
+        trainer._emit_event = Mock()
+        trainer._run_post_upload_script = Mock()
+        trainer._drain_hub_upload_futures = Mock()
+        trainer.checkpoint_manager = CheckpointManager(output_dir) if use_checkpoint_manager else None
+        trainer.state = {"global_step": 110, "current_epoch": 1}
+        trainer.config = SimpleNamespace(
+            output_dir=output_dir,
+            use_deepspeed_optimizer=False,
+            fsdp_enable=False,
+            checkpoints_total_limit=limit,
+            num_train_epochs=1,
+        )
+        trainer.accelerator = SimpleNamespace(is_main_process=True)
+        return trainer
+
+    def test_checkpoint_state_cleanup_temp_removes_standard_and_rolling_temp(self):
+        for use_checkpoint_manager in (True, False):
+            with self.subTest(use_checkpoint_manager=use_checkpoint_manager):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    for checkpoint in (
+                        "checkpoint-10",
+                        "checkpoint-20-rolling",
+                        "checkpoint-30-tmp",
+                        "checkpoint-40-rolling-tmp",
+                    ):
+                        Path(tmpdir, checkpoint).mkdir()
+
+                    trainer = object.__new__(Trainer)
+                    trainer.checkpoint_manager = CheckpointManager(tmpdir) if use_checkpoint_manager else None
+                    trainer.checkpoint_state_cleanup_temp(tmpdir)
+
+                    remaining = sorted(path.name for path in Path(tmpdir).glob("checkpoint-*"))
+                    self.assertEqual(remaining, ["checkpoint-10", "checkpoint-20-rolling"])
+
+    def test_standard_checkpoint_unlimited_cleans_temp_without_rotation(self):
+        for use_checkpoint_manager in (True, False):
+            with self.subTest(use_checkpoint_manager=use_checkpoint_manager):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    existing_checkpoint = Path(tmpdir, "checkpoint-100")
+                    incoming_checkpoint = Path(tmpdir, "checkpoint-110")
+                    temp_checkpoint = Path(tmpdir, "checkpoint-90-tmp")
+                    existing_checkpoint.mkdir()
+                    temp_checkpoint.mkdir()
+
+                    trainer = self._build_standard_checkpoint_test_trainer(
+                        tmpdir,
+                        limit=0,
+                        use_checkpoint_manager=use_checkpoint_manager,
+                    )
+                    trainer.checkpoint_state_cleanup = Mock(wraps=trainer.checkpoint_state_cleanup)
+
+                    def save_checkpoint(output_dir):
+                        self.assertEqual(tmpdir, output_dir)
+                        self.assertFalse(temp_checkpoint.exists())
+                        incoming_checkpoint.mkdir()
+                        return str(incoming_checkpoint)
+
+                    trainer.checkpoint_state_save = Mock(side_effect=save_checkpoint)
+                    save_path = trainer._run_standard_checkpoint(
+                        webhook_message=None,
+                        parent_loss=None,
+                        epoch=0,
+                        upload_to_hub=False,
+                    )
+
+                    self.assertEqual(str(incoming_checkpoint), save_path)
+                    remaining = sorted(path.name for path in Path(tmpdir).glob("checkpoint-*"))
+                    self.assertEqual(remaining, ["checkpoint-100", "checkpoint-110"])
+                    trainer.checkpoint_state_cleanup.assert_not_called()
+                    trainer._drain_hub_upload_futures.assert_not_called()
+
+    def test_standard_checkpoint_waits_only_when_removal_is_needed(self):
+        for use_checkpoint_manager in (True, False):
+            with self.subTest(use_checkpoint_manager=use_checkpoint_manager):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    existing_checkpoint = Path(tmpdir, "checkpoint-100")
+                    incoming_checkpoint = Path(tmpdir, "checkpoint-110")
+                    next_checkpoint = Path(tmpdir, "checkpoint-120")
+                    existing_checkpoint.mkdir()
+
+                    trainer = self._build_standard_checkpoint_test_trainer(
+                        tmpdir,
+                        limit=2,
+                        use_checkpoint_manager=use_checkpoint_manager,
+                    )
+
+                    def save_checkpoint(output_dir):
+                        self.assertEqual(tmpdir, output_dir)
+                        incoming_checkpoint.mkdir()
+                        return str(incoming_checkpoint)
+
+                    trainer.checkpoint_state_save = Mock(side_effect=save_checkpoint)
+                    save_path = trainer._run_standard_checkpoint(
+                        webhook_message=None,
+                        parent_loss=None,
+                        epoch=0,
+                        upload_to_hub=False,
+                    )
+
+                    self.assertEqual(str(incoming_checkpoint), save_path)
+                    remaining = sorted(path.name for path in Path(tmpdir).glob("checkpoint-*"))
+                    self.assertEqual(remaining, ["checkpoint-100", "checkpoint-110"])
+                    trainer._drain_hub_upload_futures.assert_not_called()
+
+                    def save_next_checkpoint(output_dir):
+                        self.assertEqual(tmpdir, output_dir)
+                        next_checkpoint.mkdir()
+                        return str(next_checkpoint)
+
+                    trainer.state["global_step"] = 120
+                    trainer.checkpoint_state_save = Mock(side_effect=save_next_checkpoint)
+                    save_path = trainer._run_standard_checkpoint(
+                        webhook_message=None,
+                        parent_loss=None,
+                        epoch=0,
+                        upload_to_hub=False,
+                    )
+
+                    self.assertEqual(str(next_checkpoint), save_path)
+                    remaining = sorted(path.name for path in Path(tmpdir).glob("checkpoint-*"))
+                    self.assertEqual(remaining, ["checkpoint-110", "checkpoint-120"])
+                    trainer._drain_hub_upload_futures.assert_called_once_with(wait=True)
+
+    def test_standard_checkpoint_rotation_preserves_recovery_and_new_save(self):
+        for use_checkpoint_manager in (True, False):
+            with self.subTest(use_checkpoint_manager=use_checkpoint_manager):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    resume_checkpoint = Path(tmpdir) / "checkpoint-100"
+                    existing_checkpoint = Path(tmpdir) / "checkpoint-200"
+                    incoming_checkpoint = Path(tmpdir) / "checkpoint-110"
+                    temp_checkpoint = Path(tmpdir) / "checkpoint-90-tmp"
+                    resume_checkpoint.mkdir()
+                    existing_checkpoint.mkdir()
+                    temp_checkpoint.mkdir()
+
+                    trainer = object.__new__(Trainer)
+                    trainer.job_id = None
+                    trainer.hub_manager = Mock()
+                    trainer.hub_manager.upload_latest_checkpoint.return_value = (
+                        "remote/checkpoint-110",
+                        str(incoming_checkpoint),
+                        "repo-url",
+                    )
+                    trainer.webhook_handler = None
+                    trainer.validation = None
+                    trainer._prepare_training_progress_payload = Mock(return_value=({}, {}))
+                    trainer._emit_event = Mock()
+                    trainer._run_post_upload_script = Mock()
+                    trainer._schedule_hub_upload = Mock(side_effect=lambda _description, upload: upload())
+
+                    def drain_uploads_before_removal(*, wait):
+                        self.assertTrue(wait)
+                        self.assertTrue(resume_checkpoint.exists())
+                        self.assertTrue(existing_checkpoint.exists())
+                        self.assertTrue(incoming_checkpoint.exists())
+
+                    trainer._drain_hub_upload_futures = Mock(side_effect=drain_uploads_before_removal)
+                    trainer.checkpoint_manager = CheckpointManager(tmpdir) if use_checkpoint_manager else None
+                    trainer.state = {"global_step": 110, "current_epoch": 1}
+                    trainer.config = SimpleNamespace(
+                        output_dir=tmpdir,
+                        use_deepspeed_optimizer=False,
+                        fsdp_enable=False,
+                        checkpoints_total_limit=1,
+                        num_train_epochs=1,
+                        resume_from_checkpoint="checkpoint-100",
+                    )
+                    trainer.accelerator = SimpleNamespace(is_main_process=True)
+
+                    def fail_save(output_dir):
+                        self.assertEqual(tmpdir, output_dir)
+                        self.assertFalse(temp_checkpoint.exists())
+                        raise RuntimeError("save failed")
+
+                    trainer.checkpoint_state_save = Mock(side_effect=fail_save)
+
+                    with self.assertRaisesRegex(RuntimeError, "save failed"):
+                        trainer._run_standard_checkpoint(
+                            webhook_message=None,
+                            parent_loss=None,
+                            epoch=0,
+                            upload_to_hub=False,
+                        )
+                    self.assertTrue(resume_checkpoint.exists())
+                    self.assertTrue(existing_checkpoint.exists())
+
+                    def save_checkpoint(output_dir):
+                        self.assertEqual(tmpdir, output_dir)
+                        self.assertTrue(resume_checkpoint.exists())
+                        self.assertTrue(existing_checkpoint.exists())
+                        incoming_checkpoint.mkdir()
+                        return str(incoming_checkpoint)
+
+                    trainer.checkpoint_state_save = Mock(side_effect=save_checkpoint)
+                    save_path = trainer._run_standard_checkpoint(
+                        webhook_message=None,
+                        parent_loss=None,
+                        epoch=0,
+                        upload_to_hub=True,
+                    )
+
+                    self.assertEqual(str(incoming_checkpoint), save_path)
+                    self.assertTrue(Path(save_path).exists())
+                    remaining = sorted(path.name for path in Path(tmpdir).glob("checkpoint-*"))
+                    self.assertEqual(remaining, ["checkpoint-110"])
+                    trainer.hub_manager.upload_latest_checkpoint.assert_called_once_with(
+                        validation_images=None,
+                        webhook_handler=None,
+                        global_step=110,
+                        epoch=1,
+                        checkpoint_path=str(incoming_checkpoint),
+                    )
+                    trainer._drain_hub_upload_futures.assert_called_once_with(wait=True)
+
+    def test_hub_upload_uses_explicit_checkpoint_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            Path(tmpdir, "checkpoint-200").mkdir()
+            incoming_checkpoint = Path(tmpdir, "checkpoint-110")
+            incoming_checkpoint.mkdir()
+
+            hub_manager = object.__new__(HubManager)
+            hub_manager.config = SimpleNamespace(output_dir=tmpdir, push_checkpoints_to_hub=True)
+            hub_manager.find_latest_checkpoint = Mock(return_value=Path(tmpdir, "checkpoint-200"))
+            hub_manager.upload_model = Mock(side_effect=["remote/checkpoint-110", "repo-url"])
+
+            result = hub_manager.upload_latest_checkpoint(
+                validation_images=None,
+                webhook_handler=None,
+                global_step=110,
+                epoch=1,
+                checkpoint_path=str(incoming_checkpoint),
+            )
+
+            self.assertEqual(("remote/checkpoint-110", str(incoming_checkpoint), "repo-url"), result)
+            hub_manager.find_latest_checkpoint.assert_not_called()
+            self.assertEqual(
+                [
+                    call(
+                        validation_images=None,
+                        override_path=incoming_checkpoint,
+                        webhook_handler=None,
+                        global_step=110,
+                        epoch=1,
+                        repo_subfolder="checkpoint-110",
+                    ),
+                    call(
+                        validation_images=None,
+                        override_path=incoming_checkpoint,
+                        webhook_handler=None,
+                        global_step=110,
+                        epoch=1,
+                    ),
+                ],
+                hub_manager.upload_model.call_args_list,
+            )
+
+    def test_rolling_checkpoint_rotation_preserves_recovery_and_new_save(self):
+        for use_checkpoint_manager in (True, False):
+            with self.subTest(use_checkpoint_manager=use_checkpoint_manager):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    resume_checkpoint = Path(tmpdir, "checkpoint-100-rolling")
+                    existing_checkpoint = Path(tmpdir, "checkpoint-200-rolling")
+                    incoming_checkpoint = Path(tmpdir, "checkpoint-110-rolling")
+                    temp_checkpoint = Path(tmpdir, "checkpoint-90-rolling-tmp")
+                    resume_checkpoint.mkdir()
+                    existing_checkpoint.mkdir()
+                    temp_checkpoint.mkdir()
+
+                    trainer = object.__new__(Trainer)
+                    trainer.checkpoint_manager = CheckpointManager(tmpdir) if use_checkpoint_manager else None
+                    trainer.config = SimpleNamespace(
+                        output_dir=tmpdir,
+                        use_deepspeed_optimizer=False,
+                        fsdp_enable=False,
+                        checkpoints_rolling_total_limit=1,
+                    )
+                    trainer.accelerator = SimpleNamespace(is_main_process=True)
+
+                    def fail_save(output_dir, suffix):
+                        self.assertEqual(tmpdir, output_dir)
+                        self.assertEqual("rolling", suffix)
+                        self.assertFalse(temp_checkpoint.exists())
+                        raise RuntimeError("save failed")
+
+                    trainer.checkpoint_state_save = Mock(side_effect=fail_save)
+                    with self.assertRaisesRegex(RuntimeError, "save failed"):
+                        trainer._save_rolling_checkpoint()
+                    self.assertTrue(resume_checkpoint.exists())
+                    self.assertTrue(existing_checkpoint.exists())
+
+                    def save_checkpoint(output_dir, suffix):
+                        self.assertEqual(tmpdir, output_dir)
+                        self.assertEqual("rolling", suffix)
+                        self.assertTrue(resume_checkpoint.exists())
+                        self.assertTrue(existing_checkpoint.exists())
+                        incoming_checkpoint.mkdir()
+                        return str(incoming_checkpoint)
+
+                    trainer.checkpoint_state_save = Mock(side_effect=save_checkpoint)
+                    save_path = trainer._save_rolling_checkpoint()
+
+                    self.assertEqual(str(incoming_checkpoint), save_path)
+                    self.assertTrue(Path(save_path).exists())
+                    remaining = sorted(path.name for path in Path(tmpdir).glob("checkpoint-*"))
+                    self.assertEqual(remaining, ["checkpoint-110-rolling"])
+
+    def test_rolling_checkpoint_non_main_save_ownership(self):
+        for use_deepspeed, fsdp_enable, should_save in (
+            (False, False, False),
+            (True, False, True),
+            (False, True, True),
+        ):
+            with self.subTest(use_deepspeed=use_deepspeed, fsdp_enable=fsdp_enable):
+                trainer = object.__new__(Trainer)
+                trainer.config = SimpleNamespace(
+                    output_dir="/tmp/output",
+                    use_deepspeed_optimizer=use_deepspeed,
+                    fsdp_enable=fsdp_enable,
+                    checkpoints_rolling_total_limit=1,
+                )
+                trainer.accelerator = SimpleNamespace(is_main_process=False)
+                trainer.checkpoint_state_cleanup_temp = Mock()
+                trainer.checkpoint_state_cleanup = Mock()
+                trainer.checkpoint_state_save = Mock(return_value="/tmp/output/checkpoint-110-rolling")
+
+                save_path = trainer._save_rolling_checkpoint()
+
+                if should_save:
+                    self.assertEqual("/tmp/output/checkpoint-110-rolling", save_path)
+                    trainer.checkpoint_state_save.assert_called_once_with("/tmp/output", "rolling")
+                else:
+                    self.assertIsNone(save_path)
+                    trainer.checkpoint_state_save.assert_not_called()
+                trainer.checkpoint_state_cleanup_temp.assert_not_called()
+                trainer.checkpoint_state_cleanup.assert_not_called()
+
     @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_save_checkpoint")
     def test_checkpoint_state_save_writes_completion_guard(self, mock_attention_backend):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2148,6 +2988,68 @@ class TestTrainer(unittest.TestCase):
             self.assertIn("pytorch_lora_weights.safetensors", manifest["files"])
             self.assertNotIn(".guard", manifest["files"])
             trainer.accelerator.wait_for_everyone.assert_not_called()
+
+    @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_save_checkpoint")
+    def test_checkpoint_state_save_synchronizes_only_all_rank_temp_writes(self, mock_attention_backend):
+        distributed_configs = (
+            (DistributedType.DEEPSPEED, True, False, (True, False), ["wait", "save", "wait", "wait", "wait"]),
+            (DistributedType.FSDP, False, True, (True, False), ["wait", "save", "wait", "wait", "wait"]),
+            (DistributedType.MULTI_GPU, False, False, (True,), ["save"]),
+        )
+        for distributed_type, use_deepspeed, fsdp_enable, process_roles, expected_events in distributed_configs:
+            for is_main_process in process_roles:
+                with self.subTest(distributed_type=distributed_type, is_main_process=is_main_process):
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        trainer = object.__new__(Trainer)
+                        trainer.config = SimpleNamespace(
+                            output_dir=tmpdir,
+                            checkpointing_use_tempdir=True,
+                            disk_low_threshold=None,
+                            use_deepspeed_optimizer=use_deepspeed,
+                            fsdp_enable=fsdp_enable,
+                        )
+                        trainer.state = {"global_step": 100}
+                        trainer.job_id = "test-job"
+                        trainer.model = SimpleNamespace()
+                        trainer.model_hooks = SimpleNamespace(
+                            training_state_path="training_state.json",
+                            get_modelspec_architecture=Mock(return_value="test/lora"),
+                        )
+                        trainer.checkpoint_manager = CheckpointManager(tmpdir)
+                        trainer.mark_optimizer_eval = Mock()
+                        trainer.mark_optimizer_train = Mock()
+                        trainer._emit_event = Mock()
+                        trainer._run_post_checkpoint_script = Mock()
+
+                        events = []
+
+                        def wait_for_everyone():
+                            events.append("wait")
+
+                        def save_state(path):
+                            self.assertEqual(expected_events[: expected_events.index("save")], events)
+                            events.append("save")
+                            Path(path).mkdir(parents=True, exist_ok=True)
+                            Path(path, "pytorch_lora_weights.safetensors").write_bytes(b"weights")
+
+                        trainer.accelerator = SimpleNamespace(
+                            _models=[],
+                            is_main_process=is_main_process,
+                            distributed_type=distributed_type,
+                            save_state=Mock(side_effect=save_state),
+                            wait_for_everyone=Mock(side_effect=wait_for_everyone),
+                        )
+
+                        with patch(
+                            "simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends",
+                            return_value={},
+                        ):
+                            save_path = trainer.checkpoint_state_save(tmpdir)
+
+                        self.assertEqual(str(Path(tmpdir, "checkpoint-100")), save_path)
+                        self.assertEqual(expected_events, events)
+                        expected_written_path = Path(save_path) if is_main_process else Path(f"{save_path}-tmp")
+                        self.assertTrue(expected_written_path.exists())
 
     @patch("simpletuner.helpers.training.trainer.logger")
     def test_init_resume_checkpoint_prodigy_without_split_groups(self, mock_logger):
@@ -2278,6 +3180,51 @@ class TestTrainer(unittest.TestCase):
             self.assertEqual(group["running_d_denom"].device, group["params"][0].device)
             self.assertFalse(group["use_focus"])
 
+    @patch("simpletuner.helpers.training.trainer.get_rank", return_value=1)
+    @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_load_checkpoint")
+    def test_init_resume_checkpoint_loads_sampler_from_hook_training_state_path(self, mock_attention_backend, mock_get_rank):
+        trainer = object.__new__(Trainer)
+        trainer.model = Mock()
+        trainer.config = SimpleNamespace(
+            output_dir="/path/to/output",
+            resume_from_checkpoint="checkpoint-100",
+            num_train_epochs=1,
+            max_train_steps=100,
+            strict_epoch_limit=True,
+            optimizer="adamw",
+            lr_scheduler="constant",
+            is_schedulefree=False,
+            learning_rate=0.001,
+            musubi_blocks_to_swap=0,
+        )
+        trainer.config.total_steps_remaining_at_start = 100
+        trainer.accelerator = Mock(num_processes=2)
+        trainer.accelerator.wait_for_everyone = Mock()
+        trainer.accelerator.load_state = Mock()
+        trainer.state = {"global_step": 0, "first_epoch": 1, "current_epoch": 1, "global_resume_step": 0}
+        trainer.distiller = None
+        trainer.optimizer = Mock()
+        trainer.optimizer.param_groups = [{"lr": 0.1}]
+        trainer._emit_event = Mock()
+        trainer.job_id = "test-job"
+        trainer.model_hooks = SimpleNamespace(training_state_path="training_state-rank1.json")
+        sampler = Mock()
+        lr_scheduler = Mock()
+        lr_scheduler.state_dict.return_value = {"base_lrs": [0.1], "_last_lr": [0.1]}
+
+        with patch(
+            "simpletuner.helpers.training.trainer.StateTracker.get_data_backends",
+            return_value={"foo": {"sampler": sampler}},
+        ):
+            with patch("simpletuner.helpers.training.trainer.StateTracker.get_global_step", return_value=10):
+                with patch("simpletuner.helpers.training.trainer.StateTracker.set_global_resume_step"):
+                    with patch("simpletuner.helpers.training.trainer.StateTracker.get_training_state", return_value={}):
+                        with patch("simpletuner.helpers.training.trainer.StateTracker.get_epoch", return_value=1):
+                            with patch("simpletuner.helpers.training.trainer.StateTracker.set_epoch"):
+                                trainer.init_resume_checkpoint(lr_scheduler=lr_scheduler)
+
+        sampler.load_states.assert_called_once_with(state_path="/path/to/output/checkpoint-100/training_state-rank1.json")
+
     def test_epoch_checkpoint_persists_next_epoch_without_state_mutation(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             checkpoint_dir = Path(tmpdir) / "checkpoint-10"
@@ -2295,6 +3242,7 @@ class TestTrainer(unittest.TestCase):
             trainer._emit_event = Mock()
             trainer._run_post_upload_script = Mock()
             trainer.checkpoint_state_cleanup = Mock()
+            trainer.checkpoint_manager = None
             trainer.state = {"global_step": 10, "global_resume_step": 0, "current_epoch": 2}
             trainer.config = SimpleNamespace(
                 output_dir=str(tmpdir),
@@ -2595,7 +3543,7 @@ class TestTrainer(unittest.TestCase):
 
         if will_create_dynamo_plugin:
             plugin_kwargs = {"backend": resolved_dynamo_backend}
-            plugin_kwargs["mode"] = "max-autotune"
+            plugin_kwargs["mode"] = "default"
             plugin_kwargs["dynamic"] = True
             plugin_kwargs["use_regional_compilation"] = True
 
@@ -2606,7 +3554,7 @@ class TestTrainer(unittest.TestCase):
         self.assertNotIn("dynamo_backend", accelerator_kwargs)
         mock_dynamo_plugin.assert_called_once()
         call_args = mock_dynamo_plugin.call_args[1]
-        self.assertEqual(call_args["mode"], "max-autotune")
+        self.assertEqual(call_args["mode"], "default")
         self.assertTrue(call_args["dynamic"])
         self.assertTrue(call_args["use_regional_compilation"])
 

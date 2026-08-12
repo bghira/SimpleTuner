@@ -1,11 +1,11 @@
 # LTX Video 2 クイックスタート
 
-この例では、LTX-2 の Video/Audio VAE と Gemma3 テキストエンコーダを使って LTX Video 2 LoRA をトレーニングします。
+この例では、LTX-2 の Video/Audio VAE と、選択した LTX-2 バージョンに対応する Gemma テキストエンコーダを使って LTX Video 2 LoRA をトレーニングします。
 
 ## ハードウェア要件
 
 LTX Video 2 は重量級の **19B** モデルです。以下を組み合わせます:
-1.  **Gemma3**: テキストエンコーダ。
+1.  **Gemma3 / Gemma4**: テキストエンコーダ。LTX-2.0 と LTX-2.3 は Gemma3、LTX-2.5 は Gemma4 を使います。
 2.  **LTX-2 Video VAE**（音声条件付きの場合は Audio VAE も使用）。
 3.  **19B Video Transformer**: 大規模な DiT バックボーン。
 
@@ -23,7 +23,7 @@ LTX Video 2 は重量級の **19B** モデルです。以下を組み合わせ�
 - **RamTorch（テキストエンコーダ含む）**: AMD 7900XTX で VRAM 約 13GB。
   - NVIDIA 3090/4090/5090+ は同等以上の余裕が見込めます。
 - **オフロードなし（int8 TorchAO）**: VRAM 約 29-30GB、32GB 機材推奨。
-  - Gemma3 bf16 を読み込み→int8 量子化（VRAM 約 32GB）でシステム RAM ピーク約 46GB。
+  - Gemma テキストエンコーダ bf16 を読み込み→int8 量子化（VRAM 約 32GB）でシステム RAM ピーク約 46GB。
   - LTX-2 transformer bf16 を読み込み→int8 量子化（VRAM 約 30GB）でシステム RAM ピーク約 34GB。
 - **オフロードなし（bf16 フル）**: オフロード無しで学習する場合、VRAM 約 48GB 必要。
 - **スループット**:
@@ -98,8 +98,8 @@ cp config/config.json.example config/config.json
 LTX Video 2 の主要設定:
 
 - `model_family`: `ltxvideo2`
-- `model_flavour`: `dev` (デフォルト)、`dev-fp4`、`dev-fp8`、`2.3-dev`、`2.3-distilled`。
-- `pretrained_model_name_or_path`: `Lightricks/LTX-2`、`dg845/LTX-2.3-Diffusers`、`dg845/LTX-2.3-Distilled-Diffusers`、またはローカル `.safetensors` ファイル。
+- `model_flavour`: `dev` (デフォルト)、`dev-fp4`、`dev-fp8`、`2.3-dev`、`2.3-distilled`、`2.5-dev`、`2.5-distilled`。
+- `pretrained_model_name_or_path`: `Lightricks/LTX-2`、`dg845/LTX-2.3-Diffusers`、`dg845/LTX-2.3-Distilled-Diffusers`、`Lightricks/LTX-2.5`、またはローカル `.safetensors` ファイル。
 - `train_batch_size`: `1`。A100/H100 以外では増やさないでください。
 - `validation_resolution`:
   - `512x768` がテスト向けの安全なデフォルト。
@@ -108,6 +108,7 @@ LTX Video 2 の主要設定:
   - 5 秒 (約 12-24fps) の場合は `61` か `49`。
   - 公式: `(frames - 1) % 4 == 0`。
 - `validation_guidance`: `5.0`。
+- `ltx2_validation_audio_guidance`: validation 用の任意の個別 audio CFG scale。未設定の場合は audio にも `validation_guidance` を使います。LTX-2.5 AV validation では、ComfyUI の dual-CFG node の既定値は video CFG `3.0`、audio CFG `7.0` です。
 - `ltx2_validation_pipeline_mode`: 通常の validation では `trained-stage` のままにします。`spatial-upscale` にすると、半解像度 latent 生成、spatial latent upscaling、フル解像度 re-denoising の LTX-2 2 段 spatial upscaler path を使います。
   - `spatial-upscale` では `validation_resolution` が 64 で割り切れる必要があります。
   - 任意の上書き: `ltx2_validation_spatial_upsampler_model` と `ltx2_validation_spatial_upsampler_filename`。既定値は `Lightricks/LTX-2.3` と `ltx-2.3-spatial-upscaler-x2-1.1.safetensors` です。
@@ -116,6 +117,9 @@ LTX Video 2 の主要設定:
 LTX-2 2.0 系は transformer / video VAE / audio VAE / vocoder を含む `.safetensors` 単体チェックポイントで配布されます。
 LTX-2.3 では、SimpleTuner は `model_flavour` に応じた Diffusers リポジトリ
 (`2.3-dev` または `2.3-distilled`) を読み込みます。
+LTX-2.5 では、SimpleTuner は Diffusers repo path を `Lightricks/LTX-2.5` とみなし、テキストエンコーダは Gemma4 にルーティングします。ローカル single-file LTX-2.5 checkpoint を読み込む場合は、`model_flavour` を `2.5-dev` または `2.5-distilled` にしてください。ローカル path で上書きしない限り、SimpleTuner は `Lightricks/LTX-2.5` を component/config source として使います。
+
+LTX-2 AV validation の dual CFG は通常の conditional / unconditional predictions を使い、video latent stream と audio latent stream に別々の scale を適用します。これ自体は追加の model pass を増やしません。STG、modality guidance、reference-audio identity guidance などの追加 guidance は、有効化した場合にそれぞれ追加 pass を使います。
 
 ### 任意: VRAM 最適化
 
@@ -241,7 +245,7 @@ simpletuner train
 
 ### 検証動画の品質
 
-- **黒/ノイズ動画**: `validation_guidance` が高すぎる (> 6.0) または低すぎる (< 2.0) ことが原因の場合が多いです。`5.0` に合わせてください。
+- **黒/ノイズ動画**: CFG が高すぎる、または低すぎることが原因の場合が多いです。LTX-2.0/2.3 では `validation_guidance: 5.0` から始め、LTX-2.5 AV validation では video CFG `3.0` と `ltx2_validation_audio_guidance: 7.0` から始めてください。
 - **モーションのガタつき**: データセットのフレームレートがモデルの学習フレームレート (多くは 25fps) と一致しているか確認。
 - **静止/ほぼ動かない**: 学習不足か、プロンプトが動きを記述していない可能性。"camera pans right"、"zoom in"、"running" などを使ってください。
 

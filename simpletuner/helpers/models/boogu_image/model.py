@@ -16,8 +16,6 @@ from simpletuner.helpers.acceleration import (
     get_sdnq_presets,
     get_torchao_presets,
 )
-from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
-from simpletuner.helpers.models.flux.model import Flux
 from simpletuner.helpers.models.boogu_image.pipeline import BooguImagePipeline
 from simpletuner.helpers.models.boogu_image.pipeline_edit import BooguImageEditPipeline
 from simpletuner.helpers.models.boogu_image.pipeline_img2img import BooguImageImg2ImgPipeline
@@ -26,6 +24,8 @@ from simpletuner.helpers.models.boogu_image.schedulers.scheduling_flow_match_eul
     FlowMatchEulerDiscreteScheduler,
 )
 from simpletuner.helpers.models.boogu_image.transformer import BooguImageTransformer2DModel
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.flux.model import Flux
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager
 
@@ -173,10 +173,13 @@ class BooguImage(ImageModelFoundation):
         boogu_timesteps = 1.0 - noise_sigmas
         return noise_sigmas, boogu_timesteps
 
+    def flow_matching_target_direction(self) -> float:
+        return -1.0
+
     def get_prediction_target(self, prepared_batch: dict):
         if prepared_batch.get("target") is not None:
             return prepared_batch["target"]
-        return prepared_batch["latents"] - prepared_batch["noise"]
+        return self.get_flow_matching_target(prepared_batch, prefer_explicit_target=False)
 
     def text_embed_cache_key(self):
         if self._is_edit_flavour():
@@ -188,8 +191,8 @@ class BooguImage(ImageModelFoundation):
     def _load_processor_for_pipeline(self):
         if self.processor is not None:
             return self.processor
-        processor_path = getattr(self.config, "processor_pretrained_model_name_or_path", None) or self._model_config_path()
-        processor_subfolder = getattr(self.config, "processor_subfolder", self.PROCESSOR_SUBFOLDER)
+        processor_path = self._resolve_qwen_processor_path(self._model_config_path())
+        processor_subfolder = self._resolve_qwen_processor_subfolder(self.PROCESSOR_SUBFOLDER)
         processor_kwargs = {
             "pretrained_model_name_or_path": processor_path,
             "subfolder": processor_subfolder,

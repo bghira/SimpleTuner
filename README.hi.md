@@ -81,31 +81,52 @@ SimpleTuner एक पूर्ण मल्टी‑यूज़र प्र�
 
 ### मॉडल आर्किटेक्चर समर्थन {#model-architecture-support}
 
-| मॉडल | पैरामीटर | PEFT LoRA | Lycoris | फुल-रैंक | ControlNet | क्वांटाइज़ेशन | फ्लो मैचिंग | टेक्स्ट एन्कोडर |
-|-------|------------|-----------|---------|-----------|------------|--------------|---------------|---------------|
-| **Stable Diffusion XL** | 3.5B | ✓ | ✓ | ✓ | ✓ | int8/nf4 | ✗ | CLIP-L/G |
-| **Stable Diffusion 3** | 2B-8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L/G + T5-XXL |
-| **Flux.1** | 12B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL |
-| **Flux.2** | 32B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | Mistral-3 Small |
-| **Ideogram 4** | 9B | ✓ | ✓ | ✓* | ✗ | fp8/nf4 | ✓ | Qwen3-VL |
-| **ACE-Step** | 3.5B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
-| **HeartMuLa** | 3B | ✓ | ✓ | ✓* | ✗ | int8 | ✗ | कोई नहीं |
-| **Chroma 1** | 8.9B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | T5-XXL |
-| **Auraflow** | 6.8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | UMT5-XXL |
-| **PixArt Sigma** | 0.6B-0.9B | ✗ | ✓ | ✓ | ✓ | int8 | ✗ | T5-XXL |
-| **Sana** | 0.6B-4.8B | ✗ | ✓ | ✓ | ✗ | int8 | ✓ | Gemma2-2B |
-| **Lumina2** | 2B | ✓ | ✓ | ✓ | ✗ | int8 | ✓ | Gemma2 |
-| **Kwai Kolors** | 5B | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ChatGLM-6B |
-| **LTX Video** | 5B | ✓ | ✓ | ✓ | ✗ | int8/fp8 | ✓ | T5-XXL |
-| **LTX Video 2** | 19B | ✓ | ✓ | ✓* | ✗ | int8/fp8 | ✓ | Gemma3 |
-| **Wan Video** | 1.3B-14B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
-| **HiDream** | 17B (8.5B MoE) | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL + Llama |
-| **Cosmos2** | 2B-14B | ✗ | ✓ | ✓ | ✗ | int8 | ✓ | T5-XXL |
-| **OmniGen** | 3.8B | ✓ | ✓ | ✓ | ✗ | int8/fp8 | ✓ | T5-XXL |
-| **Qwen Image** | 20B | ✓ | ✓ | ✓* | ✗ | int8/nf4 (req.) | ✓ | T5-XXL |
-| **SD 1.x/2.x (Legacy)** | 0.9B | ✓ | ✓ | ✓ | ✓ | int8/nf4 | ✗ | CLIP-L |
+SimpleTuner निम्नलिखित मॉडल families का समर्थन करता है। विस्तृत training feature समर्थन [Quickstart Guide](/documentation/QUICKSTART.hi.md) में है।
 
-*✓ = समर्थित, ✗ = समर्थित नहीं, * = फुल‑रैंक प्रशिक्षण के लिए DeepSpeed आवश्यक*
+| मॉडल | पैरामीटर | लाइसेंस | व्यावसायिक उपयोग |
+| --- | --- | --- | --- |
+| **ACE-Step** | 3.5B | Apache-2.0 | हाँ |
+| **Anima** | निर्दिष्ट नहीं | CircleStone Labs Non-Commercial License v1.2 | नहीं (मॉडल); outputs अनुमत |
+| **Auraflow** | 6B | Apache-2.0 | हाँ |
+| **Boogu-Image** | निर्दिष्ट नहीं | Apache-2.0 | हाँ |
+| **Chroma 1** | 8.9B | Apache-2.0 | हाँ |
+| **Cosmos2** | 2B-14B | NVIDIA Open Model License | हाँ |
+| **Cosmos3** | 16B-65B | OpenMDW-1.1 | हाँ |
+| **DeepFloyd IF** | 0.4B-4.3B stages | DeepFloyd IF License | Abandonware |
+| **ERNIE-Image** | निर्दिष्ट नहीं | Apache-2.0 | हाँ |
+| **Flux.1** | 8B-12B | Apache-2.0 (schnell); FLUX.1 [dev] Non-Commercial License (dev/Kontext) | checkpoint के अनुसार mixed |
+| **Flux.2** | 4B-32B | Apache-2.0 (klein 4B); FLUX Non-Commercial License (dev/klein 9B) | checkpoint के अनुसार mixed |
+| **HeartMuLa** | 3B | SimpleTuner में निर्दिष्ट नहीं | upstream शर्तें देखें |
+| **HiDream** | 17B (8.5B MoE) | MIT | हाँ |
+| **Hunyuan Video** | 8.3B | AGPL-3.0 | हाँ (copyleft) |
+| **Ideogram 4** | 9B | Ideogram 4 Non-Commercial | नहीं |
+| **Kandinsky 5.0 Image** | 6B (lite) | MIT | हाँ |
+| **Kandinsky 5.0 Video** | 2B lite, 19B pro | MIT | हाँ |
+| **Kwai Kolors** | 2.7B | Apache-2.0 | Abandonware |
+| **Krea2** | निर्दिष्ट नहीं | Krea 2 Community License | हाँ ($1M से कम राजस्व; safeguards आवश्यक) |
+| **LongCat Image** | 6B | Apache-2.0 | हाँ |
+| **LongCat Video** | 13.6B | MIT | हाँ |
+| **LTX Video** | ~2.5B | Apache-2.0 | हाँ |
+| **LTX Video 2** | 19B | Apache-2.0 | हाँ |
+| **Lumina2** | 2B | Apache-2.0 | हाँ |
+| **Mage-Flow** | 4B | MIT | हाँ |
+| **MiniMax H3** | 33B | MiniMax H3 Community License | शर्तें लागू (territory exclusions; US/EU/UK/KR में authorization आवश्यक) |
+| **OmniGen** | 3.8B | MIT | हाँ |
+| **PixArt Sigma** | 0.6B-0.9B | OpenRAIL++ | हाँ (restricted) |
+| **Qwen Image** | 20B | Apache-2.0 | हाँ |
+| **Sana** | 0.6B-4.8B | Apache-2.0 | हाँ |
+| **Sana Video** | 2B | Apache-2.0 | हाँ |
+| **SD 1.x/2.x (Legacy)** | 0.9B | OpenRAIL++ | हाँ (restricted) |
+| **Stable Diffusion 3** | 2B-8B | Stability AI Community License | हाँ ($1M से कम राजस्व) |
+| **Stable Diffusion XL** | 3.5B | CreativeML OpenRAIL-M | हाँ (restricted) |
+| **Stable Cascade (Stage C)** | 1B, 3.6B prior | SimpleTuner में निर्दिष्ट नहीं | Abandonware |
+| **Wan Video** | 1.3B-14B | Apache-2.0 | हाँ |
+| **Wan S2V** | 14B | Apache-2.0 | हाँ |
+| **Z-Image** | 6B | Apache-2.0 | हाँ |
+| **Z-Image Omni** | 6B | Apache-2.0 | हाँ |
+| **ZLab I1** | 3B | MIT | हाँ |
+
+*लाइसेंस मान उपलब्ध होने पर SimpleTuner model helpers से लिए गए हैं, और पहले अनिर्दिष्ट entries के लिए upstream model cards/licenses से। `SimpleTuner में निर्दिष्ट नहीं` का अर्थ है कि helper कोई license name नहीं देता और यहां upstream terms का सार नहीं दिया गया है; उपयोग से पहले upstream model card देखें.*
 
 ### उन्नत प्रशिक्षण तकनीकें {#advanced-training-techniques}
 

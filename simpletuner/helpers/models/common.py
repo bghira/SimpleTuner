@@ -53,11 +53,13 @@ from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedul
 from simpletuner.helpers.training.layersync import LayerSyncRegularizer
 from simpletuner.helpers.training.lora_format import (
     PEFTLoRAFormat,
+    collect_lora_alphas,
     convert_comfyui_to_diffusers,
     convert_diffusers_to_comfyui,
-    convert_diffusers_to_comfyui_sd_lora,
     detect_state_dict_format,
     normalize_lora_format,
+    peft_lora_config_kwargs_from_state_dict,
+    synthesize_missing_lora_alphas_from_ranks,
 )
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank
@@ -116,6 +118,7 @@ flow_matching_model_families = [
     "zlab_i1",
     "ideogram",
     "krea2",
+    "minimaxh3",
 ]
 upstream_config_sources = {
     "sdxl": "stabilityai/stable-diffusion-xl-base-1.0",
@@ -133,6 +136,7 @@ upstream_config_sources = {
     "hunyuanvideo": "tencent/HunyuanVideo-1.5",
     "ideogram": "ideogram-ai/ideogram-4-fp8",
     "krea2": "krea/Krea-2-Raw",
+    "minimaxh3": "MiniMaxAI/MiniMax-H3",
 }
 
 
@@ -489,6 +493,7 @@ class ModelFoundation(ABC):
     DDP_FIND_UNUSED_PARAMETERS = False
     DEFAULT_AUDIO_CHANNELS = 1
     DEFAULT_LORA_EXCLUDE_TARGETS = None  # regex, not list
+    COMFYUI_LORA_PRESERVE_COMPONENT_PREFIXES = None
 
     # Acceleration backend support - models declare what they DON'T support
     UNSUPPORTED_BACKENDS: set = set()  # Empty = supports all backends
@@ -951,9 +956,35 @@ class ModelFoundation(ABC):
                 combined.append(target)
         return combined
 
+    def _prepare_init_lora_state_dict(self, state_dict: dict) -> dict:
+        return state_dict
+
+    def _load_init_lora_state_dict(self) -> dict | None:
+        init_lora_path = getattr(self.config, "init_lora", None)
+        if not init_lora_path or not isinstance(init_lora_path, str) or not os.path.isfile(init_lora_path):
+            return None
+
+        import safetensors.torch
+
+        try:
+            state_dict = safetensors.torch.load_file(init_lora_path)
+        except Exception as exc:
+            raise ValueError(f"Unable to inspect init_lora checkpoint `{init_lora_path}` for LoRA rank metadata.") from exc
+        return self._prepare_init_lora_state_dict(state_dict)
+
+    def _init_lora_config_kwargs(self, state_dict: dict | None = None) -> dict:
+        state_dict = self._load_init_lora_state_dict() if state_dict is None else state_dict
+        if not state_dict:
+            return {}
+        key_to_replace = (
+            self.CONTROLNET_LORA_STATE_DICT_PREFIX if getattr(self.config, "controlnet", False) else self.MODEL_TYPE.value
+        )
+        return peft_lora_config_kwargs_from_state_dict(state_dict, prefix_to_strip=f"{key_to_replace}.")
+
     def add_lora_adapter(self):
         from peft import LoraConfig
 
+        init_lora_state_dict = self._load_init_lora_state_dict()
         target_modules = self.get_lora_target_layers()
         save_modules = self.get_lora_save_layers()
         addkeys, misskeys = [], []
@@ -989,9 +1020,15 @@ class ModelFoundation(ABC):
 
                     logger.info("Enabling SingLoRA for LoRA training.")
                     setup_singlora()
+            lora_config_kwargs.update(self._init_lora_config_kwargs(init_lora_state_dict))
+            lora_rank = lora_config_kwargs.pop("r", self.config.lora_rank)
+            lora_alpha = lora_config_kwargs.pop(
+                "lora_alpha",
+                self.config.lora_alpha if self.config.lora_alpha is not None else lora_rank,
+            )
             self.lora_config = lora_config_cls(
-                r=self.config.lora_rank,
-                lora_alpha=(self.config.lora_alpha if self.config.lora_alpha is not None else self.config.lora_rank),
+                r=lora_rank,
+                lora_alpha=lora_alpha,
                 lora_dropout=self.config.lora_dropout,
                 init_lora_weights=self.config.lora_initialisation_style,
                 target_modules=target_modules,
@@ -1020,6 +1057,7 @@ class ModelFoundation(ABC):
                 {self.MODEL_TYPE.value: (self.controlnet if getattr(self.config, "controlnet", False) else self.model)},
                 self.config.init_lora,
                 use_dora=use_dora,
+                state_dict=init_lora_state_dict,
             )
 
         return addkeys, misskeys
@@ -1526,6 +1564,10 @@ class ModelFoundation(ABC):
     def uses_audio_latents(self) -> bool:
         return False
 
+    def uses_audio_latents_for_data_backend(self, data_backend_id: Optional[str] = None) -> bool:
+        del data_backend_id
+        return self.uses_audio_latents()
+
     def uses_audio_tokens(self) -> bool:
         """
         Override to True for autoregressive audio models that consume discrete token sequences
@@ -1851,7 +1893,10 @@ class ModelFoundation(ABC):
                 active_format = PEFTLoRAFormat.COMFYUI
         alpha_map = {}
         if active_format == PEFTLoRAFormat.COMFYUI:
-            lora_state_dict, comfy_alphas = convert_comfyui_to_diffusers(lora_state_dict, target_prefix=key_to_replace)
+            lora_state_dict, comfy_alphas = self._convert_lora_state_dict_from_comfyui(
+                lora_state_dict,
+                target_prefix=key_to_replace,
+            )
             alpha_map.update(_normalise_alpha_map(comfy_alphas))
         if network_alphas:
             alpha_map.update(_normalise_alpha_map(network_alphas))
@@ -1865,6 +1910,15 @@ class ModelFoundation(ABC):
         from diffusers.utils import convert_unet_state_dict_to_peft
 
         denoiser_sd = convert_unet_state_dict_to_peft(denoiser_sd)
+        if not alpha_map:
+            explicit_alphas = collect_lora_alphas(denoiser_sd)
+            if explicit_alphas:
+                alpha_map.update(
+                    _normalise_alpha_map({f"{module_key}.alpha": alpha for module_key, alpha in explicit_alphas.items()})
+                )
+        if not alpha_map:
+            alpha_map.update(_normalise_alpha_map(synthesize_missing_lora_alphas_from_ranks(denoiser_sd)))
+        denoiser_sd = {key: value for key, value in denoiser_sd.items() if not key.endswith((".alpha", ".lora_alpha"))}
 
         from peft.utils import set_peft_model_state_dict
 
@@ -1879,6 +1933,11 @@ class ModelFoundation(ABC):
         if incompatible_keys is not None:
             unexpected_keys = getattr(incompatible_keys, "unexpected_keys", None)
             if unexpected_keys:
+                if len(unexpected_keys) == len(denoiser_sd):
+                    raise ValueError(
+                        "LoRA checkpoint loading rejected every denoiser tensor. "
+                        "The checkpoint naming or adapter configuration is incompatible with the model."
+                    )
                 logger.warning(f"LoRA loading found unexpected keys not in the denoiser model: {unexpected_keys}")
 
         if getattr(self.config, "train_text_encoder", False):
@@ -1903,6 +1962,27 @@ class ModelFoundation(ABC):
                 )
 
         logger.info("Finished loading LoRA weights successfully.")
+
+    def _convert_lora_state_dict_from_comfyui(
+        self,
+        weights: dict,
+        *,
+        target_prefix: str,
+    ) -> tuple[dict, dict]:
+        return convert_comfyui_to_diffusers(weights, target_prefix=target_prefix)
+
+    def _convert_lora_state_dict_to_comfyui(
+        self,
+        weights: dict,
+        *,
+        adapter_metadata: Optional[dict] = None,
+        component_adapter_metadata: Optional[dict] = None,
+    ) -> dict:
+        return convert_diffusers_to_comfyui(
+            weights,
+            adapter_metadata=adapter_metadata,
+            preserve_component_prefixes=self.COMFYUI_LORA_PRESERVE_COMPONENT_PREFIXES,
+        )
 
     def save_lora_weights(self, *args, **kwargs):
         """
@@ -1933,22 +2013,6 @@ class ModelFoundation(ABC):
             import safetensors.torch
             from diffusers.loaders.lora_base import LORA_ADAPTER_METADATA_KEY
 
-            comfy_preserve_prefix_families = {
-                "flux",
-                "flux2",
-                "lumina2",
-                "sd3",
-                "auraflow",
-                "pixart_sigma",
-                "hidream",
-            }
-            preserve_component_prefixes = (
-                {"transformer"} if self.config.model_family in comfy_preserve_prefix_families else None
-            )
-
-            # Use model-specific converters where available
-            model_family = self.config.model_family
-
             def comfyui_save_function(weights, filename):
                 metadata = {"format": "pt"}
                 if adapter_metadata:
@@ -1957,23 +2021,11 @@ class ModelFoundation(ABC):
                     except Exception:
                         pass
 
-                if model_family == "flux2":
-                    from simpletuner.helpers.models.flux2.pipeline import _convert_diffusers_flux2_lora_to_comfyui
-
-                    converted = _convert_diffusers_flux2_lora_to_comfyui(weights, adapter_metadata=adapter_metadata)
-                elif model_family in {"sd1x", "sdxl"}:
-                    converted = convert_diffusers_to_comfyui_sd_lora(
-                        weights,
-                        adapter_metadata=adapter_metadata,
-                        component_adapter_metadata=component_adapter_metadata,
-                        sdxl=(model_family == "sdxl"),
-                    )
-                else:
-                    converted = convert_diffusers_to_comfyui(
-                        weights,
-                        adapter_metadata=adapter_metadata,
-                        preserve_component_prefixes=preserve_component_prefixes,
-                    )
+                converted = self._convert_lora_state_dict_to_comfyui(
+                    weights,
+                    adapter_metadata=adapter_metadata,
+                    component_adapter_metadata=component_adapter_metadata,
+                )
                 safetensors.torch.save_file(converted, filename, metadata=metadata)
 
             kwargs["save_function"] = comfyui_save_function
@@ -2517,6 +2569,84 @@ class ModelFoundation(ABC):
         component_name = getattr(component_cls, "__name__", "")
         return "gemma" in component_name.lower()
 
+    @staticmethod
+    def _component_value_mentions_qwen(value) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return "qwen" in value.lower()
+        component_name = getattr(value, "__name__", "")
+        return "qwen" in component_name.lower()
+
+    @staticmethod
+    def _optional_model_path(value) -> Optional[str]:
+        if value is None or value is False:
+            return None
+        if isinstance(value, os.PathLike):
+            return os.fspath(value)
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return None
+
+    def _get_optional_config_model_path(self, name: str) -> Optional[str]:
+        return self._optional_model_path(getattr(self.config, name, None))
+
+    def _is_qwen_text_encoder_config(self, text_encoder_config: dict) -> bool:
+        return any(
+            self._component_value_mentions_qwen(text_encoder_config.get(key))
+            for key in ("name", "model", "tokenizer", "path")
+        )
+
+    def _qwen_text_encoder_config_count(self) -> int:
+        text_encoder_configuration = getattr(self, "TEXT_ENCODER_CONFIGURATION", None) or {}
+        return sum(
+            1
+            for text_encoder_config in text_encoder_configuration.values()
+            if self._is_qwen_text_encoder_config(text_encoder_config)
+        )
+
+    def _warn_qwen_text_encoder_override_ignored(self, qwen_count: int) -> None:
+        if getattr(self, "_qwen_text_encoder_override_warning_emitted", False):
+            return
+        logger.warning(
+            "Ignoring qwen_text_encoder_model_name_or_path for %s because this model defines %s Qwen text encoders.",
+            self.NAME,
+            qwen_count,
+        )
+        self._qwen_text_encoder_override_warning_emitted = True
+
+    def _uses_qwen_text_encoder_override(self, text_encoder_config: dict) -> bool:
+        qwen_path = self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path")
+        if not qwen_path or not self._is_qwen_text_encoder_config(text_encoder_config):
+            return False
+        qwen_count = self._qwen_text_encoder_config_count()
+        if qwen_count == 1:
+            return True
+        if qwen_count > 1:
+            self._warn_qwen_text_encoder_override_ignored(qwen_count)
+        return False
+
+    def _resolve_text_encoder_subfolder(self, text_encoder_config: dict, key: str, default=None):
+        if self._uses_qwen_text_encoder_override(text_encoder_config):
+            return None
+        return text_encoder_config.get(key, default)
+
+    def _resolve_qwen_processor_path(self, default_path: str) -> str:
+        return (
+            self._get_optional_config_model_path("processor_pretrained_model_name_or_path")
+            or self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path")
+            or default_path
+        )
+
+    def _resolve_qwen_processor_subfolder(self, default_subfolder: Optional[str]) -> Optional[str]:
+        processor_subfolder = getattr(self.config, "processor_subfolder", None)
+        if isinstance(processor_subfolder, str):
+            return processor_subfolder
+        if self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path"):
+            return None
+        return default_subfolder
+
     def _resolve_text_encoder_path(self, text_encoder_config: dict) -> str:
         text_encoder_path = get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path)
         config_path = text_encoder_config.get("path", None)
@@ -2525,6 +2655,9 @@ class ModelFoundation(ABC):
         gemma_path = getattr(self.config, "pretrained_gemma_model_name_or_path", None)
         if gemma_path and self._is_gemma_component(text_encoder_config.get("model")):
             text_encoder_path = gemma_path
+        qwen_path = self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path")
+        if qwen_path and self._uses_qwen_text_encoder_override(text_encoder_config):
+            text_encoder_path = qwen_path
         return text_encoder_path
 
     def load_text_tokenizer(self):
@@ -2551,7 +2684,11 @@ class ModelFoundation(ABC):
         for attr_name, text_encoder_config in self.TEXT_ENCODER_CONFIGURATION.items():
             tokenizer_idx += 1
             tokenizer_cls = text_encoder_config.get("tokenizer")
-            tokenizer_kwargs["subfolder"] = text_encoder_config.get("tokenizer_subfolder", "tokenizer")
+            tokenizer_kwargs["subfolder"] = self._resolve_text_encoder_subfolder(
+                text_encoder_config,
+                "tokenizer_subfolder",
+                "tokenizer",
+            )
             tokenizer_kwargs["use_fast"] = text_encoder_config.get("use_fast", False)
             tokenizer_kwargs["pretrained_model_name_or_path"] = self._resolve_text_encoder_path(text_encoder_config)
             logger.info(f"Loading tokenizer {tokenizer_idx}: {tokenizer_cls.__name__} with args: {tokenizer_kwargs}")
@@ -2673,7 +2810,12 @@ class ModelFoundation(ABC):
                     "pretrained_model_name_or_path": text_encoder_path,
                     "variant": self.config.variant,
                     "revision": self.config.revision,
-                    "subfolder": text_encoder_config.get("subfolder", "text_encoder") or "",
+                    "subfolder": self._resolve_text_encoder_subfolder(
+                        text_encoder_config,
+                        "subfolder",
+                        "text_encoder",
+                    )
+                    or "",
                     **extra_kwargs,
                 }
                 accelerator = getattr(self, "accelerator", None)
@@ -3150,17 +3292,63 @@ class ModelFoundation(ABC):
 
         self.configure_chunked_feed_forward()
 
+        self.apply_gradient_checkpointing_settings()
+
+        self.fuse_qkv_projections()
+        self.post_model_load_setup()
+
+    def apply_gradient_checkpointing_settings(self):
+        """Wire configured gradient-checkpointing backend/interval/stride onto the loaded model.
+
+        Called from the base load_model; model families that override load_model must call this
+        themselves after constructing self.model.
+        """
         # Set gradient checkpointing backend
-        checkpoint_backend = getattr(self.config, "gradient_checkpointing_backend", "torch")
-        if checkpoint_backend == "unsloth" and not torch.cuda.is_available():
+        checkpoint_backend = (getattr(self.config, "gradient_checkpointing_backend", None) or "torch").lower()
+        if checkpoint_backend not in ["torch", "torch-ffn", "unsloth", "unsloth-ffn"]:
+            logger.warning(f"Invalid gradient checkpointing backend '{checkpoint_backend}', falling back to torch")
+            checkpoint_backend = "torch"
+        if checkpoint_backend in {"unsloth", "unsloth-ffn"} and not torch.cuda.is_available():
             logger.warning("Unsloth gradient checkpointing backend requires CUDA, falling back to torch")
             checkpoint_backend = "torch"
 
-        from simpletuner.helpers.training.gradient_checkpointing_interval import set_checkpoint_backend
+        from simpletuner.helpers.training.gradient_checkpointing_interval import (
+            get_checkpoint_backend_scope,
+            set_checkpoint_backend,
+        )
+
+        if get_checkpoint_backend_scope(checkpoint_backend) == "ffn":
+            trained_component = self.unwrap_model(model=self.model) if self.model is not None else None
+            if trained_component is None or not getattr(trained_component, "_supports_ffn_gradient_checkpointing", False):
+                raise ValueError(
+                    f"Gradient checkpointing backend '{checkpoint_backend}' requires FFN-only checkpointing support, "
+                    f"but {self.config.model_family} does not expose it."
+                )
 
         set_checkpoint_backend(checkpoint_backend)
-        if checkpoint_backend == "unsloth":
+        if checkpoint_backend in {"unsloth", "unsloth-ffn"}:
             logger.info("Using Unsloth-style gradient checkpointing (CPU offload)")
+
+        offload_attention = bool(getattr(self.config, "gradient_checkpointing_offload_attention", False))
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import (
+            normalize_activation_offload_pin_memory_max_buckets,
+            set_activation_offload_pin_memory_max_buckets,
+            set_activation_offload_prefetch_enabled,
+        )
+
+        offload_pin_memory_max_buckets = normalize_activation_offload_pin_memory_max_buckets(
+            getattr(self.config, "gradient_checkpointing_offload_pin_memory_max_buckets", 12)
+        )
+        set_activation_offload_pin_memory_max_buckets(offload_pin_memory_max_buckets)
+        set_activation_offload_prefetch_enabled(bool(getattr(self.config, "gradient_checkpointing_offload_prefetch", False)))
+        if offload_attention:
+            trained_component = self.unwrap_model(model=self.model) if self.model is not None else None
+            if trained_component is None or not getattr(trained_component, "_supports_attention_activation_offload", False):
+                raise ValueError(
+                    "--gradient_checkpointing_offload_attention requires a model with an attention/FFN checkpointing "
+                    f"boundary, but {self.config.model_family} does not expose it."
+                )
+            logger.info("Using attention activation offload for gradient checkpointing")
 
         if self.config.gradient_checkpointing_interval is not None and self.config.gradient_checkpointing_interval > 1:
             if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_interval"):
@@ -3168,13 +3356,34 @@ class ModelFoundation(ABC):
                 self.unwrap_model(model=self.model).set_gradient_checkpointing_interval(
                     int(self.config.gradient_checkpointing_interval)
                 )
+            else:
+                logger.warning(
+                    "--gradient_checkpointing_interval=%s was requested, but %s does not expose interval "
+                    "checkpointing support; the value will be ignored.",
+                    self.config.gradient_checkpointing_interval,
+                    self.config.model_family,
+                )
+
+        gradient_checkpointing_segment_stride = getattr(self.config, "gradient_checkpointing_segment_stride", None)
+        if gradient_checkpointing_segment_stride is not None:
+            if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_segment_stride"):
+                logger.info("Setting gradient checkpointing segment stride..")
+                self.unwrap_model(model=self.model).set_gradient_checkpointing_segment_stride(
+                    int(gradient_checkpointing_segment_stride)
+                )
+            else:
+                logger.warning(
+                    "--gradient_checkpointing_segment_stride=%s was requested, but %s does not expose segmented "
+                    "checkpoint stride support; the value will be ignored.",
+                    gradient_checkpointing_segment_stride,
+                    self.config.model_family,
+                )
 
         # Set gradient checkpointing backend on model if supported
         if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_backend"):
             self.unwrap_model(model=self.model).set_gradient_checkpointing_backend(checkpoint_backend)
-
-        self.fuse_qkv_projections()
-        self.post_model_load_setup()
+        if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_offload_attention"):
+            self.unwrap_model(model=self.model).set_gradient_checkpointing_offload_attention(offload_attention)
 
     def post_model_load_setup(self):
         """
@@ -3185,6 +3394,13 @@ class ModelFoundation(ABC):
 
         """
         self._init_layersync_regularizer()
+
+    def post_quantization_setup(self):
+        """
+        Hook for model families that need setup after manual quantization.
+
+        """
+        return
 
     def fuse_qkv_projections(self):
         if not self.config.fuse_qkv_projections or self._qkv_projections_fused:
@@ -4098,6 +4314,65 @@ class ModelFoundation(ABC):
         self.diff2flow_bridge = DiffusionToFlowBridge(alphas_cumprod=alphas_cumprod)
         self.diff2flow_bridge.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
 
+    def flow_matching_target_direction(self) -> float:
+        """
+        Return +1 for the common noise-ward velocity convention (`noise - latents`),
+        or -1 for models trained on the inverse data-ward convention.
+        """
+        return 1.0
+
+    def raw_model_prediction_to_model_prediction(self, raw_prediction: torch.Tensor) -> torch.Tensor:
+        """
+        Convert the denoiser's raw output into SimpleTuner's public `model_prediction`
+        convention. Most models already emit the public convention.
+        """
+        return raw_prediction
+
+    def noiseward_flow_to_prediction(self, flow: torch.Tensor) -> torch.Tensor:
+        direction = float(self.flow_matching_target_direction())
+        if direction == 1.0:
+            return flow
+        if direction == -1.0:
+            return -flow
+        if direction == 0.0:
+            raise ValueError("Flow-matching target direction may not be zero.")
+        return flow * direction
+
+    def prediction_to_noiseward_flow(self, prediction: torch.Tensor) -> torch.Tensor:
+        direction = float(self.flow_matching_target_direction())
+        if direction == 1.0:
+            return prediction
+        if direction == -1.0:
+            return -prediction
+        if direction == 0.0:
+            raise ValueError("Flow-matching target direction may not be zero.")
+        return prediction / direction
+
+    def flow_matching_target(self, latents: torch.Tensor, noise: torch.Tensor) -> torch.Tensor:
+        return self.noiseward_flow_to_prediction(noise - latents)
+
+    def get_flow_matching_target(
+        self,
+        prepared_batch: dict,
+        *,
+        latents: Optional[torch.Tensor] = None,
+        noise: Optional[torch.Tensor] = None,
+        prefer_explicit_target: bool = True,
+    ) -> torch.Tensor:
+        if prefer_explicit_target:
+            target = prepared_batch.get("target")
+            if target is not None:
+                return target
+            flow_target = prepared_batch.get("flow_target")
+            if flow_target is not None:
+                return flow_target
+
+        if latents is None:
+            latents = prepared_batch["latents"]
+        if noise is None:
+            noise = prepared_batch["noise"]
+        return self.flow_matching_target(latents, noise)
+
     def get_prediction_target(self, prepared_batch: dict):
         """
         Returns the target used in the loss function.
@@ -4108,7 +4383,7 @@ class ModelFoundation(ABC):
             # Parent-student training
             target = prepared_batch["target"]
         elif self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
-            target = prepared_batch["noise"] - prepared_batch["latents"]
+            target = self.get_flow_matching_target(prepared_batch, prefer_explicit_target=False)
         elif self.PREDICTION_TYPE is PredictionTypes.EPSILON:
             target = prepared_batch["noise"]
         elif self.PREDICTION_TYPE is PredictionTypes.V_PREDICTION:
@@ -4454,6 +4729,19 @@ class ModelFoundation(ABC):
         timesteps = sigmas * 1000.0
         return sigmas, timesteps
 
+    def flow_matching_timesteps_from_sigmas(
+        self,
+        sigmas: torch.Tensor,
+        *,
+        reference_timesteps: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Convert noise-ward flow sigmas to the timestep convention consumed by this model."""
+        if reference_timesteps is not None and torch.max(reference_timesteps.detach().float()) <= 1.0:
+            return sigmas
+        scheduler_config = getattr(getattr(self, "noise_schedule", None), "config", None)
+        num_train_timesteps = float(getattr(scheduler_config, "num_train_timesteps", 1000) or 1000)
+        return sigmas * num_train_timesteps
+
     def _validate_twinflow_config(self) -> None:
         """
         Validate TwinFlow configuration and record common flags.
@@ -4729,8 +5017,8 @@ class ModelFoundation(ABC):
                 use_grad=False,
             )
 
-        # Integrate one step: x_fake = z - F_fake (from t=1 to t=0)
-        x_fake = z - F_fake
+        # Integrate one step from t=1 to t=0 using the canonical noise-ward velocity.
+        x_fake = z - self.prediction_to_noiseward_flow(F_fake)
         return x_fake.detach(), z
 
     def _twinflow_compute_adversarial_loss(
@@ -4757,8 +5045,8 @@ class ModelFoundation(ABC):
         # Construct fake trajectory interpolation
         x_t_fake = t_b * z + (1 - t_b) * x_fake
 
-        # Target velocity for fake trajectory
-        target_fake = z - x_fake
+        # Target velocity for fake trajectory in this model's prediction convention.
+        target_fake = self.noiseward_flow_to_prediction(z - x_fake)
 
         # Forward with NEGATIVE time (sign embedding handles distinction)
         neg_t = -t
@@ -5020,15 +5308,15 @@ class ModelFoundation(ABC):
 
         return pred
 
-    @staticmethod
-    def _twinflow_reconstruct_states(x_t: torch.Tensor, sigma: torch.Tensor, flow_pred: torch.Tensor):
+    def _twinflow_reconstruct_states(self, x_t: torch.Tensor, sigma: torch.Tensor, flow_pred: torch.Tensor):
         """
         Recover x_hat and z_hat from the predicted flow under linear interpolation x_t = t*z + (1-t)*x.
         """
         sigma_b = ModelFoundation._twinflow_match_time_shape(sigma, x_t)
         gamma = 1 - sigma_b
-        x_hat = x_t - sigma_b * flow_pred
-        z_hat = x_t + gamma * flow_pred
+        noiseward_flow = self.prediction_to_noiseward_flow(flow_pred)
+        x_hat = x_t - sigma_b * noiseward_flow
+        z_hat = x_t + gamma * noiseward_flow
         return x_hat, z_hat
 
     def _twinflow_rcgm_target(
@@ -5116,6 +5404,12 @@ class ModelFoundation(ABC):
         # Ensure the encoder hidden states are on device
         if batch["prompt_embeds"] is not None and hasattr(batch["prompt_embeds"], "to"):
             batch["encoder_hidden_states"] = batch["prompt_embeds"].to(**target_device_kwargs)
+        negative_prompt_embeds = batch.get("negative_prompt_embeds")
+        if negative_prompt_embeds is not None and hasattr(negative_prompt_embeds, "to"):
+            batch["negative_encoder_hidden_states"] = negative_prompt_embeds.to(**target_device_kwargs)
+        negative_attention_mask = batch.get("negative_encoder_attention_mask")
+        if negative_attention_mask is not None and hasattr(negative_attention_mask, "to"):
+            batch["negative_encoder_attention_mask"] = negative_attention_mask.to(device=self.accelerator.device)
 
         # Process additional conditioning if provided
         pooled_embeds = batch.get("add_text_embeds")
@@ -5174,7 +5468,9 @@ class ModelFoundation(ABC):
         batch["noise"] = noise
 
         if getattr(self.config, "diff2flow_enabled", False):
-            batch["flow_target"] = (batch["noise"] - batch["latents"]).to(**target_device_kwargs)
+            batch["flow_target"] = self.get_flow_matching_target(batch, prefer_explicit_target=False).to(
+                **target_device_kwargs
+            )
 
         # Possibly add input perturbation to input noise only
         if self.config.input_perturbation != 0 and (
@@ -5301,6 +5597,19 @@ class ModelFoundation(ABC):
     def requires_validation_i2v_samples(self) -> bool:
         """
         Override for models that need to pair validation videos with their conditioning images.
+        """
+        return False
+
+    def uses_validation_negative_prompt(self) -> bool:
+        """
+        Whether validation should encode and pass a negative prompt branch.
+        """
+        return self.VALIDATION_USES_NEGATIVE_PROMPT
+
+    def validation_negative_prompt_requires_prompt_context(self) -> bool:
+        """
+        Whether validation negative prompts must be encoded per sample with the same
+        image/reference context as the positive prompt.
         """
         return False
 
@@ -5725,7 +6034,9 @@ class ModelFoundation(ABC):
             rcgm_latents = (1 - sigmas) * latents + sigmas * noise
         prepared_batch["twinflow_tt"] = tt
 
-        target = (noise - latents).to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+        target = self.get_flow_matching_target(prepared_batch, prefer_explicit_target=False).to(
+            device=self.accelerator.device, dtype=self.config.weight_dtype
+        )
 
         if self._twinflow_diffusion_bridge:
             if self.diff2flow_bridge is None:

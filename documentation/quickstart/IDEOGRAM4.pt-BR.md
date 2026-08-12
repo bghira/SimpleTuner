@@ -14,7 +14,7 @@ Pontos de partida recomendados:
 
 - **Padrão:** pesos base FP8, pesos LoRA treináveis em bf16, rank 16-32.
 - **Baixa VRAM:** NF4 para o modelo base.
-- **Alta VRAM:** pesos bf16-upcast se houver VRAM suficiente e você quiser evitar carregamento quantizado.
+- **Alta VRAM:** pesos bf16-upcast (`ideogram_fp8_base_upcast=true`) se houver VRAM suficiente e você quiser evitar carregamento quantizado. Isso dequantiza o checkpoint FP8 nativo para o dtype de treinamento no carregamento (transformer de ~18 GiB).
 
 Medição em H100 80GB, FP8 nativo (`base_model_precision=fp8-torchao`, `quantize_via=pipeline`), LoRA rank 32, mixed precision bf16, gradient checkpointing ligado, treino square 1024px e validação desligada:
 

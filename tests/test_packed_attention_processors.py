@@ -1,4 +1,5 @@
 import unittest
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -325,6 +326,52 @@ class PackedAttentionProcessorTests(unittest.TestCase):
         self.assertEqual(output.shape, hidden_states.shape)
         self.assertIs(dispatch.call_args.kwargs["parallel_config"], parallel_config)
         self.assertEqual(dispatch.call_args.kwargs["attn_mask"].shape, (1, 1, 1, 6))
+
+    def test_flux2_metal_flash_fast_path_uses_activation_offload_context(self):
+        context_calls = []
+
+        @contextmanager
+        def fake_activation_offload_context(enabled, label=None):
+            context_calls.append((enabled, label))
+            yield
+
+        def fake_metal_attention(query, *_args, **_kwargs):
+            return torch.zeros_like(query)
+
+        double_stream = Flux2Attention(query_dim=8, heads=2, dim_head=4, out_dim=8)
+        single_stream = Flux2ParallelSelfAttention(query_dim=8, heads=2, dim_head=4, out_dim=8, mlp_ratio=1.0)
+
+        with (
+            patch(
+                "simpletuner.helpers.models.flux2.transformer.activation_offload_context",
+                new=fake_activation_offload_context,
+            ),
+            patch(
+                "simpletuner.helpers.models.flux2.transformer.maybe_metal_flash_rope_attention",
+                side_effect=fake_metal_attention,
+            ) as metal_attention,
+        ):
+            double_output = double_stream(
+                torch.randn(1, 2, 8),
+                image_rotary_emb=object(),
+                offload_attention=True,
+            )
+            single_output = single_stream(
+                torch.randn(1, 3, 8),
+                image_rotary_emb=object(),
+                offload_attention=True,
+            )
+
+        self.assertEqual(double_output.shape, (1, 2, 8))
+        self.assertEqual(single_output.shape, (1, 3, 8))
+        self.assertEqual(metal_attention.call_count, 2)
+        self.assertEqual(
+            context_calls,
+            [
+                (True, "Flux2Attention:attention"),
+                (True, "Flux2ParallelSelfAttention:attention"),
+            ],
+        )
 
     def test_ltx2_transformer_fuse_enables_packed_self_attention_processors(self):
         model = LTX2VideoTransformer3DModel(

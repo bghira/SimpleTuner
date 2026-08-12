@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 _peft_lora_config_patched = False
 _peft_lora_model_patched = False
 _peft_inject_patched = False
+_peft_lora_forward_patched = False
 
 
 @lru_cache(maxsize=1)
@@ -47,6 +48,7 @@ def ensure_available() -> dict:
         imports = _ramtorch_imports()
         _maybe_patch_peft_lora_config()
         _maybe_patch_peft_lora_model()
+        _maybe_patch_peft_lora_forward()
         _maybe_patch_peft_inject()
         return imports
     except ImportError as exc:
@@ -104,6 +106,72 @@ def _is_replaceable_linear(module: nn.Module) -> bool:
     if isinstance(module, nn.Linear):
         return True
     return _is_quanto_linear(module) and hasattr(module, "in_features") and hasattr(module, "out_features")
+
+
+def _is_scaled_fp8_linear(module: nn.Module) -> bool:
+    weight = getattr(module, "weight", None)
+    weight_scale = getattr(module, "weight_scale", None)
+    if not torch.is_tensor(weight) or not torch.is_tensor(weight_scale):
+        return False
+    if not str(weight.dtype).startswith("torch.float8_"):
+        return False
+    return weight.ndim == 2 and weight_scale.shape == (weight.shape[0],)
+
+
+def _move_peft_lora_adapters_to_device(peft_layer: Any, device: torch.device | None) -> None:
+    if device is None or getattr(peft_layer, "disable_adapters", False):
+        return
+
+    try:
+        active = peft_layer.active_adapters
+    except Exception:
+        try:
+            active = peft_layer.active_adapter
+        except Exception:
+            active = None
+
+    if active is None:
+        active_adapters = list(getattr(peft_layer, "lora_A", {}).keys())
+    elif isinstance(active, (list, tuple, set)):
+        active_adapters = list(active)
+    else:
+        active_adapters = [active]
+
+    def _move_module(module: nn.Module | None) -> None:
+        if module is None:
+            return
+        try:
+            weight = getattr(module, "weight", None)
+            if weight is not None and weight.device != device:
+                module.to(device)
+        except Exception:
+            pass
+
+    for adapter_name in active_adapters:
+        if adapter_name in getattr(peft_layer, "lora_A", {}):
+            _move_module(peft_layer.lora_A[adapter_name])
+        if adapter_name in getattr(peft_layer, "lora_B", {}):
+            _move_module(peft_layer.lora_B[adapter_name])
+
+
+def _move_peft_base_layer_to_device(peft_layer: Any, device: torch.device | None) -> None:
+    if device is None:
+        return
+    try:
+        base_layer = peft_layer.get_base_layer()
+    except Exception:
+        base_layer = getattr(peft_layer, "base_layer", None)
+    if base_layer is None:
+        return
+    for param in base_layer.parameters(recurse=True):
+        if getattr(param, "is_ramtorch", False):
+            return
+    try:
+        first_param = next(base_layer.parameters(recurse=True), None)
+    except Exception:
+        first_param = None
+    if first_param is not None and first_param.device != device:
+        base_layer.to(device)
 
 
 def _tensor_uses_subclass_storage(tensor: Any) -> bool:
@@ -234,6 +302,23 @@ def replace_linear_layers_with_ramtorch(
 
         child_bias = getattr(child, "bias", None)
         child_weight = getattr(child, "weight")
+        if _is_scaled_fp8_linear(child):
+            from simpletuner.helpers.ramtorch_extensions import CPUBouncingFp8Linear
+
+            new_layer = CPUBouncingFp8Linear(
+                int(child.in_features),
+                int(child.out_features),
+                weight=child_weight,
+                weight_scale=child.weight_scale,
+                bias=child_bias,
+                device=resolved_device,
+                compute_dtype=getattr(child, "compute_dtype", None),
+            )
+            new_layer.train(child.training)
+            setattr(parent, child_name, new_layer)
+            replaced += 1
+            continue
+
         new_layer = ramtorch_linear(
             int(child.in_features),
             int(child.out_features),
@@ -354,52 +439,8 @@ def register_lora_custom_module(lora_config) -> bool:
         """
 
         def _ensure_lora_on_device(self, device):
-            if device is None:
-                return
-            try:
-                active = self.active_adapter
-            except Exception:
-                active = None
-
-            def _active_adapters(candidate):
-                if candidate is None:
-                    return []
-                if isinstance(candidate, (list, tuple, set)):
-                    return list(candidate)
-                return [candidate]
-
-            def _move_layer(layer):
-                try:
-                    if hasattr(layer, "to") and layer.weight.device != device:
-                        layer.to(device)
-                except Exception:
-                    pass
-
-            actives = _active_adapters(active)
-            keys_to_move = actives or list(self.lora_A.keys())
-
-            for name in keys_to_move:
-                try:
-                    key = name
-                    if key in self.lora_A:
-                        _move_layer(self.lora_A[key])
-                    if key in self.lora_B:
-                        _move_layer(self.lora_B[key])
-                    if key in getattr(self.lora_embedding_A, "_parameters", {}):
-                        emb_a = self.lora_embedding_A[key]
-                        emb_b = self.lora_embedding_B.get(key)
-                        try:
-                            if hasattr(emb_a, "to") and emb_a.device != device:
-                                emb_a.data = emb_a.data.to(device)
-                        except Exception:
-                            pass
-                        try:
-                            if emb_b is not None and hasattr(emb_b, "to") and emb_b.device != device:
-                                emb_b.data = emb_b.data.to(device)
-                        except Exception:
-                            pass
-                except Exception:
-                    continue
+            _move_peft_base_layer_to_device(self, device)
+            _move_peft_lora_adapters_to_device(self, device)
 
         def forward(self, x: torch.Tensor, *args, **kwargs):  # type: ignore[override]
             self._ensure_lora_on_device(x.device if torch.is_tensor(x) else None)
@@ -525,39 +566,8 @@ def _maybe_patch_peft_lora_model() -> bool:
 
     class RamTorchPeftLinear(PeftLinear):  # type: ignore[misc]
         def _ensure_lora_on_device(self, device):
-            if device is None:
-                return
-            try:
-                active = self.active_adapter
-            except Exception:
-                active = None
-
-            def _active_adapters(candidate):
-                if candidate is None:
-                    return []
-                if isinstance(candidate, (list, tuple, set)):
-                    return list(candidate)
-                return [candidate]
-
-            def _move_layer(layer):
-                try:
-                    if hasattr(layer, "to") and layer.weight.device != device:
-                        layer.to(device)
-                except Exception:
-                    pass
-
-            actives = _active_adapters(active)
-            keys_to_move = actives or list(self.lora_A.keys())
-
-            for name in keys_to_move:
-                try:
-                    key = name
-                    if key in self.lora_A:
-                        _move_layer(self.lora_A[key])
-                    if key in self.lora_B:
-                        _move_layer(self.lora_B[key])
-                except Exception:
-                    continue
+            _move_peft_base_layer_to_device(self, device)
+            _move_peft_lora_adapters_to_device(self, device)
 
         def forward(self, x: torch.Tensor, *args, **kwargs):  # type: ignore[override]
             self._ensure_lora_on_device(x.device if torch.is_tensor(x) else None)
@@ -597,6 +607,40 @@ def _maybe_patch_peft_lora_model() -> bool:
     _wrapped_create_new_module._ramtorch_wrapped = True
     LoraModel._create_new_module = staticmethod(_wrapped_create_new_module)
     _peft_lora_model_patched = True
+    return True
+
+
+def _maybe_patch_peft_lora_forward() -> bool:
+    """
+    Patch PEFT's stock LoRA Linear forward when RamTorch is active. Some models
+    can still dispatch to the normal PEFT wrapper after quantization/offload, and
+    those adapters need the same activation-device relocation as RamTorchLinear.
+    """
+
+    global _peft_lora_forward_patched
+    if _peft_lora_forward_patched:
+        return False
+
+    try:
+        import torch
+        from peft.tuners.lora.layer import Linear as PeftLinear
+    except Exception:
+        return False
+
+    orig_forward = PeftLinear.forward
+    if getattr(orig_forward, "_ramtorch_wrapped", False):
+        _peft_lora_forward_patched = True
+        return False
+
+    def _wrapped_forward(self, x: torch.Tensor, *args, **kwargs):  # type: ignore[override]
+        device = x.device if torch.is_tensor(x) else None
+        _move_peft_base_layer_to_device(self, device)
+        _move_peft_lora_adapters_to_device(self, device)
+        return orig_forward(self, x, *args, **kwargs)
+
+    _wrapped_forward._ramtorch_wrapped = True
+    PeftLinear.forward = _wrapped_forward
+    _peft_lora_forward_patched = True
     return True
 
 
@@ -761,20 +805,26 @@ def move_non_linear_layers_to_device(module: nn.Module, device: object) -> int:
 
 def mark_ddp_ignore_params(module: nn.Module) -> int:
     """
-    Mark RamTorch parameters on a module to be ignored by DistributedDataParallel.
+    Mark RamTorch/CPU-resident parameters on a module to be ignored by
+    DistributedDataParallel.
 
     Returns:
-        Number of parameters added to the ignore list.
+        Number of parameters and buffers added to the ignore list.
     """
-    ramtorch_names = [name for name, param in module.named_parameters() if getattr(param, "is_ramtorch", False)]
-    ramtorch_names.extend(name for name, buffer in module.named_buffers() if getattr(buffer, "is_ramtorch", False))
-    if not ramtorch_names:
-        device_types = {param.device.type for _, param in module.named_parameters() if param.device is not None}
-        if "cuda" in device_types and "cpu" in device_types:
-            ramtorch_names = [name for name, param in module.named_parameters() if param.device.type == "cpu"]
-    if not ramtorch_names:
+    named_params = list(module.named_parameters())
+    named_buffers = list(module.named_buffers())
+    ignore_names = {name for name, param in named_params if getattr(param, "is_ramtorch", False)}
+    ignore_names.update(name for name, buffer in named_buffers if getattr(buffer, "is_ramtorch", False))
+
+    device_types = {param.device.type for _, param in named_params if param.device is not None}
+    should_ignore_cpu_residents = bool(ignore_names) or {"cpu", "cuda"}.issubset(device_types)
+    if should_ignore_cpu_residents:
+        ignore_names.update(name for name, param in named_params if param.device.type == "cpu" and not param.requires_grad)
+        ignore_names.update(name for name, buffer in named_buffers if buffer.device.type == "cpu")
+    if not ignore_names:
         return 0
 
-    existing = getattr(module, "_ddp_params_and_buffers_to_ignore", set())
-    module._ddp_params_and_buffers_to_ignore = set(existing) | set(ramtorch_names)
-    return len(ramtorch_names)
+    existing = set(getattr(module, "_ddp_params_and_buffers_to_ignore", set()))
+    newly_added = ignore_names - existing
+    module._ddp_params_and_buffers_to_ignore = existing | ignore_names
+    return len(newly_added)

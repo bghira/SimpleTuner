@@ -32,6 +32,7 @@ from simpletuner.helpers.models.flowmap import (
     register_flowmap_config,
     validate_flowmap_deltatime_type,
 )
+from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
 
 
 # Copied from diffusers.pipelines.wuerstchen.modeling_wuerstchen_common.WuerstchenLayerNorm with WuerstchenLayerNorm -> SDCascadeLayerNorm
@@ -446,12 +447,20 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
         )
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
         self.flowmap_deltatime_type: Optional[str] = None
         if deltatime_type is not None:
             self.enable_flowmap_time_conditioning(
                 gate_value=0.25 if gate_value is None else float(gate_value),
                 deltatime_type=deltatime_type,
             )
+
+    def set_gradient_checkpointing_interval(self, interval: int | None) -> None:
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None) -> None:
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="Stable Cascade")
@@ -519,92 +528,69 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             clip = clip_txt_pool
         return self.clip_norm(clip)
 
+    def _run_checkpointable_block(self, block_index: int, block: nn.Module, *args):
+        if (
+            torch.is_grad_enabled()
+            and self.gradient_checkpointing
+            and should_checkpoint_block(
+                block_index,
+                True,
+                self.gradient_checkpointing_interval,
+                self.gradient_checkpointing_segment_stride,
+            )
+        ):
+            return self._gradient_checkpointing_func(block, *args)
+        return block(*args)
+
     def _down_encode(self, x, r_embed, clip, delta_r_embed=None):
         level_outputs = []
         block_group = zip(self.down_blocks, self.down_downscalers, self.down_repeat_mappers)
+        checkpoint_block_index = 0
 
-        if torch.is_grad_enabled() and self.gradient_checkpointing:
-            for down_block, downscaler, repmap in block_group:
-                x = downscaler(x)
-                for i in range(len(repmap) + 1):
-                    for block in down_block:
-                        if isinstance(block, SDCascadeResBlock):
-                            x = self._gradient_checkpointing_func(block, x)
-                        elif isinstance(block, SDCascadeAttnBlock):
-                            x = self._gradient_checkpointing_func(block, x, clip)
-                        elif isinstance(block, SDCascadeTimestepBlock):
-                            x = self._gradient_checkpointing_func(block, x, r_embed, delta_r_embed)
-                        else:
-                            x = self._gradient_checkpointing_func(block)
-                    if i < len(repmap):
-                        x = repmap[i](x)
-                level_outputs.insert(0, x)
-        else:
-            for down_block, downscaler, repmap in block_group:
-                x = downscaler(x)
-                for i in range(len(repmap) + 1):
-                    for block in down_block:
-                        if isinstance(block, SDCascadeResBlock):
-                            x = block(x)
-                        elif isinstance(block, SDCascadeAttnBlock):
-                            x = block(x, clip)
-                        elif isinstance(block, SDCascadeTimestepBlock):
-                            x = block(x, r_embed, delta_r_embed)
-                        else:
-                            x = block(x)
-                    if i < len(repmap):
-                        x = repmap[i](x)
-                level_outputs.insert(0, x)
-        return level_outputs
+        for down_block, downscaler, repmap in block_group:
+            x = downscaler(x)
+            for i in range(len(repmap) + 1):
+                for block in down_block:
+                    if isinstance(block, SDCascadeResBlock):
+                        x = self._run_checkpointable_block(checkpoint_block_index, block, x)
+                    elif isinstance(block, SDCascadeAttnBlock):
+                        x = self._run_checkpointable_block(checkpoint_block_index, block, x, clip)
+                    elif isinstance(block, SDCascadeTimestepBlock):
+                        x = self._run_checkpointable_block(checkpoint_block_index, block, x, r_embed, delta_r_embed)
+                    else:
+                        x = self._run_checkpointable_block(checkpoint_block_index, block, x)
+                    checkpoint_block_index += 1
+                if i < len(repmap):
+                    x = repmap[i](x)
+            level_outputs.insert(0, x)
+        return level_outputs, checkpoint_block_index
 
-    def _up_decode(self, level_outputs, r_embed, clip, delta_r_embed=None):
+    def _up_decode(self, level_outputs, r_embed, clip, delta_r_embed=None, checkpoint_block_index: int = 0):
         x = level_outputs[0]
         block_group = zip(self.up_blocks, self.up_upscalers, self.up_repeat_mappers)
 
-        if torch.is_grad_enabled() and self.gradient_checkpointing:
-            for i, (up_block, upscaler, repmap) in enumerate(block_group):
-                for j in range(len(repmap) + 1):
-                    for k, block in enumerate(up_block):
-                        if isinstance(block, SDCascadeResBlock):
-                            skip = level_outputs[i] if k == 0 and i > 0 else None
-                            if skip is not None and (x.size(-1) != skip.size(-1) or x.size(-2) != skip.size(-2)):
-                                orig_type = x.dtype
-                                x = torch.nn.functional.interpolate(
-                                    x.float(), skip.shape[-2:], mode="bilinear", align_corners=True
-                                )
-                                x = x.to(orig_type)
-                            x = self._gradient_checkpointing_func(block, x, skip)
-                        elif isinstance(block, SDCascadeAttnBlock):
-                            x = self._gradient_checkpointing_func(block, x, clip)
-                        elif isinstance(block, SDCascadeTimestepBlock):
-                            x = self._gradient_checkpointing_func(block, x, r_embed, delta_r_embed)
-                        else:
-                            x = self._gradient_checkpointing_func(block, x)
-                    if j < len(repmap):
-                        x = repmap[j](x)
-                x = upscaler(x)
-        else:
-            for i, (up_block, upscaler, repmap) in enumerate(block_group):
-                for j in range(len(repmap) + 1):
-                    for k, block in enumerate(up_block):
-                        if isinstance(block, SDCascadeResBlock):
-                            skip = level_outputs[i] if k == 0 and i > 0 else None
-                            if skip is not None and (x.size(-1) != skip.size(-1) or x.size(-2) != skip.size(-2)):
-                                orig_type = x.dtype
-                                x = torch.nn.functional.interpolate(
-                                    x.float(), skip.shape[-2:], mode="bilinear", align_corners=True
-                                )
-                                x = x.to(orig_type)
-                            x = block(x, skip)
-                        elif isinstance(block, SDCascadeAttnBlock):
-                            x = block(x, clip)
-                        elif isinstance(block, SDCascadeTimestepBlock):
-                            x = block(x, r_embed, delta_r_embed)
-                        else:
-                            x = block(x)
-                    if j < len(repmap):
-                        x = repmap[j](x)
-                x = upscaler(x)
+        for i, (up_block, upscaler, repmap) in enumerate(block_group):
+            for j in range(len(repmap) + 1):
+                for k, block in enumerate(up_block):
+                    if isinstance(block, SDCascadeResBlock):
+                        skip = level_outputs[i] if k == 0 and i > 0 else None
+                        if skip is not None and (x.size(-1) != skip.size(-1) or x.size(-2) != skip.size(-2)):
+                            orig_type = x.dtype
+                            x = torch.nn.functional.interpolate(
+                                x.float(), skip.shape[-2:], mode="bilinear", align_corners=True
+                            )
+                            x = x.to(orig_type)
+                        x = self._run_checkpointable_block(checkpoint_block_index, block, x, skip)
+                    elif isinstance(block, SDCascadeAttnBlock):
+                        x = self._run_checkpointable_block(checkpoint_block_index, block, x, clip)
+                    elif isinstance(block, SDCascadeTimestepBlock):
+                        x = self._run_checkpointable_block(checkpoint_block_index, block, x, r_embed, delta_r_embed)
+                    else:
+                        x = self._run_checkpointable_block(checkpoint_block_index, block, x)
+                    checkpoint_block_index += 1
+                if j < len(repmap):
+                    x = repmap[j](x)
+            x = upscaler(x)
         return x
 
     def forward(
@@ -665,8 +651,14 @@ class StableCascadeUNet(ModelMixin, ConfigMixin, FromOriginalModelMixin):
             x = x + nn.functional.interpolate(
                 self.pixels_mapper(pixels), size=x.shape[-2:], mode="bilinear", align_corners=True
             )
-        level_outputs = self._down_encode(x, timestep_ratio_embed, clip, delta_timestep_ratio_embed)
-        x = self._up_decode(level_outputs, timestep_ratio_embed, clip, delta_timestep_ratio_embed)
+        level_outputs, checkpoint_block_index = self._down_encode(x, timestep_ratio_embed, clip, delta_timestep_ratio_embed)
+        x = self._up_decode(
+            level_outputs,
+            timestep_ratio_embed,
+            clip,
+            delta_timestep_ratio_embed,
+            checkpoint_block_index=checkpoint_block_index,
+        )
         sample = self.clf(x)
 
         if not return_dict:

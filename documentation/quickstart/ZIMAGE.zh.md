@@ -20,6 +20,18 @@ Z-Image 比 Flux 省显存，但仍受益于高性能 GPU。训练 rank-16 LoRA 
 
 不建议使用 Apple GPU 训练。
 
+### SDNQ Hadamard 实测性能
+
+这些数据使用 `z-image-turbo.peft-lora` Domokun 示例训练 1000 步，启用验证、`base_model_precision=int8-sdnq`、`sdnq_use_hadamard=true`、`sdnq_group_size=-1`、`sdnq_hadamard_group_size=256` 和 gradient checkpointing。启用该路径的选项见 [ConvRot / Hadamard SDNQ quick setup](../experimental/CONVROT.md#quick-setup)。请把它们作为该配方的比较数据，不要当作硬件保证。
+
+| GPU | 运行 | train loop 秒/步 | 平均 train step | p50 | p95 | 峰值已分配 VRAM |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| H100 80GB | 当前 SDNQ Hadamard 路径 | 1.107 | 1.087 | 1.071 | 1.109 | 9.70 GiB |
+| L40S | 当前 SDNQ Hadamard 路径 | 1.026 | 1.018 | 1.002 | 1.040 | 9.66 GiB |
+| L40S | baseline SDNQ Hadamard 路径 | 1.131 | 1.072 | 1.055 | 1.102 | 9.66 GiB |
+
+在 warm cache 的 L40S 对比中，当前路径按 train-loop wall time 比 baseline SDNQ Hadamard 路径快 10.3%，按实测 train-step 平均快 5.2%。
+
 ### 内存卸载（可选）
 
 组模块卸载能显著降低 transformer 权重带来的 VRAM 压力。可在 `TRAINER_EXTRA_ARGS`（或 WebUI 硬件页面）中添加：

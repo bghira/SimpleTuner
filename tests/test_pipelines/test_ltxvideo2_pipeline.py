@@ -1,4 +1,5 @@
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -47,6 +48,13 @@ class TestLTXVideo2Pipeline(unittest.TestCase):
         self.assertTrue(torch.equal(updated["audio_latents"], expected))
         self.assertNotIn("_s2v_conditioning", updated)
 
+    def test_update_pipeline_call_kwargs_injects_audio_guidance(self):
+        self.model.config.ltx2_validation_audio_guidance = 7.0
+
+        updated = self.model.update_pipeline_call_kwargs({})
+
+        self.assertEqual(updated["audio_guidance_scale"], 7.0)
+
     def test_load_audio_latents_for_validation_uses_cache(self):
         latents = torch.randn(1, 3)
         cache = MagicMock()
@@ -67,6 +75,119 @@ class TestLTXVideo2Pipeline(unittest.TestCase):
         self.assertEqual(self.model._resolve_ltx2_version(), "2.3")
         self.assertEqual(self.model._resolve_ltx2_combined_filename(), "ltx-2.3-22b-distilled.safetensors")
 
+    def test_resolve_ltx25_flavour_requires_explicit_checkpoint_filename(self):
+        self.model.config.model_flavour = "2.5-dev"
+
+        self.assertEqual(self.model._resolve_ltx2_version(), "2.5")
+        self.assertEqual(self.model.HUGGINGFACE_PATHS["2.5-dev"], "Lightricks/LTX-2.5")
+        with self.assertRaisesRegex(ValueError, "LTX-2.5 checkpoint filename is not known"):
+            self.model._resolve_ltx2_combined_filename()
+
+        self.model.config.ltx2_checkpoint_filename = "ltx-2.5-local.safetensors"
+        self.assertEqual(self.model._resolve_ltx2_combined_filename(), "ltx-2.5-local.safetensors")
+
+    def test_ltx25_configures_gemma4_text_encoder(self):
+        self.model.config.model_flavour = "2.5-dev"
+
+        self.model._configure_ltx2_text_encoder()
+
+        text_encoder_config = self.model.TEXT_ENCODER_CONFIGURATION["text_encoder"]
+        self.assertEqual(text_encoder_config["name"], "Gemma4")
+        self.assertEqual(text_encoder_config["tokenizer"].__name__, "AutoTokenizer")
+
+    def test_ltx25_single_file_uses_ltx25_repo_for_text_encoder_path(self):
+        self.model.config.model_flavour = "2.5-dev"
+        self.model.config.pretrained_model_name_or_path = "/tmp/ltx-2.5-dev.safetensors"
+        self.model._configure_ltx2_text_encoder()
+
+        self.assertEqual(
+            self.model._resolve_text_encoder_path(self.model.TEXT_ENCODER_CONFIGURATION["text_encoder"]),
+            "Lightricks/LTX-2.5",
+        )
+
+    def test_ltx25_repo_uses_split_pack_layout(self):
+        self.model.config.model_flavour = "2.5-dev"
+        self.model.config.pretrained_model_name_or_path = "Lightricks/LTX-2.5"
+
+        with patch.object(self.model, "_detect_diffusers_layout", return_value=False):
+            self.assertTrue(self.model._uses_ltx25_split_pack())
+            self.assertFalse(self.model._uses_combined_checkpoint())
+
+    def test_ltx25_distilled_split_pack_selects_distilled_transformer(self):
+        self.model.config.model_flavour = "2.5-distilled"
+
+        self.assertEqual(
+            self.model._default_ltx25_transformer_filename(),
+            "diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors",
+        )
+
+    def test_ltx25_local_split_pack_detection_uses_component_files(self):
+        self.model.config.model_flavour = "2.5-dev"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            transformer_path = Path(tmpdir) / "diffusion_models" / "ltx-2.5-22b-dev-transformer-bf16.safetensors"
+            transformer_path.parent.mkdir(parents=True)
+            transformer_path.touch()
+            self.model.config.pretrained_model_name_or_path = tmpdir
+
+            self.assertTrue(self.model._uses_ltx25_split_pack())
+
+    def test_ltx25_resolve_split_file_downloads_expected_path(self):
+        self.model.config.model_flavour = "2.5-dev"
+        self.model.config.pretrained_model_name_or_path = "Lightricks/LTX-2.5"
+        self.model.config.pretrained_transformer_model_name_or_path = None
+        self.model.config.revision = "test-revision"
+
+        with patch(
+            "simpletuner.helpers.models.ltxvideo2.model.hf_hub_download",
+            return_value="/cache/transformer.safetensors",
+        ) as download:
+            path = self.model._resolve_ltx25_transformer_path()
+
+        self.assertEqual(path, "/cache/transformer.safetensors")
+        download.assert_called_once_with(
+            repo_id="Lightricks/LTX-2.5",
+            filename="diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors",
+            revision="test-revision",
+        )
+
+    def test_ltx25_split_file_resolution_pins_first_downloaded_snapshot(self):
+        self.model.config.model_flavour = "2.5-dev"
+        self.model.config.pretrained_model_name_or_path = "Lightricks/LTX-2.5"
+        self.model.config.pretrained_gemma_model_name_or_path = None
+        self.model.config.pretrained_transformer_model_name_or_path = None
+        self.model.config.revision = None
+
+        with patch(
+            "simpletuner.helpers.models.ltxvideo2.model.hf_hub_download",
+            side_effect=[
+                "/cache/models--Lightricks--LTX-2.5/snapshots/abc123/text_encoders/gemma4.safetensors",
+                "/cache/models--Lightricks--LTX-2.5/snapshots/abc123/diffusion_models/transformer.safetensors",
+            ],
+        ) as download:
+            text_encoder_path = self.model._resolve_ltx25_text_encoder_path()
+            transformer_path = self.model._resolve_ltx25_transformer_path()
+
+        self.assertIn("/snapshots/abc123/", text_encoder_path)
+        self.assertIn("/snapshots/abc123/", transformer_path)
+        self.assertEqual(download.call_args_list[0].kwargs["revision"], None)
+        self.assertEqual(download.call_args_list[1].kwargs["revision"], "abc123")
+
+    def test_ltx25_split_file_resolution_uses_cached_paths(self):
+        self.model.config.model_flavour = "2.5-dev"
+        self.model.config.pretrained_model_name_or_path = "Lightricks/LTX-2.5"
+        self.model.config.pretrained_transformer_model_name_or_path = None
+        self.model.config.revision = None
+
+        with patch(
+            "simpletuner.helpers.models.ltxvideo2.model.hf_hub_download",
+            return_value="/cache/models--Lightricks--LTX-2.5/snapshots/abc123/diffusion_models/transformer.safetensors",
+        ) as download:
+            first_path = self.model._resolve_ltx25_transformer_path()
+            second_path = self.model._resolve_ltx25_transformer_path()
+
+        self.assertEqual(first_path, second_path)
+        download.assert_called_once()
+
     def test_model_config_path_uses_ltx23_dev_repo_for_single_file(self):
         self.model.config.model_flavour = "2.3-dev"
         self.model.config.pretrained_model_name_or_path = "/tmp/ltx-2.3-22b-dev.safetensors"
@@ -78,6 +199,12 @@ class TestLTXVideo2Pipeline(unittest.TestCase):
         self.model.config.pretrained_model_name_or_path = "/tmp/ltx-2.3-22b-distilled.safetensors"
 
         self.assertEqual(self.model._model_config_path(), "dg845/LTX-2.3-Distilled-Diffusers")
+
+    def test_model_config_path_uses_ltx25_repo_for_single_file(self):
+        self.model.config.model_flavour = "2.5-dev"
+        self.model.config.pretrained_model_name_or_path = "/tmp/ltx-2.5-dev.safetensors"
+
+        self.assertEqual(self.model._model_config_path(), "Lightricks/LTX-2.5")
 
     def test_legacy_ltx23_aliases_are_rejected(self):
         for flavour in ("2.3", "distilled"):
@@ -115,6 +242,26 @@ class TestLTXVideo2Pipeline(unittest.TestCase):
         fake_vae.load_state_dict.assert_called_once_with(state_dict, strict=True, assign=True)
         fake_vae.register_to_config.assert_called_once_with(_name_or_path="dg845/LTX-2.3-Diffusers")
         self.assertIs(self.model.vae, fake_vae)
+
+    def test_audio_latent_length_uses_comfy_rounding(self):
+        self.model.config.framerate = 24
+        self.model.audio_vae = SimpleNamespace(
+            config=SimpleNamespace(sample_rate=16000, mel_hop_length=160, latent_channels=8, mel_bins=64),
+            temporal_compression_ratio=4,
+            mel_compression_ratio=4,
+        )
+        video_vae = SimpleNamespace(temporal_compression_ratio=8)
+        batch = {"latents": torch.zeros(1, 128, 3, 2, 2)}
+
+        with (
+            patch.object(self.model, "_load_audio_vae", return_value=None),
+            patch.object(self.model, "get_vae", return_value=video_vae),
+        ):
+            expected_length = self.model._calculate_expected_audio_latent_length(batch)
+            empty_latents = self.model._build_empty_audio_latents(batch, torch.device("cpu"), torch.float32)
+
+        self.assertEqual(expected_length, 18)
+        self.assertEqual(empty_latents.shape, (1, 8, 18, 16))
 
     def test_intrinsic_first_frame_conditioning_replaces_tokens_and_masks_loss(self):
         self.model.config.ltx2_intrinsic_conditioning = [{"type": "first_frame", "probability": 1.0}]
@@ -190,7 +337,7 @@ class TestLTXVideo2Metadata(unittest.TestCase):
 
         self.assertEqual(
             metadata["ltxvideo2"]["flavour_choices"],
-            ["dev", "dev-fp4", "dev-fp8", "2.3-dev", "2.3-distilled"],
+            ["dev", "dev-fp4", "dev-fp8", "2.3-dev", "2.3-distilled", "2.5-dev", "2.5-distilled"],
         )
 
 
@@ -299,6 +446,15 @@ class TestLTXVideo2TransformerLoading(unittest.TestCase):
         self.assertIn("a2v_cross_attention_mask", sig.parameters)
         self.assertIn("v2a_cross_attention_mask", sig.parameters)
 
+    def test_ltx2_pipelines_expose_audio_guidance_scale(self):
+        import inspect
+
+        from simpletuner.helpers.models.ltxvideo2.pipeline_ltx2 import LTX2Pipeline
+        from simpletuner.helpers.models.ltxvideo2.pipeline_ltx2_image2video import LTX2ImageToVideoPipeline
+
+        self.assertIn("audio_guidance_scale", inspect.signature(LTX2Pipeline.__call__).parameters)
+        self.assertIn("audio_guidance_scale", inspect.signature(LTX2ImageToVideoPipeline.__call__).parameters)
+
     def test_ltx2_conditioning_config_fields_are_parseable(self):
         from simpletuner.helpers.configuration.cmd_args import get_argument_parser
 
@@ -319,11 +475,14 @@ class TestLTXVideo2TransformerLoading(unittest.TestCase):
                 '[{"type":"first_frame","probability":1.0}]',
                 "--ltx2_reference_temporal_scale_factor",
                 "2",
+                "--ltx2_validation_audio_guidance",
+                "7.0",
             ]
         )
 
         self.assertEqual(args.ltx2_intrinsic_conditioning, '[{"type":"first_frame","probability":1.0}]')
         self.assertEqual(args.ltx2_reference_temporal_scale_factor, 2)
+        self.assertEqual(args.ltx2_validation_audio_guidance, 7.0)
 
 
 if __name__ == "__main__":

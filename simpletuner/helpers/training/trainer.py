@@ -34,6 +34,7 @@ import huggingface_hub
 import wandb
 from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
+from torch.distributed.tensor import DTensor
 
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
@@ -49,9 +50,10 @@ from simpletuner.helpers.data_backend.factory import (
 from simpletuner.helpers.data_backend.runtime import random_dataloader_iterator
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
 from simpletuner.helpers.data_backend.runtime.schedule import normalize_start_epoch, normalize_start_step
-from simpletuner.helpers.distillation.registry import DistillationRegistry
+from simpletuner.helpers.distillation.composition import resolve_configured_distiller_requirement_profile
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.musubi_block_swap import prepare_musubi_model_for_ddp
 from simpletuner.helpers.publishing import PublishingManager
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.publishing.providers.s3 import S3PublishingProvider
@@ -94,6 +96,7 @@ from simpletuner.helpers.training.quantisation import (
     mark_transformerengine_ddp_ignore_params,
 )
 from simpletuner.helpers.training.script_runner import run_hook_script
+from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
 from simpletuner.helpers.training.wrappers import unwrap_model
@@ -188,6 +191,7 @@ from simpletuner.helpers.training.context_parallel import (
     normalize_context_parallel_size,
     normalize_context_parallel_strategy,
     resolve_context_parallel_world_size,
+    scale_standalone_context_parallel_loss,
 )
 
 try:
@@ -372,12 +376,44 @@ class Trainer:
         except Exception:
             return False
 
+    @staticmethod
+    def _ramtorch_shared_parameters_enabled() -> bool:
+        value = os.environ.get("SIMPLETUNER_RAMTORCH_SHARED_PARAMETERS", "1").strip().lower()
+        return value not in {"0", "false", "no", "off"}
+
     def _distributed_collectives_ready(self) -> bool:
         try:
             num_processes = int(getattr(self.accelerator, "num_processes", 1) or 1)
         except (TypeError, ValueError):
             num_processes = 1
         return num_processes > 1 and torch.distributed.is_available() and torch.distributed.is_initialized()
+
+    @contextmanager
+    def _fsdp2_full_export_failure_guard(self, enabled: bool):
+        if not enabled or not self._distributed_collectives_ready():
+            yield
+            return
+
+        if self.accelerator is None:
+            raise RuntimeError("Accelerator must be initialized before running FSDP2 export collectives.")
+        status = torch.zeros((), dtype=torch.int32, device=self.accelerator.device)
+        try:
+            yield
+        finally:
+            original_exception_type = sys.exc_info()[0]
+            status.fill_(int(original_exception_type is not None))
+            try:
+                torch.distributed.all_reduce(status, op=torch.distributed.ReduceOp.MAX)
+            except Exception as collective_error:
+                if original_exception_type is not None:
+                    logger.error(
+                        "Failed to propagate FSDP2 final-export failure to peer ranks: %s",
+                        collective_error,
+                    )
+                else:
+                    raise
+            if original_exception_type is None and status.item():
+                raise RuntimeError("FSDP2 full-model export failed on another rank.")
 
     def _any_rank_reached_epoch_end(self, reached_epoch_end: bool) -> bool:
         if not self._distributed_collectives_ready():
@@ -389,6 +425,30 @@ class Trainer:
         local_flag = torch.tensor(1 if reached_epoch_end else 0, device=device, dtype=torch.int32)
         torch.distributed.all_reduce(local_flag, op=torch.distributed.ReduceOp.MAX)
         return bool(local_flag.item())
+
+    def _write_train_stage_breadcrumb(self, stage: str, step: int) -> None:
+        output_dir = os.environ.get("SIMPLETUNER_TRAIN_STAGE_TRACE_DIR")
+        if not output_dir:
+            return
+
+        rank = os.environ.get("RANK", os.environ.get("LOCAL_RANK", "unknown"))
+        payload = {
+            "rank": rank,
+            "pid": os.getpid(),
+            "step": int(step),
+            "stage": stage,
+            "timestamp": time.time(),
+        }
+        try:
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+            destination = output_path / f"rank-{rank}.json"
+            temporary = output_path / f"rank-{rank}.{os.getpid()}.tmp"
+            temporary.write_text(json.dumps(payload), encoding="utf-8")
+            os.replace(temporary, destination)
+        except Exception:
+            # Diagnostics must not affect the training path.
+            pass
 
     def _register_optimizer_attention_params(self, optimizer) -> None:
         try:
@@ -563,12 +623,17 @@ class Trainer:
         if self.config.grad_clip_method == "norm":
             grad_value = self.grad_norm
             if clone_norm_value:
-                grad_value = float(self.grad_norm.clone().detach())
+                grad_value = self._normalize_metric_value(self.grad_norm)
+                if grad_value is None:
+                    return
             target_logs[f"{prefix}grad_norm"] = grad_value
         elif (
             not require_value_method or self.config.grad_clip_method == "value"
         ) and not self.config.use_deepspeed_optimizer:
-            target_logs[f"{prefix}grad_absmax"] = self.grad_norm
+            grad_value = self.grad_norm
+            if clone_norm_value:
+                grad_value = float(self.grad_norm.clone().detach())
+            target_logs[f"{prefix}grad_absmax"] = grad_value
 
     def _config_uses_bitsandbytes(self) -> bool:
         if not getattr(self, "config", None):
@@ -639,8 +704,7 @@ class Trainer:
             },
         )
         required = any(
-            bool(getattr(provider, "config", {}).get("required", False))
-            for provider in getattr(manager, "providers", [])
+            bool(getattr(provider, "config", {}).get("required", False)) for provider in getattr(manager, "providers", [])
         )
         if required and not results:
             raise RuntimeError("Required final artifact publishing did not succeed")
@@ -933,11 +997,14 @@ class Trainer:
                 kwargs_handlers=accelerator_custom_config,
             )
 
+            ddp_kwargs = {}
             find_unused_parameters = self._resolve_ddp_find_unused_parameters()
             if find_unused_parameters is not None:
-                accelerator_custom_config.append(
-                    DistributedDataParallelKwargs(find_unused_parameters=find_unused_parameters)
-                )
+                ddp_kwargs["find_unused_parameters"] = find_unused_parameters
+            if (getattr(self.config, "musubi_blocks_to_swap", 0) or 0) > 0:
+                ddp_kwargs["gradient_as_bucket_view"] = True
+            if ddp_kwargs:
+                accelerator_custom_config.append(DistributedDataParallelKwargs(**ddp_kwargs))
 
             if not will_create_dynamo_plugin and dynamo_backend_env != "no":
                 accelerator_kwargs["dynamo_backend"] = dynamo_backend_env
@@ -1103,6 +1170,7 @@ class Trainer:
 
         StateTracker.set_accelerator(self.accelerator)
         StateTracker.set_args(self.config)
+        configure_sdnq_compile_mode()
         StateTracker.set_weight_dtype(self.config.weight_dtype)
         self.set_model_family()
 
@@ -1204,6 +1272,21 @@ class Trainer:
                 "FSDP activation checkpointing enabled; disabling model-level gradient checkpointing to avoid conflicts."
             )
             setattr(self.config, "gradient_checkpointing", False)
+
+        if fsdp_version == 2 and cpu_offload:
+            optimizer_name = str(getattr(self.config, "optimizer", "") or "").lower()
+            uses_optimi_gradient_release = bool(getattr(self.config, "optimizer_release_gradients", False)) and (
+                "optimi" in optimizer_name
+            )
+            uses_torchao_cpu_offload_optimizer = (
+                str(getattr(self.config, "optimizer_cpu_offload_method", "") or "").lower() == "torchao"
+            )
+            if uses_optimi_gradient_release or uses_torchao_cpu_offload_optimizer:
+                raise RuntimeError(
+                    "FSDP v2 CPU parameter offload is not compatible with post-accumulate gradient hook based "
+                    "optimizer paths. Disable fsdp_cpu_offload, optimizer_release_gradients, or "
+                    "optimizer_cpu_offload_method=torchao."
+                )
 
         plugin_kwargs = {
             "fsdp_version": fsdp_version,
@@ -1836,6 +1919,7 @@ class Trainer:
                     self.init_tread_model,
                     self.init_gligen_layers,
                     self.init_freeze_models,
+                    self.init_distillation_adapter_modules,
                     self.init_trainable_peft_adapter,
                     self.init_lyrics_embedder_training,
                 ]
@@ -1855,6 +1939,7 @@ class Trainer:
             self.resume_and_prepare()
             self._exit_on_signal()
             self.init_trackers()
+            self.run_startup_validation()
 
             # Start the training process
             self.train()
@@ -2185,6 +2270,95 @@ class Trainer:
             self._hub_upload_executor.shutdown(wait=True)
             self._hub_upload_executor = None
 
+    def _init_lora_metadata_global_step(self) -> str | None:
+        init_lora = getattr(self.config, "init_lora", None)
+        if not isinstance(init_lora, (str, os.PathLike)) or not os.path.isfile(init_lora):
+            return None
+
+        from safetensors import safe_open
+
+        try:
+            with safe_open(os.fspath(init_lora), framework="pt", device="cpu") as handle:
+                metadata = handle.metadata() or {}
+        except Exception as exc:
+            raise ValueError(f"Unable to inspect init_lora checkpoint metadata: {init_lora}") from exc
+        return metadata.get("global_step")
+
+    def _initial_lora_step(self) -> int:
+        raw_step = getattr(self.config, "init_lora_step", None)
+        if isinstance(raw_step, unittest_mock.Mock):
+            raw_step = None
+        inferred_from_metadata = raw_step is None
+        if inferred_from_metadata:
+            raw_step = self._init_lora_metadata_global_step()
+        if raw_step is None:
+            return 0
+        try:
+            initial_step = int(raw_step or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"init_lora_step must be a non-negative integer, received {raw_step!r}.") from exc
+
+        if initial_step < 0 or (isinstance(raw_step, float) and not raw_step.is_integer()):
+            raise ValueError(f"init_lora_step must be a non-negative integer, received {raw_step!r}.")
+        if initial_step == 0:
+            return 0
+        if not getattr(self.config, "init_lora", None):
+            raise ValueError("init_lora_step requires init_lora.")
+        if getattr(self.config, "resume_from_checkpoint", None):
+            raise ValueError("init_lora_step cannot be combined with resume_from_checkpoint.")
+
+        max_train_steps = getattr(self.config, "max_train_steps", None)
+        if max_train_steps not in (None, 0) and initial_step >= int(max_train_steps):
+            raise ValueError(f"init_lora_step ({initial_step}) must be smaller than max_train_steps ({max_train_steps}).")
+        if inferred_from_metadata:
+            self.config.init_lora_step = initial_step
+            logger.info("Using global step %s from init_lora safetensors metadata.", initial_step)
+        return initial_step
+
+    def _restore_constant_scheduler_lr(
+        self,
+        lr_scheduler,
+        optimizer_param_groups: list[dict],
+        configured_param_group_lrs: list[float | None],
+        global_step: int,
+    ) -> None:
+        if (
+            lr_scheduler is None
+            or self.config.lr_scheduler not in ("constant", "constant_with_warmup")
+            or self.config.is_schedulefree
+        ):
+            return
+
+        scheduler_steps = global_step
+        if not getattr(lr_scheduler, "split_batches", False):
+            scheduler_steps *= self.accelerator.num_processes
+
+        warmup_steps = int(getattr(self.config, "lr_warmup_steps", 0) or 0) * self.accelerator.num_processes
+        lr_scale = 1.0
+        if self.config.lr_scheduler == "constant_with_warmup" and warmup_steps > 0:
+            lr_scale = min(float(scheduler_steps) / float(warmup_steps), 1.0)
+
+        restored_lrs = []
+        for group_index, group in enumerate(optimizer_param_groups):
+            configured_lr = configured_param_group_lrs[group_index]
+            if configured_lr is None:
+                restored_lrs.append(group.get("lr"))
+                continue
+            restored_lr = configured_lr * lr_scale
+            group["lr"] = restored_lr
+            restored_lrs.append(restored_lr)
+
+        scheduler_state = lr_scheduler.state_dict()
+        if "base_lrs" in scheduler_state:
+            scheduler_state["base_lrs"] = list(configured_param_group_lrs)
+        if "_last_lr" in scheduler_state:
+            scheduler_state["_last_lr"] = restored_lrs
+        if "last_epoch" in scheduler_state:
+            scheduler_state["last_epoch"] = scheduler_steps
+        if "_step_count" in scheduler_state:
+            scheduler_state["_step_count"] = scheduler_steps + 1
+        lr_scheduler.load_state_dict(scheduler_state)
+
     def _misc_init(self):
         """things that do not really need an order."""
         torch.set_num_threads(self.config.torch_num_threads)
@@ -2198,8 +2372,9 @@ class Trainer:
         #  takes into account the number of gradient_accumulation_steps. If we use 1 gradient_accumulation_step,
         #  then global_step and step will be the same throughout training. However, if we use
         #  2 gradient_accumulation_steps, then global_step will be twice as large as step, and so on.
-        self.state["global_step"] = 0
-        self.state["global_resume_step"] = 0
+        initial_lora_step = self._initial_lora_step()
+        self.state["global_step"] = initial_lora_step
+        self.state["global_resume_step"] = initial_lora_step
         self.state["first_epoch"] = 1
         self.state["args"] = self.config.__dict__
         self.timesteps_buffer = []
@@ -2216,6 +2391,7 @@ class Trainer:
         self.extra_lr_scheduler_kwargs = {}
         self.iteration_tracker = IterationTracker()
         StateTracker.set_global_step(self.state["global_step"])
+        StateTracker.set_global_resume_step(self.state["global_resume_step"])
         self._init_publishing_manager()
         self.config.use_deepspeed_optimizer, self.config.use_deepspeed_scheduler = prepare_model_for_deepspeed(
             self.accelerator, self.config
@@ -2816,7 +2992,9 @@ class Trainer:
                 if self.config.controlnet:
                     logger.info(f"Moving ControlNet to dtype={self.config.base_weight_dtype}, device={quantization_device}")
                     self.model.controlnet.to(quantization_device, dtype=self.config.base_weight_dtype)
-        if self.config.is_quanto:
+        # SDNQ base models may still use Quanto text encoders. Let the SDNQ
+        # branch handle that mixed setup so the base model is not quantized twice.
+        if self.config.is_quanto and not self.config.is_sdnq:
             with self.accelerator.local_main_process_first():
                 if ema_only:
                     if not pipeline_base_quantization:
@@ -3005,6 +3183,9 @@ class Trainer:
                     )
                     self.model.set_prepared_model(q_model, base_model=False)
 
+        if not preprocessing_models_only and not ema_only:
+            self.model.post_quantization_setup()
+
         if (
             getattr(self.config, "ramtorch", False)
             and not preprocessing_models_only
@@ -3085,6 +3266,16 @@ class Trainer:
         )
         logger.info("GLIGEN layers injected into model")
         self.accelerator.wait_for_everyone()
+
+    def init_distillation_adapter_modules(self):
+        """Create distillation-owned model modules before PEFT chooses its targets."""
+        method = getattr(self.config, "distillation_method", None)
+        if method is None:
+            return
+
+        from simpletuner.helpers.distillation.factory import DistillerFactory
+
+        DistillerFactory.prepare_model_for_adapter(method, self.model, vars(self.config))
 
     def init_trainable_peft_adapter(self):
         if "lora" not in self.config.model_type:
@@ -3323,10 +3514,23 @@ class Trainer:
             self.distiller_requirement_profile = EMPTY_PROFILE
             return EMPTY_PROFILE
 
-        profile = DistillationRegistry.get_requirement_profile(method)
+        profile = resolve_configured_distiller_requirement_profile(self.config)
         self.distiller_requirement_profile = profile
         StateTracker.set_distiller_profile(method, profile)
         return profile
+
+    def init_distillation_adapter_modules(self):
+        """Initialize distillation modules that must exist before PEFT wraps the model."""
+        from simpletuner.helpers.distillation.factory import DistillerFactory
+
+        method = getattr(self.config, "distillation_method", None)
+        if method is None:
+            return
+        DistillerFactory.prepare_model_for_adapter(
+            method=method,
+            model=self.model,
+            config=vars(self.config),
+        )
 
     def init_distillation(self):
         """Initialize distillation using the factory pattern."""
@@ -3371,6 +3575,9 @@ class Trainer:
             logger.debug("Enabling gradient checkpointing.")
             if hasattr(self.model.get_trained_component(), "enable_gradient_checkpointing"):
                 unwrap_model(self.accelerator, self.model.get_trained_component()).enable_gradient_checkpointing()
+            model_level_enable = getattr(self.model, "enable_gradient_checkpointing", None)
+            if callable(model_level_enable):
+                model_level_enable()
             if hasattr(self.config, "train_text_encoder") and self.config.train_text_encoder:
                 for text_encoder in self.model.text_encoders:
                     if text_encoder is not None:
@@ -3383,6 +3590,9 @@ class Trainer:
                 unwrap_model(
                     self.accelerator, self.model.get_trained_component(base_model=True)
                 ).disable_gradient_checkpointing()
+            model_level_disable = getattr(self.model, "disable_gradient_checkpointing", None)
+            if callable(model_level_disable):
+                model_level_disable()
             if self.config.controlnet:
                 unwrap_model(self.accelerator, self.model.get_trained_component()).disable_gradient_checkpointing()
             if hasattr(self.config, "train_text_encoder") and self.config.train_text_encoder:
@@ -3456,7 +3666,7 @@ class Trainer:
             method = getattr(self.config, "distillation_method", None)
             if method:
                 try:
-                    profile = DistillationRegistry.get_requirement_profile(method)
+                    profile = resolve_configured_distiller_requirement_profile(self.config)
                     caption_batches_supported = profile.requires_dataset_type(DatasetType.CAPTION)
                 except Exception:
                     caption_batches_supported = False
@@ -4014,6 +4224,25 @@ class Trainer:
         _init_lyrics_scheduler()
         return lr_scheduler
 
+    def _load_initial_lora_ema_state(self) -> None:
+        init_ema_path = getattr(self.config, "init_lora_ema", None)
+        if isinstance(init_ema_path, unittest_mock.Mock):
+            init_ema_path = None
+        if not init_ema_path:
+            return
+        if not getattr(self.config, "init_lora", None):
+            raise ValueError("init_lora_ema requires init_lora.")
+        if not getattr(self.config, "use_ema", False):
+            raise ValueError("init_lora_ema requires use_ema=true.")
+        if not os.path.isfile(init_ema_path):
+            raise FileNotFoundError(f"Initial LoRA EMA state does not exist: {init_ema_path}")
+        if self.ema_model is None:
+            return
+
+        self.ema_model.load_state_dict(init_ema_path)
+        if self.accelerator.is_main_process:
+            logger.info(f"Loaded initial LoRA EMA state from {init_ema_path}")
+
     def init_ema_model(self):
         # Create EMA for the model.
         self.ema_model = None
@@ -4064,10 +4293,15 @@ class Trainer:
                 model_cls=ema_model_cls,
                 model_config=ema_model_config,
                 decay=self.config.ema_decay,
+                warmup_steps=getattr(self.config, "ema_warmup_steps", 0),
                 foreach=not self.config.ema_foreach_disable,
             )
+            self._load_initial_lora_ema_state()
             if should_log:
                 logger.info(f"EMA model creation completed with {self.ema_model.parameter_count():,} parameters")
+
+        if not instantiate_on_rank:
+            self._load_initial_lora_ema_state()
 
         self.accelerator.wait_for_everyone()
         # same about running on all processes to ensure alignment.
@@ -4148,20 +4382,30 @@ class Trainer:
         primary_model = self.model.get_trained_component(unwrap_model=False)
         if hasattr(self.model, "before_accelerator_prepare"):
             self.model.before_accelerator_prepare()
+        self.model_hooks.validate_fsdp2_pipeline_export()
         apply_standalone_context_parallel(self.accelerator, primary_model, self._context_parallel_topology)
         attach_shared_ramtorch_parameters = None
         if self._ramtorch_distributed() and primary_model is not None:
             ramtorch_utils.ensure_available()
-            from simpletuner.helpers.ramtorch.utils import (
-                attach_shared_ramtorch_parameters as attach_shared_ramtorch_parameters,
-            )
+            if self._ramtorch_shared_parameters_enabled():
+                from simpletuner.helpers.ramtorch.utils import (
+                    attach_shared_ramtorch_parameters as attach_shared_ramtorch_parameters,
+                )
 
+            moved = ramtorch_utils.move_embeddings_to_device(primary_model, self.accelerator.device)
+            if moved:
+                logger.info("Moved %s non-RamTorch CPU parameters/buffers before DDP prepare.", moved)
             ignored = ramtorch_utils.mark_ddp_ignore_params(primary_model)
             if ignored:
                 logger.info("Marking %s RamTorch parameters to ignore for DDP.", ignored)
-            attached = attach_shared_ramtorch_parameters(primary_model)
-            if attached:
-                logger.info("Attached %s shared RamTorch parameters across ranks.", attached)
+            if attach_shared_ramtorch_parameters is not None:
+                attached = attach_shared_ramtorch_parameters(primary_model)
+                if attached:
+                    logger.info("Attached %s shared RamTorch parameters across ranks.", attached)
+            else:
+                logger.warning(
+                    "RamTorch shared parameters are disabled; each rank will retain its own CPU copy of streamed weights."
+                )
         if primary_model is not None and "torchao" in str(getattr(self.config, "base_model_precision", "")):
             ignored = mark_torchao_ddp_ignore_params(primary_model)
             if ignored:
@@ -4220,6 +4464,16 @@ class Trainer:
         ramtorch_enabled = getattr(self.config, "ramtorch", False)
         group_offload_requested = bool(getattr(self.config, "enable_group_offload", False))
         skip_model_device_placement = musubi_block_swap_active or ramtorch_enabled or group_offload_requested
+        if musubi_block_swap_active and self.accelerator.distributed_type == DistributedType.MULTI_GPU:
+            self._move_model_with_block_swap(primary_model)
+            moved_trainable, ignored_frozen = prepare_musubi_model_for_ddp(primary_model, self.accelerator.device)
+            logger.info(
+                "Prepared Musubi block swap model for DDP: moved %s trainable parameters to %s and ignored %s "
+                "frozen parameters/buffers.",
+                moved_trainable,
+                self.accelerator.device,
+                ignored_frozen,
+            )
         if skip_model_device_placement:
             logger.info(
                 "Skipping automatic device placement for primary model during accelerator.prepare() "
@@ -4421,9 +4675,17 @@ class Trainer:
                 job_id=self.job_id,
             )
         )
-        # we'll run validation on base model if it hasn't already.
-        self.validation.run_validations(validation_type="base_model", step=0)
-        self.validation.save_benchmark("base_model")
+        trained_component = self.model.get_trained_component(unwrap_model=False)
+        was_training = trained_component.training
+        trained_component.eval()
+        try:
+            # Run validation on the base model if it has not already been benchmarked.
+            with self.accelerator.autocast():
+                self.validation.run_validations(validation_type="base_model", step=0)
+            self.validation.save_benchmark("base_model")
+        finally:
+            if was_training:
+                trained_component.train()
         self._emit_event(
             lifecycle_stage_event(
                 key="benchmark_base_model",
@@ -4606,6 +4868,44 @@ class Trainer:
             f"missing checkpoint completion guard {CHECKPOINT_GUARD_FILENAME}",
         )
 
+    def _restore_constant_scheduler_lr(
+        self,
+        lr_scheduler,
+        optimizer_param_groups: list[dict[str, Any]],
+        configured_base_lrs: list[float | None],
+        global_step: int,
+    ) -> None:
+        if self.config.lr_scheduler not in ("constant", "constant_with_warmup") or self.config.is_schedulefree:
+            return
+
+        process_multiplier = 1 if getattr(lr_scheduler, "split_batches", False) else self.accelerator.num_processes
+        scheduler_step = int(global_step) * max(1, int(process_multiplier))
+        warmup_steps = 0
+        if self.config.lr_scheduler == "constant_with_warmup":
+            warmup_steps = int(getattr(self.config, "lr_warmup_steps", 0)) * max(1, int(process_multiplier))
+        warmup_scale = min(1.0, scheduler_step / max(1, warmup_steps)) if warmup_steps > 0 else 1.0
+
+        restored_lrs = [float(base_lr) * warmup_scale if base_lr is not None else None for base_lr in configured_base_lrs]
+        scheduler_state = lr_scheduler.state_dict()
+        scheduler_state["base_lrs"] = list(configured_base_lrs)
+        scheduler_state["_last_lr"] = list(restored_lrs)
+        if "last_epoch" in scheduler_state:
+            scheduler_state["last_epoch"] = scheduler_step
+        if "_step_count" in scheduler_state:
+            scheduler_state["_step_count"] = scheduler_step + 1
+        lr_scheduler.load_state_dict(scheduler_state)
+
+        for group_index, group in enumerate(optimizer_param_groups):
+            if group_index >= len(restored_lrs) or restored_lrs[group_index] is None:
+                continue
+            group["initial_lr"] = configured_base_lrs[group_index]
+            group["lr"] = restored_lrs[group_index]
+
+        logger.info(
+            f"Restored {self.config.lr_scheduler} scheduler at global step {global_step} "
+            f"(scheduler step {scheduler_step}) with learning rates {restored_lrs}."
+        )
+
     def init_resume_checkpoint(self, lr_scheduler):
         # Potentially load in the weights and states from a previous save
         self.config.total_steps_remaining_at_start = self.config.max_train_steps
@@ -4613,7 +4913,26 @@ class Trainer:
         self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
         if not self.config.resume_from_checkpoint:
-            logger.info(f"Not resuming from checkpoint.")
+            initial_lora_step = self._initial_lora_step()
+            if initial_lora_step:
+                optimizer_param_groups = getattr(getattr(self, "optimizer", None), "param_groups", [])
+                configured_param_group_lrs = [group.get("initial_lr", group.get("lr")) for group in optimizer_param_groups]
+                self._restore_constant_scheduler_lr(
+                    lr_scheduler,
+                    optimizer_param_groups,
+                    configured_param_group_lrs,
+                    initial_lora_step,
+                )
+                self.config.total_steps_remaining_at_start -= initial_lora_step
+                if hasattr(self.model, "reset_flow_custom_timestep_cursor"):
+                    self.model.reset_flow_custom_timestep_cursor(initial_lora_step)
+                logger.warning(
+                    "Continuing from init_lora at global step %s with fresh optimizer, sampler, and RNG state. "
+                    "Use resume_from_checkpoint when full trainer state is available.",
+                    initial_lora_step,
+                )
+            else:
+                logger.info("Not resuming from checkpoint.")
             return lr_scheduler
         resume_value = str(self.config.resume_from_checkpoint)
         delete_invalid_value = getattr(self.config, "delete_invalid_checkpoints", False)
@@ -4622,6 +4941,12 @@ class Trainer:
         delete_invalid_checkpoints = bool(delete_invalid_value)
         resume_latest = resume_value == "latest"
         deleted_checkpoint_names: set[str] = set()
+        optimizer_param_groups = []
+        if getattr(self, "optimizer", None) is not None:
+            raw_param_groups = getattr(self.optimizer, "param_groups", None)
+            if isinstance(raw_param_groups, list):
+                optimizer_param_groups = raw_param_groups
+        configured_param_group_lrs = [group.get("initial_lr", group.get("lr")) for group in optimizer_param_groups]
 
         while True:
             checkpoint_dir = None
@@ -4693,14 +5018,32 @@ class Trainer:
         if getattr(self, "distiller", None) is not None:
             logger.info(f"Loading DCM checkpoint states..")
             self.distiller.on_load_checkpoint(checkpoint_dir)
+        event = lifecycle_stage_event(
+            key="init_resume_checkpoint",
+            label="Resume Checkpoint",
+            status="running",
+            message=f"Resuming model: {path}",
+            job_id=self.job_id,
+        )
+        self._emit_event(event)
+        for _, backend in StateTracker.get_data_backends().items():
+            if "sampler" in backend:
+                backend["sampler"].load_states(
+                    state_path=os.path.join(
+                        self.config.output_dir,
+                        path,
+                        self.model_hooks.training_state_path,
+                    ),
+                )
+        self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
+        StateTracker.set_global_resume_step(self.state["global_resume_step"])
         try:
-            if "constant" == self.config.lr_scheduler and not self.config.is_schedulefree:
-                for g in self.optimizer.param_groups:
-                    if "lr" in g:
-                        g["lr"] = self.config.learning_rate
-                for k, v in lr_scheduler.state_dict().items():
-                    if k in ("base_lrs", "_last_lr"):
-                        v[0] = self.config.learning_rate
+            self._restore_constant_scheduler_lr(
+                lr_scheduler,
+                optimizer_param_groups,
+                configured_param_group_lrs,
+                self.state["global_resume_step"],
+            )
         except Exception as e:
             event = notification_event(
                 message="Could not update learning rate scheduler LR value.",
@@ -4711,29 +5054,6 @@ class Trainer:
             logger.error(
                 f"Could not update lr_scheduler {self.config.lr_scheduler} learning rate to {self.config.learning_rate} upon resume: {e}"
             )
-
-        event = lifecycle_stage_event(
-            key="init_resume_checkpoint",
-            label="Resume Checkpoint",
-            status="running",
-            message=f"Resuming model: {path}",
-            job_id=self.job_id,
-        )
-        self._emit_event(event)
-        training_state_filename = f"training_state.json"
-        if get_rank() > 0:
-            training_state_filename = f"training_state-{get_rank()}.json"
-        for _, backend in StateTracker.get_data_backends().items():
-            if "sampler" in backend:
-                backend["sampler"].load_states(
-                    state_path=os.path.join(
-                        self.config.output_dir,
-                        path,
-                        training_state_filename,
-                    ),
-                )
-        self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
-        StateTracker.set_global_resume_step(self.state["global_resume_step"])
         if hasattr(self.model, "load_flow_custom_timestep_state"):
             self.model.load_flow_custom_timestep_state(
                 checkpoint_dir,
@@ -5207,7 +5527,38 @@ class Trainer:
         except Exception as err:  # pragma: no cover - best-effort persistence
             logger.warning(f"Failed to write epoch {epoch_value} to {training_state_path}: {err}")
 
-    def _run_standard_checkpoint(self, webhook_message: str | None, parent_loss, epoch: int, *, upload_to_hub: bool = False):
+    def _schedule_checkpoint_hub_upload(self, checkpoint_path: str) -> None:
+        if not checkpoint_path or self.hub_manager is None or not self.accelerator.is_main_process:
+            return
+
+        validation_images = getattr(self.validation, "validation_images") if self.validation is not None else None
+        captured_step = self.state["global_step"]
+        captured_epoch = self.state["current_epoch"]
+
+        def _upload_latest_checkpoint():
+            return self.hub_manager.upload_latest_checkpoint(
+                validation_images=validation_images,
+                webhook_handler=self.webhook_handler,
+                global_step=captured_step,
+                epoch=captured_epoch,
+                checkpoint_path=checkpoint_path,
+            )
+
+        description = f"checkpoint step {captured_step}"
+        try:
+            self._schedule_hub_upload(description, _upload_latest_checkpoint)
+        except Exception as e:
+            logger.error(f"Error uploading to hub: {e}, continuing training.")
+
+    def _run_standard_checkpoint(
+        self,
+        webhook_message: str | None,
+        parent_loss,
+        epoch: int,
+        *,
+        upload_to_hub: bool = False,
+        defer_hub_upload: bool = False,
+    ):
         if webhook_message:
             self._send_webhook_msg(
                 message=f"Checkpoint: `{webhook_message}`",
@@ -5228,40 +5579,45 @@ class Trainer:
             **progress_kwargs,
         )
         self._emit_event(event)
-        if self.accelerator.is_main_process and self.config.checkpoints_total_limit is not None:
-            self.checkpoint_state_cleanup(
-                self.config.output_dir,
-                self.config.checkpoints_total_limit,
-            )
+        checkpoint_limit = self.config.checkpoints_total_limit
+        if self.accelerator.is_main_process:
+            self.checkpoint_state_cleanup_temp(self.config.output_dir)
 
         save_path = None
         if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer or self.config.fsdp_enable:
             save_path = self.checkpoint_state_save(self.config.output_dir)
+        if self.accelerator.is_main_process and checkpoint_limit is not None and checkpoint_limit > 0:
+            if len(self.checkpoint_state_filter(self.config.output_dir)) > checkpoint_limit:
+                self._drain_hub_upload_futures(wait=True)
+            self.checkpoint_state_cleanup(
+                self.config.output_dir,
+                checkpoint_limit,
+                protected_checkpoint=save_path,
+            )
 
         hub_upload_planned = upload_to_hub and self.hub_manager is not None
-        if hub_upload_planned:
-            if self.accelerator.is_main_process:
-                validation_images = getattr(self.validation, "validation_images") if self.validation is not None else None
-                captured_step = self.state["global_step"]
-                captured_epoch = self.state["current_epoch"]
-
-                def _upload_latest_checkpoint():
-                    remote_path, local_path, repo_url = self.hub_manager.upload_latest_checkpoint(
-                        validation_images=validation_images,
-                        webhook_handler=self.webhook_handler,
-                        global_step=captured_step,
-                        epoch=captured_epoch,
-                    )
-                    return remote_path, local_path, repo_url
-
-                description = f"checkpoint step {self.state.get('global_step')}"
-                try:
-                    self._schedule_hub_upload(description, _upload_latest_checkpoint)
-                except Exception as e:
-                    logger.error(f"Error uploading to hub: {e}, continuing training.")
+        if hub_upload_planned and not defer_hub_upload:
+            self._schedule_checkpoint_hub_upload(save_path)
         else:
-            if save_path:
+            if save_path and not hub_upload_planned:
                 self._run_post_upload_script(local_path=save_path, remote_path=None)
+        return save_path
+
+    def _save_rolling_checkpoint(self):
+        checkpoint_limit = self.config.checkpoints_rolling_total_limit
+        if self.accelerator.is_main_process:
+            self.checkpoint_state_cleanup_temp(self.config.output_dir)
+
+        save_path = None
+        if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer or self.config.fsdp_enable:
+            save_path = self.checkpoint_state_save(self.config.output_dir, "rolling")
+        if self.accelerator.is_main_process and checkpoint_limit is not None and checkpoint_limit > 0:
+            self.checkpoint_state_cleanup(
+                self.config.output_dir,
+                checkpoint_limit,
+                "rolling",
+                protected_checkpoint=save_path,
+            )
         return save_path
 
     def _send_webhook_msg(
@@ -5334,7 +5690,11 @@ class Trainer:
             metrics.setdefault("total_batch_size", batch_size_value)
         metrics.update(self.iteration_tracker.iteration_metrics())
         # Add gradient metrics (same logic as _update_grad_metrics but for webhook payload)
-        self._update_grad_metrics(metrics, clone_norm_value=True, is_regularisation_data=parent_loss is not None)
+        self._update_grad_metrics(
+            metrics,
+            clone_norm_value=True,
+            is_regularisation_data=parent_loss is not None,
+        )
         if extra_metrics:
             for key, value in extra_metrics.items():
                 if value is None:
@@ -5484,8 +5844,23 @@ class Trainer:
                 # we'll have to split the buckets between GPUs again now, so that the VAE cache distributes properly.
                 logger.info("Splitting buckets across GPUs")
                 backend["metadata_backend"].split_buckets_between_processes(
-                    gradient_accumulation_steps=self.config.gradient_accumulation_steps
+                    gradient_accumulation_steps=self.config.gradient_accumulation_steps,
+                    apply_padding=(self.config.overrode_max_train_steps or self.config.allow_dataset_oversubscription),
                 )
+                local_sample_count = sum(
+                    len(bucket) for bucket in backend["metadata_backend"].aspect_ratio_bucket_indices.values()
+                )
+                if local_sample_count == 0:
+                    raise ValueError(
+                        f"(id={backend_id}) Dataset produced no usable samples. The epoch rollover"
+                        f" re-split left this rank with zero samples, so epoch {epoch} would train"
+                        f" against an empty schedule here.\n"
+                        f"This usually means per-epoch re-bucketing (e.g., crop_aspect=random) produced"
+                        f" buckets too small to divide across the data-parallel ranks, or that samples"
+                        f" were filtered out of the cache during the previous epoch.\n"
+                        f"Enable --allow_dataset_oversubscription so short buckets are padded across"
+                        f" ranks, use fewer GPUs, or add more samples to the dataset."
+                    )
                 # we have to rebuild the VAE cache if it exists.
                 if "vaecache" in backend:
                     logger.info("Rebuilding VAE cache..")
@@ -5623,6 +5998,156 @@ class Trainer:
 
         return model_pred
 
+    def _compute_model_prediction_loss(self, prepared_batch: dict) -> tuple[torch.Tensor, dict, torch.Tensor, dict, dict]:
+        model_pred = self.model_predict(
+            prepared_batch=prepared_batch,
+        )
+        loss, loss_logs = self.model.loss_with_logs(
+            prepared_batch=prepared_batch,
+            model_output=model_pred,
+            apply_conditioning_mask=True,
+        )
+        diffusion_loss = loss.clone()
+        loss, aux_loss_logs = self.model.auxiliary_loss(
+            prepared_batch=prepared_batch,
+            model_output=model_pred,
+            loss=loss,
+        )
+        distill_logs = {}
+        if self.config.distillation_method is not None:
+            loss, distill_logs = self.distiller.compute_distill_loss(prepared_batch, model_pred, loss)
+            loss, gen_logs = self.distiller.generator_loss_step(prepared_batch, model_pred, loss)
+            distill_logs.update(gen_logs)
+        return loss, loss_logs, diffusion_loss, aux_loss_logs, distill_logs
+
+    @contextmanager
+    def _low_rank_adapter_disabled(self):
+        if self.config.lora_type.lower() == "lycoris":
+            training_logger.debug("Detaching LyCORIS adapter for parent prediction.")
+            self.accelerator._lycoris_wrapped_network.set_multiplier(0.0)
+            try:
+                yield
+            finally:
+                training_logger.debug("Attaching LyCORIS adapter for student prediction.")
+                self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
+            return
+
+        trained_component = self.model.get_trained_component()
+        trained_component.disable_lora()
+        try:
+            yield
+        finally:
+            trained_component.enable_lora()
+
+    def _prepare_regularisation_parent_targets(self, prepared_batch: dict) -> None:
+        training_logger.debug("Predicting parent model residual.")
+        with torch.no_grad(), self._low_rank_adapter_disabled():
+            parent_prediction = self.model_predict(prepared_batch=prepared_batch)
+
+        if isinstance(parent_prediction, dict):
+            prepared_batch["target"] = parent_prediction["model_prediction"].detach()
+            audio_prediction = parent_prediction.get("audio_prediction")
+            if torch.is_tensor(audio_prediction):
+                prepared_batch["audio_target"] = audio_prediction.detach()
+            else:
+                prepared_batch.pop("audio_target", None)
+            return
+
+        prepared_batch["target"] = parent_prediction.detach() if torch.is_tensor(parent_prediction) else parent_prediction
+        prepared_batch.pop("audio_target", None)
+
+    def _discard_probe_gradients(self) -> None:
+        trained_component = self.model.get_trained_component(unwrap_model=False)
+        if trained_component is not None:
+            trained_component.zero_grad(set_to_none=True)
+        if getattr(self, "optimizer", None) is not None:
+            self.optimizer.zero_grad(set_to_none=True)
+        if getattr(self, "sidecar_optimizer", None) is not None:
+            self.sidecar_optimizer.zero_grad(set_to_none=True)
+
+    def _activation_offload_prefetch_autotune_probe(self, prepared_batch: dict, *, label: str) -> float:
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        start_time = time.perf_counter()
+        loss, _loss_logs, _diffusion_loss, _aux_loss_logs, _distill_logs = self._compute_model_prediction_loss(
+            dict(prepared_batch)
+        )
+        context_parallel_topology = getattr(self, "_context_parallel_topology", None)
+        self.accelerator.backward(scale_standalone_context_parallel_loss(loss, context_parallel_topology))
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        elapsed = time.perf_counter() - start_time
+        self._discard_probe_gradients()
+        logger.debug("Activation offload prefetch autotune %s probe: %.4fs", label, elapsed)
+        return elapsed
+
+    def _maybe_autotune_activation_offload_prefetch(self, prepared_batch: dict) -> None:
+        if not getattr(self.config, "gradient_checkpointing_offload_prefetch", False):
+            return
+        if not getattr(self.config, "gradient_checkpointing_offload_attention", False):
+            logger.info("Skipping activation offload prefetch autotune because attention activation offload is disabled.")
+            return
+        if getattr(self, "_activation_offload_prefetch_autotuned", False):
+            return
+        if self.config.disable_accelerator or not torch.cuda.is_available():
+            logger.info("Skipping activation offload prefetch autotune because CUDA training is unavailable.")
+            return
+        if self.config.distillation_method is not None:
+            logger.warning("Skipping activation offload prefetch autotune for distillation runs.")
+            self._activation_offload_prefetch_autotuned = True
+            return
+
+        from simpletuner.helpers.training.offloaded_gradient_checkpointer import (
+            get_activation_offload_prefetch_autotune_enabled,
+            mark_activation_offload_prefetch_autotune_decision,
+            reset_activation_offload_prefetch_stats,
+            set_activation_offload_prefetch_autotune_enabled,
+            set_activation_offload_prefetch_enabled,
+            set_activation_offload_prefetch_runtime_disabled,
+        )
+
+        self._activation_offload_prefetch_autotuned = True
+        previous_autotune_enabled = get_activation_offload_prefetch_autotune_enabled()
+        cpu_rng_state = torch.get_rng_state()
+        cuda_rng_states = torch.cuda.get_rng_state_all()
+
+        def restore_rng_state() -> None:
+            torch.set_rng_state(cpu_rng_state)
+            torch.cuda.set_rng_state_all(cuda_rng_states)
+
+        logger.info("Autotuning attention activation prefetch with a real model_predict/backward probe.")
+        try:
+            set_activation_offload_prefetch_enabled(True)
+            set_activation_offload_prefetch_autotune_enabled(False)
+            reset_activation_offload_prefetch_stats()
+
+            set_activation_offload_prefetch_runtime_disabled(True, decision=None)
+            restore_rng_state()
+            self._activation_offload_prefetch_autotune_probe(prepared_batch, label="learn")
+
+            restore_rng_state()
+            jit_seconds = self._activation_offload_prefetch_autotune_probe(prepared_batch, label="jit")
+
+            set_activation_offload_prefetch_runtime_disabled(False, decision=None)
+            restore_rng_state()
+            prefetch_seconds = self._activation_offload_prefetch_autotune_probe(prepared_batch, label="prefetch")
+
+            decision = "prefetch" if prefetch_seconds < jit_seconds * 0.98 else "jit"
+            mark_activation_offload_prefetch_autotune_decision(decision)
+            logger.info(
+                "Activation offload prefetch autotune selected %s (jit=%.4fs, prefetch=%.4fs).",
+                decision,
+                jit_seconds,
+                prefetch_seconds,
+            )
+        except Exception as exc:
+            logger.warning("Activation offload prefetch autotune failed; disabling prefetch. Error: %s", exc)
+            mark_activation_offload_prefetch_autotune_decision("jit")
+            self._discard_probe_gradients()
+        finally:
+            restore_rng_state()
+            set_activation_offload_prefetch_autotune_enabled(previous_autotune_enabled)
+
     def _prepare_custom_timestep_batch(self, prepared_batch: dict, custom_timesteps):
         overridden_batch = dict(prepared_batch)
         reference_timesteps = prepared_batch.get("timesteps")
@@ -5639,9 +6164,8 @@ class Trainer:
             device=reference_device if reference_device is not None else self.accelerator.device,
             dtype=reference_dtype,
         )
-        overridden_batch["timesteps"] = custom_timesteps_tensor
-
         if not self.model.uses_noise_schedule():
+            overridden_batch["timesteps"] = custom_timesteps_tensor
             return overridden_batch
 
         latents = prepared_batch.get("latents")
@@ -5655,6 +6179,19 @@ class Trainer:
             if torch.max(sigma_values) > 1.0:
                 sigma_values = sigma_values / max_timestep
             sigma_values = sigma_values.clamp(0.0, 1.0)
+
+            def flow_matching_timesteps_from_sigmas(sigmas: torch.Tensor) -> torch.Tensor:
+                model_converter = getattr(self.model, "flow_matching_timesteps_from_sigmas", None)
+                if callable(model_converter):
+                    return model_converter(sigmas, reference_timesteps=custom_timesteps_tensor)
+                if torch.max(custom_timesteps_tensor.detach().float()) <= 1.0:
+                    return sigmas
+                return sigmas * max_timestep
+
+            overridden_batch["timesteps"] = flow_matching_timesteps_from_sigmas(sigma_values).to(
+                device=reference_device if reference_device is not None else self.accelerator.device,
+                dtype=reference_dtype,
+            )
 
             reference_sigmas = prepared_batch.get("sigmas")
             if torch.is_tensor(reference_sigmas) and reference_sigmas.ndim > sigma_values.ndim:
@@ -5697,7 +6234,7 @@ class Trainer:
                     audio_sigma_for_noise = audio_sigma_for_noise.unsqueeze(-1)
                 audio_sigma_for_noise = audio_sigma_for_noise.to(device=audio_latents.device, dtype=audio_latents.dtype)
                 overridden_batch["audio_sigmas"] = audio_sigma_for_model
-                overridden_batch["audio_timesteps"] = custom_timesteps_tensor.to(
+                overridden_batch["audio_timesteps"] = flow_matching_timesteps_from_sigmas(audio_sigma_values).to(
                     device=audio_latents.device,
                     dtype=(
                         prepared_batch.get("audio_timesteps", custom_timesteps_tensor).dtype
@@ -5726,11 +6263,36 @@ class Trainer:
         return overridden_batch
 
     def _max_grad_value(self):
-        max_grad_value = float("-inf")  # Start with a very small number
+        gradients = []
+        device_mesh = None
+        empty_local_gradient = None
         for param in self._get_trainable_parameters():
-            if param.grad is not None:
-                max_grad_value = max(max_grad_value, param.grad.abs().max().item())
+            gradient = param.grad
+            if gradient is None:
+                continue
+            if isinstance(gradient, DTensor):
+                device_mesh = gradient.device_mesh
+                gradient = gradient.to_local()
+                if gradient.numel() == 0:
+                    empty_local_gradient = gradient
+                    continue
+            gradients.append(gradient)
 
+        if gradients:
+            max_grad_value = torch.nn.utils.get_total_norm(gradients, norm_type=float("inf"))
+        elif empty_local_gradient is None:
+            return float("-inf")
+        else:
+            max_grad_value = empty_local_gradient.new_tensor(float("-inf"))
+
+        if device_mesh is not None:
+            if max_grad_value.device.type != device_mesh.device_type:
+                max_grad_value = max_grad_value.to(device_mesh.device_type)
+            torch.distributed.all_reduce(
+                max_grad_value,
+                op=torch.distributed.ReduceOp.MAX,
+                group=device_mesh.get_group(),
+            )
         return max_grad_value
 
     def prepare_batch(self, batch: dict):
@@ -5751,10 +6313,15 @@ class Trainer:
         if dataset_type is DatasetType.CAPTION:
             return self._prepare_caption_generated_batch(batch)
 
+        breadcrumb_step = int(self.state.get("global_step", 0)) + 1
+        self._write_train_stage_breadcrumb("model_prepare:start", breadcrumb_step)
         prepared_batch = self.model.prepare_batch(batch, state=self.state)
+        self._write_train_stage_breadcrumb("model_prepare:done", breadcrumb_step)
 
         if getattr(self, "distiller", None) is not None:
+            self._write_train_stage_breadcrumb("distiller_prepare:start", breadcrumb_step)
             prepared_batch = self.distiller.prepare_batch(prepared_batch, self.model, self.state)
+            self._write_train_stage_breadcrumb("distiller_prepare:done", breadcrumb_step)
 
         return prepared_batch
 
@@ -5819,7 +6386,7 @@ class Trainer:
                 if len(cs) < 2:
                     continue
                 elif len(cs) > 2:
-                    sfx = cs[2]
+                    sfx = cs[-1]
 
                 if base != "checkpoint":
                     continue
@@ -5832,26 +6399,36 @@ class Trainer:
 
             return checkpoints_keep
 
-    def checkpoint_state_cleanup(self, output_dir, limit, suffix=None):
+    def checkpoint_state_cleanup_temp(self, output_dir):
         if self.checkpoint_manager:
-            self.checkpoint_manager.cleanup_checkpoints(limit, suffix)
+            self.checkpoint_manager.cleanup_temp_checkpoints()
         else:
-            # Fallback to original implementation
-            # remove any left over temp checkpoints (partially written, etc)
             checkpoints = self.checkpoint_state_filter(output_dir, "tmp")
             for removing_checkpoint in checkpoints:
                 self.checkpoint_state_remove(output_dir, removing_checkpoint)
+
+    def checkpoint_state_cleanup(self, output_dir, limit, suffix=None, protected_checkpoint=None):
+        if self.checkpoint_manager:
+            self.checkpoint_manager.cleanup_checkpoints(
+                limit,
+                suffix,
+                protected_checkpoint=protected_checkpoint,
+            )
+        else:
+            # remove any left over temp checkpoints (partially written, etc)
+            self.checkpoint_state_cleanup_temp(output_dir)
 
             # now remove normal checkpoints past the limit
             checkpoints = self.checkpoint_state_filter(output_dir, suffix)
             checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
 
-            # before we save the new checkpoint, we need to have at _most_ `limit - 1` checkpoints
-            if len(checkpoints) < limit:
+            if len(checkpoints) <= limit:
                 return
 
-            num_to_remove = len(checkpoints) - limit + 1
-            removing_checkpoints = checkpoints[0:num_to_remove]
+            num_to_remove = len(checkpoints) - limit
+            protected_name = os.path.basename(os.path.normpath(protected_checkpoint)) if protected_checkpoint else None
+            removal_candidates = [checkpoint for checkpoint in checkpoints if checkpoint != protected_name]
+            removing_checkpoints = removal_candidates[0:num_to_remove]
             logger.debug(f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints")
             logger.debug(f"removing checkpoints: {', '.join(removing_checkpoints)}")
 
@@ -5929,6 +6506,13 @@ class Trainer:
         all_processes_saving = bool(
             getattr(self.config, "use_deepspeed_optimizer", False) or getattr(self.config, "fsdp_enable", False)
         )
+        if (
+            self.accelerator is not None
+            and distributed_type != DistributedType.NO
+            and all_processes_saving
+            and self.config.checkpointing_use_tempdir
+        ):
+            self.accelerator.wait_for_everyone()
         if fsdp_v2_run:
             logger.info("FSDP v2 detected; saving with sharded state dict (_use_dtensor disabled for NCCL compatibility).")
         if is_main_process:
@@ -6092,6 +6676,19 @@ class Trainer:
 
         return should_validate
 
+    def run_startup_validation(self) -> bool:
+        if not bool(getattr(self.config, "validation_on_startup", False)) or getattr(self, "validation", None) is None:
+            return False
+        step = self.state.get("global_step")
+        if step is None:
+            step = StateTracker.get_global_step()
+        step = int(step or 0)
+        logger.info("Running startup validation at restored global step %d.", step)
+        return self._run_intermediary_validation(step, manual_validation_requested=True)
+
+    def _run_startup_validation(self) -> bool:
+        return self.run_startup_validation()
+
     def _create_torch_profiler(self):
         trace_dir = os.environ.get("SIMPLETUNER_TORCH_PROFILER_DIR")
         if not trace_dir:
@@ -6242,8 +6839,11 @@ class Trainer:
                 # enabled, only the CP leader samples; non-leaders receive via broadcast.
                 # This ensures all ranks in a CP group receive the same batch before the
                 # model's _cp_plan splits it along the sequence dimension.
+                self._write_train_stage_breadcrumb("fetch_batch:start", step)
                 raw_batch = cp_batch_synchronizer.fetch_batch(iterator_fn, step, *iterator_args)
-                prepared_batch = self.prepare_batch(raw_batch)
+                self._write_train_stage_breadcrumb("fetch_batch:done", step)
+                with cp_batch_synchronizer.synchronized_rng(getattr(self.config, "seed", None), step):
+                    prepared_batch = self.prepare_batch(raw_batch)
                 training_logger.debug(f"Iterator: {iterator_fn}")
                 if self.config.lr_scheduler == "cosine_with_restarts":
                     self.extra_lr_scheduler_kwargs["step"] = self.state["global_step"]
@@ -6254,7 +6854,9 @@ class Trainer:
                     )
 
                 local_epoch_end = prepared_batch is False
+                self._write_train_stage_breadcrumb("epoch_end_sync:start", step)
                 epoch_end_reached = self._any_rank_reached_epoch_end(local_epoch_end)
+                self._write_train_stage_breadcrumb("epoch_end_sync:done", step)
                 # If any rank receives False from the enumerator, all ranks must leave the step loop together.
                 if epoch_end_reached:
                     if not local_epoch_end:
@@ -6342,21 +6944,7 @@ class Trainer:
                     # Predict the noise residual and compute loss
                     is_regularisation_data = prepared_batch.get("is_regularisation_data", False)
                     if is_regularisation_data and self.config.model_type == "lora" and self.model.uses_noise_schedule():
-                        training_logger.debug("Predicting parent model residual.")
-                        with torch.no_grad():
-                            if self.config.lora_type.lower() == "lycoris":
-                                training_logger.debug("Detaching LyCORIS adapter for parent prediction.")
-                                self.accelerator._lycoris_wrapped_network.set_multiplier(0.0)
-                            else:
-                                self.model.get_trained_component().disable_lora()
-                            prepared_batch["target"] = self.model_predict(
-                                prepared_batch=prepared_batch,
-                            )["model_prediction"]
-                            if self.config.lora_type.lower() == "lycoris":
-                                training_logger.debug("Attaching LyCORIS adapter for student prediction.")
-                                self.accelerator._lycoris_wrapped_network.set_multiplier(1.0)
-                            else:
-                                self.model.get_trained_component().enable_lora()
+                        self._prepare_regularisation_parent_targets(prepared_batch)
 
                     # slider
                     raw_strength = prepared_batch.get("slider_strength", 1.0)
@@ -6380,26 +6968,12 @@ class Trainer:
                                         module.scaling[key] = val * strength
                                     slider_original_scaling[layer_id] = (module, saved)
 
+                    self._maybe_autotune_activation_offload_prefetch(prepared_batch)
+
                     training_logger.debug("Predicting.")
-                    model_pred = self.model_predict(
-                        prepared_batch=prepared_batch,
+                    loss, loss_logs, diffusion_loss, aux_loss_logs, distill_logs = self._compute_model_prediction_loss(
+                        prepared_batch
                     )
-                    loss, loss_logs = self.model.loss_with_logs(
-                        prepared_batch=prepared_batch,
-                        model_output=model_pred,
-                        apply_conditioning_mask=True,
-                    )
-                    diffusion_loss = loss.clone()
-                    loss, aux_loss_logs = self.model.auxiliary_loss(
-                        prepared_batch=prepared_batch,
-                        model_output=model_pred,
-                        loss=loss,
-                    )
-                    distill_logs = {}
-                    if self.config.distillation_method is not None:
-                        loss, distill_logs = self.distiller.compute_distill_loss(prepared_batch, model_pred, loss)
-                        loss, gen_logs = self.distiller.generator_loss_step(prepared_batch, model_pred, loss)
-                        distill_logs.update(gen_logs)
                     parent_loss = None
                     if is_regularisation_data:
                         parent_loss = loss
@@ -6427,7 +7001,8 @@ class Trainer:
                         training_logger.debug("Backwards pass.")
                         if self._ramtorch_sync_enabled():
                             torch.cuda.synchronize()
-                        self.accelerator.backward(loss)
+                        backward_loss = scale_standalone_context_parallel_loss(loss, self._context_parallel_topology)
+                        self.accelerator.backward(backward_loss)
                         if self._ramtorch_sync_enabled():
                             torch.cuda.synchronize()
 
@@ -6439,12 +7014,16 @@ class Trainer:
                                 if param.grad is not None:
                                     param.grad.data = param.grad.data.to(torch.float32)
 
-                        self.grad_norm = self._max_grad_value()
-                        if (
+                        should_clip_gradients = (
                             self.accelerator.sync_gradients
                             and self.config.optimizer not in ["optimi-stableadamw", "prodigy"]
                             and self.config.max_grad_norm > 0
+                        )
+                        if self.accelerator.sync_gradients and (
+                            self.config.grad_clip_method != "norm" or not should_clip_gradients
                         ):
+                            self.grad_norm = self._max_grad_value()
+                        if should_clip_gradients:
                             # StableAdamW/Prodigy do not need clipping, similar to Adafactor.
                             if self.config.fsdp_enable:
                                 # For FSDP, handle FSDP1/FSDP2 separately and surface failures instead of crashing.
@@ -6722,6 +7301,7 @@ class Trainer:
                     checkpoint_step_interval = self._checkpoint_step_interval()
                     upload_to_hub = (
                         self.hub_manager is not None
+                        and bool(getattr(self.config, "push_checkpoints_to_hub", False))
                         and step % self.config.gradient_accumulation_steps == 0
                         and self.state["global_step"] > self.state["global_resume_step"]
                     )
@@ -6741,6 +7321,7 @@ class Trainer:
                             parent_loss=parent_loss,
                             epoch=epoch,
                             upload_to_hub=upload_to_hub,
+                            defer_hub_upload=upload_to_hub,
                         )
                         checkpoint_saved_this_step = True
                     elif (
@@ -6766,16 +7347,7 @@ class Trainer:
                             **progress_kwargs,
                         )
                         self._emit_event(event)
-                        if self.accelerator.is_main_process and self.config.checkpoints_rolling_total_limit is not None:
-                            # _before_ saving state, check if this save would set us over the `checkpoints_rolling_total_limit`
-                            self.checkpoint_state_cleanup(
-                                self.config.output_dir,
-                                self.config.checkpoints_rolling_total_limit,
-                                "rolling",
-                            )
-
-                        if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer:
-                            self.checkpoint_state_save(self.config.output_dir, "rolling")
+                        self._save_rolling_checkpoint()
 
                     if (
                         self.config.accelerator_cache_clear_interval is not None
@@ -6844,7 +7416,6 @@ class Trainer:
                 self._update_grad_metrics(
                     logs,
                     require_value_method=True,
-                    clone_norm_value=True,
                     is_regularisation_data=is_regularisation_data,
                 )
 
@@ -6856,9 +7427,11 @@ class Trainer:
                         step,
                         manual_validation_requested=manual_validation_requested,
                     )
-                    if step_checkpoint_path:
-                        self._populate_checkpoint_assets(step_checkpoint_path)
+                if step_checkpoint_path:
+                    self._populate_checkpoint_assets(step_checkpoint_path)
                 self.accelerator.wait_for_everyone()
+                if step_checkpoint_path and upload_to_hub:
+                    self._schedule_checkpoint_hub_upload(step_checkpoint_path)
                 if torch_profiler is not None:
                     torch_profiler.step()
 
@@ -6872,16 +7445,20 @@ class Trainer:
                     # Note: training_complete event is emitted after final validation and model save
                     break
             epoch_checkpoint_dir = None
+            epoch_upload_to_hub = False
             if epoch_checkpoint_pending:
                 epoch_message = f"Epoch {epoch} completed at step {self.state['global_step']}"
-                epoch_upload_to_hub = self.hub_manager is not None and (
-                    self.state["global_step"] > self.state["global_resume_step"]
+                epoch_upload_to_hub = (
+                    self.hub_manager is not None
+                    and (self.state["global_step"] > self.state["global_resume_step"])
+                    and bool(getattr(self.config, "push_checkpoints_to_hub", False))
                 )
                 epoch_checkpoint_dir = self._run_standard_checkpoint(
                     webhook_message=epoch_message,
                     parent_loss=parent_loss,
                     epoch=epoch,
                     upload_to_hub=epoch_upload_to_hub,
+                    defer_hub_upload=epoch_upload_to_hub,
                 )
                 if epoch_checkpoint_dir:
                     self._write_checkpoint_epoch(epoch_checkpoint_dir, epoch + 1)
@@ -6889,6 +7466,9 @@ class Trainer:
                 self._run_intermediary_validation(step, epoch_end=True)
             if epoch_checkpoint_dir:
                 self._populate_checkpoint_assets(epoch_checkpoint_dir)
+            self.accelerator.wait_for_everyone()
+            if epoch_checkpoint_dir and epoch_upload_to_hub:
+                self._schedule_checkpoint_hub_upload(epoch_checkpoint_dir)
 
             if self.state["global_step"] >= self.config.max_train_steps or (
                 epoch > self.config.num_train_epochs and self.config.strict_epoch_limit
@@ -6906,6 +7486,14 @@ class Trainer:
             logger.info("Torch profiler stopped.")
         validation_images = None
         final_lora_save_kwargs = None
+        fsdp_plugin = getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None)
+        is_fsdp2_full_model_save = (
+            self.config.model_type == "full"
+            and self.accelerator.distributed_type == DistributedType.FSDP
+            and getattr(fsdp_plugin, "fsdp_version", 1) == 2
+        )
+        fsdp2_model_for_save = None
+        fsdp2_pipeline_export_spec = None
         if "lora" in self.config.model_type and "standard" == self.config.lora_type.lower():
             from simpletuner.helpers.training.save_hooks import _materialize_state_dict_for_save
 
@@ -6934,122 +7522,162 @@ class Trainer:
             if self.config.fsdp_enable:
                 self.accelerator.wait_for_everyone()
 
-        if self.accelerator.is_main_process:
-            event = lifecycle_stage_event(
-                key="model_save",
-                label="Saving Final Model",
-                status="running",
-                message=f"Finalizing model and saving to {self.config.output_dir}",
-                job_id=self.job_id,
-            )
-            self._emit_event(event)
-            self.mark_optimizer_eval()
-            if self.validation is not None:
-                AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
-                self.disable_gradient_checkpointing()
-                # Emit validation start lifecycle event for final validations
-                validation_start_event = lifecycle_stage_event(
-                    key="final_validation",
-                    label="Running Final Validations",
-                    status="running",
-                    message="Generating final validation images...",
-                    job_id=self.job_id,
+        with self._fsdp2_full_export_failure_guard(is_fsdp2_full_model_save):
+            if is_fsdp2_full_model_save:
+                from simpletuner.helpers.training.save_hooks import (
+                    _build_model_from_state_dict_for_save,
+                    _materialize_fsdp2_state_dict_for_save,
                 )
-                self._emit_event(validation_start_event)
-                validation_images = self.validation.run_validations(
-                    validation_type="final",
-                    step=self.state["global_step"],
-                    force_evaluation=True,
-                    skip_execution=True,
-                ).validation_images
-                # Emit validation completed lifecycle event
-                validation_completed_event = lifecycle_stage_event(
-                    key="final_validation",
-                    label="Running Final Validations",
-                    status="completed",
-                    message="Final validation images completed",
-                    job_id=self.job_id,
+
+                fsdp2_pipeline_export_spec = getattr(
+                    getattr(self, "model_hooks", None),
+                    "fsdp2_pipeline_export_spec",
+                    None,
                 )
-                self._emit_event(validation_completed_event)
-                # we don't have to do this but we will anyway.
-                AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
-            if self.model.get_trained_component() is not None:
-                self.model.model = unwrap_model(self.accelerator, self.model.model)
-            if "lora" in self.config.model_type and "standard" == self.config.lora_type.lower():
-                if final_lora_save_kwargs is None:
-                    raise RuntimeError("Final LoRA save kwargs were not materialized before the main-process save.")
-                self.model.save_lora_weights(
-                    **final_lora_save_kwargs,
+                if fsdp2_pipeline_export_spec is None:
+                    raise RuntimeError("FSDP2 full-model pipeline export was not validated before training.")
+                trained_component = self.model.get_trained_component(unwrap_model=False)
+                fsdp2_state_dict = _materialize_fsdp2_state_dict_for_save(
+                    self.accelerator,
+                    trained_component,
+                    ema_model=self.ema_model if self.config.use_ema else None,
                 )
-                del final_lora_save_kwargs
-                reclaim_memory()
-            elif "lora" in self.config.model_type and "lycoris" == self.config.lora_type.lower():
-                if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer:
-                    logger.info(f"Saving final LyCORIS checkpoint to {self.config.output_dir}")
-                    # Save final LyCORIS checkpoint.
-                    if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
-                        from simpletuner.helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME
-
-                        self.accelerator._lycoris_wrapped_network.save_weights(
-                            os.path.join(self.config.output_dir, LORA_SAFETENSORS_FILENAME),
-                            list(self.accelerator._lycoris_wrapped_network.parameters())[0].dtype,
-                            {"lycoris_config": json.dumps(self.lycoris_config)},  # metadata
-                        )
-                        shutil.copy2(
-                            self.config.lycoris_config,
-                            os.path.join(self.config.output_dir, "lycoris_config.json"),
-                        )
-
-            elif self.config.use_ema:
-                if self.model.get_trained_component() is not None:
-                    self.ema_model.copy_to(self.model.get_trained_component().parameters())
-
-            if self.config.model_type == "full":
-                if self.config.save_text_encoder:
-                    self.model.load_text_encoder()
-                self.model.load_vae()
-                pipeline = self.model.get_pipeline()
-                pipeline.save_pretrained(
-                    os.path.join(self.config.output_dir, "pipeline"),
-                    safe_serialization=True,
-                )
-                logger.info(f"Wrote pipeline to disk: {self.config.output_dir}/pipeline")
-
-            if self.hub_manager is not None and self.accelerator.is_main_process:
-                captured_step = self.state["global_step"]
-                captured_epoch = self.state["current_epoch"]
-
-                def _upload_final_model():
-                    repo_url = self.hub_manager.upload_model(
-                        validation_images,
-                        self.webhook_handler,
-                        global_step=captured_step,
-                        epoch=captured_epoch,
+                if self.accelerator.is_main_process:
+                    fsdp2_model_for_save = _build_model_from_state_dict_for_save(
+                        fsdp2_pipeline_export_spec.model_class,
+                        fsdp2_pipeline_export_spec.model_config,
+                        fsdp2_state_dict,
                     )
-                    return repo_url, self.config.output_dir, repo_url
+                del fsdp2_state_dict
 
-                try:
-                    self._schedule_hub_upload("final model upload", _upload_final_model)
-                except Exception as e:
-                    logger.error(f"Error uploading final model to hub: {e}")
-                self._finish_hub_uploads()
-            else:
-                self._run_post_upload_script(local_path=self.config.output_dir, remote_path=None)
-            if (
-                self.accelerator.is_main_process
-                and os.environ.get("SIMPLETUNER_PUBLISH_FINAL_ARTIFACTS", "").lower()
-                in {"1", "true", "yes", "on"}
-            ):
-                self._publish_final_artifacts()
-            # Mark model_save as completed
-            event = lifecycle_stage_event(
-                key="model_save",
-                label="Saving Final Model",
-                status="completed",
-                message=f"Model saved to {self.config.output_dir}",
-                job_id=self.job_id,
-            )
-            self._emit_event(event)
+            if self.accelerator.is_main_process:
+                event = lifecycle_stage_event(
+                    key="model_save",
+                    label="Saving Final Model",
+                    status="running",
+                    message=f"Finalizing model and saving to {self.config.output_dir}",
+                    job_id=self.job_id,
+                )
+                self._emit_event(event)
+                self.mark_optimizer_eval()
+                if self.validation is not None:
+                    AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
+                    self.disable_gradient_checkpointing()
+                    # Emit validation start lifecycle event for final validations
+                    validation_start_event = lifecycle_stage_event(
+                        key="final_validation",
+                        label="Running Final Validations",
+                        status="running",
+                        message="Generating final validation images...",
+                        job_id=self.job_id,
+                    )
+                    self._emit_event(validation_start_event)
+                    validation_images = self.validation.run_validations(
+                        validation_type="final",
+                        step=self.state["global_step"],
+                        force_evaluation=True,
+                        skip_execution=True,
+                    ).validation_images
+                    # Emit validation completed lifecycle event
+                    validation_completed_event = lifecycle_stage_event(
+                        key="final_validation",
+                        label="Running Final Validations",
+                        status="completed",
+                        message="Final validation images completed",
+                        job_id=self.job_id,
+                    )
+                    self._emit_event(validation_completed_event)
+                    # we don't have to do this but we will anyway.
+                    AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
+                if self.model.get_trained_component() is not None and not is_fsdp2_full_model_save:
+                    self.model.model = unwrap_model(self.accelerator, self.model.model)
+                if "lora" in self.config.model_type and "standard" == self.config.lora_type.lower():
+                    if final_lora_save_kwargs is None:
+                        raise RuntimeError("Final LoRA save kwargs were not materialized before the main-process save.")
+                    self.model.save_lora_weights(
+                        **final_lora_save_kwargs,
+                    )
+                    del final_lora_save_kwargs
+                    reclaim_memory()
+                elif "lora" in self.config.model_type and "lycoris" == self.config.lora_type.lower():
+                    if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer:
+                        logger.info(f"Saving final LyCORIS checkpoint to {self.config.output_dir}")
+                        # Save final LyCORIS checkpoint.
+                        if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
+                            from simpletuner.helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME
+
+                            self.accelerator._lycoris_wrapped_network.save_weights(
+                                os.path.join(self.config.output_dir, LORA_SAFETENSORS_FILENAME),
+                                list(self.accelerator._lycoris_wrapped_network.parameters())[0].dtype,
+                                {"lycoris_config": json.dumps(self.lycoris_config)},  # metadata
+                            )
+                            shutil.copy2(
+                                self.config.lycoris_config,
+                                os.path.join(self.config.output_dir, "lycoris_config.json"),
+                            )
+
+                elif self.config.use_ema and not is_fsdp2_full_model_save:
+                    if self.model.get_trained_component() is not None:
+                        self.ema_model.copy_to(self.model.get_trained_component().parameters())
+
+                if self.config.model_type == "full":
+                    if self.config.save_text_encoder:
+                        self.model.load_text_encoder()
+                    self.model.load_vae()
+                    if is_fsdp2_full_model_save:
+                        from simpletuner.helpers.training.save_hooks import _save_pipeline_with_component_for_save
+
+                        pipeline = self.model.get_pipeline(pipeline_type=fsdp2_pipeline_export_spec.pipeline_type)
+                        _save_pipeline_with_component_for_save(
+                            pipeline,
+                            fsdp2_pipeline_export_spec.component_name,
+                            fsdp2_model_for_save,
+                            os.path.join(self.config.output_dir, "pipeline"),
+                        )
+                    else:
+                        pipeline = self.model.get_pipeline()
+                        pipeline.save_pretrained(
+                            os.path.join(self.config.output_dir, "pipeline"),
+                            safe_serialization=True,
+                        )
+                    logger.info(f"Wrote pipeline to disk: {self.config.output_dir}/pipeline")
+                    if is_fsdp2_full_model_save:
+                        del fsdp2_model_for_save
+                        reclaim_memory()
+
+                if self.hub_manager is not None and self.accelerator.is_main_process:
+                    captured_step = self.state["global_step"]
+                    captured_epoch = self.state["current_epoch"]
+
+                    def _upload_final_model():
+                        repo_url = self.hub_manager.upload_model(
+                            validation_images,
+                            self.webhook_handler,
+                            global_step=captured_step,
+                            epoch=captured_epoch,
+                        )
+                        return repo_url, self.config.output_dir, repo_url
+
+                    try:
+                        self._schedule_hub_upload("final model upload", _upload_final_model)
+                    except Exception as e:
+                        logger.error(f"Error uploading final model to hub: {e}")
+                    self._finish_hub_uploads()
+                else:
+                    self._run_post_upload_script(local_path=self.config.output_dir, remote_path=None)
+                if self.accelerator.is_main_process and os.environ.get(
+                    "SIMPLETUNER_PUBLISH_FINAL_ARTIFACTS", ""
+                ).lower() in {"1", "true", "yes", "on"}:
+                    self._publish_final_artifacts()
+                # Mark model_save as completed
+                event = lifecycle_stage_event(
+                    key="model_save",
+                    label="Saving Final Model",
+                    status="completed",
+                    message=f"Model saved to {self.config.output_dir}",
+                    job_id=self.job_id,
+                )
+                self._emit_event(event)
         self.accelerator.end_training()
         # Emit training_complete event after all model saving and validation is complete
         event = lifecycle_stage_event(

@@ -1,8 +1,13 @@
 import json
 import logging
 import os
+import shutil
+import subprocess
+import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from tqdm import tqdm
@@ -11,6 +16,7 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.training import video_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -82,8 +88,8 @@ class WebshartMetadataBackend(MetadataBackend):
         )
         if not isinstance(data_backend, WebshartDataBackend):
             raise ValueError("WebshartMetadataBackend requires WebshartDataBackend")
-        if self.dataset_type not in {DatasetType.IMAGE, DatasetType.CONDITIONING, DatasetType.EVAL}:
-            raise ValueError("WebshartMetadataBackend currently supports image-like datasets only.")
+        if self.dataset_type not in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CONDITIONING, DatasetType.EVAL}:
+            raise ValueError("WebshartMetadataBackend supports image, video, conditioning, and eval datasets only.")
 
         self.caption_cache: Dict[str, Union[str, List[str]]] = {}
 
@@ -202,15 +208,101 @@ class WebshartMetadataBackend(MetadataBackend):
             raise ValueError("Webshart sample bucket entries must include sample_idx.")
         return self.data_backend.sample_id(shard_idx, int(entry["sample_idx"]), str(entry["filename"]))
 
-    def _metadata_for_entry(self, shard_metadata: dict, filename: str, entry: dict) -> dict:
+    @staticmethod
+    def _coerce_positive_number(value: Any, value_type):
+        try:
+            result = value_type(value)
+        except (TypeError, ValueError):
+            return None
+        return result if result > 0 else None
+
+    @staticmethod
+    def _ffprobe_video_path(probe_path: str) -> dict:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height,nb_frames,avg_frame_rate,r_frame_rate,duration",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "json",
+                probe_path,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        probe = json.loads(result.stdout) if result.stdout else {}
+        streams = probe.get("streams") or []
+        stream = streams[0] if streams else {}
+        width = WebshartMetadataBackend._coerce_positive_number(stream.get("width"), int)
+        height = WebshartMetadataBackend._coerce_positive_number(stream.get("height"), int)
+        metadata = {"original_size": (width, height)} if width and height else {}
+
+        num_frames = WebshartMetadataBackend._coerce_positive_number(stream.get("nb_frames"), int)
+        if num_frames:
+            metadata["num_frames"] = num_frames
+        duration = WebshartMetadataBackend._coerce_positive_number(
+            stream.get("duration") or (probe.get("format") or {}).get("duration"),
+            float,
+        )
+        if duration:
+            metadata["video_duration"] = duration
+        return metadata
+
+    def _probe_video_metadata(self, sample_path: str, file_metadata: Optional[dict] = None) -> dict:
+        if shutil.which("ffprobe") is None:
+            return {}
+
+        suffix = Path(self.data_backend.parse_sample_id(sample_path).filename).suffix or ".mp4"
+        probe_path = None
+        try:
+            range_reader = getattr(self.data_backend, "read_sample_head_tail", None)
+            if callable(range_reader):
+                try:
+                    head, tail, total_size = range_reader(sample_path, file_metadata=file_metadata)
+                    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
+                        probe_path = handle.name
+                        handle.truncate(total_size)
+                        handle.seek(0)
+                        handle.write(head)
+                        handle.seek(total_size - len(tail))
+                        handle.write(tail)
+                    metadata = self._ffprobe_video_path(probe_path)
+                    if metadata.get("original_size"):
+                        return metadata
+                except Exception as exc:
+                    logger.debug("Unable to range-probe Webshart video %s: %s", sample_path, exc)
+                finally:
+                    if probe_path:
+                        Path(probe_path).unlink(missing_ok=True)
+                        probe_path = None
+
+            payload = self.data_backend.read(sample_path)
+            if not payload:
+                return {}
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
+                handle.write(payload)
+                probe_path = handle.name
+            return self._ffprobe_video_path(probe_path)
+        except Exception as exc:
+            logger.debug("Unable to probe Webshart video %s: %s", sample_path, exc)
+            return {}
+        finally:
+            if probe_path:
+                Path(probe_path).unlink(missing_ok=True)
+
+    def _metadata_for_entry(self, shard_metadata: dict, filename: str, entry: dict, sample_path: str) -> dict:
         file_metadata = shard_metadata.get(filename, {}) or {}
         width = entry.get("width", file_metadata.get("width"))
         height = entry.get("height", file_metadata.get("height"))
-        if width is None or height is None:
-            return {}
-
         metadata = {
-            "original_size": (int(width), int(height)),
             "webshart": {
                 "shard_idx": entry.get("shard_idx"),
                 "sample_idx": entry.get("sample_idx"),
@@ -220,13 +312,50 @@ class WebshartMetadataBackend(MetadataBackend):
                 "json_path": file_metadata.get("json_path"),
             },
         }
+        if width is not None and height is not None:
+            metadata["original_size"] = (int(width), int(height))
         if "captions" in file_metadata:
             metadata["captions"] = file_metadata["captions"]
-        if "json_metadata" in file_metadata:
-            metadata["json_metadata"] = file_metadata["json_metadata"]
+        json_metadata = file_metadata.get("json_metadata") or {}
+        if json_metadata:
+            metadata["json_metadata"] = json_metadata
         if "json_path" in file_metadata:
             metadata["json_path"] = file_metadata["json_path"]
+
+        if self.dataset_type is DatasetType.VIDEO:
+            fps = self._coerce_positive_number(json_metadata.get("fps"), float)
+            num_frames = self._coerce_positive_number(
+                json_metadata.get("frame", json_metadata.get("num_frames")),
+                int,
+            )
+            duration = self._coerce_positive_number(
+                json_metadata.get("seconds", json_metadata.get("duration")),
+                float,
+            )
+            if fps:
+                metadata["fps"] = fps
+            if num_frames:
+                metadata["num_frames"] = num_frames
+            if duration:
+                metadata["video_duration"] = duration
+            if "original_size" not in metadata:
+                probed = self._probe_video_metadata(sample_path, file_metadata=file_metadata)
+                for key, value in probed.items():
+                    metadata.setdefault(key, value)
         return metadata
+
+    def _prepare_bucket_entry(
+        self,
+        shard_metadata: dict,
+        entry: dict,
+        sample_path: str,
+    ) -> tuple[dict, Optional[tuple[float, dict]], Optional[Exception]]:
+        try:
+            filename = str(entry["filename"])
+            sample_metadata = self._metadata_for_entry(shard_metadata, filename, entry, sample_path)
+            return sample_metadata, self._prepare_metadata(sample_path, sample_metadata), None
+        except Exception as exc:
+            return {}, None, exc
 
     def _prepare_metadata(self, sample_path: str, sample_metadata: dict) -> Optional[tuple[float, dict]]:
         if not sample_metadata or "original_size" not in sample_metadata:
@@ -249,7 +378,32 @@ class WebshartMetadataBackend(MetadataBackend):
                 "target_size": prepared_sample.target_size,
             }
         )
-        return round(aspect_ratio, 2), sample_metadata
+        if self.dataset_type is DatasetType.VIDEO and self.bucket_strategy == "resolution_frames":
+            target_width, target_height = prepared_sample.target_size
+            bucket_key, rounded_frames = self._compute_video_bucket(
+                target_width,
+                target_height,
+                sample_metadata["num_frames"],
+            )
+            sample_metadata["bucket_frames"] = rounded_frames
+        else:
+            bucket_key = round(aspect_ratio, 2)
+        return bucket_key, sample_metadata
+
+    def _entries_for_shard(self, shard_idx: int) -> list[dict]:
+        if self.dataset_type is not DatasetType.VIDEO:
+            shard_bucket_results = self.data_backend.list_shard_sample_aspect_buckets([shard_idx])
+            if not shard_bucket_results:
+                return []
+            shard_bucket_data = shard_bucket_results[0]
+            return [entry for entries in shard_bucket_data.get("buckets", {}).values() for entry in entries]
+
+        entries = []
+        for sample_idx, filename in enumerate(self.data_backend.dataset.list_samples_in_shard(shard_idx)):
+            if Path(filename).suffix.lower().strip(".") not in video_file_extensions:
+                continue
+            entries.append({"sample_idx": sample_idx, "filename": filename})
+        return entries
 
     def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False, progress_callback=None):
         logger.info("Building aspect ratio buckets from webshart metadata...")
@@ -258,10 +412,13 @@ class WebshartMetadataBackend(MetadataBackend):
             "skipped": {
                 "already_exists": 0,
                 "metadata_missing": 0,
+                "caption_missing": 0,
                 "too_small": 0,
                 "error": 0,
             },
         }
+        backend_config = StateTracker.get_data_backend_config(self.id) or {}
+        require_captions = str(backend_config.get("caption_strategy", "")).lower() == "webshart"
 
         if not ignore_existing_cache:
             self.reload_cache()
@@ -282,42 +439,71 @@ class WebshartMetadataBackend(MetadataBackend):
         metadata_updates: Dict[str, dict] = {}
         shard_metadata_cache: Dict[int, dict] = {}
         shard_indices = self._all_shard_indices()
+        worker_count = max(1, int(getattr(self.data_backend, "parallel_downloads", 1)))
+        executor = (
+            ThreadPoolExecutor(max_workers=worker_count)
+            if self.dataset_type is DatasetType.VIDEO and worker_count > 1
+            else None
+        )
 
-        for shard_idx in tqdm(
-            shard_indices,
-            desc="Processing webshart metadata",
-            total=len(shard_indices),
-            leave=False,
-            ncols=100,
-        ):
-            if (
-                self.max_num_samples is not None
-                and statistics["total_processed"] + len(existing_files) >= self.max_num_samples
+        try:
+            for shard_idx in tqdm(
+                shard_indices,
+                desc="Processing webshart metadata",
+                total=len(shard_indices),
+                leave=False,
+                ncols=100,
             ):
-                break
+                if (
+                    self.max_num_samples is not None
+                    and statistics["total_processed"] + len(existing_files) >= self.max_num_samples
+                ):
+                    break
 
-            shard_bucket_results = self.data_backend.list_shard_sample_aspect_buckets([shard_idx])
-            if not shard_bucket_results:
-                continue
-            shard_bucket_data = shard_bucket_results[0]
-            shard_metadata = shard_metadata_cache.setdefault(shard_idx, self.data_backend.get_shard_metadata(shard_idx))
-            for entries in shard_bucket_data.get("buckets", {}).values():
-                for entry in entries:
+                shard_entries = self._entries_for_shard(shard_idx)
+                if not shard_entries:
+                    continue
+                shard_metadata = shard_metadata_cache.setdefault(shard_idx, self.data_backend.get_shard_metadata(shard_idx))
+                candidates = []
+                for entry in shard_entries:
+                    entry = {**entry, "shard_idx": shard_idx}
+                    sample_path = self._sample_id_from_entry(shard_idx, entry)
+                    if sample_path in existing_files:
+                        continue
+                    candidates.append((entry, sample_path))
+
+                chunk_size = max(1, worker_count * 2)
+                candidate_idx = 0
+                while candidate_idx < len(candidates):
                     if (
                         self.max_num_samples is not None
                         and statistics["total_processed"] + len(existing_files) >= self.max_num_samples
                     ):
                         break
-                    processed_entries += 1
-                    try:
-                        filename = str(entry["filename"])
-                        entry = {**entry, "shard_idx": shard_idx}
-                        sample_path = self._sample_id_from_entry(shard_idx, entry)
-                        if sample_path in existing_files:
-                            continue
+                    remaining = (
+                        self.max_num_samples - statistics["total_processed"] - len(existing_files)
+                        if self.max_num_samples is not None
+                        else chunk_size
+                    )
+                    current_chunk_size = min(chunk_size, remaining)
+                    chunk = candidates[candidate_idx : candidate_idx + current_chunk_size]
+                    candidate_idx += len(chunk)
+                    if executor is None:
+                        results = [
+                            self._prepare_bucket_entry(shard_metadata, entry, sample_path) for entry, sample_path in chunk
+                        ]
+                    else:
+                        results = executor.map(
+                            lambda item: self._prepare_bucket_entry(shard_metadata, item[0], item[1]),
+                            chunk,
+                        )
 
-                        sample_metadata = self._metadata_for_entry(shard_metadata, filename, entry)
-                        prepared = self._prepare_metadata(sample_path, sample_metadata)
+                    for (entry, sample_path), (sample_metadata, prepared, error) in zip(chunk, results):
+                        processed_entries += 1
+                        if error is not None:
+                            logger.error("Error processing webshart bucket entry %s: %s", entry, error)
+                            statistics["skipped"]["error"] += 1
+                            continue
                         if prepared is None:
                             if sample_metadata:
                                 statistics["skipped"]["too_small"] += 1
@@ -325,14 +511,14 @@ class WebshartMetadataBackend(MetadataBackend):
                                 statistics["skipped"]["metadata_missing"] += 1
                             continue
                         bucket_key, sample_metadata = prepared
+                        if require_captions and not sample_metadata.get("captions"):
+                            statistics["skipped"]["caption_missing"] += 1
+                            continue
                         aspect_ratio_bucket_updates.setdefault(bucket_key, []).append(sample_path)
                         metadata_updates[sample_path] = sample_metadata
                         if sample_metadata.get("captions"):
                             self.caption_cache[sample_path] = sample_metadata["captions"]
                         statistics["total_processed"] += 1
-                    except Exception as exc:
-                        logger.error("Error processing webshart bucket entry %s: %s", entry, exc)
-                        statistics["skipped"]["error"] += 1
 
                     current_time = time.time()
                     if (current_time - last_save_time) >= self.metadata_update_interval:
@@ -346,13 +532,11 @@ class WebshartMetadataBackend(MetadataBackend):
                         self.save_image_metadata()
                         self._save_caption_cache()
                         last_save_time = current_time
-                if (
-                    self.max_num_samples is not None
-                    and statistics["total_processed"] + len(existing_files) >= self.max_num_samples
-                ):
-                    break
-            if progress_callback is not None:
-                progress_callback(shard_idx + 1, len(shard_indices))
+                if progress_callback is not None:
+                    progress_callback(shard_idx + 1, len(shard_indices))
+        finally:
+            if executor is not None:
+                executor.shutdown(wait=True)
 
         for key, value in aspect_ratio_bucket_updates.items():
             self.aspect_ratio_bucket_indices.setdefault(key, []).extend(value)

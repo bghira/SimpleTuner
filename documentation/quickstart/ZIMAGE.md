@@ -20,6 +20,18 @@ You'll need:
 
 Apple GPUs are not recommended for training.
 
+### Measured SDNQ Hadamard performance
+
+These measurements used the `z-image-turbo.peft-lora` Domokun example for 1000 steps with validation enabled, `base_model_precision=int8-sdnq`, `sdnq_use_hadamard=true`, `sdnq_group_size=-1`, `sdnq_hadamard_group_size=256`, and gradient checkpointing enabled. See the [ConvRot / Hadamard SDNQ quick setup](../experimental/CONVROT.md#quick-setup) for the options that enable this path. Treat these numbers as comparison points for this recipe, not as hardware guarantees.
+
+| GPU | Run | Train loop s/step | Mean train step | p50 | p95 | Peak allocated VRAM |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| H100 80GB | current SDNQ Hadamard path | 1.107 | 1.087 | 1.071 | 1.109 | 9.70 GiB |
+| L40S | current SDNQ Hadamard path | 1.026 | 1.018 | 1.002 | 1.040 | 9.66 GiB |
+| L40S | baseline SDNQ Hadamard path | 1.131 | 1.072 | 1.055 | 1.102 | 9.66 GiB |
+
+On the warmed L40S comparison, the current path was 10.3% faster by train-loop wall time and 5.2% faster by measured train-step mean than the baseline SDNQ Hadamard path.
+
 ### Memory offloading (optional)
 
 Grouped module offloading dramatically reduces VRAM pressure when you are bottlenecked by the transformer weights. You can enable it by adding the following flags to `TRAINER_EXTRA_ARGS` (or the WebUI Hardware page):

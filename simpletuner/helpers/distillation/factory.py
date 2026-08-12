@@ -6,8 +6,9 @@ from typing import Any, Dict, Optional, Union
 # Ensure registry-backed distillers (like self_forcing) register themselves on import.
 import simpletuner.helpers.distillation.anyflow  # noqa: F401
 import simpletuner.helpers.distillation.flow_dpo  # noqa: F401
+import simpletuner.helpers.distillation.h3_drift  # noqa: F401
 import simpletuner.helpers.distillation.perflow.distiller  # noqa: F401
-import simpletuner.helpers.distillation.self_forcing  # noqa: F401
+import simpletuner.helpers.distillation.self_forcing.distiller  # noqa: F401
 from simpletuner.helpers.distillation.common import DistillationBase, validate_distillation_text_encoder_training
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 
@@ -23,6 +24,7 @@ class DistillationMethod(Enum):
     PERFLOW = "perflow"
     FLOW_DPO = "flow_dpo"
     ANYFLOW = "anyflow"
+    H3_DRIFT = "h3_drift"
     SELF_FORCING = "self_forcing"
 
     @classmethod
@@ -39,6 +41,63 @@ class DistillationMethod(Enum):
 
 class DistillerFactory:
     """Factory class for creating distillers based on configuration."""
+
+    @staticmethod
+    def _method_config(method: DistillationMethod, config: Dict[str, Any]) -> Dict[str, Any]:
+        configured = config.get("distillation_config")
+        if not isinstance(configured, dict):
+            return {}
+        method_config = configured.get(method.value, configured)
+        return method_config if isinstance(method_config, dict) else {}
+
+    @staticmethod
+    def prepare_model_for_adapter(
+        method: Union[str, DistillationMethod, None],
+        model,
+        config: Dict[str, Any],
+    ) -> None:
+        """Let a distiller create model modules before the PEFT adapter is initialized."""
+        if isinstance(method, str):
+            method = DistillationMethod.from_string(method)
+        if method is None:
+            return
+
+        distiller_cls = DistillationRegistry.get(method.value)
+        if distiller_cls is None:
+            return
+        distiller_cls.prepare_model_for_adapter(model, DistillerFactory._method_config(method, config))
+
+    @staticmethod
+    def adapter_dropout_override(method: Union[str, DistillationMethod, None]) -> Optional[float]:
+        """Return the LoRA dropout a configured distillation method requires, or None."""
+        if isinstance(method, str):
+            if method.strip().lower() in {"", "none", "false", "0"}:
+                return None
+            method = DistillationMethod.from_string(method)
+        if method is None:
+            return None
+        distiller_cls = DistillationRegistry.get(method.value)
+        if distiller_cls is None:
+            return None
+        return distiller_cls.adapter_dropout_override()
+
+    @staticmethod
+    def training_batch_requirements(
+        method: Union[str, DistillationMethod, None],
+        config: Dict[str, Any],
+    ) -> set[str]:
+        """Return cached inputs required by a configured distillation method."""
+        if isinstance(method, str):
+            if method.strip().lower() in {"", "none", "false", "0"}:
+                return set()
+            method = DistillationMethod.from_string(method)
+        if method is None:
+            return set()
+
+        distiller_cls = DistillationRegistry.get(method.value)
+        if distiller_cls is None:
+            return set()
+        return set(distiller_cls.training_batch_requirements(DistillerFactory._method_config(method, config)))
 
     @staticmethod
     def create_distiller(
@@ -75,14 +134,7 @@ class DistillerFactory:
 
         validate_distillation_text_encoder_training(method, bool(config.get("train_text_encoder")))
 
-        distill_config = {}
-        if config.get("distillation_config") is not None:
-            # Check for method-specific config first
-            if method.value in config["distillation_config"]:
-                distill_config = config["distillation_config"][method.value]
-            else:
-                # Fall back to general distillation config
-                distill_config = config["distillation_config"]
+        distill_config = DistillerFactory._method_config(method, config)
 
         if method == DistillationMethod.DCM:
             return DistillerFactory._create_dcm_distiller(
@@ -144,6 +196,23 @@ class DistillerFactory:
                     "model_type": model_type,
                     "model_family": model_family,
                     "prediction_type": prediction_type,
+                    "seed": config.get("seed"),
+                    "seed_for_each_device": config.get("seed_for_each_device", False),
+                },
+                student_model=student_model,
+            )
+        elif method == DistillationMethod.H3_DRIFT:
+            return DistillerFactory._create_registered_distiller(
+                registry_key=method.value,
+                teacher_model=teacher_model,
+                noise_scheduler=noise_scheduler,
+                distill_config=distill_config,
+                runtime_config_defaults={
+                    "model_type": model_type,
+                    "model_family": model_family,
+                    "prediction_type": prediction_type,
+                    "seed": config.get("seed"),
+                    "seed_for_each_device": config.get("seed_for_each_device", False),
                 },
                 student_model=student_model,
             )

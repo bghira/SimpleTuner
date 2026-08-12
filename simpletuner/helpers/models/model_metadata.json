@@ -263,7 +263,9 @@
             "dev-fp4",
             "dev-fp8",
             "2.3-dev",
-            "2.3-distilled"
+            "2.3-distilled",
+            "2.5-dev",
+            "2.5-distilled"
         ],
         "module_path": "simpletuner.helpers.models.ltxvideo2.model",
         "name": "LTXVideo2",
@@ -277,6 +279,34 @@
         ],
         "module_path": "simpletuner.helpers.models.lumina2.model",
         "name": "Lumina-T2I",
+        "prediction_type": "flow_matching"
+    },
+    "mageflow": {
+        "class_name": "MageFlow",
+        "flavour_choices": [
+            "base",
+            "default",
+            "turbo",
+            "edit-base",
+            "edit",
+            "edit-turbo"
+        ],
+        "module_path": "simpletuner.helpers.models.mageflow.model",
+        "name": "Mage-Flow",
+        "prediction_type": "flow_matching"
+    },
+    "minimaxh3": {
+        "class_name": "MiniMaxH3",
+        "flavour_choices": [
+            "fl2va",
+            "ref2va",
+            "convrot-int8",
+            "convrot-int4",
+            "nvfp4",
+            "fp8-e4m3fn"
+        ],
+        "module_path": "simpletuner.helpers.models.minimaxh3.model",
+        "name": "MiniMax H3",
         "prediction_type": "flow_matching"
     },
     "omnigen": {

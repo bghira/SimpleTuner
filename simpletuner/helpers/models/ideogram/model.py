@@ -21,6 +21,7 @@ from simpletuner.helpers.models.ideogram.pipeline import (
 )
 from simpletuner.helpers.models.ideogram.prompt_enhancer import Ideogram4PromptEnhancerHead
 from simpletuner.helpers.models.ideogram.prompting import maybe_convert_prompt_to_ideogram_json
+from simpletuner.helpers.models.ideogram.quantized_loading import dequantize_fp8_state_dict, is_fp8_state_dict
 from simpletuner.helpers.models.ideogram.scheduler import get_schedule_for_resolution
 from simpletuner.helpers.models.ideogram.text_projection import Ideogram4TextProjection, Ideogram4TextProjectionConfig
 from simpletuner.helpers.models.registry import ModelRegistry
@@ -64,6 +65,9 @@ class Ideogram4(ImageModelFoundation):
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
         return 33
 
+    def raw_model_prediction_to_model_prediction(self, raw_prediction: torch.Tensor) -> torch.Tensor:
+        return raw_prediction * -1
+
     def setup_model_flavour(self):
         super().setup_model_flavour()
         flavour = getattr(self.config, "model_flavour", None) or self.DEFAULT_MODEL_FLAVOUR
@@ -81,6 +85,14 @@ class Ideogram4(ImageModelFoundation):
         repo_id = self._repo_id()
         pipe_config = Ideogram4PipelineConfig(weights_repo=repo_id)
         state_dict = _load_indexed_or_single_state_dict(repo_id, pipe_config.conditional_index_filename)
+        base_precision = getattr(self.config, "base_model_precision", None) or "no_change"
+        quantization_requested = base_precision != "no_change"
+        if is_fp8_state_dict(state_dict) and (
+            getattr(self.config, "ideogram_fp8_base_upcast", False) or quantization_requested
+        ):
+            # Quantizers operate on nn.Linear parameters; Fp8Linear stores its weight as a
+            # buffer, so a requested base_model_precision would otherwise silently no-op.
+            state_dict = dequantize_fp8_state_dict(state_dict, self.config.weight_dtype)
         self.model = _build_transformer(
             Ideogram4Config(),
             state_dict,
@@ -89,6 +101,7 @@ class Ideogram4(ImageModelFoundation):
         )
         if move_to_device:
             self.model.to(self.accelerator.device)
+        self.apply_gradient_checkpointing_settings()
         self.apply_model_specific_freeze()
         return self.model
 
@@ -103,12 +116,13 @@ class Ideogram4(ImageModelFoundation):
     def load_text_encoder(self, move_to_device: bool = True):
         repo_id = getattr(self.config, "pretrained_model_name_or_path", None) or self.HUGGINGFACE_PATHS["fp8"]
         pipe_config = Ideogram4PipelineConfig(weights_repo=repo_id)
+        qwen_repo_id = self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path")
         tokenizer, text_encoder = _load_qwen3_vl(
-            repo_id,
+            qwen_repo_id or repo_id,
             self.accelerator.device,
             self.config.weight_dtype,
-            tokenizer_subfolder=pipe_config.tokenizer_subfolder,
-            text_encoder_subfolder=pipe_config.text_encoder_subfolder,
+            tokenizer_subfolder=None if qwen_repo_id else pipe_config.tokenizer_subfolder,
+            text_encoder_subfolder=None if qwen_repo_id else pipe_config.text_encoder_subfolder,
         )
         self.tokenizers = [tokenizer]
         self.text_encoders = [text_encoder]
@@ -661,7 +675,7 @@ class Ideogram4(ImageModelFoundation):
         )
         packed_prediction = model_output[:, text_tokens:]
         model_prediction = self._unpack_latents(packed_prediction, latent_height, latent_width)
-        return {"model_prediction": model_prediction * -1}
+        return {"model_prediction": self.raw_model_prediction_to_model_prediction(model_prediction)}
 
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         bsz = batch["latents"].shape[0]

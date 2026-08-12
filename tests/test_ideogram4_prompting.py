@@ -512,6 +512,12 @@ class Ideogram4PromptingTests(unittest.TestCase):
             def requires_conditioning_validation_inputs(self):
                 return False
 
+            def uses_validation_negative_prompt(self):
+                return True
+
+            def validation_negative_prompt_requires_prompt_context(self):
+                return False
+
             def should_precompute_validation_negative_prompt(self):
                 return True
 
@@ -552,6 +558,12 @@ class Ideogram4PromptingTests(unittest.TestCase):
             def requires_conditioning_validation_inputs(self):
                 return False
 
+            def uses_validation_negative_prompt(self):
+                return True
+
+            def validation_negative_prompt_requires_prompt_context(self):
+                return False
+
             def should_precompute_validation_negative_prompt(self):
                 return True
 
@@ -580,6 +592,57 @@ class Ideogram4PromptingTests(unittest.TestCase):
         embed_cache.compute_embeddings_for_prompts.assert_not_called()
         embed_cache.encode_validation_negative_prompt.assert_not_called()
         self.assertEqual([entry.prompt for entry in metadata["validation_prompts"]], ["on demand prompt"])
+
+    def test_empty_validation_negative_prompt_is_not_precomputed(self):
+        class DummyEmbedCache:
+            model_type = "test"
+            text_cache_ondemand = False
+
+            def __init__(self):
+                self.compute_embeddings_for_prompts = mock.MagicMock()
+                self.encode_validation_negative_prompt = mock.MagicMock()
+
+        class DummyModel:
+            def log_model_devices(self):
+                raise AssertionError("negative prompt precompute should not log devices for an empty prompt")
+
+            def requires_conditioning_validation_inputs(self):
+                return False
+
+            def uses_validation_negative_prompt(self):
+                return True
+
+            def validation_negative_prompt_requires_prompt_context(self):
+                return False
+
+            def should_precompute_validation_negative_prompt(self):
+                return True
+
+        args = types.SimpleNamespace(
+            model_family="flux",
+            model_flavour="base",
+            controlnet=False,
+            control=False,
+            validation_using_datasets=False,
+            validation_prompt_library=False,
+            user_prompt_library=None,
+            validation_prompt="visible prompt",
+            validation_negative_prompt="",
+            validation_disable_unconditional=True,
+        )
+        embed_cache = DummyEmbedCache()
+
+        with (
+            mock.patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
+            mock.patch(
+                "simpletuner.helpers.training.validation.StateTracker.get_validation_sample_images", return_value=None
+            ),
+        ):
+            metadata = prepare_validation_prompt_list(args, embed_cache, DummyModel())
+
+        embed_cache.compute_embeddings_for_prompts.assert_called_once()
+        embed_cache.encode_validation_negative_prompt.assert_not_called()
+        self.assertEqual([entry.prompt for entry in metadata["validation_prompts"]], ["visible prompt"])
 
     def test_pipeline_saves_lora_weights_with_transformer_prefix(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

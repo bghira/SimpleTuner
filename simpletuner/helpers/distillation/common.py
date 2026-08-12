@@ -22,6 +22,11 @@ def validate_distillation_text_encoder_training(method, train_text_encoder: bool
 class DistillationBase:
     """Base class for model distillation techniques."""
 
+    @classmethod
+    def prepare_model_for_adapter(cls, model, config: Dict[str, Any]) -> None:
+        """Create distillation-specific modules that must exist before PEFT wrapping."""
+        del model, config
+
     def __init__(
         self,
         teacher_model,
@@ -100,6 +105,30 @@ class DistillationBase:
         """A child class can override this to provide a custom scheduler."""
         self.logger.warning("No distillation scheduler provided. Using default.")
         return None
+
+    def supports_special_scheduler_validation(self) -> bool:
+        """Return whether this distiller can wrap a model-owned inference scheduler."""
+        return False
+
+    @classmethod
+    def prepare_model_for_adapter(cls, model, config: Dict[str, Any]) -> None:
+        """Create distillation-specific modules that must exist before PEFT wrapping."""
+        del model, config
+
+    @classmethod
+    def training_batch_requirements(cls, config: Dict[str, Any]) -> set[str]:
+        """Describe extra cached inputs that the training collator must provide."""
+        del config
+        return set()
+
+    @classmethod
+    def adapter_dropout_override(cls) -> float | None:
+        """LoRA dropout the method's reference implementation trains with, or None to leave user config untouched.
+
+        Every currently supported reference (AnyFlow, DMD2, DCM, LCM-LoRA, Diffusion-DPO) trains adapters without
+        dropout; methods whose reference differs should override this.
+        """
+        return 0.0
 
     def toggle_adapter(self, enable=False):
         """

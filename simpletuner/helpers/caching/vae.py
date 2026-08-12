@@ -400,9 +400,17 @@ class VAECache(WebhookMixin):
         delete_from_backend: bool = False,
         details: dict = None,
     ) -> None:
+        buckets = getattr(self.metadata_backend, "aspect_ratio_bucket_indices", None)
+        shard_lengths = (
+            {shard: len(images) for shard, images in buckets.items()}
+            if isinstance(buckets, dict) and getattr(self.metadata_backend, "read_only", False)
+            else None
+        )
         removed = self._remove_image_from_metadata_backend(self.metadata_backend, filepath, bucket)
         if removed:
             self._record_filter_stat(reason, bucket, filepath)
+            if shard_lengths is not None:
+                self._restore_split_shard_lengths(shard_lengths)
         self._queue_metadata_filter_action(
             filepath=filepath,
             bucket=bucket,
@@ -410,6 +418,20 @@ class VAECache(WebhookMixin):
             delete_from_backend=delete_from_backend,
             details=details,
         )
+
+    def _restore_split_shard_lengths(self, shard_lengths: dict) -> None:
+        """Refill a post-split shard the filter just shortened.
+
+        Every data-parallel rank has to schedule the same number of samples, so removing an
+        entry from one rank's shard desynchronises them. The removed slots are refilled by
+        repeating the final surviving sample, which is how the splitter pads. A bucket the
+        filter emptied has nothing to repeat and stays empty until the next split.
+        """
+        for bucket, length in shard_lengths.items():
+            images = self.metadata_backend.aspect_ratio_bucket_indices.get(bucket)
+            if not images or len(images) >= length:
+                continue
+            images.extend([images[-1]] * (length - len(images)))
 
     def _handle_nsfw_rejected_sample(self, filepath: str, bucket: str, classification: dict) -> None:
         rejected_entry = {
@@ -1034,8 +1056,10 @@ class VAECache(WebhookMixin):
             "wan_s2v",
             "sanavideo",
             "kandinsky5-video",
+            "kandinsky5_video",
             "hunyuanvideo",
             "longcat_video",
+            "minimaxh3",
         ]:
             if samples.ndim == 4:
                 original_shape = samples.shape
@@ -1313,14 +1337,24 @@ class VAECache(WebhookMixin):
 
                 if self.dataset_type_enum is DatasetType.AUDIO:
                     debug_filepaths = [filepaths[i] for i in uncached_image_indices]
+                    debug_latents = (
+                        latents_uncached["latents"]
+                        if isinstance(latents_uncached, dict) and "latents" in latents_uncached
+                        else latents_uncached
+                    )
                     for idx, fp in enumerate(debug_filepaths):
-                        self._log_audio_tensor_stats("audio_latents_processed", latents_uncached[idx], fp)
+                        self._log_audio_tensor_stats("audio_latents_processed", debug_latents[idx], fp)
 
                 latents_uncached = self.model.scale_vae_latents_for_cache(latents_uncached, self.vae)
                 if self.dataset_type_enum is DatasetType.AUDIO:
                     debug_filepaths = [filepaths[i] for i in uncached_image_indices]
+                    debug_latents = (
+                        latents_uncached["latents"]
+                        if isinstance(latents_uncached, dict) and "latents" in latents_uncached
+                        else latents_uncached
+                    )
                     for idx, fp in enumerate(debug_filepaths):
-                        self._log_audio_tensor_stats("audio_latents_scaled", latents_uncached[idx], fp)
+                        self._log_audio_tensor_stats("audio_latents_scaled", debug_latents[idx], fp)
             if isinstance(latents_uncached, dict) and "latents" in latents_uncached:
                 raw_latents = latents_uncached["latents"]
                 num_samples = raw_latents.shape[0]
@@ -1604,6 +1638,12 @@ class VAECache(WebhookMixin):
         waveform, sample_rate = self._coerce_audio_waveform(raw_sample, metadata, filepath)
         if waveform is None:
             return None
+        waveform, metadata = self._truncate_audio_waveform_to_max_duration(
+            waveform=waveform,
+            sample_rate=sample_rate,
+            metadata=metadata,
+            filepath=filepath,
+        )
         waveform, metadata = self._align_audio_waveform_to_video(
             waveform=waveform,
             sample_rate=sample_rate,
@@ -1660,6 +1700,44 @@ class VAECache(WebhookMixin):
         metadata = dict(metadata)
         metadata["num_samples"] = waveform.shape[-1]
         metadata["duration_seconds"] = float(waveform.shape[-1]) / float(sample_rate)
+        return waveform, metadata
+
+    def _truncate_audio_waveform_to_max_duration(self, waveform, sample_rate, metadata: dict, filepath: str):
+        if sample_rate is None:
+            return waveform, metadata
+        backend_config = StateTracker.get_data_backend_config(data_backend_id=self.id) or {}
+        audio_config = backend_config.get("audio") or {}
+        max_duration = audio_config.get("max_duration_seconds")
+        if max_duration is None:
+            return waveform, metadata
+        try:
+            max_duration = float(max_duration)
+        except (TypeError, ValueError):
+            return waveform, metadata
+        if max_duration <= 0:
+            return waveform, metadata
+
+        target_samples = int(round(max_duration * float(sample_rate)))
+        if target_samples <= 0 or waveform.shape[-1] <= target_samples:
+            return waveform, metadata
+
+        truncation_mode = (metadata.get("truncation_mode") or audio_config.get("truncation_mode") or "beginning").lower()
+        if truncation_mode == "end":
+            start = waveform.shape[-1] - target_samples
+        elif truncation_mode == "random":
+            start = random.randint(0, waveform.shape[-1] - target_samples)
+        else:
+            start = 0
+        waveform = waveform[:, start : start + target_samples].contiguous()
+        metadata = dict(metadata)
+        metadata["num_samples"] = waveform.shape[-1]
+        metadata["duration_seconds"] = float(waveform.shape[-1]) / float(sample_rate)
+        metadata["truncated_duration_seconds"] = metadata["duration_seconds"]
+        logger.debug(
+            "Truncated audio sample %s to %.2fs for audio.max_duration_seconds.",
+            filepath,
+            metadata["duration_seconds"],
+        )
         return waveform, metadata
 
     def _coerce_audio_waveform(self, sample, metadata: dict, filepath: str):

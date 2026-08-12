@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import torch
 
 from simpletuner.helpers.models.longcat_image.model import LongCatImage
+from simpletuner.helpers.models.longcat_image.pipeline import LongCatImagePipeline
 
 
 class LongCatImageModelTests(unittest.TestCase):
@@ -17,6 +18,18 @@ class LongCatImageModelTests(unittest.TestCase):
 
     def test_model_supports_crepa_self_flow(self):
         self.assertTrue(self.model.supports_crepa_self_flow())
+
+    def test_pipeline_allows_missing_image_encoder(self):
+        pipeline = LongCatImagePipeline(
+            scheduler=MagicMock(),
+            vae=MagicMock(),
+            text_encoder=MagicMock(),
+            tokenizer=MagicMock(),
+            text_processor=MagicMock(),
+            transformer=MagicMock(),
+        )
+
+        self.assertIsNone(pipeline.image_encoder)
 
     def test_prepare_crepa_self_flow_batch_creates_tokenwise_timesteps(self):
         self.model.accelerator = SimpleNamespace(device=torch.device("cpu"))

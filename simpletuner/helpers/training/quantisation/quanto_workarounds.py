@@ -60,9 +60,9 @@ def _same_device(actual: torch.device, expected: torch.device) -> bool:
 _original_include_paths = torch.utils.cpp_extension.include_paths
 
 
-def _patched_include_paths(device_type: str = "cpu") -> list:
+def _patched_include_paths(device_type: str = "cpu", *args, **kwargs) -> list:
     """Patched include_paths that filters out /usr/include for HIP/ROCm."""
-    paths = _original_include_paths(device_type)
+    paths = _original_include_paths(device_type, *args, **kwargs)
 
     # Filter out /usr/include - it breaks #include_next in GCC's C++ headers
     # when passed as -isystem. The compiler already knows about /usr/include.

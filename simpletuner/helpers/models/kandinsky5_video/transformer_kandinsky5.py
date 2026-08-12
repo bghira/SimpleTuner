@@ -39,7 +39,9 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
+from simpletuner.helpers.training.offloaded_gradient_checkpointer import activation_offload_context
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 
@@ -407,7 +409,15 @@ class Kandinsky5AttnProcessor:
         if not hasattr(F, "scaled_dot_product_attention"):
             raise ImportError(f"{self.__class__.__name__} requires PyTorch 2.0. Please upgrade your pytorch version.")
 
-    def __call__(self, attn, hidden_states, encoder_hidden_states=None, rotary_emb=None, sparse_params=None):
+    def __call__(
+        self,
+        attn,
+        hidden_states,
+        encoder_hidden_states=None,
+        rotary_emb=None,
+        sparse_params=None,
+        offload_attention: bool = False,
+    ):
         def _describe_tensor(name: str, tensor: Optional[Tensor]) -> str:
             if tensor is None:
                 return f"{name}=None"
@@ -474,13 +484,14 @@ class Kandinsky5AttnProcessor:
                 getattr(attn, "to_query", None) and attn.to_query.weight,
                 getattr(attn, "to_key", None) and attn.to_key.weight,
             )
-            attn_output = dispatch_attention_fn(
-                query,
-                key,
-                value,
-                attn_mask=attn_mask,
-                backend=self._attention_backend,
-            )
+            with activation_offload_context(offload_attention, label=f"{attn.__class__.__qualname__}:attention"):
+                attn_output = dispatch_attention_fn(
+                    query,
+                    key,
+                    value,
+                    attn_mask=attn_mask,
+                    backend=self._attention_backend,
+                )
         except Exception:
             logger.error(
                 "dispatch_attention_fn failed (backend=%s): %s; %s; %s; hidden_states=%s; encoder_hidden_states=%s; attn_mask=%s; %s",
@@ -529,6 +540,7 @@ class Kandinsky5Attention(nn.Module, AttentionModuleMixin):
         encoder_hidden_states: Optional[torch.Tensor] = None,
         sparse_params: Optional[torch.Tensor] = None,
         rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        offload_attention: bool = False,
         **kwargs,
     ) -> torch.Tensor:
         attn_parameters = set(inspect.signature(self.processor.__call__).parameters.keys())
@@ -546,6 +558,7 @@ class Kandinsky5Attention(nn.Module, AttentionModuleMixin):
             encoder_hidden_states=encoder_hidden_states,
             sparse_params=sparse_params,
             rotary_emb=rotary_emb,
+            offload_attention=offload_attention,
             **kwargs,
         )
 
@@ -607,7 +620,7 @@ class Kandinsky5TransformerEncoderBlock(nn.Module):
         self.feed_forward_norm = nn.LayerNorm(model_dim, elementwise_affine=False)
         self.feed_forward = Kandinsky5FeedForward(model_dim, ff_dim)
 
-    def forward(self, x, time_embed, rope):
+    def forward(self, x, time_embed, rope, offload_attention: bool = False):
         self_attn_params, ff_params = torch.chunk(
             _broadcast_modulation_params(self.text_modulation(time_embed), x), 2, dim=-1
         )
@@ -627,7 +640,7 @@ class Kandinsky5TransformerEncoderBlock(nn.Module):
                 ]
             )
             raise RuntimeError(debug_msg) from err
-        out = self.self_attention(out, rotary_emb=rope)
+        out = self.self_attention(out, rotary_emb=rope, offload_attention=offload_attention)
         x = (x.float() + gate.float() * out.float()).type_as(x)
 
         shift, scale, gate = torch.chunk(ff_params, 3, dim=-1)
@@ -652,7 +665,7 @@ class Kandinsky5TransformerDecoderBlock(nn.Module):
         self.feed_forward_norm = nn.LayerNorm(model_dim, elementwise_affine=False)
         self.feed_forward = Kandinsky5FeedForward(model_dim, ff_dim)
 
-    def forward(self, visual_embed, text_embed, time_embed, rope, sparse_params):
+    def forward(self, visual_embed, text_embed, time_embed, rope, sparse_params, offload_attention: bool = False):
         self_attn_params, cross_attn_params, ff_params = torch.chunk(
             _broadcast_modulation_params(self.visual_modulation(time_embed), visual_embed), 3, dim=-1
         )
@@ -661,14 +674,23 @@ class Kandinsky5TransformerDecoderBlock(nn.Module):
         visual_out = (self.self_attention_norm(visual_embed.float()) * (scale.float() + 1.0) + shift.float()).type_as(
             visual_embed
         )
-        visual_out = self.self_attention(visual_out, rotary_emb=rope, sparse_params=sparse_params)
+        visual_out = self.self_attention(
+            visual_out,
+            rotary_emb=rope,
+            sparse_params=sparse_params,
+            offload_attention=offload_attention,
+        )
         visual_embed = (visual_embed.float() + gate.float() * visual_out.float()).type_as(visual_embed)
 
         shift, scale, gate = torch.chunk(cross_attn_params, 3, dim=-1)
         visual_out = (self.cross_attention_norm(visual_embed.float()) * (scale.float() + 1.0) + shift.float()).type_as(
             visual_embed
         )
-        visual_out = self.cross_attention(visual_out, encoder_hidden_states=text_embed)
+        visual_out = self.cross_attention(
+            visual_out,
+            encoder_hidden_states=text_embed,
+            offload_attention=offload_attention,
+        )
         visual_embed = (visual_embed.float() + gate.float() * visual_out.float()).type_as(visual_embed)
 
         shift, scale, gate = torch.chunk(ff_params, 3, dim=-1)
@@ -701,6 +723,7 @@ class Kandinsky5Transformer3DModel(
         "Kandinsky5TransformerDecoderBlock",
     ]
     _supports_gradient_checkpointing = True
+    _supports_attention_activation_offload = True
     _cp_plan = {
         "": {
             "hidden_states": ContextParallelInput(split_dim=1, expected_dims=3, split_output=False),
@@ -784,6 +807,9 @@ class Kandinsky5Transformer3DModel(
         self.out_layer = Kandinsky5OutLayer(model_dim, time_dim, out_visual_dim, patch_size)
         self.gradient_checkpointing = False
         self.gradient_checkpointing_backend = "torch"
+        self.gradient_checkpointing_offload_attention = False
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=num_text_blocks + num_visual_blocks,
             blocks_to_swap=musubi_blocks_to_swap,
@@ -797,6 +823,15 @@ class Kandinsky5Transformer3DModel(
 
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
+
+    def set_gradient_checkpointing_offload_attention(self, enabled: bool):
+        self.gradient_checkpointing_offload_attention = bool(enabled)
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     def set_router(self, router: TREADRouter, routes: List[Dict[str, Any]]):
         """Attach a TREAD router and route definitions."""
@@ -891,20 +926,38 @@ class Kandinsky5Transformer3DModel(
                     f"Tokenwise timestep count {visual_time_embed.shape[1]} does not match visual token count {expected_tokens}."
                 )
 
-        for text_transformer_block in self.text_transformer_blocks:
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
-                if self.gradient_checkpointing_backend == "unsloth":
+        for text_layer_idx, text_transformer_block in enumerate(self.text_transformer_blocks):
+            if torch.is_grad_enabled() and should_checkpoint_block(
+                text_layer_idx,
+                self.gradient_checkpointing,
+                self.gradient_checkpointing_interval,
+                self.gradient_checkpointing_segment_stride,
+            ):
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint
                 else:
                     checkpoint_fn = torch.utils.checkpoint.checkpoint
 
+                def _checkpointed_text_block(text_embed, text_time_embed, text_rope, block=text_transformer_block):
+                    return block(
+                        text_embed,
+                        text_time_embed,
+                        text_rope,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
+                    )
+
                 text_embed = checkpoint_fn(
-                    text_transformer_block, text_embed, text_time_embed, text_rope, use_reentrant=False
+                    _checkpointed_text_block, text_embed, text_time_embed, text_rope, use_reentrant=False
                 )
             else:
-                text_embed = text_transformer_block(text_embed, text_time_embed, text_rope)
+                text_embed = text_transformer_block(
+                    text_embed,
+                    text_time_embed,
+                    text_rope,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
+                )
 
         visual_rope = self.visual_rope_embeddings(visual_shape, visual_rope_pos, scale_factor)
         to_fractal = sparse_params["to_fractal"] if sparse_params is not None else False
@@ -982,16 +1035,38 @@ class Kandinsky5Transformer3DModel(
                 current_rope = self._route_rope(visual_rope, tread_mask_info, keep_len=visual_embed.size(1))
                 routing_now = True
 
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
-                if self.gradient_checkpointing_backend == "unsloth":
+            if torch.is_grad_enabled() and should_checkpoint_block(
+                global_idx,
+                self.gradient_checkpointing,
+                self.gradient_checkpointing_interval,
+                self.gradient_checkpointing_segment_stride,
+            ):
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint
                 else:
                     checkpoint_fn = torch.utils.checkpoint.checkpoint
 
+                def _checkpointed_visual_block(
+                    visual_embed,
+                    text_embed,
+                    visual_time_embed,
+                    current_rope,
+                    sparse_params,
+                    block=visual_transformer_block,
+                ):
+                    return block(
+                        visual_embed,
+                        text_embed,
+                        visual_time_embed,
+                        current_rope,
+                        sparse_params,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
+                    )
+
                 visual_embed = checkpoint_fn(
-                    visual_transformer_block,
+                    _checkpointed_visual_block,
                     visual_embed,
                     text_embed,
                     visual_time_embed,
@@ -1001,7 +1076,12 @@ class Kandinsky5Transformer3DModel(
                 )
             else:
                 visual_embed = visual_transformer_block(
-                    visual_embed, text_embed, visual_time_embed, current_rope, sparse_params
+                    visual_embed,
+                    text_embed,
+                    visual_time_embed,
+                    current_rope,
+                    sparse_params,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
                 )
 
             if grounding_objs is not None and hasattr(visual_transformer_block, "fuser"):

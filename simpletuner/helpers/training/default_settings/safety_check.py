@@ -8,6 +8,7 @@ from torch.version import cuda as cuda_version
 
 from simpletuner.helpers.training.attention_backend import AttentionBackendMode
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
+from simpletuner.helpers.training.offloaded_gradient_checkpointer import normalize_activation_offload_pin_memory_max_buckets
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -20,6 +21,33 @@ from simpletuner.helpers.training.error_handling import validate_deepspeed_compa
 
 
 def safety_check(args, accelerator):
+    if getattr(args, "distillation_method", None):
+        from simpletuner.helpers.distillation.factory import DistillerFactory
+
+        dropout_override = DistillerFactory.adapter_dropout_override(args.distillation_method)
+        current_dropout = getattr(args, "lora_dropout", 0.0)
+        if dropout_override is not None and current_dropout != dropout_override:
+            force_enabled = os.environ.get("SIMPLETUNER_LORA_DROPOUT_FORCE_ENABLED", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+            if force_enabled:
+                logger.warning(
+                    f"Keeping --lora_dropout={current_dropout} for {args.distillation_method} distillation because "
+                    "SIMPLETUNER_LORA_DROPOUT_FORCE_ENABLED is set; the reference implementation trains with "
+                    f"lora_dropout={dropout_override}."
+                )
+            else:
+                logger.warning(
+                    f"{args.distillation_method} distillation reference implementations train adapters with "
+                    f"lora_dropout={dropout_override}; overriding --lora_dropout={current_dropout}. Set "
+                    "SIMPLETUNER_LORA_DROPOUT_FORCE_ENABLED=1 to keep the configured value. Adapter dropout also "
+                    "injects amplified noise into finite-difference distillation targets."
+                )
+                args.lora_dropout = dropout_override
+
     if accelerator is not None and accelerator.num_processes > 1:
         # mulit-gpu safety checks & warnings
         if args.model_type == "lora" and args.lora_type == "standard":
@@ -141,6 +169,8 @@ def safety_check(args, accelerator):
 
     gradient_checkpointing_interval_supported_models = [
         "flux",
+        "ace_step",
+        "anima",
         "sana",
         "sd3",
         "chroma",
@@ -148,7 +178,98 @@ def safety_check(args, accelerator):
         "hunyuanvideo",
         "ernie",
         "cosmos3",
+        "mageflow",
+        "boogu_image",
+        "cosmos",
+        "flux2",
+        "hidream",
+        "ideogram",
+        "kandinsky5_image",
+        "kandinsky5_video",
+        "krea2",
+        "longcat_image",
+        "longcat_video",
+        "ltxvideo",
+        "ltxvideo2",
+        "lumina2",
+        "pixart",
+        "minimaxh3",
+        "qwen_image",
+        "sanavideo",
+        "stable_cascade",
+        "wan_s2v",
+        "wan",
+        "z_image",
+        "zlab_i1",
     ]
+    gradient_checkpointing_segment_stride_supported_models = [
+        "ace_step",
+        "anima",
+        "auraflow",
+        "boogu_image",
+        "chroma",
+        "cosmos",
+        "cosmos3",
+        "ernie",
+        "flux",
+        "flux2",
+        "hidream",
+        "hunyuanvideo",
+        "ideogram",
+        "kandinsky5_image",
+        "kandinsky5_video",
+        "krea2",
+        "longcat_image",
+        "longcat_video",
+        "ltxvideo",
+        "ltxvideo2",
+        "lumina2",
+        "mageflow",
+        "minimaxh3",
+        "pixart",
+        "qwen_image",
+        "sana",
+        "sanavideo",
+        "sd3",
+        "stable_cascade",
+        "wan_s2v",
+        "wan",
+        "z_image",
+        "zlab_i1",
+    ]
+    attention_activation_offload_supported_models = [
+        "chroma",
+        "flux",
+        "flux2",
+        "hunyuanvideo",
+        "kandinsky5-image",
+        "kandinsky5-video",
+        "kandinsky5_image",
+        "kandinsky5_video",
+        "krea2",
+        "longcat_image",
+        "longcat_video",
+        "ltxvideo2",
+        "mageflow",
+        "minimaxh3",
+        "sd3",
+        "wan",
+        "z_image",
+    ]
+    if getattr(args, "gradient_checkpointing_offload_attention", False):
+        if args.model_family.lower() not in attention_activation_offload_supported_models:
+            raise ValueError(
+                "--gradient_checkpointing_offload_attention is only supported on model families with a clean "
+                f"attention/FFN checkpointing boundary. Currently supported models: {attention_activation_offload_supported_models}"
+            )
+    elif getattr(args, "gradient_checkpointing_offload_prefetch", False):
+        logger.warning(
+            "Gradient checkpointing activation prefetch requires --gradient_checkpointing_offload_attention; disabling prefetch."
+        )
+        args.gradient_checkpointing_offload_prefetch = False
+    args.gradient_checkpointing_offload_pin_memory_max_buckets = normalize_activation_offload_pin_memory_max_buckets(
+        getattr(args, "gradient_checkpointing_offload_pin_memory_max_buckets", 12)
+    )
     if args.gradient_checkpointing_interval == 1:
         args.gradient_checkpointing_interval = None
     if args.gradient_checkpointing_interval is not None:
@@ -159,6 +280,28 @@ def safety_check(args, accelerator):
             args.gradient_checkpointing_interval = None
         if args.gradient_checkpointing_interval == 0:
             raise ValueError("Gradient checkpointing interval must be greater than 0. Please set it to a positive integer.")
+    if getattr(args, "gradient_checkpointing_segment_stride", None) in ("", "None"):
+        args.gradient_checkpointing_segment_stride = None
+    if getattr(args, "gradient_checkpointing_segment_stride", None) is not None:
+        try:
+            args.gradient_checkpointing_segment_stride = int(args.gradient_checkpointing_segment_stride)
+        except (TypeError, ValueError):
+            raise ValueError("Gradient checkpointing segment stride must be a positive integer.")
+        if args.model_family.lower() not in gradient_checkpointing_segment_stride_supported_models:
+            logger.warning(
+                f"Gradient checkpointing segment stride is not supported with {args.model_family} models. "
+                f"Currently supported models: {gradient_checkpointing_segment_stride_supported_models}"
+            )
+            args.gradient_checkpointing_segment_stride = None
+        elif args.gradient_checkpointing_segment_stride <= 0:
+            raise ValueError("Gradient checkpointing segment stride must be greater than 0.")
+        elif args.gradient_checkpointing_interval is None:
+            logger.warning(
+                "Gradient checkpointing segment stride requires --gradient_checkpointing_interval greater than 1; ignoring segment stride."
+            )
+            args.gradient_checkpointing_segment_stride = None
+        elif args.gradient_checkpointing_segment_stride < args.gradient_checkpointing_interval:
+            raise ValueError("Gradient checkpointing segment stride must be at least the checkpointing interval.")
 
     def _normalize_interval(raw_value, cast):
         if raw_value in (None, "", "None"):

@@ -15,6 +15,7 @@ from simpletuner.helpers.training.context_parallel_tensors import (
     shard_cp_tensor,
     unshard_cp_tensor,
 )
+from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
 from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,9 @@ class ErnieImageTransformer2DModel(
 
     def set_gradient_checkpointing_interval(self, interval: int):
         self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
@@ -217,9 +221,14 @@ class ErnieImageTransformer2DModel(
             if (
                 torch.is_grad_enabled()
                 and self.gradient_checkpointing
-                and (self.gradient_checkpointing_interval is None or layer_idx % self.gradient_checkpointing_interval == 0)
+                and should_checkpoint_block(
+                    layer_idx,
+                    True,
+                    self.gradient_checkpointing_interval,
+                    getattr(self, "gradient_checkpointing_segment_stride", None),
+                )
             ):
-                if self.gradient_checkpointing_backend == "unsloth":
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     sequence_first_hidden_states = offloaded_checkpoint(

@@ -48,6 +48,7 @@ class HiDream(ImageModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    COMFYUI_LORA_PRESERVE_COMPONENT_PREFIXES = {"transformer"}
     AUTOENCODER_CLASS = AutoencoderKL
     LATENT_CHANNEL_COUNT = 16
     MAXIMUM_CANVAS_SIZE = 1024**2  # H*W cannot exceed this value.
@@ -117,6 +118,9 @@ class HiDream(ImageModelFoundation):
 
     def supports_crepa_self_flow(self) -> bool:
         return True
+
+    def raw_model_prediction_to_model_prediction(self, raw_prediction: torch.Tensor) -> torch.Tensor:
+        return raw_prediction * -1
 
     def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
         patch_size = int(max(getattr(self.unwrap_model(model=self.model).config, "patch_size", 2), 1))
@@ -739,7 +743,7 @@ class HiDream(ImageModelFoundation):
         # Forward pass through the transformer with ControlNet residuals
         model_pred = self.model(**hidream_transformer_kwargs)[0]
 
-        return {"model_prediction": model_pred * -1}  # the model is trained with inverted velocity :(
+        return {"model_prediction": self.raw_model_prediction_to_model_prediction(model_pred)}
 
     def get_lora_target_layers(self):
         manual_targets = self._get_peft_lora_target_modules()
@@ -762,6 +766,25 @@ class HiDream(ImageModelFoundation):
             )
         return targets
 
+    @staticmethod
+    def _precision_backend(precision: Optional[str]) -> Optional[str]:
+        if not isinstance(precision, str) or precision in ("", "no_change"):
+            return None
+        precision = precision.lower()
+        if "quanto" in precision:
+            return "quanto"
+        if "torchao" in precision:
+            return "torchao"
+        if "sdnq" in precision:
+            return "sdnq"
+        if "bnb" in precision:
+            return "bnb"
+        if precision == "fp8-native":
+            return "fp8-native"
+        if precision == "fp8-transformerengine":
+            return "fp8-transformerengine"
+        return None
+
     def check_user_config(self):
         """
         Checks self.config values against important issues. Optionally implemented in child class.
@@ -770,6 +793,23 @@ class HiDream(ImageModelFoundation):
             raise ValueError(
                 f"{self.NAME} does not support fp8-quanto. Please use fp8-torchao or int8 precision level instead."
             )
+        base_backend = self._precision_backend(self.config.base_model_precision)
+        text_encoder_4_precision = getattr(self.config, "text_encoder_4_precision", None)
+        text_encoder_4_backend = self._precision_backend(text_encoder_4_precision)
+        if base_backend and text_encoder_4_backend and base_backend != text_encoder_4_backend:
+            if text_encoder_4_precision == "int4-quanto":
+                logger.warning(
+                    "HiDream's bundled Llama text encoder int4-quanto setting is only compatible with Quanto "
+                    "base quantisation; setting text_encoder_4_precision=no_change for %s.",
+                    self.config.base_model_precision,
+                )
+                self.config.text_encoder_4_precision = "no_change"
+            else:
+                raise ValueError(
+                    f"{self.NAME} cannot mix base model precision {self.config.base_model_precision!r} with "
+                    f"text_encoder_4_precision={text_encoder_4_precision!r}. Use one quant backend or set "
+                    "text_encoder_4_precision=no_change."
+                )
         t5_max_length = 128
         if self.config.tokenizer_max_length is None or self.config.tokenizer_max_length == 0:
             logger.warning(f"Setting T5 XXL tokeniser max length to {t5_max_length} for {self.NAME}.")

@@ -16,6 +16,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args
 from simpletuner.simpletuner_sdk.server.services.configs_service import ConfigsService
 from simpletuner.simpletuner_sdk.server.services.field_service import FieldService
 from simpletuner.simpletuner_sdk.server.services.training_service import build_config_bundle
@@ -23,6 +24,11 @@ from simpletuner.simpletuner_sdk.server.services.training_service import build_c
 
 class TestAllowEmptyFields(unittest.TestCase):
     """Test allow_empty field handling through the full stack."""
+
+    def test_empty_string_preserved_when_mapping_to_cli_args(self):
+        result = mapping_to_cli_args({"validation_negative_prompt": ""})
+
+        self.assertIn("--validation_negative_prompt=", result)
 
     def test_empty_string_preserved_in_form_submission(self):
         """Test that empty strings are preserved during form normalization."""

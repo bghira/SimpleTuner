@@ -1,12 +1,13 @@
 import unittest
 from io import BytesIO
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import torch
 
 from simpletuner.helpers.models.common import AudioModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.training import validation_audio
-from simpletuner.helpers.training.validation import Validation, ValidationPrompt
+from simpletuner.helpers.training.validation import Validation, ValidationPrompt, prepare_validation_prompt_list
 
 
 class MockAudioModel(AudioModelFoundation):
@@ -74,6 +75,38 @@ class MockAudioModel(AudioModelFoundation):
 
 
 class TestAudioValidation(unittest.TestCase):
+    def test_raw_validation_prompts_do_not_require_text_embed_cache(self):
+        class NoTextCacheModel:
+            def uses_text_embeddings_cache(self):
+                return False
+
+            def requires_conditioning_validation_inputs(self):
+                return False
+
+            def should_precompute_validation_negative_prompt(self):
+                return False
+
+        args = SimpleNamespace(
+            model_family="heartmula",
+            model_flavour="3b",
+            controlnet=False,
+            control=False,
+            validation_using_datasets=False,
+            validation_input=None,
+            validation_prompt_library=False,
+            user_prompt_library=None,
+            validation_prompt="driving pop, bright synths",
+            validation_negative_prompt="None",
+            validation_disable_unconditional=True,
+            data_backend_config="config/examples/heartmula-audio.json",
+        )
+
+        with patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args):
+            metadata = prepare_validation_prompt_list(args, embed_cache=None, model=NoTextCacheModel())
+
+        self.assertEqual([entry.prompt for entry in metadata["validation_prompts"]], [args.validation_prompt])
+        self.assertEqual(metadata["validation_shortnames"], ["validation"])
+
     @patch("simpletuner.helpers.training.validation.StateTracker")
     @patch("simpletuner.helpers.training.validation.validation_audio.save_audio")
     @patch("simpletuner.helpers.training.validation.prepare_validation_prompt_list")

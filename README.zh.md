@@ -81,31 +81,52 @@ SimpleTuner 包含完整的多用户训练平台，具有企业级功能——**
 
 ### 模型架构支持
 
-| 模型 | 参数量 | PEFT LoRA | Lycoris | 全秩 | ControlNet | 量化 | Flow Matching | 文本编码器 |
-|-------|------------|-----------|---------|-----------|------------|--------------|---------------|---------------|
-| **Stable Diffusion XL** | 3.5B | ✓ | ✓ | ✓ | ✓ | int8/nf4 | ✗ | CLIP-L/G |
-| **Stable Diffusion 3** | 2B-8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L/G + T5-XXL |
-| **Flux.1** | 12B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL |
-| **Flux.2** | 32B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | Mistral-3 Small |
-| **Ideogram 4** | 9B | ✓ | ✓ | ✓* | ✗ | fp8/nf4 | ✓ | Qwen3-VL |
-| **ACE-Step** | 3.5B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
-| **HeartMuLa** | 3B | ✓ | ✓ | ✓* | ✗ | int8 | ✗ | 无 |
-| **Chroma 1** | 8.9B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | T5-XXL |
-| **Auraflow** | 6.8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | UMT5-XXL |
-| **PixArt Sigma** | 0.6B-0.9B | ✗ | ✓ | ✓ | ✓ | int8 | ✗ | T5-XXL |
-| **Sana** | 0.6B-4.8B | ✗ | ✓ | ✓ | ✗ | int8 | ✓ | Gemma2-2B |
-| **Lumina2** | 2B | ✓ | ✓ | ✓ | ✗ | int8 | ✓ | Gemma2 |
-| **Kwai Kolors** | 5B | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ChatGLM-6B |
-| **LTX Video** | 5B | ✓ | ✓ | ✓ | ✗ | int8/fp8 | ✓ | T5-XXL |
-| **LTX Video 2** | 19B | ✓ | ✓ | ✓* | ✗ | int8/fp8 | ✓ | Gemma3 |
-| **Wan Video** | 1.3B-14B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
-| **HiDream** | 17B (8.5B MoE) | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL + Llama |
-| **Cosmos2** | 2B-14B | ✗ | ✓ | ✓ | ✗ | int8 | ✓ | T5-XXL |
-| **OmniGen** | 3.8B | ✓ | ✓ | ✓ | ✗ | int8/fp8 | ✓ | T5-XXL |
-| **Qwen Image** | 20B | ✓ | ✓ | ✓* | ✗ | int8/nf4（必需） | ✓ | T5-XXL |
-| **SD 1.x/2.x（旧版）** | 0.9B | ✓ | ✓ | ✓ | ✓ | int8/nf4 | ✗ | CLIP-L |
+SimpleTuner 支持以下模型系列。详细的训练功能支持请参阅[快速入门指南](/documentation/QUICKSTART.zh.md)。
 
-*✓ = 支持，✗ = 不支持，* = 全秩训练需要 DeepSpeed*
+| 模型 | 参数量 | 许可证 | 商业使用 |
+| --- | --- | --- | --- |
+| **ACE-Step** | 3.5B | Apache-2.0 | 是 |
+| **Anima** | 未指定 | CircleStone Labs Non-Commercial License v1.2 | 否（模型）；输出可商用 |
+| **Auraflow** | 6B | Apache-2.0 | 是 |
+| **Boogu-Image** | 未指定 | Apache-2.0 | 是 |
+| **Chroma 1** | 8.9B | Apache-2.0 | 是 |
+| **Cosmos2** | 2B-14B | NVIDIA Open Model License | 是 |
+| **Cosmos3** | 16B-65B | OpenMDW-1.1 | 是 |
+| **DeepFloyd IF** | 0.4B-4.3B stages | DeepFloyd IF License | Abandonware |
+| **ERNIE-Image** | 未指定 | Apache-2.0 | 是 |
+| **Flux.1** | 8B-12B | Apache-2.0 (schnell)；FLUX.1 [dev] Non-Commercial License (dev/Kontext) | 按 checkpoint 不同 |
+| **Flux.2** | 4B-32B | Apache-2.0 (klein 4B)；FLUX Non-Commercial License (dev/klein 9B) | 按 checkpoint 不同 |
+| **HeartMuLa** | 3B | SimpleTuner 中未指定 | 查看上游条款 |
+| **HiDream** | 17B (8.5B MoE) | MIT | 是 |
+| **Hunyuan Video** | 8.3B | AGPL-3.0 | 是（copyleft） |
+| **Ideogram 4** | 9B | Ideogram 4 Non-Commercial | 否 |
+| **Kandinsky 5.0 Image** | 6B (lite) | MIT | 是 |
+| **Kandinsky 5.0 Video** | 2B lite, 19B pro | MIT | 是 |
+| **Kwai Kolors** | 2.7B | Apache-2.0 | Abandonware |
+| **Krea2** | 未指定 | Krea 2 Community License | 是（年收入低于 100 万美元；需安全防护） |
+| **LongCat Image** | 6B | Apache-2.0 | 是 |
+| **LongCat Video** | 13.6B | MIT | 是 |
+| **LTX Video** | ~2.5B | Apache-2.0 | 是 |
+| **LTX Video 2** | 19B | Apache-2.0 | 是 |
+| **Lumina2** | 2B | Apache-2.0 | 是 |
+| **Mage-Flow** | 4B | MIT | 是 |
+| **MiniMax H3** | 33B | MiniMax H3 Community License | 有条件（含地区排除；美国/EU/英国/韩国需要授权） |
+| **OmniGen** | 3.8B | MIT | 是 |
+| **PixArt Sigma** | 0.6B-0.9B | OpenRAIL++ | 是（受限） |
+| **Qwen Image** | 20B | Apache-2.0 | 是 |
+| **Sana** | 0.6B-4.8B | Apache-2.0 | 是 |
+| **Sana Video** | 2B | Apache-2.0 | 是 |
+| **SD 1.x/2.x (Legacy)** | 0.9B | OpenRAIL++ | 是（受限） |
+| **Stable Diffusion 3** | 2B-8B | Stability AI Community License | 是（年收入低于 100 万美元） |
+| **Stable Diffusion XL** | 3.5B | CreativeML OpenRAIL-M | 是（受限） |
+| **Stable Cascade (Stage C)** | 1B, 3.6B prior | SimpleTuner 中未指定 | Abandonware |
+| **Wan Video** | 1.3B-14B | Apache-2.0 | 是 |
+| **Wan S2V** | 14B | Apache-2.0 | 是 |
+| **Z-Image** | 6B | Apache-2.0 | 是 |
+| **Z-Image Omni** | 6B | Apache-2.0 | 是 |
+| **ZLab I1** | 3B | MIT | 是 |
+
+*许可证值在可用时来自 SimpleTuner 模型 helper，并为此前未指定的条目参考上游模型卡/许可证。`SimpleTuner 中未指定` 表示 helper 未命名许可证，且此处未汇总上游条款；使用前请查看上游模型卡。*
 
 ### 高级训练技术
 

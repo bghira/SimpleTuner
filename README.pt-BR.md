@@ -81,31 +81,52 @@ Para detalhes de deploy, veja o [guia enterprise](/documentation/experimental/se
 
 ### Suporte a arquitetura de modelos
 
-| Modelo | Parametros | PEFT LoRA | Lycoris | Full-Rank | ControlNet | Quantizacao | Flow Matching | Text Encoders |
-|-------|------------|-----------|---------|-----------|------------|--------------|---------------|---------------|
-| **Stable Diffusion XL** | 3.5B | ✓ | ✓ | ✓ | ✓ | int8/nf4 | ✗ | CLIP-L/G |
-| **Stable Diffusion 3** | 2B-8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L/G + T5-XXL |
-| **Flux.1** | 12B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL |
-| **Flux.2** | 32B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | Mistral-3 Small |
-| **Ideogram 4** | 9B | ✓ | ✓ | ✓* | ✗ | fp8/nf4 | ✓ | Qwen3-VL |
-| **ACE-Step** | 3.5B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
-| **HeartMuLa** | 3B | ✓ | ✓ | ✓* | ✗ | int8 | ✗ | Nenhum |
-| **Chroma 1** | 8.9B | ✓ | ✓ | ✓* | ✗ | int8/fp8/nf4 | ✓ | T5-XXL |
-| **Auraflow** | 6.8B | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | UMT5-XXL |
-| **PixArt Sigma** | 0.6B-0.9B | ✗ | ✓ | ✓ | ✓ | int8 | ✗ | T5-XXL |
-| **Sana** | 0.6B-4.8B | ✗ | ✓ | ✓ | ✗ | int8 | ✓ | Gemma2-2B |
-| **Lumina2** | 2B | ✓ | ✓ | ✓ | ✗ | int8 | ✓ | Gemma2 |
-| **Kwai Kolors** | 5B | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ | ChatGLM-6B |
-| **LTX Video** | 5B | ✓ | ✓ | ✓ | ✗ | int8/fp8 | ✓ | T5-XXL |
-| **LTX Video 2** | 19B | ✓ | ✓ | ✓* | ✗ | int8/fp8 | ✓ | Gemma3 |
-| **Wan Video** | 1.3B-14B | ✓ | ✓ | ✓* | ✗ | int8 | ✓ | UMT5 |
-| **HiDream** | 17B (8.5B MoE) | ✓ | ✓ | ✓* | ✓ | int8/fp8/nf4 | ✓ | CLIP-L + T5-XXL + Llama |
-| **Cosmos2** | 2B-14B | ✗ | ✓ | ✓ | ✗ | int8 | ✓ | T5-XXL |
-| **OmniGen** | 3.8B | ✓ | ✓ | ✓ | ✗ | int8/fp8 | ✓ | T5-XXL |
-| **Qwen Image** | 20B | ✓ | ✓ | ✓* | ✗ | int8/nf4 (req.) | ✓ | T5-XXL |
-| **SD 1.x/2.x (Legacy)** | 0.9B | ✓ | ✓ | ✓ | ✓ | int8/nf4 | ✗ | CLIP-L |
+SimpleTuner suporta as seguintes familias de modelos. O suporte detalhado a recursos de treinamento fica no [guia Quickstart](/documentation/QUICKSTART.pt-BR.md).
 
-*✓ = Suportado, ✗ = Nao suportado, * = Requer DeepSpeed para treino full-rank*
+| Modelo | Parametros | Licenca | Uso comercial |
+| --- | --- | --- | --- |
+| **ACE-Step** | 3.5B | Apache-2.0 | Sim |
+| **Anima** | Nao especificado | CircleStone Labs Non-Commercial License v1.2 | Nao (modelo); outputs permitidos |
+| **Auraflow** | 6B | Apache-2.0 | Sim |
+| **Boogu-Image** | Nao especificado | Apache-2.0 | Sim |
+| **Chroma 1** | 8.9B | Apache-2.0 | Sim |
+| **Cosmos2** | 2B-14B | NVIDIA Open Model License | Sim |
+| **Cosmos3** | 16B-65B | OpenMDW-1.1 | Sim |
+| **DeepFloyd IF** | 0.4B-4.3B stages | DeepFloyd IF License | Abandonware |
+| **ERNIE-Image** | Nao especificado | Apache-2.0 | Sim |
+| **Flux.1** | 8B-12B | Apache-2.0 (schnell); FLUX.1 [dev] Non-Commercial License (dev/Kontext) | Misto por checkpoint |
+| **Flux.2** | 4B-32B | Apache-2.0 (klein 4B); FLUX Non-Commercial License (dev/klein 9B) | Misto por checkpoint |
+| **HeartMuLa** | 3B | Nao especificada no SimpleTuner | Ver termos upstream |
+| **HiDream** | 17B (8.5B MoE) | MIT | Sim |
+| **Hunyuan Video** | 8.3B | AGPL-3.0 | Sim (copyleft) |
+| **Ideogram 4** | 9B | Ideogram 4 Non-Commercial | Nao |
+| **Kandinsky 5.0 Image** | 6B (lite) | MIT | Sim |
+| **Kandinsky 5.0 Video** | 2B lite, 19B pro | MIT | Sim |
+| **Kwai Kolors** | 2.7B | Apache-2.0 | Abandonware |
+| **Krea2** | Nao especificado | Krea 2 Community License | Sim (menos de $1M em receita; salvaguardas exigidas) |
+| **LongCat Image** | 6B | Apache-2.0 | Sim |
+| **LongCat Video** | 13.6B | MIT | Sim |
+| **LTX Video** | ~2.5B | Apache-2.0 | Sim |
+| **LTX Video 2** | 19B | Apache-2.0 | Sim |
+| **Lumina2** | 2B | Apache-2.0 | Sim |
+| **Mage-Flow** | 4B | MIT | Sim |
+| **MiniMax H3** | 33B | MiniMax H3 Community License | Condicoes aplicaveis (exclusoes territoriais; autorizacao exigida nos EUA/UE/Reino Unido/Coreia do Sul) |
+| **OmniGen** | 3.8B | MIT | Sim |
+| **PixArt Sigma** | 0.6B-0.9B | OpenRAIL++ | Sim (restrito) |
+| **Qwen Image** | 20B | Apache-2.0 | Sim |
+| **Sana** | 0.6B-4.8B | Apache-2.0 | Sim |
+| **Sana Video** | 2B | Apache-2.0 | Sim |
+| **SD 1.x/2.x (Legacy)** | 0.9B | OpenRAIL++ | Sim (restrito) |
+| **Stable Diffusion 3** | 2B-8B | Stability AI Community License | Sim (menos de $1M em receita) |
+| **Stable Diffusion XL** | 3.5B | CreativeML OpenRAIL-M | Sim (restrito) |
+| **Stable Cascade (Stage C)** | 1B, 3.6B prior | Nao especificada no SimpleTuner | Abandonware |
+| **Wan Video** | 1.3B-14B | Apache-2.0 | Sim |
+| **Wan S2V** | 14B | Apache-2.0 | Sim |
+| **Z-Image** | 6B | Apache-2.0 | Sim |
+| **Z-Image Omni** | 6B | Apache-2.0 | Sim |
+| **ZLab I1** | 3B | MIT | Sim |
+
+*Os valores de licenca vem dos model helpers do SimpleTuner quando disponiveis e dos model cards/licencas upstream para entradas que antes nao estavam especificadas. `Nao especificada no SimpleTuner` significa que o helper nao informa uma licenca e nenhum termo upstream esta resumido aqui; verifique o model card upstream antes de usar.*
 
 ### Tecnicas avancadas de treinamento
 

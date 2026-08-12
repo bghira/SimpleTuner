@@ -1,6 +1,5 @@
 import logging
 import os
-import sys
 from contextlib import nullcontext
 from functools import partial
 from inspect import Parameter, signature
@@ -10,6 +9,7 @@ import torch
 
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.quantisation.fp8_native import mark_fp8_native_ddp_ignore_params
+from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
@@ -524,6 +524,21 @@ def _quanto_model(
             "norm_out",
             "context_embedder",
         ]
+    elif StateTracker.get_args().model_family == "mageflow":
+        extra_quanto_args["exclude"] = [
+            # Mage-Flow uses packed latent/text streams with small conditioning
+            # projections that are more sensitive than the large attention/MLP weights.
+            "*norm*",
+            "*pos_embed*",
+            "img_in",
+            "txt_in",
+            "time_text_embed*",
+            "time_sign_embed*",
+            "*img_mod*",
+            "*txt_mod*",
+            "norm_out*",
+            "proj_out",
+        ]
     if quantize_activations:
         logger.info("Quanto: Freezing model weights and activations")
         extra_quanto_args["activations"] = weight_quant
@@ -1027,25 +1042,20 @@ def _sdnq_model(
     if weights_dtype is None:
         raise ValueError(f"Invalid SDNQ precision level: {model_precision}")
 
+    configure_sdnq_compile_mode()
     args = StateTracker.get_args()
-    sdnq_compile_mode = getattr(args, "sdnq_compile_mode", "auto")
-    if sdnq_compile_mode not in (None, "auto"):
-        if "sdnq.common" in sys.modules:
-            logger.warning(
-                "SDNQ was already imported before --sdnq_compile_mode=%s could be applied. "
-                "Set SDNQ_USE_TORCH_COMPILE before process startup to force this mode.",
-                sdnq_compile_mode,
-            )
-        else:
-            os.environ["SDNQ_USE_TORCH_COMPILE"] = "1" if sdnq_compile_mode == "compile" else "0"
 
     try:
         # Silence sdnq startup logs
         logging.getLogger("sdnq").setLevel(logging.WARNING)
         import sdnq.common as sdnq_common
         from sdnq.training import sdnq_training_post_load_quant
+
+        from simpletuner.helpers.training.sdnq_workarounds import apply_sdnq_workarounds
     except ImportError as e:
         raise ImportError(f"To use SDNQ, please install the sdnq library: `pip install sdnq`: {e}")
+
+    apply_sdnq_workarounds()
 
     sdnq_fp8_mm_supported = getattr(sdnq_common, "is_fp8_mm_supported", False)
     if callable(sdnq_fp8_mm_supported):
@@ -1086,6 +1096,21 @@ def _sdnq_model(
     if args.model_family == "flux":
         # Use ".proj_out" for root level proj_out in Flux (inner layers also have proj_out)
         modules_to_not_convert.append(".proj_out")
+    elif args.model_family == "mageflow":
+        modules_to_not_convert.extend(
+            [
+                ".img_in",
+                ".txt_in",
+                ".time_text_embed",
+                ".time_sign_embed",
+                ".norm_out",
+                ".proj_out",
+                "*pos_embed*",
+                "*norm*",
+                "*img_mod*",
+                "*txt_mod*",
+            ]
+        )
     if getattr(args, "sdnq_modules_to_not_convert", None):
         modules_to_not_convert.extend(args.sdnq_modules_to_not_convert)
 

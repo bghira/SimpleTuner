@@ -10,6 +10,7 @@ from simpletuner.helpers.models.boogu_image.lora_pipeline import BooguImageLoraL
 from simpletuner.helpers.models.boogu_image.model import BooguImage
 from simpletuner.helpers.models.boogu_image.pipeline import BooguImagePipeline, retrieve_timesteps
 from simpletuner.helpers.models.boogu_image.rope import BooguImageDoubleStreamRotaryPosEmbed
+from simpletuner.helpers.models.boogu_image.transformer import BooguImageTransformer2DModel
 from simpletuner.helpers.models.common import PipelineTypes
 from simpletuner.helpers.models.flux.model import Flux
 from simpletuner.helpers.training.attention_backend import _DIFFUSERS_BACKEND_ALIASES
@@ -186,6 +187,63 @@ class BooguImageModelTests(unittest.TestCase):
     def test_torchao_filter_skips_boogu_reference_image_modules(self):
         self.assertFalse(_torchao_filter_fn(torch.nn.Linear(16, 16), "ref_image_refiner.0.attn.to_q"))
         self.assertTrue(_torchao_filter_fn(torch.nn.Linear(16, 16), "context_refiner.0.attn.to_q"))
+
+    def test_patch_embed_refine_clones_custom_autograd_outputs_before_layout_writes(self):
+        class PassThroughFunction(torch.autograd.Function):
+            @staticmethod
+            def forward(ctx, tensor):
+                return tensor
+
+            @staticmethod
+            def backward(ctx, grad_output):
+                return grad_output
+
+        class PassThroughModule(torch.nn.Module):
+            def forward(self, tensor):
+                return PassThroughFunction.apply(tensor)
+
+        transformer = BooguImageTransformer2DModel(
+            patch_size=2,
+            in_channels=1,
+            hidden_size=4,
+            num_layers=0,
+            num_double_stream_layers=0,
+            num_refiner_layers=0,
+            num_attention_heads=1,
+            num_kv_heads=1,
+            axes_dim_rope=(1, 1, 2),
+            axes_lens=(4, 4, 4),
+            instruction_feature_configs={
+                "instruction_feat_dim": 4,
+                "reduce_type": "mean",
+                "num_instruction_feat_layers": 1,
+            },
+        )
+        transformer.x_embedder = PassThroughModule()
+        transformer.ref_image_patch_embedder = PassThroughModule()
+
+        hidden_states = torch.randn(1, 4, 4, requires_grad=True)
+        ref_image_hidden_states = torch.randn(1, 2, 4, requires_grad=True)
+        padded_img_mask = torch.ones(1, 4, dtype=torch.bool)
+        padded_ref_img_mask = torch.ones(1, 2, dtype=torch.bool)
+        noise_rotary_emb = torch.zeros(1, 4, 4)
+        ref_img_rotary_emb = torch.zeros(1, 2, 4)
+        temb = torch.zeros(1, 4)
+
+        output = transformer.img_patch_embed_and_refine(
+            hidden_states,
+            ref_image_hidden_states,
+            padded_img_mask,
+            padded_ref_img_mask,
+            noise_rotary_emb,
+            ref_img_rotary_emb,
+            [[2]],
+            [4],
+            temb,
+        )
+
+        self.assertEqual(tuple(output.shape), (1, 6, 4))
+        output.sum().backward()
 
     def test_boogu_rotary_complex_inputs_use_real_valued_math(self):
         x = torch.randn(2, 5, 3, 8, dtype=torch.bfloat16)

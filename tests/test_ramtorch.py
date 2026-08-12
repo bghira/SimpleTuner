@@ -175,6 +175,40 @@ class RamTorchUtilsTests(unittest.TestCase):
         self.assertIn("weight", dict(model[0].named_buffers(recurse=False)))
         self.assertTrue(getattr(model[0].weight, "is_ramtorch", False))
 
+    def test_replace_scaled_fp8_linear_preserves_scale_and_output(self):
+        from simpletuner.helpers.models.ideogram.quantized_loading import FP8_WEIGHT_DTYPE, Fp8Linear
+        from simpletuner.helpers.ramtorch_extensions import CPUBouncingFp8Linear
+
+        source = Fp8Linear(3, 2, bias=True, compute_dtype=torch.float32)
+        source.weight.copy_(torch.tensor([[1.0, -2.0, 0.5], [2.0, 1.0, -1.0]]).to(FP8_WEIGHT_DTYPE))
+        source.weight_scale.copy_(torch.tensor([0.25, 2.0]))
+        source.bias.copy_(torch.tensor([0.5, -0.25]))
+        model = nn.Sequential(source)
+        x = torch.tensor([[1.0, 2.0, -1.0]], requires_grad=True)
+        expected = source(x)
+        expected.sum().backward()
+        expected_grad = x.grad.detach().clone()
+
+        x.grad = None
+        with patch.object(
+            ramtorch_utils,
+            "ensure_available",
+            return_value=self._build_stub_imports(lambda mod, device=None: None),
+        ):
+            replaced = ramtorch_utils.replace_linear_layers_with_ramtorch(model, device="cpu")
+
+        self.assertEqual(replaced, 1)
+        self.assertIsInstance(model[0], CPUBouncingFp8Linear)
+        self.assertEqual(model[0].weight.dtype, FP8_WEIGHT_DTYPE)
+        self.assertEqual(model[0].weight_scale.dtype, torch.float32)
+        self.assertTrue(getattr(model[0].weight, "is_ramtorch", False))
+        self.assertTrue(getattr(model[0].weight_scale, "is_ramtorch", False))
+
+        actual = model(x)
+        actual.sum().backward()
+        torch.testing.assert_close(actual, expected)
+        torch.testing.assert_close(x.grad, expected_grad)
+
     def test_move_embeddings_to_device_skips_ramtorch_buffers(self):
         class _BufferModel(nn.Module):
             def __init__(self):
@@ -191,6 +225,20 @@ class RamTorchUtilsTests(unittest.TestCase):
         self.assertEqual(model.regular_buffer.device.type, "meta")
         self.assertEqual(model.ramtorch_buffer.device.type, "cpu")
         self.assertTrue(getattr(model.ramtorch_buffer, "is_ramtorch", False))
+
+    def test_ramtorch_profile_reset_resets_cuda_peak_memory_stats(self):
+        from simpletuner.helpers.ramtorch import profiling as ramtorch_profile
+
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.device_count", return_value=2),
+            patch("torch.cuda.reset_peak_memory_stats") as reset_peak_memory_stats,
+        ):
+            ramtorch_profile.reset_for_new_run()
+
+        self.assertEqual(reset_peak_memory_stats.call_count, 2)
+        self.assertEqual(str(reset_peak_memory_stats.call_args_list[0].args[0]), "cuda:0")
+        self.assertEqual(str(reset_peak_memory_stats.call_args_list[1].args[0]), "cuda:1")
 
     def test_torchao_int8_ramtorch_backward_uses_dense_weight_view(self):
         try:
@@ -313,9 +361,18 @@ class RamTorchUtilsTests(unittest.TestCase):
         ignored = ramtorch_utils.mark_ddp_ignore_params(model)
         self.assertEqual(ignored, 3)
         ignore_set = getattr(model, "_ddp_params_and_buffers_to_ignore", set())
+        self.assertNotIn("linear_a.weight", ignore_set)
+        self.assertNotIn("linear_a.bias", ignore_set)
         self.assertIn("linear_b.weight", ignore_set)
         self.assertIn("linear_b.bias", ignore_set)
         self.assertIn("ramtorch_buffer", ignore_set)
+        self.assertEqual(ramtorch_utils.mark_ddp_ignore_params(model), 0)
+
+    def test_mark_ddp_ignore_params_skips_plain_cpu_modules(self):
+        model = nn.Sequential(nn.Linear(2, 2), nn.LayerNorm(2))
+        ignored = ramtorch_utils.mark_ddp_ignore_params(model)
+        self.assertEqual(ignored, 0)
+        self.assertFalse(hasattr(model, "_ddp_params_and_buffers_to_ignore"))
 
     def test_prefetch_hooks_follow_ramtorch_module_order(self):
         from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
@@ -621,6 +678,53 @@ class RamTorchUtilsTests(unittest.TestCase):
         model = nn.Sequential(_PrefetchModule(), _PrefetchModule())
         with patch.dict("os.environ", {"SIMPLETUNER_RAMTORCH_PREFETCH_POLICY": "sync"}):
             self.assertEqual(add_ramtorch_prefetch_hooks(model), [])
+
+    def test_prefetch_hooks_start_successor_before_current_forward(self):
+        from simpletuner.helpers.ramtorch_extensions import add_ramtorch_prefetch_hooks
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        StateTracker.reset_ramtorch_prefetch_orders()
+
+        class _PrefetchModule(nn.Module):
+            is_ramtorch = True
+
+            def __init__(self, label, calls):
+                super().__init__()
+                self.label = label
+                self.calls = calls
+
+            def prefetch_forward(self):
+                self.calls.append(("prefetch", self.label))
+                return True
+
+            def forward(self, x):
+                self.calls.append(("forward", self.label))
+                return x
+
+        calls = []
+        model = nn.Sequential(
+            _PrefetchModule("first", calls),
+            _PrefetchModule("second", calls),
+            _PrefetchModule("third", calls),
+        )
+
+        hooks = add_ramtorch_prefetch_hooks(model, component_label="prehook-timing-test")
+        try:
+            model(torch.ones(1))
+        finally:
+            for hook in hooks:
+                hook.remove()
+
+        self.assertEqual(
+            calls,
+            [
+                ("prefetch", "second"),
+                ("forward", "first"),
+                ("prefetch", "third"),
+                ("forward", "second"),
+                ("forward", "third"),
+            ],
+        )
 
     def test_bundled_linear_skips_frozen_weight_gradients(self):
         from simpletuner.helpers.ramtorch.modules.linear import Linear

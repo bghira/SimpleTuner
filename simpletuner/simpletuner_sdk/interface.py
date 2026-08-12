@@ -287,6 +287,7 @@ class WebInterface:
             "input_perturbation": 0.0,
             "flow_sigmoid_scale": 1.0,
             "flow_schedule_shift": 3.0,
+            "audio_flow_schedule_shift": None,
             "flux_guidance_value": 1.0,
             "ema_decay": 0.995,
         }

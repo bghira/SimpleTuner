@@ -1,12 +1,56 @@
+import inspect
+import json
 import unittest
+from unittest.mock import patch
 
 import torch
 
 from simpletuner.helpers.models.z_image.model import ZImage
+from simpletuner.helpers.models.z_image.quantized_loading import _decode_comfy_quant, _map_zimage_comfy_key_to_diffusers
 from simpletuner.helpers.models.z_image.transformer import ZImageTransformer2DModel
 
 
 class ZImageTransformerPaddingTests(unittest.TestCase):
+    def test_transformer_exposes_single_file_loader(self):
+        parameters = inspect.signature(ZImageTransformer2DModel.from_single_file).parameters
+
+        self.assertIn("pretrained_model_link_or_path", parameters)
+        self.assertIn("filename", parameters)
+        self.assertIn("torch_dtype", parameters)
+
+    def test_convrot_comfy_key_mapping(self):
+        self.assertEqual(
+            _map_zimage_comfy_key_to_diffusers("x_embedder.weight"),
+            ["all_x_embedder.2-1.weight"],
+        )
+        self.assertEqual(
+            _map_zimage_comfy_key_to_diffusers("final_layer.linear.weight"),
+            ["all_final_layer.2-1.linear.weight"],
+        )
+        self.assertEqual(
+            _map_zimage_comfy_key_to_diffusers("layers.3.attention.q_norm.weight"),
+            ["layers.3.attention.norm_q.weight"],
+        )
+        self.assertEqual(
+            _map_zimage_comfy_key_to_diffusers("layers.3.attention.out.weight"),
+            ["layers.3.attention.to_out.0.weight"],
+        )
+        self.assertEqual(
+            _map_zimage_comfy_key_to_diffusers("layers.3.attention.qkv.weight"),
+            [
+                "layers.3.attention.to_q.weight",
+                "layers.3.attention.to_k.weight",
+                "layers.3.attention.to_v.weight",
+            ],
+        )
+
+    def test_convrot_comfy_quant_metadata_decodes(self):
+        metadata = {"format": "int8_tensorwise", "convrot": True, "convrot_groupsize": 64, "per_row": True}
+        json_bytes = json.dumps(metadata).encode("utf-8")
+        payload = torch.tensor(list(json_bytes), dtype=torch.uint8)
+
+        self.assertEqual(_decode_comfy_quant(payload), metadata)
+
     def test_patchify_handles_zero_padding_len(self):
         model = ZImageTransformer2DModel(
             all_patch_size=(2,),
@@ -71,6 +115,35 @@ class ZImageTransformerPaddingTests(unittest.TestCase):
         # Should not raise
         model._set_gradient_checkpointing(enable=True)
         self.assertTrue(model.gradient_checkpointing)
+
+    def test_ffn_backend_disables_segmented_checkpointing(self):
+        model = ZImageTransformer2DModel(
+            all_patch_size=(2,),
+            all_f_patch_size=(1,),
+            in_channels=1,
+            dim=8,
+            n_layers=2,
+            n_refiner_layers=1,
+            n_heads=1,
+            n_kv_heads=1,
+            norm_eps=1e-5,
+            qk_norm=False,
+            cap_feat_dim=4,
+            rope_theta=1.0,
+            t_scale=1.0,
+            axes_dims=[2, 2, 4],
+            axes_lens=[64, 64, 64],
+        )
+        model.train()
+        model._set_gradient_checkpointing(enable=True)
+        model.set_gradient_checkpointing_backend("torch-ffn")
+        model.set_gradient_checkpointing_interval(2)
+
+        with patch("simpletuner.helpers.models.z_image.transformer.checkpoint_sequential_state") as segmented:
+            output = model([torch.zeros(1, 1, 8, 8, requires_grad=True)], torch.full((1,), 0.5), [torch.zeros(2, 4)])[0]
+
+        segmented.assert_not_called()
+        self.assertEqual(output[0].shape, (1, 1, 8, 8))
 
     def test_context_parallel_only_marks_unified_transformer_blocks(self):
         model = ZImageTransformer2DModel(

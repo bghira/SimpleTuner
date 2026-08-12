@@ -280,6 +280,10 @@ class ParquetMetadataBackend(MetadataBackend):
                     )
             # Load filtering statistics if present
             self.filtering_statistics = cache_data.get("filtering_statistics")
+            try:
+                self.load_image_metadata()
+            except Exception as e:
+                logger.warning(f"Error loading parquet metadata cache, continuing with empty metadata: {e}")
         else:
             logger.warning("No cache file found, starting a fresh one.")
 
@@ -344,9 +348,15 @@ class ParquetMetadataBackend(MetadataBackend):
                 ignore_existing_cache=ignore_existing_cache,
             )
         if not new_files:
+            if not self.image_metadata_loaded:
+                try:
+                    self.load_image_metadata()
+                except Exception as e:
+                    raise Exception(f"Error loading image metadata. Consider removing the metadata file manually: {e}")
             if self.bucket_report:
                 self.bucket_report.update_statistics(statistics)
                 self.bucket_report.record_bucket_snapshot("post_refresh", self.aspect_ratio_bucket_indices)
+            self._ensure_metadata_for_cached_buckets()
             return
 
         if ignore_existing_cache:
@@ -421,14 +431,17 @@ class ParquetMetadataBackend(MetadataBackend):
         if isinstance(series_or_scalar, pd.Series):
             series_or_scalar = series_or_scalar.iloc[0]  # Just unwrap the first value
         elif isinstance(series_or_scalar, str):
-            series_or_scalar = float(series_or_scalar) if "." in series_or_scalar else int(series_or_scalar)
+            try:
+                series_or_scalar = float(series_or_scalar) if "." in series_or_scalar else int(series_or_scalar)
+            except ValueError:
+                return series_or_scalar
 
         # After unwrapping, if it's an np.int* or np.float*, cast to python int/float
         if isinstance(series_or_scalar, np.integer):
             return int(series_or_scalar)
         elif isinstance(series_or_scalar, np.floating):
             return float(series_or_scalar)
-        elif isinstance(series_or_scalar, (int, float)):
+        elif isinstance(series_or_scalar, (int, float, str, list, tuple, dict)):
             return series_or_scalar
         elif series_or_scalar is None:
             return None
@@ -708,6 +721,11 @@ class ParquetMetadataBackend(MetadataBackend):
                     duration_seconds = None
 
             overrides = {}
+            caption_column = self.parquet_config.get("caption_column")
+            caption_value = self._extract_audio_value(database_row, caption_column)
+            if caption_value:
+                overrides["tags"] = caption_value
+                overrides["prompt"] = caption_value
             lyrics_column = self.parquet_config.get("lyrics_column")
             if lyrics_column:
                 lyrics_value = self._extract_audio_value(database_row, lyrics_column)

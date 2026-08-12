@@ -1,7 +1,7 @@
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
+from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ParserType, ValidationRule, ValidationRuleType
 
 if TYPE_CHECKING:
     from ..registry import FieldRegistry
@@ -514,6 +514,25 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="Automatically calculates optimal shift for different resolutions. May require learning rate adjustment.",
             importance=ImportanceLevel.ADVANCED,
             order=26,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="audio_flow_schedule_shift",
+            arg_name="--audio_flow_schedule_shift",
+            ui_label="Audio Schedule Shift",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=None,
+            parser_type=ParserType.FLOAT,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
+            help_text="Shift the audio noise schedule for flow-matching models with audio latents",
+            tooltip="MiniMax-H3 uses this to keep audio latents on their native schedule while video uses a separate shift.",
+            importance=ImportanceLevel.ADVANCED,
+            order=26.2,
         )
     )
 
@@ -1791,6 +1810,24 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             ],
             help_text="Communication primitive used to rotate K/V shards during context parallel attention.",
             tooltip="All-gather works for standalone and FSDP2 context parallelism; all-to-all is available only with the FSDP2 torch CP path.",
+            importance=ImportanceLevel.ADVANCED,
+            order=19,
+            platform_specific=["cuda"],
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="find_unused_parameters",
+            arg_name="--find_unused_parameters",
+            ui_label="Find Unused DDP Parameters",
+            field_type=FieldType.CHECKBOX,
+            tab="hardware",
+            section="accelerate",
+            subsection="advanced",
+            default_value=None,
+            help_text="Enable DistributedDataParallel unused-parameter detection for conditional training graphs.",
+            tooltip="Leave unset for the model default. Enable when some trainable parameters do not participate in every backward pass.",
             importance=ImportanceLevel.ADVANCED,
             order=19,
             platform_specific=["cuda"],

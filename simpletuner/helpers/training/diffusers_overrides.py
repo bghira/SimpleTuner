@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from functools import wraps
 from typing import Dict, Iterable, Optional
 
 import torch
@@ -477,6 +478,121 @@ def patch_attention_flexible():
     logger.info(f"Patched Attention with flexible fusion (permanent={PERMANENT_FUSION})")
 
 
+def _collect_physically_merged_lora_adapters(pipeline, components: Optional[Iterable[str]] = None) -> set[str]:
+    from peft.tuners.tuners_utils import BaseTunerLayer
+
+    merged_adapters: set[str] = set()
+    component_names = components if components is not None else getattr(pipeline, "_lora_loadable_modules", [])
+    for component_name in component_names:
+        component = getattr(pipeline, component_name, None)
+        if not isinstance(component, nn.Module):
+            continue
+        for module in component.modules():
+            if isinstance(module, BaseTunerLayer):
+                merged_adapters.update(adapter for adapter in module.merged_adapters if adapter)
+    return merged_adapters
+
+
+def patch_lora_unfuse_merged_adapters_tracking():
+    from diffusers.loaders.lora_base import LoraBaseMixin
+
+    if getattr(LoraBaseMixin, "_simpletuner_unfuse_lora_tracking_patch", False):
+        return
+
+    original_unfuse_lora = LoraBaseMixin.unfuse_lora
+
+    @wraps(original_unfuse_lora)
+    def unfuse_lora_with_merged_adapter_resync(self, components: Optional[list[str]] = None, **kwargs):
+        components = components or []
+        tracked_before = set(getattr(self, "_merged_adapters", set()) or set())
+        result = original_unfuse_lora(self, components=components, **kwargs)
+        if components:
+            components_to_unfuse = set(components)
+            remaining_components = [
+                component_name
+                for component_name in getattr(self, "_lora_loadable_modules", [])
+                if component_name not in components_to_unfuse
+            ]
+        else:
+            remaining_components = None
+        physically_merged = _collect_physically_merged_lora_adapters(self, remaining_components)
+        currently_tracked = set(getattr(self, "_merged_adapters", set()) or set())
+        self._merged_adapters = (currently_tracked | tracked_before) & physically_merged
+        return result
+
+    LoraBaseMixin.unfuse_lora = unfuse_lora_with_merged_adapter_resync
+    LoraBaseMixin._simpletuner_unfuse_lora_tracking_patch = True
+    LoraBaseMixin._simpletuner_original_unfuse_lora = original_unfuse_lora
+
+
+def _patched_cudnn_attention_backward_op(ctx, grad_out: torch.Tensor, *args, **kwargs):
+    query, key, value, out, lse, cum_seq_q, cum_seq_k, philox_seed, philox_offset = ctx.saved_tensors
+
+    grad_out = grad_out.transpose(1, 2).contiguous()
+
+    grad_query, grad_key, grad_value = torch.ops.aten._scaled_dot_product_cudnn_attention_backward(
+        grad_out,
+        query,
+        key,
+        value,
+        out,
+        logsumexp=lse,
+        philox_seed=philox_seed,
+        philox_offset=philox_offset,
+        attn_bias=ctx.attn_mask,
+        cum_seq_q=cum_seq_q,
+        cum_seq_k=cum_seq_k,
+        max_q=ctx.max_q,
+        max_k=ctx.max_k,
+        dropout_p=ctx.dropout_p,
+        is_causal=ctx.is_causal,
+        scale=ctx.scale,
+    )
+    grad_query, grad_key, grad_value = (x.transpose(1, 2).contiguous() for x in (grad_query, grad_key, grad_value))
+
+    return grad_query, grad_key, grad_value
+
+
+def _patched_native_flash_attention_backward_op(ctx, grad_out: torch.Tensor, *args, **kwargs):
+    query, key, value, out, lse, cum_seq_q, cum_seq_k, philox_seed, philox_offset = ctx.saved_tensors
+
+    grad_out = grad_out.transpose(1, 2).contiguous()
+
+    grad_query, grad_key, grad_value = torch.ops.aten._scaled_dot_product_flash_attention_backward(
+        grad_out,
+        query,
+        key,
+        value,
+        out,
+        logsumexp=lse,
+        philox_seed=philox_seed,
+        philox_offset=philox_offset,
+        cum_seq_q=cum_seq_q,
+        cum_seq_k=cum_seq_k,
+        max_q=ctx.max_q,
+        max_k=ctx.max_k,
+        dropout_p=ctx.dropout_p,
+        is_causal=ctx.is_causal,
+        scale=ctx.scale,
+    )
+    grad_query, grad_key, grad_value = (x.transpose(1, 2).contiguous() for x in (grad_query, grad_key, grad_value))
+
+    return grad_query, grad_key, grad_value
+
+
+def patch_templated_attention_backward_layout():
+    if getattr(attention_dispatch, "_simpletuner_templated_attention_backward_layout_patch", False):
+        return
+
+    attention_dispatch._simpletuner_original_cudnn_attention_backward_op = attention_dispatch._cudnn_attention_backward_op
+    attention_dispatch._simpletuner_original_native_flash_attention_backward_op = (
+        attention_dispatch._native_flash_attention_backward_op
+    )
+    attention_dispatch._cudnn_attention_backward_op = _patched_cudnn_attention_backward_op
+    attention_dispatch._native_flash_attention_backward_op = _patched_native_flash_attention_backward_op
+    attention_dispatch._simpletuner_templated_attention_backward_layout_patch = True
+
+
 # Convenience functions for different use cases
 def enable_permanent_fusion():
     """Enable permanent fusion mode globally"""
@@ -495,6 +611,8 @@ def enable_reversible_fusion():
 patch_flash_attn2_hub_kernel_attrs()
 patch_ring_anything_attention_lse_shape()
 patch_attention_flexible()
+patch_lora_unfuse_merged_adapters_tracking()
+patch_templated_attention_backward_layout()
 
 
 def _pad_qwen_hidden_states_to_fixed_length(
@@ -841,9 +959,18 @@ def patch_fsdp2_state_dict_loader() -> None:
     if original is None:
         return
 
-    def replacement(accelerator: Accelerator, model: torch.nn.Module, full_sd: dict):
+    def replacement(
+        accelerator: Accelerator,
+        model: torch.nn.Module,
+        full_sd: dict,
+        cpu_offload: Optional[bool] = None,
+    ):
         import torch.distributed as dist
+        from torch.distributed.fsdp import CPUOffloadPolicy
         from torch.distributed.tensor import distribute_tensor
+
+        if cpu_offload is None:
+            cpu_offload = isinstance(accelerator.state.fsdp_plugin.cpu_offload, CPUOffloadPolicy)
 
         meta_state = model.state_dict()
         shards: Dict[str, torch.Tensor] = {}
@@ -873,6 +1000,8 @@ def patch_fsdp2_state_dict_loader() -> None:
                     dist.broadcast(shard, src=0, group=dist.group.WORLD)
                     shard = to_contiguous_and_cast(shard, full_param)
 
+                if cpu_offload:
+                    shard = shard.to("cpu")
                 shards[name] = shard
         else:
             for name, sharded_param in meta_state.items():
@@ -886,6 +1015,8 @@ def patch_fsdp2_state_dict_loader() -> None:
                     device = accelerator.device if accelerator.device.type != "meta" else torch.device("cpu")
                     shard = torch.empty(sharded_param.size(), device=device, dtype=sharded_param.dtype)
                     dist.broadcast(shard, src=0, group=dist.group.WORLD)
+                if cpu_offload:
+                    shard = shard.to("cpu")
                 shards[name] = shard
 
         model.load_state_dict(shards, assign=True)

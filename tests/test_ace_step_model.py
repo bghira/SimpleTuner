@@ -24,6 +24,7 @@ class TestACEStepModel(unittest.TestCase):
         self.config.pretrained_model_name_or_path = "dummy_path"
         self.config.pretrained_transformer_model_name_or_path = None
         self.config.pretrained_transformer_subfolder = None
+        self.config.qwen_text_encoder_model_name_or_path = None
         self.config.model_flavour = "base"
         self.config.controlnet = False
         self.config.peft_lora_target_modules = None
@@ -183,6 +184,21 @@ class TestACEStepModel(unittest.TestCase):
         self.assertIsNotNone(layout)
         self.assertEqual(layout["variant_path"], str(root / "acestep-v15-base"))
         self.assertEqual(layout["tokenizer_path"], str(root / "Qwen3-Embedding-0.6B"))
+        self.assertEqual(layout["vae_path"], str(root / "vae"))
+
+    def test_resolve_v15_layout_uses_qwen_text_encoder_override(self):
+        self.config.model_flavour = "v15-base"
+        self.config.qwen_text_encoder_model_name_or_path = "custom/qwen"
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "vae").mkdir()
+            (root / "acestep-v15-base").mkdir()
+            torch.save(torch.zeros(1, 64, 4), root / "acestep-v15-base" / "silence_latent.pt")
+
+            layout = self.model._resolve_v15_layout(str(root))
+
+        self.assertIsNotNone(layout)
+        self.assertEqual(layout["tokenizer_path"], "custom/qwen")
         self.assertEqual(layout["vae_path"], str(root / "vae"))
 
     def test_resolve_v15_layout_caches_negative_result_for_same_base_path(self):

@@ -43,6 +43,7 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
 from simpletuner.helpers.utils.patching import MutableModuleList, PatchableModule
@@ -1098,6 +1099,9 @@ class QwenImageTransformer2DModel(
         self.proj_out = nn.Linear(self.inner_dim, patch_size * patch_size * self.out_channels, bias=True)
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
         self._musubi_block_swap = MusubiBlockSwapManager.build(
             depth=num_layers,
             blocks_to_swap=musubi_blocks_to_swap,
@@ -1108,6 +1112,15 @@ class QwenImageTransformer2DModel(
         # TREAD support
         self._tread_router = None
         self._tread_routes = None
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     def set_router(self, router: TREADRouter, routes: Optional[List[Dict]] = None):
         """Set TREAD router and routes for token reduction during training."""
@@ -1369,7 +1382,12 @@ class QwenImageTransformer2DModel(
                 hidden_states = router.start_route(hidden_states, tread_mask_info)
                 routing_now = True
 
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
+            if torch.is_grad_enabled() and should_checkpoint_block(
+                index_block,
+                self.gradient_checkpointing,
+                self.gradient_checkpointing_interval,
+                self.gradient_checkpointing_segment_stride,
+            ):
 
                 def create_custom_forward(module, mod_idx):
                     def custom_forward(
@@ -1403,7 +1421,14 @@ class QwenImageTransformer2DModel(
 
                     return custom_forward
 
-                encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    checkpoint_fn = offloaded_checkpoint
+                else:
+                    checkpoint_fn = self._gradient_checkpointing_func
+
+                encoder_hidden_states, hidden_states = checkpoint_fn(
                     create_custom_forward(block, modulate_index),
                     hidden_states,
                     encoder_hidden_states,

@@ -5,10 +5,12 @@ import os
 import shutil
 import types
 from contextlib import contextmanager
+from dataclasses import dataclass
 
 import torch
 import torch.distributed.checkpoint as dcp
 from accelerate.utils import DistributedType
+from accelerate.utils.versions import compare_versions
 from diffusers.training_utils import _collate_lora_metadata
 from diffusers.utils import convert_state_dict_to_diffusers, convert_unet_state_dict_to_peft
 from diffusers.utils.state_dict_utils import StateDictType
@@ -36,6 +38,14 @@ else:
 MODEL_SPEC_VERSION = "1.0.1"
 LORA_SAFETENSORS_FILENAME = "pytorch_lora_weights.safetensors"
 EMA_SAFETENSORS_FILENAME = "ema_model.safetensors"
+
+
+@dataclass(frozen=True)
+class _FSDP2PipelineExportSpec:
+    pipeline_type: PipelineTypes
+    component_name: str
+    model_class: type[torch.nn.Module]
+    model_config: object
 
 
 def merge_safetensors_files(directory, metadata=None):
@@ -123,12 +133,148 @@ def _materialize_state_dict_for_save(state_dict: dict[str, torch.Tensor]) -> dic
     return {name: _materialize_tensor_for_save(tensor) for name, tensor in state_dict.items()}
 
 
+def _get_fsdp2_pipeline_export_spec(model) -> _FSDP2PipelineExportSpec:
+    is_controlnet = bool(getattr(model.config, "controlnet", False))
+    pipeline_type = PipelineTypes.CONTROLNET if is_controlnet else model.DEFAULT_PIPELINE_TYPE
+    pipeline_class = model.PIPELINE_CLASSES.get(pipeline_type)
+    if pipeline_class is None:
+        raise RuntimeError(
+            f"FSDP2 full-model export requires a {pipeline_type.value!r} pipeline for {type(model).__name__}."
+        )
+    if not callable(getattr(pipeline_class, "save_pretrained", None)):
+        raise RuntimeError(
+            f"FSDP2 full-model export is unavailable because {pipeline_class.__name__} "
+            "does not support save_pretrained()."
+        )
+
+    default_component_name = "controlnet" if is_controlnet else model.MODEL_TYPE.value
+    component_name_attr = f"{default_component_name}_name"
+    component_name = getattr(pipeline_class, component_name_attr, default_component_name)
+    if not isinstance(component_name, str) or not component_name:
+        raise RuntimeError(
+            f"FSDP2 full-model export requires {pipeline_class.__name__}.{component_name_attr} "
+            "to name a registered pipeline component."
+        )
+
+    component = _get_trained_component_for_save(model)
+    if component is None:
+        raise RuntimeError("FSDP2 full-model export requires a trained model component.")
+    model_class = type(component)
+    model_config = getattr(component, "config", None)
+    if model_config is None or not callable(getattr(model_class, "from_config", None)):
+        raise RuntimeError(
+            f"FSDP2 full-model export cannot use {model_class.__name__}: "
+            "the component cannot be reconstructed from its config."
+        )
+
+    try:
+        with torch.device("meta"):
+            rebuilt_component = model_class.from_config(model_config)
+        component_state = component.state_dict()
+        rebuilt_state = rebuilt_component.state_dict()
+    except Exception as exc:
+        raise RuntimeError(f"FSDP2 full-model export cannot reconstruct {model_class.__name__} from its config.") from exc
+
+    component_shapes = {name: tuple(value.shape) for name, value in component_state.items()}
+    rebuilt_shapes = {name: tuple(value.shape) for name, value in rebuilt_state.items()}
+    if component_shapes != rebuilt_shapes:
+        raise RuntimeError(
+            f"FSDP2 full-model export cannot use {model_class.__name__}: "
+            "the trained component cannot be reconstructed exactly from its config."
+        )
+
+    return _FSDP2PipelineExportSpec(
+        pipeline_type=pipeline_type,
+        component_name=component_name,
+        model_class=model_class,
+        model_config=model_config,
+    )
+
+
+def _materialize_fsdp2_tensor_for_save(accelerator, tensor: torch.Tensor) -> torch.Tensor | None:
+    if type(tensor).__name__ == "DTensor" and hasattr(tensor, "full_tensor"):
+        if tensor.device.type == "cpu":
+            tensor = tensor.to(accelerator.device)
+        tensor = tensor.full_tensor()
+    if not accelerator.is_main_process:
+        return None
+    return _materialize_tensor_for_save(tensor)
+
+
+def _materialize_fsdp2_state_dict_for_save(accelerator, component, ema_model=None) -> dict[str, torch.Tensor]:
+    prepared_component = component
+    component = unwrap_model(accelerator, component)
+    state_dict = accelerator.get_state_dict(prepared_component, unwrap=False)
+
+    if ema_model is not None:
+        trainable_parameters = [(name, param) for name, param in component.named_parameters() if param.requires_grad]
+        shadow_params = list(ema_model.shadow_params)
+        tracked_param_ids = list(getattr(ema_model, "_tracked_param_ids", ()))
+        if len(trainable_parameters) != len(shadow_params) or tracked_param_ids != [
+            id(param) for _, param in trainable_parameters
+        ]:
+            raise RuntimeError("FSDP2 EMA parameters do not match the trainable component parameters.")
+
+        component_state = component.state_dict()
+        for (name, parameter), shadow in zip(trainable_parameters, shadow_params):
+            if name not in component_state:
+                raise RuntimeError(f"FSDP2 EMA parameter {name!r} is absent from the component state dict.")
+            if shadow.shape != parameter.shape:
+                raise RuntimeError(
+                    f"FSDP2 EMA shape mismatch for {name!r}: expected {tuple(parameter.shape)}, "
+                    f"got {tuple(shadow.shape)}."
+                )
+            materialized = _materialize_fsdp2_tensor_for_save(accelerator, shadow)
+            if accelerator.is_main_process:
+                state_dict[name] = materialized
+
+    if not accelerator.is_main_process:
+        return {}
+    if not state_dict:
+        raise RuntimeError("FSDP2 full-state export returned an empty state dict on the main process.")
+    if any(type(tensor).__name__ == "DTensor" for tensor in state_dict.values()):
+        raise RuntimeError("FSDP2 full-state export left distributed tensors in the main-process state dict.")
+    if any(not isinstance(tensor, torch.Tensor) or tensor.device.type != "cpu" for tensor in state_dict.values()):
+        raise RuntimeError("FSDP2 full-state export did not produce only CPU tensors.")
+    return state_dict
+
+
+def _build_model_from_state_dict_for_save(model_class, model_config, state_dict: dict[str, torch.Tensor]):
+    if not state_dict:
+        raise RuntimeError("Cannot build a save-only model from an empty state dict.")
+    with torch.device("meta"):
+        model = model_class.from_config(model_config)
+    model.load_state_dict(state_dict, strict=True, assign=True)
+    return model
+
+
+def _save_pipeline_with_component_for_save(pipeline, component_name: str, component, output_dir: str) -> None:
+    save_pretrained = getattr(pipeline, "save_pretrained", None)
+    if not callable(save_pretrained):
+        raise RuntimeError(f"{type(pipeline).__name__} does not support save_pretrained().")
+
+    try:
+        components = pipeline.components
+    except (AttributeError, ValueError) as exc:
+        raise RuntimeError(f"Unable to inspect the registered components of {type(pipeline).__name__}.") from exc
+    if component_name not in components:
+        raise RuntimeError(f"{component_name!r} is not a registered pipeline component of {type(pipeline).__name__}.")
+
+    previous_component = components[component_name]
+    setattr(pipeline, component_name, component)
+    try:
+        save_pretrained(output_dir, safe_serialization=True)
+    finally:
+        setattr(pipeline, component_name, previous_component)
+
+
 class SaveHookManager:
     EMA_METADATA_KEYS = (
         "decay",
         "min_decay",
         "optimization_step",
         "update_after_step",
+        "warmup_steps",
         "use_ema_warmup",
         "inv_gamma",
         "power",
@@ -145,17 +291,40 @@ class SaveHookManager:
 
         self.args = args
         self.model = model
-        if self.model.get_trained_component() is None:
-            raise ValueError("No model was loaded?")
         self.ema_model = ema_model
         self.accelerator = accelerator
         self.use_deepspeed_optimizer = use_deepspeed_optimizer
+        if self.model.get_trained_component() is None:
+            raise ValueError("No model was loaded?")
+
+        self.fsdp2_pipeline_export_spec = None
 
         self.denoiser_class = self.model.MODEL_CLASS
         self.denoiser_subdir = self.model.MODEL_SUBFOLDER
-        self.pipeline_class = self.model.PIPELINE_CLASSES[
-            (PipelineTypes.IMG2IMG if args.validation_using_datasets else PipelineTypes.TEXT2IMG)
-        ]
+        pipeline_type = getattr(self.model, "DEFAULT_PIPELINE_TYPE", PipelineTypes.TEXT2IMG)
+        if isinstance(pipeline_type, str):
+            try:
+                pipeline_type = PipelineTypes(pipeline_type)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Unsupported DEFAULT_PIPELINE_TYPE for {type(self.model).__name__}: {pipeline_type!r}"
+                ) from exc
+        if args.validation_using_datasets and PipelineTypes.IMG2IMG in self.model.PIPELINE_CLASSES:
+            pipeline_type = PipelineTypes.IMG2IMG
+        if not isinstance(pipeline_type, PipelineTypes):
+            raise ValueError(
+                f"DEFAULT_PIPELINE_TYPE for {type(self.model).__name__} must be a PipelineTypes value, "
+                f"got {pipeline_type!r}."
+            )
+        self.pipeline_class = self.model.PIPELINE_CLASSES.get(pipeline_type)
+        if self.pipeline_class is None:
+            available_pipeline_types = ", ".join(
+                key.value if isinstance(key, PipelineTypes) else repr(key) for key in self.model.PIPELINE_CLASSES
+            )
+            raise ValueError(
+                f"{type(self.model).__name__} does not register a save pipeline for {pipeline_type.value!r}. "
+                f"Available pipeline types: {available_pipeline_types or 'none'}."
+            )
 
         self.ema_model_cls = self.model.get_trained_component().__class__
         self.ema_model_subdir = f"{self.model.MODEL_SUBFOLDER}_ema"
@@ -172,6 +341,15 @@ class SaveHookManager:
             and fsdp_plugin is not None
             and getattr(fsdp_plugin, "fsdp_version", 1) == 2
         )
+
+    def validate_fsdp2_pipeline_export(self) -> None:
+        if self.args.model_type == "full" and self._is_fsdp2():
+            if not compare_versions("accelerate", ">=", "1.8.0"):
+                raise RuntimeError(
+                    "FSDP2 full-model pipeline export requires accelerate>=1.8.0 so the gathered state dict "
+                    "is offloaded to CPU before serialization."
+                )
+            self.fsdp2_pipeline_export_spec = _get_fsdp2_pipeline_export_spec(self.model)
 
     def _ema_checkpoint_dir(self, checkpoint_dir: str) -> str:
         return os.path.join(checkpoint_dir, self.ema_model_subdir)
@@ -435,7 +613,10 @@ class SaveHookManager:
         return metadata
 
     def _build_modelspec_metadata(self, checkpoint_dir: str | None = None) -> dict[str, str]:
-        metadata = {"modelspec.sai_model_spec": MODEL_SPEC_VERSION}
+        metadata = {
+            "modelspec.sai_model_spec": MODEL_SPEC_VERSION,
+            "global_step": str(int(StateTracker.get_global_step() or 0)),
+        }
 
         architecture = self._derive_modelspec_architecture()
         if architecture:
@@ -565,10 +746,7 @@ class SaveHookManager:
             self.ema_model.copy_to(trainable_parameters)
             ema_trained_component = unwrap_model(self.accelerator, self.model.get_trained_component())
             lora_save_parameters = {
-                f"{self.model.MODEL_SUBFOLDER}_lora_layers": convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(ema_trained_component),
-                    original_type=StateDictType.PEFT,
-                ),
+                f"{self.model.MODEL_SUBFOLDER}_lora_layers": get_peft_model_state_dict(ema_trained_component),
             }
             ema_modules_to_save = {self.model.MODEL_SUBFOLDER: ema_trained_component}
             ema_metadata = _collate_lora_metadata(ema_modules_to_save)
@@ -615,9 +793,8 @@ class SaveHookManager:
                 modules_to_save["controlnet"] = unwrapped_model
             elif isinstance(unwrapped_model, tuple(trained_component_classes)):
                 # unet_lora_layers or transformer_lora_layers
-                lora_save_parameters[f"{self.model.MODEL_SUBFOLDER}_lora_layers"] = convert_state_dict_to_diffusers(
-                    get_peft_model_state_dict(unwrapped_model),
-                    original_type=StateDictType.PEFT,
+                lora_save_parameters[f"{self.model.MODEL_SUBFOLDER}_lora_layers"] = get_peft_model_state_dict(
+                    unwrapped_model
                 )
                 modules_to_save[self.model.MODEL_SUBFOLDER] = unwrapped_model
             elif text_encoder_0_cls is not None and isinstance(unwrapped_model, text_encoder_0_cls):
@@ -915,13 +1092,20 @@ class SaveHookManager:
     def save_model_hook(self, models, weights, output_dir):
         # Write "training_state.json" to the output directory containing the training state
         StateTracker.save_training_state(os.path.join(output_dir, self.training_state_path))
-        StateTracker.save_ramtorch_prefetch_orders(output_dir)
 
         distributed_type = DistributedType.NO
         is_main_process = True
+        is_local_main_process = True
         if self.accelerator is not None:
             distributed_type = getattr(self.accelerator, "distributed_type", DistributedType.NO)
             is_main_process = getattr(self.accelerator, "is_main_process", True)
+            is_local_main_process = getattr(self.accelerator, "is_local_main_process", True)
+
+        # One writer per node, so the file also lands on node-local storage in
+        # multi-node runs. Concurrent node-mains on a shared filesystem are safe
+        # because the writer uses a process-unique temp name and atomic rename.
+        if is_local_main_process:
+            StateTracker.save_ramtorch_prefetch_orders(output_dir)
 
         with self._offload_models_during_save(is_main_process):
             self._save_ema_state(output_dir, is_main_process=is_main_process)

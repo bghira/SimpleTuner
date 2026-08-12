@@ -149,6 +149,8 @@ class TrainingSample:
         cond_backend = StateTracker.get_data_backend(self.data_backend_id)
         if training_backend is None:
             raise ValueError(f"No training dataset registered for backend “{training_dataset_id}”.")
+        if isinstance(self.image_metadata, dict) and self.image_metadata.get("training_sample_path"):
+            return training_backend["data_backend"].get_abs_path(self.image_metadata["training_sample_path"])
         training_data_dir = training_backend["config"]["instance_data_dir"]
         cond_data_dir = cond_backend["config"]["instance_data_dir"]
         if os.path.isabs(self._image_path):

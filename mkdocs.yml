@@ -77,6 +77,7 @@ plugins:
             Training: 训练
             NSFW Classifier Checks: NSFW 分类器检查
             CaptionFlow Captioning: CaptionFlow 描述生成
+            Unsloth-Style Checkpointing: Unsloth 风格 Checkpointing
             Reference: 参考
         - locale: ja
           name: 日本語
@@ -94,6 +95,7 @@ plugins:
             Training: トレーニング
             NSFW Classifier Checks: NSFW 分類器チェック
             CaptionFlow Captioning: CaptionFlow キャプション生成
+            Unsloth-Style Checkpointing: Unsloth 形式 Checkpointing
             Reference: リファレンス
         - locale: hi
           name: हिन्दी
@@ -115,6 +117,7 @@ plugins:
             Server & Multi-User: सर्वर और बहु-उपयोगकर्ता
             Cloud Training: क्लाउड प्रशिक्षण
             Advanced: उन्नत
+            Unsloth-Style Checkpointing: Unsloth-Style Checkpointing
             Reference: संदर्भ
         - locale: ko
           name: 한국어
@@ -151,6 +154,7 @@ plugins:
             Server & Multi-User: Servidor e multi-usuario
             Cloud Training: Treinamento na nuvem
             Advanced: Avancado
+            Unsloth-Style Checkpointing: Checkpointing estilo Unsloth
             Reference: Referencia
         - locale: es
           name: Español
@@ -172,6 +176,7 @@ plugins:
             Server & Multi-User: Servidor y multiusuario
             Cloud Training: Entrenamiento en la nube
             Advanced: Avanzado
+            Unsloth-Style Checkpointing: Checkpointing estilo Unsloth
             Reference: Referencia
 
 markdown_extensions:
@@ -271,6 +276,7 @@ nav:
       - LTX Video 2: quickstart/LTXVIDEO2.md
       - Cosmos3: quickstart/COSMOS3.md
       - Hunyuan Video: quickstart/HUNYUANVIDEO.md
+      - MiniMax H3: quickstart/MINIMAX_H3.md
       - Sana Video: quickstart/SANAVIDEO.md
       - Kandinsky 5 Video: quickstart/KANDINSKY5_VIDEO.md
       - LongCat Video: quickstart/LONGCAT_VIDEO.md
@@ -296,6 +302,7 @@ nav:
       - TwinFlow (RCGM): distillation/TWINFLOW.md
       - SDXL LCM: distillation/SDXL_LCM.md
       - Wan DCM: distillation/WAN_DCM.md
+      - MiniMax H3 Drift: distillation/MINIMAX_H3_DRIFT.md
       - FastWan DMD: distillation/FASTWAN_DMD.md
       - GLANCE: distillation/GLANCE.md
     - Evaluation:
@@ -345,14 +352,17 @@ nav:
       - Sliding Window (SLA): attention/SLA.md
     - Experimental:
       - AnyFlow: experimental/ANYFLOW.md
+      - ConvRot / Hadamard SDNQ: experimental/CONVROT.md
       - Diff2Flow: experimental/DIFF2FLOW.md
       - Flow-DPO: experimental/FLOW_DPO.md
       - LayerSync: experimental/LAYERSYNC.md
       - Metal Flash Attention: experimental/METAL_FLASH_ATTENTION.md
       - Prompt2Effect: experimental/PROMPT2EFFECT.md
       - Self-Flow: experimental/SELF_FLOW.md
+      - Segmented Checkpointing: experimental/SEGMENTED_CHECKPOINTING.md
       - Scheduled Sampling: experimental/SCHEDULED_SAMPLING.md
       - T-LoRA: experimental/T_LORA.md
+      - Unsloth-Style Checkpointing: experimental/UNSLOTH_CHECKPOINTING.md
       - Video CREPA: experimental/VIDEO_CREPA.md
     - Development:
       - Factory Architecture: development/FACTORY_ARCHITECTURE.md

@@ -43,15 +43,15 @@ _METAL_FLASH_ATTENTION_PROFILES = {
     "universal-metal-flash-attention": MetalFlashAttentionProfile(),
     "metal-flash-attention-int8": MetalFlashAttentionProfile(
         target_precision=3,
-        quant_mode=2,
+        quant_mode=0,
         target_precision_constant="QUANT_INT8",
-        quant_mode_constant="QUANT_BLOCK_WISE",
+        quant_mode_constant="QUANT_TENSOR_WISE",
     ),
     "metal-flash-attention-int4": MetalFlashAttentionProfile(
         target_precision=4,
-        quant_mode=2,
+        quant_mode=0,
         target_precision_constant="QUANT_INT4",
-        quant_mode_constant="QUANT_BLOCK_WISE",
+        quant_mode_constant="QUANT_TENSOR_WISE",
     ),
 }
 
@@ -297,12 +297,44 @@ class PackedAttentionBackend:
                 key.contiguous(),
                 value.contiguous(),
                 cu_seqlens,
+                cu_seqlens,
+                max_seqlen,
                 max_seqlen,
                 causal=causal,
                 dropout_p=dropout_p,
                 softmax_scale=softmax_scale,
             )
         return _pad_varlen_output(output_unpad, indices, batch_size, padded_seqlen)
+
+    def varlen_unpacked(
+        self,
+        query_unpad: torch.Tensor,
+        key_unpad: torch.Tensor,
+        value_unpad: torch.Tensor,
+        cu_seqlens_q: torch.Tensor,
+        cu_seqlens_k: torch.Tensor,
+        max_seqlen_q: int,
+        max_seqlen_k: int,
+        *,
+        causal: bool = False,
+        dropout_p: float = 0.0,
+        softmax_scale: Optional[float] = None,
+    ) -> torch.Tensor:
+        if self.varlen_unpacked_func is None:
+            raise RuntimeError(f"Packed attention backend '{self.name}' does not provide varlen unpacked attention.")
+        return _call_varlen_unpacked_kernel(
+            self.varlen_unpacked_func,
+            query_unpad,
+            key_unpad,
+            value_unpad,
+            cu_seqlens_q,
+            cu_seqlens_k,
+            max_seqlen_q,
+            max_seqlen_k,
+            causal=causal,
+            dropout_p=dropout_p,
+            softmax_scale=softmax_scale,
+        )
 
 
 _PACKED_BACKEND_ALIASES = {
@@ -335,9 +367,28 @@ _PACKED_BACKEND_ALIASES = {
     "flash4-hub": ("hub-fa4", "kernels-community/flash-attn4"),
 }
 
+_HUB_KERNEL_VERSIONS: Dict[str, int] = {
+    "kernels-community/flash-attn2": 3,
+    "kernels-community/flash-attn3": 1,
+    "kernels-community/flash-attn4": 0,
+}
+
 
 def _normalize_backend_key(value: str) -> str:
     return value.replace("_", "-")
+
+
+def _get_hub_kernel(target: str) -> Any:
+    try:
+        from kernels import get_kernel
+    except ImportError as exc:
+        raise RuntimeError("The 'kernels' package is required for Hugging Face Hub attention kernels.") from exc
+
+    kwargs: Dict[str, Any] = {"trust_remote_code": True}
+    version = _HUB_KERNEL_VERSIONS.get(target)
+    if version is not None:
+        kwargs["version"] = version
+    return get_kernel(target, **kwargs)
 
 
 @lru_cache(maxsize=32)
@@ -348,12 +399,7 @@ def get_packed_attention_backend(
     backend_key = _select_packed_backend(preferred_backend, require_varlen_qkvpacked=require_varlen_qkvpacked)
     provider, target = _PACKED_BACKEND_ALIASES[backend_key]
     if provider.startswith("hub-"):
-        try:
-            from kernels import get_kernel
-        except ImportError as exc:
-            raise RuntimeError("The 'kernels' package is required for Hugging Face Hub attention kernels.") from exc
-
-        module = get_kernel(target)
+        module = _get_hub_kernel(target)
         return PackedAttentionBackend(backend_key, module)
 
     import importlib
@@ -478,8 +524,10 @@ def _call_varlen_unpacked_kernel(
     query_unpad: torch.Tensor,
     key_unpad: torch.Tensor,
     value_unpad: torch.Tensor,
-    cu_seqlens: torch.Tensor,
-    max_seqlen: int,
+    cu_seqlens_q: torch.Tensor,
+    cu_seqlens_k: torch.Tensor,
+    max_seqlen_q: int,
+    max_seqlen_k: int,
     *,
     causal: bool,
     dropout_p: float,
@@ -495,10 +543,10 @@ def _call_varlen_unpacked_kernel(
         query_unpad,
         key_unpad,
         value_unpad,
-        cu_seqlens,
-        cu_seqlens,
-        max_seqlen,
-        max_seqlen,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        max_seqlen_q,
+        max_seqlen_k,
         **kwargs,
     )
     if isinstance(output, tuple):
@@ -888,9 +936,9 @@ def check_shape_growth_cache():
     torch.manual_seed(123)
     for seq_len in (512, 1024):
         shape = (1, 4, seq_len, 128)
-        query = torch.randn(shape, dtype=torch.float32, device="mps") * 0.02
-        key = torch.randn(shape, dtype=torch.float32, device="mps") * 0.02
-        value = torch.randn(shape, dtype=torch.float32, device="mps") * 0.02
+        query = (torch.randn(shape, dtype=torch.float32, device="mps") * 0.02).requires_grad_(True)
+        key = (torch.randn(shape, dtype=torch.float32, device="mps") * 0.02).requires_grad_(True)
+        value = (torch.randn(shape, dtype=torch.float32, device="mps") * 0.02).requires_grad_(True)
         torch.mps.synchronize()
         observed = selected_impl(
             query,
@@ -915,6 +963,11 @@ def check_shape_growth_cache():
                 + " observed_std="
                 + str(observed_std)
             )
+        observed.float().square().mean().backward()
+        torch.mps.synchronize()
+        for name, tensor in (("query", query), ("key", key), ("value", value)):
+            if tensor.grad is None or not torch.isfinite(tensor.grad).all().item():
+                raise SystemExit("Quantized UMFA shape-growth check produced invalid gradient for " + name)
 
 
 check_shape_growth_cache()
@@ -1086,7 +1139,8 @@ class AttentionBackendController:
         diffusers_backend = cls._resolve_diffusers_backend(backend_alias)
         if diffusers_backend is not None:
             cls._clear_metal_flash_attention_quantization_mode()
-            cls._enable_diffusers_backend(backend_alias, diffusers_backend)
+            trust_remote_code = cls._truthy_config_value(getattr(config, "trust_remote_code", False))
+            cls._enable_diffusers_backend(backend_alias, diffusers_backend, trust_remote_code=trust_remote_code)
             return
 
         cls.restore_default()
@@ -1133,6 +1187,14 @@ class AttentionBackendController:
             return None
         normalized = cls._normalize_backend_key(backend)
         return _DIFFUSERS_BACKEND_ALIASES.get(normalized)
+
+    @staticmethod
+    def _truthy_config_value(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
 
     @classmethod
     def _load_metal_flash_attention_extension(cls, backend: str = "metal-flash-attention"):
@@ -1324,29 +1386,70 @@ class AttentionBackendController:
         return False
 
     @classmethod
-    def _enable_diffusers_backend(cls, backend_key: str, backend_enum: AttentionBackendName) -> None:
+    def _enable_diffusers_backend(
+        cls,
+        backend_key: str,
+        backend_enum: AttentionBackendName,
+        *,
+        trust_remote_code: bool = False,
+    ) -> None:
         if cls._diffusers_backend_name == backend_key:
             return
         if diffusers_attention_backend is None or _check_attention_backend_requirements is None:
-            message = f"Diffusers attention backend helpers are unavailable. Upgrade diffusers to at least 0.35 to use {backend_key}."
+            message = (
+                "Diffusers attention backend helpers are unavailable. "
+                f"Upgrade diffusers to at least 0.35 to use {backend_key}."
+            )
             logger.error(message)
             raise RuntimeError(message)
 
-        try:
-            _check_attention_backend_requirements(backend_enum)
-        except Exception as exc:  # pragma: no cover - exercised only when backend requirements fail
-            message = f"Attention backend '{backend_key}' is unavailable: {exc}"
-            logger.error(message)
-            raise RuntimeError(message) from exc
+        patched_kernel_modules: list[tuple[Any, Any]] = []
+        if trust_remote_code and backend_key.endswith("-hub"):
+            for module_name in ("kernels", "kernels.utils"):
+                try:
+                    kernel_module = importlib.import_module(module_name)
+                    original_get_kernel = getattr(kernel_module, "get_kernel", None)
+                except ModuleNotFoundError as exc:
+                    missing_module = exc.name or ""
+                    if missing_module not in {module_name, module_name.split(".", 1)[0]}:
+                        raise
+                    continue
+                if not callable(original_get_kernel):
+                    continue
 
-        cls._disable_diffusers_backend()
+                def patched_get_kernel(*args, _original_get_kernel=original_get_kernel, **kwargs):
+                    kwargs.setdefault("trust_remote_code", True)
+                    repo_id = kwargs.get("repo_id")
+                    if repo_id is None and args:
+                        repo_id = args[0]
+                    if kwargs.get("version") is None and kwargs.get("revision") is None:
+                        version = _HUB_KERNEL_VERSIONS.get(repo_id)
+                        if version is not None:
+                            kwargs["version"] = version
+                    return _original_get_kernel(*args, **kwargs)
+
+                setattr(kernel_module, "get_kernel", patched_get_kernel)
+                patched_kernel_modules.append((kernel_module, original_get_kernel))
+
         try:
-            context = diffusers_attention_backend(backend_enum)
-            context.__enter__()
-        except Exception as exc:
-            message = f"Failed to enable attention backend '{backend_key}': {exc}"
-            logger.error(message)
-            raise RuntimeError(message) from exc
+            try:
+                _check_attention_backend_requirements(backend_enum)
+            except Exception as exc:  # pragma: no cover - exercised only when backend requirements fail
+                message = f"Attention backend '{backend_key}' is unavailable: {exc}"
+                logger.error(message)
+                raise RuntimeError(message) from exc
+
+            cls._disable_diffusers_backend()
+            try:
+                context = diffusers_attention_backend(backend_enum)
+                context.__enter__()
+            except Exception as exc:
+                message = f"Failed to enable attention backend '{backend_key}': {exc}"
+                logger.error(message)
+                raise RuntimeError(message) from exc
+        finally:
+            for kernel_module, original_get_kernel in patched_kernel_modules:
+                setattr(kernel_module, "get_kernel", original_get_kernel)
 
         cls._diffusers_backend_context = context
         cls._diffusers_backend_name = backend_key
@@ -1751,7 +1854,8 @@ class AttentionBackendController:
         saved_settings = payload.get("settings")
         if saved_settings and cls._sla_settings and cls._sla_settings != saved_settings:
             logger.warning(
-                "SLA runtime settings differ from checkpoint settings. Runtime=%s, Checkpoint=%s. Proceeding with runtime configuration.",
+                "SLA runtime settings differ from checkpoint settings. Runtime=%s, Checkpoint=%s. "
+                "Proceeding with runtime configuration.",
                 cls._sla_settings,
                 saved_settings,
             )

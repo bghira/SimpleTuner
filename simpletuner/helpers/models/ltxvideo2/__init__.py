@@ -98,7 +98,16 @@ def unpack_ltx2_audio_latents(
     return latents.unflatten(2, (-1, num_mel_bins)).transpose(1, 2)
 
 
+def ltx2_rope_freqs_dtype(double_precision: bool, device: str | torch.device | None) -> torch.dtype:
+    if not double_precision:
+        return torch.float32
+    if device is not None and torch.device(device).type == "mps":
+        return torch.float32
+    return torch.float64
+
+
 __all__ = [
+    "ltx2_rope_freqs_dtype",
     "normalize_ltx2_audio_latents",
     "normalize_ltx2_latents",
     "pack_ltx2_audio_latents",

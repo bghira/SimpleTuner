@@ -75,6 +75,7 @@ class HunyuanVideo(VideoModelFoundation):
         "i2v-480p-distilled": "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-480p_i2v_distilled",
         "i2v-720p-distilled": "hunyuanvideo-community/HunyuanVideo-1.5-Diffusers-720p_i2v_distilled",
     }
+    UPSTREAM_MODEL_REPO = "tencent/HunyuanVideo-1.5"
     MODEL_LICENSE = "agpl-3.0"
 
     # Component repositories - direct loading without subfolders
@@ -256,6 +257,16 @@ class HunyuanVideo(VideoModelFoundation):
         except Exception:
             return False
 
+    def check_user_config(self):
+        super().check_user_config()
+        flavour = getattr(self.config, "model_flavour", None) or self.DEFAULT_MODEL_FLAVOUR
+        if flavour not in self.HUGGINGFACE_PATHS:
+            raise ValueError(f"Unsupported HunyuanVideo flavour '{flavour}'. Expected one of {list(self.HUGGINGFACE_PATHS)}")
+
+        model_path = getattr(self.config, "pretrained_model_name_or_path", None)
+        if model_path in (None, "", "None", self.UPSTREAM_MODEL_REPO):
+            self.config.pretrained_model_name_or_path = self.HUGGINGFACE_PATHS[flavour]
+
     def requires_conditioning_dataset(self) -> bool:
         return self._is_i2v_like_flavour() or super().requires_conditioning_dataset()
 
@@ -282,7 +293,11 @@ class HunyuanVideo(VideoModelFoundation):
         Load the Qwen2.5 VL text encoder and ByT5 glyph encoder.
         """
         device = self.accelerator.device if move_to_device else torch.device("cpu")
-        qwen_path = getattr(self.config, "hunyuan_text_encoder_path", None) or self.TEXT_ENCODER_REPO
+        qwen_path = (
+            self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path")
+            or getattr(self.config, "hunyuan_text_encoder_path", None)
+            or self.TEXT_ENCODER_REPO
+        )
 
         logger.info(f"Loading HunyuanVideo text encoder from {qwen_path}")
         tokenizer = Qwen2Tokenizer.from_pretrained(qwen_path)

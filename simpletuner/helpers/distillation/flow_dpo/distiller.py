@@ -85,8 +85,8 @@ class FlowDPODistiller(DistillationBase):
         finally:
             self.toggle_adapter(enable=True)
 
-        win_target = prepared_batch["noise"] - win_latents
-        lose_target = prepared_batch["noise"] - lose_latents
+        win_target = self._flow_target(prepared_batch, win_latents)
+        lose_target = self._flow_target(lose_batch, lose_latents)
         mask = self._mask_for_loss(prepared_batch, policy_win)
 
         policy_win_err = self._per_sample_error(policy_win, win_target, mask)
@@ -174,6 +174,13 @@ class FlowDPODistiller(DistillationBase):
             "sigmas"
         ] * prepared_batch["input_noise"]
         return rejected_batch
+
+    def _flow_target(self, prepared_batch: Dict[str, Any], latents: torch.Tensor) -> torch.Tensor:
+        get_target = getattr(self.student_model, "get_flow_matching_target", None)
+        if callable(get_target):
+            target = get_target(prepared_batch, latents=latents, prefer_explicit_target=False)
+            return target.to(device=latents.device, dtype=latents.dtype)
+        return prepared_batch["noise"] - latents
 
     def _mask_for_loss(self, prepared_batch: Dict[str, Any], prediction: torch.Tensor) -> Optional[torch.Tensor]:
         loss_mask_type = prepared_batch.get("loss_mask_type")

@@ -1,9 +1,11 @@
+import os
 import shutil
 import sys
 import tempfile
 import types
 import unittest
 from importlib.machinery import ModuleSpec
+from unittest.mock import patch
 
 
 def _ensure_torchao_stub():
@@ -148,6 +150,77 @@ from simpletuner.helpers.configuration.cmd_args import parse_cmdline_args
 
 
 class TestFSDPCmdArgs(unittest.TestCase):
+    def test_process_group_timeout_defaults_to_ninety_minutes(self):
+        tmp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS", None)
+            args = parse_cmdline_args(
+                input_args=[
+                    "--model_family=sdxl",
+                    "--model_type=full",
+                    f"--output_dir={tmp_dir}",
+                    "--optimizer=adamw_bf16",
+                    "--data_backend_config=dummy",
+                ],
+                exit_on_error=False,
+            )
+
+        self.assertEqual(args.process_group_kwargs.timeout.total_seconds(), 5400)
+
+    def test_process_group_timeout_reads_environment_override(self):
+        tmp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
+
+        with patch.dict(os.environ, {"SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS": "7200"}, clear=False):
+            args = parse_cmdline_args(
+                input_args=[
+                    "--model_family=sdxl",
+                    "--model_type=full",
+                    f"--output_dir={tmp_dir}",
+                    "--optimizer=adamw_bf16",
+                    "--data_backend_config=dummy",
+                ],
+                exit_on_error=False,
+            )
+
+        self.assertEqual(args.process_group_kwargs.timeout.total_seconds(), 7200)
+
+    def test_process_group_timeout_rejects_non_positive_override(self):
+        tmp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
+
+        with patch.dict(os.environ, {"SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS": "0"}, clear=False):
+            with self.assertRaisesRegex(ValueError, "positive integer"):
+                parse_cmdline_args(
+                    input_args=[
+                        "--model_family=sdxl",
+                        "--model_type=full",
+                        f"--output_dir={tmp_dir}",
+                        "--optimizer=adamw_bf16",
+                        "--data_backend_config=dummy",
+                    ],
+                    exit_on_error=False,
+                )
+
+    def test_process_group_timeout_rejects_non_integer_override(self):
+        tmp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
+
+        with patch.dict(os.environ, {"SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS": "abc"}, clear=False):
+            with self.assertRaisesRegex(ValueError, "SIMPLETUNER_PROCESS_GROUP_TIMEOUT_SECONDS.*'abc'"):
+                parse_cmdline_args(
+                    input_args=[
+                        "--model_family=sdxl",
+                        "--model_type=full",
+                        f"--output_dir={tmp_dir}",
+                        "--optimizer=adamw_bf16",
+                        "--data_backend_config=dummy",
+                    ],
+                    exit_on_error=False,
+                )
+
     def test_fsdp_cli_normalization(self):
         tmp_dir = tempfile.mkdtemp()
         self.addCleanup(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
@@ -214,6 +287,47 @@ class TestFSDPCmdArgs(unittest.TestCase):
                 ],
                 exit_on_error=False,
             )
+
+    def test_fsdp2_cpu_offload_rejects_optimi_gradient_release(self):
+        tmp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
+        base_args = [
+            "--model_family=sdxl",
+            "--model_type=full",
+            f"--output_dir={tmp_dir}",
+            "--optimizer=optimi-adamw",
+            "--data_backend_config=dummy",
+        ]
+        with self.assertRaisesRegex(ValueError, "post-accumulate gradient hook"):
+            parse_cmdline_args(
+                input_args=base_args
+                + [
+                    "--fsdp_enable",
+                    "--fsdp_version=2",
+                    "--fsdp_cpu_offload",
+                    "--optimizer_release_gradients",
+                ],
+                exit_on_error=False,
+            )
+
+    def test_fsdp2_cpu_offload_allows_standard_optimizer(self):
+        tmp_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: shutil.rmtree(tmp_dir, ignore_errors=True))
+        args = parse_cmdline_args(
+            input_args=[
+                "--model_family=sdxl",
+                "--model_type=full",
+                f"--output_dir={tmp_dir}",
+                "--optimizer=adamw_bf16",
+                "--data_backend_config=dummy",
+                "--fsdp_enable",
+                "--fsdp_version=2",
+                "--fsdp_cpu_offload",
+            ],
+            exit_on_error=False,
+        )
+
+        self.assertTrue(args.fsdp_cpu_offload)
 
 
 if __name__ == "__main__":

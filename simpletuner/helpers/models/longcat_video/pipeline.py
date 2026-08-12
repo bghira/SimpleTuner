@@ -15,7 +15,6 @@ from diffusers.utils import (
     convert_state_dict_to_peft,
     convert_unet_state_dict_to_peft,
     get_adapter_name,
-    get_peft_kwargs,
     is_peft_version,
     logging,
     scale_lora_layers,

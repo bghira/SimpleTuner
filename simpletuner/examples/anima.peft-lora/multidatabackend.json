@@ -21,15 +21,15 @@
     "target_downsample_size": 1024,
     "resolution": 1024,
     "resolution_type": "pixel_area",
-    "cache_dir_vae": "cache/vae/anima-anyflow-example",
-    "text_embeds": "anima-anyflow-example-text",
+    "cache_dir_vae": "cache/vae/anima-example",
+    "text_embeds": "anima-example-text",
     "repeats": 1
   },
   {
-    "id": "anima-anyflow-example-text",
+    "id": "anima-example-text",
     "dataset_type": "text_embeds",
     "default": true,
     "type": "local",
-    "cache_dir": "cache/text/anima-anyflow-example"
+    "cache_dir": "cache/text/anima-example"
   }
 ]

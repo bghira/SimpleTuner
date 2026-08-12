@@ -24,6 +24,45 @@ class _WorkerConfig:
 
 
 class TestCheckpointInferenceWorker(unittest.TestCase):
+    def test_checkpoint_runtime_creates_distillation_modules_before_peft(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            trainer = MagicMock()
+            trainer.config = SimpleNamespace(
+                output_dir=temporary_directory,
+                model_family="minimaxh3",
+                validation_negative_prompt="",
+            )
+            trainer.model.text_encoders = []
+            trainer.model.tokenizers = []
+            trainer.model.uses_validation_negative_prompt.return_value = False
+            trainer.model.pipeline = object()
+            trainer.distiller = None
+
+            runtime = object.__new__(CheckpointInferenceRuntime)
+            runtime.checkpoint_name = "checkpoint-100"
+            runtime.session_dir = Path(temporary_directory) / "session"
+            runtime.job_id = "test-runtime"
+
+            with (
+                patch("simpletuner.inference.Trainer", return_value=trainer),
+                patch("simpletuner.inference.LocalDataBackend"),
+                patch("simpletuner.inference.TextEmbeddingCache") as embed_cache_class,
+                patch("simpletuner.inference.StateTracker"),
+                patch("simpletuner.inference.AttentionBackendController"),
+            ):
+                embed_cache_class.return_value.discover_all_files.return_value = None
+                runtime._load({}, lambda: False, False)
+
+            call_names = [call[0] for call in trainer.method_calls]
+            self.assertLess(
+                call_names.index("init_distillation_adapter_modules"),
+                call_names.index("init_trainable_peft_adapter"),
+            )
+            self.assertLess(
+                call_names.index("init_trainable_peft_adapter"),
+                call_names.index("init_distillation"),
+            )
+
     def test_flush_embed_cache_times_out_instead_of_blocking(self) -> None:
         runtime = object.__new__(CheckpointInferenceRuntime)
         thread = MagicMock()
@@ -110,6 +149,32 @@ class TestCheckpointInferenceWorker(unittest.TestCase):
             self.assertEqual(output_path.stem, hashlib.sha256(output_path.read_bytes()).hexdigest())
             sidecar = output_path.with_suffix(".png.json")
             self.assertEqual(json.loads(sidecar.read_text(encoding="utf-8"))["prompt"], "a test prompt")
+
+    def test_video_export_falls_back_when_framerate_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            runtime = object.__new__(CheckpointInferenceRuntime)
+            runtime.checkpoint_name = "checkpoint-100"
+            runtime.session_dir = Path(temporary_directory) / "session-one"
+            runtime.trainer = SimpleNamespace(config=SimpleNamespace(framerate=None))
+            frames = [Image.new("RGB", (8, 8), color=(10, 20, 30))]
+
+            def fake_export(_frames, output_path, fps):
+                self.assertEqual(fps, 16)
+                Path(output_path).write_bytes(b"video")
+
+            with patch("diffusers.utils.export_utils.export_to_video", side_effect=fake_export):
+                metadata = runtime._save_media(
+                    frames,
+                    prompt="a test prompt",
+                    shortname="custom_001",
+                    seed=42,
+                    style="compact",
+                    index=0,
+                    settings={"seed": 42},
+                )
+
+            self.assertEqual(metadata["media_type"], "video")
+            self.assertTrue((runtime.session_dir / "checkpoint-100" / metadata["filename"]).is_file())
 
     @patch("simpletuner.inference.CheckpointInferenceRuntime")
     def test_batch_worker_unloads_between_checkpoints(self, runtime_class: MagicMock) -> None:

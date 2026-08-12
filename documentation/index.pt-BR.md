@@ -72,9 +72,9 @@
 
     ---
 
-    Recursos de pesquisa como AnyFlow, Prompt2Effect, Self-Flow, Flow-DPO, LayerSync, Diff2Flow, Metal Flash Attention e Video CREPA
+    Recursos de pesquisa como AnyFlow, quantização SDNQ Hadamard no estilo ConvRot, checkpointing segmentado, checkpointing estilo Unsloth, Prompt2Effect, Self-Flow, Flow-DPO, LayerSync, Diff2Flow, Metal Flash Attention e Video CREPA
 
-    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: Metal Flash Attention](experimental/METAL_FLASH_ATTENTION.md)
+    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: ConvRot / Hadamard SDNQ](experimental/CONVROT.md) · [:octicons-arrow-right-24: Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md) · [:octicons-arrow-right-24: Unsloth Checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) · [:octicons-arrow-right-24: Metal Flash Attention](experimental/METAL_FLASH_ATTENTION.md)
 
 </div>
 

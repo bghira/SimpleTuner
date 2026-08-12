@@ -63,6 +63,24 @@ def register_fields(registry) -> None:
 
     registry._add_field(
         ConfigField(
+            name="ideogram_fp8_base_upcast",
+            arg_name="--ideogram_fp8_base_upcast",
+            ui_label="Ideogram FP8 Base Upcast",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="model_specific",
+            model_specific=["ideogram"],
+            default_value=False,
+            help_text="Dequantize Ideogram 4's native FP8 transformer weights to the training dtype (bf16) at load time.",
+            tooltip="Uses more VRAM (~18 GiB transformer) but avoids per-matmul dequantization. Ignored for non-FP8 checkpoints.",
+            importance=ImportanceLevel.ADVANCED,
+            dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
+            order=36,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="ideogram_prompt_enhancer_head_id",
             arg_name="--ideogram_prompt_enhancer_head_id",
             ui_label="Ideogram Prompt Enhancer Head",
@@ -75,7 +93,7 @@ def register_fields(registry) -> None:
             tooltip="Used when --ideogram_prompt_upsample is enabled to rewrite prompts into Ideogram's structured JSON caption schema.",
             importance=ImportanceLevel.ADVANCED,
             dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
-            order=36,
+            order=37,
         )
     )
 
@@ -93,7 +111,7 @@ def register_fields(registry) -> None:
             tooltip="Matches the default mu used by the vendored Ideogram validation pipeline.",
             importance=ImportanceLevel.ADVANCED,
             dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
-            order=37,
+            order=38,
         )
     )
 
@@ -111,6 +129,6 @@ def register_fields(registry) -> None:
             tooltip="Matches the default std used by the vendored Ideogram validation pipeline.",
             importance=ImportanceLevel.ADVANCED,
             dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
-            order=38,
+            order=39,
         )
     )

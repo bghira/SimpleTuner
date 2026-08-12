@@ -1,19 +1,16 @@
 # AnyFlow
 
-AnyFlow 是面向 flow-matching 模型的实验性蒸馏模式。它让模型同时条件化在普通训练 timestep `t` 和更低的参考 timestep `r` 上，使网络学习一个跨 interval 的 flow map，而不是只学习单点 rectified-flow velocity。
+SimpleTuner 将 NVIDIA AnyFlow 实现为面向 flow-matching 模型的两个显式训练阶段。这两个阶段都会训练一个模型，使其同时接收当前 flow 时间 `t` 和区间端点 `r`。
 
-在 SimpleTuner 中：
+- `stage=forward` 实现 NVIDIA 的 forward MeanFlow 目标。
+- `stage=onpolicy` 在共同训练 forward 目标的同时，实现 Flow Map Backward Simulation 和 on-policy DMD。
 
-- `--distillation_method=anyflow` 启用 `AnyFlowDistiller`。
-- distiller 在启动时调用训练组件的 `enable_flowmap_time_conditioning()`。
-- 每个 prepared batch 会加入 `flowmap_r_timesteps`。
-- 常规 target 会在计算 model loss 之前替换为 AnyFlow target。
+已移除的 `online_teacher` 和 `linear` target mode 是 SimpleTuner 过去的自定义目标，现在不再接受。
 
-SimpleTuner 的 AnyFlow 是 online 的，不需要预先计算 ODE cache。
+使用 NVIDIA 已发布 checkpoint 继续训练 Wan 的示例，请参阅
+[AnyFlow Continuation Quickstart](/documentation/quickstart/ANYFLOW.zh.md)。
 
-关于使用 NVIDIA 发布的 AnyFlow checkpoints 继续训练 Wan 的示例，见 [AnyFlow 继续训练快速入门](/documentation/quickstart/ANYFLOW.zh.md)。
-
-## 快速配置
+## Forward 阶段
 
 ```json
 {
@@ -21,10 +18,12 @@ SimpleTuner 的 AnyFlow 是 online 的，不需要预先计算 ODE cache。
   "distillation_method": "anyflow",
   "distillation_config": {
     "anyflow": {
-      "target_mode": "online_teacher",
-      "teacher_rollout_steps": 1,
-      "r_timestep_sampler": "uniform",
-      "min_interval_ratio": 0.02,
+      "stage": "forward",
+      "diffusion_ratio": 0.5,
+      "consistency_ratio": 0.25,
+      "central_difference_epsilon": 0.005,
+      "meanflow_weight_type": "beta08",
+      "meanflow_adaptive_weighting": true,
       "gate_value": 0.25,
       "deltatime_type": "r",
       "loss_weight": 1.0
@@ -33,37 +32,85 @@ SimpleTuner 的 AnyFlow 是 online 的，不需要预先计算 ODE cache。
 }
 ```
 
-SimpleTuner 的所有 distillation methods 都会禁止 text encoder training，AnyFlow 也一样。
+对于每个全局 batch，forward 阶段会：
 
-## 工作方式
+1. 采样两个均匀 flow 时间，并排序为 `t >= r`。
+2. 将 50% 样本分配到 diffusion 区间 (`r=t`)，25% 分配到 endpoint 区间 (`r=0`)，其余分配到任意区间。
+3. 对两个端点应用模型 scheduler 的 flow shift。
+4. 沿直线 latent flow 路径计算中心差分。
+5. 构造 MeanFlow tangent target，并应用 NVIDIA 归一化的 `beta08` timestep weighting。
+6. 将每个非 diffusion 样本与全局 diffusion 分支 loss 均值进行平衡。
 
-对每个 flow-matching batch，SimpleTuner 会：
+## On-Policy 阶段
 
-1. 使用正常的 `prepare_batch()` 采样 `sigmas`、`timesteps`、`noisy_latents` 和 base flow target。
-2. 从当前 interval 中采样 `r < t`。
-3. 将 `flowmap_r_timesteps` 写入 batch，让 model wrapper 作为 `r_timestep` 传入。
-4. 构建训练 target。
-5. 使用正常 model loss 比较 prediction 和 target。
+通过设置 `init_lora` 或从 checkpoint 恢复，从 forward 阶段 AnyFlow adapter 启动此阶段：
 
-在 `target_mode=online_teacher` 下，target 是从 `t` 处 noisy latent 指向 `r` 的平均 velocity。LoRA 和 LyCORIS 训练时，distiller 会在 teacher rollout 期间临时禁用 adapter，然后再启用。
+```json
+{
+  "model_type": "lora",
+  "lora_type": "standard",
+  "init_lora": "path-or-repo-to-forward-anyflow-adapter",
+  "learning_rate": 0.000002,
+  "optimizer_beta1": 0.0,
+  "optimizer_beta2": 0.999,
+  "optimizer_weight_decay": 0.0,
+  "distillation_method": "anyflow",
+  "distillation_config": {
+    "anyflow": {
+      "stage": "onpolicy",
+      "cotrain_forward": true,
+      "rollout_step_counts": [2, 4, 8, 16, 50],
+      "dmd_weight": 1.0,
+      "dmd_batch_size": 1,
+      "real_score_guidance_scale": 0.0,
+      "discriminator_lr": 0.000002,
+      "discriminator_betas": [0.0, 0.999],
+      "discriminator_weight_decay": 0.0,
+      "discriminator_grad_clip": 1.0
+    }
+  }
+}
+```
 
-在 `target_mode=linear` 下，不使用 teacher rollout。target 是 straight flow target `noise - latents`。它适合 smoke test 和 ablation，但不是完整的 AnyFlow teacher-map objective。
+on-policy 阶段使用三个 score 角色。标准 LoRA 训练会在它们之间共享一个冻结的 base transformer：
 
-## 选项
+- 已加载的 AnyFlow adapter 是 generator。
+- 禁用 adapter 的 base model 是冻结的 real score。
+- 单独优化的 `anyflow_discriminator` adapter 是 fake score。
 
-- `target_mode`：`online_teacher` 或 `linear`。默认：`online_teacher`。
-- `teacher_rollout_steps`：`t` 到 `r` 之间的 online teacher Euler steps。默认：`1`。
-- `r_timestep_sampler`：`uniform` 或 `zero`。默认：`uniform`。
-- `min_interval_ratio`：`t` 和 `r` 之间保留的最小 normalized interval。默认：`0.02`。
-- `gate_value`：FlowMap delta timestep embedding 的混合权重。默认：`0.25`。
-- `deltatime_type`：`r` 或 `t-r`。默认：`r`。
-- `loss_weight`：已计算 training loss 的乘数。默认：`1.0`。
-- `timestep_scale`：用于自定义 timestep scale 的模型。通常保持未设置。
+每次 generator 更新都会从 `rollout_step_counts` 中选择 rollout 预算，执行可微 FlowMap rollout，在一个 shifted uniform
+时间点给生成 latent 加噪，并应用 NVIDIA 的归一化 DMD 梯度。每次 discriminator 更新都会执行无梯度 student rollout，采样
+logit-normal shifted 时间，并用普通 flow target 训练 fake score。discriminator adapter 和 optimizer 会随每个 SimpleTuner
+checkpoint 保存为 `anyflow_discriminator.safetensors` 和 `anyflow_discriminator_optim.pt`。
+
+MiniMax-H3 已经包含 CFG distillation，因此它的 on-policy 运行通常应保持 `real_score_guidance_scale=0`。需要外部 real-score
+CFG pass 的模型必须缓存 negative text embeddings，并可以显式设置该 scale。
+
+设置 `--seed` 时，AnyFlow 会从按设备隔离的 Torch generator 中采样 MeanFlow 区间、rollout schedule、rollout latent、DMD
+noise 和 DMD sigma。这样即使无关训练代码消耗了全局 Torch RNG，AnyFlow 样本也会保持稳定。这不会让 CUDA attention
+backward 达到 bit-stable。
+
+## 共享配置
+
+- `stage`: `forward` 或 `onpolicy`。默认：`forward`。
+- `diffusion_ratio`: 使用 `r=t` 的全局 batch 比例。默认：`0.5`。
+- `consistency_ratio`: 使用 `r=0` 的全局 batch 比例。默认：`0.25`。
+- `central_difference_epsilon`: 归一化 shifted-time offset。默认：`0.005`，对应 NVIDIA 的 `5/1000`。
+- `meanflow_weight_type`: `beta08` 或 `uniform`。默认：`beta08`。
+- `meanflow_adaptive_weighting`: 将非 diffusion 样本与 diffusion 分支平衡。默认：`true`。
+- `gate_value`: FlowMap delta-timestep embedding 混合权重。默认：`0.25`。
+- `deltatime_type`: `r` 或 `t-r`。默认：`r`。
+- `loss_weight`: forward MeanFlow loss 乘数。默认：`1.0`。
 
 ## 限制
 
-- 需要 flow-matching 模型。
-- 需要每个样本一个 scalar timestep。Tokenwise AnyFlow intervals 还没有接入。
-- 需要 `r_timestep < timestep`；timestep zero 会被拒绝。
-- 当前 online teacher 模式面向 LoRA/LyCORIS。Full-rank online teacher 需要单独的 student/teacher wiring。
-- validation 已通过 AnyFlow distiller 的 scheduler hook 接入。当前 pipeline scheduler 会被代理，validation transformer/UNet 会收到下一个 interval endpoint，作为 `r_timestep` 或 `timestep_r` 传入。已注册的 FlowMap-capable validation pipeline 会覆盖；自定义或 external validation path 仍需自行传递 FlowMap timestep kwarg。
+- AnyFlow 需要 flow-matching 模型，并且该模型要有模型专用的 FlowMap 区间 conditioning。
+- on-policy 训练目前需要标准 PEFT LoRA。共享 base 可以避免在每个 DDP rank 上分配 generator、real-score 和 discriminator 三份大型 transformer。
+- 目前拒绝 MiniMax-H3 audio-video 联合训练。video 使用 schedule shift 12，audio 使用 shift 3；需要先实现原生双 schedule MeanFlow target 和 rollout，AV 训练才有效。
+- 所有 SimpleTuner distillation 方法都禁用 text encoder training。
+- 验证使用 `AnyFlowValidationScheduler`，它会把下一个区间端点传给已注册的 FlowMap 模型组件。
+
+## Logs
+
+Forward 训练会添加 `anyflow_forward_loss`、timestep 和 interval 值，以及全局分支比例。On-policy 训练还会添加
+`anyflow_dmd_loss`、`anyflow_dmd_gradient_norm`、`anyflow_dmd_sigma` 和 `anyflow_rollout_steps`。

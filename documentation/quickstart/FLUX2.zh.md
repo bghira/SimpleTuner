@@ -25,7 +25,7 @@ FLUX.2 有三个变体：
 }
 ```
 
-> **重要**：对于 `klein-4b` 和 `klein-9b`，除非你明确想替换内置的 Qwen3 文本编码器，否则不要设置 `pretrained_text_encoder_model_name_or_path`。设置这个字段会覆盖 Klein 的默认行为，并可能触发下载其他文本编码器。
+> **重要**：对于 `klein-4b` 和 `klein-9b`，请将 `qwen_text_encoder_model_name_or_path` 留空以使用内置的 Qwen3 文本编码器。仅在需要用另一个兼容 Qwen 的来源替换内置 Qwen3 文本编码器时设置它。
 
 ## 模型概述
 

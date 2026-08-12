@@ -39,6 +39,9 @@ from simpletuner.helpers.models.flowmap import (
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.attention_backend import maybe_metal_flash_rope_attention
+from simpletuner.helpers.training.checkpointing import checkpoint as simpletuner_checkpoint
+from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state
+from simpletuner.helpers.training.offloaded_gradient_checkpointer import activation_offload_context
 from simpletuner.helpers.training.tread import TREADRouter
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -229,8 +232,14 @@ class Krea2TextFusionBlock(nn.Module):
         self.attn = Krea2Attention(dim, num_heads, num_kv_heads, eps=eps)
         self.ff = Krea2SwiGLU(dim, intermediate_size)
 
-    def forward(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor | None = None) -> torch.Tensor:
-        hidden_states = hidden_states + self.attn(self.norm1(hidden_states), attention_mask=attention_mask)
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        offload_attention: bool = False,
+    ) -> torch.Tensor:
+        with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+            hidden_states = hidden_states + self.attn(self.norm1(hidden_states), attention_mask=attention_mask)
         hidden_states = hidden_states + self.ff(self.norm2(hidden_states))
         return hidden_states
 
@@ -287,26 +296,49 @@ class Krea2TransformerBlock(nn.Module):
         self.attn = Krea2Attention(hidden_size, num_heads, num_kv_heads, eps=norm_eps)
         self.ff = Krea2SwiGLU(hidden_size, intermediate_size)
 
+    def _ffn_forward(
+        self,
+        hidden_states: torch.Tensor,
+        postscale: torch.Tensor,
+        postshift: torch.Tensor,
+        postgate: torch.Tensor,
+    ) -> torch.Tensor:
+        ff_out = self.ff((1.0 + postscale) * self.norm2(hidden_states) + postshift)
+        return hidden_states + postgate * ff_out
+
     def forward(
         self,
         hidden_states: torch.Tensor,
         temb: torch.Tensor,
         image_rotary_emb: tuple[torch.Tensor, torch.Tensor],
         attention_mask: torch.Tensor | None = None,
+        checkpoint_ffn: bool = False,
+        checkpoint_fn: Any | None = None,
+        offload_attention: bool = False,
     ) -> torch.Tensor:
         # temb: (B, 1, 6 * hidden_size), shared across all blocks; each block only learns an additive table.
         modulation = temb.unflatten(-1, (6, -1)) + self.scale_shift_table
         prescale, preshift, pregate, postscale, postshift, postgate = modulation.unbind(-2)
 
-        attn_out = self.attn(
-            (1.0 + prescale) * self.norm1(hidden_states) + preshift,
-            attention_mask=attention_mask,
-            image_rotary_emb=image_rotary_emb,
-        )
+        with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
+            attn_out = self.attn(
+                (1.0 + prescale) * self.norm1(hidden_states) + preshift,
+                attention_mask=attention_mask,
+                image_rotary_emb=image_rotary_emb,
+            )
         hidden_states = hidden_states + pregate * attn_out
-        ff_out = self.ff((1.0 + postscale) * self.norm2(hidden_states) + postshift)
-        hidden_states = hidden_states + postgate * ff_out
-        return hidden_states
+        if checkpoint_ffn:
+            if checkpoint_fn is None:
+                raise ValueError("checkpoint_fn is required when checkpoint_ffn=True")
+            return checkpoint_fn(
+                self._ffn_forward,
+                hidden_states,
+                postscale,
+                postshift,
+                postgate,
+                use_reentrant=False,
+            )
+        return self._ffn_forward(hidden_states, postscale, postshift, postgate)
 
 
 class Krea2TimestepEmbedding(nn.Module):
@@ -494,6 +526,8 @@ class Krea2Transformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftAdapt
     """
 
     _supports_gradient_checkpointing = True
+    _supports_ffn_gradient_checkpointing = True
+    _supports_attention_activation_offload = True
     _no_split_modules = ["Krea2TransformerBlock", "Krea2TextFusionBlock", "Krea2FinalLayer"]
     _repeated_blocks = ["Krea2TransformerBlock"]
     _keep_in_fp32_modules = ["norm", "norm1", "norm2", "norm_q", "norm_k"]
@@ -535,6 +569,10 @@ class Krea2Transformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftAdapt
         self.out_channels = in_channels
         self.hidden_size = hidden_size
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
+        self.gradient_checkpointing_offload_attention = False
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
 
         self.img_in = nn.Linear(in_channels, hidden_size, bias=True)
         self.time_embed = Krea2TimestepEmbedding(
@@ -582,6 +620,18 @@ class Krea2Transformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftAdapt
         self._tread_router: TREADRouter | None = None
         self._tread_routes: list[dict[str, Any]] | None = None
 
+    def set_gradient_checkpointing_backend(self, backend: str) -> None:
+        self.gradient_checkpointing_backend = backend
+
+    def set_gradient_checkpointing_offload_attention(self, enabled: bool) -> None:
+        self.gradient_checkpointing_offload_attention = bool(enabled)
+
+    def set_gradient_checkpointing_interval(self, interval: int) -> None:
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None) -> None:
+        self.gradient_checkpointing_segment_stride = segment_stride
+
     def set_router(self, router: TREADRouter, routes: list[dict[str, Any]] | None = None) -> None:
         self._tread_router = router
         self._tread_routes = routes
@@ -600,6 +650,29 @@ class Krea2Transformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftAdapt
         for module in self.modules():
             if isinstance(module, Krea2Attention):
                 module.unfuse_projections()
+
+    @classmethod
+    def from_single_file(
+        cls,
+        pretrained_model_link_or_path: str,
+        *args: Any,
+        filename: str | None = None,
+        subfolder: str | None = None,
+        revision: str | None = None,
+        torch_dtype: torch.dtype | None = None,
+        **kwargs: Any,
+    ) -> "Krea2Transformer2DModel":
+        del args, kwargs
+        from simpletuner.helpers.models.krea2.quantized_loading import load_krea2_comfy_convrot_checkpoint
+
+        return load_krea2_comfy_convrot_checkpoint(
+            cls,
+            pretrained_model_link_or_path,
+            filename=filename,
+            subfolder=subfolder,
+            revision=revision,
+            torch_dtype=torch_dtype,
+        )
 
     @apply_lora_scale("attention_kwargs")
     def forward(
@@ -703,6 +776,50 @@ class Krea2Transformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftAdapt
         if musubi_manager is not None:
             musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, torch.is_grad_enabled())
 
+        use_segmented_checkpointing = (
+            torch.is_grad_enabled()
+            and self.gradient_checkpointing
+            and self.gradient_checkpointing_interval is not None
+            and self.gradient_checkpointing_interval > 1
+            and not use_routing
+            and not skip_set
+            and hidden_states_buffer is None
+            and not musubi_offload_active
+        )
+        segmented_checkpoint_fn = None
+        if use_segmented_checkpointing:
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
+                from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                segmented_checkpoint_fn = offloaded_checkpoint
+            else:
+                segmented_checkpoint_fn = simpletuner_checkpoint
+
+            def run_segmented_block(_idx, block, hidden_states):
+                return block(
+                    hidden_states,
+                    temb_mod,
+                    image_rotary_emb,
+                    attention_mask,
+                    offload_attention=self.gradient_checkpointing_offload_attention,
+                )
+
+            (hidden_states,) = checkpoint_sequential_state(
+                self.transformer_blocks,
+                self.gradient_checkpointing_interval,
+                (hidden_states,),
+                run_segmented_block,
+                segmented_checkpoint_fn,
+                {"use_reentrant": False},
+                segment_stride=self.gradient_checkpointing_segment_stride,
+            )
+            hidden_states = hidden_states[:, text_seq_len:]
+            output = self.final_layer(hidden_states, temb)
+
+            if not return_dict:
+                return (output,)
+            return Transformer2DModelOutput(sample=output)
+
         for idx, block in enumerate(self.transformer_blocks):
             if musubi_offload_active and musubi_manager.is_managed_block(idx):
                 musubi_manager.stream_in(block, hidden_states.device)
@@ -731,12 +848,47 @@ class Krea2Transformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftAdapt
                 if idx in skip_set:
                     block_output = hidden_states
                 else:
-                    block_output = self._gradient_checkpointing_func(
-                        block, hidden_states, temb_mod, image_rotary_emb, attention_mask
-                    )
+                    if self.gradient_checkpointing_backend.endswith("-ffn"):
+                        block_output = block(
+                            hidden_states,
+                            temb_mod,
+                            image_rotary_emb,
+                            attention_mask,
+                            checkpoint_ffn=True,
+                            checkpoint_fn=self._gradient_checkpointing_func,
+                            offload_attention=self.gradient_checkpointing_offload_attention,
+                        )
+                    else:
+
+                        def run_checkpointed_block(
+                            checkpoint_hidden_states,
+                            checkpoint_temb,
+                            checkpoint_rope,
+                            checkpoint_mask,
+                            checkpoint_block=block,
+                        ):
+                            return checkpoint_block(
+                                checkpoint_hidden_states,
+                                checkpoint_temb,
+                                checkpoint_rope,
+                                checkpoint_mask,
+                                offload_attention=self.gradient_checkpointing_offload_attention,
+                            )
+
+                        block_output = self._gradient_checkpointing_func(
+                            run_checkpointed_block, hidden_states, temb_mod, image_rotary_emb, attention_mask
+                        )
             else:
                 block_output = (
-                    hidden_states if idx in skip_set else block(hidden_states, temb_mod, image_rotary_emb, attention_mask)
+                    hidden_states
+                    if idx in skip_set
+                    else block(
+                        hidden_states,
+                        temb_mod,
+                        image_rotary_emb,
+                        attention_mask,
+                        offload_attention=self.gradient_checkpointing_offload_attention,
+                    )
                 )
             hidden_states = block_output
 

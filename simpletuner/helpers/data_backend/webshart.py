@@ -1,16 +1,20 @@
 import json
 import logging
 import os
+import random
+import time
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from typing import Any, List, Optional, Tuple, Union
 
+import requests
 import torch
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
-from simpletuner.helpers.image_manipulation.load import load_image
+from simpletuner.helpers.image_manipulation.load import load_image, load_video
+from simpletuner.helpers.training import video_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
 
 logger = logging.getLogger("WebshartDataBackend")
@@ -29,6 +33,7 @@ class WebshartSampleRef:
 
 class WebshartDataBackend(BaseDataBackend):
     SAMPLE_PREFIX = "webshart://"
+    PATH_NORMALIZED_SAMPLE_PREFIX = "webshart:/"
     CACHE_EXTENSIONS = {".json", ".pt", ".msgpack", ".safetensors"}
 
     def __init__(
@@ -69,8 +74,12 @@ class WebshartDataBackend(BaseDataBackend):
         self.metadata_cache_dir = (
             str(metadata_cache_dir) if metadata_cache_dir else str(Path(self.cache_dir) / "metadata_cache")
         )
-        self.shard_cache_dir = str(shard_cache_dir) if shard_cache_dir else str(Path(self.cache_dir) / "shard_cache")
         self.shard_cache_gb = float(shard_cache_gb)
+        if self.shard_cache_gb < 0:
+            raise ValueError("shard_cache_gb must be non-negative; use 0 to disable whole-shard caching.")
+        self.shard_cache_dir = str(shard_cache_dir) if shard_cache_dir else str(Path(self.cache_dir) / "shard_cache")
+        if self.shard_cache_gb == 0:
+            self.shard_cache_dir = None
         self.parallel_downloads = int(parallel_downloads)
         self.buffer_size = int(buffer_size)
         self.max_file_size = int(max_file_size)
@@ -88,7 +97,7 @@ class WebshartDataBackend(BaseDataBackend):
             metadata=self.metadata,
         )
         self.dataset.enable_metadata_cache(location=self.metadata_cache_dir)
-        if self.shard_cache_dir:
+        if self.shard_cache_dir is not None:
             Path(self.shard_cache_dir).mkdir(parents=True, exist_ok=True)
             self.dataset.enable_shard_cache(
                 location=self.shard_cache_dir,
@@ -117,6 +126,10 @@ class WebshartDataBackend(BaseDataBackend):
         marker = value.find(cls.SAMPLE_PREFIX)
         if marker >= 0:
             return value[marker:]
+        marker = value.find(cls.PATH_NORMALIZED_SAMPLE_PREFIX)
+        if marker >= 0:
+            remainder = value[marker + len(cls.PATH_NORMALIZED_SAMPLE_PREFIX) :]
+            return f"{cls.SAMPLE_PREFIX}{remainder}"
         return value
 
     @classmethod
@@ -137,10 +150,9 @@ class WebshartDataBackend(BaseDataBackend):
 
     @classmethod
     def is_sample_id(cls, identifier: Union[str, Path]) -> bool:
-        value = str(identifier)
-        if cls.SAMPLE_PREFIX not in value:
+        sample_id = cls.normalize_sample_id(identifier)
+        if not sample_id.startswith(cls.SAMPLE_PREFIX):
             return False
-        sample_id = cls.normalize_sample_id(value)
         filename = sample_id.split("/", 2)[-1] if "/" in sample_id else sample_id
         return Path(filename).suffix.lower() not in {".pt", ".safetensors"}
 
@@ -188,8 +200,92 @@ class WebshartDataBackend(BaseDataBackend):
 
     def _read_sample_bytes(self, identifier: Union[str, Path]) -> bytes:
         sample_ref = self.parse_sample_id(identifier)
-        entry = self.loader.load_sample(sample_ref.shard_idx, sample_ref.sample_idx)
-        return bytes(entry.data)
+        max_attempts = 6
+        for attempt in range(max_attempts):
+            try:
+                entry = self.loader.load_sample(sample_ref.shard_idx, sample_ref.sample_idx)
+                return bytes(entry.data)
+            except Exception as exc:
+                message = str(exc).lower()
+                retryable = any(
+                    marker in message
+                    for marker in (
+                        "rate limit",
+                        "http 429",
+                        "status code 429",
+                        "connection reset",
+                        "temporarily unavailable",
+                        "timed out",
+                        "timeout",
+                    )
+                )
+                if not retryable or attempt + 1 >= max_attempts:
+                    raise
+                delay = min(30.0, 2.0**attempt) + random.uniform(0.0, 1.0)
+                logger.warning(
+                    "Transient error reading Webshart sample %s; retrying in %.1fs (%d/%d): %s",
+                    identifier,
+                    delay,
+                    attempt + 1,
+                    max_attempts,
+                    exc,
+                )
+                time.sleep(delay)
+
+    def read_sample_head_tail(
+        self,
+        identifier: Union[str, Path],
+        *,
+        file_metadata: Optional[dict] = None,
+        head_bytes: int = 4096,
+        tail_bytes: int = 131072,
+    ) -> tuple[bytes, bytes, int]:
+        """Range-read the beginning and end of a sample without loading its full TAR member."""
+        sample_ref = self.parse_sample_id(identifier)
+        metadata = file_metadata or self.get_shard_metadata(sample_ref.shard_idx).get(sample_ref.filename, {})
+        offset = metadata.get("offset")
+        length = metadata.get("length", metadata.get("size"))
+        shard_info = self.dataset.get_shard_info(sample_ref.shard_idx)
+        tar_path = shard_info.get("tar_path") if isinstance(shard_info, dict) else None
+        if offset is None or length is None or not str(tar_path or "").startswith(("http://", "https://")):
+            raise ValueError(f"Range metadata is unavailable for Webshart sample {identifier}.")
+
+        offset = int(offset)
+        length = int(length)
+        if length <= 0:
+            raise ValueError(f"Invalid Webshart sample length for {identifier}: {length}")
+
+        token = self.hf_token
+        if token is True:
+            from huggingface_hub import get_token
+
+            token = get_token()
+        base_headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+        def _read_range(relative_start: int, relative_end: int) -> bytes:
+            absolute_start = offset + relative_start
+            absolute_end = offset + relative_end
+            headers = {**base_headers, "Range": f"bytes={absolute_start}-{absolute_end}"}
+            response = requests.get(str(tar_path), headers=headers, stream=True, timeout=(10, 60))
+            try:
+                if response.status_code != 206:
+                    raise IOError(f"Range request for {identifier} returned HTTP {response.status_code} instead of 206.")
+                payload = response.content
+            finally:
+                response.close()
+            expected_size = relative_end - relative_start + 1
+            if len(payload) != expected_size:
+                raise IOError(f"Range request for {identifier} returned {len(payload)} bytes; expected {expected_size}.")
+            return payload
+
+        head_size = min(max(1, int(head_bytes)), length)
+        tail_size = min(max(1, int(tail_bytes)), length)
+        head = _read_range(0, head_size - 1)
+        if tail_size == length:
+            tail = head if head_size == length else _read_range(0, length - 1)
+        else:
+            tail = _read_range(length - tail_size, length - 1)
+        return head, tail, length
 
     def _sample_index_for_filename(self, shard_idx: int, filename: str) -> Optional[int]:
         shard_idx = int(shard_idx)
@@ -205,6 +301,11 @@ class WebshartDataBackend(BaseDataBackend):
             return None
 
         sample_ref = self.parse_sample_id(image_path)
+        sample_metadata = self.get_shard_metadata(sample_ref.shard_idx).get(sample_ref.filename, {}) or {}
+        caption = sample_metadata.get("captions")
+        if caption:
+            return str(caption).strip()
+
         caption_filename = Path(sample_ref.filename).with_suffix(".txt").name
         caption_sample_idx = self._sample_index_for_filename(sample_ref.shard_idx, caption_filename)
         if caption_sample_idx is None:
@@ -296,7 +397,9 @@ class WebshartDataBackend(BaseDataBackend):
 
     def read_image(self, filepath: str, delete_problematic_images: bool = False):
         try:
-            return load_image(self.read(filepath, as_byteIO=True))
+            file_extension = Path(self.normalize_sample_id(filepath)).suffix.lower().strip(".")
+            loader = load_video if file_extension in video_file_extensions else load_image
+            return loader(self.read(filepath, as_byteIO=True))
         except Exception as exc:
             logger.error("Error opening webshart sample %s: %s", filepath, exc)
             if delete_problematic_images:
@@ -322,6 +425,7 @@ class WebshartDataBackend(BaseDataBackend):
         data = self.read(filename, as_byteIO=True)
         if self.compress_cache:
             data = self._decompress_torch(data)
+        data.seek(0)
         return torch.load(data, map_location="cpu")
 
     def torch_save(self, data, filename):

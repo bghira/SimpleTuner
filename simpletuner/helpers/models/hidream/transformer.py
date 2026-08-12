@@ -23,6 +23,7 @@ from simpletuner.helpers.models.flowmap import (
     validate_flowmap_deltatime_type,
 )
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
 from simpletuner.helpers.training.qk_clip_logging import publish_attention_max_logits
 from simpletuner.helpers.training.tread import TREADRouter
@@ -1091,6 +1092,8 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_backend = "torch"
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
 
         total_layers = num_layers + num_single_layers
         self._musubi_block_swap = MusubiBlockSwapManager.build(
@@ -1112,7 +1115,13 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
     def set_gradient_checkpointing_backend(self, backend: str):
         self.gradient_checkpointing_backend = backend
 
-    def _set_gradient_checkpointing(self, module, value=False):
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
+
+    def _set_gradient_checkpointing(self, module=None, value=False, enable=None, gradient_checkpointing_func=None):
         """
         Recursively enables or disables gradient checkpointing for all modules.
 
@@ -1120,6 +1129,13 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             module: Module to set gradient checkpointing for
             value: Whether to enable (True) or disable (False) gradient checkpointing
         """
+        if enable is not None:
+            value = enable
+        if gradient_checkpointing_func is not None:
+            self._gradient_checkpointing_func = gradient_checkpointing_func
+        if module is None:
+            module = self
+            self.gradient_checkpointing = value
         if isinstance(
             module,
             (
@@ -1134,7 +1150,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
         # Also set checkpointing for child modules that might not be directly accessible
         for child in module.children():
-            self._set_gradient_checkpointing(child, value)
+            self._set_gradient_checkpointing(child, value=value)
 
     def enable_gradient_checkpointing(self):
         """Enables gradient checkpointing for the model"""
@@ -1304,7 +1320,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
                 return custom_forward
 
-            if self.gradient_checkpointing_backend == "unsloth":
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
                 from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                 checkpoint_fn = offloaded_checkpoint
@@ -1423,7 +1439,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
                 return custom_forward
 
-            if self.gradient_checkpointing_backend == "unsloth":
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
                 from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                 checkpoint_fn = offloaded_checkpoint
@@ -1482,7 +1498,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
                 return custom_forward
 
-            if self.gradient_checkpointing_backend == "unsloth":
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
                 from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                 checkpoint_fn = offloaded_checkpoint
@@ -1527,7 +1543,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
                 return custom_forward
 
-            if self.gradient_checkpointing_backend == "unsloth":
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
                 from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                 checkpoint_fn = offloaded_checkpoint
@@ -1584,7 +1600,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
                 return custom_forward
 
-            if self.gradient_checkpointing_backend == "unsloth":
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
                 from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                 checkpoint_fn = offloaded_checkpoint
@@ -1682,7 +1698,12 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             )
 
             # Process through the block with optional gradient checkpointing
-            if self.training and self.gradient_checkpointing:
+            if self.training and should_checkpoint_block(
+                bid,
+                self.gradient_checkpointing,
+                self.gradient_checkpointing_interval,
+                self.gradient_checkpointing_segment_stride,
+            ):
 
                 def create_custom_forward(module, return_dict=None):
                     def custom_forward(*inputs):
@@ -1693,7 +1714,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
                     return custom_forward
 
-                if self.gradient_checkpointing_backend == "unsloth":
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint
@@ -1814,7 +1835,12 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             hidden_states = torch.cat([hidden_states, cur_llama_embedding], dim=1)
 
             # Process through the block with optional gradient checkpointing
-            if self.training and self.gradient_checkpointing:
+            if self.training and should_checkpoint_block(
+                len(self.double_stream_blocks) + bid,
+                self.gradient_checkpointing,
+                self.gradient_checkpointing_interval,
+                self.gradient_checkpointing_segment_stride,
+            ):
 
                 def create_custom_forward(module, return_dict=None):
                     def custom_forward(*inputs):
@@ -1825,7 +1851,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
                     return custom_forward
 
-                if self.gradient_checkpointing_backend == "unsloth":
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                     checkpoint_fn = offloaded_checkpoint
@@ -1914,7 +1940,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
                 return custom_forward
 
-            if self.gradient_checkpointing_backend == "unsloth":
+            if self.gradient_checkpointing_backend.startswith("unsloth"):
                 from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
                 checkpoint_fn = offloaded_checkpoint

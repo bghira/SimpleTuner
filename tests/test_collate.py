@@ -13,6 +13,7 @@ from simpletuner.helpers.training.collate import (
     collate_fn,
     compute_latents,
     compute_prompt_embeddings,
+    compute_single_embedding,
     describe_missing_conditioning_pairs,
 )
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -26,12 +27,14 @@ class _StubModel:
         requires_conditioning_latents: bool = False,
         requires_conditioning_dataset: bool = False,
         requires_text_embed_image_context: bool = False,
+        uses_text_embeddings_cache: bool = True,
     ):
         self._requires_conditioning = requires_conditioning
         self._use_reference_embeds = use_reference_embeds
         self._requires_conditioning_latents = requires_conditioning_latents
         self._requires_conditioning_dataset = requires_conditioning_dataset
         self._requires_text_embed_context = requires_text_embed_image_context
+        self._uses_text_embeddings_cache = uses_text_embeddings_cache
 
     def requires_conditioning_image_embeds(self):
         return self._requires_conditioning
@@ -53,6 +56,9 @@ class _StubModel:
 
     def requires_text_embed_image_context(self):
         return self._requires_text_embed_context
+
+    def uses_text_embeddings_cache(self):
+        return self._uses_text_embeddings_cache
 
 
 class _StubConditioningSample:
@@ -98,6 +104,8 @@ class CollateFunctionTests(unittest.TestCase):
             vae_cache_ondemand=False,
             data_aesthetic_score=0.0,
             conditioning_multidataset_sampling=None,
+            distillation_method=None,
+            distillation_config={},
         )
         self.base_batch = [
             {
@@ -180,6 +188,64 @@ class CollateFunctionTests(unittest.TestCase):
         backend_mock = active_mocks[5]
         backend_mock.assert_called()
 
+    def test_collate_fn_loads_anyflow_unconditional_embeddings(self):
+        self.base_args.distillation_method = "anyflow"
+        self.base_args.distillation_config = {"anyflow": {"fuse_guidance_scale": 3.0}}
+        positive = {"prompt_embeds": torch.ones(1, 1)}
+        unconditional = {"prompt_embeds": torch.zeros(1, 1)}
+        backend_dict = {
+            "text_embed_cache": SimpleNamespace(disabled=False),
+            "data_backend": _make_stub_data_backend(),
+            "config": {"instance_data_dir": "/train"},
+        }
+        model = _StubModel(requires_conditioning=False)
+        model.text_embed_cache_metadata_for_sample = lambda **kwargs: {
+            "prompt_signature": f"sig:{kwargs['prompt'] or 'empty'}"
+        }
+        model.text_embed_cache_key_value = lambda prompt, default_key, metadata: metadata["prompt_signature"]
+        patchers, _ = self._patch_state_tracker(
+            model=model,
+            data_backend=backend_dict,
+            text_outputs=positive,
+            backend_lookup={"backend-1": backend_dict},
+        )
+
+        with ExitStack() as stack:
+            active_mocks = [stack.enter_context(patcher) for patcher in patchers]
+            embed_mock = active_mocks[9]
+            embed_mock.side_effect = [positive, unconditional]
+            result = collate_fn(self.base_batch)
+
+        self.assertTrue(torch.equal(result["prompt_embeds"], positive["prompt_embeds"]))
+        self.assertTrue(torch.equal(result["negative_prompt_embeds"], unconditional["prompt_embeds"]))
+        self.assertEqual(embed_mock.call_count, 2)
+        conditional_requests = embed_mock.call_args_list[0].args[0]
+        unconditional_requests = embed_mock.call_args_list[1].args[0]
+        self.assertEqual(conditional_requests[0]["metadata"]["prompt_signature"], "sig:caption")
+        self.assertEqual(unconditional_requests[0]["metadata"]["prompt_signature"], "sig:empty")
+        self.assertIsNot(conditional_requests[0]["metadata"], unconditional_requests[0]["metadata"])
+        self.assertEqual(unconditional_requests[0]["prompt"], "")
+        self.assertEqual(unconditional_requests[0]["key"], "sig:empty")
+
+    def test_collate_fn_preserves_prompts_without_text_cache(self):
+        backend_dict = {
+            "data_backend": _make_stub_data_backend(),
+            "config": {"instance_data_dir": "/train"},
+        }
+
+        model = _StubModel(requires_conditioning=False, uses_text_embeddings_cache=False)
+        patchers, _ = self._patch_state_tracker(
+            model=model, data_backend=backend_dict, text_outputs={}, backend_lookup={"backend-1": backend_dict}
+        )
+        with ExitStack() as stack:
+            active_mocks = [stack.enter_context(patcher) for patcher in patchers]
+            result = collate_fn(self.base_batch)
+
+        self.assertEqual(result["prompts"], ["caption"])
+        self.assertEqual(result["text_encoder_output"], {})
+        self.assertIsNone(result["prompt_embeds"])
+        active_mocks[9].assert_not_called()
+
     def test_compute_latents_uses_backend_ondemand_mode(self):
         vae_cache = SimpleNamespace(
             vae_cache_ondemand=True,
@@ -214,6 +280,28 @@ class CollateFunctionTests(unittest.TestCase):
         executor.assert_not_called()
         self.assertEqual(compute_one.call_count, 2)
         self.assertEqual(result["prompt_embeds"].shape, torch.Size([2, 1, 1]))
+
+    def test_empty_prompt_uses_active_model_dropout_cache_policy(self):
+        class FalseyModel:
+            def __bool__(self):
+                return False
+
+            def use_text_cache_dropout_sentinel(self):
+                return False
+
+        dataset_cache = MagicMock()
+        default_cache = MagicMock()
+        default_cache._requires_path_based_keys = True
+        default_cache.model = SimpleNamespace()
+        default_cache.compute_prompt_embeddings_with_model.return_value = {"prompt_embeds": torch.ones(1, 1, 1)}
+        model = FalseyModel()
+        prompt_entry = {"prompt": "", "key": "dataset:sample.mp4", "metadata": {"context": "sample"}}
+
+        with patch.object(StateTracker, "get_default_text_embed_cache", return_value=default_cache):
+            compute_single_embedding(prompt_entry, dataset_cache, model)
+
+        self.assertEqual(prompt_entry["key"], "dataset:sample.mp4")
+        default_cache.compute_prompt_embeddings_with_model.assert_called_once_with(prompt_records=[prompt_entry])
 
     def test_collate_fn_stacks_conditioning_image_embeds(self):
         conditioning_tensor = torch.ones(2, 4)
