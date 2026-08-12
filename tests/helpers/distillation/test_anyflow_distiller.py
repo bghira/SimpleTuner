@@ -536,6 +536,37 @@ class AnyFlowDistillerTests(unittest.TestCase):
         self.assertTrue(torch.equal(batch["anyflow_diffusion_mask"], torch.tensor([True, True])))
         self.assertTrue(torch.equal(batch["anyflow_consistency_mask"], torch.tensor([False, False])))
 
+    def test_meanflow_warns_once_when_global_batch_omits_enabled_branch(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={
+                "model_type": "lora",
+                "diffusion_ratio": 0.5,
+                "consistency_ratio": 0.25,
+            },
+        )
+        latents = torch.zeros(3, 1, 2, 2)
+        noise = torch.ones_like(latents)
+        sigmas = torch.tensor([0.9, 0.6, 0.3]).view(3, 1, 1, 1)
+        batch = {
+            "latents": latents,
+            "noise": noise,
+            "input_noise": noise.clone(),
+            "sigmas": sigmas,
+            "timesteps": torch.tensor([900.0, 600.0, 300.0]),
+            "noisy_latents": (1 - sigmas) * latents + sigmas * noise,
+        }
+        draws = [torch.tensor([0.8, 0.7, 0.6]), torch.tensor([0.2, 0.4, 0.3])] * 2
+
+        with self.assertLogs("AnyFlowDistiller", level="WARNING") as captured, patch("torch.rand", side_effect=draws):
+            distiller._prepare_meanflow_pair(batch, model)
+            distiller._prepare_meanflow_pair(batch, model)
+
+        self.assertEqual(len(captured.records), 1)
+        self.assertIn("zero arbitrary samples", captured.output[0])
+
     def test_meanflow_central_difference_uses_noise_sigma_coordinate(self):
         model = _SigmaPredictionFlowModel()
         distiller = AnyFlowDistiller(
