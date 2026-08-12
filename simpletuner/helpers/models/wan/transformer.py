@@ -32,7 +32,7 @@ from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import FP32LayerNorm
 from diffusers.utils import USE_PEFT_BACKEND, logging, scale_lora_layers, unscale_lora_layers
 
-from simpletuner.helpers.models.flowmap import register_flowmap_config
+from simpletuner.helpers.models.flowmap import blend_flowmap_embeddings, register_flowmap_config
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state
 from simpletuner.helpers.training.grounding.gligen_layers import apply_grounding_fuser
@@ -347,8 +347,7 @@ class WanTimeTextImageEmbedding(nn.Module):
         if r_timestep is not None:
             delta_timestep = self._prepare_flowmap_delta_timestep(timestep, r_timestep)
             delta_emb, _ = self._embed_timestep(delta_timestep, encoder_hidden_states, self.delta_embedder)
-            gate = self.flowmap_delta_emb_gate.to(device=temb.device, dtype=temb.dtype)
-            temb = (1.0 - gate) * temb + gate * delta_emb
+            temb = blend_flowmap_embeddings(temb, delta_emb, self.flowmap_delta_emb_gate)
         if timestep_sign is not None:
             if self.time_sign_embed is None:
                 raise ValueError(
