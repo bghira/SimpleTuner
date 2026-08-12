@@ -595,6 +595,34 @@ class AnyFlowDistiller(DistillationBase):
         global_indices = process_index * batch_size + torch.arange(batch_size, device=device)
         diffusion_count = round(float(self.config["diffusion_ratio"]) * global_batch_size)
         consistency_count = round(float(self.config["consistency_ratio"]) * global_batch_size)
+        effective_diffusion_count = min(diffusion_count, global_batch_size)
+        effective_consistency_count = min(consistency_count, global_batch_size - effective_diffusion_count)
+        arbitrary_count = global_batch_size - effective_diffusion_count - effective_consistency_count
+        if process_index == 0 and not getattr(self, "_meanflow_branch_mix_logged", False):
+            self.logger.info(
+                "AnyFlow interval mixture at global batch %d: diffusion=%d, consistency=%d, arbitrary=%d.",
+                global_batch_size,
+                effective_diffusion_count,
+                effective_consistency_count,
+                arbitrary_count,
+            )
+            missing_branches = []
+            if float(self.config["diffusion_ratio"]) > 0.0 and effective_diffusion_count == 0:
+                missing_branches.append("diffusion")
+            if float(self.config["consistency_ratio"]) > 0.0 and effective_consistency_count == 0:
+                missing_branches.append("consistency")
+            arbitrary_ratio = 1.0 - float(self.config["diffusion_ratio"]) - float(self.config["consistency_ratio"])
+            if arbitrary_ratio > 0.0 and arbitrary_count == 0:
+                missing_branches.append("arbitrary")
+            if missing_branches:
+                self.logger.warning(
+                    "AnyFlow global batch %d rounds the configured interval mixture to zero %s samples. "
+                    "Increase the per-device batch size or data-parallel process count so every enabled branch "
+                    "is represented on each optimizer step.",
+                    global_batch_size,
+                    "/".join(missing_branches),
+                )
+            self._meanflow_branch_mix_logged = True
         diffusion_mask = global_indices < diffusion_count
         consistency_mask = (global_indices >= diffusion_count) & (global_indices < diffusion_count + consistency_count)
         arbitrary_mask = ~(diffusion_mask | consistency_mask)
