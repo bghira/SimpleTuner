@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from threading import Lock
 
 import torch
 import torch.nn.functional as F
 
 H3_SPARSE_ATTENTION_MODES = ("disabled", "moba3d")
+_FLEX_ATTENTION_COMPILE_LOCK = Lock()
+_COMPILED_FLEX_ATTENTION = None
 
 
 def parse_h3_sparse_block_shape(
@@ -76,6 +79,7 @@ class MiniMaxH3SparseAttentionLayout:
     target_start: int
     target_shape: tuple[int, int, int]
     trailing_padding: int = 0
+    packed_valid_mask: torch.Tensor | None = None
 
     def validate(self, sequence_length: int) -> None:
         target_tokens = math.prod(self.target_shape)
@@ -288,6 +292,19 @@ def _route_video_blocks(
     return block_counts, block_indices
 
 
+def initialize_minimax_h3_flex_attention():
+    """Create the compiled FlexAttention wrapper before entering the model forward."""
+    global _COMPILED_FLEX_ATTENTION
+
+    if _COMPILED_FLEX_ATTENTION is None:
+        with _FLEX_ATTENTION_COMPILE_LOCK:
+            if _COMPILED_FLEX_ATTENTION is None:
+                from torch.nn.attention.flex_attention import flex_attention
+
+                _COMPILED_FLEX_ATTENTION = torch.compile(flex_attention, dynamic=False)
+    return _COMPILED_FLEX_ATTENTION
+
+
 @torch.compiler.disable
 def _flex_attention(
     query: torch.Tensor,
@@ -295,12 +312,7 @@ def _flex_attention(
     value: torch.Tensor,
     block_mask,
 ) -> torch.Tensor:
-    from torch.nn.attention.flex_attention import flex_attention
-
-    compiled = getattr(_flex_attention, "_compiled", None)
-    if compiled is None:
-        compiled = torch.compile(flex_attention, dynamic=False)
-        _flex_attention._compiled = compiled
+    compiled = initialize_minimax_h3_flex_attention()
     return compiled(query, key, value, block_mask=block_mask)
 
 
@@ -332,9 +344,24 @@ def minimax_h3_sparse_attention(
         shared_head_group=shared_head_group,
     )
     valid_rows = _valid_rows(reordered_layout, query.device)
+    if layout.packed_valid_mask is not None:
+        packed_valid_mask = layout.packed_valid_mask.to(device=query.device, dtype=torch.bool)
+        if packed_valid_mask.shape != (
+            query.shape[0],
+            layout.target_start + math.prod(layout.target_shape) + layout.trailing_padding,
+        ):
+            raise ValueError(
+                "MiniMax-H3 sparse packed validity mask must have shape `[batch, sequence]`, got "
+                f"{tuple(packed_valid_mask.shape)}."
+            )
+        valid_rows = (
+            valid_rows.unsqueeze(0) & _reorder_qkv(packed_valid_mask[:, None, :, None], reordered_layout)[:, 0, :, 0]
+        )
 
     def mask_mod(batch_index, head_index, query_index, key_index):
-        return valid_rows[query_index] & valid_rows[key_index]
+        if valid_rows.ndim == 1:
+            return valid_rows[query_index] & valid_rows[key_index]
+        return valid_rows[batch_index, query_index] & valid_rows[batch_index, key_index]
 
     block_mask = BlockMask.from_kv_blocks(
         block_counts,
