@@ -44,6 +44,7 @@ from simpletuner.helpers.models.flowmap import (
     set_flowmap_gate,
     validate_flowmap_deltatime_type,
 )
+from simpletuner.helpers.models.ltxvideo2 import ltx2_rope_freqs_dtype
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
 from simpletuner.helpers.training.checkpointing import checkpoint as simpletuner_checkpoint
 from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state
@@ -1433,7 +1434,7 @@ class LTX2AudioVideoRotaryPosEmbed(nn.Module):
         num_rope_elems = num_pos_dims * 2
 
         # 4. Create a 1D grid of frequencies for RoPE
-        freqs_dtype = torch.float64 if self.double_precision else torch.float32
+        freqs_dtype = ltx2_rope_freqs_dtype(self.double_precision, device)
         pow_indices = torch.pow(
             self.theta,
             torch.linspace(start=0.0, end=1.0, steps=self.dim // num_rope_elems, dtype=freqs_dtype, device=device),

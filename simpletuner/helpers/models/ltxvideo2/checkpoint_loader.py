@@ -69,6 +69,7 @@ LTX_2_3_VIDEO_VAE_RENAME_DICT = {
 }
 
 LTX_2_5_DIFFUSION_VIDEO_VAE_RENAME_DICT = {
+    **LTX_2_3_VIDEO_VAE_RENAME_DICT,
     "per_channel_statistics.mean-of-means": "latents_mean",
     "per_channel_statistics.std-of-means": "latents_std",
 }
@@ -93,6 +94,10 @@ LTX_2_3_VOCODER_RENAME_DICT = {
 LTX_2_0_VAE_SPECIAL_KEYS_REMAP = {
     "per_channel_statistics.channel": None,
     "per_channel_statistics.mean-of-stds": None,
+}
+LTX_2_5_DIFFUSION_VIDEO_VAE_SPECIAL_KEYS_REMAP = {
+    **LTX_2_0_VAE_SPECIAL_KEYS_REMAP,
+    "decoder.type_emb": None,
 }
 LTX_2_0_AUDIO_VAE_SPECIAL_KEYS_REMAP: Dict[str, Any] = {}
 LTX_2_0_VOCODER_SPECIAL_KEYS_REMAP = {}
@@ -787,7 +792,7 @@ def convert_ltx2_video_vae(original_state_dict: Dict[str, Any], version: str) ->
         _apply_remap_rules(
             original_state_dict,
             LTX_2_5_DIFFUSION_VIDEO_VAE_RENAME_DICT,
-            LTX_2_0_VAE_SPECIAL_KEYS_REMAP,
+            LTX_2_5_DIFFUSION_VIDEO_VAE_SPECIAL_KEYS_REMAP,
         )
         vae.load_state_dict(original_state_dict, strict=True, assign=True)
         return vae

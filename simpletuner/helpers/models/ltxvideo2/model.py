@@ -11,7 +11,8 @@ from accelerate import init_empty_weights
 from diffusers import FlowMatchEulerDiscreteScheduler
 from huggingface_hub import hf_hub_download
 from huggingface_hub.utils import EntryNotFoundError
-from transformers import AutoTokenizer, Gemma3ForConditionalGeneration, GemmaTokenizerFast
+from safetensors import safe_open
+from transformers import AutoTokenizer, Gemma3ForConditionalGeneration, GemmaTokenizerFast, PreTrainedTokenizerFast
 
 from simpletuner.helpers.models.common import (
     ModelTypes,
@@ -71,10 +72,22 @@ LTX2_FLAVOUR_FILENAMES = {
     "2.3-dev": "ltx-2.3-22b-dev.safetensors",
     "2.3-distilled": "ltx-2.3-22b-distilled.safetensors",
 }
+LTX25_SPLIT_FILENAMES = {
+    "transformer_dev": "diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors",
+    "transformer_distilled": "diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors",
+    "text_encoder": "text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors",
+    "video_vae": "vae/ltx-2.5-video-vae-bf16.safetensors",
+    "audio_vae": "vae/ltx-2.5-audio-vae-bf16.safetensors",
+}
 LTX2_TRANSFORMER_PREFIX = "model.diffusion_model."
 LTX2_VIDEO_VAE_PREFIX = "vae."
 LTX2_AUDIO_VAE_PREFIX = "audio_vae."
 LTX2_VOCODER_PREFIX = "vocoder."
+LTX25_TRANSFORMER_CONNECTOR_PREFIXES = (
+    "audio_embeddings_connector.",
+    "video_embeddings_connector.",
+)
+LTX25_TEXT_PROJECTION_PREFIX = "text_embedding_projection."
 
 
 def _align_ltx2_connector_attention_mask(attention_mask: torch.Tensor, sequence_length: int) -> torch.Tensor:
@@ -197,6 +210,9 @@ class LTXVideo2(VideoModelFoundation):
         self._warned_missing_video = False
         self._combined_checkpoint_path = None
         self._diffusers_layout_detected = None
+        self._ltx25_split_layout_detected = None
+        self._ltx25_split_file_paths: dict[tuple[str, str, str], str] = {}
+        self._ltx25_snapshot_revisions: dict[tuple[str, str], str] = {}
 
     def _get_additional_lora_targets(self) -> list[str]:
         """
@@ -359,6 +375,28 @@ class LTXVideo2(VideoModelFoundation):
             },
         }
 
+    def load_text_tokenizer(self):
+        if not self._uses_ltx25_split_pack():
+            return super().load_text_tokenizer()
+        tokenizer = self._load_ltx25_text_tokenizer_from_file()
+        self.tokenizers = [tokenizer]
+        self.tokenizer_1 = tokenizer
+
+    def load_text_encoder(self, move_to_device: bool = True):
+        if not self._uses_ltx25_split_pack():
+            return super().load_text_encoder(move_to_device=move_to_device)
+        self.load_text_tokenizer()
+        text_encoder = self._load_ltx25_text_encoder_from_file()
+        if self._ramtorch_text_encoders_requested():
+            self._apply_ramtorch_layers(text_encoder, "text_encoder_1")
+        elif move_to_device:
+            text_encoder.to(self.accelerator.device, dtype=self.config.weight_dtype)
+        text_encoder.eval()
+        text_encoder.requires_grad_(False)
+        self.text_encoders = [text_encoder]
+        self.text_encoder = text_encoder
+        self.text_encoder_1 = text_encoder
+
     def _resolve_text_encoder_path(self, text_encoder_config: dict) -> str:
         text_encoder_path = super()._resolve_text_encoder_path(text_encoder_config)
         if self._resolve_ltx2_version() == "2.5" and text_encoder_path == "Lightricks/LTX-2":
@@ -407,6 +445,239 @@ class LTXVideo2(VideoModelFoundation):
             if local_path and os.path.isfile(local_path):
                 return True
         return False
+
+    def _default_ltx25_transformer_filename(self) -> str:
+        flavour = getattr(self.config, "model_flavour", None) or self.DEFAULT_MODEL_FLAVOUR
+        flavour_key = str(flavour).strip().lower() if flavour is not None else ""
+        if "distilled" in flavour_key:
+            return LTX25_SPLIT_FILENAMES["transformer_distilled"]
+        return LTX25_SPLIT_FILENAMES["transformer_dev"]
+
+    def _detect_ltx25_split_layout(self, model_path: Optional[str]) -> bool:
+        if self._resolve_ltx2_version() != "2.5" or not model_path:
+            return False
+        if isinstance(model_path, str) and model_path.endswith((".safetensors", ".sft")):
+            return False
+        if os.path.isfile(model_path):
+            return False
+        if self._diffusers_layout_detected is None:
+            self._diffusers_layout_detected = self._detect_diffusers_layout(model_path)
+        if self._diffusers_layout_detected:
+            return False
+        if os.path.isdir(model_path):
+            return any(
+                os.path.isfile(os.path.join(model_path, filename))
+                for filename in (
+                    self._default_ltx25_transformer_filename(),
+                    LTX25_SPLIT_FILENAMES["text_encoder"],
+                    LTX25_SPLIT_FILENAMES["video_vae"],
+                    LTX25_SPLIT_FILENAMES["audio_vae"],
+                )
+            )
+        return True
+
+    def _uses_ltx25_split_pack(self) -> bool:
+        if self._ltx25_split_layout_detected is None:
+            self._ltx25_split_layout_detected = self._detect_ltx25_split_layout(self.config.pretrained_model_name_or_path)
+        return self._ltx25_split_layout_detected
+
+    @staticmethod
+    def _ltx25_revision_key(revision) -> str:
+        if revision in (None, "", "None"):
+            return ""
+        return str(revision)
+
+    @staticmethod
+    def _extract_hf_snapshot_revision(path: str) -> str | None:
+        parts = os.path.normpath(path).split(os.sep)
+        try:
+            snapshot_index = parts.index("snapshots")
+        except ValueError:
+            return None
+        if snapshot_index + 1 >= len(parts):
+            return None
+        return parts[snapshot_index + 1] or None
+
+    def _resolve_ltx25_split_file(
+        self,
+        *,
+        filename: str,
+        override_attr: str | None = None,
+    ) -> str:
+        base_path = None
+        if override_attr is not None:
+            base_path = getattr(self.config, override_attr, None)
+        if base_path in (None, "", "None"):
+            base_path = self.config.pretrained_model_name_or_path
+        if base_path in (None, "", "None"):
+            raise ValueError("pretrained_model_name_or_path is required for LTX-2.5 split-pack loading.")
+
+        base_path = str(base_path)
+        if os.path.isfile(base_path):
+            return base_path
+        if os.path.isdir(base_path):
+            candidate = os.path.join(base_path, filename)
+            if os.path.isfile(candidate):
+                return candidate
+            raise ValueError(f"LTX-2.5 split-pack file {filename} was not found under {base_path}.")
+
+        revision = getattr(self.config, "revision", None)
+        revision_key = self._ltx25_revision_key(revision)
+        file_cache_key = (base_path, revision_key, filename)
+        cached_path = self._ltx25_split_file_paths.get(file_cache_key)
+        if cached_path is not None:
+            return cached_path
+
+        snapshot_key = (base_path, revision_key)
+        download_revision = self._ltx25_snapshot_revisions.get(snapshot_key) or revision
+        resolved_path = hf_hub_download(
+            repo_id=base_path,
+            filename=filename,
+            revision=download_revision,
+        )
+        snapshot_revision = self._extract_hf_snapshot_revision(resolved_path)
+        if snapshot_revision is not None:
+            self._ltx25_snapshot_revisions.setdefault(snapshot_key, snapshot_revision)
+        self._ltx25_split_file_paths[file_cache_key] = resolved_path
+        return resolved_path
+
+    def _resolve_ltx25_transformer_path(self) -> str:
+        return self._resolve_ltx25_split_file(
+            filename=self._default_ltx25_transformer_filename(),
+            override_attr="pretrained_transformer_model_name_or_path",
+        )
+
+    def _resolve_ltx25_text_encoder_path(self) -> str:
+        return self._resolve_ltx25_split_file(
+            filename=LTX25_SPLIT_FILENAMES["text_encoder"],
+            override_attr="pretrained_gemma_model_name_or_path",
+        )
+
+    def _resolve_ltx25_video_vae_path(self) -> str:
+        return self._resolve_ltx25_split_file(
+            filename=LTX25_SPLIT_FILENAMES["video_vae"],
+            override_attr="pretrained_vae_model_name_or_path",
+        )
+
+    def _resolve_ltx25_audio_vae_path(self) -> str:
+        return self._resolve_ltx25_split_file(filename=LTX25_SPLIT_FILENAMES["audio_vae"])
+
+    @staticmethod
+    def _load_safetensors_keys(checkpoint_path: str, predicate) -> dict[str, torch.Tensor]:
+        state_dict: dict[str, torch.Tensor] = {}
+        with safe_open(checkpoint_path, framework="pt", device="cpu") as handle:
+            for key in handle.keys():
+                mapped_key = predicate(key)
+                if mapped_key is not None:
+                    state_dict[mapped_key] = handle.get_tensor(key)
+        return state_dict
+
+    @staticmethod
+    def _decode_ltx25_text_asset(handle, key: str) -> str:
+        try:
+            tensor = handle.get_tensor(key)
+        except Exception as exc:
+            raise ValueError(f"LTX-2.5 text encoder checkpoint is missing embedded asset {key}.") from exc
+        return tensor.cpu().numpy().tobytes().decode("utf-8")
+
+    def _load_ltx25_transformer_state_dict(self) -> dict[str, torch.Tensor]:
+        checkpoint_path = self._resolve_ltx25_transformer_path()
+        logger.info("Loading LTX-2.5 transformer from split checkpoint %s", checkpoint_path)
+
+        def predicate(key: str) -> str | None:
+            if not key.startswith(LTX2_TRANSFORMER_PREFIX):
+                return None
+            mapped_key = key.removeprefix(LTX2_TRANSFORMER_PREFIX)
+            if mapped_key.startswith(LTX25_TRANSFORMER_CONNECTOR_PREFIXES):
+                return None
+            return mapped_key
+
+        return self._load_safetensors_keys(checkpoint_path, predicate)
+
+    def _load_ltx25_connector_state_dict(self) -> dict[str, torch.Tensor]:
+        transformer_path = self._resolve_ltx25_transformer_path()
+        text_encoder_path = self._resolve_ltx25_text_encoder_path()
+        logger.info(
+            "Loading LTX-2.5 text connectors from split checkpoints %s and %s",
+            transformer_path,
+            text_encoder_path,
+        )
+
+        def transformer_predicate(key: str) -> str | None:
+            if not key.startswith(LTX2_TRANSFORMER_PREFIX):
+                return None
+            mapped_key = key.removeprefix(LTX2_TRANSFORMER_PREFIX)
+            if mapped_key.startswith(LTX25_TRANSFORMER_CONNECTOR_PREFIXES):
+                return mapped_key
+            return None
+
+        state_dict = self._load_safetensors_keys(transformer_path, transformer_predicate)
+
+        def text_encoder_predicate(key: str) -> str | None:
+            if key.startswith(LTX25_TEXT_PROJECTION_PREFIX):
+                return key
+            return None
+
+        state_dict.update(self._load_safetensors_keys(text_encoder_path, text_encoder_predicate))
+        return state_dict
+
+    def _load_ltx25_text_tokenizer_from_file(self) -> PreTrainedTokenizerFast:
+        text_encoder_path = self._resolve_ltx25_text_encoder_path()
+        logger.info("Loading LTX-2.5 tokenizer from embedded assets in %s", text_encoder_path)
+        with safe_open(text_encoder_path, framework="pt", device="cpu") as handle:
+            tokenizer_json = self._decode_ltx25_text_asset(handle, "tokenizer_json")
+            tokenizer_config = json.loads(self._decode_ltx25_text_asset(handle, "hf_asset__tokenizer_config.json"))
+            chat_template = self._decode_ltx25_text_asset(handle, "hf_asset__chat_template.jinja")
+
+        from tokenizers import Tokenizer
+
+        tokenizer_kwargs = {
+            key: tokenizer_config[key]
+            for key in (
+                "bos_token",
+                "eos_token",
+                "unk_token",
+                "pad_token",
+                "mask_token",
+                "padding_side",
+                "extra_special_tokens",
+            )
+            if key in tokenizer_config
+        }
+        tokenizer_kwargs["model_max_length"] = int(getattr(self.config, "tokenizer_max_length", None) or 1024)
+        tokenizer = PreTrainedTokenizerFast(
+            tokenizer_object=Tokenizer.from_str(tokenizer_json),
+            **tokenizer_kwargs,
+        )
+        tokenizer.chat_template = chat_template
+        return tokenizer
+
+    def _load_ltx25_text_encoder_from_file(self) -> torch.nn.Module:
+        text_encoder_path = self._resolve_ltx25_text_encoder_path()
+        logger.info("Loading LTX-2.5 Gemma4 text encoder from split checkpoint %s", text_encoder_path)
+        with safe_open(text_encoder_path, framework="pt", device="cpu") as handle:
+            metadata = handle.metadata() or {}
+            gemma_config = metadata.get("gemma_config")
+            if gemma_config is None:
+                raise ValueError("LTX-2.5 text encoder checkpoint is missing gemma_config metadata.")
+            config_dict = json.loads(gemma_config)
+
+        from transformers import Gemma4Config, Gemma4TextModel
+
+        text_config = Gemma4Config.from_dict(config_dict).text_config
+        with init_empty_weights():
+            text_encoder = Gemma4TextModel(text_config)
+
+        def predicate(key: str) -> str | None:
+            if key.startswith("model."):
+                return key.removeprefix("model.")
+            return None
+
+        state_dict = self._load_safetensors_keys(text_encoder_path, predicate)
+        text_encoder.load_state_dict(state_dict, strict=True, assign=True)
+        del state_dict
+        text_encoder.config._name_or_path = text_encoder_path
+        return text_encoder
 
     def setup_model_flavour(self):
         flavour = getattr(self.config, "model_flavour", None)
@@ -503,6 +774,8 @@ class LTXVideo2(VideoModelFoundation):
         return LTX2_FLAVOUR_FILENAMES.get(flavour_key, LTX2_COMBINED_FILENAME)
 
     def _uses_combined_checkpoint(self) -> bool:
+        if self._uses_ltx25_split_pack():
+            return False
         model_path = self.config.pretrained_model_name_or_path
         if self._diffusers_layout_detected is None:
             self._diffusers_layout_detected = self._detect_diffusers_layout(model_path)
@@ -587,6 +860,17 @@ class LTXVideo2(VideoModelFoundation):
                     metadata_config=metadata_config,
                 )
                 del state_dict
+            elif self._uses_ltx25_split_pack():
+                audio_vae_path = self._resolve_ltx25_audio_vae_path()
+                logger.info("Loading LTX-2.5 audio VAE from split checkpoint %s", audio_vae_path)
+                state_dict = load_ltx2_state_dict_from_checkpoint(audio_vae_path, LTX2_AUDIO_VAE_PREFIX)
+                metadata_config = load_ltx2_metadata_config(audio_vae_path)
+                audio_vae = convert_ltx2_audio_vae(
+                    state_dict,
+                    version=self._resolve_ltx2_version(),
+                    metadata_config=metadata_config,
+                )
+                del state_dict
             else:
                 audio_vae_path = getattr(self.config, "pretrained_audio_vae_model_name_or_path", None)
                 if audio_vae_path is None:
@@ -638,6 +922,10 @@ class LTXVideo2(VideoModelFoundation):
                 state_dict = load_ltx2_state_dict_from_checkpoint(ckpt_path, LTX2_TRANSFORMER_PREFIX)
                 connectors = convert_ltx2_connectors(state_dict, version=self._resolve_ltx2_version())
                 del state_dict
+            elif self._uses_ltx25_split_pack():
+                state_dict = self._load_ltx25_connector_state_dict()
+                connectors = convert_ltx2_connectors(state_dict, version=self._resolve_ltx2_version())
+                del state_dict
             else:
                 model_path = self._model_config_path()
                 logger.info("Loading LTX-2 text connectors from %s", model_path)
@@ -665,6 +953,12 @@ class LTXVideo2(VideoModelFoundation):
                 ckpt_path = self._resolve_ltx2_checkpoint_path()
                 logger.info("Loading LTX-2 vocoder from combined checkpoint %s", ckpt_path)
                 state_dict = load_ltx2_state_dict_from_checkpoint(ckpt_path, LTX2_VOCODER_PREFIX)
+                vocoder = convert_ltx2_vocoder(state_dict, version=self._resolve_ltx2_version())
+                del state_dict
+            elif self._uses_ltx25_split_pack():
+                audio_vae_path = self._resolve_ltx25_audio_vae_path()
+                logger.info("Loading LTX-2.5 vocoder from split checkpoint %s", audio_vae_path)
+                state_dict = load_ltx2_state_dict_from_checkpoint(audio_vae_path, LTX2_VOCODER_PREFIX)
                 vocoder = convert_ltx2_vocoder(state_dict, version=self._resolve_ltx2_version())
                 del state_dict
             else:
@@ -700,6 +994,21 @@ class LTXVideo2(VideoModelFoundation):
         state_dict = load_ltx2_state_dict_from_checkpoint(ckpt_path, LTX2_VIDEO_VAE_PREFIX)
         self.vae = convert_ltx2_video_vae(state_dict, version=self._resolve_ltx2_version())
         del state_dict
+
+    def _load_video_vae_from_ltx25_split_pack(self):
+        if self.vae is not None:
+            return
+        vae_path = self._resolve_ltx25_video_vae_path()
+        logger.info("Loading LTX-2.5 video VAE from split checkpoint %s", vae_path)
+        state_dict = safetensors.torch.load_file(vae_path, device="cpu")
+        self.vae = convert_ltx2_video_vae(state_dict, version=self._resolve_ltx2_version())
+        del state_dict
+        self.config.vae_kwargs = {
+            "pretrained_model_name_or_path": vae_path,
+            "revision": self.config.revision,
+            "force_upcast": False,
+            "variant": self.config.variant,
+        }
 
     def _resolve_diffusers_component_file(self, base_path: str, component_subfolder: str, filename: str) -> str:
         if os.path.isdir(base_path):
@@ -814,6 +1123,10 @@ class LTXVideo2(VideoModelFoundation):
             self._load_video_vae_from_combined()
             self._configure_video_vae_settings(move_to_device=move_to_device)
             self.post_vae_load_setup()
+        elif self._uses_ltx25_split_pack():
+            self._load_video_vae_from_ltx25_split_pack()
+            self._configure_video_vae_settings(move_to_device=move_to_device)
+            self.post_vae_load_setup()
         elif self._resolve_ltx2_version() in {"2.3", "2.5"}:
             self._load_video_vae_from_diffusers_repo()
             self._configure_video_vae_settings(move_to_device=move_to_device)
@@ -841,6 +1154,58 @@ class LTXVideo2(VideoModelFoundation):
         return self.config, self.noise_schedule
 
     def load_model(self, move_to_device: bool = True):
+        if self._uses_ltx25_split_pack():
+            if (
+                getattr(self.config, "quantization_config", None) not in (None, "", "None")
+                or getattr(self.config, "quantize_via", None) == "pipeline"
+            ):
+                raise ValueError(
+                    "Pipeline quantization is not supported for LTX-2.5 split checkpoints. "
+                    "Use unquantized split weights or a Diffusers-compatible repository."
+                )
+
+            self._group_offload_configured = False
+            state_dict = self._load_ltx25_transformer_state_dict()
+            overrides = self._build_transformer_config_overrides()
+            self.model = convert_ltx2_transformer(
+                state_dict,
+                version=self._resolve_ltx2_version(),
+                config_overrides=overrides,
+            )
+            del state_dict
+
+            unwrapped = self.unwrap_model(model=self.model)
+            if self._module_has_meta_tensors(unwrapped):
+                raise RuntimeError("LTX-2 transformer parameters remain on the meta device after loading.")
+
+            if (
+                self._ramtorch_enabled()
+                and not self._ramtorch_base_deferred_until_after_quantization()
+                and self.model is not None
+            ):
+                self._apply_ramtorch_layers(self.model, self.MODEL_TYPE.value, percent=self._ramtorch_transformer_percent())
+            if move_to_device and self.model is not None:
+                self.model.to(self.accelerator.device, dtype=self.config.weight_dtype)
+
+            self.configure_chunked_feed_forward()
+
+            if self.config.gradient_checkpointing_interval is not None and self.config.gradient_checkpointing_interval > 1:
+                if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_interval"):
+                    logger.info("Setting gradient checkpointing interval..")
+                    self.unwrap_model(model=self.model).set_gradient_checkpointing_interval(
+                        int(self.config.gradient_checkpointing_interval)
+                    )
+            gradient_checkpointing_segment_stride = getattr(self.config, "gradient_checkpointing_segment_stride", None)
+            if gradient_checkpointing_segment_stride is not None:
+                if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_segment_stride"):
+                    logger.info("Setting gradient checkpointing segment stride..")
+                    self.unwrap_model(model=self.model).set_gradient_checkpointing_segment_stride(
+                        int(gradient_checkpointing_segment_stride)
+                    )
+            self.fuse_qkv_projections()
+            self.post_model_load_setup()
+            return
+
         if not self._uses_combined_checkpoint():
             return super().load_model(move_to_device=move_to_device)
 

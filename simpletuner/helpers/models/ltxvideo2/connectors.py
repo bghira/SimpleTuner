@@ -8,6 +8,8 @@ from diffusers.loaders import PeftAdapterMixin
 from diffusers.models.attention import FeedForward
 from diffusers.models.modeling_utils import ModelMixin
 
+from simpletuner.helpers.models.ltxvideo2 import ltx2_rope_freqs_dtype
+
 from .transformer import LTX2Attention, LTX2AudioVideoAttnProcessor
 
 
@@ -106,7 +108,7 @@ class LTX2RotaryPosEmbed1d(nn.Module):
         grid = grid_1d.unsqueeze(0).repeat(batch_size, 1)
 
         num_rope_elems = 2
-        freqs_dtype = torch.float64 if self.double_precision else torch.float32
+        freqs_dtype = ltx2_rope_freqs_dtype(self.double_precision, device)
         pow_indices = torch.pow(
             self.theta,
             torch.linspace(start=0.0, end=1.0, steps=self.dim // num_rope_elems, dtype=freqs_dtype, device=device),
