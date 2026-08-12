@@ -1106,6 +1106,7 @@ Different models expect different conditioning data:
 - **`--ltx2_validation_pipeline_mode`**: Choose whether LTX-2 validation runs only the trained model (`trained-stage`) or runs a two-stage spatial upscaler validation pipeline (`spatial-upscale`).
 - **`--ltx2_validation_spatial_upsampler_model`**: Hugging Face repo, local directory, or local `.safetensors` file for the LTX-2 spatial latent upsampler. Defaults to `Lightricks/LTX-2.3`.
 - **`--ltx2_validation_spatial_upsampler_filename`**: Upsampler filename when the model option points at a repo or directory. Defaults to `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`.
+- **`--ltx2_validation_audio_guidance`**: Optional separate CFG guidance scale for LTX-2 audio latents during validation. Leave unset to reuse `--validation_guidance`; set it when you want Comfy-style dual CFG with separate video and audio scales.
 - **What spatial-upscale does**: Stage 1 generates video latents at half the requested validation resolution, the spatial upsampler doubles those latents, and stage 2 re-denoises at the requested resolution with the LTX-2 stage-2 sigma schedule.
 - **Limit**: Spatial-upscale validation is video-only; `--validation_audio_only` keeps the normal single-stage validation path.
 

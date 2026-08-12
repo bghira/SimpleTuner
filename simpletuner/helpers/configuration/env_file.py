@@ -74,6 +74,7 @@ env_to_args_map = {
     "LTX2_VALIDATION_PIPELINE_MODE": "--ltx2_validation_pipeline_mode",
     "LTX2_VALIDATION_SPATIAL_UPSAMPLER_MODEL": "--ltx2_validation_spatial_upsampler_model",
     "LTX2_VALIDATION_SPATIAL_UPSAMPLER_FILENAME": "--ltx2_validation_spatial_upsampler_filename",
+    "LTX2_VALIDATION_AUDIO_GUIDANCE": "--ltx2_validation_audio_guidance",
     "POST_CHECKPOINT_SCRIPT": "--post_checkpoint_script",
     "POST_UPLOAD_SCRIPT": "--post_upload_script",
     "VALIDATION_GUIDANCE_RESCALE": "--validation_guidance_rescale",

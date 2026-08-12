@@ -263,7 +263,9 @@
             "dev-fp4",
             "dev-fp8",
             "2.3-dev",
-            "2.3-distilled"
+            "2.3-distilled",
+            "2.5-dev",
+            "2.5-distilled"
         ],
         "module_path": "simpletuner.helpers.models.ltxvideo2.model",
         "name": "LTXVideo2",

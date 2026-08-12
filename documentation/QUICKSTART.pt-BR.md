@@ -270,7 +270,7 @@ A matriz completa de compatibilidade é dividida por área de recurso para mante
 | LongCat Image | Qwen2.5-VL | 7B | AutoencoderKL |
 | LongCat Video | Qwen2.5-VL | 7B | Wan VAE |
 | LTX Video | T5 XXL v1.1 | 11B | LTX Video VAE |
-| LTX Video 2 | Gemma3 | not specified | LTX Video 2 VAE |
+| LTX Video 2 | Gemma3 / Gemma4 | not specified | LTX Video 2 VAE |
 | Lumina2 | Gemma2 | 2B | AutoencoderKL |
 | Mage-Flow | Qwen3-VL | not specified | Mage-VAE |
 | MiniMax H3 | Qwen3-VL | not specified | MiniMax H3 Video VAE + Audio VAE |

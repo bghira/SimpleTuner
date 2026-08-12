@@ -1,11 +1,11 @@
 # LTX Video 2 क्विकस्टार्ट
 
-इस उदाहरण में, हम LTX‑2 video/audio VAE और Gemma3 text encoder का उपयोग करके LTX Video 2 LoRA प्रशिक्षण करेंगे।
+इस उदाहरण में, हम LTX‑2 video/audio VAE और चुने गए LTX‑2 version के matching Gemma text encoder का उपयोग करके LTX Video 2 LoRA प्रशिक्षण करेंगे।
 
 ## हार्डवेयर आवश्यकताएँ
 
 LTX Video 2 एक भारी **19B** मॉडल है। यह निम्न को जोड़ता है:
-1. **Gemma3**: टेक्स्ट एन्कोडर।
+1. **Gemma3 / Gemma4**: टेक्स्ट एन्कोडर। LTX-2.0 और LTX-2.3 Gemma3 उपयोग करते हैं; LTX-2.5 Gemma4 उपयोग करता है।
 2. **LTX‑2 Video VAE** (audio conditioning के लिए Audio VAE भी)।
 3. **19B Video Transformer**: बड़ा DiT backbone।
 
@@ -23,7 +23,7 @@ LTX Video 2 एक भारी **19B** मॉडल है। यह निम�
 - **RamTorch (text encoder सहित)**: AMD 7900XTX पर ~13 GB VRAM।
   - NVIDIA 3090/4090/5090+ पर समान या बेहतर VRAM हेडरूम मिलना चाहिए।
 - **बिना offload (int8 TorchAO)**: ~29-30 GB VRAM; 32 GB हार्डवेयर अनुशंसित।
-  - सिस्टम RAM पीक: bf16 Gemma3 लोड करके int8 में क्वांटाइज़ करने पर ~46 GB (~32 GB VRAM)।
+  - सिस्टम RAM पीक: bf16 Gemma text encoder लोड करके int8 में क्वांटाइज़ करने पर ~46 GB (~32 GB VRAM)।
   - सिस्टम RAM पीक: bf16 LTX-2 transformer लोड करके int8 में क्वांटाइज़ करने पर ~34 GB (~30 GB VRAM)।
 - **बिना offload (पूर्ण bf16)**: बिना किसी offload के ट्रेनिंग के लिए ~48 GB VRAM चाहिए।
 - **थ्रूपुट**:
@@ -97,8 +97,8 @@ cp config/config.json.example config/config.json
 LTX Video 2 के लिए key settings:
 
 - `model_family`: `ltxvideo2`
-- `model_flavour`: `dev` (डिफ़ॉल्ट), `dev-fp4`, `dev-fp8`, `2.3-dev` या `2.3-distilled`।
-- `pretrained_model_name_or_path`: `Lightricks/LTX-2`, `dg845/LTX-2.3-Diffusers`, `dg845/LTX-2.3-Distilled-Diffusers` या local `.safetensors` फ़ाइल।
+- `model_flavour`: `dev` (डिफ़ॉल्ट), `dev-fp4`, `dev-fp8`, `2.3-dev`, `2.3-distilled`, `2.5-dev` या `2.5-distilled`।
+- `pretrained_model_name_or_path`: `Lightricks/LTX-2`, `dg845/LTX-2.3-Diffusers`, `dg845/LTX-2.3-Distilled-Diffusers`, `Lightricks/LTX-2.5` या local `.safetensors` फ़ाइल।
 - `train_batch_size`: `1`। इसे तब तक न बढ़ाएँ जब तक आपके पास A100/H100 न हो।
 - `validation_resolution`:
   - `512x768` परीक्षण के लिए सुरक्षित डिफ़ॉल्ट है।
@@ -107,6 +107,7 @@ LTX Video 2 के लिए key settings:
   - 5s (लगभग 12‑24fps पर): `61` या `49` उपयोग करें।
   - सूत्र: `(frames - 1) % 4 == 0`.
 - `validation_guidance`: `5.0`.
+- `ltx2_validation_audio_guidance`: validation के लिए optional separate audio CFG scale। unset रखने पर audio के लिए `validation_guidance` reuse होगा; LTX-2.5 AV validation में ComfyUI dual-CFG node defaults video CFG `3.0` और audio CFG `7.0` हैं।
 - `ltx2_validation_pipeline_mode`: सामान्य validation के लिए `trained-stage` रखें। `spatial-upscale` LTX-2 का two-stage spatial upscaler path चलाता है: half-resolution latent generation, spatial latent upscaling, फिर full-resolution re-denoising।
   - `spatial-upscale` के लिए `validation_resolution` 64 से divisible होना चाहिए।
   - Optional overrides: `ltx2_validation_spatial_upsampler_model` और `ltx2_validation_spatial_upsampler_filename`। Defaults `Lightricks/LTX-2.3` और `ltx-2.3-spatial-upscaler-x2-1.1.safetensors` हैं।
@@ -115,6 +116,9 @@ LTX Video 2 के लिए key settings:
 LTX-2 2.0 variants एक `.safetensors` checkpoint के रूप में आते हैं जिनमें transformer, video VAE, audio VAE, और vocoder शामिल हैं।
 LTX-2.3 के लिए, SimpleTuner `model_flavour` के आधार पर संबंधित Diffusers repo लोड करता है
 (`2.3-dev` या `2.3-distilled`)।
+LTX-2.5 के लिए, SimpleTuner Diffusers repo path को `Lightricks/LTX-2.5` मानता है और text encoder को Gemma4 से route करता है। यदि आप local single-file LTX-2.5 checkpoint लोड करते हैं, तो `model_flavour` को `2.5-dev` या `2.5-distilled` रखें; local path से override न करने पर SimpleTuner `Lightricks/LTX-2.5` को component/config source के रूप में उपयोग करेगा।
+
+LTX-2 AV validation का dual CFG सामान्य conditional और unconditional predictions उपयोग करता है और video/audio latent streams पर अलग-अलग scales लागू करता है। यह अपने-आप extra model pass नहीं जोड़ता। STG, modality guidance, या reference-audio identity guidance जैसे extra guidance features enabled होने पर अपना additional pass जोड़ते हैं।
 
 ### वैकल्पिक: VRAM ऑप्टिमाइज़ेशन
 
@@ -239,7 +243,7 @@ simpletuner train
 
 ### Validation Video Quality
 
-- **Black/Noise Videos**: अक्सर `validation_guidance` बहुत अधिक (> 6.0) या बहुत कम (< 2.0) होने से होता है। `5.0` पर रहें।
+- **Black/Noise Videos**: अक्सर CFG बहुत अधिक या बहुत कम होने से होता है। LTX-2.0/2.3 के लिए `validation_guidance: 5.0` से शुरू करें; LTX-2.5 AV validation के लिए video CFG `3.0` और `ltx2_validation_audio_guidance: 7.0` से शुरू करें।
 - **Motion Jitter**: जांचें कि dataset frame rate मॉडल के प्रशिक्षित frame rate (अक्सर 25fps) से मेल खाता है।
 - **Stagnant/Static Video**: मॉडल कम प्रशिक्षित हो सकता है या prompt में motion वर्णन नहीं है। "camera pans right", "zoom in", "running" जैसे prompts उपयोग करें।
 
