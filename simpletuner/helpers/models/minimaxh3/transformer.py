@@ -26,7 +26,7 @@ import torch.nn as nn
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import PeftAdapterMixin
 from diffusers.models._modeling_parallel import ContextParallelInput
-from diffusers.models.attention import AttentionMixin, AttentionModuleMixin
+from diffusers.models.attention import AttentionMixin, AttentionModuleMixin, FeedForward
 from diffusers.models.attention_dispatch import AttentionBackendName, _AttentionBackendRegistry, dispatch_attention_fn
 from diffusers.models.cache_utils import CacheMixin
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
@@ -355,6 +355,26 @@ def _map_minimax_h3_comfy_key_to_diffusers(key: str) -> list[str]:
     return [key]
 
 
+def _convert_minimax_h3_native_swiglu_to_diffusers(key: str, tensor: torch.Tensor) -> torch.Tensor:
+    """Convert native H3 ``[gate; value]`` FFN rows to Diffusers' ``[value; gate]`` order."""
+    if not key.endswith(".mlp.fc1.weight"):
+        return tensor
+    if tensor.ndim == 0 or tensor.shape[0] % 2 != 0:
+        raise RuntimeError(f"MiniMax-H3 SwiGLU tensor {key} cannot be split into gate/value rows")
+    gate, value = tensor.chunk(2, dim=0)
+    return torch.cat((value, gate), dim=0).contiguous()
+
+
+def _convert_minimax_h3_native_swiglu_scale_to_diffusers(key: str, scale: torch.Tensor) -> torch.Tensor:
+    """Apply the native H3 FFN row conversion to a per-output-row quantization scale."""
+    if not key.endswith(".mlp.fc1.weight") or scale.ndim == 0 or scale.numel() == 1:
+        return scale
+    if scale.shape[0] % 2 != 0:
+        raise RuntimeError(f"MiniMax-H3 SwiGLU scale for {key} cannot be split into gate/value rows")
+    gate, value = scale.chunk(2, dim=0)
+    return torch.cat((value, gate), dim=0).contiguous()
+
+
 def _count_indexed_blocks(keys: set[str], prefix: str) -> int:
     indices = set()
     for key in keys:
@@ -411,7 +431,7 @@ def _infer_minimax_h3_config_from_checkpoint(checkpoint) -> dict[str, Any]:
             ),
             "rope_freq_dim": _get_checkpoint_tensor(checkpoint, "rope.inv_freq").shape[0] if has_rope else 16,
             "adaln_curve_grid": adaln_curve_table.shape[0] if has_adaln_curve else None,
-            "swiglu_gate_first": True,
+            "swiglu_gate_first": False,
         }
 
     if "proj_in.weight" in raw_keys:
@@ -893,7 +913,10 @@ class MiniMaxH3TokenRefinerBlock(nn.Module):
             qk_norm_eps=qk_norm_eps,
         )
         self.norm2 = nn.RMSNorm(hidden_size, eps=norm_eps)
-        self.ff = MiniMaxH3FeedForward(hidden_size, inner_dim=ffn_dim, bias=False, gate_first=swiglu_gate_first)
+        if swiglu_gate_first:
+            self.ff = MiniMaxH3FeedForward(hidden_size, inner_dim=ffn_dim, bias=False, gate_first=True)
+        else:
+            self.ff = FeedForward(hidden_size, inner_dim=ffn_dim, activation_fn="swiglu", bias=False)
 
     def forward(
         self,
@@ -1021,7 +1044,10 @@ class MiniMaxH3TransformerBlock(nn.Module):
             qk_norm_eps=qk_norm_eps,
         )
         self.norm2 = nn.RMSNorm(hidden_size, eps=norm_eps)
-        self.ff = MiniMaxH3FeedForward(hidden_size, inner_dim=ffn_dim, bias=False, gate_first=swiglu_gate_first)
+        if swiglu_gate_first:
+            self.ff = MiniMaxH3FeedForward(hidden_size, inner_dim=ffn_dim, bias=False, gate_first=True)
+        else:
+            self.ff = FeedForward(hidden_size, inner_dim=ffn_dim, activation_fn="swiglu", bias=False)
         self.adaln_proj = MiniMaxH3AdaLayerNormModulation(
             time_embed_dim=time_embed_dim,
             hidden_size=hidden_size,
@@ -1640,6 +1666,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                     continue
 
                 tensor = checkpoint.get_tensor(raw_key)
+                tensor = _convert_minimax_h3_native_swiglu_to_diffusers(key, tensor)
                 if tensor.dtype in _COMFY_FP8_DTYPES:
                     from simpletuner.helpers.models.z_image.quantized_loading import _decode_comfy_quant
 
@@ -1659,6 +1686,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                             f"{quant_metadata.get('format')!r}"
                         )
                     scale = checkpoint.get_tensor(scale_key).to(torch.float32)
+                    scale = _convert_minimax_h3_native_swiglu_scale_to_diffusers(key, scale)
                     if len(mapped_keys) == 3:
                         if tensor.shape[0] % 3 != 0:
                             raise RuntimeError(f"MiniMax-H3 FP8 tensor {raw_key} cannot be split into q/k/v tensors")
@@ -1699,6 +1727,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                     if hadamard_group_size <= 0:
                         raise RuntimeError(f"MiniMax-H3 ConvRot tensor {raw_key} has invalid convrot_groupsize")
                     scale = checkpoint.get_tensor(scale_key)
+                    scale = _convert_minimax_h3_native_swiglu_scale_to_diffusers(key, scale)
                     if len(mapped_keys) == 3:
                         if tensor.shape[0] % 3 != 0 or scale.shape[0] % 3 != 0:
                             raise RuntimeError(f"MiniMax-H3 ConvRot tensor {raw_key} cannot be split into q/k/v tensors")
