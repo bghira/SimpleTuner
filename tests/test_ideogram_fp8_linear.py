@@ -204,5 +204,74 @@ class IdeogramFp8DequantTests(unittest.TestCase):
         self.assertTrue(device_supports_float8(torch.device("cpu")))
 
 
+class IdeogramFp8BaseUpcastTests(unittest.TestCase):
+    def _make_model(self, upcast: bool, base_model_precision: str = "no_change"):
+        from simpletuner.helpers.models.ideogram.model import Ideogram4
+
+        model = Ideogram4.__new__(Ideogram4)
+        model.config = mock.Mock()
+        model.config.pretrained_transformer_model_name_or_path = None
+        model.config.pretrained_model_name_or_path = "ideogram-ai/ideogram-4-fp8"
+        model.config.ideogram_fp8_base_upcast = upcast
+        model.config.base_model_precision = base_model_precision
+        model.config.weight_dtype = torch.bfloat16
+        model.accelerator = mock.Mock()
+        model.accelerator.device = torch.device("cpu")
+        model.apply_gradient_checkpointing_settings = mock.Mock()
+        model.apply_model_specific_freeze = mock.Mock()
+        return model
+
+    def _fp8_state_dict(self):
+        weight, scale = quantize_weight_to_fp8(torch.randn(3, 4))
+        return {"proj.weight": weight, "proj.weight_scale": scale}
+
+    def test_load_model_upcast_dequantizes_before_build(self):
+        from simpletuner.helpers.models.ideogram import model as ideogram_model
+
+        model = self._make_model(upcast=True)
+        state_dict = self._fp8_state_dict()
+        with mock.patch.object(ideogram_model, "_load_indexed_or_single_state_dict", return_value=state_dict):
+            with mock.patch.object(ideogram_model, "_build_transformer", return_value=mock.Mock()) as build:
+                model.load_model(move_to_device=False)
+
+        built_state_dict = build.call_args.args[1]
+        self.assertFalse(is_fp8_state_dict(built_state_dict))
+        self.assertEqual(built_state_dict["proj.weight"].dtype, torch.bfloat16)
+        self.assertNotIn("proj.weight_scale", built_state_dict)
+
+    def test_load_model_default_keeps_fp8_state_dict(self):
+        from simpletuner.helpers.models.ideogram import model as ideogram_model
+
+        model = self._make_model(upcast=False)
+        state_dict = self._fp8_state_dict()
+        with mock.patch.object(ideogram_model, "_load_indexed_or_single_state_dict", return_value=state_dict):
+            with mock.patch.object(ideogram_model, "_build_transformer", return_value=mock.Mock()) as build:
+                model.load_model(move_to_device=False)
+
+        self.assertIs(build.call_args.args[1], state_dict)
+
+    def test_load_model_quantization_request_dequantizes_first(self):
+        from simpletuner.helpers.models.ideogram import model as ideogram_model
+
+        model = self._make_model(upcast=False, base_model_precision="int8-sdnq")
+        state_dict = self._fp8_state_dict()
+        with mock.patch.object(ideogram_model, "_load_indexed_or_single_state_dict", return_value=state_dict):
+            with mock.patch.object(ideogram_model, "_build_transformer", return_value=mock.Mock()) as build:
+                model.load_model(move_to_device=False)
+
+        built_state_dict = build.call_args.args[1]
+        self.assertFalse(is_fp8_state_dict(built_state_dict))
+
+    def test_load_model_applies_gradient_checkpointing_settings(self):
+        from simpletuner.helpers.models.ideogram import model as ideogram_model
+
+        model = self._make_model(upcast=False)
+        with mock.patch.object(ideogram_model, "_load_indexed_or_single_state_dict", return_value=self._fp8_state_dict()):
+            with mock.patch.object(ideogram_model, "_build_transformer", return_value=mock.Mock()):
+                model.load_model(move_to_device=False)
+
+        model.apply_gradient_checkpointing_settings.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

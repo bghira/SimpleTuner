@@ -21,6 +21,7 @@ from simpletuner.helpers.models.ideogram.pipeline import (
 )
 from simpletuner.helpers.models.ideogram.prompt_enhancer import Ideogram4PromptEnhancerHead
 from simpletuner.helpers.models.ideogram.prompting import maybe_convert_prompt_to_ideogram_json
+from simpletuner.helpers.models.ideogram.quantized_loading import dequantize_fp8_state_dict, is_fp8_state_dict
 from simpletuner.helpers.models.ideogram.scheduler import get_schedule_for_resolution
 from simpletuner.helpers.models.ideogram.text_projection import Ideogram4TextProjection, Ideogram4TextProjectionConfig
 from simpletuner.helpers.models.registry import ModelRegistry
@@ -84,6 +85,14 @@ class Ideogram4(ImageModelFoundation):
         repo_id = self._repo_id()
         pipe_config = Ideogram4PipelineConfig(weights_repo=repo_id)
         state_dict = _load_indexed_or_single_state_dict(repo_id, pipe_config.conditional_index_filename)
+        base_precision = getattr(self.config, "base_model_precision", None) or "no_change"
+        quantization_requested = base_precision != "no_change"
+        if is_fp8_state_dict(state_dict) and (
+            getattr(self.config, "ideogram_fp8_base_upcast", False) or quantization_requested
+        ):
+            # Quantizers operate on nn.Linear parameters; Fp8Linear stores its weight as a
+            # buffer, so a requested base_model_precision would otherwise silently no-op.
+            state_dict = dequantize_fp8_state_dict(state_dict, self.config.weight_dtype)
         self.model = _build_transformer(
             Ideogram4Config(),
             state_dict,
@@ -92,6 +101,7 @@ class Ideogram4(ImageModelFoundation):
         )
         if move_to_device:
             self.model.to(self.accelerator.device)
+        self.apply_gradient_checkpointing_settings()
         self.apply_model_specific_freeze()
         return self.model
 

@@ -354,22 +354,28 @@ HunyuanVideo इस training shape पर activation-heavy है। Per-block �
 
 ### Ideogram 4.0
 
-Example: `ideogram-fp8.peft-lora`. Resolution: 1024x1024. `fp8` flavour Ideogram 4 के native weight-only fp8 checkpoint का उपयोग करता है (`base_model_precision=no_change`).
+Example: `ideogram-fp8.peft-lora`. Resolution: 1024x1024. `fp8` flavour Ideogram 4 के native weight-only fp8 checkpoint का उपयोग करता है (`base_model_precision=no_change`); `bf16-upcast` `ideogram_fp8_base_upcast=true` सेट करता है ताकि load पर base weights को bf16 में dequantize किया जाए। कोई भी अन्य `base_model_precision` (जैसे `int8-sdnq`) मांगने पर भी पहले dequantize होता है, ताकि quantizer असली weights पर काम करे।
 
-| Precision | Mode | H100 | L40S |
-| --- | --- | ---: | ---: |
-| fp8-native | none | failed | OOM |
-| fp8-native | activation-offload | unsupported | unsupported |
-| fp8-native | layer | 1.033 / 12.57 | 3.101 / 11.82 |
-| fp8-native | interval2 | 1.030 / 12.33 | 3.098 / 11.82 |
-| fp8-native | seg2-stride4 | 1.031 / 12.33 | 3.088 / 11.82 |
-| fp8-native | seg2-stride4-offload | unsupported | unsupported |
-| int8-sdnq-hadamard | none | 0.702 / 61.78 | OOM |
-| int8-sdnq-hadamard | activation-offload | unsupported | unsupported |
-| int8-sdnq-hadamard | layer | 1.033 / 12.33 | 3.030 / 11.82 |
-| int8-sdnq-hadamard | interval2 | 1.032 / 12.33 | 3.034 / 11.82 |
-| int8-sdnq-hadamard | seg2-stride4 | 1.028 / 12.33 | 3.035 / 11.82 |
-| int8-sdnq-hadamard | seg2-stride4-offload | unsupported | unsupported |
+इस table के पहले के संस्करण तब मापे गए थे जब Ideogram `gradient_checkpointing_interval`, `gradient_checkpointing_segment_stride` या `gradient_checkpointing_backend` को लागू नहीं करता था (उसका custom loader साझा wiring छोड़ देता था), और जब `int8-sdnq` वास्तव में fp8 checkpoint को quantize नहीं करता था — सभी checkpointing rows चुपचाप fp8-native weights पर full-layer torch checkpointing थीं। नीचे के H100 आंकड़े fix के बाद के हैं; L40S rows की re-measurement बाकी है।
+
+`torch-ffn`/`unsloth-ffn` backends unsupported हैं: Ideogram 4 attention/FFN checkpointing boundary expose नहीं करता।
+
+| Precision | Mode | Backend | H100 speed (s/step) | H100 VRAM (GiB) |
+| --- | --- | --- | ---: | ---: |
+| fp8-native | layer | torch | 1.068 | 12.33 |
+| fp8-native | layer | unsloth | 1.098 | 11.17 |
+| fp8-native | seg2-stride4 | torch | 0.915 | 36.28 |
+| fp8-native | seg2-stride4 | unsloth | 0.929 | 35.70 |
+| bf16-upcast | layer | torch | 0.962 | 20.51 |
+| bf16-upcast | layer | unsloth | 0.992 | 19.35 |
+| bf16-upcast | seg2-stride4 | torch | 0.842 | 36.85 |
+| bf16-upcast | seg2-stride4 | unsloth | 0.848 | 36.27 |
+| int8-sdnq-hadamard | layer | torch | 1.735 | 11.88 |
+| int8-sdnq-hadamard | layer | unsloth | 1.535 | 10.72 |
+| int8-sdnq-hadamard | seg2-stride4 | torch | 0.981 | 28.19 |
+| int8-sdnq-hadamard | seg2-stride4 | unsloth | 0.992 | 27.61 |
+
+निष्कर्ष: seg2-stride4 full-layer से ~14% तेज है, बदले में ~24 GiB अधिक retained activations लगती हैं; unsloth offload ~1.2 GiB बचाता है और step-time में 1-3% की लागत आती है (int8 full-layer में यह torch से तेज है, क्योंकि offload quantized matmul के साथ overlap होता है); VRAM अनुमति दे तो bf16-upcast throughput का विजेता है।
 
 ### Kandinsky 5 Image
 

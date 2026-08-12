@@ -14,7 +14,7 @@ simpletuner/examples/ideogram-fp8.peft-lora/config.json
 
 - **डिफ़ॉल्ट:** FP8 base weights, bf16 trainable LoRA weights, rank 16-32।
 - **कम VRAM:** base model के लिए NF4।
-- **अधिक VRAM:** पर्याप्त VRAM होने पर bf16-upcast weights, ताकि quantized loading से बचा जा सके।
+- **अधिक VRAM:** पर्याप्त VRAM होने पर bf16-upcast weights (`ideogram_fp8_base_upcast=true`), ताकि quantized loading से बचा जा सके। यह native FP8 checkpoint को load के समय training dtype में dequantize करता है (~18 GiB transformer)।
 
 H100 80GB पर measured values: native FP8 (`base_model_precision=fp8-torchao`, `quantize_via=pipeline`), rank 32 LoRA, bf16 mixed precision, gradient checkpointing enabled, 1024px square training, validation disabled:
 
