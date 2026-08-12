@@ -48,6 +48,7 @@ from simpletuner.helpers.models.minimaxh3.packing import (
 from simpletuner.helpers.models.minimaxh3.pipeline import MiniMaxH3Pipeline
 from simpletuner.helpers.models.minimaxh3.pipeline_ref import MiniMaxH3Ref2VAPipeline
 from simpletuner.helpers.models.minimaxh3.scheduler import MiniMaxH3Scheduler
+from simpletuner.helpers.models.minimaxh3.sparse_attention import initialize_minimax_h3_flex_attention
 from simpletuner.helpers.models.minimaxh3.transformer import MiniMaxH3Transformer3DModel
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
@@ -171,6 +172,9 @@ class MiniMaxH3(VideoModelFoundation):
 
     def __init__(self, config: dict, accelerator):
         super().__init__(config, accelerator)
+        sparse_mode = str(getattr(self.config, "minimax_h3_sparse_attention", "disabled") or "disabled").lower()
+        if sparse_mode not in {"disabled", "none", "full", "dense"}:
+            initialize_minimax_h3_flex_attention()
         self.audio_vae = None
         self.processor = None
         self._warned_missing_audio = False
@@ -1235,29 +1239,100 @@ class MiniMaxH3(VideoModelFoundation):
         batch["audio_noisy_latents"] = audio_noisy.to(device=target_device, dtype=target_dtype)
         return batch
 
-    def _resolve_text_token_tags(self, prepared_batch: dict, text_seq_len: int, device: torch.device) -> torch.Tensor:
+    def _resolve_text_token_tags(
+        self,
+        prepared_batch: dict,
+        text_seq_len: int,
+        batch_size: int,
+        device: torch.device,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         tags = prepared_batch.get("text_token_tags")
         if tags is None:
             text_output = prepared_batch.get("text_encoder_output")
             if isinstance(text_output, dict):
                 tags = text_output.get("text_token_tags")
         if tags is None:
-            return torch.full((text_seq_len,), MINIMAX_H3_TEXT_TAG, dtype=torch.long, device=device)
+            return torch.full((text_seq_len,), MINIMAX_H3_TEXT_TAG, dtype=torch.long, device=device), None
         tags = tags.to(device=device, dtype=torch.long)
         if tags.ndim == 1:
             if tags.shape[0] != text_seq_len:
                 raise ValueError(f"MiniMax-H3 text_token_tags length {tags.shape[0]} != prompt length {text_seq_len}.")
-            return tags
+            return tags, None
         if tags.ndim == 2:
+            if tags.shape[0] != batch_size:
+                raise ValueError(f"MiniMax-H3 text_token_tags batch {tags.shape[0]} != latent batch {batch_size}.")
             if tags.shape[1] != text_seq_len:
                 raise ValueError(f"MiniMax-H3 text_token_tags length {tags.shape[1]} != prompt length {text_seq_len}.")
-            if not torch.all(tags == tags[0:1]):
-                raise ValueError(
-                    "MiniMax-H3 batched training currently requires identical packed text token layouts. "
-                    "Use train_batch_size=1 or group prompts with identical H3 token/tag lengths."
-                )
-            return tags[0]
+            live_mask = tags >= 0
+            text_lengths = live_mask.sum(dim=1)
+            expected_live_mask = torch.arange(text_seq_len, device=device).unsqueeze(0) < text_lengths.unsqueeze(1)
+            if not bool(torch.equal(live_mask, expected_live_mask)):
+                raise ValueError("MiniMax-H3 batched text padding must be trailing.")
+            layout_tags = tags.max(dim=0).values
+            if bool((layout_tags < 0).any()):
+                raise ValueError("MiniMax-H3 batched text layout contains a column that is padding for every sample.")
+            if bool((live_mask & (tags != layout_tags.unsqueeze(0))).any()):
+                raise ValueError("MiniMax-H3 batched training requires matching non-padding text modality layouts.")
+            return layout_tags, None if bool(live_mask.all()) else live_mask
         raise ValueError(f"MiniMax-H3 text_token_tags must be 1-D or 2-D, got {tuple(tags.shape)}.")
+
+    @staticmethod
+    def _batch_timestep_values(value: torch.Tensor, batch_size: int, name: str) -> torch.Tensor:
+        value = torch.as_tensor(value, dtype=torch.float32)
+        if value.ndim == 0:
+            return value.expand(batch_size)
+        if value.shape[0] != batch_size:
+            raise ValueError(f"MiniMax-H3 {name} timestep batch {value.shape[0]} != latent batch {batch_size}.")
+        return value.reshape(batch_size, -1)[:, 0]
+
+    @staticmethod
+    def _batched_row_timesteps(
+        layout,
+        video_timesteps: torch.Tensor,
+        audio_timesteps: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        rows = []
+        for video_timestep, audio_timestep in zip(video_timesteps, audio_timesteps):
+            values, indices = build_row_timesteps(
+                layout,
+                video_timestep=float(video_timestep.item()),
+                audio_timestep=float(audio_timestep.item()),
+                condition_video_timestep=MINIMAX_H3_KEYFRAME_NOISE_AUG,
+                condition_audio_timestep=MINIMAX_H3_KEYFRAME_NOISE_AUG,
+            )
+            rows.append(values[indices])
+        row_timesteps = torch.stack(rows)
+        values, indices = torch.unique(row_timesteps, sorted=True, return_inverse=True)
+        indices = indices.view_as(row_timesteps)
+        return (values, indices[0]) if row_timesteps.shape[0] == 1 else (values, indices)
+
+    @staticmethod
+    def _batched_row_timestep_intervals(
+        layout,
+        video_timesteps: torch.Tensor,
+        audio_timesteps: torch.Tensor,
+        video_r_timesteps: torch.Tensor,
+        audio_r_timesteps: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        rows = []
+        for values in zip(video_timesteps, audio_timesteps, video_r_timesteps, audio_r_timesteps):
+            video_timestep, audio_timestep, video_r_timestep, audio_r_timestep = values
+            timesteps, r_timesteps, indices = build_row_timestep_intervals(
+                layout,
+                video_timestep=float(video_timestep.item()),
+                audio_timestep=float(audio_timestep.item()),
+                condition_video_timestep=MINIMAX_H3_KEYFRAME_NOISE_AUG,
+                condition_audio_timestep=MINIMAX_H3_KEYFRAME_NOISE_AUG,
+                video_r_timestep=float(video_r_timestep.item()),
+                audio_r_timestep=float(audio_r_timestep.item()),
+            )
+            rows.append(torch.stack((timesteps[indices], r_timesteps[indices]), dim=-1))
+        row_pairs = torch.stack(rows)
+        pairs, indices = torch.unique(row_pairs.view(-1, 2), dim=0, sorted=True, return_inverse=True)
+        indices = indices.view(row_pairs.shape[:-1])
+        if row_pairs.shape[0] == 1:
+            indices = indices[0]
+        return pairs[:, 0], pairs[:, 1], indices
 
     def _audio_latent_channels(self) -> int:
         transformer = getattr(self, "model", None)
@@ -1327,11 +1402,15 @@ class MiniMaxH3(VideoModelFoundation):
         patch_size = tuple(getattr(transformer.config, "patch_size", (1, 2, 2)))
         patch_product = int(patch_size[0] * patch_size[1] * patch_size[2])
         batch_size, channels, latent_frames, latent_height, latent_width = noisy_latents.shape
+        text_seq_len = encoder_hidden_states.shape[1]
         use_audio = use_audio and latent_frames > 1
         if use_audio:
             audio_noisy = audio_noisy.to(self.accelerator.device, dtype=self.config.weight_dtype)
-        text_token_tags = self._resolve_text_token_tags(
-            prepared_batch, encoder_hidden_states.shape[1], self.accelerator.device
+        text_token_tags, text_valid_mask = self._resolve_text_token_tags(
+            prepared_batch,
+            text_seq_len,
+            batch_size,
+            self.accelerator.device,
         )
         packed_target_video = patchify_video_latents(noisy_latents, patch_size).view(
             batch_size, -1, channels * patch_product
@@ -1384,44 +1463,41 @@ class MiniMaxH3(VideoModelFoundation):
             patch_size=patch_size,
             keyframe_anchors=keyframe_anchors,
         )
-        video_timestep = self._scalar_timestep(prepared_batch["timesteps"], "video")
+        video_timesteps = self._batch_timestep_values(prepared_batch["timesteps"], batch_size, "video")
         if use_audio:
-            audio_timestep = self._scalar_timestep(
+            audio_timesteps = self._batch_timestep_values(
                 prepared_batch.get("audio_timesteps", prepared_batch["timesteps"]),
+                batch_size,
                 "audio",
             )
         else:
-            audio_timestep = video_timestep
+            audio_timesteps = video_timesteps
         flowmap_r_timesteps = prepared_batch.get(self.FLOWMAP_R_TIMESTEP_BATCH_KEY)
         r_timestep = None
         if flowmap_r_timesteps is not None:
-            video_r_timestep = self._scalar_timestep(flowmap_r_timesteps, "video r")
+            video_r_timesteps = self._batch_timestep_values(flowmap_r_timesteps, batch_size, "video r")
             if use_audio:
-                video_r_sigma = torch.tensor([1.0 - video_r_timestep], dtype=torch.float32)
+                video_r_sigma = 1.0 - video_r_timesteps
                 audio_r_sigma = self._shift_sigmas_between_schedules(
                     video_r_sigma,
                     float(getattr(self.config, "flow_schedule_shift", 12.0) or 12.0),
                     float(getattr(self.config, "audio_flow_schedule_shift", 3.0) or 3.0),
                 )
-                audio_r_timestep = float(1.0 - audio_r_sigma[0].item())
+                audio_r_timesteps = 1.0 - audio_r_sigma
             else:
-                audio_r_timestep = video_r_timestep
-            timestep, r_timestep, timestep_indices = build_row_timestep_intervals(
+                audio_r_timesteps = video_r_timesteps
+            timestep, r_timestep, timestep_indices = self._batched_row_timestep_intervals(
                 layout,
-                video_timestep=video_timestep,
-                audio_timestep=audio_timestep,
-                condition_video_timestep=MINIMAX_H3_KEYFRAME_NOISE_AUG,
-                condition_audio_timestep=MINIMAX_H3_KEYFRAME_NOISE_AUG,
-                video_r_timestep=video_r_timestep,
-                audio_r_timestep=audio_r_timestep,
+                video_timesteps,
+                audio_timesteps,
+                video_r_timesteps,
+                audio_r_timesteps,
             )
         else:
-            timestep, timestep_indices = build_row_timesteps(
+            timestep, timestep_indices = self._batched_row_timesteps(
                 layout,
-                video_timestep=video_timestep,
-                audio_timestep=audio_timestep,
-                condition_video_timestep=MINIMAX_H3_KEYFRAME_NOISE_AUG,
-                condition_audio_timestep=MINIMAX_H3_KEYFRAME_NOISE_AUG,
+                video_timesteps,
+                audio_timesteps,
             )
 
         token_tags = layout.token_tags.to(self.accelerator.device)
@@ -1429,6 +1505,17 @@ class MiniMaxH3(VideoModelFoundation):
         video_indices = layout.video_indices.to(self.accelerator.device)
         audio_indices = layout.audio_indices.to(self.accelerator.device)
         text_indices = layout.text_indices.to(self.accelerator.device)
+        packed_valid_mask = None
+        if text_valid_mask is not None:
+            packed_valid_mask = torch.ones(
+                (batch_size, layout.sequence_length),
+                device=self.accelerator.device,
+                dtype=torch.bool,
+            )
+            packed_valid_mask[:, text_indices] = text_valid_mask
+            text_lengths = text_valid_mask.sum(dim=1)
+            position_ids = position_ids.unsqueeze(0).expand(batch_size, -1, -1).clone()
+            position_ids[:, text_seq_len:, 0] += (text_lengths - text_seq_len).to(position_ids.dtype).unsqueeze(1)
         timestep = timestep.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
         if r_timestep is not None:
             r_timestep = r_timestep.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
@@ -1461,6 +1548,7 @@ class MiniMaxH3(VideoModelFoundation):
             "video_indices": video_indices,
             "audio_indices": audio_indices,
             "text_indices": text_indices,
+            "packed_valid_mask": packed_valid_mask,
             "attention_kwargs": {},
             "skip_layers": prepared_batch.get("skip_layers"),
             "force_keep_mask": force_keep_mask,

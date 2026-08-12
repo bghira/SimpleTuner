@@ -175,6 +175,18 @@ class TestMiniMaxH3RotaryPosEmbed(unittest.TestCase):
         self.assertEqual(cos.shape, (4, 12))
         self.assertEqual(sin.shape, (4, 12))
 
+    def test_supports_per_sample_position_ids(self):
+        rope = MiniMaxH3RotaryPosEmbed(rope_freq_dim=2)
+        position_ids = torch.arange(24, dtype=torch.float32).view(2, 4, 3)
+
+        cos, sin = rope(position_ids)
+
+        self.assertEqual(cos.shape, (2, 4, 12))
+        self.assertEqual(sin.shape, (2, 4, 12))
+        expected_cos, expected_sin = rope(position_ids[1])
+        self.assertTrue(torch.equal(cos[1], expected_cos))
+        self.assertTrue(torch.equal(sin[1], expected_sin))
+
 
 class TestMiniMaxH3ContextParallelLayout(unittest.TestCase):
     def test_pads_odd_layout_to_context_parallel_degree(self):
@@ -1364,6 +1376,53 @@ class MiniMaxH3Tests(unittest.TestCase):
         output = wrapper.model_predict(prepared_batch)
         self.assertEqual(output["model_prediction"].shape, (1, 2, 2, 2, 2))
         self.assertEqual(output["audio_prediction"].shape, (1, 2, 3, 2))
+
+    def test_model_predict_batches_variable_text_lengths_and_timesteps_exactly(self):
+        torch.manual_seed(17)
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.model = tiny_h3_transformer(num_layers=1).eval()
+        wrapper.model.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+        wrapper.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        wrapper.config = SimpleNamespace(weight_dtype=torch.float32)
+        wrapper.LATENT_CHANNEL_COUNT = 2
+        wrapper.unwrap_model = lambda model=None: model
+
+        noisy_latents = torch.randn(2, 2, 2, 2, 2)
+        encoder_hidden_states = torch.randn(2, 5, 6)
+        encoder_hidden_states[0, 3:] = 0
+        text_token_tags = torch.tensor(
+            [
+                [MINIMAX_H3_TEXT_TAG, MINIMAX_H3_TEXT_TAG, MINIMAX_H3_TEXT_TAG, -1, -1],
+                [MINIMAX_H3_TEXT_TAG] * 5,
+            ],
+            dtype=torch.long,
+        )
+        timesteps = torch.tensor([0.25, 0.75])
+        r_timesteps = torch.tensor([0.5, 0.9])
+        prepared_batch = {
+            "noisy_latents": noisy_latents,
+            "encoder_hidden_states": encoder_hidden_states,
+            "timesteps": timesteps,
+            "text_token_tags": text_token_tags,
+            "flowmap_r_timesteps": r_timesteps,
+            "minimax_h3_target_mode": "video",
+        }
+
+        with torch.no_grad():
+            batched = wrapper.model_predict(prepared_batch)["model_prediction"]
+            individual = []
+            for batch_index, text_length in enumerate((3, 5)):
+                single_batch = {
+                    "noisy_latents": noisy_latents[batch_index : batch_index + 1],
+                    "encoder_hidden_states": encoder_hidden_states[batch_index : batch_index + 1, :text_length],
+                    "timesteps": timesteps[batch_index : batch_index + 1],
+                    "text_token_tags": text_token_tags[batch_index : batch_index + 1, :text_length],
+                    "flowmap_r_timesteps": r_timesteps[batch_index : batch_index + 1],
+                    "minimax_h3_target_mode": "video",
+                }
+                individual.append(wrapper.model_predict(single_batch)["model_prediction"])
+
+        self.assertTrue(torch.allclose(batched, torch.cat(individual), atol=1e-5, rtol=1e-5))
 
     def test_model_predict_video_target_mode_omits_audio_rows(self):
         wrapper = MiniMaxH3.__new__(MiniMaxH3)

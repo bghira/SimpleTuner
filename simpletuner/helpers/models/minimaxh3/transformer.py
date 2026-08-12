@@ -55,6 +55,7 @@ from .activations import MiniMaxH3FeedForward
 from .sparse_attention import (
     MiniMaxH3SparseAttentionConfig,
     MiniMaxH3SparseAttentionLayout,
+    initialize_minimax_h3_flex_attention,
     minimax_h3_sparse_attention,
     minimax_h3_sparse_attention_ulysses,
 )
@@ -477,7 +478,8 @@ class MiniMaxH3TransformerOutput(BaseOutput):
 def _apply_rotary_emb(hidden_states: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
     r"""
     Rotate the leading `rotary_dim` channels of every head and pass the remaining channels through unchanged.
-    `hidden_states` is `(batch_size, seq_len, num_heads, head_dim)` and `cos`/`sin` are `(seq_len, rotary_dim)`.
+    `hidden_states` is `(batch_size, seq_len, num_heads, head_dim)` and `cos`/`sin` are either
+    `(seq_len, rotary_dim)` or `(batch_size, seq_len, rotary_dim)`.
     """
     rotary_dim = cos.shape[-1]
     hidden_states_rotary = hidden_states[..., :rotary_dim]
@@ -572,11 +574,11 @@ class MiniMaxH3RotaryPosEmbed(nn.Module):
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
     def forward(self, position_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        # position_ids: (seq_len, 3) -> cos/sin: (seq_len, 2 * 3 * rope_freq_dim)
+        # position_ids: (..., seq_len, 3) -> cos/sin: (..., seq_len, 2 * 3 * rope_freq_dim)
         position_ids = position_ids.to(torch.float32)
         inv_freq = self.inv_freq.to(device=position_ids.device)
-        freqs = position_ids.unsqueeze(-1) * inv_freq.view(1, 1, -1)  # (seq_len, 3, rope_freq_dim)
-        freqs_t, freqs_h, freqs_w = freqs.unbind(dim=1)
+        freqs = position_ids.unsqueeze(-1) * inv_freq.view(1, 1, -1)
+        freqs_t, freqs_h, freqs_w = freqs.unbind(dim=-2)
         freqs = torch.cat((freqs_t, freqs_h, freqs_w), dim=-1)
         freqs = torch.cat((freqs, freqs), dim=-1)
         return freqs.cos(), freqs.sin()
@@ -778,8 +780,10 @@ class MiniMaxH3AttnProcessor:
         )
         if use_sparse_attention:
             cp_config = context_parallel_config(self._parallel_config)
-            if attention_mask is not None and cp_config is None:
+            if attention_mask is not None and cp_config is None and sparse_attention_layout.packed_valid_mask is None:
                 raise ValueError("MiniMax-H3 sparse attention cannot be combined with a packed attention mask yet.")
+            if reference_mask is not None and attention_mask is not None:
+                raise ValueError("MiniMax-H3 sparse attention cannot combine batched padding with CachedKV masking yet.")
             if cp_config is not None:
                 hidden_states = minimax_h3_sparse_attention_ulysses(
                     query,
@@ -894,12 +898,13 @@ class MiniMaxH3TokenRefinerBlock(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
         checkpoint_ffn: bool = False,
         checkpoint_fn: Any | None = None,
         offload_attention: bool = False,
     ) -> torch.Tensor:
         with activation_offload_context(offload_attention, label=f"{self.__class__.__qualname__}:attention"):
-            hidden_states = hidden_states + self.attn(self.norm1(hidden_states))
+            hidden_states = hidden_states + self.attn(self.norm1(hidden_states), attention_mask=attention_mask)
         if checkpoint_ffn:
             if checkpoint_fn is None:
                 raise ValueError("checkpoint_fn is required when checkpoint_ffn=True")
@@ -947,6 +952,7 @@ class MiniMaxH3TokenRefiner(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
         checkpoint_backend: str = "torch",
         offload_attention: bool = False,
     ) -> torch.Tensor:
@@ -964,6 +970,7 @@ class MiniMaxH3TokenRefiner(nn.Module):
                 if checkpoint_backend.endswith("-ffn"):
                     hidden_states = block(
                         hidden_states,
+                        attention_mask=attention_mask,
                         checkpoint_ffn=True,
                         checkpoint_fn=checkpoint_fn,
                         offload_attention=offload_attention,
@@ -973,12 +980,17 @@ class MiniMaxH3TokenRefiner(nn.Module):
                     def run_checkpointed_block(checkpoint_hidden_states, checkpoint_block=block):
                         return checkpoint_block(
                             checkpoint_hidden_states,
+                            attention_mask=attention_mask,
                             offload_attention=offload_attention,
                         )
 
                     hidden_states = checkpoint_fn(run_checkpointed_block, hidden_states, use_reentrant=False)
             else:
-                hidden_states = block(hidden_states, offload_attention=offload_attention)
+                hidden_states = block(
+                    hidden_states,
+                    attention_mask=attention_mask,
+                    offload_attention=offload_attention,
+                )
         return self.final_norm(hidden_states)
 
 
@@ -1366,6 +1378,8 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                 f"MiniMax-H3 sparse start layer {config.start_layer} is outside the "
                 f"{len(self.transformer_blocks)}-layer transformer."
             )
+        if config.enabled:
+            initialize_minimax_h3_flex_attention()
         self._h3_sparse_attention_config = config
         for layer_index, block in enumerate(self.transformer_blocks):
             block.attn._h3_sparse_layer_index = layer_index
@@ -1859,6 +1873,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         video_indices: torch.Tensor,
         audio_indices: torch.Tensor,
         text_indices: torch.Tensor,
+        packed_valid_mask: torch.Tensor | None = None,
         attention_kwargs: dict[str, Any] | None = None,
         skip_layers: list[int] | None = None,
         force_keep_mask: torch.Tensor | None = None,
@@ -1885,13 +1900,14 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
             timestep (`torch.Tensor` of shape `(num_timesteps,)`):
                 The *distinct* timestep values present in the packed sequence, in `[0, 1]` and unscaled. One forward
                 serves rows at different noise levels (target video, target audio, conditioning rows).
-            timestep_indices (`torch.Tensor` of shape `(seq_len,)`):
+            timestep_indices (`torch.Tensor` of shape `(seq_len,)` or `(batch_size, seq_len)`):
                 For every row of the packed sequence, the index of its timestep in `timestep`.
             token_tags (`torch.Tensor` of shape `(seq_len,)`):
                 For every row of the packed sequence, its modality: `0` video, `1` text, `2` audio, `-1` padding.
                 Padding rows form their own attention document and never reach the outputs.
-            position_ids (`torch.Tensor` of shape `(seq_len, 3)`):
-                The `(t, h, w)` rotary coordinates of every row of the packed sequence.
+            position_ids (`torch.Tensor` of shape `(seq_len, 3)` or `(batch_size, seq_len, 3)`):
+                The `(t, h, w)` rotary coordinates of every row of the packed sequence. Batched coordinates preserve
+                each sample's unpadded text-length origin.
             video_indices (`torch.Tensor` of shape `(num_video_tokens,)`):
                 Positions of the video rows in the packed sequence.
             audio_indices (`torch.Tensor` of shape `(num_audio_tokens,)`):
@@ -1918,18 +1934,37 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                 `video_indices` and `audio_indices`.
         """
         # `attention_kwargs` is consumed by the `@apply_lora_scale` decorator on this method.
-        if position_ids.ndim != 2 or position_ids.shape[-1] != 3:
-            raise ValueError(f"`position_ids` must be a `(seq_len, 3)` tensor, got {list(position_ids.shape)}.")
-        sequence_length = position_ids.shape[0]
-        if token_tags.shape != (sequence_length,) or timestep_indices.shape != (sequence_length,):
+        valid_position_ids = position_ids.ndim == 2 or (
+            position_ids.ndim == 3 and position_ids.shape[0] == hidden_states.shape[0]
+        )
+        if not valid_position_ids or position_ids.shape[-1] != 3:
             raise ValueError(
-                "`token_tags` and `timestep_indices` must both be `(seq_len,)` tensors matching `position_ids`, got "
+                "`position_ids` must be `(seq_len, 3)` or `(batch, seq_len, 3)`, got " f"{list(position_ids.shape)}."
+            )
+        sequence_length = position_ids.shape[-2]
+        valid_timestep_indices = timestep_indices.shape == (sequence_length,) or timestep_indices.shape == (
+            hidden_states.shape[0],
+            sequence_length,
+        )
+        if token_tags.shape != (sequence_length,) or not valid_timestep_indices:
+            raise ValueError(
+                "`token_tags` must be `(seq_len,)` and `timestep_indices` must be `(seq_len,)` or "
+                "`(batch, seq_len)` tensors matching `position_ids`, got "
                 f"{list(token_tags.shape)} and {list(timestep_indices.shape)} for seq_len={sequence_length}."
             )
+        if packed_valid_mask is not None:
+            packed_valid_mask = packed_valid_mask.to(device=hidden_states.device, dtype=torch.bool)
+            if packed_valid_mask.shape != (hidden_states.shape[0], sequence_length):
+                raise ValueError(
+                    "`packed_valid_mask` must be `(batch, seq_len)`, got "
+                    f"{list(packed_valid_mask.shape)} for batch={hidden_states.shape[0]}, seq_len={sequence_length}."
+                )
 
         parallel_config = getattr(self, "_parallel_config", None)
         cp_config = context_parallel_config(parallel_config)
         cp_active = cp_config is not None
+        if cp_active and (position_ids.ndim == 3 or timestep_indices.ndim == 2 or packed_valid_mask is not None):
+            raise ValueError("MiniMax-H3 batched packed layouts are not supported with context parallelism yet.")
         sparse_config = self._h3_sparse_attention_config
         if sparse_config.enabled and cp_active:
             ring_degree = int(getattr(cp_config, "ring_degree", 1) or 1)
@@ -1960,8 +1995,14 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         audio_embeds = self.audio_proj_in(audio_hidden_states.to(self.audio_proj_in.weight.dtype))
         text_embeds = self.context_embedder(encoder_hidden_states.to(self.context_embedder.weight.dtype))
         self.token_refiner.gradient_checkpointing = self.gradient_checkpointing
+        text_attention_mask = None
+        if packed_valid_mask is not None:
+            text_is_pad = ~packed_valid_mask.index_select(1, text_indices)
+            if bool(text_is_pad.any()):
+                text_attention_mask = text_is_pad[:, None, :, None] == text_is_pad[:, None, None, :]
         text_embeds = self.token_refiner(
             text_embeds,
+            attention_mask=text_attention_mask,
             checkpoint_backend=self.gradient_checkpointing_backend,
             offload_attention=self.gradient_checkpointing_offload_attention,
         )
@@ -1988,9 +2029,13 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         # are discarded, and excluding padding keys keeps every live row exact.
         attention_mask = None
         is_pad = token_tags < 0
+        if packed_valid_mask is not None:
+            is_pad = (~packed_valid_mask) | is_pad.unsqueeze(0)
         if bool(is_pad.any()):
             if cp_active:
                 attention_mask = (~is_pad)[None, None, None, :]
+            elif is_pad.ndim == 2:
+                attention_mask = is_pad[:, None, :, None] == is_pad[:, None, None, :]
             else:
                 attention_mask = is_pad[None, :] == is_pad[:, None]
 
@@ -2002,6 +2047,8 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         reference_kv_cache = None
         reference_kv_stats = None
         if reference_mode is H3_REFERENCE_MODE.CachedKV and not grad_enabled:
+            if packed_valid_mask is not None:
+                raise ValueError("MiniMax-H3 CachedKV reference mode does not support batched text padding yet.")
             if cp_active:
                 raise ValueError("MiniMax-H3 CachedKV reference mode does not support context_parallel_size yet.")
             reference_mask = self._build_reference_mask(
@@ -2072,6 +2119,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                 target_start=unpadded_sequence_length - target_video_rows,
                 target_shape=target_shape,
                 trailing_padding=sequence_length - unpadded_sequence_length,
+                packed_valid_mask=packed_valid_mask,
             )
             if use_routing:
                 raise ValueError("MiniMax-H3 sparse attention cannot be combined with TREAD routing yet.")
