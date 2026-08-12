@@ -740,6 +740,26 @@ class AnyFlowDistillerTests(unittest.TestCase):
         self.assertIs(unconditional_batch["encoder_attention_mask"], batch["negative_encoder_attention_mask"])
         self.assertTrue(torch.equal(result, torch.full_like(conditional_x0, 1.5)))
 
+    def test_unconditional_batch_drops_positive_attention_mask_when_negative_has_none(self):
+        batch = _prepared_batch()
+        batch["encoder_attention_mask"] = torch.ones(2, 5, dtype=torch.long)
+
+        unconditional_batch = AnyFlowDistiller._unconditional_batch(batch)
+
+        self.assertNotIn("encoder_attention_mask", unconditional_batch)
+
+    def test_unconditional_batch_drops_model_specific_conditioning_aliases(self):
+        batch = _prepared_batch()
+        batch["prompt_embeds"] = torch.ones(2, 7, 4)
+        batch["attention_mask"] = torch.ones(2, 7, dtype=torch.bool)
+        batch["attention_masks"] = torch.ones(2, 7, dtype=torch.bool)
+
+        unconditional_batch = AnyFlowDistiller._unconditional_batch(batch)
+
+        self.assertNotIn("prompt_embeds", unconditional_batch)
+        self.assertNotIn("attention_mask", unconditional_batch)
+        self.assertNotIn("attention_masks", unconditional_batch)
+
     def test_onpolicy_initializes_separate_discriminator_adapter_and_optimizer(self):
         model = _FlowModel()
         distiller = AnyFlowDistiller(
