@@ -1029,6 +1029,12 @@ class Ideogram4Pipeline(Ideogram4LoraLoaderMixin):
             s_val = float(schedule(step_intervals[i].unsqueeze(0)).item())
             t = torch.full((batch_size,), t_val, dtype=torch.float32, device=self.device)
 
+            # FlowMap-conditioned (AnyFlow) students predict the mean velocity over the
+            # jump [t -> s]; pass the jump destination so the Euler update is the exact jump.
+            flowmap_kwargs = {}
+            if getattr(self.conditional_transformer, "flowmap_deltatime_type", None) is not None:
+                flowmap_kwargs["r_timestep"] = torch.full((batch_size,), s_val, dtype=torch.float32, device=self.device)
+
             pos_z = torch.cat([text_z_padding, z], dim=1)
             pos_out = self.conditional_transformer(
                 llm_features=llm_features,
@@ -1037,6 +1043,7 @@ class Ideogram4Pipeline(Ideogram4LoraLoaderMixin):
                 position_ids=inputs["position_ids"],
                 segment_ids=inputs["segment_ids"],
                 indicator=inputs["indicator"],
+                **flowmap_kwargs,
             )
             pos_v = pos_out[:, max_text_tokens:]
 
@@ -1051,6 +1058,7 @@ class Ideogram4Pipeline(Ideogram4LoraLoaderMixin):
                         position_ids=neg_inputs["position_ids"],
                         segment_ids=neg_inputs["segment_ids"],
                         indicator=neg_inputs["indicator"],
+                        **flowmap_kwargs,
                     )
                     neg_v = neg_out[:, neg_max_text_tokens:]
                 else:
