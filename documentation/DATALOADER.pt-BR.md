@@ -1325,8 +1325,24 @@ Datasets Webshart carregam shards tar no estilo WebDataset pelo pacote `webshart
 - `metadata` é opcional e pode apontar para metadados separados com captions. Para repos Hugging Face de metadata como `webshart/conceptual-captions-12m-webdataset-metadata`, passe o repo id; o Webshart segue o layout de subpastas do source, como `data/`.
 - `metadata_backend` deve ser `webshart`; `caption_strategy` deve ser `webshart` ou `instanceprompt`.
 - `webshart.cache_dir` armazena os metadados do SimpleTuner e os caches do Webshart. `shard_cache_gb` e `parallel_downloads` são passados ao cache de shards do Webshart; defina `shard_cache_gb` como `0` para desativar o cache de shards completos e manter leituras por intervalo indexadas.
+- `webshart_optimize_captions` (grafia alternativa `webshart_optimise_captions`; também aceito como `optimize_captions`/`optimise_captions` dentro do bloco `webshart`) sonda o layout de captions na inicialização e, quando os captions ficam em membros tar sidecar `.txt`/`.json` em vez do índice de metadados, consolida-os uma única vez no cache local de metadados do Webshart. Sem essa opção, datasets com captions em sidecars (por exemplo `laion/conceptual-captions-12m-webdataset`) pagam uma leitura por intervalo por amostra sempre que os captions são enumerados — na inicialização, nos checkpoints e na geração do model card. Datasets cujos metadados já embutem os captions pulam a consolidação automaticamente.
 
-Exige um build do Webshart com `TarDataLoader.list_shard_sample_aspect_buckets()`.
+#### Otimizando captions com antecedência
+
+A mesma consolidação está disponível na CLI do Webshart, que também pode publicar os metadados reparados para que todos os consumidores do dataset se beneficiem sem a opção em tempo de execução:
+
+```bash
+webshart optimize-captions \
+  --source organization/dataset \
+  --metadata organization/dataset-metadata \
+  --destination caption-metadata \
+  --shard-cache-dir cache/shards \
+  --push-to-hub organization/dataset-metadata
+```
+
+`--destination` grava uma árvore de metadados portátil por shard, e `--push-to-hub` a envia para um repositório de metadata; depois aponte a opção `metadata` do dataloader para esse repositório. `--shard-cache-dir` permite que a consolidação reutilize shards totalmente em cache em vez de emitir uma leitura por intervalo para cada sidecar.
+
+Esse backend exige um build do Webshart com `TarDataLoader.list_shard_sample_aspect_buckets()`; `webshart_optimize_captions` exige adicionalmente `probe_caption_layout()` e `coalesce_caption_metadata()`.
 
 ## Mapeamento personalizado de proporção para resolução
 

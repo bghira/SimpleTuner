@@ -53,6 +53,7 @@ class WebshartDataBackend(BaseDataBackend):
         max_file_size: int = 500 * 1024 * 1024,
         compress_cache: bool = False,
         dataset_type: Union[str, DatasetType] = DatasetType.IMAGE,
+        optimize_captions: bool = False,
     ):
         if not source:
             raise ValueError("source is required for Webshart data backends.")
@@ -85,6 +86,7 @@ class WebshartDataBackend(BaseDataBackend):
         self.max_file_size = int(max_file_size)
         self.compress_cache = compress_cache
         self.dataset_type = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
+        self.optimize_captions = bool(optimize_captions)
         self._shard_sample_index_cache: dict[int, dict[str, int]] = {}
 
         Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
@@ -115,6 +117,44 @@ class WebshartDataBackend(BaseDataBackend):
                 "SimpleTuner's Webshart backend requires a webshart build that provides "
                 "TarDataLoader.list_shard_sample_aspect_buckets()."
             )
+        if self.optimize_captions:
+            self._optimize_caption_metadata()
+
+    def _optimize_caption_metadata(self) -> None:
+        """Fold sidecar captions into the local metadata cache via webshart's coalescer.
+
+        Sidecar-caption datasets (e.g. plain webdataset ``.txt`` members) otherwise cost one
+        range-read per sample every time captions are enumerated; after coalescing, the local
+        metadata cache serves them as embedded captions.
+        """
+        probe = getattr(self.dataset, "probe_caption_layout", None)
+        coalesce = getattr(self.loader, "coalesce_caption_metadata", None)
+        if not callable(probe) or not callable(coalesce):
+            raise ImportError(
+                "webshart_optimize_captions requires a webshart build that provides "
+                "DiscoveredDataset.probe_caption_layout() and TarDataLoader.coalesce_caption_metadata()."
+            )
+
+        is_main_process = self.accelerator is None or getattr(self.accelerator, "is_main_process", True)
+        if is_main_process:
+            layout = str(probe(max_shards=8).get("layout"))
+            if layout in ("json_sidecar", "txt_sidecar", "mixed"):
+                logger.info(
+                    "(id=%s) Coalescing %s captions into the webshart metadata cache...",
+                    self.id,
+                    layout,
+                )
+                result = coalesce()
+                logger.info(
+                    "(id=%s) Coalesced %s captions across %s shards.",
+                    self.id,
+                    result.get("coalesced_samples"),
+                    result.get("shards"),
+                )
+            else:
+                logger.info("(id=%s) Caption layout is '%s'; no coalescing needed.", self.id, layout)
+        if self.accelerator is not None and hasattr(self.accelerator, "wait_for_everyone"):
+            self.accelerator.wait_for_everyone()
 
     @classmethod
     def sample_id(cls, shard_idx: int, sample_idx: int, filename: str) -> str:

@@ -893,6 +893,14 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "step": 1,
                     "advanced": True,
                 },
+                {
+                    "id": "webshart_optimize_captions",
+                    "label": "optimize captions",
+                    "description": "coalesce .txt/.json sidecar captions into the local webshart metadata cache at startup, avoiding per-sample range reads",
+                    "type": "toggle",
+                    "defaultValue": False,
+                    "advanced": True,
+                },
             ],
             "metadata": {
                 "tags": ["image", "webshart"],

@@ -1326,8 +1326,24 @@ Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。
 - `metadata` 可选，可指向包含 captions 的独立 metadata location。对于 `webshart/conceptual-captions-12m-webdataset-metadata` 这样的 Hugging Face metadata repo，传 repo id 即可；Webshart 会跟随 source shard 的 `data/` 等子目录布局。
 - `metadata_backend` 必须为 `webshart`；`caption_strategy` 应为 `webshart` 或 `instanceprompt`。
 - `webshart.cache_dir` 存储 SimpleTuner metadata 与 Webshart caches。`shard_cache_gb` 和 `parallel_downloads` 会传给 Webshart 的 shard cache；将 `shard_cache_gb` 设为 `0` 可禁用整 shard cache，并保留基于索引的 range reads。
+- `webshart_optimize_captions`（另一拼写 `webshart_optimise_captions`；在 `webshart` 块内也接受 `optimize_captions`/`optimise_captions`）会在启动时探测 caption 布局，当 captions 位于 `.txt`/`.json` sidecar tar 成员中而不是 metadata 索引中时，将它们一次性合并进本地 Webshart metadata cache。若不启用，sidecar caption 数据集（例如 `laion/conceptual-captions-12m-webdataset`）在每次枚举 captions 时——启动、checkpoint、生成 model card——都要为每个样本付出一次 range read。metadata 中已内嵌 captions 的数据集会自动跳过合并。
 
-需要提供 `TarDataLoader.list_shard_sample_aspect_buckets()` 的 Webshart build。
+#### 提前优化 captions
+
+同样的合并也可以通过 Webshart CLI 完成，它还能发布修复后的 metadata，让该数据集的所有使用者无需 runtime 选项即可受益：
+
+```bash
+webshart optimize-captions \
+  --source organization/dataset \
+  --metadata organization/dataset-metadata \
+  --destination caption-metadata \
+  --shard-cache-dir cache/shards \
+  --push-to-hub organization/dataset-metadata
+```
+
+`--destination` 写出一棵可移植的按 shard 组织的 metadata 树，`--push-to-hub` 将其上传到 metadata 仓库；之后把 dataloader 的 `metadata` 选项指向该仓库即可。`--shard-cache-dir` 让合并过程复用已完整 cache 的 shards，而不是为每个 sidecar 发起一次 range read。
+
+该 backend 需要提供 `TarDataLoader.list_shard_sample_aspect_buckets()` 的 Webshart build；`webshart_optimize_captions` 还额外需要 `probe_caption_layout()` 和 `coalesce_caption_metadata()`。
 
 ## 自定义纵横比到分辨率映射
 

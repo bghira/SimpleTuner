@@ -59,6 +59,7 @@ class ImageBackendConfig(BaseBackendConfig):
     webshart_parallel_downloads: Optional[int] = None
     webshart_buffer_size: Optional[int] = None
     webshart_max_file_size: Optional[int] = None
+    webshart_optimize_captions: Optional[bool] = None
 
     vae_cache_clear_each_epoch: Optional[bool] = None
     probability: float = 1.0
@@ -190,6 +191,17 @@ class ImageBackendConfig(BaseBackendConfig):
             )
             config.webshart_buffer_size = webshart_block.get("buffer_size", backend_dict.get("buffer_size"))
             config.webshart_max_file_size = webshart_block.get("max_file_size", backend_dict.get("max_file_size"))
+            optimize_captions = None
+            for candidate in (
+                backend_dict.get("webshart_optimize_captions"),
+                backend_dict.get("webshart_optimise_captions"),
+                webshart_block.get("optimize_captions"),
+                webshart_block.get("optimise_captions"),
+            ):
+                if candidate is not None:
+                    optimize_captions = bool(candidate)
+                    break
+            config.webshart_optimize_captions = optimize_captions
 
         config.vae_cache_clear_each_epoch = backend_dict.get("vae_cache_clear_each_epoch")
         config.probability = float(backend_dict.get("probability", 1.0)) if backend_dict.get("probability") else 1.0
@@ -538,6 +550,8 @@ class ImageBackendConfig(BaseBackendConfig):
                 webshart_config["buffer_size"] = self.webshart_buffer_size
             if self.webshart_max_file_size is not None:
                 webshart_config["max_file_size"] = self.webshart_max_file_size
+            if self.webshart_optimize_captions is not None:
+                webshart_config["optimize_captions"] = self.webshart_optimize_captions
 
         if self.video is not None:
             config["video"] = self.video

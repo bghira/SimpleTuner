@@ -1326,8 +1326,24 @@ Webshart データセットは `webshart` パッケージで WebDataset 形式�
 - `metadata` は任意で、captions を含む別 metadata location を指定できます。`webshart/conceptual-captions-12m-webdataset-metadata` のような Hugging Face metadata repo では repo id だけを渡します。Webshart は source shard の `data/` などのサブフォルダ構成に従います。
 - `metadata_backend` は `webshart`、`caption_strategy` は `webshart` または `instanceprompt` にします。
 - `webshart.cache_dir` は SimpleTuner metadata と Webshart caches を保存します。`shard_cache_gb` と `parallel_downloads` は Webshart の shard cache に渡されます。`shard_cache_gb` を `0` にすると、shard 全体の cache を無効にし、index 付き range read を維持します。
+- `webshart_optimize_captions`（別綴り `webshart_optimise_captions`。`webshart` ブロック内では `optimize_captions`/`optimise_captions` も受け付けます）は起動時に caption layout を probe し、captions が metadata index ではなく `.txt`/`.json` の sidecar tar member にある場合、それらをローカルの Webshart metadata cache に一度だけ統合します。このオプションがないと、sidecar caption の dataset（たとえば `laion/conceptual-captions-12m-webdataset`）は captions を列挙するたび — 起動時、checkpoint 時、model card 生成時 — にサンプルごとに 1 回の range read が発生します。metadata に captions が既に埋め込まれている dataset では、統合は自動的にスキップされます。
 
-`TarDataLoader.list_shard_sample_aspect_buckets()` を提供する Webshart build が必要です。
+#### captions を事前に最適化する
+
+同じ統合処理は Webshart CLI からも利用でき、修復済みの metadata を公開することもできるため、runtime オプションなしで dataset のすべての利用者が恩恵を受けられます:
+
+```bash
+webshart optimize-captions \
+  --source organization/dataset \
+  --metadata organization/dataset-metadata \
+  --destination caption-metadata \
+  --shard-cache-dir cache/shards \
+  --push-to-hub organization/dataset-metadata
+```
+
+`--destination` はポータブルな shard ごとの metadata ツリーを書き出し、`--push-to-hub` はそれを metadata repository にアップロードします。その後、dataloader の `metadata` オプションをその repository に向けてください。`--shard-cache-dir` を指定すると、統合処理は sidecar ごとに 1 回の range read を発行する代わりに、完全に cache された shard を再利用できます。
+
+この backend には `TarDataLoader.list_shard_sample_aspect_buckets()` を提供する Webshart build が必要です。`webshart_optimize_captions` にはさらに `probe_caption_layout()` と `coalesce_caption_metadata()` が必要です。
 
 ## アスペクト比と解像度のカスタムマッピング
 

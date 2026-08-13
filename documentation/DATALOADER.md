@@ -1371,8 +1371,24 @@ Webshart datasets load WebDataset-style tar shards through the `webshart` packag
 - `metadata_backend` must be `webshart`; it reads dimensions and captions from Webshart metadata.
 - `caption_strategy` should be `webshart` to train from metadata captions, or `instanceprompt` to ignore stored captions.
 - `webshart.cache_dir` stores SimpleTuner metadata plus Webshart metadata and shard caches. `shard_cache_gb` and `parallel_downloads` are passed to Webshart's shard cache; set `shard_cache_gb` to `0` to disable whole-shard caching and retain indexed range reads.
+- `webshart_optimize_captions` (alt spelling `webshart_optimise_captions`; also accepted as `optimize_captions`/`optimise_captions` inside the `webshart` block) probes the caption layout at startup and, when captions live in `.txt`/`.json` sidecar tar members rather than the metadata index, folds them into the local Webshart metadata cache once. Without it, sidecar-caption datasets (for example `laion/conceptual-captions-12m-webdataset`) pay one range read per sample every time captions are enumerated — startup, checkpointing, and model card generation. Datasets whose metadata already embeds captions skip the coalescing automatically.
 
-This backend requires a Webshart build with `TarDataLoader.list_shard_sample_aspect_buckets()`.
+#### Optimizing captions ahead of time
+
+The same coalescing is available from the Webshart CLI, which can also publish the repaired metadata so every consumer of the dataset benefits without the runtime option:
+
+```bash
+webshart optimize-captions \
+  --source organization/dataset \
+  --metadata organization/dataset-metadata \
+  --destination caption-metadata \
+  --shard-cache-dir cache/shards \
+  --push-to-hub organization/dataset-metadata
+```
+
+`--destination` writes a portable per-shard metadata tree, and `--push-to-hub` uploads it to a metadata repository; point the dataloader `metadata` option at that repository afterwards. `--shard-cache-dir` lets coalescing reuse fully cached shards instead of issuing one range read per sidecar.
+
+This backend requires a Webshart build with `TarDataLoader.list_shard_sample_aspect_buckets()`; `webshart_optimize_captions` additionally requires `probe_caption_layout()` and `coalesce_caption_metadata()`.
 
 ## Custom aspect ratio-to-resolution mapping
 
