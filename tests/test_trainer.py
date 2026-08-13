@@ -2302,6 +2302,23 @@ class TestTrainer(unittest.TestCase):
             self.assertEqual(trainer._initial_lora_step(), 1500)
             self.assertEqual(trainer.config.init_lora_step, 1500)
 
+    def test_initial_lora_step_rejects_metadata_step_at_max_with_fresh_run_hint(self):
+        with tempfile.NamedTemporaryFile(suffix=".safetensors") as lora_file:
+            save_file({"weight": torch.ones(1)}, lora_file.name, metadata={"global_step": "1500"})
+            trainer = object.__new__(Trainer)
+            trainer.config = SimpleNamespace(
+                init_lora=lora_file.name,
+                init_lora_step=None,
+                resume_from_checkpoint=None,
+                max_train_steps=100,
+            )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "init_lora metadata reports global_step 1500.*init_lora_step: 0.*max_train_steps above 1500",
+            ):
+                trainer._initial_lora_step()
+
     def test_initial_lora_step_explicit_zero_overrides_safetensors_metadata(self):
         with tempfile.NamedTemporaryFile(suffix=".safetensors") as lora_file:
             save_file({"weight": torch.ones(1)}, lora_file.name, metadata={"global_step": "1500"})
