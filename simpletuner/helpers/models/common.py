@@ -85,6 +85,17 @@ else:
     logger.setLevel("ERROR")
 
 
+def _serialize_lora_adapter_metadata(metadata: dict) -> str:
+    def _json_default(value):
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, (set, frozenset)):
+            return sorted(value, key=str)
+        raise TypeError(f"Unsupported LoRA adapter metadata value: {type(value).__name__}")
+
+    return json.dumps(metadata, indent=2, sort_keys=True, default=_json_default)
+
+
 class ValidationPipelineCall(Protocol):
     def __call__(
         self,
@@ -1856,7 +1867,8 @@ class ModelFoundation(ABC):
                 )
 
         pipeline_cls = self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
-        lora_load_kwargs = self._lora_state_dict_load_kwargs()
+        load_kwargs_hook = getattr(self, "_lora_state_dict_load_kwargs", None)
+        lora_load_kwargs = load_kwargs_hook() if callable(load_kwargs_hook) else {}
         lora_state = pipeline_cls.lora_state_dict(input_dir, **lora_load_kwargs)
         network_alphas = None
         adapter_metadata = None
@@ -1889,7 +1901,9 @@ class ModelFoundation(ABC):
 
         if not isinstance(lora_state_dict, dict):
             raise ValueError("LoRA checkpoint did not return a state dictionary.")
-        lora_state_dict = self._prepare_loaded_lora_state_dict(lora_state_dict, metadata=adapter_metadata)
+        prepare_state_hook = getattr(self, "_prepare_loaded_lora_state_dict", None)
+        if callable(prepare_state_hook):
+            lora_state_dict = prepare_state_hook(lora_state_dict, metadata=adapter_metadata)
 
         def _normalise_alpha_map(alpha_dict: dict) -> dict:
             if not alpha_dict:
@@ -2041,9 +2055,9 @@ class ModelFoundation(ABC):
                 metadata = {"format": "pt"}
                 if adapter_metadata:
                     try:
-                        metadata[LORA_ADAPTER_METADATA_KEY] = json.dumps(adapter_metadata, indent=2, sort_keys=True)
-                    except Exception:
-                        pass
+                        metadata[LORA_ADAPTER_METADATA_KEY] = _serialize_lora_adapter_metadata(adapter_metadata)
+                    except TypeError as exc:
+                        raise ValueError("Unable to serialize LoRA adapter metadata for ComfyUI export.") from exc
 
                 converted = self._convert_lora_state_dict_to_comfyui(
                     weights,
