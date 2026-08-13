@@ -315,7 +315,7 @@ class MiniMaxMusic3Transformer1DModel(ModelMixin, ConfigMixin):
         hidden_states_buffer: Optional[dict[str, torch.Tensor]] = None,
         output_hidden_states: bool = False,
         hidden_state_layer: Optional[int] = None,
-    ) -> Tuple[torch.Tensor] | Transformer2DModelOutput:
+) -> Tuple[torch.Tensor, ...] | Transformer2DModelOutput:
         r"""
         Args:
             hidden_states (`torch.Tensor` of shape `(batch, in_channels, length)`):
