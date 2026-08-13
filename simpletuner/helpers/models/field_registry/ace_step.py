@@ -24,7 +24,7 @@ def register_fields(registry) -> None:
             importance=ImportanceLevel.ADVANCED,
             order=2,
             allow_empty=True,
-            model_specific=["ace_step"],
+            model_specific=["ace_step", "minimaxmusic"],
         )
     )
 
@@ -45,7 +45,7 @@ def register_fields(registry) -> None:
             tooltip="Length of the audio clip to generate during validation runs.",
             importance=ImportanceLevel.ADVANCED,
             order=6,
-            model_specific=["ace_step"],
+            model_specific=["ace_step", "minimaxmusic"],
         )
     )
 
