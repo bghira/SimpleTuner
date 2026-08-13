@@ -74,6 +74,7 @@ class Anima(ImageModelFoundation):
         "preview-3": "CalamitousFelicitousness/Anima-Preview-3-sdnext-diffusers",
         "preview-2": "CalamitousFelicitousness/Anima-Preview-2-sdnext-diffusers",
         "preview": "CalamitousFelicitousness/Anima-sdnext-diffusers",
+        "gazingstars123-2.9b": "Gazingstars123/Anima-2.9B",
     }
     DIFFUSERS_LAYOUT_PATHS = set(HUGGINGFACE_PATHS.values())
     MODEL_LICENSE = "other"

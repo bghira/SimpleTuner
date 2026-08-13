@@ -18,7 +18,8 @@
             "base-v1.0",
             "preview-3",
             "preview-2",
-            "preview"
+            "preview",
+            "gazingstars123-2.9b"
         ],
         "module_path": "simpletuner.helpers.models.anima.model",
         "name": "Anima",
