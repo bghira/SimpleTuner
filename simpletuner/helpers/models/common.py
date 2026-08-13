@@ -536,6 +536,7 @@ class ModelFoundation(ABC):
         self.accelerator = accelerator
         self.noise_schedule = None
         self.pipelines = {}
+        self.controlnet = None
         self._single_file_component_cache = None
         self._qkv_projections_fused = False
         self._validation_preview_decoder = None
@@ -608,10 +609,10 @@ class ModelFoundation(ABC):
         Extract audio outputs from a pipeline result, normalising to a list of samples.
         """
         audio = None
-        if hasattr(pipeline_result, "audio"):
-            audio = pipeline_result.audio
-        elif hasattr(pipeline_result, "audios"):
+        if hasattr(pipeline_result, "audios"):
             audio = pipeline_result.audios
+        elif hasattr(pipeline_result, "audio"):
+            audio = pipeline_result.audio
 
         if audio is None:
             return None
@@ -6240,7 +6241,6 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
         self.has_text_encoder = True
         self.vae = None
         self.model = None
-        self.controlnet = None
         self.text_encoders = None
         self.tokenizers = None
         self._group_offload_configured = False
@@ -6642,6 +6642,9 @@ class AudioModelFoundation(AudioTransformMixin, ModelFoundation):
         super().__init__(config, accelerator)
         self.text_encoders = None
         self.tokenizers = None
+
+    def custom_model_card_schedule_info(self):
+        return ""
 
     def expand_sigmas(self, batch: dict) -> dict:
         """
