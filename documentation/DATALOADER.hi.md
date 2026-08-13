@@ -1325,8 +1325,24 @@ Webshart datasets `webshart` package के जरिए WebDataset-style tar sh
 - `metadata` optional है और captions वाले separate metadata location को point कर सकता है। `webshart/conceptual-captions-12m-webdataset-metadata` जैसे Hugging Face metadata repos के लिए repo id दें; Webshart source shard के `data/` जैसे subfolder layout को follow करता है।
 - `metadata_backend` को `webshart` होना चाहिए; `caption_strategy` `webshart` या `instanceprompt` हो सकता है।
 - `webshart.cache_dir` SimpleTuner metadata और Webshart caches store करता है। `shard_cache_gb` और `parallel_downloads` Webshart shard cache को pass किए जाते हैं; whole-shard caching disable करने और indexed range reads बनाए रखने के लिए `shard_cache_gb` को `0` सेट करें।
+- `webshart_optimize_captions` (alternate spelling `webshart_optimise_captions`; `webshart` block के अंदर `optimize_captions`/`optimise_captions` भी accepted हैं) startup पर caption layout probe करता है और, जब captions metadata index की बजाय `.txt`/`.json` sidecar tar members में हों, उन्हें एक बार local Webshart metadata cache में fold कर देता है। इसके बिना, sidecar-caption datasets (जैसे `laion/conceptual-captions-12m-webdataset`) को हर बार captions enumerate होने पर — startup, checkpointing और model card generation में — प्रति sample एक range read की कीमत चुकानी पड़ती है। जिन datasets की metadata में captions पहले से embedded हैं, वे coalescing अपने आप skip कर देते हैं।
 
-इसके लिए `TarDataLoader.list_shard_sample_aspect_buckets()` वाला Webshart build चाहिए।
+#### Captions को पहले से optimize करना
+
+यही coalescing Webshart CLI से भी उपलब्ध है, जो repaired metadata publish भी कर सकती है ताकि dataset के सभी consumers को runtime option के बिना फायदा मिले:
+
+```bash
+webshart optimize-captions \
+  --source organization/dataset \
+  --metadata organization/dataset-metadata \
+  --destination caption-metadata \
+  --shard-cache-dir cache/shards \
+  --push-to-hub organization/dataset-metadata
+```
+
+`--destination` एक portable per-shard metadata tree लिखता है, और `--push-to-hub` उसे metadata repository पर upload करता है; बाद में dataloader के `metadata` option को उसी repository पर point करें। `--shard-cache-dir` से coalescing हर sidecar के लिए एक range read करने की बजाय पूरी तरह cached shards reuse कर पाती है।
+
+इस backend के लिए `TarDataLoader.list_shard_sample_aspect_buckets()` वाला Webshart build चाहिए; `webshart_optimize_captions` के लिए अतिरिक्त रूप से `probe_caption_layout()` और `coalesce_caption_metadata()` भी चाहिए।
 
 ## Custom aspect ratio‑to‑resolution mapping
 

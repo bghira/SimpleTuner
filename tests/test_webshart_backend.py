@@ -240,7 +240,7 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
     def test_webshart_caption_strategy_accepts_txt_sidecar_samples(self):
         backend = self._build_backend(self._entries())
         backend.data_backend.get_shard_metadata = Mock(
-            return_value={"files": {"uncaptioned.txt": {"offset": 0, "length": 10}}}
+            return_value={"uncaptioned.txt": {"path": "uncaptioned.txt", "offset": 0, "length": 10}}
         )
         with patch(
             "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_data_backend_config",
@@ -272,3 +272,68 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWebshartCaptionOptimization(unittest.TestCase):
+    def _build_backend(self, layout: str, has_api: bool = True):
+        backend = WebshartDataBackend.__new__(WebshartDataBackend)
+        backend.id = "test-backend"
+        backend.accelerator = None
+        backend.optimize_captions = True
+        backend.dataset = Mock()
+        backend.loader = Mock()
+        if has_api:
+            backend.dataset.probe_caption_layout = Mock(return_value={"layout": layout})
+            backend.loader.coalesce_caption_metadata = Mock(return_value={"coalesced_samples": 128, "shards": 4})
+        else:
+            del backend.dataset.probe_caption_layout
+            del backend.loader.coalesce_caption_metadata
+        return backend
+
+    def test_sidecar_layout_triggers_coalescing(self):
+        for layout in ("txt_sidecar", "json_sidecar", "mixed"):
+            with self.subTest(layout=layout):
+                backend = self._build_backend(layout)
+                backend._optimize_caption_metadata()
+                backend.loader.coalesce_caption_metadata.assert_called_once_with()
+
+    def test_embedded_layout_skips_coalescing(self):
+        for layout in ("embedded", "none"):
+            with self.subTest(layout=layout):
+                backend = self._build_backend(layout)
+                backend._optimize_caption_metadata()
+                backend.loader.coalesce_caption_metadata.assert_not_called()
+
+    def test_missing_webshart_api_raises(self):
+        backend = self._build_backend("txt_sidecar", has_api=False)
+        with self.assertRaises(ImportError):
+            backend._optimize_caption_metadata()
+
+
+class TestWebshartOptimizeCaptionsConfig(unittest.TestCase):
+    def _config_from(self, backend_dict):
+        from simpletuner.helpers.data_backend.config.image import ImageBackendConfig
+
+        base = {
+            "id": "ws",
+            "type": "webshart",
+            "source": "org/dataset",
+            "metadata_backend": "webshart",
+            "caption_strategy": "webshart",
+        }
+        base.update(backend_dict)
+        return ImageBackendConfig.from_dict(base, {})
+
+    def test_accepts_both_spellings_and_block_form(self):
+        cases = [
+            ({"webshart_optimize_captions": True}, True),
+            ({"webshart_optimise_captions": True}, True),
+            ({"webshart": {"optimize_captions": True}}, True),
+            ({"webshart": {"optimise_captions": True}}, True),
+            ({"webshart_optimize_captions": False}, False),
+            ({}, None),
+        ]
+        for backend_dict, expected in cases:
+            with self.subTest(backend_dict=backend_dict):
+                config = self._config_from(backend_dict)
+                self.assertEqual(config.webshart_optimize_captions, expected)
