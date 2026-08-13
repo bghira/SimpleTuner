@@ -1065,3 +1065,20 @@ class AnyFlowDistillerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnyFlowUnconditionalBatchTests(unittest.TestCase):
+    def test_unconditional_batch_drops_stale_mask_and_model_specific_aliases(self):
+        batch = _prepared_batch()
+        batch["encoder_attention_mask"] = torch.ones(2, 5, dtype=torch.long)
+        batch["prompt_embeds"] = torch.ones(2, 7, 4)
+        batch["attention_mask"] = torch.ones(2, 7, dtype=torch.bool)
+        batch["attention_masks"] = torch.ones(2, 7, dtype=torch.bool)
+
+        unconditional_batch = AnyFlowDistiller._unconditional_batch(batch)
+
+        self.assertIs(unconditional_batch["encoder_hidden_states"], batch["negative_encoder_hidden_states"])
+        self.assertNotIn("encoder_attention_mask", unconditional_batch)
+        self.assertNotIn("prompt_embeds", unconditional_batch)
+        self.assertNotIn("attention_mask", unconditional_batch)
+        self.assertNotIn("attention_masks", unconditional_batch)
