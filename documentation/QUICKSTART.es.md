@@ -32,6 +32,7 @@
 | Lumina2 | 2B | [LUMINA2.es.md](quickstart/LUMINA2.es.md) |
 | Mage-Flow | 4B | [MAGEFLOW.es.md](quickstart/MAGEFLOW.es.md) |
 | MiniMax H3 | 33B | [MINIMAX_H3.es.md](/documentation/quickstart/MINIMAX_H3.es.md) |
+| MiniMax Music 3 | 2.4B transformer + 8B AR | No dedicated guide |
 | OmniGen | 3.8B | [OMNIGEN.es.md](quickstart/OMNIGEN.es.md) |
 | PixArt Sigma | 0.6B-0.9B | [SIGMA.es.md](quickstart/SIGMA.es.md) |
 | Qwen Image | 20B | [QWEN_IMAGE.es.md](quickstart/QWEN_IMAGE.es.md)<br>[QWEN_EDIT.es.md](quickstart/QWEN_EDIT.es.md) |
@@ -82,6 +83,7 @@ La matriz completa de compatibilidad se divide por área de función para que ca
 | Lumina2 | ✓ | ✓ | ✓ | ✗ | ✗ |
 | Mage-Flow | ✓ | ✓ | ✓* | ✗ | ✓ edit |
 | MiniMax H3 | ✓ | ✓ | ✓* | ✗ | ✓ opt (FL2VA/Ref2VA) |
+| MiniMax Music 3 | ✓ | ✓ | ✓* | ✗ | lyrics |
 | OmniGen | ✓ | ✓ | ✓ | ✗ | ✗ |
 | PixArt Sigma | ✗ | ✓ | ✓ | ✓ | ✗ |
 | Qwen Image | ✓ | ✓ | ✓* | ✗ | ✓ req (Edit) |
@@ -130,6 +132,7 @@ La matriz completa de compatibilidad se divide por área de función para que ca
 | Lumina2 | int8 optional | bf16 |
 | Mage-Flow | fp8 optional | bf16 |
 | MiniMax H3 | int8/fp8 optional; convrot-int8 | bf16 |
+| MiniMax Music 3 | int8 optional | bf16 |
 | OmniGen | int8/fp8 optional | bf16 |
 | PixArt Sigma | int8 optional | bf16 |
 | Qwen Image | required (int8/nf4) | bf16 |
@@ -178,6 +181,7 @@ La matriz completa de compatibilidad se divide por área de función para que ca
 | Lumina2 | ✓ | ✓ | ✓ | ✗ |
 | Mage-Flow | ✓ | ✓ | ✓ | ✓ |
 | MiniMax H3 | ✓ | ✓ | ✓ | ✓ |
+| MiniMax Music 3 | ✓ | ✓ | ✓ | ✗ |
 | OmniGen | ✓ | ✗ | ✗ | ✗ |
 | PixArt Sigma | ✓ | ✓ | ✓ | ✗ |
 | Qwen Image | ✓ | ✓ | ✓ | ✗ |
@@ -226,6 +230,7 @@ La matriz completa de compatibilidad se divide por área de función para que ca
 | Lumina2 | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ |
 | Mage-Flow | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ |
 | MiniMax H3 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
+| MiniMax Music 3 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
 | OmniGen | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ |
 | PixArt Sigma | epsilon | ✗ | ✗ | ✓ | ✓ | ✓ |
 | Qwen Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -274,6 +279,7 @@ La matriz completa de compatibilidad se divide por área de función para que ca
 | Lumina2 | Gemma2 | 2B | AutoencoderKL |
 | Mage-Flow | Qwen3-VL | not specified | Mage-VAE |
 | MiniMax H3 | Qwen3-VL | not specified | MiniMax H3 Video VAE + Audio VAE |
+| MiniMax Music 3 | Qwen3 AR | 8B | Flow-VAE latents + vocoder decoder |
 | OmniGen | Integrated OmniGen encoder | not specified | AutoencoderKL |
 | PixArt Sigma | T5 XXL v1.1 | 11B | AutoencoderKL |
 | Qwen Image | Qwen2.5-VL | 7B | Qwen Image VAE |
