@@ -32,7 +32,7 @@
 | Lumina2 | 2B | [LUMINA2.pt-BR.md](quickstart/LUMINA2.pt-BR.md) |
 | Mage-Flow | 4B | [MAGEFLOW.pt-BR.md](quickstart/MAGEFLOW.pt-BR.md) |
 | MiniMax H3 | 33B | [MINIMAX_H3.pt-BR.md](/documentation/quickstart/MINIMAX_H3.pt-BR.md) |
-| MiniMax Music 3 | 2.4B transformer + 8B AR | No dedicated guide |
+| MiniMax Music 3 | 2.4B transformer + 8B AR | [MINIMAX_MUSIC.pt-BR.md](/documentation/quickstart/MINIMAX_MUSIC.pt-BR.md) |
 | OmniGen | 3.8B | [OMNIGEN.pt-BR.md](quickstart/OMNIGEN.pt-BR.md) |
 | PixArt Sigma | 0.6B-0.9B | [SIGMA.pt-BR.md](quickstart/SIGMA.pt-BR.md) |
 | Qwen Image | 20B | [QWEN_IMAGE.pt-BR.md](quickstart/QWEN_IMAGE.pt-BR.md)<br>[QWEN_EDIT.pt-BR.md](quickstart/QWEN_EDIT.pt-BR.md) |
@@ -279,7 +279,7 @@ A matriz completa de compatibilidade é dividida por área de recurso para mante
 | Lumina2 | Gemma2 | 2B | AutoencoderKL |
 | Mage-Flow | Qwen3-VL | not specified | Mage-VAE |
 | MiniMax H3 | Qwen3-VL | not specified | MiniMax H3 Video VAE + Audio VAE |
-| MiniMax Music 3 | Qwen3 AR | 8B | Flow-VAE latents + vocoder decoder |
+| MiniMax Music 3 | Qwen3 AR | 8B | DAV audio autoencoder + vocoder decoder |
 | OmniGen | Integrated OmniGen encoder | not specified | AutoencoderKL |
 | PixArt Sigma | T5 XXL v1.1 | 11B | AutoencoderKL |
 | Qwen Image | Qwen2.5-VL | 7B | Qwen Image VAE |

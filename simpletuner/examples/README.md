@@ -48,6 +48,10 @@ ACE-Step examples are split by model generation:
 - `ace_step-v1-0.peft-lora` for the original ACE-Step v1 3.5B path
 - `ace_step-v1-5.peft-lora` for the forward-compatible ACE-Step v1.5 LoRA path
 
+MiniMax Music examples:
+
+- `minimaxmusic-music3.peft-lora` trains MiniMax Music 3 LoRA with raw audio encoded by VAECache through the DAV audio VAE.
+
 LTX-2 conditioning examples are split by conditioning style:
 
 - `ltxvideo2-19b-t2v.peft-lora+first-frame-conditioning` shows the shorthand `ltx2_*` probability fields.

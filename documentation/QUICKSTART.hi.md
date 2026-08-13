@@ -32,7 +32,7 @@
 | Lumina2 | 2B | [LUMINA2.hi.md](quickstart/LUMINA2.hi.md) |
 | Mage-Flow | 4B | [MAGEFLOW.hi.md](quickstart/MAGEFLOW.hi.md) |
 | MiniMax H3 | 33B | [MINIMAX_H3.hi.md](/documentation/quickstart/MINIMAX_H3.hi.md) |
-| MiniMax Music 3 | 2.4B transformer + 8B AR | No dedicated guide |
+| MiniMax Music 3 | 2.4B transformer + 8B AR | [MINIMAX_MUSIC.hi.md](/documentation/quickstart/MINIMAX_MUSIC.hi.md) |
 | OmniGen | 3.8B | [OMNIGEN.hi.md](quickstart/OMNIGEN.hi.md) |
 | PixArt Sigma | 0.6B-0.9B | [SIGMA.hi.md](quickstart/SIGMA.hi.md) |
 | Qwen Image | 20B | [QWEN_IMAGE.hi.md](quickstart/QWEN_IMAGE.hi.md)<br>[QWEN_EDIT.hi.md](quickstart/QWEN_EDIT.hi.md) |
@@ -279,7 +279,7 @@
 | Lumina2 | Gemma2 | 2B | AutoencoderKL |
 | Mage-Flow | Qwen3-VL | not specified | Mage-VAE |
 | MiniMax H3 | Qwen3-VL | not specified | MiniMax H3 Video VAE + Audio VAE |
-| MiniMax Music 3 | Qwen3 AR | 8B | Flow-VAE latents + vocoder decoder |
+| MiniMax Music 3 | Qwen3 AR | 8B | DAV audio autoencoder + vocoder decoder |
 | OmniGen | Integrated OmniGen encoder | not specified | AutoencoderKL |
 | PixArt Sigma | T5 XXL v1.1 | 11B | AutoencoderKL |
 | Qwen Image | Qwen2.5-VL | 7B | Qwen Image VAE |
