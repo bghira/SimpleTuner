@@ -130,7 +130,6 @@ class KubeflowWorkerRoutesTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updates["status"], WorkerStatus.CONNECTING)
         self.assertEqual(updates["current_job_id"], "job-1")
 
-
     async def test_completed_requires_central_lora_artifact(self) -> None:
         """Verify a bound Worker cannot complete before central upload."""
         worker = _bound_worker()
@@ -181,9 +180,7 @@ class KubeflowWorkerRoutesTestCase(unittest.IsolatedAsyncioTestCase):
                 "worker_id": worker.worker_id,
                 "artifact_upload": {
                     "status": "receiving",
-                    "received_files": [
-                        "outputs/job-1/tiny-output/pytorch_lora_weights.safetensors"
-                    ],
+                    "received_files": ["outputs/job-1/tiny-output/pytorch_lora_weights.safetensors"],
                 },
             },
         )

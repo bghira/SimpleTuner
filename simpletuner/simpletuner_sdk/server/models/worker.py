@@ -58,11 +58,7 @@ class Worker:
         Returns:
             True when the ephemeral Worker must retain its assigned job.
         """
-        return (
-            self.worker_type == WorkerType.EPHEMERAL
-            and self.provider == "kubeflow"
-            and self.current_job_id is not None
-        )
+        return self.worker_type == WorkerType.EPHEMERAL and self.provider == "kubeflow" and self.current_job_id is not None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""

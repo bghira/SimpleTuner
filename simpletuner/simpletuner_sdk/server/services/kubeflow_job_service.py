@@ -181,7 +181,6 @@ class KubeflowJobService:
         prepared["publishing_config"] = publishing
         return prepared
 
-
     @staticmethod
     def artifacts_received(job: UnifiedJob) -> bool:
         """Check whether the Server has received a LoRA weight artifact.
@@ -195,10 +194,7 @@ class KubeflowJobService:
         metadata = getattr(job, "metadata", None) or {}
         upload_state = metadata.get("artifact_upload") or {}
         received_files = upload_state.get("received_files") or []
-        return any(
-            str(object_path).lower().endswith(".safetensors")
-            for object_path in received_files
-        )
+        return any(str(object_path).lower().endswith(".safetensors") for object_path in received_files)
 
     async def _archive_logs(self, job: UnifiedJob) -> dict[str, Any]:
         """Persist the ephemeral Worker log before Kubernetes cleanup.
@@ -338,9 +334,7 @@ class KubeflowJobService:
             elif phase == KubeflowPhase.COMPLETED:
                 terminal = True
                 terminal_status = (
-                    CloudJobStatus.COMPLETED.value
-                    if self.artifacts_received(job)
-                    else CloudJobStatus.FAILED.value
+                    CloudJobStatus.COMPLETED.value if self.artifacts_received(job) else CloudJobStatus.FAILED.value
                 )
                 updates.update(
                     {
@@ -349,9 +343,7 @@ class KubeflowJobService:
                     }
                 )
                 if terminal_status == CloudJobStatus.FAILED.value:
-                    updates["error_message"] = (
-                        "Kubeflow Worker exited without confirmed central artifact upload"
-                    )
+                    updates["error_message"] = "Kubeflow Worker exited without confirmed central artifact upload"
 
             if terminal:
                 archived_metadata = await self._archive_logs(job)

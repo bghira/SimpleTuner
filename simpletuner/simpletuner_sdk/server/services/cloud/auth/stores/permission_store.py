@@ -31,20 +31,17 @@ class PermissionStore(BaseAuthStore):
     def _init_schema(self, cursor) -> None:
         """Initialize permission-related tables."""
         # Permissions table
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS permissions (
                 id INTEGER PRIMARY KEY,
                 name TEXT UNIQUE NOT NULL,
                 description TEXT NOT NULL,
                 category TEXT NOT NULL DEFAULT 'general'
             )
-        """
-        )
+        """)
 
         # Levels (roles) table
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS levels (
                 id INTEGER PRIMARY KEY,
                 name TEXT UNIQUE NOT NULL,
@@ -52,24 +49,20 @@ class PermissionStore(BaseAuthStore):
                 priority INTEGER NOT NULL DEFAULT 0,
                 is_system INTEGER NOT NULL DEFAULT 0
             )
-        """
-        )
+        """)
 
         # Level-Permission linking table
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS level_permissions (
                 level_id INTEGER NOT NULL,
                 permission_name TEXT NOT NULL,
                 PRIMARY KEY (level_id, permission_name),
                 FOREIGN KEY (level_id) REFERENCES levels(id) ON DELETE CASCADE
             )
-        """
-        )
+        """)
 
         # User-Level linking table
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_levels (
                 user_id INTEGER NOT NULL,
                 level_id INTEGER NOT NULL,
@@ -79,12 +72,10 @@ class PermissionStore(BaseAuthStore):
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY (level_id) REFERENCES levels(id) ON DELETE CASCADE
             )
-        """
-        )
+        """)
 
         # User-Permission overrides table
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_permissions (
                 user_id INTEGER NOT NULL,
                 permission_name TEXT NOT NULL,
@@ -94,12 +85,10 @@ class PermissionStore(BaseAuthStore):
                 PRIMARY KEY (user_id, permission_name),
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
-        """
-        )
+        """)
 
         # Resource rules table
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS resource_rules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -112,13 +101,11 @@ class PermissionStore(BaseAuthStore):
                 created_by INTEGER,
                 FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
             )
-        """
-        )
+        """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_resource_rules_type ON resource_rules(resource_type)")
 
         # Level-ResourceRule linking table
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS level_resource_rules (
                 level_id INTEGER NOT NULL,
                 rule_id INTEGER NOT NULL,
@@ -126,8 +113,7 @@ class PermissionStore(BaseAuthStore):
                 FOREIGN KEY (level_id) REFERENCES levels(id) ON DELETE CASCADE,
                 FOREIGN KEY (rule_id) REFERENCES resource_rules(id) ON DELETE CASCADE
             )
-        """
-        )
+        """)
 
     def seed_defaults(self, cursor) -> None:
         """Seed default permissions and levels."""
@@ -774,11 +760,9 @@ class PermissionStore(BaseAuthStore):
             try:
                 cursor = conn.cursor()
                 # Get all resource rules
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT * FROM resource_rules ORDER BY priority DESC, name
-                """
-                )
+                """)
                 rules = []
                 for row in cursor.fetchall():
                     rule_id = row["id"]

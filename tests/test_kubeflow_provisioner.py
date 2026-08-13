@@ -73,11 +73,7 @@ class KubeflowWorkerProvisionerTestCase(unittest.IsolatedAsyncioTestCase):
             secret_name="simpletuner-worker-kjob-123",
         )
 
-        token_env = next(
-            item
-            for item in manifest["spec"]["trainer"]["env"]
-            if item["name"] == "SIMPLETUNER_WORKER_TOKEN"
-        )
+        token_env = next(item for item in manifest["spec"]["trainer"]["env"] if item["name"] == "SIMPLETUNER_WORKER_TOKEN")
         self.assertEqual(
             token_env["valueFrom"]["secretKeyRef"],
             {"name": "simpletuner-worker-kjob-123", "key": "worker-token"},
@@ -130,7 +126,6 @@ class KubeflowWorkerProvisionerTestCase(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(phase, KubeflowPhase.COMPLETED)
 
-
     async def test_get_logs_reads_trainjob_pod(self) -> None:
         """Verify Server-side polling reads the ephemeral Worker Pod log."""
         self.core_api.list_namespaced_pod.return_value = SimpleNamespace(
@@ -156,9 +151,7 @@ class KubeflowWorkerProvisionerTestCase(unittest.IsolatedAsyncioTestCase):
         self.core_api.list_namespaced_pod.return_value = SimpleNamespace(
             items=[SimpleNamespace(metadata=SimpleNamespace(name="worker-pod"))]
         )
-        self.core_api.read_namespaced_pod_log.return_value = (
-            'b"training step 1/1\\ntraining complete"'
-        )
+        self.core_api.read_namespaced_pod_log.return_value = 'b"training step 1/1\\ntraining complete"'
 
         logs = await self.provisioner.get_logs("simpletuner-kjob-123")
 

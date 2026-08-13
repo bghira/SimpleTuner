@@ -402,9 +402,7 @@ class KubeflowWorkerProvisioner:
 
         conditions = trainjob.get("status", {}).get("conditions", [])
         true_conditions = {
-            condition.get("type")
-            for condition in conditions
-            if str(condition.get("status", "")).lower() == "true"
+            condition.get("type") for condition in conditions if str(condition.get("status", "")).lower() == "true"
         }
         if "Failed" in true_conditions:
             return KubeflowPhase.FAILED

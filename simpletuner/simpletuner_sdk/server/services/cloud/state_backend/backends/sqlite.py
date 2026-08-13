@@ -124,13 +124,11 @@ class SQLiteStateBackend:
         assert self._connection is not None
 
         # Create schema version table
-        await self._connection.execute(
-            """
+        await self._connection.execute("""
             CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER PRIMARY KEY
             )
-        """
-        )
+        """)
 
         # Check current version
         cursor = await self._connection.execute("SELECT version FROM schema_version LIMIT 1")
@@ -148,8 +146,7 @@ class SQLiteStateBackend:
 
         if from_version < 1:
             # Initial schema
-            await self._connection.execute(
-                """
+            await self._connection.execute("""
                 CREATE TABLE IF NOT EXISTS state_store (
                     key TEXT PRIMARY KEY,
                     value BLOB NOT NULL,
@@ -158,8 +155,7 @@ class SQLiteStateBackend:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
-            """
-            )
+            """)
             await self._connection.execute("CREATE INDEX IF NOT EXISTS idx_state_expires ON state_store(expires_at)")
             await self._connection.execute("CREATE INDEX IF NOT EXISTS idx_state_type ON state_store(type)")
 

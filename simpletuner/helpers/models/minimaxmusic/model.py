@@ -4,12 +4,16 @@
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import torch
 import torch.nn.functional as F
 from diffusers import FlowMatchEulerDiscreteScheduler
 from diffusers.guiders import ClassifierFreeGuidance
+from huggingface_hub import hf_hub_download
+from huggingface_hub.utils import EntryNotFoundError, HFValidationError, LocalEntryNotFoundError, RepositoryNotFoundError
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoTokenizer, Qwen3ForCausalLM
 
@@ -23,7 +27,13 @@ from simpletuner.helpers.acceleration import (
     get_torchao_presets,
 )
 from simpletuner.helpers.configuration.registry import ConfigRegistry, ConfigRule, RuleType, ValidationResult
-from simpletuner.helpers.models.common import AudioModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.common import (
+    AudioModelFoundation,
+    ModelTypes,
+    PipelineTypes,
+    PredictionTypes,
+    TextEmbedCacheKey,
+)
 from simpletuner.helpers.models.minimaxmusic.condition_encoder import MiniMaxMusic3ConditionEncoder
 from simpletuner.helpers.models.minimaxmusic.encoders import (
     _AR_CFG_SCALE,
@@ -44,7 +54,7 @@ from simpletuner.helpers.models.minimaxmusic.modular_blocks import MiniMaxMusic3
 from simpletuner.helpers.models.minimaxmusic.modular_pipeline import MiniMaxMusic3ModularPipeline
 from simpletuner.helpers.models.minimaxmusic.rvq_depth_decoder import MiniMaxMusic3RVQDepthDecoder
 from simpletuner.helpers.models.minimaxmusic.transformer import MiniMaxMusic3Transformer1DModel
-from simpletuner.helpers.models.minimaxmusic.vocoder import MiniMaxMusic3Vocoder
+from simpletuner.helpers.models.minimaxmusic.vocoder import MiniMaxMusic3DAV, MiniMaxMusic3Vocoder
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.lora_format import (
     PEFTLoRAFormat,
@@ -69,7 +79,7 @@ class MiniMaxMusic(AudioModelFoundation):
         PipelineTypes.TEXT2IMG: MiniMaxMusic3ModularPipeline,
     }
     DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2AUDIO
-    AUTOENCODER_CLASS = MiniMaxMusic3Vocoder
+    AUTOENCODER_CLASS = MiniMaxMusic3DAV
     LATENT_CHANNEL_COUNT = 128
     DEFAULT_NOISE_SCHEDULER = "flow_matching"
     DEFAULT_MODEL_FLAVOUR = "music3"
@@ -107,6 +117,7 @@ class MiniMaxMusic(AudioModelFoundation):
         self.rvq_depth_decoder: Optional[MiniMaxMusic3RVQDepthDecoder] = None
         self.language_model: Optional[Qwen3ForCausalLM] = None
         self.guider: Optional[ClassifierFreeGuidance] = None
+        self.vae = None
 
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
@@ -176,6 +187,27 @@ class MiniMaxMusic(AudioModelFoundation):
             return ["prompt", "lyrics", "tags"]
         return []
 
+    @staticmethod
+    def _prompt_context_from_audio_metadata(sample_metadata: dict, prompt: str | None = None) -> dict:
+        metadata = {}
+        if prompt is not None:
+            metadata["prompt"] = str(prompt)
+        if not isinstance(sample_metadata, dict):
+            return metadata
+        for key in (
+            "lyrics",
+            "audio_duration",
+            "duration",
+            "duration_seconds",
+            "bucket_duration_seconds",
+            "truncated_duration_seconds",
+            "original_duration_seconds",
+        ):
+            value = sample_metadata.get(key)
+            if value not in (None, ""):
+                metadata[key] = value
+        return metadata
+
     @classmethod
     def register_config_requirements(cls):
         rules = [
@@ -183,7 +215,7 @@ class MiniMaxMusic(AudioModelFoundation):
                 field_name="dataset_type",
                 rule_type=RuleType.CUSTOM,
                 value=None,
-                message="MiniMax Music 3 expects audio datasets with precomputed Flow-VAE latents.",
+                message="MiniMax Music 3 expects audio datasets; VAECache encodes raw audio through the DAV autoencoder.",
                 error_level="warning",
             ),
         ]
@@ -204,13 +236,77 @@ class MiniMaxMusic(AudioModelFoundation):
                     field="dataset_type",
                     message="MiniMax Music 3 requires audio datasets for training.",
                     level="warning",
-                    suggestion="Set dataset_type: audio and provide cached Flow-VAE latents.",
+                    suggestion="Set dataset_type: audio so VAECache can encode raw audio into MiniMax Music 3 DAV latents.",
                 )
             ]
         return []
 
     def supports_crepa_self_flow(self) -> bool:
         return True
+
+    @classmethod
+    def supports_audio_only_training(cls) -> bool:
+        return True
+
+    def text_embed_cache_key(self) -> TextEmbedCacheKey:
+        return TextEmbedCacheKey.DATASET_AND_FILENAME
+
+    def requires_text_embed_image_context(self) -> bool:
+        return True
+
+    def should_precompute_dropout_caption(self) -> bool:
+        return False
+
+    def use_text_cache_dropout_sentinel(self) -> bool:
+        return False
+
+    def uses_image_context_dropout_caption_cache(self) -> bool:
+        return True
+
+    def text_embed_cache_key_value(self, *, prompt: str, default_key: str, metadata: dict) -> str:
+        del metadata
+        if prompt == "":
+            return f"{default_key}:__caption_dropout__"
+        return default_key
+
+    def text_embed_cache_metadata_for_sample(
+        self,
+        *,
+        example: dict,
+        latent: Optional[torch.Tensor],
+        prompt: str,
+        data_backend_id: Optional[str],
+        dataset_relative_path: Optional[str],
+    ) -> dict:
+        del latent, data_backend_id, dataset_relative_path
+        sample_metadata = {}
+        if isinstance(example, dict):
+            embedded_metadata = example.get("image_metadata")
+            if isinstance(embedded_metadata, dict):
+                sample_metadata.update(embedded_metadata)
+            sample_metadata.update(example)
+        else:
+            embedded_metadata = getattr(example, "image_metadata", None)
+            if isinstance(embedded_metadata, dict):
+                sample_metadata.update(embedded_metadata)
+
+        return self._prompt_context_from_audio_metadata(sample_metadata, str(prompt))
+
+    def text_embed_cache_metadata_for_filepath(
+        self,
+        *,
+        init_backend: dict,
+        image_path: str,
+        prompt: str,
+        data_backend_id: str | None,
+        dataset_relative_path: str | None,
+    ) -> dict:
+        del data_backend_id, dataset_relative_path
+        metadata_backend = init_backend.get("metadata_backend") if isinstance(init_backend, dict) else None
+        if metadata_backend is None:
+            return {"prompt": str(prompt)}
+        sample_metadata = metadata_backend.get_metadata_by_filepath(image_path) or {}
+        return self._prompt_context_from_audio_metadata(sample_metadata, str(prompt))
 
     def flow_matching_target_direction(self) -> float:
         return -1.0
@@ -445,23 +541,82 @@ class MiniMaxMusic(AudioModelFoundation):
     def _checkpoint_path(self) -> str:
         return self.config.pretrained_model_name_or_path or self.HUGGINGFACE_PATHS[self.DEFAULT_MODEL_FLAVOUR]
 
+    def _vae_checkpoint_path(self) -> str:
+        return self.config.pretrained_vae_model_name_or_path or self._checkpoint_path()
+
+    def _has_diffusers_audio_vae(self, checkpoint_path: str) -> bool:
+        if os.path.isfile(checkpoint_path):
+            return False
+        if os.path.isdir(checkpoint_path):
+            checkpoint = Path(checkpoint_path)
+            if (checkpoint / "config.json").is_file():
+                return True
+            return (checkpoint / "audio_vae" / "config.json").is_file()
+        try:
+            hf_hub_download(
+                checkpoint_path,
+                "audio_vae/config.json",
+                revision=getattr(self.config, "revision", None),
+                repo_type="model",
+            )
+            return True
+        except (EntryNotFoundError, LocalEntryNotFoundError, RepositoryNotFoundError, HFValidationError):
+            return False
+
+    def _load_diffusers_audio_vae(self, checkpoint_path: str) -> MiniMaxMusic3DAV:
+        if os.path.isdir(checkpoint_path) and os.path.isfile(os.path.join(checkpoint_path, "config.json")):
+            return MiniMaxMusic3DAV.from_pretrained(checkpoint_path, torch_dtype=torch.float32)
+        return MiniMaxMusic3DAV.from_pretrained(checkpoint_path, subfolder="audio_vae", torch_dtype=torch.float32)
+
+    def _resolve_dav_checkpoint(self) -> Optional[str]:
+        checkpoint_path = self._vae_checkpoint_path()
+        if os.path.isfile(checkpoint_path):
+            return checkpoint_path
+        if os.path.isdir(checkpoint_path):
+            local_dav_path = os.path.join(checkpoint_path, "dav.pth")
+            return local_dav_path if os.path.isfile(local_dav_path) else None
+        try:
+            return hf_hub_download(
+                checkpoint_path,
+                "dav.pth",
+                revision=getattr(self.config, "revision", None),
+                repo_type="model",
+            )
+        except (EntryNotFoundError, LocalEntryNotFoundError, RepositoryNotFoundError, HFValidationError):
+            return None
+
     def load_vae(self, move_to_device: bool = True):
         if self.vae is None:
-            self.vae = MiniMaxMusic3Vocoder.from_pretrained(
-                self.config.pretrained_vae_model_name_or_path or self._checkpoint_path(),
-                subfolder="vocoder",
-                torch_dtype=self.config.weight_dtype,
-            )
+            checkpoint_path = self._vae_checkpoint_path()
+            if self._has_diffusers_audio_vae(checkpoint_path):
+                self.vae = self._load_diffusers_audio_vae(checkpoint_path)
+            elif (dav_checkpoint := self._resolve_dav_checkpoint()) is not None:
+                self.vae = MiniMaxMusic3DAV.from_original_dav(dav_checkpoint)
+            else:
+                self.vae = MiniMaxMusic3Vocoder.from_pretrained(
+                    checkpoint_path,
+                    subfolder="vocoder",
+                    torch_dtype=self.config.weight_dtype,
+                )
             self.vae.requires_grad_(False)
         if move_to_device and self.vae is not None:
-            self.vae.to(self.accelerator.device, dtype=self.config.weight_dtype)
+            vae_dtype = torch.float32 if isinstance(self.vae, MiniMaxMusic3DAV) else self.config.weight_dtype
+            self.vae.to(self.accelerator.device, dtype=vae_dtype)
         return self.vae
 
     def encode_cache_batch(self, vae, samples, metadata_entries: Optional[list] = None):
-        raise NotImplementedError(
-            "MiniMax Music 3 support currently requires precomputed Flow-VAE latents; the public Diffusers PR "
-            "includes the decoder/vocoder but not an audio encoder."
-        )
+        del metadata_entries
+        if not hasattr(vae, "encode"):
+            raise RuntimeError(
+                "MiniMax Music 3 VAE caching requires the original dav.pth checkpoint with the audio encoder. "
+                "Use SimpleTuner/MiniMax-Music-3-Encoder, MiniMaxAI/MiniMax-Music3, or set "
+                "pretrained_vae_model_name_or_path to a local path containing dav.pth."
+            )
+        samples = samples.to(device=self.accelerator.device, dtype=torch.float32)
+        latents = vae.encode(samples)
+        if not isinstance(latents, torch.Tensor):
+            raise TypeError("MiniMax Music 3 DAV encode() must return a tensor.")
+        return latents.to(dtype=self.config.weight_dtype)
 
     def load_text_tokenizer(self):
         if self.tokenizers is not None:
@@ -476,9 +631,9 @@ class MiniMaxMusic(AudioModelFoundation):
         self.tokenizer_1 = tokenizer
 
     def load_text_encoder(self, move_to_device: bool = True):
+        self.load_text_tokenizer()
         if self.language_model is not None and self.rvq_depth_decoder is not None and self.condition_encoder is not None:
             return
-        self.load_text_tokenizer()
         base_path = self._checkpoint_path()
         language_model = Qwen3ForCausalLM.from_pretrained(
             base_path,
@@ -514,8 +669,21 @@ class MiniMaxMusic(AudioModelFoundation):
         self.text_encoders = [language_model]
         self.text_encoder_1 = language_model
 
+    def unload_text_encoder(self):
+        super().unload_text_encoder()
+        self.language_model = None
+        self.rvq_depth_decoder = None
+        self.condition_encoder = None
+
     def _audio_duration_for_context(self, context: dict) -> float:
-        for key in ("audio_duration", "duration", "duration_seconds"):
+        for key in (
+            "audio_duration",
+            "duration",
+            "duration_seconds",
+            "bucket_duration_seconds",
+            "truncated_duration_seconds",
+            "original_duration_seconds",
+        ):
             value = context.get(key) if isinstance(context, dict) else None
             if value is not None:
                 return max(float(value), 0.04)
@@ -727,11 +895,16 @@ class MiniMaxMusic(AudioModelFoundation):
     def prepare_batch(self, batch: dict, state: dict) -> dict:
         if not batch:
             return batch
-        if batch.get("latent_batch") is None:
-            raise ValueError("MiniMax Music 3 training requires cached Flow-VAE latents in latent_batch.")
+        latent_batch = batch.get("latent_batch")
+        if latent_batch is None:
+            latent_batch = batch.get("audio_latent_batch")
+        if latent_batch is None:
+            raise ValueError(
+                "MiniMax Music 3 training requires cached Flow-VAE latents in latent_batch or audio_latent_batch."
+            )
         device = self.accelerator.device
         dtype = self.config.weight_dtype
-        latents = batch["latent_batch"].to(device=device, dtype=dtype)
+        latents = latent_batch.to(device=device, dtype=dtype)
         if latents.ndim != 3:
             raise ValueError(
                 "MiniMax Music 3 Flow-VAE latents must be shaped `[batch, channels, latent_length]`, "
@@ -886,7 +1059,12 @@ class MiniMaxMusic(AudioModelFoundation):
         if cached_pipeline is None:
             cached_pipeline = MiniMaxMusic3ModularPipeline(MiniMaxMusic3Blocks())
             self.pipelines[pipeline_type] = cached_pipeline
-        if self.language_model is None or self.rvq_depth_decoder is None or self.condition_encoder is None:
+        if (
+            self.tokenizers is None
+            or self.language_model is None
+            or self.rvq_depth_decoder is None
+            or self.condition_encoder is None
+        ):
             self.load_text_encoder(move_to_device=True)
         if self.vae is None:
             self.load_vae(move_to_device=True)
@@ -910,10 +1088,15 @@ class MiniMaxMusic(AudioModelFoundation):
         return cached_pipeline
 
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
+        validation_prompt = pipeline_kwargs.get("_validation_prompt_text")
+        if pipeline_kwargs.get("prompt") is None and validation_prompt:
+            pipeline_kwargs["prompt"] = validation_prompt
         if "lyrics" not in pipeline_kwargs:
             configured_lyrics = getattr(self.config, "validation_lyrics", None)
             if configured_lyrics:
                 pipeline_kwargs["lyrics"] = configured_lyrics
+        for cached_embed_key in ("frame_hiddens", "prompt_embeds", "attention_masks"):
+            pipeline_kwargs.pop(cached_embed_key, None)
         return pipeline_kwargs
 
 

@@ -37,15 +37,13 @@ class ProviderConfigStore(BaseSQLiteStore):
         try:
             cursor = conn.cursor()
 
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS provider_config (
                     provider TEXT PRIMARY KEY,
                     config TEXT NOT NULL DEFAULT '{}',
                     updated_at TEXT NOT NULL
                 )
-            """
-            )
+            """)
 
             conn.commit()
         except Exception as exc:

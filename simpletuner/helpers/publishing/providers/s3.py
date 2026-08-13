@@ -41,9 +41,7 @@ class S3PublishingProvider(PublishingProvider):
         self.use_ssl = bool(config.get("use_ssl", True))
         self._session = boto3.session.Session(**{k: v for k, v in session_kwargs.items() if v is not None})
         self._client = self._session.client("s3", endpoint_url=self.endpoint_url, use_ssl=self.use_ssl)
-        self.request_headers = {
-            str(name): str(value) for name, value in (config.get("request_headers") or {}).items()
-        }
+        self.request_headers = {str(name): str(value) for name, value in (config.get("request_headers") or {}).items()}
         self.force_single_part = bool(config.get("force_single_part", False))
         if self.request_headers:
             self._client.meta.events.register("before-sign.s3", self._inject_request_headers)

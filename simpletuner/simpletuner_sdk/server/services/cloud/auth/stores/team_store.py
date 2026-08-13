@@ -25,8 +25,7 @@ class TeamStore(BaseAuthStore):
 
     def _init_schema(self, cursor) -> None:
         """Initialize the teams and user_teams tables schema."""
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS teams (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 org_id INTEGER NOT NULL,
@@ -39,13 +38,11 @@ class TeamStore(BaseAuthStore):
                 FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE,
                 UNIQUE (org_id, slug)
             )
-        """
-        )
+        """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_teams_org ON teams(org_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_teams_slug ON teams(slug)")
 
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_teams (
                 user_id INTEGER NOT NULL,
                 team_id INTEGER NOT NULL,
@@ -55,8 +52,7 @@ class TeamStore(BaseAuthStore):
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                 FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
             )
-        """
-        )
+        """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_teams_user ON user_teams(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_teams_team ON user_teams(team_id)")
 

@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/storage", tags=["storage"])
 
+
 async def _record_kubeflow_upload(
     store: Any,
     authenticated_job: Any,
