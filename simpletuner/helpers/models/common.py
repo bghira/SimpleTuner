@@ -3911,6 +3911,7 @@ class ModelFoundation(ABC):
         target_patterns: Optional[list[str]] = None,
         full_ramtorch: bool = False,
         percent: Optional[float] = None,
+        force: bool = False,
     ) -> int:
         """
         Apply RamTorch to a module's layers.
@@ -3922,8 +3923,10 @@ class ModelFoundation(ABC):
             full_ramtorch: If True, convert all supported layer types (Linear, Embedding,
                           Conv, LayerNorm) to bouncing versions. If False, only Linear.
             percent: Optional percentage (0-100) of eligible Linear layers to replace.
+            force: Apply even when --ramtorch is not globally enabled (e.g. component-level
+                   offload flags such as --ideogram_uncond_ramtorch).
         """
-        if module is None or not self._ramtorch_enabled():
+        if module is None or not (force or self._ramtorch_enabled()):
             return 0
 
         # Check if extensions are disabled via --ramtorch_disable_extensions

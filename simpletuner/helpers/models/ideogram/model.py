@@ -105,7 +105,42 @@ class Ideogram4(ImageModelFoundation):
             self.model.to(self.accelerator.device)
         self.apply_gradient_checkpointing_settings()
         self.apply_model_specific_freeze()
+        self.unconditional_transformer = None
+        if getattr(self.config, "ideogram_load_unconditional_transformer", False):
+            self.load_unconditional_transformer()
         return self.model
+
+    def load_unconditional_transformer(self):
+        """Load Ideogram 4's frozen image-only unconditional transformer for asymmetric CFG."""
+        repo_id = self._repo_id()
+        pipe_config = Ideogram4PipelineConfig(weights_repo=repo_id)
+        state_dict = _load_indexed_or_single_state_dict(repo_id, pipe_config.unconditional_index_filename)
+        base_precision = getattr(self.config, "base_model_precision", None) or "no_change"
+        quantization_requested = base_precision != "no_change"
+        if is_fp8_state_dict(state_dict) and (
+            getattr(self.config, "ideogram_fp8_base_upcast", False) or quantization_requested
+        ):
+            state_dict = dequantize_fp8_state_dict(state_dict, self.config.weight_dtype)
+        use_ramtorch = bool(getattr(self.config, "ideogram_uncond_ramtorch", False))
+        device = torch.device("cpu") if use_ramtorch else self.accelerator.device
+        transformer = _build_transformer(
+            Ideogram4Config(),
+            state_dict,
+            device,
+            self.config.weight_dtype,
+        )
+        transformer.requires_grad_(False)
+        transformer.eval()
+        if use_ramtorch:
+            self._apply_ramtorch_layers(
+                transformer,
+                "ideogram_unconditional_transformer",
+                percent=self._ramtorch_transformer_percent(),
+                full_ramtorch=True,
+                force=True,
+            )
+        self.unconditional_transformer = transformer
+        return transformer
 
     def load_vae(self, move_to_device: bool = True):
         repo_id = getattr(self.config, "pretrained_model_name_or_path", None) or self.HUGGINGFACE_PATHS["fp8"]
@@ -160,7 +195,7 @@ class Ideogram4(ImageModelFoundation):
         transformer = self.unwrap_model(self.model, keep_fp32_wrapper=False)
         pipeline = Ideogram4Pipeline(
             conditional_transformer=transformer,
-            unconditional_transformer=None,
+            unconditional_transformer=getattr(self, "unconditional_transformer", None),
             text_encoder=self.text_encoders[0],
             text_tokenizer=self.tokenizers[0],
             autoencoder=self.vae,
@@ -268,7 +303,7 @@ class Ideogram4(ImageModelFoundation):
             self._logged_text_encoder_devices = True
         encoder_shell = Ideogram4Pipeline(
             conditional_transformer=None,
-            unconditional_transformer=None,
+            unconditional_transformer=getattr(self, "unconditional_transformer", None),
             text_encoder=self.text_encoders[0],
             text_tokenizer=tokenizer,
             autoencoder=None,
@@ -597,6 +632,48 @@ class Ideogram4(ImageModelFoundation):
         )
         return flowmap_batch
 
+    def _use_unconditional_transformer(self, prepared_batch: dict) -> bool:
+        return (
+            bool(prepared_batch.get("is_unconditional_pass"))
+            and getattr(self, "unconditional_transformer", None) is not None
+        )
+
+    def _unconditional_model_predict(
+        self,
+        prepared_batch: dict,
+        packed_latents: torch.Tensor,
+        prompt_embeds: torch.Tensor,
+        latent_height: int,
+        latent_width: int,
+    ) -> dict:
+        # Mirrors the pipeline's asymmetric-CFG branch: image tokens only (no text
+        # padding), zeroed llm conditioning, and no flowmap kwargs (the unconditional
+        # transformer is never adapter-trained).
+        batch_size, image_tokens, _channels = packed_latents.shape
+        position_ids = self._image_position_ids(batch_size, latent_height, latent_width)
+        segment_ids = torch.ones(batch_size, image_tokens, dtype=torch.long, device=self.accelerator.device)
+        indicator = torch.full(
+            (batch_size, image_tokens), OUTPUT_IMAGE_INDICATOR, dtype=torch.long, device=self.accelerator.device
+        )
+        llm_features = torch.zeros(
+            batch_size,
+            image_tokens,
+            prompt_embeds.shape[-1],
+            dtype=prompt_embeds.dtype,
+            device=self.accelerator.device,
+        )
+        timesteps = self._prepare_model_predict_timesteps(prepared_batch["timesteps"], batch_size=batch_size)
+        model_output = self.unconditional_transformer(
+            llm_features=llm_features,
+            x=packed_latents,
+            t=timesteps,
+            position_ids=position_ids,
+            segment_ids=segment_ids,
+            indicator=indicator,
+        )
+        model_prediction = self._unpack_latents(model_output, latent_height, latent_width)
+        return {"model_prediction": self.raw_model_prediction_to_model_prediction(model_prediction)}
+
     def model_predict(self, prepared_batch):
         noisy_latents = prepared_batch["noisy_latents"].to(device=self.accelerator.device, dtype=self.config.weight_dtype)
         batch_size, _channels, latent_height, latent_width = noisy_latents.shape
@@ -607,6 +684,14 @@ class Ideogram4(ImageModelFoundation):
         if prompt_embeds is None:
             prompt_embeds = prepared_batch["encoder_hidden_states"]
         prompt_embeds = prompt_embeds.to(device=self.accelerator.device, dtype=torch.float32)
+        if self._use_unconditional_transformer(prepared_batch):
+            return self._unconditional_model_predict(
+                prepared_batch,
+                packed_latents,
+                prompt_embeds,
+                latent_height,
+                latent_width,
+            )
         attention_mask = prepared_batch.get("encoder_attention_mask")
         if attention_mask is None:
             attention_mask = prepared_batch.get("attention_mask")
@@ -712,6 +797,10 @@ class Ideogram4(ImageModelFoundation):
     def check_user_config(self):
         super().check_user_config()
         self.config.prediction_type = "flow_matching"
+        if getattr(self.config, "ideogram_uncond_ramtorch", False) and not getattr(
+            self.config, "ideogram_load_unconditional_transformer", False
+        ):
+            raise ValueError("--ideogram_uncond_ramtorch requires --ideogram_load_unconditional_transformer.")
 
     def log_model_devices(self):
         super().log_model_devices()
