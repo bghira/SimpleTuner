@@ -4,6 +4,21 @@
 
 Este guia fornece uma explicacao amigavel das opcoes de linha de comando disponiveis no script `train.py` do SimpleTuner. Essas opcoes oferecem alto grau de customizacao, permitindo treinar seu modelo conforme suas necessidades.
 
+### Opções do servidor Kubeflow para GPU única
+
+A integração opcional com o Kubeflow delega a admissão de GPU ao Kueue e cria Workers de uso único por meio do Kubeflow Trainer. Instale com `pip install 'simpletuner[kubernetes]'` e execute o Servidor dentro do cluster:
+
+```bash
+simpletuner server --mode trainer --kubeflow \
+  --kubeflow-namespace training \
+  --kubeflow-runtime simpletuner-worker \
+  --kubeflow-queue gpu-training \
+  --kubeflow-worker-image registry.example.com/simpletuner:latest \
+  --kubeflow-orchestrator-url http://simpletuner-server.training.svc:8001
+```
+
+`--kubeflow-poll-interval` controla a reconciliação do TrainJob e tem padrão de cinco segundos. O administrador do cluster fornece o TrainingRuntime, a fila do Kueue, as permissões de ServiceAccount, a configuração de pull de imagem e o armazenamento compartilhado de modelos/dados.
+
 ### Formato do arquivo de configuracao JSON
 
 O nome esperado do arquivo JSON e `config.json` e os nomes das chaves sao os mesmos dos `--argumentos` abaixo. O prefixo `--` nao e necessario no arquivo JSON, mas pode ser mantido.

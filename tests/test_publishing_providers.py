@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from botocore.compat import HTTPHeaders
+
 from simpletuner.helpers.publishing.providers.azure_blob import AzureBlobPublishingProvider
 from simpletuner.helpers.publishing.providers.dropbox import DropboxPublishingProvider
 from simpletuner.helpers.publishing.providers.s3 import S3PublishingProvider
@@ -117,6 +119,33 @@ class TestS3Provider(unittest.TestCase):
                 self.assertTrue((Path(tmpdir) / "training_state.json").exists())
                 self.assertTrue((Path(tmpdir) / "model.safetensors").exists())
                 self.assertTrue((Path(tmpdir) / "checkpoint_manifest.json").exists())
+
+    def test_server_upload_uses_custom_header_and_single_put(self):
+        """Server publishing should use bearer headers without multipart calls."""
+        config = self.config.copy()
+        config.update(
+            {
+                "request_headers": {"X-SimpleTuner-Secret": "job-token"},
+                "force_single_part": True,
+            }
+        )
+        mock_boto3 = MagicMock()
+        mock_client = mock_boto3.session.Session.return_value.client.return_value
+
+        with patch.dict(sys.modules, {"boto3": mock_boto3}):
+            provider = S3PublishingProvider(config)
+            request = MagicMock(headers=HTTPHeaders())
+            header_handler = mock_client.meta.events.register.call_args.args[1]
+            header_handler(request)
+            self.assertEqual(request.headers["X-SimpleTuner-Secret"], "job-token")
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                artifact = Path(tmpdir) / "model.safetensors"
+                artifact.write_bytes(b"weights")
+                provider.publish(artifact)
+
+        mock_client.put_object.assert_called_once()
+        mock_client.upload_file.assert_not_called()
 
 
 class TestAzureProvider(unittest.TestCase):
