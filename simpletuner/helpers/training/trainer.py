@@ -2313,8 +2313,19 @@ class Trainer:
             raise ValueError("init_lora_step cannot be combined with resume_from_checkpoint.")
 
         max_train_steps = getattr(self.config, "max_train_steps", None)
-        if max_train_steps not in (None, 0) and initial_step >= int(max_train_steps):
-            raise ValueError(f"init_lora_step ({initial_step}) must be smaller than max_train_steps ({max_train_steps}).")
+        if max_train_steps not in (None, 0):
+            max_train_steps = int(max_train_steps)
+            if initial_step >= max_train_steps:
+                if inferred_from_metadata:
+                    raise ValueError(
+                        "init_lora metadata reports global_step "
+                        f"{initial_step}, which is greater than or equal to max_train_steps ({max_train_steps}). "
+                        "For a fresh run from this adapter, set init_lora_step: 0 explicitly. "
+                        f"To continue scheduler/accounting from the adapter step, raise max_train_steps above {initial_step}."
+                    )
+                raise ValueError(
+                    f"init_lora_step ({initial_step}) must be smaller than max_train_steps ({max_train_steps})."
+                )
         if inferred_from_metadata:
             self.config.init_lora_step = initial_step
             logger.info("Using global step %s from init_lora safetensors metadata.", initial_step)
