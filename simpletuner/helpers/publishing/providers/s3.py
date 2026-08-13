@@ -41,6 +41,22 @@ class S3PublishingProvider(PublishingProvider):
         self.use_ssl = bool(config.get("use_ssl", True))
         self._session = boto3.session.Session(**{k: v for k, v in session_kwargs.items() if v is not None})
         self._client = self._session.client("s3", endpoint_url=self.endpoint_url, use_ssl=self.use_ssl)
+        self.request_headers = {
+            str(name): str(value) for name, value in (config.get("request_headers") or {}).items()
+        }
+        self.force_single_part = bool(config.get("force_single_part", False))
+        if self.request_headers:
+            self._client.meta.events.register("before-sign.s3", self._inject_request_headers)
+
+    def _inject_request_headers(self, request: Any, **_: Any) -> None:
+        """Attach configured headers before an S3-compatible request is signed.
+
+        Args:
+            request: Botocore request being prepared for signing.
+            **_: Unused botocore event metadata.
+        """
+        for name, value in self.request_headers.items():
+            request.headers[name] = value
 
     def _build_uri(self, key_prefix: str) -> str:
         if self.public_base_url:
@@ -127,7 +143,11 @@ class S3PublishingProvider(PublishingProvider):
         for file_path in files:
             relative_key = file_path.relative_to(path).as_posix() if path.is_dir() else file_path.name
             destination_key = "/".join([part for part in (destination_root, relative_key) if part])
-            self._client.upload_file(str(file_path), self.bucket, destination_key)
+            if self.force_single_part:
+                with file_path.open("rb") as body:
+                    self._client.put_object(Bucket=self.bucket, Key=destination_key, Body=body)
+            else:
+                self._client.upload_file(str(file_path), self.bucket, destination_key)
             last_key = destination_key
 
         assert last_key is not None  # for mypy/pylint; guarded by files check

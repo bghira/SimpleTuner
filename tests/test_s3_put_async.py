@@ -129,12 +129,12 @@ class TestS3PutRoutesAsync(AsyncAPITestCase, unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertEqual(response.status_code, status.HTTP_200_OK)
-            data = response.json()
-
-            # Check response structure
-            self.assertIn("ETag", data)
-            self.assertEqual(data["Key"], "test-file.txt")
-            self.assertEqual(data["Bucket"], "test-bucket")
+            self.assertEqual(
+                response.json(),
+                {"ETag": response.headers["etag"], "Key": "test-file.txt", "Bucket": "test-bucket"},
+            )
+            self.assertIn("etag", response.headers)
+            self.assertTrue(response.headers["etag"].startswith('"'))
 
             # Verify file was written
             upload_dir = Path(self._upload_dir)
@@ -314,8 +314,8 @@ class TestS3PutRoutesAsync(AsyncAPITestCase, unittest.IsolatedAsyncioTestCase):
             )
 
             # ETags should be the same for identical content
-            etag1 = response1.json()["ETag"]
-            etag2 = response2.json()["ETag"]
+            etag1 = response1.headers["etag"]
+            etag2 = response2.headers["etag"]
             self.assertEqual(etag1, etag2)
 
             # Different content should have different ETag
@@ -325,7 +325,7 @@ class TestS3PutRoutesAsync(AsyncAPITestCase, unittest.IsolatedAsyncioTestCase):
                 headers={"X-Upload-Token": upload_token},
             )
 
-            etag3 = response3.json()["ETag"]
+            etag3 = response3.headers["etag"]
             self.assertNotEqual(etag1, etag3)
 
 

@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 import torch
 from accelerate.utils.operations import convert_to_fp32
 from PIL import Image
+from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
 from simpletuner.helpers.acceleration import AccelerationBackend
@@ -21,10 +22,12 @@ from simpletuner.helpers.models.minimaxh3.denoise import _denoiser_inputs, _pred
 from simpletuner.helpers.models.minimaxh3.encoders import MiniMaxH3TextEncoderStep
 from simpletuner.helpers.models.minimaxh3.model import MiniMaxH3
 from simpletuner.helpers.models.minimaxh3.modular_pipeline import (
+    MINIMAX_H3_SWIGLU_GATE_FIRST_METADATA_KEY,
     MiniMaxH3ModularPipeline,
     MiniMaxH3Ref2VAModularPipeline,
     _convert_minimax_h3_comfy_lora_to_diffusers,
     _convert_minimax_h3_diffusers_lora_to_comfyui,
+    _convert_minimax_h3_diffusers_swiglu_lora_layout,
 )
 from simpletuner.helpers.models.minimaxh3.packing import (
     MINIMAX_H3_FPS,
@@ -54,6 +57,8 @@ from simpletuner.helpers.models.minimaxh3.transformer import (
     MiniMaxH3RotaryPosEmbed,
     MiniMaxH3Transformer3DModel,
     MiniMaxH3TransformerOutput,
+    _convert_minimax_h3_native_swiglu_scale_to_diffusers,
+    _convert_minimax_h3_native_swiglu_to_diffusers,
     _gather_h3_context_parallel_output,
     _pad_h3_context_parallel_layout,
     resolve_h3_reference_mode,
@@ -1020,6 +1025,62 @@ class MiniMaxH3Tests(unittest.TestCase):
         expected = torch.nn.functional.silu(torch.tensor([[0.5, -1.0]])) * torch.tensor([[1.0, -3.0]])
 
         self.assertTrue(torch.allclose(result, expected))
+
+    def test_native_swiglu_conversion_preserves_forward_and_backward(self):
+        torch.manual_seed(23)
+        hidden_states = torch.randn(2, 3, requires_grad=True)
+        native_weight = torch.randn(8, 3, requires_grad=True)
+        down_weight = torch.randn(3, 4, requires_grad=True)
+
+        native_gate, native_value = torch.nn.functional.linear(hidden_states, native_weight).chunk(2, dim=-1)
+        native_output = torch.nn.functional.linear(torch.nn.functional.silu(native_gate) * native_value, down_weight)
+        native_grads = torch.autograd.grad(native_output.square().sum(), (hidden_states, native_weight, down_weight))
+
+        converted_hidden = hidden_states.detach().clone().requires_grad_()
+        converted_weight = _convert_minimax_h3_native_swiglu_to_diffusers(
+            "blocks.0.mlp.fc1.weight",
+            native_weight.detach(),
+        ).requires_grad_()
+        converted_down = down_weight.detach().clone().requires_grad_()
+        converted_value, converted_gate = torch.nn.functional.linear(converted_hidden, converted_weight).chunk(2, dim=-1)
+        converted_output = torch.nn.functional.linear(
+            converted_value * torch.nn.functional.silu(converted_gate),
+            converted_down,
+        )
+        converted_grads = torch.autograd.grad(
+            converted_output.square().sum(),
+            (converted_hidden, converted_weight, converted_down),
+        )
+
+        self.assertTrue(torch.equal(native_output, converted_output))
+        self.assertTrue(torch.allclose(native_grads[0], converted_grads[0], atol=1e-6, rtol=1e-6))
+        self.assertTrue(
+            torch.allclose(
+                native_grads[1],
+                _convert_minimax_h3_native_swiglu_to_diffusers(
+                    "blocks.0.mlp.fc1.weight",
+                    converted_grads[1],
+                ),
+                atol=1e-6,
+                rtol=1e-6,
+            )
+        )
+        self.assertTrue(torch.allclose(native_grads[2], converted_grads[2], atol=1e-6, rtol=1e-6))
+
+    def test_native_swiglu_conversion_reorders_quantization_scales(self):
+        scale = torch.arange(8, dtype=torch.float32).view(8, 1)
+
+        converted = _convert_minimax_h3_native_swiglu_scale_to_diffusers(
+            "blocks.0.mlp.fc1.weight",
+            scale,
+        )
+
+        self.assertTrue(torch.equal(converted, torch.cat((scale[4:], scale[:4]), dim=0)))
+        scalar = torch.tensor(0.125)
+        self.assertIs(
+            _convert_minimax_h3_native_swiglu_scale_to_diffusers("blocks.0.mlp.fc1.weight", scalar),
+            scalar,
+        )
 
     def test_transformer_propagates_comfy_swiglu_gate_first_config(self):
         model = tiny_h3_transformer(swiglu_gate_first=True)
@@ -2467,9 +2528,34 @@ class MiniMaxH3Tests(unittest.TestCase):
                 weights[f"{prefix}.lora_B.weight"] = torch.randn(4, 2)
             save_function(weights, output_path)
             saved = load_file(output_path)
+            with safe_open(output_path, framework="pt", device="cpu") as handle:
+                adapter_metadata = json.loads(handle.metadata()["lora_adapter_metadata"])
 
         self.assertIn("diffusion_model.blocks.0.attn.qkv_proj.lora_A.weight", saved)
         self.assertNotIn("diffusion_model.transformer_blocks.0.attn.to_q.lora_A.weight", saved)
+        self.assertTrue(adapter_metadata[MINIMAX_H3_SWIGLU_GATE_FIRST_METADATA_KEY])
+
+    def test_model_diffusers_lora_save_marks_hidden_first_swiglu_layout(self):
+        model = object.__new__(MiniMaxH3)
+        model.config = SimpleNamespace(
+            controlnet=False,
+            lora_format="diffusers",
+            model_family="minimaxh3",
+        )
+        model.model = tiny_h3_transformer(swiglu_gate_first=False)
+        model.accelerator = SimpleNamespace(unwrap_model=lambda model, keep_fp32_wrapper=True: model)
+        pipeline_class = model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
+
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(pipeline_class, "save_lora_weights") as save_lora_weights:
+            model.save_lora_weights(
+                tmpdir,
+                transformer_lora_layers={"transformer_blocks.0.ff.net.0.proj.lora_A.weight": torch.ones(2, 3)},
+                transformer_lora_adapter_metadata={"adapter": "h3"},
+            )
+
+        adapter_metadata = save_lora_weights.call_args.kwargs["transformer_lora_adapter_metadata"]
+        self.assertEqual(adapter_metadata["adapter"], "h3")
+        self.assertFalse(adapter_metadata[MINIMAX_H3_SWIGLU_GATE_FIRST_METADATA_KEY])
 
     def test_training_resume_imports_native_comfy_lora_keys(self):
         wrapper = object.__new__(MiniMaxH3)
@@ -2532,6 +2618,49 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertIn("time_embedder.linear_1.lora_B.weight", loaded)
         self.assertNotIn("blocks.0.attn.qkv_proj.lora_A.weight", loaded)
 
+    def test_training_resume_uses_metadata_for_ambiguous_diffusers_swiglu_layout(self):
+        wrapper = object.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(
+            controlnet=False,
+            lora_format="diffusers",
+            model_flavour="fl2va",
+            train_text_encoder=False,
+        )
+        wrapper.model = tiny_h3_transformer(swiglu_gate_first=False)
+        wrapper.controlnet = None
+        wrapper.text_encoders = []
+        wrapper.accelerator = SimpleNamespace(
+            unwrap_model=lambda model, keep_fp32_wrapper=True: model,
+        )
+        gate = torch.full((4, 4), 1.0)
+        hidden = torch.full((4, 4), 2.0)
+        prefix = "transformer.transformer_blocks.0.ff.net.0.proj"
+        source_state_dict = {
+            f"{prefix}.lora_A.weight": torch.randn(4, 8),
+            f"{prefix}.lora_B.weight": torch.cat((gate, hidden), dim=0),
+        }
+        pipeline_class = wrapper.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
+
+        with (
+            patch.object(
+                pipeline_class,
+                "lora_state_dict",
+                return_value=(source_state_dict, {"transformer.swiglu_gate_first": True}),
+            ) as lora_state_dict,
+            patch("peft.utils.set_peft_model_state_dict") as set_peft_state,
+        ):
+            set_peft_state.return_value = SimpleNamespace(unexpected_keys=[])
+            wrapper.load_lora_weights([wrapper.model], "unused")
+
+        lora_state_dict.assert_called_once_with("unused", return_lora_metadata=True)
+        loaded = set_peft_state.call_args.args[1]
+        self.assertTrue(
+            torch.equal(
+                loaded["transformer_blocks.0.ff.net.0.proj.lora_B.weight"],
+                torch.cat((hidden, gate), dim=0),
+            )
+        )
+
     def test_training_resume_fails_when_peft_rejects_every_lora_key(self):
         wrapper = object.__new__(MiniMaxH3)
         wrapper.config = SimpleNamespace(
@@ -2590,6 +2719,42 @@ class MiniMaxH3Tests(unittest.TestCase):
             )
         )
 
+    def test_comfy_lora_swiglu_conversion_preserves_adapter_forward(self):
+        torch.manual_seed(29)
+        hidden_states = torch.randn(2, 3)
+        native_base = torch.randn(8, 3)
+        native_down = torch.randn(2, 3)
+        native_up = torch.randn(8, 2)
+
+        native_projection = torch.nn.functional.linear(
+            hidden_states,
+            native_base + native_up @ native_down,
+        )
+        native_gate, native_value = native_projection.chunk(2, dim=-1)
+        native_output = torch.nn.functional.silu(native_gate) * native_value
+
+        converted, _network_alphas = _convert_minimax_h3_comfy_lora_to_diffusers(
+            {
+                "blocks.0.mlp.fc1.lora_A.weight": native_down,
+                "blocks.0.mlp.fc1.lora_B.weight": native_up,
+            },
+            target_prefix="transformer",
+        )
+        canonical_base = _convert_minimax_h3_native_swiglu_to_diffusers(
+            "blocks.0.mlp.fc1.weight",
+            native_base,
+        )
+        canonical_down = converted["transformer.transformer_blocks.0.ff.net.0.proj.lora.down.weight"]
+        canonical_up = converted["transformer.transformer_blocks.0.ff.net.0.proj.lora.up.weight"]
+        canonical_projection = torch.nn.functional.linear(
+            hidden_states,
+            canonical_base + canonical_up @ canonical_down,
+        )
+        canonical_value, canonical_gate = canonical_projection.chunk(2, dim=-1)
+        canonical_output = canonical_value * torch.nn.functional.silu(canonical_gate)
+
+        self.assertTrue(torch.equal(canonical_output, native_output))
+
     def test_comfy_lora_conversion_preserves_swiglu_rows_for_gate_first_target(self):
         gate = torch.full((2, 4), 1.0)
         hidden = torch.full((2, 4), 2.0)
@@ -2611,6 +2776,32 @@ class MiniMaxH3Tests(unittest.TestCase):
                 fc1_up,
             )
         )
+
+    def test_diffusers_lora_layout_conversion_swaps_only_swiglu_up_rows(self):
+        down = torch.randn(2, 4)
+        gate = torch.full((3, 2), 1.0)
+        hidden = torch.full((3, 2), 2.0)
+        attention_up = torch.randn(4, 2)
+        state_dict = {
+            "transformer.transformer_blocks.0.ff.net.0.proj.lora_A.weight": down,
+            "transformer.transformer_blocks.0.ff.net.0.proj.lora_B.weight": torch.cat((gate, hidden), dim=0),
+            "transformer.transformer_blocks.0.attn.to_q.lora_B.weight": attention_up,
+        }
+
+        converted = _convert_minimax_h3_diffusers_swiglu_lora_layout(
+            state_dict,
+            source_gate_first=True,
+            target_gate_first=False,
+        )
+
+        self.assertIs(converted["transformer.transformer_blocks.0.ff.net.0.proj.lora_A.weight"], down)
+        self.assertTrue(
+            torch.equal(
+                converted["transformer.transformer_blocks.0.ff.net.0.proj.lora_B.weight"],
+                torch.cat((hidden, gate), dim=0),
+            )
+        )
+        self.assertIs(converted["transformer.transformer_blocks.0.attn.to_q.lora_B.weight"], attention_up)
 
     def test_lora_loader_detects_bare_h3_native_layout(self):
         pipe = MiniMaxH3ModularPipeline.__new__(MiniMaxH3ModularPipeline)
@@ -2637,6 +2828,49 @@ class MiniMaxH3Tests(unittest.TestCase):
             )
         )
         self.assertEqual(kwargs["adapter_name"], "h3")
+
+    def test_lora_loader_uses_metadata_for_ambiguous_diffusers_swiglu_layout(self):
+        pipe = MiniMaxH3ModularPipeline.__new__(MiniMaxH3ModularPipeline)
+        pipe.transformer = FakeLoraTarget()
+        pipe.transformer.config = SimpleNamespace(swiglu_gate_first=False)
+        gate = torch.full((2, 4), 1.0)
+        hidden = torch.full((2, 4), 2.0)
+        state_dict = {
+            "transformer.transformer_blocks.0.ff.net.0.proj.lora_A.weight": torch.randn(4, 16),
+            "transformer.transformer_blocks.0.ff.net.0.proj.lora_B.weight": torch.cat((gate, hidden), dim=0),
+        }
+        pipe.lora_state_dict = lambda _path, **_kwargs: (
+            state_dict,
+            {"transformer.swiglu_gate_first": True},
+        )
+
+        pipe.load_lora_weights("unused", adapter_name="h3")
+
+        loaded_state_dict, _kwargs = pipe.transformer.calls[0]
+        self.assertTrue(
+            torch.equal(
+                loaded_state_dict["transformer.transformer_blocks.0.ff.net.0.proj.lora_B.weight"],
+                torch.cat((hidden, gate), dim=0),
+            )
+        )
+
+    def test_lora_loader_leaves_unmarked_diffusers_swiglu_layout_unchanged(self):
+        pipe = MiniMaxH3ModularPipeline.__new__(MiniMaxH3ModularPipeline)
+        pipe.transformer = FakeLoraTarget()
+        pipe.transformer.config = SimpleNamespace(swiglu_gate_first=False)
+        up = torch.randn(4, 2)
+        pipe.lora_state_dict = lambda _path, **_kwargs: {
+            "transformer.transformer_blocks.0.ff.net.0.proj.lora_A.weight": torch.randn(2, 4),
+            "transformer.transformer_blocks.0.ff.net.0.proj.lora_B.weight": up,
+        }
+
+        pipe.load_lora_weights("unused", adapter_name="h3")
+
+        loaded_state_dict, _kwargs = pipe.transformer.calls[0]
+        self.assertIs(
+            loaded_state_dict["transformer.transformer_blocks.0.ff.net.0.proj.lora_B.weight"],
+            up,
+        )
 
     def test_init_lora_prepares_bare_h3_native_layout_and_targets(self):
         gate = torch.full((2, 4), 1.0)
@@ -2676,6 +2910,39 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertIn("transformer.transformer_blocks.0.ff.net.0.proj.lora_A.weight", prepared)
         self.assertEqual(prepared["transformer.transformer_blocks.0.ff.net.0.proj.alpha"].item(), 2.0)
         self.assertEqual(targets, ["transformer_blocks.0.ff.net.0.proj"])
+
+    def test_init_lora_uses_metadata_for_ambiguous_diffusers_swiglu_layout(self):
+        gate = torch.full((2, 4), 1.0)
+        hidden = torch.full((2, 4), 2.0)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            init_lora_path = f"{tmpdir}/h3-peft.safetensors"
+            save_file(
+                {
+                    "transformer.transformer_blocks.0.ff.net.0.proj.lora_A.weight": torch.randn(4, 16),
+                    "transformer.transformer_blocks.0.ff.net.0.proj.lora_B.weight": torch.cat((gate, hidden), dim=0),
+                },
+                init_lora_path,
+                metadata={
+                    "lora_adapter_metadata": json.dumps({"transformer.swiglu_gate_first": True}),
+                },
+            )
+            wrapper = MiniMaxH3.__new__(MiniMaxH3)
+            wrapper.config = SimpleNamespace(
+                init_lora=init_lora_path,
+                lora_format=None,
+                model_flavour="fl2va",
+            )
+            wrapper.model = tiny_h3_transformer(swiglu_gate_first=False)
+            wrapper.accelerator = SimpleNamespace(unwrap_model=lambda model, keep_fp32_wrapper=True: model)
+
+            prepared = wrapper._load_init_lora_state_dict()
+
+        self.assertTrue(
+            torch.equal(
+                prepared["transformer.transformer_blocks.0.ff.net.0.proj.lora_B.weight"],
+                torch.cat((hidden, gate), dim=0),
+            )
+        )
 
     def test_ref2va_lora_loader_retargets_transformer_prefix(self):
         pipe = MiniMaxH3Ref2VAModularPipeline.__new__(MiniMaxH3Ref2VAModularPipeline)
@@ -2908,6 +3175,65 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertEqual(tuple(loaded.config.patch_size), (1, 2, 2))
         self.assertFalse(loaded.config.swiglu_gate_first)
         self.assertFalse(loaded.rope.inv_freq.is_meta)
+
+    def test_single_file_native_loader_normalizes_swiglu_to_diffusers_order(self):
+        model = tiny_h3_transformer(num_layers=1)
+        native_state_dict = {}
+        for key, value in model.state_dict().items():
+            native_key = key
+            for source, target in (
+                ("audio_proj_in.", "audio_patch_proj."),
+                ("proj_in.", "video_patch_proj."),
+                ("context_embedder.", "condition_proj."),
+                ("time_embedder.linear_1.", "time_embedder.proj_in."),
+                ("time_embedder.linear_2.", "time_embedder.proj_out."),
+                ("norm_out.norm.", "final_layer.norm."),
+                ("norm_out.linear.", "final_layer.adaln_proj.linear."),
+                ("audio_proj_out.", "final_layer.audio_out."),
+                ("proj_out.", "final_layer.video_out."),
+            ):
+                if native_key.startswith(source):
+                    native_key = native_key.replace(source, target, 1)
+                    break
+            native_key = native_key.replace("token_refiner.refiner_blocks.", "token_refiner.blocks.", 1)
+            native_key = native_key.replace("transformer_blocks.", "blocks.", 1)
+            native_key = native_key.replace(".attn.norm_q.", ".attn.q_norm.")
+            native_key = native_key.replace(".attn.norm_k.", ".attn.k_norm.")
+            native_key = native_key.replace(".attn.to_out.0.", ".attn.out_proj.")
+            native_key = native_key.replace(".ff.net.0.proj.", ".mlp.fc1.")
+            native_key = native_key.replace(".ff.net.2.", ".mlp.fc2.")
+            if native_key.endswith(".mlp.fc1.weight"):
+                value, gate = value.chunk(2, dim=0)
+                value = torch.cat((gate, value), dim=0).contiguous()
+            native_state_dict[native_key] = value
+
+        for prefix in ("blocks.0", "token_refiner.blocks.0"):
+            q = native_state_dict.pop(f"{prefix}.attn.to_q.weight")
+            k = native_state_dict.pop(f"{prefix}.attn.to_k.weight")
+            v = native_state_dict.pop(f"{prefix}.attn.to_v.weight")
+            native_state_dict[f"{prefix}.attn.qkv_proj.weight"] = torch.cat((q, k, v), dim=0)
+        native_state_dict["rope.inv_freq"] = model.rope.inv_freq
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = f"{tmpdir}/tiny-h3-native.safetensors"
+            save_file(native_state_dict, path)
+            loaded = MiniMaxH3Transformer3DModel.from_single_file(path, torch_dtype=torch.float32)
+
+        self.assertFalse(loaded.config.swiglu_gate_first)
+        self.assertEqual(type(loaded.transformer_blocks[0].ff).__name__, "FeedForward")
+        self.assertTrue(
+            torch.equal(
+                loaded.transformer_blocks[0].ff.net[0].proj.weight,
+                model.transformer_blocks[0].ff.net[0].proj.weight,
+            )
+        )
+        inputs = tiny_inputs()
+        model.eval()
+        loaded.eval()
+        expected = model(**inputs)
+        actual = loaded(**inputs)
+        self.assertTrue(torch.equal(actual.sample, expected.sample))
+        self.assertTrue(torch.equal(actual.audio_sample, expected.audio_sample))
 
     def test_single_file_loader_accepts_trailing_safetensors_bytes(self):
         model = tiny_h3_transformer(num_layers=1)

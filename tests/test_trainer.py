@@ -2266,6 +2266,28 @@ class TestTrainer(unittest.TestCase):
                 mock_logger.info.assert_called()
                 trainer.accelerator.load_state.assert_called_with("/path/to/output/checkpoint-200")
 
+    def test_publish_final_artifacts_uploads_output_directory(self):
+        trainer = object.__new__(Trainer)
+        trainer.publishing_manager = Mock(configured=True)
+        trainer.publishing_manager.providers = []
+        trainer.publishing_manager.publish.return_value = [Mock()]
+        trainer.job_id = "job-123"
+        trainer.state = {"global_step": 1, "current_epoch": 1}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "output"
+            output_dir.mkdir()
+            (output_dir / "pytorch_lora_weights.safetensors").write_bytes(b"weights")
+            trainer.config = SimpleNamespace(output_dir=str(output_dir))
+
+            results = trainer._publish_final_artifacts()
+
+        self.assertEqual(len(results), 1)
+        args, kwargs = trainer.publishing_manager.publish.call_args
+        self.assertEqual(args[0], output_dir)
+        self.assertEqual(kwargs["artifact_name"], "output")
+        self.assertEqual(kwargs["metadata"]["job_id"], "job-123")
+
     def test_initial_lora_step_rejects_full_checkpoint_resume(self):
         trainer = object.__new__(Trainer)
         trainer.config = SimpleNamespace(
@@ -2301,6 +2323,23 @@ class TestTrainer(unittest.TestCase):
 
             self.assertEqual(trainer._initial_lora_step(), 1500)
             self.assertEqual(trainer.config.init_lora_step, 1500)
+
+    def test_initial_lora_step_rejects_metadata_step_at_max_with_fresh_run_hint(self):
+        with tempfile.NamedTemporaryFile(suffix=".safetensors") as lora_file:
+            save_file({"weight": torch.ones(1)}, lora_file.name, metadata={"global_step": "1500"})
+            trainer = object.__new__(Trainer)
+            trainer.config = SimpleNamespace(
+                init_lora=lora_file.name,
+                init_lora_step=None,
+                resume_from_checkpoint=None,
+                max_train_steps=100,
+            )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "init_lora metadata reports global_step 1500.*init_lora_step: 0.*max_train_steps above 1500",
+            ):
+                trainer._initial_lora_step()
 
     def test_initial_lora_step_explicit_zero_overrides_safetensors_metadata(self):
         with tempfile.NamedTemporaryFile(suffix=".safetensors") as lora_file:

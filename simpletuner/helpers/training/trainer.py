@@ -675,6 +675,41 @@ class Trainer:
             logger.error("Failed to initialise publishing providers: %s", exc)
             self.publishing_manager = None
 
+    def _publish_final_artifacts(self) -> List[Any]:
+        """Publish the completed output directory through configured providers.
+
+        Returns:
+            Publishing results produced by all successful providers.
+
+        Raises:
+            FileNotFoundError: If publishing is enabled but the output directory is missing.
+            RuntimeError: If a required publishing provider reports no artifacts.
+        """
+        manager = self.publishing_manager
+        if manager is None or not getattr(manager, "configured", False):
+            return []
+
+        output_dir = Path(self.config.output_dir)
+        if not output_dir.exists():
+            raise FileNotFoundError(f"Final publishing directory does not exist: {output_dir}")
+
+        results = manager.publish(
+            output_dir,
+            artifact_name=output_dir.name,
+            metadata={
+                "job_id": self.job_id,
+                "global_step": self.state.get("global_step", 0),
+                "epoch": self.state.get("current_epoch", 0),
+                "artifact_stage": "final",
+            },
+        )
+        required = any(
+            bool(getattr(provider, "config", {}).get("required", False)) for provider in getattr(manager, "providers", [])
+        )
+        if required and not results:
+            raise RuntimeError("Required final artifact publishing did not succeed")
+        return results
+
     def _enable_dynamo_dynamic_output_capture(self) -> None:
         try:
             import torch._dynamo as torch_dynamo
@@ -2278,8 +2313,19 @@ class Trainer:
             raise ValueError("init_lora_step cannot be combined with resume_from_checkpoint.")
 
         max_train_steps = getattr(self.config, "max_train_steps", None)
-        if max_train_steps not in (None, 0) and initial_step >= int(max_train_steps):
-            raise ValueError(f"init_lora_step ({initial_step}) must be smaller than max_train_steps ({max_train_steps}).")
+        if max_train_steps not in (None, 0):
+            max_train_steps = int(max_train_steps)
+            if initial_step >= max_train_steps:
+                if inferred_from_metadata:
+                    raise ValueError(
+                        "init_lora metadata reports global_step "
+                        f"{initial_step}, which is greater than or equal to max_train_steps ({max_train_steps}). "
+                        "For a fresh run from this adapter, set init_lora_step: 0 explicitly. "
+                        f"To continue scheduler/accounting from the adapter step, raise max_train_steps above {initial_step}."
+                    )
+                raise ValueError(
+                    f"init_lora_step ({initial_step}) must be smaller than max_train_steps ({max_train_steps})."
+                )
         if inferred_from_metadata:
             self.config.init_lora_step = initial_step
             logger.info("Using global step %s from init_lora safetensors metadata.", initial_step)
@@ -7635,6 +7681,10 @@ class Trainer:
                     self._finish_hub_uploads()
                 else:
                     self._run_post_upload_script(local_path=self.config.output_dir, remote_path=None)
+                if self.accelerator.is_main_process and os.environ.get(
+                    "SIMPLETUNER_PUBLISH_FINAL_ARTIFACTS", ""
+                ).lower() in {"1", "true", "yes", "on"}:
+                    self._publish_final_artifacts()
                 # Mark model_save as completed
                 event = lifecycle_stage_event(
                     key="model_save",

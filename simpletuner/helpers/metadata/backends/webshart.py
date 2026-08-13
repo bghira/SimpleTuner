@@ -512,8 +512,12 @@ class WebshartMetadataBackend(MetadataBackend):
                             continue
                         bucket_key, sample_metadata = prepared
                         if require_captions and not sample_metadata.get("captions"):
-                            statistics["skipped"]["caption_missing"] += 1
-                            continue
+                            # Captions may live as sibling .txt tar members instead of embedded
+                            # metadata (e.g. cc12m); get_caption() range-reads those at runtime.
+                            caption_member = Path(str(entry["filename"])).with_suffix(".txt").name
+                            if caption_member not in (shard_metadata.get("files") or {}):
+                                statistics["skipped"]["caption_missing"] += 1
+                                continue
                         aspect_ratio_bucket_updates.setdefault(bucket_key, []).append(sample_path)
                         metadata_updates[sample_path] = sample_metadata
                         if sample_metadata.get("captions"):
