@@ -11,6 +11,7 @@ CPU RAM and are streamed to GPU on-demand during forward pass.
 """
 
 import os
+from fnmatch import fnmatch
 
 import torch
 import torch.nn as nn
@@ -840,6 +841,23 @@ def _rmsnorm_use_weight_addition(module: nn.Module) -> bool:
     return "gemma" in module.__class__.__name__.lower()
 
 
+def _matches_ramtorch_pattern(name: str, module: nn.Module, patterns: list[str] | None) -> bool:
+    if patterns is None:
+        return True
+    glob_chars = {"*", "?", "["}
+    class_name = module.__class__.__name__
+    candidates = [name]
+    if "." in name:
+        candidates.append(name.split(".", 1)[1])
+    for pattern in patterns:
+        if any(fnmatch(candidate, pattern) for candidate in candidates) or fnmatch(class_name, pattern):
+            return True
+        if not any(ch in pattern for ch in glob_chars):
+            if any(fnmatch(candidate, pattern + ".*") for candidate in candidates):
+                return True
+    return False
+
+
 def replace_module_with_ramtorch(
     module: nn.Module,
     device: str = "cuda",
@@ -847,6 +865,8 @@ def replace_module_with_ramtorch(
     include_conv: bool = True,
     include_layernorm: bool = True,
     include_rmsnorm: bool = True,
+    target_patterns: list[str] | None = None,
+    name_prefix: str = "",
 ) -> int:
     """
     Replace supported layer types with CPU-bouncing versions.
@@ -858,6 +878,8 @@ def replace_module_with_ramtorch(
         include_conv: Replace nn.Conv2d and nn.Conv3d layers
         include_layernorm: Replace nn.LayerNorm layers
         include_rmsnorm: Replace RMSNorm-like layers
+        target_patterns: Optional glob patterns limiting which modules are replaced
+        name_prefix: Optional prefix for module names
 
     Returns:
         Number of modules replaced
@@ -865,8 +887,16 @@ def replace_module_with_ramtorch(
     replaced = 0
 
     for name, child in list(module.named_children()):
+        qualified_name = f"{name_prefix}.{name}" if name_prefix else name
+        matches_target = _matches_ramtorch_pattern(qualified_name, child, target_patterns)
+
         # Check for Embedding
-        if include_embedding and isinstance(child, nn.Embedding) and not isinstance(child, CPUBouncingEmbedding):
+        if (
+            matches_target
+            and include_embedding
+            and isinstance(child, nn.Embedding)
+            and not isinstance(child, CPUBouncingEmbedding)
+        ):
             # Extract embed_scale from scaled word embeddings (e.g., Gemma3TextScaledWordEmbedding)
             embed_scale = None
             if hasattr(child, "embed_scale") and child.embed_scale is not None:
@@ -890,7 +920,7 @@ def replace_module_with_ramtorch(
             continue
 
         # Check for Conv2d
-        if include_conv and isinstance(child, nn.Conv2d) and not isinstance(child, CPUBouncingConv2d):
+        if matches_target and include_conv and isinstance(child, nn.Conv2d) and not isinstance(child, CPUBouncingConv2d):
             new_layer = CPUBouncingConv2d(
                 in_channels=child.in_channels,
                 out_channels=child.out_channels,
@@ -911,7 +941,7 @@ def replace_module_with_ramtorch(
             continue
 
         # Check for Conv3d
-        if include_conv and isinstance(child, nn.Conv3d) and not isinstance(child, CPUBouncingConv3d):
+        if matches_target and include_conv and isinstance(child, nn.Conv3d) and not isinstance(child, CPUBouncingConv3d):
             new_layer = CPUBouncingConv3d(
                 in_channels=child.in_channels,
                 out_channels=child.out_channels,
@@ -932,7 +962,7 @@ def replace_module_with_ramtorch(
             continue
 
         # Check for RMSNorm
-        if include_rmsnorm and _is_rmsnorm_module(child) and not isinstance(child, CPUBouncingRMSNorm):
+        if matches_target and include_rmsnorm and _is_rmsnorm_module(child) and not isinstance(child, CPUBouncingRMSNorm):
             weight = getattr(child, "weight", None)
             bias = getattr(child, "bias", None) if hasattr(child, "bias") else None
             normalized_shape = getattr(child, "normalized_shape", None)
@@ -959,7 +989,12 @@ def replace_module_with_ramtorch(
                 continue
 
         # Check for LayerNorm
-        if include_layernorm and isinstance(child, nn.LayerNorm) and not isinstance(child, CPUBouncingLayerNorm):
+        if (
+            matches_target
+            and include_layernorm
+            and isinstance(child, nn.LayerNorm)
+            and not isinstance(child, CPUBouncingLayerNorm)
+        ):
             new_layer = CPUBouncingLayerNorm(
                 normalized_shape=child.normalized_shape,
                 eps=child.eps,
@@ -982,6 +1017,8 @@ def replace_module_with_ramtorch(
             include_conv=include_conv,
             include_layernorm=include_layernorm,
             include_rmsnorm=include_rmsnorm,
+            target_patterns=target_patterns,
+            name_prefix=qualified_name,
         )
 
     return replaced

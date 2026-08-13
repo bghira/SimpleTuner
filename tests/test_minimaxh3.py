@@ -2,6 +2,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -1217,11 +1218,30 @@ class MiniMaxH3Tests(unittest.TestCase):
         musubi = {preset.level: preset for preset in presets if preset.backend is AccelerationBackend.MUSUBI_BLOCK_SWAP}
 
         self.assertTrue(ramtorch.config["ramtorch"])
+        self.assertFalse(ramtorch.config["ramtorch_disable_extensions"])
+        self.assertTrue(ramtorch.config["ramtorch_text_encoder"])
         self.assertIn("transformer_blocks.0.*", ramtorch.config["ramtorch_target_modules"])
         self.assertIn("transformer_blocks.24.*", ramtorch.config["ramtorch_target_modules"])
         self.assertEqual(musubi["light"].config["musubi_blocks_to_swap"], 12)
         self.assertEqual(musubi["balanced"].config["musubi_blocks_to_swap"], 25)
         self.assertEqual(musubi["aggressive"].config["musubi_blocks_to_swap"], 37)
+
+    def test_h3_low_vram_examples_enable_text_encoder_ramtorch(self):
+        examples_root = Path(__file__).resolve().parents[1] / "simpletuner" / "examples"
+        with (examples_root / "minimaxh3-fl2va-convrot-int8-24g.peft-lora+ramtorch" / "config.json").open() as handle:
+            config_24g = json.load(handle)
+        with (examples_root / "minimaxh3-fl2va-convrot-int8-32g.peft-lora" / "config.json").open() as handle:
+            config_32g = json.load(handle)
+
+        self.assertTrue(config_24g["ramtorch"])
+        self.assertFalse(config_24g["ramtorch_disable_extensions"])
+        self.assertTrue(config_24g["ramtorch_text_encoder"])
+        self.assertEqual(config_24g["ramtorch_transformer_percent"], 100)
+
+        self.assertTrue(config_32g["ramtorch"])
+        self.assertFalse(config_32g["ramtorch_disable_extensions"])
+        self.assertTrue(config_32g["ramtorch_text_encoder"])
+        self.assertEqual(config_32g["ramtorch_transformer_percent"], 0)
 
     def test_transformer_output_supports_accelerate_fp32_conversion(self):
         output = MiniMaxH3TransformerOutput(

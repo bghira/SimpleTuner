@@ -4072,10 +4072,14 @@ class ModelFoundation(ABC):
         if self.model is None:
             logger.debug("RamTorch requested but no base model module is initialised.")
             return 0
+        transformer_percent = self._ramtorch_transformer_percent()
+        if transformer_percent == 0:
+            logger.debug("RamTorch transformer conversion skipped because ramtorch_transformer_percent=0.")
+            return 0
         return self._apply_ramtorch_layers(
             self.model,
             self.MODEL_TYPE.value,
-            percent=self._ramtorch_transformer_percent(),
+            percent=transformer_percent,
             full_ramtorch=True,
         )
 

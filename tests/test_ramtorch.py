@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import torch
 import torch.nn as nn
@@ -175,6 +175,82 @@ class RamTorchUtilsTests(unittest.TestCase):
         self.assertIn("weight", dict(model[0].named_buffers(recurse=False)))
         self.assertTrue(getattr(model[0].weight, "is_ramtorch", False))
 
+    def test_replace_all_layers_with_ramtorch_honors_target_patterns_for_extensions(self):
+        from simpletuner.helpers import ramtorch_extensions
+
+        class _ExtensionModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.embedding = nn.Embedding(4, 2)
+                self.block = nn.Sequential(nn.Embedding(4, 2), nn.LayerNorm(2))
+                self.other_norm = nn.LayerNorm(2)
+
+        class _StubEmbedding(nn.Embedding):
+            def __init__(
+                self,
+                num_embeddings,
+                embedding_dim,
+                padding_idx=None,
+                max_norm=None,
+                norm_type=2.0,
+                scale_grad_by_freq=False,
+                sparse=False,
+                device=None,
+                dtype=None,
+                _weight=None,
+                embed_scale=None,
+            ):
+                del device, embed_scale
+                super().__init__(
+                    num_embeddings,
+                    embedding_dim,
+                    padding_idx=padding_idx,
+                    max_norm=max_norm,
+                    norm_type=norm_type,
+                    scale_grad_by_freq=scale_grad_by_freq,
+                    sparse=sparse,
+                    _weight=None if _weight is None else _weight.detach().clone(),
+                    dtype=dtype,
+                )
+
+        class _StubLayerNorm(nn.LayerNorm):
+            def __init__(
+                self,
+                normalized_shape,
+                eps=1e-5,
+                elementwise_affine=True,
+                bias=True,
+                device=None,
+                dtype=None,
+                _weight=None,
+                _bias=None,
+            ):
+                del device
+                super().__init__(normalized_shape, eps=eps, elementwise_affine=elementwise_affine, bias=bias, dtype=dtype)
+                if _weight is not None:
+                    self.weight.data.copy_(_weight)
+                if _bias is not None and self.bias is not None:
+                    self.bias.data.copy_(_bias)
+
+        model = _ExtensionModel()
+
+        with (
+            patch.object(ramtorch_extensions, "CPUBouncingEmbedding", _StubEmbedding),
+            patch.object(ramtorch_extensions, "CPUBouncingLayerNorm", _StubLayerNorm),
+        ):
+            counts = ramtorch_utils.replace_all_layers_with_ramtorch(
+                model,
+                device="cpu",
+                include_linear=False,
+                target_patterns=["block.*"],
+            )
+
+        self.assertEqual(counts["other"], 2)
+        self.assertIsInstance(model.embedding, nn.Embedding)
+        self.assertIsInstance(model.block[0], _StubEmbedding)
+        self.assertIsInstance(model.block[1], _StubLayerNorm)
+        self.assertIsInstance(model.other_norm, nn.LayerNorm)
+
     def test_replace_scaled_fp8_linear_preserves_scale_and_output(self):
         from simpletuner.helpers.models.ideogram.quantized_loading import FP8_WEIGHT_DTYPE, Fp8Linear
         from simpletuner.helpers.ramtorch_extensions import CPUBouncingFp8Linear
@@ -239,6 +315,23 @@ class RamTorchUtilsTests(unittest.TestCase):
         self.assertEqual(reset_peak_memory_stats.call_count, 2)
         self.assertEqual(str(reset_peak_memory_stats.call_args_list[0].args[0]), "cuda:0")
         self.assertEqual(str(reset_peak_memory_stats.call_args_list[1].args[0]), "cuda:1")
+
+    def test_apply_ramtorch_to_transformer_skips_percent_zero(self):
+        from simpletuner.helpers.models.common import ModelFoundation, ModelTypes
+
+        model = SimpleNamespace(
+            config=SimpleNamespace(ramtorch=True, ramtorch_transformer_percent=0),
+            model=object(),
+            MODEL_TYPE=ModelTypes.TRANSFORMER,
+            _ramtorch_enabled=lambda: True,
+            _ramtorch_transformer_percent=lambda: 0,
+            _apply_ramtorch_layers=Mock(return_value=1),
+        )
+
+        replaced = ModelFoundation.apply_ramtorch_to_transformer(model)
+
+        self.assertEqual(replaced, 0)
+        model._apply_ramtorch_layers.assert_not_called()
 
     def test_torchao_int8_ramtorch_backward_uses_dense_weight_view(self):
         try:
