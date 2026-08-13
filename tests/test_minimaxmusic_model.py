@@ -8,7 +8,7 @@ import torch
 from safetensors import safe_open
 from safetensors.torch import load_file
 
-from simpletuner.helpers.models.common import PipelineTypes
+from simpletuner.helpers.models.common import PipelineTypes, TextEmbedCacheKey
 from simpletuner.helpers.models.minimaxmusic.condition_encoder import MiniMaxMusic3ConditionEncoder
 from simpletuner.helpers.models.minimaxmusic.model import MiniMaxMusic
 from simpletuner.helpers.models.minimaxmusic.modular_pipeline import (
@@ -18,6 +18,7 @@ from simpletuner.helpers.models.minimaxmusic.modular_pipeline import (
     _convert_minimax_music_diffusers_lora_to_comfyui,
 )
 from simpletuner.helpers.models.minimaxmusic.transformer import MiniMaxMusic3Transformer1DModel
+from simpletuner.helpers.models.minimaxmusic.vocoder import MiniMaxMusic3DAV
 from simpletuner.helpers.models.registry import ModelRegistry
 
 
@@ -78,6 +79,7 @@ class MiniMaxMusicModelTests(unittest.TestCase):
         model.condition_encoder = None
         model.crepa_regularizer = None
         model.layersync_regularizer = None
+        model.vae = None
         model._new_hidden_state_buffer = MagicMock(return_value={})
         model.get_trained_component = lambda: model.model
         model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
@@ -90,6 +92,255 @@ class MiniMaxMusicModelTests(unittest.TestCase):
         self.assertIsNotNone(registered)
         self.assertEqual(registered.NAME, "MiniMax Music 3")
         self.assertIn("music3", registered.get_flavour_choices())
+
+    def test_minimaxmusic_supports_audio_only_training(self):
+        self.assertTrue(MiniMaxMusic.supports_audio_only_training())
+
+    def test_minimaxmusic_inherits_model_card_schedule_hook(self):
+        model = self._build_model()
+
+        self.assertEqual(model.custom_model_card_schedule_info(), "")
+
+    def test_minimaxmusic_validation_audio_sample_rate(self):
+        model = self._build_model()
+
+        self.assertEqual(model.validation_audio_sample_rate(), 44100)
+
+    def test_validation_kwargs_restore_raw_prompt_for_modular_pipeline(self):
+        model = self._build_model()
+        model.config.validation_lyrics = "[verse]\nhello"
+        prompt_embeds = torch.randn(1, 2, 3)
+        pipeline_kwargs = {
+            "prompt": None,
+            "_validation_prompt_text": "bright synth pop",
+            "frame_hiddens": prompt_embeds,
+            "prompt_embeds": prompt_embeds,
+            "attention_masks": torch.tensor([2]),
+        }
+
+        updated = model.update_pipeline_call_kwargs(pipeline_kwargs)
+
+        self.assertEqual(updated["prompt"], "bright synth pop")
+        self.assertEqual(updated["lyrics"], "[verse]\nhello")
+        self.assertNotIn("frame_hiddens", updated)
+        self.assertNotIn("prompt_embeds", updated)
+        self.assertNotIn("attention_masks", updated)
+
+    def test_load_text_encoder_restores_tokenizer_after_validation_clear(self):
+        model = self._build_model()
+        model.language_model = object()
+        model.rvq_depth_decoder = object()
+        model.condition_encoder = object()
+        model.tokenizers = None
+
+        def restore_tokenizer():
+            model.tokenizers = ["tokenizer"]
+            model.tokenizer_1 = "tokenizer"
+
+        model.load_text_tokenizer = MagicMock(side_effect=restore_tokenizer)
+
+        model.load_text_encoder(move_to_device=False)
+
+        model.load_text_tokenizer.assert_called_once_with()
+        self.assertEqual(model.tokenizers, ["tokenizer"])
+
+    def test_unload_text_encoder_clears_minimax_conditioning_aliases(self):
+        model = self._build_model()
+        model.language_model = object()
+        model.rvq_depth_decoder = object()
+        model.condition_encoder = object()
+        model.text_encoder_1 = model.language_model
+        model.text_encoders = [model.language_model]
+        model.tokenizers = ["tokenizer"]
+
+        model.unload_text_encoder()
+
+        self.assertIsNone(model.language_model)
+        self.assertIsNone(model.rvq_depth_decoder)
+        self.assertIsNone(model.condition_encoder)
+        self.assertIsNone(model.text_encoder_1)
+        self.assertIsNone(model.text_encoders)
+        self.assertIsNone(model.tokenizers)
+
+    @patch("simpletuner.helpers.models.minimaxmusic.model.MiniMaxMusic3ModularPipeline")
+    def test_get_pipeline_restores_tokenizer_after_validation_clear(self, mock_pipeline_cls):
+        pipeline = MagicMock()
+        mock_pipeline_cls.return_value = pipeline
+        model = self._build_model()
+        model.pipelines = {}
+        model.language_model = object()
+        model.rvq_depth_decoder = object()
+        model.condition_encoder = object()
+        model.tokenizers = None
+        model.vae = object()
+        model.guider = object()
+
+        def restore_text_stack(move_to_device=True):
+            del move_to_device
+            model.tokenizers = ["tokenizer"]
+            model.tokenizer_1 = "tokenizer"
+
+        model.load_text_encoder = MagicMock(side_effect=restore_text_stack)
+
+        result = model.get_pipeline()
+
+        self.assertIs(result, pipeline)
+        model.load_text_encoder.assert_called_once_with(move_to_device=True)
+        self.assertEqual(pipeline.update_components.call_args.kwargs["tokenizer"], "tokenizer")
+
+    def test_text_embed_cache_uses_audio_sample_context_keys(self):
+        model = self._build_model()
+
+        self.assertEqual(model.text_embed_cache_key(), TextEmbedCacheKey.DATASET_AND_FILENAME)
+        self.assertTrue(model.requires_text_embed_image_context())
+        self.assertFalse(model.should_precompute_dropout_caption())
+        self.assertFalse(model.use_text_cache_dropout_sentinel())
+        self.assertTrue(model.uses_image_context_dropout_caption_cache())
+        self.assertEqual(
+            model.text_embed_cache_key_value(prompt="", default_key="music:track.wav", metadata={}),
+            "music:track.wav:__caption_dropout__",
+        )
+        self.assertEqual(
+            model.text_embed_cache_key_value(prompt="bright synth pop", default_key="music:track.wav", metadata={}),
+            "music:track.wav",
+        )
+
+    def test_constructed_model_initializes_vae_slot(self):
+        config = SimpleNamespace(
+            model_family="minimaxmusic",
+            model_flavour="music3",
+            pretrained_model_name_or_path="MiniMaxAI/MiniMax-Music3",
+            pretrained_vae_model_name_or_path=None,
+            vae_path=None,
+        )
+        model = MiniMaxMusic(config=config, accelerator=SimpleNamespace())
+
+        self.assertTrue(hasattr(model, "vae"))
+        self.assertTrue(hasattr(model, "controlnet"))
+        self.assertIsNone(model.controlnet)
+        self.assertIsNone(model.vae)
+
+    def test_text_embed_cache_metadata_includes_lyrics_and_audio_duration(self):
+        model = self._build_model()
+
+        metadata = model.text_embed_cache_metadata_for_sample(
+            example={
+                "lyrics": "[verse]\nhello world",
+                "audio_duration": 12.5,
+                "image_metadata": {"duration_seconds": 10.0},
+            },
+            latent=torch.zeros(1),
+            prompt="bright synth pop",
+            data_backend_id="music",
+            dataset_relative_path="track_01.wav",
+        )
+
+        self.assertEqual(metadata["prompt"], "bright synth pop")
+        self.assertEqual(metadata["lyrics"], "[verse]\nhello world")
+        self.assertEqual(metadata["audio_duration"], 12.5)
+        self.assertEqual(metadata["duration_seconds"], 10.0)
+
+    def test_text_embed_cache_metadata_accepts_training_sample_metadata(self):
+        model = self._build_model()
+        sample = SimpleNamespace(image_metadata={"lyrics": "la la", "duration": 8.0})
+
+        metadata = model.text_embed_cache_metadata_for_sample(
+            example=sample,
+            latent=None,
+            prompt="warm piano ballad",
+            data_backend_id=None,
+            dataset_relative_path=None,
+        )
+
+        self.assertEqual(metadata["prompt"], "warm piano ballad")
+        self.assertEqual(metadata["lyrics"], "la la")
+        self.assertEqual(metadata["duration"], 8.0)
+
+    def test_text_embed_cache_metadata_for_filepath_uses_audio_metadata_backend(self):
+        model = self._build_model()
+        metadata_backend = MagicMock()
+        metadata_backend.get_metadata_by_filepath.return_value = {
+            "lyrics": "[chorus]\nshine",
+            "duration_seconds": 1.0,
+            "bucket_duration_seconds": 1.0,
+        }
+
+        metadata = model.text_embed_cache_metadata_for_filepath(
+            init_backend={"metadata_backend": metadata_backend},
+            image_path="track.wav",
+            prompt="bright synth pop",
+            data_backend_id="music",
+            dataset_relative_path="track.wav",
+        )
+
+        metadata_backend.get_metadata_by_filepath.assert_called_once_with("track.wav")
+        self.assertEqual(metadata["prompt"], "bright synth pop")
+        self.assertEqual(metadata["lyrics"], "[chorus]\nshine")
+        self.assertEqual(metadata["duration_seconds"], 1.0)
+        self.assertEqual(metadata["bucket_duration_seconds"], 1.0)
+
+    def test_audio_duration_for_context_accepts_audio_bucket_duration(self):
+        model = self._build_model()
+        model.config.validation_audio_duration = 30.0
+
+        self.assertEqual(model._audio_duration_for_context({"bucket_duration_seconds": 1.0}), 1.0)
+
+    def test_dav_encodes_raw_audio_to_stereo_latents(self):
+        dav = MiniMaxMusic3DAV(
+            latent_channels=4,
+            channel_latent_channels=2,
+            encoder_dim=2,
+            encoder_rates=(2,),
+            encoder_latent_dim=4,
+            decoder_input_dim=4,
+            decoder_hidden_dim=4,
+            upsampling_ratios=(2,),
+        )
+
+        latents = dav.encode(torch.randn(1, 1, 16))
+        waveform = dav.decode(latents)
+
+        self.assertEqual(latents.shape, (1, 4, 8))
+        self.assertEqual(waveform.shape, (1, 2, 16))
+
+    def test_encode_cache_batch_uses_dav_encoder(self):
+        model = self._build_model()
+        dav = MiniMaxMusic3DAV(
+            latent_channels=4,
+            channel_latent_channels=2,
+            encoder_dim=2,
+            encoder_rates=(2,),
+            encoder_latent_dim=4,
+            decoder_input_dim=4,
+            decoder_hidden_dim=4,
+            upsampling_ratios=(2,),
+        )
+
+        latents = model.encode_cache_batch(dav, torch.randn(1, 1, 16))
+
+        self.assertEqual(latents.shape, (1, 4, 8))
+
+    def test_load_vae_accepts_diffusers_audio_vae_subfolder(self):
+        model = self._build_model()
+        dav = MiniMaxMusic3DAV(
+            latent_channels=4,
+            channel_latent_channels=2,
+            encoder_dim=2,
+            encoder_rates=(2,),
+            encoder_latent_dim=4,
+            decoder_input_dim=4,
+            decoder_hidden_dim=4,
+            upsampling_ratios=(2,),
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            audio_vae_dir = f"{tmpdir}/audio_vae"
+            dav.save_pretrained(audio_vae_dir)
+            model.config.pretrained_vae_model_name_or_path = tmpdir
+
+            loaded = model.load_vae(move_to_device=False)
+
+        self.assertIsInstance(loaded, MiniMaxMusic3DAV)
+        self.assertEqual(loaded.config.latent_channels, 4)
 
     def test_condition_encoder_resamples_frame_hidden_states(self):
         encoder = MiniMaxMusic3ConditionEncoder(
@@ -149,6 +400,25 @@ class MiniMaxMusicModelTests(unittest.TestCase):
         self.assertTrue(transformer.config.swiglu_gate_first)
         self.assertTrue(transformer.transformer_blocks[0].swiglu_gate_first)
 
+    def test_transformer_supports_peft_adapter_injection(self):
+        from peft import LoraConfig
+
+        transformer = _tiny_transformer()
+
+        transformer.add_adapter(
+            LoraConfig(
+                r=2,
+                lora_alpha=2,
+                target_modules=["to_q", "to_k", "to_v", "to_out.0", "ff_in", "ff_out", "proj_in", "proj_out"],
+            )
+        )
+
+        trainable_lora_parameters = [
+            name for name, parameter in transformer.named_parameters() if "lora_" in name and parameter.requires_grad
+        ]
+        self.assertTrue(trainable_lora_parameters)
+        self.assertIn("transformer_blocks.0.attn.to_q.lora_A.default.weight", trainable_lora_parameters)
+
     def test_transformer_requires_initialized_timestep_conditioning(self):
         transformer = _tiny_transformer()
         kwargs = {
@@ -177,6 +447,22 @@ class MiniMaxMusicModelTests(unittest.TestCase):
         self.assertEqual(prepared["sigmas"].shape, (2, 1, 1))
         torch.testing.assert_close(prepared["timesteps"], torch.tensor([0.75, 0.25]))
         torch.testing.assert_close(model.get_prediction_target(prepared), prepared["latents"] - prepared["noise"])
+
+    def test_prepare_batch_accepts_audio_only_collate_latents(self):
+        model = self._build_model()
+        model.sample_flow_sigmas = MagicMock(return_value=(torch.tensor([0.4]), torch.tensor([0.6])))
+        audio_latents = torch.randn(1, 4, 6)
+        batch = {
+            "latent_batch": None,
+            "audio_latent_batch": audio_latents,
+            "prompt_embeds": torch.randn(1, 6, 8),
+        }
+
+        prepared = model.prepare_batch(batch, state={"global_step": 0})
+
+        torch.testing.assert_close(prepared["latents"], audio_latents)
+        self.assertEqual(prepared["encoder_hidden_states"].shape, (1, 6, 8))
+        torch.testing.assert_close(prepared["timesteps"], torch.tensor([0.6]))
 
     def test_prepare_crepa_self_flow_batch_creates_tokenwise_timesteps(self):
         model = self._build_model()
