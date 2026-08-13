@@ -11,7 +11,7 @@ SimpleTuner 支持：
 - MiniMax Music 3 transformer 的 LoRA、LyCORIS 和 full-rank 训练
 - 通过原始 `dav.pth` autoencoder 让 VAECache 从原始音频编码 latent
 - 从音频数据集 metadata 读取 caption、lyrics 和 duration
-- 使用 `validation_prompt`、`validation_lyrics` 和 `validation_audio_duration` 生成验证音频
+- 使用 `validation_prompt`、`validation_lyrics`、`validation_audio_duration` 和 prompt library 生成验证音频
 - 使用 `lora_format: "comfyui"` 导入/导出 ComfyUI MiniMax Music LoRA
 - AnyFlow、TwinFlow、CREPA self-flow 和 LayerSync
 
@@ -82,6 +82,7 @@ mkdir -p config/minimaxmusic-training-demo
 
 - `simpletuner/examples/minimaxmusic-music3.peft-lora`
 - `simpletuner/examples/minimaxmusic-audio.json`
+- `simpletuner/examples/minimaxmusic-prompts.json`
 
 运行示例：
 
@@ -142,6 +143,8 @@ datasets/minimaxmusic-audio/
 - **`validation_guidance`**：CFG scale，建议从 `1.5` 到 `2.0` 开始。
 - **`validation_num_inference_steps`**：验证采样步数，建议从 `30` 左右开始。
 - **`validation_steps`**：每隔多少 step 生成验证音频。
+- **`validation_prompt_library`**：使用 `"audio"` 选择内置音乐 caption + lyrics 库。
+- **`user_prompt_library`**：JSON 库路径。条目可使用 `prompt` 或 `caption`，并可选提供多行 `lyrics`。
 
 ## 训练
 

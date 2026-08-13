@@ -63,6 +63,7 @@ mkdir -p config/heartmula-training-demo
 
 - **`validation_prompt`**: टैग्स या ऑडियो का टेक्स्ट विवरण (जैसे, "ब्राइट सिंथ्स के साथ अपबीट पॉप").
 - **`validation_lyrics`**: (वैकल्पिक) मॉडल से गाने के लिए लिरिक्स। इंस्ट्रूमेंटल के लिए खाली स्ट्रिंग दें।
+- **`validation_prompt_library`**: built-in caption + lyrics validation library के लिए `"audio"` इस्तेमाल करें।
 - **`validation_audio_duration`**: वैलिडेशन क्लिप की अवधि (सेकंड, डिफ़ॉल्ट: 30.0)।
 - **`validation_guidance`**: गाइडेंस स्केल (1.5 - 3.0 के आसपास से शुरू करें)।
 - **`validation_step_interval`**: कितनी बार सैंपल जनरेट करने हैं (जैसे, हर 100 स्टेप)।

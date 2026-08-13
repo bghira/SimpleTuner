@@ -56,6 +56,7 @@ class MockAudioModel(AudioModelFoundation):
         return None
 
     def update_pipeline_call_kwargs(self, kwargs):
+        self.last_pipeline_kwargs = dict(kwargs)
         return kwargs
 
     def convert_text_embed_for_pipeline(self, embed, prompt=None):
@@ -122,7 +123,11 @@ class TestAudioValidation(unittest.TestCase):
         # Setup mocks
         mock_tqdm.side_effect = lambda x, **kwargs: x
         mock_setup_scheduler.return_value = None
-        mock_normalise.return_value = ValidationPrompt(shortname="test", prompt="test prompt")
+        mock_normalise.return_value = ValidationPrompt(
+            shortname="test",
+            prompt="test prompt",
+            lyrics="[verse]\nper prompt lyric",
+        )
         mock_prepare_prompts.return_value = {
             "validation_prompts": ["test prompt"],
             "validation_shortnames": ["test"],
@@ -165,6 +170,7 @@ class TestAudioValidation(unittest.TestCase):
         mock_config.validation_noise_scheduler = "ddim"
         mock_config.validation_seed_source = "cpu"
         mock_config.validation_seed = 42
+        mock_config.validation_lyrics = "[verse]\nglobal lyric"
         mock_config.weight_dtype = torch.float32
         mock_config.controlnet = False
         mock_config.control = False
@@ -205,6 +211,43 @@ class TestAudioValidation(unittest.TestCase):
         self.assertEqual(validation.validation_images, {"test": []})
         self.assertIn("test", validation.validation_audios)
         self.assertEqual(len(validation.validation_audios["test"]), 1)
+        self.assertEqual(mock_model.last_pipeline_kwargs["lyrics"], "[verse]\nper prompt lyric")
+
+    def test_audio_validation_prompt_library_provides_lyrics(self):
+        class NoTextCacheModel:
+            def uses_text_embeddings_cache(self):
+                return False
+
+            def requires_conditioning_validation_inputs(self):
+                return False
+
+            def should_precompute_validation_negative_prompt(self):
+                return False
+
+        args = SimpleNamespace(
+            model_family="ace_step",
+            model_flavour="v15-base",
+            controlnet=False,
+            control=False,
+            validation_using_datasets=False,
+            validation_input=None,
+            validation_prompt_library="audio",
+            user_prompt_library=None,
+            validation_prompt=None,
+            validation_negative_prompt="None",
+            validation_disable_unconditional=True,
+            data_backend_config="config/examples/acestep-audio.json",
+        )
+
+        with (
+            patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
+            patch("simpletuner.helpers.training.validation.StateTracker.get_validation_sample_images", return_value=[]),
+        ):
+            metadata = prepare_validation_prompt_list(args, embed_cache=None, model=NoTextCacheModel())
+
+        entries = metadata["validation_prompts"]
+        self.assertIn("audio_bright_synth_pop", metadata["validation_shortnames"])
+        self.assertTrue(any(entry.lyrics and "\n" in entry.lyrics for entry in entries))
 
     @patch("simpletuner.helpers.training.validation_audio.StateTracker.get_webhook_handler", return_value=None)
     @patch("simpletuner.helpers.training.validation_audio.StateTracker.get_global_step", return_value=7)

@@ -153,7 +153,8 @@ def resolve_config_path(
     1. Relative to the provided config_dir (if supplied)
     2. Relative to current working directory (if check_cwd_first is True)
     3. Relative to SimpleTuner's default config directory
-    4. Relative to SimpleTuner's root directory (for paths like 'config/...')
+    4. Relative to SimpleTuner's packaged examples directory for 'config/examples/...'
+    5. Relative to SimpleTuner's root directory (for paths like 'config/...')
 
     Args:
         path: The path to resolve (can be relative or absolute)
@@ -189,8 +190,17 @@ def resolve_config_path(
     default_config = get_config_directory()
     paths_to_check.append(default_config / expanded_path)
 
-    # 4. Check relative to SimpleTuner root (for paths like 'config/examples/...')
     simpletuner_root = get_simpletuner_root()
+    if expanded_path.startswith("config/examples/"):
+        try:
+            example_relative_path = Path(expanded_path).relative_to("config/examples")
+        except ValueError:
+            example_relative_path = None
+        if example_relative_path is not None:
+            paths_to_check.append(simpletuner_root / "simpletuner" / "examples" / example_relative_path)
+            paths_to_check.append(simpletuner_root / "examples" / example_relative_path)
+
+    # 5. Check relative to SimpleTuner root (for paths like 'config/...')
     paths_to_check.append(simpletuner_root / expanded_path)
 
     # Return the first existing path

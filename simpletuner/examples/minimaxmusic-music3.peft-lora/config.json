@@ -3,6 +3,7 @@
   "checkpoint_step_interval": 50,
   "compress_disk_cache": true,
   "data_backend_config": "config/examples/minimaxmusic-audio.json",
+  "user_prompt_library": "config/examples/minimaxmusic-prompts.json",
   "hub_model_id": "simpletuner-example-minimaxmusic-peft-lora",
   "learning_rate": 0.00005,
   "lora_format": "comfyui",

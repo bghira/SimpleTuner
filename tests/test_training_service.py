@@ -399,6 +399,29 @@ class TrainingServiceTests(unittest.TestCase):
         self.assertTrue(runtime_path.exists())
         self.assertEqual(json.loads(runtime_path.read_text(encoding="utf-8")), {"prompt": "value"})
 
+    def test_start_training_job_resolves_example_prompt_library(self) -> None:
+        captured = {}
+
+        def fake_submit(job_id, func, config):
+            captured["job_id"] = job_id
+            captured["config"] = config
+
+        with (
+            patch.object(training_service, "get_webui_state", return_value=(None, WebUIDefaults())),
+            patch.object(training_service.process_keeper, "submit_job", side_effect=fake_submit),
+            patch(
+                "simpletuner.simpletuner_sdk.server.services.local_gpu_allocator.get_gpu_allocator", _mock_get_gpu_allocator
+            ),
+        ):
+            result = training_service.start_training_job(
+                {"--user_prompt_library": "config/examples/minimaxmusic-prompts.json"}
+            )
+
+        runtime_path = Path(captured["config"]["--user_prompt_library"])
+        self.assertEqual(result.job_id, captured["job_id"])
+        self.assertTrue(runtime_path.exists())
+        self.assertIn("neon_pop_hook", json.loads(runtime_path.read_text(encoding="utf-8")))
+
     def test_start_training_job_missing_prompt_library_raises(self) -> None:
         with (
             patch.object(training_service, "get_webui_state", return_value=(None, WebUIDefaults())),

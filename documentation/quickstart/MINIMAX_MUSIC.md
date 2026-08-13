@@ -11,7 +11,7 @@ SimpleTuner supports:
 - LoRA, LyCORIS, and full-rank transformer training
 - VAECache encoding from raw audio through the original `dav.pth` autoencoder
 - caption, lyrics, and duration metadata from audio datasets
-- validation audio generation with `validation_prompt`, `validation_lyrics`, and `validation_audio_duration`
+- validation audio generation with `validation_prompt`, `validation_lyrics`, `validation_audio_duration`, and prompt libraries
 - ComfyUI MiniMax Music LoRA import/export with `lora_format: "comfyui"`
 - AnyFlow, TwinFlow, CREPA self-flow, and LayerSync
 
@@ -82,6 +82,7 @@ Ready-made template files are available at:
 
 - `simpletuner/examples/minimaxmusic-music3.peft-lora`
 - `simpletuner/examples/minimaxmusic-audio.json`
+- `simpletuner/examples/minimaxmusic-prompts.json`
 
 You can launch the example with:
 
@@ -183,6 +184,19 @@ The `.txt` file is the music description. The `.lyrics` file is passed into the 
 - **`validation_guidance`**: classifier-free guidance scale. Start near `1.5` to `2.0`.
 - **`validation_num_inference_steps`**: validation sampling steps. Start around `30`.
 - **`validation_steps`**: how often to render validation audio.
+- **`validation_prompt_library`**: set to `"audio"` for the built-in music caption + lyrics library.
+- **`user_prompt_library`**: path to a JSON library. Entries can use `prompt` or `caption`, plus optional multiline `lyrics`.
+
+Example `user_prompt_library.json` entry:
+
+```json
+{
+  "neon_pop_hook": {
+    "caption": "neon synth pop, 120 bpm, bright lead vocal, pulsing bass, glossy drums",
+    "lyrics": "[verse]\nwe found sparks in the city rain\n[chorus]\nlight it up and let it go"
+  }
+}
+```
 
 ## Training
 

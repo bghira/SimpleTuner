@@ -401,6 +401,16 @@ def _parse_bool_flag(value):
     raise argparse.ArgumentTypeError(f"Expected a boolean value, got {value!r}")
 
 
+def _parse_validation_prompt_library_flag(value):
+    try:
+        return _parse_bool_flag(value)
+    except argparse.ArgumentTypeError:
+        text_value = str(value).strip()
+        if not text_value:
+            return False
+        return text_value
+
+
 def _extract_choice_values(field: ConfigField) -> List[Any]:
     if not field.choices or field.dynamic_choices:
         return []
@@ -493,7 +503,9 @@ def _add_argument_from_field(parser: argparse.ArgumentParser, field: ConfigField
             {
                 "nargs": "?",
                 "const": True,
-                "type": _parse_bool_flag,
+                "type": (
+                    _parse_validation_prompt_library_flag if field.name == "validation_prompt_library" else _parse_bool_flag
+                ),
                 "default": default_bool,
             }
         )

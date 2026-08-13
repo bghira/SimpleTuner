@@ -72,6 +72,32 @@ class PromptLibraryRoutesTestCase(_WebUIBaseTestCase, unittest.TestCase):
         self.assertEqual(get_resp.status_code, 200)
         self.assertEqual(get_resp.json()["entries"]["slider"], {"prompt": "hello", "adapter_strength": 0.25})
 
+    def test_save_audio_prompt_library_with_caption_and_lyrics(self) -> None:
+        lyrics = "[verse]\nmoonlit signal on the wire\n[chorus]\ncarry the melody higher"
+        payload = {
+            "entries": {
+                "audio_song": {
+                    "caption": "dream pop with soft percussion and airy vocals",
+                    "lyrics": lyrics,
+                },
+                "instrumental": {
+                    "tags": "cinematic instrumental, piano, strings, gentle pulse",
+                },
+            }
+        }
+        response = self.client.put("/api/prompt-libraries/user_prompt_library-audio.json", json=payload)
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["entries"]["audio_song"]["prompt"], "dream pop with soft percussion and airy vocals")
+        self.assertEqual(body["entries"]["audio_song"]["lyrics"], lyrics)
+        self.assertEqual(body["entries"]["instrumental"], "cinematic instrumental, piano, strings, gentle pulse")
+
+        get_resp = self.client.get("/api/prompt-libraries/user_prompt_library-audio.json")
+        self.assertEqual(get_resp.status_code, 200)
+        reloaded = get_resp.json()["entries"]
+        self.assertEqual(reloaded["audio_song"]["lyrics"], lyrics)
+        self.assertEqual(reloaded["instrumental"], "cinematic instrumental, piano, strings, gentle pulse")
+
     def test_save_prompt_library_with_bbox_entities(self) -> None:
         entities = [
             {"label": "cat", "bbox": [0.2, 0.3, 0.6, 0.8]},

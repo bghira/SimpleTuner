@@ -1397,6 +1397,34 @@ class ConfigsService:
         return value
 
     @staticmethod
+    def _coerce_validation_prompt_library(value: Any, default_value: Any = False) -> Any:
+        if isinstance(value, (list, tuple, set)):
+            if not value:
+                return False
+            saw_truthy = False
+            for item in value:
+                converted = ConfigsService._coerce_validation_prompt_library(item, default_value)
+                if isinstance(converted, str):
+                    return converted
+                saw_truthy = saw_truthy or bool(converted)
+            return saw_truthy
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return default_value if default_value is not None else False
+            lowered = stripped.lower()
+            if lowered in {"false", "0", "no", "off", "none"}:
+                return False
+            if lowered in {"true", "1", "yes", "on"}:
+                return True
+            return stripped
+        return bool(value)
+
+    @staticmethod
     def normalize_form_to_config(
         form_data: Dict[str, Any],
         directory_fields: Optional[List[str]] = None,
@@ -1513,6 +1541,10 @@ class ConfigsService:
             default_value = field.default_value if field else None
             allow_empty = field.allow_empty if field else False
 
+            if lookup_name == "validation_prompt_library":
+                config_dict[config_key] = ConfigsService._coerce_validation_prompt_library(value, default_value)
+                continue
+
             if isinstance(value, list):
                 if field_type == FieldType.CHECKBOX or field_type == FieldType.MULTI_SELECT:
                     converted_value = ConfigsService.convert_value_by_type(value, field_type, default_value, allow_empty)
@@ -1578,6 +1610,10 @@ class ConfigsService:
             field = lazy_field_registry.get_field(lookup_name)
             if not field:
                 coerced[key] = value
+                continue
+
+            if lookup_name == "validation_prompt_library":
+                coerced[key] = ConfigsService._coerce_validation_prompt_library(value, field.default_value)
                 continue
 
             coerced[key] = ConfigsService.convert_value_by_type(

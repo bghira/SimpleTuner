@@ -72,6 +72,7 @@ def load_example_config(example_path: Path) -> Dict:
     path_fields = [
         "data_backend_config",
         "validation_prompt_library",
+        "user_prompt_library",
         "controlnet_config",
         "reference_config",
         "lycoris_config",

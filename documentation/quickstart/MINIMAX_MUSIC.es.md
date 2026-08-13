@@ -11,7 +11,7 @@ SimpleTuner admite:
 - entrenamiento LoRA, LyCORIS y full-rank del transformer
 - VAECache desde audio bruto mediante el autoencoder original `dav.pth`
 - caption, lyrics y duration desde metadatos de datasets de audio
-- validación con `validation_prompt`, `validation_lyrics` y `validation_audio_duration`
+- validación con `validation_prompt`, `validation_lyrics`, `validation_audio_duration` y bibliotecas de prompts
 - importación/exportación de LoRA ComfyUI MiniMax Music con `lora_format: "comfyui"`
 - AnyFlow, TwinFlow, CREPA self-flow y LayerSync
 
@@ -82,6 +82,7 @@ Plantillas listas:
 
 - `simpletuner/examples/minimaxmusic-music3.peft-lora`
 - `simpletuner/examples/minimaxmusic-audio.json`
+- `simpletuner/examples/minimaxmusic-prompts.json`
 
 Ejecuta el ejemplo:
 
@@ -142,6 +143,8 @@ datasets/minimaxmusic-audio/
 - **`validation_guidance`**: escala CFG. Empieza cerca de `1.5` a `2.0`.
 - **`validation_num_inference_steps`**: pasos de sampling. Empieza cerca de `30`.
 - **`validation_steps`**: frecuencia de renderizado de validación.
+- **`validation_prompt_library`**: usa `"audio"` para la biblioteca integrada de caption + lyrics musical.
+- **`user_prompt_library`**: ruta a una biblioteca JSON. Las entradas pueden usar `prompt` o `caption`, y `lyrics` multilinea opcional.
 
 ## Entrenamiento
 

@@ -131,6 +131,7 @@ class ValidationPrompt:
     adapter_strength: float | None = None
     bbox_entities: list[dict] | None = None
     bbox_keyframes: list[dict] | None = None
+    lyrics: str | None = None
 
 
 def resize_validation_images(validation_images, edge_length):
@@ -160,6 +161,7 @@ def resize_validation_images(validation_images, edge_length):
                 adapter_strength=validation_prompt.adapter_strength,
                 bbox_entities=validation_prompt.bbox_entities,
                 bbox_keyframes=validation_prompt.bbox_keyframes,
+                lyrics=validation_prompt.lyrics,
             )
         )
     return resized_validation_samples
@@ -290,14 +292,16 @@ def _normalise_validation_sample(sample, idx: int = 0, fallback_shortname: str |
     adapter_strength: float | None = None
     bbox_entities: list[dict] | None = None
     bbox_keyframes: list[dict] | None = None
+    lyrics: str | None = None
 
     if isinstance(sample, PromptLibraryEntry):
         prompt = sample.prompt
         adapter_strength = sample.adapter_strength
         bbox_entities = sample.bbox_entities
         bbox_keyframes = sample.bbox_keyframes
-    elif isinstance(sample, dict) and "prompt" in sample:
-        prompt = sample.get("prompt")
+        lyrics = sample.lyrics
+    elif isinstance(sample, dict) and any(key in sample for key in ("prompt", "caption", "tags")):
+        prompt = sample.get("prompt", sample.get("caption", sample.get("tags")))
         explicit_shortname = sample.get("shortname") or sample.get("name")
         if isinstance(explicit_shortname, str) and explicit_shortname.strip():
             shortname = explicit_shortname.strip()
@@ -305,6 +309,8 @@ def _normalise_validation_sample(sample, idx: int = 0, fallback_shortname: str |
             adapter_strength = None if sample.get("adapter_strength") is None else float(sample.get("adapter_strength"))
         except Exception:
             adapter_strength = None
+        raw_lyrics = sample.get("lyrics")
+        lyrics = raw_lyrics if isinstance(raw_lyrics, str) else None
     elif isinstance(sample, tuple):
         if len(sample) == 4:
             candidate_shortname, prompt, image_path, conditioning = sample
@@ -337,6 +343,7 @@ def _normalise_validation_sample(sample, idx: int = 0, fallback_shortname: str |
         adapter_strength=adapter_strength,
         bbox_entities=bbox_entities,
         bbox_keyframes=bbox_keyframes,
+        lyrics=lyrics,
     )
 
 
@@ -954,22 +961,25 @@ def prepare_validation_prompt_list(args, embed_cache, model):
 
     if allow_prompt_library and args.validation_prompt_library:
         # Use the SimpleTuner prompts library for validation prompts.
-        from simpletuner.helpers.prompts import prompts as prompt_library
+        from simpletuner.helpers.prompts import get_validation_prompt_library
+
+        prompt_library = get_validation_prompt_library(args.validation_prompt_library)
 
         # Iterate through the prompts with a progress bar
-        for shortname, prompt in tqdm(
+        for shortname, raw_entry in tqdm(
             prompt_library.items(),
             leave=False,
             ncols=125,
             desc="Precomputing validation prompt embeddings",
         ):
+            entry = raw_entry if isinstance(raw_entry, PromptLibraryEntry) else PromptLibraryEntry.from_payload(raw_entry)
             prompt_record = {
-                "prompt": prompt,
+                "prompt": entry.prompt,
                 "key": shortname,
             }
             if precompute_text_embeddings:
                 embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
-            validation_prompts.append(PromptLibraryEntry(prompt=prompt))
+            validation_prompts.append(entry)
             validation_shortnames.append(shortname)
 
     if allow_prompt_library and args.user_prompt_library is not None:
@@ -1687,6 +1697,7 @@ class _ValidationWorkItem:
     data_backend_id: str | None = None
     bbox_entities: list[dict] | None = None
     bbox_keyframes: list[dict] | None = None
+    lyrics: str | None = None
 
 
 @dataclass(frozen=True)
@@ -3815,6 +3826,7 @@ class Validation:
                     data_backend_id=validation_prompt.data_backend_id,
                     bbox_entities=validation_prompt.bbox_entities,
                     bbox_keyframes=validation_prompt.bbox_keyframes,
+                    lyrics=validation_prompt.lyrics,
                 )
             )
         return work_items
@@ -3906,6 +3918,7 @@ class Validation:
             data_backend_id=item.data_backend_id,
             bbox_entities=item.bbox_entities,
             bbox_keyframes=item.bbox_keyframes,
+            lyrics=item.lyrics,
         )
         return {
             "index": item.index,
@@ -4426,6 +4439,7 @@ class Validation:
         data_backend_id: str | None = None,
         bbox_entities: list[dict] | None = None,
         bbox_keyframes: list[dict] | None = None,
+        lyrics: str | None = None,
     ):
         """Generate validation images for a single prompt."""
         self._check_abort()
@@ -4690,10 +4704,12 @@ class Validation:
                 ):
                     pipeline_kwargs["no_cfg_until_timestep"] = self.config.validation_no_cfg_until_timestep
 
-                if is_audio and getattr(self.config, "validation_lyrics", None):
-                    pipeline_kwargs["lyrics"] = self.config.validation_lyrics
-
                 if is_audio:
+                    if lyrics is not None:
+                        pipeline_kwargs["lyrics"] = lyrics
+                    elif getattr(self.config, "validation_lyrics", None):
+                        pipeline_kwargs["lyrics"] = self.config.validation_lyrics
+
                     pipeline_kwargs["audio_duration"] = getattr(self.config, "validation_audio_duration", 30.0) or 30.0
 
                 pipeline_kwargs = self.model.update_pipeline_call_kwargs(pipeline_kwargs)

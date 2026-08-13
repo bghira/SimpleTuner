@@ -11,7 +11,7 @@ SimpleTuner は以下をサポートします。
 - transformer の LoRA、LyCORIS、full-rank 学習
 - 元の `dav.pth` autoencoder を使った raw audio からの VAECache エンコード
 - 音声データセット metadata からの caption、lyrics、duration 条件
-- `validation_prompt`、`validation_lyrics`、`validation_audio_duration` による検証音声
+- `validation_prompt`、`validation_lyrics`、`validation_audio_duration`、プロンプトライブラリによる検証音声
 - `lora_format: "comfyui"` による ComfyUI MiniMax Music LoRA の import/export
 - AnyFlow、TwinFlow、CREPA self-flow、LayerSync
 
@@ -82,6 +82,7 @@ mkdir -p config/minimaxmusic-training-demo
 
 - `simpletuner/examples/minimaxmusic-music3.peft-lora`
 - `simpletuner/examples/minimaxmusic-audio.json`
+- `simpletuner/examples/minimaxmusic-prompts.json`
 
 例を実行します。
 
@@ -142,6 +143,8 @@ datasets/minimaxmusic-audio/
 - **`validation_guidance`**: CFG scale。`1.5` から `2.0` 付近で始めます。
 - **`validation_num_inference_steps`**: 検証 sampling steps。まず `30` 前後にします。
 - **`validation_steps`**: 検証音声を生成する間隔。
+- **`validation_prompt_library`**: 組み込みの音楽 caption + lyrics ライブラリには `"audio"` を使います。
+- **`user_prompt_library`**: JSON ライブラリへのパス。エントリは `prompt` または `caption` と、任意の複数行 `lyrics` を使えます。
 
 ## 学習
 

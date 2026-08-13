@@ -16,7 +16,10 @@ router = APIRouter(prefix="/api/prompt-libraries", tags=["prompt_libraries"])
 
 
 class PromptLibraryEntryModel(BaseModel):
-    prompt: str
+    prompt: Optional[str] = None
+    caption: Optional[str] = None
+    tags: Optional[str] = None
+    lyrics: Optional[str] = None
     adapter_strength: Optional[float] = None
     bbox_entities: Optional[List[Dict[str, Any]]] = None
     bbox_keyframes: Optional[List[Dict[str, Any]]] = None

@@ -50,7 +50,7 @@ ACE-Step examples are split by model generation:
 
 MiniMax Music examples:
 
-- `minimaxmusic-music3.peft-lora` trains MiniMax Music 3 LoRA with raw audio encoded by VAECache through the DAV audio VAE.
+- `minimaxmusic-music3.peft-lora` trains MiniMax Music 3 LoRA with raw audio encoded by VAECache through the DAV audio VAE, and references `minimaxmusic-prompts.json` for caption + lyrics validation prompts.
 
 LTX-2 conditioning examples are split by conditioning style:
 

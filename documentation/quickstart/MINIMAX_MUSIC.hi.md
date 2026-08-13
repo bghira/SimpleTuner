@@ -11,7 +11,7 @@ SimpleTuner support करता है:
 - transformer के लिए LoRA, LyCORIS और full-rank training
 - original `dav.pth` autoencoder से raw audio VAECache encoding
 - audio dataset metadata से caption, lyrics और duration
-- `validation_prompt`, `validation_lyrics` और `validation_audio_duration` के साथ validation audio
+- `validation_prompt`, `validation_lyrics`, `validation_audio_duration` और prompt libraries के साथ validation audio
 - `lora_format: "comfyui"` के साथ ComfyUI MiniMax Music LoRA import/export
 - AnyFlow, TwinFlow, CREPA self-flow और LayerSync
 
@@ -82,6 +82,7 @@ Ready-made templates:
 
 - `simpletuner/examples/minimaxmusic-music3.peft-lora`
 - `simpletuner/examples/minimaxmusic-audio.json`
+- `simpletuner/examples/minimaxmusic-prompts.json`
 
 Example run करें:
 
@@ -142,6 +143,8 @@ datasets/minimaxmusic-audio/
 - **`validation_guidance`**: CFG scale। `1.5` से `2.0` के आसपास शुरू करें।
 - **`validation_num_inference_steps`**: sampling steps। `30` के आसपास शुरू करें।
 - **`validation_steps`**: कितनी training steps के बाद validation render हो।
+- **`validation_prompt_library`**: built-in music caption + lyrics library के लिए `"audio"` इस्तेमाल करें।
+- **`user_prompt_library`**: JSON library path। Entries `prompt` या `caption` और optional multiline `lyrics` इस्तेमाल कर सकती हैं।
 
 ## Training
 
