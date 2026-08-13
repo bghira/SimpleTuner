@@ -1279,6 +1279,13 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if args.validation_num_video_frames is not None and args.validation_num_video_frames < 1:
         raise ValueError("validation_num_video_frames must be at least 1.")
 
+    for option_name in ("validate_after_step", "validate_after_epoch"):
+        value = getattr(args, option_name, None)
+        if value is None:
+            continue
+        if value < 0:
+            raise ValueError(f"--{option_name} must be greater than or equal to 0.")
+
     # Check if we have a valid gradient accumulation steps.
     if args.gradient_accumulation_steps < 1:
         raise ValueError(

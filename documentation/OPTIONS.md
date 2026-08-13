@@ -1898,6 +1898,8 @@ usage: train.py [-h] --model_family
                 [--tokenizer_max_length TOKENIZER_MAX_LENGTH]
                 [--validation_step_interval VALIDATION_STEP_INTERVAL]
                 [--validation_epoch_interval VALIDATION_EPOCH_INTERVAL]
+                [--validate_after_step VALIDATE_AFTER_STEP]
+                [--validate_after_epoch VALIDATE_AFTER_EPOCH]
                 [--disable_benchmark [DISABLE_BENCHMARK]]
                 [--validation_prompt VALIDATION_PROMPT]
                 [--validation_input VALIDATION_INPUT]
@@ -2316,6 +2318,12 @@ options:
                         Run validation every N training steps (deprecated alias: --validation_steps)
   --validation_epoch_interval VALIDATION_EPOCH_INTERVAL
                         Run validation every N training epochs
+  --validate_after_step VALIDATE_AFTER_STEP
+                        Skip scheduled validation until the global training
+                        step reaches this value
+  --validate_after_epoch VALIDATE_AFTER_EPOCH
+                        Skip scheduled validation until the training epoch
+                        reaches this value
   --disable_benchmark [DISABLE_BENCHMARK]
                         Skip generating baseline comparison images before
                         training starts

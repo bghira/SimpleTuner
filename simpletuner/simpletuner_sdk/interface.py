@@ -279,6 +279,8 @@ class WebInterface:
             "checkpoint_epoch_interval": None,
             "validation_step_interval": 100,
             "validation_epoch_interval": None,
+            "validate_after_step": None,
+            "validate_after_epoch": None,
             "seed": 42,
             "lora_rank": 16,
             "lora_alpha": None,

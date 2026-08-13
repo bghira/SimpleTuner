@@ -167,5 +167,28 @@ class TestValidationPreviewField(unittest.TestCase):
         self.assertEqual(interval_field.default_value, 1)
 
 
+class TestValidationStartFields(unittest.TestCase):
+    """Ensure validation start gate fields are registered correctly."""
+
+    def test_validate_after_field_metadata(self):
+        from simpletuner.simpletuner_sdk.server.services.field_registry.registry import FieldRegistry
+        from simpletuner.simpletuner_sdk.server.services.field_registry.types import FieldType, ValidationRuleType
+
+        registry = FieldRegistry()
+        for field_name, arg_name in (
+            ("validate_after_step", "--validate_after_step"),
+            ("validate_after_epoch", "--validate_after_epoch"),
+        ):
+            with self.subTest(field_name=field_name):
+                field = registry.get_field(field_name)
+                self.assertIsNotNone(field)
+                self.assertEqual(field.arg_name, arg_name)
+                self.assertEqual(field.field_type, FieldType.NUMBER)
+                self.assertIsNone(field.default_value)
+                min_rules = [rule for rule in field.validation_rules if rule.rule_type == ValidationRuleType.MIN]
+                self.assertEqual(len(min_rules), 1)
+                self.assertEqual(min_rules[0].value, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
