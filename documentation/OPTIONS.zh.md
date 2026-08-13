@@ -4,6 +4,21 @@
 
 本指南以易读方式介绍 SimpleTuner `train.py` 中可用的命令行选项。这些选项提供高度可定制性，使你能按需求训练模型。
 
+### Kubeflow 单 GPU 服务器选项
+
+可选的 Kubeflow 集成将 GPU 准入委托给 Kueue，并通过 Kubeflow Trainer 创建一次性 Worker。使用 `pip install 'simpletuner[kubernetes]'` 安装，然后在集群内运行服务器：
+
+```bash
+simpletuner server --mode trainer --kubeflow \
+  --kubeflow-namespace training \
+  --kubeflow-runtime simpletuner-worker \
+  --kubeflow-queue gpu-training \
+  --kubeflow-worker-image registry.example.com/simpletuner:latest \
+  --kubeflow-orchestrator-url http://simpletuner-server.training.svc:8001
+```
+
+`--kubeflow-poll-interval` 控制 TrainJob 调谐频率，默认为五秒。集群管理员负责提供 TrainingRuntime、Kueue 队列、ServiceAccount 权限、镜像拉取配置以及共享模型/数据存储。
+
 ### JSON 配置文件格式
 
 默认 JSON 文件名为 `config.json`，键名与下方 `--arguments` 一致。JSON 中不需要前导 `--`，但也可以保留。
