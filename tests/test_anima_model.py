@@ -17,7 +17,7 @@ class TestAnimaModel(unittest.TestCase):
         self.assertEqual(Anima.NAME, "Anima")
         self.assertEqual(Anima.DEFAULT_MODEL_FLAVOUR, "preview-3")
 
-    def test_model_flavours_use_converted_diffusers_repos(self):
+    def test_model_flavours_use_supported_repo_layouts(self):
         from simpletuner.helpers.models.anima.model import Anima
 
         self.assertEqual(
@@ -44,6 +44,11 @@ class TestAnimaModel(unittest.TestCase):
             Anima.HUGGINGFACE_PATHS["gazingstars123-2.9b"],
             "Gazingstars123/Anima-2.9B",
         )
+        self.assertEqual(
+            Anima.SINGLE_FILE_HUGGINGFACE_FILENAMES["gazingstars123-2.9b"],
+            "Anima-2.9B-preview-v1.safetensors",
+        )
+        self.assertNotIn("Gazingstars123/Anima-2.9B", Anima.DIFFUSERS_LAYOUT_PATHS)
 
     def test_diffusers_layout_switches_component_sources(self):
         from simpletuner.helpers.models.anima.model import Anima
@@ -87,6 +92,95 @@ class TestAnimaModel(unittest.TestCase):
                 "circlestone-labs/Anima-Base-v1.0-Diffusers::t5_tokenizer",
             ),
         )
+
+    def test_gazingstars_flavour_uses_top_level_single_file_transformer(self):
+        from simpletuner.helpers.models.anima.model import Anima
+        from simpletuner.helpers.models.common import ImageModelFoundation
+
+        model = Anima.__new__(Anima)
+        model.config = SimpleNamespace(
+            pretrained_model_name_or_path="Gazingstars123/Anima-2.9B",
+            pretrained_transformer_model_name_or_path=None,
+            model_flavour="gazingstars123-2.9b",
+        )
+
+        self.assertFalse(model._uses_diffusers_repo_layout())
+        self.assertTrue(model._uses_single_file_repo_layout())
+        self.assertEqual(
+            model._single_file_transformer_filename(),
+            "Anima-2.9B-preview-v1.safetensors",
+        )
+        self.assertEqual(
+            model.pretrained_load_args({})["filename"],
+            "Anima-2.9B-preview-v1.safetensors",
+        )
+
+        with patch.object(ImageModelFoundation, "load_model", return_value="loaded") as mock_load_model:
+            self.assertEqual(model.load_model(move_to_device=False), "loaded")
+
+        self.assertIsNone(model.MODEL_SUBFOLDER)
+        mock_load_model.assert_called_once_with(move_to_device=False)
+
+    def test_gazingstars_layout_uses_default_text_encoder_and_vae_sources(self):
+        from simpletuner.helpers.models.anima.model import Anima
+
+        model = Anima.__new__(Anima)
+        model.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model.config = SimpleNamespace(
+            pretrained_model_name_or_path="Gazingstars123/Anima-2.9B",
+            pretrained_text_encoder_model_name_or_path=None,
+            qwen_text_encoder_model_name_or_path=None,
+            model_flavour="gazingstars123-2.9b",
+            revision=None,
+            text_encoder_revision=None,
+            weight_dtype=torch.float32,
+            local_files_only=True,
+            cache_dir=None,
+            force_download=False,
+            token=False,
+        )
+        model.prompt_tokenizer = object()
+        model.text_encoders = None
+        text_encoder = MagicMock()
+        vae = MagicMock(config=SimpleNamespace(scaling_factor=0.18215))
+
+        with (
+            patch(
+                "simpletuner.helpers.models.anima.model.load_default_text_encoder", return_value=text_encoder
+            ) as mock_text_encoder,
+            patch("simpletuner.helpers.models.anima.model.load_default_vae", return_value=vae) as mock_vae,
+        ):
+            model.load_text_encoder(move_to_device=False)
+            model.load_vae(move_to_device=False)
+
+        mock_text_encoder.assert_called_once()
+        mock_vae.assert_called_once()
+        self.assertIs(model.text_encoder, text_encoder)
+        self.assertIs(model.vae, vae)
+        self.assertEqual(model.AUTOENCODER_SCALING_FACTOR, 0.18215)
+
+    def test_gazingstars_layout_uses_builtin_training_scheduler(self):
+        from simpletuner.helpers.models.anima.model import Anima
+        from simpletuner.helpers.models.anima.scheduler import AnimaFlowMatchEulerDiscreteScheduler
+        from simpletuner.helpers.models.common import ImageModelFoundation
+
+        model = Anima.__new__(Anima)
+        model.config = SimpleNamespace(
+            pretrained_model_name_or_path="Gazingstars123/Anima-2.9B",
+            model_flavour="gazingstars123-2.9b",
+            flow_schedule_shift=2.5,
+            prediction_type=None,
+        )
+
+        with patch.object(ImageModelFoundation, "setup_training_noise_schedule") as mock_base_scheduler:
+            config, scheduler = model.setup_training_noise_schedule()
+
+        mock_base_scheduler.assert_not_called()
+        self.assertIs(config, model.config)
+        self.assertIs(scheduler, model.noise_schedule)
+        self.assertIsInstance(scheduler, AnimaFlowMatchEulerDiscreteScheduler)
+        self.assertEqual(scheduler.config.shift, 2.5)
+        self.assertEqual(model.config.prediction_type, "flow_matching")
 
     def test_diffusers_layout_loads_text_encoder_and_vae_from_standard_subfolders(self):
         from simpletuner.helpers.models.anima.model import Anima
@@ -202,6 +296,52 @@ class TestAnimaModel(unittest.TestCase):
         mock_from_single_file.assert_called_once()
         self.assertEqual(mock_from_single_file.call_args.args[0], "circlestone-labs/Anima")
         self.assertEqual(mock_from_single_file.call_args.kwargs["subfolder"], "transformer")
+
+    def test_single_file_converter_ignores_rope_buffers(self):
+        from simpletuner.helpers.models.anima.transformer import _convert_anima_state_dict_to_diffusers
+
+        state_dict = {
+            "x_embedder.proj.1.weight": torch.empty(2048, 68),
+            "pos_embedder.dim_spatial_range": torch.empty(21),
+            "pos_embedder.dim_temporal_range": torch.empty(22),
+            "pos_embedder.seq": torch.empty(256),
+        }
+
+        core, adapter = _convert_anima_state_dict_to_diffusers(state_dict)
+
+        self.assertEqual(
+            set(core),
+            {"core.patch_embed.proj.weight"},
+        )
+        self.assertEqual(adapter, {})
+
+    def test_single_file_loader_infers_gazingstars_architecture(self):
+        from simpletuner.helpers.models.anima.transformer import _infer_anima_transformer_kwargs
+
+        state_dict = {
+            "x_embedder.proj.1.weight": torch.empty(2048, 68),
+            "final_layer.linear.weight": torch.empty(64, 2048),
+            "blocks.0.self_attn.q_norm.weight": torch.empty(128),
+            "blocks.0.cross_attn.k_proj.weight": torch.empty(2048, 1024),
+            "blocks.0.mlp.layer1.weight": torch.empty(8192, 2048),
+            "blocks.0.adaln_modulation_self_attn.1.weight": torch.empty(256, 2048),
+            "llm_adapter.embed.weight": torch.empty(32128, 1024),
+            "llm_adapter.blocks.0.self_attn.q_norm.weight": torch.empty(64),
+        }
+        for block_index in range(40):
+            state_dict[f"blocks.{block_index}.self_attn.q_proj.weight"] = torch.empty(2048, 2048)
+        for block_index in range(6):
+            state_dict[f"llm_adapter.blocks.{block_index}.self_attn.q_proj.weight"] = torch.empty(1024, 1024)
+
+        kwargs = _infer_anima_transformer_kwargs(state_dict)
+
+        self.assertEqual(kwargs["num_layers"], 40)
+        self.assertEqual(kwargs["adapter_layers"], 6)
+        self.assertEqual(kwargs["in_channels"], 16)
+        self.assertEqual(kwargs["out_channels"], 16)
+        self.assertEqual(kwargs["num_attention_heads"], 16)
+        self.assertEqual(kwargs["attention_head_dim"], 128)
+        self.assertEqual(kwargs["adapter_heads"], 16)
 
     def test_pipeline_load_without_base_model_uses_cached_embed_components_only(self):
         from simpletuner.helpers.models.anima.model import Anima

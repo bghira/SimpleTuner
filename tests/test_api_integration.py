@@ -34,6 +34,40 @@ class ConfigurationEndpointTests(AsyncAPITestCase, unittest.IsolatedAsyncioTestC
 
         self.assertEqual(result["status"], "success")
 
+    async def test_configuration_check_passes_merged_dict_without_fallback(self) -> None:
+        config_api = Configuration()
+        job_config = ConfigModel(
+            trainer_config={"model_type": "lora", "model_family": "anima", "report_to": "wandb"},
+            dataloader_config=[],
+            webhook_config={},
+            job_id="test_check_payload",
+        )
+
+        with patch.object(
+            config_api,
+            "_load_base_trainer_config",
+            return_value={
+                "model_family": "flux",
+                "learning_rate": 1e-4,
+                "--report_to": "tensorboard",
+                "--data_backend_config": "stale/multidatabackend.json",
+            },
+        ):
+            with patch("simpletuner.helpers.training.trainer.Trainer") as mock_trainer_cls:
+                mock_trainer_cls.return_value = Mock()
+                result = await config_api.check(job_config)
+
+        self.assertEqual(result["status"], "success")
+        trainer_payload = mock_trainer_cls.call_args.kwargs["config"]
+        self.assertIsInstance(trainer_payload, dict)
+        self.assertEqual(trainer_payload["model_family"], "anima")
+        self.assertEqual(trainer_payload["learning_rate"], 1e-4)
+        self.assertEqual(trainer_payload["report_to"], "wandb")
+        self.assertEqual(trainer_payload["data_backend_config"], "config/multidatabackend.json")
+        self.assertNotIn("--data_backend_config", trainer_payload)
+        self.assertNotIn("--report_to", trainer_payload)
+        self.assertTrue(trainer_payload["__skip_config_fallback__"])
+
     async def test_configuration_run_endpoint_subprocess_mode(self) -> None:
         config_api = Configuration()
         job_config = ConfigModel(
@@ -50,6 +84,47 @@ class ConfigurationEndpointTests(AsyncAPITestCase, unittest.IsolatedAsyncioTestC
 
         self.assertIn("subprocess", result["result"])
         mock_submit.assert_called_once()
+
+    async def test_configuration_run_passes_merged_dict_without_fallback(self) -> None:
+        config_api = Configuration()
+        job_config = ConfigModel(
+            trainer_config={"model_type": "lora", "model_family": "anima", "--report_to": "wandb"},
+            dataloader_config=[],
+            webhook_config={},
+            job_id="test_run_payload",
+        )
+        APIState.clear_state()
+
+        with patch.object(
+            config_api,
+            "_load_base_trainer_config",
+            return_value={
+                "model_family": "flux",
+                "learning_rate": 1e-4,
+                "--report_to": "tensorboard",
+                "--data_backend_config": "stale/multidatabackend.json",
+            },
+        ):
+            with patch("simpletuner.helpers.training.trainer.Trainer") as mock_trainer_cls:
+                trainer = Mock()
+                mock_trainer_cls.return_value = trainer
+                with patch("simpletuner.simpletuner_sdk.thread_keeper.submit_job") as mock_submit:
+                    result = await config_api.run(job_config)
+
+        self.assertEqual(result["status"], "success")
+        trainer_payload = mock_trainer_cls.call_args.kwargs["config"]
+        self.assertIsInstance(trainer_payload, dict)
+        self.assertEqual(trainer_payload["model_family"], "anima")
+        self.assertEqual(trainer_payload["learning_rate"], 1e-4)
+        self.assertEqual(trainer_payload["report_to"], "wandb")
+        self.assertEqual(trainer_payload["data_backend_config"], "config/multidatabackend.json")
+        self.assertNotIn("--data_backend_config", trainer_payload)
+        self.assertNotIn("--report_to", trainer_payload)
+        self.assertTrue(trainer_payload["__skip_config_fallback__"])
+        state_trainer_config = APIState.get_state("current_job")["trainer_config"]
+        self.assertEqual(state_trainer_config["report_to"], "wandb")
+        self.assertNotIn("--report_to", state_trainer_config)
+        mock_submit.assert_called_once_with("test_run_payload", trainer.run)
 
     async def test_concurrent_job_prevention(self) -> None:
         config_api = Configuration()

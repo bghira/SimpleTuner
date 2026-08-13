@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from simpletuner.helpers.logging import get_logger
 
@@ -11,7 +11,6 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 from pydantic import BaseModel, field_validator
 
 from simpletuner.helpers.configuration.cmd_args import get_default_config
-from simpletuner.helpers.configuration.json_file import normalize_args
 from simpletuner.simpletuner_sdk import thread_keeper
 from simpletuner.simpletuner_sdk.api_state import APIState
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
@@ -101,8 +100,9 @@ class Configuration:
                 os.remove(file)
 
     def _config_save(self, job_config: ConfigModel):
-        job_config.trainer_config.setdefault("--report_to", "none")
-        job_config.trainer_config.setdefault("report_to", "none")
+        report_to = job_config.trainer_config.get("report_to", job_config.trainer_config.get("--report_to", "none"))
+        job_config.trainer_config["report_to"] = report_to
+        job_config.trainer_config.pop("--report_to", None)
 
         with open("config/multidatabackend.json", mode="w") as file_handler:
             json.dump(job_config.dataloader_config, file_handler, indent=4)
@@ -154,11 +154,24 @@ class Configuration:
         defaults = get_default_config()
         return {f"--{key}": value for key, value in defaults.items() if value not in (None, "")}
 
-    def _build_trainer_cli_args(self, trainer_config: Dict[str, Any]) -> List[str]:
-        base_config = self._load_base_trainer_config()
+    def _normalize_trainer_config_keys(self, trainer_config: Dict[str, Any]) -> Dict[str, Any]:
+        normalized = {}
+        for key, value in (trainer_config or {}).items():
+            if not isinstance(key, str):
+                normalized[key] = value
+                continue
+            normalized_key = key.lstrip("-")
+            if key.startswith("-") and normalized_key in normalized:
+                continue
+            normalized[normalized_key] = value
+        return normalized
+
+    def _build_trainer_config(self, trainer_config: Dict[str, Any]) -> Dict[str, Any]:
+        base_config = self._normalize_trainer_config_keys(self._load_base_trainer_config())
         merged_config = dict(base_config)
-        merged_config.update(trainer_config or {})
-        return normalize_args(merged_config)
+        merged_config.update(self._normalize_trainer_config_keys(trainer_config))
+        merged_config["__skip_config_fallback__"] = True
+        return merged_config
 
     async def check(self, job_config: ConfigModel):
         """
@@ -174,8 +187,8 @@ class Configuration:
             self._config_clear()
             self._config_save(job_config)
             TrainerClass = _import_trainer_class()
-            cli_args = self._build_trainer_cli_args(job_config.trainer_config)
-            trainer = TrainerClass(config=cli_args)
+            trainer_config = self._build_trainer_config(job_config.trainer_config)
+            trainer = TrainerClass(config=trainer_config)
             return {
                 "status": "success",
                 "result": "Configuration validated successfully",
@@ -224,8 +237,8 @@ class Configuration:
         try:
             logger.info("Creating new Trainer instance..")
             TrainerClass = _import_trainer_class()
-            cli_args = self._build_trainer_cli_args(job_config.trainer_config)
-            trainer = TrainerClass(config=cli_args, job_id=job_id)
+            trainer_config = self._build_trainer_config(job_config.trainer_config)
+            trainer = TrainerClass(config=trainer_config, job_id=job_id)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -282,8 +295,9 @@ class Configuration:
         self._config_save(job_config)
 
         # Prepare config for subprocess
+        trainer_config = self._build_trainer_config(job_config.trainer_config)
         config_dict = {
-            "trainer_config": job_config.trainer_config,
+            "trainer_config": trainer_config,
             "dataloader_config": job_config.dataloader_config,
             "webhook_config": job_config.webhook_config,
             "job_id": job_id,
