@@ -129,7 +129,20 @@ Ideogram 验证默认关闭。要启用：
 }
 ```
 
-这是一个临时开关。上游 Ideogram CFG 推理路径预期有单独的 unconditional transformer；SimpleTuner 当前默认只训练 conditional transformer。启用后，验证会用 conditional transformer 做 negative/unconditional pass，因此仍可检查提示词和 negative prompt 的效果。
+上游 Ideogram CFG 推理路径预期有单独的、只处理图像的 unconditional transformer。仅启用 `ideogram_validation=true` 时，验证会把 negative prompt 的 embeds 送入 conditional transformer 来近似 unconditional pass，因此仍可检查提示词和 negative prompt 的效果。
+
+要运行真正的非对称 CFG 而不是这个代理路径，请加载单独的 unconditional transformer：
+
+```json
+{
+  "ideogram_validation": true,
+  "ideogram_load_unconditional_transformer": true
+}
+```
+
+这会在 conditional transformer 之外加载 Ideogram 4 冻结的、只处理图像的 unconditional transformer。验证随后会以清零的文本 conditioning 运行真正的 unconditional pass，AnyFlow 蒸馏的 fused guidance 目标也会基于真正的 unconditional 分支计算，而不是 negative prompt 代理。FP8 checkpoint 约需额外 10 GiB 显存；配合 `ideogram_fp8_base_upcast=true` 反量化为 bf16 时约需 18 GiB。
+
+如果显存不够，设置 `ideogram_uncond_ramtorch=true` 可以通过 RamTorch 把 unconditional transformer 保存在 CPU 内存中，每次 forward pass 将其层流式传输到加速器，以生成速度换取显存。
 
 ## Caption 格式
 

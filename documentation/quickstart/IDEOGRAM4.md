@@ -192,7 +192,20 @@ Ideogram validation is disabled unless you opt in:
 }
 ```
 
-This is temporary. Ideogram's upstream inference path expects an unconditional transformer for CFG, while SimpleTuner currently trains only the conditional transformer by default. With `ideogram_validation=true`, validation uses the conditional transformer for the negative/unconditional pass so you can still check prompt and negative-prompt behaviour.
+Ideogram's upstream inference path expects a separate image-only unconditional transformer for CFG. With `ideogram_validation=true` alone, validation approximates the unconditional pass by feeding negative-prompt embeds through the conditional transformer so you can still check prompt and negative-prompt behaviour.
+
+To run real asymmetric CFG instead of the proxy, load the separate unconditional transformer:
+
+```json
+{
+  "ideogram_validation": true,
+  "ideogram_load_unconditional_transformer": true
+}
+```
+
+This loads Ideogram 4's frozen image-only unconditional transformer alongside the conditional one. Validation then runs the real unconditional pass with zeroed text conditioning, and AnyFlow distillation computes its fused-guidance targets against the real unconditional branch instead of the negative-prompt proxy. Budget roughly 10 GiB extra VRAM for the FP8 checkpoint, or about 18 GiB when `ideogram_fp8_base_upcast=true` dequantizes it to bf16.
+
+If that does not fit, set `ideogram_uncond_ramtorch=true` to hold the unconditional transformer in CPU RAM via RamTorch and stream its layers to the accelerator per forward pass, trading generation speed for VRAM.
 
 Use JSON-style validation prompts whenever possible. Short natural-language prompts can trigger Ideogram's built-in filtering or weak prompt behaviour, while structured prompts are more reliable.
 

@@ -129,7 +129,20 @@ Ideogram validation opt-in है:
 }
 ```
 
-यह temporary flag है। Ideogram का upstream CFG inference path अलग unconditional transformer expect करता है, जबकि SimpleTuner अभी default रूप से सिर्फ conditional transformer train करता है। इस flag के साथ validation conditional transformer को negative/unconditional pass के लिए भी use करता है, ताकि prompts और negative prompts जांचे जा सकें।
+Ideogram का upstream CFG inference path एक अलग, केवल image वाला unconditional transformer expect करता है। सिर्फ `ideogram_validation=true` के साथ validation negative-prompt embeds को conditional transformer से गुजारकर unconditional pass का approximation करता है, ताकि prompts और negative prompts जांचे जा सकें।
+
+Proxy की जगह असली asymmetric CFG चलाने के लिए अलग unconditional transformer load करें:
+
+```json
+{
+  "ideogram_validation": true,
+  "ideogram_load_unconditional_transformer": true
+}
+```
+
+यह Ideogram 4 का frozen, केवल image वाला unconditional transformer conditional के साथ load करता है। Validation फिर zeroed text conditioning के साथ असली unconditional pass चलाता है, और AnyFlow distillation अपने fused guidance targets negative-prompt proxy की बजाय असली unconditional branch के खिलाफ compute करता है। FP8 checkpoint के लिए लगभग 10 GiB extra VRAM रखें, या `ideogram_fp8_base_upcast=true` से bf16 में dequantize करने पर लगभग 18 GiB।
+
+अगर VRAM कम पड़े तो `ideogram_uncond_ramtorch=true` सेट करें: unconditional transformer RamTorch के जरिए CPU RAM में रहता है और हर forward pass पर layers accelerator को stream होती हैं (generation speed की कीमत पर VRAM बचत)।
 
 ## Caption format
 
