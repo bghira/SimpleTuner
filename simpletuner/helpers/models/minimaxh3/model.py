@@ -348,7 +348,9 @@ class MiniMaxH3(VideoModelFoundation):
                 config={
                     **base_config,
                     "ramtorch": True,
+                    "ramtorch_disable_extensions": False,
                     "ramtorch_target_modules": ",".join(f"transformer_blocks.{idx}.*" for idx in range(25)),
+                    "ramtorch_text_encoder": True,
                 },
             ),
             AccelerationPreset(

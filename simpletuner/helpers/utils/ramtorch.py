@@ -409,6 +409,8 @@ def replace_all_layers_with_ramtorch(
         include_conv=include_conv,
         include_layernorm=include_layernorm,
         include_rmsnorm=include_rmsnorm,
+        target_patterns=normalize_patterns(target_patterns),
+        name_prefix=name_prefix,
     )
 
     # Add sync hooks if requested (fixes race conditions in ramtorch)
