@@ -3829,14 +3829,13 @@ class Validation:
                 "items": [Validation._serialise_media(item) for item in media],
             }
         if not isinstance(media, Image.Image):
-            # Check if it's audio (tensor or numpy)
-            if isinstance(media, (torch.Tensor, np.ndarray)):
-                # It's audio. Serialize as WAV bytes.
+            if isinstance(media, np.ndarray):
+                media = torch.from_numpy(np.ascontiguousarray(media))
+            elif isinstance(media, torch.Tensor):
+                media = media.detach().cpu()
+
+            if isinstance(media, torch.Tensor):
                 buffer = BytesIO()
-                # Assuming 44100 sample rate for serialization, or we need to pass it.
-                # For simplicity, we might just pickle it or use a standard rate.
-                # But _serialise_media is static.
-                # Let's use torch.save for tensors to be safe and generic
                 torch.save(media, buffer)
                 return {
                     "type": "audio_tensor",
@@ -3943,23 +3942,23 @@ class Validation:
             if sample_rate is None:
                 validation_audio.save_audio(
                     self.save_dir,
-                    validation_images,
+                    validation_audios,
                     decorated_shortname,
                 )
                 validation_audio.log_audio_to_webhook(
-                    validation_images,
+                    validation_audios,
                     decorated_shortname,
                     prompt,
                 )
             else:
                 validation_audio.save_audio(
                     self.save_dir,
-                    validation_images,
+                    validation_audios,
                     decorated_shortname,
                     sample_rate=sample_rate,
                 )
                 validation_audio.log_audio_to_webhook(
-                    validation_images,
+                    validation_audios,
                     decorated_shortname,
                     prompt,
                     sample_rate=sample_rate,
@@ -4843,16 +4842,27 @@ class Validation:
                                 )
                             else:
                                 pipeline_result = self.model.pipeline(**filtered_pipeline_kwargs)
-                        current_results = self._extract_pipeline_media(
-                            pipeline_result,
-                            audio_only=bool(getattr(self.config, "validation_audio_only", False)),
-                        )
-                        if current_results is None:
-                            logger.error(
-                                "Pipeline result does not have 'frames', 'images', 'videos', 'audios', or 'audio': %s",
-                                pipeline_result,
-                            )
+                        if is_audio:
                             current_results = []
+                            audio_results = self.model.extract_validation_audio(pipeline_result)
+                            if audio_results is None:
+                                logger.error(
+                                    "Audio validation pipeline result does not have 'audios' or 'audio': %s",
+                                    pipeline_result,
+                                )
+                            else:
+                                all_validation_type_audio[current_validation_type] = audio_results
+                        else:
+                            current_results = self._extract_pipeline_media(
+                                pipeline_result,
+                                audio_only=bool(getattr(self.config, "validation_audio_only", False)),
+                            )
+                            if current_results is None:
+                                logger.error(
+                                    "Pipeline result does not have 'frames', 'images', 'videos', 'audios', or 'audio': %s",
+                                    pipeline_result,
+                                )
+                                current_results = []
                         all_validation_type_results[current_validation_type] = current_results
                         if isinstance(self.model, VideoModelFoundation):
                             audio_only_validation = bool(getattr(self.config, "validation_audio_only", False))
@@ -5078,17 +5088,17 @@ class Validation:
     def _log_validations_to_trackers(self, validation_images, validation_audios=None):
         if isinstance(self.model, AudioModelFoundation):
             sample_rate = self.model.validation_audio_sample_rate()
-            for validation_shortname in validation_images.keys():
+            for validation_shortname in (validation_audios or {}).keys():
                 if sample_rate is None:
                     validation_audio.log_audio_to_trackers(
                         self.accelerator,
-                        validation_images,
+                        validation_audios,
                         validation_shortname,
                     )
                 else:
                     validation_audio.log_audio_to_trackers(
                         self.accelerator,
-                        validation_images,
+                        validation_audios,
                         validation_shortname,
                         sample_rate=sample_rate,
                     )
