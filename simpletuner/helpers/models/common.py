@@ -85,6 +85,17 @@ else:
     logger.setLevel("ERROR")
 
 
+def _serialize_lora_adapter_metadata(metadata: dict) -> str:
+    def _json_default(value):
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, (set, frozenset)):
+            return sorted(value, key=str)
+        raise TypeError(f"Unsupported LoRA adapter metadata value: {type(value).__name__}")
+
+    return json.dumps(metadata, indent=2, sort_keys=True, default=_json_default)
+
+
 class ValidationPipelineCall(Protocol):
     def __call__(
         self,
@@ -956,7 +967,8 @@ class ModelFoundation(ABC):
                 combined.append(target)
         return combined
 
-    def _prepare_init_lora_state_dict(self, state_dict: dict) -> dict:
+    def _prepare_init_lora_state_dict(self, state_dict: dict, metadata: Optional[dict] = None) -> dict:
+        del metadata
         return state_dict
 
     def _load_init_lora_state_dict(self) -> dict | None:
@@ -965,12 +977,18 @@ class ModelFoundation(ABC):
             return None
 
         import safetensors.torch
+        from diffusers.loaders.lora_base import LORA_ADAPTER_METADATA_KEY
+        from safetensors import safe_open
 
         try:
             state_dict = safetensors.torch.load_file(init_lora_path)
+            with safe_open(init_lora_path, framework="pt", device="cpu") as handle:
+                file_metadata = handle.metadata() or {}
+            raw_adapter_metadata = file_metadata.get(LORA_ADAPTER_METADATA_KEY)
+            adapter_metadata = json.loads(raw_adapter_metadata) if raw_adapter_metadata else None
         except Exception as exc:
             raise ValueError(f"Unable to inspect init_lora checkpoint `{init_lora_path}` for LoRA rank metadata.") from exc
-        return self._prepare_init_lora_state_dict(state_dict)
+        return self._prepare_init_lora_state_dict(state_dict, metadata=adapter_metadata)
 
     def _init_lora_config_kwargs(self, state_dict: dict | None = None) -> dict:
         state_dict = self._load_init_lora_state_dict() if state_dict is None else state_dict
@@ -1800,6 +1818,13 @@ class ModelFoundation(ABC):
         visit(component)
         return classes
 
+    def _lora_state_dict_load_kwargs(self) -> dict:
+        return {}
+
+    def _prepare_loaded_lora_state_dict(self, state_dict: dict, metadata: Optional[dict] = None) -> dict:
+        del metadata
+        return state_dict
+
     def load_lora_weights(self, models, input_dir):
         """
         Generalized LoRA loading method.
@@ -1842,10 +1867,20 @@ class ModelFoundation(ABC):
                 )
 
         pipeline_cls = self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
-        lora_state = pipeline_cls.lora_state_dict(input_dir)
+        load_kwargs_hook = getattr(self, "_lora_state_dict_load_kwargs", None)
+        lora_load_kwargs = load_kwargs_hook() if callable(load_kwargs_hook) else {}
+        lora_state = pipeline_cls.lora_state_dict(input_dir, **lora_load_kwargs)
         network_alphas = None
+        adapter_metadata = None
 
-        if isinstance(lora_state, tuple):
+        if lora_load_kwargs.get("return_lora_metadata") and isinstance(lora_state, tuple):
+            if len(lora_state) == 2:
+                lora_state_dict, adapter_metadata = lora_state
+            elif len(lora_state) >= 3:
+                lora_state_dict, network_alphas, adapter_metadata = lora_state[:3]
+            else:
+                lora_state_dict = lora_state[0]
+        elif isinstance(lora_state, tuple):
             if len(lora_state) >= 2:
                 lora_state_dict, maybe_network_alphas = lora_state[:2]
                 if isinstance(maybe_network_alphas, dict) or maybe_network_alphas is None:
@@ -1866,6 +1901,9 @@ class ModelFoundation(ABC):
 
         if not isinstance(lora_state_dict, dict):
             raise ValueError("LoRA checkpoint did not return a state dictionary.")
+        prepare_state_hook = getattr(self, "_prepare_loaded_lora_state_dict", None)
+        if callable(prepare_state_hook):
+            lora_state_dict = prepare_state_hook(lora_state_dict, metadata=adapter_metadata)
 
         def _normalise_alpha_map(alpha_dict: dict) -> dict:
             if not alpha_dict:
@@ -2017,9 +2055,9 @@ class ModelFoundation(ABC):
                 metadata = {"format": "pt"}
                 if adapter_metadata:
                     try:
-                        metadata[LORA_ADAPTER_METADATA_KEY] = json.dumps(adapter_metadata, indent=2, sort_keys=True)
-                    except Exception:
-                        pass
+                        metadata[LORA_ADAPTER_METADATA_KEY] = _serialize_lora_adapter_metadata(adapter_metadata)
+                    except TypeError as exc:
+                        raise ValueError("Unable to serialize LoRA adapter metadata for ComfyUI export.") from exc
 
                 converted = self._convert_lora_state_dict_to_comfyui(
                     weights,

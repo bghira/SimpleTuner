@@ -240,7 +240,7 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
     def test_webshart_caption_strategy_accepts_txt_sidecar_samples(self):
         backend = self._build_backend(self._entries())
         backend.data_backend.get_shard_metadata = Mock(
-            return_value={"uncaptioned.txt": {"path": "uncaptioned.txt", "offset": 0, "length": 10}}
+            return_value={"files": {"uncaptioned.txt": {"offset": 0, "length": 10}}}
         )
         with patch(
             "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_data_backend_config",

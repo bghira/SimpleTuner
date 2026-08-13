@@ -100,6 +100,12 @@ class WorkerManager:
         """Check individual worker health."""
         from ..models.worker import WorkerStatus
 
+        # The Kubeflow service owns launch timeout, Pod failure, and cleanup for
+        # one-shot Workers. Generic recovery would otherwise requeue the job
+        # and delete the Worker while its TrainJob is still being admitted.
+        if worker.is_job_bound:
+            return
+
         if worker.status == WorkerStatus.CONNECTING:
             time_since_created = now - worker.created_at
             if time_since_created > self.connecting_timeout:
@@ -242,19 +248,56 @@ class WorkerManager:
             labels=required_labels,
         )
 
-    async def _dispatch_job_to_worker(self, job, worker):
-        """Assign job to worker and push via SSE."""
+    async def dispatch_bound_job(self, worker_id: str) -> bool:
+        """Dispatch the single job preassigned to a provisioned Worker.
+
+        Args:
+            worker_id: Worker that just established its SSE stream.
+
+        Returns:
+            True when the assigned job was pushed to that Worker.
+        """
+        worker = await self.worker_repository.get_worker(worker_id)
+        if worker is None or not worker.is_job_bound:
+            return False
+
+        job = await self.job_store.get_job(worker.current_job_id)
+        if (
+            job is None
+            or getattr(job, "provider", None) != "kubeflow"
+            or job.status not in {"pending", "queued"}
+        ):
+            logger.warning(
+                "Bound worker %s has no dispatchable Kubeflow job %s",
+                worker_id,
+                worker.current_job_id,
+            )
+            return False
+
+        return await self._dispatch_job_to_worker(job, worker, preserve_binding=True)
+
+    async def _dispatch_job_to_worker(self, job, worker, *, preserve_binding: bool = False) -> bool:
+        """Assign a job to a Worker and push it through SSE.
+
+        Args:
+            job: Unified job to dispatch.
+            worker: Destination Worker.
+            preserve_binding: Keep the fixed job assignment if the push fails.
+
+        Returns:
+            True when the event was pushed successfully.
+        """
         from ..models.worker import WorkerStatus
 
         try:
             from ..routes.workers import is_worker_connected, push_to_worker
         except ImportError:
             logger.warning("Worker routes not available, cannot dispatch job")
-            return
+            return False
 
         if not is_worker_connected(worker.worker_id):
             logger.warning(f"Worker {worker.worker_id} not connected, skipping dispatch")
-            return
+            return False
 
         await self.worker_repository.update_worker(
             worker.worker_id,
@@ -287,6 +330,7 @@ class WorkerManager:
                 "job_id": job.job_id,
                 "config": config,
                 "dataloader": config.get("dataloader_config"),
+                "provider": getattr(job, "provider", None),
                 "upload_endpoint": "/api/cloud/storage",
                 "upload_token": getattr(job, "upload_token", None),
                 "hf_token": job_metadata.get("hf_token"),
@@ -295,26 +339,31 @@ class WorkerManager:
 
         if success:
             logger.info(f"Dispatched job {job.job_id} to worker {worker.worker_id}")
-        else:
-            logger.error(f"Failed to dispatch job {job.job_id} to worker {worker.worker_id}")
-            await self.worker_repository.update_worker(
-                worker.worker_id,
-                {
-                    "status": WorkerStatus.IDLE,
-                    "current_job_id": None,
-                },
-            )
-            # Reset job to pending, clear worker assignment from metadata
-            reset_metadata = dict(job.metadata or {})
+            return True
+
+        logger.error(f"Failed to dispatch job {job.job_id} to worker {worker.worker_id}")
+        await self.worker_repository.update_worker(
+            worker.worker_id,
+            {
+                "status": WorkerStatus.CONNECTING if preserve_binding else WorkerStatus.IDLE,
+                "current_job_id": worker.current_job_id if preserve_binding else None,
+            },
+        )
+
+        # Bound jobs remain attached to their provisioned Worker so only the
+        # same Pod can retry the SSE connection.
+        reset_metadata = dict(job.metadata or {})
+        if not preserve_binding:
             reset_metadata.pop("worker_id", None)
-            await self.job_store.update_job(
-                job.job_id,
-                {
-                    "status": "pending",
-                    "started_at": None,
-                    "metadata": reset_metadata,
-                },
-            )
+        await self.job_store.update_job(
+            job.job_id,
+            {
+                "status": "queued" if preserve_binding else "pending",
+                "started_at": None,
+                "metadata": reset_metadata,
+            },
+        )
+        return False
 
     async def reconcile_on_startup(self):
         """Called on server startup to reconcile state."""

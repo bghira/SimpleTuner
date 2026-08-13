@@ -857,14 +857,7 @@ class AnyFlowDistiller(DistillationBase):
         negative = prepared_batch.get("negative_encoder_hidden_states")
         if not torch.is_tensor(negative):
             raise ValueError("AnyFlow real_score_guidance_scale requires cached negative_encoder_hidden_states.")
-        unconditional_batch = dict(prepared_batch)
-        unconditional_batch["encoder_hidden_states"] = negative
-        negative_tags = prepared_batch.get("negative_text_token_tags")
-        if torch.is_tensor(negative_tags):
-            unconditional_batch["text_token_tags"] = negative_tags
-        negative_mask = prepared_batch.get("negative_encoder_attention_mask")
-        if torch.is_tensor(negative_mask):
-            unconditional_batch["encoder_attention_mask"] = negative_mask
+        unconditional_batch = self._unconditional_batch(prepared_batch)
         unconditional_x0 = self._score_x0(unconditional_batch, noisy_latents, sigmas)
         return conditional_x0 + (conditional_x0 - unconditional_x0) * guidance
 
@@ -954,8 +947,13 @@ class AnyFlowDistiller(DistillationBase):
         if torch.is_tensor(negative_tags):
             batch["text_token_tags"] = negative_tags
         negative_mask = prepared_batch.get("negative_encoder_attention_mask")
+        batch.pop("encoder_attention_mask", None)
         if torch.is_tensor(negative_mask):
             batch["encoder_attention_mask"] = negative_mask
+        # Some families (e.g. Ideogram) read model-specific conditioning aliases ahead of the
+        # generic keys; drop them so the swapped unconditional embeds/mask take effect.
+        for alias in ("prompt_embeds", "attention_mask", "attention_masks"):
+            batch.pop(alias, None)
         return batch
 
     def _slice_batch(self, prepared_batch: Dict[str, Any], requested_batch_size: int) -> Dict[str, Any]:
