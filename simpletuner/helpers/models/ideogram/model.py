@@ -47,7 +47,9 @@ class Ideogram4(ImageModelFoundation):
         "fp8": "ideogram-ai/ideogram-4-fp8",
         "nf4": "ideogram-ai/ideogram-4-nf4",
     }
-    MODEL_LICENSE = "ideogram-4-non-commercial"
+    MODEL_LICENSE = "other"
+    MODEL_LICENSE_NAME = "ideogram-4-non-commercial"
+    MODEL_LICENSE_LINK = "https://huggingface.co/ideogram-ai/ideogram-4-fp8/blob/main/LICENSE.md"
     VALIDATION_USES_NEGATIVE_PROMPT = True
     VALIDATION_USE_AUTOCAST = False
     SUPPORTS_LORA = True
