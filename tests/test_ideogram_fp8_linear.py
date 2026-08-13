@@ -213,6 +213,8 @@ class IdeogramFp8BaseUpcastTests(unittest.TestCase):
         model.config.pretrained_transformer_model_name_or_path = None
         model.config.pretrained_model_name_or_path = "ideogram-ai/ideogram-4-fp8"
         model.config.ideogram_fp8_base_upcast = upcast
+        model.config.ideogram_load_unconditional_transformer = False
+        model.config.ideogram_uncond_ramtorch = False
         model.config.base_model_precision = base_model_precision
         model.config.weight_dtype = torch.bfloat16
         model.accelerator = mock.Mock()

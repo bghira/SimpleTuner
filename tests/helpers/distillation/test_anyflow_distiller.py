@@ -1086,6 +1086,14 @@ class AnyFlowUnconditionalBatchTests(unittest.TestCase):
         self.assertNotIn("attention_mask", unconditional_batch)
         self.assertNotIn("attention_masks", unconditional_batch)
 
+    def test_unconditional_batch_marks_unconditional_pass(self):
+        batch = _prepared_batch()
+
+        unconditional_batch = AnyFlowDistiller._unconditional_batch(batch)
+
+        self.assertTrue(unconditional_batch["is_unconditional_pass"])
+        self.assertNotIn("is_unconditional_pass", batch)
+
 
 class AnyFlowDeltaEmbedderTests(unittest.TestCase):
     def test_clone_flowmap_embedder_is_trainable(self):
