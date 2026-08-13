@@ -132,3 +132,39 @@ def register_fields(registry) -> None:
             order=39,
         )
     )
+
+    registry._add_field(
+        ConfigField(
+            name="ideogram_load_unconditional_transformer",
+            arg_name="--ideogram_load_unconditional_transformer",
+            ui_label="Ideogram Unconditional Transformer",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="model_specific",
+            model_specific=["ideogram"],
+            default_value=False,
+            help_text="Load Ideogram 4's frozen image-only unconditional transformer for real asymmetric CFG during validation and distillation.",
+            tooltip="Costs ~10 GiB extra VRAM for the FP8 checkpoint, or ~18 GiB with --ideogram_fp8_base_upcast. The unconditional transformer is never trained or adapter-wrapped.",
+            importance=ImportanceLevel.ADVANCED,
+            dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
+            order=40,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="ideogram_uncond_ramtorch",
+            arg_name="--ideogram_uncond_ramtorch",
+            ui_label="Ideogram Unconditional RamTorch",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="model_specific",
+            model_specific=["ideogram"],
+            default_value=False,
+            help_text="Hold the Ideogram 4 unconditional transformer in CPU RAM via RamTorch instead of fully on-GPU.",
+            tooltip="Requires --ideogram_load_unconditional_transformer. Layers stream to the accelerator per forward pass, trading speed for VRAM.",
+            importance=ImportanceLevel.ADVANCED,
+            dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
+            order=41,
+        )
+    )

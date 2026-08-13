@@ -954,6 +954,8 @@ class AnyFlowDistiller(DistillationBase):
         # generic keys; drop them so the swapped unconditional embeds/mask take effect.
         for alias in ("prompt_embeds", "attention_mask", "attention_masks"):
             batch.pop(alias, None)
+        # Lets families with a dedicated unconditional model (e.g. Ideogram) dispatch to it.
+        batch["is_unconditional_pass"] = True
         return batch
 
     def _slice_batch(self, prepared_batch: Dict[str, Any], requested_batch_size: int) -> Dict[str, Any]:
