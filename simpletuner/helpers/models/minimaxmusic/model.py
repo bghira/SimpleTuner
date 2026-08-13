@@ -46,6 +46,12 @@ from simpletuner.helpers.models.minimaxmusic.rvq_depth_decoder import MiniMaxMus
 from simpletuner.helpers.models.minimaxmusic.transformer import MiniMaxMusic3Transformer1DModel
 from simpletuner.helpers.models.minimaxmusic.vocoder import MiniMaxMusic3Vocoder
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.training.lora_format import (
+    PEFTLoRAFormat,
+    collect_lora_ranks,
+    detect_state_dict_format,
+    normalize_lora_format,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +88,7 @@ class MiniMaxMusic(AudioModelFoundation):
     MODEL_LICENSE = "apache-2.0"
     SUPPORTS_LYRICS_EMBEDDER_TRAINING = False
     VALIDATION_USES_NEGATIVE_PROMPT = False
+    AUTO_LORA_FORMAT_DETECTION = True
     DEFAULT_LORA_TARGET = [
         "to_q",
         "to_k",
@@ -244,10 +251,148 @@ class MiniMaxMusic(AudioModelFoundation):
         anyflow_config = configured.get("anyflow", configured)
         return anyflow_config if isinstance(anyflow_config, dict) else {}
 
+    def _music_lora_component_name(self) -> str:
+        return "transformer"
+
+    def _music_transformer_uses_gate_first_swiglu(self) -> bool:
+        transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
+        return bool(getattr(getattr(transformer, "config", None), "swiglu_gate_first", False))
+
+    def _convert_lora_state_dict_to_comfyui(
+        self,
+        weights: dict,
+        *,
+        adapter_metadata: Optional[dict] = None,
+        component_adapter_metadata: Optional[dict] = None,
+    ) -> dict:
+        del component_adapter_metadata
+        from simpletuner.helpers.models.minimaxmusic.modular_pipeline import _convert_minimax_music_diffusers_lora_to_comfyui
+
+        return _convert_minimax_music_diffusers_lora_to_comfyui(
+            weights,
+            adapter_metadata=adapter_metadata,
+            source_swiglu_gate_first=self._music_transformer_uses_gate_first_swiglu(),
+        )
+
+    def _convert_lora_state_dict_from_comfyui(
+        self,
+        weights: dict,
+        *,
+        target_prefix: str,
+    ) -> tuple[dict, dict]:
+        from simpletuner.helpers.models.minimaxmusic.modular_pipeline import _convert_minimax_music_comfy_lora_to_diffusers
+
+        return _convert_minimax_music_comfy_lora_to_diffusers(
+            weights,
+            target_prefix=target_prefix,
+            target_swiglu_gate_first=self._music_transformer_uses_gate_first_swiglu(),
+        )
+
+    def _prepare_plain_music_lora_swiglu_layout(self, state_dict: dict, metadata: Optional[dict]) -> dict:
+        from simpletuner.helpers.models.minimaxmusic.modular_pipeline import (
+            _convert_minimax_music_swiglu_lora_layout,
+            _minimax_music_swiglu_gate_first_from_metadata,
+        )
+
+        source_gate_first = _minimax_music_swiglu_gate_first_from_metadata(
+            metadata,
+            target_prefix=self._music_lora_component_name(),
+        )
+        if source_gate_first is None:
+            return state_dict
+        return _convert_minimax_music_swiglu_lora_layout(
+            state_dict,
+            source_gate_first=source_gate_first,
+            target_gate_first=self._music_transformer_uses_gate_first_swiglu(),
+        )
+
+    def _lora_state_dict_load_kwargs(self) -> dict:
+        return {"return_lora_metadata": True}
+
+    def _prepare_loaded_lora_state_dict(self, state_dict: dict, metadata: Optional[dict] = None) -> dict:
+        from simpletuner.helpers.models.minimaxmusic.modular_pipeline import (
+            _convert_minimax_music_comfy_lora_to_diffusers,
+            _is_minimax_music_native_lora_state_dict,
+        )
+
+        if _is_minimax_music_native_lora_state_dict(state_dict):
+            lora_format = normalize_lora_format(getattr(self.config, "lora_format", None))
+            if lora_format == PEFTLoRAFormat.COMFYUI or detect_state_dict_format(state_dict) == PEFTLoRAFormat.COMFYUI:
+                return state_dict
+            converted, _network_alphas = _convert_minimax_music_comfy_lora_to_diffusers(
+                state_dict,
+                target_prefix=self._music_lora_component_name(),
+                target_swiglu_gate_first=self._music_transformer_uses_gate_first_swiglu(),
+            )
+            return converted
+        return self._prepare_plain_music_lora_swiglu_layout(state_dict, metadata)
+
+    def _prepare_init_lora_state_dict(self, state_dict: dict, metadata: Optional[dict] = None) -> dict:
+        from simpletuner.helpers.models.minimaxmusic.modular_pipeline import (
+            _convert_minimax_music_comfy_lora_to_diffusers,
+            _is_minimax_music_native_lora_state_dict,
+        )
+
+        lora_format = normalize_lora_format(getattr(self.config, "lora_format", None))
+        detected_format = detect_state_dict_format(state_dict)
+        if lora_format == PEFTLoRAFormat.DIFFUSERS and (
+            detected_format == PEFTLoRAFormat.COMFYUI or _is_minimax_music_native_lora_state_dict(state_dict)
+        ):
+            lora_format = PEFTLoRAFormat.COMFYUI
+        if lora_format != PEFTLoRAFormat.COMFYUI:
+            return self._prepare_plain_music_lora_swiglu_layout(state_dict, metadata)
+        converted, network_alphas = _convert_minimax_music_comfy_lora_to_diffusers(
+            state_dict,
+            target_prefix=self._music_lora_component_name(),
+            target_swiglu_gate_first=self._music_transformer_uses_gate_first_swiglu(),
+        )
+        prepared = {}
+        for key, value in converted.items():
+            if key.endswith(".lora.down.weight"):
+                key = f"{key[: -len('.lora.down.weight')]}.lora_A.weight"
+            elif key.endswith(".lora.up.weight"):
+                key = f"{key[: -len('.lora.up.weight')]}.lora_B.weight"
+            prepared[key] = value
+        for key, alpha in network_alphas.items():
+            prepared[key] = torch.tensor(alpha, dtype=torch.float32)
+        return prepared
+
+    def save_lora_weights(self, *args, **kwargs):
+        from simpletuner.helpers.models.minimaxmusic.modular_pipeline import (
+            MINIMAX_MUSIC_FLOWMAP_DELTATIME_METADATA_KEY,
+            MINIMAX_MUSIC_FLOWMAP_GATE_METADATA_KEY,
+            MINIMAX_MUSIC_SWIGLU_GATE_FIRST_METADATA_KEY,
+        )
+
+        metadata_key = f"{self.MODEL_SUBFOLDER}_lora_adapter_metadata"
+        adapter_metadata = dict(kwargs.get(metadata_key) or {})
+        lora_format = normalize_lora_format(getattr(self.config, "lora_format", None))
+        adapter_metadata[MINIMAX_MUSIC_SWIGLU_GATE_FIRST_METADATA_KEY] = (
+            False if lora_format == PEFTLoRAFormat.COMFYUI else self._music_transformer_uses_gate_first_swiglu()
+        )
+        transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
+        deltatime_type = getattr(transformer, "flowmap_deltatime_type", None)
+        if deltatime_type is not None:
+            gate = getattr(transformer, "flowmap_delta_emb_gate", None)
+            if torch.is_tensor(gate):
+                adapter_metadata[MINIMAX_MUSIC_FLOWMAP_GATE_METADATA_KEY] = float(gate.detach().float().cpu().item())
+            adapter_metadata[MINIMAX_MUSIC_FLOWMAP_DELTATIME_METADATA_KEY] = str(deltatime_type)
+        kwargs[metadata_key] = adapter_metadata
+        return super().save_lora_weights(*args, **kwargs)
+
     def get_lora_target_layers(self):
         manual_targets = self._get_peft_lora_target_modules()
         if manual_targets:
             return manual_targets
+        if str(getattr(self.config, "lora_type", "standard")).lower() == "standard":
+            init_lora_state_dict = self._load_init_lora_state_dict()
+            if init_lora_state_dict:
+                ranks = collect_lora_ranks(
+                    init_lora_state_dict,
+                    prefix_to_strip=f"{self._music_lora_component_name()}.",
+                )
+                if ranks:
+                    return sorted(ranks)
         if not self._configured_anyflow() or str(getattr(self.config, "lora_type", "standard")).lower() != "standard":
             return super().get_lora_target_layers()
 

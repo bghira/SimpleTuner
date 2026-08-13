@@ -136,18 +136,23 @@ class MiniMaxMusic3Attention(nn.Module, AttentionModuleMixin):
 
 
 class MiniMaxMusic3TransformerBlock(nn.Module):
-    def __init__(self, dim: int, heads: int, head_dim: int, ff_inner_dim: int):
+    def __init__(self, dim: int, heads: int, head_dim: int, ff_inner_dim: int, swiglu_gate_first: bool = False):
         super().__init__()
         self.norm1 = nn.LayerNorm(dim)
         self.attn = MiniMaxMusic3Attention(dim, heads, head_dim)
         self.norm2 = nn.LayerNorm(dim)
         self.ff_in = nn.Linear(dim, ff_inner_dim * 2)
         self.ff_out = nn.Linear(ff_inner_dim, dim)
+        self.swiglu_gate_first = bool(swiglu_gate_first)
 
     def forward(self, hidden_states: torch.Tensor, rotary_emb: Tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         hidden_states = hidden_states + self.attn(self.norm1(hidden_states), rotary_emb)
-        gate_states, gate = self.ff_in(self.norm2(hidden_states)).chunk(2, dim=-1)
-        hidden_states = hidden_states + self.ff_out(gate_states * torch.nn.functional.silu(gate))
+        first, second = self.ff_in(self.norm2(hidden_states)).chunk(2, dim=-1)
+        if self.swiglu_gate_first:
+            gate, value = first, second
+        else:
+            value, gate = first, second
+        hidden_states = hidden_states + self.ff_out(value * torch.nn.functional.silu(gate))
         return hidden_states
 
 
@@ -180,6 +185,7 @@ class MiniMaxMusic3Transformer1DModel(ModelMixin, ConfigMixin):
         enable_time_sign_embed: bool = False,
         gate_value: Optional[float] = None,
         deltatime_type: Optional[str] = None,
+        swiglu_gate_first: bool = False,
     ):
         super().__init__()
         inner_dim = num_attention_heads * attention_head_dim
@@ -206,7 +212,13 @@ class MiniMaxMusic3Transformer1DModel(ModelMixin, ConfigMixin):
         self.rotary_emb = MiniMaxMusic3RotaryEmbedding(rotary_dim)
         self.transformer_blocks = nn.ModuleList(
             [
-                MiniMaxMusic3TransformerBlock(inner_dim, num_attention_heads, attention_head_dim, ff_inner_dim)
+                MiniMaxMusic3TransformerBlock(
+                    inner_dim,
+                    num_attention_heads,
+                    attention_head_dim,
+                    ff_inner_dim,
+                    swiglu_gate_first=swiglu_gate_first,
+                )
                 for _ in range(num_layers)
             ]
         )

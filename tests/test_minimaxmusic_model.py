@@ -1,16 +1,27 @@
+import json
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import torch
+from safetensors import safe_open
+from safetensors.torch import load_file
 
+from simpletuner.helpers.models.common import PipelineTypes
 from simpletuner.helpers.models.minimaxmusic.condition_encoder import MiniMaxMusic3ConditionEncoder
 from simpletuner.helpers.models.minimaxmusic.model import MiniMaxMusic
+from simpletuner.helpers.models.minimaxmusic.modular_pipeline import (
+    MINIMAX_MUSIC_SWIGLU_GATE_FIRST_METADATA_KEY,
+    MiniMaxMusic3ModularPipeline,
+    _convert_minimax_music_comfy_lora_to_diffusers,
+    _convert_minimax_music_diffusers_lora_to_comfyui,
+)
 from simpletuner.helpers.models.minimaxmusic.transformer import MiniMaxMusic3Transformer1DModel
 from simpletuner.helpers.models.registry import ModelRegistry
 
 
-def _tiny_transformer(enable_time_sign_embed: bool = False) -> MiniMaxMusic3Transformer1DModel:
+def _tiny_transformer(enable_time_sign_embed: bool = False, **kwargs) -> MiniMaxMusic3Transformer1DModel:
     return MiniMaxMusic3Transformer1DModel(
         in_channels=4,
         condition_dim=8,
@@ -21,7 +32,23 @@ def _tiny_transformer(enable_time_sign_embed: bool = False) -> MiniMaxMusic3Tran
         rotary_dim=4,
         fourier_embedding_dim=8,
         enable_time_sign_embed=enable_time_sign_embed,
+        **kwargs,
     )
+
+
+class FakeLoraTarget:
+    def __init__(self, *, swiglu_gate_first: bool = False):
+        self.config = SimpleNamespace(swiglu_gate_first=swiglu_gate_first)
+        self.calls = []
+        self.flowmap_deltatime_type = None
+        self.flowmap_gate_value = None
+
+    def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r"):
+        self.flowmap_gate_value = gate_value
+        self.flowmap_deltatime_type = deltatime_type
+
+    def load_lora_adapter(self, state_dict, **kwargs):
+        self.calls.append((state_dict, kwargs))
 
 
 class MiniMaxMusicModelTests(unittest.TestCase):
@@ -115,6 +142,12 @@ class MiniMaxMusicModelTests(unittest.TestCase):
         )
 
         self.assertEqual(output[0].shape, (1, 4, 5))
+
+    def test_transformer_propagates_swiglu_gate_first_config(self):
+        transformer = _tiny_transformer(swiglu_gate_first=True)
+
+        self.assertTrue(transformer.config.swiglu_gate_first)
+        self.assertTrue(transformer.transformer_blocks[0].swiglu_gate_first)
 
     def test_transformer_requires_initialized_timestep_conditioning(self):
         transformer = _tiny_transformer()
@@ -210,6 +243,213 @@ class MiniMaxMusicModelTests(unittest.TestCase):
             torch.zeros(1, 4, 3),
         )
         torch.testing.assert_close(tokenwise_timesteps, torch.tensor([[0.75, 0.25, 0.75]]))
+
+    def test_comfy_lora_conversion_maps_music_names_and_splits_qkv(self):
+        qkv_down = torch.randn(4, 12)
+        qkv_up = torch.randn(36, 4)
+        ff_down = torch.randn(2, 12)
+        value_rows = torch.full((3, 2), 2.0)
+        gate_rows = torch.full((3, 2), 1.0)
+        state_dict = {
+            "diffusion_model.diffusion_transformer.transformer.layers.0.self_attn.to_qkv.lora_A.weight": qkv_down,
+            "diffusion_model.diffusion_transformer.transformer.layers.0.self_attn.to_qkv.lora_B.weight": qkv_up,
+            "diffusion_model.diffusion_transformer.transformer.layers.0.self_attn.to_qkv.alpha": torch.tensor(4.0),
+            "diffusion_model.diffusion_transformer.transformer.layers.0.ff.ff.0.proj.lora_A.weight": ff_down,
+            "diffusion_model.diffusion_transformer.transformer.layers.0.ff.ff.0.proj.lora_B.weight": torch.cat(
+                (value_rows, gate_rows), dim=0
+            ),
+            "diffusion_model.diffusion_transformer.to_timestep_embed.0.lora_A.weight": torch.randn(2, 8),
+            "diffusion_model.diffusion_transformer.to_timestep_embed.0.lora_B.weight": torch.randn(12, 2),
+        }
+
+        converted, network_alphas = _convert_minimax_music_comfy_lora_to_diffusers(
+            state_dict,
+            target_prefix="transformer",
+        )
+
+        q_key = "transformer.transformer_blocks.0.attn.to_q.lora.down.weight"
+        k_key = "transformer.transformer_blocks.0.attn.to_k.lora.down.weight"
+        v_key = "transformer.transformer_blocks.0.attn.to_v.lora.down.weight"
+        self.assertTrue(torch.equal(converted[q_key], qkv_down))
+        self.assertTrue(torch.equal(converted[k_key], qkv_down))
+        self.assertTrue(torch.equal(converted[v_key], qkv_down))
+        self.assertTrue(torch.equal(converted["transformer.transformer_blocks.0.attn.to_q.lora.up.weight"], qkv_up[:12]))
+        self.assertTrue(torch.equal(converted["transformer.transformer_blocks.0.attn.to_k.lora.up.weight"], qkv_up[12:24]))
+        self.assertTrue(torch.equal(converted["transformer.transformer_blocks.0.attn.to_v.lora.up.weight"], qkv_up[24:]))
+        self.assertTrue(
+            torch.equal(
+                converted["transformer.transformer_blocks.0.ff_in.lora.up.weight"],
+                torch.cat((value_rows, gate_rows), dim=0),
+            )
+        )
+        self.assertIn("transformer.time_embed.linear_1.lora.down.weight", converted)
+        self.assertEqual(network_alphas["transformer.transformer_blocks.0.attn.to_q.alpha"], 4.0)
+        self.assertEqual(network_alphas["transformer.transformer_blocks.0.attn.to_k.alpha"], 4.0)
+        self.assertEqual(network_alphas["transformer.transformer_blocks.0.attn.to_v.alpha"], 4.0)
+
+    def test_comfy_lora_conversion_swaps_swiglu_rows_for_gate_first_target(self):
+        value_rows = torch.full((3, 2), 2.0)
+        gate_rows = torch.full((3, 2), 1.0)
+
+        converted, _network_alphas = _convert_minimax_music_comfy_lora_to_diffusers(
+            {
+                "diffusion_transformer.transformer.layers.0.ff.ff.0.proj.lora_A.weight": torch.randn(2, 12),
+                "diffusion_transformer.transformer.layers.0.ff.ff.0.proj.lora_B.weight": torch.cat(
+                    (value_rows, gate_rows), dim=0
+                ),
+            },
+            target_prefix="transformer",
+            target_swiglu_gate_first=True,
+        )
+
+        self.assertTrue(
+            torch.equal(
+                converted["transformer.transformer_blocks.0.ff_in.lora.up.weight"],
+                torch.cat((gate_rows, value_rows), dim=0),
+            )
+        )
+
+    def test_comfy_lora_export_fuses_qkv_and_maps_swiglu(self):
+        state_dict = {}
+        expected_deltas = []
+        for index, projection in enumerate(("to_q", "to_k", "to_v"), start=1):
+            down = torch.full((2, 3), float(index))
+            up = torch.full((4, 2), float(index + 3))
+            prefix = f"transformer.transformer_blocks.0.attn.{projection}"
+            state_dict[f"{prefix}.lora_A.weight"] = down
+            state_dict[f"{prefix}.lora_B.weight"] = up
+            expected_deltas.append(up @ down)
+        gate_rows = torch.full((2, 2), 1.0)
+        value_rows = torch.full((2, 2), 2.0)
+        state_dict["transformer.transformer_blocks.0.ff_in.lora_A.weight"] = torch.randn(2, 3)
+        state_dict["transformer.transformer_blocks.0.ff_in.lora_B.weight"] = torch.cat((gate_rows, value_rows), dim=0)
+
+        converted = _convert_minimax_music_diffusers_lora_to_comfyui(
+            state_dict,
+            source_swiglu_gate_first=True,
+        )
+
+        prefix = "diffusion_model.diffusion_transformer.transformer.layers.0.self_attn.to_qkv"
+        fused_down = converted[f"{prefix}.lora_A.weight"]
+        fused_up = converted[f"{prefix}.lora_B.weight"]
+        self.assertEqual(tuple(fused_down.shape), (6, 3))
+        self.assertEqual(tuple(fused_up.shape), (12, 6))
+        self.assertEqual(converted[f"{prefix}.alpha"].item(), 6.0)
+        self.assertTrue(torch.equal(fused_up @ fused_down, torch.cat(expected_deltas, dim=0)))
+        self.assertTrue(
+            torch.equal(
+                converted["diffusion_model.diffusion_transformer.transformer.layers.0.ff.ff.0.proj.lora_B.weight"],
+                torch.cat((value_rows, gate_rows), dim=0),
+            )
+        )
+
+    def test_lora_loader_detects_native_comfy_music_layout(self):
+        pipe = MiniMaxMusic3ModularPipeline.__new__(MiniMaxMusic3ModularPipeline)
+        pipe.transformer = FakeLoraTarget()
+        pipe.lora_state_dict = lambda _path, **_kwargs: {
+            "diffusion_transformer.transformer.layers.0.self_attn.to_qkv.lora_A.weight": torch.randn(2, 12),
+            "diffusion_transformer.transformer.layers.0.self_attn.to_qkv.lora_B.weight": torch.randn(36, 2),
+        }
+
+        pipe.load_lora_weights("unused", adapter_name="music", lora_format="comfyui")
+
+        loaded_state_dict, kwargs = pipe.transformer.calls[0]
+        self.assertIn("transformer.transformer_blocks.0.attn.to_q.lora.down.weight", loaded_state_dict)
+        self.assertIn("transformer.transformer_blocks.0.attn.to_k.lora.down.weight", loaded_state_dict)
+        self.assertIn("transformer.transformer_blocks.0.attn.to_v.lora.down.weight", loaded_state_dict)
+        self.assertEqual(kwargs["adapter_name"], "music")
+
+    def test_lora_loader_uses_metadata_for_ambiguous_diffusers_swiglu_layout(self):
+        pipe = MiniMaxMusic3ModularPipeline.__new__(MiniMaxMusic3ModularPipeline)
+        pipe.transformer = FakeLoraTarget(swiglu_gate_first=False)
+        gate_rows = torch.full((2, 4), 1.0)
+        value_rows = torch.full((2, 4), 2.0)
+        state_dict = {
+            "transformer.transformer_blocks.0.ff_in.lora_A.weight": torch.randn(4, 12),
+            "transformer.transformer_blocks.0.ff_in.lora_B.weight": torch.cat((gate_rows, value_rows), dim=0),
+        }
+        pipe.lora_state_dict = lambda _path, **_kwargs: (
+            state_dict,
+            {"transformer.swiglu_gate_first": True},
+        )
+
+        pipe.load_lora_weights("unused", adapter_name="music")
+
+        loaded_state_dict, _kwargs = pipe.transformer.calls[0]
+        self.assertTrue(
+            torch.equal(
+                loaded_state_dict["transformer.transformer_blocks.0.ff_in.lora_B.weight"],
+                torch.cat((value_rows, gate_rows), dim=0),
+            )
+        )
+
+    def test_model_comfy_lora_save_uses_native_music_exporter(self):
+        model = object.__new__(MiniMaxMusic)
+        model.config = SimpleNamespace(
+            controlnet=False,
+            lora_format="comfyui",
+            model_family="minimaxmusic",
+            model_flavour="music3",
+        )
+        model.model = _tiny_transformer()
+        model.accelerator = SimpleNamespace(unwrap_model=lambda model, keep_fp32_wrapper=True: model)
+        pipeline_class = model.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(pipeline_class, "save_lora_weights") as save_lora_weights:
+            model.save_lora_weights(
+                tmpdir,
+                transformer_lora_layers={"transformer_blocks.0.attn.to_q.lora_A.weight": torch.ones(2, 3)},
+            )
+            save_function = save_lora_weights.call_args.kwargs["save_function"]
+            output_path = f"{tmpdir}/music-comfy.safetensors"
+            shared_down = torch.randn(2, 3)
+            weights = {}
+            for projection in ("to_q", "to_k", "to_v"):
+                prefix = f"transformer.transformer_blocks.0.attn.{projection}"
+                weights[f"{prefix}.lora_A.weight"] = shared_down.clone()
+                weights[f"{prefix}.lora_B.weight"] = torch.randn(4, 2)
+            save_function(weights, output_path)
+            saved = load_file(output_path)
+            with safe_open(output_path, framework="pt", device="cpu") as handle:
+                adapter_metadata = json.loads(handle.metadata()["lora_adapter_metadata"])
+
+        self.assertIn("diffusion_model.diffusion_transformer.transformer.layers.0.self_attn.to_qkv.lora_A.weight", saved)
+        self.assertNotIn("diffusion_model.transformer_blocks.0.attn.to_q.lora_A.weight", saved)
+        self.assertFalse(adapter_metadata[MINIMAX_MUSIC_SWIGLU_GATE_FIRST_METADATA_KEY])
+
+    def test_training_resume_imports_native_comfy_lora_keys(self):
+        wrapper = object.__new__(MiniMaxMusic)
+        wrapper.config = SimpleNamespace(
+            controlnet=False,
+            lora_format=None,
+            model_flavour="music3",
+        )
+        wrapper.model = _tiny_transformer(swiglu_gate_first=False)
+        wrapper.controlnet = None
+        wrapper.text_encoders = []
+        wrapper.accelerator = SimpleNamespace(
+            unwrap_model=lambda model, keep_fp32_wrapper=True: model,
+        )
+        native_state_dict = {
+            "diffusion_model.diffusion_transformer.transformer.layers.0.self_attn.to_qkv.lora_A.weight": torch.randn(2, 12),
+            "diffusion_model.diffusion_transformer.transformer.layers.0.self_attn.to_qkv.lora_B.weight": torch.randn(36, 2),
+            "diffusion_model.diffusion_transformer.transformer.layers.0.ff.ff.0.proj.lora_A.weight": torch.randn(2, 12),
+            "diffusion_model.diffusion_transformer.transformer.layers.0.ff.ff.0.proj.lora_B.weight": torch.randn(32, 2),
+        }
+        pipeline_class = wrapper.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
+
+        with (
+            patch.object(pipeline_class, "lora_state_dict", return_value=native_state_dict),
+            patch("peft.utils.set_peft_model_state_dict") as set_peft_state,
+        ):
+            set_peft_state.return_value = SimpleNamespace(unexpected_keys=[])
+            wrapper.load_lora_weights([wrapper.model], "unused")
+
+        loaded = set_peft_state.call_args.args[1]
+        self.assertIn("transformer_blocks.0.attn.to_q.lora_A.weight", loaded)
+        self.assertIn("transformer_blocks.0.attn.to_k.lora_A.weight", loaded)
+        self.assertIn("transformer_blocks.0.attn.to_v.lora_A.weight", loaded)
+        self.assertIn("transformer_blocks.0.ff_in.lora_A.weight", loaded)
+        self.assertNotIn("diffusion_transformer.transformer.layers.0.self_attn.to_qkv.lora_A.weight", loaded)
 
 
 if __name__ == "__main__":
