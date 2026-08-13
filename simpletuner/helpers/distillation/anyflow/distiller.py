@@ -954,8 +954,13 @@ class AnyFlowDistiller(DistillationBase):
         if torch.is_tensor(negative_tags):
             batch["text_token_tags"] = negative_tags
         negative_mask = prepared_batch.get("negative_encoder_attention_mask")
+        batch.pop("encoder_attention_mask", None)
         if torch.is_tensor(negative_mask):
             batch["encoder_attention_mask"] = negative_mask
+        # Some families (e.g. Ideogram) read model-specific conditioning aliases ahead of the
+        # generic keys; drop them so the swapped unconditional embeds/mask take effect.
+        for alias in ("prompt_embeds", "attention_mask", "attention_masks"):
+            batch.pop(alias, None)
         return batch
 
     def _slice_batch(self, prepared_batch: Dict[str, Any], requested_batch_size: int) -> Dict[str, Any]:
