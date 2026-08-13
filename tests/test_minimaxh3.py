@@ -22,6 +22,8 @@ from simpletuner.helpers.models.minimaxh3.denoise import _denoiser_inputs, _pred
 from simpletuner.helpers.models.minimaxh3.encoders import MiniMaxH3TextEncoderStep
 from simpletuner.helpers.models.minimaxh3.model import MiniMaxH3
 from simpletuner.helpers.models.minimaxh3.modular_pipeline import (
+    MINIMAX_H3_FLOWMAP_DELTATIME_METADATA_KEY,
+    MINIMAX_H3_FLOWMAP_GATE_METADATA_KEY,
     MINIMAX_H3_SWIGLU_GATE_FIRST_METADATA_KEY,
     MiniMaxH3ModularPipeline,
     MiniMaxH3Ref2VAModularPipeline,
@@ -1315,6 +1317,33 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertTrue(torch.equal(base[0], model.adaln_t_table[1]))
         self.assertTrue(torch.equal(flowmap[0], model.adaln_t_table[2] + 100.0))
 
+    def test_transformer_adaln_delta_table_updates_large_interval_output(self):
+        torch.manual_seed(31)
+        model = tiny_h3_transformer(num_layers=1, time_embed_dim=16, adaln_curve_grid=5).train()
+        with torch.no_grad():
+            model.adaln_t_table.copy_(torch.randn_like(model.adaln_t_table))
+        model.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+        model.requires_grad_(False)
+        model.delta_adaln_embedder.weight.requires_grad_(True)
+        optimizer = torch.optim.SGD([model.delta_adaln_embedder.weight], lr=0.1)
+        inputs = tiny_inputs()
+        inputs["timestep"] = torch.full_like(inputs["timestep"], 0.1)
+        r_timestep = torch.full_like(inputs["timestep"], 0.9)
+
+        base_before = model(**inputs).sample.detach().clone()
+        flow_before = model(**inputs, r_timestep=r_timestep).sample.detach().clone()
+        loss = model(**inputs, r_timestep=r_timestep).sample.square().mean()
+        loss.backward()
+
+        self.assertIsNotNone(model.delta_adaln_embedder.weight.grad)
+        self.assertGreater(float(model.delta_adaln_embedder.weight.grad.norm()), 0.0)
+        optimizer.step()
+
+        base_after = model(**inputs).sample.detach()
+        flow_after = model(**inputs, r_timestep=r_timestep).sample.detach()
+        self.assertTrue(torch.equal(base_before, base_after))
+        self.assertFalse(torch.equal(flow_before, flow_after))
+
     def test_anyflow_lora_targets_ffn_and_available_time_embedders(self):
         wrapper = MiniMaxH3.__new__(MiniMaxH3)
         wrapper.config = SimpleNamespace(
@@ -1364,6 +1393,60 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertNotIn("delta_time_embedder.linear_1", targets)
         self.assertIsNone(wrapper.get_lora_save_layers())
 
+    def test_h3_anyflow_guidance_defaults_follow_guidance_distilled_base(self):
+        for method, distillation_config in (
+            ("anyflow", {"anyflow": {}}),
+            (
+                "h3_drift",
+                {
+                    "h3_drift": {
+                        "inner_distillation_method": "anyflow",
+                        "inner_distillation_config": {},
+                    }
+                },
+            ),
+        ):
+            with self.subTest(method=method):
+                wrapper = MiniMaxH3.__new__(MiniMaxH3)
+                wrapper.config = SimpleNamespace(
+                    distillation_method=method,
+                    distillation_config=distillation_config,
+                    framerate=MINIMAX_H3_FPS,
+                    flow_schedule_shift=12.0,
+                    audio_flow_schedule_shift=3.0,
+                    vae_enable_tiling=True,
+                    vae_enable_temporal_roll=True,
+                )
+
+                wrapper.check_user_config()
+
+                anyflow_config = wrapper._anyflow_distillation_config()
+                self.assertEqual(anyflow_config["fuse_guidance_scale"], 1.0)
+                self.assertEqual(anyflow_config["real_score_guidance_scale"], 0.0)
+
+    def test_h3_anyflow_guidance_defaults_preserve_explicit_values(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(
+            distillation_method="anyflow",
+            distillation_config={
+                "anyflow": {
+                    "fuse_guidance_scale": 2.0,
+                    "real_score_guidance_scale": 0.5,
+                }
+            },
+            framerate=MINIMAX_H3_FPS,
+            flow_schedule_shift=12.0,
+            audio_flow_schedule_shift=3.0,
+            vae_enable_tiling=True,
+            vae_enable_temporal_roll=True,
+        )
+
+        wrapper.check_user_config()
+
+        anyflow_config = wrapper._anyflow_distillation_config()
+        self.assertEqual(anyflow_config["fuse_guidance_scale"], 2.0)
+        self.assertEqual(anyflow_config["real_score_guidance_scale"], 0.5)
+
     def test_anyflow_curve_checkpoint_saves_delta_table_with_adapter(self):
         from peft import LoraConfig
         from peft.utils import get_peft_model_state_dict
@@ -1394,6 +1477,23 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertIn("delta_adaln_embedder.weight", state_dict)
         self.assertTrue(wrapper.model.delta_adaln_embedder.modules_to_save.default.weight.requires_grad)
         self.assertFalse(wrapper.model.delta_adaln_embedder.original_module.weight.requires_grad)
+        wrapper._assert_anyflow_endpoint_parameters_trainable()
+
+    def test_anyflow_endpoint_assertion_rejects_missing_trainable_delta(self):
+        from peft import LoraConfig
+
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(
+            distillation_method="anyflow",
+            distillation_config={"anyflow": {"train_delta_embedder": True}},
+        )
+        wrapper.model = tiny_h3_transformer(time_embed_dim=16)
+        wrapper.accelerator = SimpleNamespace(unwrap_model=lambda model, keep_fp32_wrapper=True: model)
+        wrapper.model.enable_flowmap_time_conditioning()
+        wrapper.model.add_adapter(LoraConfig(r=2, lora_alpha=2, target_modules=["to_q"]))
+
+        with self.assertRaisesRegex(RuntimeError, "no trainable delta timestep parameters"):
+            wrapper._assert_anyflow_endpoint_parameters_trainable()
 
     def test_flow_matching_timesteps_use_h3_dataward_convention(self):
         wrapper = MiniMaxH3.__new__(MiniMaxH3)
@@ -2556,6 +2656,118 @@ class MiniMaxH3Tests(unittest.TestCase):
         adapter_metadata = save_lora_weights.call_args.kwargs["transformer_lora_adapter_metadata"]
         self.assertEqual(adapter_metadata["adapter"], "h3")
         self.assertFalse(adapter_metadata[MINIMAX_H3_SWIGLU_GATE_FIRST_METADATA_KEY])
+
+    def test_comfy_anyflow_table_adapter_round_trip_preserves_delta_and_flowmap_metadata(self):
+        from diffusers.training_utils import _collate_lora_metadata
+        from peft import LoraConfig
+        from peft.utils import get_peft_model_state_dict
+
+        source = tiny_h3_transformer(time_embed_dim=3, adaln_curve_grid=5)
+        source.enable_flowmap_time_conditioning(gate_value=0.4, deltatime_type="r")
+        source.add_adapter(
+            LoraConfig(
+                r=2,
+                lora_alpha=2,
+                target_modules=["to_q", "to_k", "to_v"],
+                modules_to_save=["delta_adaln_embedder"],
+            )
+        )
+        with torch.no_grad():
+            source.delta_adaln_embedder.modules_to_save.default.weight.add_(7.0)
+        expected_delta = source.delta_adaln_embedder.modules_to_save.default.weight.detach().clone()
+
+        wrapper = object.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(
+            controlnet=False,
+            lora_format="comfyui",
+            model_family="minimaxh3",
+            model_flavour="convrot-int8",
+        )
+        wrapper.model = source
+        wrapper.accelerator = SimpleNamespace(unwrap_model=lambda model, keep_fp32_wrapper=True: model)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wrapper.save_lora_weights(
+                tmpdir,
+                transformer_lora_layers=get_peft_model_state_dict(source),
+                **_collate_lora_metadata({"transformer": source}),
+            )
+            output_path = f"{tmpdir}/pytorch_lora_weights.safetensors"
+            with safe_open(output_path, framework="pt", device="cpu") as handle:
+                saved_keys = list(handle.keys())
+                adapter_metadata = json.loads(handle.metadata()["lora_adapter_metadata"])
+
+            target = tiny_h3_transformer(time_embed_dim=3, adaln_curve_grid=5)
+            pipe = MiniMaxH3ModularPipeline.__new__(MiniMaxH3ModularPipeline)
+            pipe._component_specs = {"transformer": None}
+            pipe.transformer = target
+            pipe.load_lora_weights(tmpdir, adapter_name="roundtrip")
+
+        self.assertIn("diffusion_model.delta_adaln_embedder.weight", saved_keys)
+        self.assertEqual(adapter_metadata["modules_to_save"], ["delta_adaln_embedder"])
+        self.assertAlmostEqual(adapter_metadata[MINIMAX_H3_FLOWMAP_GATE_METADATA_KEY], 0.4)
+        self.assertEqual(adapter_metadata[MINIMAX_H3_FLOWMAP_DELTATIME_METADATA_KEY], "r")
+        self.assertEqual(target.peft_config["roundtrip"].modules_to_save, ["delta_adaln_embedder"])
+        self.assertEqual(target.flowmap_deltatime_type, "r")
+        self.assertAlmostEqual(float(target.flowmap_delta_emb_gate.item()), 0.4)
+        self.assertTrue(
+            torch.equal(
+                target.delta_adaln_embedder.modules_to_save.roundtrip.weight,
+                expected_delta,
+            )
+        )
+
+    def test_lora_loader_recovers_legacy_table_sidecar_without_metadata(self):
+        source = tiny_h3_transformer(time_embed_dim=3, adaln_curve_grid=5)
+        source.enable_flowmap_time_conditioning()
+        legacy_state = {
+            "diffusion_model.delta_adaln_embedder.weight": torch.full((5, 3), 6.0),
+            "diffusion_model.blocks.0.mlp.fc2.lora_A.weight": torch.randn(2, 32),
+            "diffusion_model.blocks.0.mlp.fc2.lora_B.weight": torch.randn(16, 2),
+            "diffusion_model.blocks.0.mlp.fc2.alpha": torch.tensor(2.0),
+        }
+
+        target = tiny_h3_transformer(time_embed_dim=3, adaln_curve_grid=5)
+        pipe = MiniMaxH3ModularPipeline.__new__(MiniMaxH3ModularPipeline)
+        pipe._component_specs = {"transformer": None}
+        pipe.transformer = target
+        pipe.lora_state_dict = lambda _path, **_kwargs: legacy_state
+
+        pipe.load_lora_weights("unused", adapter_name="legacy")
+
+        self.assertEqual(target.peft_config["legacy"].modules_to_save, ["delta_adaln_embedder"])
+        self.assertTrue(
+            torch.equal(
+                target.delta_adaln_embedder.modules_to_save.legacy.weight,
+                torch.full((5, 3), 6.0),
+            )
+        )
+
+    def test_lora_loader_enables_frozen_flowmap_delta_from_metadata(self):
+        state_dict = {
+            "transformer.transformer_blocks.0.ff.net.2.lora_A.weight": torch.randn(2, 32),
+            "transformer.transformer_blocks.0.ff.net.2.lora_B.weight": torch.randn(16, 2),
+        }
+        metadata = {
+            "transformer.r": 2,
+            "transformer.lora_alpha": 2,
+            "transformer.target_modules": ["transformer_blocks.0.ff.net.2"],
+            "transformer.rank_pattern": {},
+            "transformer.alpha_pattern": {},
+            f"transformer.{MINIMAX_H3_FLOWMAP_GATE_METADATA_KEY}": 0.2,
+            f"transformer.{MINIMAX_H3_FLOWMAP_DELTATIME_METADATA_KEY}": "r",
+        }
+        target = tiny_h3_transformer(time_embed_dim=3, adaln_curve_grid=5)
+        pipe = MiniMaxH3ModularPipeline.__new__(MiniMaxH3ModularPipeline)
+        pipe._component_specs = {"transformer": None}
+        pipe.transformer = target
+        pipe.lora_state_dict = lambda _path, **_kwargs: (state_dict, metadata)
+
+        pipe.load_lora_weights("unused", adapter_name="frozen-delta")
+
+        self.assertIsNotNone(target.delta_adaln_embedder)
+        self.assertEqual(target.flowmap_deltatime_type, "r")
+        self.assertAlmostEqual(float(target.flowmap_delta_emb_gate.item()), 0.2)
 
     def test_training_resume_imports_native_comfy_lora_keys(self):
         wrapper = object.__new__(MiniMaxH3)

@@ -24,8 +24,10 @@ from simpletuner.helpers.training.lora_format import (
     PEFTLoRAFormat,
     _resolve_alpha_for_module,
     collect_lora_alphas,
+    collect_lora_ranks,
     detect_state_dict_format,
     normalize_lora_format,
+    peft_lora_config_kwargs_from_state_dict,
     synthesize_missing_lora_alphas_from_ranks,
 )
 
@@ -48,6 +50,13 @@ _MINIMAX_H3_NATIVE_LORA_PREFIXES = (
     "time_embedder.",
 )
 MINIMAX_H3_SWIGLU_GATE_FIRST_METADATA_KEY = "swiglu_gate_first"
+MINIMAX_H3_FLOWMAP_GATE_METADATA_KEY = "flowmap_gate_value"
+MINIMAX_H3_FLOWMAP_DELTATIME_METADATA_KEY = "flowmap_deltatime_type"
+_MINIMAX_H3_CUSTOM_ADAPTER_METADATA_KEYS = {
+    MINIMAX_H3_SWIGLU_GATE_FIRST_METADATA_KEY,
+    MINIMAX_H3_FLOWMAP_GATE_METADATA_KEY,
+    MINIMAX_H3_FLOWMAP_DELTATIME_METADATA_KEY,
+}
 
 
 def _strip_comfy_lora_prefix(key: str) -> str:
@@ -103,6 +112,32 @@ def _minimax_h3_swiglu_gate_first_from_metadata(
             return value.strip().lower() == "true"
         raise ValueError(f"MiniMax-H3 LoRA metadata `{key}` must be a boolean, received {value!r}.")
     return None
+
+
+def _minimax_h3_adapter_metadata_value(metadata: Optional[dict], key: str, *, target_prefix: str):
+    if not metadata:
+        return None
+    for candidate in (f"{target_prefix}.{key}", f"transformer.{key}", f"transformer_ref.{key}", key):
+        if candidate in metadata:
+            return metadata[candidate]
+    return None
+
+
+def _minimax_h3_peft_adapter_metadata(metadata: Optional[dict], *, target_prefix: str) -> Optional[dict]:
+    if not metadata:
+        return None
+    filtered = {}
+    for key, value in metadata.items():
+        if key.rsplit(".", 1)[-1] in _MINIMAX_H3_CUSTOM_ADAPTER_METADATA_KEYS:
+            continue
+        for source_prefix in ("transformer.", "transformer_ref."):
+            if key.startswith(source_prefix):
+                key = f"{target_prefix}.{key.removeprefix(source_prefix)}"
+                break
+        else:
+            key = f"{target_prefix}.{key}"
+        filtered[key] = value
+    return filtered or None
 
 
 def _convert_minimax_h3_diffusers_swiglu_lora_layout(
@@ -550,6 +585,53 @@ class MiniMaxH3LoraLoaderMixin(LoraBaseMixin):
             key: value for key, value in transformer_state_dict.items() if not key.endswith((".alpha", ".lora_alpha"))
         }
 
+        has_delta_adaln = any(".delta_adaln_embedder." in key for key in transformer_state_dict)
+        has_delta_time = any(".delta_time_embedder." in key for key in transformer_state_dict)
+        gate_value = _minimax_h3_adapter_metadata_value(
+            adapter_metadata,
+            MINIMAX_H3_FLOWMAP_GATE_METADATA_KEY,
+            target_prefix=self.transformer_name,
+        )
+        deltatime_type = _minimax_h3_adapter_metadata_value(
+            adapter_metadata,
+            MINIMAX_H3_FLOWMAP_DELTATIME_METADATA_KEY,
+            target_prefix=self.transformer_name,
+        )
+        if has_delta_adaln or has_delta_time or gate_value is not None or deltatime_type is not None:
+            transformer.enable_flowmap_time_conditioning(
+                gate_value=0.25 if gate_value is None else float(gate_value),
+                deltatime_type="r" if deltatime_type is None else str(deltatime_type),
+            )
+
+        peft_metadata = _minimax_h3_peft_adapter_metadata(
+            adapter_metadata,
+            target_prefix=self.transformer_name,
+        )
+        if has_delta_adaln and (
+            peft_metadata is None
+            or _minimax_h3_adapter_metadata_value(
+                peft_metadata,
+                "modules_to_save",
+                target_prefix=self.transformer_name,
+            )
+            is None
+        ):
+            local_state_dict = {
+                key.removeprefix(f"{self.transformer_name}."): value for key, value in transformer_state_dict.items()
+            }
+            for key, alpha in (network_alphas or {}).items():
+                local_key = key.removeprefix(f"{self.transformer_name}.")
+                local_state_dict[local_key] = torch.tensor(alpha, dtype=torch.float32)
+            inferred_metadata = peft_lora_config_kwargs_from_state_dict(local_state_dict)
+            inferred_metadata["target_modules"] = sorted(collect_lora_ranks(local_state_dict))
+            inferred_metadata["modules_to_save"] = ["delta_adaln_embedder"]
+            inferred_metadata.setdefault("rank_pattern", {})
+            inferred_metadata.setdefault("alpha_pattern", {})
+            peft_metadata = {f"{self.transformer_name}.{key}": value for key, value in inferred_metadata.items()}
+
+        if peft_metadata is not None:
+            network_alphas = None
+
         transformer.load_lora_adapter(
             transformer_state_dict,
             adapter_name=adapter_name,
@@ -558,6 +640,7 @@ class MiniMaxH3LoraLoaderMixin(LoraBaseMixin):
             hotswap=hotswap,
             prefix=self.transformer_name,
             network_alphas=network_alphas or None,
+            metadata=peft_metadata,
         )
 
     @classmethod

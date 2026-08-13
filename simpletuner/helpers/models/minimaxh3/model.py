@@ -224,10 +224,43 @@ class MiniMaxH3(VideoModelFoundation):
         return str(h3_config.get("inner_distillation_method", "") or "").strip().lower() == "anyflow"
 
     def _anyflow_distillation_config(self) -> dict:
+        method = str(getattr(self.config, "distillation_method", "") or "").strip().lower()
         configured = getattr(self.config, "distillation_config", None)
         configured = configured if isinstance(configured, dict) else {}
-        anyflow_config = configured.get("anyflow", configured)
+        if method == "h3_drift":
+            h3_config = configured.get("h3_drift", configured)
+            if not isinstance(h3_config, dict):
+                return {}
+            anyflow_config = h3_config.get("inner_distillation_config", {})
+        else:
+            anyflow_config = configured.get("anyflow", configured)
         return anyflow_config if isinstance(anyflow_config, dict) else {}
+
+    def _apply_h3_anyflow_guidance_defaults(self) -> None:
+        if not self._configured_anyflow():
+            return
+
+        configured = getattr(self.config, "distillation_config", None)
+        if not isinstance(configured, dict):
+            configured = {}
+            self.config.distillation_config = configured
+
+        method = str(getattr(self.config, "distillation_method", "") or "").strip().lower()
+        if method == "h3_drift":
+            h3_config = configured.get("h3_drift", configured)
+            if not isinstance(h3_config, dict):
+                raise ValueError("MiniMax-H3 h3_drift distillation config must be a mapping.")
+            anyflow_config = h3_config.get("inner_distillation_config")
+            if anyflow_config is None:
+                anyflow_config = {}
+                h3_config["inner_distillation_config"] = anyflow_config
+        else:
+            anyflow_config = configured.get("anyflow", configured)
+
+        if not isinstance(anyflow_config, dict):
+            raise ValueError("MiniMax-H3 AnyFlow distillation config must be a mapping.")
+        anyflow_config.setdefault("fuse_guidance_scale", 1.0)
+        anyflow_config.setdefault("real_score_guidance_scale", 0.0)
 
     def _get_additional_lora_targets(self) -> list[str]:
         targets = super()._get_additional_lora_targets()
@@ -257,6 +290,29 @@ class MiniMaxH3(VideoModelFoundation):
         if transformer is not None and getattr(transformer, "delta_adaln_embedder", None) is not None:
             return ["delta_adaln_embedder"]
         return super().get_lora_save_layers()
+
+    def _assert_anyflow_endpoint_parameters_trainable(self) -> None:
+        if not self._configured_anyflow():
+            return
+        if not bool(self._anyflow_distillation_config().get("train_delta_embedder", True)):
+            return
+        transformer = self.unwrap_model(self.model)
+        trainable = [
+            name
+            for name, parameter in transformer.named_parameters()
+            if parameter.requires_grad and ("delta_adaln_embedder" in name or "delta_time_embedder" in name)
+        ]
+        if not trainable:
+            raise RuntimeError(
+                "MiniMax-H3 AnyFlow requested train_delta_embedder=true, but the PEFT adapter has no trainable "
+                "delta timestep parameters. The student cannot learn large (t, r) interval conditioning."
+            )
+        logger.info("MiniMax-H3 AnyFlow endpoint conditioning is trainable through: %s", ", ".join(trainable))
+
+    def add_lora_adapter(self):
+        result = super().add_lora_adapter()
+        self._assert_anyflow_endpoint_parameters_trainable()
+        return result
 
     @classmethod
     def adjust_video_frames(cls, num_frames: int) -> int:
@@ -368,6 +424,7 @@ class MiniMaxH3(VideoModelFoundation):
         super().check_user_config()
         if getattr(self.config, "framerate", None) is None:
             self.config.framerate = MINIMAX_H3_FPS
+        self._apply_h3_anyflow_guidance_defaults()
         self._apply_h3_schedule_defaults()
         self._force_video_vae_reference_settings()
 
@@ -638,7 +695,11 @@ class MiniMaxH3(VideoModelFoundation):
         return prepared
 
     def save_lora_weights(self, *args, **kwargs):
-        from simpletuner.helpers.models.minimaxh3.modular_pipeline import MINIMAX_H3_SWIGLU_GATE_FIRST_METADATA_KEY
+        from simpletuner.helpers.models.minimaxh3.modular_pipeline import (
+            MINIMAX_H3_FLOWMAP_DELTATIME_METADATA_KEY,
+            MINIMAX_H3_FLOWMAP_GATE_METADATA_KEY,
+            MINIMAX_H3_SWIGLU_GATE_FIRST_METADATA_KEY,
+        )
 
         metadata_key = f"{self.MODEL_SUBFOLDER}_lora_adapter_metadata"
         adapter_metadata = dict(kwargs.get(metadata_key) or {})
@@ -646,6 +707,13 @@ class MiniMaxH3(VideoModelFoundation):
         adapter_metadata[MINIMAX_H3_SWIGLU_GATE_FIRST_METADATA_KEY] = (
             lora_format == PEFTLoRAFormat.COMFYUI or self._h3_transformer_uses_gate_first_swiglu()
         )
+        transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
+        deltatime_type = getattr(transformer, "flowmap_deltatime_type", None)
+        if deltatime_type is not None:
+            gate = getattr(transformer, "flowmap_delta_emb_gate", None)
+            if torch.is_tensor(gate):
+                adapter_metadata[MINIMAX_H3_FLOWMAP_GATE_METADATA_KEY] = float(gate.detach().float().cpu().item())
+            adapter_metadata[MINIMAX_H3_FLOWMAP_DELTATIME_METADATA_KEY] = str(deltatime_type)
         kwargs[metadata_key] = adapter_metadata
         return super().save_lora_weights(*args, **kwargs)
 
