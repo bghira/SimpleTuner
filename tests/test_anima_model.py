@@ -40,6 +40,10 @@ class TestAnimaModel(unittest.TestCase):
             Anima.HUGGINGFACE_PATHS["preview"],
             "CalamitousFelicitousness/Anima-sdnext-diffusers",
         )
+        self.assertEqual(
+            Anima.HUGGINGFACE_PATHS["gazingstars123-2.9b"],
+            "Gazingstars123/Anima-2.9B",
+        )
 
     def test_diffusers_layout_switches_component_sources(self):
         from simpletuner.helpers.models.anima.model import Anima
