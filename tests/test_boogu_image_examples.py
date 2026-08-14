@@ -64,5 +64,24 @@ class BooguImageExampleTests(unittest.TestCase):
             self.assertEqual(copied_lycoris["apply_preset"]["exclude_name"], ["ref_image_*"])
 
 
+class ExampleCopyTests(unittest.TestCase):
+    def test_copy_example_preserves_minimaxmusic_prompt_library(self):
+        config_path = EXAMPLES_DIR / "minimaxmusic-music3.peft-lora" / "config.json"
+        self.assertIn("minimaxmusic-prompts.json", find_referenced_files(config_path))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("simpletuner.cli.examples.get_examples_dir", return_value=EXAMPLES_DIR):
+                self.assertTrue(copy_example("minimaxmusic-music3.peft-lora", tmpdir))
+
+            copied_dir = Path(tmpdir) / "minimaxmusic-music3.peft-lora"
+            with (copied_dir / "config.json").open("r", encoding="utf-8") as handle:
+                copied_config = json.load(handle)
+            with (copied_dir / "minimaxmusic-prompts.json").open("r", encoding="utf-8") as handle:
+                copied_prompts = json.load(handle)
+
+            self.assertEqual(copied_config["user_prompt_library"], "minimaxmusic-prompts.json")
+            self.assertIn("\n", copied_prompts["neon_pop_hook"]["lyrics"])
+
+
 if __name__ == "__main__":
     unittest.main()

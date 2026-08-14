@@ -70,13 +70,11 @@ class ApprovalStore:
         cursor = conn.cursor()
 
         # Check current schema version
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER PRIMARY KEY
             )
-            """
-        )
+            """)
 
         row = cursor.execute("SELECT version FROM schema_version").fetchone()
         current_version = row["version"] if row else 0
@@ -91,8 +89,7 @@ class ApprovalStore:
         """Run schema migrations."""
         if from_version < 1 <= to_version:
             # Approval rules table
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS approval_rules (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
@@ -108,12 +105,10 @@ class ApprovalStore:
                     created_at TEXT NOT NULL,
                     created_by INTEGER
                 )
-                """
-            )
+                """)
 
             # Approval requests table
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS approval_requests (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     job_id TEXT NOT NULL,
@@ -134,8 +129,7 @@ class ApprovalStore:
                     notification_sent_at TEXT,
                     FOREIGN KEY (rule_id) REFERENCES approval_rules(id)
                 )
-                """
-            )
+                """)
 
             # Indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_requests_status ON approval_requests(status)")

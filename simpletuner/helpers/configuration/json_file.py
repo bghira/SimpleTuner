@@ -116,4 +116,9 @@ def _resolve_example_path(value: str) -> str:
 def normalize_args(args_dict: dict[str, object]) -> list[str]:
     """Backward-compatible helper returning CLI args for the given mapping."""
 
-    return mapping_to_cli_args(args_dict)
+    def _transform(key: str, value: object) -> object:
+        if isinstance(value, str):
+            return _resolve_example_path(value)
+        return value
+
+    return mapping_to_cli_args(args_dict, transform=_transform)

@@ -153,7 +153,8 @@ def resolve_config_path(
     1. Relative to the provided config_dir (if supplied)
     2. Relative to current working directory (if check_cwd_first is True)
     3. Relative to SimpleTuner's default config directory
-    4. Relative to SimpleTuner's root directory (for paths like 'config/...')
+    4. Relative to SimpleTuner's packaged examples directory for 'config/examples/...'
+    5. Relative to SimpleTuner's root directory (for paths like 'config/...')
 
     Args:
         path: The path to resolve (can be relative or absolute)
@@ -181,6 +182,26 @@ def resolve_config_path(
         config_path = Path(os.path.expanduser(str(config_dir)))
         paths_to_check.append(config_path / expanded_path)
 
+        # Handle legacy paths that redundantly include the config directory name,
+        # e.g. config/deepfloyd/multidatabackend.json when the configs_dir already
+        # points at .../config. User-provided config_dir still wins over packaged
+        # examples and repository fallbacks.
+        try:
+            parts = Path(expanded_path).parts
+        except Exception:
+            parts = ()
+
+        if parts:
+            config_basename = config_path.name.lower()
+            leading_variants = {config_basename, "config", "configs"}
+            if config_basename.endswith("s") and len(config_basename) > 1:
+                leading_variants.add(config_basename[:-1])
+
+            first_part = parts[0].lower()
+            if first_part in leading_variants and len(parts) > 1:
+                trimmed_path = Path(os.path.join(*parts[1:]))
+                paths_to_check.append(config_path / trimmed_path)
+
     # 2. Check relative to CWD (only when explicitly allowed)
     if check_cwd_first:
         paths_to_check.append(Path.cwd() / expanded_path)
@@ -189,36 +210,22 @@ def resolve_config_path(
     default_config = get_config_directory()
     paths_to_check.append(default_config / expanded_path)
 
-    # 4. Check relative to SimpleTuner root (for paths like 'config/examples/...')
     simpletuner_root = get_simpletuner_root()
+    if expanded_path.startswith("config/examples/"):
+        try:
+            example_relative_path = Path(expanded_path).relative_to("config/examples")
+        except ValueError:
+            example_relative_path = None
+        if example_relative_path is not None:
+            paths_to_check.append(simpletuner_root / "simpletuner" / "examples" / example_relative_path)
+            paths_to_check.append(simpletuner_root / "examples" / example_relative_path)
+
+    # 5. Check relative to SimpleTuner root (for paths like 'config/...')
     paths_to_check.append(simpletuner_root / expanded_path)
 
     # Return the first existing path
     for check_path in paths_to_check:
         if check_path.exists():
             return check_path.resolve()
-
-    # Handle legacy paths that redundantly include the config directory name,
-    # e.g. config/deepfloyd/multidatabackend.json when the configs_dir already
-    # points at .../config. In that scenario drop the leading segment and retry.
-    if config_dir and not expanded_path.startswith(os.sep):
-        try:
-            parts = Path(expanded_path).parts
-        except Exception:
-            parts = ()
-
-        if parts:
-            config_root = Path(os.path.expanduser(str(config_dir)))
-            config_basename = config_root.name.lower()
-            leading_variants = {config_basename, "config", "configs"}
-            if config_basename.endswith("s") and len(config_basename) > 1:
-                leading_variants.add(config_basename[:-1])
-
-            first_part = parts[0].lower()
-            if first_part in leading_variants and len(parts) > 1:
-                trimmed_path = Path(os.path.join(*parts[1:]))
-                alt_candidate = config_root / trimmed_path
-                if alt_candidate.exists():
-                    return alt_candidate.resolve()
 
     return None

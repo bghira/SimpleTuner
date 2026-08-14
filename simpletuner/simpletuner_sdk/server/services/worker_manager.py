@@ -262,11 +262,7 @@ class WorkerManager:
             return False
 
         job = await self.job_store.get_job(worker.current_job_id)
-        if (
-            job is None
-            or getattr(job, "provider", None) != "kubeflow"
-            or job.status not in {"pending", "queued"}
-        ):
+        if job is None or getattr(job, "provider", None) != "kubeflow" or job.status not in {"pending", "queued"}:
             logger.warning(
                 "Bound worker %s has no dispatchable Kubeflow job %s",
                 worker_id,

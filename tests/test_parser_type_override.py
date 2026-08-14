@@ -49,3 +49,19 @@ class TestParserTypeOverride(unittest.TestCase):
             with self.subTest(option=option):
                 with self.assertRaises(ValueError):
                     cmd_args.parse_cmdline_args(base_args + [f"{option}=-1"], exit_on_error=True)
+
+    def test_validation_prompt_library_accepts_named_library(self):
+        parser = cmd_args.get_argument_parser()
+
+        args = parser.parse_args(
+            [
+                "--model_family=flux",
+                "--output_dir=output/test",
+                "--model_type=lora",
+                "--optimizer=adamw_bf16",
+                "--data_backend_config=config/multidatabackend.json",
+                "--validation_prompt_library=audio",
+            ]
+        )
+
+        self.assertEqual(args.validation_prompt_library, "audio")

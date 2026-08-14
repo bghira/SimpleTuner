@@ -44,9 +44,7 @@ class KubeflowQueueRouteTestCase(unittest.IsolatedAsyncioTestCase):
                 "simpletuner.simpletuner_sdk.server.services.kubeflow_job_service.get_kubeflow_job_service",
                 return_value=service,
             ),
-            patch(
-                "simpletuner.simpletuner_sdk.server.services.training_service.start_training_job"
-            ) as start_local,
+            patch("simpletuner.simpletuner_sdk.server.services.training_service.start_training_job") as start_local,
             patch(
                 "simpletuner.simpletuner_sdk.server.services.worker_repository.get_worker_repository"
             ) as get_worker_repository,

@@ -237,17 +237,10 @@ async def register_worker(
 
     now = datetime.now(timezone.utc)
 
-    if (
-        worker.is_job_bound
-        and request.current_job_id is not None
-        and request.current_job_id != worker.current_job_id
-    ):
+    if worker.is_job_bound and request.current_job_id is not None and request.current_job_id != worker.current_job_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"Worker {worker.worker_id} is bound to job "
-                f"{worker.current_job_id}, not {request.current_job_id}"
-            ),
+            detail=(f"Worker {worker.worker_id} is bound to job " f"{worker.current_job_id}, not {request.current_job_id}"),
         )
 
     worker_type = (
@@ -421,17 +414,10 @@ async def worker_heartbeat(
     worker_repo = get_worker_repository()
 
     # Update worker with heartbeat info
-    if (
-        worker.is_job_bound
-        and request.current_job_id is not None
-        and request.current_job_id != worker.current_job_id
-    ):
+    if worker.is_job_bound and request.current_job_id is not None and request.current_job_id != worker.current_job_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"Worker {worker.worker_id} is bound to job "
-                f"{worker.current_job_id}, not {request.current_job_id}"
-            ),
+            detail=(f"Worker {worker.worker_id} is bound to job " f"{worker.current_job_id}, not {request.current_job_id}"),
         )
 
     now = datetime.now(timezone.utc)
@@ -442,9 +428,7 @@ async def worker_heartbeat(
     if worker.is_job_bound:
         from ..models.worker import WorkerStatus
 
-        updates["status"] = (
-            WorkerStatus.BUSY if request.status == WorkerStatus.BUSY.value else WorkerStatus.CONNECTING
-        )
+        updates["status"] = WorkerStatus.BUSY if request.status == WorkerStatus.BUSY.value else WorkerStatus.CONNECTING
         updates["current_job_id"] = worker.current_job_id
     if worker.connected_at is None:
         updates["connected_at"] = now

@@ -99,6 +99,7 @@
 | मॉडल | आकार / संस्करण | गाइड |
 |-------|------------------|-------|
 | **ACE-Step** | 3.5B / 1.5 | [ACE-Step गाइड](ACE_STEP.md) |
+| **MiniMax Music 3** | 2.4B + 8B AR | [MiniMax Music 3 गाइड](MINIMAX_MUSIC.hi.md) |
 | **HeartMuLa** | 3B | [HeartMuLa गाइड](HEARTMULA.md) |
 
 ## मॉडल चुनना

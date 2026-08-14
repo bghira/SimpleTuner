@@ -103,6 +103,37 @@ class TestWebUIArgsFiltering(unittest.TestCase):
         self.assertIsInstance(parsed, dict)
         self.assertEqual(parsed["webhook_type"], "raw")
 
+    def test_validation_prompt_library_named_value_survives_form_normalization(self):
+        config_dict = ConfigsService.normalize_form_to_config(
+            {
+                "--model_family": "minimaxmusic",
+                "--validation_prompt_library": "audio",
+            }
+        )
+
+        self.assertEqual(config_dict["--validation_prompt_library"], "audio")
+
+    def test_validation_prompt_library_named_value_survives_saved_config_coercion(self):
+        config_dict = ConfigsService.coerce_config_values_by_field(
+            {
+                "--model_family": "minimaxmusic",
+                "--validation_prompt_library": "audio",
+            }
+        )
+
+        self.assertEqual(config_dict["--validation_prompt_library"], "audio")
+
+    def test_validation_prompt_library_boolean_values_still_coerce(self):
+        config_dict = ConfigsService.coerce_config_values_by_field(
+            {
+                "--validation_prompt_library": "true",
+                "validation_disable": "off",
+            }
+        )
+
+        self.assertIs(config_dict["--validation_prompt_library"], True)
+        self.assertIs(config_dict["validation_disable"], False)
+
     def test_error_scenario_from_logs(self):
         """Test the exact scenario that caused the error in the logs."""
         # Simulate the form data that caused the issue

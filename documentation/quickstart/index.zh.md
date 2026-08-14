@@ -99,6 +99,7 @@
 | 模型 | 规模 / 版本 | 指南 |
 |-------|--------------|-------|
 | **ACE-Step** | 3.5B / 1.5 | [ACE-Step 指南](ACE_STEP.md) |
+| **MiniMax Music 3** | 2.4B + 8B AR | [MiniMax Music 3 指南](MINIMAX_MUSIC.zh.md) |
 | **HeartMuLa** | 3B | [HeartMuLa 指南](HEARTMULA.md) |
 
 ## 选择模型

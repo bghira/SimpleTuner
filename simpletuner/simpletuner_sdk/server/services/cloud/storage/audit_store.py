@@ -27,8 +27,7 @@ class AuditStore(AsyncSQLiteStore):
         """Initialize the audit_log table."""
         conn = await self._get_connection()
 
-        await conn.execute(
-            """
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
@@ -40,8 +39,7 @@ class AuditStore(AsyncSQLiteStore):
                 user_id TEXT,
                 details TEXT DEFAULT '{}'
             )
-        """
-        )
+        """)
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp DESC)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_job_id ON audit_log(job_id)")

@@ -152,13 +152,11 @@ class UserStore:
             users_table_exists = cursor.fetchone() is not None
 
             # Schema version tracking (must exist before migrations)
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS user_schema_version (
                     version INTEGER PRIMARY KEY
                 )
-            """
-            )
+            """)
 
             # Check current version
             cursor.execute("SELECT version FROM user_schema_version LIMIT 1")

@@ -2374,9 +2374,11 @@ options:
   --validation_disable [VALIDATION_DISABLE]
                         Completely disable validation image generation
   --validation_prompt_library [VALIDATION_PROMPT_LIBRARY]
-                        Use SimpleTuner's built-in prompt library
+                        Use SimpleTuner's built-in prompt library. Use "audio"
+                        for music/audio caption + lyrics prompts.
   --user_prompt_library USER_PROMPT_LIBRARY
-                        Path to custom JSON prompt library
+                        Path to custom JSON prompt library. Entries may use
+                        prompt or caption, plus optional lyrics.
   --eval_dataset_id EVAL_DATASET_ID
                         Specific dataset to use for evaluation metrics
   --validation_stitch_input_location {left,right}

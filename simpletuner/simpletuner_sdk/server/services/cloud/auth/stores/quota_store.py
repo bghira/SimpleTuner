@@ -28,8 +28,7 @@ class QuotaStore(BaseAuthStore):
 
     def _init_schema(self, cursor) -> None:
         """Initialize the quotas table schema."""
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS quotas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 quota_type TEXT NOT NULL,
@@ -47,8 +46,7 @@ class QuotaStore(BaseAuthStore):
                 FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE CASCADE,
                 FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
             )
-        """
-        )
+        """)
 
         # Migrate legacy quotas table: add org_id and team_id columns if missing
         cursor.execute("PRAGMA table_info(quotas)")
@@ -309,13 +307,11 @@ class QuotaStore(BaseAuthStore):
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT * FROM quotas
                     WHERE user_id IS NULL AND level_id IS NULL
                       AND org_id IS NULL AND team_id IS NULL
-                    """
-                )
+                    """)
                 return [dict(row) for row in cursor.fetchall()]
             finally:
                 conn.close()
@@ -334,8 +330,7 @@ class QuotaStore(BaseAuthStore):
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT q.*,
                            u.username as user_name,
                            l.name as level_name,
@@ -347,8 +342,7 @@ class QuotaStore(BaseAuthStore):
                     LEFT JOIN organizations o ON q.org_id = o.id
                     LEFT JOIN teams t ON q.team_id = t.id
                     ORDER BY q.quota_type, q.user_id, q.level_id, q.org_id, q.team_id
-                    """
-                )
+                    """)
 
                 quotas = []
                 for row in cursor.fetchall():

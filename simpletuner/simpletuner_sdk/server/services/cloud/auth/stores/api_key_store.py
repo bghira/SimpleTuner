@@ -27,8 +27,7 @@ class APIKeyStore(BaseAuthStore):
 
     def _init_schema(self, cursor) -> None:
         """Initialize the api_keys table schema."""
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS api_keys (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -42,8 +41,7 @@ class APIKeyStore(BaseAuthStore):
                 scoped_permissions TEXT,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
-        """
-        )
+        """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id)")
 

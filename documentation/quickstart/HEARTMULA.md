@@ -63,6 +63,7 @@ Add these to your `config.json` to monitor progress:
 
 - **`validation_prompt`**: Tags or a text description of the audio (e.g., "Upbeat pop with bright synths").
 - **`validation_lyrics`**: (Optional) Lyrics for the model to sing. Use an empty string for instrumentals.
+- **`validation_prompt_library`**: Set to `"audio"` for the built-in caption + lyrics validation library.
 - **`validation_audio_duration`**: Duration in seconds for validation clips (default: 30.0).
 - **`validation_guidance`**: Guidance scale (start around 1.5 - 3.0).
 - **`validation_step_interval`**: How often to generate samples (e.g., every 100 steps).

@@ -71,13 +71,11 @@ class NotificationStore:
         cursor = conn.cursor()
 
         # Check current schema version
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS schema_version (
                 version INTEGER PRIMARY KEY
             )
-            """
-        )
+            """)
 
         row = cursor.execute("SELECT version FROM schema_version").fetchone()
         current_version = row["version"] if row else 0
@@ -92,8 +90,7 @@ class NotificationStore:
         """Run schema migrations."""
         if from_version < 1 <= to_version:
             # Notification channels table
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS notification_channels (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     channel_type TEXT NOT NULL,
@@ -127,12 +124,10 @@ class NotificationStore:
                     created_at TEXT NOT NULL,
                     updated_at TEXT
                 )
-                """
-            )
+                """)
 
             # Notification preferences table
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS notification_preferences (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
@@ -144,12 +139,10 @@ class NotificationStore:
                     FOREIGN KEY (channel_id) REFERENCES notification_channels(id)
                         ON DELETE CASCADE
                 )
-                """
-            )
+                """)
 
             # Notification log table
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS notification_log (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     channel_id INTEGER NOT NULL,
@@ -165,12 +158,10 @@ class NotificationStore:
                     FOREIGN KEY (channel_id) REFERENCES notification_channels(id)
                         ON DELETE CASCADE
                 )
-                """
-            )
+                """)
 
             # Pending responses table (for email reply correlation)
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS pending_responses (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     response_token TEXT UNIQUE NOT NULL,
@@ -182,8 +173,7 @@ class NotificationStore:
                     FOREIGN KEY (channel_id) REFERENCES notification_channels(id)
                         ON DELETE CASCADE
                 )
-                """
-            )
+                """)
 
             # Indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_channels_type ON notification_channels(channel_type)")

@@ -2368,9 +2368,12 @@ options:
   --validation_disable [VALIDATION_DISABLE]
                         Completely disable validation image generation
   --validation_prompt_library [VALIDATION_PROMPT_LIBRARY]
-                        Use SimpleTuner's built-in prompt library
+                        SimpleTuner की built-in prompt library इस्तेमाल करें।
+                        music/audio caption + lyrics prompts के लिए "audio"
+                        इस्तेमाल करें।
   --user_prompt_library USER_PROMPT_LIBRARY
-                        Path to custom JSON prompt library
+                        custom JSON prompt library का path। Entries prompt या
+                        caption और optional lyrics इस्तेमाल कर सकती हैं।
   --eval_dataset_id EVAL_DATASET_ID
                         Specific dataset to use for evaluation metrics
   --validation_stitch_input_location {left,right}

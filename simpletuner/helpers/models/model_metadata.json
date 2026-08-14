@@ -310,6 +310,15 @@
         "name": "MiniMax H3",
         "prediction_type": "flow_matching"
     },
+    "minimaxmusic": {
+        "class_name": "MiniMaxMusic",
+        "flavour_choices": [
+            "music3"
+        ],
+        "module_path": "simpletuner.helpers.models.minimaxmusic.model",
+        "name": "MiniMax Music 3",
+        "prediction_type": "flow_matching"
+    },
     "omnigen": {
         "class_name": "OmniGen",
         "flavour_choices": [
