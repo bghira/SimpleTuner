@@ -6,6 +6,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
+from peft import LoraConfig, inject_adapter_in_model
+from peft.utils import get_peft_model_state_dict
+from safetensors.torch import save_file
 
 import tests.test_stubs  # noqa: F401
 from simpletuner.helpers.distillation.anyflow.distiller import AnyFlowDistiller
@@ -1082,3 +1085,72 @@ class AnyFlowUnconditionalBatchTests(unittest.TestCase):
         self.assertNotIn("prompt_embeds", unconditional_batch)
         self.assertNotIn("attention_mask", unconditional_batch)
         self.assertNotIn("attention_masks", unconditional_batch)
+
+
+class AnyFlowDeltaEmbedderTests(unittest.TestCase):
+    def test_clone_flowmap_embedder_is_trainable(self):
+        from simpletuner.helpers.models.flowmap import clone_flowmap_embedder
+
+        frozen = torch.nn.Linear(4, 4)
+        frozen.requires_grad_(False)
+        clone = clone_flowmap_embedder(frozen)
+
+        self.assertTrue(all(p.requires_grad for p in clone.parameters()))
+        self.assertFalse(any(p.requires_grad for p in frozen.parameters()))
+
+    def test_sidecar_prefixes_cover_all_family_namings(self):
+        from simpletuner.helpers.training.adapter import ANYFLOW_SIDECAR_PREFIXES
+
+        for naming in (
+            "condition_embedder.delta_embedder.linear_1.weight",
+            "delta_adaln_embedder.table",
+            "delta_time_embedder.linear_1.weight",
+            "delta_timestep_embedder.linear_1.weight",
+            "delta_t_embedding.mlp_in.weight",
+        ):
+            with self.subTest(naming=naming):
+                self.assertTrue(naming.startswith(ANYFLOW_SIDECAR_PREFIXES))
+
+    def test_collect_anyflow_sidecar_state(self):
+        from simpletuner.helpers.training.save_hooks import _collect_anyflow_sidecar_state
+
+        class Toy(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.delta_t_embedding = torch.nn.Linear(2, 2)
+                self.other = torch.nn.Linear(2, 2)
+
+        collected = _collect_anyflow_sidecar_state(Toy())
+        self.assertEqual(
+            sorted(collected),
+            ["delta_t_embedding.bias", "delta_t_embedding.weight"],
+        )
+
+    def test_collect_anyflow_sidecar_state_excludes_peft_adapter_aliases(self):
+        from simpletuner.helpers.training.save_hooks import _collect_anyflow_sidecar_state
+
+        class Toy(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.delta_t_embedding = torch.nn.Module()
+                self.delta_t_embedding.linear_1 = torch.nn.Linear(2, 2)
+
+        model = Toy().requires_grad_(False)
+        model = inject_adapter_in_model(
+            LoraConfig(r=1, lora_alpha=1, target_modules=["delta_t_embedding.linear_1"]),
+            model,
+        )
+        state = get_peft_model_state_dict(model)
+        state.update(_collect_anyflow_sidecar_state(model))
+
+        self.assertEqual(
+            sorted(name for name in state if "delta_t_embedding" in name),
+            [
+                "delta_t_embedding.linear_1.bias",
+                "delta_t_embedding.linear_1.lora_A.weight",
+                "delta_t_embedding.linear_1.lora_B.weight",
+                "delta_t_embedding.linear_1.weight",
+            ],
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_file(state, str(Path(temp_dir) / "adapter.safetensors"))

@@ -94,6 +94,44 @@ def merge_safetensors_files(directory, metadata=None):
     logger.info(f"All tensors have been merged and saved into {output_file_path}")
 
 
+def _collect_anyflow_sidecar_state(module) -> dict[str, torch.Tensor]:
+    """FlowMap delta-embedder tensors ride in the LoRA file as sidecar keys.
+
+    PEFT's state dict only covers adapter layers; without this, trained AnyFlow jump
+    conditioning is silently dropped at every save.
+    """
+    from simpletuner.helpers.training.adapter import ANYFLOW_SIDECAR_PREFIXES
+
+    state_dict = getattr(module, "state_dict", None)
+    if not callable(state_dict):
+        return {}
+
+    collected: dict[str, tuple[int, torch.Tensor]] = {}
+    for name, tensor in state_dict().items():
+        if not name.startswith(ANYFLOW_SIDECAR_PREFIXES):
+            continue
+        if ".lora_" in name or ".lora_magnitude_vector" in name or ".original_module." in name:
+            continue
+
+        logical_name = name
+        priority = 1
+        if ".modules_to_save." in name:
+            module_name, wrapped_name = name.split(".modules_to_save.", 1)
+            adapter_name, separator, parameter_name = wrapped_name.partition(".")
+            if not separator:
+                continue
+            logical_name = f"{module_name}.{parameter_name}"
+            priority = 3 if adapter_name == "default" else 2
+        elif ".base_layer." in name:
+            logical_name = name.replace(".base_layer.", ".", 1)
+
+        previous = collected.get(logical_name)
+        if previous is None or priority > previous[0]:
+            collected[logical_name] = (priority, tensor)
+
+    return {name: value for name, (_, value) in collected.items()}
+
+
 def _collect_wrapped_component_classes(accelerator, component):
     classes = set()
     seen = set()
@@ -771,8 +809,10 @@ class SaveHookManager:
             self.ema_model.store(trainable_parameters)
             self.ema_model.copy_to(trainable_parameters)
             ema_trained_component = unwrap_model(self.accelerator, self.model.get_trained_component())
+            ema_peft_state = get_peft_model_state_dict(ema_trained_component)
+            ema_peft_state.update(_collect_anyflow_sidecar_state(ema_trained_component))
             lora_save_parameters = {
-                f"{self.model.MODEL_SUBFOLDER}_lora_layers": get_peft_model_state_dict(ema_trained_component),
+                f"{self.model.MODEL_SUBFOLDER}_lora_layers": ema_peft_state,
             }
             ema_modules_to_save = {self.model.MODEL_SUBFOLDER: ema_trained_component}
             ema_metadata = _collate_lora_metadata(ema_modules_to_save)
@@ -819,9 +859,9 @@ class SaveHookManager:
                 modules_to_save["controlnet"] = unwrapped_model
             elif isinstance(unwrapped_model, tuple(trained_component_classes)):
                 # unet_lora_layers or transformer_lora_layers
-                lora_save_parameters[f"{self.model.MODEL_SUBFOLDER}_lora_layers"] = get_peft_model_state_dict(
-                    unwrapped_model
-                )
+                component_peft_state = get_peft_model_state_dict(unwrapped_model)
+                component_peft_state.update(_collect_anyflow_sidecar_state(unwrapped_model))
+                lora_save_parameters[f"{self.model.MODEL_SUBFOLDER}_lora_layers"] = component_peft_state
                 modules_to_save[self.model.MODEL_SUBFOLDER] = unwrapped_model
             elif text_encoder_0_cls is not None and isinstance(unwrapped_model, text_encoder_0_cls):
                 lora_save_parameters["text_encoder_lora_layers"] = convert_state_dict_to_diffusers(
