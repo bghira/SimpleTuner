@@ -2716,6 +2716,8 @@ class Validation:
     ):
         if validation_prompts is None or (isinstance(validation_prompts, list) and len(validation_prompts) == 0):
             return False
+        if not self._scheduled_validation_start_reached():
+            return False
         step_interval_value = getattr(self.config, "validation_step_interval", None)
         if step_interval_value in ("", "None"):
             step_interval_value = None
@@ -2778,6 +2780,28 @@ class Validation:
         if not (self.deepspeed or self._use_distributed_validation()):
             should_validate = should_validate and self.accelerator.is_main_process
         return bool(should_validate)
+
+    @staticmethod
+    def _validation_start_threshold(config, option_name: str) -> int | None:
+        raw_value = getattr(config, option_name, None)
+        if raw_value in (None, "", "None"):
+            return None
+        threshold = int(raw_value)
+        if threshold < 0:
+            raise ValueError(f"--{option_name} must be greater than or equal to 0.")
+        return threshold if threshold > 0 else None
+
+    def _scheduled_validation_start_reached(self) -> bool:
+        after_step = self._validation_start_threshold(self.config, "validate_after_step")
+        if after_step is not None and int(self.global_step or 0) < after_step:
+            return False
+
+        after_epoch = self._validation_start_threshold(self.config, "validate_after_epoch")
+        if after_epoch is None:
+            return True
+        if self.current_epoch is None:
+            return False
+        return int(self.current_epoch) >= after_epoch
 
     def _loaded_scheduler_for_validation(self):
         pipeline = getattr(self.model, "pipeline", None)

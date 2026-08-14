@@ -48,6 +48,8 @@ env_to_args_map = {
     "VALIDATION_STEPS": "--validation_step_interval",
     "VALIDATION_STEP_INTERVAL": "--validation_step_interval",
     "VALIDATION_EPOCH_INTERVAL": "--validation_epoch_interval",
+    "VALIDATE_AFTER_STEP": "--validate_after_step",
+    "VALIDATE_AFTER_EPOCH": "--validate_after_epoch",
     "VALIDATION_RESOLUTION": "--validation_resolution",
     "VALIDATION_GUIDANCE": "--validation_guidance",
     "VALIDATION_METHOD": "--validation_method",
