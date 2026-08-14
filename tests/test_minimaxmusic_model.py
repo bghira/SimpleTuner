@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -17,7 +18,7 @@ from simpletuner.helpers.models.minimaxmusic.modular_pipeline import (
     _convert_minimax_music_comfy_lora_to_diffusers,
     _convert_minimax_music_diffusers_lora_to_comfyui,
 )
-from simpletuner.helpers.models.minimaxmusic.transformer import MiniMaxMusic3Transformer1DModel
+from simpletuner.helpers.models.minimaxmusic.transformer import MiniMaxMusic3AttnProcessor, MiniMaxMusic3Transformer1DModel
 from simpletuner.helpers.models.minimaxmusic.vocoder import MiniMaxMusic3DAV
 from simpletuner.helpers.models.registry import ModelRegistry
 
@@ -106,6 +107,34 @@ class MiniMaxMusicModelTests(unittest.TestCase):
 
         self.assertEqual(model.validation_audio_sample_rate(), 44100)
 
+    @patch("simpletuner.helpers.models.minimaxmusic.transformer.dispatch_attention_fn")
+    def test_attention_processor_casts_sdnq_fp32_outputs_to_autocast_dtype(self, dispatch_attention_fn):
+        dispatch_attention_fn.side_effect = lambda query, key, value, **kwargs: query
+
+        class FP32Projection(torch.nn.Module):
+            def forward(self, hidden_states):
+                return hidden_states.float()
+
+        attention = SimpleNamespace(
+            to_q=FP32Projection(),
+            to_k=FP32Projection(),
+            to_v=FP32Projection(),
+            to_out=torch.nn.ModuleList([torch.nn.Identity(), torch.nn.Identity()]),
+            heads=2,
+            head_dim=4,
+        )
+        hidden_states = torch.randn(1, 3, 8)
+        rotary_emb = (torch.ones(3, 4), torch.zeros(3, 4))
+
+        with torch.autocast("cpu", dtype=torch.bfloat16):
+            output = MiniMaxMusic3AttnProcessor()(attention, hidden_states, rotary_emb)
+
+        query, key, value = dispatch_attention_fn.call_args.args[:3]
+        self.assertEqual(query.dtype, torch.bfloat16)
+        self.assertEqual(key.dtype, torch.bfloat16)
+        self.assertEqual(value.dtype, torch.bfloat16)
+        self.assertEqual(output.dtype, torch.bfloat16)
+
     def test_validation_kwargs_restore_raw_prompt_for_modular_pipeline(self):
         model = self._build_model()
         model.config.validation_lyrics = "[verse]\nhello"
@@ -187,6 +216,25 @@ class MiniMaxMusicModelTests(unittest.TestCase):
         self.assertIsNone(model.text_encoder_1)
         self.assertIsNone(model.text_encoders)
         self.assertIsNone(model.tokenizers)
+
+    def test_cached_frame_hiddens_only_reload_condition_encoder(self):
+        model = self._build_model()
+        condition_encoder = torch.nn.Identity()
+
+        def restore_condition_encoder(move_to_device=True):
+            del move_to_device
+            model.condition_encoder = condition_encoder
+            return condition_encoder
+
+        model.load_condition_encoder = MagicMock(side_effect=restore_condition_encoder)
+        model.load_text_encoder = MagicMock()
+        frame_hiddens = torch.randn(1, 5, 8)
+
+        condition = model._condition_from_frame_hiddens(frame_hiddens, latent_length=5)
+
+        model.load_condition_encoder.assert_called_once_with(move_to_device=True)
+        model.load_text_encoder.assert_not_called()
+        torch.testing.assert_close(condition, frame_hiddens)
 
     @patch("simpletuner.helpers.models.minimaxmusic.model.MiniMaxMusic3ModularPipeline")
     def test_get_pipeline_restores_tokenizer_after_validation_clear(self, mock_pipeline_cls):
@@ -404,6 +452,24 @@ class MiniMaxMusicModelTests(unittest.TestCase):
         self.assertEqual(output.sample.shape, (1, 4, 6))
         self.assertEqual(output.hidden_states.shape, (1, 6, 12))
         self.assertEqual(sorted(hidden_states_buffer), ["layer_0", "layer_1"])
+
+    def test_transformer_activates_configured_musubi_block_swap(self):
+        transformer = _tiny_transformer(enable_time_sign_embed=True)
+        manager = MagicMock()
+        manager.activate.return_value = True
+        manager.is_managed_block.side_effect = lambda index: index == 1
+        transformer._musubi_block_swap = manager
+
+        transformer(
+            hidden_states=torch.randn(1, 4, 6),
+            timestep=torch.tensor([0.5]),
+            encoder_hidden_states=torch.randn(1, 6, 8),
+            return_dict=True,
+        )
+
+        manager.activate.assert_called_once()
+        manager.stream_in.assert_called_once_with(transformer.transformer_blocks[1], torch.device("cpu"))
+        manager.stream_out.assert_called_once_with(transformer.transformer_blocks[1])
 
     def test_transformer_accepts_tokenwise_timesteps_for_self_flow(self):
         transformer = _tiny_transformer(enable_time_sign_embed=True)
@@ -807,6 +873,38 @@ class MiniMaxMusicAnyFlowValidationWrapperTests(unittest.TestCase):
         self.assertIsNotNone(r_timestep)
         self.assertTrue(torch.all(r_timestep >= received["timestep"]))
         self.assertTrue(torch.all(r_timestep <= 1.0))
+
+
+class MiniMaxMusicExampleConfigTests(unittest.TestCase):
+    def test_memory_tier_examples_use_tested_acceleration_settings(self):
+        examples_root = Path(__file__).resolve().parents[1] / "simpletuner" / "examples"
+        expected = {
+            "24g": {"duration": 30, "quantize_via": "cpu", "blocks_to_swap": 35, "stride": 6},
+            "32g": {"duration": 40, "quantize_via": "cpu", "blocks_to_swap": 18, "stride": 6},
+            "48g": {"duration": 60, "quantize_via": "accelerator", "blocks_to_swap": 0, "stride": 12},
+        }
+
+        for tier, settings in expected.items():
+            with self.subTest(tier=tier):
+                config_path = examples_root / f"minimaxmusic-music3-{tier}.peft-lora" / "config.json"
+                config = json.loads(config_path.read_text(encoding="utf-8"))
+                data_path = examples_root / f"minimaxmusic-audio-{tier}.json"
+                data_config = json.loads(data_path.read_text(encoding="utf-8"))
+
+                self.assertEqual(config["attention_mechanism"], "flash-attn-varlen-hub")
+                self.assertTrue(config["trust_remote_code"])
+                self.assertEqual(config["base_model_precision"], "int8-sdnq")
+                self.assertEqual(config["text_encoder_1_precision"], "int8-sdnq")
+                self.assertTrue(config["sdnq_use_hadamard"])
+                self.assertEqual(config["sdnq_hadamard_group_size"], 256)
+                self.assertEqual(config["quantize_via"], settings["quantize_via"])
+                self.assertTrue(config["dynamo_use_regional_compilation"])
+                self.assertEqual(config["gradient_checkpointing_interval"], 2)
+                self.assertEqual(config["gradient_checkpointing_segment_stride"], settings["stride"])
+                self.assertEqual(config.get("musubi_blocks_to_swap", 0), settings["blocks_to_swap"])
+                self.assertEqual(config["validation_audio_duration"], settings["duration"])
+                self.assertEqual(data_config[0]["split"], "test")
+                self.assertEqual(data_config[0]["audio"]["max_duration_seconds"], settings["duration"])
 
 
 if __name__ == "__main__":

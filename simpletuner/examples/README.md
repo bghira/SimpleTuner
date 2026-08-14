@@ -51,6 +51,9 @@ ACE-Step examples are split by model generation:
 MiniMax Music examples:
 
 - `minimaxmusic-music3.peft-lora` trains MiniMax Music 3 LoRA with raw audio encoded by VAECache through the DAV audio VAE, and references `minimaxmusic-prompts.json` for caption + lyrics validation prompts.
+- `minimaxmusic-music3-24g.peft-lora` uses CPU-side INT8-SDNQ Hadamard quantization, segmented checkpointing, and maximum Musubi block swapping for audio up to 30 seconds.
+- `minimaxmusic-music3-32g.peft-lora` uses CPU-side quantization and swaps half of the transformer blocks for audio up to 40 seconds.
+- `minimaxmusic-music3-48g.peft-lora` uses accelerator-side quantization and sparse segmented checkpointing while keeping the quantized transformer resident for audio up to 60 seconds.
 
 LTX-2 conditioning examples are split by conditioning style:
 

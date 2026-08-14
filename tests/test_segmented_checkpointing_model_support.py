@@ -42,6 +42,18 @@ class AceStepSegmentedCheckpointingSupportTests(unittest.TestCase):
         )
 
 
+class MiniMaxMusicSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.minimaxmusic.transformer import MiniMaxMusic3Transformer1DModel
+
+        assert_checkpointing_controls(
+            self,
+            MiniMaxMusic3Transformer1DModel,
+            interval=True,
+            stride=True,
+        )
+
+
 class AuraFlowSegmentedCheckpointingSupportTests(unittest.TestCase):
     def test_checkpointing_controls(self):
         from simpletuner.helpers.models.auraflow.transformer import AuraFlowTransformer2DModel

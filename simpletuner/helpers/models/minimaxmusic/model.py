@@ -56,6 +56,7 @@ from simpletuner.helpers.models.minimaxmusic.rvq_depth_decoder import MiniMaxMus
 from simpletuner.helpers.models.minimaxmusic.transformer import MiniMaxMusic3Transformer1DModel
 from simpletuner.helpers.models.minimaxmusic.vocoder import MiniMaxMusic3DAV, MiniMaxMusic3Vocoder
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.lora_format import (
     PEFTLoRAFormat,
     collect_lora_ranks,
@@ -325,7 +326,7 @@ class MiniMaxMusic(AudioModelFoundation):
             anyflow_config = self._anyflow_distillation_config()
             pretrained_load_args.setdefault("deltatime_type", anyflow_config.get("deltatime_type", "r"))
             pretrained_load_args.setdefault("gate_value", float(anyflow_config.get("gate_value", 0.25)))
-        return pretrained_load_args
+        return apply_musubi_pretrained_defaults(self.config, pretrained_load_args)
 
     def post_model_load_setup(self):
         super().post_model_load_setup()
@@ -647,11 +648,7 @@ class MiniMaxMusic(AudioModelFoundation):
             subfolder="rvq_depth_decoder",
             torch_dtype=self.config.weight_dtype,
         )
-        condition_encoder = MiniMaxMusic3ConditionEncoder.from_pretrained(
-            base_path,
-            subfolder="condition_encoder",
-            torch_dtype=self.config.weight_dtype,
-        )
+        condition_encoder = self.load_condition_encoder(move_to_device=False)
         for component in (language_model, rvq_depth_decoder, condition_encoder):
             component.eval()
             component.requires_grad_(False)
@@ -668,6 +665,20 @@ class MiniMaxMusic(AudioModelFoundation):
         self.condition_encoder = condition_encoder
         self.text_encoders = [language_model]
         self.text_encoder_1 = language_model
+
+    def load_condition_encoder(self, move_to_device: bool = True):
+        if self.condition_encoder is None:
+            self.condition_encoder = MiniMaxMusic3ConditionEncoder.from_pretrained(
+                self._checkpoint_path(),
+                subfolder="condition_encoder",
+                revision=getattr(self.config, "revision", None),
+                torch_dtype=self.config.weight_dtype,
+            )
+            self.condition_encoder.eval()
+            self.condition_encoder.requires_grad_(False)
+        if move_to_device:
+            self.condition_encoder.to(self.accelerator.device, dtype=self.config.weight_dtype)
+        return self.condition_encoder
 
     def unload_text_encoder(self):
         super().unload_text_encoder()
@@ -831,7 +842,7 @@ class MiniMaxMusic(AudioModelFoundation):
 
     def _condition_from_frame_hiddens(self, frame_hiddens: torch.Tensor, latent_length: int) -> torch.Tensor:
         if self.condition_encoder is None:
-            self.load_text_encoder(move_to_device=True)
+            self.load_condition_encoder(move_to_device=True)
         condition_encoder = self.condition_encoder
         if condition_encoder is None:
             raise ValueError("MiniMax Music 3 condition encoder is not loaded.")
