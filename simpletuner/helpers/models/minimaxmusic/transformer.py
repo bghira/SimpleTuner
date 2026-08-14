@@ -242,6 +242,7 @@ class MiniMaxMusic3Transformer1DModel(ModelMixin, ConfigMixin, PeftAdapterMixin)
         self.postprocess_conv = nn.Conv1d(in_channels, in_channels, 1, bias=False)
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_backend = "torch"
         self.gradient_checkpointing_interval = None
         self.gradient_checkpointing_segment_stride = None
         self._musubi_block_swap = MusubiBlockSwapManager.build(
@@ -250,6 +251,9 @@ class MiniMaxMusic3Transformer1DModel(ModelMixin, ConfigMixin, PeftAdapterMixin)
             swap_device=musubi_block_swap_device,
             logger=logger,
         )
+
+    def set_gradient_checkpointing_backend(self, backend: str):
+        self.gradient_checkpointing_backend = backend
 
     def set_gradient_checkpointing_interval(self, interval: int):
         self.gradient_checkpointing_interval = interval
@@ -428,7 +432,17 @@ class MiniMaxMusic3Transformer1DModel(ModelMixin, ConfigMixin, PeftAdapterMixin)
                 self.gradient_checkpointing_interval,
                 self.gradient_checkpointing_segment_stride,
             ):
-                hidden_states = self._gradient_checkpointing_func(block, hidden_states, rotary_emb)
+                if self.gradient_checkpointing_backend.startswith("unsloth"):
+                    from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
+
+                    hidden_states = offloaded_checkpoint(
+                        block,
+                        hidden_states,
+                        rotary_emb,
+                        use_reentrant=False,
+                    )
+                else:
+                    hidden_states = self._gradient_checkpointing_func(block, hidden_states, rotary_emb)
             else:
                 hidden_states = block(hidden_states, rotary_emb)
             if hidden_states_buffer is not None:

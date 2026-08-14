@@ -94,6 +94,23 @@ class MiniMaxMusicModelTests(unittest.TestCase):
         self.assertEqual(registered.NAME, "MiniMax Music 3")
         self.assertIn("music3", registered.get_flavour_choices())
 
+    @patch("simpletuner.helpers.training.offloaded_gradient_checkpointer.offloaded_checkpoint")
+    def test_unsloth_checkpointing_backend_uses_offloaded_checkpoint(self, offloaded_checkpoint):
+        transformer = _tiny_transformer().train()
+        transformer.gradient_checkpointing = True
+        transformer.set_gradient_checkpointing_backend("unsloth")
+        transformer.set_gradient_checkpointing_interval(2)
+        offloaded_checkpoint.side_effect = lambda function, *args, **kwargs: function(*args)
+
+        transformer(
+            hidden_states=torch.randn(1, 4, 6, requires_grad=True),
+            timestep=torch.ones(1),
+            encoder_hidden_states=torch.randn(1, 6, 8),
+        )
+
+        offloaded_checkpoint.assert_called_once()
+        self.assertFalse(offloaded_checkpoint.call_args.kwargs["use_reentrant"])
+
     def test_minimaxmusic_supports_audio_only_training(self):
         self.assertTrue(MiniMaxMusic.supports_audio_only_training())
 
