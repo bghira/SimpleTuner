@@ -30,8 +30,7 @@ class HTMXBehaviourTestCase(WebUITestCase):
             driver.find_element(By.CSS_SELECTOR, ".tab-btn[data-tab='basic']").click()
 
             WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "trainer-form")))
-            driver.execute_script(
-                """
+            driver.execute_script("""
                 if (!window.__htmxHarness) {
                     window.__htmxHarness = {
                         requests: [],
@@ -135,16 +134,14 @@ class HTMXBehaviourTestCase(WebUITestCase):
                         trainer.hasUnsavedChanges = true;
                     }
                 }
-                """
-            )
+                """)
 
             def fire_request(*, expect_dom: bool = False):
                 # Check both requests and fetches since saveConfig uses fetch() API
                 req_before = driver.execute_script("return window.__htmxHarness.requests.length;")
                 fetch_before = driver.execute_script("return window.__htmxHarness.fetches.length;")
                 dom_before = driver.execute_script("return window.__htmxHarness.domChanges.length;")
-                driver.execute_script(
-                    """
+                driver.execute_script("""
                     if (window.Alpine && Alpine.store) {
                         const trainer = Alpine.store('trainer');
                         if (trainer && typeof trainer.saveConfig === 'function') {
@@ -156,8 +153,7 @@ class HTMXBehaviourTestCase(WebUITestCase):
                             }
                         }
                     }
-                    """
-                )
+                    """)
                 # Wait for either HTMX requests or fetch calls to complete
                 WebDriverWait(driver, 5).until(
                     lambda d: driver.execute_script("return window.__htmxHarness.requests.length;") > req_before

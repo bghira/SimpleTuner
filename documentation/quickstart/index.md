@@ -99,6 +99,7 @@ Step-by-step guides for training each supported model architecture.
 | Model | Size / Version | Guide |
 |-------|----------------|-------|
 | **ACE-Step** | 3.5B / 1.5 | [ACE-Step Guide](ACE_STEP.md) |
+| **MiniMax Music 3** | 2.4B + 8B AR | [MiniMax Music 3 Guide](MINIMAX_MUSIC.md) |
 | **HeartMuLa** | 3B | [HeartMuLa Guide](HEARTMULA.md) |
 
 ## Choosing a Model

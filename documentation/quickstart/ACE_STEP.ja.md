@@ -106,6 +106,7 @@ ACE-Step v1.5 では `model_family: "ace_step"` を維持したまま、v1.5 fla
 
 - **`validation_prompt`**: 生成したい音声のテキスト説明（例: "A catchy pop song with upbeat drums"）。
 - **`validation_lyrics`**: （任意）モデルに歌わせたい歌詞。
+- **`validation_prompt_library`**: 組み込みの caption + lyrics 検証ライブラリには `"audio"` を使います。
 - **`validation_audio_duration`**: 検証クリップの秒数（デフォルト: 30.0）。
 - **`validation_guidance`**: ガイダンススケール（デフォルト: 約 3.0〜5.0）。
 - **`validation_step_interval`**: サンプル生成の間隔（例: 100 ステップごと）。

@@ -180,8 +180,7 @@ class BasePage:
 
         def _pending_requests():
             try:
-                return self.driver.execute_script(
-                    """
+                return self.driver.execute_script("""
                     if (typeof window.__trainerHarnessHtmxPending === 'number') {
                       return window.__trainerHarnessHtmxPending;
                     }
@@ -189,8 +188,7 @@ class BasePage:
                       return 0;
                     }
                     return document.querySelector('[hx-request]') ? 1 : 0;
-                    """
-                )
+                    """)
             except Exception:
                 return 0
 

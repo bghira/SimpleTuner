@@ -63,6 +63,7 @@ mkdir -p config/heartmula-training-demo
 
 - **`validation_prompt`**: 标签或音频描述（例如“明亮合成器的轻快流行”）。
 - **`validation_lyrics`**: （可选）用于演唱的歌词。纯器乐可使用空字符串。
+- **`validation_prompt_library`**: 使用 `"audio"` 选择内置 caption + lyrics 验证库。
 - **`validation_audio_duration`**: 验证音频时长（秒，默认 30.0）。
 - **`validation_guidance`**: 引导强度（建议从 1.5 - 3.0 开始）。
 - **`validation_step_interval`**: 生成样本的频率（例如每 100 步）。

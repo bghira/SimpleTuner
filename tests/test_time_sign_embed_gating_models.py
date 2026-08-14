@@ -1,6 +1,7 @@
 import unittest
 
 from simpletuner.helpers.models.longcat_image.transformer import LongCatImageTransformer2DModel
+from simpletuner.helpers.models.minimaxmusic.transformer import MiniMaxMusic3Transformer1DModel
 from simpletuner.helpers.models.qwen_image.transformer import QwenImageTransformer2DModel
 from simpletuner.helpers.models.sana.transformer import SanaTransformer2DModel
 from simpletuner.helpers.models.sanavideo.transformer import SanaVideoTransformer3DModel
@@ -62,6 +63,20 @@ def _tiny_qwen_image_transformer(enable_time_sign_embed: bool = False) -> QwenIm
     )
 
 
+def _tiny_minimax_music_transformer(enable_time_sign_embed: bool = False) -> MiniMaxMusic3Transformer1DModel:
+    return MiniMaxMusic3Transformer1DModel(
+        in_channels=4,
+        condition_dim=8,
+        num_layers=1,
+        num_attention_heads=2,
+        attention_head_dim=6,
+        ff_inner_dim=16,
+        rotary_dim=4,
+        fourier_embedding_dim=8,
+        enable_time_sign_embed=enable_time_sign_embed,
+    )
+
+
 def _tiny_sanavideo_transformer(
     guidance_embeds: bool,
     enable_time_sign_embed: bool = False,
@@ -102,6 +117,10 @@ class TimeSignEmbedGatingAcrossModelsTest(unittest.TestCase):
     def test_qwen_image_time_sign_embed_gated(self):
         self.assertFalse(_state_dict_has_time_sign_embed(_tiny_qwen_image_transformer()))
         self.assertTrue(_state_dict_has_time_sign_embed(_tiny_qwen_image_transformer(enable_time_sign_embed=True)))
+
+    def test_minimax_music_time_sign_embed_gated(self):
+        self.assertFalse(_state_dict_has_time_sign_embed(_tiny_minimax_music_transformer()))
+        self.assertTrue(_state_dict_has_time_sign_embed(_tiny_minimax_music_transformer(enable_time_sign_embed=True)))
 
     def test_sanavideo_time_sign_embed_gated_without_guidance(self):
         self.assertFalse(_state_dict_has_time_sign_embed(_tiny_sanavideo_transformer(guidance_embeds=False)))

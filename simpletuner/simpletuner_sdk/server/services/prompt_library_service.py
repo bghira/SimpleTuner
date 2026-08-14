@@ -44,6 +44,7 @@ class PromptLibraryEntry:
     adapter_strength: Optional[float] = None
     bbox_entities: Optional[List[Dict[str, Any]]] = None
     bbox_keyframes: Optional[List[Dict[str, Any]]] = None
+    lyrics: Optional[str] = None
 
     @classmethod
     def from_payload(cls, payload: Union[str, Dict[str, Any]]) -> "PromptLibraryEntry":
@@ -51,9 +52,9 @@ class PromptLibraryEntry:
             return cls(prompt=payload, adapter_strength=None)
         if not isinstance(payload, dict):
             raise PromptLibraryError("Prompt entries must be strings or objects with a prompt field.")
-        prompt_value = payload.get("prompt")
+        prompt_value = payload.get("prompt", payload.get("caption", payload.get("tags")))
         if prompt_value is None:
-            raise PromptLibraryError("Prompt entry objects must include a 'prompt' field.")
+            raise PromptLibraryError("Prompt entry objects must include a 'prompt', 'caption', or 'tags' field.")
         strength = payload.get("adapter_strength", None)
         try:
             strength_value = None if strength is None else float(strength)
@@ -61,11 +62,15 @@ class PromptLibraryEntry:
             raise PromptLibraryError("adapter_strength must be numeric when provided.")
         bbox_entities = cls._parse_bbox_entities(payload.get("bbox_entities"))
         bbox_keyframes = cls._parse_bbox_keyframes(payload.get("bbox_keyframes"))
+        lyrics_value = payload.get("lyrics", None)
+        if lyrics_value is not None and not isinstance(lyrics_value, str):
+            raise PromptLibraryError("lyrics must be a string when provided.")
         return cls(
             prompt=str(prompt_value),
             adapter_strength=strength_value,
             bbox_entities=bbox_entities,
             bbox_keyframes=bbox_keyframes,
+            lyrics=lyrics_value,
         )
 
     @staticmethod
@@ -127,6 +132,8 @@ class PromptLibraryEntry:
             data["bbox_entities"] = self.bbox_entities
         if self.bbox_keyframes is not None:
             data["bbox_keyframes"] = self.bbox_keyframes
+        if self.lyrics is not None:
+            data["lyrics"] = self.lyrics
         return data
 
 
@@ -194,7 +201,12 @@ class PromptLibraryService:
     def serialise_entries(entries: Dict[str, PromptLibraryEntry]) -> Dict[str, Any]:
         serialised: Dict[str, Any] = {}
         for key, entry in entries.items():
-            if entry.adapter_strength is None and entry.bbox_entities is None and entry.bbox_keyframes is None:
+            if (
+                entry.adapter_strength is None
+                and entry.bbox_entities is None
+                and entry.bbox_keyframes is None
+                and entry.lyrics is None
+            ):
                 serialised[key] = entry.prompt
             else:
                 serialised[key] = entry.serialise()

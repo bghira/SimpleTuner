@@ -85,8 +85,7 @@ class WebUITestCase(SeleniumTestCase):
     def dismiss_onboarding(driver) -> None:
         """Hide the onboarding overlay if it is currently visible."""
 
-        driver.execute_script(
-            """
+        driver.execute_script("""
             if (window.Alpine && Alpine.store && Alpine.store('trainer')) {
                 const store = Alpine.store('trainer');
                 store.overlayVisible = false;
@@ -97,5 +96,4 @@ class WebUITestCase(SeleniumTestCase):
             if (overlay) {
                 overlay.style.display = 'none';
             }
-            """
-        )
+            """)

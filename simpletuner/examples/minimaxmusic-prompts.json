@@ -1,0 +1,14 @@
+{
+  "neon_pop_hook": {
+    "caption": "neon synth pop, 120 bpm, bright lead vocal, pulsing bass, glossy drums, wide chorus harmonies",
+    "lyrics": "[verse]\nwe found sparks in the city rain\ncounted seconds by the train\n[chorus]\nlight it up and let it go\nwe are brighter than we know"
+  },
+  "indie_rock_room": {
+    "caption": "indie rock band in a small live room, 94 bpm, jangly guitars, warm bass, dry snare, intimate vocal",
+    "lyrics": "[verse]\nthere is dust on the windowsill\nand a song we never played\n[chorus]\nturn the corner, hold it still\nwe are not so far away"
+  },
+  "instrumental_bossa": {
+    "caption": "instrumental bossa nova trio, nylon guitar, upright bass, soft shaker, mellow piano fills, sunny cafe ambience",
+    "lyrics": ""
+  }
+}

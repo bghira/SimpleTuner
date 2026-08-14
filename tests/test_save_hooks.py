@@ -109,10 +109,7 @@ class RamtorchPrefetchOrderWriterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             barrier = ctx.Barrier(2, timeout=60)
             errors = ctx.Value("i", 0)
-            workers = [
-                ctx.Process(target=_concurrent_writer, args=(tmpdir, barrier, 30, errors))
-                for _ in range(2)
-            ]
+            workers = [ctx.Process(target=_concurrent_writer, args=(tmpdir, barrier, 30, errors)) for _ in range(2)]
             for worker in workers:
                 worker.start()
             for worker in workers:

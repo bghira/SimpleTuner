@@ -29,8 +29,7 @@ class OAuthStateStore(BaseAuthStore):
 
     def _init_schema(self, cursor) -> None:
         """Initialize the oauth_states table schema."""
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS oauth_states (
                 state TEXT PRIMARY KEY,
                 provider TEXT NOT NULL,
@@ -39,8 +38,7 @@ class OAuthStateStore(BaseAuthStore):
                 expires_at TEXT NOT NULL,
                 metadata TEXT DEFAULT '{}'
             )
-        """
-        )
+        """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_oauth_states_expires ON oauth_states(expires_at)")
 
     async def create(

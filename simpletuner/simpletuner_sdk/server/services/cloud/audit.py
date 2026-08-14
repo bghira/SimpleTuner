@@ -167,8 +167,7 @@ class AuditStore:
             cursor = conn.cursor()
 
             # Audit log table - append-only
-            cursor.execute(
-                """
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS audit_log (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp TEXT NOT NULL,
@@ -183,8 +182,7 @@ class AuditStore:
                     previous_hash TEXT NOT NULL,
                     entry_hash TEXT NOT NULL
                 )
-            """
-            )
+            """)
 
             # Indexes for common queries
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp)")
@@ -579,24 +577,20 @@ class AuditStore:
                 total = cursor.fetchone()["count"]
 
                 # Entries by type
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT event_type, COUNT(*) as count
                     FROM audit_log
                     GROUP BY event_type
                     ORDER BY count DESC
-                """
-                )
+                """)
                 by_type = {row["event_type"]: row["count"] for row in cursor.fetchall()}
 
                 # Recent activity (last 24 hours)
-                cursor.execute(
-                    """
+                cursor.execute("""
                     SELECT COUNT(*) as count
                     FROM audit_log
                     WHERE timestamp >= datetime('now', '-24 hours')
-                """
-                )
+                """)
                 recent = cursor.fetchone()["count"]
 
                 # First and last entry

@@ -23,6 +23,7 @@ def find_referenced_files(config_path: Path) -> List[str]:
         fields_to_check = [
             "data_backend_config",
             "validation_prompt_library",
+            "user_prompt_library",
             "controlnet_config",
             "reference_config",
             "lycoris_config",
@@ -54,6 +55,7 @@ def update_config_paths(config_path: Path, referenced_files: List[str]) -> None:
         fields_to_check = [
             "data_backend_config",
             "validation_prompt_library",
+            "user_prompt_library",
             "controlnet_config",
             "reference_config",
             "lycoris_config",

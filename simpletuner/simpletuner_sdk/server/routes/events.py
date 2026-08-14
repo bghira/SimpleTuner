@@ -396,13 +396,11 @@ async def get_recent_events(request: Request, _user: User = Depends(get_current_
     events = [event for event in events if event.type != EventType.VALIDATION_IMAGE]
 
     if not events:
-        return HTMLResponse(
-            """
+        return HTMLResponse("""
         <div class="text-muted text-center py-3">
             <i class="fas fa-info-circle"></i> No recent events
         </div>
-        """
-        )
+        """)
 
     html = ""
     for event in events:

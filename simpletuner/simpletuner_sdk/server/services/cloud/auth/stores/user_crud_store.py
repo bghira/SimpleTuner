@@ -27,8 +27,7 @@ class UserCrudStore(BaseAuthStore):
 
     def _init_schema(self, cursor) -> None:
         """Initialize the users table schema."""
-        cursor.execute(
-            """
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 email TEXT UNIQUE NOT NULL,
@@ -46,8 +45,7 @@ class UserCrudStore(BaseAuthStore):
                 org_id INTEGER,
                 metadata TEXT DEFAULT '{}'
             )
-        """
-        )
+        """)
 
         # Ensure columns exist for legacy databases (migrations)
         cursor.execute("PRAGMA table_info(users)")

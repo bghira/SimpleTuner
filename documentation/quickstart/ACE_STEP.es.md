@@ -106,6 +106,7 @@ Añade estos valores a tu `config.json` para monitorear el progreso:
 
 - **`validation_prompt`**: Una descripción de texto del audio que quieres generar (p. ej., "A catchy pop song with upbeat drums").
 - **`validation_lyrics`**: (Opcional) Letras para que el modelo cante.
+- **`validation_prompt_library`**: Usa `"audio"` para la biblioteca integrada de caption + lyrics.
 - **`validation_audio_duration`**: Duración en segundos para clips de validación (predeterminado: 30.0).
 - **`validation_guidance`**: Escala de guidance (predeterminado: ~3.0 - 5.0).
 - **`validation_step_interval`**: Con qué frecuencia generar muestras (p. ej., cada 100 pasos).

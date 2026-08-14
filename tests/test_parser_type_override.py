@@ -34,3 +34,19 @@ class TestParserTypeOverride(unittest.TestCase):
         action = next(action for action in parser._actions if "--nsfw_check_models" in action.option_strings)
         self.assertEqual(action.default, DEFAULT_NSFW_CHECK_MODELS_CSV)
         self.assertNotIn("Marqo/", action.default)
+
+    def test_validation_prompt_library_accepts_named_library(self):
+        parser = cmd_args.get_argument_parser()
+
+        args = parser.parse_args(
+            [
+                "--model_family=flux",
+                "--output_dir=output/test",
+                "--model_type=lora",
+                "--optimizer=adamw_bf16",
+                "--data_backend_config=config/multidatabackend.json",
+                "--validation_prompt_library=audio",
+            ]
+        )
+
+        self.assertEqual(args.validation_prompt_library, "audio")

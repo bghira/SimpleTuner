@@ -1,0 +1,23 @@
+[
+  {
+    "id": "minimaxmusic-demo-data",
+    "type": "huggingface",
+    "dataset_type": "audio",
+    "dataset_name": "Yi3852/ACEStep-Songs",
+    "metadata_backend": "huggingface",
+    "caption_strategy": "huggingface",
+    "audio": {
+      "bucket_strategy": "duration",
+      "duration_interval": 3.0,
+      "max_duration_seconds": 30
+    },
+    "cache_dir_vae": "cache/vae/{model_family}/minimaxmusic-demo-data"
+  },
+  {
+    "id": "text-embeds",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "type": "local",
+    "cache_dir": "cache/text/{model_family}"
+  }
+]

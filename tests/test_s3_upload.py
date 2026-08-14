@@ -168,7 +168,6 @@ class TestS3PutObjectAuthentication(unittest.TestCase):
             {"ETag": result.headers["etag"], "Key": "secret.bin", "Bucket": "bucket2"},
         )
 
-
     def test_kubeflow_upload_is_registered_on_the_job(self):
         """Test Kubeflow uploads are recorded before job completion."""
         import asyncio
@@ -181,9 +180,7 @@ class TestS3PutObjectAuthentication(unittest.TestCase):
             body=b"lora weights",
         )
         mock_store = MagicMock()
-        mock_store.get_job_by_upload_token = AsyncMock(
-            return_value=MockJob("job-456", provider="kubeflow")
-        )
+        mock_store.get_job_by_upload_token = AsyncMock(return_value=MockJob("job-456", provider="kubeflow"))
         mock_store.update_job = AsyncMock()
 
         with patch(

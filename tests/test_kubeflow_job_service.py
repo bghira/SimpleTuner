@@ -47,9 +47,7 @@ class KubeflowJobServiceTestCase(unittest.IsolatedAsyncioTestCase):
         """Verify submission binds one ephemeral Worker to one queued job."""
         config = {"model_family": "sdxl"}
         with (
-            patch(
-                "simpletuner.simpletuner_sdk.server.services.kubeflow_job_service.uuid.uuid4"
-            ) as uuid4,
+            patch("simpletuner.simpletuner_sdk.server.services.kubeflow_job_service.uuid.uuid4") as uuid4,
             patch(
                 "simpletuner.simpletuner_sdk.server.services.worker_credentials.generate_worker_token",
                 return_value="test-token",
@@ -182,9 +180,12 @@ class KubeflowJobServiceTestCase(unittest.IsolatedAsyncioTestCase):
         self.provisioner.get_logs.side_effect = lambda *_: events.append("logs") or "training complete"
         self.provisioner.delete.side_effect = lambda *_: events.append("delete")
 
-        with tempfile.TemporaryDirectory() as tmpdir, patch(
-            "simpletuner.simpletuner_sdk.server.routes.cloud.helpers.get_local_upload_dir",
-            return_value=Path(tmpdir),
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch(
+                "simpletuner.simpletuner_sdk.server.routes.cloud.helpers.get_local_upload_dir",
+                return_value=Path(tmpdir),
+            ),
         ):
             await self.service.finalize(job.job_id)
             archived_log = Path(tmpdir) / "outputs" / job.job_id / "worker.log"
@@ -228,7 +229,6 @@ class KubeflowJobServiceTestCase(unittest.IsolatedAsyncioTestCase):
         self.worker_repository.delete_worker.assert_awaited_once_with("worker-123")
         updates = self.job_store.update_job.await_args.args[1]
         self.assertEqual(updates["status"], CloudJobStatus.FAILED.value)
-
 
     async def test_reconcile_completed_trainjob_without_artifact_fails(self) -> None:
         """Verify infrastructure success cannot bypass artifact confirmation."""

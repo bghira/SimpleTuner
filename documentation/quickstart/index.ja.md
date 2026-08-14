@@ -99,6 +99,7 @@
 | モデル | サイズ / バージョン | ガイド |
 |-------|------------------------|-------|
 | **ACE-Step** | 3.5B / 1.5 | [ACE-Step ガイド](ACE_STEP.md) |
+| **MiniMax Music 3** | 2.4B + 8B AR | [MiniMax Music 3 ガイド](MINIMAX_MUSIC.ja.md) |
 | **HeartMuLa** | 3B | [HeartMuLa ガイド](HEARTMULA.md) |
 
 ## モデルの選び方

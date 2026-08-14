@@ -71,8 +71,7 @@ class _TrainerPageMixin:
         if not load_jobs:
             return []
 
-        result = driver.execute_async_script(
-            """
+        result = driver.execute_async_script("""
             const done = arguments[0];
             const comp = window.Alpine.$data(document.querySelector('#cloud-tab-content'));
             if (!comp || typeof comp.loadJobs !== 'function') {
@@ -84,8 +83,7 @@ class _TrainerPageMixin:
                     names: (comp.jobs || []).map((job) => job.metadata?.tracker_run_name || null),
                 }))
                 .catch((error) => done({ error: String(error) }));
-            """
-        )
+            """)
         if not isinstance(result, dict):
             raise AssertionError(f"Unexpected Cloud jobs loader result: {result!r}")
         if result.get("error"):
@@ -955,8 +953,7 @@ class ValidationPromptLibraryLayoutTestCase(_TrainerPageMixin, WebUITestCase):
                 message="Prompt library modal did not open with an editable prompt row",
             )
 
-            metrics = driver.execute_script(
-                """
+            metrics = driver.execute_script("""
                 const rect = (element) => {
                     const r = element.getBoundingClientRect();
                     return {
@@ -986,8 +983,7 @@ class ValidationPromptLibraryLayoutTestCase(_TrainerPageMixin, WebUITestCase):
                     rowsClientWidth: rows.clientWidth,
                     rowsScrollWidth: rows.scrollWidth
                 };
-                """
-            )
+                """)
 
             tolerance = 1.5
             self.assertEqual(metrics["modalDisplay"], "flex")
@@ -1103,8 +1099,7 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                 )
 
             with self.subTest("running_status_clears_completed_lifecycle_progress"):
-                lifecycle_check = driver.execute_script(
-                    """
+                lifecycle_check = driver.execute_script("""
                     return (function() {
                         const handler = window.eventHandler;
                         if (!handler || typeof handler.notifyTrainingState !== 'function') {
@@ -1155,8 +1150,7 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
 
                         return { hasHandler: true, remaining };
                     })();
-                    """
-                )
+                    """)
                 self.assertTrue(lifecycle_check.get("hasHandler"), "Event handler should be initialised on the trainer page")
                 remaining_progress = lifecycle_check.get("remaining", [])
                 self.assertEqual(
@@ -1168,8 +1162,7 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                 self.assertEqual(remaining_progress[0].get("total"), "3")
 
             with self.subTest("lifecycle_stage_completion_schedules_removal"):
-                lifecycle_stage_check = driver.execute_script(
-                    """
+                lifecycle_stage_check = driver.execute_script("""
                     return (function() {
                         const handler = window.eventHandler;
                         if (!handler || typeof handler.parseStructuredData !== 'function') {
@@ -1216,8 +1209,7 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
 
                         return result;
                     })();
-                    """
-                )
+                    """)
                 self.assertTrue(lifecycle_stage_check.get("hasHandler"), "Event handler should handle lifecycle stages")
                 self.assertTrue(
                     lifecycle_stage_check.get("itemExists"), "Lifecycle stage event should create a progress entry"
@@ -1287,8 +1279,7 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                 )
 
             with self.subTest("notification_error_does_not_stop_training"):
-                driver.execute_script(
-                    """
+                driver.execute_script("""
                     if (window.eventHandler && typeof window.eventHandler.processProcessKeeperEvents === 'function') {
                         window.eventHandler.processProcessKeeperEvents([{
                             id: 'notif-err-1',
@@ -1299,16 +1290,14 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                             data: { status: 'uploading_model' }
                         }]);
                     }
-                    """
-                )
+                    """)
 
                 WebDriverWait(driver, 5).until(
                     lambda d: d.execute_script("return document.body && document.body.dataset.trainingActive === 'true';")
                 )
 
             with self.subTest("notification_error_with_failure_status_stops_training"):
-                driver.execute_script(
-                    """
+                driver.execute_script("""
                     if (window.eventHandler && typeof window.eventHandler.processProcessKeeperEvents === 'function') {
                         window.eventHandler.processProcessKeeperEvents([{
                             id: 'notif-err-2',
@@ -1319,8 +1308,7 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
                             data: { status: 'failed' }
                         }]);
                     }
-                    """
-                )
+                    """)
 
                 WebDriverWait(driver, 5).until(
                     lambda d: d.execute_script("return document.body && document.body.dataset.trainingActive === 'false';")
@@ -1460,8 +1448,7 @@ class DatasetCaptioningTabSmokeTestCase(_TrainerPageMixin, WebUITestCase):
             captioning_button.click()
 
             def captioning_panel_ready(active_driver):
-                return active_driver.execute_script(
-                    """
+                return active_driver.execute_script("""
                     const root = document.querySelector('[x-data="datasetCaptioningComponent()"]');
                     if (!root) return false;
                     const text = root.innerText || '';
@@ -1471,8 +1458,7 @@ class DatasetCaptioningTabSmokeTestCase(_TrainerPageMixin, WebUITestCase):
                             || text.includes('No image datasets are available')
                             || !!root.querySelector('button[type="submit"]')
                         );
-                    """
-                )
+                    """)
 
             self.assertTrue(
                 WebDriverWait(driver, 10).until(captioning_panel_ready),
@@ -1493,8 +1479,7 @@ class DatasetCaptioningTabSmokeTestCase(_TrainerPageMixin, WebUITestCase):
             else:
                 self.assertIn("pip install 'simpletuner[captioning]'", driver.page_source)
 
-            scroll_state = driver.execute_async_script(
-                """
+            scroll_state = driver.execute_async_script("""
                 const done = arguments[0];
                 const root = document.querySelector('[x-data="datasetCaptioningComponent()"]');
                 const comp = root && window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : null;
@@ -1533,8 +1518,7 @@ class DatasetCaptioningTabSmokeTestCase(_TrainerPageMixin, WebUITestCase):
                         });
                     }, 100);
                 });
-                """
-            )
+                """)
             self.assertTrue(scroll_state.get("ready"), scroll_state)
             self.assertTrue(scroll_state.get("atBottom"), scroll_state)
 
@@ -1572,13 +1556,11 @@ class TabNavigationTestCase(_TrainerPageMixin, WebUITestCase):
                 selector = trainer_page.TAB_SELECTORS.get(tab_name, f"#tab-content #{tab_name}-tab-content")
 
                 # Wait for element to be present and visible
-                is_visible = driver.execute_script(
-                    f"""
+                is_visible = driver.execute_script(f"""
                     const selector = '{selector}';
                     const el = document.querySelector(selector);
                     return el && el.offsetParent !== null && el.offsetHeight > 0;
-                """
-                )
+                """)
 
                 if not is_visible:
                     # If not immediately visible, wait a bit
@@ -1586,12 +1568,10 @@ class TabNavigationTestCase(_TrainerPageMixin, WebUITestCase):
 
                     def element_is_visible(driver):
                         try:
-                            return driver.execute_script(
-                                f"""
+                            return driver.execute_script(f"""
                                 const el = document.querySelector('{selector}');
                                 return el && el.offsetParent !== null && el.offsetHeight > 0;
-                            """
-                            )
+                            """)
                         except:
                             return False
 
@@ -1989,8 +1969,7 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
             trainer_page.dismiss_toast()
 
             trainer_page.wait.until(lambda d: d.execute_script("return !!window.datasetWizardComponentInstance"))
-            opened = driver.execute_async_script(
-                """
+            opened = driver.execute_async_script("""
                 const done = arguments[0];
                 const root = document.querySelector('#datasets-tab-content');
                 const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : null;
@@ -2001,12 +1980,10 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
                 Promise.resolve(comp.openWizard())
                     .then(() => done(true))
                     .catch((err) => done(String(err)));
-                """
-            )
+                """)
             self.assertTrue(opened)
 
-            state = driver.execute_script(
-                """
+            state = driver.execute_script("""
                 const root = document.querySelector('#datasets-tab-content');
                 const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : window.datasetWizardComponentInstance;
                 if (!comp) { return { ready: false }; }
@@ -2023,16 +2000,14 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
                 } catch (err) {
                     return { ready: false, error: String(err) };
                 }
-                """
-            )
+                """)
 
             self.assertTrue(state.get("ready"), state)
             self.assertTrue(state.get("hasFields"), state)
             self.assertTrue(state.get("showNewFolder"), state)
             self.assertTrue(state.get("uploadOpen"), state)
 
-            step_ready = driver.execute_script(
-                """
+            step_ready = driver.execute_script("""
                 const root = document.querySelector('#datasets-tab-content');
                 const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : window.datasetWizardComponentInstance;
                 if (!comp) { return null; }
@@ -2046,8 +2021,7 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
                 comp.currentDataset.type = 'local';
                 comp.currentDataset.caption_strategy = 'parquet';
                 return captionsStep;
-                """
-            )
+                """)
             self.assertIsNotNone(step_ready)
 
             trainer_page.wait.until(
@@ -2060,8 +2034,7 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
                 )
             )
 
-            parquet_state = driver.execute_script(
-                """
+            parquet_state = driver.execute_script("""
                 const filenameInput = document.querySelector('input[x-model="currentDataset.parquet.filename_column"]');
                 const captionInput = document.querySelector('input[x-model="currentDataset.parquet.caption_column"]');
                 const extToggle = document.querySelector('#identifierExt');
@@ -2070,8 +2043,7 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
                     captionValue: captionInput ? captionInput.value : null,
                     extChecked: extToggle ? extToggle.checked : null
                 };
-                """
-            )
+                """)
             self.assertEqual(parquet_state.get("filenameValue"), "id")
             self.assertEqual(parquet_state.get("captionValue"), "caption")
             self.assertFalse(parquet_state.get("extChecked"))
@@ -2102,8 +2074,7 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
             trainer_page.dismiss_toast()
 
             trainer_page.wait.until(lambda d: d.execute_script("return !!window.datasetWizardComponentInstance"))
-            opened = driver.execute_async_script(
-                """
+            opened = driver.execute_async_script("""
                 const done = arguments[0];
                 const root = document.querySelector('#datasets-tab-content');
                 const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : null;
@@ -2114,8 +2085,7 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
                 Promise.resolve(comp.openWizard())
                     .then(() => done(true))
                     .catch((err) => done(String(err)));
-                """
-            )
+                """)
             self.assertTrue(opened)
 
             next_button = trainer_page.wait.until(
@@ -2128,25 +2098,18 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
             trainer_page.wait.until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, ".dataset-wizard-modal input[x-model='currentDataset.id']"))
             )
-            driver.execute_script(
-                """
+            driver.execute_script("""
                 const input = document.querySelector(".dataset-wizard-modal input[x-model='currentDataset.id']");
                 input.value = 'primary-images';
                 input.dispatchEvent(new Event('input', { bubbles: true }));
-                """
-            )
+                """)
 
-            trainer_page.wait.until(
-                lambda d: d.execute_script(
-                    """
+            trainer_page.wait.until(lambda d: d.execute_script("""
                     const button = document.querySelector(".dataset-wizard-modal button[aria-label='Continue to next step']");
                     return button && !button.disabled;
-                    """
-                )
-            )
+                    """))
 
-            state = driver.execute_script(
-                """
+            state = driver.execute_script("""
                 const root = document.querySelector('#datasets-tab-content');
                 const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : window.datasetWizardComponentInstance;
                 return {
@@ -2159,8 +2122,7 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
                         return window.getComputedStyle(alert).display !== 'none';
                     })()
                 };
-                """
-            )
+                """)
             self.assertTrue(state.get("canProceed"), state)
             self.assertFalse(state.get("hasPrimaryDatasetAvailable"), state)
             self.assertFalse(state.get("regularisationChecked"), state)
@@ -2225,8 +2187,7 @@ class CloudUploadProgressTestCase(_TrainerPageMixin, WebUITestCase):
                 lambda d: d.execute_script("return !!(window.Alpine && document.querySelector('#cloud-tab-content'));")
             )
 
-            started = driver.execute_script(
-                """
+            started = driver.execute_script("""
                 window.__cloudTestOriginalEventSource = window.EventSource;
                 window.__cloudTestEventSourceUrl = null;
                 window.__cloudTestEventSourceInstance = null;
@@ -2243,15 +2204,13 @@ class CloudUploadProgressTestCase(_TrainerPageMixin, WebUITestCase):
                 }
                 comp.startUploadProgress('upload-test-1');
                 return true;
-                """
-            )
+                """)
             self.assertTrue(started)
 
             url = driver.execute_script("return window.__cloudTestEventSourceUrl;")
             self.assertEqual(url, "/api/webhooks/upload/progress/upload-test-1")
 
-            driver.execute_script(
-                """
+            driver.execute_script("""
                 const instance = window.__cloudTestEventSourceInstance;
                 if (instance && instance.onmessage) {
                     instance.onmessage({
@@ -2264,8 +2223,7 @@ class CloudUploadProgressTestCase(_TrainerPageMixin, WebUITestCase):
                         })
                     });
                 }
-                """
-            )
+                """)
 
             WebDriverWait(driver, 5).until(
                 lambda d: d.execute_script(
@@ -2303,8 +2261,7 @@ class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
         )
 
     def _install_cloud_modal_harness(self, driver) -> bool:
-        return driver.execute_script(
-            """
+        return driver.execute_script("""
             const el = document.querySelector('#cloud-tab-content');
             const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null;
             if (!comp) { return false; }
@@ -2365,12 +2322,10 @@ class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
             };
             window.__cloudHardwareComponentReady = true;
             return true;
-            """
-        )
+            """)
 
     def _open_modal(self, driver) -> None:
-        opened = driver.execute_async_script(
-            """
+        opened = driver.execute_async_script("""
             const done = arguments[0];
             const el = document.querySelector('#cloud-tab-content');
             const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null;
@@ -2379,8 +2334,7 @@ class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
                 console.error('openPreSubmitModal failed', err);
                 done(false);
             });
-            """
-        )
+            """)
         self.assertTrue(opened)
         WebDriverWait(driver, 10).until(EC.visibility_of_element_located((By.CSS_SELECTOR, ".cloud-submit-modal.show")))
         WebDriverWait(driver, 10).until(
@@ -2441,13 +2395,11 @@ class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
             driver.execute_script("localStorage.setItem('cloud_replicate_hardware_profile', 'h100-x8');")
             self.assertTrue(self._install_cloud_modal_harness(driver))
 
-            driver.execute_script(
-                """
+            driver.execute_script("""
                 const comp = Alpine.$data(document.querySelector('#cloud-tab-content'));
                 comp.preSubmitModal.hardwareProfile = 'h100-x8';
                 comp.showSettingsPanel = true;
-                """
-            )
+                """)
 
             WebDriverWait(driver, 5).until(
                 lambda d: d.execute_script(
@@ -2463,25 +2415,21 @@ class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
                 )
             )
 
-            pressed_before = driver.execute_script(
-                """
+            pressed_before = driver.execute_script("""
                 return Array.from(document.querySelectorAll('[data-testid="cloud-settings-hardware-profile"]'))
                     .filter((button) => button.offsetParent !== null)
                     .map((button) => ({ text: button.innerText.trim(), pressed: button.getAttribute('aria-pressed') }));
-                """
-            )
+                """)
             self.assertIn({"text": "H100", "pressed": "true"}, pressed_before)
             self.assertIn({"text": "L40S", "pressed": "false"}, pressed_before)
 
-            clicked = driver.execute_script(
-                """
+            clicked = driver.execute_script("""
                 const button = Array.from(document.querySelectorAll('[data-testid="cloud-settings-hardware-profile"]'))
                     .find((candidate) => candidate.offsetParent !== null && candidate.innerText.trim() === 'L40S');
                 if (!button) { return false; }
                 button.click();
                 return true;
-                """
-            )
+                """)
             self.assertTrue(clicked)
 
             WebDriverWait(driver, 5).until(
@@ -2495,13 +2443,11 @@ class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
                 )
             )
 
-            pressed_after = driver.execute_script(
-                """
+            pressed_after = driver.execute_script("""
                 return Array.from(document.querySelectorAll('[data-testid="cloud-settings-hardware-profile"]'))
                     .filter((button) => button.offsetParent !== null)
                     .map((button) => ({ text: button.innerText.trim(), pressed: button.getAttribute('aria-pressed') }));
-                """
-            )
+                """)
             self.assertIn({"text": "H100", "pressed": "false"}, pressed_after)
             self.assertIn({"text": "L40S", "pressed": "true"}, pressed_after)
 
@@ -2690,14 +2636,12 @@ class EasyModeFormDirtyTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertFalse(initial_dirty, "formDirty should start as false")
 
             # Change model type in Easy Mode (click the Full Model radio)
-            driver.execute_script(
-                """
+            driver.execute_script("""
                 const fullModelRadio = document.querySelector('input[type="radio"][value="full"]');
                 if (fullModelRadio) {
                     fullModelRadio.click();
                 }
-                """
-            )
+                """)
 
             # Wait a moment for Alpine reactivity
             time.sleep(0.2)
@@ -2736,15 +2680,13 @@ class EasyModeFormDirtyTestCase(_TrainerPageMixin, WebUITestCase):
             )
 
             # Change a select in Easy Mode (base model precision)
-            driver.execute_script(
-                """
+            driver.execute_script("""
                 const precisionSelect = document.querySelector('.ez-mode-form select[x-model="base_model_precision"]');
                 if (precisionSelect) {
                     precisionSelect.value = 'int8-quanto';
                     precisionSelect.dispatchEvent(new Event('change', { bubbles: false }));
                 }
-                """
-            )
+                """)
 
             time.sleep(0.2)
 
@@ -2817,8 +2759,7 @@ class EasyModeOptimizerSyncTestCase(_TrainerPageMixin, WebUITestCase):
 
             WebDriverWait(driver, 10).until(lambda d: get_optimizer_values(d)["ez"] == get_optimizer_values(d)["full"])
 
-            new_value = driver.execute_script(
-                """
+            new_value = driver.execute_script("""
                 const fullSelect = document.getElementById('optimizer');
                 if (!fullSelect || !fullSelect.options || fullSelect.options.length === 0) {
                     return null;
@@ -2830,8 +2771,7 @@ class EasyModeOptimizerSyncTestCase(_TrainerPageMixin, WebUITestCase):
                 fullSelect.dispatchEvent(new Event('change', { bubbles: true }));
                 fullSelect.dispatchEvent(new Event('input', { bubbles: true }));
                 return next.value;
-                """
-            )
+                """)
             self.assertTrue(new_value, "Expected to find optimizer options in full form.")
 
             WebDriverWait(driver, 10).until(
@@ -2863,13 +2803,11 @@ class EasyModeOptimizerSyncTestCase(_TrainerPageMixin, WebUITestCase):
             )
 
             def get_grad_norm_values(active_driver):
-                return active_driver.execute_script(
-                    """
+                return active_driver.execute_script("""
                     const ez = document.querySelector('.ez-mode-form input[x-model\\\\.number="max_grad_norm"]');
                     const full = document.getElementById('max_grad_norm');
                     return { ez: ez ? ez.value : null, full: full ? full.value : null };
-                    """
-                )
+                    """)
 
             WebDriverWait(driver, 10).until(lambda d: get_grad_norm_values(d)["full"])
             WebDriverWait(driver, 10).until(lambda d: get_grad_norm_values(d)["ez"])
@@ -2892,52 +2830,36 @@ class EasyModeOptimizerSyncTestCase(_TrainerPageMixin, WebUITestCase):
             trainer_page.wait_for_tab("training")
             trainer_page.wait_for_htmx()
 
-            WebDriverWait(driver, 10).until(
-                lambda d: d.execute_script(
-                    """
+            WebDriverWait(driver, 10).until(lambda d: d.execute_script("""
                     return Array.from(document.querySelectorAll('.ez-mode-form .optimizer-preset-card'))
                         .some(card => card.textContent.includes('Moderate'));
-                    """
-                )
-            )
+                    """))
 
-            driver.execute_script(
-                """
+            driver.execute_script("""
                 const moderateCard = Array.from(document.querySelectorAll('.ez-mode-form .optimizer-preset-card'))
                     .find(card => card.textContent.includes('Moderate'));
                 moderateCard.click();
-                """
-            )
+                """)
 
-            WebDriverWait(driver, 10).until(
-                lambda d: d.execute_script(
-                    """
+            WebDriverWait(driver, 10).until(lambda d: d.execute_script("""
                     const component = window.Alpine?.$data(document.getElementById('training-tab-content'));
                     return component?.selectedOptimizerPreset === 'moderate';
-                    """
-                )
-            )
+                    """))
 
-            driver.execute_script(
-                """
+            driver.execute_script("""
                 const batchSizeInput = document.getElementById('train_batch_size');
                 batchSizeInput.value = '3';
                 batchSizeInput.dispatchEvent(new Event('input', { bubbles: true }));
                 batchSizeInput.dispatchEvent(new Event('change', { bubbles: true }));
-                """
-            )
+                """)
 
-            WebDriverWait(driver, 10).until(
-                lambda d: d.execute_script(
-                    """
+            WebDriverWait(driver, 10).until(lambda d: d.execute_script("""
                     const component = window.Alpine?.$data(document.getElementById('training-tab-content'));
                     const selectedCards = document.querySelectorAll('.ez-mode-form .optimizer-preset-card.selected');
                     return component?.train_batch_size === 3
                         && component?.selectedOptimizerPreset === null
                         && selectedCards.length === 0;
-                    """
-                )
-            )
+                    """))
 
         self.for_each_browser(
             "test_easy_mode_optimizer_preset_selection_updates_from_full_form_batch_size",
@@ -2960,15 +2882,13 @@ class EasyModeOptimizerSyncTestCase(_TrainerPageMixin, WebUITestCase):
                 lambda d: d.execute_script("return document.querySelector('.ez-mode-footer button') !== null;")
             )
 
-            driver.execute_script(
-                """
+            driver.execute_script("""
                 const switchButton = Array.from(document.querySelectorAll('.ez-mode-footer button'))
                     .find(button => button.textContent.includes('Switch to Full Form'));
                 if (switchButton) {
                     switchButton.click();
                 }
-                """
-            )
+                """)
 
             WebDriverWait(driver, 10).until(
                 lambda d: d.execute_script(
@@ -2978,30 +2898,23 @@ class EasyModeOptimizerSyncTestCase(_TrainerPageMixin, WebUITestCase):
 
             driver.execute_script("document.querySelector('#section-optimizer_config .optimizer-presets-btn').click();")
 
-            WebDriverWait(driver, 10).until(
-                lambda d: d.execute_script(
-                    """
+            WebDriverWait(driver, 10).until(lambda d: d.execute_script("""
                     return Array.from(document.querySelectorAll('.optimizer-presets-modal .optimizer-preset-card'))
                         .some(card => card.textContent.includes('Moderate'));
-                    """
-                )
-            )
+                    """))
 
-            driver.execute_script(
-                """
+            driver.execute_script("""
                 const moderateCard = Array.from(document.querySelectorAll('.optimizer-presets-modal .optimizer-preset-card'))
                     .find(card => card.textContent.includes('Moderate'));
                 moderateCard.click();
                 document.querySelector('.optimizer-presets-modal .modal-footer .btn-primary').click();
-                """
-            )
+                """)
 
             WebDriverWait(driver, 10).until(
                 lambda d: d.execute_script("return document.getElementById('learning_rate')?.value === '0.0001';")
             )
 
-            values = driver.execute_script(
-                """
+            values = driver.execute_script("""
                 const store = window.Alpine?.store?.('trainer');
                 return {
                     learningRate: document.getElementById('learning_rate')?.value,
@@ -3010,8 +2923,7 @@ class EasyModeOptimizerSyncTestCase(_TrainerPageMixin, WebUITestCase):
                     gradAccum: store?.activeEnvironmentConfig?.['--gradient_accumulation_steps'],
                     dirty: store?.formDirty
                 };
-                """
-            )
+                """)
 
             self.assertEqual(values["learningRate"], "0.0001")
             self.assertEqual(values["optimizer"], "adamw_bf16")
