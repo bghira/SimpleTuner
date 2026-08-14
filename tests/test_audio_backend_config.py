@@ -17,6 +17,7 @@ class TestAudioBackendConfig(unittest.TestCase):
         self.args.audio_bucket_strategy = "duration"
         self.args.audio_duration_interval = 3.0
         self.args.audio_truncation_mode = "beginning"
+        self.args.model_family = "sdxl"
         self.args.train_batch_size = 1
         self.args.resolution = 512
         self.args.resolution_type = "pixel"
@@ -51,6 +52,37 @@ class TestAudioBackendConfig(unittest.TestCase):
         self.assertEqual(audio_conf.get("truncation_mode"), "random")
         # Should still have global defaults for unspecified
         self.assertEqual(audio_conf.get("max_duration_seconds"), 30.0)
+
+    def test_minimaxmusic_textfile_audio_defaults_to_lyrics_sidecar(self):
+        self.args.model_family = "minimaxmusic"
+        backend_config = {
+            "id": "test_audio",
+            "type": "local",
+            "dataset_type": "audio",
+            "caption_strategy": "textfile",
+            "instance_data_dir": "/tmp/audio",
+        }
+
+        result = init_backend_config(backend_config, self.args, self.accelerator)
+
+        audio_conf = result["config"]["audio"]
+        self.assertEqual(audio_conf.get("lyrics_filename_format"), "{filename}.lyrics")
+
+    def test_minimaxmusic_textfile_audio_preserves_explicit_lyrics_sidecar(self):
+        self.args.model_family = "minimaxmusic"
+        backend_config = {
+            "id": "test_audio",
+            "type": "local",
+            "dataset_type": "audio",
+            "caption_strategy": "textfile",
+            "instance_data_dir": "/tmp/audio",
+            "audio": {"lyrics_filename_format": "{stem}.lrc"},
+        }
+
+        result = init_backend_config(backend_config, self.args, self.accelerator)
+
+        audio_conf = result["config"]["audio"]
+        self.assertEqual(audio_conf.get("lyrics_filename_format"), "{stem}.lrc")
 
     @patch("simpletuner.helpers.audio.load_audio")
     def test_attach_audio_backend(self, mock_load_audio):
