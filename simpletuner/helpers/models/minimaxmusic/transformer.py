@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import math
 from typing import Optional, Tuple
 
@@ -35,6 +36,10 @@ from simpletuner.helpers.models.flowmap import (
     set_flowmap_gate,
     validate_flowmap_deltatime_type,
 )
+from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager
+from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
+
+logger = logging.getLogger(__name__)
 
 
 class MiniMaxMusic3FourierEmbedding(nn.Module):
@@ -94,6 +99,14 @@ class MiniMaxMusic3AttnProcessor:
         query = attn.to_q(hidden_states)
         key = attn.to_k(hidden_states)
         value = attn.to_v(hidden_states)
+
+        device_type = query.device.type
+        if torch.is_autocast_enabled(device_type):
+            attention_dtype = torch.get_autocast_dtype(device_type)
+            if attention_dtype in (torch.float16, torch.bfloat16):
+                query = query.to(dtype=attention_dtype)
+                key = key.to(dtype=attention_dtype)
+                value = value.to(dtype=attention_dtype)
 
         query = query.view(batch_size, seq_len, attn.heads, attn.head_dim)
         key = key.view(batch_size, seq_len, attn.heads, attn.head_dim)
@@ -184,6 +197,8 @@ class MiniMaxMusic3Transformer1DModel(ModelMixin, ConfigMixin, PeftAdapterMixin)
         rotary_dim: int = 32,
         fourier_embedding_dim: int = 256,
         enable_time_sign_embed: bool = False,
+        musubi_blocks_to_swap: int = 0,
+        musubi_block_swap_device: str = "cpu",
         gate_value: Optional[float] = None,
         deltatime_type: Optional[str] = None,
         swiglu_gate_first: bool = False,
@@ -227,6 +242,20 @@ class MiniMaxMusic3Transformer1DModel(ModelMixin, ConfigMixin, PeftAdapterMixin)
         self.postprocess_conv = nn.Conv1d(in_channels, in_channels, 1, bias=False)
 
         self.gradient_checkpointing = False
+        self.gradient_checkpointing_interval = None
+        self.gradient_checkpointing_segment_stride = None
+        self._musubi_block_swap = MusubiBlockSwapManager.build(
+            depth=num_layers,
+            blocks_to_swap=musubi_blocks_to_swap,
+            swap_device=musubi_block_swap_device,
+            logger=logger,
+        )
+
+    def set_gradient_checkpointing_interval(self, interval: int):
+        self.gradient_checkpointing_interval = interval
+
+    def set_gradient_checkpointing_segment_stride(self, segment_stride: int | None):
+        self.gradient_checkpointing_segment_stride = segment_stride
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.flowmap_deltatime_type = validate_flowmap_deltatime_type(deltatime_type, model_name="MiniMax Music 3")
@@ -316,7 +345,7 @@ class MiniMaxMusic3Transformer1DModel(ModelMixin, ConfigMixin, PeftAdapterMixin)
         hidden_states_buffer: Optional[dict[str, torch.Tensor]] = None,
         output_hidden_states: bool = False,
         hidden_state_layer: Optional[int] = None,
-) -> Tuple[torch.Tensor, ...] | Transformer2DModelOutput:
+    ) -> Tuple[torch.Tensor, ...] | Transformer2DModelOutput:
         r"""
         Args:
             hidden_states (`torch.Tensor` of shape `(batch, in_channels, length)`):
@@ -377,10 +406,28 @@ class MiniMaxMusic3Transformer1DModel(ModelMixin, ConfigMixin, PeftAdapterMixin)
         skip_set = set(skip_layers) if skip_layers is not None else set()
         capture_layer = int(hidden_state_layer) if hidden_state_layer is not None else None
         captured_hidden_states = None
+        musubi_manager = self._musubi_block_swap
+        musubi_offload_active = False
+        if musubi_manager is not None:
+            musubi_offload_active = musubi_manager.activate(
+                self.transformer_blocks,
+                hidden_states.device,
+                torch.is_grad_enabled(),
+            )
         for block_idx, block in enumerate(self.transformer_blocks):
+            managed_block = musubi_offload_active and musubi_manager.is_managed_block(block_idx)
+            if managed_block:
+                musubi_manager.stream_in(block, hidden_states.device)
             if block_idx in skip_set:
+                if managed_block:
+                    musubi_manager.stream_out(block)
                 continue
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
+            if torch.is_grad_enabled() and should_checkpoint_block(
+                block_idx,
+                self.gradient_checkpointing,
+                self.gradient_checkpointing_interval,
+                self.gradient_checkpointing_segment_stride,
+            ):
                 hidden_states = self._gradient_checkpointing_func(block, hidden_states, rotary_emb)
             else:
                 hidden_states = block(hidden_states, rotary_emb)
@@ -390,6 +437,8 @@ class MiniMaxMusic3Transformer1DModel(ModelMixin, ConfigMixin, PeftAdapterMixin)
                 captured_hidden_states = hidden_states[:, 1:]
                 if capture_layer is not None:
                     output_hidden_states = False
+            if managed_block:
+                musubi_manager.stream_out(block)
 
         hidden_states = self.proj_out(hidden_states[:, 1:])
         hidden_states = hidden_states.transpose(1, 2)
