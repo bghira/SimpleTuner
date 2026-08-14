@@ -5440,6 +5440,20 @@ class Trainer:
                 else:
                     self.model.get_trained_component(unwrap_model=False).to(target_device, dtype=self.config.weight_dtype)
                 self._report_cuda_usage_if_requested("after_move_trained_component")
+            elif ramtorch_enabled and is_accelerator_target:
+                # RamTorch is applied before PEFT adapters are injected. Refresh
+                # accelerator residency here so untargeted layers and newly-created
+                # adapter weights do not remain on CPU when the root .to() is skipped.
+                moved = ramtorch_utils.move_embeddings_to_device(
+                    self.model.get_trained_component(unwrap_model=False),
+                    target_device,
+                )
+                if moved:
+                    logger.info(
+                        "Moved %s non-RamTorch parameters/buffers to %s after adapter setup.",
+                        moved,
+                        target_device,
+                    )
         if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
             self.accelerator._lycoris_wrapped_network = self.accelerator._lycoris_wrapped_network.to(
                 target_device, dtype=self.config.weight_dtype
