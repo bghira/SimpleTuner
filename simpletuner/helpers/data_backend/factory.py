@@ -777,13 +777,13 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if is_audio_dataset:
         output["config"]["audio"] = _prepare_audio_settings(backend)
         model_family_value = str(_get_arg_value(args, "model_family", "") or "").lower()
-        if model_family_value == "ace_step" and output["config"].get("caption_strategy") == "textfile":
+        if model_family_value in {"ace_step", "minimaxmusic"} and output["config"].get("caption_strategy") == "textfile":
             audio_settings = output["config"]["audio"]
             if not any(audio_settings.get(key) for key in ("lyrics_filename_format", "lyrics_extension", "lyrics_suffix")):
                 default_lyrics_format = "{filename}.lyrics"
                 audio_settings["lyrics_filename_format"] = default_lyrics_format
                 warning_log(
-                    f"(id={backend['id']}) ACE-Step textfile datasets will also load lyrics beside each sample "
+                    f"(id={backend['id']}) Audio textfile datasets will also load lyrics beside each sample "
                     f"using '{default_lyrics_format}'. Set audio.lyrics_filename_format to match your naming scheme."
                 )
             output["config"]["audio"] = audio_settings
