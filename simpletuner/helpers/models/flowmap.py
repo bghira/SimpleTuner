@@ -5,7 +5,13 @@ import torch
 
 
 def clone_flowmap_embedder(embedder: torch.nn.Module) -> torch.nn.Module:
-    return copy.deepcopy(embedder)
+    # The clone is the FlowMap (t, r) delta embedder — the jump-conditioning parameters the
+    # AnyFlow student trains. The source embedder is frozen base weight, so the deepcopy
+    # inherits requires_grad=False and must be re-enabled or the conditioning can never learn.
+    clone = copy.deepcopy(embedder)
+    for parameter in clone.parameters():
+        parameter.requires_grad_(True)
+    return clone
 
 
 def validate_flowmap_deltatime_type(deltatime_type: str, *, model_name: str) -> str:

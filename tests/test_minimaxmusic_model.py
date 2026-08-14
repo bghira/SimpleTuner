@@ -764,5 +764,50 @@ class MiniMaxMusicModelTests(unittest.TestCase):
         self.assertNotIn("diffusion_transformer.transformer.layers.0.self_attn.to_qkv.lora_A.weight", loaded)
 
 
+class MiniMaxMusicAnyFlowValidationWrapperTests(unittest.TestCase):
+    def test_install_pipeline_hooks_wraps_transformer_and_injects_r(self):
+        import numpy as np
+        from diffusers import FlowMatchEulerDiscreteScheduler
+
+        from simpletuner.helpers.distillation.anyflow.scheduler import AnyFlowValidationScheduler
+        from simpletuner.helpers.models.minimaxmusic.modular_blocks import MiniMaxMusic3Blocks
+
+        pipeline = MiniMaxMusic3ModularPipeline(MiniMaxMusic3Blocks())
+        transformer = _tiny_transformer()
+        transformer.enable_flowmap_time_conditioning(gate_value=0.25, deltatime_type="r")
+        scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1, invert_sigmas=True)
+        pipeline.update_components(transformer=transformer, scheduler=scheduler)
+
+        validation_scheduler = AnyFlowValidationScheduler(scheduler, num_train_timesteps=1)
+        validation_scheduler.install_pipeline_hooks(pipeline, component_names=("transformer",))
+
+        # The denoise blocks resolve the component exactly like this attribute access,
+        # so a registry-backed pipeline must expose the wrapper here, not the raw module.
+        wrapped = pipeline.transformer
+        self.assertTrue(getattr(wrapped, "_anyflow_validation_wrapper", False))
+
+        received = {}
+
+        def capture_forward(*args, **kwargs):
+            received.update(kwargs)
+            return (torch.zeros(1, 4, 6),)
+
+        transformer.forward = capture_forward
+
+        sigmas = np.linspace(1.0, 0.25, 4)
+        scheduler.set_timesteps(sigmas=sigmas, device="cpu")
+        wrapped(
+            hidden_states=torch.zeros(1, 4, 6),
+            timestep=scheduler.timesteps[0].expand(1),
+            encoder_hidden_states=torch.zeros(1, 6, 8),
+            return_dict=False,
+        )
+
+        r_timestep = received.get("r_timestep")
+        self.assertIsNotNone(r_timestep)
+        self.assertTrue(torch.all(r_timestep >= received["timestep"]))
+        self.assertTrue(torch.all(r_timestep <= 1.0))
+
+
 if __name__ == "__main__":
     unittest.main()

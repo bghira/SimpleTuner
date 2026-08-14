@@ -991,10 +991,9 @@ class MiniMaxMusic(AudioModelFoundation):
         r_timestep = prepared_batch.get(self.FLOWMAP_R_TIMESTEP_BATCH_KEY)
         if r_timestep is None:
             return None
-        r_timestep = r_timestep.to(device=timestep.device, dtype=timestep.dtype)
-        if r_timestep.numel() > 0 and torch.max(r_timestep.detach().abs()) > 1.0:
-            r_timestep = (r_timestep / 1000.0).clamp(0.0, 1.0)
-        return r_timestep
+        # The AnyFlow distiller converts r through flow_matching_timesteps_from_sigmas,
+        # so values arrive in the transformer's [0, 1] flow-time domain already.
+        return r_timestep.to(device=timestep.device, dtype=timestep.dtype)
 
     def _select_crepa_hidden_states(self, prepared_batch: dict, hidden_states_buffer):
         if hidden_states_buffer is None:

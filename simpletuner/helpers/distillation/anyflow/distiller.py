@@ -1009,11 +1009,20 @@ class AnyFlowDistiller(DistillationBase):
         logs.update(self._delta_parameter_logs())
         return logs
 
+    _DELTA_PARAMETER_TAGS = (
+        "condition_embedder.delta_embedder",
+        "delta_adaln_embedder",
+        "delta_time_embed",
+        "delta_time_embedder",
+        "delta_timestep_embedder",
+        "delta_t_embedding",
+    )
+
     def _trainable_delta_parameters(self):
         for name, parameter in self._flowmap_component.named_parameters():
             if ".original_module." in name or not parameter.requires_grad:
                 continue
-            if "delta_adaln_embedder" in name or "delta_time_embedder" in name:
+            if any(tag in name for tag in self._DELTA_PARAMETER_TAGS):
                 yield name, parameter
 
     def _delta_parameter_logs(self) -> Dict[str, float]:

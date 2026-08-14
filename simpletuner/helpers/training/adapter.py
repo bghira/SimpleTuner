@@ -7,6 +7,9 @@ import torch
 ANYFLOW_SIDECAR_PREFIXES = (
     "condition_embedder.delta_embedder.",
     "delta_adaln_embedder.",
+    "delta_time_embedder.",
+    "delta_timestep_embedder.",
+    "delta_t_embedding.",
 )
 
 
@@ -35,7 +38,10 @@ def _sidecar_destination(model_state: dict, model_key: str, adapter_name: str):
     module_name, separator, parameter_name = model_key.rpartition(".")
     if not separator:
         return None
-    return model_state.get(f"{module_name}.modules_to_save.{adapter_name}.{parameter_name}")
+    destination = model_state.get(f"{module_name}.modules_to_save.{adapter_name}.{parameter_name}")
+    if destination is not None:
+        return destination
+    return model_state.get(f"{module_name}.base_layer.{parameter_name}")
 
 
 def determine_adapter_target_modules(args, unet, transformer):
