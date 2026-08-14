@@ -791,13 +791,10 @@ class MiniMaxH3AttnProcessor:
                 model_name="MiniMax-H3",
             )
         sparse_config = getattr(attn, "_h3_sparse_attention_config", None)
-        sparse_layer_index = int(getattr(attn, "_h3_sparse_layer_index", -1))
-        use_sparse_attention = (
-            sparse_attention_layout is not None
-            and sparse_config is not None
-            and sparse_config.enabled
-            and sparse_layer_index >= sparse_config.start_layer
-        )
+        use_sparse_attention = sparse_attention_layout is not None and sparse_config is not None and sparse_config.enabled
+        if use_sparse_attention:
+            sparse_layer_index = int(getattr(attn, "_h3_sparse_layer_index", -1))
+            use_sparse_attention = sparse_layer_index >= sparse_config.start_layer
         if use_sparse_attention:
             cp_config = context_parallel_config(self._parallel_config)
             if attention_mask is not None and cp_config is None and sparse_attention_layout.packed_valid_mask is None:

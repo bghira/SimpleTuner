@@ -49,6 +49,7 @@ class MiniMaxMusicSegmentedCheckpointingSupportTests(unittest.TestCase):
         assert_checkpointing_controls(
             self,
             MiniMaxMusic3Transformer1DModel,
+            backend=True,
             interval=True,
             stride=True,
         )
