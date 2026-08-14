@@ -126,6 +126,32 @@ class MiniMaxMusicModelTests(unittest.TestCase):
         self.assertNotIn("prompt_embeds", updated)
         self.assertNotIn("attention_masks", updated)
 
+    def test_validation_kwargs_replace_blank_prompt_library_lyrics(self):
+        model = self._build_model()
+        model.config.validation_lyrics = "[verse]\nconfigured"
+        pipeline_kwargs = {
+            "prompt": "instrumental jazz",
+            "_validation_prompt_text": "instrumental jazz",
+            "lyrics": "",
+        }
+
+        updated = model.update_pipeline_call_kwargs(pipeline_kwargs)
+
+        self.assertEqual(updated["lyrics"], "[verse]\nconfigured")
+
+    def test_validation_kwargs_fall_back_to_prompt_without_configured_lyrics(self):
+        model = self._build_model()
+        model.config.validation_lyrics = ""
+        pipeline_kwargs = {
+            "prompt": "cinematic ambient instrumental",
+            "_validation_prompt_text": "cinematic ambient instrumental",
+            "lyrics": "",
+        }
+
+        updated = model.update_pipeline_call_kwargs(pipeline_kwargs)
+
+        self.assertEqual(updated["lyrics"], "cinematic ambient instrumental")
+
     def test_load_text_encoder_restores_tokenizer_after_validation_clear(self):
         model = self._build_model()
         model.language_model = object()

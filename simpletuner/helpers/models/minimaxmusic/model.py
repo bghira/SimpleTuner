@@ -1091,10 +1091,13 @@ class MiniMaxMusic(AudioModelFoundation):
         validation_prompt = pipeline_kwargs.get("_validation_prompt_text")
         if pipeline_kwargs.get("prompt") is None and validation_prompt:
             pipeline_kwargs["prompt"] = validation_prompt
-        if "lyrics" not in pipeline_kwargs:
+        lyrics = pipeline_kwargs.get("lyrics")
+        if not isinstance(lyrics, str) or not lyrics.strip():
             configured_lyrics = getattr(self.config, "validation_lyrics", None)
-            if configured_lyrics:
-                pipeline_kwargs["lyrics"] = configured_lyrics
+            if configured_lyrics and str(configured_lyrics).strip():
+                pipeline_kwargs["lyrics"] = str(configured_lyrics)
+            elif validation_prompt:
+                pipeline_kwargs["lyrics"] = str(validation_prompt)
         for cached_embed_key in ("frame_hiddens", "prompt_embeds", "attention_masks"):
             pipeline_kwargs.pop(cached_embed_key, None)
         return pipeline_kwargs
