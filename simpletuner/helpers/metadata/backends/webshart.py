@@ -137,8 +137,13 @@ class WebshartMetadataBackend(MetadataBackend):
         if self.data_backend.exists(path):
             try:
                 raw = self.data_backend.read(path)
-                self.caption_cache = json.loads(raw)
-                return
+                loaded = json.loads(raw)
+                # An empty cache file (written before captions were indexed) must not
+                # short-circuit the rebuild below, or it wedges every startup into
+                # per-sample caption lookups.
+                if loaded:
+                    self.caption_cache = loaded
+                    return
             except Exception as exc:
                 logger.warning("Error loading webshart caption cache, regenerating when buckets refresh: %s", exc)
         self.caption_cache = {}

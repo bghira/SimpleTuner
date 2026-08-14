@@ -337,3 +337,55 @@ class TestWebshartOptimizeCaptionsConfig(unittest.TestCase):
             with self.subTest(backend_dict=backend_dict):
                 config = self._config_from(backend_dict)
                 self.assertEqual(config.webshart_optimize_captions, expected)
+
+
+class TestWebshartShardMetadataMemoization(unittest.TestCase):
+    def _backend(self, limit=8):
+        backend = WebshartDataBackend.__new__(WebshartDataBackend)
+        backend._shard_metadata_cache = {}
+        backend._shard_metadata_cache_limit = limit
+        backend.loader = Mock(get_metadata=Mock(side_effect=lambda idx: {"file.jpg": {"captions": f"shard {idx}"}}))
+        return backend
+
+    def test_repeat_lookups_hit_cache(self):
+        backend = self._backend()
+
+        first = backend.get_shard_metadata(3)
+        second = backend.get_shard_metadata(3)
+
+        self.assertIs(first, second)
+        backend.loader.get_metadata.assert_called_once_with(3)
+
+    def test_cache_evicts_oldest_shard_at_limit(self):
+        backend = self._backend(limit=2)
+
+        backend.get_shard_metadata(1)
+        backend.get_shard_metadata(2)
+        backend.get_shard_metadata(3)
+
+        self.assertEqual(sorted(backend._shard_metadata_cache), [2, 3])
+        backend.get_shard_metadata(1)
+        self.assertEqual(backend.loader.get_metadata.call_count, 4)
+
+
+class TestWebshartCaptionCacheLoad(unittest.TestCase):
+    def _metadata_backend(self, cache_payload):
+        backend = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
+        backend.cache_file = "aspect_ratio_bucket_indices_test.json"
+        backend.data_backend = Mock(exists=Mock(return_value=True), read=Mock(return_value=cache_payload))
+        backend.image_metadata = {"webshart://0/1/sample.jpg": {"captions": "a red bicycle"}}
+        return backend
+
+    def test_empty_cache_file_regenerates_from_image_metadata(self):
+        backend = self._metadata_backend("{}")
+
+        backend._load_caption_cache()
+
+        self.assertEqual(backend.caption_cache, {"webshart://0/1/sample.jpg": "a red bicycle"})
+
+    def test_populated_cache_file_is_used_directly(self):
+        backend = self._metadata_backend('{"webshart://0/1/sample.jpg": "cached caption"}')
+
+        backend._load_caption_cache()
+
+        self.assertEqual(backend.caption_cache, {"webshart://0/1/sample.jpg": "cached caption"})
