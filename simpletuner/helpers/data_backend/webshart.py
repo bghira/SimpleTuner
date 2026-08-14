@@ -88,6 +88,8 @@ class WebshartDataBackend(BaseDataBackend):
         self.dataset_type = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
         self.optimize_captions = bool(optimize_captions)
         self._shard_sample_index_cache: dict[int, dict[str, int]] = {}
+        self._shard_metadata_cache: dict[int, dict] = {}
+        self._shard_metadata_cache_limit = 8
 
         Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
         Path(self.metadata_cache_dir).mkdir(parents=True, exist_ok=True)
@@ -525,7 +527,16 @@ class WebshartDataBackend(BaseDataBackend):
         return int(value)
 
     def get_shard_metadata(self, shard_idx: int) -> dict:
-        return dict(self.loader.get_metadata(shard_idx))
+        # Caption scans call this once per sample; without memoization each call
+        # re-fetches and copies the full shard metadata (~200ms x dataset size).
+        shard_idx = int(shard_idx)
+        cached = self._shard_metadata_cache.get(shard_idx)
+        if cached is None:
+            cached = dict(self.loader.get_metadata(shard_idx))
+            if len(self._shard_metadata_cache) >= self._shard_metadata_cache_limit:
+                self._shard_metadata_cache.pop(next(iter(self._shard_metadata_cache)))
+            self._shard_metadata_cache[shard_idx] = cached
+        return cached
 
     def list_shard_sample_aspect_buckets(
         self,
