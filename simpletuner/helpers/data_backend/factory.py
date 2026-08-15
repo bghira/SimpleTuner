@@ -3774,7 +3774,7 @@ class FactoryRegistry:
                 prompt_records,
                 return_concat=False,
                 load_from_cache=False,
-                split_between_processes=False,
+                split_between_processes=True,
             )
             info_log(f"(id={init_backend['id']}) Completed processing {len(captions)} captions.")
 
@@ -3911,7 +3911,7 @@ class FactoryRegistry:
                 prompt_records,
                 return_concat=False,
                 load_from_cache=False,
-                split_between_processes=False,
+                split_between_processes=True,
             )
             info_log(f"(id={dataset_id}) Completed processing {len(captions)} captions with image context.")
 
