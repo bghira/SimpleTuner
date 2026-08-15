@@ -950,10 +950,24 @@ class AnyFlowDistiller(DistillationBase):
         batch.pop("encoder_attention_mask", None)
         if torch.is_tensor(negative_mask):
             batch["encoder_attention_mask"] = negative_mask
-        # Some families (e.g. Ideogram) read model-specific conditioning aliases ahead of the
-        # generic keys; drop them so the swapped unconditional embeds/mask take effect.
-        for alias in ("prompt_embeds", "attention_mask", "attention_masks"):
-            batch.pop(alias, None)
+        # Some families read model-specific conditioning aliases ahead of (or instead of) the
+        # generic keys: Ideogram prefers `prompt_embeds` when present, and Flux requires it.
+        # Swap the aliases to the unconditional tensors rather than popping them.
+        if "prompt_embeds" in batch:
+            batch["prompt_embeds"] = negative
+        for alias in ("attention_mask", "attention_masks"):
+            if alias in batch:
+                if torch.is_tensor(negative_mask):
+                    batch[alias] = negative_mask
+                else:
+                    batch.pop(alias)
+        negative_pooled = prepared_batch.get("negative_add_text_embeds")
+        if torch.is_tensor(negative_pooled):
+            if "add_text_embeds" in batch:
+                batch["add_text_embeds"] = negative_pooled
+            added_cond_kwargs = batch.get("added_cond_kwargs")
+            if isinstance(added_cond_kwargs, dict) and "text_embeds" in added_cond_kwargs:
+                batch["added_cond_kwargs"] = {**added_cond_kwargs, "text_embeds": negative_pooled}
         # Lets families with a dedicated unconditional model (e.g. Ideogram) dispatch to it.
         batch["is_unconditional_pass"] = True
         return batch

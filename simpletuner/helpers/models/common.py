@@ -5456,6 +5456,9 @@ class ModelFoundation(ABC):
         negative_attention_mask = batch.get("negative_encoder_attention_mask")
         if negative_attention_mask is not None and hasattr(negative_attention_mask, "to"):
             batch["negative_encoder_attention_mask"] = negative_attention_mask.to(device=self.accelerator.device)
+        negative_pooled_embeds = batch.get("negative_add_text_embeds")
+        if negative_pooled_embeds is not None and hasattr(negative_pooled_embeds, "to"):
+            batch["negative_add_text_embeds"] = negative_pooled_embeds.to(**target_device_kwargs)
 
         # Process additional conditioning if provided
         pooled_embeds = batch.get("add_text_embeds")

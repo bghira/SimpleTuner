@@ -751,7 +751,7 @@ class AnyFlowDistillerTests(unittest.TestCase):
 
         self.assertNotIn("encoder_attention_mask", unconditional_batch)
 
-    def test_unconditional_batch_drops_model_specific_conditioning_aliases(self):
+    def test_unconditional_batch_swaps_model_specific_conditioning_aliases(self):
         batch = _prepared_batch()
         batch["prompt_embeds"] = torch.ones(2, 7, 4)
         batch["attention_mask"] = torch.ones(2, 7, dtype=torch.bool)
@@ -759,9 +759,21 @@ class AnyFlowDistillerTests(unittest.TestCase):
 
         unconditional_batch = AnyFlowDistiller._unconditional_batch(batch)
 
-        self.assertNotIn("prompt_embeds", unconditional_batch)
+        self.assertIs(unconditional_batch["prompt_embeds"], batch["negative_encoder_hidden_states"])
         self.assertNotIn("attention_mask", unconditional_batch)
         self.assertNotIn("attention_masks", unconditional_batch)
+
+    def test_unconditional_batch_swaps_alias_masks_when_negative_mask_present(self):
+        batch = _prepared_batch()
+        batch["prompt_embeds"] = torch.ones(2, 7, 4)
+        batch["attention_mask"] = torch.ones(2, 7, dtype=torch.bool)
+        batch["attention_masks"] = torch.ones(2, 7, dtype=torch.bool)
+        batch["negative_encoder_attention_mask"] = torch.zeros(2, 5, dtype=torch.bool)
+
+        unconditional_batch = AnyFlowDistiller._unconditional_batch(batch)
+
+        self.assertIs(unconditional_batch["attention_mask"], batch["negative_encoder_attention_mask"])
+        self.assertIs(unconditional_batch["attention_masks"], batch["negative_encoder_attention_mask"])
 
     def test_onpolicy_initializes_separate_discriminator_adapter_and_optimizer(self):
         model = _FlowModel()
@@ -1071,7 +1083,7 @@ if __name__ == "__main__":
 
 
 class AnyFlowUnconditionalBatchTests(unittest.TestCase):
-    def test_unconditional_batch_drops_stale_mask_and_model_specific_aliases(self):
+    def test_unconditional_batch_drops_stale_mask_and_swaps_model_specific_aliases(self):
         batch = _prepared_batch()
         batch["encoder_attention_mask"] = torch.ones(2, 5, dtype=torch.long)
         batch["prompt_embeds"] = torch.ones(2, 7, 4)
@@ -1082,7 +1094,7 @@ class AnyFlowUnconditionalBatchTests(unittest.TestCase):
 
         self.assertIs(unconditional_batch["encoder_hidden_states"], batch["negative_encoder_hidden_states"])
         self.assertNotIn("encoder_attention_mask", unconditional_batch)
-        self.assertNotIn("prompt_embeds", unconditional_batch)
+        self.assertIs(unconditional_batch["prompt_embeds"], batch["negative_encoder_hidden_states"])
         self.assertNotIn("attention_mask", unconditional_batch)
         self.assertNotIn("attention_masks", unconditional_batch)
 
@@ -1162,3 +1174,16 @@ class AnyFlowDeltaEmbedderTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             save_file(state, str(Path(temp_dir) / "adapter.safetensors"))
+
+    def test_unconditional_batch_swaps_negative_pooled_embeds(self):
+        batch = _prepared_batch()
+        batch["add_text_embeds"] = torch.ones(2, 8)
+        batch["added_cond_kwargs"] = {"text_embeds": batch["add_text_embeds"], "time_ids": torch.zeros(2, 6)}
+        batch["negative_add_text_embeds"] = torch.zeros(2, 8)
+
+        unconditional_batch = AnyFlowDistiller._unconditional_batch(batch)
+
+        self.assertIs(unconditional_batch["add_text_embeds"], batch["negative_add_text_embeds"])
+        self.assertIs(unconditional_batch["added_cond_kwargs"]["text_embeds"], batch["negative_add_text_embeds"])
+        self.assertIs(unconditional_batch["added_cond_kwargs"]["time_ids"], batch["added_cond_kwargs"]["time_ids"])
+        self.assertIs(batch["added_cond_kwargs"]["text_embeds"], batch["add_text_embeds"])
