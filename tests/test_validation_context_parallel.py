@@ -151,7 +151,7 @@ class ValidationContextParallelTests(unittest.TestCase):
         validation._execute_validation_work_item = MagicMock(return_value=rank0_payload)
 
         with (
-            patch("simpletuner.helpers.training.validation.gather_object", return_value=[rank0_payload, rank1_payload]),
+            patch("simpletuner.helpers.training.validation.gather_object", return_value=[[rank0_payload], [rank1_payload]]),
             patch("simpletuner.helpers.training.validation.validation_audio.save_audio") as save_audio,
             patch("simpletuner.helpers.training.validation.validation_audio.log_audio_to_webhook"),
             patch("simpletuner.helpers.training.validation.validation_audio.log_audio_to_trackers"),

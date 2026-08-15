@@ -4192,7 +4192,13 @@ class Validation:
 
         if use_distributed:
             logger.info(f"[Rank {rank}] Gathering {len(local_payloads)} local payloads")
-            aggregated_payloads = list(gather_object(local_payloads) or [])
+            gathered_payloads = list(gather_object(local_payloads) or [])
+            aggregated_payloads = []
+            for payload_group in gathered_payloads:
+                if isinstance(payload_group, list):
+                    aggregated_payloads.extend(payload_group)
+                else:
+                    aggregated_payloads.append(payload_group)
             if not self.accelerator.is_main_process:
                 return
             logger.info(f"[Rank {rank}] Total aggregated payloads: {len(aggregated_payloads)}")
