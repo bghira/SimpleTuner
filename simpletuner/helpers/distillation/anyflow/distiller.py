@@ -961,6 +961,13 @@ class AnyFlowDistiller(DistillationBase):
                     batch[alias] = negative_mask
                 else:
                     batch.pop(alias)
+        negative_pooled = prepared_batch.get("negative_add_text_embeds")
+        if torch.is_tensor(negative_pooled):
+            if "add_text_embeds" in batch:
+                batch["add_text_embeds"] = negative_pooled
+            added_cond_kwargs = batch.get("added_cond_kwargs")
+            if isinstance(added_cond_kwargs, dict) and "text_embeds" in added_cond_kwargs:
+                batch["added_cond_kwargs"] = {**added_cond_kwargs, "text_embeds": negative_pooled}
         # Lets families with a dedicated unconditional model (e.g. Ideogram) dispatch to it.
         batch["is_unconditional_pass"] = True
         return batch

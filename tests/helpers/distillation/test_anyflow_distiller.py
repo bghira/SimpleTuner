@@ -1174,3 +1174,16 @@ class AnyFlowDeltaEmbedderTests(unittest.TestCase):
         )
         with tempfile.TemporaryDirectory() as temp_dir:
             save_file(state, str(Path(temp_dir) / "adapter.safetensors"))
+
+    def test_unconditional_batch_swaps_negative_pooled_embeds(self):
+        batch = _prepared_batch()
+        batch["add_text_embeds"] = torch.ones(2, 8)
+        batch["added_cond_kwargs"] = {"text_embeds": batch["add_text_embeds"], "time_ids": torch.zeros(2, 6)}
+        batch["negative_add_text_embeds"] = torch.zeros(2, 8)
+
+        unconditional_batch = AnyFlowDistiller._unconditional_batch(batch)
+
+        self.assertIs(unconditional_batch["add_text_embeds"], batch["negative_add_text_embeds"])
+        self.assertIs(unconditional_batch["added_cond_kwargs"]["text_embeds"], batch["negative_add_text_embeds"])
+        self.assertIs(unconditional_batch["added_cond_kwargs"]["time_ids"], batch["added_cond_kwargs"]["time_ids"])
+        self.assertIs(batch["added_cond_kwargs"]["text_embeds"], batch["add_text_embeds"])
