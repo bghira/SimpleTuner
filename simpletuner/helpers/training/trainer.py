@@ -5562,12 +5562,14 @@ class Trainer:
             return
 
         validation_images = getattr(self.validation, "validation_images") if self.validation is not None else None
+        validation_audios = getattr(self.validation, "validation_audios") if self.validation is not None else None
         captured_step = self.state["global_step"]
         captured_epoch = self.state["current_epoch"]
 
         def _upload_latest_checkpoint():
             return self.hub_manager.upload_latest_checkpoint(
                 validation_images=validation_images,
+                validation_audios=validation_audios,
                 webhook_handler=self.webhook_handler,
                 global_step=captured_step,
                 epoch=captured_epoch,
@@ -6618,7 +6620,7 @@ class Trainer:
         return save_path
 
     def _populate_checkpoint_assets(self, checkpoint_path: str) -> None:
-        """Copy validation images/videos from this step to the checkpoint's assets folder."""
+        """Copy validation media from this step to the checkpoint's assets folder."""
         if not checkpoint_path or not os.path.exists(checkpoint_path):
             return
 
@@ -6633,7 +6635,10 @@ class Trainer:
             return
 
         step_pattern = f"step_{checkpoint_step}_"
-        supported_extensions = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".avi", ".mov", ".webm"}
+        audio_extensions = {".wav", ".flac", ".mp3", ".ogg", ".m4a"}
+        video_extensions = {".mp4", ".avi", ".mov", ".webm"}
+        image_extensions = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+        supported_extensions = image_extensions | video_extensions | audio_extensions
 
         matching_files = []
         for filename in os.listdir(validation_dir):
@@ -6648,10 +6653,14 @@ class Trainer:
         assets_dir = os.path.join(checkpoint_path, "assets")
         try:
             os.makedirs(assets_dir, exist_ok=True)
-            for idx, filename in enumerate(sorted(matching_files)):
+            asset_counts = {"image": 0, "audio": 0}
+            for filename in sorted(matching_files):
                 src = os.path.join(validation_dir, filename)
                 ext = os.path.splitext(filename)[1]
-                dst = os.path.join(assets_dir, f"image_{idx}{ext}")
+                prefix = "audio" if ext.lower() in audio_extensions else "image"
+                idx = asset_counts[prefix]
+                asset_counts[prefix] += 1
+                dst = os.path.join(assets_dir, f"{prefix}_{idx}{ext}")
                 shutil.copy2(src, dst)
             logger.debug(f"Copied {len(matching_files)} validation assets to {assets_dir}")
         except Exception as e:
@@ -7515,6 +7524,7 @@ class Trainer:
             torch_profiler.stop()
             logger.info("Torch profiler stopped.")
         validation_images = None
+        validation_audios = None
         final_lora_save_kwargs = None
         fsdp_plugin = getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None)
         is_fsdp2_full_model_save = (
@@ -7602,12 +7612,14 @@ class Trainer:
                         job_id=self.job_id,
                     )
                     self._emit_event(validation_start_event)
-                    validation_images = self.validation.run_validations(
+                    validation_result = self.validation.run_validations(
                         validation_type="final",
                         step=self.state["global_step"],
                         force_evaluation=True,
                         skip_execution=True,
-                    ).validation_images
+                    )
+                    validation_images = validation_result.validation_images
+                    validation_audios = validation_result.validation_audios
                     # Emit validation completed lifecycle event
                     validation_completed_event = lifecycle_stage_event(
                         key="final_validation",
@@ -7682,6 +7694,7 @@ class Trainer:
                     def _upload_final_model():
                         repo_url = self.hub_manager.upload_model(
                             validation_images,
+                            validation_audios,
                             self.webhook_handler,
                             global_step=captured_step,
                             epoch=captured_epoch,

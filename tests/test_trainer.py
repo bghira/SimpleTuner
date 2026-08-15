@@ -2835,6 +2835,7 @@ class TestTrainer(unittest.TestCase):
                     self.assertEqual(remaining, ["checkpoint-110"])
                     trainer.hub_manager.upload_latest_checkpoint.assert_called_once_with(
                         validation_images=None,
+                        validation_audios=None,
                         webhook_handler=None,
                         global_step=110,
                         epoch=1,
@@ -2855,6 +2856,7 @@ class TestTrainer(unittest.TestCase):
 
             result = hub_manager.upload_latest_checkpoint(
                 validation_images=None,
+                validation_audios=None,
                 webhook_handler=None,
                 global_step=110,
                 epoch=1,
@@ -2867,6 +2869,7 @@ class TestTrainer(unittest.TestCase):
                 [
                     call(
                         validation_images=None,
+                        validation_audios=None,
                         override_path=incoming_checkpoint,
                         webhook_handler=None,
                         global_step=110,
@@ -2875,6 +2878,7 @@ class TestTrainer(unittest.TestCase):
                     ),
                     call(
                         validation_images=None,
+                        validation_audios=None,
                         override_path=incoming_checkpoint,
                         webhook_handler=None,
                         global_step=110,
@@ -2883,6 +2887,61 @@ class TestTrainer(unittest.TestCase):
                 ],
                 hub_manager.upload_model.call_args_list,
             )
+
+    def test_hub_checkpoint_upload_filters_audio_assets_for_step(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            validation_dir = Path(tmpdir, "validation_images")
+            validation_dir.mkdir()
+            current_audio = validation_dir / "step_110_song_0.wav"
+            stale_audio = validation_dir / "step_90_song_0.wav"
+            current_audio.write_bytes(b"current audio")
+            stale_audio.write_bytes(b"stale audio")
+            checkpoint = Path(tmpdir, "checkpoint-110")
+            checkpoint.mkdir()
+
+            hub_manager = object.__new__(HubManager)
+            hub_manager.config = SimpleNamespace(output_dir=tmpdir, push_checkpoints_to_hub=False)
+            hub_manager.find_latest_checkpoint = Mock(return_value=checkpoint)
+            hub_manager.upload_model = Mock(return_value="repo-url")
+
+            result = hub_manager.upload_latest_checkpoint(
+                validation_images=None,
+                validation_audios={"song": [object()]},
+                webhook_handler=None,
+                global_step=110,
+                epoch=1,
+                checkpoint_path=str(checkpoint),
+            )
+
+            self.assertEqual(("repo-url", str(checkpoint), "repo-url"), result)
+            hub_manager.upload_model.assert_called_once_with(
+                validation_images=None,
+                validation_audios={"song": [str(current_audio)]},
+                override_path=checkpoint,
+                webhook_handler=None,
+                global_step=110,
+                epoch=1,
+            )
+
+    def test_populate_checkpoint_assets_copies_audio_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            validation_dir = Path(tmpdir, "validation_images")
+            validation_dir.mkdir()
+            current_audio = validation_dir / "step_110_song_0.wav"
+            stale_audio = validation_dir / "step_90_song_0.wav"
+            current_audio.write_bytes(b"current audio")
+            stale_audio.write_bytes(b"stale audio")
+            checkpoint = Path(tmpdir, "checkpoint-110")
+            checkpoint.mkdir()
+
+            trainer = object.__new__(Trainer)
+            trainer.config = SimpleNamespace(output_dir=tmpdir)
+
+            trainer._populate_checkpoint_assets(str(checkpoint))
+
+            assets = sorted(path.name for path in (checkpoint / "assets").iterdir())
+            self.assertEqual(["audio_0.wav"], assets)
+            self.assertEqual(b"current audio", (checkpoint / "assets" / "audio_0.wav").read_bytes())
 
     def test_rolling_checkpoint_rotation_preserves_recovery_and_new_save(self):
         for use_checkpoint_manager in (True, False):
