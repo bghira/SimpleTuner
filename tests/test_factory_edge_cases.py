@@ -17,6 +17,7 @@ import sys
 import tempfile
 import unittest
 from copy import deepcopy
+from types import SimpleNamespace
 from typing import Any, Dict, List
 from unittest.mock import MagicMock, patch
 
@@ -327,6 +328,94 @@ class TestFactoryEdgeCases(unittest.TestCase):
         cache.compute_embeddings_for_prompts.assert_not_called()
         self.assertTrue(init_backend["config"]["hash_filenames"])
         set_config.assert_called_once_with("image-dataset", init_backend["config"])
+
+    def test_text_embed_precompute_splits_full_dataset_records_between_processes(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory._uses_text_embeddings_cache = lambda: True
+        factory._append_image_context_dropout_prompt_record = lambda *_args, **_kwargs: None
+        factory.args = SimpleNamespace(
+            prepend_instance_prompt=False,
+            instance_prompt=None,
+            only_instance_prompt=False,
+            skip_file_discovery="",
+        )
+        factory.accelerator = SimpleNamespace(device="cpu")
+        factory.text_encoders = []
+        factory.model = SimpleNamespace(
+            requires_text_embed_image_context=lambda: False,
+            text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION,
+        )
+        cache = MagicMock(text_cache_ondemand=False)
+        init_backend = {
+            "id": "image-dataset",
+            "config": {"caption_strategy": "textfile"},
+            "data_backend": object(),
+            "instance_data_dir": "dataset",
+            "metadata_backend": MagicMock(),
+            "text_embed_cache": cache,
+        }
+
+        with (
+            patch(
+                "simpletuner.helpers.data_backend.factory.PromptHandler.get_all_captions",
+                return_value=(["caption"], [], ["dataset/sample.png"]),
+            ),
+            patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+            patch(
+                "simpletuner.helpers.data_backend.factory.StateTracker.get_args",
+                return_value=SimpleNamespace(output_dir="output"),
+            ),
+            patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config"),
+        ):
+            factory._process_text_embeddings({}, init_backend, None)
+
+        cache.compute_embeddings_for_prompts.assert_called_once()
+        self.assertTrue(cache.compute_embeddings_for_prompts.call_args.kwargs["split_between_processes"])
+
+    def test_deferred_text_embed_precompute_splits_full_dataset_records_between_processes(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory._uses_text_embeddings_cache = lambda: True
+        factory._append_image_context_dropout_prompt_record = lambda *_args, **_kwargs: None
+        factory.args = SimpleNamespace(
+            caption_strategy="textfile",
+            prepend_instance_prompt=False,
+            instance_prompt=None,
+            only_instance_prompt=False,
+        )
+        factory.accelerator = SimpleNamespace(device="cpu")
+        factory.text_encoders = []
+        factory.model = SimpleNamespace(text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION)
+        cache = MagicMock(text_cache_ondemand=False)
+        backend = {"caption_strategy": "textfile"}
+        init_backend = {
+            "id": "image-dataset",
+            "config": {"caption_strategy": "textfile"},
+            "data_backend": object(),
+            "instance_data_dir": "dataset",
+            "metadata_backend": MagicMock(),
+            "text_embed_cache": cache,
+        }
+        factory._deferred_text_embed_backends = [(backend, init_backend)]
+
+        with (
+            patch("simpletuner.helpers.data_backend.factory.StateTracker.get_conditioning_datasets", return_value=[]),
+            patch(
+                "simpletuner.helpers.data_backend.factory.PromptHandler.get_all_captions",
+                return_value=(["caption"], [], ["dataset/sample.png"]),
+            ),
+            patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+        ):
+            factory._process_deferred_text_embeddings()
+
+        cache.compute_embeddings_for_prompts.assert_called_once()
+        self.assertTrue(cache.compute_embeddings_for_prompts.call_args.kwargs["split_between_processes"])
+        self.assertEqual(factory._deferred_text_embed_backends, [])
 
     def test_text_embed_disable_config_implies_ondemand_without_mutating_global_args(self):
         from simpletuner.helpers.data_backend.factory import init_backend_config
