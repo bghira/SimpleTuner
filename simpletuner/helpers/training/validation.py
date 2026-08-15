@@ -18,6 +18,7 @@ import diffusers
 import numpy as np
 import torch
 import wandb
+from accelerate.utils import gather_object
 from tqdm import tqdm
 
 from simpletuner.helpers.caching.memory import reclaim_memory
@@ -76,7 +77,7 @@ from simpletuner.helpers.training.validation_adapters import (
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 
 logger = logging.getLogger("Validation")
-from simpletuner.helpers.training.multi_process import gather_across_processes, should_log, split_across_processes
+from simpletuner.helpers.training.multi_process import should_log, split_across_processes
 
 if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -4191,13 +4192,15 @@ class Validation:
 
         if use_distributed:
             logger.info(f"[Rank {rank}] Gathering {len(local_payloads)} local payloads")
-            gathered_payloads = gather_across_processes(local_payloads)
+            gathered_payloads = list(gather_object(local_payloads) or [])
+            aggregated_payloads = []
+            for payload_group in gathered_payloads:
+                if isinstance(payload_group, list):
+                    aggregated_payloads.extend(payload_group)
+                else:
+                    aggregated_payloads.append(payload_group)
             if not self.accelerator.is_main_process:
                 return
-            logger.info(
-                f"[Rank {rank}] Gathered {len(gathered_payloads)} payload groups: {[len(p) for p in gathered_payloads]}"
-            )
-            aggregated_payloads = [payload for worker_payloads in gathered_payloads for payload in worker_payloads]
             logger.info(f"[Rank {rank}] Total aggregated payloads: {len(aggregated_payloads)}")
 
             aggregated_payloads.sort(key=lambda payload: payload["index"])
