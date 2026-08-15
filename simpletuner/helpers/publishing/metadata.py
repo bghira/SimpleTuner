@@ -4,6 +4,7 @@ import os
 from typing import Any, Optional, Union
 
 import numpy as np
+import scipy.io.wavfile
 import torch
 from diffusers.utils.export_utils import export_to_gif
 from PIL import Image
@@ -434,15 +435,30 @@ def model_card_note(args):
 
 def save_metadata_sample(
     image_path: str,
-    image: Union[Image.Image, np.ndarray, list, str],
+    image: Union[Image.Image, np.ndarray, list, str, torch.Tensor],
+    sample_rate: int = 44100,
 ):
     if isinstance(image, str):
-        # Video file path - copy it to the destination
         import shutil
 
         file_extension = os.path.splitext(image)[1][1:]  # Get extension without dot
         output_path = f"{image_path}.{file_extension}"
         shutil.copy2(image, output_path)
+    elif torch.is_tensor(image) or isinstance(image, np.ndarray):
+        from simpletuner.helpers.training.validation_audio import _coerce_audio_tensor
+
+        tensor = _coerce_audio_tensor(image)
+        if tensor is None:
+            raise ValueError(f"Cannot export sample type {type(image)} as audio.")
+        audio_np = tensor.numpy().T
+        if audio_np.shape[1] == 1:
+            audio_np = audio_np.squeeze(1)
+        if np.issubdtype(audio_np.dtype, np.floating):
+            audio_np = np.clip(audio_np, -1.0, 1.0)
+            audio_np = (audio_np * 32767.0).astype(np.int16)
+        file_extension = "wav"
+        output_path = f"{image_path}.{file_extension}"
+        scipy.io.wavfile.write(output_path, sample_rate, audio_np)
     elif isinstance(image, list):
         file_extension = "gif"
         output_path = f"{image_path}.{file_extension}"
@@ -471,6 +487,11 @@ def _model_card_family_tag(model_family: str):
 
 
 def _pipeline_tag(args):
+    audio_model_families = {
+        "ace_step",
+        "heartmula",
+        "minimaxmusic",
+    }
     video_model_families = {
         "hunyuanvideo",
         "longcat_video",
@@ -481,7 +502,18 @@ def _pipeline_tag(args):
         "wan",
         "wan_s2v",
     }
+    if args.model_family in audio_model_families:
+        return "text-to-audio"
     return "text-to-video" if args.model_family in video_model_families else "text-to-image"
+
+
+def _secondary_pipeline_tag(args):
+    pipeline_tag = _pipeline_tag(args)
+    if pipeline_tag == "text-to-video":
+        return "image-to-video"
+    if pipeline_tag == "text-to-audio":
+        return "audio"
+    return "image-to-image"
 
 
 def _license_metadata(model: ModelFoundation) -> str:
@@ -639,6 +671,7 @@ def save_model_card(
     model: ModelFoundation,
     repo_id: str,
     images=None,
+    audios=None,
     base_model: str = "",
     train_text_encoder: bool = False,
     prompt: str = "",
@@ -676,20 +709,27 @@ def save_model_card(
     if negative_prompt_text == "":
         negative_prompt_text = "''"
     has_video = False
-    if images is not None and len(images) > 0:
-        widget_str = "widget:"
-        for image_list in images.values() if isinstance(images, dict) else images:
-            if not isinstance(image_list, list):
-                image_list = [image_list]
+    has_audio = False
+    has_media = (images is not None and len(images) > 0) or (audios is not None and len(audios) > 0)
+    audio_sample_rate = model.validation_audio_sample_rate() or 44100
+
+    def _add_widget_entries(media, asset_prefix: str):
+        nonlocal widget_str, idx, shortname_idx, has_video, has_audio
+        for media_list in media.values() if isinstance(media, dict) else media:
+            if not isinstance(media_list, list):
+                media_list = [media_list]
             sub_idx = 0
-            for image in image_list:
-                output_path, image_extension = save_metadata_sample(
-                    image_path=os.path.join(assets_folder, f"image_{idx}_{sub_idx}"),
-                    image=image,
+            for media_sample in media_list:
+                output_path, media_extension = save_metadata_sample(
+                    image_path=os.path.join(assets_folder, f"{asset_prefix}_{idx}_{sub_idx}"),
+                    image=media_sample,
+                    sample_rate=audio_sample_rate,
                 )
                 asset_filename = os.path.basename(output_path)
-                if image_extension == "mp4":
+                if media_extension in {"mp4", "avi", "mov", "webm"}:
                     has_video = True
+                if media_extension in {"wav", "flac", "mp3", "ogg", "m4a"}:
+                    has_audio = True
                 validation_prompt = "no prompt available"
                 if validation_prompts is not None:
                     try:
@@ -699,7 +739,6 @@ def save_model_card(
                 if validation_prompt == "":
                     validation_prompt = "unconditional (blank prompt)"
                 else:
-                    # Escape anything that YAML won't like
                     validation_prompt = validation_prompt.replace("'", "''")
                 widget_str += f"\n- text: '{validation_prompt}'"
                 widget_str += "\n  parameters:"
@@ -711,10 +750,23 @@ def save_model_card(
                 sub_idx += 1
 
             shortname_idx += 1
+
+    if has_media:
+        widget_str = "widget:"
+        if images is not None and len(images) > 0:
+            _add_widget_entries(images, "image")
+        if audios is not None and len(audios) > 0:
+            _add_widget_entries(audios, "audio")
     gallery_intro = ""
-    if images is not None:
-        if has_video:
+    if has_media:
+        if has_video and has_audio:
+            gallery_intro = "You can find some example images, videos, and audio samples in the following gallery:"
+        elif has_video:
             gallery_intro = "You can find some example images and videos in the following gallery:"
+        elif has_audio and images is not None and len(images) > 0:
+            gallery_intro = "You can find some example images and audio samples in the following gallery:"
+        elif has_audio:
+            gallery_intro = "You can find some example audio samples in the following gallery:"
         else:
             gallery_intro = "You can find some example images in the following gallery:"
     sage_usage = getattr(args.sageattention_usage, "value", args.sageattention_usage)
@@ -726,7 +778,7 @@ tags:
   - {_model_card_family_tag(model_family)}
   - {f'{_model_card_family_tag(model_family)}-diffusers' if 'deepfloyd' not in args.model_type else 'deepfloyd-if-diffusers'}
   - {_pipeline_tag(args)}
-  - {'image-to-video' if _pipeline_tag(args) == 'text-to-video' else 'image-to-image'}
+  - {_secondary_pipeline_tag(args)}
   - diffusers
   - simpletuner
   - {'not-for-all-audiences' if not args.model_card_safe_for_work else 'safe-for-work'}
