@@ -816,6 +816,30 @@ def _validation_text_cache_key(args, shortname: str, prompt: str) -> str:
     return f"{shortname}:{prompt_hash}"
 
 
+def _validation_prompt_cache_metadata(
+    args,
+    model,
+    *,
+    entry: PromptLibraryEntry | ValidationPrompt | None = None,
+    lyrics: str | None = None,
+) -> dict[str, Any] | None:
+    if not isinstance(model, AudioModelFoundation):
+        return None
+
+    metadata: dict[str, Any] = {}
+    lyrics_text = lyrics
+    if lyrics_text is None and entry is not None:
+        lyrics_text = entry.lyrics
+    if lyrics_text is not None:
+        metadata["lyrics"] = lyrics_text
+
+    audio_duration = getattr(args, "validation_audio_duration", None)
+    if audio_duration is not None:
+        metadata["audio_duration"] = audio_duration
+
+    return metadata or None
+
+
 def _validation_negative_text_cache_key(args, shortname: str, negative_prompt: str) -> str:
     prompt_hash = hashlib.md5(str(negative_prompt).encode("utf-8")).hexdigest()
     return f"{_validation_text_cache_key(args, shortname, negative_prompt)}:__validation_negative__{prompt_hash}"
@@ -871,6 +895,9 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             "prompt": "",
             "key": "unconditional",
         }
+        metadata = _validation_prompt_cache_metadata(args, model)
+        if metadata:
+            prompt_record["metadata"] = metadata
         if precompute_text_embeddings:
             embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
     model_type = getattr(embed_cache, "model_type", None)
@@ -930,6 +957,9 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                             "Skipping validation sample without reference images while preparing embeds for image-context encoding."
                         )
                         continue
+                    audio_metadata = _validation_prompt_cache_metadata(args, model, entry=validation_sample)
+                    if audio_metadata:
+                        metadata.update(audio_metadata)
 
                     # Create prompt record with shortname as key and image metadata for encoding
                     prompt_record = {
@@ -945,6 +975,9 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                         "prompt": validation_prompt,
                         "key": shortname,
                     }
+                    metadata = _validation_prompt_cache_metadata(args, model, entry=validation_sample)
+                    if metadata:
+                        prompt_record["metadata"] = metadata
                     if precompute_text_embeddings:
                         embed_cache.compute_embeddings_for_prompts([prompt_record], load_from_cache=False)
                 sample_prompts.append(PromptLibraryEntry(prompt=validation_prompt))
@@ -977,6 +1010,9 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                 "prompt": entry.prompt,
                 "key": shortname,
             }
+            metadata = _validation_prompt_cache_metadata(args, model, entry=entry)
+            if metadata:
+                prompt_record["metadata"] = metadata
             if precompute_text_embeddings:
                 embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
             validation_prompts.append(entry)
@@ -1000,6 +1036,9 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                 "prompt": entry.prompt,
                 "key": shortname,
             }
+            metadata = _validation_prompt_cache_metadata(args, model, entry=entry)
+            if metadata:
+                prompt_record["metadata"] = metadata
             if precompute_text_embeddings:
                 embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
             if entry.bbox_entities:
@@ -1044,6 +1083,13 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             "prompt": args.validation_prompt,
             "key": _validation_text_cache_key(args, "validation", args.validation_prompt),
         }
+        metadata = _validation_prompt_cache_metadata(
+            args,
+            model,
+            lyrics=getattr(args, "validation_lyrics", None),
+        )
+        if metadata:
+            prompt_record["metadata"] = metadata
         if precompute_text_embeddings:
             embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
     # Compute negative embed for validation prompts, if any are set, so that it's stored before we unload the text encoder.
@@ -2225,10 +2271,12 @@ class Validation:
         validation_shortname: str,
         validation_input_image=None,
         cache_shortname: str | None = None,
+        lyrics: str | None = None,
     ):
         # For validation prompts, use the cache_shortname (defaults to validation_shortname) as cache key for lookup.
+        args = StateTracker.get_args()
         cache_key = _validation_text_cache_key(
-            StateTracker.get_args(),
+            args,
             cache_shortname or validation_shortname,
             validation_prompt,
         )
@@ -2236,10 +2284,14 @@ class Validation:
             "prompt": validation_prompt,
             "key": cache_key,
         }
+        metadata = {}
         if self.model.requires_text_embed_image_context() and validation_input_image is not None:
-            metadata = _validation_reference_prompt_metadata(validation_input_image)
-            if metadata:
-                prompt_record["metadata"] = metadata
+            metadata.update(_validation_reference_prompt_metadata(validation_input_image) or {})
+        audio_metadata = _validation_prompt_cache_metadata(args, self.model, lyrics=lyrics)
+        if audio_metadata:
+            metadata.update(audio_metadata)
+        if metadata:
+            prompt_record["metadata"] = metadata
         prompt_embed = self.embed_cache.compute_embeddings_for_prompts([prompt_record], load_from_cache=True)
 
         if prompt_embed is None:
@@ -4627,7 +4679,11 @@ class Validation:
                 validation_audio_results[validation_shortname] = []
             try:
                 _embed = self._gather_prompt_embeds(
-                    prompt, validation_shortname, validation_input_image_for_resolution, cache_shortname=cache_key
+                    prompt,
+                    validation_shortname,
+                    validation_input_image_for_resolution,
+                    cache_shortname=cache_key,
+                    lyrics=lyrics,
                 )
                 if _embed is not None:
                     extra_validation_kwargs.update(_embed)

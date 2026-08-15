@@ -168,9 +168,34 @@ class MiniMaxMusicModelTests(unittest.TestCase):
 
         self.assertEqual(updated["prompt"], "bright synth pop")
         self.assertEqual(updated["lyrics"], "[verse]\nhello")
-        self.assertNotIn("frame_hiddens", updated)
+        self.assertIs(updated["frame_hiddens"], prompt_embeds)
         self.assertNotIn("prompt_embeds", updated)
         self.assertNotIn("attention_masks", updated)
+
+    def test_modular_pipeline_accepts_cached_frame_hiddens_input(self):
+        from simpletuner.helpers.models.minimaxmusic.modular_blocks import MiniMaxMusic3Blocks
+
+        pipeline = MiniMaxMusic3ModularPipeline(MiniMaxMusic3Blocks())
+
+        self.assertIn("frame_hiddens", [param.name for param in pipeline._blocks.inputs])
+
+    def test_cached_frame_hiddens_skip_text_and_semantic_blocks(self):
+        from diffusers.modular_pipelines.modular_pipeline import PipelineState
+
+        from simpletuner.helpers.models.minimaxmusic.encoders import (
+            MiniMaxMusic3SemanticGenerationStep,
+            MiniMaxMusic3TextEncoderStep,
+        )
+
+        state = PipelineState()
+        frame_hiddens = torch.randn(1, 4, 8)
+        state.set("frame_hiddens", frame_hiddens)
+        components = SimpleNamespace(_execution_device=torch.device("cpu"))
+
+        _, state = MiniMaxMusic3TextEncoderStep()(components, state)
+        _, state = MiniMaxMusic3SemanticGenerationStep()(components, state)
+
+        self.assertIs(state.get("frame_hiddens"), frame_hiddens)
 
     def test_validation_kwargs_replace_blank_prompt_library_lyrics(self):
         model = self._build_model()
@@ -295,6 +320,79 @@ class MiniMaxMusicModelTests(unittest.TestCase):
             model.text_embed_cache_key_value(prompt="bright synth pop", default_key="music:track.wav", metadata={}),
             "music:track.wav",
         )
+
+    def test_validation_prompt_library_precompute_includes_audio_metadata(self):
+        from simpletuner.helpers.training.validation import prepare_validation_prompt_list
+        from simpletuner.simpletuner_sdk.server.services.prompt_library_service import PromptLibraryEntry
+
+        class DummyEmbedCache:
+            model_type = "minimaxmusic"
+            text_cache_ondemand = False
+
+            def __init__(self):
+                self.calls = []
+
+            def compute_embeddings_for_prompts(self, prompts, **kwargs):
+                self.calls.append((prompts, kwargs))
+
+            def encode_validation_negative_prompt(self, prompt):
+                raise AssertionError(f"Unexpected negative prompt precompute: {prompt}")
+
+        args = SimpleNamespace(
+            model_family="minimaxmusic",
+            model_flavour="music3",
+            controlnet=False,
+            control=False,
+            validation_using_datasets=False,
+            validation_input=None,
+            validation_prompt_library="audio",
+            user_prompt_library=None,
+            validation_prompt=None,
+            validation_negative_prompt="None",
+            validation_disable_unconditional=True,
+            validation_audio_duration=42.0,
+            data_backend_config="config/examples/minimaxmusic-audio-48g.json",
+        )
+        entry = PromptLibraryEntry(prompt="bright synth pop", lyrics="[verse]\nhello world")
+        embed_cache = DummyEmbedCache()
+
+        with (
+            patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
+            patch("simpletuner.helpers.training.validation.StateTracker.get_validation_sample_images", return_value=[]),
+            patch(
+                "simpletuner.helpers.prompts.get_validation_prompt_library",
+                return_value={"song": entry},
+            ),
+        ):
+            metadata = prepare_validation_prompt_list(args, embed_cache, self._build_model())
+
+        self.assertEqual(metadata["validation_shortnames"], ["song"])
+        prompt_record = embed_cache.calls[0][0][0]
+        self.assertEqual(prompt_record["metadata"]["lyrics"], "[verse]\nhello world")
+        self.assertEqual(prompt_record["metadata"]["audio_duration"], 42.0)
+
+    def test_validation_embed_lookup_includes_audio_metadata(self):
+        from simpletuner.helpers.training.validation import Validation
+
+        model = self._build_model()
+        validation = object.__new__(Validation)
+        validation.model = model
+        validation.inference_device = torch.device("cpu")
+        validation.embed_cache = MagicMock()
+        validation.embed_cache.compute_embeddings_for_prompts.return_value = {"prompt_embeds": torch.ones(1, 4, 8)}
+        args = SimpleNamespace(model_family="minimaxmusic", validation_audio_duration=30.0)
+
+        with patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args):
+            pipeline_embed = validation._gather_prompt_embeds(
+                "bright synth pop",
+                "song",
+                lyrics="[chorus]\nshine tonight",
+            )
+
+        prompt_record = validation.embed_cache.compute_embeddings_for_prompts.call_args.args[0][0]
+        self.assertEqual(prompt_record["metadata"]["lyrics"], "[chorus]\nshine tonight")
+        self.assertEqual(prompt_record["metadata"]["audio_duration"], 30.0)
+        torch.testing.assert_close(pipeline_embed["frame_hiddens"], torch.ones(1, 4, 8))
 
     def test_constructed_model_initializes_vae_slot(self):
         config = SimpleNamespace(

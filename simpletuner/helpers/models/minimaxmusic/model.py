@@ -1108,7 +1108,7 @@ class MiniMaxMusic(AudioModelFoundation):
                 pipeline_kwargs["lyrics"] = str(configured_lyrics)
             elif validation_prompt:
                 pipeline_kwargs["lyrics"] = str(validation_prompt)
-        for cached_embed_key in ("frame_hiddens", "prompt_embeds", "attention_masks"):
+        for cached_embed_key in ("prompt_embeds", "attention_masks"):
             pipeline_kwargs.pop(cached_embed_key, None)
         return pipeline_kwargs
 
