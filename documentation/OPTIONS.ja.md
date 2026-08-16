@@ -1799,6 +1799,7 @@ LayerSync は同一 Transformer 内の「学生」レイヤーを、より強い
 - `TRAINING_NUM_PROCESSES` はシステム内の GPU 数に設定します。ほとんどの用途で DistributedDataParallel（DDP）を有効化するには十分です。`config.env` を使いたくない場合は、`config.json` の `num_processes` を使用してください。
 - `TRAINING_DYNAMO_BACKEND` は既定で `no` ですが、対応する torch.compile バックエンド（例: `inductor`, `aot_eager`, `cudagraphs`）に設定でき、`--dynamo_mode`、`--dynamo_fullgraph`、`--dynamo_use_regional_compilation` と組み合わせて微調整できます。
 - `SIMPLETUNER_LOG_LEVEL` は既定で `INFO` ですが、`DEBUG` にすると `debug.log` に問題報告向けの詳細情報を追加できます。
+- `SIMPLETUNER_ALLOW_MODIFYING_BSZ=1` を設定すると、チェックポイントから再開する際のサンプラー batch_size 不一致チェックをスキップします。意図的に `train_batch_size` を変更し、サンプラー状態の不整合リスクを許容する場合のみ使用してください。`--i_know_what_i_am_doing` と同等です。
 - `VENV_PATH` は Python 仮想環境の場所を指定できます（標準の `.venv` 以外の場合）。
 - `ACCELERATE_EXTRA_ARGS` は未設定でも構いませんが、`--multi_gpu` や FSDP 特有のフラグなど追加引数を含められます。
 
@@ -2410,7 +2411,9 @@ options:
                         Source device used to generate validation seeds
   --i_know_what_i_am_doing [I_KNOW_WHAT_I_AM_DOING]
                         Unlock experimental overrides and bypass built-in
-                        safety limits.
+                        safety limits. Also bypasses the sampler batch-size
+                        mismatch check on resume (same effect as
+                        SIMPLETUNER_ALLOW_MODIFYING_BSZ=1).
   --flow_sigmoid_scale FLOW_SIGMOID_SCALE
                         Scale factor for sigmoid timestep sampling for flow-
                         matching models.

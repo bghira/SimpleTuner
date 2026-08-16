@@ -324,7 +324,8 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.assertEqual(
             str(error.exception),
             "Dataset 'foo' checkpoint batch_size=3 does not match current batch_size=2. "
-            "Resume with the same per-dataset train_batch_size.",
+            "Resume with the same per-dataset train_batch_size, "
+            "or set --i_know_what_i_am_doing / SIMPLETUNER_ALLOW_MODIFYING_BSZ=1 to bypass.",
         )
         self.assertEqual(self.metadata_backend.aspect_ratio_bucket_indices, {"fresh": ["fresh.jpg"]})
         self.assertEqual(self.metadata_backend.seen_images, {"fresh.jpg": 1})
@@ -334,7 +335,32 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.assertEqual(self.sampler.exhausted_buckets, ["fresh-exhausted"])
         self.assertEqual(self.sampler.current_epoch, 7)
 
-    def test_load_states_legacy_state_without_batch_size_keeps_fresh_split_when_no_layout(self):
+    def test_load_states_batch_size_mismatch_allowed_via_env_var(self):
+        self.sampler.state_manager.load_state.return_value = {
+            "aspect_ratio_bucket_indices": {"saved": ["saved.jpg"]},
+            "buckets": ["saved"],
+            "batch_size": 3,
+        }
+        self.metadata_backend.aspect_ratio_bucket_indices = {"fresh": ["fresh.jpg"]}
+        import os
+
+        with patch.dict(os.environ, {"SIMPLETUNER_ALLOW_MODIFYING_BSZ": "1"}):
+            with patch.object(StateTracker, "get_args", return_value=SimpleNamespace(i_know_what_i_am_doing=False)):
+                # Should not raise
+                self.sampler.load_states(self.state_path)
+
+    def test_load_states_batch_size_mismatch_allowed_via_i_know_flag(self):
+        self.sampler.state_manager.load_state.return_value = {
+            "aspect_ratio_bucket_indices": {"saved": ["saved.jpg"]},
+            "buckets": ["saved"],
+            "batch_size": 3,
+        }
+        self.metadata_backend.aspect_ratio_bucket_indices = {"fresh": ["fresh.jpg"]}
+        with patch.object(StateTracker, "get_args", return_value=SimpleNamespace(i_know_what_i_am_doing=True)):
+            # Should not raise
+            self.sampler.load_states(self.state_path)
+
+
         # Checkpoints written before the layout was recorded cannot be attributed to a rank, so
         # the schedule is left alone. Seen state still loads.
         self.sampler.state_manager.load_state.return_value = {

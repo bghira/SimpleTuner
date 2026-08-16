@@ -1794,6 +1794,7 @@ As opcoes acima se aplicam em grande parte ao `config.json` — mas algumas entr
 - `TRAINING_NUM_PROCESSES` deve ser definido para o numero de GPUs no sistema. Para a maioria dos casos, isso basta para habilitar treino DDP. Use `num_processes` no `config.json` se preferir nao usar `config.env`.
 - `TRAINING_DYNAMO_BACKEND` padrao e `no`, mas pode ser definido para qualquer backend suportado do torch.compile (ex.: `inductor`, `aot_eager`, `cudagraphs`) e combinado com `--dynamo_mode`, `--dynamo_fullgraph` ou `--dynamo_use_regional_compilation` para ajuste fino.
 - `SIMPLETUNER_LOG_LEVEL` padrao e `INFO`, mas pode ser definido para `DEBUG` para adicionar mais informacoes de issues no `debug.log`.
+- `SIMPLETUNER_ALLOW_MODIFYING_BSZ=1` ignora a verificação de incompatibilidade de batch_size do sampler ao retomar de um checkpoint. Use apenas se intencionalmente alterou `train_batch_size` entre execuções e aceita o risco de estado inconsistente do sampler. Equivalente a `--i_know_what_i_am_doing`.
 - `VENV_PATH` pode ser definido para o caminho do seu virtual env python, se nao estiver no local tipico `.venv`.
 - `ACCELERATE_EXTRA_ARGS` pode ficar vazio ou conter argumentos extras como `--multi_gpu` ou flags especificas do FSDP.
 
@@ -2405,7 +2406,9 @@ options:
                         Source device used to generate validation seeds
   --i_know_what_i_am_doing [I_KNOW_WHAT_I_AM_DOING]
                         Unlock experimental overrides and bypass built-in
-                        safety limits.
+                        safety limits. Also bypasses the sampler batch-size
+                        mismatch check on resume (same effect as
+                        SIMPLETUNER_ALLOW_MODIFYING_BSZ=1).
   --flow_sigmoid_scale FLOW_SIGMOID_SCALE
                         Scale factor for sigmoid timestep sampling for flow-
                         matching models.

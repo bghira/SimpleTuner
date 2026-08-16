@@ -178,9 +178,20 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         saved_batch_size = previous_state.get("batch_size")
         if "batch_size" in previous_state and saved_batch_size != self.batch_size:
-            raise ValueError(
-                f"Dataset '{self.id}' checkpoint batch_size={saved_batch_size} does not match "
-                f"current batch_size={self.batch_size}. Resume with the same per-dataset train_batch_size."
+            _allow = os.environ.get("SIMPLETUNER_ALLOW_MODIFYING_BSZ", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            ) or getattr(StateTracker.get_args(), "i_know_what_i_am_doing", False)
+            if not _allow:
+                raise ValueError(
+                    f"Dataset '{self.id}' checkpoint batch_size={saved_batch_size} does not match "
+                    f"current batch_size={self.batch_size}. Resume with the same per-dataset train_batch_size, "
+                    f"or set --i_know_what_i_am_doing / SIMPLETUNER_ALLOW_MODIFYING_BSZ=1 to bypass."
+                )
+            logger.warning(
+                f"Dataset '{self.id}': resuming with batch_size={self.batch_size} but checkpoint recorded "
+                f"batch_size={saved_batch_size}. Proceeding because override is set."
             )
 
         # Checkpoints contain the rank-local schedule. Restore it before seen
