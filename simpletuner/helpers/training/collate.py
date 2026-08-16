@@ -627,7 +627,7 @@ def collate_fn(batch):
     data_backend = StateTracker.get_data_backend(batch_backend_id)
     training_data_root = data_backend.get("config", {}).get("instance_data_dir")
 
-    # Check for audio-only mode (LTX-2 audio-only training)
+    # Check for audio-only mode on models that support training without source video.
     # Can be explicit (audio.audio_only: true) or implicit (audio dataset + model supports audio-only)
     backend_config_for_audio_check = data_backend.get("config", {})
     is_audio_only = False

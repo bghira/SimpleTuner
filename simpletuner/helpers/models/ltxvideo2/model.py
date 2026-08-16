@@ -141,8 +141,24 @@ class LTXVideo2(VideoModelFoundation):
     # Only training the Attention blocks by default.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
     DEFAULT_LORA_EXCLUDE_TARGETS = ".*connector.*|.*embedding.*"
-    # Audio-specific LoRA targets added when audio data is present.
-    AUDIO_LORA_TARGETS = [
+    SUPPORTS_FAKE_VIDEO_STREAM = True
+    AUDIO_LORA_TARGET = [
+        "audio_attn1.to_k",
+        "audio_attn1.to_q",
+        "audio_attn1.to_v",
+        "audio_attn1.to_out.0",
+        "audio_attn2.to_k",
+        "audio_attn2.to_q",
+        "audio_attn2.to_v",
+        "audio_attn2.to_out.0",
+        "audio_ff.net.0.proj",
+        "audio_ff.net.2",
+        "audio_proj_in",
+        "audio_proj_out",
+        "audio_caption_projection.linear_1",
+        "audio_caption_projection.linear_2",
+    ]
+    AUDIO_ADDITIONAL_LORA_TARGET = [
         "audio_proj_in",
         "audio_proj_out",
         "audio_caption_projection.linear_1",
@@ -222,7 +238,7 @@ class LTXVideo2(VideoModelFoundation):
         projection layers in the LoRA targets to enable learning audio features.
         """
         if self._data_has_audio:
-            return list(self.AUDIO_LORA_TARGETS)
+            return list(self.AUDIO_ADDITIONAL_LORA_TARGET)
         return []
 
     def supports_crepa_self_flow(self) -> bool:
@@ -314,25 +330,6 @@ class LTXVideo2(VideoModelFoundation):
         lora_type = getattr(self.config, "lora_type", "standard")
         if str(lora_type).lower() != "standard":
             return super().get_lora_target_layers()
-
-        if self._data_has_audio and not self._data_has_video:
-            # Audio-only: target just audio layers, not video layers
-            targets = [
-                "audio_attn1.to_k",
-                "audio_attn1.to_q",
-                "audio_attn1.to_v",
-                "audio_attn1.to_out.0",
-                "audio_attn2.to_k",
-                "audio_attn2.to_q",
-                "audio_attn2.to_v",
-                "audio_attn2.to_out.0",
-                "audio_ff.net.0.proj",
-                "audio_ff.net.2",
-            ]
-            for extra in self.AUDIO_LORA_TARGETS:
-                if extra not in targets:
-                    targets.append(extra)
-            return targets
 
         targets = super().get_lora_target_layers()
         if self._data_has_audio:
@@ -695,11 +692,6 @@ class LTXVideo2(VideoModelFoundation):
         return 47
 
     def supports_audio_inputs(self) -> bool:
-        return True
-
-    @classmethod
-    def supports_audio_only_training(cls) -> bool:
-        """LTX-2 supports training on audio-only datasets without video."""
         return True
 
     def supports_conditioning_dataset(self) -> bool:
@@ -1781,32 +1773,13 @@ class LTXVideo2(VideoModelFoundation):
         # Ensure frames satisfy LTX-2 constraint: frames % 8 == 1
         video_frames = self.adjust_video_frames(video_frames)
 
-        # Calculate video latent shape
+        # Calculate video latent shape. The LTX audio-only transformer skips the
+        # video branch, so one placeholder token per latent frame is sufficient.
         video_temporal_ratio = getattr(self.get_vae(), "temporal_compression_ratio", 8)
-        video_spatial_ratio = getattr(self.get_vae(), "spatial_compression_ratio", 32)
         latent_frames = (video_frames - 1) // video_temporal_ratio + 1
 
-        # Get resolution from latent_metadata or config
-        latent_metadata = batch.get("latent_metadata")
-        if latent_metadata and len(latent_metadata) > 0:
-            meta = latent_metadata[0]
-            height = meta.get("latent_height") or meta.get("original_size", (512, 512))[1]
-            width = meta.get("latent_width") or meta.get("original_size", (512, 512))[0]
-            # If these are pixel values, convert to latent dimensions
-            if height > 64:
-                height = height // video_spatial_ratio
-            if width > 64:
-                width = width // video_spatial_ratio
-        else:
-            # For audio-only training, use minimal resolution since video latents
-            # are just zeros with masked loss - no need to allocate large tensors
-            # Default to 64x64 (2x2 latent) which is the minimum practical size
-            default_res = 64
-            height = default_res // video_spatial_ratio  # 64 / 32 = 2
-            width = default_res // video_spatial_ratio  # 64 / 32 = 2
-
         batch_size = audio_latents.shape[0]
-        shape = (batch_size, self.LATENT_CHANNEL_COUNT, latent_frames, height, width)
+        shape = (batch_size, self.LATENT_CHANNEL_COUNT, latent_frames, 1, 1)
         return torch.zeros(shape, device=device, dtype=dtype)
 
     def _calculate_expected_audio_latent_length(self, batch: dict) -> int:

@@ -33,17 +33,20 @@ from simpletuner.helpers.models.minimaxh3.encoders import MINIMAX_H3_DEFAULT_MAX
 from simpletuner.helpers.models.minimaxh3.modular_blocks_minimax_h3 import MiniMaxH3Blocks, MiniMaxH3Ref2VABlocks
 from simpletuner.helpers.models.minimaxh3.packing import (
     MINIMAX_H3_AUDIO_CHANNELS,
+    MINIMAX_H3_AUDIO_LATENTS_PER_SECOND,
     MINIMAX_H3_FPS,
     MINIMAX_H3_KEYFRAME_NOISE_AUG,
     MINIMAX_H3_PIXEL_MEAN,
     MINIMAX_H3_PIXEL_STD,
     MINIMAX_H3_TEXT_TAG,
+    align_num_frames,
     audio_latent_num_frames,
     build_packed_sequence,
     build_row_timestep_intervals,
     build_row_timesteps,
     patchify_video_latents,
     unpatchify_video_tokens,
+    video_latent_num_frames,
 )
 from simpletuner.helpers.models.minimaxh3.pipeline import MiniMaxH3Pipeline
 from simpletuner.helpers.models.minimaxh3.pipeline_ref import MiniMaxH3Ref2VAPipeline
@@ -98,6 +101,7 @@ def _is_single_file_path(path: Any) -> bool:
 class MiniMaxH3(VideoModelFoundation):
     SUPPORTS_MUON_CLIP = True
     AUTO_LORA_FORMAT_DETECTION = True
+    DEFAULT_AUDIO_CHANNELS = MINIMAX_H3_AUDIO_CHANNELS
     NAME = "MiniMax H3"
     MODEL_DESCRIPTION = "Joint audio-video flow-matching transformer"
     ENABLED_IN_WIZARD = True
@@ -157,6 +161,15 @@ class MiniMaxH3(VideoModelFoundation):
 
     DEFAULT_LORA_TARGET = ["to_q", "to_k", "to_v", "to_out.0"]
     DEFAULT_LYCORIS_TARGET = ["MiniMaxH3Attention", "FeedForward"]
+    SUPPORTS_FAKE_VIDEO_STREAM = True
+    AUDIO_LORA_TARGET = [
+        "to_q",
+        "to_k",
+        "to_v",
+        "to_out.0",
+        "audio_proj_in",
+        "audio_proj_out",
+    ]
 
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
@@ -1103,6 +1116,12 @@ class MiniMaxH3(VideoModelFoundation):
     def uses_audio_latents(self) -> bool:
         return True
 
+    def get_vae_for_dataset_type(self, dataset_type: str):
+        if dataset_type == "audio":
+            self._load_audio_vae(move_to_device=True)
+            return self.audio_vae
+        return self.get_vae()
+
     @staticmethod
     def _normalise_h3_target_mode(value: Any, *, source: str = "MiniMax-H3 target mode") -> str:
         if value is None or value == "":
@@ -1137,6 +1156,9 @@ class MiniMaxH3(VideoModelFoundation):
     def _h3_target_mode_for_data_backend(self, data_backend_id: Optional[str] = None) -> str:
         mode = self._target_mode_from_backend_config(data_backend_id) or self._configured_h3_target_mode()
         if mode == "auto":
+            backend_config = StateTracker.get_data_backend_config(data_backend_id) if data_backend_id else {}
+            if (backend_config or {}).get("dataset_type") == "audio":
+                return "av"
             return "video"
         return mode
 
@@ -1239,6 +1261,44 @@ class MiniMaxH3(VideoModelFoundation):
             dtype=dtype,
         )
 
+    def _build_fake_video_latents(self, batch: dict, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        audio_latents = batch.get("audio_latent_batch")
+        if isinstance(audio_latents, dict):
+            audio_latents = audio_latents.get("latents")
+        if not torch.is_tensor(audio_latents) or audio_latents.ndim != 4:
+            raise ValueError("MiniMax-H3 audio-only training requires cached audio latents before batch preparation.")
+
+        audio_length = int(audio_latents.shape[-1])
+        pixel_frames = max(
+            2,
+            round(audio_length / MINIMAX_H3_AUDIO_LATENTS_PER_SECOND * MINIMAX_H3_FPS),
+        )
+        latent_frames = video_latent_num_frames(align_num_frames(pixel_frames))
+        transformer = self.unwrap_model(self.model)
+        patch_size = tuple(getattr(transformer.config, "patch_size", (1, 2, 2)))
+        patch_t, patch_h, patch_w = patch_size
+        if latent_frames % patch_t:
+            latent_frames += patch_t - latent_frames % patch_t
+
+        return torch.zeros(
+            audio_latents.shape[0],
+            self.LATENT_CHANNEL_COUNT,
+            latent_frames,
+            patch_h,
+            patch_w,
+            device=device,
+            dtype=dtype,
+        )
+
+    def prepare_batch(self, batch: dict, state: dict) -> dict:
+        if batch.get("is_audio_only", False) and batch.get("latent_batch") is None:
+            batch["latent_batch"] = self._build_fake_video_latents(
+                batch,
+                self.accelerator.device,
+                self.config.weight_dtype,
+            )
+        return super().prepare_batch(batch=batch, state=state)
+
     def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
         batch = super().prepare_batch_conditions(batch=batch, state=state)
         target_device = self.accelerator.device
@@ -1303,12 +1363,13 @@ class MiniMaxH3(VideoModelFoundation):
                 f"MiniMax-H3 audio latents must have shape `[batch, 2, {audio_channels}, audio_latents]`, "
                 f"got {tuple(audio_latents.shape)}."
             )
-        expected_audio_latents = self._expected_audio_latents(batch["latents"])
-        if audio_latents.shape[-1] != expected_audio_latents:
-            raise ValueError(
-                f"MiniMax-H3 audio latent length {audio_latents.shape[-1]} does not match the video duration "
-                f"({expected_audio_latents}). Rebuild the audio VAE cache for this dataset."
-            )
+        if not batch.get("is_audio_only", False):
+            expected_audio_latents = self._expected_audio_latents(batch["latents"])
+            if audio_latents.shape[-1] != expected_audio_latents:
+                raise ValueError(
+                    f"MiniMax-H3 audio latent length {audio_latents.shape[-1]} does not match the video duration "
+                    f"({expected_audio_latents}). Rebuild the audio VAE cache for this dataset."
+                )
 
         if audio_mask is None:
             audio_mask = torch.ones(audio_latents.shape[0], device=target_device, dtype=torch.float32)
@@ -1722,11 +1783,15 @@ class MiniMaxH3(VideoModelFoundation):
         return total_loss, logs
 
     def _compute_av_loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
-        video_loss = super().loss(
-            prepared_batch,
-            model_output,
-            apply_conditioning_mask=apply_conditioning_mask,
-        )
+        video_mask = prepared_batch.get("video_latent_mask")
+        if torch.is_tensor(video_mask) and bool(torch.all(video_mask == 0)):
+            video_loss = model_output["model_prediction"].float().sum() * 0.0
+        else:
+            video_loss = super().loss(
+                prepared_batch,
+                model_output,
+                apply_conditioning_mask=apply_conditioning_mask,
+            )
         if os.environ.get("SIMPLETUNER_MINIMAXH3_LOSS_DEBUG", "0") == "1":
             video_pred = model_output.get("model_prediction")
             latents = prepared_batch.get("latents")

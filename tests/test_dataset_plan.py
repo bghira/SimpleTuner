@@ -556,6 +556,14 @@ class AudioOnlyDatasetValidationTest(unittest.TestCase):
         # Should NOT require video/image when only audio datasets present
         self.assertFalse(any("image or video" in msg for msg in errors))
 
+    def test_minimaxh3_implicit_audio_only_allows_audio_dataset(self):
+        datasets = self._base_datasets()
+        datasets.append({"id": "audio", "dataset_type": "audio", "type": "local"})
+
+        validations = compute_validations(datasets, blueprints=[], model_family="minimaxh3")
+
+        self.assertFalse(any("image or video" in msg for msg in self._collect_errors(validations)))
+
     def test_ltxvideo2_explicit_audio_only_allows_audio_dataset(self):
         """LTX-2 with explicit audio_only flag should not require video or image datasets."""
         datasets = self._base_datasets()

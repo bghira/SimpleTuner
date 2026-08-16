@@ -33,6 +33,7 @@ from simpletuner.helpers.models.minimaxh3.modular_pipeline import (
     _convert_minimax_h3_diffusers_swiglu_lora_layout,
 )
 from simpletuner.helpers.models.minimaxh3.packing import (
+    MINIMAX_H3_AUDIO_LATENTS_PER_SECOND,
     MINIMAX_H3_FPS,
     MINIMAX_H3_PIXEL_MEAN,
     MINIMAX_H3_PIXEL_STD,
@@ -67,6 +68,7 @@ from simpletuner.helpers.models.minimaxh3.transformer import (
     resolve_h3_reference_mode,
 )
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import _validation_negative_prompt_record, prepare_validation_prompt_list
 
 
@@ -3619,6 +3621,118 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertEqual(first["text_token_tags"].tolist(), [[1, 0]])
         self.assertEqual(second["prompt_embeds"].shape, (1, 3, 4))
         self.assertEqual(second["text_token_tags"].tolist(), [[1, 0, 1]])
+
+    def test_supports_fake_video_stream_with_audio_lora_target(self):
+        self.assertTrue(MiniMaxH3.SUPPORTS_FAKE_VIDEO_STREAM)
+        self.assertTrue(MiniMaxH3.supports_audio_only_training())
+        self.assertEqual(MiniMaxH3.DEFAULT_AUDIO_CHANNELS, 2)
+        self.assertIn("audio_proj_in", MiniMaxH3.AUDIO_LORA_TARGET)
+        self.assertIn("audio_proj_out", MiniMaxH3.AUDIO_LORA_TARGET)
+
+    def test_audio_only_data_uses_audio_lora_target(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(
+            lora_type="standard",
+            peft_lora_target_modules=None,
+            controlnet=False,
+            slider_lora_target=False,
+        )
+        wrapper.configure_data_signals(has_audio=True)
+
+        self.assertEqual(wrapper.get_lora_target_layers(), MiniMaxH3.AUDIO_LORA_TARGET)
+
+    def test_manual_lora_target_overrides_audio_default(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(
+            lora_type="standard",
+            peft_lora_target_modules=["custom.audio.layer"],
+            controlnet=False,
+            slider_lora_target=False,
+        )
+        wrapper.configure_data_signals(has_audio=True)
+
+        self.assertEqual(wrapper.get_lora_target_layers(), ["custom.audio.layer"])
+
+    def test_audio_backend_selects_av_target_mode_by_default(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(minimax_h3_target_mode="auto")
+
+        with patch.object(StateTracker, "get_data_backend_config", return_value={"dataset_type": "audio"}):
+            self.assertEqual(wrapper._h3_target_mode_for_data_backend("music"), "av")
+            self.assertTrue(wrapper.uses_audio_latents_for_data_backend("music"))
+
+    def test_audio_dataset_uses_audio_vae(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.audio_vae = object()
+        wrapper._load_audio_vae = Mock()
+
+        result = wrapper.get_vae_for_dataset_type("audio")
+
+        wrapper._load_audio_vae.assert_called_once_with(move_to_device=True)
+        self.assertIs(result, wrapper.audio_vae)
+
+    def test_fake_video_stream_has_one_spatial_token_per_frame(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.model = tiny_h3_transformer(num_layers=1)
+        wrapper.LATENT_CHANNEL_COUNT = 2
+        wrapper.unwrap_model = lambda model=None: model
+        audio_length = 10 * MINIMAX_H3_AUDIO_LATENTS_PER_SECOND
+        batch = {"audio_latent_batch": torch.zeros(1, 2, 3, audio_length)}
+
+        latents = wrapper._build_fake_video_latents(batch, torch.device("cpu"), torch.float32)
+
+        self.assertEqual(latents.shape, (1, 2, 72, 2, 2))
+        packed = latents.shape[2] * (latents.shape[3] // 2) * (latents.shape[4] // 2)
+        self.assertEqual(packed, latents.shape[2])
+
+    def test_fake_video_stream_runs_joint_h3_forward(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.model = tiny_h3_transformer(num_layers=1)
+        wrapper.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        wrapper.config = SimpleNamespace(weight_dtype=torch.float32)
+        wrapper.LATENT_CHANNEL_COUNT = 2
+        wrapper.unwrap_model = lambda model=None: model
+        audio_noisy = torch.randn(1, 2, 3, 2)
+        fake_video = wrapper._build_fake_video_latents(
+            {"audio_latent_batch": audio_noisy}, torch.device("cpu"), torch.float32
+        )
+
+        output = wrapper.model_predict(
+            {
+                "noisy_latents": fake_video,
+                "audio_noisy_latents": audio_noisy,
+                "encoder_hidden_states": torch.randn(1, 5, 6),
+                "timesteps": torch.tensor([0.25]),
+                "audio_timesteps": torch.tensor([0.5]),
+                "text_token_tags": torch.full((1, 5), MINIMAX_H3_TEXT_TAG, dtype=torch.long),
+                "minimax_h3_target_mode": "av",
+            }
+        )
+
+        self.assertEqual(output["model_prediction"].shape, fake_video.shape)
+        self.assertEqual(output["audio_prediction"].shape, audio_noisy.shape)
+
+    def test_audio_only_loss_ignores_fake_video_prediction(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(audio_loss_weight=1.0)
+        video_prediction = torch.full((1, 2, 2, 2, 2), 100.0, requires_grad=True)
+        audio_prediction = torch.ones(1, 2, 3, 2, requires_grad=True)
+
+        loss, video_loss, audio_loss, _ = wrapper._compute_av_loss(
+            {
+                "video_latent_mask": torch.zeros(1),
+                "audio_latent_mask": torch.ones(1),
+                "audio_target": torch.zeros_like(audio_prediction),
+            },
+            {"model_prediction": video_prediction, "audio_prediction": audio_prediction},
+        )
+        loss.backward()
+
+        self.assertEqual(video_loss.item(), 0.0)
+        self.assertEqual(audio_loss.item(), 1.0)
+        self.assertEqual(loss.item(), 1.0)
+        self.assertTrue(torch.equal(video_prediction.grad, torch.zeros_like(video_prediction)))
+        self.assertTrue(bool(torch.all(audio_prediction.grad > 0)))
 
 
 if __name__ == "__main__":
