@@ -1194,18 +1194,18 @@ Estos son ajustes avanzados opcionales para entrenamiento LTX-2. Úsalos en arch
 
 ### `--allow_dataset_oversubscription` {#--allow_dataset_oversubscription}
 
-- **Qué**: Ajusta automáticamente los `repeats` del dataset cuando el dataset es más pequeño que el tamaño de batch efectivo.
+- **Qué**: Ajusta automáticamente los `repeats` cuando un bucket de aspecto es más pequeño que el requisito de dimensionamiento de buckets de ese dataset.
 - **Por qué**: Evita fallos de entrenamiento cuando el tamaño de tu dataset no cumple los requisitos mínimos de tu configuración multi-GPU.
 - **Cómo funciona**:
   - Calcula el requisito de dimensionamiento de buckets de cada dataset: `train_batch_size resuelto del dataset × num_gpus × gradient_accumulation_steps`
-  - Si cualquier bucket de aspecto tiene menos muestras que el tamaño de batch efectivo, incrementa automáticamente `repeats`
+  - Si cualquier bucket de aspecto tiene menos muestras que el requisito de dimensionamiento de buckets de ese dataset, incrementa automáticamente `repeats`
   - Solo aplica cuando `repeats` no está configurado explícitamente en tu configuración de dataset
   - Registra una advertencia mostrando el ajuste y el razonamiento
 - **Casos de uso**:
   - Datasets pequeños (< 100 imágenes) con múltiples GPUs
   - Experimentar con distintos tamaños de batch sin reconfigurar datasets
   - Prototipado antes de recopilar un dataset completo
-- **Ejemplo**: Con 25 imágenes, 8 GPUs y `train_batch_size=4`, el tamaño de batch efectivo es 32. Este flag establecería automáticamente `repeats=1` para proporcionar 50 muestras (25 × 2).
+- **Ejemplo**: Con 25 imágenes, 8 GPUs y `train_batch_size=4`, el requisito de dimensionamiento de buckets del dataset es 32. Este flag establecería automáticamente `repeats=1` para proporcionar 50 muestras (25 × 2).
 - **Nota**: Esto **no** sobrescribirá valores `repeats` configurados manualmente en tu configuración de dataloader. Similar a `--disable_bucket_pruning`, este flag ofrece conveniencia sin comportamiento sorprendente.
 
 Consulta la guía [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) para más detalles sobre el tamaño de dataset para entrenamiento multi-GPU.

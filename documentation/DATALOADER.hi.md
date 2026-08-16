@@ -73,8 +73,8 @@
 
 ### `train_batch_size`
 
-- **केवल independently sampled primary datasets पर लागू** (`image`, `video`, `audio`, `caption`)। `conditioning` paired auxiliary data है, independently sampled primary dataset नहीं।
-- **Description:** इस dataset के लिए global `--train_batch_size` को override करता है। Resolved value उसके sampler microbatch size, bucket sizing, और dataset चुने जाने पर instantaneous sample count को नियंत्रित करता है। Global value उपयोग करने के लिए unset छोड़ें।
+- **Training behavior:** Independently sampled primary datasets (`image`, `video`, `audio`, `caption`) resolved value को training microbatch size के रूप में उपयोग करते हैं। `conditioning` paired auxiliary data है; उसका resolved value metadata buckets का आकार तय कर सकता है, लेकिन अलग training microbatch नहीं बनाता और optimizer update की sample count में अलग से नहीं जुड़ता।
+- **Description:** इस dataset के लिए global `--train_batch_size` को override करता है। Primary datasets के लिए resolved value sampler microbatch size, bucket sizing, और selected होने पर instantaneous sample count नियंत्रित करता है। `conditioning` के लिए यह केवल metadata और bucket preparation को प्रभावित करता है। Global value उपयोग करने के लिए unset छोड़ें।
 - **Gradient accumulation:** एक accumulation window अलग resolved microbatch sizes वाले datasets चुन सकती है। एक optimizer update का global sample total सभी accumulation microsteps और data-parallel ranks के actual local microbatch sizes का योग है; बिना override वाला selected dataset उस rank पर global default उपयोग करता है।
 - **Global reference:** Trainer-level learning-rate scaling और अन्य static configuration या reporting, जहाँ एक fixed batch size चाहिए, global `--train_batch_size` का ही उपयोग करते हैं। इसलिए mixed dataset overrides के साथ सामान्य global/effective batch-size formula configured reference है, हर optimizer update का exact sample count नहीं।
 - **Gradient checkpointing:** Gradient checkpointing batch-size arithmetic को नहीं बदलता।

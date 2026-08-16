@@ -1190,18 +1190,18 @@ Estas sao configuracoes avancadas opcionais para treino LTX-2. Defina-as em JSON
 
 ### `--allow_dataset_oversubscription` {#--allow_dataset_oversubscription}
 
-- **O que**: Ajusta automaticamente `repeats` quando o dataset e menor que o batch efetivo.
+- **O que**: Ajusta automaticamente `repeats` quando um bucket de aspecto e menor que o requisito de dimensionamento de buckets desse dataset.
 - **Por que**: Evita falhas quando o tamanho do dataset nao atende os requisitos minimos da configuracao multi-GPU.
 - **Como funciona**:
   - Calcula o requisito de dimensionamento de buckets de cada dataset: `train_batch_size resolvido do dataset × num_gpus × gradient_accumulation_steps`
-  - Se algum bucket de aspecto tiver menos samples que o batch efetivo, aumenta `repeats`
+  - Se algum bucket de aspecto tiver menos samples que o requisito de dimensionamento de buckets desse dataset, aumenta `repeats`
   - So aplica quando `repeats` nao esta configurado explicitamente no dataset
   - Registra um warning mostrando o ajuste e a justificativa
 - **Casos de uso**:
   - Datasets pequenos (< 100 imagens) com varias GPUs
   - Experimentar batch sizes diferentes sem reconfigurar datasets
   - Prototipar antes de coletar um dataset completo
-- **Exemplo**: Com 25 imagens, 8 GPUs e `train_batch_size=4`, o batch efetivo e 32. Esta flag definira `repeats=1` para fornecer 50 samples (25 × 2).
+- **Exemplo**: Com 25 imagens, 8 GPUs e `train_batch_size=4`, o requisito de dimensionamento de buckets do dataset e 32. Esta flag definira `repeats=1` para fornecer 50 samples (25 × 2).
 - **Nota**: Isso **nao** sobrescreve valores de `repeats` definidos manualmente no dataloader. Assim como `--disable_bucket_pruning`, esta flag oferece conveniencia sem comportamento surpreendente.
 
 Veja o guia [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) para mais detalhes sobre tamanho de dataset em treino multi-GPU.

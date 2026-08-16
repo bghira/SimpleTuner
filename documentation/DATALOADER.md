@@ -73,8 +73,8 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 ### `train_batch_size`
 
-- **Only applies to independently sampled primary datasets** (`image`, `video`, `audio`, `caption`). `conditioning` is paired auxiliary data rather than an independently sampled primary dataset.
-- **Description:** Overrides the global `--train_batch_size` for this dataset. The resolved value controls its sampler microbatch size, bucket sizing, and instantaneous sample count whenever it is selected. Leave unset to use the global value.
+- **Training behavior:** Independently sampled primary datasets (`image`, `video`, `audio`, `caption`) use the resolved value as their training microbatch size. `conditioning` is paired auxiliary data; its resolved value can still size metadata buckets, but it does not create an independent training microbatch or contribute separately to optimizer-update sample accounting.
+- **Description:** Overrides the global `--train_batch_size` for this dataset. For primary datasets, the resolved value controls sampler microbatch size, bucket sizing, and instantaneous sample count whenever selected. For `conditioning`, it only affects metadata and bucket preparation. Leave unset to use the global value.
 - **Gradient accumulation:** An accumulation window can select datasets with different resolved microbatch sizes. The optimizer update's global sample total is the sum of the actual local microbatch sizes across every accumulation microstep and data-parallel rank; a selected dataset without an override uses the global default on that rank.
 - **Global reference:** Trainer-level learning-rate scaling and other static configuration or reporting that require one fixed batch size continue to use the global `--train_batch_size`. Therefore, the usual global/effective batch-size formula is a configured reference when dataset overrides are mixed, not an exact sample count for every optimizer update.
 - **Gradient checkpointing:** Gradient checkpointing does not change batch-size arithmetic.
