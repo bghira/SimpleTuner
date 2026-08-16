@@ -9,12 +9,14 @@ from simpletuner.helpers.models.common import ImageModelFoundation
 
 
 def _flow_model(custom_timesteps: str, mode: str):
+    accelerator = SimpleNamespace(device=torch.device("cpu"), num_processes=1, process_index=0)
+    accelerator.gather = lambda tensor: tensor.repeat(accelerator.num_processes)
     model = SimpleNamespace(
         config=SimpleNamespace(
             flow_custom_timesteps=custom_timesteps,
             flow_timesteps_mode=mode,
         ),
-        accelerator=SimpleNamespace(device=torch.device("cpu"), num_processes=1, process_index=0),
+        accelerator=accelerator,
     )
     model._normalize_flow_custom_timesteps = ImageModelFoundation._normalize_flow_custom_timesteps.__get__(model)
     model.reset_flow_custom_timestep_cursor = ImageModelFoundation.reset_flow_custom_timestep_cursor.__get__(model)
@@ -59,6 +61,22 @@ class FlowCustomTimestepsTests(unittest.TestCase):
         self.assertTrue(torch.equal(rank0_timesteps, torch.tensor([100.0, 200.0])))
         self.assertTrue(torch.equal(rank1_timesteps, torch.tensor([300.0, 400.0])))
         self.assertTrue(torch.equal(rank0_next, torch.tensor([500.0, 100.0])))
+
+    def test_round_robin_offsets_rank_varying_batch_sizes(self):
+        rank0 = _flow_model("100,200,300,400,500,600,700,800", "round-robin")
+        rank1 = _flow_model("100,200,300,400,500,600,700,800", "round-robin")
+        for model in (rank0, rank1):
+            model.accelerator.num_processes = 2
+            model.accelerator.gather = lambda _tensor: torch.tensor([1, 3])
+        rank1.accelerator.process_index = 1
+
+        _, rank0_timesteps = rank0.sample_flow_sigmas(batch={"latents": torch.zeros(1, 1, 2, 2)}, state={"global_step": 0})
+        _, rank1_timesteps = rank1.sample_flow_sigmas(batch={"latents": torch.zeros(3, 1, 2, 2)}, state={"global_step": 0})
+        _, rank0_next = rank0.sample_flow_sigmas(batch={"latents": torch.zeros(1, 1, 2, 2)}, state={"global_step": 0})
+
+        self.assertTrue(torch.equal(rank0_timesteps, torch.tensor([100.0])))
+        self.assertTrue(torch.equal(rank1_timesteps, torch.tensor([200.0, 300.0, 400.0])))
+        self.assertTrue(torch.equal(rank0_next, torch.tensor([500.0])))
 
     def test_round_robin_initializes_from_resume_step(self):
         model = _flow_model("100,200,300,400,500", "round-robin")
