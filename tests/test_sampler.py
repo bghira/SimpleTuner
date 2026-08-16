@@ -318,7 +318,11 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.sampler.exhausted_buckets = ["fresh-exhausted"]
         self.sampler.current_epoch = 7
 
-        with self.assertRaises(ValueError) as error:
+        with (
+            patch.dict(os.environ, {"SIMPLETUNER_ALLOW_MODIFYING_BSZ": ""}),
+            patch.object(StateTracker, "get_args", return_value=SimpleNamespace(i_know_what_i_am_doing=False)),
+            self.assertRaises(ValueError) as error,
+        ):
             self.sampler.load_states(self.state_path)
 
         self.assertEqual(
