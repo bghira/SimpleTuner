@@ -1178,8 +1178,10 @@ Different models different conditioning data expect करते हैं:
 
 ### `--train_batch_size`
 
-- **What**: training data loader के लिए batch size।
+- **What**: Training data loader के लिए global default batch size। Primary dataset अपने sampler microbatch size को `train_batch_size` से override कर सकता है; बिना override वाले datasets इस value का उपयोग करते हैं।
 - **Why**: model memory consumption, convergence quality, और training speed प्रभावित करता है। बड़ा batch size सामान्यतः बेहतर परिणाम देता है, लेकिन बहुत बड़ा batch size overfitting या destabilized training का कारण बन सकता है और training अवधि भी बढ़ा सकता है। प्रयोग ज़रूरी है, लेकिन सामान्यतः लक्ष्य यह है कि training speed घटाए बिना VRAM अधिकतम उपयोग में हो।
+- **Static configuration**: Trainer-level learning-rate scaling और अन्य configuration या reporting, जहाँ एक fixed batch size चाहिए, dataset microbatch overrides के बावजूद इस global value का उपयोग करते हैं।
+- **Gradient accumulation**: चुने गए datasets के resolved microbatch sizes अलग होने पर एक optimizer update का global sample total सभी accumulation microsteps और data-parallel ranks के actual local microbatch sizes का योग है। बिना override वाला selected dataset उस rank पर इस global default का उपयोग करता है। सामान्य global/effective batch-size formula exact per-update sample count के बजाय configured reference रहता है। Gradient checkpointing इस arithmetic को नहीं बदलता।
 
 ### `--gradient_accumulation_steps`
 
@@ -1190,18 +1192,18 @@ Different models different conditioning data expect करते हैं:
 
 ### `--allow_dataset_oversubscription` {#--allow_dataset_oversubscription}
 
-- **What**: dataset effective batch size से छोटा होने पर `repeats` स्वतः adjust करता है।
+- **What**: aspect bucket उस dataset की bucket-sizing requirement से छोटा होने पर `repeats` स्वतः adjust करता है।
 - **Why**: multi‑GPU कॉन्फ़िगरेशन के लिए न्यूनतम requirements पूरी न होने पर training failure को रोकता है।
 - **How it works**:
-  - **effective batch size** की गणना करता है: `train_batch_size × num_gpus × gradient_accumulation_steps`
-  - यदि किसी aspect bucket में effective batch size से कम samples हैं, तो `repeats` स्वतः बढ़ाता है
+  - हर dataset की bucket-sizing requirement की गणना करता है: `resolved dataset train_batch_size × num_gpus × gradient_accumulation_steps`
+  - यदि किसी aspect bucket में उस dataset की bucket-sizing requirement से कम samples हैं, तो `repeats` स्वतः बढ़ाता है
   - केवल तब लागू होता है जब dataset config में `repeats` explicitly सेट न हो
   - adjustment और reasoning दिखाने के लिए warning लॉग करता है
 - **Use cases**:
   - कई GPUs के साथ छोटे datasets (< 100 images)
   - datasets फिर से कॉन्फ़िगर किए बिना अलग batch sizes के साथ experimentation
   - full dataset इकट्ठा करने से पहले prototyping
-- **Example**: 25 images, 8 GPUs, और `train_batch_size=4` के साथ effective batch size 32 होता है। यह flag `repeats=1` स्वतः सेट करेगा ताकि 50 samples (25 × 2) मिलें।
+- **Example**: 25 images, 8 GPUs, और `train_batch_size=4` के साथ dataset की bucket-sizing requirement 32 होती है। यह flag `repeats=1` स्वतः सेट करेगा ताकि 50 samples (25 × 2) मिलें।
 - **Note**: यह dataloader कॉन्फ़िग में manually‑set `repeats` values को override **नहीं** करेगा। `--disable_bucket_pruning` की तरह, यह flag बिना surprising behavior के सुविधा देता है।
 
 Multi‑GPU training के लिए dataset sizing पर अधिक विवरण [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) में देखें।

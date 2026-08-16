@@ -1181,8 +1181,10 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 
 ### `--train_batch_size`
 
-- **内容**：训练数据加载器的批大小。
+- **内容**：训练数据加载器的全局默认批大小。主要数据集可以用自己的 `train_batch_size` 覆盖采样器微批大小；没有覆盖值的数据集使用此值。
 - **原因**：影响内存消耗、收敛质量与训练速度。批越大结果通常越好，但过大可能导致过拟合或训练不稳定，并延长训练时间。需要实验，通常希望在不降低训练速度的前提下尽量用满显存。
+- **静态配置**：训练器级学习率缩放，以及其他必须使用单个固定批大小的配置或报告，即使数据集覆盖了微批大小，也仍使用此全局值。
+- **梯度累积**：当选中的数据集具有不同的解析后微批大小时，一次优化器更新的全局样本总数，是所有累积微步和所有数据并行 rank 上实际本地微批大小之和。被选中且没有覆盖值的数据集在对应 rank 上使用此全局默认值。常用的全局/有效批大小公式仍是配置参考值，而不是每次更新的准确样本数。梯度检查点不改变这一计算方式。
 
 ### `--gradient_accumulation_steps`
 
@@ -1193,18 +1195,18 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 
 ### `--allow_dataset_oversubscription` {#--allow_dataset_oversubscription}
 
-- **内容**：当数据集小于有效批大小时自动调整 `repeats`。
+- **内容**：当某个纵横比桶小于该数据集的 bucket 大小要求时，自动调整 `repeats`。
 - **原因**：避免多 GPU 配置下因数据集不足而训练失败。
 - **工作方式**：
-  - 计算**有效批大小**：`train_batch_size × num_gpus × gradient_accumulation_steps`
-  - 若某些纵横比桶样本数少于有效批大小，则自动增加 `repeats`
+  - 计算每个数据集的 bucket 大小要求：`解析后的数据集 train_batch_size × num_gpus × gradient_accumulation_steps`
+  - 若某些纵横比桶样本数少于该数据集的 bucket 大小要求，则自动增加 `repeats`
   - 仅在数据集配置未显式设置 `repeats` 时生效
   - 记录警告说明调整原因与结果
 - **适用场景**：
   - 小数据集（< 100 张）+ 多 GPU
   - 试验不同 batch 大小而无需重配数据集
   - 在收集完整数据集前做原型验证
-- **示例**：25 张图像、8 GPU、`train_batch_size=4` 时，有效批大小为 32。该标志会自动设定 `repeats=1`，提供 50 样本（25 × 2）。
+- **示例**：25 张图像、8 GPU、`train_batch_size=4` 时，该数据集的 bucket 大小要求为 32。该标志会自动设定 `repeats=1`，提供 50 样本（25 × 2）。
 - **说明**：不会覆盖 dataloader 配置中手动设置的 `repeats`。与 `--disable_bucket_pruning` 类似，此标志在不产生意外行为的前提下提供便利。
 
 更多关于多 GPU 数据集规模的细节见 [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription)。

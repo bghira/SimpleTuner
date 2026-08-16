@@ -73,8 +73,11 @@
 
 ### `train_batch_size`
 
-- **केवल trainable datasets पर लागू** (`image`, `video`, `audio`, `caption`, `conditioning`)
-- **Description:** इस dataset के लिए global `--train_batch_size` को override करता है। Global value उपयोग करने के लिए unset छोड़ें।
+- **Training behavior:** Independently sampled primary datasets (`image`, `video`, `audio`, `caption`) resolved value को training microbatch size के रूप में उपयोग करते हैं। `conditioning` paired auxiliary data है; उसका resolved value metadata buckets का आकार तय कर सकता है, लेकिन अलग training microbatch नहीं बनाता और optimizer update की sample count में अलग से नहीं जुड़ता।
+- **Description:** इस dataset के लिए global `--train_batch_size` को override करता है। Primary datasets के लिए resolved value sampler microbatch size, bucket sizing, और selected होने पर instantaneous sample count नियंत्रित करता है। `conditioning` के लिए यह केवल metadata और bucket preparation को प्रभावित करता है। Global value उपयोग करने के लिए unset छोड़ें।
+- **Gradient accumulation:** एक accumulation window अलग resolved microbatch sizes वाले datasets चुन सकती है। एक optimizer update का global sample total सभी accumulation microsteps और data-parallel ranks के actual local microbatch sizes का योग है; बिना override वाला selected dataset उस rank पर global default उपयोग करता है।
+- **Global reference:** Trainer-level learning-rate scaling और अन्य static configuration या reporting, जहाँ एक fixed batch size चाहिए, global `--train_batch_size` का ही उपयोग करते हैं। इसलिए mixed dataset overrides के साथ सामान्य global/effective batch-size formula configured reference है, हर optimizer update का exact sample count नहीं।
+- **Gradient checkpointing:** Gradient checkpointing batch-size arithmetic को नहीं बदलता।
 - **Default:** trainer के `--train_batch_size` argument पर fallback करता है।
 
 ### `write_batch_size`
@@ -678,6 +681,8 @@ Multiple GPUs के साथ training करते समय, आपका dat
 ```
 effective_batch_size = dataset train_batch_size × num_gpus × gradient_accumulation_steps
 ```
+
+यह per-dataset bucket-sizing requirement है। इसका अर्थ यह नहीं है कि एक accumulation window में हर configured dataset चुना जाता है, और यह mixed sizes वाले optimizer update का exact sample count नहीं बताता।
 
 उदाहरण के लिए, 4 GPUs, dataset `train_batch_size=4`, और `gradient_accumulation_steps=1` के साथ, हर aspect bucket में (repeats लागू होने के बाद) कम से कम **16 samples** चाहिए।
 

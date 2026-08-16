@@ -1176,8 +1176,10 @@ Estas sao configuracoes avancadas opcionais para treino LTX-2. Defina-as em JSON
 
 ### `--train_batch_size`
 
-- **O que**: Batch size para o dataloader de treinamento.
+- **O que**: Batch size global padrão para o dataloader de treinamento. Um dataset primário pode sobrescrever o tamanho do seu microbatch do sampler com `train_batch_size`; datasets sem override usam este valor.
 - **Por que**: Afeta consumo de memoria, qualidade de convergencia e velocidade. Batch maior tende a melhorar resultados, mas pode causar overfitting ou instabilidade e aumentar a duracao do treino. Experimente, mas em geral tente maximizar VRAM sem reduzir a velocidade.
+- **Configuração estática**: O escalonamento da learning rate no trainer e outras configurações ou relatórios que exigem um único batch size fixo usam este valor global, mesmo quando datasets sobrescrevem seus tamanhos de microbatch.
+- **Acúmulo de gradientes**: Quando os datasets selecionados têm tamanhos de microbatch resolvidos diferentes, o total global de amostras de uma atualização do otimizador é a soma dos tamanhos reais dos microbatches locais em todos os microsteps de acúmulo e ranks data-parallel. Um dataset selecionado sem override usa este padrão global naquele rank. A fórmula de batch global/efetivo continua sendo uma referência configurada, não a contagem exata por atualização. Gradient checkpointing não altera essa aritmética.
 
 ### `--gradient_accumulation_steps`
 
@@ -1188,18 +1190,18 @@ Estas sao configuracoes avancadas opcionais para treino LTX-2. Defina-as em JSON
 
 ### `--allow_dataset_oversubscription` {#--allow_dataset_oversubscription}
 
-- **O que**: Ajusta automaticamente `repeats` quando o dataset e menor que o batch efetivo.
+- **O que**: Ajusta automaticamente `repeats` quando um bucket de aspecto e menor que o requisito de dimensionamento de buckets desse dataset.
 - **Por que**: Evita falhas quando o tamanho do dataset nao atende os requisitos minimos da configuracao multi-GPU.
 - **Como funciona**:
-  - Calcula o **batch efetivo**: `train_batch_size × num_gpus × gradient_accumulation_steps`
-  - Se algum bucket de aspecto tiver menos samples que o batch efetivo, aumenta `repeats`
+  - Calcula o requisito de dimensionamento de buckets de cada dataset: `train_batch_size resolvido do dataset × num_gpus × gradient_accumulation_steps`
+  - Se algum bucket de aspecto tiver menos samples que o requisito de dimensionamento de buckets desse dataset, aumenta `repeats`
   - So aplica quando `repeats` nao esta configurado explicitamente no dataset
   - Registra um warning mostrando o ajuste e a justificativa
 - **Casos de uso**:
   - Datasets pequenos (< 100 imagens) com varias GPUs
   - Experimentar batch sizes diferentes sem reconfigurar datasets
   - Prototipar antes de coletar um dataset completo
-- **Exemplo**: Com 25 imagens, 8 GPUs e `train_batch_size=4`, o batch efetivo e 32. Esta flag definira `repeats=1` para fornecer 50 samples (25 × 2).
+- **Exemplo**: Com 25 imagens, 8 GPUs e `train_batch_size=4`, o requisito de dimensionamento de buckets do dataset e 32. Esta flag definira `repeats=1` para fornecer 50 samples (25 × 2).
 - **Nota**: Isso **nao** sobrescreve valores de `repeats` definidos manualmente no dataloader. Assim como `--disable_bucket_pruning`, esta flag oferece conveniencia sem comportamento surpreendente.
 
 Veja o guia [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) para mais detalhes sobre tamanho de dataset em treino multi-GPU.

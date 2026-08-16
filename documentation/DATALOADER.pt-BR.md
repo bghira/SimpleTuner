@@ -73,8 +73,11 @@ Aqui está o exemplo mais básico de um arquivo de configuração do dataloader,
 
 ### `train_batch_size`
 
-- **Aplica-se apenas a datasets treináveis** (`image`, `video`, `audio`, `caption`, `conditioning`)
-- **Descrição:** Sobrescreve o `--train_batch_size` global para este dataset. Deixe sem definir para usar o valor global.
+- **Comportamento de treinamento:** Datasets primários amostrados de forma independente (`image`, `video`, `audio`, `caption`) usam o valor resolvido como tamanho do microbatch de treinamento. `conditioning` é um dado auxiliar pareado; seu valor resolvido ainda pode dimensionar buckets de metadados, mas não cria um microbatch de treinamento independente nem entra separadamente na contagem de amostras da atualização do otimizador.
+- **Descrição:** Sobrescreve o `--train_batch_size` global para este dataset. Para datasets primários, o valor resolvido controla o microbatch do sampler, os buckets e a quantidade instantânea de amostras quando selecionado. Para `conditioning`, afeta apenas a preparação de metadados e buckets. Deixe sem definir para usar o valor global.
+- **Acúmulo de gradientes:** Uma janela de acúmulo pode selecionar datasets com tamanhos de microbatch resolvidos diferentes. O total global de amostras de uma atualização do otimizador é a soma dos tamanhos reais dos microbatches locais em todos os microsteps de acúmulo e ranks data-parallel; um dataset selecionado sem override usa o padrão global naquele rank.
+- **Referência global:** O escalonamento da learning rate no trainer e outras configurações estáticas ou relatórios que exigem um único batch size fixo continuam usando o `--train_batch_size` global. Portanto, ao misturar overrides por dataset, a fórmula de batch global/efetivo é uma referência configurada, não a contagem exata de amostras de cada atualização do otimizador.
+- **Gradient checkpointing:** Gradient checkpointing não altera a aritmética do batch size.
 - **Padrão:** Usa o argumento `--train_batch_size` do trainer.
 
 ### `write_batch_size`
@@ -678,6 +681,8 @@ Ao treinar com múltiplas GPUs, seu dataset deve ser grande o suficiente para ac
 ```
 effective_batch_size = train_batch_size do dataset × num_gpus × gradient_accumulation_steps
 ```
+
+Esse é um requisito de dimensionamento de buckets por dataset. Ele não significa que todos os datasets configurados serão selecionados em uma janela de acúmulo nem descreve a contagem exata de amostras de uma atualização do otimizador com tamanhos mistos.
 
 Por exemplo, com 4 GPUs, `train_batch_size=4` no dataset e `gradient_accumulation_steps=1`, você precisa de pelo menos **16 amostras** (após aplicar repeats) em cada bucket de aspecto.
 
