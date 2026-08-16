@@ -71,6 +71,12 @@
 - **説明:** このデータセットの埋め込みキャッシュファイルの保存先を指定します。`text_embeds` はテキストエンコーダ出力、`image_embeds` は VAE 潜在の保存先です。
 - **注記:** 主となる画像/動画データセットで VAE キャッシュの保存先を指定する `cache_dir_vae` とは異なります。
 
+### `train_batch_size`
+
+- **学習対象データセットのみに適用** (`image`, `video`, `audio`, `caption`, `conditioning`)
+- **説明:** このデータセットでグローバルな `--train_batch_size` を上書きします。未設定の場合はグローバル値を使います。
+- **既定値:** トレーナーの `--train_batch_size` 引数にフォールバックします。
+
 ### `write_batch_size`
 
 - **`dataset_type=text_embeds` のみに適用**
@@ -665,10 +671,10 @@ Canny エッジ検出マップを生成します:
 複数 GPU で学習する場合、データセットは次の **実効バッチサイズ** を満たすだけの大きさが必要です:
 
 ```
-effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_steps
+effective_batch_size = データセットの train_batch_size × num_gpus × gradient_accumulation_steps
 ```
 
-たとえば、GPU が 4 枚、`train_batch_size=4`、`gradient_accumulation_steps=1` の場合、各アスペクトバケットには（repeats 適用後で）最低 **16 サンプル**が必要です。
+たとえば、GPU が 4 枚、データセットの `train_batch_size=4`、`gradient_accumulation_steps=1` の場合、各アスペクトバケットには（repeats 適用後で）最低 **16 サンプル**が必要です。
 
 **重要:** データセット設定から使用可能なバッチが 0 になる場合、SimpleTuner はエラーを出します。エラーメッセージには以下が表示されます:
 - 現在の設定値（バッチサイズ、GPU 数、repeats）

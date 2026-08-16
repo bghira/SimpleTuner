@@ -71,6 +71,12 @@
 - **说明:** 指定该数据集嵌入缓存文件的存储位置。`text_embeds` 写入文本编码器输出，`image_embeds` 存放 VAE 潜变量。
 - **注记:** 这与主图像/视频数据集上的 `cache_dir_vae` 不同，后者用于指定其 VAE 缓存位置。
 
+### `train_batch_size`
+
+- **仅适用于可训练数据集**（`image`、`video`、`audio`、`caption`、`conditioning`）
+- **说明:** 为此数据集覆盖全局 `--train_batch_size`。不设置时使用全局值。
+- **默认值:** 回退到训练器的 `--train_batch_size` 参数。
+
 ### `write_batch_size`
 
 - **仅适用于 `dataset_type=text_embeds`**
@@ -665,10 +671,10 @@
 使用多 GPU 训练时，数据集必须足以满足**有效批大小**，计算如下：
 
 ```
-effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_steps
+effective_batch_size = 数据集 train_batch_size × num_gpus × gradient_accumulation_steps
 ```
 
-例如，4 张 GPU、`train_batch_size=4`、`gradient_accumulation_steps=1` 时，每个纵横比桶至少需要 **16 个样本**（应用 repeats 后）。
+例如，4 张 GPU、数据集 `train_batch_size=4`、`gradient_accumulation_steps=1` 时，每个纵横比桶至少需要 **16 个样本**（应用 repeats 后）。
 
 **重要:** 若数据集配置导致可用批次数为 0，SimpleTuner 会报错。错误信息将显示：
 - 当前配置值（批大小、GPU 数、repeats）
