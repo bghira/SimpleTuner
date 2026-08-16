@@ -96,6 +96,7 @@ from simpletuner.helpers.caching.distillation import DistillationCache
 from simpletuner.helpers.caching.image_embed import ImageEmbedCache
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.caching.vae import VAECache
+from simpletuner.helpers.configuration.platform_validation import validate_mps_train_batch_size
 from simpletuner.helpers.configuration.template_vars import resolve_value_placeholders
 from simpletuner.helpers.data_backend.aws import S3DataBackend
 from simpletuner.helpers.data_backend.base import BaseDataBackend
@@ -312,6 +313,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     dataset_train_batch_size = (
         resolve_dataset_train_batch_size(backend, args, dataset_type) if has_training_batch_size else None
     )
+    if dataset_train_batch_size is not None:
+        validate_mps_train_batch_size(dataset_train_batch_size)
 
     start_epoch = normalize_start_epoch(backend.get("start_epoch", 1))
     start_step = normalize_start_step(backend.get("start_step", 0))
