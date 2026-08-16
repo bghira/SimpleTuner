@@ -189,7 +189,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     f"current batch_size={self.batch_size}. Resume with the same per-dataset train_batch_size, "
                     f"or set --i_know_what_i_am_doing / SIMPLETUNER_ALLOW_MODIFYING_BSZ=1 to bypass."
                 )
-            logger.warning(
+            self.logger.warning(
                 f"Dataset '{self.id}': resuming with batch_size={self.batch_size} but checkpoint recorded "
                 f"batch_size={saved_batch_size}. Proceeding because override is set."
             )

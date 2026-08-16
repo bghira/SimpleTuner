@@ -342,11 +342,9 @@ class TestMultiAspectSampler(unittest.TestCase):
             "batch_size": 3,
         }
         self.metadata_backend.aspect_ratio_bucket_indices = {"fresh": ["fresh.jpg"]}
-        import os
 
         with patch.dict(os.environ, {"SIMPLETUNER_ALLOW_MODIFYING_BSZ": "1"}):
             with patch.object(StateTracker, "get_args", return_value=SimpleNamespace(i_know_what_i_am_doing=False)):
-                # Should not raise
                 self.sampler.load_states(self.state_path)
 
     def test_load_states_batch_size_mismatch_allowed_via_i_know_flag(self):
@@ -357,10 +355,9 @@ class TestMultiAspectSampler(unittest.TestCase):
         }
         self.metadata_backend.aspect_ratio_bucket_indices = {"fresh": ["fresh.jpg"]}
         with patch.object(StateTracker, "get_args", return_value=SimpleNamespace(i_know_what_i_am_doing=True)):
-            # Should not raise
             self.sampler.load_states(self.state_path)
 
-
+    def test_load_states_legacy_state_without_batch_size_keeps_fresh_split_when_no_layout(self):
         # Checkpoints written before the layout was recorded cannot be attributed to a rank, so
         # the schedule is left alone. Seen state still loads.
         self.sampler.state_manager.load_state.return_value = {
