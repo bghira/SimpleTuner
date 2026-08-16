@@ -10,7 +10,10 @@ import torch.nn.functional as F
 from safetensors.torch import load_file, save_file
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
-from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_model_replica_data_info
+from simpletuner.helpers.data_backend.runtime.context_parallel_sync import (
+    gather_variable_batch_tensor,
+    resolve_distributed_batch_layout,
+)
 from simpletuner.helpers.distillation.anyflow.scheduler import AnyFlowValidationScheduler
 from simpletuner.helpers.distillation.common import DistillationBase
 from simpletuner.helpers.distillation.registry import DistillationRegistry
@@ -585,20 +588,17 @@ class AnyFlowDistiller(DistillationBase):
         r_base = torch.minimum(first, second)
 
         accelerator = getattr(model, "accelerator", getattr(self.teacher_model, "accelerator", None))
-        process_index = int(getattr(accelerator, "process_index", 0) or 0)
-        num_processes = int(getattr(accelerator, "num_processes", 1) or 1)
-        data_parallel_enabled, data_rank, _, _, data_parallel_size = get_model_replica_data_info(accelerator)
-        if data_parallel_enabled:
-            process_index = data_rank
-            num_processes = data_parallel_size
-        global_batch_size = batch_size * num_processes
-        global_indices = process_index * batch_size + torch.arange(batch_size, device=device)
+        batch_layout = resolve_distributed_batch_layout(accelerator, batch_size)
+        self._distributed_batch_accelerator = accelerator
+        self._distributed_batch_layout = batch_layout
+        global_batch_size = batch_layout.global_batch_size
+        global_indices = batch_layout.local_batch_offset + torch.arange(batch_size, device=device)
         diffusion_count = round(float(self.config["diffusion_ratio"]) * global_batch_size)
         consistency_count = round(float(self.config["consistency_ratio"]) * global_batch_size)
         effective_diffusion_count = min(diffusion_count, global_batch_size)
         effective_consistency_count = min(consistency_count, global_batch_size - effective_diffusion_count)
         arbitrary_count = global_batch_size - effective_diffusion_count - effective_consistency_count
-        if process_index == 0 and not getattr(self, "_meanflow_branch_mix_logged", False):
+        if batch_layout.data_rank == 0 and not getattr(self, "_meanflow_branch_mix_logged", False):
             self.logger.info(
                 "AnyFlow interval mixture at global batch %d: diffusion=%d, consistency=%d, arbitrary=%d.",
                 global_batch_size,
@@ -1253,13 +1253,16 @@ class AnyFlowDistiller(DistillationBase):
         if isinstance(hidden_states_buffer, dict):
             hidden_states_buffer.clear()
 
-    @staticmethod
-    def _gather_detached(tensor: torch.Tensor) -> torch.Tensor:
-        if not torch.distributed.is_available() or not torch.distributed.is_initialized():
-            return tensor.detach()
-        gathered = [torch.empty_like(tensor) for _ in range(torch.distributed.get_world_size())]
-        torch.distributed.all_gather(gathered, tensor.detach())
-        return torch.cat(gathered, dim=0)
+    def _gather_detached(self, tensor: torch.Tensor) -> torch.Tensor:
+        accelerator = getattr(
+            self,
+            "_distributed_batch_accelerator",
+            getattr(self.teacher_model, "accelerator", None),
+        )
+        layout = getattr(self, "_distributed_batch_layout", None)
+        if layout is None or layout.local_batch_size != tensor.shape[0]:
+            layout = resolve_distributed_batch_layout(accelerator, tensor.shape[0])
+        return gather_variable_batch_tensor(tensor, accelerator, layout)
 
     def _discriminator_state_dict(self) -> Dict[str, torch.Tensor]:
         adapter_name = str(self._discriminator_adapter_name)

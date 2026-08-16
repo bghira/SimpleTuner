@@ -33,6 +33,7 @@ except ImportError:
 
 from simpletuner.diff2flow import DiffusionToFlowBridge
 from simpletuner.helpers.assistant_lora import build_adapter_stack, set_adapter_stack
+from simpletuner.helpers.data_backend.runtime.context_parallel_sync import resolve_distributed_batch_layout
 from simpletuner.helpers.models.foundation_mixins import (
     AudioTransformMixin,
     PipelineSupportMixin,
@@ -4714,31 +4715,30 @@ class ModelFoundation(ABC):
                 timesteps = base_timesteps.expand(bsz)
             else:
                 if timestep_mode == "round-robin":
-                    world_size = max(1, int(getattr(self.accelerator, "num_processes", 1) or 1))
-                    process_index = int(getattr(self.accelerator, "process_index", 0) or 0)
-                    if base_timesteps.numel() < bsz * world_size and not getattr(
+                    batch_layout = resolve_distributed_batch_layout(self.accelerator, bsz)
+                    global_batch_size = batch_layout.global_batch_size
+                    if base_timesteps.numel() < global_batch_size and not getattr(
                         self, "_flow_custom_timestep_overlap_warning_logged", False
                     ):
                         logger.warning(
                             "flow_timesteps_mode=round-robin has %s custom timestep(s), but the global batch "
                             "consumes %s sample(s) per step. Different ranks may reuse timestep entries on the same step; "
-                            "provide at least train_batch_size * num_processes values for non-overlapping per-step "
-                            "coverage.",
+                            "provide at least the global per-step sample count for non-overlapping coverage.",
                             base_timesteps.numel(),
-                            bsz * world_size,
+                            global_batch_size,
                         )
                         self._flow_custom_timestep_overlap_warning_logged = True
                     if not hasattr(self, "_flow_custom_timestep_cursor"):
                         resume_step = getattr(self, "_flow_custom_timestep_resume_step", None)
                         completed_steps = int(resume_step if resume_step is not None else state.get("global_step", 0) or 0)
-                        self._flow_custom_timestep_cursor = (
-                            completed_steps * bsz * world_size + process_index * bsz
-                        ) % base_timesteps.numel()
+                        self._flow_custom_timestep_cursor = (completed_steps * global_batch_size) % base_timesteps.numel()
                         if resume_step is not None:
                             delattr(self, "_flow_custom_timestep_resume_step")
                     cursor = int(getattr(self, "_flow_custom_timestep_cursor", 0))
-                    indices = (torch.arange(bsz, device=self.accelerator.device) + cursor) % base_timesteps.numel()
-                    self._flow_custom_timestep_cursor = (cursor + bsz * world_size) % base_timesteps.numel()
+                    indices = (
+                        torch.arange(bsz, device=self.accelerator.device) + cursor + batch_layout.local_batch_offset
+                    ) % base_timesteps.numel()
+                    self._flow_custom_timestep_cursor = (cursor + global_batch_size) % base_timesteps.numel()
                 else:
                     indices = torch.randint(0, base_timesteps.numel(), (bsz,), device=self.accelerator.device)
                 sigmas = base_sigmas[indices]

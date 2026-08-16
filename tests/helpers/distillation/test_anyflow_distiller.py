@@ -11,6 +11,7 @@ from peft.utils import get_peft_model_state_dict
 from safetensors.torch import save_file
 
 import tests.test_stubs  # noqa: F401
+from simpletuner.helpers.data_backend.runtime.context_parallel_sync import DistributedBatchLayout
 from simpletuner.helpers.distillation.anyflow.distiller import AnyFlowDistiller
 from simpletuner.helpers.distillation.anyflow.scheduler import AnyFlowValidationScheduler
 from simpletuner.helpers.distillation.factory import DistillerFactory
@@ -529,8 +530,17 @@ class AnyFlowDistillerTests(unittest.TestCase):
         with (
             patch("torch.rand", side_effect=draws),
             patch(
-                "simpletuner.helpers.distillation.anyflow.distiller.get_model_replica_data_info",
-                return_value=(True, 1, 0, 2, 4),
+                "simpletuner.helpers.distillation.anyflow.distiller.resolve_distributed_batch_layout",
+                return_value=DistributedBatchLayout(
+                    local_batch_size=2,
+                    global_batch_size=8,
+                    local_batch_offset=2,
+                    data_rank=1,
+                    data_parallel_size=4,
+                    model_replica_size=2,
+                    world_size=8,
+                    data_replica_batch_sizes=(2, 2, 2, 2),
+                ),
             ),
         ):
             batch = _prepared_batch()
@@ -538,6 +548,53 @@ class AnyFlowDistillerTests(unittest.TestCase):
 
         self.assertTrue(torch.equal(batch["anyflow_diffusion_mask"], torch.tensor([True, True])))
         self.assertTrue(torch.equal(batch["anyflow_consistency_mask"], torch.tensor([False, False])))
+
+    def test_meanflow_branch_assignment_uses_rank_varying_batch_offsets(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={
+                "model_type": "lora",
+                "diffusion_ratio": 0.5,
+                "consistency_ratio": 0.25,
+            },
+        )
+        latents = torch.zeros(3, 1, 2, 2)
+        noise = torch.ones_like(latents)
+        sigmas = torch.tensor([0.9, 0.6, 0.3]).view(3, 1, 1, 1)
+        batch = {
+            "latents": latents,
+            "noise": noise,
+            "input_noise": noise.clone(),
+            "sigmas": sigmas,
+            "timesteps": torch.tensor([900.0, 600.0, 300.0]),
+            "noisy_latents": (1 - sigmas) * latents + sigmas * noise,
+        }
+        draws = [torch.tensor([0.8, 0.7, 0.6]), torch.tensor([0.2, 0.4, 0.3])]
+        layout = DistributedBatchLayout(
+            local_batch_size=3,
+            global_batch_size=4,
+            local_batch_offset=1,
+            data_rank=1,
+            data_parallel_size=2,
+            model_replica_size=1,
+            world_size=2,
+            data_replica_batch_sizes=(1, 3),
+        )
+
+        with (
+            patch("torch.rand", side_effect=draws),
+            patch(
+                "simpletuner.helpers.distillation.anyflow.distiller.resolve_distributed_batch_layout",
+                return_value=layout,
+            ),
+        ):
+            distiller._prepare_meanflow_pair(batch, model)
+
+        self.assertTrue(torch.equal(batch["anyflow_diffusion_mask"], torch.tensor([True, False, False])))
+        self.assertTrue(torch.equal(batch["anyflow_consistency_mask"], torch.tensor([False, True, False])))
+        self.assertTrue(torch.equal(batch["anyflow_arbitrary_mask"], torch.tensor([False, False, True])))
 
     def test_meanflow_warns_once_when_global_batch_omits_enabled_branch(self):
         model = _FlowModel()

@@ -48,7 +48,10 @@ from simpletuner.helpers.data_backend.factory import (
     run_distillation_cache_generation,
 )
 from simpletuner.helpers.data_backend.runtime import random_dataloader_iterator
-from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+from simpletuner.helpers.data_backend.runtime.context_parallel_sync import (
+    ContextParallelBatchSynchronizer,
+    gather_sample_weighted_scalar,
+)
 from simpletuner.helpers.data_backend.runtime.schedule import normalize_start_epoch, normalize_start_step
 from simpletuner.helpers.distillation.composition import resolve_configured_distiller_requirement_profile
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
@@ -7031,11 +7034,11 @@ class Trainer:
                             f"filepaths={batch_filepaths}, loss_logs={loss_logs_context})."
                         )
 
-                    # Gather the losses across all processes for logging (if using distributed training)
-                    avg_loss = self.accelerator.gather(loss.repeat(int(bsz))).mean()
+                    # Keep metric collectives fixed-shape when ranks use different dataset batch sizes.
+                    avg_loss = gather_sample_weighted_scalar(loss, int(bsz), self.accelerator)
                     self.train_loss += avg_loss.item() / self.config.gradient_accumulation_steps
                     if aux_loss_logs is not None:
-                        avg_diffusion_loss = self.accelerator.gather(diffusion_loss.repeat(int(bsz))).mean()
+                        avg_diffusion_loss = gather_sample_weighted_scalar(diffusion_loss, int(bsz), self.accelerator)
                         self.train_diffusion_loss += avg_diffusion_loss.item() / self.config.gradient_accumulation_steps
                     # Backpropagate
                     self.grad_norm = None
