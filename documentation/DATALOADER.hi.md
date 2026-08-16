@@ -137,12 +137,17 @@ Audio backends एक dedicated `audio` block सपोर्ट करते �
 }
 ```
 
+जब सभी enabled media datasets `dataset_type: "audio"` इस्तेमाल करते हैं, तब `SUPPORTS_FAKE_VIDEO_STREAM` वाली video
+model families अपने आप audio-only training चुनती हैं। LTX-2 अपना native audio-only branch इस्तेमाल करता है।
+MiniMax-H3 हर latent frame के लिए एक fake spatial video token रखता है और video loss को mask करता है। Standard LoRA
+अपने आप `AUDIO_LORA_TARGET` चुनता है; explicit `peft_lora_target_modules` को प्राथमिकता मिलती है।
+
 - **`bucket_strategy`** – फिलहाल `duration` डिफ़ॉल्ट है और clips को समान अंतराल वाले buckets में truncate करता है ताकि per‑GPU sampling batch गणना का सम्मान करे।
 - **`duration_interval`** – seconds में bucket rounding (unset होने पर डिफ़ॉल्ट **3**)। `15` के साथ, 77s clip 75s bucket में जाएगा। यह single long clips को अन्य ranks को starve करने से रोकता है और truncation को समान interval पर मजबूर करता है।
 - **`max_duration_seconds`** – इससे लंबे clips metadata discovery के दौरान पूरी तरह skip किए जाते हैं ताकि अत्यधिक लंबे tracks अनपेक्षित रूप से buckets न भरें।
 - **`truncation_mode`** – bucket interval पर snap करते समय clip का कौन‑सा हिस्सा रखा जाए। विकल्प: `beginning`, `end`, या `random` (डिफ़ॉल्ट: `beginning`)।
-- **`audio_only`** – केवल ऑडियो ट्रेनिंग मोड (LTX-2): वीडियो फाइलों के बिना केवल ऑडियो जेनरेशन ट्रेन करता है। वीडियो latents स्वचालित रूप से शून्य हो जाते हैं और वीडियो loss मास्क हो जाता है।
-- **`target_resolution`** – केवल ऑडियो मोड के लिए लक्ष्य वीडियो resolution (latent dimensions की गणना के लिए उपयोग)।
+- **`audio_only`** – audio-only mode का compatibility override; केवल-audio config इसे LTX-2 और MiniMax-H3 के लिए अपने आप enable करता है।
+- **`target_resolution`** – legacy override; automatic fake stream model की minimal token geometry इस्तेमाल करता है।
 - standard audio settings (channel count, cache directory) सीधे `simpletuner.helpers.data_backend.factory` द्वारा बनाए गए runtime audio backend पर मैप होते हैं। Padding जानबूझकर नहीं किया जाता—clips truncate होते हैं ताकि behavior ACE-Step जैसे diffusion trainers के साथ consistent रहे।
 
 #### S2V training के लिए Audio configuration
@@ -172,8 +177,8 @@ Audio backends एक dedicated `audio` block सपोर्ट करते �
 | `audio.auto_split` | bool | true | Video files से audio dataset auto-generate करें। `audio` section मौजूद होने पर default true। S2V-required models के लिए `audio` section न होने पर भी default true। |
 | `audio.source_from_video` | bool | false | (Auto-set) दर्शाता है कि audio video से extract किया गया है |
 | `audio.allow_zero_audio` | bool | false | बिना audio stream वाले videos के लिए zero-filled audio generate करें |
-| `audio.audio_only` | bool | false | केवल audio training mode (LTX-2): video files के बिना audio generation train करें |
-| `audio.target_resolution` | int | null | केवल audio mode के लिए target video resolution (latent dimensions गणना हेतु) |
+| `audio.audio_only` | bool | false | Compatibility override; केवल-audio dataset config इसे LTX-2 और MiniMax-H3 के लिए अपने आप enable करता है |
+| `audio.target_resolution` | int | null | Legacy override; automatic fake stream model family की minimal token geometry इस्तेमाल करता है |
 | `audio.sample_rate` | int | 16000 | Audio extraction के लिए target sample rate |
 | `audio.channels` | int | 1 | Audio channels की संख्या (1=mono, 2=stereo) |
 | `audio.bucket_strategy` | string | "duration" | Audio samples के लिए bucketing strategy |

@@ -137,12 +137,17 @@
 }
 ```
 
+有効なメディアデータセットがすべて `dataset_type: "audio"` の場合、`SUPPORTS_FAKE_VIDEO_STREAM` を持つ動画モデルは
+自動的に音声のみトレーニングになります。LTX-2 はネイティブの音声専用ブランチを使用します。MiniMax-H3 は latent
+frame ごとに 1 個の偽動画空間トークンを保持し、動画 loss をマスクします。標準 LoRA では
+`AUDIO_LORA_TARGET` が自動選択され、明示した `peft_lora_target_modules` が優先されます。
+
 - **`bucket_strategy`** – 現在は `duration` が既定で、クリップを等間隔のバケットに切り詰め、GPU ごとのサンプリングがバッチ計算に合うようにします。
 - **`duration_interval`** – バケット丸めを秒単位で指定します（未設定時の既定は **3**）。`15` にすると、77 秒のクリップは 75 秒に丸められます。これにより、単一の長いクリップが他のランクを阻害するのを防ぎ、同じ間隔で切り詰められます。
 - **`max_duration_seconds`** – これを超える長さのクリップはメタデータ探索時に完全にスキップされるため、極端に長いトラックがバケットを予期せず消費しません。
 - **`truncation_mode`** – バケット間隔に揃える際に保持するクリップの部分を決めます。選択肢: `beginning`、`end`、`random`（既定: `beginning`）。
-- **`audio_only`** – 音声のみトレーニングモード（LTX-2）: 動画ファイルなしで音声生成のみをトレーニングします。動画潜在変数は自動的にゼロになり、動画損失はマスクされます。
-- **`target_resolution`** – 音声のみモードでのターゲット動画解像度（潜在変数の次元計算に使用）。
+- **`audio_only`** – 音声のみモードの互換用 override。音声のみの構成では LTX-2 と MiniMax-H3 に対して自動的に有効化されます。
+- **`target_resolution`** – レガシー override。自動 fake stream はモデルの最小トークン形状を使用します。
 - 標準の音声設定（チャンネル数、キャッシュディレクトリなど）は `simpletuner.helpers.data_backend.factory` によって作成されるランタイム音声バックエンドに直接マッピングされます。パディングは意図的に回避され、クリップは延長ではなく切り詰められるため、ACE-Step のような拡散トレーナーの挙動と整合します。
 
 #### S2V トレーニング用の音声設定
@@ -172,8 +177,8 @@
 | `audio.auto_split` | bool | true | ビデオファイルからオーディオデータセットを自動生成。`audio` セクションが存在する場合、デフォルトは true。S2V 必須モデルでは `audio` セクションがなくてもデフォルトで true。 |
 | `audio.source_from_video` | bool | false | （自動設定）オーディオがビデオから抽出されたことを示す |
 | `audio.allow_zero_audio` | bool | false | 音声ストリームのないビデオに対してゼロ埋めオーディオを生成 |
-| `audio.audio_only` | bool | false | 音声のみトレーニングモード（LTX-2）：ビデオファイルなしで音声生成のみトレーニング |
-| `audio.target_resolution` | int | null | 音声のみモードのターゲットビデオ解像度（latent 次元の計算に使用） |
+| `audio.audio_only` | bool | false | 互換用 override。音声のみの構成では LTX-2 と MiniMax-H3 に対して自動的に有効化 |
+| `audio.target_resolution` | int | null | レガシー override。自動 fake stream はモデルファミリーの最小トークン形状を使用 |
 | `audio.sample_rate` | int | 16000 | 音声抽出のターゲットサンプルレート |
 | `audio.channels` | int | 1 | オーディオチャンネル数（1=モノラル、2=ステレオ） |
 | `audio.bucket_strategy` | string | "duration" | オーディオサンプルのバケット戦略 |

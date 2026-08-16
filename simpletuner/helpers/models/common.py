@@ -6529,6 +6529,36 @@ class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
     does not do it by default.
     """
 
+    SUPPORTS_FAKE_VIDEO_STREAM = False
+    AUDIO_LORA_TARGET = None
+
+    @classmethod
+    def supports_audio_only_training(cls) -> bool:
+        """Return whether audio datasets can be trained without source video."""
+        return bool(cls.SUPPORTS_FAKE_VIDEO_STREAM)
+
+    def get_lora_target_layers(self):
+        manual_targets = self._get_peft_lora_target_modules()
+        if manual_targets:
+            return manual_targets
+
+        lora_type = str(getattr(self.config, "lora_type", "standard")).lower()
+        audio_only_data = self._data_has_audio and not self._data_has_images and not self._data_has_video
+        use_audio_default = (
+            lora_type == "standard"
+            and audio_only_data
+            and self.SUPPORTS_FAKE_VIDEO_STREAM
+            and not getattr(self.config, "controlnet", False)
+            and not getattr(self.config, "slider_lora_target", False)
+            and not getattr(self, "_data_has_grounding", False)
+        )
+        if use_audio_default:
+            if not self.AUDIO_LORA_TARGET:
+                raise ValueError(f"{self.NAME} supports audio-only datasets but does not define AUDIO_LORA_TARGET.")
+            return list(self.AUDIO_LORA_TARGET)
+
+        return super().get_lora_target_layers()
+
     @property
     def crepa_mode(self) -> CrepaMode:
         """Return shape interpretation mode for CREPA alignment.

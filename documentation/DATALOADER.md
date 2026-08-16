@@ -137,6 +137,12 @@ Audio backends support a dedicated `audio` block so metadata and bucket math sta
 }
 ```
 
+When every enabled media dataset has `dataset_type: "audio"`, video model families with
+`SUPPORTS_FAKE_VIDEO_STREAM` automatically enter audio-only training. LTX-2 uses its native audio-only transformer
+branch. MiniMax-H3 keeps one fake spatial video token per latent frame in its packed sequence and masks the video
+loss. Standard LoRA training automatically selects the family-defined `AUDIO_LORA_TARGET`; an explicit
+`peft_lora_target_modules` list still takes precedence. No video dataset or fake-stream command-line option is needed.
+
 - **`bucket_strategy`** – currently `duration` is the default and truncates clips into evenly spaced buckets so per-GPU sampling respects batch math.
 - **`duration_interval`** – bucket rounding in seconds (defaults to **3** when unset). With `15`, a 77 s clip is bucketed at 75 s. This prevents single long clips from starving other ranks and forces truncation to the same interval.
 - **`max_duration_seconds`** – clips longer than this are skipped entirely during metadata discovery so exceptionally long tracks don't consume buckets unexpectedly.
@@ -173,8 +179,8 @@ This automatically creates a `my-videos_audio` dataset and links it via `s2v_dat
 | `audio.auto_split` | bool | true | Auto-generate audio dataset from video files. Defaults to true when an `audio` section is present. For S2V-required models, defaults to true even without an `audio` section. |
 | `audio.source_from_video` | bool | false | (Auto-set) Indicates audio is extracted from video |
 | `audio.allow_zero_audio` | bool | false | Generate zero-filled audio for videos without audio streams |
-| `audio.audio_only` | bool | false | Audio-only training mode (LTX-2): train audio generation without video files |
-| `audio.target_resolution` | int | null | Target video resolution for audio-only mode (used to compute latent dimensions) |
+| `audio.audio_only` | bool | false | Compatibility override for audio-only training; all-audio dataset configurations enable it automatically on LTX-2 and MiniMax-H3 |
+| `audio.target_resolution` | int | null | Legacy target resolution override; automatic fake streams use the model family's minimal token geometry |
 | `audio.sample_rate` | int | 16000 | Target sample rate for audio extraction |
 | `audio.channels` | int | 1 | Number of audio channels (1=mono, 2=stereo) |
 | `audio.bucket_strategy` | string | "duration" | Bucketing strategy for audio samples |

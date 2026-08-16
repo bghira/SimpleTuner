@@ -383,7 +383,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             truncation_mode = "beginning"
         audio_block["truncation_mode"] = truncation_mode
 
-        # Audio-only mode: standalone audio training without video (e.g., LTX-2 audio-only)
+        # Audio-only mode: standalone audio training without source video.
         audio_only_raw = audio_block.get("audio_only") or source.get("audio_only")
         if audio_only_raw is not None:
             audio_block["audio_only"] = bool(audio_only_raw)
@@ -1640,7 +1640,7 @@ class FactoryRegistry:
     def _validate_audio_only_datasets(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """
         Validate audio-only datasets are only used with models that support them.
-        Audio-only mode allows training on audio without video (e.g., LTX-2 audio-only training).
+        Audio-only mode allows compatible video families to train on audio without source video.
         """
         supports_audio_only = self._supports_audio_only_training()
 
@@ -1661,7 +1661,7 @@ class FactoryRegistry:
                     raise ValueError(
                         f"Audio-only dataset '{backend_id}' is configured with audio.audio_only=true, "
                         f"but the current model does not support audio-only training. "
-                        f"Audio-only mode is currently only supported by LTX-2. "
+                        f"The current model family does not advertise SUPPORTS_FAKE_VIDEO_STREAM. "
                         f"Either use a compatible model or remove the audio_only setting."
                     )
                 info_log(

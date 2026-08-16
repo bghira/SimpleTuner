@@ -137,12 +137,17 @@ Backends de áudio suportam um bloco `audio` dedicado para que metadados e cálc
 }
 ```
 
+Quando todos os datasets de mídia habilitados usam `dataset_type: "audio"`, famílias de vídeo com
+`SUPPORTS_FAKE_VIDEO_STREAM` entram automaticamente no treinamento apenas de áudio. LTX-2 usa seu branch nativo de
+áudio; MiniMax-H3 mantém um token espacial de vídeo falso por frame latente e mascara a loss de vídeo. LoRA padrão
+seleciona `AUDIO_LORA_TARGET` automaticamente, a menos que `peft_lora_target_modules` seja definido explicitamente.
+
 - **`bucket_strategy`** – atualmente `duration` é o padrão e trunca clipes em buckets espaçados de forma uniforme para que a amostragem por GPU respeite o cálculo de batch.
 - **`duration_interval`** – arredondamento de bucket em segundos (padrão **3** quando não definido). Com `15`, um clipe de 77 s é colocado no bucket de 75 s. Isso impede que clipes longos únicos prejudiquem outros ranks e força truncamento no mesmo intervalo.
 - **`max_duration_seconds`** – clipes mais longos que isso são ignorados durante a descoberta de metadados para que faixas excepcionalmente longas não consumam buckets inesperadamente.
 - **`truncation_mode`** – determina qual parte do clipe é mantida quando ajustamos para o intervalo do bucket. Opções: `beginning`, `end` ou `random` (padrão: `beginning`).
-- **`audio_only`** – modo de treinamento apenas áudio (LTX-2): treina apenas a geração de áudio sem arquivos de vídeo. Os latentes de vídeo são zerados automaticamente e a perda de vídeo é mascarada.
-- **`target_resolution`** – resolução de vídeo alvo para o modo apenas áudio (usada para calcular dimensões de latentes).
+- **`audio_only`** – override de compatibilidade para modo apenas áudio; configurações somente de áudio o ativam automaticamente em LTX-2 e MiniMax-H3.
+- **`target_resolution`** – override legado; fake streams automáticos usam a geometria mínima de tokens do modelo.
 - Configurações padrão de áudio (contagem de canais, diretório de cache) mapeiam diretamente para o backend de áudio em runtime criado por `simpletuner.helpers.data_backend.factory`. O padding é intencionalmente evitado — clipes são truncados em vez de estendidos para manter o comportamento consistente com treinadores de difusão como o ACE-Step.
 
 #### Configuração de áudio para treinamento S2V
@@ -172,8 +177,8 @@ Isso cria automaticamente um dataset `my-videos_audio` e o vincula via `s2v_data
 | `audio.auto_split` | bool | true | Gera automaticamente dataset de áudio a partir de arquivos de vídeo. Padrão true quando a seção `audio` está presente. Para modelos que exigem S2V, padrão true mesmo sem seção `audio`. |
 | `audio.source_from_video` | bool | false | (Auto-definido) Indica que o áudio é extraído do vídeo |
 | `audio.allow_zero_audio` | bool | false | Gera áudio zerado para vídeos sem stream de áudio |
-| `audio.audio_only` | bool | false | Modo de treinamento apenas áudio (LTX-2): treina geração de áudio sem arquivos de vídeo |
-| `audio.target_resolution` | int | null | Resolução de vídeo alvo para modo apenas áudio (usada para calcular dimensões de latentes) |
+| `audio.audio_only` | bool | false | Override de compatibilidade; configurações somente de áudio ativam o modo automaticamente para LTX-2 e MiniMax-H3 |
+| `audio.target_resolution` | int | null | Override legado; o fake stream automático usa a geometria mínima de tokens da família |
 | `audio.sample_rate` | int | 16000 | Taxa de amostragem alvo para extração de áudio |
 | `audio.channels` | int | 1 | Número de canais de áudio (1=mono, 2=estéreo) |
 | `audio.bucket_strategy` | string | "duration" | Estratégia de bucketing para amostras de áudio |

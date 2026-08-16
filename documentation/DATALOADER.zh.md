@@ -137,12 +137,16 @@
 }
 ```
 
+当所有启用的媒体数据集都使用 `dataset_type: "audio"` 时，带有 `SUPPORTS_FAKE_VIDEO_STREAM` 的视频模型会自动进入纯音频训练。
+LTX-2 使用原生纯音频分支；MiniMax-H3 在打包序列中为每个 latent frame 保留一个伪视频空间 token，并屏蔽视频 loss。
+标准 LoRA 会自动选择 `AUDIO_LORA_TARGET`，但显式设置的 `peft_lora_target_modules` 仍然优先。
+
 - **`bucket_strategy`** – 当前默认是 `duration`，会将片段截断到等间隔桶中，使每 GPU 的采样符合批次计算。
 - **`duration_interval`** – 以秒为单位的分桶舍入（未设置时默认 **3**）。例如设为 `15` 时，77 秒的片段会归入 75 秒桶。这样可防止单个超长片段占用过多桶，并强制截断到统一间隔。
 - **`max_duration_seconds`** – 超过此时长的片段在元数据发现时会被完全跳过，避免异常长的音轨占用桶。
 - **`truncation_mode`** – 规定对齐到桶间隔时保留片段的哪一部分。可选：`beginning`、`end`、`random`（默认：`beginning`）。
-- **`audio_only`** – 纯音频训练模式（LTX-2）：不使用视频文件仅训练音频生成。视频 latents 会自动置零并屏蔽视频损失。
-- **`target_resolution`** – 纯音频模式下的目标视频分辨率（用于计算 latent 维度）。
+- **`audio_only`** – 纯音频模式的兼容性 override；纯音频配置会为 LTX-2 和 MiniMax-H3 自动启用。
+- **`target_resolution`** – 旧版 override；自动伪视频流使用模型的最小 token 几何。
 - 标准音频设置（声道数、缓存目录）会直接映射到 `simpletuner.helpers.data_backend.factory` 创建的运行时音频后端。刻意避免 padding——片段被截断而不是延长，以保持与 ACE-Step 等扩散训练器的行为一致。
 
 #### S2V 训练的音频配置
@@ -172,8 +176,8 @@
 | `audio.auto_split` | bool | true | 从视频文件自动生成音频数据集。当存在 `audio` 部分时默认为 true。对于要求 S2V 的模型，即使没有 `audio` 部分也默认为 true。 |
 | `audio.source_from_video` | bool | false | （自动设置）表示音频从视频中提取 |
 | `audio.allow_zero_audio` | bool | false | 为没有音频流的视频生成全零音频 |
-| `audio.audio_only` | bool | false | 纯音频训练模式（LTX-2）：不使用视频文件仅训练音频生成 |
-| `audio.target_resolution` | int | null | 纯音频模式下的目标视频分辨率（用于计算 latent 维度） |
+| `audio.audio_only` | bool | false | 兼容性 override；纯音频数据集配置会为 LTX-2 和 MiniMax-H3 自动启用此模式 |
+| `audio.target_resolution` | int | null | 旧版 override；自动伪视频流使用模型系列的最小 token 几何 |
 | `audio.sample_rate` | int | 16000 | 音频提取的目标采样率 |
 | `audio.channels` | int | 1 | 音频声道数（1=单声道，2=立体声） |
 | `audio.bucket_strategy` | string | "duration" | 音频样本的分桶策略 |

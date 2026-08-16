@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.append(os.getcwd())
 
-from simpletuner.helpers.models.common import ModelFoundation
+from simpletuner.helpers.models.common import ModelFoundation, VideoModelFoundation
 from simpletuner.helpers.models.ltxvideo2.model import LTXVideo2
 
 
@@ -54,7 +54,8 @@ class MockLTXVideo2(LTXVideo2):
         # Copy class attributes needed for LoRA target tests
         self.DEFAULT_LORA_TARGET = LTXVideo2.DEFAULT_LORA_TARGET
         self.DEFAULT_LYCORIS_TARGET = LTXVideo2.DEFAULT_LYCORIS_TARGET
-        self.AUDIO_LORA_TARGETS = LTXVideo2.AUDIO_LORA_TARGETS
+        self.AUDIO_LORA_TARGET = LTXVideo2.AUDIO_LORA_TARGET
+        self.AUDIO_ADDITIONAL_LORA_TARGET = LTXVideo2.AUDIO_ADDITIONAL_LORA_TARGET
 
 
 class TestDataSignalsBase(unittest.TestCase):
@@ -74,6 +75,10 @@ class TestDataSignalsBase(unittest.TestCase):
         self.assertFalse(model._data_has_images)
         self.assertFalse(model._data_has_video)
         self.assertFalse(model._data_has_audio)
+
+    def test_video_foundation_disables_fake_video_stream_by_default(self):
+        self.assertFalse(VideoModelFoundation.SUPPORTS_FAKE_VIDEO_STREAM)
+        self.assertFalse(VideoModelFoundation.supports_audio_only_training())
 
     def test_configure_data_signals_sets_flags(self):
         """configure_data_signals should set the appropriate flags."""
@@ -254,16 +259,24 @@ class TestLTXVideo2AudioLoraTargets(unittest.TestCase):
         self.assertIn("audio_proj_out", targets)
 
     def test_ltx2_audio_targets_constant(self):
-        """Verify LTX-2 AUDIO_LORA_TARGETS constant is correct."""
+        """Verify LTX-2 AUDIO_LORA_TARGET constant covers only audio modules."""
         expected = [
+            "audio_attn1.to_k",
+            "audio_attn1.to_q",
+            "audio_attn1.to_v",
+            "audio_attn1.to_out.0",
+            "audio_attn2.to_k",
+            "audio_attn2.to_q",
+            "audio_attn2.to_v",
+            "audio_attn2.to_out.0",
+            "audio_ff.net.0.proj",
+            "audio_ff.net.2",
             "audio_proj_in",
             "audio_proj_out",
             "audio_caption_projection.linear_1",
             "audio_caption_projection.linear_2",
-            "audio_ff.net.0.proj",
-            "audio_ff.net.2",
         ]
-        self.assertEqual(LTXVideo2.AUDIO_LORA_TARGETS, expected)
+        self.assertEqual(LTXVideo2.AUDIO_LORA_TARGET, expected)
 
     def test_ltx2_get_additional_lora_targets_returns_copy(self):
         """_get_additional_lora_targets should return a copy, not the class constant."""
