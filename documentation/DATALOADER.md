@@ -73,8 +73,11 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 ### `train_batch_size`
 
-- **Only applies to trainable datasets** (`image`, `video`, `audio`, `caption`, `conditioning`)
-- **Description:** Overrides the global `--train_batch_size` for this dataset. Leave unset to use the global value.
+- **Only applies to independently sampled primary datasets** (`image`, `video`, `audio`, `caption`). `conditioning` is paired auxiliary data rather than an independently sampled primary dataset.
+- **Description:** Overrides the global `--train_batch_size` for this dataset. The resolved value controls its sampler microbatch size, bucket sizing, and instantaneous sample count whenever it is selected. Leave unset to use the global value.
+- **Gradient accumulation:** An accumulation window can select datasets with different resolved microbatch sizes. The optimizer update's global sample total is the sum of the actual local microbatch sizes across every accumulation microstep and data-parallel rank; a selected dataset without an override uses the global default on that rank.
+- **Global reference:** Trainer-level learning-rate scaling and other static configuration or reporting that require one fixed batch size continue to use the global `--train_batch_size`. Therefore, the usual global/effective batch-size formula is a configured reference when dataset overrides are mixed, not an exact sample count for every optimizer update.
+- **Gradient checkpointing:** Gradient checkpointing does not change batch-size arithmetic.
 - **Default:** Falls back to the trainer's `--train_batch_size` argument.
 
 ### `write_batch_size`
@@ -680,6 +683,8 @@ When training with multiple GPUs, your dataset must be large enough to accommoda
 ```
 effective_batch_size = dataset train_batch_size × num_gpus × gradient_accumulation_steps
 ```
+
+This is a per-dataset bucket-sizing requirement. It does not mean every configured dataset is selected in an accumulation window, and it does not describe the exact sample count of a mixed-size optimizer update.
 
 For example, with 4 GPUs, dataset `train_batch_size=4`, and `gradient_accumulation_steps=1`, you need at least **16 samples** (after applying repeats) in each aspect bucket.
 

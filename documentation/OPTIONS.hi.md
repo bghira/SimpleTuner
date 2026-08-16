@@ -1178,8 +1178,10 @@ Different models different conditioning data expect करते हैं:
 
 ### `--train_batch_size`
 
-- **What**: training data loader के लिए batch size।
+- **What**: Training data loader के लिए global default batch size। Primary dataset अपने sampler microbatch size को `train_batch_size` से override कर सकता है; बिना override वाले datasets इस value का उपयोग करते हैं।
 - **Why**: model memory consumption, convergence quality, और training speed प्रभावित करता है। बड़ा batch size सामान्यतः बेहतर परिणाम देता है, लेकिन बहुत बड़ा batch size overfitting या destabilized training का कारण बन सकता है और training अवधि भी बढ़ा सकता है। प्रयोग ज़रूरी है, लेकिन सामान्यतः लक्ष्य यह है कि training speed घटाए बिना VRAM अधिकतम उपयोग में हो।
+- **Static configuration**: Trainer-level learning-rate scaling और अन्य configuration या reporting, जहाँ एक fixed batch size चाहिए, dataset microbatch overrides के बावजूद इस global value का उपयोग करते हैं।
+- **Gradient accumulation**: चुने गए datasets के resolved microbatch sizes अलग होने पर एक optimizer update का global sample total सभी accumulation microsteps और data-parallel ranks के actual local microbatch sizes का योग है। बिना override वाला selected dataset उस rank पर इस global default का उपयोग करता है। सामान्य global/effective batch-size formula exact per-update sample count के बजाय configured reference रहता है। Gradient checkpointing इस arithmetic को नहीं बदलता।
 
 ### `--gradient_accumulation_steps`
 
@@ -1193,7 +1195,7 @@ Different models different conditioning data expect करते हैं:
 - **What**: dataset effective batch size से छोटा होने पर `repeats` स्वतः adjust करता है।
 - **Why**: multi‑GPU कॉन्फ़िगरेशन के लिए न्यूनतम requirements पूरी न होने पर training failure को रोकता है।
 - **How it works**:
-  - **effective batch size** की गणना करता है: `train_batch_size × num_gpus × gradient_accumulation_steps`
+  - हर dataset की bucket-sizing requirement की गणना करता है: `resolved dataset train_batch_size × num_gpus × gradient_accumulation_steps`
   - यदि किसी aspect bucket में effective batch size से कम samples हैं, तो `repeats` स्वतः बढ़ाता है
   - केवल तब लागू होता है जब dataset config में `repeats` explicitly सेट न हो
   - adjustment और reasoning दिखाने के लिए warning लॉग करता है

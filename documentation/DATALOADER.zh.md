@@ -73,8 +73,11 @@
 
 ### `train_batch_size`
 
-- **仅适用于可训练数据集**（`image`、`video`、`audio`、`caption`、`conditioning`）
-- **说明:** 为此数据集覆盖全局 `--train_batch_size`。不设置时使用全局值。
+- **仅适用于独立采样的主要数据集**（`image`、`video`、`audio`、`caption`）。`conditioning` 是配对的辅助数据，不是独立采样的主要数据集。
+- **说明:** 为此数据集覆盖全局 `--train_batch_size`。解析后的值控制该数据集的采样器微批大小、bucket 大小以及每次被选中时的即时样本数。不设置时使用全局值。
+- **梯度累积:** 一个累积窗口可以选中解析后微批大小不同的数据集。一次优化器更新的全局样本总数，是所有累积微步和所有数据并行 rank 上实际本地微批大小之和；被选中且没有覆盖值的数据集在对应 rank 上使用全局默认值。
+- **全局参考值:** 训练器级学习率缩放，以及其他必须使用单个固定批大小的静态配置或报告，仍以全局 `--train_batch_size` 为准。因此，混用数据集覆盖值时，常用的全局/有效批大小公式只是配置参考值，并不表示每次优化器更新的准确样本数。
+- **梯度检查点:** 梯度检查点不改变批大小的计算方式。
 - **默认值:** 回退到训练器的 `--train_batch_size` 参数。
 
 ### `write_batch_size`
@@ -677,6 +680,8 @@ LTX-2 使用原生纯音频分支；MiniMax-H3 在打包序列中为每个 laten
 ```
 effective_batch_size = 数据集 train_batch_size × num_gpus × gradient_accumulation_steps
 ```
+
+这是每个数据集的 bucket 大小要求。它不表示一个累积窗口会选中所有已配置的数据集，也不表示混合不同微批大小时一次优化器更新的准确样本数。
 
 例如，4 张 GPU、数据集 `train_batch_size=4`、`gradient_accumulation_steps=1` 时，每个纵横比桶至少需要 **16 个样本**（应用 repeats 后）。
 

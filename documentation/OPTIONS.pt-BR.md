@@ -1176,8 +1176,10 @@ Estas sao configuracoes avancadas opcionais para treino LTX-2. Defina-as em JSON
 
 ### `--train_batch_size`
 
-- **O que**: Batch size para o dataloader de treinamento.
+- **O que**: Batch size global padrão para o dataloader de treinamento. Um dataset primário pode sobrescrever o tamanho do seu microbatch do sampler com `train_batch_size`; datasets sem override usam este valor.
 - **Por que**: Afeta consumo de memoria, qualidade de convergencia e velocidade. Batch maior tende a melhorar resultados, mas pode causar overfitting ou instabilidade e aumentar a duracao do treino. Experimente, mas em geral tente maximizar VRAM sem reduzir a velocidade.
+- **Configuração estática**: O escalonamento da learning rate no trainer e outras configurações ou relatórios que exigem um único batch size fixo usam este valor global, mesmo quando datasets sobrescrevem seus tamanhos de microbatch.
+- **Acúmulo de gradientes**: Quando os datasets selecionados têm tamanhos de microbatch resolvidos diferentes, o total global de amostras de uma atualização do otimizador é a soma dos tamanhos reais dos microbatches locais em todos os microsteps de acúmulo e ranks data-parallel. Um dataset selecionado sem override usa este padrão global naquele rank. A fórmula de batch global/efetivo continua sendo uma referência configurada, não a contagem exata por atualização. Gradient checkpointing não altera essa aritmética.
 
 ### `--gradient_accumulation_steps`
 
@@ -1191,7 +1193,7 @@ Estas sao configuracoes avancadas opcionais para treino LTX-2. Defina-as em JSON
 - **O que**: Ajusta automaticamente `repeats` quando o dataset e menor que o batch efetivo.
 - **Por que**: Evita falhas quando o tamanho do dataset nao atende os requisitos minimos da configuracao multi-GPU.
 - **Como funciona**:
-  - Calcula o **batch efetivo**: `train_batch_size × num_gpus × gradient_accumulation_steps`
+  - Calcula o requisito de dimensionamento de buckets de cada dataset: `train_batch_size resolvido do dataset × num_gpus × gradient_accumulation_steps`
   - Se algum bucket de aspecto tiver menos samples que o batch efetivo, aumenta `repeats`
   - So aplica quando `repeats` nao esta configurado explicitamente no dataset
   - Registra um warning mostrando o ajuste e a justificativa
