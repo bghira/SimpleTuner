@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from numbers import Integral
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 
@@ -72,6 +73,26 @@ def get_arg_value(args: Any, key: str, default: Any = None) -> Any:
     return getattr(args, key, default)
 
 
+def parse_positive_train_batch_size(raw_value: Any, backend_id: Optional[str] = None) -> int:
+    """Parse a positive integer dataset training batch size."""
+    error_message = f"(id={backend_id}) train_batch_size must be a positive integer."
+
+    if isinstance(raw_value, bool):
+        raise ValueError(error_message)
+    if isinstance(raw_value, Integral):
+        batch_size = int(raw_value)
+    elif isinstance(raw_value, str) and raw_value.isascii() and raw_value.isdecimal():
+        batch_size = int(raw_value)
+        if raw_value != str(batch_size):
+            raise ValueError(error_message)
+    else:
+        raise ValueError(error_message)
+
+    if batch_size < 1:
+        raise ValueError(error_message)
+    return batch_size
+
+
 def resolve_dataset_train_batch_size(
     backend: Mapping[str, Any],
     args: Any,
@@ -88,12 +109,4 @@ def resolve_dataset_train_batch_size(
         raw_value = get_arg_value(args, "train_batch_size", 1)
 
     resolved_backend_id = backend_id if backend_id is not None else backend.get("id")
-    try:
-        batch_size = int(raw_value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"(id={resolved_backend_id}) train_batch_size must be a positive integer.") from exc
-
-    if batch_size < 1:
-        raise ValueError(f"(id={resolved_backend_id}) train_batch_size must be a positive integer.")
-
-    return batch_size
+    return parse_positive_train_batch_size(raw_value, resolved_backend_id)

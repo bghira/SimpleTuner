@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
-from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, parse_positive_train_batch_size
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 from . import validators
@@ -213,10 +213,7 @@ class ImageBackendConfig(BaseBackendConfig):
         config.disable_validation = backend_dict.get("disable_validation", False)
         train_batch_size = backend_dict.get("train_batch_size")
         if train_batch_size not in (None, ""):
-            try:
-                config.train_batch_size = int(train_batch_size)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"(id={config.id}) train_batch_size must be a positive integer.") from exc
+            config.train_batch_size = parse_positive_train_batch_size(train_batch_size, config.id)
         if "hash_filenames" in backend_dict and config.backend_type != "csv":
             config.hash_filenames = backend_dict.get("hash_filenames")
         config.source_dataset_id = backend_dict.get("source_dataset_id")
@@ -372,8 +369,8 @@ class ImageBackendConfig(BaseBackendConfig):
             self._validate_video_settings(args)
 
         validators.check_for_caption_filter_list_misuse(self.dataset_type, False, self.id)
-        if self.train_batch_size is not None and self.train_batch_size < 1:
-            raise ValueError(f"(id={self.id}) train_batch_size must be a positive integer.")
+        if self.train_batch_size is not None:
+            parse_positive_train_batch_size(self.train_batch_size, self.id)
 
     def _validate_controlnet_requirements(self, args: Dict[str, Any]) -> None:
         def _get_controlnet_flag(source: Any) -> Optional[bool]:
