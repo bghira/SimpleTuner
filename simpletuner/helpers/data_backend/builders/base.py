@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.config.base import BaseBackendConfig
-from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type, resolve_dataset_train_batch_size
 
 # Import metadata backends at module load so tests can patch these names.
 from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
@@ -18,36 +18,6 @@ from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBacke
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger("BaseBackendBuilder")
-
-
-def _get_arg_value(args: Any, key: str, default: Any = None) -> Any:
-    if isinstance(args, dict):
-        return args.get(key, default)
-    return getattr(args, key, default)
-
-
-def _resolve_train_batch_size(
-    backend_dict: Dict[str, Any],
-    args: Any,
-    dataset_type: DatasetType,
-    backend_id: str,
-) -> int:
-    if dataset_type is DatasetType.EVAL:
-        return 1
-
-    raw_value = backend_dict.get("train_batch_size")
-    if raw_value in (None, ""):
-        raw_value = _get_arg_value(args, "train_batch_size", 1)
-
-    try:
-        batch_size = int(raw_value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"(id={backend_id}) train_batch_size must be a positive integer.") from exc
-
-    if batch_size < 1:
-        raise ValueError(f"(id={backend_id}) train_batch_size must be a positive integer.")
-
-    return batch_size
 
 
 class BaseBackendBuilder(ABC):
@@ -146,7 +116,7 @@ class BaseBackendBuilder(ABC):
             )
 
         video_config = config.config.get("video", {})
-        train_batch_size = _resolve_train_batch_size(backend_dict, args, dataset_type, config.id)
+        train_batch_size = resolve_dataset_train_batch_size(backend_dict, args, dataset_type, config.id)
 
         metadata_backend = MetadataBackendCls(
             id=config.id,
