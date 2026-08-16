@@ -830,7 +830,7 @@ class FormDirtyStateFlowTestCase(_TrainerPageMixin, WebUITestCase):
             wait_for_save_state(False)
 
             # Easy Mode change enables Save
-            basic_tab.set_output_dir("/tmp/dirty-easy-mode")
+            basic_tab.set_output_dir(str(self.home_path.parent / "dirty-easy-mode"))
             wait_for_save_state(True)
 
             save_via_ui()
@@ -855,7 +855,7 @@ class FormDirtyStateFlowTestCase(_TrainerPageMixin, WebUITestCase):
 
             # Save clears, new edits re-enable
             trainer_page.switch_to_basic_tab()
-            basic_tab.set_output_dir("/tmp/dirty-easy-mode-2")
+            basic_tab.set_output_dir(str(self.home_path.parent / "dirty-easy-mode-2"))
             wait_for_save_state(True)
 
         self.for_each_browser("test_save_button_dirty_state", scenario)
@@ -1019,7 +1019,7 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
             self.dismiss_onboarding(driver)
             trainer_page.wait_for_tab("basic")
             basic_tab.set_model_name("flux-test-model")
-            basic_tab.set_output_dir("/tmp/test-output")
+            basic_tab.set_output_dir(str(self.home_path.parent / "test-output"))
             trainer_page.switch_to_model_tab()
             trainer_page.wait_for_tab("model")
             basic_tab.set_base_model("jimmycarter/LibreFlux-SimpleTuner")
@@ -1055,7 +1055,7 @@ class TrainingWorkflowTestCase(_TrainerPageMixin, WebUITestCase):
             trainer_page.wait_for_tab("basic")
 
             basic_tab.set_model_name("failure-job")
-            basic_tab.set_output_dir("/tmp/failure-output")
+            basic_tab.set_output_dir(str(self.home_path.parent / "failure-output"))
 
             trainer_page.start_training()
 
@@ -1616,7 +1616,7 @@ class ToastNotificationsTestCase(_TrainerPageMixin, WebUITestCase):
             trainer_page.navigate_to_trainer()
             self.dismiss_onboarding(driver)
             trainer_page.wait_for_tab("basic")
-            basic_tab.set_output_dir("/tmp/toast-position")
+            basic_tab.set_output_dir(str(self.home_path.parent / "toast-position"))
             basic_tab.save_changes()
 
             toast_container = driver.find_element(By.CSS_SELECTOR, ".toast-container")
@@ -1757,7 +1757,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_dataset_modal", scenario)
 
     def test_dataset_train_batch_size_marks_unsaved_and_saves_clean_json(self) -> None:
-        """Dataset train_batch_size should update Alpine state, mark dirty, and serialize."""
+        """Dataset train_batch_size should only render and serialize for supported dataset types."""
         self.seed_defaults()
 
         def scenario(driver, _browser):
@@ -1813,6 +1813,66 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             )
             self.assertTrue(state["dirty"])
             self.assertEqual(state["trainBatchSize"], 3)
+
+            driver.execute_script(
+                """
+                const select = document.querySelectorAll('.list-item-type-select')[arguments[0]];
+                select.value = 'conditioning';
+                select.dispatchEvent(new Event('input', { bubbles: true }));
+                select.dispatchEvent(new Event('change', { bubbles: true }));
+                """,
+                dataset_index,
+            )
+            unsupported_state = WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    """
+                    const comp = window.dataloaderSectionComponentInstance;
+                    const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;
+                    if (!comp || !store || !Array.isArray(comp.datasets)) { return null; }
+                    const dataset = comp.datasets[arguments[0]];
+                    const saved = store.prepareDatasetsForSave(comp.datasets)[arguments[0]] || {};
+                    return dataset.dataset_type === 'conditioning'
+                        && !Object.prototype.hasOwnProperty.call(dataset, 'train_batch_size')
+                        && !Object.prototype.hasOwnProperty.call(saved, 'train_batch_size')
+                        ? { datasetType: dataset.dataset_type }
+                        : null;
+                    """,
+                    dataset_index,
+                )
+            )
+            self.assertEqual(unsupported_state["datasetType"], "conditioning")
+
+            hidden_for_conditioning = WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    """
+                    const input = document.querySelector('.dataset-modal input[x-model\\\\.number\\\\.lazy="editingDataset.train_batch_size"]');
+                    const field = input ? input.closest('.col-md-4') : null;
+                    return field ? window.getComputedStyle(field).display === 'none' : false;
+                    """
+                )
+            )
+            self.assertTrue(hidden_for_conditioning)
+
+            eval_state = WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    """
+                    const comp = window.dataloaderSectionComponentInstance;
+                    const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;
+                    const dataset = comp && Array.isArray(comp.datasets) ? comp.datasets[arguments[0]] : null;
+                    if (!dataset || !store) { return null; }
+                    dataset.train_batch_size = 7;
+                    dataset.dataset_type = 'eval';
+                    comp.onDatasetTypeChange(dataset);
+                    const saved = store.prepareDatasetsForSave(comp.datasets)[arguments[0]] || {};
+                    return !Object.prototype.hasOwnProperty.call(dataset, 'train_batch_size')
+                        && !Object.prototype.hasOwnProperty.call(saved, 'train_batch_size')
+                        ? { datasetType: dataset.dataset_type }
+                        : null;
+                    """,
+                    dataset_index,
+                )
+            )
+            self.assertEqual(eval_state["datasetType"], "eval")
 
         self.for_each_browser("test_dataset_train_batch_size_marks_unsaved_and_saves_clean_json", scenario)
 

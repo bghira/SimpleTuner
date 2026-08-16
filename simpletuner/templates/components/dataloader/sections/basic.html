@@ -19,7 +19,7 @@
                 <label class="form-label">Type <span class="text-danger">*</span></label>
                 <select class="form-control form-control-sm"
                         x-model="dataset.dataset_type"
-                        @change="markAsUnsaved()"
+                        @change="onDatasetTypeChange(dataset)"
                         :class="{'is-invalid': hasFieldError(dataset.id, 'dataset_type')}">
                     <option value="">Select type...</option>
                     <option value="image">🖼️ Image</option>

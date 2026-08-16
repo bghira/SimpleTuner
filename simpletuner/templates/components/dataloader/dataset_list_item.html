@@ -26,7 +26,7 @@
     <!-- Type Selector -->
     <select class="form-select form-select-sm list-item-type-select"
             x-model="dataset.dataset_type"
-            @change="markAsUnsaved()"
+            @change="onDatasetTypeChange(dataset)"
             @click.stop>
         <option value="">Type...</option>
         <option value="image">Image</option>
