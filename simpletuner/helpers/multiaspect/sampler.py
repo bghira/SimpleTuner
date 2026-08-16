@@ -176,6 +176,13 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         except Exception as e:
             raise e
 
+        saved_batch_size = previous_state.get("batch_size")
+        if "batch_size" in previous_state and saved_batch_size != self.batch_size:
+            raise ValueError(
+                f"Dataset '{self.id}' checkpoint batch_size={saved_batch_size} does not match "
+                f"current batch_size={self.batch_size}. Resume with the same per-dataset train_batch_size."
+            )
+
         # Checkpoints contain the rank-local schedule. Restore it before seen
         # state so legacy boolean flags can be expanded to all occurrences.
         saved_schedule = previous_state.get("aspect_ratio_bucket_indices")
