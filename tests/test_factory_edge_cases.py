@@ -453,6 +453,71 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertEqual(result["config"]["train_batch_size"], 2)
         self.assertEqual(result["bucket_report"].constraints["train_batch_size"], 2)
 
+    def test_init_backend_config_rejects_unsafe_dataset_train_batch_size_on_mps(self):
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        self.args.train_batch_size = 1
+        training_dataset_types = (
+            DatasetType.IMAGE,
+            DatasetType.VIDEO,
+            DatasetType.AUDIO,
+            DatasetType.CONDITIONING,
+            DatasetType.CAPTION,
+            DatasetType.GROUNDING,
+        )
+
+        with patch(
+            "simpletuner.helpers.configuration.platform_validation.torch.backends.mps.is_available", return_value=True
+        ):
+            for dataset_type in training_dataset_types:
+                with self.subTest(dataset_type=dataset_type.value):
+                    backend = {
+                        "id": f"{dataset_type.value}-unsafe-batch",
+                        "type": "local",
+                        "dataset_type": dataset_type.value,
+                        "train_batch_size": 17,
+                        "instance_data_dir": self.temp_dir,
+                    }
+
+                    with self.assertRaisesRegex(ValueError, "Please reduce the batch size to 12 or lower"):
+                        init_backend_config(backend, self.args, self.accelerator)
+
+    def test_init_backend_config_allows_train_batch_size_at_mps_limit(self):
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        backend = {
+            "id": "image-safe-mps-batch",
+            "type": "local",
+            "dataset_type": "image",
+            "train_batch_size": 16,
+            "instance_data_dir": self.temp_dir,
+        }
+
+        with patch(
+            "simpletuner.helpers.configuration.platform_validation.torch.backends.mps.is_available", return_value=True
+        ):
+            result = init_backend_config(backend, self.args, self.accelerator)
+
+        self.assertEqual(result["config"]["train_batch_size"], 16)
+
+    def test_init_backend_config_allows_large_train_batch_size_without_mps(self):
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        backend = {
+            "id": "image-non-mps-batch",
+            "type": "local",
+            "dataset_type": "image",
+            "train_batch_size": 17,
+            "instance_data_dir": self.temp_dir,
+        }
+
+        with patch(
+            "simpletuner.helpers.configuration.platform_validation.torch.backends.mps.is_available", return_value=False
+        ):
+            result = init_backend_config(backend, self.args, self.accelerator)
+
+        self.assertEqual(result["config"]["train_batch_size"], 17)
+
     def test_eval_backend_config_forces_train_batch_size_one(self):
         from simpletuner.helpers.data_backend.factory import init_backend_config
 
@@ -461,11 +526,14 @@ class TestFactoryEdgeCases(unittest.TestCase):
             "id": "eval-custom-batch",
             "type": "local",
             "dataset_type": "eval",
-            "train_batch_size": 3,
+            "train_batch_size": 17,
             "instance_data_dir": self.temp_dir,
         }
 
-        result = init_backend_config(backend, self.args, self.accelerator)
+        with patch(
+            "simpletuner.helpers.configuration.platform_validation.torch.backends.mps.is_available", return_value=True
+        ):
+            result = init_backend_config(backend, self.args, self.accelerator)
 
         self.assertEqual(result["config"]["train_batch_size"], 1)
 

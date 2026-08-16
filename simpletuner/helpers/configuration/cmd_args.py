@@ -17,6 +17,7 @@ from accelerate import InitProcessGroupKwargs
 from accelerate.utils import ProjectConfiguration
 
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args, normalize_lr_scheduler_value
+from simpletuner.helpers.configuration.platform_validation import validate_mps_train_batch_size
 from simpletuner.helpers.configuration.template_vars import render_modelspec_comment
 from simpletuner.helpers.distillation.common import validate_distillation_text_encoder_training
 from simpletuner.helpers.logging import get_logger
@@ -963,12 +964,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if torch.backends.mps.is_available():
         if args.model_family.lower() not in ["sd3", "flux", "legacy"] and not args.unet_attention_slice:
             warning_log("MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed.")
-        if args.train_batch_size > 16:
-            raise ValueError(
-                "An M3 Max 128G will use 12 seconds per step at a batch size of 1 and 65 seconds per step at a batch size of 12."
-                " Any higher values will result in NDArray size errors or other unstable training results and crashes."
-                "\nPlease reduce the batch size to 12 or lower."
-            )
+        validate_mps_train_batch_size(args.train_batch_size)
 
         if args.quantize_via == "accelerator":
             args.quantize_via = "cpu"
