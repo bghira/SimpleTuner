@@ -321,6 +321,33 @@ class TestImageBackendConfig(unittest.TestCase):
         self.assertEqual(config.maximum_image_size, 10.0)
         self.assertEqual(config.target_downsample_size, 5.0)
 
+    def test_train_batch_size_round_trip(self):
+        backend_dict = {
+            "id": "image_test",
+            "type": "local",
+            "dataset_type": "image",
+            "train_batch_size": "3",
+        }
+
+        config = ImageBackendConfig.from_dict(backend_dict, self.args)
+        output = config.to_dict()
+
+        self.assertEqual(config.train_batch_size, 3)
+        self.assertEqual(output["config"]["train_batch_size"], 3)
+
+    def test_train_batch_size_must_be_positive(self):
+        backend_dict = {
+            "id": "image_test",
+            "type": "local",
+            "dataset_type": "image",
+            "train_batch_size": 0,
+        }
+
+        config = ImageBackendConfig.from_dict(backend_dict, self.args)
+
+        with self.assertRaisesRegex(ValueError, "train_batch_size"):
+            config.validate(self.args)
+
     def test_vae_cache_ondemand_round_trip(self):
         backend_dict = {
             "id": "image_test",
