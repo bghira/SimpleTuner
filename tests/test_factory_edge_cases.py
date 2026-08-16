@@ -436,6 +436,39 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertFalse(self.args.text_cache_disable)
         self.assertFalse(self.args.text_cache_ondemand)
 
+    def test_init_backend_config_uses_dataset_train_batch_size(self):
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        self.args.train_batch_size = 4
+        backend = {
+            "id": "image-custom-batch",
+            "type": "local",
+            "dataset_type": "image",
+            "train_batch_size": 2,
+            "instance_data_dir": self.temp_dir,
+        }
+
+        result = init_backend_config(backend, self.args, self.accelerator)
+
+        self.assertEqual(result["config"]["train_batch_size"], 2)
+        self.assertEqual(result["bucket_report"].constraints["train_batch_size"], 2)
+
+    def test_eval_backend_config_forces_train_batch_size_one(self):
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        self.args.train_batch_size = 4
+        backend = {
+            "id": "eval-custom-batch",
+            "type": "local",
+            "dataset_type": "eval",
+            "train_batch_size": 3,
+            "instance_data_dir": self.temp_dir,
+        }
+
+        result = init_backend_config(backend, self.args, self.accelerator)
+
+        self.assertEqual(result["config"]["train_batch_size"], 1)
+
     def test_inline_conditioning_auto_generation_for_image_dataset(self):
         """Inline conditioning blocks on image datasets should spawn auto-generated conditioning datasets."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry

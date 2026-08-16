@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.config.base import BaseBackendConfig
-from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type, resolve_dataset_train_batch_size
 
 # Import metadata backends at module load so tests can patch these names.
 from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
@@ -116,6 +116,7 @@ class BaseBackendBuilder(ABC):
             )
 
         video_config = config.config.get("video", {})
+        train_batch_size = resolve_dataset_train_batch_size(backend_dict, args, dataset_type, config.id)
 
         metadata_backend = MetadataBackendCls(
             id=config.id,
@@ -130,7 +131,7 @@ class BaseBackendBuilder(ABC):
             maximum_num_frames=video_config.get("max_frames", None),
             num_frames=video_config.get("num_frames", None),
             resolution_type=config.resolution_type or args.get("resolution_type"),
-            batch_size=args.get("train_batch_size"),
+            batch_size=train_batch_size,
             metadata_update_interval=backend_dict.get("metadata_update_interval", args.get("metadata_update_interval")),
             cache_file=os.path.join(
                 instance_data_dir,

@@ -40,7 +40,8 @@ class JobRepository(BaseSQLiteStore):
             cursor = conn.cursor()
 
             # Create jobs table (unified with queue fields as of v5)
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS jobs (
                     job_id TEXT PRIMARY KEY,
                     job_type TEXT NOT NULL,
@@ -72,28 +73,39 @@ class JobRepository(BaseSQLiteStore):
                     allocated_gpus TEXT,
                     num_processes INTEGER DEFAULT 1
                 )
-            """)
+            """
+            )
 
             # Create indexes for common queries
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at DESC)
-            """)
-            cursor.execute("""
+            """
+            )
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)
-            """)
-            cursor.execute("""
+            """
+            )
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_jobs_upload_token ON jobs(upload_token)
-            """)
-            cursor.execute("""
+            """
+            )
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_jobs_user_id ON jobs(user_id)
-            """)
+            """
+            )
 
             # Create schema_version table
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS schema_version (
                     version INTEGER PRIMARY KEY
                 )
-            """)
+            """
+            )
 
             # Check and run schema migrations
             cursor.execute("SELECT version FROM schema_version LIMIT 1")
@@ -107,25 +119,37 @@ class JobRepository(BaseSQLiteStore):
                     cursor.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
 
             # Queue-related indexes (v5) - created after migrations ensure columns exist
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_jobs_priority ON jobs(priority DESC)
-            """)
-            cursor.execute("""
+            """
+            )
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_jobs_queue_position ON jobs(queue_position)
-            """)
-            cursor.execute("""
+            """
+            )
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_jobs_scheduling ON jobs(status, priority DESC, queued_at ASC)
-            """)
-            cursor.execute("""
+            """
+            )
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_jobs_team_id ON jobs(team_id)
-            """)
-            cursor.execute("""
+            """
+            )
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_jobs_org_id ON jobs(org_id)
-            """)
-            cursor.execute("""
+            """
+            )
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_jobs_local_running ON jobs(job_type, status)
                 WHERE job_type = 'local' AND status = 'running'
-            """)
+            """
+            )
 
             conn.commit()
         except Exception as exc:
@@ -180,10 +204,12 @@ class JobRepository(BaseSQLiteStore):
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_scheduling ON jobs(status, priority DESC, queued_at ASC)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_team_id ON jobs(team_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_jobs_org_id ON jobs(org_id)")
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_jobs_local_running ON jobs(job_type, status)
                 WHERE job_type = 'local' AND status = 'running'
-            """)
+            """
+            )
             logger.info("Queue fields merged into jobs table (v5 migration complete)")
 
     async def add(self, job: UnifiedJob) -> bool:
@@ -680,12 +706,14 @@ class JobRepository(BaseSQLiteStore):
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT * FROM jobs
                     WHERE job_type = 'local' AND status IN ('pending', 'queued')
                       AND COALESCE(provider, '') != 'kubeflow'
                     ORDER BY priority DESC, queued_at ASC
-                    """)
+                    """
+                )
                 return [self._row_to_job(row) for row in cursor.fetchall()]
             finally:
                 conn.close()
@@ -700,12 +728,14 @@ class JobRepository(BaseSQLiteStore):
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT * FROM jobs
                     WHERE job_type = 'local' AND status = 'running'
                       AND COALESCE(provider, '') != 'kubeflow'
                     ORDER BY started_at ASC
-                    """)
+                    """
+                )
                 return [self._row_to_job(row) for row in cursor.fetchall()]
             finally:
                 conn.close()
@@ -720,10 +750,12 @@ class JobRepository(BaseSQLiteStore):
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT allocated_gpus FROM jobs
                     WHERE job_type = 'local' AND status = 'running' AND allocated_gpus IS NOT NULL
-                    """)
+                    """
+                )
                 allocated: set = set()
                 for row in cursor.fetchall():
                     gpus = json.loads(row["allocated_gpus"])
@@ -748,11 +780,13 @@ class JobRepository(BaseSQLiteStore):
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT COUNT(*) as cnt FROM jobs
                     WHERE job_type = 'local' AND status = 'running'
                       AND COALESCE(provider, '') != 'kubeflow'
-                    """)
+                    """
+                )
                 return cursor.fetchone()["cnt"]
             finally:
                 conn.close()
@@ -796,11 +830,13 @@ class JobRepository(BaseSQLiteStore):
                 stats["running"] = stats["by_status"].get("running", 0)
 
                 # Average wait time (for completed jobs)
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT AVG(JULIANDAY(started_at) - JULIANDAY(queued_at)) * 86400 as avg_wait
                     FROM jobs
                     WHERE status = 'completed' AND started_at IS NOT NULL AND queued_at IS NOT NULL
-                    """)
+                    """
+                )
                 row = cursor.fetchone()
                 stats["avg_wait_seconds"] = row["avg_wait"] if row else None
 
@@ -818,11 +854,13 @@ class JobRepository(BaseSQLiteStore):
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT org_id, allocated_gpus FROM jobs
                     WHERE job_type = 'local' AND status = 'running'
                     AND org_id IS NOT NULL AND allocated_gpus IS NOT NULL
-                    """)
+                    """
+                )
                 org_gpu_counts: Dict[int, int] = {}
                 for row in cursor.fetchall():
                     org_id = row["org_id"]
@@ -894,12 +932,14 @@ class JobRepository(BaseSQLiteStore):
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT user_id, COUNT(*) as running_count
                     FROM jobs
                     WHERE status = 'running' AND user_id IS NOT NULL
                     GROUP BY user_id
-                    """)
+                    """
+                )
                 return {row["user_id"]: row["running_count"] for row in cursor.fetchall()}
             finally:
                 conn.close()
@@ -914,12 +954,14 @@ class JobRepository(BaseSQLiteStore):
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT team_id, COUNT(*) as running_count
                     FROM jobs
                     WHERE status = 'running' AND team_id IS NOT NULL
                     GROUP BY team_id
-                    """)
+                    """
+                )
                 return {row["team_id"]: row["running_count"] for row in cursor.fetchall()}
             finally:
                 conn.close()
@@ -957,11 +999,13 @@ class JobRepository(BaseSQLiteStore):
             try:
                 cursor = conn.cursor()
                 # Get pending jobs ordered by priority and queue time
-                cursor.execute("""
+                cursor.execute(
+                    """
                     SELECT job_id FROM jobs
                     WHERE status IN ('pending', 'queued')
                     ORDER BY priority DESC, queued_at ASC
-                    """)
+                    """
+                )
                 job_ids = [row["job_id"] for row in cursor.fetchall()]
 
                 # Update positions

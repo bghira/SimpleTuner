@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Iterable, Optional, Sequence
+from typing import Any, Iterable, Mapping, Optional, Sequence
 
 
 class DatasetType(str, Enum):
@@ -63,3 +63,37 @@ def dataset_type_in(
     """Return True if value matches any candidate dataset types."""
     target = ensure_dataset_type(value, default=default)
     return target in set(candidates)
+
+
+def get_arg_value(args: Any, key: str, default: Any = None) -> Any:
+    """Safely retrieve a value from an args mapping or namespace."""
+    if isinstance(args, Mapping):
+        return args.get(key, default)
+    return getattr(args, key, default)
+
+
+def resolve_dataset_train_batch_size(
+    backend: Mapping[str, Any],
+    args: Any,
+    dataset_type: Optional[DatasetType] = None,
+    backend_id: Optional[str] = None,
+) -> int:
+    """Return the effective per-rank training batch size for a dataset."""
+    resolved_dataset_type = dataset_type or ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
+    if resolved_dataset_type is DatasetType.EVAL:
+        return 1
+
+    raw_value = backend.get("train_batch_size")
+    if raw_value in (None, ""):
+        raw_value = get_arg_value(args, "train_batch_size", 1)
+
+    resolved_backend_id = backend_id if backend_id is not None else backend.get("id")
+    try:
+        batch_size = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"(id={resolved_backend_id}) train_batch_size must be a positive integer.") from exc
+
+    if batch_size < 1:
+        raise ValueError(f"(id={resolved_backend_id}) train_batch_size must be a positive integer.")
+
+    return batch_size

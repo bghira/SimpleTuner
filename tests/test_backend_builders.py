@@ -146,6 +146,29 @@ class TestLocalBackendBuilder(unittest.TestCase):
 
     @patch("simpletuner.helpers.data_backend.builders.base.ParquetMetadataBackend")
     @patch("simpletuner.helpers.data_backend.builders.base.JsonMetadataBackend")
+    def test_create_metadata_backend_uses_dataset_train_batch_size(self, mock_json_backend, mock_parquet_backend):
+        """Dataset-level train_batch_size overrides the global default for metadata bucketing."""
+        mock_data_backend = Mock()
+        mock_json_backend.return_value = Mock()
+
+        config = ImageBackendConfig.from_dict(
+            {
+                "id": "test_local",
+                "type": "local",
+                "metadata_backend": "json",
+                "instance_data_dir": "/tmp/images",
+                "train_batch_size": 3,
+            },
+            {**self.args, "train_batch_size": 8},
+        )
+
+        self.builder.create_metadata_backend(config, mock_data_backend, {**self.args, "train_batch_size": 8})
+
+        self.assertEqual(mock_json_backend.call_args.kwargs["batch_size"], 3)
+        mock_parquet_backend.assert_not_called()
+
+    @patch("simpletuner.helpers.data_backend.builders.base.ParquetMetadataBackend")
+    @patch("simpletuner.helpers.data_backend.builders.base.JsonMetadataBackend")
     def test_create_metadata_backend_parquet(self, mock_json_backend, mock_parquet_backend):
         """Test creating Parquet metadata backend"""
         mock_data_backend = Mock()

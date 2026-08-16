@@ -6937,10 +6937,15 @@ class Trainer:
                         bsz = prepared_batch["tokens"].shape[0]
                         training_logger.debug("Sending token batch to GPU.")
 
-                    if int(bsz) != int(self.config.train_batch_size):
+                    expected_batch_size = self.config.train_batch_size
+                    batch_backend_id = prepared_batch.get("data_backend_id")
+                    if isinstance(batch_backend_id, str):
+                        backend_config = StateTracker.get_data_backend_config(batch_backend_id) or {}
+                        expected_batch_size = backend_config.get("train_batch_size", expected_batch_size)
+
+                    if int(bsz) != int(expected_batch_size):
                         logger.error(
-                            f"Received {bsz} {batch_label}, but expected {self.config.train_batch_size}. "
-                            "Processing short batch."
+                            f"Received {bsz} {batch_label}, but expected {expected_batch_size}. " "Processing short batch."
                         )
                     training_logger.debug(f"Working on batch size: {bsz}")
                     # Prepare the data for the scatter plot
@@ -7027,12 +7032,10 @@ class Trainer:
                         )
 
                     # Gather the losses across all processes for logging (if using distributed training)
-                    avg_loss = self.accelerator.gather(loss.repeat(self.config.train_batch_size)).mean()
+                    avg_loss = self.accelerator.gather(loss.repeat(int(bsz))).mean()
                     self.train_loss += avg_loss.item() / self.config.gradient_accumulation_steps
                     if aux_loss_logs is not None:
-                        avg_diffusion_loss = self.accelerator.gather(
-                            diffusion_loss.repeat(self.config.train_batch_size)
-                        ).mean()
+                        avg_diffusion_loss = self.accelerator.gather(diffusion_loss.repeat(int(bsz))).mean()
                         self.train_diffusion_loss += avg_diffusion_loss.item() / self.config.gradient_accumulation_steps
                     # Backpropagate
                     self.grad_norm = None

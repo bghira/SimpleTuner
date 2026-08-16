@@ -25,7 +25,8 @@ class SessionStore(BaseAuthStore):
 
     def _init_schema(self, cursor) -> None:
         """Initialize the sessions table schema."""
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -35,7 +36,8 @@ class SessionStore(BaseAuthStore):
                 user_agent TEXT,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
-        """)
+        """
+        )
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)")
 

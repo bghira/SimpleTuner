@@ -446,13 +446,15 @@ async def run_migrations(
     conn = sqlite3.connect(str(path))
 
     # Ensure migrations table exists
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS schema_migrations (
             version TEXT PRIMARY KEY,
             name TEXT,
             applied_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
-    """)
+    """
+    )
 
     migrations_run = []
     try:

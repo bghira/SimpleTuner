@@ -38,7 +38,8 @@ class WorkerRepository(BaseSQLiteStore):
             cursor = conn.cursor()
 
             # Create workers table
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS workers (
                     worker_id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -54,25 +55,34 @@ class WorkerRepository(BaseSQLiteStore):
                     connected_at TEXT,
                     created_at TEXT NOT NULL
                 )
-            """)
+            """
+            )
 
             # Create indexes for common queries
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_workers_status ON workers(status)
-            """)
-            cursor.execute("""
+            """
+            )
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_workers_user_id ON workers(user_id)
-            """)
-            cursor.execute("""
+            """
+            )
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_workers_token_hash ON workers(token_hash)
-            """)
+            """
+            )
 
             # Create schema_version table
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS schema_version (
                     version INTEGER PRIMARY KEY
                 )
-            """)
+            """
+            )
 
             # Check and initialize schema version
             cursor.execute("SELECT version FROM schema_version LIMIT 1")

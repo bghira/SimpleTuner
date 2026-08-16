@@ -32,7 +32,8 @@ class UploadProgressStore(BaseSQLiteStore):
         try:
             cursor = conn.cursor()
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS upload_progress (
                     upload_id TEXT PRIMARY KEY,
                     stage TEXT NOT NULL,
@@ -44,12 +45,15 @@ class UploadProgressStore(BaseSQLiteStore):
                     error TEXT,
                     updated_at TEXT NOT NULL
                 )
-            """)
+            """
+            )
 
-            cursor.execute("""
+            cursor.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_upload_progress_updated_at
                 ON upload_progress(updated_at)
-            """)
+            """
+            )
 
             conn.commit()
         except Exception as exc:

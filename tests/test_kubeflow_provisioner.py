@@ -6,11 +6,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from simpletuner.simpletuner_sdk.server.services.kubeflow import (
-    KubeflowPhase,
-    KubeflowSettings,
-    KubeflowWorkerProvisioner,
-)
+from simpletuner.simpletuner_sdk.server.services.kubeflow import KubeflowPhase, KubeflowSettings, KubeflowWorkerProvisioner
 
 
 class KubeflowSettingsTestCase(unittest.TestCase):

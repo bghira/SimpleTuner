@@ -430,9 +430,7 @@ async def lifespan(app: FastAPI):
 
     # Kubeflow is opt-in. Invalid in-cluster configuration must fail startup
     # instead of silently routing a GPU task through the local scheduler.
-    from simpletuner.simpletuner_sdk.server.services.kubeflow_job_service import (
-        initialize_kubeflow_job_service,
-    )
+    from simpletuner.simpletuner_sdk.server.services.kubeflow_job_service import initialize_kubeflow_job_service
 
     kubeflow_job_service = await initialize_kubeflow_job_service()
     if kubeflow_job_service is not None:
@@ -457,9 +455,7 @@ async def lifespan(app: FastAPI):
 
         # Stop Kubernetes reconciliation before the shared Worker manager.
         try:
-            from simpletuner.simpletuner_sdk.server.services.kubeflow_job_service import (
-                shutdown_kubeflow_job_service,
-            )
+            from simpletuner.simpletuner_sdk.server.services.kubeflow_job_service import shutdown_kubeflow_job_service
 
             await shutdown_kubeflow_job_service()
             logger.debug("Kubeflow job service stopped")

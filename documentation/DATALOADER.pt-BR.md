@@ -71,6 +71,12 @@ Aqui está o exemplo mais básico de um arquivo de configuração do dataloader,
 - **Descrição:** Especifica onde os arquivos de cache de embeds são armazenados para este dataset. Para `text_embeds`, é onde as saídas do text encoder são gravadas. Para `image_embeds`, é onde os latentes do VAE são armazenados.
 - **Nota:** Diferente de `cache_dir_vae`, que é definido em datasets de imagem/vídeo primários para especificar onde o cache de VAE vai.
 
+### `train_batch_size`
+
+- **Aplica-se apenas a datasets treináveis** (`image`, `video`, `audio`, `caption`, `conditioning`)
+- **Descrição:** Sobrescreve o `--train_batch_size` global para este dataset. Deixe sem definir para usar o valor global.
+- **Padrão:** Usa o argumento `--train_batch_size` do trainer.
+
 ### `write_batch_size`
 
 - **Aplica-se apenas a `dataset_type=text_embeds`**
@@ -670,10 +676,10 @@ Por padrão, o SimpleTuner fará upscaling de imagens pequenas para atender à r
 Ao treinar com múltiplas GPUs, seu dataset deve ser grande o suficiente para acomodar o **tamanho efetivo do batch**, calculado como:
 
 ```
-effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_steps
+effective_batch_size = train_batch_size do dataset × num_gpus × gradient_accumulation_steps
 ```
 
-Por exemplo, com 4 GPUs, `train_batch_size=4` e `gradient_accumulation_steps=1`, você precisa de pelo menos **16 amostras** (após aplicar repeats) em cada bucket de aspecto.
+Por exemplo, com 4 GPUs, `train_batch_size=4` no dataset e `gradient_accumulation_steps=1`, você precisa de pelo menos **16 amostras** (após aplicar repeats) em cada bucket de aspecto.
 
 **Importante:** O SimpleTuner lançará um erro se sua configuração de dataset produzir zero batches utilizáveis. A mensagem de erro mostrará:
 - Valores atuais de configuração (batch size, contagem de GPUs, repeats)

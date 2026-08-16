@@ -71,6 +71,12 @@
 - **Description:** इस dataset के लिए embed cache files कहाँ स्टोर होंगी। `text_embeds` के लिए यही text encoder outputs लिखने की जगह है। `image_embeds` के लिए यही VAE latents स्टोर करने की जगह है।
 - **Note:** यह `cache_dir_vae` से अलग है, जो primary image/video datasets पर VAE cache की जगह बताने के लिए सेट होता है।
 
+### `train_batch_size`
+
+- **केवल trainable datasets पर लागू** (`image`, `video`, `audio`, `caption`, `conditioning`)
+- **Description:** इस dataset के लिए global `--train_batch_size` को override करता है। Global value उपयोग करने के लिए unset छोड़ें।
+- **Default:** trainer के `--train_batch_size` argument पर fallback करता है।
+
 ### `write_batch_size`
 
 - **केवल `dataset_type=text_embeds` पर लागू**
@@ -670,10 +676,10 @@ Images cropping से पहले resize नहीं होतीं **जब
 Multiple GPUs के साथ training करते समय, आपका dataset **effective batch size** को समाहित करने लायक होना चाहिए, जिसकी गणना इस प्रकार है:
 
 ```
-effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_steps
+effective_batch_size = dataset train_batch_size × num_gpus × gradient_accumulation_steps
 ```
 
-उदाहरण के लिए, 4 GPUs, `train_batch_size=4`, और `gradient_accumulation_steps=1` के साथ, हर aspect bucket में (repeats लागू होने के बाद) कम से कम **16 samples** चाहिए।
+उदाहरण के लिए, 4 GPUs, dataset `train_batch_size=4`, और `gradient_accumulation_steps=1` के साथ, हर aspect bucket में (repeats लागू होने के बाद) कम से कम **16 samples** चाहिए।
 
 **Important:** यदि आपका dataset कॉन्फ़िगरेशन zero usable batches बनाता है तो SimpleTuner error उठाएगा। error message में दिखाया जाएगा:
 - वर्तमान कॉन्फ़िगरेशन मान (batch size, GPU count, repeats)

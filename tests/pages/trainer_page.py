@@ -63,7 +63,8 @@ class TrainerPage(BasePage):
         try:
             self.wait.until(EC.presence_of_element_located((By.ID, "trainer-form")))
             # Ensure toast infrastructure is initialized
-            self.driver.execute_script("""
+            self.driver.execute_script(
+                """
                 if (!document.getElementById('toast-container')) {
                     const container = document.createElement('div');
                     container.id = 'toast-container';
@@ -91,7 +92,8 @@ class TrainerPage(BasePage):
                         }
                     }
                 }
-            """)
+            """
+            )
         except TimeoutException:
             pass
 
@@ -108,7 +110,8 @@ class TrainerPage(BasePage):
             )
 
             # Stub external fetches that are unavailable in the test harness
-            self.driver.execute_script("""
+            self.driver.execute_script(
+                """
                 if (!window.__simpletunerTestFetchPatched) {
                   window.__simpletunerTestFetchPatched = true;
                   const originalFetch = window.fetch.bind(window);
@@ -265,7 +268,8 @@ class TrainerPage(BasePage):
                     return originalFetch(resource, options);
                   };
                 }
-                """)
+                """
+            )
 
             # Disable SSE/event polling which is not available in tests
             self.driver.execute_script(
@@ -356,7 +360,8 @@ class TrainerPage(BasePage):
         except TimeoutException:
             pass
 
-        self.driver.execute_script("""
+        self.driver.execute_script(
+            """
             (function installHarnessHtmxTracker() {
               if (window.__trainerHarnessHtmxTrackerInstalled) {
                 return;
@@ -401,7 +406,8 @@ class TrainerPage(BasePage):
               }
               settleIfIdle();
             })();
-            """)
+            """
+        )
 
         self._wait_for_trainer_ready("basic")
 
@@ -515,7 +521,8 @@ class TrainerPage(BasePage):
     def save_configuration(self):
         """Persist configuration via the API and surface a success toast."""
 
-        payload = self.driver.execute_script("""
+        payload = self.driver.execute_script(
+            """
             const form = document.getElementById('trainer-form');
             const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;
             if (!form) {
@@ -555,7 +562,8 @@ class TrainerPage(BasePage):
               extras,
               defaults: store && store.defaults ? store.defaults : {}
             };
-            """)
+            """
+        )
 
         name = payload.get("name") or "default"
         config = payload.get("config") or {}
@@ -685,7 +693,9 @@ class TrainerPage(BasePage):
 
     def start_training(self):
         """Click the start training button."""
-        missing_fields = self.driver.execute_script("""
+        missing_fields = (
+            self.driver.execute_script(
+                """
         const readValue = (candidates) => {
           for (const name of candidates) {
             const el = document.querySelector(`[name=\"${name}\"]`);
@@ -705,7 +715,10 @@ class TrainerPage(BasePage):
           runValue: runVal,
           outputValue: outputVal,
         };
-        """) or {}
+        """
+            )
+            or {}
+        )
 
         if missing_fields.get("run") or missing_fields.get("output"):
             issues = []

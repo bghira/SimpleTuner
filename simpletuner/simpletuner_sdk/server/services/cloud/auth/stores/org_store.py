@@ -25,7 +25,8 @@ class OrgStore(BaseAuthStore):
 
     def _init_schema(self, cursor) -> None:
         """Initialize the organizations table schema."""
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS organizations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -35,7 +36,8 @@ class OrgStore(BaseAuthStore):
                 created_at TEXT NOT NULL,
                 settings TEXT DEFAULT '{}'
             )
-        """)
+        """
+        )
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_organizations_slug ON organizations(slug)")
 
     async def create(
