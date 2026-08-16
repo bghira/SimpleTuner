@@ -1207,8 +1207,17 @@ class MiniMaxH3(VideoModelFoundation):
     def should_precompute_validation_negative_prompt(self) -> bool:
         return False
 
+    def validation_audio_sample_rate(self) -> Optional[int]:
+        if getattr(self, "audio_vae", None) is None:
+            self._load_audio_vae(move_to_device=False)
+        sampling_rate = getattr(getattr(self.audio_vae, "config", None), "sampling_rate", None)
+        return int(sampling_rate) if sampling_rate else None
+
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         pipeline_kwargs.setdefault("minimax_h3_target_mode", self._configured_h3_target_mode())
+        num_frames = getattr(self.config, "validation_num_video_frames", None)
+        if num_frames:
+            pipeline_kwargs.setdefault("num_frames", int(num_frames))
         guidance_scale_real = pipeline_kwargs.pop("guidance_scale_real", None)
         if guidance_scale_real is None:
             guidance_scale_real = getattr(self.config, "validation_guidance_real", None)

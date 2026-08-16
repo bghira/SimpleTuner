@@ -3872,7 +3872,7 @@ class Validation:
 
     @staticmethod
     def _extract_pipeline_media(pipeline_result, *, audio_only: bool = False):
-        for field_name in ("frames", "images", "audios", "audio", "videos"):
+        for field_name in ("frames", "images", "videos", "audios", "audio"):
             if not hasattr(pipeline_result, field_name):
                 continue
             current_results = getattr(pipeline_result, field_name)
