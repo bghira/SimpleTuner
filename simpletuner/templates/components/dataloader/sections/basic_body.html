@@ -188,7 +188,7 @@
                        placeholder="0">
                 <div class="form-text small">0 = single pass, 1+ = extra sweeps</div>
             </div>
-            <div class="col-md-4">
+            <div class="col-md-4" x-show="supportsTrainBatchSize(editingDataset)">
                 <label class="form-label small">Batch Size <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#train_batch_size') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
                 <input type="number"
                        class="form-control form-control-sm"

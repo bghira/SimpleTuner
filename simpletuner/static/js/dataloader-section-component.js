@@ -49,6 +49,8 @@ const SKIP_DISCOVERY_OPTIONS = [
     }
 ];
 
+const TRAIN_BATCH_SIZE_DATASET_TYPES = new Set(['image', 'video', 'audio', 'caption']);
+
 window.CONDITIONING_GENERATOR_TYPES = window.CONDITIONING_GENERATOR_TYPES || CONDITIONING_GENERATOR_TYPES;
 
 const DATASET_COLLAPSE_SECTION_MAP = {
@@ -368,6 +370,18 @@ function dataloaderSectionComponent() {
         return labels.some(label =>
             label && label.toLowerCase().includes(query)
         );
+    },
+    supportsTrainBatchSize(dataset) {
+        const datasetType = typeof dataset?.dataset_type === 'string'
+            ? dataset.dataset_type.toLowerCase()
+            : '';
+        return TRAIN_BATCH_SIZE_DATASET_TYPES.has(datasetType);
+    },
+    onDatasetTypeChange(dataset) {
+        if (dataset && !this.supportsTrainBatchSize(dataset)) {
+            delete dataset.train_batch_size;
+        }
+        this.markAsUnsaved();
     },
 
     // Modal methods

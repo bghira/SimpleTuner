@@ -24,5 +24,25 @@ class TestMemoryDatasetBlueprints(unittest.TestCase):
             self.assertFalse(fields["memory_filesystem_sudo"].defaultValue)
 
 
+class TestTrainBatchSizeBlueprints(unittest.TestCase):
+    def test_train_batch_size_only_applies_to_independently_sampled_datasets(self):
+        lookup = get_blueprint_lookup()
+        supported_types = {"image", "video", "audio", "caption"}
+
+        for (_backend_type, dataset_type), blueprint in lookup.items():
+            fields = {field.id for field in blueprint.fields}
+            self.assertEqual(
+                "train_batch_size" in fields,
+                dataset_type in supported_types,
+                f"Unexpected train_batch_size eligibility for {blueprint.backendType}/{dataset_type}",
+            )
+
+    def test_local_caption_blueprint_exposes_train_batch_size(self):
+        blueprint = find_blueprint("local", "caption")
+
+        self.assertIsNotNone(blueprint)
+        self.assertIn("train_batch_size", {field.id for field in blueprint.fields})
+
+
 if __name__ == "__main__":
     unittest.main()

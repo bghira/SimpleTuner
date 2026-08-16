@@ -37,7 +37,7 @@
                                    placeholder="0">
                             <div class="form-text">Set to 0 for a single pass. Each repeat adds another sweep through the dataset.</div>
                         </div>
-                        <div class="col-md-4">
+                        <div class="col-md-4" x-show="supportsTrainBatchSize(dataset)">
                             <label class="form-label">Batch Size</label>
                             <input type="number" class="form-control form-control-sm"
                                    min="1"

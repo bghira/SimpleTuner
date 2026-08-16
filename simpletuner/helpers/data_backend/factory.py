@@ -4494,6 +4494,7 @@ class FactoryRegistry:
         if isinstance(metadata_backend, CaptionMetadataBackend) and not built_on_rank:
             metadata_backend.load_image_metadata()
 
+        self._create_caption_dataloader(backend, init_backend)
         StateTracker.register_data_backend(init_backend)
         self.caption_backends[init_backend["id"]] = init_backend
         info_log(f"(id={init_backend['id']}) Caption dataset registered.")
