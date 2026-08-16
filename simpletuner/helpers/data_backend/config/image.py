@@ -370,7 +370,7 @@ class ImageBackendConfig(BaseBackendConfig):
 
         validators.check_for_caption_filter_list_misuse(self.dataset_type, False, self.id)
         if self.train_batch_size is not None:
-            parse_positive_train_batch_size(self.train_batch_size, self.id)
+            self.train_batch_size = parse_positive_train_batch_size(self.train_batch_size, self.id)
 
     def _validate_controlnet_requirements(self, args: Dict[str, Any]) -> None:
         def _get_controlnet_flag(source: Any) -> Optional[bool]:
