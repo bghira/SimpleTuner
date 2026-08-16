@@ -3373,6 +3373,7 @@ class FactoryRegistry:
 
     def _handle_config_versioning(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
         """Handle configuration versioning and validation."""
+        runtime_mutable_keys = ("train_batch_size",)
         excluded_keys = [
             "probability",
             "repeats",
@@ -3390,6 +3391,7 @@ class FactoryRegistry:
             "start_epoch",
             "hash_filenames",  # always enabled, not user-configurable
             "_s2v_audio_autoinjected",  # runtime flag, not user-configurable
+            *runtime_mutable_keys,
         ]
         _latest_config_version = latest_config_version()
         current_config_version = _latest_config_version
@@ -3423,6 +3425,14 @@ class FactoryRegistry:
                                 f"Key {key} not found in the current backend config, using the existing value '{prev_config[key]}'."
                             )
                         init_backend["config"][key] = prev_config[key]
+
+        metadata_backend_config = getattr(init_backend["metadata_backend"], "config", None)
+        if isinstance(metadata_backend_config, dict):
+            for key in runtime_mutable_keys:
+                if key in init_backend["config"]:
+                    metadata_backend_config[key] = init_backend["config"][key]
+                else:
+                    metadata_backend_config.pop(key, None)
 
         runtime_linkage_keys = (
             "conditioning_data",

@@ -469,6 +469,72 @@ class TestFactoryEdgeCases(unittest.TestCase):
 
         self.assertEqual(result["config"]["train_batch_size"], 1)
 
+    def _apply_cached_train_batch_size(self, backend, cached_train_batch_size):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
+
+        init_backend = init_backend_config(backend, self.args, self.accelerator)
+        effective_train_batch_size = init_backend["config"]["train_batch_size"]
+        metadata_backend = MagicMock()
+        metadata_backend.config = {"train_batch_size": cached_train_batch_size}
+        metadata_backend.batch_size = effective_train_batch_size
+        metadata_backend.__len__.return_value = 1
+        init_backend["metadata_backend"] = metadata_backend
+        init_backend["data_backend"] = MagicMock()
+
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        sampler = MagicMock(caption_strategy="filename")
+        with (
+            patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config") as set_config,
+            patch("simpletuner.helpers.data_backend.factory.print_bucket_info"),
+            patch("simpletuner.helpers.data_backend.factory.MultiAspectDataset"),
+            patch("simpletuner.helpers.data_backend.factory.MultiAspectSampler", return_value=sampler) as sampler_cls,
+            patch("simpletuner.helpers.data_backend.factory.torch.utils.data.DataLoader"),
+        ):
+            factory._handle_config_versioning(backend, init_backend)
+            factory._create_dataset_and_sampler(backend, init_backend, conditioning_type=None)
+
+        set_config.assert_called_once_with(init_backend["id"], init_backend["config"])
+        self.assertEqual(init_backend["config"]["train_batch_size"], effective_train_batch_size)
+        self.assertEqual(metadata_backend.batch_size, effective_train_batch_size)
+        self.assertEqual(metadata_backend.config["train_batch_size"], effective_train_batch_size)
+        self.assertEqual(sampler_cls.call_args.kwargs["batch_size"], effective_train_batch_size)
+        return init_backend
+
+    def test_cached_batch_size_does_not_override_changed_global_default(self):
+        self.args.train_batch_size = 4
+        backend = {
+            "id": "image-global-batch",
+            "type": "local",
+            "dataset_type": "image",
+            "instance_data_dir": self.temp_dir,
+        }
+
+        result = self._apply_cached_train_batch_size(backend, cached_train_batch_size=2)
+
+        self.assertNotIn("train_batch_size", backend)
+        self.assertEqual(result["config"]["train_batch_size"], 4)
+
+    def test_cached_batch_size_does_not_override_changed_dataset_value(self):
+        self.args.train_batch_size = 8
+        backend = {
+            "id": "image-dataset-batch",
+            "type": "local",
+            "dataset_type": "image",
+            "train_batch_size": 4,
+            "instance_data_dir": self.temp_dir,
+        }
+
+        result = self._apply_cached_train_batch_size(backend, cached_train_batch_size=2)
+
+        self.assertEqual(backend["train_batch_size"], 4)
+        self.assertEqual(result["config"]["train_batch_size"], 4)
+
     def test_inline_conditioning_auto_generation_for_image_dataset(self):
         """Inline conditioning blocks on image datasets should spawn auto-generated conditioning datasets."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
