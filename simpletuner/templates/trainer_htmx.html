@@ -1944,8 +1944,15 @@ function trainerComponent() {
             if (dataset.dataset_type === 'text_embeds' || dataset.dataset_type === 'image_embeds') {
                 const writeBatch = this._coerceInt(dataset.write_batch_size);
                 dataset.write_batch_size = Number.isFinite(writeBatch) && writeBatch > 0 ? writeBatch : 128;
+                delete dataset.train_batch_size;
             } else {
                 delete dataset.write_batch_size;
+                const trainBatch = this._coerceInt(dataset.train_batch_size);
+                if (Number.isFinite(trainBatch) && trainBatch > 0) {
+                    dataset.train_batch_size = trainBatch;
+                } else {
+                    delete dataset.train_batch_size;
+                }
             }
 
             dataset._showAdvanced = Boolean(dataset._showAdvanced);
@@ -2660,6 +2667,7 @@ function trainerComponent() {
                 }
 
                 if (cleaned.dataset_type === 'text_embeds' || cleaned.dataset_type === 'image_embeds') {
+                    delete cleaned.train_batch_size;
                     const writeBatchSize = this._coerceInt(dataset.write_batch_size);
                     if (Number.isFinite(writeBatchSize) && writeBatchSize > 0) {
                         cleaned.write_batch_size = writeBatchSize;
@@ -2695,6 +2703,12 @@ function trainerComponent() {
                     delete cleaned.caption_filter_list;
                     delete cleaned.text_cache_ondemand;
                     delete cleaned.text_cache_disable;
+                    const trainBatchSize = this._coerceInt(dataset.train_batch_size);
+                    if (Number.isFinite(trainBatchSize) && trainBatchSize > 0) {
+                        cleaned.train_batch_size = trainBatchSize;
+                    } else {
+                        delete cleaned.train_batch_size;
+                    }
                 }
 
                 if (['image', 'video'].includes(cleaned.dataset_type)) {

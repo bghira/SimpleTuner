@@ -25,7 +25,8 @@ class CredentialStore(BaseAuthStore):
 
     def _init_schema(self, cursor) -> None:
         """Initialize the provider_credentials table schema."""
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS provider_credentials (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -39,7 +40,8 @@ class CredentialStore(BaseAuthStore):
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                 UNIQUE(user_id, provider, credential_name)
             )
-        """)
+        """
+        )
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_provider_creds_user ON provider_credentials(user_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_provider_creds_provider ON provider_credentials(provider)")
 

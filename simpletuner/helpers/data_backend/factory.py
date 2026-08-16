@@ -202,6 +202,32 @@ def _backend_dataset_type(backend: Dict[str, Any], *, default: DatasetType = Dat
     return ensure_dataset_type(backend.get("dataset_type"), default=default)
 
 
+def _resolve_dataset_train_batch_size(
+    backend: Dict[str, Any],
+    args: Any,
+    dataset_type: Optional[DatasetType] = None,
+) -> int:
+    """Return the effective per-rank training batch size for this dataset."""
+
+    resolved_dataset_type = dataset_type or _backend_dataset_type(backend)
+    if resolved_dataset_type is DatasetType.EVAL:
+        return 1
+
+    raw_value = backend.get("train_batch_size")
+    if raw_value in (None, ""):
+        raw_value = _get_arg_value(args, "train_batch_size", 1)
+
+    try:
+        batch_size = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"(id={backend.get('id')}) train_batch_size must be a positive integer.") from exc
+
+    if batch_size < 1:
+        raise ValueError(f"(id={backend.get('id')}) train_batch_size must be a positive integer.")
+
+    return batch_size
+
+
 def _is_primary_training_backend(backend: Dict[str, Any]) -> bool:
     """Return True when backend participates in the core training dataloader."""
     primary_types = {
@@ -309,6 +335,15 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             if key in backend:
                 output["config"][key] = backend[key]
     is_audio_dataset = dataset_type is DatasetType.AUDIO
+    has_training_batch_size = dataset_type not in {
+        DatasetType.TEXT_EMBEDS,
+        DatasetType.IMAGE_EMBEDS,
+        DatasetType.CONDITIONING_IMAGE_EMBEDS,
+        DatasetType.DISTILLATION_CACHE,
+    }
+    dataset_train_batch_size = (
+        _resolve_dataset_train_batch_size(backend, args, dataset_type) if has_training_batch_size else None
+    )
 
     start_epoch = normalize_start_epoch(backend.get("start_epoch", 1))
     start_step = normalize_start_step(backend.get("start_step", 0))
@@ -318,6 +353,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     output["config"]["start_step"] = start_step
     output["config"]["end_epoch"] = end_epoch
     output["config"]["end_step"] = end_step
+    if dataset_train_batch_size is not None:
+        output["config"]["train_batch_size"] = dataset_train_batch_size
 
     def _prepare_audio_settings(source: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize audio configuration settings from backend definitions."""
@@ -428,7 +465,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     bucket_report = BucketReport(dataset_id=output["id"], dataset_type=output["dataset_type"])
     output["bucket_report"] = bucket_report
     bucket_report.set_constraints(
-        train_batch_size=_get_arg_value(args, "train_batch_size"),
+        train_batch_size=dataset_train_batch_size,
         repeats=int(backend.get("repeats", 0) or 0),
     )
     choices = [
@@ -3141,6 +3178,11 @@ class FactoryRegistry:
             raise ValueError(f"Unknown metadata backend type: {metadata_backend}")
 
         video_config = init_backend["config"].get("video", {})
+        dataset_type_enum = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
+        train_batch_size = init_backend["config"].get(
+            "train_batch_size",
+            _resolve_dataset_train_batch_size(backend, self.args, dataset_type_enum),
+        )
         metadata_cache_root = backend.get(
             "instance_data_dir",
             backend.get("csv_cache_dir", backend.get("aws_data_prefix", "")),
@@ -3162,11 +3204,7 @@ class FactoryRegistry:
             maximum_num_frames=video_config.get("max_frames", None),
             num_frames=video_config.get("num_frames", None),
             resolution_type=backend.get("resolution_type", self.args.resolution_type),
-            batch_size=(
-                1
-                if ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE) is DatasetType.EVAL
-                else self.args.train_batch_size
-            ),
+            batch_size=train_batch_size,
             metadata_update_interval=backend.get("metadata_update_interval", self.args.metadata_update_interval),
             cache_file=os.path.join(
                 metadata_cache_root,
@@ -3281,8 +3319,12 @@ class FactoryRegistry:
             if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
             if init_backend["metadata_backend"].has_single_underfilled_bucket():
+                train_batch_size = init_backend["config"].get(
+                    "train_batch_size",
+                    _resolve_dataset_train_batch_size(backend, self.args),
+                )
                 raise Exception(
-                    f"Cannot train using a dataset that has a single bucket with fewer than {self.args.train_batch_size} images."
+                    f"Cannot train using a dataset that has a single bucket with fewer than {train_batch_size} images."
                     f" You have to reduce your batch size, or increase your dataset size (id={init_backend['id']})."
                 )
 
@@ -3559,7 +3601,10 @@ class FactoryRegistry:
             data_backend=init_backend["data_backend"],
             model=self.model,
             accelerator=self.accelerator,
-            batch_size=1 if dataset_type is DatasetType.EVAL else self.args.train_batch_size,
+            batch_size=init_backend["config"].get(
+                "train_batch_size",
+                _resolve_dataset_train_batch_size(backend, self.args, dataset_type),
+            ),
             debug_aspect_buckets=self.args.debug_aspect_buckets,
             delete_unwanted_images=backend.get("delete_unwanted_images", self.args.delete_unwanted_images),
             resolution=backend.get("resolution", self.args.resolution),
@@ -3601,7 +3646,10 @@ class FactoryRegistry:
         repeats = max(int(init_backend["config"].get("repeats", 0) or 0), 0)
         shuffle = backend.get("shuffle", True)
         seed = getattr(self.args, "seed", 0)
-        batch_size = backend.get("train_batch_size", getattr(self.args, "train_batch_size", 1))
+        batch_size = init_backend["config"].get(
+            "train_batch_size",
+            _resolve_dataset_train_batch_size(backend, self.args, DatasetType.CAPTION),
+        )
 
         init_backend["train_dataset"] = CaptionDataset(
             id=init_backend["id"],

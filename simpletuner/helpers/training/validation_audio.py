@@ -7,8 +7,8 @@ from typing import Any
 import numpy as np
 import scipy.io.wavfile
 import torch
-
 import wandb
+
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)

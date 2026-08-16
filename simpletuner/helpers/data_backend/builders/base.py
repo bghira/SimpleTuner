@@ -20,6 +20,36 @@ from simpletuner.helpers.training.state_tracker import StateTracker
 logger = logging.getLogger("BaseBackendBuilder")
 
 
+def _get_arg_value(args: Any, key: str, default: Any = None) -> Any:
+    if isinstance(args, dict):
+        return args.get(key, default)
+    return getattr(args, key, default)
+
+
+def _resolve_train_batch_size(
+    backend_dict: Dict[str, Any],
+    args: Any,
+    dataset_type: DatasetType,
+    backend_id: str,
+) -> int:
+    if dataset_type is DatasetType.EVAL:
+        return 1
+
+    raw_value = backend_dict.get("train_batch_size")
+    if raw_value in (None, ""):
+        raw_value = _get_arg_value(args, "train_batch_size", 1)
+
+    try:
+        batch_size = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"(id={backend_id}) train_batch_size must be a positive integer.") from exc
+
+    if batch_size < 1:
+        raise ValueError(f"(id={backend_id}) train_batch_size must be a positive integer.")
+
+    return batch_size
+
+
 class BaseBackendBuilder(ABC):
 
     def __init__(self, accelerator: Any, args: Optional[Any] = None) -> None:
@@ -116,6 +146,7 @@ class BaseBackendBuilder(ABC):
             )
 
         video_config = config.config.get("video", {})
+        train_batch_size = _resolve_train_batch_size(backend_dict, args, dataset_type, config.id)
 
         metadata_backend = MetadataBackendCls(
             id=config.id,
@@ -130,7 +161,7 @@ class BaseBackendBuilder(ABC):
             maximum_num_frames=video_config.get("max_frames", None),
             num_frames=video_config.get("num_frames", None),
             resolution_type=config.resolution_type or args.get("resolution_type"),
-            batch_size=args.get("train_batch_size"),
+            batch_size=train_batch_size,
             metadata_update_interval=backend_dict.get("metadata_update_interval", args.get("metadata_update_interval")),
             cache_file=os.path.join(
                 instance_data_dir,

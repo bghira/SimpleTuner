@@ -89,6 +89,7 @@ class ImageBackendConfig(BaseBackendConfig):
 
     is_regularisation_data: bool = False
     is_regularization_data: bool = False
+    train_batch_size: Optional[int] = None
 
     @classmethod
     def from_dict(cls, backend_dict: Dict[str, Any], args: Dict[str, Any]) -> "ImageBackendConfig":
@@ -210,6 +211,12 @@ class ImageBackendConfig(BaseBackendConfig):
         )
         config.repeats = int(backend_dict.get("repeats", 0)) if backend_dict.get("repeats") else 0
         config.disable_validation = backend_dict.get("disable_validation", False)
+        train_batch_size = backend_dict.get("train_batch_size")
+        if train_batch_size not in (None, ""):
+            try:
+                config.train_batch_size = int(train_batch_size)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"(id={config.id}) train_batch_size must be a positive integer.") from exc
         if "hash_filenames" in backend_dict and config.backend_type != "csv":
             config.hash_filenames = backend_dict.get("hash_filenames")
         config.source_dataset_id = backend_dict.get("source_dataset_id")
@@ -365,6 +372,8 @@ class ImageBackendConfig(BaseBackendConfig):
             self._validate_video_settings(args)
 
         validators.check_for_caption_filter_list_misuse(self.dataset_type, False, self.id)
+        if self.train_batch_size is not None and self.train_batch_size < 1:
+            raise ValueError(f"(id={self.id}) train_batch_size must be a positive integer.")
 
     def _validate_controlnet_requirements(self, args: Dict[str, Any]) -> None:
         def _get_controlnet_flag(source: Any) -> Optional[bool]:
@@ -463,6 +472,8 @@ class ImageBackendConfig(BaseBackendConfig):
         config["timestep_sampling_offset"] = self.timestep_sampling_offset
         config["repeats"] = self.repeats
         config["instance_data_dir"] = self.instance_data_dir
+        if self.train_batch_size is not None:
+            config["train_batch_size"] = self.train_batch_size
 
         if self.crop_aspect_buckets is not None:
             config["crop_aspect_buckets"] = self.crop_aspect_buckets

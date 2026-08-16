@@ -27,7 +27,8 @@ class IdempotencyStore(AsyncSQLiteStore):
         """Initialize the idempotency_keys table."""
         conn = await self._get_connection()
 
-        await conn.execute("""
+        await conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS idempotency_keys (
                 idempotency_key TEXT PRIMARY KEY,
                 job_id TEXT NOT NULL,
@@ -35,7 +36,8 @@ class IdempotencyStore(AsyncSQLiteStore):
                 created_at TEXT NOT NULL,
                 expires_at TEXT NOT NULL
             )
-        """)
+        """
+        )
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON idempotency_keys(expires_at)")
         await conn.commit()
 

@@ -86,7 +86,6 @@ from .protocols import (
     UserStoreProtocol,
 )
 from .replicate_client import ReplicateCogClient
-from .simpletuner_io_client import SimpleTunerIOClient
 from .secrets import (
     AWSSecretsManagerProvider,
     EnvironmentSecretProvider,
@@ -96,6 +95,7 @@ from .secrets import (
     SecretsManager,
     get_secrets_manager,
 )
+from .simpletuner_io_client import SimpleTunerIOClient
 
 __all__ = [
     # Base types

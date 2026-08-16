@@ -102,7 +102,8 @@ class MySQLStateBackend(StateBackendProtocol):
 
         async with pool.acquire() as conn:
             async with conn.cursor() as cursor:
-                await cursor.execute("""
+                await cursor.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS state_store (
                         `key` VARCHAR(512) PRIMARY KEY,
                         value LONGBLOB NOT NULL,
@@ -113,7 +114,8 @@ class MySQLStateBackend(StateBackendProtocol):
                             ON UPDATE CURRENT_TIMESTAMP(6),
                         INDEX idx_state_expires (expires_at)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-                """)
+                """
+                )
 
     def _full_key(self, key: str) -> str:
         """Get full key with prefix."""

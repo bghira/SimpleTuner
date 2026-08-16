@@ -31,7 +31,8 @@ class ReservationStore(AsyncSQLiteStore):
         """Initialize the job_reservations table."""
         conn = await self._get_connection()
 
-        await conn.execute("""
+        await conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS job_reservations (
                 reservation_id TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -39,7 +40,8 @@ class ReservationStore(AsyncSQLiteStore):
                 expires_at TEXT NOT NULL,
                 consumed INTEGER DEFAULT 0
             )
-        """)
+        """
+        )
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_reservations_user ON job_reservations(user_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_reservations_expires ON job_reservations(expires_at)")
         await conn.commit()

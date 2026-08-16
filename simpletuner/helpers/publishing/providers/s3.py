@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
-from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from .base import PublishingProvider, PublishingResult
 

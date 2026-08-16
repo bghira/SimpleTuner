@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import status
-from huggingface_hub import HfApi, get_token as hf_get_token, login as hf_login, logout as hf_logout
+from huggingface_hub import HfApi
+from huggingface_hub import get_token as hf_get_token
+from huggingface_hub import login as hf_login
+from huggingface_hub import logout as hf_logout
 
 
 class PublishingServiceError(Exception):

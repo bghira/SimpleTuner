@@ -37,6 +37,16 @@
                                    placeholder="0">
                             <div class="form-text">Set to 0 for a single pass. Each repeat adds another sweep through the dataset.</div>
                         </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Batch Size</label>
+                            <input type="number" class="form-control form-control-sm"
+                                   min="1"
+                                   step="1"
+                                   x-model.number.lazy="dataset.train_batch_size"
+                                   @input="markAsUnsaved()"
+                                   placeholder="Use global">
+                            <div class="form-text">Overrides the global training batch size for this dataset.</div>
+                        </div>
                         <div class="col-md-4"
                              :class="{'danger-mode-locked': !dangerModeEnabled()}">
                             <label class="form-label">Probability</label>

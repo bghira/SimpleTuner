@@ -87,7 +87,8 @@ class PostgreSQLStateBackend(StateBackendProtocol):
             return
 
         async with pool.acquire() as conn:
-            await conn.execute("""
+            await conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS state_store (
                     key TEXT PRIMARY KEY,
                     value BYTEA NOT NULL,
@@ -96,11 +97,14 @@ class PostgreSQLStateBackend(StateBackendProtocol):
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
-            """)
-            await conn.execute("""
+            """
+            )
+            await conn.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_state_expires
                 ON state_store(expires_at) WHERE expires_at IS NOT NULL
-            """)
+            """
+            )
 
     def _full_key(self, key: str) -> str:
         """Get full key with prefix."""
