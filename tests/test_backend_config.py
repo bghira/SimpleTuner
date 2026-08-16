@@ -8,6 +8,8 @@ import unittest
 from typing import Any, Dict
 from unittest.mock import Mock, patch
 
+import numpy as np
+
 from simpletuner.helpers.data_backend.config import (
     BaseBackendConfig,
     ImageBackendConfig,
@@ -335,18 +337,40 @@ class TestImageBackendConfig(unittest.TestCase):
         self.assertEqual(config.train_batch_size, 3)
         self.assertEqual(output["config"]["train_batch_size"], 3)
 
-    def test_train_batch_size_must_be_positive(self):
-        backend_dict = {
-            "id": "image_test",
-            "type": "local",
-            "dataset_type": "image",
-            "train_batch_size": 0,
-        }
+    def test_train_batch_size_must_be_a_positive_integer(self):
+        invalid_values = (True, False, 2.5, 3.0, "2.5", 0, "0", -1, "-1", "03", "+3", "three")
 
-        config = ImageBackendConfig.from_dict(backend_dict, self.args)
+        for value in invalid_values:
+            with self.subTest(value=value):
+                backend_dict = {
+                    "id": "image_test",
+                    "type": "local",
+                    "dataset_type": "image",
+                    "train_batch_size": value,
+                }
 
-        with self.assertRaisesRegex(ValueError, "train_batch_size"):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"\(id=image_test\) train_batch_size must be a positive integer\.",
+                ):
+                    ImageBackendConfig.from_dict(backend_dict, self.args)
+
+    def test_validate_rejects_invalid_direct_train_batch_size(self):
+        config = ImageBackendConfig(id="image_test", train_batch_size=True)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"\(id=image_test\) train_batch_size must be a positive integer\.",
+        ):
             config.validate(self.args)
+
+    def test_validate_normalizes_integral_train_batch_size(self):
+        config = ImageBackendConfig(id="image_test", train_batch_size=np.int64(3))
+
+        config.validate(self.args)
+
+        self.assertIs(type(config.train_batch_size), int)
+        self.assertIs(type(config.to_dict()["config"]["train_batch_size"]), int)
 
     def test_vae_cache_ondemand_round_trip(self):
         backend_dict = {
