@@ -1592,6 +1592,18 @@ class MiniMaxH3(VideoModelFoundation):
             batch_size,
             self.accelerator.device,
         )
+        if text_valid_mask is not None and bool(text_valid_mask.any()):
+            # Trailing text padding forces a dense attention mask that the context-parallel
+            # attention dispatch cannot accept; trim it away and drop the mask when nothing
+            # in the batch is padded after trimming.
+            keep_len = int(text_valid_mask.any(dim=0).nonzero().max().item()) + 1
+            if keep_len < text_seq_len:
+                encoder_hidden_states = encoder_hidden_states[:, :keep_len]
+                text_token_tags = text_token_tags[:, :keep_len]
+                text_valid_mask = text_valid_mask[:, :keep_len]
+                text_seq_len = keep_len
+            if bool(text_valid_mask.all()):
+                text_valid_mask = None
         packed_target_video = patchify_video_latents(noisy_latents, patch_size).view(
             batch_size, -1, channels * patch_product
         )
