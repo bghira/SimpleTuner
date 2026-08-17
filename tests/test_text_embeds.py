@@ -200,6 +200,28 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         self.assertEqual(saved_embeddings["prompt_embeds"].shape, torch.Size([1, 2, 4]))
         self.assertEqual(cache.model.pack_input_dims, [4])
 
+        def test_cache_miss_error_mentions_multi_caption_workaround(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION)
+
+        class CacheOnlyModel(_DummyModel):
+            def __init__(self):
+                super().__init__(TextEmbedCacheKey.CAPTION)
+
+            def unpack_text_embeddings_from_cache(self, embeddings):
+                return embeddings
+
+        cache.model = CacheOnlyModel()
+        cache.load_from_cache = MagicMock(side_effect=FileNotFoundError("missing"))
+
+        with self.assertRaisesRegex(RuntimeError, "multi-caption") as context:
+            cache.compute_prompt_embeddings_with_model(
+                prompt_records=[{"prompt": "alternate caption", "key": "alternate caption", "metadata": {}}]
+            )
+
+        message = str(context.exception)
+        self.assertIn("text_cache_ondemand: true", message)
+        self.assertIn("clear the text embedding cache and rerun precache", message)
+
     def test_resolve_key_value_caption_fallback(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION)
         record = {"prompt": "hello world"}
