@@ -153,7 +153,9 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         cache.model.encode_text_batch.assert_not_called()
         self.assertEqual(cache.write_queue.qsize(), 0)
 
-    def test_ondemand_cache_miss_returns_packed_cache_format(self):
+    def test_ondemand_cache_miss_returns_unpacked_format(self):
+        """On-demand encode round-trips through pack then unpack so the
+        returned format matches what load_from_cache would return."""
         cache = _make_cache(TextEmbedCacheKey.CAPTION, text_cache_ondemand=True)
 
         class PackingModel(_DummyModel):
@@ -176,7 +178,12 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
                 return packed
 
             def unpack_text_embeddings_from_cache(self, embeddings):
-                return embeddings
+                # Simulate restoring full width (mirrors load_from_cache path)
+                unpacked = dict(embeddings)
+                unpacked["prompt_embeds"] = torch.nn.functional.pad(
+                    embeddings["prompt_embeds"], (0, 2)
+                )
+                return unpacked
 
         cache.model = PackingModel()
         cache.load_from_cache = MagicMock(side_effect=FileNotFoundError("missing"))
@@ -186,9 +193,11 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
             prompt_records=[{"prompt": "uncached prompt", "key": "uncached prompt", "metadata": {}}]
         )
 
-        self.assertEqual(output["prompt_embeds"].shape, torch.Size([1, 2, 2]))
+        # Output should be in unpacked format (full width), same as cache-hit path
+        self.assertEqual(output["prompt_embeds"].shape, torch.Size([1, 2, 4]))
+        # save_to_cache receives unpacked data; it re-packs internally
         saved_embeddings = cache.save_to_cache.call_args.args[1]
-        self.assertEqual(saved_embeddings["prompt_embeds"].shape, torch.Size([1, 2, 2]))
+        self.assertEqual(saved_embeddings["prompt_embeds"].shape, torch.Size([1, 2, 4]))
         self.assertEqual(cache.model.pack_input_dims, [4])
 
     def test_resolve_key_value_caption_fallback(self):

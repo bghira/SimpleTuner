@@ -708,6 +708,7 @@ class TextEmbeddingCache(WebhookMixin):
                         is_validation=is_validation,
                     )
                     text_encoder_output = self.model.pack_text_embeddings_for_cache(text_encoder_output)
+                    text_encoder_output = self.model.unpack_text_embeddings_from_cache(text_encoder_output)
                     logger.debug(
                         f"Filename {filename} prompt embeds: {gather_dict_of_tensors_shapes(tensors=text_encoder_output)}, keys: {text_encoder_output.keys()}"
                     )
