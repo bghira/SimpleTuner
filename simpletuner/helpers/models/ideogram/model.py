@@ -524,11 +524,12 @@ class Ideogram4(ImageModelFoundation):
                 attention_mask = item.get("attention_masks")
             if prompt_embeds.dim() == 3:
                 prompt_embeds = prompt_embeds.squeeze(0)
+            prompt_embeds = prompt_embeds.to("cpu")
             if attention_mask is None:
-                attention_mask = torch.ones(prompt_embeds.shape[0], dtype=torch.bool, device=prompt_embeds.device)
+                attention_mask = torch.ones(prompt_embeds.shape[0], dtype=torch.bool, device="cpu")
             elif attention_mask.dim() == 2:
                 attention_mask = attention_mask.squeeze(0)
-            attention_mask = attention_mask.to(dtype=torch.bool)
+            attention_mask = attention_mask.to(device="cpu", dtype=torch.bool)
             length = int(attention_mask.sum().item())
             prompt_embeds = prompt_embeds[:length]
             attention_mask = attention_mask[:length]

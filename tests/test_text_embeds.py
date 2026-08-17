@@ -153,6 +153,44 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         cache.model.encode_text_batch.assert_not_called()
         self.assertEqual(cache.write_queue.qsize(), 0)
 
+    def test_ondemand_cache_miss_returns_packed_cache_format(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION, text_cache_ondemand=True)
+
+        class PackingModel(_DummyModel):
+            def __init__(self):
+                super().__init__(TextEmbedCacheKey.CAPTION)
+                self.pack_input_dims = []
+
+            def encode_text_batch(self, prompts, is_negative_prompt=False, prompt_contexts=None):
+                return {
+                    "prompt_embeds": torch.arange(1 * 2 * 4, dtype=torch.float32).reshape(1, 2, 4),
+                    "attention_mask": torch.ones(1, 2, dtype=torch.bool),
+                }
+
+            def pack_text_embeddings_for_cache(self, embeddings):
+                self.pack_input_dims.append(embeddings["prompt_embeds"].shape[-1])
+                if embeddings["prompt_embeds"].shape[-1] == 2:
+                    return embeddings
+                packed = dict(embeddings)
+                packed["prompt_embeds"] = embeddings["prompt_embeds"][..., :2].contiguous()
+                return packed
+
+            def unpack_text_embeddings_from_cache(self, embeddings):
+                return embeddings
+
+        cache.model = PackingModel()
+        cache.load_from_cache = MagicMock(side_effect=FileNotFoundError("missing"))
+        cache.save_to_cache = MagicMock()
+
+        output = cache.compute_prompt_embeddings_with_model(
+            prompt_records=[{"prompt": "uncached prompt", "key": "uncached prompt", "metadata": {}}]
+        )
+
+        self.assertEqual(output["prompt_embeds"].shape, torch.Size([1, 2, 2]))
+        saved_embeddings = cache.save_to_cache.call_args.args[1]
+        self.assertEqual(saved_embeddings["prompt_embeds"].shape, torch.Size([1, 2, 2]))
+        self.assertEqual(cache.model.pack_input_dims, [4])
+
     def test_resolve_key_value_caption_fallback(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION)
         record = {"prompt": "hello world"}
