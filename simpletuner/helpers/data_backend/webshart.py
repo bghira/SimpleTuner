@@ -338,7 +338,7 @@ class WebshartDataBackend(BaseDataBackend):
             }
         return self._shard_sample_index_cache[shard_idx].get(str(filename))
 
-    def get_caption(self, image_path: str) -> Optional[str]:
+    def get_caption(self, image_path: str) -> Optional[Union[str, List[str], dict]]:
         if not self.is_sample_id(image_path):
             return None
 
@@ -346,6 +346,10 @@ class WebshartDataBackend(BaseDataBackend):
         sample_metadata = self.get_shard_metadata(sample_ref.shard_idx).get(sample_ref.filename, {}) or {}
         caption = sample_metadata.get("captions")
         if caption:
+            if isinstance(caption, dict):
+                return caption
+            if isinstance(caption, list):
+                return [str(item).strip() for item in caption if item is not None and str(item).strip()]
             return str(caption).strip()
 
         caption_filename = Path(sample_ref.filename).with_suffix(".txt").name

@@ -91,7 +91,7 @@ class WebshartMetadataBackend(MetadataBackend):
         if self.dataset_type not in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CONDITIONING, DatasetType.EVAL}:
             raise ValueError("WebshartMetadataBackend supports image, video, conditioning, and eval datasets only.")
 
-        self.caption_cache: Dict[str, Union[str, List[str]]] = {}
+        self.caption_cache: Dict[str, Union[str, List[str], dict]] = {}
 
         context = accelerator.main_process_first() if hasattr(accelerator, "main_process_first") else nullcontext()
         with context:
@@ -119,7 +119,7 @@ class WebshartMetadataBackend(MetadataBackend):
             return
         StateTracker.set_image_files([("", [], sample_ids)], data_backend_id=self.data_backend.id)
 
-    def caption_cache_entry(self, index: str) -> Optional[Union[str, List[str]]]:
+    def caption_cache_entry(self, index: str) -> Optional[Union[str, List[str], dict]]:
         index = self.data_backend.normalize_sample_id(index)
         caption = self.caption_cache.get(index, None)
         if caption is not None:
