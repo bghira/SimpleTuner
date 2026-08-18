@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import dataclasses
+import fnmatch
 import math
 import weakref
 from typing import Any
@@ -274,8 +275,10 @@ class ControlResidualProjector(nn.Module):
         super().__init__()
         self.norm = RMSNorm(hidden_size)
         self.down = nn.Linear(hidden_size, rank, bias=False)
+        self.query_down = nn.Linear(hidden_size, rank, bias=False)
         self.up = nn.Linear(rank, hidden_size, bias=False)
         self.multiplier = 1.0
+        nn.init.zeros_(self.query_down.weight)
         nn.init.zeros_(self.up.weight)
 
     def set_multiplier(self, value: float) -> None:
@@ -283,8 +286,12 @@ class ControlResidualProjector(nn.Module):
             raise ValueError("ControlLoRA multiplier must be finite and non-negative")
         self.multiplier = float(value)
 
-    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        return self.up(F.silu(self.down(self.norm(hidden_states)))) * self.multiplier
+    def forward(self, control_hidden_states: torch.Tensor, query_hidden_states: torch.Tensor) -> torch.Tensor:
+        if control_hidden_states.shape != query_hidden_states.shape:
+            raise ValueError("control and query hidden states must have the same shape")
+        control = F.silu(self.down(self.norm(control_hidden_states)))
+        query_gate = 1.0 + torch.tanh(self.query_down(self.norm(query_hidden_states)))
+        return self.up(control * query_gate) * self.multiplier
 
 
 class ControlLoRADecoderLayer(nn.Module):
@@ -320,7 +327,7 @@ class ControlLoRADecoderLayer(nn.Module):
                 f"control hidden shape {tuple(control.shape)} does not match layer output "
                 f"{tuple(hidden_states.shape)} or controlled suffix {tuple(target_hidden_states.shape)}"
             )
-        controlled = target_hidden_states + control_scale * self.residual(control)
+        controlled = target_hidden_states + control_scale * self.residual(control, target_hidden_states)
         return torch.cat((hidden_states[:, :query_start], controlled), dim=1)
 
 
@@ -446,6 +453,7 @@ def create_qwen_lokr_adapter(
     *,
     rank: int = 16,
     alpha: float = 16.0,
+    bypass_mode: bool = False,
 ):
     """Attach LyCORIS LoKr modules to every Qwen attention and gated-MLP projection."""
     if any(isinstance(layer, ReferenceConditionedDecoderLayer) for layer in language_model.model.layers):
@@ -462,12 +470,33 @@ def create_qwen_lokr_adapter(
         linear_dim=rank,
         linear_alpha=alpha,
         algo="lokr",
+        bypass_mode=bypass_mode,
     )
     expected_modules = len(language_model.model.layers) * 7
     if len(network.loras) != expected_modules:
         raise RuntimeError(f"expected {expected_modules} Qwen LoKr modules, created {len(network.loras)}")
     network.apply_to()
     return network
+
+
+def quantize_qwen_linears(language_model, mode: str) -> None:
+    if mode == "none":
+        return
+    if mode != "int8-weight-only":
+        raise ValueError(f"Unsupported Qwen quantization mode: {mode}")
+    if any(parameter.requires_grad for parameter in language_model.parameters()):
+        raise ValueError("Qwen parameters must be frozen before weight-only quantization")
+    try:
+        from torchao.quantization import Int8WeightOnlyConfig, quantize_
+    except ImportError as exc:
+        raise ImportError("int8 Qwen weight-only quantization requires `pip install torchao`") from exc
+
+    def qwen_projection(module: nn.Module, fqn: str) -> bool:
+        return isinstance(module, nn.Linear) and any(
+            fnmatch.fnmatch(fqn, pattern) for pattern in _QWEN_ATTENTION_FFN_TARGETS
+        )
+
+    quantize_(language_model, Int8WeightOnlyConfig(), filter_fn=qwen_projection)
 
 
 def prefix_adapter_checkpoint_filename(adapter_type: str) -> str:
