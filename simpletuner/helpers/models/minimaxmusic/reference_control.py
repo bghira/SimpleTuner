@@ -301,6 +301,7 @@ class ControlLoRADecoderLayer(nn.Module):
     def forward(self, hidden_states: torch.Tensor, *args, **kwargs) -> torch.Tensor:
         control_hidden_states = kwargs.pop("control_hidden_states", None)
         query_start = kwargs.pop("control_query_start", None)
+        control_scale = kwargs.pop("control_scale", 1.0)
         hidden_states = self.base_layer(hidden_states, *args, **kwargs)
         if control_hidden_states is None:
             return hidden_states
@@ -308,12 +309,18 @@ class ControlLoRADecoderLayer(nn.Module):
             raise ValueError("ControlLoRA residual injection requires control_query_start")
         if not 0 <= query_start < hidden_states.shape[1]:
             raise ValueError("control_query_start is outside the decoder sequence")
+        if not math.isfinite(control_scale) or control_scale < 0.0:
+            raise ValueError("control_scale must be finite and non-negative")
         control = control_hidden_states[self.layer_index]
-        if control.shape != hidden_states.shape:
+        target_hidden_states = hidden_states[:, query_start:]
+        if control.shape == hidden_states.shape:
+            control = control[:, query_start:]
+        elif control.shape != target_hidden_states.shape:
             raise ValueError(
-                f"control hidden shape {tuple(control.shape)} does not match layer output {tuple(hidden_states.shape)}"
+                f"control hidden shape {tuple(control.shape)} does not match layer output "
+                f"{tuple(hidden_states.shape)} or controlled suffix {tuple(target_hidden_states.shape)}"
             )
-        controlled = hidden_states[:, query_start:] + self.residual(control[:, query_start:])
+        controlled = target_hidden_states + control_scale * self.residual(control)
         return torch.cat((hidden_states[:, :query_start], controlled), dim=1)
 
 

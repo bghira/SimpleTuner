@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import io
 import json
 import sys
@@ -35,6 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dav-chunk-seconds", type=float, default=30.0)
     parser.add_argument("--max-samples", type=int)
+    parser.add_argument("--clip-ids-csv", type=Path)
     return parser.parse_args()
 
 
@@ -68,6 +70,17 @@ def decode_audio(data: bytes) -> tuple[torch.Tensor, int]:
     return torch.from_numpy(audio.T.copy()), sample_rate
 
 
+def load_clip_ids_csv(path: Path) -> tuple[str, ...]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None or "clip_id" not in reader.fieldnames:
+            raise ValueError("clip IDs CSV must contain a clip_id column")
+        clip_ids = tuple(row["clip_id"].strip() for row in reader if row["clip_id"].strip())
+    if not clip_ids or len(set(clip_ids)) != len(clip_ids):
+        raise ValueError("clip IDs CSV must contain non-empty unique clip IDs")
+    return clip_ids
+
+
 def main() -> None:
     args = parse_args()
     if args.shard_index < 0:
@@ -85,6 +98,11 @@ def main() -> None:
         source_samples = member_index(source_archive)
         target_samples = member_index(target_archive)
         keys = sorted(target_samples)
+        if args.clip_ids_csv is not None:
+            keys = list(load_clip_ids_csv(args.clip_ids_csv))
+            missing = sorted(set(keys).difference(source_samples, target_samples))
+            if missing:
+                raise ValueError(f"Requested clip IDs are absent from shard {args.shard_index}: {missing}")
         if args.max_samples is not None:
             keys = keys[: args.max_samples]
         for clip_id in tqdm(keys, desc=f"RVQ shard {args.shard_index:05d}"):

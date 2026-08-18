@@ -11,6 +11,11 @@ from safetensors.torch import save_file
 from torch import nn
 from transformers import Qwen3Config, Qwen3ForCausalLM
 
+from scripts.minimax_music3.eval_control_lora import (
+    shifted_reference_sample,
+    substituted_reference_sample,
+    summarize_teacher_forced_pair,
+)
 from scripts.minimax_music3.eval_prefix_distillation import parse_guidance_scales, sustained_relock_frame
 from scripts.minimax_music3.eval_reference_control import (
     is_validation_clip,
@@ -19,7 +24,13 @@ from scripts.minimax_music3.eval_reference_control import (
     select_pair_path,
     sustained_relock_latency,
 )
-from scripts.minimax_music3.train_control_lora import aligned_reference_hint, collate_control_samples, load_clip_ids_csv
+from scripts.minimax_music3.train_control_lora import (
+    ControlLoRATrainingModel,
+    aligned_reference_hint,
+    collate_control_samples,
+    initialize_distributed,
+    load_clip_ids_csv,
+)
 from scripts.minimax_music3.train_prefix_distillation import (
     base_model_teacher,
     frame_loss_weights,
@@ -62,6 +73,80 @@ def tiny_qwen() -> Qwen3ForCausalLM:
 
 
 class ReferenceControlTest(unittest.TestCase):
+    def test_shifted_reference_sample_preserves_target_and_rotates_reference(self):
+        sample = {
+            "target_codes": torch.tensor([[10], [11], [12]]),
+            "reference_codes": torch.tensor([[0], [1], [2]]),
+        }
+        shifted = shifted_reference_sample(sample, 1)
+        self.assertIs(shifted["target_codes"], sample["target_codes"])
+        torch.testing.assert_close(shifted["reference_codes"], torch.tensor([[2], [0], [1]]))
+        torch.testing.assert_close(sample["reference_codes"], torch.tensor([[0], [1], [2]]))
+
+    def test_substituted_reference_sample_maps_query_to_replacement_timeline(self):
+        sample = {
+            "target_codes": torch.tensor([[10], [11], [12]]),
+            "reference_codes": torch.tensor([[0], [1], [2]]),
+            "query_positions": torch.tensor([2.0, 3.0, 4.0]),
+            "key_positions": torch.tensor([1.0, 2.0, 3.0, 4.0]),
+        }
+        replacement = {
+            "reference_codes": torch.tensor([[20], [21], [22], [23], [24]]),
+            "key_positions": torch.tensor([10.0, 11.0, 12.0, 13.0, 14.0]),
+        }
+        substituted = substituted_reference_sample(sample, replacement)
+        self.assertIs(substituted["target_codes"], sample["target_codes"])
+        torch.testing.assert_close(substituted["reference_codes"], replacement["reference_codes"])
+        torch.testing.assert_close(substituted["query_positions"], torch.tensor([10.0, 12.0, 14.0]))
+
+    def test_teacher_forced_pair_summary_separates_fixes_and_regressions(self):
+        summary = summarize_teacher_forced_pair(
+            reference_ce=torch.tensor([0.5, 2.0, 0.25, 3.0]),
+            null_ce=torch.tensor([1.0, 1.0, 2.0, 2.0]),
+            reference_correct=torch.tensor([True, False, True, False]),
+            null_correct=torch.tensor([False, True, False, False]),
+            semantic_transition=torch.tensor([False, True, True, False]),
+        )
+        self.assertEqual(summary["reference_fixes"], 2)
+        self.assertEqual(summary["reference_regressions"], 1)
+        self.assertAlmostEqual(summary["conditional_fix_rate"], 2 / 3)
+        self.assertAlmostEqual(summary["conditional_regression_rate"], 1.0)
+        self.assertAlmostEqual(summary["net_available_headroom_gain"], 1 / 3)
+        self.assertAlmostEqual(summary["ce_gain_mean"], 0.0625)
+        self.assertAlmostEqual(summary["semantic_transition"]["ce_gain_mean"], 0.375)
+
+    def test_teacher_forced_pair_summary_marks_undefined_conditional_rates(self):
+        summary = summarize_teacher_forced_pair(
+            reference_ce=torch.tensor([0.5, 0.25]),
+            null_ce=torch.tensor([1.0, 0.5]),
+            reference_correct=torch.tensor([True, True]),
+            null_correct=torch.tensor([True, True]),
+            semantic_transition=torch.tensor([False, False]),
+        )
+        self.assertIsNone(summary["conditional_fix_rate"])
+        self.assertIsNone(summary["net_available_headroom_gain"])
+        self.assertEqual(summary["semantic_transition"]["frames"], 0)
+
+    def test_partial_torchrun_environment_is_rejected(self):
+        with patch.dict("os.environ", {"RANK": "0"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "RANK, LOCAL_RANK, and WORLD_SIZE"):
+                initialize_distributed("cpu")
+
+    def test_control_lora_training_wrapper_owns_indirect_adapter_parameters(self):
+        model = tiny_qwen()
+        model.requires_grad_(False)
+        adapter = MiniMaxMusic3ControlLoRAAdapter(
+            ControlLoRAConfig(hidden_size=64, residual_rank=4, layer_indices=(0, 1, 2, 3))
+        )
+        adapter.install(model)
+        depth_decoder = nn.Linear(2, 2)
+        depth_decoder.requires_grad_(False)
+        lokr_network = nn.Linear(2, 2, bias=False)
+        wrapper = ControlLoRATrainingModel(model, depth_decoder, adapter, lokr_network)
+        wrapper_parameter_ids = {id(parameter) for parameter in wrapper.parameters()}
+        self.assertTrue({id(parameter) for parameter in adapter.parameters()} <= wrapper_parameter_ids)
+        self.assertTrue({id(parameter) for parameter in lokr_network.parameters()} <= wrapper_parameter_ids)
+
     def test_aligned_reference_hint_interpolates_query_timeline(self):
         reference = torch.tensor([[[0.0], [10.0], [20.0]]])
         query = torch.tensor([[0.0, 0.5, 1.5, 2.0]])
@@ -105,6 +190,46 @@ class ReferenceControlTest(unittest.TestCase):
         ).last_hidden_state
         torch.testing.assert_close(controlled[:, :3], baseline[:, :3], rtol=0.0, atol=0.0)
         self.assertFalse(torch.equal(controlled[:, 3:], baseline[:, 3:]))
+
+    def test_control_lora_accepts_target_sized_contextual_deltas(self):
+        torch.manual_seed(0)
+        model = tiny_qwen().eval()
+        inputs = torch.randn(1, 7, model.config.hidden_size)
+        adapter = MiniMaxMusic3ControlLoRAAdapter(
+            ControlLoRAConfig(hidden_size=64, residual_rank=4, layer_indices=(0, 1, 2, 3))
+        )
+        adapter.install(model)
+        with torch.no_grad():
+            adapter.residuals[0].up.weight.fill_(0.01)
+        control = tuple(torch.randn(1, 4, 64) for _ in model.model.layers)
+        baseline = model.model(inputs_embeds=inputs).last_hidden_state
+        controlled = model.model(
+            inputs_embeds=inputs,
+            control_hidden_states=control,
+            control_query_start=3,
+        ).last_hidden_state
+        torch.testing.assert_close(controlled[:, :3], baseline[:, :3], rtol=0.0, atol=0.0)
+        self.assertFalse(torch.equal(controlled[:, 3:], baseline[:, 3:]))
+
+    def test_control_lora_zero_scale_disables_contextual_deltas(self):
+        torch.manual_seed(0)
+        model = tiny_qwen().eval()
+        inputs = torch.randn(1, 7, model.config.hidden_size)
+        adapter = MiniMaxMusic3ControlLoRAAdapter(
+            ControlLoRAConfig(hidden_size=64, residual_rank=4, layer_indices=(0, 1, 2, 3))
+        )
+        adapter.install(model)
+        with torch.no_grad():
+            adapter.residuals[0].up.weight.fill_(0.01)
+        control = tuple(torch.randn(1, 4, 64) for _ in model.model.layers)
+        baseline = model.model(inputs_embeds=inputs).last_hidden_state
+        controlled = model.model(
+            inputs_embeds=inputs,
+            control_hidden_states=control,
+            control_query_start=3,
+            control_scale=0.0,
+        ).last_hidden_state
+        torch.testing.assert_close(controlled, baseline, rtol=0.0, atol=0.0)
 
     def test_control_lora_zero_multiplier_disables_residuals(self):
         torch.manual_seed(0)
@@ -437,6 +562,10 @@ class ReferenceControlTest(unittest.TestCase):
         batch = collate_control_samples(samples)
         self.assertEqual(batch["target_codes"].shape, (2, 3, 8))
         self.assertEqual(batch["reference_codes"].shape, (2, 6, 8))
+        torch.testing.assert_close(
+            batch["reference_attention_mask"],
+            torch.tensor([[1, 1, 1, 1, 0, 0], [1, 1, 1, 1, 1, 1]]),
+        )
         torch.testing.assert_close(batch["key_positions"][0], torch.tensor([0, 1, 2, 3, 3, 3]).float())
 
     def test_dataset_prepends_true_context_without_expanding_loss_crop(self):

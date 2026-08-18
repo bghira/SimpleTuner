@@ -7,14 +7,20 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import random
 import time
+from contextlib import nullcontext
+from dataclasses import dataclass
 from pathlib import Path
 
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
 from safetensors.torch import load_file, save_file
-from torch.utils.data import DataLoader
+from torch import nn
+from torch.nn.parallel import DistributedDataParallel
+from torch.utils.data import DataLoader, DistributedSampler
 from transformers import AutoTokenizer, Qwen3ForCausalLM, get_polynomial_decay_schedule_with_warmup
 
 from scripts.minimax_music3.train_reference_control import (
@@ -36,6 +42,7 @@ from simpletuner.helpers.models.minimaxmusic.reference_control import (
 from simpletuner.helpers.models.minimaxmusic.rvq_depth_decoder import MiniMaxMusic3RVQDepthDecoder
 
 CHECKPOINT_FORMAT = "minimax-music3-control-lora-v1"
+CONTROL_INPUT_MODES = ("additive-hint", "reference-delta")
 
 
 def parse_args() -> argparse.Namespace:
@@ -56,6 +63,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lokr-rank", type=int, default=16)
     parser.add_argument("--lokr-alpha", type=float, default=16.0)
     parser.add_argument("--hint-scale", type=float, default=1.0)
+    parser.add_argument("--control-input-mode", choices=CONTROL_INPUT_MODES, default="reference-delta")
     parser.add_argument("--reference-dropout", type=float, default=0.1)
     parser.add_argument("--feedback-corruption-rate", type=float, default=0.5)
     parser.add_argument("--feedback-sampling-top-k", type=int, default=1)
@@ -66,6 +74,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=200)
     parser.add_argument("--warmup-steps", type=int, default=20)
     parser.add_argument("--gradient-accumulation", type=int, default=1)
+    parser.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--checkpoint-depth-decoder", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
     parser.add_argument("--save-every", type=int, default=25)
     parser.add_argument("--eval-every", type=int, default=25)
@@ -73,6 +83,51 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--wandb-project")
     return parser.parse_args()
+
+
+@dataclass(frozen=True)
+class DistributedContext:
+    device: torch.device
+    rank: int = 0
+    local_rank: int = 0
+    world_size: int = 1
+
+    @property
+    def enabled(self) -> bool:
+        return self.world_size > 1
+
+    @property
+    def is_main_process(self) -> bool:
+        return self.rank == 0
+
+
+def initialize_distributed(device_name: str) -> DistributedContext:
+    distributed_keys = {name: os.environ.get(name) for name in ("RANK", "LOCAL_RANK", "WORLD_SIZE")}
+    configured = {name for name, value in distributed_keys.items() if value is not None}
+    if configured and len(configured) != len(distributed_keys):
+        raise ValueError("distributed launch requires RANK, LOCAL_RANK, and WORLD_SIZE")
+    if not configured:
+        return DistributedContext(device=torch.device(device_name))
+    if not torch.cuda.is_available():
+        raise RuntimeError("ControlLoRA distributed training requires CUDA")
+    rank = int(distributed_keys["RANK"])
+    local_rank = int(distributed_keys["LOCAL_RANK"])
+    world_size = int(distributed_keys["WORLD_SIZE"])
+    if world_size < 2:
+        raise ValueError("torchrun WORLD_SIZE must be at least 2")
+    torch.cuda.set_device(local_rank)
+    dist.init_process_group(backend="nccl")
+    return DistributedContext(torch.device("cuda", local_rank), rank, local_rank, world_size)
+
+
+def reduce_metrics(metrics: dict[str, float], context: DistributedContext) -> dict[str, float]:
+    if not context.enabled:
+        return metrics
+    keys = sorted(metrics)
+    values = torch.tensor([metrics[key] for key in keys], dtype=torch.float64, device=context.device)
+    dist.all_reduce(values, op=dist.ReduceOp.SUM)
+    values /= context.world_size
+    return dict(zip(keys, values.tolist(), strict=True))
 
 
 def load_clip_ids_csv(path: Path) -> tuple[str, ...]:
@@ -98,11 +153,20 @@ def collate_control_samples(samples: list[dict]) -> dict:
         raise ValueError("ControlLoRA batches require equal target windows and loss starts")
     max_reference_frames = max(sample["reference_codes"].shape[0] for sample in samples)
     reference_codes = []
+    reference_attention_mask = []
     key_positions = []
     for sample in samples:
         pad_frames = max_reference_frames - sample["reference_codes"].shape[0]
         reference_codes.append(
             torch.cat((sample["reference_codes"], sample["reference_codes"][-1:].expand(pad_frames, -1)), dim=0)
+        )
+        reference_attention_mask.append(
+            torch.cat(
+                (
+                    torch.ones(sample["reference_codes"].shape[0], dtype=torch.long),
+                    torch.zeros(pad_frames, dtype=torch.long),
+                )
+            )
         )
         key_positions.append(torch.cat((sample["key_positions"], sample["key_positions"][-1:].expand(pad_frames)), dim=0))
     return {
@@ -113,6 +177,7 @@ def collate_control_samples(samples: list[dict]) -> dict:
         "target_codes": torch.stack([sample["target_codes"] for sample in samples]),
         "loss_start": loss_starts.pop(),
         "reference_codes": torch.stack(reference_codes),
+        "reference_attention_mask": torch.stack(reference_attention_mask),
         "query_positions": torch.stack([sample["query_positions"] for sample in samples]),
         "key_positions": torch.stack(key_positions),
     }
@@ -197,21 +262,21 @@ def control_lora_hidden_states(
     *,
     hint_scale: float,
     null_reference: bool,
+    control_input_mode: str = "additive-hint",
     text_attention_mask: torch.Tensor | None = None,
+    reference_attention_mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
+    if control_input_mode not in CONTROL_INPUT_MODES:
+        raise ValueError(f"unsupported control input mode: {control_input_mode}")
     feedback_embeddings = embed_rvq_frames(language_model, depth_decoder, feedback_codes)
     reference_embeddings = embed_rvq_frames(language_model, depth_decoder, reference_codes)
-    hint = aligned_reference_hint(reference_embeddings, query_positions, key_positions)
-    if null_reference:
-        hint = hint * 0.0
     main_inputs = torch.cat((text_embeddings, feedback_embeddings), dim=1)
-    control_inputs = torch.cat((text_embeddings, feedback_embeddings + hint_scale * hint), dim=1)
     query_start = text_embeddings.shape[1]
-    attention_mask = None
+    main_attention_mask = None
     if text_attention_mask is not None:
         if text_attention_mask.shape != text_embeddings.shape[:2]:
             raise ValueError("text attention mask does not match text embeddings")
-        attention_mask = torch.cat(
+        main_attention_mask = torch.cat(
             (
                 text_attention_mask,
                 torch.ones(
@@ -224,34 +289,113 @@ def control_lora_hidden_states(
         )
 
     lokr_network.set_multiplier(1.0)
-    control_output = language_model.model(
-        inputs_embeds=control_inputs,
-        attention_mask=attention_mask,
-        use_cache=False,
-        output_hidden_states=True,
-    )
-    control_hidden_states = control_output.hidden_states[1:]
+    if control_input_mode == "additive-hint":
+        hint = aligned_reference_hint(reference_embeddings, query_positions, key_positions)
+        if null_reference:
+            hint = hint * 0.0
+        control_inputs = torch.cat((text_embeddings, feedback_embeddings + hint_scale * hint), dim=1)
+        control_output = language_model.model(
+            inputs_embeds=control_inputs,
+            attention_mask=main_attention_mask,
+            use_cache=False,
+            output_hidden_states=True,
+        )
+        control_hidden_states = control_output.hidden_states[1:]
+        control_scale = 1.0
+    else:
+        if reference_attention_mask is None:
+            reference_attention_mask = torch.ones(
+                reference_embeddings.shape[:2],
+                dtype=torch.long,
+                device=reference_embeddings.device,
+            )
+        if reference_attention_mask.shape != reference_embeddings.shape[:2]:
+            raise ValueError("reference attention mask does not match reference embeddings")
+        conditioned_reference = reference_embeddings * (0.0 if null_reference else 1.0)
+        null_reference_embeddings = torch.zeros_like(reference_embeddings)
+        conditioned_inputs = torch.cat((text_embeddings, conditioned_reference), dim=1)
+        null_inputs = torch.cat((text_embeddings, null_reference_embeddings), dim=1)
+        control_inputs = torch.cat((conditioned_inputs, null_inputs), dim=0)
+        control_attention_mask = None
+        if text_attention_mask is not None:
+            reference_sequence_mask = torch.cat((text_attention_mask, reference_attention_mask), dim=1)
+            control_attention_mask = torch.cat((reference_sequence_mask, reference_sequence_mask), dim=0)
+        control_output = language_model.model(
+            inputs_embeds=control_inputs,
+            attention_mask=control_attention_mask,
+            use_cache=False,
+            output_hidden_states=True,
+        )
+        control_hidden_states = []
+        for layer_hidden_states in control_output.hidden_states[1:]:
+            conditioned_hidden, null_hidden = layer_hidden_states.chunk(2, dim=0)
+            reference_delta = conditioned_hidden[:, query_start:] - null_hidden[:, query_start:]
+            control_hidden_states.append(aligned_reference_hint(reference_delta, query_positions, key_positions))
+        control_hidden_states = tuple(control_hidden_states)
+        control_scale = hint_scale
     if len(control_hidden_states) != len(language_model.model.layers):
         raise RuntimeError("control pass did not return one hidden state per Qwen block")
     lokr_network.set_multiplier(0.0)
     try:
         output = language_model.model(
             inputs_embeds=main_inputs,
-            attention_mask=attention_mask,
+            attention_mask=main_attention_mask,
             use_cache=False,
             control_hidden_states=control_hidden_states,
             control_query_start=query_start,
+            control_scale=control_scale,
         )
     finally:
         lokr_network.set_multiplier(1.0)
     return output.last_hidden_state[:, query_start:]
 
 
+class ControlLoRATrainingModel(nn.Module):
+    def __init__(self, language_model, depth_decoder, adapter, lokr_network):
+        super().__init__()
+        self.language_model = language_model
+        self.depth_decoder = depth_decoder
+        self.adapter = adapter
+        self.lokr_network = lokr_network
+
+    def forward(
+        self,
+        text_embeddings: torch.Tensor,
+        feedback_codes: torch.Tensor,
+        reference_codes: torch.Tensor,
+        query_positions: torch.Tensor,
+        key_positions: torch.Tensor,
+        *,
+        hint_scale: float,
+        null_reference: bool,
+        control_input_mode: str,
+        text_attention_mask: torch.Tensor | None,
+        reference_attention_mask: torch.Tensor | None,
+    ) -> torch.Tensor:
+        return control_lora_hidden_states(
+            self.language_model,
+            self.depth_decoder,
+            self.adapter,
+            self.lokr_network,
+            text_embeddings,
+            feedback_codes,
+            reference_codes,
+            query_positions,
+            key_positions,
+            hint_scale=hint_scale,
+            null_reference=null_reference,
+            control_input_mode=control_input_mode,
+            text_attention_mask=text_attention_mask,
+            reference_attention_mask=reference_attention_mask,
+        )
+
+
+def unwrap_training_model(training_model) -> ControlLoRATrainingModel:
+    return training_model.module if isinstance(training_model, DistributedDataParallel) else training_model
+
+
 def train_step(
-    language_model,
-    depth_decoder,
-    adapter,
-    lokr_network,
+    training_model,
     tokenizer,
     sample: dict,
     device: torch.device,
@@ -261,15 +405,25 @@ def train_step(
     disable_corruption: bool = False,
     disable_reference_dropout: bool = False,
 ) -> tuple[torch.Tensor, dict[str, float]]:
+    components = unwrap_training_model(training_model)
+    language_model = components.language_model
+    depth_decoder = components.depth_decoder
     target_codes = sample["target_codes"].to(device)
     reference_codes = sample["reference_codes"].to(device)
+    reference_attention_mask = sample.get("reference_attention_mask")
+    if reference_attention_mask is not None:
+        reference_attention_mask = reference_attention_mask.to(device)
     query_positions = sample["query_positions"].to(device)
     key_positions = sample["key_positions"].to(device)
     if target_codes.ndim == 2:
         target_codes = target_codes.unsqueeze(0)
         reference_codes = reference_codes.unsqueeze(0)
+        if reference_attention_mask is not None:
+            reference_attention_mask = reference_attention_mask.unsqueeze(0)
         query_positions = query_positions.unsqueeze(0)
         key_positions = key_positions.unsqueeze(0)
+    if reference_attention_mask is None:
+        reference_attention_mask = torch.ones(reference_codes.shape[:2], dtype=torch.long, device=device)
     loss_start = int(sample.get("loss_start", 0))
     with torch.no_grad():
         text_embeddings, text_attention_mask = batched_text_embeddings(
@@ -288,11 +442,7 @@ def train_step(
     corruption_fraction = 0.0
     if args.feedback_corruption_rate > 0.0 and not disable_corruption:
         with torch.no_grad():
-            clean_hidden = control_lora_hidden_states(
-                language_model,
-                depth_decoder,
-                adapter,
-                lokr_network,
+            clean_hidden = training_model(
                 text_embeddings,
                 clean_feedback,
                 reference_codes,
@@ -300,7 +450,9 @@ def train_step(
                 key_positions,
                 hint_scale=args.hint_scale,
                 null_reference=null_reference,
+                control_input_mode=args.control_input_mode,
                 text_attention_mask=text_attention_mask,
+                reference_attention_mask=reference_attention_mask,
             )
             sampled_codes = sample_codes_from_hidden(
                 depth_decoder,
@@ -314,11 +466,7 @@ def train_step(
                 loss_start=loss_start,
                 corruption_rate=args.feedback_corruption_rate,
             )
-    hidden = control_lora_hidden_states(
-        language_model,
-        depth_decoder,
-        adapter,
-        lokr_network,
+    hidden = training_model(
         text_embeddings,
         feedback_codes,
         reference_codes,
@@ -326,7 +474,9 @@ def train_step(
         key_positions,
         hint_scale=args.hint_scale,
         null_reference=null_reference,
+        control_input_mode=args.control_input_mode,
         text_attention_mask=text_attention_mask,
+        reference_attention_mask=reference_attention_mask,
     )
     hidden = hidden[:, loss_start:]
     target_codes = target_codes[:, loss_start:]
@@ -340,7 +490,7 @@ def train_step(
         language_model,
         hidden,
         target_codes,
-        checkpoint_decoder=torch.is_grad_enabled(),
+        checkpoint_decoder=args.checkpoint_depth_decoder and torch.is_grad_enabled(),
     )
     loss = (args.semantic_loss_weight * semantic_loss + torch.stack(acoustic_losses).sum()) / (
         args.semantic_loss_weight + len(acoustic_losses)
@@ -361,7 +511,10 @@ def train_step(
 
 
 @torch.no_grad()
-def evaluate(language_model, depth_decoder, adapter, lokr_network, tokenizer, sample, device, args) -> dict:
+def evaluate(training_model, tokenizer, sample, device, args) -> dict:
+    components = unwrap_training_model(training_model)
+    language_model = components.language_model
+    adapter = components.adapter
     was_training = language_model.training
     language_model.eval()
     adapter.eval()
@@ -369,10 +522,7 @@ def evaluate(language_model, depth_decoder, adapter, lokr_network, tokenizer, sa
     for name, null_reference in (("reference", False), ("null", True)):
         with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
             _, values[name] = train_step(
-                language_model,
-                depth_decoder,
-                adapter,
-                lokr_network,
+                training_model,
                 tokenizer,
                 sample,
                 device,
@@ -405,11 +555,17 @@ def save_checkpoint(output_dir: Path, step: int, adapter, lokr_network, optimize
         "lokr_alpha": args.lokr_alpha,
         "crop_frames": args.crop_frames,
         "hint_scale": args.hint_scale,
+        "control_input_mode": args.control_input_mode,
         "reference_dropout": args.reference_dropout,
         "feedback_corruption_rate": args.feedback_corruption_rate,
         "feedback_sampling_top_k": args.feedback_sampling_top_k,
         "semantic_loss_weight": args.semantic_loss_weight,
         "batch_size": args.batch_size,
+        "global_batch_size": args.batch_size * args.world_size * args.gradient_accumulation,
+        "world_size": args.world_size,
+        "gradient_accumulation": args.gradient_accumulation,
+        "gradient_checkpointing": args.gradient_checkpointing,
+        "checkpoint_depth_decoder": args.checkpoint_depth_decoder,
         "random_crops": args.random_crops,
         "training_clip_ids": list(args.training_clip_ids),
     }
@@ -434,6 +590,9 @@ def load_checkpoint(checkpoint_dir: Path, adapter, lokr_network, args) -> None:
         raise ValueError("ControlLoRA checkpoint adapter topology does not match")
     if int(config["lokr_rank"]) != args.lokr_rank or float(config["lokr_alpha"]) != args.lokr_alpha:
         raise ValueError("ControlLoRA checkpoint LoKr topology does not match")
+    checkpoint_mode = config.get("control_input_mode", "additive-hint")
+    if checkpoint_mode != args.control_input_mode:
+        raise ValueError(f"ControlLoRA checkpoint input mode {checkpoint_mode!r} does not match {args.control_input_mode!r}")
     adapter.load_state_dict(load_file(adapter_path), strict=True)
     load_state = lokr_network.load_weights(str(lokr_path))
     if load_state:
@@ -442,6 +601,8 @@ def load_checkpoint(checkpoint_dir: Path, adapter, lokr_network, args) -> None:
 
 def main() -> None:
     args = parse_args()
+    context = initialize_distributed(args.device)
+    args.world_size = context.world_size
     if (args.overfit_clip_id is None) == (args.overfit_ids_csv is None):
         raise ValueError("provide exactly one of --overfit-clip-id or --overfit-ids-csv")
     if args.crop_frames < 2:
@@ -467,7 +628,7 @@ def main() -> None:
 
     torch.manual_seed(args.seed)
     random.seed(args.seed)
-    device = torch.device(args.device)
+    device = context.device
     clip_ids = load_clip_ids_csv(args.overfit_ids_csv) if args.overfit_ids_csv is not None else None
     args.training_clip_ids = clip_ids if clip_ids is not None else (args.overfit_clip_id,)
     dataset = CachedStylePairDataset(
@@ -478,18 +639,37 @@ def main() -> None:
         clip_ids=clip_ids,
         fixed_crop_start=None if args.random_crops else args.overfit_start_frame,
     )
-    if len(dataset) % args.batch_size:
-        raise ValueError(f"dataset size {len(dataset)} is not divisible by batch size {args.batch_size}")
+    global_micro_batch_size = args.batch_size * context.world_size
+    if len(dataset) % global_micro_batch_size:
+        raise ValueError(
+            f"dataset size {len(dataset)} is not divisible by global micro-batch size {global_micro_batch_size}"
+        )
+    sampler = (
+        DistributedSampler(
+            dataset,
+            num_replicas=context.world_size,
+            rank=context.rank,
+            shuffle=True,
+            seed=args.seed,
+            drop_last=True,
+        )
+        if context.enabled
+        else None
+    )
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=sampler is None,
+        sampler=sampler,
         num_workers=args.num_workers,
         collate_fn=collate_control_samples,
-        generator=torch.Generator().manual_seed(args.seed),
+        generator=torch.Generator().manual_seed(args.seed + context.rank),
     )
-    validation_count = min(args.batch_size, len(dataset))
-    sample = collate_control_samples([dataset[index] for index in range(validation_count)])
+    if len(loader) % args.gradient_accumulation:
+        raise ValueError("per-rank dataloader length must be divisible by gradient accumulation")
+    validation_start = context.rank * args.batch_size
+    validation_indices = range(validation_start, validation_start + args.batch_size)
+    validation_sample = collate_control_samples([dataset[index] for index in validation_indices])
     tokenizer = AutoTokenizer.from_pretrained(args.model_id, subfolder="tokenizer")
     language_model = Qwen3ForCausalLM.from_pretrained(
         args.model_id,
@@ -518,9 +698,25 @@ def main() -> None:
     adapter.install(language_model)
     if args.init_checkpoint is not None:
         load_checkpoint(args.init_checkpoint, adapter, lokr_network, args)
-    language_model.gradient_checkpointing_enable()
+    if args.gradient_checkpointing:
+        language_model.gradient_checkpointing_enable()
+    else:
+        language_model.gradient_checkpointing_disable()
     language_model.train()
     depth_decoder.eval()
+    training_module = ControlLoRATrainingModel(language_model, depth_decoder, adapter, lokr_network)
+    training_model = (
+        DistributedDataParallel(
+            training_module,
+            device_ids=[context.local_rank],
+            output_device=context.local_rank,
+            broadcast_buffers=False,
+        )
+        if context.enabled
+        else training_module
+    )
+    torch.manual_seed(args.seed + context.rank)
+    random.seed(args.seed + context.rank)
     parameter_groups = [
         {"params": list(adapter.parameters()), "lr": args.learning_rate},
         {"params": list(lokr_network.parameters()), "lr": args.lokr_learning_rate},
@@ -534,27 +730,37 @@ def main() -> None:
         power=1.0,
     )
     trainable_parameters = sum(parameter.numel() for parameter in parameters if parameter.requires_grad)
-    steps_per_epoch = len(loader)
-    print(
-        json.dumps(
-            {
-                "trainable_parameters": trainable_parameters,
-                "training_files": len(dataset),
-                "batch_size": args.batch_size,
-                "steps_per_epoch": steps_per_epoch,
-            }
-        ),
-        flush=True,
-    )
+    steps_per_epoch = len(loader) // args.gradient_accumulation
+    if context.is_main_process:
+        print(
+            json.dumps(
+                {
+                    "trainable_parameters": trainable_parameters,
+                    "training_files": len(dataset),
+                    "batch_size_per_rank": args.batch_size,
+                    "global_batch_size": args.batch_size * context.world_size * args.gradient_accumulation,
+                    "world_size": context.world_size,
+                    "steps_per_epoch": steps_per_epoch,
+                    "gradient_checkpointing": args.gradient_checkpointing,
+                    "checkpoint_depth_decoder": args.checkpoint_depth_decoder,
+                }
+            ),
+            flush=True,
+        )
     wandb_run = None
-    if args.wandb_project:
+    if args.wandb_project and context.is_main_process:
         import wandb
 
         wandb_run = wandb.init(project=args.wandb_project, config=vars(args))
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    baseline = evaluate(language_model, depth_decoder, adapter, lokr_network, tokenizer, sample, device, args)
+    if context.is_main_process:
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+    if context.enabled:
+        dist.barrier()
+    baseline = evaluate(training_model, tokenizer, validation_sample, device, args)
+    baseline = reduce_metrics(baseline, context)
     baseline["step"] = 0
-    print(json.dumps(baseline), flush=True)
+    if context.is_main_process:
+        print(json.dumps(baseline), flush=True)
     if wandb_run is not None:
         wandb_run.log(baseline, step=0)
     optimizer.zero_grad(set_to_none=True)
@@ -563,29 +769,37 @@ def main() -> None:
     started = time.perf_counter()
     step = 0
     micro_step = 0
+    data_epoch = 0
     while step < args.max_steps:
+        if sampler is not None:
+            sampler.set_epoch(data_epoch)
         for sample in loader:
-            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-                loss, metrics = train_step(
-                    language_model,
-                    depth_decoder,
-                    adapter,
-                    lokr_network,
-                    tokenizer,
-                    sample,
-                    device,
-                    args,
-                )
-                scaled_loss = loss / args.gradient_accumulation
-            scaled_loss.backward()
+            sync_gradients = (micro_step + 1) % args.gradient_accumulation == 0
+            synchronization = (
+                nullcontext()
+                if sync_gradients or not isinstance(training_model, DistributedDataParallel)
+                else training_model.no_sync()
+            )
+            with synchronization:
+                with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+                    loss, metrics = train_step(
+                        training_model,
+                        tokenizer,
+                        sample,
+                        device,
+                        args,
+                    )
+                    scaled_loss = loss / args.gradient_accumulation
+                scaled_loss.backward()
             micro_step += 1
-            if micro_step % args.gradient_accumulation:
+            if not sync_gradients:
                 continue
             grad_norm = torch.nn.utils.clip_grad_norm_(parameters, args.max_grad_norm)
             optimizer.step()
             scheduler.step()
             optimizer.zero_grad(set_to_none=True)
             step += 1
+            metrics = reduce_metrics(metrics, context)
             metrics.update(
                 {
                     "step": step,
@@ -598,21 +812,30 @@ def main() -> None:
             )
             if device.type == "cuda":
                 metrics["peak_vram_gib"] = torch.cuda.max_memory_allocated(device) / 2**30
-            print(json.dumps(metrics), flush=True)
+            if context.is_main_process:
+                print(json.dumps(metrics), flush=True)
             if wandb_run is not None:
                 wandb_run.log(metrics, step=step)
             if step % args.eval_every == 0 or step == args.max_steps:
-                validation = evaluate(language_model, depth_decoder, adapter, lokr_network, tokenizer, sample, device, args)
+                validation = evaluate(training_model, tokenizer, validation_sample, device, args)
+                validation = reduce_metrics(validation, context)
                 validation["step"] = step
-                print(json.dumps(validation), flush=True)
+                if context.is_main_process:
+                    print(json.dumps(validation), flush=True)
                 if wandb_run is not None:
                     wandb_run.log(validation, step=step)
             if step % args.save_every == 0 or step == args.max_steps:
-                save_checkpoint(args.output_dir, step, adapter, lokr_network, optimizer, scheduler, args)
+                if context.is_main_process:
+                    save_checkpoint(args.output_dir, step, adapter, lokr_network, optimizer, scheduler, args)
+                if context.enabled:
+                    dist.barrier()
             if step >= args.max_steps:
                 break
+        data_epoch += 1
     if wandb_run is not None:
         wandb_run.finish()
+    if context.enabled:
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":
