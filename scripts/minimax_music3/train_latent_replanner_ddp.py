@@ -142,6 +142,26 @@ class PairCropDataset(Dataset):
                     raise
         raise RuntimeError("unreachable")
 
+    def _read_crop(self, path: Path, offset: float, out_rate: int, mono: bool) -> torch.Tensor:
+        """Seek-based crop read; tolerates VBR seek slop by over-reading and trimming."""
+        import torchaudio
+
+        with sf.SoundFile(str(path)) as handle:
+            native = handle.samplerate
+            handle.seek(min(int(offset * native), max(0, handle.frames - 1)))
+            data = handle.read(int((self.crop_seconds + 0.25) * native), dtype="float32", always_2d=True)
+        waveform = torch.from_numpy(data.T.copy())
+        if mono and waveform.shape[0] > 1:
+            waveform = waveform.mean(dim=0, keepdim=True)
+        if native != out_rate:
+            waveform = torchaudio.functional.resample(waveform, native, out_rate)
+        length = int(self.crop_seconds * out_rate)
+        if waveform.shape[-1] < int(0.9 * length):
+            raise ValueError(f"{path} produced a short crop")
+        if waveform.shape[-1] < length:
+            waveform = F.pad(waveform, (0, length - waveform.shape[-1]))
+        return waveform[..., :length]
+
     def _load_item(self, index: int) -> dict:
         pair_id = self.pair_ids[index]
         draw = random.random() if not self.deterministic else 1.0
@@ -149,27 +169,44 @@ class PairCropDataset(Dataset):
         restore = self.identity_rate <= draw < self.identity_rate + self.degrade_rate
         if self.deterministic and self.eval_degrade:
             restore = True
-        source = load_audio(self.source_dir / pair_id, MERT_SAMPLE_RATE, mono=True)
+        same_file = identity or restore or self.source_dir == self.target_dir
         target_path = (self.source_dir if (identity or restore) else self.target_dir) / pair_id
-        target = load_audio(target_path, SAMPLE_RATE, mono=False)
-        if target.shape[0] == 1:
-            target = target.repeat(2, 1)
-        source_seconds = source.shape[-1] / MERT_SAMPLE_RATE
-        target_seconds = target.shape[-1] / SAMPLE_RATE
-        max_offset = min(source_seconds, target_seconds) - self.crop_seconds
-        if max_offset < 0:
-            raise ValueError(f"{pair_id} is shorter than the crop window")
-        if self.deterministic:
-            offset = 0.0
+        if same_file:
+            duration = sf.info(str(target_path)).duration
+            max_offset = duration - self.crop_seconds - 1.0
+            if max_offset < 0:
+                raise ValueError(f"{pair_id} is shorter than the crop window")
+            offset = 0.0 if self.deterministic else random.uniform(0.0, max_offset)
+            target_crop = self._read_crop(target_path, offset, SAMPLE_RATE, mono=False)
+            if target_crop.shape[0] == 1:
+                target_crop = target_crop.repeat(2, 1)
+            source_crop = None
         else:
-            offset = random.uniform(0.0, max_offset)
-        source_start = int(offset * MERT_SAMPLE_RATE)
-        target_start = int(offset * SAMPLE_RATE)
-        source_length = int(self.crop_seconds * MERT_SAMPLE_RATE)
-        target_length = int(self.crop_seconds * SAMPLE_RATE)
-        source_crop = source[..., source_start : source_start + source_length]
-        target_crop = target[..., target_start : target_start + target_length]
+            source = load_audio(self.source_dir / pair_id, MERT_SAMPLE_RATE, mono=True)
+            target = load_audio(target_path, SAMPLE_RATE, mono=False)
+            if target.shape[0] == 1:
+                target = target.repeat(2, 1)
+            source_seconds = source.shape[-1] / MERT_SAMPLE_RATE
+            target_seconds = target.shape[-1] / SAMPLE_RATE
+            max_offset = min(source_seconds, target_seconds) - self.crop_seconds
+            if max_offset < 0:
+                raise ValueError(f"{pair_id} is shorter than the crop window")
+            offset = 0.0 if self.deterministic else random.uniform(0.0, max_offset)
+            source_start = int(offset * MERT_SAMPLE_RATE)
+            target_start = int(offset * SAMPLE_RATE)
+            source_crop = source[..., source_start : source_start + int(self.crop_seconds * MERT_SAMPLE_RATE)]
+            target_crop = target[..., target_start : target_start + int(self.crop_seconds * SAMPLE_RATE)]
         degraded_crop = None
+        if source_crop is None and not restore:
+            import torchaudio
+
+            source_crop = torchaudio.functional.resample(
+                target_crop.mean(dim=0, keepdim=True), SAMPLE_RATE, MERT_SAMPLE_RATE
+            )
+            expected = int(self.crop_seconds * MERT_SAMPLE_RATE)
+            if source_crop.shape[-1] < expected:
+                source_crop = F.pad(source_crop, (0, expected - source_crop.shape[-1]))
+            source_crop = source_crop[..., :expected]
         if restore:
             if self.deterministic:
                 state = random.getstate()
