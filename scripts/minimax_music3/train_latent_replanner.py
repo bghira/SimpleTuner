@@ -236,6 +236,7 @@ class LatentReplanner(nn.Module):
         degraded_latents: torch.Tensor | None = None,
         task: torch.Tensor | None = None,
         context_latents: torch.Tensor | None = None,
+        frame_positions: torch.Tensor | None = None,
     ) -> torch.Tensor:
         target_length = noisy_latents.shape[1]
         states = self.proj_in(torch.cat((noisy_latents, conditioning), dim=-1))
@@ -262,7 +263,11 @@ class LatentReplanner(nn.Module):
             if style is None:
                 style = self.style_null[None].expand(t.shape[0], -1)
             time_conditioning = time_conditioning + self.style_proj(style)
-        cos, sin = self.rope(target_length, states.device)
+        if frame_positions is not None:
+            full_cos, full_sin = self.rope(int(frame_positions.max().item()) + 1, states.device)
+            cos, sin = full_cos[frame_positions], full_sin[frame_positions]
+        else:
+            cos, sin = self.rope(target_length, states.device)
         if in_context:
             cos = torch.cat((cos, cos), dim=0)
             sin = torch.cat((sin, sin), dim=0)

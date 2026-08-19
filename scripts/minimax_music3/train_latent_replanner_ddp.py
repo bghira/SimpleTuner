@@ -100,6 +100,12 @@ def parse_args() -> argparse.Namespace:
         "--task-conditioning", action="store_true", help="learned task embedding with dropout to trained null"
     )
     parser.add_argument("--task-dropout", type=float, default=0.15)
+    parser.add_argument(
+        "--target-mask-ratio",
+        type=float,
+        default=0.0,
+        help="MaskDiT-style training: drop this fraction of target frames from the sequence (loss on kept frames)",
+    )
     return parser.parse_args()
 
 
@@ -695,8 +701,34 @@ def main() -> None:
             task_ids = batch["task"].to(device)
             null_mask = torch.rand(batch_size, device=device) < args.task_dropout
             task_ids = torch.where(null_mask, torch.full_like(task_ids, 3), task_ids)
+        if args.target_mask_ratio > 0.0:
+            frame_total = noisy.shape[1]
+            keep_count = max(8, int(frame_total * (1.0 - args.target_mask_ratio)))
+            keep = torch.randperm(frame_total, device=device)[:keep_count].sort().values
+            noisy = noisy[:, keep]
+            conditioning = conditioning[:, keep]
+            layers = layers[:, :, keep]
+            prediction_target = prediction_target[:, keep]
+            if stream_latents is not None:
+                stream_latents = stream_latents[:, keep]
+            if context_latents is not None:
+                context_latents = context_latents[:, keep]
+            if code_conditioning is not None:
+                code_conditioning = code_conditioning[:, keep]
+            frame_positions = keep
+        else:
+            frame_positions = None
         velocity = wrapped(
-            noisy, conditioning, t, layers, style, code_conditioning, stream_latents, task_ids, context_latents
+            noisy,
+            conditioning,
+            t,
+            layers,
+            style,
+            code_conditioning,
+            stream_latents,
+            task_ids,
+            context_latents,
+            frame_positions,
         )
         per_sample = (velocity - prediction_target).square().mean(dim=(1, 2))
         loss = per_sample.mean()
