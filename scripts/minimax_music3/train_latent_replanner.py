@@ -177,6 +177,10 @@ class LatentReplanner(nn.Module):
         angles = t[:, None].float() * freqs[None, :] * 1_000.0
         return torch.cat((angles.sin(), angles.cos()), dim=-1)
 
+    def enable_mert_masking(self, cond_dim: int, mert_layer_count: int) -> None:
+        """Learned per-layer null vectors substituted at masked reference frames."""
+        self.mert_null = nn.Parameter(torch.zeros(mert_layer_count, cond_dim))
+
     def enable_style_conditioning(self, style_dim: int) -> None:
         """CLAP-style pooled conditioning entering beside the flow timestep."""
         self.style_proj = nn.Sequential(

@@ -49,6 +49,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--codes-dir", type=Path, help="precomputed RVQ codes dir; enables the code stream")
     parser.add_argument("--codes-per-crop", type=int, default=1024)
     parser.add_argument("--style-dropout", type=float, default=0.15)
+    parser.add_argument("--mert-full-mask-rate", type=float, default=0.05)
+    parser.add_argument(
+        "--mert-span-mask-rate", type=float, default=0.5, help="fraction of samples receiving partial span masks"
+    )
+    parser.add_argument("--mert-max-mask-fraction", type=float, default=0.3)
     parser.add_argument("--code-dropout", type=float, default=0.15)
     parser.add_argument("--warm-start", type=Path, help="load model weights only (strict=False), fresh optimizer")
     parser.add_argument("--cache-dir")
@@ -306,6 +311,7 @@ def main() -> None:
 
     model = LatentReplanner(128, 768, args.d_model, args.depth, args.heads)
     model.enable_layer_conditioning(768, 13)
+    model.enable_mert_masking(768, 13)
     model.enable_style_conditioning(512)
     if args.codes_dir is not None:
         codes_meta = json.loads((args.codes_dir / "meta.json").read_text())
@@ -388,8 +394,17 @@ def main() -> None:
         latents, layers = extractor(batch)
         clean = (latents - latent_mean) / latent_std
         layers = (layers - layer_mean) / layer_std
-        conditioning = layers[:, args.mert_input_layer]
         batch_size = clean.shape[0]
+        frame_total = layers.shape[2]
+        for row in range(batch_size):
+            draw = torch.rand(())
+            if draw < args.mert_full_mask_rate:
+                layers[row] = model.mert_null[:, None, :]
+            elif draw < args.mert_full_mask_rate + args.mert_span_mask_rate:
+                span = int(torch.randint(1, max(2, int(frame_total * args.mert_max_mask_fraction)), (1,)))
+                start = int(torch.randint(0, frame_total - span, (1,)))
+                layers[row, :, start : start + span] = model.mert_null[:, None, :]
+        conditioning = layers[:, args.mert_input_layer]
         style = extractor.clap_audio_embedding(batch["target"])
         style_keep = (torch.rand(batch_size, device=device) >= args.style_dropout).float()[:, None]
         style = style_keep * style + (1.0 - style_keep) * model.style_null[None]
