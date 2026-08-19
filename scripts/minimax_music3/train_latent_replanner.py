@@ -163,6 +163,7 @@ class LatentReplanner(nn.Module):
         self.time_embed = nn.Sequential(nn.Linear(256, d_model), nn.SiLU(), nn.Linear(d_model, d_model))
         self.style_proj: nn.Module | None = None
         self.code_embed: nn.Module | None = None
+        self.degraded_in_proj: nn.Module | None = None
         self.rope = RotaryEmbedding(d_model // heads)
         self.blocks = nn.ModuleList(ReplannerBlock(d_model, heads) for _ in range(depth))
         self.out_norm = nn.LayerNorm(d_model, elementwise_affine=False)
@@ -187,6 +188,12 @@ class LatentReplanner(nn.Module):
             nn.Linear(style_dim, self.time_dim), nn.SiLU(), nn.Linear(self.time_dim, self.time_dim)
         )
         self.style_null = nn.Parameter(torch.zeros(style_dim))
+
+    def enable_degraded_latent_conditioning(self, latent_dim: int = 128) -> None:
+        """SR3-style: degraded latents concatenated per frame via zero-init additive projection."""
+        self.degraded_in_proj = nn.Linear(latent_dim, self.proj_in.out_features, bias=False)
+        self.degraded_null = nn.Parameter(torch.zeros(latent_dim))
+        nn.init.zeros_(self.degraded_in_proj.weight)
 
     def enable_code_conditioning(self, vocab_size: int, books: int, code_dim: int = 256) -> None:
         """RVQ-code conditioning: summed book embeddings, zero-init additive input projection."""
@@ -215,8 +222,13 @@ class LatentReplanner(nn.Module):
         layer_conditioning: torch.Tensor | None = None,
         style: torch.Tensor | None = None,
         code_conditioning: torch.Tensor | None = None,
+        degraded_latents: torch.Tensor | None = None,
     ) -> torch.Tensor:
         states = self.proj_in(torch.cat((noisy_latents, conditioning), dim=-1))
+        if self.degraded_in_proj is not None:
+            if degraded_latents is None:
+                degraded_latents = self.degraded_null[None, None].expand(states.shape[0], states.shape[1], -1)
+            states = states + self.degraded_in_proj(degraded_latents)
         if self.code_embed is not None:
             if code_conditioning is None:
                 code_conditioning = self.code_null[None, None].expand(states.shape[0], states.shape[1], -1)
@@ -244,6 +256,7 @@ def sample(
     code_conditioning: torch.Tensor | None = None,
     initial_latents: torch.Tensor | None = None,
     edit_strength: float = 1.0,
+    degraded_latents: torch.Tensor | None = None,
 ) -> torch.Tensor:
     noise = torch.randn(
         conditioning.shape[0],
@@ -261,7 +274,7 @@ def sample(
     schedule = torch.linspace(edit_strength, 0.0, steps + 1, device=conditioning.device)
     for index in range(steps):
         t = schedule[index].expand(latents.shape[0])
-        velocity = model(latents, conditioning, t, layer_conditioning, style, code_conditioning)
+        velocity = model(latents, conditioning, t, layer_conditioning, style, code_conditioning, degraded_latents)
         latents = latents - (schedule[index] - schedule[index + 1]) * velocity
     return latents
 

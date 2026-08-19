@@ -137,18 +137,29 @@ class PairCropDataset(Dataset):
         source_length = int(self.crop_seconds * MERT_SAMPLE_RATE)
         target_length = int(self.crop_seconds * SAMPLE_RATE)
         source_crop = source[..., source_start : source_start + source_length]
+        target_crop = target[..., target_start : target_start + target_length]
+        degraded_crop = None
         if restore:
             if self.deterministic:
                 state = random.getstate()
                 random.seed(1000 + index)
-                source_crop = degrade_source(source_crop, MERT_SAMPLE_RATE)
+            degraded_crop = degrade_source(target_crop, SAMPLE_RATE)
+            import torchaudio
+
+            source_crop = torchaudio.functional.resample(
+                degraded_crop.mean(dim=0, keepdim=True), SAMPLE_RATE, MERT_SAMPLE_RATE
+            )
+            expected = int(self.crop_seconds * MERT_SAMPLE_RATE)
+            if source_crop.shape[-1] < expected:
+                source_crop = F.pad(source_crop, (0, expected - source_crop.shape[-1]))
+            source_crop = source_crop[..., :expected]
+            if self.deterministic:
                 random.setstate(state)
-            else:
-                source_crop = degrade_source(source_crop, MERT_SAMPLE_RATE)
         item = {
             "task": 1 if identity else (2 if restore else 0),
             "source": source_crop,
-            "target": target[..., target_start : target_start + target_length],
+            "target": target_crop,
+            "degraded": degraded_crop if degraded_crop is not None else target_crop,
         }
         if self.codes_dir is not None:
             payload = torch.load(self.codes_dir / f"{pair_id.replace('/', '__')}.pt", weights_only=True)
@@ -197,6 +208,8 @@ def collate_crops(items: list[dict]) -> dict:
         batch["codes"] = torch.stack([item["codes"] for item in items])
     if "task" in items[0]:
         batch["task"] = torch.tensor([item["task"] for item in items], dtype=torch.long)
+    if "degraded" in items[0]:
+        batch["degraded"] = torch.stack([item["degraded"] for item in items])
     return batch
 
 
@@ -249,6 +262,9 @@ class OnlineExtractor:
         """Returns (latents [B,T,128], mert_layers [B,L,T,768]) at the DAV frame rate."""
         target = batch["target"].to(self.device)
         latents = self.dav.encode(target).transpose(1, 2).float()
+        self.last_degraded_latents = None
+        if "degraded" in batch:
+            self.last_degraded_latents = self.dav.encode(batch["degraded"].to(self.device)).transpose(1, 2).float()
         frame_count = latents.shape[1]
         inputs = self.processor(
             [waveform.squeeze(0).numpy() for waveform in batch["source"]],
@@ -269,6 +285,23 @@ class OnlineExtractor:
             .reshape(batch_size, layer_count, frame_count, dim)
         )
         return latents, layers
+
+
+@torch.no_grad()
+def bridge_sample(
+    model, conditioning, steps, layer_conditioning, degraded_latents, direction="restore", style=None, code_conditioning=None
+):
+    """Deterministic Euler along the clean<->degraded bridge. restore: t 1->0 from degraded; degrade: t 0->1 from clean."""
+    latents = degraded_latents.clone()
+    if direction == "restore":
+        schedule = torch.linspace(1.0, 0.0, steps + 1, device=latents.device)
+    else:
+        schedule = torch.linspace(0.0, 1.0, steps + 1, device=latents.device)
+    for index in range(steps):
+        t = schedule[index].expand(latents.shape[0])
+        velocity = model(latents, conditioning, t, layer_conditioning, style, code_conditioning)
+        latents = latents - (schedule[index] - schedule[index + 1]) * velocity
+    return latents
 
 
 def ddpm_alpha_bar(t: torch.Tensor) -> torch.Tensor:
@@ -405,6 +438,8 @@ def main() -> None:
     model.enable_layer_conditioning(768, 13)
     model.enable_mert_masking(768, 13)
     model.enable_style_conditioning(512)
+    if args.degraded_latent_stream or args.objective == "bridge":
+        model.enable_degraded_latent_conditioning(128)
     if args.codes_dir is not None:
         codes_meta = json.loads((args.codes_dir / "meta.json").read_text())
         model.enable_code_conditioning(codes_meta["total_vocab"], codes_meta["books"])
@@ -454,6 +489,9 @@ def main() -> None:
         holdout_items = [holdout_dataset[index] for index in range(len(holdout_dataset))]
         holdout_batch = collate_crops(holdout_items)
         holdout_latents, holdout_layers = extractor(holdout_batch)
+        holdout_degraded = None
+        if extractor.last_degraded_latents is not None and (args.degraded_latent_stream or args.objective == "bridge"):
+            holdout_degraded = ((extractor.last_degraded_latents - latent_mean) / latent_std).cpu()
         if args.clap_from_source:
             import torchaudio as _ta2
 
@@ -521,8 +559,17 @@ def main() -> None:
             code_conditioning = model.embed_codes(batch["codes"].to(device), clean.shape[1])
             code_keep = (torch.rand(batch_size, device=device) >= args.code_dropout).float()[:, None, None]
             code_conditioning = code_keep * code_conditioning + (1.0 - code_keep) * model.code_null[None, None]
+        degraded_latents = None
+        if extractor.last_degraded_latents is not None and (args.degraded_latent_stream or args.objective == "bridge"):
+            degraded_latents = (extractor.last_degraded_latents - latent_mean) / latent_std
         noise = torch.randn_like(clean)
-        if args.objective == "ddpm":
+        if args.objective == "bridge":
+            if degraded_latents is None:
+                raise RuntimeError("bridge objective requires degraded latents")
+            t = torch.rand(batch_size, device=device)
+            noisy = (1.0 - t[:, None, None]) * clean + t[:, None, None] * degraded_latents
+            prediction_target = degraded_latents - clean
+        elif args.objective == "ddpm":
             t = torch.rand(batch_size, device=device)
             abar = ddpm_alpha_bar(t)[:, None, None]
             noisy = abar.sqrt() * clean + (1 - abar).sqrt() * noise
@@ -533,7 +580,8 @@ def main() -> None:
             prediction_target = noise - clean
         for group in optimizer.param_groups:
             group["lr"] = args.learning_rate * lr_scale(step + 1)
-        velocity = wrapped(noisy, conditioning, t, layers, style, code_conditioning)
+        stream_latents = degraded_latents if args.degraded_latent_stream and args.objective != "bridge" else None
+        velocity = wrapped(noisy, conditioning, t, layers, style, code_conditioning, stream_latents)
         per_sample = (velocity - prediction_target).square().mean(dim=(1, 2))
         loss = per_sample.mean()
         if "task" in batch:
