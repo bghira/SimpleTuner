@@ -101,6 +101,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--task-dropout", type=float, default=0.15)
     parser.add_argument(
+        "--residual-loss-weighting",
+        action="store_true",
+        help="weight per-frame loss by |target - input| magnitude (0.5 uniform floor), per AUDIT",
+    )
+    parser.add_argument(
         "--target-mask-ratio",
         type=float,
         default=0.0,
@@ -730,7 +735,14 @@ def main() -> None:
             context_latents,
             frame_positions,
         )
-        per_sample = (velocity - prediction_target).square().mean(dim=(1, 2))
+        frame_error = (velocity - prediction_target).square().mean(dim=-1)
+        if args.residual_loss_weighting and degraded_latents is not None:
+            residual_mag = (clean - degraded_latents).square().mean(dim=-1).sqrt()
+            if args.target_mask_ratio > 0.0:
+                residual_mag = residual_mag[:, keep]
+            weight = 0.5 + 0.5 * residual_mag / (residual_mag.mean(dim=1, keepdim=True) + 1e-6)
+            frame_error = frame_error * weight
+        per_sample = frame_error.mean(dim=1)
         loss = per_sample.mean()
         if "task" in batch:
             tasks = batch["task"].to(device)
@@ -822,6 +834,12 @@ def main() -> None:
                 confusion = flat_generated @ flat_targets.T
                 diagonal = confusion.diagonal()
                 count = confusion.shape[0]
+                residual_metric = None
+                if holdout_degraded is not None:
+                    degraded_denorm = holdout_degraded.to(device) * latent_std + latent_mean
+                    residual_generated = (denormalized - degraded_denorm).flatten(1)
+                    residual_true = (holdout_latents - degraded_denorm).flatten(1)
+                    residual_metric = round(F.cosine_similarity(residual_generated, residual_true, dim=1).mean().item(), 4)
                 print(
                     json.dumps(
                         {
@@ -832,6 +850,7 @@ def main() -> None:
                             "holdout_offdiag_mean": round(
                                 ((confusion.sum() - diagonal.sum()) / (count * (count - 1))).item(), 4
                             ),
+                            "holdout_residual_cos": residual_metric,
                         }
                     ),
                     flush=True,
