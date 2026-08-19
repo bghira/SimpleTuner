@@ -95,6 +95,7 @@ class PairCropDataset(Dataset):
         codes_per_crop: int = 1024,
         identity_rate: float = 0.0,
         degrade_rate: float = 0.0,
+        eval_degrade: bool = False,
     ):
         self.source_dir = source_dir
         self.target_dir = target_dir
@@ -105,6 +106,7 @@ class PairCropDataset(Dataset):
         self.codes_per_crop = codes_per_crop
         self.identity_rate = identity_rate
         self.degrade_rate = degrade_rate
+        self.eval_degrade = eval_degrade
 
     def __len__(self) -> int:
         return len(self.pair_ids)
@@ -114,6 +116,8 @@ class PairCropDataset(Dataset):
         draw = random.random() if not self.deterministic else 1.0
         identity = draw < self.identity_rate
         restore = self.identity_rate <= draw < self.identity_rate + self.degrade_rate
+        if self.deterministic and self.eval_degrade:
+            restore = True
         source = load_audio(self.source_dir / pair_id, MERT_SAMPLE_RATE, mono=True)
         target_path = (self.source_dir if (identity or restore) else self.target_dir) / pair_id
         target = load_audio(target_path, SAMPLE_RATE, mono=False)
@@ -134,7 +138,13 @@ class PairCropDataset(Dataset):
         target_length = int(self.crop_seconds * SAMPLE_RATE)
         source_crop = source[..., source_start : source_start + source_length]
         if restore:
-            source_crop = degrade_source(source_crop, MERT_SAMPLE_RATE)
+            if self.deterministic:
+                state = random.getstate()
+                random.seed(1000 + index)
+                source_crop = degrade_source(source_crop, MERT_SAMPLE_RATE)
+                random.setstate(state)
+            else:
+                source_crop = degrade_source(source_crop, MERT_SAMPLE_RATE)
         item = {
             "task": 1 if identity else (2 if restore else 0),
             "source": source_crop,
@@ -259,6 +269,39 @@ class OnlineExtractor:
             .reshape(batch_size, layer_count, frame_count, dim)
         )
         return latents, layers
+
+
+def ddpm_alpha_bar(t: torch.Tensor) -> torch.Tensor:
+    return torch.cos(t.clamp(0.0, 0.999) * torch.pi / 2).square()
+
+
+@torch.no_grad()
+def ddpm_ancestral_sample(
+    model, conditioning, steps, generator, layer_conditioning=None, style=None, code_conditioning=None
+):
+    device = conditioning.device
+    latents = torch.randn(
+        conditioning.shape[0], conditioning.shape[1], model.proj_out.out_features, generator=generator, device="cpu"
+    ).to(device)
+    times = torch.linspace(1.0, 0.0, steps + 1, device=device)
+    for index in range(steps):
+        t = times[index].expand(latents.shape[0])
+        t_next = times[index + 1]
+        abar = ddpm_alpha_bar(t)[:, None, None]
+        abar_next = ddpm_alpha_bar(t_next.expand(latents.shape[0]))[:, None, None]
+        v = model(latents, conditioning, t, layer_conditioning, style, code_conditioning)
+        x0 = abar.sqrt() * latents - (1 - abar).sqrt() * v
+        eps = (1 - abar).sqrt() * latents + abar.sqrt() * v
+        if index == steps - 1:
+            latents = x0
+        else:
+            alpha_step = (abar / abar_next).clamp(max=1.0)
+            var = ((1 - abar_next) / (1 - abar)) * (1 - alpha_step)
+            mean = abar_next.sqrt() * x0 + (1 - abar_next - var).clamp_min(0.0).sqrt() * eps
+            latents = mean + var.sqrt() * torch.randn(
+                latents.shape, generator=torch.Generator().manual_seed(int(index) + 7), device="cpu"
+            ).to(device)
+    return latents
 
 
 def barrier(active: bool) -> None:
@@ -411,7 +454,15 @@ def main() -> None:
         holdout_items = [holdout_dataset[index] for index in range(len(holdout_dataset))]
         holdout_batch = collate_crops(holdout_items)
         holdout_latents, holdout_layers = extractor(holdout_batch)
-        holdout_style = extractor.clap_audio_embedding(holdout_batch["target"])
+        if args.clap_from_source:
+            import torchaudio as _ta2
+
+            holdout_clap_input = _ta2.functional.resample(holdout_batch["source"], MERT_SAMPLE_RATE, SAMPLE_RATE).repeat(
+                1, 2, 1
+            )
+            holdout_style = extractor.clap_audio_embedding(holdout_clap_input)
+        else:
+            holdout_style = extractor.clap_audio_embedding(holdout_batch["target"])
         holdout_codes = None
         if args.codes_dir is not None:
             holdout_codes = torch.stack(
@@ -456,7 +507,13 @@ def main() -> None:
                 start = int(torch.randint(0, frame_total - span, (1,)))
                 layers[row, :, start : start + span] = model.mert_null[:, None, :]
         conditioning = layers[:, args.mert_input_layer]
-        style = extractor.clap_audio_embedding(batch["target"])
+        if args.clap_from_source:
+            import torchaudio as _ta
+
+            clap_input = _ta.functional.resample(batch["source"], MERT_SAMPLE_RATE, SAMPLE_RATE).repeat(1, 2, 1)
+            style = extractor.clap_audio_embedding({"target": clap_input}["target"])
+        else:
+            style = extractor.clap_audio_embedding(batch["target"])
         style_keep = (torch.rand(batch_size, device=device) >= args.style_dropout).float()[:, None]
         style = style_keep * style + (1.0 - style_keep) * model.style_null[None]
         code_conditioning = None
@@ -464,13 +521,20 @@ def main() -> None:
             code_conditioning = model.embed_codes(batch["codes"].to(device), clean.shape[1])
             code_keep = (torch.rand(batch_size, device=device) >= args.code_dropout).float()[:, None, None]
             code_conditioning = code_keep * code_conditioning + (1.0 - code_keep) * model.code_null[None, None]
-        t = torch.sigmoid(torch.randn(batch_size, device=device))
         noise = torch.randn_like(clean)
-        noisy = (1.0 - t[:, None, None]) * clean + t[:, None, None] * noise
+        if args.objective == "ddpm":
+            t = torch.rand(batch_size, device=device)
+            abar = ddpm_alpha_bar(t)[:, None, None]
+            noisy = abar.sqrt() * clean + (1 - abar).sqrt() * noise
+            prediction_target = abar.sqrt() * noise - (1 - abar).sqrt() * clean
+        else:
+            t = torch.sigmoid(torch.randn(batch_size, device=device))
+            noisy = (1.0 - t[:, None, None]) * clean + t[:, None, None] * noise
+            prediction_target = noise - clean
         for group in optimizer.param_groups:
             group["lr"] = args.learning_rate * lr_scale(step + 1)
         velocity = wrapped(noisy, conditioning, t, layers, style, code_conditioning)
-        per_sample = (velocity - (noise - clean)).square().mean(dim=(1, 2))
+        per_sample = (velocity - prediction_target).square().mean(dim=(1, 2))
         loss = per_sample.mean()
         if "task" in batch:
             tasks = batch["task"].to(device)
