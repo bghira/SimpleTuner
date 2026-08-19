@@ -524,7 +524,17 @@ def main() -> None:
         )
         holdout_items = [holdout_dataset[index] for index in range(len(holdout_dataset))]
         holdout_batch = collate_crops(holdout_items)
-        holdout_latents, holdout_layers = extractor(holdout_batch)
+        latent_chunks, layer_chunks, degraded_chunks = [], [], []
+        for start in range(0, len(holdout_items), 4):
+            piece = collate_crops(holdout_items[start : start + 4])
+            piece_latents, piece_layers = extractor(piece)
+            latent_chunks.append(piece_latents)
+            layer_chunks.append(piece_layers)
+            if extractor.last_degraded_latents is not None:
+                degraded_chunks.append(extractor.last_degraded_latents)
+        holdout_latents = torch.cat(latent_chunks)
+        holdout_layers = torch.cat(layer_chunks)
+        extractor.last_degraded_latents = torch.cat(degraded_chunks) if degraded_chunks else None
         holdout_degraded = None
         if extractor.last_degraded_latents is not None and (args.degraded_latent_stream or args.objective == "bridge"):
             holdout_degraded = ((extractor.last_degraded_latents - latent_mean) / latent_std).cpu()
