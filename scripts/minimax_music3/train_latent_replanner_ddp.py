@@ -94,6 +94,7 @@ class PairCropDataset(Dataset):
         codes_dir: Path | None = None,
         codes_per_crop: int = 1024,
         identity_rate: float = 0.0,
+        degrade_rate: float = 0.0,
     ):
         self.source_dir = source_dir
         self.target_dir = target_dir
@@ -103,15 +104,18 @@ class PairCropDataset(Dataset):
         self.codes_dir = codes_dir
         self.codes_per_crop = codes_per_crop
         self.identity_rate = identity_rate
+        self.degrade_rate = degrade_rate
 
     def __len__(self) -> int:
         return len(self.pair_ids)
 
     def __getitem__(self, index: int) -> dict:
         pair_id = self.pair_ids[index]
-        identity = (not self.deterministic) and self.identity_rate > 0.0 and random.random() < self.identity_rate
+        draw = random.random() if not self.deterministic else 1.0
+        identity = draw < self.identity_rate
+        restore = self.identity_rate <= draw < self.identity_rate + self.degrade_rate
         source = load_audio(self.source_dir / pair_id, MERT_SAMPLE_RATE, mono=True)
-        target_path = (self.source_dir if identity else self.target_dir) / pair_id
+        target_path = (self.source_dir if (identity or restore) else self.target_dir) / pair_id
         target = load_audio(target_path, SAMPLE_RATE, mono=False)
         if target.shape[0] == 1:
             target = target.repeat(2, 1)
@@ -128,8 +132,11 @@ class PairCropDataset(Dataset):
         target_start = int(offset * SAMPLE_RATE)
         source_length = int(self.crop_seconds * MERT_SAMPLE_RATE)
         target_length = int(self.crop_seconds * SAMPLE_RATE)
+        source_crop = source[..., source_start : source_start + source_length]
+        if restore:
+            source_crop = degrade_source(source_crop, MERT_SAMPLE_RATE)
         item = {
-            "source": source[..., source_start : source_start + source_length],
+            "source": source_crop,
             "target": target[..., target_start : target_start + target_length],
         }
         if self.codes_dir is not None:
@@ -141,6 +148,33 @@ class PairCropDataset(Dataset):
             positions = torch.linspace(code_start, min(code_start + code_span, codes.shape[0] - 1), self.codes_per_crop)
             item["codes"] = codes[positions.long()].long()
         return item
+
+
+def degrade_source(waveform: torch.Tensor, sample_rate: int) -> torch.Tensor:
+    """Random restoration-task degradation chain: bandwidth crush, noise, bit crush, clipping."""
+    import torchaudio
+
+    degraded = waveform
+    if random.random() < 0.8:
+        low_rate = random.choice((4_000, 8_000, 12_000))
+        degraded = torchaudio.functional.resample(
+            torchaudio.functional.resample(degraded, sample_rate, low_rate), low_rate, sample_rate
+        )
+        if degraded.shape[-1] < waveform.shape[-1]:
+            degraded = F.pad(degraded, (0, waveform.shape[-1] - degraded.shape[-1]))
+        degraded = degraded[..., : waveform.shape[-1]]
+    if random.random() < 0.5:
+        snr_db = random.uniform(15.0, 35.0)
+        signal_power = degraded.square().mean().clamp_min(1e-8)
+        noise = torch.randn_like(degraded) * (signal_power / (10 ** (snr_db / 10))).sqrt()
+        degraded = degraded + noise
+    if random.random() < 0.3:
+        levels = 2 ** random.choice((8, 9, 10))
+        degraded = (degraded * levels).round() / levels
+    if random.random() < 0.3:
+        drive = random.uniform(1.5, 4.0)
+        degraded = torch.tanh(degraded * drive) / drive
+    return degraded
 
 
 def collate_crops(items: list[dict]) -> dict:
