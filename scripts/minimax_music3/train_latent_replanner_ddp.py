@@ -84,7 +84,7 @@ def parse_args() -> argparse.Namespace:
         default=0.0,
         help="probability a sample trains as restore (degraded input, clean target)",
     )
-    parser.add_argument("--objective", choices=("fm", "ddpm", "bridge"), default="fm")
+    parser.add_argument("--objective", choices=("fm", "ddpm", "bridge", "incontext"), default="fm")
     parser.add_argument(
         "--degraded-latent-stream", action="store_true", help="feed DAV(degraded) latents as SR3-style conditioning"
     )
@@ -527,6 +527,8 @@ def main() -> None:
     model.enable_style_conditioning(512)
     if args.degraded_latent_stream or args.objective == "bridge":
         model.enable_degraded_latent_conditioning(128)
+    if args.objective == "incontext":
+        model.enable_context_editing()
     if args.task_conditioning:
         model.enable_task_conditioning(3)
     if args.codes_dir is not None:
@@ -590,7 +592,9 @@ def main() -> None:
         holdout_layers = torch.cat(layer_chunks)
         extractor.last_degraded_latents = torch.cat(degraded_chunks) if degraded_chunks else None
         holdout_degraded = None
-        if extractor.last_degraded_latents is not None and (args.degraded_latent_stream or args.objective == "bridge"):
+        if extractor.last_degraded_latents is not None and (
+            args.degraded_latent_stream or args.objective in ("bridge", "incontext")
+        ):
             holdout_degraded = ((extractor.last_degraded_latents - latent_mean) / latent_std).cpu()
         if args.clap_from_source:
             import torchaudio as _ta2
@@ -660,7 +664,9 @@ def main() -> None:
             code_keep = (torch.rand(batch_size, device=device) >= args.code_dropout).float()[:, None, None]
             code_conditioning = code_keep * code_conditioning + (1.0 - code_keep) * model.code_null[None, None]
         degraded_latents = None
-        if extractor.last_degraded_latents is not None and (args.degraded_latent_stream or args.objective == "bridge"):
+        if extractor.last_degraded_latents is not None and (
+            args.degraded_latent_stream or args.objective in ("bridge", "incontext")
+        ):
             degraded_latents = (extractor.last_degraded_latents - latent_mean) / latent_std
         noise = torch.randn_like(clean)
         if args.objective == "bridge":
@@ -680,13 +686,18 @@ def main() -> None:
             prediction_target = noise - clean
         for group in optimizer.param_groups:
             group["lr"] = args.learning_rate * lr_scale(step + 1)
-        stream_latents = degraded_latents if args.degraded_latent_stream and args.objective != "bridge" else None
+        stream_latents = (
+            degraded_latents if args.degraded_latent_stream and args.objective not in ("bridge", "incontext") else None
+        )
+        context_latents = degraded_latents if args.objective == "incontext" else None
         task_ids = None
         if args.task_conditioning and "task" in batch:
             task_ids = batch["task"].to(device)
             null_mask = torch.rand(batch_size, device=device) < args.task_dropout
             task_ids = torch.where(null_mask, torch.full_like(task_ids, 3), task_ids)
-        velocity = wrapped(noisy, conditioning, t, layers, style, code_conditioning, stream_latents, task_ids)
+        velocity = wrapped(
+            noisy, conditioning, t, layers, style, code_conditioning, stream_latents, task_ids, context_latents
+        )
         per_sample = (velocity - prediction_target).square().mean(dim=(1, 2))
         loss = per_sample.mean()
         if "task" in batch:
@@ -721,19 +732,56 @@ def main() -> None:
                 chunks = []
                 for start in range(0, holdout_layers.shape[0], 8):
                     chunk_layers = holdout_layers[start : start + 8].to(device).float()
-                    chunks.append(
-                        sample(
-                            model,
-                            chunk_layers[:, args.mert_input_layer],
-                            args.sample_steps,
-                            torch.Generator(device="cpu").manual_seed(args.seed + start),
-                            chunk_layers,
-                            style=holdout_style[start : start + 8],
-                            code_conditioning=(
-                                holdout_codes[start : start + 8].to(device).float() if holdout_codes is not None else None
-                            ),
-                        )
+                    chunk_degraded = holdout_degraded[start : start + 8].to(device) if holdout_degraded is not None else None
+                    gen = torch.Generator(device="cpu").manual_seed(args.seed + start)
+                    kwargs = dict(
+                        style=holdout_style[start : start + 8],
+                        code_conditioning=(
+                            holdout_codes[start : start + 8].to(device).float() if holdout_codes is not None else None
+                        ),
                     )
+                    if args.objective == "bridge":
+                        chunks.append(
+                            bridge_sample(
+                                model,
+                                chunk_layers[:, args.mert_input_layer],
+                                args.sample_steps,
+                                chunk_layers,
+                                chunk_degraded,
+                                direction="restore",
+                                **kwargs,
+                            )
+                        )
+                    elif args.objective == "ddpm":
+                        chunks.append(
+                            ddpm_ancestral_sample(
+                                model, chunk_layers[:, args.mert_input_layer], args.sample_steps, gen, chunk_layers, **kwargs
+                            )
+                        )
+                    elif args.objective == "incontext":
+                        chunks.append(
+                            sample(
+                                model,
+                                chunk_layers[:, args.mert_input_layer],
+                                args.sample_steps,
+                                gen,
+                                chunk_layers,
+                                context_latents=chunk_degraded,
+                                **kwargs,
+                            )
+                        )
+                    else:
+                        chunks.append(
+                            sample(
+                                model,
+                                chunk_layers[:, args.mert_input_layer],
+                                args.sample_steps,
+                                gen,
+                                chunk_layers,
+                                degraded_latents=chunk_degraded if args.degraded_latent_stream else None,
+                                **kwargs,
+                            )
+                        )
                 model.train()
                 generated = torch.cat(chunks, dim=0)
                 denormalized = generated * latent_std + latent_mean
