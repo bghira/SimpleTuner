@@ -78,6 +78,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--resume", type=Path)
+    parser.add_argument(
+        "--degrade-rate",
+        type=float,
+        default=0.0,
+        help="probability a sample trains as restore (degraded input, clean target)",
+    )
+    parser.add_argument("--objective", choices=("fm", "ddpm", "bridge"), default="fm")
+    parser.add_argument(
+        "--degraded-latent-stream", action="store_true", help="feed DAV(degraded) latents as SR3-style conditioning"
+    )
+    parser.add_argument(
+        "--clap-from-source",
+        action="store_true",
+        help="condition CLAP on the (possibly degraded) source instead of the target",
+    )
+    parser.add_argument(
+        "--eval-degrade", action="store_true", help="apply seeded degradation to holdout sources (refiner evaluation)"
+    )
+    parser.add_argument(
+        "--task-conditioning", action="store_true", help="learned task embedding with dropout to trained null"
+    )
+    parser.add_argument("--task-dropout", type=float, default=0.15)
     return parser.parse_args()
 
 
