@@ -182,8 +182,13 @@ class OnlineExtractor:
         half = min(5 * SAMPLE_RATE, center)
         clip = mono[..., center - half : center + half]
         clip = torchaudio.functional.resample(clip.cpu(), SAMPLE_RATE, 48_000)
-        inputs = self.clap_processor(audios=[row.numpy() for row in clip], sampling_rate=48_000, return_tensors="pt")
-        return self.clap.get_audio_features(input_features=inputs["input_features"].to(self.device)).float()
+        inputs = self.clap_processor(audio=[row.numpy() for row in clip], sampling_rate=48_000, return_tensors="pt")
+        features = self.clap.get_audio_features(input_features=inputs["input_features"].to(self.device))
+        if not torch.is_tensor(features):
+            features = features.pooler_output
+        if features.shape[-1] != self.clap.config.projection_dim:
+            features = self.clap.audio_projection(features)
+        return features.float()
 
     @torch.no_grad()
     def __call__(self, batch: dict) -> tuple[torch.Tensor, torch.Tensor]:
