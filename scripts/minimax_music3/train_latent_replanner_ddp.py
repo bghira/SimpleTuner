@@ -49,6 +49,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--codes-dir", type=Path, help="precomputed RVQ codes dir; enables the code stream")
     parser.add_argument("--codes-per-crop", type=int, default=1024)
     parser.add_argument("--style-dropout", type=float, default=0.15)
+    parser.add_argument(
+        "--identity-rate", type=float, default=0.0, help="probability a sample trains as identity (target := source)"
+    )
     parser.add_argument("--mert-full-mask-rate", type=float, default=0.05)
     parser.add_argument(
         "--mert-span-mask-rate", type=float, default=0.5, help="fraction of samples receiving partial span masks"
@@ -90,6 +93,7 @@ class PairCropDataset(Dataset):
         deterministic: bool,
         codes_dir: Path | None = None,
         codes_per_crop: int = 1024,
+        identity_rate: float = 0.0,
     ):
         self.source_dir = source_dir
         self.target_dir = target_dir
@@ -98,14 +102,17 @@ class PairCropDataset(Dataset):
         self.deterministic = deterministic
         self.codes_dir = codes_dir
         self.codes_per_crop = codes_per_crop
+        self.identity_rate = identity_rate
 
     def __len__(self) -> int:
         return len(self.pair_ids)
 
     def __getitem__(self, index: int) -> dict:
         pair_id = self.pair_ids[index]
+        identity = (not self.deterministic) and self.identity_rate > 0.0 and random.random() < self.identity_rate
         source = load_audio(self.source_dir / pair_id, MERT_SAMPLE_RATE, mono=True)
-        target = load_audio(self.target_dir / pair_id, SAMPLE_RATE, mono=False)
+        target_path = (self.source_dir if identity else self.target_dir) / pair_id
+        target = load_audio(target_path, SAMPLE_RATE, mono=False)
         if target.shape[0] == 1:
             target = target.repeat(2, 1)
         source_seconds = source.shape[-1] / MERT_SAMPLE_RATE
