@@ -182,20 +182,31 @@ class PairCropDataset(Dataset):
                 target_crop = target_crop.repeat(2, 1)
             source_crop = None
         else:
-            source = load_audio(self.source_dir / pair_id, MERT_SAMPLE_RATE, mono=True)
+            source_44k = load_audio(self.source_dir / pair_id, SAMPLE_RATE, mono=False)
+            if source_44k.shape[0] == 1:
+                source_44k = source_44k.repeat(2, 1)
             target = load_audio(target_path, SAMPLE_RATE, mono=False)
             if target.shape[0] == 1:
                 target = target.repeat(2, 1)
-            source_seconds = source.shape[-1] / MERT_SAMPLE_RATE
+            source_seconds = source_44k.shape[-1] / SAMPLE_RATE
             target_seconds = target.shape[-1] / SAMPLE_RATE
             max_offset = min(source_seconds, target_seconds) - self.crop_seconds
             if max_offset < 0:
                 raise ValueError(f"{pair_id} is shorter than the crop window")
             offset = 0.0 if self.deterministic else random.uniform(0.0, max_offset)
-            source_start = int(offset * MERT_SAMPLE_RATE)
             target_start = int(offset * SAMPLE_RATE)
-            source_crop = source[..., source_start : source_start + int(self.crop_seconds * MERT_SAMPLE_RATE)]
-            target_crop = target[..., target_start : target_start + int(self.crop_seconds * SAMPLE_RATE)]
+            length_44k = int(self.crop_seconds * SAMPLE_RATE)
+            source_44k_crop = source_44k[..., target_start : target_start + length_44k]
+            target_crop = target[..., target_start : target_start + length_44k]
+            import torchaudio
+
+            source_crop = torchaudio.functional.resample(
+                source_44k_crop.mean(dim=0, keepdim=True), SAMPLE_RATE, MERT_SAMPLE_RATE
+            )
+            expected = int(self.crop_seconds * MERT_SAMPLE_RATE)
+            if source_crop.shape[-1] < expected:
+                source_crop = F.pad(source_crop, (0, expected - source_crop.shape[-1]))
+            source_crop = source_crop[..., :expected]
         degraded_crop = None
         if source_crop is None and not restore:
             import torchaudio
@@ -223,11 +234,17 @@ class PairCropDataset(Dataset):
             source_crop = source_crop[..., :expected]
             if self.deterministic:
                 random.setstate(state)
+        if degraded_crop is not None:
+            input_audio = degraded_crop
+        elif identity or restore or self.source_dir == self.target_dir:
+            input_audio = target_crop
+        else:
+            input_audio = source_44k_crop
         item = {
             "task": 1 if identity else (2 if restore else 0),
             "source": source_crop,
             "target": target_crop,
-            "degraded": degraded_crop if degraded_crop is not None else target_crop,
+            "degraded": input_audio,
         }
         if self.codes_dir is not None:
             payload = torch.load(self.codes_dir / f"{pair_id.replace('/', '__')}.pt", weights_only=True)
