@@ -134,6 +134,15 @@ class PairCropDataset(Dataset):
         return len(self.pair_ids)
 
     def __getitem__(self, index: int) -> dict:
+        for hop in range(5):
+            try:
+                return self._load_item((index + hop) % len(self.pair_ids))
+            except Exception:
+                if hop == 4:
+                    raise
+        raise RuntimeError("unreachable")
+
+    def _load_item(self, index: int) -> dict:
         pair_id = self.pair_ids[index]
         draw = random.random() if not self.deterministic else 1.0
         identity = draw < self.identity_rate
