@@ -136,6 +136,7 @@ class PairCropDataset(Dataset):
         if restore:
             source_crop = degrade_source(source_crop, MERT_SAMPLE_RATE)
         item = {
+            "task": 1 if identity else (2 if restore else 0),
             "source": source_crop,
             "target": target[..., target_start : target_start + target_length],
         }
@@ -184,6 +185,8 @@ def collate_crops(items: list[dict]) -> dict:
     }
     if "codes" in items[0]:
         batch["codes"] = torch.stack([item["codes"] for item in items])
+    if "task" in items[0]:
+        batch["task"] = torch.tensor([item["task"] for item in items], dtype=torch.long)
     return batch
 
 
@@ -425,6 +428,8 @@ def main() -> None:
         return min(1.0, step / max(1, args.warmup_steps))
 
     step = start_step
+    task_loss_sums = [0.0, 0.0, 0.0]
+    task_loss_counts = [0, 0, 0]
     started = time.perf_counter()
     data_iterator = iter(loader)
     epoch = 0
@@ -465,25 +470,34 @@ def main() -> None:
         for group in optimizer.param_groups:
             group["lr"] = args.learning_rate * lr_scale(step + 1)
         velocity = wrapped(noisy, conditioning, t, layers, style, code_conditioning)
-        loss = F.mse_loss(velocity, noise - clean)
+        per_sample = (velocity - (noise - clean)).square().mean(dim=(1, 2))
+        loss = per_sample.mean()
+        if "task" in batch:
+            tasks = batch["task"].to(device)
+            for task_id in (0, 1, 2):
+                mask = tasks == task_id
+                if mask.any():
+                    task_loss_sums[task_id] += per_sample[mask].sum().item()
+                    task_loss_counts[task_id] += int(mask.sum())
         loss.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(wrapped.parameters(), 1.0)
         optimizer.step()
         optimizer.zero_grad(set_to_none=True)
         step += 1
         if main_process and (step % 50 == 0 or step == start_step + 1):
-            print(
-                json.dumps(
-                    {
-                        "step": step,
-                        "loss": round(loss.item(), 6),
-                        "grad_norm": round(float(grad_norm), 4),
-                        "steps_per_second": round((step - start_step) / (time.perf_counter() - started), 3),
-                        "epoch": epoch,
-                    }
-                ),
-                flush=True,
-            )
+            record = {
+                "step": step,
+                "loss": round(loss.item(), 6),
+                "grad_norm": round(float(grad_norm), 4),
+                "steps_per_second": round((step - start_step) / (time.perf_counter() - started), 3),
+                "epoch": epoch,
+            }
+            for task_id, name in ((0, "loss_transfer"), (1, "loss_identity"), (2, "loss_restore")):
+                if task_loss_counts[task_id]:
+                    record[name] = round(task_loss_sums[task_id] / task_loss_counts[task_id], 6)
+            task_loss_sums = [0.0, 0.0, 0.0]
+            task_loss_counts = [0, 0, 0]
+            print(json.dumps(record), flush=True)
         if step % args.eval_every == 0 or step == args.steps:
             if main_process:
                 model.eval()
