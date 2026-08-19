@@ -162,6 +162,7 @@ class LatentReplanner(nn.Module):
         self.time_dim = d_model
         self.time_embed = nn.Sequential(nn.Linear(256, d_model), nn.SiLU(), nn.Linear(d_model, d_model))
         self.style_proj: nn.Module | None = None
+        self.task_embed: nn.Module | None = None
         self.code_embed: nn.Module | None = None
         self.degraded_in_proj: nn.Module | None = None
         self.rope = RotaryEmbedding(d_model // heads)
@@ -181,6 +182,11 @@ class LatentReplanner(nn.Module):
     def enable_mert_masking(self, cond_dim: int, mert_layer_count: int) -> None:
         """Learned per-layer null vectors substituted at masked reference frames."""
         self.mert_null = nn.Parameter(torch.zeros(mert_layer_count, cond_dim))
+
+    def enable_task_conditioning(self, task_count: int = 3) -> None:
+        """Learned task embedding into AdaLN; index task_count is the trained null."""
+        self.task_embed = nn.Embedding(task_count + 1, self.time_dim)
+        nn.init.zeros_(self.task_embed.weight)
 
     def enable_style_conditioning(self, style_dim: int) -> None:
         """CLAP-style pooled conditioning entering beside the flow timestep."""
@@ -223,6 +229,7 @@ class LatentReplanner(nn.Module):
         style: torch.Tensor | None = None,
         code_conditioning: torch.Tensor | None = None,
         degraded_latents: torch.Tensor | None = None,
+        task: torch.Tensor | None = None,
     ) -> torch.Tensor:
         states = self.proj_in(torch.cat((noisy_latents, conditioning), dim=-1))
         if self.degraded_in_proj is not None:
@@ -234,6 +241,10 @@ class LatentReplanner(nn.Module):
                 code_conditioning = self.code_null[None, None].expand(states.shape[0], states.shape[1], -1)
             states = states + self.code_in_proj(code_conditioning)
         time_conditioning = self.time_embed(self.timestep_features(t))
+        if self.task_embed is not None:
+            if task is None:
+                task = torch.full((t.shape[0],), self.task_embed.num_embeddings - 1, dtype=torch.long, device=t.device)
+            time_conditioning = time_conditioning + self.task_embed(task)
         if self.style_proj is not None:
             if style is None:
                 style = self.style_null[None].expand(t.shape[0], -1)

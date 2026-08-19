@@ -440,6 +440,8 @@ def main() -> None:
     model.enable_style_conditioning(512)
     if args.degraded_latent_stream or args.objective == "bridge":
         model.enable_degraded_latent_conditioning(128)
+    if args.task_conditioning:
+        model.enable_task_conditioning(3)
     if args.codes_dir is not None:
         codes_meta = json.loads((args.codes_dir / "meta.json").read_text())
         model.enable_code_conditioning(codes_meta["total_vocab"], codes_meta["books"])
@@ -581,7 +583,12 @@ def main() -> None:
         for group in optimizer.param_groups:
             group["lr"] = args.learning_rate * lr_scale(step + 1)
         stream_latents = degraded_latents if args.degraded_latent_stream and args.objective != "bridge" else None
-        velocity = wrapped(noisy, conditioning, t, layers, style, code_conditioning, stream_latents)
+        task_ids = None
+        if args.task_conditioning and "task" in batch:
+            task_ids = batch["task"].to(device)
+            null_mask = torch.rand(batch_size, device=device) < args.task_dropout
+            task_ids = torch.where(null_mask, torch.full_like(task_ids, 3), task_ids)
+        velocity = wrapped(noisy, conditioning, t, layers, style, code_conditioning, stream_latents, task_ids)
         per_sample = (velocity - prediction_target).square().mean(dim=(1, 2))
         loss = per_sample.mean()
         if "task" in batch:
