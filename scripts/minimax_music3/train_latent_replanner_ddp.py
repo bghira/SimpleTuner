@@ -424,7 +424,7 @@ def main() -> None:
     torch.manual_seed(args.seed + rank)
     random.seed(args.seed + rank)
 
-    pair_ids = [line.strip() for line in args.pair_ids_file.read_text().replace(",", "\n").splitlines() if line.strip()]
+    pair_ids = [line.strip() for line in args.pair_ids_file.read_text().splitlines() if line.strip()]
     if len(pair_ids) <= args.holdout_count:
         raise ValueError("holdout-count leaves no training pairs")
     train_ids = pair_ids[: -args.holdout_count]
