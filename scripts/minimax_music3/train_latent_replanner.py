@@ -163,6 +163,7 @@ class LatentReplanner(nn.Module):
         self.time_embed = nn.Sequential(nn.Linear(256, d_model), nn.SiLU(), nn.Linear(d_model, d_model))
         self.style_proj: nn.Module | None = None
         self.task_embed: nn.Module | None = None
+        self.context_embed: nn.Parameter | None = None
         self.code_embed: nn.Module | None = None
         self.degraded_in_proj: nn.Module | None = None
         self.rope = RotaryEmbedding(d_model // heads)
@@ -182,6 +183,10 @@ class LatentReplanner(nn.Module):
     def enable_mert_masking(self, cond_dim: int, mert_layer_count: int) -> None:
         """Learned per-layer null vectors substituted at masked reference frames."""
         self.mert_null = nn.Parameter(torch.zeros(mert_layer_count, cond_dim))
+
+    def enable_context_editing(self) -> None:
+        """In-context editing: clean reference latents ride as context tokens with a learned segment embedding."""
+        self.context_embed = nn.Parameter(torch.zeros(self.time_dim))
 
     def enable_task_conditioning(self, task_count: int = 3) -> None:
         """Learned task embedding into AdaLN; index task_count is the trained null."""
@@ -230,8 +235,15 @@ class LatentReplanner(nn.Module):
         code_conditioning: torch.Tensor | None = None,
         degraded_latents: torch.Tensor | None = None,
         task: torch.Tensor | None = None,
+        context_latents: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        target_length = noisy_latents.shape[1]
         states = self.proj_in(torch.cat((noisy_latents, conditioning), dim=-1))
+        if self.context_embed is not None and context_latents is not None:
+            context_states = (
+                self.proj_in(torch.cat((context_latents, conditioning), dim=-1)) + self.context_embed[None, None]
+            )
+            states = torch.cat((context_states, states), dim=1)
         if self.degraded_in_proj is not None:
             if degraded_latents is None:
                 degraded_latents = self.degraded_null[None, None].expand(states.shape[0], states.shape[1], -1)
@@ -240,6 +252,7 @@ class LatentReplanner(nn.Module):
             if code_conditioning is None:
                 code_conditioning = self.code_null[None, None].expand(states.shape[0], states.shape[1], -1)
             states = states + self.code_in_proj(code_conditioning)
+        in_context = self.context_embed is not None and context_latents is not None
         time_conditioning = self.time_embed(self.timestep_features(t))
         if self.task_embed is not None:
             if task is None:
@@ -249,10 +262,17 @@ class LatentReplanner(nn.Module):
             if style is None:
                 style = self.style_null[None].expand(t.shape[0], -1)
             time_conditioning = time_conditioning + self.style_proj(style)
-        cos, sin = self.rope(states.shape[1], states.device)
+        cos, sin = self.rope(target_length, states.device)
+        if in_context:
+            cos = torch.cat((cos, cos), dim=0)
+            sin = torch.cat((sin, sin), dim=0)
         for index, block in enumerate(self.blocks):
             block_layers = layer_conditioning[:, self.layer_map[index]] if layer_conditioning is not None else None
+            if in_context and block_layers is not None:
+                block_layers = torch.cat((block_layers, block_layers), dim=1)
             states = block(states, time_conditioning, cos, sin, block_layers)
+        if in_context:
+            states = states[:, target_length:]
         return self.proj_out(self.out_norm(states))
 
 
@@ -268,6 +288,7 @@ def sample(
     initial_latents: torch.Tensor | None = None,
     edit_strength: float = 1.0,
     degraded_latents: torch.Tensor | None = None,
+    context_latents: torch.Tensor | None = None,
 ) -> torch.Tensor:
     noise = torch.randn(
         conditioning.shape[0],
@@ -285,7 +306,9 @@ def sample(
     schedule = torch.linspace(edit_strength, 0.0, steps + 1, device=conditioning.device)
     for index in range(steps):
         t = schedule[index].expand(latents.shape[0])
-        velocity = model(latents, conditioning, t, layer_conditioning, style, code_conditioning, degraded_latents)
+        velocity = model(
+            latents, conditioning, t, layer_conditioning, style, code_conditioning, degraded_latents, None, context_latents
+        )
         latents = latents - (schedule[index] - schedule[index + 1]) * velocity
     return latents
 
