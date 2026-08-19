@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -24,12 +25,18 @@ sys.path.insert(0, str(COLLECTION_DIR))
 from benchmark_reference_feedback import place_components, render_traces  # noqa: E402
 from minimax_music3_reference_adapter import install_diffusers_reference_adapter  # noqa: E402
 
-from scripts.minimax_music3.eval_control_lora import checkpoint_args  # noqa: E402
+from scripts.minimax_music3.eval_control_lora import (  # noqa: E402
+    AUDIO_CFG_TOKEN_ID,
+    checkpoint_args,
+    classifier_free_guidance_logits,
+    generate_cfg_frame,
+)
 from scripts.minimax_music3.eval_prefix_distillation import generate_frame  # noqa: E402
 from scripts.minimax_music3.train_control_lora import (  # noqa: E402
     CHECKPOINT_FORMAT,
     aligned_reference_hint,
     load_checkpoint,
+    reference_delta_control_hidden_states,
     reference_warmup_codes,
 )
 from scripts.minimax_music3.train_reference_control import (  # noqa: E402
@@ -60,8 +67,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-inference-steps", type=int, default=30)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--top-k", type=int, default=50)
-    parser.add_argument("--sample", action="store_true")
-    parser.add_argument("--control-strength", type=float, default=1.0)
+    parser.add_argument("--sample", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--control-strength", type=float, default=0.5)
+    parser.add_argument("--cfg-scale", type=float)
+    parser.add_argument("--control-unconditional-branch", action="store_true")
+    parser.add_argument("--generation-mode", choices=("reference", "null", "both"), default="reference")
     parser.add_argument("--ar-device", default="cuda:0")
     parser.add_argument("--render-device", default="cuda:1")
     parser.add_argument("--skip-render", action="store_true")
@@ -140,8 +150,51 @@ def controlled_forward(
     return main_output, control_output
 
 
+def main_forward(
+    language_model,
+    lokr_network,
+    main_inputs: torch.Tensor,
+    control_hidden_states: tuple[torch.Tensor, ...],
+    *,
+    main_past=None,
+    control_query_start: int,
+    control_scale: float,
+):
+    lokr_network.set_multiplier(0.0)
+    try:
+        return language_model.model(
+            inputs_embeds=main_inputs,
+            past_key_values=main_past,
+            use_cache=True,
+            control_hidden_states=control_hidden_states,
+            control_query_start=control_query_start,
+            control_scale=control_scale,
+        )
+    finally:
+        lokr_network.set_multiplier(1.0)
+
+
+def uncontrolled_forward(language_model, lokr_network, inputs: torch.Tensor, *, past=None):
+    lokr_network.set_multiplier(0.0)
+    try:
+        return language_model.model(inputs_embeds=inputs, past_key_values=past, use_cache=True)
+    finally:
+        lokr_network.set_multiplier(1.0)
+
+
 @torch.inference_mode()
-def cached_rollout(components, sample: dict, frame_count: int, *, sample_codes: bool, top_k: int, seed: int):
+def cached_rollout(
+    components,
+    sample: dict,
+    frame_count: int,
+    *,
+    null_reference: bool,
+    sample_codes: bool,
+    top_k: int,
+    seed: int,
+    cfg_scale: float | None,
+    control_unconditional_branch: bool,
+):
     pipeline = components.pipeline
     language_model = pipeline.language_model
     depth_decoder = pipeline.rvq_depth_decoder
@@ -151,43 +204,127 @@ def cached_rollout(components, sample: dict, frame_count: int, *, sample_codes: 
     key_positions = sample["key_positions"].to(device).unsqueeze(0)
     text_ids = tokenize_prompt(pipeline.tokenizer, sample["prompt"], sample["lyrics"], device)
     text_embeddings = language_model.model.embed_tokens(text_ids)
+    unconditional_text_embeddings = None
+    if cfg_scale is not None:
+        unconditional_ids = text_ids.clone()
+        unconditional_ids[:, 1:-2] = AUDIO_CFG_TOKEN_ID
+        unconditional_text_embeddings = language_model.model.embed_tokens(unconditional_ids)
     reference_embeddings = embed_rvq_frames(language_model, depth_decoder, reference_codes)
-    hints = aligned_reference_hint(reference_embeddings, query_positions, key_positions)
     warmup_codes = reference_warmup_codes(reference_codes, query_positions, key_positions)
     warmup_embeddings = embed_rvq_frames(language_model, depth_decoder, warmup_codes)
     main_inputs = torch.cat((text_embeddings, warmup_embeddings), dim=1)
-    control_inputs = torch.cat(
-        (text_embeddings, warmup_embeddings + components.runtime_args.hint_scale * hints[:, :1]),
-        dim=1,
-    )
-    main_output, control_output = controlled_forward(
-        language_model,
-        components.lokr_network,
-        main_inputs,
-        control_inputs,
-        control_query_start=text_embeddings.shape[1],
-    )
+    control_past = None
+    unconditional_control_states = None
+    if components.runtime_args.control_input_mode == "additive-hint":
+        hints = aligned_reference_hint(reference_embeddings, query_positions, key_positions)
+        if null_reference:
+            hints = hints * 0.0
+        control_inputs = torch.cat(
+            (text_embeddings, warmup_embeddings + components.runtime_args.hint_scale * hints[:, :1]),
+            dim=1,
+        )
+        main_output, control_output = controlled_forward(
+            language_model,
+            components.lokr_network,
+            main_inputs,
+            control_inputs,
+            control_query_start=text_embeddings.shape[1],
+        )
+        control_past = control_output.past_key_values
+        control_states = None
+    elif components.runtime_args.control_input_mode == "reference-delta":
+        components.lokr_network.set_multiplier(1.0)
+        control_states = reference_delta_control_hidden_states(
+            language_model,
+            text_embeddings,
+            reference_embeddings,
+            query_positions,
+            key_positions,
+            null_reference=null_reference,
+            text_attention_mask=None,
+            reference_attention_mask=None,
+        )
+        if control_unconditional_branch:
+            unconditional_control_states = reference_delta_control_hidden_states(
+                language_model,
+                unconditional_text_embeddings,
+                reference_embeddings,
+                query_positions,
+                key_positions,
+                null_reference=null_reference,
+                text_attention_mask=None,
+                reference_attention_mask=None,
+            )
+        main_output = main_forward(
+            language_model,
+            components.lokr_network,
+            main_inputs,
+            tuple(states[:, :1] for states in control_states),
+            control_query_start=text_embeddings.shape[1],
+            control_scale=components.runtime_args.hint_scale,
+        )
+        hints = None
+    else:
+        raise ValueError(f"Unsupported ControlLoRA input mode: {components.runtime_args.control_input_mode}")
     main_past = main_output.past_key_values
-    control_past = control_output.past_key_values
     hidden = main_output.last_hidden_state[:, -1]
+    unconditional_past = None
+    unconditional_hidden = None
+    if unconditional_text_embeddings is not None:
+        unconditional_inputs = torch.cat((unconditional_text_embeddings, warmup_embeddings), dim=1)
+        if unconditional_control_states is None:
+            unconditional_output = uncontrolled_forward(
+                language_model,
+                components.lokr_network,
+                unconditional_inputs,
+            )
+        else:
+            unconditional_output = main_forward(
+                language_model,
+                components.lokr_network,
+                unconditional_inputs,
+                tuple(states[:, :1] for states in unconditional_control_states),
+                control_query_start=unconditional_text_embeddings.shape[1],
+                control_scale=components.runtime_args.hint_scale,
+            )
+        unconditional_past = unconditional_output.past_key_values
+        unconditional_hidden = unconditional_output.last_hidden_state[:, -1]
     generated_codes = []
     frame_hiddens = []
     generator = torch.Generator(device="cpu").manual_seed(seed)
     started = time.perf_counter()
     for frame_index in range(frame_count):
-        logits = F.linear(
+        conditioned_logits = F.linear(
             hidden,
             language_model.lm_head.weight[AUDIO_CODE_OFFSET : AUDIO_CODE_OFFSET + AUDIO_VOCAB_SIZE],
         ).float()
-        codes, frame_hidden = generate_frame(
-            language_model,
-            depth_decoder,
-            hidden,
-            sample=sample_codes,
-            top_k=top_k,
-            generator=generator,
-            semantic_override_logits=logits,
-        )
+        if unconditional_hidden is None:
+            codes, frame_hidden = generate_frame(
+                language_model,
+                depth_decoder,
+                hidden,
+                sample=sample_codes,
+                top_k=top_k,
+                generator=generator,
+                semantic_override_logits=conditioned_logits,
+            )
+        else:
+            unconditioned_logits = F.linear(
+                unconditional_hidden,
+                language_model.lm_head.weight[AUDIO_CODE_OFFSET : AUDIO_CODE_OFFSET + AUDIO_VOCAB_SIZE],
+            ).float()
+            logits = classifier_free_guidance_logits(conditioned_logits, unconditioned_logits, cfg_scale)
+            codes, frame_hidden = generate_cfg_frame(
+                language_model,
+                depth_decoder,
+                hidden,
+                unconditional_hidden,
+                logits,
+                cfg_scale=cfg_scale,
+                sample=sample_codes,
+                top_k=top_k,
+                generator=generator,
+            )
         generated_codes.append(codes.cpu())
         frame_hiddens.append(frame_hidden.cpu())
         if (frame_index + 1) % 25 == 0 or frame_index + 1 == frame_count:
@@ -205,18 +342,49 @@ def cached_rollout(components, sample: dict, frame_count: int, *, sample_codes: 
         if frame_index + 1 == frame_count:
             break
         feedback = embed_rvq_frames(language_model, depth_decoder, codes.unsqueeze(1))
-        main_output, control_output = controlled_forward(
-            language_model,
-            components.lokr_network,
-            feedback,
-            feedback + components.runtime_args.hint_scale * hints[:, frame_index + 1 : frame_index + 2],
-            main_past=main_past,
-            control_past=control_past,
-            control_query_start=0,
-        )
+        if control_states is None:
+            main_output, control_output = controlled_forward(
+                language_model,
+                components.lokr_network,
+                feedback,
+                feedback + components.runtime_args.hint_scale * hints[:, frame_index + 1 : frame_index + 2],
+                main_past=main_past,
+                control_past=control_past,
+                control_query_start=0,
+            )
+            control_past = control_output.past_key_values
+        else:
+            main_output = main_forward(
+                language_model,
+                components.lokr_network,
+                feedback,
+                tuple(states[:, frame_index + 1 : frame_index + 2] for states in control_states),
+                main_past=main_past,
+                control_query_start=0,
+                control_scale=components.runtime_args.hint_scale,
+            )
         main_past = main_output.past_key_values
-        control_past = control_output.past_key_values
         hidden = main_output.last_hidden_state[:, -1]
+        if unconditional_past is not None:
+            if unconditional_control_states is None:
+                unconditional_output = uncontrolled_forward(
+                    language_model,
+                    components.lokr_network,
+                    feedback,
+                    past=unconditional_past,
+                )
+            else:
+                unconditional_output = main_forward(
+                    language_model,
+                    components.lokr_network,
+                    feedback,
+                    tuple(states[:, frame_index + 1 : frame_index + 2] for states in unconditional_control_states),
+                    main_past=unconditional_past,
+                    control_query_start=0,
+                    control_scale=components.runtime_args.hint_scale,
+                )
+            unconditional_past = unconditional_output.past_key_values
+            unconditional_hidden = unconditional_output.last_hidden_state[:, -1]
     return SimpleNamespace(
         generated_codes=torch.cat(generated_codes, dim=0),
         frame_hiddens=torch.cat(frame_hiddens, dim=0).unsqueeze(0).to(torch.bfloat16),
@@ -247,6 +415,14 @@ def main() -> None:
         raise ValueError(f"top-k must be between 1 and {AUDIO_VOCAB_SIZE}")
     if args.control_strength < 0.0:
         raise ValueError("control-strength must be non-negative")
+    if args.cfg_scale is not None and (not math.isfinite(args.cfg_scale) or args.cfg_scale < 0.0):
+        raise ValueError("cfg-scale must be finite and non-negative")
+    if args.control_unconditional_branch and args.cfg_scale is None:
+        raise ValueError("--control-unconditional-branch requires --cfg-scale")
+    if args.control_unconditional_branch:
+        config = json.loads((args.checkpoint_dir / "control_lora.json").read_text(encoding="utf-8"))
+        if config.get("control_input_mode", "additive-hint") != "reference-delta":
+            raise ValueError("controlled CFG currently requires a reference-delta checkpoint")
     frame_count = round(args.max_seconds * FRAME_RATE)
     dataset = CachedStylePairDataset(
         args.pair_cache,
@@ -259,22 +435,37 @@ def main() -> None:
     frame_count = min(frame_count, sample["target_codes"].shape[0])
     args.output_dir.mkdir(parents=True, exist_ok=True)
     components = load_pipeline_and_checkpoint(args, torch.device(args.ar_device), torch.device(args.render_device))
-    trace = cached_rollout(
-        components,
-        sample,
-        frame_count,
-        sample_codes=args.sample,
-        top_k=args.top_k,
-        seed=args.seed,
-    )
-    verification = verify_prefix(trace, args.verify_prefix_codes) if args.verify_prefix_codes else None
-    save_file(
-        {
-            "generated_codes": trace.generated_codes.to(torch.int16),
-            "frame_hiddens": trace.frame_hiddens,
-        },
-        args.output_dir / "reference.safetensors",
-    )
+    modes = {
+        "reference": (("reference", False),),
+        "null": (("null", True),),
+        "both": (("reference", False), ("null", True)),
+    }[args.generation_mode]
+    traces = {}
+    mode_results = {}
+    for name, null_reference in modes:
+        trace = cached_rollout(
+            components,
+            sample,
+            frame_count,
+            null_reference=null_reference,
+            sample_codes=args.sample,
+            top_k=args.top_k,
+            seed=args.seed,
+            cfg_scale=args.cfg_scale,
+            control_unconditional_branch=args.control_unconditional_branch,
+        )
+        traces[name] = trace
+        save_file(
+            {
+                "generated_codes": trace.generated_codes.to(torch.int16),
+                "frame_hiddens": trace.frame_hiddens,
+            },
+            args.output_dir / f"{name}.safetensors",
+        )
+        mode_results[name] = {"ar_seconds": round(trace.seconds, 3)}
+    if args.verify_prefix_codes and "reference" not in traces:
+        raise ValueError("--verify-prefix-codes requires reference generation")
+    verification = verify_prefix(traces["reference"], args.verify_prefix_codes) if args.verify_prefix_codes else None
     results = {
         "clip_id": args.clip_id,
         "frames": frame_count,
@@ -282,18 +473,22 @@ def main() -> None:
         "sample": args.sample,
         "top_k": args.top_k,
         "control_strength": args.control_strength,
-        "ar_seconds": round(trace.seconds, 3),
+        "cfg_scale": args.cfg_scale,
+        "control_unconditional_branch": args.control_unconditional_branch,
+        "modes": mode_results,
         "verification": verification,
         "checkpoint_config": components.config,
     }
     if not args.skip_render:
-        results["render"] = render_traces(
+        render_results = render_traces(
             components.pipeline,
-            {"reference": trace},
+            traces,
             args.output_dir,
             args.num_inference_steps,
             args.seed,
         )
+        for name, metrics in render_results.items():
+            results["modes"][name]["render"] = metrics
     (args.output_dir / "results.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(results, indent=2), flush=True)
 

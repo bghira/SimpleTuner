@@ -29,21 +29,49 @@ class MiniMaxMusic3DepthAttnProcessor:
     _parallel_config = None
 
     def __call__(self, attn: "MiniMaxMusic3DepthAttention", hidden_states: torch.Tensor) -> torch.Tensor:
-        batch_size, seq_len, _ = hidden_states.shape
+        query, key, value = self._project(attn, hidden_states)
+        return self._attention(attn, query, key, value, is_causal=True)
 
+    def forward_with_cache(
+        self,
+        attn: "MiniMaxMusic3DepthAttention",
+        hidden_states: torch.Tensor,
+        past_key_value: tuple[torch.Tensor, torch.Tensor] | None,
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+        query, key, value = self._project(attn, hidden_states)
+        if past_key_value is not None:
+            key = torch.cat((past_key_value[0], key), dim=1)
+            value = torch.cat((past_key_value[1], value), dim=1)
+        output = self._attention(attn, query, key, value, is_causal=past_key_value is None)
+        return output, (key, value)
+
+    @staticmethod
+    def _project(
+        attn: "MiniMaxMusic3DepthAttention", hidden_states: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        batch_size, seq_len, _ = hidden_states.shape
         query = attn.to_q(hidden_states)
         key = attn.to_k(hidden_states)
         value = attn.to_v(hidden_states)
-
         query = query.view(batch_size, seq_len, attn.heads, attn.head_dim)
         key = key.view(batch_size, seq_len, attn.heads, attn.head_dim)
         value = value.view(batch_size, seq_len, attn.heads, attn.head_dim)
+        return query, key, value
 
+    def _attention(
+        self,
+        attn: "MiniMaxMusic3DepthAttention",
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        *,
+        is_causal: bool,
+    ) -> torch.Tensor:
         hidden_states = dispatch_attention_fn(
             query,
             key,
             value,
-            is_causal=True,
+            is_causal=is_causal,
             backend=self._attention_backend,
             parallel_config=self._parallel_config,
         )
@@ -70,6 +98,13 @@ class MiniMaxMusic3DepthAttention(nn.Module, AttentionModuleMixin):
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         return self.processor(self, hidden_states)
 
+    def forward_with_cache(
+        self,
+        hidden_states: torch.Tensor,
+        past_key_value: tuple[torch.Tensor, torch.Tensor] | None = None,
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+        return self.processor.forward_with_cache(self, hidden_states, past_key_value)
+
 
 class MiniMaxMusic3DepthDecoderBlock(nn.Module):
     def __init__(self, dim: int, heads: int, intermediate_size: int):
@@ -85,6 +120,19 @@ class MiniMaxMusic3DepthDecoderBlock(nn.Module):
         hidden_states = hidden_states + self.attn(self.input_layernorm(hidden_states))
         norm_states = self.post_attention_layernorm(hidden_states)
         return hidden_states + self.down_proj(F.silu(self.gate_proj(norm_states)) * self.up_proj(norm_states))
+
+    def forward_with_cache(
+        self,
+        hidden_states: torch.Tensor,
+        past_key_value: tuple[torch.Tensor, torch.Tensor] | None = None,
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+        attention_output, present_key_value = self.attn.forward_with_cache(
+            self.input_layernorm(hidden_states), past_key_value
+        )
+        hidden_states = hidden_states + attention_output
+        norm_states = self.post_attention_layernorm(hidden_states)
+        hidden_states = hidden_states + self.down_proj(F.silu(self.gate_proj(norm_states)) * self.up_proj(norm_states))
+        return hidden_states, present_key_value
 
 
 class MiniMaxMusic3RVQDepthDecoder(ModelMixin, ConfigMixin):
@@ -136,3 +184,22 @@ class MiniMaxMusic3RVQDepthDecoder(ModelMixin, ConfigMixin):
         for layer in self.layers:
             hidden_states = layer(hidden_states)
         return self.norm(hidden_states)
+
+    def forward_with_cache(
+        self,
+        inputs_embeds: torch.Tensor,
+        past_key_values: tuple[tuple[torch.Tensor, torch.Tensor], ...] | None = None,
+    ) -> tuple[torch.Tensor, tuple[tuple[torch.Tensor, torch.Tensor], ...]]:
+        if past_key_values is not None and len(past_key_values) != len(self.layers):
+            raise ValueError("past key values must contain one entry per depth-decoder layer")
+        past_length = 0 if past_key_values is None else past_key_values[0][0].shape[1]
+        positions = torch.arange(past_length, past_length + inputs_embeds.shape[1], device=inputs_embeds.device)
+        if positions[-1] >= self.config.max_position_embeddings:
+            raise ValueError("depth-decoder sequence exceeds max_position_embeddings")
+        hidden_states = inputs_embeds + self.pos_embedding(positions).unsqueeze(0)
+        present_key_values = []
+        for index, layer in enumerate(self.layers):
+            past_key_value = None if past_key_values is None else past_key_values[index]
+            hidden_states, present_key_value = layer.forward_with_cache(hidden_states, past_key_value)
+            present_key_values.append(present_key_value)
+        return self.norm(hidden_states), tuple(present_key_values)

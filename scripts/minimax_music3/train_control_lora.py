@@ -10,7 +10,7 @@ import json
 import os
 import random
 import time
-from contextlib import nullcontext
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -86,7 +86,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-steps", type=int, default=200)
     parser.add_argument("--warmup-steps", type=int, default=20)
     parser.add_argument("--gradient-accumulation", type=int, default=1)
-    parser.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--checkpoint-depth-decoder", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
     parser.add_argument("--save-every", type=int, default=25)
@@ -132,6 +132,14 @@ def initialize_distributed(device_name: str) -> DistributedContext:
     return DistributedContext(torch.device("cuda", local_rank), rank, local_rank, world_size)
 
 
+def validate_distributed_options(context: DistributedContext, *, gradient_checkpointing: bool) -> None:
+    if context.enabled and gradient_checkpointing:
+        raise ValueError(
+            "gradient checkpointing is incompatible with DDP because LyCORIS bypass multipliers change between "
+            "the control and main Qwen passes; use --no-gradient-checkpointing"
+        )
+
+
 def reduce_metrics(metrics: dict[str, float], context: DistributedContext) -> dict[str, float]:
     if not context.enabled:
         return metrics
@@ -140,6 +148,56 @@ def reduce_metrics(metrics: dict[str, float], context: DistributedContext) -> di
     dist.all_reduce(values, op=dist.ReduceOp.SUM)
     values /= context.world_size
     return dict(zip(keys, values.tolist(), strict=True))
+
+
+def parameter_gradient_norm(parameters) -> float:
+    squared_norms = [
+        parameter.grad.detach().float().square().sum() for parameter in parameters if parameter.grad is not None
+    ]
+    if not squared_norms:
+        return 0.0
+    return torch.stack(squared_norms).sum().sqrt().item()
+
+
+def validate_first_backward(adapter, lokr_network) -> None:
+    adapter_up_gradients = sum(residual.up.weight.grad is not None for residual in adapter.residuals)
+    if adapter_up_gradients != len(adapter.residuals):
+        raise RuntimeError(
+            f"ControlLoRA first backward reached {adapter_up_gradients}/{len(adapter.residuals)} output projections"
+        )
+    lokr_gradient_tensors = sum(parameter.grad is not None for parameter in lokr_network.parameters())
+    if lokr_gradient_tensors == 0:
+        raise RuntimeError("LoKr first backward did not reach any parameter tensors")
+
+
+@contextmanager
+def no_grad_autocast_without_cache(device: torch.device):
+    with (
+        torch.no_grad(),
+        torch.autocast(
+            device_type=device.type,
+            dtype=torch.bfloat16,
+            cache_enabled=False,
+        ),
+    ):
+        yield
+
+
+@contextmanager
+def bypass_lokr_network(lokr_network):
+    patched_forwards = []
+    for lora in lokr_network.loras:
+        module = lora.org_module[0]
+        current_forward = module.forward
+        if getattr(current_forward, "__self__", None) is not lora:
+            raise RuntimeError(f"LoKr module {lora.lora_name} is not installed on its target projection")
+        patched_forwards.append((module, current_forward))
+        module.forward = lora.org_forward
+    try:
+        yield
+    finally:
+        for module, forward in patched_forwards:
+            module.forward = forward
 
 
 def use_mismatched_reference_step(micro_step: int, rate: float) -> bool:
@@ -358,17 +416,16 @@ def generated_warmup_codes(
     text_attention_mask: torch.Tensor | None,
 ) -> torch.Tensor:
     was_training = language_model.training
-    lokr_network.set_multiplier(0.0)
     language_model.eval()
     try:
-        hidden = language_model.model(
-            inputs_embeds=text_embeddings,
-            attention_mask=text_attention_mask,
-            use_cache=False,
-        ).last_hidden_state[:, -1:]
+        with bypass_lokr_network(lokr_network):
+            hidden = language_model.model(
+                inputs_embeds=text_embeddings,
+                attention_mask=text_attention_mask,
+                use_cache=False,
+            ).last_hidden_state[:, -1:]
         return sample_codes_from_hidden(depth_decoder, language_model, hidden, top_k=1)
     finally:
-        lokr_network.set_multiplier(1.0)
         language_model.train(was_training)
 
 
@@ -430,13 +487,19 @@ def reference_delta_control_hidden_states(
         raise ValueError("reference attention mask does not match reference embeddings")
     conditioned_reference = reference_embeddings * (0.0 if null_reference else 1.0)
     null_reference_embeddings = torch.zeros_like(reference_embeddings)
+    if text_attention_mask is None:
+        text_attention_mask = torch.ones(
+            text_embeddings.shape[:2],
+            dtype=torch.long,
+            device=text_embeddings.device,
+        )
+    if text_attention_mask.shape != text_embeddings.shape[:2]:
+        raise ValueError("text attention mask does not match text embeddings")
     conditioned_inputs = torch.cat((text_embeddings, conditioned_reference), dim=1)
     null_inputs = torch.cat((text_embeddings, null_reference_embeddings), dim=1)
     control_inputs = torch.cat((conditioned_inputs, null_inputs), dim=0)
-    control_attention_mask = None
-    if text_attention_mask is not None:
-        reference_sequence_mask = torch.cat((text_attention_mask, reference_attention_mask), dim=1)
-        control_attention_mask = torch.cat((reference_sequence_mask, reference_sequence_mask), dim=0)
+    reference_sequence_mask = torch.cat((text_attention_mask, reference_attention_mask), dim=1)
+    control_attention_mask = torch.cat((reference_sequence_mask, reference_sequence_mask), dim=0)
     control_output = language_model.model(
         inputs_embeds=control_inputs,
         attention_mask=control_attention_mask,
@@ -464,10 +527,9 @@ def target_control_teacher_hidden_states(
     target_embeddings = embed_rvq_frames(language_model, depth_decoder, target_codes)
     target_attention_mask = torch.ones(target_codes.shape[:2], dtype=torch.long, device=target_codes.device)
     was_training = language_model.training
-    lokr_network.set_multiplier(0.0)
     language_model.eval()
     try:
-        with torch.no_grad():
+        with torch.no_grad(), bypass_lokr_network(lokr_network):
             return reference_delta_control_hidden_states(
                 language_model,
                 text_embeddings,
@@ -479,8 +541,28 @@ def target_control_teacher_hidden_states(
                 reference_attention_mask=target_attention_mask,
             )
     finally:
-        lokr_network.set_multiplier(1.0)
         language_model.train(was_training)
+
+
+def null_reference_delta_control_hidden_states(
+    language_model,
+    lokr_network,
+    query_positions: torch.Tensor,
+    dtype: torch.dtype,
+) -> tuple[torch.Tensor, ...]:
+    graph_zero = torch.zeros((), device=query_positions.device, dtype=dtype)
+    if torch.is_grad_enabled():
+        for parameter in lokr_network.parameters():
+            if parameter.requires_grad:
+                graph_zero = graph_zero + parameter.reshape(-1)[0].to(dtype) * 0.0
+    control = torch.zeros(
+        *query_positions.shape,
+        language_model.config.hidden_size,
+        device=query_positions.device,
+        dtype=dtype,
+    )
+    control = control + graph_zero
+    return tuple(control for _ in language_model.model.layers)
 
 
 def control_lora_hidden_states(
@@ -500,11 +582,13 @@ def control_lora_hidden_states(
     text_attention_mask: torch.Tensor | None = None,
     reference_attention_mask: torch.Tensor | None = None,
     return_control_hidden_states: bool = False,
+    precomputed_control_hidden_states: tuple[torch.Tensor, ...] | None = None,
 ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
     if control_input_mode not in CONTROL_INPUT_MODES:
         raise ValueError(f"unsupported control input mode: {control_input_mode}")
+    if precomputed_control_hidden_states is not None and control_input_mode != "reference-delta":
+        raise ValueError("precomputed control states require reference-delta input mode")
     feedback_embeddings = embed_rvq_frames(language_model, depth_decoder, feedback_codes)
-    reference_embeddings = embed_rvq_frames(language_model, depth_decoder, reference_codes)
     main_inputs = torch.cat((text_embeddings, feedback_embeddings), dim=1)
     query_start = text_embeddings.shape[1]
     main_attention_mask = None
@@ -523,8 +607,8 @@ def control_lora_hidden_states(
             dim=1,
         )
 
-    lokr_network.set_multiplier(1.0)
     if control_input_mode == "additive-hint":
+        reference_embeddings = embed_rvq_frames(language_model, depth_decoder, reference_codes)
         hint = aligned_reference_hint(reference_embeddings, query_positions, key_positions)
         if null_reference:
             hint = hint * 0.0
@@ -537,7 +621,19 @@ def control_lora_hidden_states(
         )
         control_hidden_states = control_output.hidden_states[1:]
         control_scale = 1.0
+    elif precomputed_control_hidden_states is not None:
+        control_hidden_states = precomputed_control_hidden_states
+        control_scale = hint_scale
+    elif null_reference and not torch.is_grad_enabled():
+        control_hidden_states = null_reference_delta_control_hidden_states(
+            language_model,
+            lokr_network,
+            query_positions,
+            text_embeddings.dtype,
+        )
+        control_scale = hint_scale
     else:
+        reference_embeddings = embed_rvq_frames(language_model, depth_decoder, reference_codes)
         control_hidden_states = reference_delta_control_hidden_states(
             language_model,
             text_embeddings,
@@ -551,8 +647,7 @@ def control_lora_hidden_states(
         control_scale = hint_scale
     if len(control_hidden_states) != len(language_model.model.layers):
         raise RuntimeError("control pass did not return one hidden state per Qwen block")
-    lokr_network.set_multiplier(0.0)
-    try:
+    with bypass_lokr_network(lokr_network):
         output = language_model.model(
             inputs_embeds=main_inputs,
             attention_mask=main_attention_mask,
@@ -561,8 +656,6 @@ def control_lora_hidden_states(
             control_query_start=query_start,
             control_scale=control_scale,
         )
-    finally:
-        lokr_network.set_multiplier(1.0)
     hidden_states = output.last_hidden_state[:, query_start:]
     if return_control_hidden_states:
         return hidden_states, control_hidden_states
@@ -576,22 +669,14 @@ def sequential_corrupted_feedback(
     lokr_network,
     text_embeddings: torch.Tensor,
     clean_feedback: torch.Tensor,
-    reference_codes: torch.Tensor,
-    query_positions: torch.Tensor,
-    key_positions: torch.Tensor,
     *,
-    hint_scale: float,
-    null_reference: bool,
     text_attention_mask: torch.Tensor | None,
-    reference_attention_mask: torch.Tensor | None,
     loss_start: int,
     corruption_rate: float,
     sampling_top_k: int,
 ) -> tuple[torch.Tensor, float]:
     if clean_feedback.ndim != 3 or clean_feedback.shape[-1] != depth_decoder.config.num_codebooks:
         raise ValueError("clean feedback must have shape [batch, frames, codebooks]")
-    if query_positions.shape != clean_feedback.shape[:2]:
-        raise ValueError("query positions must match clean feedback frames")
     if not 0 <= loss_start < clean_feedback.shape[1]:
         raise ValueError("loss_start must index clean feedback")
     if not 0.0 <= corruption_rate <= 1.0:
@@ -602,21 +687,9 @@ def sequential_corrupted_feedback(
     if corruption_rate == 0.0 or first_corruptible >= frame_count:
         return clean_feedback, 0.0
 
-    reference_embeddings = embed_rvq_frames(language_model, depth_decoder, reference_codes)
     was_training = language_model.training
     language_model.eval()
-    lokr_network.set_multiplier(1.0)
     try:
-        control_hidden_states = reference_delta_control_hidden_states(
-            language_model,
-            text_embeddings,
-            reference_embeddings,
-            query_positions,
-            key_positions,
-            null_reference=null_reference,
-            text_attention_mask=text_attention_mask,
-            reference_attention_mask=reference_attention_mask,
-        )
         warmup_embeddings = embed_rvq_frames(language_model, depth_decoder, clean_feedback[:, :1])
         main_inputs = torch.cat((text_embeddings, warmup_embeddings), dim=1)
         attention_mask = None
@@ -634,15 +707,12 @@ def sequential_corrupted_feedback(
                 dim=1,
             )
 
-        lokr_network.set_multiplier(0.0)
-        output = language_model.model(
-            inputs_embeds=main_inputs,
-            attention_mask=attention_mask,
-            use_cache=True,
-            control_hidden_states=tuple(states[:, :1] for states in control_hidden_states),
-            control_query_start=text_embeddings.shape[1],
-            control_scale=hint_scale,
-        )
+        with bypass_lokr_network(lokr_network):
+            output = language_model.model(
+                inputs_embeds=main_inputs,
+                attention_mask=attention_mask,
+                use_cache=True,
+            )
         feedback_frames = [clean_feedback[:, :1]]
         corrupted = 0
         corruptible = clean_feedback.shape[0] * (frame_count - first_corruptible)
@@ -688,20 +758,15 @@ def sequential_corrupted_feedback(
                     ),
                     dim=1,
                 )
-            output = language_model.model(
-                inputs_embeds=next_embeddings,
-                attention_mask=attention_mask,
-                past_key_values=output.past_key_values,
-                use_cache=True,
-                control_hidden_states=tuple(
-                    states[:, feedback_index : feedback_index + 1] for states in control_hidden_states
-                ),
-                control_query_start=0,
-                control_scale=hint_scale,
-            )
+            with bypass_lokr_network(lokr_network):
+                output = language_model.model(
+                    inputs_embeds=next_embeddings,
+                    attention_mask=attention_mask,
+                    past_key_values=output.past_key_values,
+                    use_cache=True,
+                )
         return torch.cat(feedback_frames, dim=1), corrupted / corruptible
     finally:
-        lokr_network.set_multiplier(1.0)
         language_model.train(was_training)
 
 
@@ -727,8 +792,39 @@ class ControlLoRATrainingModel(nn.Module):
         text_attention_mask: torch.Tensor | None,
         reference_attention_mask: torch.Tensor | None,
         return_control_hidden_states: bool = False,
-    ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
-        return control_lora_hidden_states(
+        precomputed_control_hidden_states: tuple[torch.Tensor, ...] | None = None,
+        sequential_corruption_rate: float | None = None,
+        sequential_sampling_top_k: int = 1,
+        loss_start: int = 0,
+        mismatched_reference_codes: torch.Tensor | None = None,
+        mismatched_key_positions: torch.Tensor | None = None,
+        mismatched_reference_attention_mask: torch.Tensor | None = None,
+    ):
+        mismatched_arguments = (
+            mismatched_reference_codes,
+            mismatched_key_positions,
+            mismatched_reference_attention_mask,
+        )
+        if any(value is None for value in mismatched_arguments) != all(value is None for value in mismatched_arguments):
+            raise ValueError("mismatched reference inputs must be provided together")
+        corruption_fraction = 0.0
+        if sequential_corruption_rate is not None:
+            if control_input_mode != "reference-delta":
+                raise ValueError("sequential corruption requires reference-delta input mode")
+            if precomputed_control_hidden_states is not None:
+                raise ValueError("sequential corruption computes its own control states")
+            feedback_codes, corruption_fraction = sequential_corrupted_feedback(
+                self.language_model,
+                self.depth_decoder,
+                self.lokr_network,
+                text_embeddings,
+                feedback_codes,
+                text_attention_mask=text_attention_mask,
+                loss_start=loss_start,
+                corruption_rate=sequential_corruption_rate,
+                sampling_top_k=sequential_sampling_top_k,
+            )
+        output = control_lora_hidden_states(
             self.language_model,
             self.depth_decoder,
             self.adapter,
@@ -744,11 +840,63 @@ class ControlLoRATrainingModel(nn.Module):
             text_attention_mask=text_attention_mask,
             reference_attention_mask=reference_attention_mask,
             return_control_hidden_states=return_control_hidden_states,
+            precomputed_control_hidden_states=precomputed_control_hidden_states,
         )
+        mismatched_control_hidden_states = None
+        if mismatched_reference_codes is not None:
+            if control_input_mode != "reference-delta":
+                raise ValueError("mismatched control states require reference-delta input mode")
+            mismatched_reference_embeddings = embed_rvq_frames(
+                self.language_model,
+                self.depth_decoder,
+                mismatched_reference_codes,
+            )
+            mismatched_control_hidden_states = reference_delta_control_hidden_states(
+                self.language_model,
+                text_embeddings,
+                mismatched_reference_embeddings,
+                query_positions,
+                mismatched_key_positions,
+                null_reference=False,
+                text_attention_mask=text_attention_mask,
+                reference_attention_mask=mismatched_reference_attention_mask,
+            )
+        if sequential_corruption_rate is not None:
+            if mismatched_control_hidden_states is not None:
+                return output, corruption_fraction, mismatched_control_hidden_states
+            return output, corruption_fraction
+        if mismatched_control_hidden_states is not None:
+            return output, mismatched_control_hidden_states
+        return output
 
 
 def unwrap_training_model(training_model) -> ControlLoRATrainingModel:
     return training_model.module if isinstance(training_model, DistributedDataParallel) else training_model
+
+
+def unpack_training_output(
+    model_output,
+    *,
+    sequential_corruption: bool,
+    align_control_states: bool,
+    corruption_fraction: float = 0.0,
+):
+    mismatched_control_hidden_states = None
+    if sequential_corruption:
+        if align_control_states:
+            model_output, corruption_fraction, mismatched_control_hidden_states = model_output
+        else:
+            model_output, corruption_fraction = model_output
+    elif align_control_states:
+        model_output, mismatched_control_hidden_states = model_output
+    return model_output, corruption_fraction, mismatched_control_hidden_states
+
+
+def mark_frozen_ddp_state(module: nn.Module) -> int:
+    ignored = {name for name, parameter in module.named_parameters() if not parameter.requires_grad}
+    ignored.update(name for name, _buffer in module.named_buffers())
+    module._ddp_params_and_buffers_to_ignore = ignored
+    return len(ignored)
 
 
 def train_step(
@@ -828,28 +976,20 @@ def train_step(
     )
     feedback_codes = clean_feedback
     corruption_fraction = 0.0
+    sequential_corruption = (
+        args.feedback_corruption_rate > 0.0 and not disable_corruption and args.feedback_corruption_mode == "sequential"
+    )
+    mismatched_reference_codes = None
+    mismatched_reference_attention_mask = None
+    mismatched_key_positions = None
+    if align_control_states:
+        mismatched_reference_codes = mismatched_control_sample["reference_codes"].to(device)
+        mismatched_reference_attention_mask = mismatched_control_sample["reference_attention_mask"].to(device)
+        mismatched_key_positions = mismatched_control_sample["key_positions"].to(device)
     if args.feedback_corruption_rate > 0.0 and not disable_corruption:
-        if args.feedback_corruption_mode == "sequential":
-            feedback_codes, corruption_fraction = sequential_corrupted_feedback(
-                language_model,
-                depth_decoder,
-                components.lokr_network,
-                text_embeddings,
-                clean_feedback,
-                reference_codes,
-                query_positions,
-                key_positions,
-                hint_scale=args.hint_scale,
-                null_reference=null_reference,
-                text_attention_mask=text_attention_mask,
-                reference_attention_mask=reference_attention_mask,
-                loss_start=loss_start,
-                corruption_rate=args.feedback_corruption_rate,
-                sampling_top_k=args.feedback_sampling_top_k,
-            )
-        else:
+        if not sequential_corruption:
             feedback_codes = clean_feedback
-            with torch.no_grad():
+            with no_grad_autocast_without_cache(device):
                 for _ in range(args.feedback_corruption_passes):
                     sampled_hidden = training_model(
                         text_embeddings,
@@ -887,32 +1027,24 @@ def train_step(
         text_attention_mask=text_attention_mask,
         reference_attention_mask=reference_attention_mask,
         return_control_hidden_states=align_control_states,
+        sequential_corruption_rate=args.feedback_corruption_rate if sequential_corruption else None,
+        sequential_sampling_top_k=args.feedback_sampling_top_k,
+        loss_start=loss_start,
+        mismatched_reference_codes=mismatched_reference_codes,
+        mismatched_key_positions=mismatched_key_positions,
+        mismatched_reference_attention_mask=mismatched_reference_attention_mask,
+    )
+    model_output, corruption_fraction, mismatched_control_hidden_states = unpack_training_output(
+        model_output,
+        sequential_corruption=sequential_corruption,
+        align_control_states=align_control_states,
+        corruption_fraction=corruption_fraction,
     )
     if align_control_states:
         hidden, student_control_hidden_states = model_output
     else:
         hidden = model_output
         student_control_hidden_states = None
-    mismatched_control_hidden_states = None
-    if align_control_states:
-        mismatched_reference_codes = mismatched_control_sample["reference_codes"].to(device)
-        mismatched_reference_attention_mask = mismatched_control_sample["reference_attention_mask"].to(device)
-        mismatched_key_positions = mismatched_control_sample["key_positions"].to(device)
-        mismatched_output = training_model(
-            text_embeddings,
-            clean_feedback,
-            mismatched_reference_codes,
-            query_positions,
-            mismatched_key_positions,
-            hint_scale=args.hint_scale,
-            null_reference=False,
-            control_input_mode=args.control_input_mode,
-            text_attention_mask=text_attention_mask,
-            reference_attention_mask=mismatched_reference_attention_mask,
-            return_control_hidden_states=True,
-        )
-        mismatched_hidden, mismatched_control_hidden_states = mismatched_output
-        del mismatched_hidden
     hidden = hidden[:, loss_start:]
     target_codes = target_codes[:, loss_start:]
     semantic_logits = F.linear(
@@ -1186,6 +1318,7 @@ def main() -> None:
     args = parse_args()
     context = initialize_distributed(args.device)
     args.world_size = context.world_size
+    validate_distributed_options(context, gradient_checkpointing=args.gradient_checkpointing)
     if args.overfit_clip_id is not None and args.overfit_ids_csv is not None:
         raise ValueError("--overfit-clip-id and --overfit-ids-csv are mutually exclusive")
     if args.crop_frames < 2:
@@ -1305,12 +1438,15 @@ def main() -> None:
     language_model.train()
     depth_decoder.eval()
     training_module = ControlLoRATrainingModel(language_model, depth_decoder, adapter, lokr_network)
+    if context.enabled:
+        mark_frozen_ddp_state(training_module)
     training_model = (
         DistributedDataParallel(
             training_module,
             device_ids=[context.local_rank],
             output_device=context.local_rank,
             broadcast_buffers=False,
+            static_graph=True,
         )
         if context.enabled
         else training_module
@@ -1378,41 +1514,43 @@ def main() -> None:
             sampler.set_epoch(data_epoch)
         for sample in loader:
             sync_gradients = (micro_step + 1) % args.gradient_accumulation == 0
-            synchronization = (
-                nullcontext()
-                if sync_gradients or not isinstance(training_model, DistributedDataParallel)
-                else training_model.no_sync()
-            )
-            with synchronization:
-                with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
-                    if use_mismatched_reference_step(micro_step, args.mismatched_reference_rate):
-                        negative_sample = mismatched_reference_batch(dataset, sample, args.seed + micro_step)
-                        loss, metrics = train_mismatched_reference_step(
-                            training_model,
-                            tokenizer,
-                            negative_sample,
-                            device,
-                            args,
-                        )
-                    else:
-                        control_negative = (
-                            mismatched_reference_batch(dataset, sample, args.seed + micro_step)
-                            if args.control_alignment_weight > 0.0
-                            else None
-                        )
-                        loss, metrics = train_step(
-                            training_model,
-                            tokenizer,
-                            sample,
-                            device,
-                            args,
-                            mismatched_control_sample=control_negative,
-                        )
-                    scaled_loss = loss / args.gradient_accumulation
-                scaled_loss.backward()
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+                if use_mismatched_reference_step(micro_step, args.mismatched_reference_rate):
+                    negative_sample = mismatched_reference_batch(dataset, sample, args.seed + micro_step)
+                    loss, metrics = train_mismatched_reference_step(
+                        training_model,
+                        tokenizer,
+                        negative_sample,
+                        device,
+                        args,
+                    )
+                else:
+                    control_negative = (
+                        mismatched_reference_batch(dataset, sample, args.seed + micro_step)
+                        if args.control_alignment_weight > 0.0
+                        else None
+                    )
+                    loss, metrics = train_step(
+                        training_model,
+                        tokenizer,
+                        sample,
+                        device,
+                        args,
+                        mismatched_control_sample=control_negative,
+                    )
+                scaled_loss = loss / args.gradient_accumulation
+            scaled_loss.backward()
             micro_step += 1
             if not sync_gradients:
                 continue
+            metrics["adapter_grad_norm"] = parameter_gradient_norm(adapter.parameters())
+            metrics["lokr_grad_norm"] = parameter_gradient_norm(lokr_network.parameters())
+            adapter_gradient_tensors = sum(parameter.grad is not None for parameter in adapter.parameters())
+            lokr_gradient_tensors = sum(parameter.grad is not None for parameter in lokr_network.parameters())
+            metrics["adapter_gradient_tensors"] = adapter_gradient_tensors
+            metrics["lokr_gradient_tensors"] = lokr_gradient_tensors
+            if step == 0:
+                validate_first_backward(adapter, lokr_network)
             grad_norm = torch.nn.utils.clip_grad_norm_(parameters, args.max_grad_norm)
             optimizer.step()
             scheduler.step()

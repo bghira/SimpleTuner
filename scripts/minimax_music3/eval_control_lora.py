@@ -116,6 +116,10 @@ def classifier_free_guidance_logits(
         raise ValueError("conditioned and unconditioned logits must have the same shape")
     if not math.isfinite(scale) or scale < 0.0:
         raise ValueError("CFG scale must be finite and non-negative")
+    if scale == 0.0:
+        return unconditioned
+    if scale == 1.0:
+        return conditioned
     return unconditioned + (conditioned - unconditioned) * scale
 
 
@@ -133,25 +137,32 @@ def generate_cfg_frame(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     if conditioned_hidden.shape != unconditioned_hidden.shape or conditioned_hidden.shape[0] != 1:
         raise ValueError("CFG frame generation requires one conditioned and one unconditioned hidden state")
-    semantic = select_code(semantic_logits, sample=sample, top_k=top_k, generator=generator).repeat(2)
-    hidden = torch.cat((conditioned_hidden, unconditioned_hidden), dim=0)
-    sequence = [depth_decoder.projection(hidden).unsqueeze(1)]
-    semantic_embedding = language_model.model.embed_tokens(semantic + AUDIO_CODE_OFFSET)
-    sequence.append(depth_decoder.projection(semantic_embedding).unsqueeze(1))
+    semantic = select_code(semantic_logits, sample=sample, top_k=top_k, generator=generator)
+    conditioned_sequence = [depth_decoder.projection(conditioned_hidden).unsqueeze(1)]
+    unconditioned_sequence = [depth_decoder.projection(unconditioned_hidden).unsqueeze(1)]
+    semantic_embedding = depth_decoder.projection(language_model.model.embed_tokens(semantic + AUDIO_CODE_OFFSET)).unsqueeze(
+        1
+    )
+    conditioned_sequence.append(semantic_embedding)
+    unconditioned_sequence.append(semantic_embedding)
     codes = [semantic]
     depth_hiddens = []
     for codebook in range(1, depth_decoder.config.num_codebooks):
-        depth_hidden = depth_decoder(torch.cat(sequence, dim=1))[:, -1]
-        depth_hiddens.append(depth_hidden[:1])
-        logits = depth_decoder.audio_heads[codebook - 1](depth_hidden).float()
-        guided = classifier_free_guidance_logits(logits[:1], logits[1:2], cfg_scale)
-        code = select_code(guided, sample=sample, top_k=top_k, generator=generator).repeat(2)
+        conditioned_depth_hidden = depth_decoder(torch.cat(conditioned_sequence, dim=1))[:, -1]
+        unconditioned_depth_hidden = depth_decoder(torch.cat(unconditioned_sequence, dim=1))[:, -1]
+        depth_hiddens.append(conditioned_depth_hidden)
+        conditioned_logits = depth_decoder.audio_heads[codebook - 1](conditioned_depth_hidden).float()
+        unconditioned_logits = depth_decoder.audio_heads[codebook - 1](unconditioned_depth_hidden).float()
+        guided = classifier_free_guidance_logits(conditioned_logits, unconditioned_logits, cfg_scale)
+        code = select_code(guided, sample=sample, top_k=top_k, generator=generator)
         codes.append(code)
         if codebook < depth_decoder.config.num_codebooks - 1:
             embedding = depth_decoder.audio_embeddings(code + (codebook - 1) * depth_decoder.config.audio_vocab_size)
-            sequence.append(depth_decoder.projection(embedding).unsqueeze(1))
+            embedding = depth_decoder.projection(embedding).unsqueeze(1)
+            conditioned_sequence.append(embedding)
+            unconditioned_sequence.append(embedding)
     frame_hidden = torch.cat((conditioned_hidden.float(), torch.cat(depth_hiddens, dim=-1).float()), dim=-1)
-    return torch.stack(codes, dim=-1)[:1], frame_hidden
+    return torch.stack(codes, dim=-1), frame_hidden
 
 
 def checkpoint_args(config: dict) -> SimpleNamespace:

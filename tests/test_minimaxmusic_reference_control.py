@@ -33,19 +33,29 @@ from scripts.minimax_music3.eval_reference_control import (
 )
 from scripts.minimax_music3.train_control_lora import (
     ControlLoRATrainingModel,
+    DistributedContext,
     aligned_reference_hint,
     build_control_datasets,
+    bypass_lokr_network,
     collate_control_samples,
+    control_lora_hidden_states,
     generated_warmup_codes,
     initialize_distributed,
     load_clip_ids_csv,
+    mark_frozen_ddp_state,
     mismatched_reference_margin_loss,
+    no_grad_autocast_without_cache,
+    null_reference_delta_control_hidden_states,
+    parameter_gradient_norm,
     reference_delta_control_hidden_states,
     replace_with_mismatched_references,
     semantic_cross_entropy,
     sequential_corrupted_feedback,
     target_control_teacher_hidden_states,
+    unpack_training_output,
     use_mismatched_reference_step,
+    validate_distributed_options,
+    validate_first_backward,
 )
 from scripts.minimax_music3.train_prefix_distillation import (
     base_model_teacher,
@@ -58,7 +68,9 @@ from scripts.minimax_music3.train_prefix_distillation import (
     weighted_head_mean,
 )
 from scripts.minimax_music3.train_reference_control import (
+    AUDIO_CODE_OFFSET,
     CachedStylePairDataset,
+    depth_losses,
     load_initial_weights,
     splice_sampled_feedback,
 )
@@ -74,6 +86,7 @@ from simpletuner.helpers.models.minimaxmusic.reference_control import (
     prefix_adapter_checkpoint_filename,
     quantize_qwen_linears,
 )
+from simpletuner.helpers.models.minimaxmusic.rvq_depth_decoder import MiniMaxMusic3RVQDepthDecoder
 
 
 def tiny_qwen() -> Qwen3ForCausalLM:
@@ -91,6 +104,439 @@ def tiny_qwen() -> Qwen3ForCausalLM:
 
 
 class ReferenceControlTest(unittest.TestCase):
+    def test_lokr_bypass_restores_patched_projection(self):
+        projection = nn.Linear(2, 2, bias=False)
+
+        class Lora:
+            def __init__(self, module):
+                self.lora_name = "test_lokr"
+                self.org_module = [module]
+                self.org_forward = module.forward
+
+            def forward(self, values):
+                return self.org_forward(values) + 1.0
+
+        lora = Lora(projection)
+        projection.forward = lora.forward
+        network = SimpleNamespace(loras=[lora])
+        values = torch.ones(1, 2)
+        controlled = projection(values)
+
+        with self.assertRaisesRegex(RuntimeError, "probe"):
+            with bypass_lokr_network(network):
+                torch.testing.assert_close(projection(values), controlled - 1.0)
+                raise RuntimeError("probe")
+
+        torch.testing.assert_close(projection(values), controlled)
+
+    def test_lokr_bypass_prevents_no_grad_autocast_cache_from_detaching_training_pass(self):
+        model = tiny_qwen()
+        model.requires_grad_(False)
+        lokr = create_qwen_lokr_adapter(model, rank=4, alpha=4.0, bypass_mode=True)
+        text_embeddings = torch.randn(1, 2, model.config.hidden_size)
+        reference_embeddings = torch.randn(1, 3, model.config.hidden_size)
+        positions = torch.arange(3, dtype=torch.float32).unsqueeze(0)
+
+        with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+            with torch.no_grad(), bypass_lokr_network(lokr):
+                model.model(inputs_embeds=text_embeddings, use_cache=False)
+            controls = reference_delta_control_hidden_states(
+                model,
+                text_embeddings,
+                reference_embeddings,
+                positions,
+                positions,
+                null_reference=False,
+                text_attention_mask=None,
+                reference_attention_mask=None,
+            )
+            loss = sum(control.float().square().mean() for control in controls)
+        loss.backward()
+
+        self.assertTrue(any(parameter.grad is not None for parameter in lokr.parameters()))
+
+    def test_no_grad_corruption_pass_does_not_detach_control_lora_weights(self):
+        model = tiny_qwen()
+        model.requires_grad_(False)
+        adapter = MiniMaxMusic3ControlLoRAAdapter(
+            ControlLoRAConfig(hidden_size=64, residual_rank=4, layer_indices=(0, 1, 2, 3))
+        )
+        adapter.install(model)
+        with torch.no_grad():
+            for residual in adapter.residuals:
+                residual.up.weight.fill_(0.01)
+        text_embeddings = torch.randn(1, 2, model.config.hidden_size)
+        feedback_embeddings = torch.randn(1, 3, model.config.hidden_size)
+        controls = tuple(torch.randn(1, 3, model.config.hidden_size) for _ in model.model.layers)
+
+        def forward():
+            inputs = torch.cat((text_embeddings, feedback_embeddings), dim=1)
+            return model.model(
+                inputs_embeds=inputs,
+                use_cache=False,
+                control_hidden_states=controls,
+                control_query_start=text_embeddings.shape[1],
+                control_scale=1.0,
+            ).last_hidden_state
+
+        with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+            with no_grad_autocast_without_cache(torch.device("cpu")):
+                forward()
+            loss = forward().float().square().mean()
+        loss.backward()
+
+        missing = [name for name, parameter in adapter.named_parameters() if parameter.grad is None]
+        self.assertEqual(missing, [])
+
+    def test_parameter_gradient_norm_ignores_parameters_without_gradients(self):
+        first = nn.Parameter(torch.tensor([3.0, 4.0]))
+        second = nn.Parameter(torch.tensor([12.0]))
+        unused = nn.Parameter(torch.tensor([100.0]))
+        first.grad = first.detach().clone()
+        second.grad = second.detach().clone()
+
+        self.assertEqual(parameter_gradient_norm((first, unused, second)), 13.0)
+
+    def test_first_backward_validation_accepts_zero_initialized_control_lora(self):
+        adapter = MiniMaxMusic3ControlLoRAAdapter(ControlLoRAConfig(hidden_size=8, residual_rank=2, layer_indices=(0, 1)))
+        lokr = nn.Linear(2, 2, bias=False)
+        for residual in adapter.residuals:
+            residual.up.weight.grad = torch.ones_like(residual.up.weight)
+        lokr.weight.grad = torch.zeros_like(lokr.weight)
+
+        validate_first_backward(adapter, lokr)
+
+    def test_first_backward_validation_rejects_detached_control_output_projection(self):
+        adapter = MiniMaxMusic3ControlLoRAAdapter(ControlLoRAConfig(hidden_size=8, residual_rank=2, layer_indices=(0, 1)))
+        lokr = nn.Linear(2, 2, bias=False)
+        adapter.residuals[0].up.weight.grad = torch.ones_like(adapter.residuals[0].up.weight)
+        lokr.weight.grad = torch.ones_like(lokr.weight)
+
+        with self.assertRaisesRegex(RuntimeError, "1/2 output projections"):
+            validate_first_backward(adapter, lokr)
+
+    def test_first_backward_validation_rejects_detached_lokr(self):
+        adapter = MiniMaxMusic3ControlLoRAAdapter(ControlLoRAConfig(hidden_size=8, residual_rank=2, layer_indices=(0, 1)))
+        lokr = nn.Linear(2, 2, bias=False)
+        for residual in adapter.residuals:
+            residual.up.weight.grad = torch.ones_like(residual.up.weight)
+
+        with self.assertRaisesRegex(RuntimeError, "did not reach any parameter tensors"):
+            validate_first_backward(adapter, lokr)
+
+    def test_unpack_training_output_handles_sequential_corruption_without_alignment(self):
+        hidden = object()
+        actual = unpack_training_output(
+            (hidden, 0.5),
+            sequential_corruption=True,
+            align_control_states=False,
+        )
+        self.assertEqual(actual, (hidden, 0.5, None))
+
+    def test_unpack_training_output_handles_sequential_corruption_with_alignment(self):
+        hidden = object()
+        mismatched = object()
+        actual = unpack_training_output(
+            (hidden, 0.5, mismatched),
+            sequential_corruption=True,
+            align_control_states=True,
+        )
+        self.assertEqual(actual, (hidden, 0.5, mismatched))
+
+    def test_unpack_training_output_preserves_iterative_corruption_fraction(self):
+        hidden = object()
+        actual = unpack_training_output(
+            hidden,
+            sequential_corruption=False,
+            align_control_states=False,
+            corruption_fraction=0.25,
+        )
+        self.assertEqual(actual, (hidden, 0.25, None))
+
+    def test_null_reference_control_states_keep_zero_lokr_gradients(self):
+        model = tiny_qwen()
+        lokr = nn.Linear(4, 4, bias=False)
+        positions = torch.arange(3, dtype=torch.float32).expand(2, -1)
+        states = null_reference_delta_control_hidden_states(model, lokr, positions, torch.float32)
+        self.assertEqual(len(states), len(model.model.layers))
+        self.assertEqual(states[0].shape, (2, 3, model.config.hidden_size))
+        sum(state.sum() for state in states).backward()
+        self.assertIsNotNone(lokr.weight.grad)
+        torch.testing.assert_close(lokr.weight.grad, torch.zeros_like(lokr.weight.grad))
+
+    def test_precomputed_reference_delta_matches_inline_control(self):
+        class Lokr:
+            loras = ()
+
+        torch.manual_seed(9)
+        model = tiny_qwen().eval()
+        adapter = MiniMaxMusic3ControlLoRAAdapter(
+            ControlLoRAConfig(hidden_size=64, residual_rank=4, layer_indices=(0, 1, 2, 3))
+        )
+        adapter.install(model)
+        with torch.no_grad():
+            adapter.residuals[0].up.weight.fill_(0.01)
+        depth_decoder = MiniMaxMusic3RVQDepthDecoder(
+            hidden_size=64,
+            num_layers=1,
+            num_attention_heads=4,
+            intermediate_size=128,
+            audio_vocab_size=16,
+            num_codebooks=8,
+        )
+        text_embeddings = torch.randn(1, 2, 64)
+        feedback_codes = torch.randint(0, 16, (1, 3, 8))
+        reference_codes = torch.randint(0, 16, (1, 3, 8))
+        positions = torch.arange(3, dtype=torch.float32).unsqueeze(0)
+
+        def fake_embeddings(_language_model, _depth_decoder, codes):
+            return codes.float().sum(dim=-1, keepdim=True).expand(-1, -1, 64)
+
+        reference_embeddings = fake_embeddings(model, depth_decoder, reference_codes)
+        controls = reference_delta_control_hidden_states(
+            model,
+            text_embeddings,
+            reference_embeddings,
+            positions,
+            positions,
+            null_reference=False,
+            text_attention_mask=None,
+            reference_attention_mask=None,
+        )
+        with patch("scripts.minimax_music3.train_control_lora.embed_rvq_frames", side_effect=fake_embeddings):
+            expected = control_lora_hidden_states(
+                model,
+                depth_decoder,
+                adapter,
+                Lokr(),
+                text_embeddings,
+                feedback_codes,
+                reference_codes,
+                positions,
+                positions,
+                hint_scale=1.0,
+                null_reference=False,
+                control_input_mode="reference-delta",
+            )
+            actual = control_lora_hidden_states(
+                model,
+                depth_decoder,
+                adapter,
+                Lokr(),
+                text_embeddings,
+                feedback_codes,
+                reference_codes,
+                positions,
+                positions,
+                hint_scale=1.0,
+                null_reference=False,
+                control_input_mode="reference-delta",
+                precomputed_control_hidden_states=controls,
+            )
+        torch.testing.assert_close(actual, expected)
+
+    def test_training_wrapper_returns_mismatched_control_without_second_main_pass(self):
+        class Lokr(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.weight = nn.Parameter(torch.ones(()))
+                self.loras = ()
+
+        torch.manual_seed(10)
+        model = tiny_qwen().eval()
+        adapter = MiniMaxMusic3ControlLoRAAdapter(
+            ControlLoRAConfig(hidden_size=64, residual_rank=4, layer_indices=(0, 1, 2, 3))
+        )
+        adapter.install(model)
+        depth_decoder = MiniMaxMusic3RVQDepthDecoder(
+            hidden_size=64,
+            num_layers=1,
+            num_attention_heads=4,
+            intermediate_size=128,
+            audio_vocab_size=16,
+            num_codebooks=8,
+        )
+        lokr = Lokr()
+        wrapper = ControlLoRATrainingModel(model, depth_decoder, adapter, lokr)
+        text_embeddings = torch.randn(1, 2, 64)
+        feedback_codes = torch.randint(0, 16, (1, 3, 8))
+        reference_codes = torch.randint(0, 16, (1, 3, 8))
+        mismatched_codes = torch.randint(0, 16, (1, 3, 8))
+        positions = torch.arange(3, dtype=torch.float32).unsqueeze(0)
+
+        def fake_embeddings(_language_model, _depth_decoder, codes):
+            return codes.float().sum(dim=-1, keepdim=True).expand(-1, -1, 64)
+
+        expected_mismatched = reference_delta_control_hidden_states(
+            model,
+            text_embeddings,
+            fake_embeddings(model, depth_decoder, mismatched_codes),
+            positions,
+            positions,
+            null_reference=False,
+            text_attention_mask=None,
+            reference_attention_mask=None,
+        )
+        with (
+            patch("scripts.minimax_music3.train_control_lora.embed_rvq_frames", side_effect=fake_embeddings),
+            patch(
+                "scripts.minimax_music3.train_control_lora.control_lora_hidden_states",
+                wraps=control_lora_hidden_states,
+            ) as main_forward,
+        ):
+            output, actual_mismatched = wrapper(
+                text_embeddings,
+                feedback_codes,
+                reference_codes,
+                positions,
+                positions,
+                hint_scale=1.0,
+                null_reference=False,
+                control_input_mode="reference-delta",
+                text_attention_mask=None,
+                reference_attention_mask=None,
+                return_control_hidden_states=True,
+                mismatched_reference_codes=mismatched_codes,
+                mismatched_key_positions=positions,
+                mismatched_reference_attention_mask=torch.ones(1, 3, dtype=torch.long),
+            )
+        self.assertEqual(main_forward.call_count, 1)
+        self.assertEqual(len(output[1]), len(model.model.layers))
+        for actual, expected in zip(actual_mismatched, expected_mismatched, strict=True):
+            torch.testing.assert_close(actual, expected)
+
+    def test_sequential_rollout_and_training_pass_compute_separate_controls(self):
+        class Lokr(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.weight = nn.Parameter(torch.ones(()))
+
+            def set_multiplier(self, _value):
+                pass
+
+        model = tiny_qwen().eval()
+        adapter = MiniMaxMusic3ControlLoRAAdapter(
+            ControlLoRAConfig(hidden_size=64, residual_rank=4, layer_indices=(0, 1, 2, 3))
+        )
+        adapter.install(model)
+        depth_decoder = MiniMaxMusic3RVQDepthDecoder(
+            hidden_size=64,
+            num_layers=1,
+            num_attention_heads=4,
+            intermediate_size=128,
+            audio_vocab_size=16,
+            num_codebooks=8,
+        )
+        wrapper = ControlLoRATrainingModel(model, depth_decoder, adapter, Lokr())
+        text_embeddings = torch.randn(1, 2, 64)
+        codes = torch.randint(0, 16, (1, 3, 8))
+        positions = torch.arange(3, dtype=torch.float32).unsqueeze(0)
+
+        with (
+            patch(
+                "scripts.minimax_music3.train_control_lora.sequential_corrupted_feedback",
+                return_value=(codes, 0.0),
+            ) as rollout,
+            patch(
+                "scripts.minimax_music3.train_control_lora.control_lora_hidden_states",
+                return_value=torch.zeros(1, 3, 64),
+            ) as training_forward,
+        ):
+            wrapper(
+                text_embeddings,
+                codes,
+                codes,
+                positions,
+                positions,
+                hint_scale=1.0,
+                null_reference=False,
+                control_input_mode="reference-delta",
+                text_attention_mask=None,
+                reference_attention_mask=None,
+                sequential_corruption_rate=0.5,
+            )
+
+        self.assertNotIn("precomputed_control_hidden_states", rollout.call_args.kwargs)
+        self.assertIsNone(training_forward.call_args.kwargs["precomputed_control_hidden_states"])
+
+    def test_depth_decoder_incremental_cache_matches_causal_prefixes(self):
+        torch.manual_seed(5)
+        decoder = MiniMaxMusic3RVQDepthDecoder(
+            hidden_size=16,
+            num_layers=2,
+            num_attention_heads=4,
+            intermediate_size=32,
+            audio_vocab_size=8,
+            num_codebooks=4,
+            max_position_embeddings=8,
+        ).eval()
+        inputs = torch.randn(2, 2, 16)
+        cached, past_key_values = decoder.forward_with_cache(inputs)
+        torch.testing.assert_close(cached, decoder(inputs), rtol=1e-5, atol=1e-6)
+        for _ in range(4):
+            next_input = torch.randn(2, 1, 16)
+            inputs = torch.cat((inputs, next_input), dim=1)
+            cached, past_key_values = decoder.forward_with_cache(next_input, past_key_values)
+            torch.testing.assert_close(cached, decoder(inputs)[:, -1:], rtol=1e-5, atol=1e-6)
+
+    def test_depth_losses_single_causal_pass_matches_prefix_forwards(self):
+        torch.manual_seed(7)
+        decoder = MiniMaxMusic3RVQDepthDecoder(
+            hidden_size=16,
+            num_layers=2,
+            num_attention_heads=4,
+            intermediate_size=32,
+            audio_vocab_size=8,
+            num_codebooks=4,
+            max_position_embeddings=8,
+        )
+        language_model = SimpleNamespace(
+            model=SimpleNamespace(embed_tokens=nn.Embedding(AUDIO_CODE_OFFSET + 8, 16)),
+        )
+        hidden = torch.randn(2, 3, 16, requires_grad=True)
+        target = torch.randint(0, 8, (2, 3, 4))
+
+        flat_hidden = hidden.flatten(0, 1)
+        flat_codes = target.flatten(0, 1)
+        sequence = [decoder.projection(flat_hidden).unsqueeze(1)]
+        semantic = language_model.model.embed_tokens(flat_codes[:, 0] + AUDIO_CODE_OFFSET)
+        sequence.append(decoder.projection(semantic).unsqueeze(1))
+        prefix_losses = []
+        for codebook in range(1, decoder.config.num_codebooks):
+            depth_hidden = decoder(torch.cat(sequence, dim=1))[:, -1]
+            logits = decoder.audio_heads[codebook - 1](depth_hidden).float()
+            prefix_losses.append(torch.nn.functional.cross_entropy(logits, flat_codes[:, codebook]))
+            if codebook < decoder.config.num_codebooks - 1:
+                embedding = decoder.audio_embeddings(
+                    flat_codes[:, codebook] + (codebook - 1) * decoder.config.audio_vocab_size
+                )
+                sequence.append(decoder.projection(embedding).unsqueeze(1))
+        sum(prefix_losses).backward()
+        expected_gradients = {
+            name: parameter.grad.detach().clone()
+            for name, parameter in (
+                *(decoder.named_parameters()),
+                ("text_embeddings", language_model.model.embed_tokens.weight),
+            )
+            if parameter.grad is not None
+        }
+        expected_hidden_gradient = hidden.grad.detach().clone()
+
+        decoder.zero_grad(set_to_none=True)
+        language_model.model.embed_tokens.zero_grad(set_to_none=True)
+        hidden.grad = None
+        causal_losses = depth_losses(decoder, language_model, hidden, target)
+        sum(causal_losses).backward()
+
+        torch.testing.assert_close(torch.stack(causal_losses), torch.stack(prefix_losses), rtol=1e-5, atol=1e-6)
+        torch.testing.assert_close(hidden.grad, expected_hidden_gradient, rtol=2e-5, atol=1e-6)
+        for name, parameter in (
+            *(decoder.named_parameters()),
+            ("text_embeddings", language_model.model.embed_tokens.weight),
+        ):
+            if name in expected_gradients:
+                torch.testing.assert_close(parameter.grad, expected_gradients[name], rtol=2e-5, atol=1e-6)
+
     def test_control_residual_query_gate_preserves_old_path_at_initialization(self):
         projector = ControlResidualProjector(hidden_size=4, rank=2)
         with torch.no_grad():
@@ -126,13 +572,44 @@ class ReferenceControlTest(unittest.TestCase):
         for control_state in controls:
             self.assertLess(control_state.abs().max().item(), 1e-6)
 
+    def test_reference_delta_matches_full_sequences(self):
+        torch.manual_seed(11)
+        model = tiny_qwen().eval()
+        text_embeddings = torch.randn(2, 4, 64)
+        reference_embeddings = torch.randn(2, 3, 64)
+        text_attention_mask = torch.tensor([[0, 1, 1, 1], [1, 1, 1, 1]])
+        reference_attention_mask = torch.tensor([[1, 1, 0], [1, 1, 1]])
+        positions = torch.arange(3, dtype=torch.float32).expand(2, -1)
+        conditioned_inputs = torch.cat((text_embeddings, reference_embeddings), dim=1)
+        null_inputs = torch.cat((text_embeddings, torch.zeros_like(reference_embeddings)), dim=1)
+        sequence_mask = torch.cat((text_attention_mask, reference_attention_mask), dim=1)
+        full_output = model.model(
+            inputs_embeds=torch.cat((conditioned_inputs, null_inputs), dim=0),
+            attention_mask=torch.cat((sequence_mask, sequence_mask), dim=0),
+            use_cache=False,
+            output_hidden_states=True,
+        )
+        expected = []
+        for layer_hidden_states in full_output.hidden_states[1:]:
+            conditioned, null = layer_hidden_states.chunk(2, dim=0)
+            expected.append(conditioned[:, text_embeddings.shape[1] :] - null[:, text_embeddings.shape[1] :])
+
+        actual = reference_delta_control_hidden_states(
+            model,
+            text_embeddings,
+            reference_embeddings,
+            positions,
+            positions,
+            null_reference=False,
+            text_attention_mask=text_attention_mask,
+            reference_attention_mask=reference_attention_mask,
+        )
+        for actual_layer, expected_layer in zip(actual, expected, strict=True):
+            torch.testing.assert_close(actual_layer, expected_layer)
+
     def test_target_control_teacher_restores_lokr_and_training_mode(self):
         class Lokr:
-            def __init__(self):
-                self.values = []
-
-            def set_multiplier(self, value):
-                self.values.append(value)
+            loras = ()
 
         model = tiny_qwen().train()
         lokr = Lokr()
@@ -152,7 +629,6 @@ class ReferenceControlTest(unittest.TestCase):
             )
         self.assertEqual(len(controls), len(model.model.layers))
         self.assertTrue(model.training)
-        self.assertEqual(lokr.values, [0.0, 1.0])
 
     def test_shifted_reference_sample_preserves_target_and_rotates_reference(self):
         sample = {
@@ -252,6 +728,8 @@ class ReferenceControlTest(unittest.TestCase):
             classifier_free_guidance_logits(conditioned, unconditioned, 0.0),
             unconditioned,
         )
+        self.assertIs(classifier_free_guidance_logits(conditioned, unconditioned, 0.0), unconditioned)
+        self.assertIs(classifier_free_guidance_logits(conditioned, unconditioned, 1.0), conditioned)
 
     def test_exclude_semantic_target_preserves_other_logits(self):
         logits = torch.tensor([[1.0, 4.0, 3.0], [5.0, 6.0, 7.0]])
@@ -276,6 +754,12 @@ class ReferenceControlTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "RANK, LOCAL_RANK, and WORLD_SIZE"):
                 initialize_distributed("cpu")
 
+    def test_ddp_rejects_mutable_lokr_gradient_checkpointing(self):
+        context = DistributedContext(torch.device("cuda", 0), rank=0, local_rank=0, world_size=2)
+        with self.assertRaisesRegex(ValueError, "LyCORIS bypass multipliers"):
+            validate_distributed_options(context, gradient_checkpointing=True)
+        validate_distributed_options(context, gradient_checkpointing=False)
+
     def test_control_lora_training_wrapper_owns_indirect_adapter_parameters(self):
         model = tiny_qwen()
         model.requires_grad_(False)
@@ -290,6 +774,24 @@ class ReferenceControlTest(unittest.TestCase):
         wrapper_parameter_ids = {id(parameter) for parameter in wrapper.parameters()}
         self.assertTrue({id(parameter) for parameter in adapter.parameters()} <= wrapper_parameter_ids)
         self.assertTrue({id(parameter) for parameter in lokr_network.parameters()} <= wrapper_parameter_ids)
+
+    def test_ddp_ignores_only_frozen_control_wrapper_state(self):
+        model = tiny_qwen()
+        model.requires_grad_(False)
+        adapter = MiniMaxMusic3ControlLoRAAdapter(
+            ControlLoRAConfig(hidden_size=64, residual_rank=4, layer_indices=(0, 1, 2, 3))
+        )
+        adapter.install(model)
+        depth_decoder = nn.Linear(2, 2)
+        depth_decoder.requires_grad_(False)
+        lokr_network = nn.Linear(2, 2, bias=False)
+        wrapper = ControlLoRATrainingModel(model, depth_decoder, adapter, lokr_network)
+        mark_frozen_ddp_state(wrapper)
+        ignored = wrapper._ddp_params_and_buffers_to_ignore
+        parameters = dict(wrapper.named_parameters())
+        self.assertTrue(ignored)
+        self.assertTrue(all(not parameters[name].requires_grad for name in ignored if name in parameters))
+        self.assertTrue(all(name not in ignored for name, parameter in parameters.items() if parameter.requires_grad))
 
     def test_aligned_reference_hint_interpolates_query_timeline(self):
         reference = torch.tensor([[[0.0], [10.0], [20.0]]])
@@ -440,11 +942,7 @@ class ReferenceControlTest(unittest.TestCase):
                 self.model = Body()
 
         class Lokr:
-            def __init__(self):
-                self.multipliers = []
-
-            def set_multiplier(self, value):
-                self.multipliers.append(value)
+            loras = ()
 
         language_model = LanguageModel()
         language_model.train()
@@ -461,16 +959,11 @@ class ReferenceControlTest(unittest.TestCase):
         torch.testing.assert_close(language_model.model.attention_mask, attention_mask)
         torch.testing.assert_close(sample_codes.call_args.args[2], torch.ones(2, 1, 4))
         self.assertEqual(sample_codes.call_args.kwargs["top_k"], 1)
-        self.assertEqual(lokr.multipliers, [0.0, 1.0])
         self.assertTrue(language_model.training)
 
     def test_sequential_corruption_uses_generated_history_after_clean_context(self):
         class Lokr:
-            def __init__(self):
-                self.multipliers = []
-
-            def set_multiplier(self, value):
-                self.multipliers.append(value)
+            loras = ()
 
         model = tiny_qwen().train()
         adapter = MiniMaxMusic3ControlLoRAAdapter(
@@ -486,7 +979,6 @@ class ReferenceControlTest(unittest.TestCase):
             ]
         )
         sampled = [torch.full((2, 1, 8), value) for value in (10, 20, 30)]
-        positions = torch.arange(4, dtype=torch.float32).expand(2, -1)
 
         def fake_embeddings(_language_model, _depth_decoder, codes):
             return codes[..., :1].float().expand(-1, -1, 64)
@@ -501,13 +993,7 @@ class ReferenceControlTest(unittest.TestCase):
                 lokr,
                 torch.randn(2, 3, 64),
                 clean_feedback,
-                clean_feedback,
-                positions,
-                positions,
-                hint_scale=1.0,
-                null_reference=False,
                 text_attention_mask=torch.tensor([[0, 1, 1], [1, 1, 1]]),
-                reference_attention_mask=torch.ones(2, 4, dtype=torch.long),
                 loss_start=1,
                 corruption_rate=1.0,
                 sampling_top_k=1,
@@ -518,7 +1004,6 @@ class ReferenceControlTest(unittest.TestCase):
         expected[:, 3] = 30
         torch.testing.assert_close(feedback, expected)
         self.assertEqual(fraction, 1.0)
-        self.assertEqual(lokr.multipliers, [1.0, 0.0, 1.0])
         self.assertTrue(model.training)
 
     def test_legacy_control_checkpoint_keeps_reference_first_warmup(self):

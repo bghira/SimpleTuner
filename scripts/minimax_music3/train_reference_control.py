@@ -235,22 +235,22 @@ def depth_losses(
     sequence = [depth_decoder.projection(hidden).unsqueeze(1)]
     semantic_embed = language_model.model.embed_tokens(codes[:, 0] + AUDIO_CODE_OFFSET)
     sequence.append(depth_decoder.projection(semantic_embed).unsqueeze(1))
-    losses = []
-    for codebook in range(1, depth_decoder.config.num_codebooks):
-        depth_inputs = torch.cat(sequence, dim=1)
-        depth_hidden = (
-            checkpoint(depth_decoder, depth_inputs, use_reentrant=False)
-            if checkpoint_decoder
-            else depth_decoder(depth_inputs)
-        )[:, -1]
-        logits = depth_decoder.audio_heads[codebook - 1](depth_hidden).float()
-        losses.append(F.cross_entropy(logits, codes[:, codebook]))
-        if codebook < depth_decoder.config.num_codebooks - 1:
-            embedding = depth_decoder.audio_embeddings(
-                codes[:, codebook] + (codebook - 1) * depth_decoder.config.audio_vocab_size
-            )
-            sequence.append(depth_decoder.projection(embedding).unsqueeze(1))
-    return losses
+    for codebook in range(1, depth_decoder.config.num_codebooks - 1):
+        embedding = depth_decoder.audio_embeddings(
+            codes[:, codebook] + (codebook - 1) * depth_decoder.config.audio_vocab_size
+        )
+        sequence.append(depth_decoder.projection(embedding).unsqueeze(1))
+    depth_inputs = torch.cat(sequence, dim=1)
+    depth_hidden = (
+        checkpoint(depth_decoder, depth_inputs, use_reentrant=False) if checkpoint_decoder else depth_decoder(depth_inputs)
+    )
+    return [
+        F.cross_entropy(
+            depth_decoder.audio_heads[codebook - 1](depth_hidden[:, codebook]).float(),
+            codes[:, codebook],
+        )
+        for codebook in range(1, depth_decoder.config.num_codebooks)
+    ]
 
 
 @torch.no_grad()
@@ -276,14 +276,17 @@ def sample_codes_from_hidden(
     sequence = [depth_decoder.projection(hidden).unsqueeze(1)]
     semantic_embed = language_model.model.embed_tokens(semantic + AUDIO_CODE_OFFSET)
     sequence.append(depth_decoder.projection(semantic_embed).unsqueeze(1))
+    depth_hidden, past_key_values = depth_decoder.forward_with_cache(torch.cat(sequence, dim=1))
     codes = [semantic]
     for codebook in range(1, depth_decoder.config.num_codebooks):
-        depth_hidden = depth_decoder(torch.cat(sequence, dim=1))[:, -1]
-        code = sample(depth_decoder.audio_heads[codebook - 1](depth_hidden).float())
+        code = sample(depth_decoder.audio_heads[codebook - 1](depth_hidden[:, -1]).float())
         codes.append(code)
         if codebook < depth_decoder.config.num_codebooks - 1:
             embedding = depth_decoder.audio_embeddings(code + (codebook - 1) * depth_decoder.config.audio_vocab_size)
-            sequence.append(depth_decoder.projection(embedding).unsqueeze(1))
+            depth_hidden, past_key_values = depth_decoder.forward_with_cache(
+                depth_decoder.projection(embedding).unsqueeze(1),
+                past_key_values,
+            )
     return torch.stack(codes, dim=-1).reshape(batch_size, frame_count, -1)
 
 
