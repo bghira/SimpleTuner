@@ -401,6 +401,8 @@ def main() -> None:
         deterministic=False,
         codes_dir=args.codes_dir,
         codes_per_crop=args.codes_per_crop,
+        identity_rate=args.identity_rate,
+        degrade_rate=args.degrade_rate,
     )
     sampler = (
         DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True, seed=args.seed, drop_last=True)
@@ -518,6 +520,7 @@ def main() -> None:
             deterministic=True,
             codes_dir=args.codes_dir,
             codes_per_crop=args.codes_per_crop,
+            eval_degrade=args.eval_degrade,
         )
         holdout_items = [holdout_dataset[index] for index in range(len(holdout_dataset))]
         holdout_batch = collate_crops(holdout_items)
