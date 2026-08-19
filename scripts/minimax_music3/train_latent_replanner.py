@@ -239,19 +239,19 @@ class LatentReplanner(nn.Module):
     ) -> torch.Tensor:
         target_length = noisy_latents.shape[1]
         states = self.proj_in(torch.cat((noisy_latents, conditioning), dim=-1))
+        if self.degraded_in_proj is not None:
+            if degraded_latents is None:
+                degraded_latents = self.degraded_null[None, None].expand(states.shape[0], target_length, -1)
+            states = states + self.degraded_in_proj(degraded_latents)
+        if self.code_embed is not None:
+            if code_conditioning is None:
+                code_conditioning = self.code_null[None, None].expand(states.shape[0], target_length, -1)
+            states = states + self.code_in_proj(code_conditioning)
         if self.context_embed is not None and context_latents is not None:
             context_states = (
                 self.proj_in(torch.cat((context_latents, conditioning), dim=-1)) + self.context_embed[None, None]
             )
             states = torch.cat((context_states, states), dim=1)
-        if self.degraded_in_proj is not None:
-            if degraded_latents is None:
-                degraded_latents = self.degraded_null[None, None].expand(states.shape[0], states.shape[1], -1)
-            states = states + self.degraded_in_proj(degraded_latents)
-        if self.code_embed is not None:
-            if code_conditioning is None:
-                code_conditioning = self.code_null[None, None].expand(states.shape[0], states.shape[1], -1)
-            states = states + self.code_in_proj(code_conditioning)
         in_context = self.context_embed is not None and context_latents is not None
         time_conditioning = self.time_embed(self.timestep_features(t))
         if self.task_embed is not None:
