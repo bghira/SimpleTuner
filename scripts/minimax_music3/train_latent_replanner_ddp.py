@@ -111,7 +111,13 @@ def parse_args() -> argparse.Namespace:
         default=0.25,
         help="on-policy flow-DPO weight (incontext only); chosen = true targets, rejected = few-step self-generations",
     )
-    parser.add_argument("--dpo-beta", type=float, default=500.0)
+    parser.add_argument("--dpo-beta", type=float, default=10.0)
+    parser.add_argument(
+        "--dpo-margin-clamp",
+        type=float,
+        default=1.0,
+        help="cap the positive preference margin before logsigmoid; bounds the unlearning incentive on self-generations",
+    )
     parser.add_argument("--dpo-every", type=int, default=4, help="apply the DPO term every N steps")
     parser.add_argument("--dpo-sample-steps", type=int, default=4, help="Euler steps for on-policy reject generation")
     parser.add_argument(
@@ -838,7 +844,8 @@ def main() -> None:
                 reference_error_chosen = (reference_chosen - prediction_target).square().mean(dim=(1, 2))
                 reference_error_rejected = (reference_rejected - rejected_target).square().mean(dim=(1, 2))
             margin = (reference_error_chosen - error_chosen) - (reference_error_rejected - error_rejected)
-            dpo_loss = -F.logsigmoid(args.dpo_beta * margin).mean()
+            clamped = margin.clamp(max=args.dpo_margin_clamp)
+            dpo_loss = -F.logsigmoid(args.dpo_beta * clamped).mean()
             loss = loss + args.dpo_weight * dpo_loss
             dpo_loss_sum += dpo_loss.item()
             dpo_margin_sum += margin.mean().item()
