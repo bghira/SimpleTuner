@@ -1145,6 +1145,67 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         loss = model.loss(prepared, {"logits": logits})
         self.assertLess(float(loss), 0.01)
 
+    def test_lm_regularisation_uses_frozen_teacher_distribution(self):
+        from contextlib import nullcontext
+
+        from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET
+
+        model = self._lm_model()
+        model.config.model_type = "lora"
+        vocab = _AUDIO_CODE_OFFSET + 16
+        prompt_len, audio_len = 3, 2
+        codes = torch.tensor([[5, 0, 0, 0], [9, 0, 0, 0]], dtype=torch.long).unsqueeze(0)
+        teacher = torch.randn(1, prompt_len + audio_len, vocab)
+        model._lm_adapters_disabled = lambda: nullcontext()
+        model._lm_predict = lambda batch: {"logits": teacher}
+        prepared = {
+            "audio_codes": codes,
+            "prompt_lengths": torch.tensor([prompt_len]),
+            "audio_lengths": torch.tensor([audio_len]),
+            "has_audio_end": torch.tensor([True]),
+            "is_regularisation_data": True,
+        }
+        matched = model.loss(prepared, {"logits": teacher.clone()})
+
+        # Perturbing supervised (audio) positions increases the loss...
+        perturbed = teacher.clone()
+        perturbed[0, prompt_len - 1 :] += torch.randn_like(perturbed[0, prompt_len - 1 :]) * 3
+        self.assertGreater(float(model.loss(prepared, {"logits": perturbed})), float(matched))
+
+        # ...but prompt positions are not supervised, so changing them does nothing.
+        prompt_only = teacher.clone()
+        prompt_only[0, : prompt_len - 1] += 100.0
+        self.assertAlmostEqual(float(model.loss(prepared, {"logits": prompt_only})), float(matched), places=4)
+
+    def test_lm_regularisation_ignored_for_full_training(self):
+        from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET, _AUDIO_END_TOKEN_ID
+
+        model = self._lm_model()
+        model.config.model_type = "full"
+        model._lm_predict = lambda batch: (_ for _ in ()).throw(AssertionError("teacher must not run"))
+        vocab = _AUDIO_CODE_OFFSET + 16
+        prompt_len, audio_len = 3, 2
+        codes = torch.tensor([[5, 0, 0, 0], [9, 0, 0, 0]], dtype=torch.long).unsqueeze(0)
+        logits = torch.zeros((1, prompt_len + audio_len, vocab))
+        logits[0, prompt_len - 1, 5 + _AUDIO_CODE_OFFSET] = 25.0
+        logits[0, prompt_len, 9 + _AUDIO_CODE_OFFSET] = 25.0
+        logits[0, prompt_len + 1, _AUDIO_END_TOKEN_ID] = 25.0
+        prepared = {
+            "audio_codes": codes,
+            "prompt_lengths": torch.tensor([prompt_len]),
+            "audio_lengths": torch.tensor([audio_len]),
+            "has_audio_end": torch.tensor([True]),
+            "is_regularisation_data": True,
+        }
+        self.assertLess(float(model.loss(prepared, {"logits": logits})), 0.01)
+
+    def test_lm_collate_allows_empty_lyrics(self):
+        model = self._lm_model()
+        model.tokenizers = [self._FakeTokenizer()]
+        examples = [{"prompt": "some song", "lyrics": "", "audio_tokens": torch.zeros((5, 4), dtype=torch.long)}]
+        payload = model.collate_audio_tokens(examples)
+        self.assertEqual(payload["audio_lengths"].tolist(), [5])
+
     def test_lm_frame_embeds_apply_depth_offsets_and_scale(self):
         from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET
 

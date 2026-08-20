@@ -168,6 +168,8 @@ MiniMax Music 3 は SimpleTuner の flow-matching 学習パスを使うため、
 
 MiniMax Music 3 のセマンティックコードを計画する Qwen3 言語モデルを、音楽 DiT の代わりにトレーニングできます — 音楽スタイルをキーワードに結びつける dreambooth 式トリガーワードに便利です。
 
+[fiona crapple](https://huggingface.co/terminusresearch/minimax-music3-lm-lora-fiona-crapple) は、このモードで作成した完全な LM LoRA トレーニング例で、設定、チェックポイント、音声比較が含まれています。
+
 ```json
 {
   "minimax_music_train_component": "language_model",
@@ -183,6 +185,7 @@ MiniMax Music 3 のセマンティックコードを計画する Qwen3 言語モ
 - このモードではトレーナー内の検証オーディオは無効です。保存されたチェックポイントから標準生成スタックでレンダリングしてください。
 - このモードでは VAE やテキストエンベッドのキャッシュは行われません — トレーニングはトークンを直接読み取るため、`cache_dir_vae` やテキストエンベッドバックエンドは使用されません。
 - トリガーキーワード（例: `"fiona crapple"`）を各サンプルの caption/`prompt` フィールドに入れ、歌詞はそのまま保持してください。
+- **プライア保存**: `is_regularisation_data: true` を付けた無関係な楽曲の第二のオーディオバックエンドを追加します（空の歌詞も許可）。それらのバッチでは、損失は正解コードではなく凍結されたベースモデル自身の次トークン分布を対象とするため、LoRA は外科的に保たれます。無関係なキャプションはベースモデルと全く同じように予測し続け、スタイルの漏れが大幅に減ります。
 
 ## トラブルシューティング
 

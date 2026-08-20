@@ -168,6 +168,8 @@ MiniMax Music 3 usa el flujo de entrenamiento flow-matching de SimpleTuner, así
 
 El modelo de lenguaje Qwen3 que planifica los códigos semánticos de MiniMax Music 3 puede entrenarse en lugar del DiT musical — útil para palabras disparadoras estilo dreambooth que vinculan un estilo musical a una palabra clave.
 
+Consulta [fiona crapple](https://huggingface.co/terminusresearch/minimax-music3-lm-lora-fiona-crapple) para ver un ejemplo completo de entrenamiento de LM LoRA producido con este modo, con su configuración, checkpoints y comparaciones de audio.
+
 ```json
 {
   "minimax_music_train_component": "language_model",
@@ -183,6 +185,7 @@ Requisitos y diferencias respecto al entrenamiento del DiT:
 - El audio de validación dentro del entrenador está deshabilitado en este modo; renderiza desde los checkpoints guardados con la pila de generación estándar.
 - En este modo no hay caché de VAE ni de embeddings de texto — el entrenamiento lee los tokens directamente, así que `cache_dir_vae` y los backends de text embeds no se usan.
 - Coloca tu palabra clave (p. ej. `"fiona crapple"`) en el campo caption/`prompt` de cada muestra; mantén las letras sin modificar.
+- **Preservación de prior**: añade un segundo backend de audio con `is_regularisation_data: true` que contenga canciones no relacionadas (se permiten letras vacías). En esos lotes la pérdida apunta a la distribución de siguiente token del modelo base congelado en lugar de los códigos reales, de modo que el LoRA se mantiene quirúrgico: los captions no relacionados siguen prediciendo exactamente como lo haría el modelo base, lo que reduce notablemente el sangrado de estilo.
 
 ## Solución de problemas
 

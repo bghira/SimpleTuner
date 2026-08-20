@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -768,8 +769,11 @@ class MiniMaxMusic(AudioModelFoundation):
             lyrics = example.get("lyrics")
             if not isinstance(caption, str) or not caption.strip():
                 raise ValueError("MiniMax Music 3 language model training requires 'prompt' (or 'tags') metadata.")
-            if not isinstance(lyrics, str) or not lyrics.strip():
-                raise ValueError("MiniMax Music 3 language model training requires 'lyrics' metadata.")
+            if not isinstance(lyrics, str):
+                raise ValueError(
+                    "MiniMax Music 3 language model training requires 'lyrics' metadata (an empty string is "
+                    "allowed for instrumental or regularisation tracks)."
+                )
             prompt_text = self._lm_prompt_text(caption, lyrics)
             input_ids = tokenizer(prompt_text, return_tensors="pt")["input_ids"].squeeze(0)
             if input_ids.shape[0] > _MAX_PROMPT_TOKENS:
@@ -837,6 +841,15 @@ class MiniMaxMusic(AudioModelFoundation):
         outputs = language_model(inputs_embeds=inputs_embeds, attention_mask=attention_mask.to(dtype=torch.long))
         return {"logits": outputs.logits}
 
+    @contextmanager
+    def _lm_adapters_disabled(self):
+        language_model = self.unwrap_model(self.model)
+        language_model.disable_adapters()
+        try:
+            yield
+        finally:
+            language_model.enable_adapters()
+
     def loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
         if not self._train_language_model:
             return super().loss(prepared_batch, model_output, apply_conditioning_mask)
@@ -856,19 +869,34 @@ class MiniMaxMusic(AudioModelFoundation):
             targets[index, start : start + audio_len] = audio_codes[index, :audio_len, 0] + _AUDIO_CODE_OFFSET
             if bool(has_audio_end[index]):
                 targets[index, start + audio_len] = _AUDIO_END_TOKEN_ID
-        # Chunked cross-entropy: upcasting the full-vocab logits at once costs several GiB at long sequence lengths.
+        teacher_logits = None
+        if (
+            prepared_batch.get("is_regularisation_data")
+            and str(getattr(self.config, "model_type", "lora")).lower() == "lora"
+        ):
+            # Prior preservation: on regularisation batches the target is the frozen base model's own
+            # next-token distribution, so unrelated songs keep predicting as they would without the LoRA.
+            with torch.no_grad(), self._lm_adapters_disabled():
+                teacher_logits = self._lm_predict(prepared_batch)["logits"]
+
+        # Chunked losses: upcasting the full-vocab logits at once costs several GiB at long sequence lengths.
         flat_logits = logits.reshape(-1, logits.shape[-1])
         flat_targets = targets.reshape(-1)
         total = flat_logits.new_zeros((), dtype=torch.float32)
         count = 0
-        chunk = 1024
+        chunk = 512 if teacher_logits is not None else 1024
+        flat_teacher = teacher_logits.reshape(-1, teacher_logits.shape[-1]) if teacher_logits is not None else None
         for start in range(0, flat_logits.shape[0], chunk):
             piece_targets = flat_targets[start : start + chunk]
             mask = piece_targets != -100
             if not mask.any():
                 continue
             piece = flat_logits[start : start + chunk][mask].float()
-            total = total + F.cross_entropy(piece, piece_targets[mask], reduction="sum")
+            if flat_teacher is not None:
+                teacher_piece = flat_teacher[start : start + chunk][mask].float()
+                total = total - (teacher_piece.softmax(dim=-1) * piece.log_softmax(dim=-1)).sum()
+            else:
+                total = total + F.cross_entropy(piece, piece_targets[mask], reduction="sum")
             count += int(mask.sum())
         if count == 0:
             raise ValueError("MiniMax Music 3 language model loss found no supervised positions.")
