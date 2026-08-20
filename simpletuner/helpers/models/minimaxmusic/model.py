@@ -893,8 +893,15 @@ class MiniMaxMusic(AudioModelFoundation):
                 continue
             piece = flat_logits[start : start + chunk][mask].float()
             if flat_teacher is not None:
-                teacher_piece = flat_teacher[start : start + chunk][mask].float()
-                total = total - (teacher_piece.softmax(dim=-1) * piece.log_softmax(dim=-1)).sum()
+                # Top-K soft targets: gathering the student's logits at the teacher's top tokens keeps the
+                # per-position autograd footprint at O(K) instead of O(vocab).
+                with torch.no_grad():
+                    teacher_piece = flat_teacher[start : start + chunk][mask].float()
+                    top_probs, top_indices = teacher_piece.softmax(dim=-1).topk(64, dim=-1)
+                    top_probs = top_probs / top_probs.sum(dim=-1, keepdim=True)
+                student_top = piece.gather(1, top_indices)
+                log_normalizer = piece.logsumexp(dim=-1, keepdim=True)
+                total = total - (top_probs * (student_top - log_normalizer)).sum()
             else:
                 total = total + F.cross_entropy(piece, piece_targets[mask], reduction="sum")
             count += int(mask.sum())
