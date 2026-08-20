@@ -83,6 +83,21 @@ Where `foo` is your config environment - or just use `config/config.json` if you
   - One frame is 40ms; 7500 frames is five minutes. Lower this if long tracks exhaust VRAM.
   - Truncated samples do not receive an end-of-audio target, so the model is not taught to stop early.
 
+### `--minimax_music_lm_adapter`
+
+- **What**: Path to a language-model LoRA (`pytorch_lora_weights.safetensors` with `language_model.`-prefixed keys, as produced by `--minimax_music_train_component=language_model`) applied to the Qwen3 planner while pre-caching DiT conditioning.
+- **Related**: `--minimax_music_lm_adapter_strength` (default `1.0`) scales the adapter delta.
+- **Notes**: Use a fresh text-embed cache directory when changing the adapter or its strength; cached embeddings are not invalidated automatically.
+
+### `--minimax_music_lm_precache_mode`
+
+- **What**: How the Qwen3 planner produces the cached conditioning for DiT training.
+- **Choices**: `text-only` (default), `audio-only`, `audio+text`
+- **Notes**:
+  - `text-only` samples an autoregressive rollout from the caption and lyrics (the stock behaviour). The hidden states describe the planner's own imagined track, not the training audio.
+  - `audio-only` teacher-forces the sample's ground-truth RVQ codes (`audio_tokens_path` metadata, raw per-codebook indices) through the planner with no text prefix; `audio+text` prepends the caption and lyrics. Both align the per-frame hidden states one-to-one with the DAV latents and truncate the codes to the audio window the VAE cache covers.
+  - Use a fresh text-embed cache directory when changing modes.
+
 ### `--minimax_h3_target_mode`
 
 - **What**: Controls whether MiniMax-H3 includes target audio rows.

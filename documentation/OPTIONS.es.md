@@ -83,6 +83,21 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
   - Un frame son 40ms; 7500 frames son cinco minutos. Reduce este valor si las pistas largas agotan la VRAM.
   - Las muestras truncadas no reciben objetivo de fin de audio, por lo que el modelo no aprende a detenerse antes de tiempo.
 
+### `--minimax_music_lm_adapter`
+
+- **Qué**: Ruta a un LoRA del modelo de lenguaje (`pytorch_lora_weights.safetensors` con claves con prefijo `language_model.`, producido por `--minimax_music_train_component=language_model`) aplicado al planificador Qwen3 durante el pre-cacheo del condicionamiento del DiT.
+- **Relacionado**: `--minimax_music_lm_adapter_strength` (predeterminado `1.0`) escala el delta del adaptador.
+- **Notas**: Usa un directorio de caché de text-embeds nuevo al cambiar el adaptador o su fuerza; la caché no se invalida automáticamente.
+
+### `--minimax_music_lm_precache_mode`
+
+- **Qué**: Cómo el planificador Qwen3 produce el condicionamiento cacheado para entrenar el DiT.
+- **Opciones**: `text-only` (predeterminado), `audio-only`, `audio+text`
+- **Notas**:
+  - `text-only` muestrea un despliegue autorregresivo desde el caption y la letra (comportamiento original). Los estados ocultos describen la pista imaginada por el planificador, no el audio de entrenamiento.
+  - `audio-only` fuerza los códigos RVQ reales de la muestra (metadato `audio_tokens_path`, índices crudos por codebook) a través del planificador sin prefijo de texto; `audio+text` antepone el caption y la letra. Ambos alinean los estados ocultos por frame uno a uno con los latentes DAV y truncan los códigos a la ventana de audio que cubre la caché del VAE.
+  - Usa un directorio de caché de text-embeds nuevo al cambiar de modo.
+
 ### `--minimax_h3_target_mode`
 
 - **Qué**: Controla si MiniMax-H3 incluye filas de audio objetivo.

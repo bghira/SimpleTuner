@@ -1206,6 +1206,47 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         payload = model.collate_audio_tokens(examples)
         self.assertEqual(payload["audio_lengths"].tolist(), [5])
 
+    def test_prompt_context_carries_audio_token_metadata(self):
+        context = MiniMaxMusic._prompt_context_from_audio_metadata(
+            {"lyrics": "la", "audio_tokens_path": "codes/x.pt", "data_backend_id": "backend-1"},
+            prompt="a song",
+        )
+        self.assertEqual(context["audio_tokens_path"], "codes/x.pt")
+        self.assertEqual(context["data_backend_id"], "backend-1")
+
+    def test_teacher_forced_depth_hiddens_positions(self):
+        from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET
+
+        model = self._lm_model()
+        hidden_dim = 8
+        frames, books = 3, 4
+
+        class _StubDepth(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = SimpleNamespace(num_codebooks=books, audio_vocab_size=8)
+                self.projection = torch.nn.Identity()
+                self.audio_embeddings = torch.nn.Embedding((books - 1) * 8, hidden_dim)
+
+            def forward(self, sequence):
+                return sequence
+
+        depth = _StubDepth()
+        embed = torch.nn.Embedding(_AUDIO_CODE_OFFSET + 32, hidden_dim)
+        model.rvq_depth_decoder = depth
+        model.language_model = SimpleNamespace(model=SimpleNamespace(embed_tokens=embed))
+        lm_hidden = torch.randn(frames, hidden_dim)
+        codes = torch.randint(0, 8, (frames, books))
+        result = model._teacher_forced_depth_hiddens(lm_hidden, codes)
+        self.assertEqual(result.shape, (frames, (books - 1) * hidden_dim))
+        # With an identity depth decoder, the first collected position is the projected semantic embedding,
+        # matching what the rollout collects at its first residual step.
+        expected_first = embed(codes[:, 0] + _AUDIO_CODE_OFFSET)
+        self.assertTrue(torch.allclose(result[:, :hidden_dim], expected_first))
+        # And the second collected position is the embedded first residual codebook.
+        expected_second = depth.audio_embeddings(codes[:, 1])
+        self.assertTrue(torch.allclose(result[:, hidden_dim : 2 * hidden_dim], expected_second))
+
     def test_lm_frame_embeds_apply_depth_offsets_and_scale(self):
         from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET
 

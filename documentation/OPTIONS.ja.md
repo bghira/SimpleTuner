@@ -83,6 +83,21 @@ simpletuner configure config/foo/config.json
   - 1 フレームは 40ms、7500 フレームは 5 分です。長いトラックで VRAM が不足する場合は下げてください。
   - 切り詰められたサンプルにはオーディオ終端ターゲットが与えられないため、モデルが早期停止を学習することはありません。
 
+### `--minimax_music_lm_adapter`
+
+- **内容**: DiT 条件付けの事前キャッシュ時に Qwen3 プランナーへ適用する言語モデル LoRA のパス（`language_model.` プレフィックス付きキーの `pytorch_lora_weights.safetensors`、`--minimax_music_train_component=language_model` で生成）。
+- **関連**: `--minimax_music_lm_adapter_strength`（デフォルト `1.0`）はアダプタのデルタをスケールします。
+- **メモ**: アダプタや強度を変更する際は新しいテキスト埋め込みキャッシュディレクトリを使用してください。キャッシュは自動では無効化されません。
+
+### `--minimax_music_lm_precache_mode`
+
+- **内容**: Qwen3 プランナーが DiT トレーニング用のキャッシュ条件を生成する方法。
+- **選択肢**: `text-only`（デフォルト）、`audio-only`、`audio+text`
+- **メモ**:
+  - `text-only` はキャプションと歌詞から自己回帰ロールアウトをサンプリングします（従来の動作）。隠れ状態はプランナーが想像したトラックを表し、トレーニング音声ではありません。
+  - `audio-only` はサンプルの正解 RVQ コード（`audio_tokens_path` メタデータ、生のコードブック別インデックス）をテキストなしでプランナーに教師強制し、`audio+text` はキャプションと歌詞を前置します。どちらもフレームごとの隠れ状態を DAV latent と 1 対 1 に整列させ、VAE キャッシュがカバーする音声ウィンドウにコードを切り詰めます。
+  - モード変更時は新しいテキスト埋め込みキャッシュディレクトリを使用してください。
+
 ### `--minimax_h3_target_mode`
 
 - **内容**: MiniMax-H3 がターゲット音声行を含めるかを制御します。

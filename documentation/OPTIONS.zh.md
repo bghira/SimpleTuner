@@ -83,6 +83,21 @@ simpletuner configure config/foo/config.json
   - 一帧为 40 毫秒；7500 帧即五分钟。如果长曲目耗尽显存，请降低该值。
   - 被截断的样本不会获得音频结束目标，因此模型不会被教导提前停止。
 
+### `--minimax_music_lm_adapter`
+
+- **内容**：预缓存 DiT 条件时应用于 Qwen3 规划器的语言模型 LoRA 路径（带 `language_model.` 前缀键的 `pytorch_lora_weights.safetensors`，由 `--minimax_music_train_component=language_model` 产生）。
+- **相关**：`--minimax_music_lm_adapter_strength`（默认 `1.0`）缩放适配器增量。
+- **说明**：更换适配器或强度时请使用新的文本嵌入缓存目录；缓存不会自动失效。
+
+### `--minimax_music_lm_precache_mode`
+
+- **内容**：Qwen3 规划器为 DiT 训练生成缓存条件的方式。
+- **选项**：`text-only`（默认）、`audio-only`、`audio+text`
+- **说明**：
+  - `text-only` 从 caption 和歌词自回归采样（原有行为），隐藏状态描述的是规划器想象的曲目而非训练音频。
+  - `audio-only` 将样本的真实 RVQ 码（`audio_tokens_path` 元数据，原始逐码本索引）教师强制通过规划器，无文本前缀；`audio+text` 前置 caption 和歌词。两者都使逐帧隐藏状态与 DAV latent 一一对齐，并将码截断到 VAE 缓存覆盖的音频窗口。
+  - 更换模式时请使用新的文本嵌入缓存目录。
+
 ### `--minimax_h3_target_mode`
 
 - **内容**：控制 MiniMax-H3 是否包含目标音频行。

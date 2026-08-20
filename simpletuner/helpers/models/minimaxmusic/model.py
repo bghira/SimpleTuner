@@ -214,6 +214,9 @@ class MiniMaxMusic(AudioModelFoundation):
             "bucket_duration_seconds",
             "truncated_duration_seconds",
             "original_duration_seconds",
+            "audio_tokens",
+            "audio_tokens_path",
+            "data_backend_id",
         ):
             value = sample_metadata.get(key)
             if value not in (None, ""):
@@ -807,9 +810,10 @@ class MiniMaxMusic(AudioModelFoundation):
             "prompts": prompts,
         }
 
-    def _lm_frame_embeds(self, codes: torch.Tensor) -> torch.Tensor:
+    def _lm_frame_embeds(self, codes: torch.Tensor, language_model=None) -> torch.Tensor:
         # codes: [frames, codebooks] raw per-book indices -> [frames, hidden] audio-frame input embeddings.
-        language_model = self.unwrap_model(self.model)
+        if language_model is None:
+            language_model = self.unwrap_model(self.model)
         embed_tokens = language_model.get_input_embeddings()
         depth = self.rvq_depth_decoder
         num_codebooks = int(depth.config.num_codebooks)
@@ -933,6 +937,8 @@ class MiniMaxMusic(AudioModelFoundation):
             torch_dtype=self.config.weight_dtype,
             trust_remote_code=True,
         )
+        if getattr(self.config, "minimax_music_lm_adapter", None):
+            self._apply_lm_precache_adapter(language_model)
         rvq_depth_decoder = MiniMaxMusic3RVQDepthDecoder.from_pretrained(
             base_path,
             subfolder="rvq_depth_decoder",
@@ -1000,6 +1006,80 @@ class MiniMaxMusic(AudioModelFoundation):
             return str(configured)
         return str(prompt)
 
+    def _apply_lm_precache_adapter(self, language_model) -> None:
+        from peft import LoraConfig
+        from safetensors.torch import load_file
+
+        adapter_path = str(self.config.minimax_music_lm_adapter)
+        strength = float(getattr(self.config, "minimax_music_lm_adapter_strength", 1.0) or 1.0)
+        state = load_file(adapter_path)
+        ranks = {value.shape[0] for key, value in state.items() if key.endswith(".lora_A.weight")}
+        if len(ranks) != 1:
+            raise ValueError(f"LM adapter {adapter_path} has mixed or missing LoRA ranks: {sorted(ranks)}")
+        rank = ranks.pop()
+        target_modules = sorted({key.split(".")[-3] for key in state if key.endswith(".lora_A.weight")})
+        language_model.add_adapter(LoraConfig(r=rank, lora_alpha=rank, target_modules=target_modules))
+        mapped = {}
+        for key, value in state.items():
+            new_key = (
+                key.removeprefix("language_model.")
+                .replace(".lora_A.weight", ".lora_A.default.weight")
+                .replace(".lora_B.weight", ".lora_B.default.weight")
+            )
+            tensor = value.to(self.config.weight_dtype)
+            if ".lora_B." in new_key:
+                tensor = tensor * strength
+            mapped[new_key] = tensor
+        _missing, unexpected = language_model.load_state_dict(mapped, strict=False)
+        if unexpected:
+            raise ValueError(f"LM adapter {adapter_path} carries unknown keys: {sorted(unexpected)[:4]}")
+        lora_names = [name for name, _ in language_model.named_parameters() if "lora_" in name]
+        loaded = sum(1 for name in lora_names if name in mapped)
+        if loaded != len(lora_names):
+            raise ValueError(f"LM adapter {adapter_path} loaded {loaded}/{len(lora_names)} LoRA tensors.")
+        logger.info("Applied LM precache adapter %s (%d tensors, strength %.2f).", adapter_path, loaded, strength)
+
+    @torch.no_grad()
+    def _teacher_forced_depth_hiddens(self, lm_hidden: torch.Tensor, codes: torch.Tensor) -> torch.Tensor:
+        # Teacher-forced prefix pass through the causal depth decoder reproduces the per-book hiddens the
+        # rollout collects one step at a time. lm_hidden: [frames, dim], codes: [frames, codebooks] raw.
+        depth = self.rvq_depth_decoder
+        num_codebooks = int(depth.config.num_codebooks)
+        audio_vocab = int(depth.config.audio_vocab_size)
+        sequence = [depth.projection(lm_hidden).unsqueeze(1)]
+        semantic_embed = self.language_model.model.embed_tokens(codes[:, 0] + _AUDIO_CODE_OFFSET)
+        sequence.append(depth.projection(semantic_embed).unsqueeze(1))
+        for index in range(1, num_codebooks - 1):
+            embed = depth.audio_embeddings(codes[:, index] + (index - 1) * audio_vocab)
+            sequence.append(depth.projection(embed).unsqueeze(1))
+        hidden = depth(torch.cat(sequence, dim=1))
+        return hidden[:, 1:num_codebooks, :].reshape(codes.shape[0], -1)
+
+    @torch.no_grad()
+    def _encode_teacher_forced_prompt(self, prompt: str, context: dict, mode: str) -> Dict[str, torch.Tensor]:
+        tokenizer = self.tokenizers[0]
+        language_model = self.language_model
+        codes = self._lm_load_audio_codes(context).to(self.accelerator.device)
+        window_seconds = self._audio_duration_for_context(context)
+        window_frames = max(1, int(round(window_seconds * self._frame_rate())))
+        codes = codes[: min(window_frames, _MAX_AUDIO_FRAMES)]
+        if mode == "audio+text":
+            prompt_text = self._lm_prompt_text(prompt, self._lyrics_for_context(context, str(prompt)))
+        else:
+            prompt_text = "<|audio_start|>"
+        input_ids = tokenizer(prompt_text, return_tensors="pt")["input_ids"].to(self.accelerator.device)
+        if input_ids.shape[1] > _MAX_PROMPT_TOKENS:
+            raise ValueError(f"The assembled MiniMax Music 3 prompt has {input_ids.shape[1]} tokens.")
+        prompt_embeds = language_model.model.embed_tokens(input_ids[0])
+        frame_embeds = self._lm_frame_embeds(codes, language_model=language_model)
+        sequence = torch.cat([prompt_embeds, frame_embeds.to(prompt_embeds.dtype)], dim=0).unsqueeze(0)
+        hidden = language_model.model(inputs_embeds=sequence).last_hidden_state[0]
+        prompt_len = input_ids.shape[1]
+        predictor_hidden = hidden[prompt_len - 1 : prompt_len - 1 + codes.shape[0]]
+        depth_hidden = self._teacher_forced_depth_hiddens(predictor_hidden, codes)
+        frame_hiddens = torch.cat([predictor_hidden, depth_hidden.to(predictor_hidden.dtype)], dim=-1)
+        return {"prompt_embeds": frame_hiddens.unsqueeze(0).to(dtype=self.config.weight_dtype)}
+
     @torch.no_grad()
     def _encode_single_prompt(self, prompt: str, context: dict) -> Dict[str, torch.Tensor]:
         self.load_text_encoder(move_to_device=True)
@@ -1008,6 +1088,9 @@ class MiniMaxMusic(AudioModelFoundation):
         rvq_depth_decoder = self.rvq_depth_decoder
         if language_model is None or rvq_depth_decoder is None:
             raise ValueError("MiniMax Music 3 text components are not loaded.")
+        precache_mode = str(getattr(self.config, "minimax_music_lm_precache_mode", "text-only") or "text-only")
+        if precache_mode in ("audio-only", "audio+text"):
+            return self._encode_teacher_forced_prompt(str(prompt), context, precache_mode)
 
         prompt_text = (
             f"<|im_start|><|caption_start|>{_clean_caption(str(prompt))}<|caption_end|>"
