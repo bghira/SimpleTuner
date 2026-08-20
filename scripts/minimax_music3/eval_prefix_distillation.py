@@ -23,7 +23,6 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(COLLECTION_DIR))
 
 from benchmark_reference_feedback import place_components, render_traces  # noqa: E402
-from minimax_music3_reference_adapter import install_diffusers_reference_adapter  # noqa: E402
 
 from scripts.minimax_music3.eval_reference_control import copy_pair_audio  # noqa: E402
 from scripts.minimax_music3.train_prefix_distillation import (  # noqa: E402
@@ -40,6 +39,7 @@ from scripts.minimax_music3.train_prefix_distillation import (  # noqa: E402
     teacher_targets,
     tokenize_prompt,
 )
+from simpletuner.helpers.models.minimaxmusic.reference_adapter import install_diffusers_reference_adapter  # noqa: E402
 from simpletuner.helpers.models.minimaxmusic.reference_control import (  # noqa: E402
     create_qwen_lokr_adapter,
     create_qwen_oftv2_adapter,

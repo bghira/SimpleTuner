@@ -1,18 +1,9 @@
-import importlib.util
-import sys
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 
 import torch
 
-ADAPTER_PATH = Path(__file__).parents[1] / "model_cards" / "collection" / "minimax_music3_reference_adapter.py"
-SPEC = importlib.util.spec_from_file_location("minimax_music3_reference_adapter_test", ADAPTER_PATH)
-if SPEC is None or SPEC.loader is None:
-    raise ImportError(f"Cannot import reference adapter from {ADAPTER_PATH}")
-adapter = importlib.util.module_from_spec(SPEC)
-sys.modules[SPEC.name] = adapter
-SPEC.loader.exec_module(adapter)
+from simpletuner.helpers.models.minimaxmusic import reference_adapter as adapter
 
 
 class MiniMaxMusic3ReferenceAdapterTests(unittest.TestCase):
@@ -167,6 +158,36 @@ class MiniMaxMusic3ReferenceAdapterTests(unittest.TestCase):
                 semantic_top_k=0,
                 device="cpu",
             )
+
+    def test_predict_codes_accepts_precompute_offload_control(self):
+        class FakeDAV(torch.nn.Module):
+            def forward(self, waveform):
+                return torch.zeros((waveform.shape[0], 4, 100), device=waveform.device)
+
+        config = adapter.RVQEncoderConfig(
+            latent_channels=4,
+            codebook_vocab_sizes=(11, 7, 7, 7, 7, 7, 7, 7),
+            d_model=8,
+            num_layers=1,
+            num_heads=2,
+            ff_mult=2,
+            dropout=0.0,
+            max_position_embeddings=4,
+            conv_dilations=(1,),
+            mup=True,
+            mup_attention_multiplier=2.0,
+        )
+        reference_adapter = adapter.MiniMaxMusic3ReferenceAdapter(
+            FakeDAV(),
+            adapter.MiniMaxMusicRVQEncoder(config),
+        )
+        codes = reference_adapter.predict_codes(
+            torch.zeros((1, adapter.SAMPLE_RATE)),
+            adapter.SAMPLE_RATE,
+            device="cpu",
+            offload_after=False,
+        )
+        self.assertEqual(tuple(codes.shape), (adapter.FRAME_RATE, 8))
 
 
 if __name__ == "__main__":

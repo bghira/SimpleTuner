@@ -21,13 +21,14 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
+from simpletuner.helpers.models.minimaxmusic.reference_adapter import MiniMaxMusic3ReferenceAdapter  # noqa: E402
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Precompute RVQ codes for re-planner conditioning")
     parser.add_argument("--source-dir", type=Path, required=True)
     parser.add_argument("--pair-ids-file", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--collection-dir", type=Path, required=True)
     parser.add_argument("--cache-dir")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--shard-index", type=int, default=0)
@@ -44,9 +45,6 @@ def main() -> None:
     args = parse_args()
     if not 0 <= args.shard_index < args.num_shards:
         raise ValueError("shard-index must be within num-shards")
-    sys.path.insert(0, str(args.collection_dir))
-    from minimax_music3_reference_adapter import MiniMaxMusic3ReferenceAdapter
-
     device = torch.device(args.device)
     adapter = MiniMaxMusic3ReferenceAdapter.from_pretrained(cache_dir=args.cache_dir)
     vocab_sizes = list(adapter.rvq_encoder.config.codebook_vocab_sizes)

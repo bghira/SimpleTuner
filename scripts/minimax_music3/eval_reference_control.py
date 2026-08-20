@@ -21,11 +21,11 @@ from safetensors import safe_open
 from safetensors.torch import load_file, save_file
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-COLLECTION_DIR = REPO_ROOT / "model_cards" / "collection"
 sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(0, str(COLLECTION_DIR))
 
-from minimax_music3_reference_adapter import (  # noqa: E402
+from scripts.minimax_music3.cache_style_pairs import member_index, read_member, shard_path  # noqa: E402
+from scripts.minimax_music3.train_reference_control import greedy_warmup_codes, train_step  # noqa: E402
+from simpletuner.helpers.models.minimaxmusic.reference_adapter import (  # noqa: E402
     AR_CFG_SCALE,
     AR_TOP_K,
     AUDIO_CODE_OFFSET,
@@ -39,9 +39,6 @@ from minimax_music3_reference_adapter import (  # noqa: E402
     build_text_ids,
     install_diffusers_reference_adapter,
 )
-
-from scripts.minimax_music3.cache_style_pairs import member_index, read_member, shard_path  # noqa: E402
-from scripts.minimax_music3.train_reference_control import greedy_warmup_codes, train_step  # noqa: E402
 from simpletuner.helpers.models.minimaxmusic.reference_control import (  # noqa: E402
     MiniMaxMusic3ReferenceControlAdapter,
     ReferenceControlConfig,
@@ -141,7 +138,7 @@ def encode_reference_audio(
     device: torch.device,
     cache_dir: str | None,
 ) -> torch.Tensor:
-    from minimax_music3_reference_adapter import MiniMaxMusic3ReferenceAdapter
+    from simpletuner.helpers.models.minimaxmusic.reference_adapter import MiniMaxMusic3ReferenceAdapter
 
     audio, sample_rate = sf.read(path, dtype="float32", always_2d=True)
     encoder = MiniMaxMusic3ReferenceAdapter.from_pretrained(cache_dir=cache_dir)

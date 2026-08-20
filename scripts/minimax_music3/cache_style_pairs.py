@@ -20,7 +20,7 @@ from tqdm.auto import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from model_cards.collection.minimax_music3_reference_adapter import MiniMaxMusic3ReferenceAdapter
+from simpletuner.helpers.models.minimaxmusic.reference_adapter import MiniMaxMusic3ReferenceAdapter
 
 SOURCE_REPO = "webshart/suno-various-94k"
 TARGET_REPO = "bghira/suno-various-94k-style-pairs"
