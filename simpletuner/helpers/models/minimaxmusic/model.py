@@ -501,6 +501,7 @@ class MiniMaxMusic(AudioModelFoundation):
             adapter_state = {
                 f"language_model.{key}": value.detach().cpu()
                 for key, value in language_model.get_adapter_state_dict().items()
+                if "lora_" in key
             }
             save_file(adapter_state, os.path.join(save_directory, "pytorch_lora_weights.safetensors"))
             return None
