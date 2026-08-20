@@ -111,6 +111,12 @@ def parse_args() -> argparse.Namespace:
         default=0.25,
         help="on-policy flow-DPO weight (incontext only); chosen = true targets, rejected = few-step self-generations",
     )
+    parser.add_argument(
+        "--dpo-reject-source",
+        choices=("onpolicy", "source"),
+        default="onpolicy",
+        help="onpolicy: few-step self-generations; source: the input/context latents (anti-passthrough)",
+    )
     parser.add_argument("--dpo-beta", type=float, default=10.0)
     parser.add_argument(
         "--dpo-margin-clamp",
@@ -770,19 +776,22 @@ def main() -> None:
             and step % args.dpo_every == 0
         )
         if use_dpo:
-            model.eval()
-            with torch.no_grad():
-                rejected = sample(
-                    model,
-                    conditioning,
-                    args.dpo_sample_steps,
-                    torch.Generator(device="cpu").manual_seed(args.seed + step * world_size + rank),
-                    layers,
-                    style=style,
-                    code_conditioning=code_conditioning,
-                    context_latents=context_latents,
-                )
-            model.train()
+            if args.dpo_reject_source == "source":
+                rejected = context_latents
+            else:
+                model.eval()
+                with torch.no_grad():
+                    rejected = sample(
+                        model,
+                        conditioning,
+                        args.dpo_sample_steps,
+                        torch.Generator(device="cpu").manual_seed(args.seed + step * world_size + rank),
+                        layers,
+                        style=style,
+                        code_conditioning=code_conditioning,
+                        context_latents=context_latents,
+                    )
+                model.train()
             noisy_rejected = (1.0 - t[:, None, None]) * rejected + t[:, None, None] * noise
             rejected_target = noise - rejected
 
