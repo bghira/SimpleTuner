@@ -101,6 +101,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--task-dropout", type=float, default=0.15)
     parser.add_argument(
+        "--bridge-context-ref",
+        action="store_true",
+        help="bridge objective: also attach the degraded latents as in-context reference tokens",
+    )
+    parser.add_argument(
         "--dpo-weight",
         type=float,
         default=0.25,
@@ -394,7 +399,16 @@ class OnlineExtractor:
 
 @torch.no_grad()
 def bridge_sample(
-    model, conditioning, steps, layer_conditioning, degraded_latents, direction="restore", style=None, code_conditioning=None
+    model,
+    conditioning,
+    steps,
+    layer_conditioning,
+    degraded_latents,
+    direction="restore",
+    style=None,
+    code_conditioning=None,
+    stream_latents=None,
+    context_latents=None,
 ):
     """Deterministic Euler along the clean<->degraded bridge. restore: t 1->0 from degraded; degrade: t 0->1 from clean."""
     latents = degraded_latents.clone()
@@ -404,7 +418,9 @@ def bridge_sample(
         schedule = torch.linspace(0.0, 1.0, steps + 1, device=latents.device)
     for index in range(steps):
         t = schedule[index].expand(latents.shape[0])
-        velocity = model(latents, conditioning, t, layer_conditioning, style, code_conditioning)
+        velocity = model(
+            latents, conditioning, t, layer_conditioning, style, code_conditioning, stream_latents, None, context_latents
+        )
         latents = latents - (schedule[index] - schedule[index + 1]) * velocity
     return latents
 
@@ -547,7 +563,7 @@ def main() -> None:
     model.enable_style_conditioning(512)
     if args.degraded_latent_stream or args.objective == "bridge":
         model.enable_degraded_latent_conditioning(128)
-    if args.objective == "incontext":
+    if args.objective == "incontext" or args.bridge_context_ref:
         model.enable_context_editing()
     if args.task_conditioning:
         model.enable_task_conditioning(3)
@@ -716,10 +732,8 @@ def main() -> None:
             prediction_target = noise - clean
         for group in optimizer.param_groups:
             group["lr"] = args.learning_rate * lr_scale(step + 1)
-        stream_latents = (
-            degraded_latents if args.degraded_latent_stream and args.objective not in ("bridge", "incontext") else None
-        )
-        context_latents = degraded_latents if args.objective == "incontext" else None
+        stream_latents = degraded_latents if args.degraded_latent_stream and args.objective != "incontext" else None
+        context_latents = degraded_latents if args.objective == "incontext" or args.bridge_context_ref else None
         task_ids = None
         if args.task_conditioning and "task" in batch:
             task_ids = batch["task"].to(device)
@@ -887,6 +901,8 @@ def main() -> None:
                                 chunk_layers,
                                 chunk_degraded,
                                 direction="restore",
+                                stream_latents=chunk_degraded if args.degraded_latent_stream else None,
+                                context_latents=chunk_degraded if args.bridge_context_ref else None,
                                 **kwargs,
                             )
                         )
