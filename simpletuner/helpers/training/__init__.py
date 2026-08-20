@@ -84,8 +84,8 @@ audio_file_extensions = {
     "mkv",
     "webm",
 }
-# we combine image and video extensions as image extensions because it's a hack that is used to list all files.
-image_file_extensions = image_file_extensions.union(video_file_extensions)
+# we combine image, video, and audio extensions as image extensions because it's a hack that is used to list all files.
+image_file_extensions = image_file_extensions.union(video_file_extensions).union(audio_file_extensions)
 
 from simpletuner.lycoris_defaults import lycoris_defaults
 
