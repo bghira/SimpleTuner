@@ -88,6 +88,10 @@ no-grad student rollout चलाता है, logit-normal shifted time sample
 MiniMax-H3 में पहले से CFG distillation है, इसलिए इसके on-policy runs में आम तौर पर `real_score_guidance_scale=0` रखा जाना चाहिए।
 जिन models को external real-score CFG pass चाहिए, उन्हें negative text embeddings cache करने होंगे और scale explicitly set किया जा सकता है।
 
+जब `--seed` set होता है, AnyFlow MeanFlow intervals, rollout schedules, rollout latents, DMD noise, और DMD sigmas को
+per-device isolated Torch generator से sample करता है। इससे unrelated training code के global Torch RNG consume करने पर
+भी AnyFlow samples stable रहते हैं। यह CUDA attention backward को bit-stable नहीं बनाता।
+
 ## Shared Configuration
 
 - `stage`: `forward` या `onpolicy`। Default: `forward`।

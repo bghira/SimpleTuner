@@ -106,6 +106,7 @@ ACE-Step v1.5 के लिए `model_family: "ace_step"` को वैसा �
 
 - **`validation_prompt`**: उस ऑडियो का टेक्स्ट विवरण जिसे आप जनरेट करना चाहते हैं (जैसे, "उत्साही ड्रम्स वाला आकर्षक पॉप सॉन्ग").
 - **`validation_lyrics`**: (वैकल्पिक) मॉडल के गाने के लिए लिरिक्स।
+- **`validation_prompt_library`**: built-in caption + lyrics validation library के लिए `"audio"` इस्तेमाल करें।
 - **`validation_audio_duration`**: वैलिडेशन क्लिप्स की अवधि सेकंड में (डिफ़ॉल्ट: 30.0)।
 - **`validation_guidance`**: गाइडेंस स्केल (डिफ़ॉल्ट: ~3.0 - 5.0)।
 - **`validation_step_interval`**: सैंपल कितनी बार जनरेट करना है (जैसे, हर 100 स्टेप पर)।

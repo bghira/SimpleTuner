@@ -2,8 +2,11 @@ import json
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import torch
 
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.publishing.metadata import *
@@ -14,6 +17,7 @@ from simpletuner.helpers.publishing.metadata import (
     _model_load,
     _negative_prompt,
     _pipeline_tag,
+    _secondary_pipeline_tag,
     _skip_layers,
     _torch_device,
     _validation_resolution,
@@ -96,6 +100,13 @@ class TestMetadataFunctions(unittest.TestCase):
             self.args.lora_type = "lycoris"
             output = _model_imports(self.args)
             self.assertIn("from lycoris import create_lycoris_from_weights", output)
+
+    def test_hub_manager_loads_standard_environment_token(self):
+        manager = object.__new__(HubManager)
+        manager.config = SimpleNamespace(push_to_hub=True)
+
+        with patch.dict(os.environ, {"HF_TOKEN": "environment-token"}, clear=False):
+            self.assertEqual(manager._load_hub_token(), "environment-token")
 
     def test_model_load(self):
         self.args.pretrained_model_name_or_path = "pretrained-model"
@@ -225,6 +236,62 @@ class TestMetadataFunctions(unittest.TestCase):
             'license_link: "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE"',
             _license_metadata(model),
         )
+
+    def test_audio_model_card_writes_audio_widget_asset(self):
+        self.args.model_family = "minimaxmusic"
+        self.args.model_type = "lora"
+        self.args.lora_type = "standard"
+        self.args.peft_lora_mode = "standard"
+        self.args.controlnet = False
+        self.args.control = False
+        model = MagicMock(
+            MODEL_LICENSE="other",
+            PREDICTION_TYPE=SimpleNamespace(value="flow_matching"),
+            gligen=False,
+        )
+        model.validation_audio_sample_rate.return_value = 44100
+        model.custom_model_card_schedule_info.return_value = ""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_model_family", return_value="minimaxmusic"),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_data_backends", return_value={}),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_weight_dtype", return_value=torch.bfloat16),
+                patch(
+                    "simpletuner.helpers.publishing.metadata.StateTracker.get_accelerator",
+                    return_value=MagicMock(num_processes=1),
+                ),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_args", return_value=self.args),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_model", return_value=model),
+            ):
+                save_model_card(
+                    repo_id="test-repo",
+                    images=None,
+                    audios={"song": [torch.zeros(1, 1600)]},
+                    base_model="test-base-model",
+                    train_text_encoder=False,
+                    prompt="Test prompt",
+                    validation_prompts=["bright reggae"],
+                    validation_shortnames=["song"],
+                    repo_folder=tmpdir,
+                    model=model,
+                    global_step=1000,
+                    epoch=1,
+                )
+
+            readme = Path(tmpdir, "README.md").read_text(encoding="utf-8")
+            self.assertIn("pipeline_tag: text-to-audio", readme)
+            self.assertIn("  - audio", readme)
+            self.assertIn("url: ./assets/audio_0_0.wav", readme)
+            self.assertIn("You can find some example audio samples", readme)
+            self.assertTrue(Path(tmpdir, "assets", "audio_0_0.wav").exists())
+
+    def test_audio_model_families_use_audio_pipeline_tag(self):
+        for model_family in ("ace_step", "heartmula", "minimaxmusic"):
+            with self.subTest(model_family=model_family):
+                self.args.model_family = model_family
+                self.assertEqual(_pipeline_tag(self.args), "text-to-audio")
+                self.assertEqual(_secondary_pipeline_tag(self.args), "audio")
 
     def test_hub_commit_message_omits_diffusion_schedule_fields_for_flow_matching(self):
         hub_manager = object.__new__(HubManager)

@@ -6,8 +6,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
+from peft import LoraConfig, inject_adapter_in_model
+from peft.utils import get_peft_model_state_dict
+from safetensors.torch import save_file
 
 import tests.test_stubs  # noqa: F401
+from simpletuner.helpers.data_backend.runtime.context_parallel_sync import DistributedBatchLayout
 from simpletuner.helpers.distillation.anyflow.distiller import AnyFlowDistiller
 from simpletuner.helpers.distillation.anyflow.scheduler import AnyFlowValidationScheduler
 from simpletuner.helpers.distillation.factory import DistillerFactory
@@ -239,6 +243,13 @@ class AnyFlowDistillerTests(unittest.TestCase):
         self.assertEqual(model.component.flowmap_gate_value, 0.4)
         self.assertEqual(model.component.flowmap_deltatime_type, "t-r")
 
+    def test_adapter_preparation_rejects_lora_dropout(self):
+        model = _FlowModel()
+        model.config.lora_dropout = 0.1
+
+        with self.assertRaisesRegex(ValueError, "lora_dropout=0.0"):
+            AnyFlowDistiller.prepare_model_for_adapter(model, {})
+
     def test_factory_reports_guidance_conditioning_for_method_config_shapes(self):
         direct = DistillerFactory.training_batch_requirements(
             "anyflow",
@@ -259,9 +270,14 @@ class AnyFlowDistillerTests(unittest.TestCase):
             "anyflow",
             {"distillation_config": {"fuse_guidance_scale": 3.0}},
         )
+        real_guidance_only = DistillerFactory.training_batch_requirements(
+            "anyflow",
+            {"distillation_config": {"fuse_guidance_scale": 1.0, "real_score_guidance_scale": 0.5}},
+        )
 
         self.assertEqual(direct, {"unconditional_text_embeddings"})
         self.assertEqual(unwrapped, direct)
+        self.assertEqual(real_guidance_only, direct)
         self.assertEqual(nested, direct)
 
     def test_removed_legacy_target_modes_are_rejected(self):
@@ -404,6 +420,98 @@ class AnyFlowDistillerTests(unittest.TestCase):
         self.assertEqual(len(model.teacher_timesteps), 2)
         self.assertTrue(model.component.adapter_enabled)
 
+    def test_meanflow_can_anchor_only_diffusion_samples_to_frozen_base_prediction(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={
+                "model_type": "lora",
+                "diffusion_ratio": 0.5,
+                "consistency_ratio": 0.5,
+                "diffusion_target": "base_prediction",
+                "fuse_guidance_scale": 1.0,
+            },
+        )
+        draws = [
+            torch.tensor([0.8, 0.7]),
+            torch.tensor([0.2, 0.4]),
+        ]
+
+        with patch("torch.rand", side_effect=draws):
+            batch = distiller.prepare_batch(_prepared_batch(), model=model, state={})
+
+        expected = torch.ones_like(batch["target"])
+        expected[0] = 2.0
+        self.assertTrue(torch.equal(batch["target"], expected))
+        self.assertEqual(model.teacher_adapter_states, [False, True, True])
+        self.assertTrue(model.component.adapter_enabled)
+        self.assertTrue(model.component.training)
+        self.assertTrue(torch.equal(batch["_anyflow_base_prediction_flow_norm_ratio"], torch.full((2,), 2.0)))
+
+    def test_meanflow_diffusion_target_is_validated(self):
+        with self.assertRaisesRegex(ValueError, "diffusion_target"):
+            AnyFlowDistiller(
+                teacher_model=_FlowModel(),
+                noise_scheduler=None,
+                config={"model_type": "lora", "diffusion_target": "unknown"},
+            )
+
+        with self.assertRaisesRegex(ValueError, "requires fuse_guidance_scale=1.0"):
+            AnyFlowDistiller(
+                teacher_model=_FlowModel(),
+                noise_scheduler=None,
+                config={"model_type": "lora", "diffusion_target": "base_prediction"},
+            )
+
+    def test_frozen_base_target_uses_base_flow_residual_for_adaptive_weighting(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={
+                "model_type": "lora",
+                "diffusion_ratio": 0.5,
+                "consistency_ratio": 0.5,
+                "diffusion_target": "base_prediction",
+                "meanflow_weight_type": "uniform",
+                "fuse_guidance_scale": 1.0,
+            },
+        )
+        draws = [
+            torch.tensor([0.8, 0.7]),
+            torch.tensor([0.2, 0.4]),
+        ]
+
+        with patch("torch.rand", side_effect=draws):
+            batch = distiller.prepare_batch(_prepared_batch(), model=model, state={})
+
+        prediction = batch["target"].clone()
+        prediction[1] += 2.0
+        loss = distiller._meanflow_loss(batch, {"model_prediction": prediction})
+
+        self.assertAlmostEqual(float(batch["_anyflow_pre_adaptive_loss"][0]), 0.0)
+        self.assertAlmostEqual(float(batch["_anyflow_adaptive_reference_loss"][0]), 1.0)
+        self.assertAlmostEqual(float(batch["_anyflow_adaptive_scale"][1]), 0.25, places=5)
+        self.assertAlmostEqual(float(batch["_anyflow_post_adaptive_loss"][1]), 1.0, places=5)
+        self.assertAlmostEqual(float(loss), 0.5, places=5)
+
+    def test_seeded_meanflow_pair_uses_isolated_rng_stream(self):
+        torch.manual_seed(1234)
+        expected_next = torch.rand(4)
+        torch.manual_seed(1234)
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "seed": 987},
+        )
+
+        distiller.prepare_batch(_prepared_batch(), model=model, state={})
+        actual_next = torch.rand(4)
+
+        self.assertTrue(torch.equal(actual_next, expected_next))
+
     def test_meanflow_branch_assignment_uses_data_replica_rank_with_context_parallelism(self):
         model = _FlowModel()
         model.accelerator.num_processes = 8
@@ -422,8 +530,17 @@ class AnyFlowDistillerTests(unittest.TestCase):
         with (
             patch("torch.rand", side_effect=draws),
             patch(
-                "simpletuner.helpers.distillation.anyflow.distiller.get_model_replica_data_info",
-                return_value=(True, 1, 0, 2, 4),
+                "simpletuner.helpers.distillation.anyflow.distiller.resolve_distributed_batch_layout",
+                return_value=DistributedBatchLayout(
+                    local_batch_size=2,
+                    global_batch_size=8,
+                    local_batch_offset=2,
+                    data_rank=1,
+                    data_parallel_size=4,
+                    model_replica_size=2,
+                    world_size=8,
+                    data_replica_batch_sizes=(2, 2, 2, 2),
+                ),
             ),
         ):
             batch = _prepared_batch()
@@ -431,6 +548,84 @@ class AnyFlowDistillerTests(unittest.TestCase):
 
         self.assertTrue(torch.equal(batch["anyflow_diffusion_mask"], torch.tensor([True, True])))
         self.assertTrue(torch.equal(batch["anyflow_consistency_mask"], torch.tensor([False, False])))
+
+    def test_meanflow_branch_assignment_uses_rank_varying_batch_offsets(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={
+                "model_type": "lora",
+                "diffusion_ratio": 0.5,
+                "consistency_ratio": 0.25,
+            },
+        )
+        latents = torch.zeros(3, 1, 2, 2)
+        noise = torch.ones_like(latents)
+        sigmas = torch.tensor([0.9, 0.6, 0.3]).view(3, 1, 1, 1)
+        batch = {
+            "latents": latents,
+            "noise": noise,
+            "input_noise": noise.clone(),
+            "sigmas": sigmas,
+            "timesteps": torch.tensor([900.0, 600.0, 300.0]),
+            "noisy_latents": (1 - sigmas) * latents + sigmas * noise,
+        }
+        draws = [torch.tensor([0.8, 0.7, 0.6]), torch.tensor([0.2, 0.4, 0.3])]
+        layout = DistributedBatchLayout(
+            local_batch_size=3,
+            global_batch_size=4,
+            local_batch_offset=1,
+            data_rank=1,
+            data_parallel_size=2,
+            model_replica_size=1,
+            world_size=2,
+            data_replica_batch_sizes=(1, 3),
+        )
+
+        with (
+            patch("torch.rand", side_effect=draws),
+            patch(
+                "simpletuner.helpers.distillation.anyflow.distiller.resolve_distributed_batch_layout",
+                return_value=layout,
+            ),
+        ):
+            distiller._prepare_meanflow_pair(batch, model)
+
+        self.assertTrue(torch.equal(batch["anyflow_diffusion_mask"], torch.tensor([True, False, False])))
+        self.assertTrue(torch.equal(batch["anyflow_consistency_mask"], torch.tensor([False, True, False])))
+        self.assertTrue(torch.equal(batch["anyflow_arbitrary_mask"], torch.tensor([False, False, True])))
+
+    def test_meanflow_warns_once_when_global_batch_omits_enabled_branch(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={
+                "model_type": "lora",
+                "diffusion_ratio": 0.5,
+                "consistency_ratio": 0.25,
+            },
+        )
+        latents = torch.zeros(3, 1, 2, 2)
+        noise = torch.ones_like(latents)
+        sigmas = torch.tensor([0.9, 0.6, 0.3]).view(3, 1, 1, 1)
+        batch = {
+            "latents": latents,
+            "noise": noise,
+            "input_noise": noise.clone(),
+            "sigmas": sigmas,
+            "timesteps": torch.tensor([900.0, 600.0, 300.0]),
+            "noisy_latents": (1 - sigmas) * latents + sigmas * noise,
+        }
+        draws = [torch.tensor([0.8, 0.7, 0.6]), torch.tensor([0.2, 0.4, 0.3])] * 2
+
+        with self.assertLogs("AnyFlowDistiller", level="WARNING") as captured, patch("torch.rand", side_effect=draws):
+            distiller._prepare_meanflow_pair(batch, model)
+            distiller._prepare_meanflow_pair(batch, model)
+
+        self.assertEqual(len(captured.records), 1)
+        self.assertIn("zero arbitrary samples", captured.output[0])
 
     def test_meanflow_central_difference_uses_noise_sigma_coordinate(self):
         model = _SigmaPredictionFlowModel()
@@ -573,6 +768,70 @@ class AnyFlowDistillerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cached unconditional text embeddings"):
             distiller._meanflow_loss(batch, {"model_prediction": torch.ones_like(batch["latents"])})
 
+    def test_real_score_guidance_uses_negative_tags_and_attention_mask(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "real_score_guidance_scale": 0.5},
+        )
+        batch = _prepared_batch()
+        batch["encoder_hidden_states"] = torch.ones(2, 5, 1)
+        batch["negative_encoder_hidden_states"] = torch.zeros(2, 3, 1)
+        batch["text_token_tags"] = torch.ones(2, 5, dtype=torch.long)
+        batch["negative_text_token_tags"] = torch.full((2, 3), 2, dtype=torch.long)
+        batch["encoder_attention_mask"] = torch.ones(2, 5, dtype=torch.long)
+        batch["negative_encoder_attention_mask"] = torch.tensor([[1, 1, 0], [1, 0, 0]], dtype=torch.long)
+        conditional_x0 = torch.ones_like(batch["latents"])
+        unconditional_x0 = torch.zeros_like(batch["latents"])
+
+        with patch.object(distiller, "_score_x0", return_value=unconditional_x0) as score_x0:
+            result = distiller._apply_real_score_guidance(
+                batch,
+                batch["noisy_latents"],
+                batch["timesteps"],
+                conditional_x0,
+            )
+
+        score_x0.assert_called_once()
+        unconditional_batch = score_x0.call_args.args[0]
+        self.assertIs(unconditional_batch["encoder_hidden_states"], batch["negative_encoder_hidden_states"])
+        self.assertIs(unconditional_batch["text_token_tags"], batch["negative_text_token_tags"])
+        self.assertIs(unconditional_batch["encoder_attention_mask"], batch["negative_encoder_attention_mask"])
+        self.assertTrue(torch.equal(result, torch.full_like(conditional_x0, 1.5)))
+
+    def test_unconditional_batch_drops_positive_attention_mask_when_negative_has_none(self):
+        batch = _prepared_batch()
+        batch["encoder_attention_mask"] = torch.ones(2, 5, dtype=torch.long)
+
+        unconditional_batch = AnyFlowDistiller._unconditional_batch(batch)
+
+        self.assertNotIn("encoder_attention_mask", unconditional_batch)
+
+    def test_unconditional_batch_swaps_model_specific_conditioning_aliases(self):
+        batch = _prepared_batch()
+        batch["prompt_embeds"] = torch.ones(2, 7, 4)
+        batch["attention_mask"] = torch.ones(2, 7, dtype=torch.bool)
+        batch["attention_masks"] = torch.ones(2, 7, dtype=torch.bool)
+
+        unconditional_batch = AnyFlowDistiller._unconditional_batch(batch)
+
+        self.assertIs(unconditional_batch["prompt_embeds"], batch["negative_encoder_hidden_states"])
+        self.assertNotIn("attention_mask", unconditional_batch)
+        self.assertNotIn("attention_masks", unconditional_batch)
+
+    def test_unconditional_batch_swaps_alias_masks_when_negative_mask_present(self):
+        batch = _prepared_batch()
+        batch["prompt_embeds"] = torch.ones(2, 7, 4)
+        batch["attention_mask"] = torch.ones(2, 7, dtype=torch.bool)
+        batch["attention_masks"] = torch.ones(2, 7, dtype=torch.bool)
+        batch["negative_encoder_attention_mask"] = torch.zeros(2, 5, dtype=torch.bool)
+
+        unconditional_batch = AnyFlowDistiller._unconditional_batch(batch)
+
+        self.assertIs(unconditional_batch["attention_mask"], batch["negative_encoder_attention_mask"])
+        self.assertIs(unconditional_batch["attention_masks"], batch["negative_encoder_attention_mask"])
+
     def test_onpolicy_initializes_separate_discriminator_adapter_and_optimizer(self):
         model = _FlowModel()
         distiller = AnyFlowDistiller(
@@ -596,7 +855,7 @@ class AnyFlowDistillerTests(unittest.TestCase):
         batch = _prepared_batch()
         batch["timesteps"] = torch.tensor([0.0, 0.5])
 
-        with patch("torch.randn_like", return_value=torch.zeros_like(batch["latents"])):
+        with patch.object(distiller, "_randn_like", return_value=torch.zeros_like(batch["latents"])):
             with distiller._adapter_role("student"):
                 result = distiller._training_rollout(batch, step_count=2, grad_timestep=1)
 
@@ -623,6 +882,38 @@ class AnyFlowDistillerTests(unittest.TestCase):
         self.assertEqual(logs["anyflow_rollout_steps"], 2.0)
         self.assertIn(logs["anyflow_rollout_grad_timestep"], (0.0, 1.0))
         self.assertEqual(model.component.active_adapter, "default")
+
+    def test_distributed_rollout_schedule_consumes_rank_local_draws_before_broadcast(self):
+        model = _FlowModel()
+        distiller = AnyFlowDistiller(
+            teacher_model=model,
+            noise_scheduler=None,
+            config={"model_type": "lora", "stage": "onpolicy", "rollout_step_counts": [2, 4, 8]},
+        )
+        broadcast_values = [0, 1]
+
+        def broadcast_from_rank_zero(tensor, src):
+            self.assertEqual(src, 0)
+            tensor.fill_(broadcast_values.pop(0))
+
+        with (
+            patch("torch.distributed.is_available", return_value=True),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.broadcast", side_effect=broadcast_from_rank_zero) as broadcast,
+            patch.object(
+                distiller,
+                "_randint",
+                side_effect=[torch.tensor([2], dtype=torch.long), torch.tensor([0], dtype=torch.long)],
+            ) as randint,
+        ):
+            step_count, grad_timestep = distiller._distributed_rollout_schedule()
+
+        self.assertEqual(step_count, 2)
+        self.assertEqual(grad_timestep, 1)
+        self.assertEqual(broadcast.call_count, 2)
+        self.assertEqual(randint.call_count, 2)
+        self.assertEqual(randint.call_args_list[0].args, (3, (1,)))
+        self.assertEqual(randint.call_args_list[1].args, (2, (1,)))
 
     def test_onpolicy_discriminator_step_updates_only_discriminator_adapter(self):
         model = _FlowModel()
@@ -696,13 +987,14 @@ class AnyFlowDistillerTests(unittest.TestCase):
             "anyflow",
             teacher_model=model,
             noise_scheduler=None,
-            config={"distillation_config": {"anyflow": {"stage": "forward"}}},
+            config={"seed": 123, "distillation_config": {"anyflow": {"stage": "forward"}}},
             model_type="lora",
             prediction_type="flow_matching",
         )
 
         self.assertIsInstance(distiller, AnyFlowDistiller)
         self.assertEqual(distiller.config["stage"], "forward")
+        self.assertEqual(distiller._rng_seed, 123)
         self.assertTrue(model.component.flowmap_enabled)
 
     def test_requires_flow_matching_model(self):
@@ -845,3 +1137,110 @@ class AnyFlowDistillerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AnyFlowUnconditionalBatchTests(unittest.TestCase):
+    def test_unconditional_batch_drops_stale_mask_and_swaps_model_specific_aliases(self):
+        batch = _prepared_batch()
+        batch["encoder_attention_mask"] = torch.ones(2, 5, dtype=torch.long)
+        batch["prompt_embeds"] = torch.ones(2, 7, 4)
+        batch["attention_mask"] = torch.ones(2, 7, dtype=torch.bool)
+        batch["attention_masks"] = torch.ones(2, 7, dtype=torch.bool)
+
+        unconditional_batch = AnyFlowDistiller._unconditional_batch(batch)
+
+        self.assertIs(unconditional_batch["encoder_hidden_states"], batch["negative_encoder_hidden_states"])
+        self.assertNotIn("encoder_attention_mask", unconditional_batch)
+        self.assertIs(unconditional_batch["prompt_embeds"], batch["negative_encoder_hidden_states"])
+        self.assertNotIn("attention_mask", unconditional_batch)
+        self.assertNotIn("attention_masks", unconditional_batch)
+
+    def test_unconditional_batch_marks_unconditional_pass(self):
+        batch = _prepared_batch()
+
+        unconditional_batch = AnyFlowDistiller._unconditional_batch(batch)
+
+        self.assertTrue(unconditional_batch["is_unconditional_pass"])
+        self.assertNotIn("is_unconditional_pass", batch)
+
+
+class AnyFlowDeltaEmbedderTests(unittest.TestCase):
+    def test_clone_flowmap_embedder_is_trainable(self):
+        from simpletuner.helpers.models.flowmap import clone_flowmap_embedder
+
+        frozen = torch.nn.Linear(4, 4)
+        frozen.requires_grad_(False)
+        clone = clone_flowmap_embedder(frozen)
+
+        self.assertTrue(all(p.requires_grad for p in clone.parameters()))
+        self.assertFalse(any(p.requires_grad for p in frozen.parameters()))
+
+    def test_sidecar_prefixes_cover_all_family_namings(self):
+        from simpletuner.helpers.training.adapter import ANYFLOW_SIDECAR_PREFIXES
+
+        for naming in (
+            "condition_embedder.delta_embedder.linear_1.weight",
+            "delta_adaln_embedder.table",
+            "delta_time_embedder.linear_1.weight",
+            "delta_timestep_embedder.linear_1.weight",
+            "delta_t_embedding.mlp_in.weight",
+        ):
+            with self.subTest(naming=naming):
+                self.assertTrue(naming.startswith(ANYFLOW_SIDECAR_PREFIXES))
+
+    def test_collect_anyflow_sidecar_state(self):
+        from simpletuner.helpers.training.save_hooks import _collect_anyflow_sidecar_state
+
+        class Toy(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.delta_t_embedding = torch.nn.Linear(2, 2)
+                self.other = torch.nn.Linear(2, 2)
+
+        collected = _collect_anyflow_sidecar_state(Toy())
+        self.assertEqual(
+            sorted(collected),
+            ["delta_t_embedding.bias", "delta_t_embedding.weight"],
+        )
+
+    def test_collect_anyflow_sidecar_state_excludes_peft_adapter_aliases(self):
+        from simpletuner.helpers.training.save_hooks import _collect_anyflow_sidecar_state
+
+        class Toy(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.delta_t_embedding = torch.nn.Module()
+                self.delta_t_embedding.linear_1 = torch.nn.Linear(2, 2)
+
+        model = Toy().requires_grad_(False)
+        model = inject_adapter_in_model(
+            LoraConfig(r=1, lora_alpha=1, target_modules=["delta_t_embedding.linear_1"]),
+            model,
+        )
+        state = get_peft_model_state_dict(model)
+        state.update(_collect_anyflow_sidecar_state(model))
+
+        self.assertEqual(
+            sorted(name for name in state if "delta_t_embedding" in name),
+            [
+                "delta_t_embedding.linear_1.bias",
+                "delta_t_embedding.linear_1.lora_A.weight",
+                "delta_t_embedding.linear_1.lora_B.weight",
+                "delta_t_embedding.linear_1.weight",
+            ],
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_file(state, str(Path(temp_dir) / "adapter.safetensors"))
+
+    def test_unconditional_batch_swaps_negative_pooled_embeds(self):
+        batch = _prepared_batch()
+        batch["add_text_embeds"] = torch.ones(2, 8)
+        batch["added_cond_kwargs"] = {"text_embeds": batch["add_text_embeds"], "time_ids": torch.zeros(2, 6)}
+        batch["negative_add_text_embeds"] = torch.zeros(2, 8)
+
+        unconditional_batch = AnyFlowDistiller._unconditional_batch(batch)
+
+        self.assertIs(unconditional_batch["add_text_embeds"], batch["negative_add_text_embeds"])
+        self.assertIs(unconditional_batch["added_cond_kwargs"]["text_embeds"], batch["negative_add_text_embeds"])
+        self.assertIs(unconditional_batch["added_cond_kwargs"]["time_ids"], batch["added_cond_kwargs"]["time_ids"])
+        self.assertIs(batch["added_cond_kwargs"]["text_embeds"], batch["add_text_embeds"])

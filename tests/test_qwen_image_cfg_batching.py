@@ -5,8 +5,8 @@ import torch
 
 from simpletuner.helpers.models.common import PipelineTypes
 from simpletuner.helpers.models.qwen_image.model import QwenImage
-from simpletuner.helpers.models.qwen_image.pipeline import _pad_qwen_cfg_prompt_tensors
 from simpletuner.helpers.models.qwen_image.pipeline import QwenImagePipeline as SimpleTunerQwenImagePipeline
+from simpletuner.helpers.models.qwen_image.pipeline import _pad_qwen_cfg_prompt_tensors
 
 
 class QwenImageCFGBatchingTests(unittest.TestCase):

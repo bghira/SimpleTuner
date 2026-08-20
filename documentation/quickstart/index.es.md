@@ -99,6 +99,7 @@ Guías paso a paso para entrenar cada arquitectura de modelo compatible.
 | Modelo | Tamaño / Versión | Guía |
 |-------|-------------------|-------|
 | **ACE-Step** | 3.5B / 1.5 | [Guía de ACE-Step](ACE_STEP.md) |
+| **MiniMax Music 3** | 2.4B + 8B AR | [Guía de MiniMax Music 3](MINIMAX_MUSIC.es.md) |
 | **HeartMuLa** | 3B | [Guía de HeartMuLa](HEARTMULA.md) |
 
 ## Elegir un modelo

@@ -1,8 +1,11 @@
 import unittest
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import torch
+
+from simpletuner.helpers.models.common import AudioModelFoundation
 from simpletuner.helpers.training.validation import Validation, _ValidationWorkItem
 
 
@@ -28,6 +31,23 @@ def _work_items(count: int):
         )
         for idx in range(count)
     ]
+
+
+class DummyAudioModel(AudioModelFoundation):
+    def validation_audio_sample_rate(self):
+        return 44100
+
+    def _encode_prompts(self, prompts, is_negative_prompt=False):
+        return {}
+
+    def convert_text_embed_for_pipeline(self, text_embedding):
+        return {}
+
+    def convert_negative_text_embed_for_pipeline(self, text_embedding):
+        return {}
+
+    def model_predict(self, prepared_batch):
+        return None
 
 
 class ValidationContextParallelTests(unittest.TestCase):
@@ -84,6 +104,64 @@ class ValidationContextParallelTests(unittest.TestCase):
         self.assertTrue(use_distributed)
         self.assertEqual(worker_count, 4)
         self.assertEqual([item.index for item in local_items], [0])
+
+    def test_batch_parallel_gathers_audio_payloads_from_peer_ranks(self):
+        validation = Validation.__new__(Validation)
+        validation.accelerator = SimpleNamespace(
+            num_processes=2,
+            process_index=0,
+            is_main_process=True,
+        )
+        validation.config = SimpleNamespace(validation_multigpu="batch-parallel")
+        validation.model = DummyAudioModel.__new__(DummyAudioModel)
+        validation.validation_prompt_metadata = {
+            "validation_prompts": ["prompt 0", "prompt 1"],
+            "validation_shortnames": ["song_0", "song_1"],
+        }
+        validation.validation_image_inputs = None
+        validation.validation_prompt_dict = None
+        validation.validation_resolutions = [(0, 0)]
+        validation.save_dir = "validation_images"
+        validation.eval_scores = {}
+        validation.validation_video_paths = {}
+        validation.evaluation_result = None
+        validation._check_abort = MagicMock()
+        validation._use_context_parallel_validation = MagicMock(return_value=False)
+        validation._split_validation_work_items = MagicMock(return_value=([_work_items(2)[0]], True, 2))
+        validation._should_publish_validation_payloads = MagicMock(return_value=True)
+
+        rank0_payload = {
+            "index": 0,
+            "shortname": "song_0",
+            "decorated_shortname": "song_0",
+            "prompt": "prompt 0",
+            "stitched": [],
+            "checkpoint": [],
+            "audio": Validation._serialise_media_list([torch.zeros(1, 4)]),
+        }
+        rank1_payload = {
+            "index": 1,
+            "shortname": "song_1",
+            "decorated_shortname": "song_1",
+            "prompt": "prompt 1",
+            "stitched": [],
+            "checkpoint": [],
+            "audio": Validation._serialise_media_list([torch.ones(1, 4)]),
+        }
+        validation._execute_validation_work_item = MagicMock(return_value=rank0_payload)
+
+        with (
+            patch("simpletuner.helpers.training.validation.gather_object", return_value=[[rank0_payload], [rank1_payload]]),
+            patch("simpletuner.helpers.training.validation.validation_audio.save_audio") as save_audio,
+            patch("simpletuner.helpers.training.validation.validation_audio.log_audio_to_webhook"),
+            patch("simpletuner.helpers.training.validation.validation_audio.log_audio_to_trackers"),
+        ):
+            validation.process_prompts(validation_type="intermediary")
+
+        self.assertEqual(sorted(validation.validation_audios.keys()), ["song_0", "song_1"])
+        torch.testing.assert_close(validation.validation_audios["song_0"][0], torch.zeros(1, 4))
+        torch.testing.assert_close(validation.validation_audios["song_1"][0], torch.ones(1, 4))
+        self.assertEqual(save_audio.call_count, 2)
 
 
 if __name__ == "__main__":

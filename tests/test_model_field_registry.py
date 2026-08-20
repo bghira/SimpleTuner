@@ -66,6 +66,21 @@ class TestModelFieldRegistry(unittest.TestCase):
         self.assertIn("acestep_lora_target", ace_fields)
         self.assertNotIn("flux_lora_target", ace_fields)
 
+    def test_minimaxmusic_exposes_audio_validation_fields(self):
+        validation_fields = {
+            field.name
+            for field in self.registry.get_fields_for_tab(
+                "validation",
+                context={
+                    "model_family": "minimaxmusic",
+                    "model_type": "lora",
+                },
+            )
+        }
+
+        self.assertIn("validation_lyrics", validation_fields)
+        self.assertIn("validation_audio_duration", validation_fields)
+
 
 if __name__ == "__main__":
     unittest.main()

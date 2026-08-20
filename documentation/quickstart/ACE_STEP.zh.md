@@ -106,6 +106,7 @@ SimpleTuner 当前支持以下 ACE-Step flavour：
 
 - **`validation_prompt`**：用于生成验证音频的文本描述（如 “A catchy pop song with upbeat drums”）。
 - **`validation_lyrics`**：（可选）模型需要演唱的歌词。
+- **`validation_prompt_library`**：使用 `"audio"` 选择内置 caption + lyrics 验证库。
 - **`validation_audio_duration`**：验证音频时长（秒），默认 30.0。
 - **`validation_guidance`**：引导尺度（默认约 3.0 - 5.0）。
 - **`validation_step_interval`**：生成样本的频率（如每 100 步）。

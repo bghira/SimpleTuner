@@ -735,7 +735,7 @@ class AnimaTransformerModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         state_dict = _strip_net_prefix(state_dict)
         core_state_dict, llm_adapter_state_dict = _convert_anima_state_dict_to_diffusers(state_dict)
 
-        transformer = cls()
+        transformer = cls(**_infer_anima_transformer_kwargs(state_dict))
         missing, unexpected = transformer.load_state_dict(
             {**core_state_dict, **llm_adapter_state_dict},
             strict=False,
@@ -808,6 +808,88 @@ def _strip_net_prefix(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Te
     return dict(state_dict)
 
 
+_ANIMA_SINGLE_FILE_IGNORED_KEYS = {
+    "pos_embedder.dim_spatial_range",
+    "pos_embedder.dim_temporal_range",
+    "pos_embedder.seq",
+}
+
+
+def _block_indices_from_keys(state_dict: dict[str, torch.Tensor], prefix: str) -> set[int]:
+    block_re = re.compile(rf"^{re.escape(prefix)}\.(\d+)\.")
+    return {int(match.group(1)) for key in state_dict if (match := block_re.match(key))}
+
+
+def _infer_contiguous_block_count(state_dict: dict[str, torch.Tensor], prefix: str) -> int:
+    block_indices = _block_indices_from_keys(state_dict, prefix)
+    if not block_indices:
+        raise RuntimeError(f"Anima checkpoint is missing {prefix}.* weights.")
+    expected_indices = set(range(max(block_indices) + 1))
+    if block_indices != expected_indices:
+        missing = sorted(expected_indices - block_indices)
+        raise RuntimeError(f"Anima checkpoint has non-contiguous {prefix} indices; missing: {missing}")
+    return len(block_indices)
+
+
+def _tensor_shape(state_dict: dict[str, torch.Tensor], key: str) -> tuple[int, ...]:
+    if key not in state_dict:
+        raise RuntimeError(f"Anima checkpoint is missing required key: {key}")
+    return tuple(state_dict[key].shape)
+
+
+def _infer_anima_transformer_kwargs(state_dict: dict[str, torch.Tensor]) -> dict[str, Any]:
+    num_layers = _infer_contiguous_block_count(state_dict, "blocks")
+    adapter_layers = _infer_contiguous_block_count(state_dict, "llm_adapter.blocks")
+
+    patch_weight_shape = _tensor_shape(state_dict, "x_embedder.proj.1.weight")
+    hidden_size, patch_input_size = patch_weight_shape
+    final_out_features = _tensor_shape(state_dict, "final_layer.linear.weight")[0]
+    patch_size = (1, 2, 2)
+    patch_volume = patch_size[0] * patch_size[1] * patch_size[2]
+    if patch_input_size % patch_volume != 0:
+        raise RuntimeError(f"Anima patch embed input size {patch_input_size} is not divisible by {patch_volume}.")
+    if final_out_features % patch_volume != 0:
+        raise RuntimeError(f"Anima output projection size {final_out_features} is not divisible by {patch_volume}.")
+
+    concat_padding_mask = True
+    in_channels = patch_input_size // patch_volume - int(concat_padding_mask)
+    out_channels = final_out_features // patch_volume
+    if in_channels <= 0 or out_channels <= 0:
+        raise RuntimeError(
+            f"Anima checkpoint has invalid channel dimensions: in_channels={in_channels}, out_channels={out_channels}."
+        )
+
+    q_norm_size = _tensor_shape(state_dict, "blocks.0.self_attn.q_norm.weight")[0]
+    if hidden_size % q_norm_size != 0:
+        raise RuntimeError(f"Anima hidden size {hidden_size} is not divisible by q_norm size {q_norm_size}.")
+    num_attention_heads = hidden_size // q_norm_size
+
+    mlp_hidden_size = _tensor_shape(state_dict, "blocks.0.mlp.layer1.weight")[0]
+    if mlp_hidden_size % hidden_size != 0:
+        raise RuntimeError(f"Anima MLP hidden size {mlp_hidden_size} is not divisible by hidden size {hidden_size}.")
+
+    adapter_vocab_size, adapter_dim = _tensor_shape(state_dict, "llm_adapter.embed.weight")
+    adapter_q_norm_size = _tensor_shape(state_dict, "llm_adapter.blocks.0.self_attn.q_norm.weight")[0]
+    if adapter_dim % adapter_q_norm_size != 0:
+        raise RuntimeError(f"Anima adapter dim {adapter_dim} is not divisible by adapter q_norm size {adapter_q_norm_size}.")
+
+    return {
+        "in_channels": in_channels,
+        "out_channels": out_channels,
+        "num_attention_heads": num_attention_heads,
+        "attention_head_dim": q_norm_size,
+        "num_layers": num_layers,
+        "mlp_ratio": mlp_hidden_size / hidden_size,
+        "text_embed_dim": _tensor_shape(state_dict, "blocks.0.cross_attn.k_proj.weight")[1],
+        "adaln_lora_dim": _tensor_shape(state_dict, "blocks.0.adaln_modulation_self_attn.1.weight")[0],
+        "patch_size": patch_size,
+        "adapter_vocab_size": adapter_vocab_size,
+        "adapter_dim": adapter_dim,
+        "adapter_layers": adapter_layers,
+        "adapter_heads": adapter_dim // adapter_q_norm_size,
+    }
+
+
 def _convert_anima_state_dict_to_diffusers(
     state_dict: dict[str, torch.Tensor],
 ) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
@@ -849,6 +931,9 @@ def _convert_anima_state_dict_to_diffusers(
 
     block_re = re.compile(r"^blocks\.(\d+)\.(.+)$")
     for key, value in state_dict.items():
+        if key in _ANIMA_SINGLE_FILE_IGNORED_KEYS:
+            continue
+
         if key.startswith("llm_adapter."):
             adapter[".".join(["llm_adapter", key.removeprefix("llm_adapter.")])] = value
             continue

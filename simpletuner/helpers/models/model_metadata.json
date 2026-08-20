@@ -18,7 +18,8 @@
             "base-v1.0",
             "preview-3",
             "preview-2",
-            "preview"
+            "preview",
+            "gazingstars123-2.9b"
         ],
         "module_path": "simpletuner.helpers.models.anima.model",
         "name": "Anima",
@@ -263,7 +264,9 @@
             "dev-fp4",
             "dev-fp8",
             "2.3-dev",
-            "2.3-distilled"
+            "2.3-distilled",
+            "2.5-dev",
+            "2.5-distilled"
         ],
         "module_path": "simpletuner.helpers.models.ltxvideo2.model",
         "name": "LTXVideo2",
@@ -305,6 +308,15 @@
         ],
         "module_path": "simpletuner.helpers.models.minimaxh3.model",
         "name": "MiniMax H3",
+        "prediction_type": "flow_matching"
+    },
+    "minimaxmusic": {
+        "class_name": "MiniMaxMusic",
+        "flavour_choices": [
+            "music3"
+        ],
+        "module_path": "simpletuner.helpers.models.minimaxmusic.model",
+        "name": "MiniMax Music 3",
         "prediction_type": "flow_matching"
     },
     "omnigen": {

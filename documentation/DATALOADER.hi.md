@@ -71,6 +71,15 @@
 - **Description:** इस dataset के लिए embed cache files कहाँ स्टोर होंगी। `text_embeds` के लिए यही text encoder outputs लिखने की जगह है। `image_embeds` के लिए यही VAE latents स्टोर करने की जगह है।
 - **Note:** यह `cache_dir_vae` से अलग है, जो primary image/video datasets पर VAE cache की जगह बताने के लिए सेट होता है।
 
+### `train_batch_size`
+
+- **Training behavior:** Independently sampled primary datasets (`image`, `video`, `audio`, `caption`) resolved value को training microbatch size के रूप में उपयोग करते हैं। `conditioning` paired auxiliary data है; उसका resolved value metadata buckets का आकार तय कर सकता है, लेकिन अलग training microbatch नहीं बनाता और optimizer update की sample count में अलग से नहीं जुड़ता।
+- **Description:** इस dataset के लिए global `--train_batch_size` को override करता है। Primary datasets के लिए resolved value sampler microbatch size, bucket sizing, और selected होने पर instantaneous sample count नियंत्रित करता है। `conditioning` के लिए यह केवल metadata और bucket preparation को प्रभावित करता है। Global value उपयोग करने के लिए unset छोड़ें।
+- **Gradient accumulation:** एक accumulation window अलग resolved microbatch sizes वाले datasets चुन सकती है। एक optimizer update का global sample total सभी accumulation microsteps और data-parallel ranks के actual local microbatch sizes का योग है; बिना override वाला selected dataset उस rank पर global default उपयोग करता है।
+- **Global reference:** Trainer-level learning-rate scaling और अन्य static configuration या reporting, जहाँ एक fixed batch size चाहिए, global `--train_batch_size` का ही उपयोग करते हैं। इसलिए mixed dataset overrides के साथ सामान्य global/effective batch-size formula configured reference है, हर optimizer update का exact sample count नहीं।
+- **Gradient checkpointing:** Gradient checkpointing batch-size arithmetic को नहीं बदलता।
+- **Default:** trainer के `--train_batch_size` argument पर fallback करता है।
+
 ### `write_batch_size`
 
 - **केवल `dataset_type=text_embeds` पर लागू**
@@ -137,12 +146,17 @@ Audio backends एक dedicated `audio` block सपोर्ट करते �
 }
 ```
 
+जब सभी enabled media datasets `dataset_type: "audio"` इस्तेमाल करते हैं, तब `SUPPORTS_FAKE_VIDEO_STREAM` वाली video
+model families अपने आप audio-only training चुनती हैं। LTX-2 अपना native audio-only branch इस्तेमाल करता है।
+MiniMax-H3 हर latent frame के लिए एक fake spatial video token रखता है और video loss को mask करता है। Standard LoRA
+अपने आप `AUDIO_LORA_TARGET` चुनता है; explicit `peft_lora_target_modules` को प्राथमिकता मिलती है।
+
 - **`bucket_strategy`** – फिलहाल `duration` डिफ़ॉल्ट है और clips को समान अंतराल वाले buckets में truncate करता है ताकि per‑GPU sampling batch गणना का सम्मान करे।
 - **`duration_interval`** – seconds में bucket rounding (unset होने पर डिफ़ॉल्ट **3**)। `15` के साथ, 77s clip 75s bucket में जाएगा। यह single long clips को अन्य ranks को starve करने से रोकता है और truncation को समान interval पर मजबूर करता है।
 - **`max_duration_seconds`** – इससे लंबे clips metadata discovery के दौरान पूरी तरह skip किए जाते हैं ताकि अत्यधिक लंबे tracks अनपेक्षित रूप से buckets न भरें।
 - **`truncation_mode`** – bucket interval पर snap करते समय clip का कौन‑सा हिस्सा रखा जाए। विकल्प: `beginning`, `end`, या `random` (डिफ़ॉल्ट: `beginning`)।
-- **`audio_only`** – केवल ऑडियो ट्रेनिंग मोड (LTX-2): वीडियो फाइलों के बिना केवल ऑडियो जेनरेशन ट्रेन करता है। वीडियो latents स्वचालित रूप से शून्य हो जाते हैं और वीडियो loss मास्क हो जाता है।
-- **`target_resolution`** – केवल ऑडियो मोड के लिए लक्ष्य वीडियो resolution (latent dimensions की गणना के लिए उपयोग)।
+- **`audio_only`** – audio-only mode का compatibility override; केवल-audio config इसे LTX-2 और MiniMax-H3 के लिए अपने आप enable करता है।
+- **`target_resolution`** – legacy override; automatic fake stream model की minimal token geometry इस्तेमाल करता है।
 - standard audio settings (channel count, cache directory) सीधे `simpletuner.helpers.data_backend.factory` द्वारा बनाए गए runtime audio backend पर मैप होते हैं। Padding जानबूझकर नहीं किया जाता—clips truncate होते हैं ताकि behavior ACE-Step जैसे diffusion trainers के साथ consistent रहे।
 
 #### S2V training के लिए Audio configuration
@@ -172,8 +186,8 @@ Audio backends एक dedicated `audio` block सपोर्ट करते �
 | `audio.auto_split` | bool | true | Video files से audio dataset auto-generate करें। `audio` section मौजूद होने पर default true। S2V-required models के लिए `audio` section न होने पर भी default true। |
 | `audio.source_from_video` | bool | false | (Auto-set) दर्शाता है कि audio video से extract किया गया है |
 | `audio.allow_zero_audio` | bool | false | बिना audio stream वाले videos के लिए zero-filled audio generate करें |
-| `audio.audio_only` | bool | false | केवल audio training mode (LTX-2): video files के बिना audio generation train करें |
-| `audio.target_resolution` | int | null | केवल audio mode के लिए target video resolution (latent dimensions गणना हेतु) |
+| `audio.audio_only` | bool | false | Compatibility override; केवल-audio dataset config इसे LTX-2 और MiniMax-H3 के लिए अपने आप enable करता है |
+| `audio.target_resolution` | int | null | Legacy override; automatic fake stream model family की minimal token geometry इस्तेमाल करता है |
 | `audio.sample_rate` | int | 16000 | Audio extraction के लिए target sample rate |
 | `audio.channels` | int | 1 | Audio channels की संख्या (1=mono, 2=stereo) |
 | `audio.bucket_strategy` | string | "duration" | Audio samples के लिए bucketing strategy |
@@ -665,10 +679,12 @@ Images cropping से पहले resize नहीं होतीं **जब
 Multiple GPUs के साथ training करते समय, आपका dataset **effective batch size** को समाहित करने लायक होना चाहिए, जिसकी गणना इस प्रकार है:
 
 ```
-effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_steps
+effective_batch_size = dataset train_batch_size × num_gpus × gradient_accumulation_steps
 ```
 
-उदाहरण के लिए, 4 GPUs, `train_batch_size=4`, और `gradient_accumulation_steps=1` के साथ, हर aspect bucket में (repeats लागू होने के बाद) कम से कम **16 samples** चाहिए।
+यह per-dataset bucket-sizing requirement है। इसका अर्थ यह नहीं है कि एक accumulation window में हर configured dataset चुना जाता है, और यह mixed sizes वाले optimizer update का exact sample count नहीं बताता।
+
+उदाहरण के लिए, 4 GPUs, dataset `train_batch_size=4`, और `gradient_accumulation_steps=1` के साथ, हर aspect bucket में (repeats लागू होने के बाद) कम से कम **16 samples** चाहिए।
 
 **Important:** यदि आपका dataset कॉन्फ़िगरेशन zero usable batches बनाता है तो SimpleTuner error उठाएगा। error message में दिखाया जाएगा:
 - वर्तमान कॉन्फ़िगरेशन मान (batch size, GPU count, repeats)
@@ -1325,8 +1341,24 @@ Webshart datasets `webshart` package के जरिए WebDataset-style tar sh
 - `metadata` optional है और captions वाले separate metadata location को point कर सकता है। `webshart/conceptual-captions-12m-webdataset-metadata` जैसे Hugging Face metadata repos के लिए repo id दें; Webshart source shard के `data/` जैसे subfolder layout को follow करता है।
 - `metadata_backend` को `webshart` होना चाहिए; `caption_strategy` `webshart` या `instanceprompt` हो सकता है।
 - `webshart.cache_dir` SimpleTuner metadata और Webshart caches store करता है। `shard_cache_gb` और `parallel_downloads` Webshart shard cache को pass किए जाते हैं; whole-shard caching disable करने और indexed range reads बनाए रखने के लिए `shard_cache_gb` को `0` सेट करें।
+- `webshart_optimize_captions` (alternate spelling `webshart_optimise_captions`; `webshart` block के अंदर `optimize_captions`/`optimise_captions` भी accepted हैं) startup पर caption layout probe करता है और, जब captions metadata index की बजाय `.txt`/`.json` sidecar tar members में हों, उन्हें एक बार local Webshart metadata cache में fold कर देता है। इसके बिना, sidecar-caption datasets (जैसे `laion/conceptual-captions-12m-webdataset`) को हर बार captions enumerate होने पर — startup, checkpointing और model card generation में — प्रति sample एक range read की कीमत चुकानी पड़ती है। जिन datasets की metadata में captions पहले से embedded हैं, वे coalescing अपने आप skip कर देते हैं।
 
-इसके लिए `TarDataLoader.list_shard_sample_aspect_buckets()` वाला Webshart build चाहिए।
+#### Captions को पहले से optimize करना
+
+यही coalescing Webshart CLI से भी उपलब्ध है, जो repaired metadata publish भी कर सकती है ताकि dataset के सभी consumers को runtime option के बिना फायदा मिले:
+
+```bash
+webshart optimize-captions \
+  --source organization/dataset \
+  --metadata organization/dataset-metadata \
+  --destination caption-metadata \
+  --shard-cache-dir cache/shards \
+  --push-to-hub organization/dataset-metadata
+```
+
+`--destination` एक portable per-shard metadata tree लिखता है, और `--push-to-hub` उसे metadata repository पर upload करता है; बाद में dataloader के `metadata` option को उसी repository पर point करें। `--shard-cache-dir` से coalescing हर sidecar के लिए एक range read करने की बजाय पूरी तरह cached shards reuse कर पाती है।
+
+इस backend के लिए `TarDataLoader.list_shard_sample_aspect_buckets()` वाला Webshart build चाहिए; `webshart_optimize_captions` के लिए अतिरिक्त रूप से `probe_caption_layout()` और `coalesce_caption_metadata()` भी चाहिए।
 
 ## Custom aspect ratio‑to‑resolution mapping
 

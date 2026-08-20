@@ -710,6 +710,7 @@ class JobRepository(BaseSQLiteStore):
                     """
                     SELECT * FROM jobs
                     WHERE job_type = 'local' AND status IN ('pending', 'queued')
+                      AND COALESCE(provider, '') != 'kubeflow'
                     ORDER BY priority DESC, queued_at ASC
                     """
                 )
@@ -731,6 +732,7 @@ class JobRepository(BaseSQLiteStore):
                     """
                     SELECT * FROM jobs
                     WHERE job_type = 'local' AND status = 'running'
+                      AND COALESCE(provider, '') != 'kubeflow'
                     ORDER BY started_at ASC
                     """
                 )
@@ -778,7 +780,13 @@ class JobRepository(BaseSQLiteStore):
             conn = self._get_connection()
             try:
                 cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) as cnt FROM jobs WHERE job_type = 'local' AND status = 'running'")
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) as cnt FROM jobs
+                    WHERE job_type = 'local' AND status = 'running'
+                      AND COALESCE(provider, '') != 'kubeflow'
+                    """
+                )
                 return cursor.fetchone()["cnt"]
             finally:
                 conn.close()

@@ -4,8 +4,8 @@
 
 ## Requirements
 
-- MPS が使える Apple Silicon。
-- Metal toolchain を含む Xcode command line tools。
+- MPS が使える Apple Silicon 上の macOS 15+。
+- Git、Swift 6+、および Metal toolchain を含む Xcode 16+ または対応する command line tools。
 - Apple dependency set で SimpleTuner をインストールしていること。Apple extra は PyTorch `>=2.13.0` を要求します。
 - `metal_flash_attention_autograd` を公開し、PyTorch `MPS` dispatch key を登録し、`clear_quantization_mode` を公開する UMFA build。quantized aliases ではさらに `metal_quantized_flash_attention_autograd`、`set_quantization_mode`、`QUANT_INT8`、`QUANT_INT4`、`QUANT_BLOCK_WISE` が必要です。
 
@@ -21,15 +21,31 @@ export UMFA_ROOT=/path/to/universal-metal-flash-attention
 export PYTHON="$ST_ROOT/.venv/bin/python"
 ```
 
+SimpleTuner には、local toolchain、Python environment、UMFA checkout、MFA+ submodule、Swift FFI library、Python FFI binding、SimpleTuner backend probes を確認する helper があります:
+
+```bash
+cd "$ST_ROOT"
+scripts/apple-metal-flash-attention.sh --check --umfa-root "$UMFA_ROOT" --python "$PYTHON"
+```
+
+その Python environment に UMFA を clone/build/install させるには、次を実行します:
+
+```bash
+scripts/apple-metal-flash-attention.sh --install --umfa-root "$UMFA_ROOT" --python "$PYTHON"
+```
+
+install path は、必要なら UMFA を clone し、UMFA の `metal-flash-attention` MFA+ submodule を初期化し、`MFAFFI` Swift product を build し、PyTorch custom-op extension を in place で build して、選択した Python environment に `metal_sdpa_extension` binding を install します。
+
 Swift package を build し、PyTorch FFI package を install します:
 
 ```bash
 cd "$UMFA_ROOT"
 git submodule update --init --recursive
-swift build -c release
+swift build -c release --product MFAFFI
 
 cd "$UMFA_ROOT/examples/pytorch-custom-op-ffi"
 "$PYTHON" -m pip install --upgrade pip setuptools wheel pybind11 numpy
+"$PYTHON" setup.py build_ext --inplace
 "$PYTHON" -m pip install --force-reinstall --no-deps --no-build-isolation --no-cache-dir .
 ```
 

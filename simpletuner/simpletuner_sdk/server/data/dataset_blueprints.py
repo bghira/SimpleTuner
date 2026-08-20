@@ -51,7 +51,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
         {
             "id": "local-image",
             "backendType": "local",
-            "datasetTypes": ["image", "video", "conditioning", "eval"],
+            "datasetTypes": ["image", "video", "caption"],
             "label": "local media backend",
             "description": "use filesystem folders or network mounts for primary training data",
             "defaults": {
@@ -100,6 +100,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                         {"value": "text_embeds", "label": "text embeds"},
                         {"value": "image_embeds", "label": "image embeds"},
                         {"value": "audio", "label": "audio"},
+                        {"value": "caption", "label": "caption"},
                         {"value": "eval", "label": "eval"},
                     ],
                 },
@@ -184,6 +185,15 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "type": "number",
                     "defaultValue": 0,
                     "min": 0,
+                    "step": 1,
+                    "advanced": True,
+                },
+                {
+                    "id": "train_batch_size",
+                    "label": "train batch size",
+                    "description": "optional per-dataset override for the global training batch size",
+                    "type": "number",
+                    "min": 1,
                     "step": 1,
                     "advanced": True,
                 },
@@ -519,6 +529,15 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "advanced": True,
                 },
                 {
+                    "id": "train_batch_size",
+                    "label": "train batch size",
+                    "description": "optional per-dataset override for the global training batch size",
+                    "type": "number",
+                    "min": 1,
+                    "step": 1,
+                    "advanced": True,
+                },
+                {
                     "id": "audio_min_duration_seconds",
                     "label": "min duration (s)",
                     "description": "minimum audio duration in seconds",
@@ -700,7 +719,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
         {
             "id": "huggingface-image",
             "backendType": "huggingface",
-            "datasetTypes": ["image", "video"],
+            "datasetTypes": ["image", "video", "caption"],
             "label": "hugging face dataset",
             "description": "stream images from the hugging face hub",
             "defaults": {
@@ -745,6 +764,15 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "type": "text",
                     "required": True,
                     "placeholder": "owner/dataset",
+                },
+                {
+                    "id": "train_batch_size",
+                    "label": "train batch size",
+                    "description": "optional per-dataset override for the global training batch size",
+                    "type": "number",
+                    "min": 1,
+                    "step": 1,
+                    "advanced": True,
                 },
                 {
                     "id": "split",
@@ -858,6 +886,15 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "placeholder": "laion/conceptual-captions-12m-webdataset",
                 },
                 {
+                    "id": "train_batch_size",
+                    "label": "train batch size",
+                    "description": "optional per-dataset override for the global training batch size",
+                    "type": "number",
+                    "min": 1,
+                    "step": 1,
+                    "advanced": True,
+                },
+                {
                     "id": "metadata",
                     "label": "metadata source",
                     "description": "optional separate metadata directory, repository, or URL prefix; Webshart follows shard subfolders such as data/",
@@ -891,6 +928,14 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "defaultValue": 4,
                     "min": 1,
                     "step": 1,
+                    "advanced": True,
+                },
+                {
+                    "id": "webshart_optimize_captions",
+                    "label": "optimize captions",
+                    "description": "coalesce .txt/.json sidecar captions into the local webshart metadata cache at startup, avoiding per-sample range reads",
+                    "type": "toggle",
+                    "defaultValue": False,
                     "advanced": True,
                 },
             ],
@@ -950,6 +995,15 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "placeholder": "config/dataset.csv",
                 },
                 {
+                    "id": "train_batch_size",
+                    "label": "train batch size",
+                    "description": "optional per-dataset override for the global training batch size",
+                    "type": "number",
+                    "min": 1,
+                    "step": 1,
+                    "advanced": True,
+                },
+                {
                     "id": "csv_caption_column",
                     "label": "caption column",
                     "type": "text",
@@ -988,7 +1042,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
         {
             "id": "aws-image",
             "backendType": "aws",
-            "datasetTypes": ["image", "video"],
+            "datasetTypes": ["image", "video", "caption"],
             "label": "aws s3 bucket",
             "description": "pull media from an s3 bucket using botocore",
             "defaults": {
@@ -1045,6 +1099,15 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "placeholder": "us-east-1",
                 },
                 {
+                    "id": "train_batch_size",
+                    "label": "train batch size",
+                    "description": "optional per-dataset override for the global training batch size",
+                    "type": "number",
+                    "min": 1,
+                    "step": 1,
+                    "advanced": True,
+                },
+                {
                     "id": "aws_endpoint_url",
                     "label": "endpoint url",
                     "type": "text",
@@ -1089,6 +1152,24 @@ _BLUEPRINTS: List[BackendBlueprint] = [
 ]
 
 
+def _create_local_auxiliary_blueprint() -> BackendBlueprint:
+    source = next(blueprint for blueprint in _BLUEPRINTS if blueprint.id == "local-image")
+    blueprint = source.model_copy(deep=True)
+    blueprint.id = "local-auxiliary"
+    blueprint.datasetTypes = ["conditioning", "eval"]
+    blueprint.label = "local auxiliary media backend"
+    blueprint.description = "use filesystem folders or network mounts for paired conditioning or evaluation data"
+    blueprint.fields = [field for field in blueprint.fields if field.id != "train_batch_size"]
+    blueprint.metadata = BlueprintMetadata(
+        tags=["conditioning", "eval", "local"],
+        docsUrl=docs_url("DATALOADER.md"),
+    )
+    return blueprint
+
+
+_BLUEPRINTS.append(_create_local_auxiliary_blueprint())
+
+
 def _memory_filesystem_fields() -> List[DatasetField]:
     return [
         DatasetField(
@@ -1096,7 +1177,7 @@ def _memory_filesystem_fields() -> List[DatasetField]:
             label="memory filesystem path",
             description="empty directory used as the memory filesystem mount",
             type="text",
-            placeholder="/tmp/simpletuner-memory/my-cache",
+            placeholder="/mnt/simpletuner-memory/my-cache",
             advanced=True,
         ),
         DatasetField(

@@ -63,6 +63,7 @@ mkdir -p config/heartmula-training-demo
 
 - **`validation_prompt`**: タグまたは音声の説明文（例: "明るいシンセのアップビートなポップ"）。
 - **`validation_lyrics`**: (任意) モデルに歌わせる歌詞。インストゥルメンタルは空文字を使用。
+- **`validation_prompt_library`**: 組み込みの caption + lyrics 検証ライブラリには `"audio"` を使います。
 - **`validation_audio_duration`**: バリデーションクリップの長さ（秒、デフォルト: 30.0）。
 - **`validation_guidance`**: ガイダンススケール（1.5 - 3.0 付近から開始）。
 - **`validation_step_interval`**: サンプル生成の頻度（例: 100 ステップごと）。

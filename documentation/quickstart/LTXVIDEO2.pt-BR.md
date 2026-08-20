@@ -1,11 +1,11 @@
 # Guia de Início Rápido do LTX Video 2
 
-Neste exemplo, vamos treinar um LoRA do LTX Video 2 usando os VAEs de vídeo/áudio do LTX-2 e um encoder de texto Gemma3.
+Neste exemplo, vamos treinar um LoRA do LTX Video 2 usando os VAEs de vídeo/áudio do LTX-2 e o encoder de texto Gemma correspondente à versão selecionada do LTX-2.
 
 ## Requisitos de hardware
 
 LTX Video 2 é um modelo pesado de **19B**. Ele combina:
-1.  **Gemma3**: O encoder de texto.
+1.  **Gemma3 / Gemma4**: O encoder de texto. LTX-2.0 e LTX-2.3 usam Gemma3; LTX-2.5 usa Gemma4.
 2.  **LTX-2 Video VAE** (mais o Audio VAE quando há condicionamento por áudio).
 3.  **Video Transformer de 19B**: Um backbone DiT grande.
 
@@ -23,7 +23,7 @@ Este setup é intensivo em VRAM, e o pré-cache do VAE pode aumentar o uso de me
 - **RamTorch (incl. encoder de texto)**: ~13 GB de VRAM em AMD 7900XTX.
   - NVIDIA 3090/4090/5090+ deve ter folga similar ou melhor.
 - **Sem offload (int8 TorchAO)**: ~29-30 GB de VRAM; hardware de 32 GB recomendado.
-  - Pico de RAM do sistema: ~46 GB ao carregar Gemma3 bf16 e depois quantizar para int8 (~32 GB VRAM).
+  - Pico de RAM do sistema: ~46 GB ao carregar o encoder de texto Gemma bf16 e depois quantizar para int8 (~32 GB VRAM).
   - Pico de RAM do sistema: ~34 GB ao carregar o transformer LTX-2 bf16 e depois quantizar para int8 (~30 GB VRAM).
 - **Sem offload (bf16 completo)**: ~48 GB de VRAM necessários para treinar o modelo sem offload.
 - **Throughput**:
@@ -97,8 +97,8 @@ cp config/config.json.example config/config.json
 Configurações-chave para LTX Video 2:
 
 - `model_family`: `ltxvideo2`
-- `model_flavour`: `dev` (padrão), `dev-fp4`, `dev-fp8`, `2.3-dev` ou `2.3-distilled`.
-- `pretrained_model_name_or_path`: `Lightricks/LTX-2`, `dg845/LTX-2.3-Diffusers`, `dg845/LTX-2.3-Distilled-Diffusers` ou um arquivo `.safetensors` local.
+- `model_flavour`: `dev` (padrão), `dev-fp4`, `dev-fp8`, `2.3-dev`, `2.3-distilled`, `2.5-dev` ou `2.5-distilled`.
+- `pretrained_model_name_or_path`: `Lightricks/LTX-2`, `dg845/LTX-2.3-Diffusers`, `dg845/LTX-2.3-Distilled-Diffusers`, `Lightricks/LTX-2.5` ou um arquivo `.safetensors` local.
 - `train_batch_size`: `1`. Não aumente isso a menos que você tenha um A100/H100.
 - `validation_resolution`:
   - `512x768` é um padrão seguro para testes.
@@ -107,6 +107,7 @@ Configurações-chave para LTX Video 2:
   - Para 5s (em ~12-24fps): Use `61` ou `49`.
   - Fórmula: `(frames - 1) % 4 == 0`.
 - `validation_guidance`: `5.0`.
+- `ltx2_validation_audio_guidance`: Escala CFG de áudio separada opcional para validation. Deixe sem definir para reutilizar `validation_guidance` no áudio; para validation AV do LTX-2.5, os padrões do nó dual CFG do ComfyUI são video CFG `3.0` e audio CFG `7.0`.
 - `ltx2_validation_pipeline_mode`: Mantenha `trained-stage` para validação normal. Use `spatial-upscale` para rodar o caminho LTX-2 em dois estágios: geração latente em meia resolução, upscaling latente espacial e re-denoising em resolução completa.
   - `spatial-upscale` exige que `validation_resolution` seja divisível por 64.
   - Overrides opcionais: `ltx2_validation_spatial_upsampler_model` e `ltx2_validation_spatial_upsampler_filename`. Os padrões são `Lightricks/LTX-2.3` e `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`.
@@ -115,6 +116,9 @@ Configurações-chave para LTX Video 2:
 As variantes LTX-2 2.0 são distribuídas como um único checkpoint `.safetensors` que inclui o transformer, o VAE de vídeo,
 o VAE de áudio e o vocoder. Para o LTX-2.3, o SimpleTuner carrega o repositório Diffusers correspondente ao `model_flavour`
 (`2.3-dev` ou `2.3-distilled`).
+Para LTX-2.5, o SimpleTuner assume que o repo Diffusers é `Lightricks/LTX-2.5` e roteia o encoder de texto por Gemma4. Se você carregar um checkpoint local single-file do LTX-2.5, mantenha `model_flavour` como `2.5-dev` ou `2.5-distilled`; o SimpleTuner usará `Lightricks/LTX-2.5` como fonte de componentes/config, a menos que você sobrescreva com um caminho local.
+
+Dual CFG para validation AV do LTX-2 usa as predições condicional e incondicional normais e aplica escalas separadas aos latentes de vídeo e áudio. Ele não adiciona um passe extra do modelo por si só. Recursos extras como STG, modality guidance ou reference-audio identity guidance adicionam seu próprio passe adicional quando habilitados.
 
 ### Opcional: otimizações de VRAM
 
@@ -237,7 +241,7 @@ Treino de vídeo é extremamente exigente. Se der OOM:
 
 ### Qualidade do vídeo de validação
 
-- **Vídeos pretos/ruído**: Geralmente causados por `validation_guidance` alto demais (> 6.0) ou baixo demais (< 2.0). Fique em `5.0`.
+- **Vídeos pretos/ruído**: Geralmente causados por CFG alto demais ou baixo demais. Para LTX-2.0/2.3, comece com `validation_guidance: 5.0`; para validation AV do LTX-2.5, comece com video CFG `3.0` e `ltx2_validation_audio_guidance: 7.0`.
 - **Tremor de movimento**: Verifique se o frame rate do seu dataset corresponde ao frame rate em que o modelo foi treinado (geralmente 25fps).
 - **Vídeo estático**: O modelo pode estar subtreinado ou o prompt não descreve movimento. Use prompts como "camera pans right", "zoom in", "running", etc.
 

@@ -354,22 +354,28 @@ HunyuanVideo はこの training shape では activation が重いです。Per-bl
 
 ### Ideogram 4.0
 
-Example: `ideogram-fp8.peft-lora`. Resolution: 1024x1024. `fp8` flavour は Ideogram 4 の native weight-only fp8 checkpoint を使います (`base_model_precision=no_change`)。
+Example: `ideogram-fp8.peft-lora`. Resolution: 1024x1024. `fp8` flavour は Ideogram 4 の native weight-only fp8 checkpoint を使います (`base_model_precision=no_change`)。`bf16-upcast` は `ideogram_fp8_base_upcast=true` を設定し、ロード時に base weights を bf16 に dequantize します。他の `base_model_precision`（例: `int8-sdnq`）を指定した場合も先に dequantize されるため、quantizer は実際の weights に対して動作します。
 
-| Precision | Mode | H100 | L40S |
-| --- | --- | ---: | ---: |
-| fp8-native | none | failed | OOM |
-| fp8-native | activation-offload | unsupported | unsupported |
-| fp8-native | layer | 1.033 / 12.57 | 3.101 / 11.82 |
-| fp8-native | interval2 | 1.030 / 12.33 | 3.098 / 11.82 |
-| fp8-native | seg2-stride4 | 1.031 / 12.33 | 3.088 / 11.82 |
-| fp8-native | seg2-stride4-offload | unsupported | unsupported |
-| int8-sdnq-hadamard | none | 0.702 / 61.78 | OOM |
-| int8-sdnq-hadamard | activation-offload | unsupported | unsupported |
-| int8-sdnq-hadamard | layer | 1.033 / 12.33 | 3.030 / 11.82 |
-| int8-sdnq-hadamard | interval2 | 1.032 / 12.33 | 3.034 / 11.82 |
-| int8-sdnq-hadamard | seg2-stride4 | 1.028 / 12.33 | 3.035 / 11.82 |
-| int8-sdnq-hadamard | seg2-stride4-offload | unsupported | unsupported |
+このテーブルの以前の版は、Ideogram が `gradient_checkpointing_interval`、`gradient_checkpointing_segment_stride`、`gradient_checkpointing_backend` を反映する前（custom loader が共有の wiring をスキップしていた）、かつ `int8-sdnq` が fp8 checkpoint を実際に quantize する前に測定されたものです — すべての checkpointing 行は、実際には fp8-native weights に対する full-layer torch checkpointing でした。以下の H100 の数値は修正後のもので、L40S 行は再測定待ちです。
+
+`torch-ffn`/`unsloth-ffn` backend は unsupported です。Ideogram 4 は attention/FFN の checkpointing 境界を公開していません。
+
+| Precision | Mode | Backend | H100 speed (s/step) | H100 VRAM (GiB) |
+| --- | --- | --- | ---: | ---: |
+| fp8-native | layer | torch | 1.068 | 12.33 |
+| fp8-native | layer | unsloth | 1.098 | 11.17 |
+| fp8-native | seg2-stride4 | torch | 0.915 | 36.28 |
+| fp8-native | seg2-stride4 | unsloth | 0.929 | 35.70 |
+| bf16-upcast | layer | torch | 0.962 | 20.51 |
+| bf16-upcast | layer | unsloth | 0.992 | 19.35 |
+| bf16-upcast | seg2-stride4 | torch | 0.842 | 36.85 |
+| bf16-upcast | seg2-stride4 | unsloth | 0.848 | 36.27 |
+| int8-sdnq-hadamard | layer | torch | 1.735 | 11.88 |
+| int8-sdnq-hadamard | layer | unsloth | 1.535 | 10.72 |
+| int8-sdnq-hadamard | seg2-stride4 | torch | 0.981 | 28.19 |
+| int8-sdnq-hadamard | seg2-stride4 | unsloth | 0.992 | 27.61 |
+
+まとめ: seg2-stride4 は full-layer より約 14% 速く、保持される activations は約 24 GiB 増えます。unsloth offload は約 1.2 GiB を節約し、step time のコストは 1-3% です（int8 full-layer では offload が quantized matmul とオーバーラップするため torch より速くなります）。VRAM に余裕があれば bf16-upcast が throughput の勝者です。
 
 ### Kandinsky 5 Image
 

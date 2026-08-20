@@ -31,7 +31,7 @@ For finer VRAM control, add a stride:
 
 That checkpoints blocks `0-1`, runs `2-3` normally, checkpoints `4-5`, runs `6-7` normally, and repeats. The stride must be at least the interval; overlapping schedules are not valid.
 
-Supported segmented whole-block paths: Flux.1, Flux.2, HunyuanVideo, Krea 2, LongCat Image, LongCat Video, LTXVideo 0.9, LTXVideo2, Lumina2, MageFlow, PixArt, SD3, SanaVideo, Z-Image, ZLab I1, and Wan.
+Supported segmented whole-block paths: Flux.1, Flux.2, HunyuanVideo, Krea 2, LongCat Image, LongCat Video, LTXVideo 0.9, LTXVideo2, Lumina2, MageFlow, MiniMax H3, PixArt, SD3, SanaVideo, Z-Image, ZLab I1, and Wan.
 
 Stable Cascade stage C also supports interval and stride control, but it applies the schedule to the UNet Res/Timestep/Attention micro-block sequence instead of transformer whole-block groups.
 
@@ -354,22 +354,28 @@ HunyuanVideo is activation-heavy at this training shape. Per-block and interval-
 
 ### Ideogram 4.0
 
-Example: `ideogram-fp8.peft-lora`. Resolution: 1024x1024. The fp8 flavour uses Ideogram 4's native weight-only fp8 checkpoint (`base_model_precision=no_change`).
+Example: `ideogram-fp8.peft-lora`. Resolution: 1024x1024. The fp8 flavour uses Ideogram 4's native weight-only fp8 checkpoint (`base_model_precision=no_change`); `bf16-upcast` sets `ideogram_fp8_base_upcast=true` to dequantize the base weights to bf16 at load. Requesting any other `base_model_precision` (e.g. `int8-sdnq`) also dequantizes first so the quantizer operates on real weights.
 
-| Precision | Mode | H100 | L40S |
-| --- | --- | ---: | ---: |
-| fp8-native | none | failed | OOM |
-| fp8-native | activation-offload | unsupported | unsupported |
-| fp8-native | layer | 1.033 / 12.57 | 3.101 / 11.82 |
-| fp8-native | interval2 | 1.030 / 12.33 | 3.098 / 11.82 |
-| fp8-native | seg2-stride4 | 1.031 / 12.33 | 3.088 / 11.82 |
-| fp8-native | seg2-stride4-offload | unsupported | unsupported |
-| int8-sdnq-hadamard | none | 0.702 / 61.78 | OOM |
-| int8-sdnq-hadamard | activation-offload | unsupported | unsupported |
-| int8-sdnq-hadamard | layer | 1.033 / 12.33 | 3.030 / 11.82 |
-| int8-sdnq-hadamard | interval2 | 1.032 / 12.33 | 3.034 / 11.82 |
-| int8-sdnq-hadamard | seg2-stride4 | 1.028 / 12.33 | 3.035 / 11.82 |
-| int8-sdnq-hadamard | seg2-stride4-offload | unsupported | unsupported |
+Earlier revisions of this table were measured before Ideogram honored `gradient_checkpointing_interval`, `gradient_checkpointing_segment_stride`, or `gradient_checkpointing_backend` (its custom loader skipped the shared wiring), and before `int8-sdnq` actually quantized the fp8 checkpoint — all checkpointing rows were silently full-layer torch checkpointing over fp8-native weights. The H100 numbers below are post-fix; L40S rows await re-measurement.
+
+The `torch-ffn`/`unsloth-ffn` backends are unsupported: Ideogram 4 does not expose an attention/FFN checkpointing boundary.
+
+| Precision | Mode | Backend | H100 speed (s/step) | H100 VRAM (GiB) |
+| --- | --- | --- | ---: | ---: |
+| fp8-native | layer | torch | 1.068 | 12.33 |
+| fp8-native | layer | unsloth | 1.098 | 11.17 |
+| fp8-native | seg2-stride4 | torch | 0.915 | 36.28 |
+| fp8-native | seg2-stride4 | unsloth | 0.929 | 35.70 |
+| bf16-upcast | layer | torch | 0.962 | 20.51 |
+| bf16-upcast | layer | unsloth | 0.992 | 19.35 |
+| bf16-upcast | seg2-stride4 | torch | 0.842 | 36.85 |
+| bf16-upcast | seg2-stride4 | unsloth | 0.848 | 36.27 |
+| int8-sdnq-hadamard | layer | torch | 1.735 | 11.88 |
+| int8-sdnq-hadamard | layer | unsloth | 1.535 | 10.72 |
+| int8-sdnq-hadamard | seg2-stride4 | torch | 0.981 | 28.19 |
+| int8-sdnq-hadamard | seg2-stride4 | unsloth | 0.992 | 27.61 |
+
+Takeaways: seg2-stride4 is ~14% faster than full-layer at ~24 GiB more retained activations; unsloth offload saves ~1.2 GiB for a 1-3% step-time cost (and is faster than torch under int8 full-layer, where offload overlaps the quantized matmul); bf16-upcast is the throughput winner when VRAM allows.
 
 ### Kandinsky 5 Image
 

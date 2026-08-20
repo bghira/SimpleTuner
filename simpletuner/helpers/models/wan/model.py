@@ -27,6 +27,7 @@ from simpletuner.helpers.models.common import (
     ValidationPipelineCall,
     VideoModelFoundation,
 )
+from simpletuner.helpers.models.flowmap import blend_flowmap_embeddings
 from simpletuner.helpers.models.foundation_mixins import VideoToTensor
 from simpletuner.helpers.models.tae.types import VideoTAESpec
 from simpletuner.helpers.models.wan.pipeline import WanPipeline
@@ -60,8 +61,7 @@ def time_text_monkeypatch(
     if r_timestep is not None:
         delta_timestep = self._prepare_flowmap_delta_timestep(timestep, r_timestep)
         delta_emb, _ = self._embed_timestep(delta_timestep, encoder_hidden_states, self.delta_embedder)
-        gate = self.flowmap_delta_emb_gate.to(device=temb.device, dtype=temb.dtype)
-        temb = (1.0 - gate) * temb + gate * delta_emb
+        temb = blend_flowmap_embeddings(temb, delta_emb, self.flowmap_delta_emb_gate)
 
     if timestep_sign is not None:
         time_sign_embed = getattr(self, "time_sign_embed", None)
@@ -320,6 +320,49 @@ class Wan(VideoModelFoundation):
         # "i2v-720p-14b-2.1": "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers",
     }
     MODEL_LICENSE = "apache-2.0"
+
+    def _configured_anyflow(self) -> bool:
+        return str(getattr(self.config, "distillation_method", "") or "").strip().lower() == "anyflow"
+
+    def _anyflow_distillation_config(self) -> dict:
+        configured = getattr(self.config, "distillation_config", None)
+        configured = configured if isinstance(configured, dict) else {}
+        anyflow_config = configured.get("anyflow", configured)
+        return anyflow_config if isinstance(anyflow_config, dict) else {}
+
+    def get_lora_target_layers(self):
+        manual_targets = self._get_peft_lora_target_modules()
+        if manual_targets:
+            return manual_targets
+        if not self._configured_anyflow() or str(getattr(self.config, "lora_type", "standard")).lower() != "standard":
+            return super().get_lora_target_layers()
+
+        # Match NVIDIA AnyFlow's Wan adapter scope. The explicit attn1 prefix is
+        # important: Wan's generic suffix targets also match cross-attention.
+        targets = [
+            "attn1.to_q",
+            "attn1.to_k",
+            "attn1.to_v",
+            "attn1.to_out.0",
+            "ffn.net.0.proj",
+            "ffn.net.2",
+        ]
+        anyflow_config = self._anyflow_distillation_config()
+        if bool(anyflow_config.get("train_time_embedder", True)):
+            targets.extend(
+                [
+                    "condition_embedder.time_embedder.linear_1",
+                    "condition_embedder.time_embedder.linear_2",
+                ]
+            )
+        if bool(anyflow_config.get("train_delta_embedder", True)):
+            targets.extend(
+                [
+                    "condition_embedder.delta_embedder.linear_1",
+                    "condition_embedder.delta_embedder.linear_2",
+                ]
+            )
+        return targets
 
     WAN_STAGE_OVERRIDES: Dict[str, Dict[str, object]] = {
         "i2v-14b-2.2-high": {

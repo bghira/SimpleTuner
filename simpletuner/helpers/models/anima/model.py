@@ -12,16 +12,11 @@ from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, 
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.crepa import CrepaMode
 
-from .loading import (
-    _QWEN_TOKENIZER_SOURCE,
-    _T5_TOKENIZER_SOURCE,
-    coerce_anima_scheduler,
-    load_prompt_tokenizer,
-    load_text_encoder_single_file,
-    load_vae_single_file,
-    resolve_text_encoder_dtype,
-    resolve_vae_scale_factor,
-)
+from .loading import _QWEN_TOKENIZER_SOURCE, _T5_TOKENIZER_SOURCE, coerce_anima_scheduler, load_prompt_tokenizer
+from .loading import load_text_encoder as load_default_text_encoder
+from .loading import load_text_encoder_single_file
+from .loading import load_vae as load_default_vae
+from .loading import load_vae_single_file, resolve_text_encoder_dtype, resolve_vae_scale_factor
 from .options import AnimaLoaderOptions
 from .pipeline import AnimaPipeline
 from .scheduler import AnimaFlowMatchEulerDiscreteScheduler
@@ -74,8 +69,13 @@ class Anima(ImageModelFoundation):
         "preview-3": "CalamitousFelicitousness/Anima-Preview-3-sdnext-diffusers",
         "preview-2": "CalamitousFelicitousness/Anima-Preview-2-sdnext-diffusers",
         "preview": "CalamitousFelicitousness/Anima-sdnext-diffusers",
+        "gazingstars123-2.9b": "Gazingstars123/Anima-2.9B",
     }
-    DIFFUSERS_LAYOUT_PATHS = set(HUGGINGFACE_PATHS.values())
+    SINGLE_FILE_HUGGINGFACE_FILENAMES = {
+        "gazingstars123-2.9b": "Anima-2.9B-preview-v1.safetensors",
+    }
+    SINGLE_FILE_LAYOUT_PATHS = {"Gazingstars123/Anima-2.9B"}
+    DIFFUSERS_LAYOUT_PATHS = set(HUGGINGFACE_PATHS.values()) - SINGLE_FILE_LAYOUT_PATHS
     MODEL_LICENSE = "other"
 
     TEXT_ENCODER_CONFIGURATION = {
@@ -259,6 +259,8 @@ class Anima(ImageModelFoundation):
             model_path = getattr(self.config, "pretrained_model_name_or_path", None)
         if isinstance(model_path, str):
             normalized_path = model_path.rstrip("/")
+            if normalized_path in self.SINGLE_FILE_LAYOUT_PATHS:
+                return False
             if normalized_path in self.DIFFUSERS_LAYOUT_PATHS:
                 return True
             model_dir = Path(model_path)
@@ -271,16 +273,74 @@ class Anima(ImageModelFoundation):
         flavour = getattr(self.config, "model_flavour", None)
         return flavour in self.HUGGINGFACE_PATHS and self.HUGGINGFACE_PATHS[flavour] in self.DIFFUSERS_LAYOUT_PATHS
 
+    def _single_file_transformer_filename(self, model_path: Optional[str] = None) -> Optional[str]:
+        if model_path is None:
+            model_path = getattr(self.config, "pretrained_model_name_or_path", None)
+        normalized_path = model_path.rstrip("/") if isinstance(model_path, str) else None
+
+        flavour = getattr(self.config, "model_flavour", None)
+        if flavour in self.SINGLE_FILE_HUGGINGFACE_FILENAMES:
+            flavour_path = self.HUGGINGFACE_PATHS[flavour]
+            if normalized_path in (None, flavour_path):
+                return self.SINGLE_FILE_HUGGINGFACE_FILENAMES[flavour]
+
+        for single_file_flavour, filename in self.SINGLE_FILE_HUGGINGFACE_FILENAMES.items():
+            if normalized_path == self.HUGGINGFACE_PATHS[single_file_flavour]:
+                return filename
+        return None
+
+    def _uses_single_file_repo_layout(self, model_path: Optional[str] = None) -> bool:
+        if model_path is None:
+            model_path = getattr(self.config, "pretrained_model_name_or_path", None)
+        if isinstance(model_path, str) and model_path.rstrip("/") in self.SINGLE_FILE_LAYOUT_PATHS:
+            return True
+        if model_path is not None:
+            return False
+
+        flavour = getattr(self.config, "model_flavour", None)
+        return flavour in self.HUGGINGFACE_PATHS and self.HUGGINGFACE_PATHS[flavour] in self.SINGLE_FILE_LAYOUT_PATHS
+
     def _add_hf_token_kwarg(self, load_kwargs: dict) -> None:
         token = getattr(self.config, "token", None)
         if token not in (None, False):
             load_kwargs["token"] = token
 
-    def load_model(self, move_to_device: bool = True):
-        self.MODEL_SUBFOLDER = (
-            self.DIFFUSERS_MODEL_SUBFOLDER if self._uses_diffusers_repo_layout() else "split_files/diffusion_models"
+    def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
+        args = super().pretrained_load_args(pretrained_load_args)
+        model_path = getattr(self.config, "pretrained_transformer_model_name_or_path", None) or getattr(
+            self.config, "pretrained_model_name_or_path", None
         )
+        filename = self._single_file_transformer_filename(model_path)
+        if filename is not None:
+            args["filename"] = filename
+        return args
+
+    def load_model(self, move_to_device: bool = True):
+        model_path = getattr(self.config, "pretrained_transformer_model_name_or_path", None) or getattr(
+            self.config, "pretrained_model_name_or_path", None
+        )
+        if self._uses_diffusers_repo_layout(model_path):
+            self.MODEL_SUBFOLDER = self.DIFFUSERS_MODEL_SUBFOLDER
+        elif self._uses_single_file_repo_layout(model_path):
+            self.MODEL_SUBFOLDER = None
+        else:
+            self.MODEL_SUBFOLDER = "split_files/diffusion_models"
         return super().load_model(move_to_device=move_to_device)
+
+    def setup_training_noise_schedule(self):
+        if not self._uses_single_file_repo_layout():
+            return super().setup_training_noise_schedule()
+
+        shift = getattr(self.config, "flow_schedule_shift", None)
+        if shift is None:
+            shift = 3.0
+        self.noise_schedule = AnimaFlowMatchEulerDiscreteScheduler(
+            num_train_timesteps=1000,
+            shift=shift,
+            use_dynamic_shifting=False,
+        )
+        self.config.prediction_type = "flow_matching"
+        return self.config, self.noise_schedule
 
     def _prompt_tokenizer_sources(self) -> tuple[str, str]:
         qwen_tokenizer_source = self._get_optional_config_model_path("qwen_text_encoder_model_name_or_path")
@@ -378,6 +438,21 @@ class Anima(ImageModelFoundation):
                 self.load_text_tokenizer()
             return
 
+        if self._uses_single_file_repo_layout(model_path):
+            text_encoder = load_default_text_encoder(
+                device=load_device,
+                dtype=dtype,
+                options=self._loader_options(),
+            )
+            self.text_encoders = [text_encoder]
+            self.text_encoder = text_encoder
+            self.text_encoder_1 = text_encoder
+            if not move_to_device:
+                text_encoder.to("cpu")
+            if getattr(self, "prompt_tokenizer", None) is None:
+                self.load_text_tokenizer()
+            return
+
         weight_path = _resolve_weight_path(
             model_path,
             filename=DEFAULT_ANIMA_TEXT_ENCODER_FILENAME,
@@ -421,6 +496,17 @@ class Anima(ImageModelFoundation):
             self.vae = self.AUTOENCODER_CLASS.from_pretrained(**load_kwargs)
             self.vae.eval().requires_grad_(False)
             self.vae.to(device=load_device, dtype=self.config.weight_dtype)
+            self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
+            if not move_to_device:
+                self.vae.to("cpu")
+            return
+
+        if self._uses_single_file_repo_layout(model_path):
+            self.vae = load_default_vae(
+                device=load_device,
+                dtype=self.config.weight_dtype,
+                options=self._loader_options(),
+            )
             self.AUTOENCODER_SCALING_FACTOR = getattr(self.vae.config, "scaling_factor", 1.0)
             if not move_to_device:
                 self.vae.to("cpu")

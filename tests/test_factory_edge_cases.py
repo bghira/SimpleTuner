@@ -17,6 +17,7 @@ import sys
 import tempfile
 import unittest
 from copy import deepcopy
+from types import SimpleNamespace
 from typing import Any, Dict, List
 from unittest.mock import MagicMock, patch
 
@@ -328,6 +329,94 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertTrue(init_backend["config"]["hash_filenames"])
         set_config.assert_called_once_with("image-dataset", init_backend["config"])
 
+    def test_text_embed_precompute_splits_full_dataset_records_between_processes(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory._uses_text_embeddings_cache = lambda: True
+        factory._append_image_context_dropout_prompt_record = lambda *_args, **_kwargs: None
+        factory.args = SimpleNamespace(
+            prepend_instance_prompt=False,
+            instance_prompt=None,
+            only_instance_prompt=False,
+            skip_file_discovery="",
+        )
+        factory.accelerator = SimpleNamespace(device="cpu")
+        factory.text_encoders = []
+        factory.model = SimpleNamespace(
+            requires_text_embed_image_context=lambda: False,
+            text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION,
+        )
+        cache = MagicMock(text_cache_ondemand=False)
+        init_backend = {
+            "id": "image-dataset",
+            "config": {"caption_strategy": "textfile"},
+            "data_backend": object(),
+            "instance_data_dir": "dataset",
+            "metadata_backend": MagicMock(),
+            "text_embed_cache": cache,
+        }
+
+        with (
+            patch(
+                "simpletuner.helpers.data_backend.factory.PromptHandler.get_all_captions",
+                return_value=(["caption"], [], ["dataset/sample.png"]),
+            ),
+            patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+            patch(
+                "simpletuner.helpers.data_backend.factory.StateTracker.get_args",
+                return_value=SimpleNamespace(output_dir="output"),
+            ),
+            patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config"),
+        ):
+            factory._process_text_embeddings({}, init_backend, None)
+
+        cache.compute_embeddings_for_prompts.assert_called_once()
+        self.assertTrue(cache.compute_embeddings_for_prompts.call_args.kwargs["split_between_processes"])
+
+    def test_deferred_text_embed_precompute_splits_full_dataset_records_between_processes(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory._uses_text_embeddings_cache = lambda: True
+        factory._append_image_context_dropout_prompt_record = lambda *_args, **_kwargs: None
+        factory.args = SimpleNamespace(
+            caption_strategy="textfile",
+            prepend_instance_prompt=False,
+            instance_prompt=None,
+            only_instance_prompt=False,
+        )
+        factory.accelerator = SimpleNamespace(device="cpu")
+        factory.text_encoders = []
+        factory.model = SimpleNamespace(text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION)
+        cache = MagicMock(text_cache_ondemand=False)
+        backend = {"caption_strategy": "textfile"}
+        init_backend = {
+            "id": "image-dataset",
+            "config": {"caption_strategy": "textfile"},
+            "data_backend": object(),
+            "instance_data_dir": "dataset",
+            "metadata_backend": MagicMock(),
+            "text_embed_cache": cache,
+        }
+        factory._deferred_text_embed_backends = [(backend, init_backend)]
+
+        with (
+            patch("simpletuner.helpers.data_backend.factory.StateTracker.get_conditioning_datasets", return_value=[]),
+            patch(
+                "simpletuner.helpers.data_backend.factory.PromptHandler.get_all_captions",
+                return_value=(["caption"], [], ["dataset/sample.png"]),
+            ),
+            patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+        ):
+            factory._process_deferred_text_embeddings()
+
+        cache.compute_embeddings_for_prompts.assert_called_once()
+        self.assertTrue(cache.compute_embeddings_for_prompts.call_args.kwargs["split_between_processes"])
+        self.assertEqual(factory._deferred_text_embed_backends, [])
+
     def test_text_embed_disable_config_implies_ondemand_without_mutating_global_args(self):
         from simpletuner.helpers.data_backend.factory import init_backend_config
 
@@ -346,6 +435,173 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertTrue(result["config"]["text_cache_ondemand"])
         self.assertFalse(self.args.text_cache_disable)
         self.assertFalse(self.args.text_cache_ondemand)
+
+    def test_init_backend_config_uses_dataset_train_batch_size(self):
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        self.args.train_batch_size = 4
+        backend = {
+            "id": "image-custom-batch",
+            "type": "local",
+            "dataset_type": "image",
+            "train_batch_size": 2,
+            "instance_data_dir": self.temp_dir,
+        }
+
+        result = init_backend_config(backend, self.args, self.accelerator)
+
+        self.assertEqual(result["config"]["train_batch_size"], 2)
+        self.assertEqual(result["bucket_report"].constraints["train_batch_size"], 2)
+
+    def test_init_backend_config_rejects_unsafe_dataset_train_batch_size_on_mps(self):
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        self.args.train_batch_size = 1
+        training_dataset_types = (
+            DatasetType.IMAGE,
+            DatasetType.VIDEO,
+            DatasetType.AUDIO,
+            DatasetType.CONDITIONING,
+            DatasetType.CAPTION,
+            DatasetType.GROUNDING,
+        )
+
+        with patch(
+            "simpletuner.helpers.configuration.platform_validation.torch.backends.mps.is_available", return_value=True
+        ):
+            for dataset_type in training_dataset_types:
+                with self.subTest(dataset_type=dataset_type.value):
+                    backend = {
+                        "id": f"{dataset_type.value}-unsafe-batch",
+                        "type": "local",
+                        "dataset_type": dataset_type.value,
+                        "train_batch_size": 17,
+                        "instance_data_dir": self.temp_dir,
+                    }
+
+                    with self.assertRaisesRegex(ValueError, "Please reduce the batch size to 12 or lower"):
+                        init_backend_config(backend, self.args, self.accelerator)
+
+    def test_init_backend_config_allows_train_batch_size_at_mps_limit(self):
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        backend = {
+            "id": "image-safe-mps-batch",
+            "type": "local",
+            "dataset_type": "image",
+            "train_batch_size": 16,
+            "instance_data_dir": self.temp_dir,
+        }
+
+        with patch(
+            "simpletuner.helpers.configuration.platform_validation.torch.backends.mps.is_available", return_value=True
+        ):
+            result = init_backend_config(backend, self.args, self.accelerator)
+
+        self.assertEqual(result["config"]["train_batch_size"], 16)
+
+    def test_init_backend_config_allows_large_train_batch_size_without_mps(self):
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        backend = {
+            "id": "image-non-mps-batch",
+            "type": "local",
+            "dataset_type": "image",
+            "train_batch_size": 17,
+            "instance_data_dir": self.temp_dir,
+        }
+
+        with patch(
+            "simpletuner.helpers.configuration.platform_validation.torch.backends.mps.is_available", return_value=False
+        ):
+            result = init_backend_config(backend, self.args, self.accelerator)
+
+        self.assertEqual(result["config"]["train_batch_size"], 17)
+
+    def test_eval_backend_config_forces_train_batch_size_one(self):
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+
+        self.args.train_batch_size = 4
+        backend = {
+            "id": "eval-custom-batch",
+            "type": "local",
+            "dataset_type": "eval",
+            "train_batch_size": 17,
+            "instance_data_dir": self.temp_dir,
+        }
+
+        with patch(
+            "simpletuner.helpers.configuration.platform_validation.torch.backends.mps.is_available", return_value=True
+        ):
+            result = init_backend_config(backend, self.args, self.accelerator)
+
+        self.assertEqual(result["config"]["train_batch_size"], 1)
+
+    def _apply_cached_train_batch_size(self, backend, cached_train_batch_size):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
+
+        init_backend = init_backend_config(backend, self.args, self.accelerator)
+        effective_train_batch_size = init_backend["config"]["train_batch_size"]
+        metadata_backend = MagicMock()
+        metadata_backend.config = {"train_batch_size": cached_train_batch_size}
+        metadata_backend.batch_size = effective_train_batch_size
+        metadata_backend.__len__.return_value = 1
+        init_backend["metadata_backend"] = metadata_backend
+        init_backend["data_backend"] = MagicMock()
+
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        sampler = MagicMock(caption_strategy="filename")
+        with (
+            patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config") as set_config,
+            patch("simpletuner.helpers.data_backend.factory.print_bucket_info"),
+            patch("simpletuner.helpers.data_backend.factory.MultiAspectDataset"),
+            patch("simpletuner.helpers.data_backend.factory.MultiAspectSampler", return_value=sampler) as sampler_cls,
+            patch("simpletuner.helpers.data_backend.factory.torch.utils.data.DataLoader"),
+        ):
+            factory._handle_config_versioning(backend, init_backend)
+            factory._create_dataset_and_sampler(backend, init_backend, conditioning_type=None)
+
+        set_config.assert_called_once_with(init_backend["id"], init_backend["config"])
+        self.assertEqual(init_backend["config"]["train_batch_size"], effective_train_batch_size)
+        self.assertEqual(metadata_backend.batch_size, effective_train_batch_size)
+        self.assertEqual(metadata_backend.config["train_batch_size"], effective_train_batch_size)
+        self.assertEqual(sampler_cls.call_args.kwargs["batch_size"], effective_train_batch_size)
+        return init_backend
+
+    def test_cached_batch_size_does_not_override_changed_global_default(self):
+        self.args.train_batch_size = 4
+        backend = {
+            "id": "image-global-batch",
+            "type": "local",
+            "dataset_type": "image",
+            "instance_data_dir": self.temp_dir,
+        }
+
+        result = self._apply_cached_train_batch_size(backend, cached_train_batch_size=2)
+
+        self.assertNotIn("train_batch_size", backend)
+        self.assertEqual(result["config"]["train_batch_size"], 4)
+
+    def test_cached_batch_size_does_not_override_changed_dataset_value(self):
+        self.args.train_batch_size = 8
+        backend = {
+            "id": "image-dataset-batch",
+            "type": "local",
+            "dataset_type": "image",
+            "train_batch_size": 4,
+            "instance_data_dir": self.temp_dir,
+        }
+
+        result = self._apply_cached_train_batch_size(backend, cached_train_batch_size=2)
+
+        self.assertEqual(backend["train_batch_size"], 4)
+        self.assertEqual(result["config"]["train_batch_size"], 4)
 
     def test_inline_conditioning_auto_generation_for_image_dataset(self):
         """Inline conditioning blocks on image datasets should spawn auto-generated conditioning datasets."""

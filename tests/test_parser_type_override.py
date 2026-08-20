@@ -24,6 +24,8 @@ class TestParserTypeOverride(unittest.TestCase):
             "--nsfw_check_min_votes",
             "--nsfw_check_video_frame_count",
             "--nsfw_check_video_min_flagged_frames",
+            "--validate_after_step",
+            "--validate_after_epoch",
         ):
             with self.subTest(option=option):
                 action = next(action for action in parser._actions if option in action.option_strings)
@@ -34,3 +36,32 @@ class TestParserTypeOverride(unittest.TestCase):
         action = next(action for action in parser._actions if "--nsfw_check_models" in action.option_strings)
         self.assertEqual(action.default, DEFAULT_NSFW_CHECK_MODELS_CSV)
         self.assertNotIn("Marqo/", action.default)
+
+    def test_validate_after_options_reject_negative_values(self):
+        base_args = [
+            "--model_family=pixart_sigma",
+            "--output_dir=output",
+            "--model_type=lora",
+            "--optimizer=adamw_bf16",
+            "--data_backend_config=config/multidatabackend.json",
+        ]
+        for option in ("--validate_after_step", "--validate_after_epoch"):
+            with self.subTest(option=option):
+                with self.assertRaises(ValueError):
+                    cmd_args.parse_cmdline_args(base_args + [f"{option}=-1"], exit_on_error=True)
+
+    def test_validation_prompt_library_accepts_named_library(self):
+        parser = cmd_args.get_argument_parser()
+
+        args = parser.parse_args(
+            [
+                "--model_family=flux",
+                "--output_dir=output/test",
+                "--model_type=lora",
+                "--optimizer=adamw_bf16",
+                "--data_backend_config=config/multidatabackend.json",
+                "--validation_prompt_library=audio",
+            ]
+        )
+
+        self.assertEqual(args.validation_prompt_library, "audio")

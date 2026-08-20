@@ -1948,6 +1948,17 @@ function trainerComponent() {
                 delete dataset.write_batch_size;
             }
 
+            if (['image', 'video', 'audio', 'caption'].includes(dataset.dataset_type)) {
+                const trainBatch = this._coerceInt(dataset.train_batch_size);
+                if (Number.isFinite(trainBatch) && trainBatch > 0) {
+                    dataset.train_batch_size = trainBatch;
+                } else {
+                    delete dataset.train_batch_size;
+                }
+            } else {
+                delete dataset.train_batch_size;
+            }
+
             dataset._showAdvanced = Boolean(dataset._showAdvanced);
 
             if (dataset._connectionStatus === undefined) {
@@ -2695,6 +2706,17 @@ function trainerComponent() {
                     delete cleaned.caption_filter_list;
                     delete cleaned.text_cache_ondemand;
                     delete cleaned.text_cache_disable;
+                }
+
+                if (['image', 'video', 'audio', 'caption'].includes(normalizedDatasetType)) {
+                    const trainBatchSize = this._coerceInt(dataset.train_batch_size);
+                    if (Number.isFinite(trainBatchSize) && trainBatchSize > 0) {
+                        cleaned.train_batch_size = trainBatchSize;
+                    } else {
+                        delete cleaned.train_batch_size;
+                    }
+                } else {
+                    delete cleaned.train_batch_size;
                 }
 
                 if (['image', 'video'].includes(cleaned.dataset_type)) {
@@ -6023,7 +6045,7 @@ function trainerComponent() {
                         <div>
                             <p class="mb-2">This is where your training configurations will be saved. Each config contains model settings, dataset references, and training parameters.</p>
                             <p class="mb-2"><strong>Already using SimpleTuner CLI?</strong> Point this to your existing configs directory and the UI will auto-discover your configurations.</p>
-                            <p class="mb-0 text-muted small">Example: <code>/home/you/simpletuner/configs</code></p>
+                            <p class="mb-0 text-muted small">Example: <code>/mnt/you/simpletuner/configs</code></p>
                         </div>
                     </div>
                     <!-- Step 2: Output Directory -->
@@ -6033,7 +6055,7 @@ function trainerComponent() {
                             <p class="mb-2">Training outputs include: validation images, data caches, checkpoints, LoRAs, optimizer states, dataloader status, random states, and model cards.</p>
                             <p class="mb-2"><strong>Disk space:</strong> LoRA training requires modest space (a few GB). Full model checkpoints require significantly more (10-50+ GB per checkpoint).</p>
                             <p class="mb-2"><strong>Multi-node users:</strong> Use network-shared storage accessible from all nodes at the same path.</p>
-                            <p class="mb-0 text-muted small">Example: <code>/home/you/simpletuner/output</code></p>
+                            <p class="mb-0 text-muted small">Example: <code>/mnt/you/simpletuner/output</code></p>
                         </div>
                     </div>
                     <!-- Step 3: Datasets Directory -->
@@ -6044,7 +6066,7 @@ function trainerComponent() {
                             <p class="mb-2"><strong>Uploading datasets:</strong> If you plan to upload datasets through the web interface, they will land in this directory.</p>
                             <p class="mb-2"><strong>Disk space:</strong> Datasets can be large (multiple GB to TB). Ensure sufficient space for your training images.</p>
                             <p class="mb-2">Leave blank to allow selecting datasets from anywhere on the filesystem (less secure).</p>
-                            <p class="mb-0 text-muted small">Example: <code>/home/you/datasets</code></p>
+                            <p class="mb-0 text-muted small">Example: <code>/mnt/you/datasets</code></p>
                         </div>
                     </div>
                 </div>

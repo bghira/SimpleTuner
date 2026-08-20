@@ -33,6 +33,7 @@ except ImportError:
 
 from simpletuner.diff2flow import DiffusionToFlowBridge
 from simpletuner.helpers.assistant_lora import build_adapter_stack, set_adapter_stack
+from simpletuner.helpers.data_backend.runtime.context_parallel_sync import resolve_distributed_batch_layout
 from simpletuner.helpers.models.foundation_mixins import (
     AudioTransformMixin,
     PipelineSupportMixin,
@@ -83,6 +84,17 @@ if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel("ERROR")
+
+
+def _serialize_lora_adapter_metadata(metadata: dict) -> str:
+    def _json_default(value):
+        if isinstance(value, Enum):
+            return value.value
+        if isinstance(value, (set, frozenset)):
+            return sorted(value, key=str)
+        raise TypeError(f"Unsupported LoRA adapter metadata value: {type(value).__name__}")
+
+    return json.dumps(metadata, indent=2, sort_keys=True, default=_json_default)
 
 
 class ValidationPipelineCall(Protocol):
@@ -525,6 +537,7 @@ class ModelFoundation(ABC):
         self.accelerator = accelerator
         self.noise_schedule = None
         self.pipelines = {}
+        self.controlnet = None
         self._single_file_component_cache = None
         self._qkv_projections_fused = False
         self._validation_preview_decoder = None
@@ -597,10 +610,10 @@ class ModelFoundation(ABC):
         Extract audio outputs from a pipeline result, normalising to a list of samples.
         """
         audio = None
-        if hasattr(pipeline_result, "audio"):
-            audio = pipeline_result.audio
-        elif hasattr(pipeline_result, "audios"):
+        if hasattr(pipeline_result, "audios"):
             audio = pipeline_result.audios
+        elif hasattr(pipeline_result, "audio"):
+            audio = pipeline_result.audio
 
         if audio is None:
             return None
@@ -956,7 +969,8 @@ class ModelFoundation(ABC):
                 combined.append(target)
         return combined
 
-    def _prepare_init_lora_state_dict(self, state_dict: dict) -> dict:
+    def _prepare_init_lora_state_dict(self, state_dict: dict, metadata: Optional[dict] = None) -> dict:
+        del metadata
         return state_dict
 
     def _load_init_lora_state_dict(self) -> dict | None:
@@ -965,12 +979,18 @@ class ModelFoundation(ABC):
             return None
 
         import safetensors.torch
+        from diffusers.loaders.lora_base import LORA_ADAPTER_METADATA_KEY
+        from safetensors import safe_open
 
         try:
             state_dict = safetensors.torch.load_file(init_lora_path)
+            with safe_open(init_lora_path, framework="pt", device="cpu") as handle:
+                file_metadata = handle.metadata() or {}
+            raw_adapter_metadata = file_metadata.get(LORA_ADAPTER_METADATA_KEY)
+            adapter_metadata = json.loads(raw_adapter_metadata) if raw_adapter_metadata else None
         except Exception as exc:
             raise ValueError(f"Unable to inspect init_lora checkpoint `{init_lora_path}` for LoRA rank metadata.") from exc
-        return self._prepare_init_lora_state_dict(state_dict)
+        return self._prepare_init_lora_state_dict(state_dict, metadata=adapter_metadata)
 
     def _init_lora_config_kwargs(self, state_dict: dict | None = None) -> dict:
         state_dict = self._load_init_lora_state_dict() if state_dict is None else state_dict
@@ -1800,6 +1820,13 @@ class ModelFoundation(ABC):
         visit(component)
         return classes
 
+    def _lora_state_dict_load_kwargs(self) -> dict:
+        return {}
+
+    def _prepare_loaded_lora_state_dict(self, state_dict: dict, metadata: Optional[dict] = None) -> dict:
+        del metadata
+        return state_dict
+
     def load_lora_weights(self, models, input_dir):
         """
         Generalized LoRA loading method.
@@ -1842,10 +1869,20 @@ class ModelFoundation(ABC):
                 )
 
         pipeline_cls = self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG]
-        lora_state = pipeline_cls.lora_state_dict(input_dir)
+        load_kwargs_hook = getattr(self, "_lora_state_dict_load_kwargs", None)
+        lora_load_kwargs = load_kwargs_hook() if callable(load_kwargs_hook) else {}
+        lora_state = pipeline_cls.lora_state_dict(input_dir, **lora_load_kwargs)
         network_alphas = None
+        adapter_metadata = None
 
-        if isinstance(lora_state, tuple):
+        if lora_load_kwargs.get("return_lora_metadata") and isinstance(lora_state, tuple):
+            if len(lora_state) == 2:
+                lora_state_dict, adapter_metadata = lora_state
+            elif len(lora_state) >= 3:
+                lora_state_dict, network_alphas, adapter_metadata = lora_state[:3]
+            else:
+                lora_state_dict = lora_state[0]
+        elif isinstance(lora_state, tuple):
             if len(lora_state) >= 2:
                 lora_state_dict, maybe_network_alphas = lora_state[:2]
                 if isinstance(maybe_network_alphas, dict) or maybe_network_alphas is None:
@@ -1866,6 +1903,9 @@ class ModelFoundation(ABC):
 
         if not isinstance(lora_state_dict, dict):
             raise ValueError("LoRA checkpoint did not return a state dictionary.")
+        prepare_state_hook = getattr(self, "_prepare_loaded_lora_state_dict", None)
+        if callable(prepare_state_hook):
+            lora_state_dict = prepare_state_hook(lora_state_dict, metadata=adapter_metadata)
 
         def _normalise_alpha_map(alpha_dict: dict) -> dict:
             if not alpha_dict:
@@ -2017,9 +2057,9 @@ class ModelFoundation(ABC):
                 metadata = {"format": "pt"}
                 if adapter_metadata:
                     try:
-                        metadata[LORA_ADAPTER_METADATA_KEY] = json.dumps(adapter_metadata, indent=2, sort_keys=True)
-                    except Exception:
-                        pass
+                        metadata[LORA_ADAPTER_METADATA_KEY] = _serialize_lora_adapter_metadata(adapter_metadata)
+                    except TypeError as exc:
+                        raise ValueError("Unable to serialize LoRA adapter metadata for ComfyUI export.") from exc
 
                 converted = self._convert_lora_state_dict_to_comfyui(
                     weights,
@@ -3292,6 +3332,17 @@ class ModelFoundation(ABC):
 
         self.configure_chunked_feed_forward()
 
+        self.apply_gradient_checkpointing_settings()
+
+        self.fuse_qkv_projections()
+        self.post_model_load_setup()
+
+    def apply_gradient_checkpointing_settings(self):
+        """Wire configured gradient-checkpointing backend/interval/stride onto the loaded model.
+
+        Called from the base load_model; model families that override load_model must call this
+        themselves after constructing self.model.
+        """
         # Set gradient checkpointing backend
         checkpoint_backend = (getattr(self.config, "gradient_checkpointing_backend", None) or "torch").lower()
         if checkpoint_backend not in ["torch", "torch-ffn", "unsloth", "unsloth-ffn"]:
@@ -3373,9 +3424,6 @@ class ModelFoundation(ABC):
             self.unwrap_model(model=self.model).set_gradient_checkpointing_backend(checkpoint_backend)
         if self.model is not None and hasattr(self.model, "set_gradient_checkpointing_offload_attention"):
             self.unwrap_model(model=self.model).set_gradient_checkpointing_offload_attention(offload_attention)
-
-        self.fuse_qkv_projections()
-        self.post_model_load_setup()
 
     def post_model_load_setup(self):
         """
@@ -3864,6 +3912,7 @@ class ModelFoundation(ABC):
         target_patterns: Optional[list[str]] = None,
         full_ramtorch: bool = False,
         percent: Optional[float] = None,
+        force: bool = False,
     ) -> int:
         """
         Apply RamTorch to a module's layers.
@@ -3875,8 +3924,10 @@ class ModelFoundation(ABC):
             full_ramtorch: If True, convert all supported layer types (Linear, Embedding,
                           Conv, LayerNorm) to bouncing versions. If False, only Linear.
             percent: Optional percentage (0-100) of eligible Linear layers to replace.
+            force: Apply even when --ramtorch is not globally enabled (e.g. component-level
+                   offload flags such as --ideogram_uncond_ramtorch).
         """
-        if module is None or not self._ramtorch_enabled():
+        if module is None or not (force or self._ramtorch_enabled()):
             return 0
 
         # Check if extensions are disabled via --ramtorch_disable_extensions
@@ -4026,10 +4077,14 @@ class ModelFoundation(ABC):
         if self.model is None:
             logger.debug("RamTorch requested but no base model module is initialised.")
             return 0
+        transformer_percent = self._ramtorch_transformer_percent()
+        if transformer_percent == 0:
+            logger.debug("RamTorch transformer conversion skipped because ramtorch_transformer_percent=0.")
+            return 0
         return self._apply_ramtorch_layers(
             self.model,
             self.MODEL_TYPE.value,
-            percent=self._ramtorch_transformer_percent(),
+            percent=transformer_percent,
             full_ramtorch=True,
         )
 
@@ -4660,31 +4715,30 @@ class ModelFoundation(ABC):
                 timesteps = base_timesteps.expand(bsz)
             else:
                 if timestep_mode == "round-robin":
-                    world_size = max(1, int(getattr(self.accelerator, "num_processes", 1) or 1))
-                    process_index = int(getattr(self.accelerator, "process_index", 0) or 0)
-                    if base_timesteps.numel() < bsz * world_size and not getattr(
+                    batch_layout = resolve_distributed_batch_layout(self.accelerator, bsz)
+                    global_batch_size = batch_layout.global_batch_size
+                    if base_timesteps.numel() < global_batch_size and not getattr(
                         self, "_flow_custom_timestep_overlap_warning_logged", False
                     ):
                         logger.warning(
                             "flow_timesteps_mode=round-robin has %s custom timestep(s), but the global batch "
                             "consumes %s sample(s) per step. Different ranks may reuse timestep entries on the same step; "
-                            "provide at least train_batch_size * num_processes values for non-overlapping per-step "
-                            "coverage.",
+                            "provide at least the global per-step sample count for non-overlapping coverage.",
                             base_timesteps.numel(),
-                            bsz * world_size,
+                            global_batch_size,
                         )
                         self._flow_custom_timestep_overlap_warning_logged = True
                     if not hasattr(self, "_flow_custom_timestep_cursor"):
                         resume_step = getattr(self, "_flow_custom_timestep_resume_step", None)
                         completed_steps = int(resume_step if resume_step is not None else state.get("global_step", 0) or 0)
-                        self._flow_custom_timestep_cursor = (
-                            completed_steps * bsz * world_size + process_index * bsz
-                        ) % base_timesteps.numel()
+                        self._flow_custom_timestep_cursor = (completed_steps * global_batch_size) % base_timesteps.numel()
                         if resume_step is not None:
                             delattr(self, "_flow_custom_timestep_resume_step")
                     cursor = int(getattr(self, "_flow_custom_timestep_cursor", 0))
-                    indices = (torch.arange(bsz, device=self.accelerator.device) + cursor) % base_timesteps.numel()
-                    self._flow_custom_timestep_cursor = (cursor + bsz * world_size) % base_timesteps.numel()
+                    indices = (
+                        torch.arange(bsz, device=self.accelerator.device) + cursor + batch_layout.local_batch_offset
+                    ) % base_timesteps.numel()
+                    self._flow_custom_timestep_cursor = (cursor + global_batch_size) % base_timesteps.numel()
                 else:
                     indices = torch.randint(0, base_timesteps.numel(), (bsz,), device=self.accelerator.device)
                 sigmas = base_sigmas[indices]
@@ -5402,6 +5456,9 @@ class ModelFoundation(ABC):
         negative_attention_mask = batch.get("negative_encoder_attention_mask")
         if negative_attention_mask is not None and hasattr(negative_attention_mask, "to"):
             batch["negative_encoder_attention_mask"] = negative_attention_mask.to(device=self.accelerator.device)
+        negative_pooled_embeds = batch.get("negative_add_text_embeds")
+        if negative_pooled_embeds is not None and hasattr(negative_pooled_embeds, "to"):
+            batch["negative_add_text_embeds"] = negative_pooled_embeds.to(**target_device_kwargs)
 
         # Process additional conditioning if provided
         pooled_embeds = batch.get("add_text_embeds")
@@ -6190,7 +6247,6 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
         self.has_text_encoder = True
         self.vae = None
         self.model = None
-        self.controlnet = None
         self.text_encoders = None
         self.tokenizers = None
         self._group_offload_configured = False
@@ -6473,6 +6529,36 @@ class VideoModelFoundation(VideoTransformMixin, ImageModelFoundation):
     does not do it by default.
     """
 
+    SUPPORTS_FAKE_VIDEO_STREAM = False
+    AUDIO_LORA_TARGET = None
+
+    @classmethod
+    def supports_audio_only_training(cls) -> bool:
+        """Return whether audio datasets can be trained without source video."""
+        return bool(cls.SUPPORTS_FAKE_VIDEO_STREAM)
+
+    def get_lora_target_layers(self):
+        manual_targets = self._get_peft_lora_target_modules()
+        if manual_targets:
+            return manual_targets
+
+        lora_type = str(getattr(self.config, "lora_type", "standard")).lower()
+        audio_only_data = self._data_has_audio and not self._data_has_images and not self._data_has_video
+        use_audio_default = (
+            lora_type == "standard"
+            and audio_only_data
+            and self.SUPPORTS_FAKE_VIDEO_STREAM
+            and not getattr(self.config, "controlnet", False)
+            and not getattr(self.config, "slider_lora_target", False)
+            and not getattr(self, "_data_has_grounding", False)
+        )
+        if use_audio_default:
+            if not self.AUDIO_LORA_TARGET:
+                raise ValueError(f"{self.NAME} supports audio-only datasets but does not define AUDIO_LORA_TARGET.")
+            return list(self.AUDIO_LORA_TARGET)
+
+        return super().get_lora_target_layers()
+
     @property
     def crepa_mode(self) -> CrepaMode:
         """Return shape interpretation mode for CREPA alignment.
@@ -6592,6 +6678,9 @@ class AudioModelFoundation(AudioTransformMixin, ModelFoundation):
         super().__init__(config, accelerator)
         self.text_encoders = None
         self.tokenizers = None
+
+    def custom_model_card_schedule_info(self):
+        return ""
 
     def expand_sigmas(self, batch: dict) -> dict:
         """

@@ -7,7 +7,7 @@ import regex as re
 from simpletuner.helpers.training import image_file_extensions
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.state_tracker import StateTracker
-from simpletuner.simpletuner_sdk.server.services.prompt_library_service import PromptLibraryService
+from simpletuner.simpletuner_sdk.server.services.prompt_library_service import PromptLibraryEntry, PromptLibraryService
 
 try:
     import pandas as pd
@@ -69,6 +69,82 @@ prompts = {
     "vintage_diner_sign": "Retro diner sign, 'Joe's Diner', classic 1950s design, neon lights, weathered look",
     "vintage_store_sign": "Vintage store sign with elaborate typography, 'Antique Shop', hand-painted, weathered look",
 }
+
+audio_prompts = {
+    "audio_bright_synth_pop": PromptLibraryEntry(
+        prompt="bright synth pop, 118 bpm, clean lead vocal, sidechained pads, crisp electronic drums, glossy chorus lift",
+        lyrics="[verse]\ncity lights are waking up\nwe trace the silver lines\n[chorus]\nkeep the signal burning bright\nwe are running through the night",
+    ),
+    "audio_indie_rock_drive": PromptLibraryEntry(
+        prompt="indie rock, 92 bpm, dry drums, jangly guitars, warm bass, intimate male vocal, roomy live band mix",
+        lyrics="[verse]\nold shoes on the station floor\nrain taps out a borrowed time\n[chorus]\nwe keep moving toward the shore\nwith a map we drew in rhyme",
+    ),
+    "audio_rnb_midnight": PromptLibraryEntry(
+        prompt="slow R&B, 74 bpm, velvet electric piano, sub bass, brushed percussion, close female vocal, late-night mood",
+        lyrics="[verse]\nleave the window open wide\nlet the midnight breathe\n[chorus]\nsoft words falling into time\nstay here next to me",
+    ),
+    "audio_country_waltz": PromptLibraryEntry(
+        prompt="modern country waltz, 76 bpm, acoustic guitar, pedal steel, soft fiddle, clear story vocal, gentle room reverb",
+        lyrics="[verse]\nthere is dust on the dashboard\nand a blue sky turning gold\n[chorus]\nwe were young on that highway\nchasing stories left untold",
+    ),
+    "audio_bossa_nova_cafe": PromptLibraryEntry(
+        prompt="bossa nova cafe trio, 132 bpm, nylon guitar, soft shaker, upright bass, airy vocal, relaxed sunlit ambience",
+        lyrics="[verse]\nmorning leans across the glass\ncoffee steam and sea salt air\n[chorus]\nwe move lightly as it passes\nlike a song without a care",
+    ),
+    "audio_blues_shuffle": PromptLibraryEntry(
+        prompt="electric blues shuffle, 98 bpm, smoky guitar bends, walking bass, organ swells, gritty vocal, small club mix",
+        lyrics="[verse]\nmy coat is full of thunder\nmy pockets full of rain\n[chorus]\nwhen the dawn comes rolling over\nI will start again",
+    ),
+    "audio_funk_dancefloor": PromptLibraryEntry(
+        prompt="tight funk groove, 110 bpm, slap bass, wah guitar, horn stabs, handclaps, playful group vocals, dry punchy mix",
+        lyrics="[verse]\nstep left, turn around\nfeel that pocket lock you down\n[chorus]\nmove it till the ceiling shakes\nmake the whole room levitate",
+    ),
+    "audio_edm_anthem": PromptLibraryEntry(
+        prompt="festival EDM anthem, 126 bpm, wide supersaws, punchy kick, filtered build, huge drop, bright topline vocal",
+        lyrics="[verse]\nwe rise above the static\nhands up in the glow\n[chorus]\nwhen the sky breaks open\nwe let the thunder know",
+    ),
+    "audio_hiphop_boom_bap": PromptLibraryEntry(
+        prompt="boom bap hip hop, 88 bpm, dusty piano loop, vinyl texture, deep kick and snare, confident rap vocal",
+        lyrics="[verse]\nink on the page, foot on the train\ncounting the sparks in the underground rain\n[hook]\nbring it back, let the record spin\nnew day knocking and we step right in",
+    ),
+    "audio_soul_ballad": PromptLibraryEntry(
+        prompt="classic soul ballad, 68 bpm, warm Rhodes, gospel organ, brushed drums, expressive vocal stacks, tape saturation",
+        lyrics="[verse]\nif the room gets quiet\nI can hear your name\n[chorus]\nlove is a river\nrunning back the same",
+    ),
+    "audio_instrumental_jazz": PromptLibraryEntry(
+        prompt="instrumental jazz quartet, 140 bpm, walking upright bass, brushed ride cymbal, mellow trumpet lead, piano comping",
+        lyrics="",
+    ),
+    "audio_cinematic_ambient": PromptLibraryEntry(
+        prompt="cinematic ambient instrumental, 60 bpm, evolving strings, soft piano motifs, granular pads, wide spacious mix",
+        lyrics="",
+    ),
+}
+
+validation_prompt_libraries = {
+    "default": prompts,
+    "image": prompts,
+    "images": prompts,
+    "audio": audio_prompts,
+    "music": audio_prompts,
+    "audio_music": audio_prompts,
+    "audio-music": audio_prompts,
+}
+
+
+def get_validation_prompt_library(selector=True):
+    if isinstance(selector, bool):
+        return prompts if selector else {}
+    key = str(selector).strip().lower()
+    if key in {"", "1", "true", "yes", "on", "default"}:
+        return prompts
+    if key in {"0", "false", "no", "off", "none", "null"}:
+        return {}
+    try:
+        return validation_prompt_libraries[key]
+    except KeyError as exc:
+        available = ", ".join(sorted(validation_prompt_libraries))
+        raise ValueError(f"Unknown validation prompt library '{selector}'. Available libraries: {available}") from exc
 
 
 import hashlib
@@ -191,6 +267,38 @@ class PromptHandler:
         self.tokenizers = tokenizers
 
     @staticmethod
+    def _caption_payload_is_multi_value(caption) -> bool:
+        return isinstance(caption, (list, tuple, dict, numpy.ndarray, pd.Series))
+
+    @staticmethod
+    def _normalize_caption_payload(caption) -> list[str]:
+        if caption is None:
+            return []
+        if isinstance(caption, bytes):
+            caption = caption.decode("utf-8")
+        if isinstance(caption, str):
+            caption = caption.strip()
+            return [caption] if caption else []
+        if isinstance(caption, dict):
+            captions = []
+            for value in caption.values():
+                captions.extend(PromptHandler._normalize_caption_payload(value))
+            return captions
+        if isinstance(caption, (list, tuple, numpy.ndarray, pd.Series)):
+            captions = []
+            for value in caption:
+                captions.extend(PromptHandler._normalize_caption_payload(value))
+            return captions
+        caption = str(caption).strip()
+        return [caption] if caption else []
+
+    @staticmethod
+    def _restore_caption_payload_shape(caption, caption_values: list[str]):
+        if PromptHandler._caption_payload_is_multi_value(caption):
+            return caption_values
+        return caption_values[0] if caption_values else ""
+
+    @staticmethod
     def retrieve_prompt_column_from_parquet(
         sampler_backend_id: str,
     ) -> str:
@@ -262,18 +370,10 @@ class PromptHandler:
             raise CaptionNotFoundError(
                 f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
             )
-        if type(image_caption) == bytes:
-            image_caption = image_caption.decode("utf-8")
-        if type(image_caption) == str:
-            image_caption = image_caption.strip()
-        if type(image_caption) in (list, tuple, numpy.ndarray, pd.Series):
-            image_caption = [str(item).strip() for item in image_caption if item is not None]
+        caption_values = PromptHandler._normalize_caption_payload(image_caption)
         if prepend_instance_prompt:
-            if type(image_caption) == list:
-                image_caption = [instance_prompt + " " + x for x in image_caption]
-            else:
-                image_caption = instance_prompt + " " + image_caption
-        return image_caption
+            caption_values = [instance_prompt + " " + x for x in caption_values]
+        return PromptHandler._restore_caption_payload_shape(image_caption, caption_values)
 
     @staticmethod
     def prepare_instance_prompt_from_filename(
@@ -384,22 +484,13 @@ class PromptHandler:
             if caption is None:
                 raise CaptionNotFoundError(f"Could not find caption for {image_path} in HuggingFace dataset")
 
-        # Process the caption
-        if isinstance(caption, bytes):
-            caption = caption.decode("utf-8")
-        if isinstance(caption, str):
-            caption = caption.strip()
-        if isinstance(caption, (list, tuple, numpy.ndarray, pd.Series)):
-            caption = [str(item).strip() for item in caption if item is not None]
+        caption_values = PromptHandler._normalize_caption_payload(caption)
 
         # Prepend instance prompt if requested
         if prepend_instance_prompt and instance_prompt:
-            if isinstance(caption, list):
-                caption = [instance_prompt + " " + c for c in caption]
-            else:
-                caption = instance_prompt + " " + caption
+            caption_values = [instance_prompt + " " + c for c in caption_values]
 
-        return caption
+        return PromptHandler._restore_caption_payload_shape(caption, caption_values)
 
     @staticmethod
     def prepare_instance_prompt_from_webshart(
@@ -427,20 +518,12 @@ class PromptHandler:
         if caption is None:
             raise CaptionNotFoundError(f"Could not find caption for {image_path} in Webshart dataset")
 
-        if isinstance(caption, bytes):
-            caption = caption.decode("utf-8")
-        if isinstance(caption, str):
-            caption = caption.strip()
-        if isinstance(caption, (list, tuple, numpy.ndarray, pd.Series)):
-            caption = [str(item).strip() for item in caption if item is not None]
+        caption_values = PromptHandler._normalize_caption_payload(caption)
 
         if prepend_instance_prompt and instance_prompt:
-            if isinstance(caption, list):
-                caption = [instance_prompt + " " + c for c in caption]
-            else:
-                caption = instance_prompt + " " + caption
+            caption_values = [instance_prompt + " " + c for c in caption_values]
 
-        return caption
+        return PromptHandler._restore_caption_payload_shape(caption, caption_values)
 
     @staticmethod
     def magic_prompt(
@@ -549,7 +632,7 @@ class PromptHandler:
 
         # Apply shuffle expansion if enabled
         if shuffle_enabled and instance_prompt:
-            caption_values = instance_prompt if isinstance(instance_prompt, list) else [instance_prompt]
+            caption_values = PromptHandler._normalize_caption_payload(instance_prompt)
             expanded_captions = []
             for value in caption_values:
                 shuffled = CaptionShuffler.expand_with_shuffles(value, caption_shuffle_config)
@@ -719,7 +802,7 @@ class PromptHandler:
                     logger.error(f"Could not load caption for image {image_path}: {e}")
                     images_missing_captions.append(image_path)
                 else:
-                    caption_values = caption if isinstance(caption, (tuple, list, dict)) else [caption]
+                    caption_values = PromptHandler._normalize_caption_payload(caption)
 
                     # Apply shuffle expansion if enabled
                     if shuffle_enabled:

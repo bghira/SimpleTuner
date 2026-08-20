@@ -14,7 +14,7 @@ simpletuner/examples/ideogram-fp8.peft-lora/config.json
 
 - **標準:** FP8 ベース重み、bf16 の LoRA 学習重み、rank 16-32。
 - **低VRAM:** ベースモデルに NF4 を使う。
-- **高VRAM:** 十分なVRAMがある場合は bf16-upcast 重みで量子化ロードを避ける。
+- **高VRAM:** 十分なVRAMがある場合は bf16-upcast 重み（`ideogram_fp8_base_upcast=true`）で量子化ロードを避ける。ロード時にネイティブFP8チェックポイントを学習dtypeへ逆量子化します（transformerは約18 GiB）。
 
 H100 80GB での実測値です。native FP8（`base_model_precision=fp8-torchao`、`quantize_via=pipeline`）、rank 32 LoRA、bf16 mixed precision、gradient checkpointing 有効、1024px square、validation 無効のトレーニングピーク:
 
@@ -129,7 +129,20 @@ Ideogram の検証は明示的に有効化するまで無効です:
 }
 ```
 
-これは一時的なフラグです。上流の Ideogram CFG 推論は別の unconditional transformer を想定していますが、SimpleTuner は現在デフォルトで conditional transformer のみを学習します。有効化すると、検証では conditional transformer を negative/unconditional pass にも使うため、プロンプトと negative prompt の挙動を確認できます。
+上流の Ideogram CFG 推論は、画像のみを処理する別の unconditional transformer を想定しています。`ideogram_validation=true` のみの場合、検証は negative prompt の embeds を conditional transformer に通して unconditional pass を近似するため、プロンプトと negative prompt の挙動を確認できます。
+
+プロキシではなく本物の非対称 CFG を実行するには、別の unconditional transformer を読み込みます:
+
+```json
+{
+  "ideogram_validation": true,
+  "ideogram_load_unconditional_transformer": true
+}
+```
+
+これは Ideogram 4 の凍結された画像専用 unconditional transformer を conditional と並行して読み込みます。検証はテキスト conditioning をゼロにした本物の unconditional pass を実行し、AnyFlow 蒸留は fused guidance のターゲットを negative prompt によるプロキシではなく本物の unconditional ブランチに対して計算します。FP8 チェックポイントでは約 10 GiB、`ideogram_fp8_base_upcast=true` で bf16 に逆量子化する場合は約 18 GiB の追加 VRAM を見込んでください。
+
+VRAM が足りない場合は `ideogram_uncond_ramtorch=true` を設定すると、unconditional transformer を RamTorch 経由で CPU RAM に保持し、forward pass ごとにレイヤーをアクセラレータへストリーミングします（生成速度と引き換えに VRAM を節約）。
 
 ## Caption 形式
 

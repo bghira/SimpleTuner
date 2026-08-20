@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import torch
 import torch.nn as nn
@@ -175,6 +175,82 @@ class RamTorchUtilsTests(unittest.TestCase):
         self.assertIn("weight", dict(model[0].named_buffers(recurse=False)))
         self.assertTrue(getattr(model[0].weight, "is_ramtorch", False))
 
+    def test_replace_all_layers_with_ramtorch_honors_target_patterns_for_extensions(self):
+        from simpletuner.helpers import ramtorch_extensions
+
+        class _ExtensionModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.embedding = nn.Embedding(4, 2)
+                self.block = nn.Sequential(nn.Embedding(4, 2), nn.LayerNorm(2))
+                self.other_norm = nn.LayerNorm(2)
+
+        class _StubEmbedding(nn.Embedding):
+            def __init__(
+                self,
+                num_embeddings,
+                embedding_dim,
+                padding_idx=None,
+                max_norm=None,
+                norm_type=2.0,
+                scale_grad_by_freq=False,
+                sparse=False,
+                device=None,
+                dtype=None,
+                _weight=None,
+                embed_scale=None,
+            ):
+                del device, embed_scale
+                super().__init__(
+                    num_embeddings,
+                    embedding_dim,
+                    padding_idx=padding_idx,
+                    max_norm=max_norm,
+                    norm_type=norm_type,
+                    scale_grad_by_freq=scale_grad_by_freq,
+                    sparse=sparse,
+                    _weight=None if _weight is None else _weight.detach().clone(),
+                    dtype=dtype,
+                )
+
+        class _StubLayerNorm(nn.LayerNorm):
+            def __init__(
+                self,
+                normalized_shape,
+                eps=1e-5,
+                elementwise_affine=True,
+                bias=True,
+                device=None,
+                dtype=None,
+                _weight=None,
+                _bias=None,
+            ):
+                del device
+                super().__init__(normalized_shape, eps=eps, elementwise_affine=elementwise_affine, bias=bias, dtype=dtype)
+                if _weight is not None:
+                    self.weight.data.copy_(_weight)
+                if _bias is not None and self.bias is not None:
+                    self.bias.data.copy_(_bias)
+
+        model = _ExtensionModel()
+
+        with (
+            patch.object(ramtorch_extensions, "CPUBouncingEmbedding", _StubEmbedding),
+            patch.object(ramtorch_extensions, "CPUBouncingLayerNorm", _StubLayerNorm),
+        ):
+            counts = ramtorch_utils.replace_all_layers_with_ramtorch(
+                model,
+                device="cpu",
+                include_linear=False,
+                target_patterns=["block.*"],
+            )
+
+        self.assertEqual(counts["other"], 2)
+        self.assertIsInstance(model.embedding, nn.Embedding)
+        self.assertIsInstance(model.block[0], _StubEmbedding)
+        self.assertIsInstance(model.block[1], _StubLayerNorm)
+        self.assertIsInstance(model.other_norm, nn.LayerNorm)
+
     def test_replace_scaled_fp8_linear_preserves_scale_and_output(self):
         from simpletuner.helpers.models.ideogram.quantized_loading import FP8_WEIGHT_DTYPE, Fp8Linear
         from simpletuner.helpers.ramtorch_extensions import CPUBouncingFp8Linear
@@ -221,10 +297,97 @@ class RamTorchUtilsTests(unittest.TestCase):
         model = _BufferModel()
         moved = ramtorch_utils.move_embeddings_to_device(model, torch.device("meta"))
 
-        self.assertEqual(moved, 0)
+        self.assertEqual(moved, 1)
         self.assertEqual(model.regular_buffer.device.type, "meta")
         self.assertEqual(model.ramtorch_buffer.device.type, "cpu")
         self.assertTrue(getattr(model.ramtorch_buffer, "is_ramtorch", False))
+
+    def test_move_embeddings_to_device_uses_module_apply_for_parameter_state(self):
+        class _TrackingLinear(nn.Linear):
+            def __init__(self):
+                super().__init__(2, 2)
+                self.direct_apply_calls = 0
+
+            def _apply(self, fn, recurse=True):
+                if not recurse:
+                    self.direct_apply_calls += 1
+                return super()._apply(fn, recurse=recurse)
+
+        model = nn.Sequential(_TrackingLinear())
+
+        moved = ramtorch_utils.move_embeddings_to_device(model, torch.device("meta"))
+
+        self.assertEqual(moved, 2)
+        self.assertEqual(model[0].direct_apply_calls, 1)
+        self.assertEqual(model[0].weight.device.type, "meta")
+
+    def test_peft_base_layer_relocation_moves_quantized_buffers(self):
+        class _BufferBackedLinear(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.register_buffer("weight", torch.ones(2, 2))
+
+        base_layer = _BufferBackedLinear()
+        peft_layer = SimpleNamespace(get_base_layer=lambda: base_layer)
+
+        ramtorch_utils._move_peft_base_layer_to_device(peft_layer, torch.device("meta"))
+
+        self.assertEqual(base_layer.weight.device.type, "meta")
+        self.assertEqual(base_layer._ramtorch_peft_resident_device, torch.device("meta"))
+
+    def test_peft_base_layer_relocation_leaves_ramtorch_buffers_on_cpu(self):
+        class _BufferBackedLinear(nn.Module):
+            def __init__(self):
+                super().__init__()
+                weight = torch.ones(2, 2)
+                weight.is_ramtorch = True
+                self.register_buffer("weight", weight)
+
+        base_layer = _BufferBackedLinear()
+        peft_layer = SimpleNamespace(get_base_layer=lambda: base_layer)
+
+        ramtorch_utils._move_peft_base_layer_to_device(peft_layer, torch.device("meta"))
+
+        self.assertEqual(base_layer.weight.device.type, "cpu")
+        self.assertFalse(hasattr(base_layer, "_ramtorch_peft_resident_device"))
+
+    def test_trainer_move_models_refreshes_non_ramtorch_parameters_after_adapter_setup(self):
+        from simpletuner.helpers.training.attention_backend import AttentionBackendController
+        from simpletuner.helpers.training.trainer import Trainer
+
+        component = nn.Sequential(nn.Conv1d(2, 2, 1), nn.Linear(2, 2))
+        component[1].weight.is_ramtorch = True
+        component[1].bias.is_ramtorch = True
+        model = SimpleNamespace(
+            get_trained_component=lambda unwrap_model=False: component,
+            group_offload_configured=False,
+        )
+        trainer = Trainer.__new__(Trainer)
+        trainer.model = model
+        trainer.config = SimpleNamespace(
+            attention_mechanism="diffusers",
+            controlnet=False,
+            enable_group_offload=False,
+            is_quantized=True,
+            musubi_blocks_to_swap=0,
+            pipeline_quantization_base=False,
+            ramtorch=True,
+            use_fsdp=False,
+            weight_dtype=torch.bfloat16,
+        )
+        trainer.accelerator = SimpleNamespace(
+            _lycoris_wrapped_network=None,
+            device=torch.device("cuda:0"),
+            state=SimpleNamespace(fsdp_plugin=None),
+        )
+
+        with (
+            patch.object(ramtorch_utils, "move_embeddings_to_device", return_value=2) as move_non_ramtorch,
+            patch.object(AttentionBackendController, "apply"),
+        ):
+            trainer.move_models(destination="accelerator")
+
+        move_non_ramtorch.assert_called_once_with(component, torch.device("cuda:0"))
 
     def test_ramtorch_profile_reset_resets_cuda_peak_memory_stats(self):
         from simpletuner.helpers.ramtorch import profiling as ramtorch_profile
@@ -239,6 +402,23 @@ class RamTorchUtilsTests(unittest.TestCase):
         self.assertEqual(reset_peak_memory_stats.call_count, 2)
         self.assertEqual(str(reset_peak_memory_stats.call_args_list[0].args[0]), "cuda:0")
         self.assertEqual(str(reset_peak_memory_stats.call_args_list[1].args[0]), "cuda:1")
+
+    def test_apply_ramtorch_to_transformer_skips_percent_zero(self):
+        from simpletuner.helpers.models.common import ModelFoundation, ModelTypes
+
+        model = SimpleNamespace(
+            config=SimpleNamespace(ramtorch=True, ramtorch_transformer_percent=0),
+            model=object(),
+            MODEL_TYPE=ModelTypes.TRANSFORMER,
+            _ramtorch_enabled=lambda: True,
+            _ramtorch_transformer_percent=lambda: 0,
+            _apply_ramtorch_layers=Mock(return_value=1),
+        )
+
+        replaced = ModelFoundation.apply_ramtorch_to_transformer(model)
+
+        self.assertEqual(replaced, 0)
+        model._apply_ramtorch_layers.assert_not_called()
 
     def test_torchao_int8_ramtorch_backward_uses_dense_weight_view(self):
         try:

@@ -17,6 +17,7 @@ from accelerate import InitProcessGroupKwargs
 from accelerate.utils import ProjectConfiguration
 
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args, normalize_lr_scheduler_value
+from simpletuner.helpers.configuration.platform_validation import validate_mps_train_batch_size
 from simpletuner.helpers.configuration.template_vars import render_modelspec_comment
 from simpletuner.helpers.distillation.common import validate_distillation_text_encoder_training
 from simpletuner.helpers.logging import get_logger
@@ -401,6 +402,16 @@ def _parse_bool_flag(value):
     raise argparse.ArgumentTypeError(f"Expected a boolean value, got {value!r}")
 
 
+def _parse_validation_prompt_library_flag(value):
+    try:
+        return _parse_bool_flag(value)
+    except argparse.ArgumentTypeError:
+        text_value = str(value).strip()
+        if not text_value:
+            return False
+        return text_value
+
+
 def _extract_choice_values(field: ConfigField) -> List[Any]:
     if not field.choices or field.dynamic_choices:
         return []
@@ -493,7 +504,9 @@ def _add_argument_from_field(parser: argparse.ArgumentParser, field: ConfigField
             {
                 "nargs": "?",
                 "const": True,
-                "type": _parse_bool_flag,
+                "type": (
+                    _parse_validation_prompt_library_flag if field.name == "validation_prompt_library" else _parse_bool_flag
+                ),
                 "default": default_bool,
             }
         )
@@ -951,12 +964,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
     if torch.backends.mps.is_available():
         if args.model_family.lower() not in ["sd3", "flux", "legacy"] and not args.unet_attention_slice:
             warning_log("MPS may benefit from the use of --unet_attention_slice for memory savings at the cost of speed.")
-        if args.train_batch_size > 16:
-            raise ValueError(
-                "An M3 Max 128G will use 12 seconds per step at a batch size of 1 and 65 seconds per step at a batch size of 12."
-                " Any higher values will result in NDArray size errors or other unstable training results and crashes."
-                "\nPlease reduce the batch size to 12 or lower."
-            )
+        validate_mps_train_batch_size(args.train_batch_size)
 
         if args.quantize_via == "accelerator":
             args.quantize_via = "cpu"
@@ -1278,6 +1286,13 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     if args.validation_num_video_frames is not None and args.validation_num_video_frames < 1:
         raise ValueError("validation_num_video_frames must be at least 1.")
+
+    for option_name in ("validate_after_step", "validate_after_epoch"):
+        value = getattr(args, option_name, None)
+        if value is None:
+            continue
+        if value < 0:
+            raise ValueError(f"--{option_name} must be greater than or equal to 0.")
 
     # Check if we have a valid gradient accumulation steps.
     if args.gradient_accumulation_steps < 1:

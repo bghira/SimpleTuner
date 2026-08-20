@@ -53,6 +53,44 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="validate_after_step",
+            arg_name="--validate_after_step",
+            ui_label="Validate After Step",
+            field_type=FieldType.NUMBER,
+            tab="validation",
+            section="validation_schedule",
+            default_value=None,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0, message="Validation start step must be non-negative")
+            ],
+            help_text="Skip scheduled validation until the global training step reaches this value",
+            tooltip="Delay scheduled validation until this global step. Normal validation intervals still determine the first run.",
+            importance=ImportanceLevel.ADVANCED,
+            order=3,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="validate_after_epoch",
+            arg_name="--validate_after_epoch",
+            ui_label="Validate After Epoch",
+            field_type=FieldType.NUMBER,
+            tab="validation",
+            section="validation_schedule",
+            default_value=None,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0, message="Validation start epoch must be non-negative")
+            ],
+            help_text="Skip scheduled validation until the training epoch reaches this value",
+            tooltip="Delay scheduled validation until this epoch. When used with validate_after_step, validation starts only after both thresholds are reached.",
+            importance=ImportanceLevel.ADVANCED,
+            order=4,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="disable_benchmark",
             arg_name="--disable_benchmark",
             ui_label="Skip Baseline Benchmark",
@@ -64,7 +102,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             help_text="Skip generating baseline comparison images before training starts",
             tooltip="Disable if you want to reduce startup time; recommended to keep enabled for qualitative comparisons.",
             importance=ImportanceLevel.ADVANCED,
-            order=3,
+            order=5,
             subsection="advanced",
             documentation="OPTIONS.md#--disable_benchmark",
         )
@@ -83,7 +121,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tooltip="Enables live previews via webhook for supported models. Requires a webhook configuration.",
             warning="Only available on model families with Tiny AutoEncoder support.",
             importance=ImportanceLevel.ADVANCED,
-            order=4,
+            order=6,
             subsection="advanced",
             documentation="OPTIONS.md#--validation_preview",
         )
@@ -102,7 +140,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             help_text="Always emit the first preview, then emit every N sampling steps thereafter.",
             tooltip="Set >1 to throttle preview decoding after the initial preview if the Tiny AutoEncoder adds overhead.",
             importance=ImportanceLevel.ADVANCED,
-            order=5,
+            order=7,
             subsection="advanced",
             documentation="OPTIONS.md#--validation_preview_steps",
         )
@@ -561,8 +599,8 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tab="validation",
             section="prompt_management",
             default_value=False,
-            help_text="Use SimpleTuner's built-in prompt library",
-            tooltip="Generates multiple diverse validation images automatically",
+            help_text='Use SimpleTuner\'s built-in prompt library; set "audio" in config for music/audio prompts',
+            tooltip="Generates multiple diverse validation samples automatically",
             importance=ImportanceLevel.ADVANCED,
             order=3,
         )
@@ -578,7 +616,7 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             tab="validation",
             section="prompt_management",
             placeholder="/path/to/prompt_library.json",
-            tooltip="See user_prompt_library.json.example for format",
+            tooltip="Path to a JSON prompt library. Entries may use prompt or caption, plus optional lyrics.",
             importance=ImportanceLevel.ADVANCED,
             order=4,
             custom_component="prompt_library_path",

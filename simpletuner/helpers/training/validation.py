@@ -18,6 +18,7 @@ import diffusers
 import numpy as np
 import torch
 import wandb
+from accelerate.utils import gather_object
 from tqdm import tqdm
 
 from simpletuner.helpers.caching.memory import reclaim_memory
@@ -76,7 +77,7 @@ from simpletuner.helpers.training.validation_adapters import (
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 
 logger = logging.getLogger("Validation")
-from simpletuner.helpers.training.multi_process import gather_across_processes, should_log, split_across_processes
+from simpletuner.helpers.training.multi_process import should_log, split_across_processes
 
 if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
@@ -131,6 +132,7 @@ class ValidationPrompt:
     adapter_strength: float | None = None
     bbox_entities: list[dict] | None = None
     bbox_keyframes: list[dict] | None = None
+    lyrics: str | None = None
 
 
 def resize_validation_images(validation_images, edge_length):
@@ -160,6 +162,7 @@ def resize_validation_images(validation_images, edge_length):
                 adapter_strength=validation_prompt.adapter_strength,
                 bbox_entities=validation_prompt.bbox_entities,
                 bbox_keyframes=validation_prompt.bbox_keyframes,
+                lyrics=validation_prompt.lyrics,
             )
         )
     return resized_validation_samples
@@ -290,14 +293,16 @@ def _normalise_validation_sample(sample, idx: int = 0, fallback_shortname: str |
     adapter_strength: float | None = None
     bbox_entities: list[dict] | None = None
     bbox_keyframes: list[dict] | None = None
+    lyrics: str | None = None
 
     if isinstance(sample, PromptLibraryEntry):
         prompt = sample.prompt
         adapter_strength = sample.adapter_strength
         bbox_entities = sample.bbox_entities
         bbox_keyframes = sample.bbox_keyframes
-    elif isinstance(sample, dict) and "prompt" in sample:
-        prompt = sample.get("prompt")
+        lyrics = sample.lyrics
+    elif isinstance(sample, dict) and any(key in sample for key in ("prompt", "caption", "tags")):
+        prompt = sample.get("prompt", sample.get("caption", sample.get("tags")))
         explicit_shortname = sample.get("shortname") or sample.get("name")
         if isinstance(explicit_shortname, str) and explicit_shortname.strip():
             shortname = explicit_shortname.strip()
@@ -305,6 +310,8 @@ def _normalise_validation_sample(sample, idx: int = 0, fallback_shortname: str |
             adapter_strength = None if sample.get("adapter_strength") is None else float(sample.get("adapter_strength"))
         except Exception:
             adapter_strength = None
+        raw_lyrics = sample.get("lyrics")
+        lyrics = raw_lyrics if isinstance(raw_lyrics, str) else None
     elif isinstance(sample, tuple):
         if len(sample) == 4:
             candidate_shortname, prompt, image_path, conditioning = sample
@@ -337,6 +344,7 @@ def _normalise_validation_sample(sample, idx: int = 0, fallback_shortname: str |
         adapter_strength=adapter_strength,
         bbox_entities=bbox_entities,
         bbox_keyframes=bbox_keyframes,
+        lyrics=lyrics,
     )
 
 
@@ -809,6 +817,30 @@ def _validation_text_cache_key(args, shortname: str, prompt: str) -> str:
     return f"{shortname}:{prompt_hash}"
 
 
+def _validation_prompt_cache_metadata(
+    args,
+    model,
+    *,
+    entry: PromptLibraryEntry | ValidationPrompt | None = None,
+    lyrics: str | None = None,
+) -> dict[str, Any] | None:
+    if not isinstance(model, AudioModelFoundation):
+        return None
+
+    metadata: dict[str, Any] = {}
+    lyrics_text = lyrics
+    if lyrics_text is None and entry is not None:
+        lyrics_text = entry.lyrics
+    if lyrics_text is not None:
+        metadata["lyrics"] = lyrics_text
+
+    audio_duration = getattr(args, "validation_audio_duration", None)
+    if audio_duration is not None:
+        metadata["audio_duration"] = audio_duration
+
+    return metadata or None
+
+
 def _validation_negative_text_cache_key(args, shortname: str, negative_prompt: str) -> str:
     prompt_hash = hashlib.md5(str(negative_prompt).encode("utf-8")).hexdigest()
     return f"{_validation_text_cache_key(args, shortname, negative_prompt)}:__validation_negative__{prompt_hash}"
@@ -826,10 +858,10 @@ def _validation_negative_prompt_record(
         metadata = (
             _validation_reference_prompt_metadata(validation_input_image) if validation_input_image is not None else {}
         )
-        if not metadata:
-            raise ValueError("Validation negative prompt encoding requires image context for this model.")
         if positive_prompt is not None:
             metadata["positive_prompt"] = positive_prompt
+        if not metadata:
+            raise ValueError("Validation negative prompt encoding requires prompt or image context for this model.")
         return {
             "prompt": negative_prompt,
             "key": _validation_negative_text_cache_key(args, shortname, negative_prompt),
@@ -851,6 +883,7 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         [PromptLibraryEntry(prompt="")] if not StateTracker.get_args().validation_disable_unconditional else []
     )
     validation_shortnames = ["unconditional"] if not StateTracker.get_args().validation_disable_unconditional else []
+    validation_prompt_inputs: dict[str, Any] = {}
     if model_uses_text_cache and not hasattr(embed_cache, "model_type"):
         raise ValueError(
             f"The default text embed cache backend was not found. You must specify 'default: true' on your text embed data backend via {StateTracker.get_args().data_backend_config}."
@@ -863,6 +896,9 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             "prompt": "",
             "key": "unconditional",
         }
+        metadata = _validation_prompt_cache_metadata(args, model)
+        if metadata:
+            prompt_record["metadata"] = metadata
         if precompute_text_embeddings:
             embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
     model_type = getattr(embed_cache, "model_type", None)
@@ -922,6 +958,9 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                             "Skipping validation sample without reference images while preparing embeds for image-context encoding."
                         )
                         continue
+                    audio_metadata = _validation_prompt_cache_metadata(args, model, entry=validation_sample)
+                    if audio_metadata:
+                        metadata.update(audio_metadata)
 
                     # Create prompt record with shortname as key and image metadata for encoding
                     prompt_record = {
@@ -937,10 +976,15 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                         "prompt": validation_prompt,
                         "key": shortname,
                     }
+                    metadata = _validation_prompt_cache_metadata(args, model, entry=validation_sample)
+                    if metadata:
+                        prompt_record["metadata"] = metadata
                     if precompute_text_embeddings:
                         embed_cache.compute_embeddings_for_prompts([prompt_record], load_from_cache=False)
                 sample_prompts.append(PromptLibraryEntry(prompt=validation_prompt))
                 sample_shortnames.append(shortname)
+                if reference_images:
+                    validation_prompt_inputs[shortname] = reference_images
             if sample_prompts:
                 validation_prompts.extend(sample_prompts)
                 validation_shortnames.extend(sample_shortnames)
@@ -951,22 +995,28 @@ def prepare_validation_prompt_list(args, embed_cache, model):
 
     if allow_prompt_library and args.validation_prompt_library:
         # Use the SimpleTuner prompts library for validation prompts.
-        from simpletuner.helpers.prompts import prompts as prompt_library
+        from simpletuner.helpers.prompts import get_validation_prompt_library
+
+        prompt_library = get_validation_prompt_library(args.validation_prompt_library)
 
         # Iterate through the prompts with a progress bar
-        for shortname, prompt in tqdm(
+        for shortname, raw_entry in tqdm(
             prompt_library.items(),
             leave=False,
             ncols=125,
             desc="Precomputing validation prompt embeddings",
         ):
+            entry = raw_entry if isinstance(raw_entry, PromptLibraryEntry) else PromptLibraryEntry.from_payload(raw_entry)
             prompt_record = {
-                "prompt": prompt,
+                "prompt": entry.prompt,
                 "key": shortname,
             }
+            metadata = _validation_prompt_cache_metadata(args, model, entry=entry)
+            if metadata:
+                prompt_record["metadata"] = metadata
             if precompute_text_embeddings:
                 embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
-            validation_prompts.append(PromptLibraryEntry(prompt=prompt))
+            validation_prompts.append(entry)
             validation_shortnames.append(shortname)
 
     if allow_prompt_library and args.user_prompt_library is not None:
@@ -987,6 +1037,9 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                 "prompt": entry.prompt,
                 "key": shortname,
             }
+            metadata = _validation_prompt_cache_metadata(args, model, entry=entry)
+            if metadata:
+                prompt_record["metadata"] = metadata
             if precompute_text_embeddings:
                 embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
             if entry.bbox_entities:
@@ -1031,23 +1084,49 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             "prompt": args.validation_prompt,
             "key": _validation_text_cache_key(args, "validation", args.validation_prompt),
         }
+        metadata = _validation_prompt_cache_metadata(
+            args,
+            model,
+            lyrics=getattr(args, "validation_lyrics", None),
+        )
+        if metadata:
+            prompt_record["metadata"] = metadata
         if precompute_text_embeddings:
             embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
     # Compute negative embed for validation prompts, if any are set, so that it's stored before we unload the text encoder.
     if validation_prompts and precompute_text_embeddings:
         negative_prompt = StateTracker.get_args().validation_negative_prompt
+        needs_context = model.validation_negative_prompt_requires_prompt_context()
         if (
             negative_prompt is not None
             and str(negative_prompt).strip().lower() != "none"
-            and negative_prompt != ""
+            and (negative_prompt != "" or needs_context)
             and model.uses_validation_negative_prompt()
         ):
             if getattr(args, "model_family", None) == "ideogram":
                 logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
                 model.log_model_devices()
                 embed_cache.encode_validation_negative_prompt(negative_prompt)
-            elif model.validation_negative_prompt_requires_prompt_context():
-                logger.info("Deferring validation negative prompt encoding; this model needs per-sample prompt context.")
+            elif needs_context:
+                logger.info("Precomputing context-dependent negative prompt embeds for validations.")
+                model.log_model_devices()
+                for entry, shortname in zip(validation_prompts, validation_shortnames):
+                    if shortname == "unconditional":
+                        continue
+                    negative_prompt_record = _validation_negative_prompt_record(
+                        args,
+                        model,
+                        negative_prompt,
+                        shortname,
+                        validation_prompt_inputs.get(shortname),
+                        positive_prompt=entry.prompt,
+                    )
+                    embed_cache.compute_embeddings_for_prompts(
+                        [negative_prompt_record],
+                        is_validation=True,
+                        load_from_cache=False,
+                        is_negative_prompt=True,
+                    )
             elif model.should_precompute_validation_negative_prompt():
                 logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
                 model.log_model_devices()
@@ -1665,6 +1744,7 @@ class _ValidationWorkItem:
     data_backend_id: str | None = None
     bbox_entities: list[dict] | None = None
     bbox_keyframes: list[dict] | None = None
+    lyrics: str | None = None
 
 
 @dataclass(frozen=True)
@@ -2192,10 +2272,12 @@ class Validation:
         validation_shortname: str,
         validation_input_image=None,
         cache_shortname: str | None = None,
+        lyrics: str | None = None,
     ):
         # For validation prompts, use the cache_shortname (defaults to validation_shortname) as cache key for lookup.
+        args = StateTracker.get_args()
         cache_key = _validation_text_cache_key(
-            StateTracker.get_args(),
+            args,
             cache_shortname or validation_shortname,
             validation_prompt,
         )
@@ -2203,10 +2285,14 @@ class Validation:
             "prompt": validation_prompt,
             "key": cache_key,
         }
+        metadata = {}
         if self.model.requires_text_embed_image_context() and validation_input_image is not None:
-            metadata = _validation_reference_prompt_metadata(validation_input_image)
-            if metadata:
-                prompt_record["metadata"] = metadata
+            metadata.update(_validation_reference_prompt_metadata(validation_input_image) or {})
+        audio_metadata = _validation_prompt_cache_metadata(args, self.model, lyrics=lyrics)
+        if audio_metadata:
+            metadata.update(audio_metadata)
+        if metadata:
+            prompt_record["metadata"] = metadata
         prompt_embed = self.embed_cache.compute_embeddings_for_prompts([prompt_record], load_from_cache=True)
 
         if prompt_embed is None:
@@ -2683,6 +2769,8 @@ class Validation:
     ):
         if validation_prompts is None or (isinstance(validation_prompts, list) and len(validation_prompts) == 0):
             return False
+        if not self._scheduled_validation_start_reached():
+            return False
         step_interval_value = getattr(self.config, "validation_step_interval", None)
         if step_interval_value in ("", "None"):
             step_interval_value = None
@@ -2745,6 +2833,28 @@ class Validation:
         if not (self.deepspeed or self._use_distributed_validation()):
             should_validate = should_validate and self.accelerator.is_main_process
         return bool(should_validate)
+
+    @staticmethod
+    def _validation_start_threshold(config, option_name: str) -> int | None:
+        raw_value = getattr(config, option_name, None)
+        if raw_value in (None, "", "None"):
+            return None
+        threshold = int(raw_value)
+        if threshold < 0:
+            raise ValueError(f"--{option_name} must be greater than or equal to 0.")
+        return threshold if threshold > 0 else None
+
+    def _scheduled_validation_start_reached(self) -> bool:
+        after_step = self._validation_start_threshold(self.config, "validate_after_step")
+        if after_step is not None and int(self.global_step or 0) < after_step:
+            return False
+
+        after_epoch = self._validation_start_threshold(self.config, "validate_after_epoch")
+        if after_epoch is None:
+            return True
+        if self.current_epoch is None:
+            return False
+        return int(self.current_epoch) >= after_epoch
 
     def _loaded_scheduler_for_validation(self):
         pipeline = getattr(self.model, "pipeline", None)
@@ -3762,7 +3872,7 @@ class Validation:
 
     @staticmethod
     def _extract_pipeline_media(pipeline_result, *, audio_only: bool = False):
-        for field_name in ("frames", "images", "audios", "audio", "videos"):
+        for field_name in ("frames", "images", "videos", "audios", "audio"):
             if not hasattr(pipeline_result, field_name):
                 continue
             current_results = getattr(pipeline_result, field_name)
@@ -3793,6 +3903,7 @@ class Validation:
                     data_backend_id=validation_prompt.data_backend_id,
                     bbox_entities=validation_prompt.bbox_entities,
                     bbox_keyframes=validation_prompt.bbox_keyframes,
+                    lyrics=validation_prompt.lyrics,
                 )
             )
         return work_items
@@ -3807,14 +3918,13 @@ class Validation:
                 "items": [Validation._serialise_media(item) for item in media],
             }
         if not isinstance(media, Image.Image):
-            # Check if it's audio (tensor or numpy)
-            if isinstance(media, (torch.Tensor, np.ndarray)):
-                # It's audio. Serialize as WAV bytes.
+            if isinstance(media, np.ndarray):
+                media = torch.from_numpy(np.ascontiguousarray(media))
+            elif isinstance(media, torch.Tensor):
+                media = media.detach().cpu()
+
+            if isinstance(media, torch.Tensor):
                 buffer = BytesIO()
-                # Assuming 44100 sample rate for serialization, or we need to pass it.
-                # For simplicity, we might just pickle it or use a standard rate.
-                # But _serialise_media is static.
-                # Let's use torch.save for tensors to be safe and generic
                 torch.save(media, buffer)
                 return {
                     "type": "audio_tensor",
@@ -3885,6 +3995,7 @@ class Validation:
             data_backend_id=item.data_backend_id,
             bbox_entities=item.bbox_entities,
             bbox_keyframes=item.bbox_keyframes,
+            lyrics=item.lyrics,
         )
         return {
             "index": item.index,
@@ -3921,23 +4032,23 @@ class Validation:
             if sample_rate is None:
                 validation_audio.save_audio(
                     self.save_dir,
-                    validation_images,
+                    validation_audios,
                     decorated_shortname,
                 )
                 validation_audio.log_audio_to_webhook(
-                    validation_images,
+                    validation_audios,
                     decorated_shortname,
                     prompt,
                 )
             else:
                 validation_audio.save_audio(
                     self.save_dir,
-                    validation_images,
+                    validation_audios,
                     decorated_shortname,
                     sample_rate=sample_rate,
                 )
                 validation_audio.log_audio_to_webhook(
-                    validation_images,
+                    validation_audios,
                     decorated_shortname,
                     prompt,
                     sample_rate=sample_rate,
@@ -4081,13 +4192,15 @@ class Validation:
 
         if use_distributed:
             logger.info(f"[Rank {rank}] Gathering {len(local_payloads)} local payloads")
-            gathered_payloads = gather_across_processes(local_payloads)
+            gathered_payloads = list(gather_object(local_payloads) or [])
+            aggregated_payloads = []
+            for payload_group in gathered_payloads:
+                if isinstance(payload_group, list):
+                    aggregated_payloads.extend(payload_group)
+                else:
+                    aggregated_payloads.append(payload_group)
             if not self.accelerator.is_main_process:
                 return
-            logger.info(
-                f"[Rank {rank}] Gathered {len(gathered_payloads)} payload groups: {[len(p) for p in gathered_payloads]}"
-            )
-            aggregated_payloads = [payload for worker_payloads in gathered_payloads for payload in worker_payloads]
             logger.info(f"[Rank {rank}] Total aggregated payloads: {len(aggregated_payloads)}")
 
             aggregated_payloads.sort(key=lambda payload: payload["index"])
@@ -4405,6 +4518,7 @@ class Validation:
         data_backend_id: str | None = None,
         bbox_entities: list[dict] | None = None,
         bbox_keyframes: list[dict] | None = None,
+        lyrics: str | None = None,
     ):
         """Generate validation images for a single prompt."""
         self._check_abort()
@@ -4568,7 +4682,11 @@ class Validation:
                 validation_audio_results[validation_shortname] = []
             try:
                 _embed = self._gather_prompt_embeds(
-                    prompt, validation_shortname, validation_input_image_for_resolution, cache_shortname=cache_key
+                    prompt,
+                    validation_shortname,
+                    validation_input_image_for_resolution,
+                    cache_shortname=cache_key,
+                    lyrics=lyrics,
                 )
                 if _embed is not None:
                     extra_validation_kwargs.update(_embed)
@@ -4669,10 +4787,12 @@ class Validation:
                 ):
                     pipeline_kwargs["no_cfg_until_timestep"] = self.config.validation_no_cfg_until_timestep
 
-                if is_audio and getattr(self.config, "validation_lyrics", None):
-                    pipeline_kwargs["lyrics"] = self.config.validation_lyrics
-
                 if is_audio:
+                    if lyrics is not None:
+                        pipeline_kwargs["lyrics"] = lyrics
+                    elif getattr(self.config, "validation_lyrics", None):
+                        pipeline_kwargs["lyrics"] = self.config.validation_lyrics
+
                     pipeline_kwargs["audio_duration"] = getattr(self.config, "validation_audio_duration", 30.0) or 30.0
 
                 pipeline_kwargs = self.model.update_pipeline_call_kwargs(pipeline_kwargs)
@@ -4821,16 +4941,27 @@ class Validation:
                                 )
                             else:
                                 pipeline_result = self.model.pipeline(**filtered_pipeline_kwargs)
-                        current_results = self._extract_pipeline_media(
-                            pipeline_result,
-                            audio_only=bool(getattr(self.config, "validation_audio_only", False)),
-                        )
-                        if current_results is None:
-                            logger.error(
-                                "Pipeline result does not have 'frames', 'images', 'videos', 'audios', or 'audio': %s",
-                                pipeline_result,
-                            )
+                        if is_audio:
                             current_results = []
+                            audio_results = self.model.extract_validation_audio(pipeline_result)
+                            if audio_results is None:
+                                logger.error(
+                                    "Audio validation pipeline result does not have 'audios' or 'audio': %s",
+                                    pipeline_result,
+                                )
+                            else:
+                                all_validation_type_audio[current_validation_type] = audio_results
+                        else:
+                            current_results = self._extract_pipeline_media(
+                                pipeline_result,
+                                audio_only=bool(getattr(self.config, "validation_audio_only", False)),
+                            )
+                            if current_results is None:
+                                logger.error(
+                                    "Pipeline result does not have 'frames', 'images', 'videos', 'audios', or 'audio': %s",
+                                    pipeline_result,
+                                )
+                                current_results = []
                         all_validation_type_results[current_validation_type] = current_results
                         if isinstance(self.model, VideoModelFoundation):
                             audio_only_validation = bool(getattr(self.config, "validation_audio_only", False))
@@ -5056,17 +5187,17 @@ class Validation:
     def _log_validations_to_trackers(self, validation_images, validation_audios=None):
         if isinstance(self.model, AudioModelFoundation):
             sample_rate = self.model.validation_audio_sample_rate()
-            for validation_shortname in validation_images.keys():
+            for validation_shortname in (validation_audios or {}).keys():
                 if sample_rate is None:
                     validation_audio.log_audio_to_trackers(
                         self.accelerator,
-                        validation_images,
+                        validation_audios,
                         validation_shortname,
                     )
                 else:
                     validation_audio.log_audio_to_trackers(
                         self.accelerator,
-                        validation_images,
+                        validation_audios,
                         validation_shortname,
                         sample_rate=sample_rate,
                     )

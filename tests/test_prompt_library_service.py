@@ -113,6 +113,27 @@ class PromptLibraryServiceTestCase(unittest.TestCase):
 
 
 class PromptLibraryEntryBboxTestCase(unittest.TestCase):
+    def test_from_payload_accepts_caption_and_lyrics(self) -> None:
+        payload = {
+            "caption": "bright synth pop",
+            "lyrics": "[verse]\nfirst line\n[chorus]\nsecond line",
+        }
+        entry = PromptLibraryEntry.from_payload(payload)
+
+        self.assertEqual(entry.prompt, "bright synth pop")
+        self.assertEqual(entry.lyrics, payload["lyrics"])
+
+    def test_from_payload_rejects_non_string_lyrics(self) -> None:
+        with self.assertRaises(PromptLibraryError):
+            PromptLibraryEntry.from_payload({"caption": "p", "lyrics": ["bad"]})
+
+    def test_serialise_entries_uses_dict_for_lyrics(self) -> None:
+        entries = {"audio": PromptLibraryEntry(prompt="p", lyrics="[verse]\nline")}
+        result = PromptLibraryService.serialise_entries(entries)
+
+        self.assertIsInstance(result["audio"], dict)
+        self.assertEqual(result["audio"]["lyrics"], "[verse]\nline")
+
     def test_from_payload_with_bbox_entities(self) -> None:
         payload = {
             "prompt": "test prompt",

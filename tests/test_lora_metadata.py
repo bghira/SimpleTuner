@@ -699,7 +699,8 @@ class SaveHookMetadataTests(unittest.TestCase):
             lora_path = os.path.join(tmpdir, "pytorch_lora_weights.safetensors")
             save_file({"weight": torch.tensor([1.0])}, lora_path, metadata={"format": "pt"})
 
-            manager._apply_modelspec_metadata_to_lora(tmpdir)
+            with patch("simpletuner.helpers.training.save_hooks.StateTracker.get_global_step", return_value=321):
+                manager._apply_modelspec_metadata_to_lora(tmpdir)
 
             with safe_open(lora_path, framework="pt", device="cpu") as handle:
                 metadata = handle.metadata()
@@ -709,6 +710,7 @@ class SaveHookMetadataTests(unittest.TestCase):
         self.assertEqual(metadata.get("modelspec.architecture"), "sdxl-base-1.0/lora")
         self.assertEqual(metadata.get("modelspec.title"), "run-name")
         self.assertEqual(metadata.get("modelspec.resolution"), "1024x1024")
+        self.assertEqual(metadata.get("global_step"), "321")
 
     def test_models_spec_comment_runtime_templates_resolve_on_save(self):
         manager, _, _ = self._make_manager(
@@ -736,6 +738,7 @@ class SaveHookMetadataTests(unittest.TestCase):
             metadata.get("modelspec.comment"),
             "step=456 epoch=9 ts=2026-04-02T12:34:56+00:00",
         )
+        self.assertEqual(metadata.get("global_step"), "456")
 
 
 class FluxPipelineMetadataTests(unittest.TestCase):

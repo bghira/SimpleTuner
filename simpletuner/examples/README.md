@@ -48,12 +48,21 @@ ACE-Step examples are split by model generation:
 - `ace_step-v1-0.peft-lora` for the original ACE-Step v1 3.5B path
 - `ace_step-v1-5.peft-lora` for the forward-compatible ACE-Step v1.5 LoRA path
 
+MiniMax Music examples:
+
+- `minimaxmusic-music3.peft-lora` trains MiniMax Music 3 LoRA with raw audio encoded by VAECache through the DAV audio VAE, and references `minimaxmusic-prompts.json` for caption + lyrics validation prompts.
+- `minimaxmusic-music3-24g.peft-lora` uses CPU-side INT8-SDNQ Hadamard quantization, segmented checkpointing, and maximum Musubi block swapping for audio up to 30 seconds.
+- `minimaxmusic-music3-32g.peft-lora` uses CPU-side quantization and swaps half of the transformer blocks for audio up to 40 seconds.
+- `minimaxmusic-music3-48g.peft-lora` uses accelerator-side quantization and sparse segmented checkpointing while keeping the quantized transformer resident for audio up to 60 seconds.
+
 LTX-2 conditioning examples are split by conditioning style:
 
 - `ltxvideo2-19b-t2v.peft-lora+first-frame-conditioning` shows the shorthand `ltx2_*` probability fields.
 - `ltxvideo2-19b-t2v.peft-lora+intrinsic-conditioning` shows the explicit `ltx2_intrinsic_conditioning` object list.
 - `ltxvideo2-19b-t2v.peft-lora+reference-conditioning` shows IC-LoRA reference conditioning with coordinate scale overrides.
 - `ltxvideo2-2.3-dev-720p-single-gpu.peft-lora+ramtorch` adapts the LTX-2.3 720p profile for one GPU with RamTorch transformer-block streaming.
+- `ltxvideo2-2.5-dev-768x512-mps-48g.peft-lora` targets the released split LTX-2.5 pack on Apple Silicon with UMFA INT8 attention for a 48G 768x512 MPS training example.
+- `ltxvideo2-2.5-dev-768x512-mps-128g.peft-lora` targets the released split LTX-2.5 pack on Apple Silicon with UMFA BF16 attention for a 128G 768x512 MPS training example.
 
 Z-Image conditioning examples:
 
@@ -70,15 +79,21 @@ Cosmos3 examples:
 - `cosmos3-video-audio.lycoris-lokr` uses local synchronized drumming files with `audio.auto_split`.
 - `cosmos3-super-i2v.lycoris-lokr` uses `nvidia/Cosmos3-Super-Image2Video` with `video.is_i2v`.
 
+MiniMax-H3 examples:
+
+- `minimaxh3-t2v-fp8-141g.peft-lora+anyflow` is an H200-class AnyFlow forward-stage profile using resident FP8
+  weights, sparse FlexAttention, 8-GPU DDP with batch 1 per rank, and segmented checkpointing interval 2 / stride 10.
+
 Large multi-GPU video examples are split from the standard 24G examples:
 
+- `wan2.1-t2v-1.3b-480p-141g.peft-lora+anyflow` reproduces NVIDIA's 480p, 81-frame Wan 2.1 1.3B AnyFlow forward stage on 8x141GB GPUs. It uses DDP, global batch 32, rank-256 LoRA, and no activation checkpointing.
 - `wan2.1-t2v-14b-480p-8xh100.peft-lora+cp-fa3`
 - `wan2.1-i2v-14b-480p-8xh100.peft-lora+cp-fa3`
 - `wan2.1-i2v-14b-720p-8xh100.peft-lora+cp-fa3`
 - `ltxvideo2-2.3-dev-720p-8xh100.peft-lora+cp-fa3`
 - `ltxvideo2-2.3-dev-1080p-8xh100.peft-lora+cp-fa3`
 
-These profiles assume 8xH100-class hardware, BF16 weights, `context_parallel_size=2`, and the Hugging Face FlashAttention 3 varlen backend. On A100-class systems, copy the example and change `attention_mechanism` to `flash-attn-varlen-hub` before benchmarking.
+The 14B Wan and LTX-Video profiles assume 8xH100-class hardware, BF16 weights, `context_parallel_size=2`, and the Hugging Face FlashAttention 3 varlen backend. The 1.3B AnyFlow profile instead uses data parallelism across 8x141GB GPUs and the FlashAttention 3 backend selected by an H200 performance sweep. On A100-class systems, copy the relevant example and benchmark `flash-attn-varlen-hub` before training.
 
 ### Modifying and extending an example
 

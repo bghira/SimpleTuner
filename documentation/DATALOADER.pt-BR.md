@@ -71,6 +71,15 @@ Aqui está o exemplo mais básico de um arquivo de configuração do dataloader,
 - **Descrição:** Especifica onde os arquivos de cache de embeds são armazenados para este dataset. Para `text_embeds`, é onde as saídas do text encoder são gravadas. Para `image_embeds`, é onde os latentes do VAE são armazenados.
 - **Nota:** Diferente de `cache_dir_vae`, que é definido em datasets de imagem/vídeo primários para especificar onde o cache de VAE vai.
 
+### `train_batch_size`
+
+- **Comportamento de treinamento:** Datasets primários amostrados de forma independente (`image`, `video`, `audio`, `caption`) usam o valor resolvido como tamanho do microbatch de treinamento. `conditioning` é um dado auxiliar pareado; seu valor resolvido ainda pode dimensionar buckets de metadados, mas não cria um microbatch de treinamento independente nem entra separadamente na contagem de amostras da atualização do otimizador.
+- **Descrição:** Sobrescreve o `--train_batch_size` global para este dataset. Para datasets primários, o valor resolvido controla o microbatch do sampler, os buckets e a quantidade instantânea de amostras quando selecionado. Para `conditioning`, afeta apenas a preparação de metadados e buckets. Deixe sem definir para usar o valor global.
+- **Acúmulo de gradientes:** Uma janela de acúmulo pode selecionar datasets com tamanhos de microbatch resolvidos diferentes. O total global de amostras de uma atualização do otimizador é a soma dos tamanhos reais dos microbatches locais em todos os microsteps de acúmulo e ranks data-parallel; um dataset selecionado sem override usa o padrão global naquele rank.
+- **Referência global:** O escalonamento da learning rate no trainer e outras configurações estáticas ou relatórios que exigem um único batch size fixo continuam usando o `--train_batch_size` global. Portanto, ao misturar overrides por dataset, a fórmula de batch global/efetivo é uma referência configurada, não a contagem exata de amostras de cada atualização do otimizador.
+- **Gradient checkpointing:** Gradient checkpointing não altera a aritmética do batch size.
+- **Padrão:** Usa o argumento `--train_batch_size` do trainer.
+
 ### `write_batch_size`
 
 - **Aplica-se apenas a `dataset_type=text_embeds`**
@@ -137,12 +146,17 @@ Backends de áudio suportam um bloco `audio` dedicado para que metadados e cálc
 }
 ```
 
+Quando todos os datasets de mídia habilitados usam `dataset_type: "audio"`, famílias de vídeo com
+`SUPPORTS_FAKE_VIDEO_STREAM` entram automaticamente no treinamento apenas de áudio. LTX-2 usa seu branch nativo de
+áudio; MiniMax-H3 mantém um token espacial de vídeo falso por frame latente e mascara a loss de vídeo. LoRA padrão
+seleciona `AUDIO_LORA_TARGET` automaticamente, a menos que `peft_lora_target_modules` seja definido explicitamente.
+
 - **`bucket_strategy`** – atualmente `duration` é o padrão e trunca clipes em buckets espaçados de forma uniforme para que a amostragem por GPU respeite o cálculo de batch.
 - **`duration_interval`** – arredondamento de bucket em segundos (padrão **3** quando não definido). Com `15`, um clipe de 77 s é colocado no bucket de 75 s. Isso impede que clipes longos únicos prejudiquem outros ranks e força truncamento no mesmo intervalo.
 - **`max_duration_seconds`** – clipes mais longos que isso são ignorados durante a descoberta de metadados para que faixas excepcionalmente longas não consumam buckets inesperadamente.
 - **`truncation_mode`** – determina qual parte do clipe é mantida quando ajustamos para o intervalo do bucket. Opções: `beginning`, `end` ou `random` (padrão: `beginning`).
-- **`audio_only`** – modo de treinamento apenas áudio (LTX-2): treina apenas a geração de áudio sem arquivos de vídeo. Os latentes de vídeo são zerados automaticamente e a perda de vídeo é mascarada.
-- **`target_resolution`** – resolução de vídeo alvo para o modo apenas áudio (usada para calcular dimensões de latentes).
+- **`audio_only`** – override de compatibilidade para modo apenas áudio; configurações somente de áudio o ativam automaticamente em LTX-2 e MiniMax-H3.
+- **`target_resolution`** – override legado; fake streams automáticos usam a geometria mínima de tokens do modelo.
 - Configurações padrão de áudio (contagem de canais, diretório de cache) mapeiam diretamente para o backend de áudio em runtime criado por `simpletuner.helpers.data_backend.factory`. O padding é intencionalmente evitado — clipes são truncados em vez de estendidos para manter o comportamento consistente com treinadores de difusão como o ACE-Step.
 
 #### Configuração de áudio para treinamento S2V
@@ -172,8 +186,8 @@ Isso cria automaticamente um dataset `my-videos_audio` e o vincula via `s2v_data
 | `audio.auto_split` | bool | true | Gera automaticamente dataset de áudio a partir de arquivos de vídeo. Padrão true quando a seção `audio` está presente. Para modelos que exigem S2V, padrão true mesmo sem seção `audio`. |
 | `audio.source_from_video` | bool | false | (Auto-definido) Indica que o áudio é extraído do vídeo |
 | `audio.allow_zero_audio` | bool | false | Gera áudio zerado para vídeos sem stream de áudio |
-| `audio.audio_only` | bool | false | Modo de treinamento apenas áudio (LTX-2): treina geração de áudio sem arquivos de vídeo |
-| `audio.target_resolution` | int | null | Resolução de vídeo alvo para modo apenas áudio (usada para calcular dimensões de latentes) |
+| `audio.audio_only` | bool | false | Override de compatibilidade; configurações somente de áudio ativam o modo automaticamente para LTX-2 e MiniMax-H3 |
+| `audio.target_resolution` | int | null | Override legado; o fake stream automático usa a geometria mínima de tokens da família |
 | `audio.sample_rate` | int | 16000 | Taxa de amostragem alvo para extração de áudio |
 | `audio.channels` | int | 1 | Número de canais de áudio (1=mono, 2=estéreo) |
 | `audio.bucket_strategy` | string | "duration" | Estratégia de bucketing para amostras de áudio |
@@ -665,10 +679,12 @@ Por padrão, o SimpleTuner fará upscaling de imagens pequenas para atender à r
 Ao treinar com múltiplas GPUs, seu dataset deve ser grande o suficiente para acomodar o **tamanho efetivo do batch**, calculado como:
 
 ```
-effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_steps
+effective_batch_size = train_batch_size do dataset × num_gpus × gradient_accumulation_steps
 ```
 
-Por exemplo, com 4 GPUs, `train_batch_size=4` e `gradient_accumulation_steps=1`, você precisa de pelo menos **16 amostras** (após aplicar repeats) em cada bucket de aspecto.
+Esse é um requisito de dimensionamento de buckets por dataset. Ele não significa que todos os datasets configurados serão selecionados em uma janela de acúmulo nem descreve a contagem exata de amostras de uma atualização do otimizador com tamanhos mistos.
+
+Por exemplo, com 4 GPUs, `train_batch_size=4` no dataset e `gradient_accumulation_steps=1`, você precisa de pelo menos **16 amostras** (após aplicar repeats) em cada bucket de aspecto.
 
 **Importante:** O SimpleTuner lançará um erro se sua configuração de dataset produzir zero batches utilizáveis. A mensagem de erro mostrará:
 - Valores atuais de configuração (batch size, contagem de GPUs, repeats)
@@ -1325,8 +1341,24 @@ Datasets Webshart carregam shards tar no estilo WebDataset pelo pacote `webshart
 - `metadata` é opcional e pode apontar para metadados separados com captions. Para repos Hugging Face de metadata como `webshart/conceptual-captions-12m-webdataset-metadata`, passe o repo id; o Webshart segue o layout de subpastas do source, como `data/`.
 - `metadata_backend` deve ser `webshart`; `caption_strategy` deve ser `webshart` ou `instanceprompt`.
 - `webshart.cache_dir` armazena os metadados do SimpleTuner e os caches do Webshart. `shard_cache_gb` e `parallel_downloads` são passados ao cache de shards do Webshart; defina `shard_cache_gb` como `0` para desativar o cache de shards completos e manter leituras por intervalo indexadas.
+- `webshart_optimize_captions` (grafia alternativa `webshart_optimise_captions`; também aceito como `optimize_captions`/`optimise_captions` dentro do bloco `webshart`) sonda o layout de captions na inicialização e, quando os captions ficam em membros tar sidecar `.txt`/`.json` em vez do índice de metadados, consolida-os uma única vez no cache local de metadados do Webshart. Sem essa opção, datasets com captions em sidecars (por exemplo `laion/conceptual-captions-12m-webdataset`) pagam uma leitura por intervalo por amostra sempre que os captions são enumerados — na inicialização, nos checkpoints e na geração do model card. Datasets cujos metadados já embutem os captions pulam a consolidação automaticamente.
 
-Exige um build do Webshart com `TarDataLoader.list_shard_sample_aspect_buckets()`.
+#### Otimizando captions com antecedência
+
+A mesma consolidação está disponível na CLI do Webshart, que também pode publicar os metadados reparados para que todos os consumidores do dataset se beneficiem sem a opção em tempo de execução:
+
+```bash
+webshart optimize-captions \
+  --source organization/dataset \
+  --metadata organization/dataset-metadata \
+  --destination caption-metadata \
+  --shard-cache-dir cache/shards \
+  --push-to-hub organization/dataset-metadata
+```
+
+`--destination` grava uma árvore de metadados portátil por shard, e `--push-to-hub` a envia para um repositório de metadata; depois aponte a opção `metadata` do dataloader para esse repositório. `--shard-cache-dir` permite que a consolidação reutilize shards totalmente em cache em vez de emitir uma leitura por intervalo para cada sidecar.
+
+Esse backend exige um build do Webshart com `TarDataLoader.list_shard_sample_aspect_buckets()`; `webshart_optimize_captions` exige adicionalmente `probe_caption_layout()` e `coalesce_caption_metadata()`.
 
 ## Mapeamento personalizado de proporção para resolução
 

@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
 
-from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.data_backend.dataset_types import DatasetType, parse_positive_train_batch_size
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 from . import validators
@@ -59,6 +59,7 @@ class ImageBackendConfig(BaseBackendConfig):
     webshart_parallel_downloads: Optional[int] = None
     webshart_buffer_size: Optional[int] = None
     webshart_max_file_size: Optional[int] = None
+    webshart_optimize_captions: Optional[bool] = None
 
     vae_cache_clear_each_epoch: Optional[bool] = None
     probability: float = 1.0
@@ -88,6 +89,7 @@ class ImageBackendConfig(BaseBackendConfig):
 
     is_regularisation_data: bool = False
     is_regularization_data: bool = False
+    train_batch_size: Optional[int] = None
 
     @classmethod
     def from_dict(cls, backend_dict: Dict[str, Any], args: Dict[str, Any]) -> "ImageBackendConfig":
@@ -190,6 +192,17 @@ class ImageBackendConfig(BaseBackendConfig):
             )
             config.webshart_buffer_size = webshart_block.get("buffer_size", backend_dict.get("buffer_size"))
             config.webshart_max_file_size = webshart_block.get("max_file_size", backend_dict.get("max_file_size"))
+            optimize_captions = None
+            for candidate in (
+                backend_dict.get("webshart_optimize_captions"),
+                backend_dict.get("webshart_optimise_captions"),
+                webshart_block.get("optimize_captions"),
+                webshart_block.get("optimise_captions"),
+            ):
+                if candidate is not None:
+                    optimize_captions = bool(candidate)
+                    break
+            config.webshart_optimize_captions = optimize_captions
 
         config.vae_cache_clear_each_epoch = backend_dict.get("vae_cache_clear_each_epoch")
         config.probability = float(backend_dict.get("probability", 1.0)) if backend_dict.get("probability") else 1.0
@@ -198,6 +211,9 @@ class ImageBackendConfig(BaseBackendConfig):
         )
         config.repeats = int(backend_dict.get("repeats", 0)) if backend_dict.get("repeats") else 0
         config.disable_validation = backend_dict.get("disable_validation", False)
+        train_batch_size = backend_dict.get("train_batch_size")
+        if train_batch_size not in (None, ""):
+            config.train_batch_size = parse_positive_train_batch_size(train_batch_size, config.id)
         if "hash_filenames" in backend_dict and config.backend_type != "csv":
             config.hash_filenames = backend_dict.get("hash_filenames")
         config.source_dataset_id = backend_dict.get("source_dataset_id")
@@ -353,6 +369,8 @@ class ImageBackendConfig(BaseBackendConfig):
             self._validate_video_settings(args)
 
         validators.check_for_caption_filter_list_misuse(self.dataset_type, False, self.id)
+        if self.train_batch_size is not None:
+            self.train_batch_size = parse_positive_train_batch_size(self.train_batch_size, self.id)
 
     def _validate_controlnet_requirements(self, args: Dict[str, Any]) -> None:
         def _get_controlnet_flag(source: Any) -> Optional[bool]:
@@ -451,6 +469,8 @@ class ImageBackendConfig(BaseBackendConfig):
         config["timestep_sampling_offset"] = self.timestep_sampling_offset
         config["repeats"] = self.repeats
         config["instance_data_dir"] = self.instance_data_dir
+        if self.train_batch_size is not None:
+            config["train_batch_size"] = self.train_batch_size
 
         if self.crop_aspect_buckets is not None:
             config["crop_aspect_buckets"] = self.crop_aspect_buckets
@@ -538,6 +558,8 @@ class ImageBackendConfig(BaseBackendConfig):
                 webshart_config["buffer_size"] = self.webshart_buffer_size
             if self.webshart_max_file_size is not None:
                 webshart_config["max_file_size"] = self.webshart_max_file_size
+            if self.webshart_optimize_captions is not None:
+                webshart_config["optimize_captions"] = self.webshart_optimize_captions
 
         if self.video is not None:
             config["video"] = self.video

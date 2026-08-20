@@ -4,8 +4,8 @@
 
 ## Requirements
 
-- Apple Silicon with MPS available.
-- Xcode command line tools with Metal toolchain.
+- MPS available हो, ऐसे Apple Silicon पर macOS 15+.
+- Git, Swift 6+, और Metal toolchain के साथ Xcode 16+ या matching command line tools.
 - SimpleTuner Apple dependency set के साथ installed हो। Apple extra PyTorch `>=2.13.0` require करता है।
 - UMFA build में `metal_flash_attention_autograd` expose होना चाहिए, PyTorch `MPS` dispatch key register होनी चाहिए, और `clear_quantization_mode` expose होना चाहिए। Quantized aliases के लिए `metal_quantized_flash_attention_autograd`, `set_quantization_mode`, `QUANT_INT8`, `QUANT_INT4`, और `QUANT_BLOCK_WISE` भी चाहिए।
 
@@ -21,15 +21,31 @@ export UMFA_ROOT=/path/to/universal-metal-flash-attention
 export PYTHON="$ST_ROOT/.venv/bin/python"
 ```
 
+SimpleTuner में एक helper है जो local toolchain, Python environment, UMFA checkout, MFA+ submodule, Swift FFI library, Python FFI binding, और SimpleTuner backend probes जांचता है:
+
+```bash
+cd "$ST_ROOT"
+scripts/apple-metal-flash-attention.sh --check --umfa-root "$UMFA_ROOT" --python "$PYTHON"
+```
+
+Helper से UMFA को उसी Python environment में clone/build/install कराने के लिए चलाएं:
+
+```bash
+scripts/apple-metal-flash-attention.sh --install --umfa-root "$UMFA_ROOT" --python "$PYTHON"
+```
+
+Install path जरूरत होने पर UMFA clone करता है, UMFA के `metal-flash-attention` MFA+ submodule को initialize करता है, `MFAFFI` Swift product build करता है, PyTorch custom-op extension को in place build करता है, और selected Python environment में `metal_sdpa_extension` binding install करता है.
+
 Swift package build करें और PyTorch FFI package install करें:
 
 ```bash
 cd "$UMFA_ROOT"
 git submodule update --init --recursive
-swift build -c release
+swift build -c release --product MFAFFI
 
 cd "$UMFA_ROOT/examples/pytorch-custom-op-ffi"
 "$PYTHON" -m pip install --upgrade pip setuptools wheel pybind11 numpy
+"$PYTHON" setup.py build_ext --inplace
 "$PYTHON" -m pip install --force-reinstall --no-deps --no-build-isolation --no-cache-dir .
 ```
 

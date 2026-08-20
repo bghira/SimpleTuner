@@ -69,7 +69,10 @@ class TestMultiAspectSampler(unittest.TestCase):
         sampler.id = "video-dataset"
         sampler.metadata_backend = SimpleNamespace(seen_images={str(i): True for i in range(1000)})
         sampler._get_unseen_images = MagicMock(return_value=[None] * 3997)
-        sampler.accelerator = SimpleNamespace(num_processes=8)
+        sampler.metadata_backend.aspect_ratio_bucket_indices = {"1.0": [None] * 600}
+        sampler.metadata_backend.max_num_samples = 4096
+        sampler.metadata_backend.bucket_report = None
+        sampler.accelerator = SimpleNamespace(num_processes=8, process_index=0)
         sampler.logger = MagicMock()
         sampler.sample_type_strs = "videos"
         sampler.buckets = ["0.75", "1.0", "1.25", "1.5", "1.75"]
@@ -80,7 +83,7 @@ class TestMultiAspectSampler(unittest.TestCase):
             patch.object(
                 StateTracker,
                 "get_data_backend_config",
-                return_value={"max_num_samples": 4096, "video": {"num_frames": 39}},
+                return_value={"max_num_samples": "not-an-int", "video": {"num_frames": 39}},
             ),
             patch.object(StateTracker, "get_dataset_schedule", return_value={"reached": True}),
         ):
@@ -90,6 +93,91 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.assertIn("- Target frame count: 39", overview)
         self.assertIn("- FPS: unknown", overview)
         self.assertNotIn("~39976", overview)
+        self.assertNotIn("~4800", overview)
+
+    def test_model_card_overview_uses_bucket_count_not_seen_progress(self):
+        sampler = object.__new__(MultiAspectSampler)
+        sampler.id = "video-dataset"
+        sampler.metadata_backend = SimpleNamespace(
+            aspect_ratio_bucket_indices={"1.0": [None] * 65536},
+            bucket_report=None,
+            max_num_samples=None,
+            seen_images={str(i): True for i in range(5740)},
+        )
+        sampler._get_unseen_images = MagicMock(return_value=[None] * 65536)
+        sampler.accelerator = SimpleNamespace(num_processes=4, process_index=0)
+        sampler.logger = MagicMock()
+        sampler.sample_type_strs = "videos"
+        sampler.buckets = ["1.0"]
+        sampler.is_regularisation_data = False
+        sampler.conditioning_type = None
+
+        with (
+            patch.object(StateTracker, "get_data_backend_config", return_value={"video": {"num_frames": 39}}),
+            patch.object(StateTracker, "get_dataset_schedule", return_value={"reached": True}),
+            patch("simpletuner.helpers.multiaspect.sampler.get_cp_aware_dp_info", return_value=(1, 0, 4)),
+        ):
+            overview = sampler.log_state(show_rank=False, alt_stats=True)
+
+        self.assertIn("- Total number of videos: 65536", overview)
+        self.assertNotIn("285096", overview)
+        self.assertNotIn("~", overview)
+
+    def test_model_card_overview_scales_data_parallel_bucket_shard_without_seen_progress(self):
+        sampler = object.__new__(MultiAspectSampler)
+        sampler.id = "video-dataset"
+        sampler.metadata_backend = SimpleNamespace(
+            aspect_ratio_bucket_indices={"1.0": [None] * 8192},
+            bucket_report=None,
+            max_num_samples=None,
+            seen_images={str(i): True for i in range(250)},
+        )
+        sampler._get_unseen_images = MagicMock(return_value=[None] * 7942)
+        sampler.accelerator = SimpleNamespace(num_processes=8, process_index=0)
+        sampler.logger = MagicMock()
+        sampler.sample_type_strs = "videos"
+        sampler.buckets = ["1.0"]
+        sampler.is_regularisation_data = False
+        sampler.conditioning_type = None
+
+        with (
+            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+            patch.object(StateTracker, "get_dataset_schedule", return_value={"reached": True}),
+            patch("simpletuner.helpers.multiaspect.sampler.get_cp_aware_dp_info", return_value=(8, 0, 1)),
+        ):
+            overview = sampler.log_state(show_rank=False, alt_stats=True)
+
+        self.assertIn("- Total number of videos: ~65536", overview)
+        self.assertNotIn("67536", overview)
+
+    def test_model_card_overview_prefers_exact_bucket_report_total(self):
+        sampler = object.__new__(MultiAspectSampler)
+        sampler.id = "image-dataset"
+        sampler.metadata_backend = SimpleNamespace(
+            aspect_ratio_bucket_indices={"1.0": [None] * 16},
+            bucket_report=SimpleNamespace(bucket_summaries={"post_refresh": {"total_samples": 123}}),
+            max_num_samples=None,
+            seen_images={str(i): True for i in range(7)},
+        )
+        sampler._get_unseen_images = MagicMock(return_value=[None] * 16)
+        sampler.accelerator = SimpleNamespace(num_processes=8, process_index=0)
+        sampler.logger = MagicMock()
+        sampler.sample_type_strs = "images"
+        sampler.buckets = ["1.0"]
+        sampler.is_regularisation_data = False
+        sampler.conditioning_type = None
+        sampler.resolution = 512
+        sampler.resolution_type = "pixel"
+
+        with (
+            patch.object(StateTracker, "get_data_backend_config", return_value={}),
+            patch.object(StateTracker, "get_dataset_schedule", return_value={"reached": True}),
+            patch("simpletuner.helpers.multiaspect.sampler.get_cp_aware_dp_info", return_value=(8, 0, 1)),
+        ):
+            overview = sampler.log_state(show_rank=False, alt_stats=True)
+
+        self.assertIn("- Total number of images: 123", overview)
+        self.assertNotIn("~128", overview)
 
     def test_save_state(self):
         with patch.object(self.sampler.state_manager, "save_state") as mock_save_state:
@@ -182,10 +270,11 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.assertEqual(conditioning_sample.image_path(), "/conditioning/11.png")
         self.assertEqual(conditioning_sample.caption, "caption")
 
-    def test_load_states_restores_schedule_before_normalizing_legacy_seen_flags(self):
+    def test_load_states_with_matching_batch_size_restores_schedule_before_normalizing_legacy_seen_flags(self):
         self.sampler.state_manager.load_state.return_value = {
             "aspect_ratio_bucket_indices": {"1.0": ["same.jpg", "same.jpg", "other.jpg"]},
             "buckets": ["1.0"],
+            "batch_size": self.batch_size,
             "current_bucket": 0,
             "exhausted_buckets": ["old"],
             "seen_images": {"same.jpg": True, "other.jpg": False, "legacy.jpg": True},
@@ -208,7 +297,71 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.assertEqual(self.metadata_backend.seen_images["other.jpg"], 0)
         self.assertTrue(self.metadata_backend.seen_images["legacy.jpg"])
 
-    def test_load_states_keeps_the_fresh_split_when_the_checkpoint_records_no_layout(self):
+    def test_load_states_rejects_batch_size_mismatch_before_mutation(self):
+        self.sampler.state_manager.load_state.return_value = {
+            "aspect_ratio_bucket_indices": {"saved": ["saved.jpg"]},
+            "buckets": ["saved"],
+            "batch_size": 3,
+            "current_bucket": "saved",
+            "exhausted_buckets": ["saved-exhausted"],
+            "seen_images": {"saved.jpg": 1},
+            "current_epoch": 9,
+            "dp_size": 1,
+            "dp_rank": 0,
+        }
+
+        self.metadata_backend.aspect_ratio_bucket_indices = {"fresh": ["fresh.jpg"]}
+        self.metadata_backend.seen_images = {"fresh.jpg": 1}
+        self.sampler._val_master_list = ["fresh.jpg"]
+        self.sampler.buckets = ["fresh"]
+        self.sampler.current_bucket = "fresh"
+        self.sampler.exhausted_buckets = ["fresh-exhausted"]
+        self.sampler.current_epoch = 7
+
+        with (
+            patch.dict(os.environ, {"SIMPLETUNER_ALLOW_MODIFYING_BSZ": ""}),
+            patch.object(StateTracker, "get_args", return_value=SimpleNamespace(i_know_what_i_am_doing=False)),
+            self.assertRaises(ValueError) as error,
+        ):
+            self.sampler.load_states(self.state_path)
+
+        self.assertEqual(
+            str(error.exception),
+            "Dataset 'foo' checkpoint batch_size=3 does not match current batch_size=2. "
+            "Resume with the same per-dataset train_batch_size, "
+            "or set --i_know_what_i_am_doing / SIMPLETUNER_ALLOW_MODIFYING_BSZ=1 to bypass.",
+        )
+        self.assertEqual(self.metadata_backend.aspect_ratio_bucket_indices, {"fresh": ["fresh.jpg"]})
+        self.assertEqual(self.metadata_backend.seen_images, {"fresh.jpg": 1})
+        self.assertEqual(self.sampler._val_master_list, ["fresh.jpg"])
+        self.assertEqual(self.sampler.buckets, ["fresh"])
+        self.assertEqual(self.sampler.current_bucket, "fresh")
+        self.assertEqual(self.sampler.exhausted_buckets, ["fresh-exhausted"])
+        self.assertEqual(self.sampler.current_epoch, 7)
+
+    def test_load_states_batch_size_mismatch_allowed_via_env_var(self):
+        self.sampler.state_manager.load_state.return_value = {
+            "aspect_ratio_bucket_indices": {"saved": ["saved.jpg"]},
+            "buckets": ["saved"],
+            "batch_size": 3,
+        }
+        self.metadata_backend.aspect_ratio_bucket_indices = {"fresh": ["fresh.jpg"]}
+
+        with patch.dict(os.environ, {"SIMPLETUNER_ALLOW_MODIFYING_BSZ": "1"}):
+            with patch.object(StateTracker, "get_args", return_value=SimpleNamespace(i_know_what_i_am_doing=False)):
+                self.sampler.load_states(self.state_path)
+
+    def test_load_states_batch_size_mismatch_allowed_via_i_know_flag(self):
+        self.sampler.state_manager.load_state.return_value = {
+            "aspect_ratio_bucket_indices": {"saved": ["saved.jpg"]},
+            "buckets": ["saved"],
+            "batch_size": 3,
+        }
+        self.metadata_backend.aspect_ratio_bucket_indices = {"fresh": ["fresh.jpg"]}
+        with patch.object(StateTracker, "get_args", return_value=SimpleNamespace(i_know_what_i_am_doing=True)):
+            self.sampler.load_states(self.state_path)
+
+    def test_load_states_legacy_state_without_batch_size_keeps_fresh_split_when_no_layout(self):
         # Checkpoints written before the layout was recorded cannot be attributed to a rank, so
         # the schedule is left alone. Seen state still loads.
         self.sampler.state_manager.load_state.return_value = {

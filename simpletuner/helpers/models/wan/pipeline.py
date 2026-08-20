@@ -202,6 +202,12 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
 
         return prompt_embeds
 
+    @staticmethod
+    def _repeat_prompt_embeds(prompt_embeds: torch.Tensor, num_videos_per_prompt: int) -> torch.Tensor:
+        batch_size, seq_len, _ = prompt_embeds.shape
+        prompt_embeds = prompt_embeds.repeat(1, num_videos_per_prompt, 1)
+        return prompt_embeds.view(batch_size * num_videos_per_prompt, seq_len, -1)
+
     def encode_prompt(
         self,
         prompt: Union[str, List[str]],
@@ -230,6 +236,8 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                 device=device,
                 dtype=dtype,
             )
+        else:
+            prompt_embeds = self._repeat_prompt_embeds(prompt_embeds, num_videos_per_prompt)
 
         if do_classifier_free_guidance and negative_prompt_embeds is None:
             negative_prompt = negative_prompt or ""
@@ -254,6 +262,8 @@ class WanPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                 device=device,
                 dtype=dtype,
             )
+        elif negative_prompt_embeds is not None:
+            negative_prompt_embeds = self._repeat_prompt_embeds(negative_prompt_embeds, num_videos_per_prompt)
 
         return prompt_embeds, negative_prompt_embeds
 

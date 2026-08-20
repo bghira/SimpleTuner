@@ -53,6 +53,7 @@ class WebshartDataBackend(BaseDataBackend):
         max_file_size: int = 500 * 1024 * 1024,
         compress_cache: bool = False,
         dataset_type: Union[str, DatasetType] = DatasetType.IMAGE,
+        optimize_captions: bool = False,
     ):
         if not source:
             raise ValueError("source is required for Webshart data backends.")
@@ -85,7 +86,10 @@ class WebshartDataBackend(BaseDataBackend):
         self.max_file_size = int(max_file_size)
         self.compress_cache = compress_cache
         self.dataset_type = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
+        self.optimize_captions = bool(optimize_captions)
         self._shard_sample_index_cache: dict[int, dict[str, int]] = {}
+        self._shard_metadata_cache: dict[int, dict] = {}
+        self._shard_metadata_cache_limit = 8
 
         Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
         Path(self.metadata_cache_dir).mkdir(parents=True, exist_ok=True)
@@ -115,6 +119,44 @@ class WebshartDataBackend(BaseDataBackend):
                 "SimpleTuner's Webshart backend requires a webshart build that provides "
                 "TarDataLoader.list_shard_sample_aspect_buckets()."
             )
+        if self.optimize_captions:
+            self._optimize_caption_metadata()
+
+    def _optimize_caption_metadata(self) -> None:
+        """Fold sidecar captions into the local metadata cache via webshart's coalescer.
+
+        Sidecar-caption datasets (e.g. plain webdataset ``.txt`` members) otherwise cost one
+        range-read per sample every time captions are enumerated; after coalescing, the local
+        metadata cache serves them as embedded captions.
+        """
+        probe = getattr(self.dataset, "probe_caption_layout", None)
+        coalesce = getattr(self.loader, "coalesce_caption_metadata", None)
+        if not callable(probe) or not callable(coalesce):
+            raise ImportError(
+                "webshart_optimize_captions requires a webshart build that provides "
+                "DiscoveredDataset.probe_caption_layout() and TarDataLoader.coalesce_caption_metadata()."
+            )
+
+        is_main_process = self.accelerator is None or getattr(self.accelerator, "is_main_process", True)
+        if is_main_process:
+            layout = str(probe(max_shards=8).get("layout"))
+            if layout in ("json_sidecar", "txt_sidecar", "mixed"):
+                logger.info(
+                    "(id=%s) Coalescing %s captions into the webshart metadata cache...",
+                    self.id,
+                    layout,
+                )
+                result = coalesce()
+                logger.info(
+                    "(id=%s) Coalesced %s captions across %s shards.",
+                    self.id,
+                    result.get("coalesced_samples"),
+                    result.get("shards"),
+                )
+            else:
+                logger.info("(id=%s) Caption layout is '%s'; no coalescing needed.", self.id, layout)
+        if self.accelerator is not None and hasattr(self.accelerator, "wait_for_everyone"):
+            self.accelerator.wait_for_everyone()
 
     @classmethod
     def sample_id(cls, shard_idx: int, sample_idx: int, filename: str) -> str:
@@ -296,7 +338,7 @@ class WebshartDataBackend(BaseDataBackend):
             }
         return self._shard_sample_index_cache[shard_idx].get(str(filename))
 
-    def get_caption(self, image_path: str) -> Optional[str]:
+    def get_caption(self, image_path: str) -> Optional[Union[str, List[str], dict]]:
         if not self.is_sample_id(image_path):
             return None
 
@@ -304,6 +346,10 @@ class WebshartDataBackend(BaseDataBackend):
         sample_metadata = self.get_shard_metadata(sample_ref.shard_idx).get(sample_ref.filename, {}) or {}
         caption = sample_metadata.get("captions")
         if caption:
+            if isinstance(caption, dict):
+                return caption
+            if isinstance(caption, list):
+                return [str(item).strip() for item in caption if item is not None and str(item).strip()]
             return str(caption).strip()
 
         caption_filename = Path(sample_ref.filename).with_suffix(".txt").name
@@ -485,7 +531,16 @@ class WebshartDataBackend(BaseDataBackend):
         return int(value)
 
     def get_shard_metadata(self, shard_idx: int) -> dict:
-        return dict(self.loader.get_metadata(shard_idx))
+        # Caption scans call this once per sample; without memoization each call
+        # re-fetches and copies the full shard metadata (~200ms x dataset size).
+        shard_idx = int(shard_idx)
+        cached = self._shard_metadata_cache.get(shard_idx)
+        if cached is None:
+            cached = dict(self.loader.get_metadata(shard_idx))
+            if len(self._shard_metadata_cache) >= self._shard_metadata_cache_limit:
+                self._shard_metadata_cache.pop(next(iter(self._shard_metadata_cache)))
+            self._shard_metadata_cache[shard_idx] = cached
+        return cached
 
     def list_shard_sample_aspect_buckets(
         self,

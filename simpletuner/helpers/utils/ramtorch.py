@@ -163,15 +163,16 @@ def _move_peft_base_layer_to_device(peft_layer: Any, device: torch.device | None
         base_layer = getattr(peft_layer, "base_layer", None)
     if base_layer is None:
         return
-    for param in base_layer.parameters(recurse=True):
-        if getattr(param, "is_ramtorch", False):
+    base_state = tuple(base_layer.parameters(recurse=True)) + tuple(base_layer.buffers(recurse=True))
+    for tensor in base_state:
+        if getattr(tensor, "is_ramtorch", False):
             return
-    try:
-        first_param = next(base_layer.parameters(recurse=True), None)
-    except Exception:
-        first_param = None
-    if first_param is not None and first_param.device != device:
-        base_layer.to(device)
+    if getattr(base_layer, "_ramtorch_peft_resident_device", None) != device:
+        # Tensor subclasses such as SDNQTensor can report the wrapper device
+        # while their flattened payload still resides on CPU. Force one
+        # reconstruction instead of trusting the outer device value.
+        base_layer._apply(lambda tensor: tensor.to(device=device, copy=True), recurse=False)
+        base_layer._ramtorch_peft_resident_device = device
 
 
 def _tensor_uses_subclass_storage(tensor: Any) -> bool:
@@ -409,6 +410,8 @@ def replace_all_layers_with_ramtorch(
         include_conv=include_conv,
         include_layernorm=include_layernorm,
         include_rmsnorm=include_rmsnorm,
+        target_patterns=normalize_patterns(target_patterns),
+        name_prefix=name_prefix,
     )
 
     # Add sync hooks if requested (fixes race conditions in ramtorch)
@@ -757,39 +760,28 @@ def move_embeddings_to_device(module: nn.Module, device: object) -> int:
         device: Target device (e.g., "cuda", torch.device("cuda:0")).
 
     Returns:
-        Number of modules moved.
+        Number of direct parameter or buffer tensors moved.
     """
     moved = 0
 
-    def _has_ramtorch_params(mod: nn.Module) -> bool:
-        for param in mod.parameters(recurse=False):
-            if getattr(param, "is_ramtorch", False):
-                return True
-        return False
-
-    def _is_leaf_module(mod: nn.Module) -> bool:
-        for child in mod.children():
-            if any(True for _ in child.parameters(recurse=True)):
-                return False
-        return True
-
-    for name, child in module.named_modules():
-        # Move buffers from all modules (e.g., position_ids in CLIPTextEmbeddings)
-        for buf_name, buf in child.named_buffers(recurse=False):
-            if getattr(buf, "is_ramtorch", False):
-                continue
-            if buf.device.type == "cpu":
-                child.register_buffer(buf_name, buf.to(device))
-
-        # Move non-ramtorch parameters to GPU
-        # This handles both leaf modules AND parameters on parent modules (like pos_embed)
-        for param_name, param in child.named_parameters(recurse=False):
-            if getattr(param, "is_ramtorch", False):
-                continue
-            if param.device.type == "cpu":
-                # Move just this parameter, not the whole module (to avoid moving ramtorch children)
-                param.data = param.data.to(device)
-                moved += 1
+    for _, child in module.named_modules():
+        direct_parameters = tuple(child.named_parameters(recurse=False))
+        direct_buffers = tuple(child.named_buffers(recurse=False))
+        direct_state = direct_parameters + direct_buffers
+        state_to_move = [
+            (name, tensor)
+            for name, tensor in direct_state
+            if not getattr(tensor, "is_ramtorch", False) and tensor.device.type == "cpu"
+        ]
+        if state_to_move:
+            # Module._apply preserves tensor-subclass payloads. Assigning
+            # through param.data can move only the outer wrapper while
+            # leaving SDNQTensor's flattened weight/scale tensors on CPU.
+            child._apply(
+                lambda tensor: tensor if getattr(tensor, "is_ramtorch", False) else tensor.to(device),
+                recurse=False,
+            )
+            moved += len(state_to_move)
 
     return moved
 

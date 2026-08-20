@@ -48,7 +48,10 @@ from simpletuner.helpers.data_backend.factory import (
     run_distillation_cache_generation,
 )
 from simpletuner.helpers.data_backend.runtime import random_dataloader_iterator
-from simpletuner.helpers.data_backend.runtime.context_parallel_sync import ContextParallelBatchSynchronizer
+from simpletuner.helpers.data_backend.runtime.context_parallel_sync import (
+    ContextParallelBatchSynchronizer,
+    gather_sample_weighted_scalar,
+)
 from simpletuner.helpers.data_backend.runtime.schedule import normalize_start_epoch, normalize_start_step
 from simpletuner.helpers.distillation.composition import resolve_configured_distiller_requirement_profile
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
@@ -674,6 +677,41 @@ class Trainer:
         except Exception as exc:
             logger.error("Failed to initialise publishing providers: %s", exc)
             self.publishing_manager = None
+
+    def _publish_final_artifacts(self) -> List[Any]:
+        """Publish the completed output directory through configured providers.
+
+        Returns:
+            Publishing results produced by all successful providers.
+
+        Raises:
+            FileNotFoundError: If publishing is enabled but the output directory is missing.
+            RuntimeError: If a required publishing provider reports no artifacts.
+        """
+        manager = self.publishing_manager
+        if manager is None or not getattr(manager, "configured", False):
+            return []
+
+        output_dir = Path(self.config.output_dir)
+        if not output_dir.exists():
+            raise FileNotFoundError(f"Final publishing directory does not exist: {output_dir}")
+
+        results = manager.publish(
+            output_dir,
+            artifact_name=output_dir.name,
+            metadata={
+                "job_id": self.job_id,
+                "global_step": self.state.get("global_step", 0),
+                "epoch": self.state.get("current_epoch", 0),
+                "artifact_stage": "final",
+            },
+        )
+        required = any(
+            bool(getattr(provider, "config", {}).get("required", False)) for provider in getattr(manager, "providers", [])
+        )
+        if required and not results:
+            raise RuntimeError("Required final artifact publishing did not succeed")
+        return results
 
     def _enable_dynamo_dynamic_output_capture(self) -> None:
         try:
@@ -2235,6 +2273,111 @@ class Trainer:
             self._hub_upload_executor.shutdown(wait=True)
             self._hub_upload_executor = None
 
+    def _init_lora_metadata_global_step(self) -> str | None:
+        init_lora = getattr(self.config, "init_lora", None)
+        if isinstance(init_lora, unittest_mock.Mock):
+            init_lora = None
+        if not isinstance(init_lora, (str, os.PathLike)) or not os.path.isfile(init_lora):
+            return None
+
+        from safetensors import safe_open
+
+        try:
+            with safe_open(os.fspath(init_lora), framework="pt", device="cpu") as handle:
+                metadata = handle.metadata() or {}
+        except Exception as exc:
+            raise ValueError(f"Unable to inspect init_lora checkpoint metadata: {init_lora}") from exc
+        return metadata.get("global_step")
+
+    def _initial_lora_step(self) -> int:
+        raw_step = getattr(self.config, "init_lora_step", None)
+        if isinstance(raw_step, unittest_mock.Mock):
+            raw_step = None
+        inferred_from_metadata = raw_step is None
+        if inferred_from_metadata:
+            raw_step = self._init_lora_metadata_global_step()
+        if raw_step is None:
+            return 0
+        try:
+            initial_step = int(raw_step or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"init_lora_step must be a non-negative integer, received {raw_step!r}.") from exc
+
+        if initial_step < 0 or (isinstance(raw_step, float) and not raw_step.is_integer()):
+            raise ValueError(f"init_lora_step must be a non-negative integer, received {raw_step!r}.")
+        if initial_step == 0:
+            return 0
+        init_lora = getattr(self.config, "init_lora", None)
+        if isinstance(init_lora, unittest_mock.Mock):
+            init_lora = None
+        if not init_lora:
+            raise ValueError("init_lora_step requires init_lora.")
+        if getattr(self.config, "resume_from_checkpoint", None):
+            raise ValueError("init_lora_step cannot be combined with resume_from_checkpoint.")
+
+        max_train_steps = getattr(self.config, "max_train_steps", None)
+        if max_train_steps not in (None, 0):
+            max_train_steps = int(max_train_steps)
+            if initial_step >= max_train_steps:
+                if inferred_from_metadata:
+                    raise ValueError(
+                        "init_lora metadata reports global_step "
+                        f"{initial_step}, which is greater than or equal to max_train_steps ({max_train_steps}). "
+                        "For a fresh run from this adapter, set init_lora_step: 0 explicitly. "
+                        f"To continue scheduler/accounting from the adapter step, raise max_train_steps above {initial_step}."
+                    )
+                raise ValueError(
+                    f"init_lora_step ({initial_step}) must be smaller than max_train_steps ({max_train_steps})."
+                )
+        if inferred_from_metadata:
+            self.config.init_lora_step = initial_step
+            logger.info("Using global step %s from init_lora safetensors metadata.", initial_step)
+        return initial_step
+
+    def _restore_constant_scheduler_lr(
+        self,
+        lr_scheduler,
+        optimizer_param_groups: list[dict],
+        configured_param_group_lrs: list[float | None],
+        global_step: int,
+    ) -> None:
+        if (
+            lr_scheduler is None
+            or self.config.lr_scheduler not in ("constant", "constant_with_warmup")
+            or self.config.is_schedulefree
+        ):
+            return
+
+        scheduler_steps = global_step
+        if not getattr(lr_scheduler, "split_batches", False):
+            scheduler_steps *= self.accelerator.num_processes
+
+        warmup_steps = int(getattr(self.config, "lr_warmup_steps", 0) or 0) * self.accelerator.num_processes
+        lr_scale = 1.0
+        if self.config.lr_scheduler == "constant_with_warmup" and warmup_steps > 0:
+            lr_scale = min(float(scheduler_steps) / float(warmup_steps), 1.0)
+
+        restored_lrs = []
+        for group_index, group in enumerate(optimizer_param_groups):
+            configured_lr = configured_param_group_lrs[group_index]
+            if configured_lr is None:
+                restored_lrs.append(group.get("lr"))
+                continue
+            restored_lr = configured_lr * lr_scale
+            group["lr"] = restored_lr
+            restored_lrs.append(restored_lr)
+
+        scheduler_state = lr_scheduler.state_dict()
+        if "base_lrs" in scheduler_state:
+            scheduler_state["base_lrs"] = list(configured_param_group_lrs)
+        if "_last_lr" in scheduler_state:
+            scheduler_state["_last_lr"] = restored_lrs
+        if "last_epoch" in scheduler_state:
+            scheduler_state["last_epoch"] = scheduler_steps
+        if "_step_count" in scheduler_state:
+            scheduler_state["_step_count"] = scheduler_steps + 1
+        lr_scheduler.load_state_dict(scheduler_state)
+
     def _misc_init(self):
         """things that do not really need an order."""
         torch.set_num_threads(self.config.torch_num_threads)
@@ -2248,8 +2391,9 @@ class Trainer:
         #  takes into account the number of gradient_accumulation_steps. If we use 1 gradient_accumulation_step,
         #  then global_step and step will be the same throughout training. However, if we use
         #  2 gradient_accumulation_steps, then global_step will be twice as large as step, and so on.
-        self.state["global_step"] = 0
-        self.state["global_resume_step"] = 0
+        initial_lora_step = self._initial_lora_step()
+        self.state["global_step"] = initial_lora_step
+        self.state["global_resume_step"] = initial_lora_step
         self.state["first_epoch"] = 1
         self.state["args"] = self.config.__dict__
         self.timesteps_buffer = []
@@ -2266,6 +2410,7 @@ class Trainer:
         self.extra_lr_scheduler_kwargs = {}
         self.iteration_tracker = IterationTracker()
         StateTracker.set_global_step(self.state["global_step"])
+        StateTracker.set_global_resume_step(self.state["global_resume_step"])
         self._init_publishing_manager()
         self.config.use_deepspeed_optimizer, self.config.use_deepspeed_scheduler = prepare_model_for_deepspeed(
             self.accelerator, self.config
@@ -4098,6 +4243,25 @@ class Trainer:
         _init_lyrics_scheduler()
         return lr_scheduler
 
+    def _load_initial_lora_ema_state(self) -> None:
+        init_ema_path = getattr(self.config, "init_lora_ema", None)
+        if isinstance(init_ema_path, unittest_mock.Mock):
+            init_ema_path = None
+        if not init_ema_path:
+            return
+        if not getattr(self.config, "init_lora", None):
+            raise ValueError("init_lora_ema requires init_lora.")
+        if not getattr(self.config, "use_ema", False):
+            raise ValueError("init_lora_ema requires use_ema=true.")
+        if not os.path.isfile(init_ema_path):
+            raise FileNotFoundError(f"Initial LoRA EMA state does not exist: {init_ema_path}")
+        if self.ema_model is None:
+            return
+
+        self.ema_model.load_state_dict(init_ema_path)
+        if self.accelerator.is_main_process:
+            logger.info(f"Loaded initial LoRA EMA state from {init_ema_path}")
+
     def init_ema_model(self):
         # Create EMA for the model.
         self.ema_model = None
@@ -4151,8 +4315,12 @@ class Trainer:
                 warmup_steps=getattr(self.config, "ema_warmup_steps", 0),
                 foreach=not self.config.ema_foreach_disable,
             )
+            self._load_initial_lora_ema_state()
             if should_log:
                 logger.info(f"EMA model creation completed with {self.ema_model.parameter_count():,} parameters")
+
+        if not instantiate_on_rank:
+            self._load_initial_lora_ema_state()
 
         self.accelerator.wait_for_everyone()
         # same about running on all processes to ensure alignment.
@@ -4719,6 +4887,44 @@ class Trainer:
             f"missing checkpoint completion guard {CHECKPOINT_GUARD_FILENAME}",
         )
 
+    def _restore_constant_scheduler_lr(
+        self,
+        lr_scheduler,
+        optimizer_param_groups: list[dict[str, Any]],
+        configured_base_lrs: list[float | None],
+        global_step: int,
+    ) -> None:
+        if self.config.lr_scheduler not in ("constant", "constant_with_warmup") or self.config.is_schedulefree:
+            return
+
+        process_multiplier = 1 if getattr(lr_scheduler, "split_batches", False) else self.accelerator.num_processes
+        scheduler_step = int(global_step) * max(1, int(process_multiplier))
+        warmup_steps = 0
+        if self.config.lr_scheduler == "constant_with_warmup":
+            warmup_steps = int(getattr(self.config, "lr_warmup_steps", 0)) * max(1, int(process_multiplier))
+        warmup_scale = min(1.0, scheduler_step / max(1, warmup_steps)) if warmup_steps > 0 else 1.0
+
+        restored_lrs = [float(base_lr) * warmup_scale if base_lr is not None else None for base_lr in configured_base_lrs]
+        scheduler_state = lr_scheduler.state_dict()
+        scheduler_state["base_lrs"] = list(configured_base_lrs)
+        scheduler_state["_last_lr"] = list(restored_lrs)
+        if "last_epoch" in scheduler_state:
+            scheduler_state["last_epoch"] = scheduler_step
+        if "_step_count" in scheduler_state:
+            scheduler_state["_step_count"] = scheduler_step + 1
+        lr_scheduler.load_state_dict(scheduler_state)
+
+        for group_index, group in enumerate(optimizer_param_groups):
+            if group_index >= len(restored_lrs) or restored_lrs[group_index] is None:
+                continue
+            group["initial_lr"] = configured_base_lrs[group_index]
+            group["lr"] = restored_lrs[group_index]
+
+        logger.info(
+            f"Restored {self.config.lr_scheduler} scheduler at global step {global_step} "
+            f"(scheduler step {scheduler_step}) with learning rates {restored_lrs}."
+        )
+
     def init_resume_checkpoint(self, lr_scheduler):
         # Potentially load in the weights and states from a previous save
         self.config.total_steps_remaining_at_start = self.config.max_train_steps
@@ -4726,7 +4932,26 @@ class Trainer:
         self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
         if not self.config.resume_from_checkpoint:
-            logger.info(f"Not resuming from checkpoint.")
+            initial_lora_step = self._initial_lora_step()
+            if initial_lora_step:
+                optimizer_param_groups = getattr(getattr(self, "optimizer", None), "param_groups", [])
+                configured_param_group_lrs = [group.get("initial_lr", group.get("lr")) for group in optimizer_param_groups]
+                self._restore_constant_scheduler_lr(
+                    lr_scheduler,
+                    optimizer_param_groups,
+                    configured_param_group_lrs,
+                    initial_lora_step,
+                )
+                self.config.total_steps_remaining_at_start -= initial_lora_step
+                if hasattr(self.model, "reset_flow_custom_timestep_cursor"):
+                    self.model.reset_flow_custom_timestep_cursor(initial_lora_step)
+                logger.warning(
+                    "Continuing from init_lora at global step %s with fresh optimizer, sampler, and RNG state. "
+                    "Use resume_from_checkpoint when full trainer state is available.",
+                    initial_lora_step,
+                )
+            else:
+                logger.info("Not resuming from checkpoint.")
             return lr_scheduler
         resume_value = str(self.config.resume_from_checkpoint)
         delete_invalid_value = getattr(self.config, "delete_invalid_checkpoints", False)
@@ -4740,7 +4965,7 @@ class Trainer:
             raw_param_groups = getattr(self.optimizer, "param_groups", None)
             if isinstance(raw_param_groups, list):
                 optimizer_param_groups = raw_param_groups
-        configured_param_group_lrs = [group.get("lr") for group in optimizer_param_groups]
+        configured_param_group_lrs = [group.get("initial_lr", group.get("lr")) for group in optimizer_param_groups]
 
         while True:
             checkpoint_dir = None
@@ -4812,29 +5037,6 @@ class Trainer:
         if getattr(self, "distiller", None) is not None:
             logger.info(f"Loading DCM checkpoint states..")
             self.distiller.on_load_checkpoint(checkpoint_dir)
-        try:
-            if self.config.lr_scheduler in ("constant", "constant_with_warmup") and not self.config.is_schedulefree:
-                for group_index, group in enumerate(optimizer_param_groups):
-                    if "lr" not in group:
-                        continue
-                    if group_index < len(configured_param_group_lrs) and configured_param_group_lrs[group_index] is not None:
-                        group["lr"] = configured_param_group_lrs[group_index]
-                for k, v in lr_scheduler.state_dict().items():
-                    if k in ("base_lrs", "_last_lr"):
-                        for group_index, configured_lr in enumerate(configured_param_group_lrs):
-                            if configured_lr is not None and group_index < len(v):
-                                v[group_index] = configured_lr
-        except Exception as e:
-            event = notification_event(
-                message="Could not update learning rate scheduler LR value.",
-                severity="warning",
-                job_id=self.job_id,
-            )
-            self._emit_event(event)
-            logger.error(
-                f"Could not update lr_scheduler {self.config.lr_scheduler} learning rate to {self.config.learning_rate} upon resume: {e}"
-            )
-
         event = lifecycle_stage_event(
             key="init_resume_checkpoint",
             label="Resume Checkpoint",
@@ -4854,6 +5056,23 @@ class Trainer:
                 )
         self.state["global_resume_step"] = self.state["global_step"] = StateTracker.get_global_step()
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
+        try:
+            self._restore_constant_scheduler_lr(
+                lr_scheduler,
+                optimizer_param_groups,
+                configured_param_group_lrs,
+                self.state["global_resume_step"],
+            )
+        except Exception as e:
+            event = notification_event(
+                message="Could not update learning rate scheduler LR value.",
+                severity="warning",
+                job_id=self.job_id,
+            )
+            self._emit_event(event)
+            logger.error(
+                f"Could not update lr_scheduler {self.config.lr_scheduler} learning rate to {self.config.learning_rate} upon resume: {e}"
+            )
         if hasattr(self.model, "load_flow_custom_timestep_state"):
             self.model.load_flow_custom_timestep_state(
                 checkpoint_dir,
@@ -5224,6 +5443,20 @@ class Trainer:
                 else:
                     self.model.get_trained_component(unwrap_model=False).to(target_device, dtype=self.config.weight_dtype)
                 self._report_cuda_usage_if_requested("after_move_trained_component")
+            elif ramtorch_enabled and is_accelerator_target:
+                # RamTorch is applied before PEFT adapters are injected. Refresh
+                # accelerator residency here so untargeted layers and newly-created
+                # adapter weights do not remain on CPU when the root .to() is skipped.
+                moved = ramtorch_utils.move_embeddings_to_device(
+                    self.model.get_trained_component(unwrap_model=False),
+                    target_device,
+                )
+                if moved:
+                    logger.info(
+                        "Moved %s non-RamTorch parameters/buffers to %s after adapter setup.",
+                        moved,
+                        target_device,
+                    )
         if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
             self.accelerator._lycoris_wrapped_network = self.accelerator._lycoris_wrapped_network.to(
                 target_device, dtype=self.config.weight_dtype
@@ -5332,12 +5565,14 @@ class Trainer:
             return
 
         validation_images = getattr(self.validation, "validation_images") if self.validation is not None else None
+        validation_audios = getattr(self.validation, "validation_audios") if self.validation is not None else None
         captured_step = self.state["global_step"]
         captured_epoch = self.state["current_epoch"]
 
         def _upload_latest_checkpoint():
             return self.hub_manager.upload_latest_checkpoint(
                 validation_images=validation_images,
+                validation_audios=validation_audios,
                 webhook_handler=self.webhook_handler,
                 global_step=captured_step,
                 epoch=captured_epoch,
@@ -6388,7 +6623,7 @@ class Trainer:
         return save_path
 
     def _populate_checkpoint_assets(self, checkpoint_path: str) -> None:
-        """Copy validation images/videos from this step to the checkpoint's assets folder."""
+        """Copy validation media from this step to the checkpoint's assets folder."""
         if not checkpoint_path or not os.path.exists(checkpoint_path):
             return
 
@@ -6403,7 +6638,10 @@ class Trainer:
             return
 
         step_pattern = f"step_{checkpoint_step}_"
-        supported_extensions = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".avi", ".mov", ".webm"}
+        audio_extensions = {".wav", ".flac", ".mp3", ".ogg", ".m4a"}
+        video_extensions = {".mp4", ".avi", ".mov", ".webm"}
+        image_extensions = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+        supported_extensions = image_extensions | video_extensions | audio_extensions
 
         matching_files = []
         for filename in os.listdir(validation_dir):
@@ -6418,10 +6656,14 @@ class Trainer:
         assets_dir = os.path.join(checkpoint_path, "assets")
         try:
             os.makedirs(assets_dir, exist_ok=True)
-            for idx, filename in enumerate(sorted(matching_files)):
+            asset_counts = {"image": 0, "audio": 0}
+            for filename in sorted(matching_files):
                 src = os.path.join(validation_dir, filename)
                 ext = os.path.splitext(filename)[1]
-                dst = os.path.join(assets_dir, f"image_{idx}{ext}")
+                prefix = "audio" if ext.lower() in audio_extensions else "image"
+                idx = asset_counts[prefix]
+                asset_counts[prefix] += 1
+                dst = os.path.join(assets_dir, f"{prefix}_{idx}{ext}")
                 shutil.copy2(src, dst)
             logger.debug(f"Copied {len(matching_files)} validation assets to {assets_dir}")
         except Exception as e:
@@ -6694,14 +6936,19 @@ class Trainer:
                         bsz = prepared_batch["latents"].shape[0]
                         training_logger.debug("Sending latent batch to GPU.")
                     else:
-                        batch_label = "tokens"
-                        bsz = prepared_batch["tokens"].shape[0]
+                        batch_label = "tokens" if "tokens" in prepared_batch else "input_ids"
+                        bsz = prepared_batch[batch_label].shape[0]
                         training_logger.debug("Sending token batch to GPU.")
 
-                    if int(bsz) != int(self.config.train_batch_size):
+                    expected_batch_size = self.config.train_batch_size
+                    batch_backend_id = prepared_batch.get("data_backend_id")
+                    if isinstance(batch_backend_id, str):
+                        backend_config = StateTracker.get_data_backend_config(batch_backend_id) or {}
+                        expected_batch_size = backend_config.get("train_batch_size", expected_batch_size)
+
+                    if int(bsz) != int(expected_batch_size):
                         logger.error(
-                            f"Received {bsz} {batch_label}, but expected {self.config.train_batch_size}. "
-                            "Processing short batch."
+                            f"Received {bsz} {batch_label}, but expected {expected_batch_size}. " "Processing short batch."
                         )
                     training_logger.debug(f"Working on batch size: {bsz}")
                     # Prepare the data for the scatter plot
@@ -6787,13 +7034,11 @@ class Trainer:
                             f"filepaths={batch_filepaths}, loss_logs={loss_logs_context})."
                         )
 
-                    # Gather the losses across all processes for logging (if using distributed training)
-                    avg_loss = self.accelerator.gather(loss.repeat(self.config.train_batch_size)).mean()
+                    # Keep metric collectives fixed-shape when ranks use different dataset batch sizes.
+                    avg_loss = gather_sample_weighted_scalar(loss, int(bsz), self.accelerator)
                     self.train_loss += avg_loss.item() / self.config.gradient_accumulation_steps
                     if aux_loss_logs is not None:
-                        avg_diffusion_loss = self.accelerator.gather(
-                            diffusion_loss.repeat(self.config.train_batch_size)
-                        ).mean()
+                        avg_diffusion_loss = gather_sample_weighted_scalar(diffusion_loss, int(bsz), self.accelerator)
                         self.train_diffusion_loss += avg_diffusion_loss.item() / self.config.gradient_accumulation_steps
                     # Backpropagate
                     self.grad_norm = None
@@ -7285,6 +7530,7 @@ class Trainer:
             torch_profiler.stop()
             logger.info("Torch profiler stopped.")
         validation_images = None
+        validation_audios = None
         final_lora_save_kwargs = None
         fsdp_plugin = getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None)
         is_fsdp2_full_model_save = (
@@ -7372,12 +7618,14 @@ class Trainer:
                         job_id=self.job_id,
                     )
                     self._emit_event(validation_start_event)
-                    validation_images = self.validation.run_validations(
+                    validation_result = self.validation.run_validations(
                         validation_type="final",
                         step=self.state["global_step"],
                         force_evaluation=True,
                         skip_execution=True,
-                    ).validation_images
+                    )
+                    validation_images = validation_result.validation_images
+                    validation_audios = validation_result.validation_audios
                     # Emit validation completed lifecycle event
                     validation_completed_event = lifecycle_stage_event(
                         key="final_validation",
@@ -7452,6 +7700,7 @@ class Trainer:
                     def _upload_final_model():
                         repo_url = self.hub_manager.upload_model(
                             validation_images,
+                            validation_audios,
                             self.webhook_handler,
                             global_step=captured_step,
                             epoch=captured_epoch,
@@ -7465,6 +7714,10 @@ class Trainer:
                     self._finish_hub_uploads()
                 else:
                     self._run_post_upload_script(local_path=self.config.output_dir, remote_path=None)
+                if self.accelerator.is_main_process and os.environ.get(
+                    "SIMPLETUNER_PUBLISH_FINAL_ARTIFACTS", ""
+                ).lower() in {"1", "true", "yes", "on"}:
+                    self._publish_final_artifacts()
                 # Mark model_save as completed
                 event = lifecycle_stage_event(
                     key="model_save",

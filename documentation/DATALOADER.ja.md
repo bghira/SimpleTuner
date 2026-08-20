@@ -71,6 +71,15 @@
 - **説明:** このデータセットの埋め込みキャッシュファイルの保存先を指定します。`text_embeds` はテキストエンコーダ出力、`image_embeds` は VAE 潜在の保存先です。
 - **注記:** 主となる画像/動画データセットで VAE キャッシュの保存先を指定する `cache_dir_vae` とは異なります。
 
+### `train_batch_size`
+
+- **学習時の挙動:** 独立してサンプリングされる主要データセット (`image`, `video`, `audio`, `caption`) は、解決後の値を学習マイクロバッチサイズとして使用します。`conditioning` はペアとなる補助データです。解決後の値はメタデータのバケットサイズには使用されますが、独立した学習マイクロバッチを作成せず、オプティマイザ更新のサンプル数にも個別には加算されません。
+- **説明:** このデータセットでグローバルな `--train_batch_size` を上書きします。主要データセットでは、解決後の値がサンプラのマイクロバッチサイズ、バケットサイズ、および選択時の実際のサンプル数を制御します。`conditioning` ではメタデータとバケットの準備だけに影響します。未設定の場合はグローバル値を使います。
+- **勾配蓄積:** 1 つの蓄積ウィンドウで、解決後のマイクロバッチサイズが異なるデータセットが選択されることがあります。1 回のオプティマイザ更新におけるグローバルなサンプル総数は、すべての蓄積マイクロステップおよびデータ並列ランクにおける実際のローカルマイクロバッチサイズの合計です。上書きのないデータセットが選択された場合、そのランクではグローバル既定値を使います。
+- **グローバル参照値:** トレーナーレベルの学習率スケーリングや、単一の固定バッチサイズを必要とするその他の静的設定・レポートでは、引き続きグローバルな `--train_batch_size` を使用します。そのため、データセットごとの上書きを混在させる場合、通常のグローバル/有効バッチサイズ式は設定上の参照値であり、各オプティマイザ更新の正確なサンプル数ではありません。
+- **勾配チェックポイント:** 勾配チェックポイントはバッチサイズの計算に影響しません。
+- **既定値:** トレーナーの `--train_batch_size` 引数にフォールバックします。
+
 ### `write_batch_size`
 
 - **`dataset_type=text_embeds` のみに適用**
@@ -137,12 +146,17 @@
 }
 ```
 
+有効なメディアデータセットがすべて `dataset_type: "audio"` の場合、`SUPPORTS_FAKE_VIDEO_STREAM` を持つ動画モデルは
+自動的に音声のみトレーニングになります。LTX-2 はネイティブの音声専用ブランチを使用します。MiniMax-H3 は latent
+frame ごとに 1 個の偽動画空間トークンを保持し、動画 loss をマスクします。標準 LoRA では
+`AUDIO_LORA_TARGET` が自動選択され、明示した `peft_lora_target_modules` が優先されます。
+
 - **`bucket_strategy`** – 現在は `duration` が既定で、クリップを等間隔のバケットに切り詰め、GPU ごとのサンプリングがバッチ計算に合うようにします。
 - **`duration_interval`** – バケット丸めを秒単位で指定します（未設定時の既定は **3**）。`15` にすると、77 秒のクリップは 75 秒に丸められます。これにより、単一の長いクリップが他のランクを阻害するのを防ぎ、同じ間隔で切り詰められます。
 - **`max_duration_seconds`** – これを超える長さのクリップはメタデータ探索時に完全にスキップされるため、極端に長いトラックがバケットを予期せず消費しません。
 - **`truncation_mode`** – バケット間隔に揃える際に保持するクリップの部分を決めます。選択肢: `beginning`、`end`、`random`（既定: `beginning`）。
-- **`audio_only`** – 音声のみトレーニングモード（LTX-2）: 動画ファイルなしで音声生成のみをトレーニングします。動画潜在変数は自動的にゼロになり、動画損失はマスクされます。
-- **`target_resolution`** – 音声のみモードでのターゲット動画解像度（潜在変数の次元計算に使用）。
+- **`audio_only`** – 音声のみモードの互換用 override。音声のみの構成では LTX-2 と MiniMax-H3 に対して自動的に有効化されます。
+- **`target_resolution`** – レガシー override。自動 fake stream はモデルの最小トークン形状を使用します。
 - 標準の音声設定（チャンネル数、キャッシュディレクトリなど）は `simpletuner.helpers.data_backend.factory` によって作成されるランタイム音声バックエンドに直接マッピングされます。パディングは意図的に回避され、クリップは延長ではなく切り詰められるため、ACE-Step のような拡散トレーナーの挙動と整合します。
 
 #### S2V トレーニング用の音声設定
@@ -172,8 +186,8 @@
 | `audio.auto_split` | bool | true | ビデオファイルからオーディオデータセットを自動生成。`audio` セクションが存在する場合、デフォルトは true。S2V 必須モデルでは `audio` セクションがなくてもデフォルトで true。 |
 | `audio.source_from_video` | bool | false | （自動設定）オーディオがビデオから抽出されたことを示す |
 | `audio.allow_zero_audio` | bool | false | 音声ストリームのないビデオに対してゼロ埋めオーディオを生成 |
-| `audio.audio_only` | bool | false | 音声のみトレーニングモード（LTX-2）：ビデオファイルなしで音声生成のみトレーニング |
-| `audio.target_resolution` | int | null | 音声のみモードのターゲットビデオ解像度（latent 次元の計算に使用） |
+| `audio.audio_only` | bool | false | 互換用 override。音声のみの構成では LTX-2 と MiniMax-H3 に対して自動的に有効化 |
+| `audio.target_resolution` | int | null | レガシー override。自動 fake stream はモデルファミリーの最小トークン形状を使用 |
 | `audio.sample_rate` | int | 16000 | 音声抽出のターゲットサンプルレート |
 | `audio.channels` | int | 1 | オーディオチャンネル数（1=モノラル、2=ステレオ） |
 | `audio.bucket_strategy` | string | "duration" | オーディオサンプルのバケット戦略 |
@@ -665,10 +679,12 @@ Canny エッジ検出マップを生成します:
 複数 GPU で学習する場合、データセットは次の **実効バッチサイズ** を満たすだけの大きさが必要です:
 
 ```
-effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_steps
+effective_batch_size = データセットの train_batch_size × num_gpus × gradient_accumulation_steps
 ```
 
-たとえば、GPU が 4 枚、`train_batch_size=4`、`gradient_accumulation_steps=1` の場合、各アスペクトバケットには（repeats 適用後で）最低 **16 サンプル**が必要です。
+これはデータセットごとのバケットサイズ要件です。1 つの蓄積ウィンドウですべての設定済みデータセットが選択されることを意味せず、異なるマイクロバッチサイズを混在させたオプティマイザ更新の正確なサンプル数を表すものでもありません。
+
+たとえば、GPU が 4 枚、データセットの `train_batch_size=4`、`gradient_accumulation_steps=1` の場合、各アスペクトバケットには（repeats 適用後で）最低 **16 サンプル**が必要です。
 
 **重要:** データセット設定から使用可能なバッチが 0 になる場合、SimpleTuner はエラーを出します。エラーメッセージには以下が表示されます:
 - 現在の設定値（バッチサイズ、GPU 数、repeats）
@@ -1326,8 +1342,24 @@ Webshart データセットは `webshart` パッケージで WebDataset 形式�
 - `metadata` は任意で、captions を含む別 metadata location を指定できます。`webshart/conceptual-captions-12m-webdataset-metadata` のような Hugging Face metadata repo では repo id だけを渡します。Webshart は source shard の `data/` などのサブフォルダ構成に従います。
 - `metadata_backend` は `webshart`、`caption_strategy` は `webshart` または `instanceprompt` にします。
 - `webshart.cache_dir` は SimpleTuner metadata と Webshart caches を保存します。`shard_cache_gb` と `parallel_downloads` は Webshart の shard cache に渡されます。`shard_cache_gb` を `0` にすると、shard 全体の cache を無効にし、index 付き range read を維持します。
+- `webshart_optimize_captions`（別綴り `webshart_optimise_captions`。`webshart` ブロック内では `optimize_captions`/`optimise_captions` も受け付けます）は起動時に caption layout を probe し、captions が metadata index ではなく `.txt`/`.json` の sidecar tar member にある場合、それらをローカルの Webshart metadata cache に一度だけ統合します。このオプションがないと、sidecar caption の dataset（たとえば `laion/conceptual-captions-12m-webdataset`）は captions を列挙するたび — 起動時、checkpoint 時、model card 生成時 — にサンプルごとに 1 回の range read が発生します。metadata に captions が既に埋め込まれている dataset では、統合は自動的にスキップされます。
 
-`TarDataLoader.list_shard_sample_aspect_buckets()` を提供する Webshart build が必要です。
+#### captions を事前に最適化する
+
+同じ統合処理は Webshart CLI からも利用でき、修復済みの metadata を公開することもできるため、runtime オプションなしで dataset のすべての利用者が恩恵を受けられます:
+
+```bash
+webshart optimize-captions \
+  --source organization/dataset \
+  --metadata organization/dataset-metadata \
+  --destination caption-metadata \
+  --shard-cache-dir cache/shards \
+  --push-to-hub organization/dataset-metadata
+```
+
+`--destination` はポータブルな shard ごとの metadata ツリーを書き出し、`--push-to-hub` はそれを metadata repository にアップロードします。その後、dataloader の `metadata` オプションをその repository に向けてください。`--shard-cache-dir` を指定すると、統合処理は sidecar ごとに 1 回の range read を発行する代わりに、完全に cache された shard を再利用できます。
+
+この backend には `TarDataLoader.list_shard_sample_aspect_buckets()` を提供する Webshart build が必要です。`webshart_optimize_captions` にはさらに `probe_caption_layout()` と `coalesce_caption_metadata()` が必要です。
 
 ## アスペクト比と解像度のカスタムマッピング
 

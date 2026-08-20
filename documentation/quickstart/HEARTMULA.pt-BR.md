@@ -63,6 +63,7 @@ Adicione estes valores ao seu `config.json` para monitorar o progresso:
 
 - **`validation_prompt`**: Tags ou uma descricao do audio (ex.: "Pop animado com sintetizadores brilhantes").
 - **`validation_lyrics`**: (Opcional) Letras para o modelo cantar. Use string vazia para instrumentais.
+- **`validation_prompt_library`**: use `"audio"` para a biblioteca integrada de caption + lyrics.
 - **`validation_audio_duration`**: Duracao em segundos para clipes de validacao (padrao: 30.0).
 - **`validation_guidance`**: Escala de guidance (comece em torno de 1.5 - 3.0).
 - **`validation_step_interval`**: Com que frequencia gerar amostras (ex.: a cada 100 passos).

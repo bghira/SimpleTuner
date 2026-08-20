@@ -144,6 +144,14 @@ class TestWebshartDataBackend(unittest.TestCase):
 
         self.assertEqual(caption, "A moving subject.")
 
+    def test_get_caption_preserves_indexed_caption_variants(self):
+        backend = WebshartDataBackend.__new__(WebshartDataBackend)
+        backend.get_shard_metadata = Mock(return_value={"sample.mp4": {"captions": ["first caption", "second caption"]}})
+
+        caption = backend.get_caption("webshart://2/7/sample.mp4")
+
+        self.assertEqual(caption, ["first caption", "second caption"])
+
     def test_video_metadata_uses_indexed_frame_fields_and_probe_geometry(self):
         backend = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
         backend.dataset_type = DatasetType.VIDEO
@@ -218,8 +226,8 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
 
     def _entries(self):
         return [
-            {"path": "captioned.webp", "captions": ["a caption"]},
-            {"path": "uncaptioned.webp", "captions": None},
+            {"path": "captioned.webp", "filename": "captioned.webp", "captions": ["a caption"]},
+            {"path": "uncaptioned.webp", "filename": "uncaptioned.webp", "captions": None},
         ]
 
     def test_webshart_caption_strategy_skips_caption_less_samples(self):
@@ -236,6 +244,24 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
         )
         self.assertEqual(backend.filtering_statistics["skipped"]["caption_missing"], 1)
         self.assertEqual(backend.filtering_statistics["total_processed"], 1)
+
+    def test_webshart_caption_strategy_accepts_txt_sidecar_samples(self):
+        backend = self._build_backend(self._entries())
+        backend.data_backend.get_shard_metadata = Mock(
+            return_value={"uncaptioned.txt": {"path": "uncaptioned.txt", "offset": 0, "length": 10}}
+        )
+        with patch(
+            "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_data_backend_config",
+            return_value={"caption_strategy": "webshart"},
+        ):
+            backend.compute_aspect_ratio_bucket_indices()
+
+        self.assertEqual(
+            backend.aspect_ratio_bucket_indices["1.0"],
+            ["webshart://0/0/captioned.webp", "webshart://0/0/uncaptioned.webp"],
+        )
+        self.assertEqual(backend.filtering_statistics["skipped"]["caption_missing"], 0)
+        self.assertEqual(backend.filtering_statistics["total_processed"], 2)
 
     def test_other_caption_strategies_keep_caption_less_samples(self):
         backend = self._build_backend(self._entries())
@@ -254,3 +280,120 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWebshartCaptionOptimization(unittest.TestCase):
+    def _build_backend(self, layout: str, has_api: bool = True):
+        backend = WebshartDataBackend.__new__(WebshartDataBackend)
+        backend.id = "test-backend"
+        backend.accelerator = None
+        backend.optimize_captions = True
+        backend.dataset = Mock()
+        backend.loader = Mock()
+        if has_api:
+            backend.dataset.probe_caption_layout = Mock(return_value={"layout": layout})
+            backend.loader.coalesce_caption_metadata = Mock(return_value={"coalesced_samples": 128, "shards": 4})
+        else:
+            del backend.dataset.probe_caption_layout
+            del backend.loader.coalesce_caption_metadata
+        return backend
+
+    def test_sidecar_layout_triggers_coalescing(self):
+        for layout in ("txt_sidecar", "json_sidecar", "mixed"):
+            with self.subTest(layout=layout):
+                backend = self._build_backend(layout)
+                backend._optimize_caption_metadata()
+                backend.loader.coalesce_caption_metadata.assert_called_once_with()
+
+    def test_embedded_layout_skips_coalescing(self):
+        for layout in ("embedded", "none"):
+            with self.subTest(layout=layout):
+                backend = self._build_backend(layout)
+                backend._optimize_caption_metadata()
+                backend.loader.coalesce_caption_metadata.assert_not_called()
+
+    def test_missing_webshart_api_raises(self):
+        backend = self._build_backend("txt_sidecar", has_api=False)
+        with self.assertRaises(ImportError):
+            backend._optimize_caption_metadata()
+
+
+class TestWebshartOptimizeCaptionsConfig(unittest.TestCase):
+    def _config_from(self, backend_dict):
+        from simpletuner.helpers.data_backend.config.image import ImageBackendConfig
+
+        base = {
+            "id": "ws",
+            "type": "webshart",
+            "source": "org/dataset",
+            "metadata_backend": "webshart",
+            "caption_strategy": "webshart",
+        }
+        base.update(backend_dict)
+        return ImageBackendConfig.from_dict(base, {})
+
+    def test_accepts_both_spellings_and_block_form(self):
+        cases = [
+            ({"webshart_optimize_captions": True}, True),
+            ({"webshart_optimise_captions": True}, True),
+            ({"webshart": {"optimize_captions": True}}, True),
+            ({"webshart": {"optimise_captions": True}}, True),
+            ({"webshart_optimize_captions": False}, False),
+            ({}, None),
+        ]
+        for backend_dict, expected in cases:
+            with self.subTest(backend_dict=backend_dict):
+                config = self._config_from(backend_dict)
+                self.assertEqual(config.webshart_optimize_captions, expected)
+
+
+class TestWebshartShardMetadataMemoization(unittest.TestCase):
+    def _backend(self, limit=8):
+        backend = WebshartDataBackend.__new__(WebshartDataBackend)
+        backend._shard_metadata_cache = {}
+        backend._shard_metadata_cache_limit = limit
+        backend.loader = Mock(get_metadata=Mock(side_effect=lambda idx: {"file.jpg": {"captions": f"shard {idx}"}}))
+        return backend
+
+    def test_repeat_lookups_hit_cache(self):
+        backend = self._backend()
+
+        first = backend.get_shard_metadata(3)
+        second = backend.get_shard_metadata(3)
+
+        self.assertIs(first, second)
+        backend.loader.get_metadata.assert_called_once_with(3)
+
+    def test_cache_evicts_oldest_shard_at_limit(self):
+        backend = self._backend(limit=2)
+
+        backend.get_shard_metadata(1)
+        backend.get_shard_metadata(2)
+        backend.get_shard_metadata(3)
+
+        self.assertEqual(sorted(backend._shard_metadata_cache), [2, 3])
+        backend.get_shard_metadata(1)
+        self.assertEqual(backend.loader.get_metadata.call_count, 4)
+
+
+class TestWebshartCaptionCacheLoad(unittest.TestCase):
+    def _metadata_backend(self, cache_payload):
+        backend = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
+        backend.cache_file = "aspect_ratio_bucket_indices_test.json"
+        backend.data_backend = Mock(exists=Mock(return_value=True), read=Mock(return_value=cache_payload))
+        backend.image_metadata = {"webshart://0/1/sample.jpg": {"captions": "a red bicycle"}}
+        return backend
+
+    def test_empty_cache_file_regenerates_from_image_metadata(self):
+        backend = self._metadata_backend("{}")
+
+        backend._load_caption_cache()
+
+        self.assertEqual(backend.caption_cache, {"webshart://0/1/sample.jpg": "a red bicycle"})
+
+    def test_populated_cache_file_is_used_directly(self):
+        backend = self._metadata_backend('{"webshart://0/1/sample.jpg": "cached caption"}')
+
+        backend._load_caption_cache()
+
+        self.assertEqual(backend.caption_cache, {"webshart://0/1/sample.jpg": "cached caption"})

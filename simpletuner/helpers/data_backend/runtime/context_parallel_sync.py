@@ -22,6 +22,7 @@ import numbers
 import os
 import random
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 
 import torch
@@ -38,6 +39,18 @@ else:
 
 # Sentinel value for non-leader ranks that skip sampling
 CP_SKIP_SAMPLING_SENTINEL = "__CP_SKIP_SAMPLING__"
+
+
+@dataclass(frozen=True)
+class DistributedBatchLayout:
+    local_batch_size: int
+    global_batch_size: int
+    local_batch_offset: int
+    data_rank: int
+    data_parallel_size: int
+    model_replica_size: int
+    world_size: int
+    data_replica_batch_sizes: tuple[int, ...]
 
 
 def _normalize_parallel_size(value: Any, name: str) -> int:
@@ -217,6 +230,122 @@ def get_model_replica_data_info(
     data_rank = process_index // data_group_size
     data_local_rank = process_index % data_group_size
     return True, data_rank, data_local_rank, data_group_size, dp_replicate_size
+
+
+def resolve_distributed_batch_layout(accelerator, local_batch_size: int) -> DistributedBatchLayout:
+    """Resolve sample counts and this data replica's offset using fixed-shape collectives."""
+    local_batch_size = _normalize_parallel_size(local_batch_size, "local_batch_size")
+    if local_batch_size < 1:
+        raise ValueError("local_batch_size must be greater than 0.")
+
+    if accelerator is None:
+        return DistributedBatchLayout(local_batch_size, local_batch_size, 0, 0, 1, 1, 1, (local_batch_size,))
+
+    world_size = _normalize_parallel_size(getattr(accelerator, "num_processes", 1), "num_processes")
+    process_index = _normalize_parallel_size(getattr(accelerator, "process_index", 0), "process_index")
+    if world_size == 1:
+        return DistributedBatchLayout(local_batch_size, local_batch_size, 0, 0, 1, 1, 1, (local_batch_size,))
+
+    count = torch.tensor([local_batch_size], device=accelerator.device, dtype=torch.long)
+    gathered_counts = accelerator.gather(count).reshape(-1)
+    if gathered_counts.numel() != world_size:
+        raise RuntimeError(
+            f"Distributed batch count gather returned {gathered_counts.numel()} values for world size {world_size}."
+        )
+    world_batch_sizes = tuple(int(value) for value in gathered_counts.cpu().tolist())
+
+    data_enabled, data_rank, _data_local_rank, model_replica_size, data_parallel_size = get_model_replica_data_info(
+        accelerator
+    )
+    if data_enabled:
+        replica_batch_sizes = []
+        for replica_rank in range(data_parallel_size):
+            start = replica_rank * model_replica_size
+            replica_counts = world_batch_sizes[start : start + model_replica_size]
+            if len(set(replica_counts)) != 1:
+                raise RuntimeError(
+                    "Model-parallel ranks received different local batch sizes: "
+                    f"data replica {replica_rank} reported {replica_counts}."
+                )
+            replica_batch_sizes.append(replica_counts[0])
+        data_replica_batch_sizes = tuple(replica_batch_sizes)
+    else:
+        data_rank = process_index
+        data_parallel_size = world_size
+        model_replica_size = 1
+        data_replica_batch_sizes = world_batch_sizes
+
+    return DistributedBatchLayout(
+        local_batch_size=local_batch_size,
+        global_batch_size=sum(data_replica_batch_sizes),
+        local_batch_offset=sum(data_replica_batch_sizes[:data_rank]),
+        data_rank=data_rank,
+        data_parallel_size=data_parallel_size,
+        model_replica_size=model_replica_size,
+        world_size=world_size,
+        data_replica_batch_sizes=data_replica_batch_sizes,
+    )
+
+
+def gather_variable_batch_tensor(
+    tensor: torch.Tensor,
+    accelerator,
+    layout: Optional[DistributedBatchLayout] = None,
+) -> torch.Tensor:
+    """Gather every rank's per-sample tensor when data replicas have different batch sizes."""
+    if tensor.ndim < 1:
+        raise ValueError("Variable batch tensor gather requires a batch dimension.")
+    if layout is None:
+        layout = resolve_distributed_batch_layout(accelerator, tensor.shape[0])
+    if tensor.shape[0] != layout.local_batch_size:
+        raise ValueError(f"Tensor batch dimension {tensor.shape[0]} does not match layout size {layout.local_batch_size}.")
+    if layout.world_size == 1:
+        return tensor.detach()
+
+    maximum_batch_size = max(layout.data_replica_batch_sizes)
+    padded = tensor.detach()
+    if padded.shape[0] < maximum_batch_size:
+        padding = padded.new_zeros((maximum_batch_size - padded.shape[0], *padded.shape[1:]))
+        padded = torch.cat((padded, padding), dim=0)
+
+    gathered = accelerator.gather(padded)
+    expected_first_dimension = layout.world_size * maximum_batch_size
+    if gathered.shape[0] != expected_first_dimension:
+        raise RuntimeError(
+            "Distributed tensor gather returned an unexpected first dimension: "
+            f"expected {expected_first_dimension}, got {gathered.shape[0]}."
+        )
+    gathered = gathered.reshape(layout.world_size, maximum_batch_size, *padded.shape[1:])
+    rank_tensors = []
+    for world_rank in range(layout.world_size):
+        replica_rank = world_rank // layout.model_replica_size
+        batch_size = layout.data_replica_batch_sizes[replica_rank]
+        rank_tensors.append(gathered[world_rank, :batch_size])
+    return torch.cat(rank_tensors, dim=0)
+
+
+def gather_sample_weighted_scalar(value: torch.Tensor, local_batch_size: int, accelerator) -> torch.Tensor:
+    """Return a sample-weighted world mean from one fixed-shape contribution per rank."""
+    local_batch_size = _normalize_parallel_size(local_batch_size, "local_batch_size")
+    if local_batch_size < 1:
+        raise ValueError("local_batch_size must be greater than 0.")
+    if value.numel() != 1:
+        raise ValueError("Sample-weighted scalar gather requires a scalar tensor.")
+
+    value = value.detach().float().reshape(())
+    world_size = _normalize_parallel_size(getattr(accelerator, "num_processes", 1), "num_processes")
+    if world_size == 1:
+        return value
+
+    local_count = value.new_tensor(float(local_batch_size))
+    contribution = torch.stack((value * local_count, local_count))
+    gathered = accelerator.gather(contribution).reshape(-1, 2)
+    if gathered.shape[0] != world_size:
+        raise RuntimeError(
+            f"Distributed loss gather returned {gathered.shape[0]} contributions for world size {world_size}."
+        )
+    totals = gathered.sum(dim=0)
+    return totals[0] / totals[1]
 
 
 class ContextParallelBatchSynchronizer:

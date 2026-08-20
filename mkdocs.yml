@@ -283,6 +283,7 @@ nav:
       - LongCat Video Edit: quickstart/LONGCAT_VIDEO_EDIT.md
     - Audio Models:
       - ACE-Step: quickstart/ACE_STEP.md
+      - MiniMax Music 3: quickstart/MINIMAX_MUSIC.md
     - Legacy Models:
       - DeepFloyd IF: DEEPFLOYD.md
 

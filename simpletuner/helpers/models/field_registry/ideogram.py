@@ -63,6 +63,24 @@ def register_fields(registry) -> None:
 
     registry._add_field(
         ConfigField(
+            name="ideogram_fp8_base_upcast",
+            arg_name="--ideogram_fp8_base_upcast",
+            ui_label="Ideogram FP8 Base Upcast",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="model_specific",
+            model_specific=["ideogram"],
+            default_value=False,
+            help_text="Dequantize Ideogram 4's native FP8 transformer weights to the training dtype (bf16) at load time.",
+            tooltip="Uses more VRAM (~18 GiB transformer) but avoids per-matmul dequantization. Ignored for non-FP8 checkpoints.",
+            importance=ImportanceLevel.ADVANCED,
+            dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
+            order=36,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="ideogram_prompt_enhancer_head_id",
             arg_name="--ideogram_prompt_enhancer_head_id",
             ui_label="Ideogram Prompt Enhancer Head",
@@ -75,7 +93,7 @@ def register_fields(registry) -> None:
             tooltip="Used when --ideogram_prompt_upsample is enabled to rewrite prompts into Ideogram's structured JSON caption schema.",
             importance=ImportanceLevel.ADVANCED,
             dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
-            order=36,
+            order=37,
         )
     )
 
@@ -93,7 +111,7 @@ def register_fields(registry) -> None:
             tooltip="Matches the default mu used by the vendored Ideogram validation pipeline.",
             importance=ImportanceLevel.ADVANCED,
             dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
-            order=37,
+            order=38,
         )
     )
 
@@ -111,6 +129,42 @@ def register_fields(registry) -> None:
             tooltip="Matches the default std used by the vendored Ideogram validation pipeline.",
             importance=ImportanceLevel.ADVANCED,
             dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
-            order=38,
+            order=39,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="ideogram_load_unconditional_transformer",
+            arg_name="--ideogram_load_unconditional_transformer",
+            ui_label="Ideogram Unconditional Transformer",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="model_specific",
+            model_specific=["ideogram"],
+            default_value=False,
+            help_text="Load Ideogram 4's frozen image-only unconditional transformer for real asymmetric CFG during validation and distillation.",
+            tooltip="Costs ~10 GiB extra VRAM for the FP8 checkpoint, or ~18 GiB with --ideogram_fp8_base_upcast. The unconditional transformer is never trained or adapter-wrapped.",
+            importance=ImportanceLevel.ADVANCED,
+            dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
+            order=40,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="ideogram_uncond_ramtorch",
+            arg_name="--ideogram_uncond_ramtorch",
+            ui_label="Ideogram Unconditional RamTorch",
+            field_type=FieldType.CHECKBOX,
+            tab="model",
+            section="model_specific",
+            model_specific=["ideogram"],
+            default_value=False,
+            help_text="Hold the Ideogram 4 unconditional transformer in CPU RAM via RamTorch instead of fully on-GPU.",
+            tooltip="Requires --ideogram_load_unconditional_transformer. Layers stream to the accelerator per forward pass, trading speed for VRAM.",
+            importance=ImportanceLevel.ADVANCED,
+            dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
+            order=41,
         )
     )

@@ -11,7 +11,6 @@ from torch.serialization import safe_globals
 from torchao.prototype.safetensors.safetensors_support import flatten_tensor_state_dict
 from torchao.quantization import Float8Tensor
 
-
 REPOS = {
     "v0.1-base": ("Boogu/Boogu-Image-0.1-Base", "SimpleTuner/Boogu-Image-0.1-Base"),
     "v0.1-base-fp8": ("Boogu/Boogu-Image-0.1-Base-fp8", "SimpleTuner/Boogu-Image-0.1-Base-fp8"),
@@ -41,9 +40,7 @@ def convert_transformer_bins_to_safetensors(repo_dir: Path) -> None:
     weight_map = index["weight_map"]
     bin_filenames = sorted(set(weight_map.values()))
     filename_map = {
-        filename: filename.replace(".bin", ".safetensors")
-        for filename in bin_filenames
-        if filename.endswith(".bin")
+        filename: filename.replace(".bin", ".safetensors") for filename in bin_filenames if filename.endswith(".bin")
     }
 
     for bin_name, safetensors_name in filename_map.items():

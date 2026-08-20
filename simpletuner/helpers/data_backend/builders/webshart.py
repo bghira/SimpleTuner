@@ -54,6 +54,7 @@ class WebshartBackendBuilder(BaseBackendBuilder):
             "max_file_size": getattr(config, "webshart_max_file_size", None) or 500 * 1024 * 1024,
             "compress_cache": self._get_compression_setting(config),
             "dataset_type": getattr(config, "dataset_type", "image"),
+            "optimize_captions": bool(getattr(config, "webshart_optimize_captions", None) or False),
         }
         if is_mock_backend:
             backend_kwargs["identifier"] = config.id

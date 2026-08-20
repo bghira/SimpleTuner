@@ -12,6 +12,10 @@ from safetensors import safe_open
 from simpletuner.helpers.models.ltxvideo2.audio_autoencoder import AutoencoderKLLTX2Audio
 from simpletuner.helpers.models.ltxvideo2.autoencoder import AutoencoderKLLTX2Video
 from simpletuner.helpers.models.ltxvideo2.connectors import LTX2TextConnectors
+from simpletuner.helpers.models.ltxvideo2.na_diffusion_decoder import (
+    LTX_25_DIFFUSION_DECODER_CONFIG,
+    AutoencoderKLLTX2VideoDiffusionDecoder,
+)
 from simpletuner.helpers.models.ltxvideo2.transformer import LTX2VideoTransformer3DModel
 from simpletuner.helpers.models.ltxvideo2.vocoder import LTX2Vocoder, LTX2VocoderWithBWE
 
@@ -64,6 +68,12 @@ LTX_2_3_VIDEO_VAE_RENAME_DICT = {
     "up_blocks.8": "up_blocks.3",
 }
 
+LTX_2_5_DIFFUSION_VIDEO_VAE_RENAME_DICT = {
+    **LTX_2_3_VIDEO_VAE_RENAME_DICT,
+    "per_channel_statistics.mean-of-means": "latents_mean",
+    "per_channel_statistics.std-of-means": "latents_std",
+}
+
 LTX_2_0_AUDIO_VAE_RENAME_DICT: Dict[str, str] = {}
 
 LTX_2_0_VOCODER_RENAME_DICT = {
@@ -84,6 +94,10 @@ LTX_2_3_VOCODER_RENAME_DICT = {
 LTX_2_0_VAE_SPECIAL_KEYS_REMAP = {
     "per_channel_statistics.channel": None,
     "per_channel_statistics.mean-of-stds": None,
+}
+LTX_2_5_DIFFUSION_VIDEO_VAE_SPECIAL_KEYS_REMAP = {
+    **LTX_2_0_VAE_SPECIAL_KEYS_REMAP,
+    "decoder.type_emb": None,
 }
 LTX_2_0_AUDIO_VAE_SPECIAL_KEYS_REMAP: Dict[str, Any] = {}
 LTX_2_0_VOCODER_SPECIAL_KEYS_REMAP = {}
@@ -280,6 +294,60 @@ def _extract_audio_vae_config_from_metadata(metadata_config: Dict[str, Any]) -> 
     }
 
 
+def _has_any_key(state_dict: Dict[str, Any], *keys: str) -> bool:
+    return any(key in state_dict for key in keys)
+
+
+def _has_any_key_fragment(state_dict: Dict[str, Any], *fragments: str) -> bool:
+    return any(any(fragment in key for fragment in fragments) for key in state_dict)
+
+
+def _infer_ltx2_transformer_config_overrides(state_dict: Dict[str, Any]) -> Dict[str, Any]:
+    overrides: Dict[str, Any] = {}
+    if "keyframes_abs_pos_embedding" in state_dict:
+        overrides["use_keyframes_abs_pos_embedding"] = True
+
+    has_video_ff = _has_any_key_fragment(state_dict, ".ff.net.0.proj.weight", ".ff.net.2.weight")
+    if has_video_ff:
+        overrides["ff_bias"] = _has_any_key_fragment(state_dict, ".ff.net.0.proj.bias", ".ff.net.2.bias")
+
+    has_audio_ff = _has_any_key_fragment(state_dict, ".audio_ff.net.0.proj.weight", ".audio_ff.net.2.weight")
+    if has_audio_ff:
+        overrides["audio_ff_bias"] = _has_any_key_fragment(
+            state_dict,
+            ".audio_ff.net.0.proj.bias",
+            ".audio_ff.net.2.bias",
+        )
+
+    if _has_any_key(
+        state_dict,
+        "prompt_adaln.emb.timestep_embedder.linear_1.weight",
+        "prompt_adaln_single.emb.timestep_embedder.linear_1.weight",
+        "audio_prompt_adaln.emb.timestep_embedder.linear_1.weight",
+        "audio_prompt_adaln_single.emb.timestep_embedder.linear_1.weight",
+    ):
+        overrides["use_prompt_adaln_single"] = True
+    elif _has_any_key_fragment(state_dict, "prompt_scale_shift_table", "audio_prompt_scale_shift_table"):
+        overrides["use_prompt_adaln_single"] = False
+    return overrides
+
+
+def _infer_ltx2_connectors_config_overrides(state_dict: Dict[str, Any]) -> Dict[str, Any]:
+    overrides: Dict[str, Any] = {}
+    has_connector_ff = _has_any_key_fragment(state_dict, ".ff.net.0.proj.weight", ".ff.net.2.weight")
+    if has_connector_ff:
+        overrides["connector_ff_bias"] = _has_any_key_fragment(
+            state_dict,
+            ".ff.net.0.proj.bias",
+            ".ff.net.2.bias",
+        )
+    return overrides
+
+
+def is_ltx2_diffusion_video_vae_state_dict(state_dict: Dict[str, Any]) -> bool:
+    return "decoder.conv_in_x_t.weight" in state_dict
+
+
 def _apply_remap_rules(state_dict: Dict[str, Any], rename_dict: Dict[str, str], special_keys_remap: Dict[str, Any]) -> None:
     for key in list(state_dict.keys()):
         new_key = key
@@ -427,7 +495,13 @@ def _get_ltx2_transformer_config(version: str, overrides: Dict[str, Any] | None 
             "rope_type": "split",
             "use_prompt_embeddings": False,
             "perturbed_attn": True,
+            "ff_bias": True,
+            "audio_ff_bias": True,
+            "use_prompt_adaln_single": True,
+            "use_keyframes_abs_pos_embedding": False,
         }
+    elif version == "2.5":
+        diffusers_config = _get_ltx2_transformer_config("2.3")
     else:
         raise ValueError(f"Unsupported LTX-2 transformer version: {version}")
 
@@ -499,7 +573,10 @@ def _get_ltx2_connectors_config(version: str) -> Dict[str, Any]:
             "video_hidden_dim": 4096,
             "audio_hidden_dim": 2048,
             "proj_bias": True,
+            "connector_ff_bias": True,
         }
+    if version == "2.5":
+        return _get_ltx2_connectors_config("2.3")
     raise ValueError(f"Unsupported LTX-2 connectors version: {version}")
 
 
@@ -537,8 +614,8 @@ def _get_ltx2_video_vae_config(version: str) -> Dict[str, Any]:
             "spatial_compression_ratio": 32,
             "temporal_compression_ratio": 8,
         }
-    if version == "2.3":
-        return {
+    if version in {"2.3", "2.5"}:
+        config = {
             "in_channels": 3,
             "out_channels": 3,
             "latent_channels": 128,
@@ -570,13 +647,16 @@ def _get_ltx2_video_vae_config(version: str) -> Dict[str, Any]:
             "spatial_compression_ratio": 32,
             "temporal_compression_ratio": 8,
         }
+        if version == "2.5":
+            config["diffusion_decoder_config"] = LTX_25_DIFFUSION_DECODER_CONFIG
+        return config
     raise ValueError(f"Unsupported LTX-2 video VAE version: {version}")
 
 
 def _get_ltx2_audio_vae_config(version: str, overrides: Dict[str, Any] | None = None) -> Dict[str, Any]:
     if overrides:
         return overrides
-    if version in {"2.0", "2.3"}:
+    if version in {"2.0", "2.3", "2.5"}:
         return {
             "base_channels": 128,
             "output_channels": 2,
@@ -615,7 +695,7 @@ def _get_ltx2_vocoder_config(version: str) -> Dict[str, Any]:
             "final_bias": True,
             "output_sampling_rate": 24000,
         }
-    if version == "2.3":
+    if version in {"2.3", "2.5"}:
         return {
             "in_channels": 128,
             "hidden_channels": 1536,
@@ -660,8 +740,15 @@ def convert_ltx2_transformer(
     version: str,
     config_overrides: Dict[str, Any] | None = None,
 ) -> LTX2VideoTransformer3DModel:
-    diffusers_config = _get_ltx2_transformer_config(version, config_overrides)
     transformer_state_dict, _ = _split_transformer_and_connector_state_dict(original_state_dict)
+    inferred_overrides = _infer_ltx2_transformer_config_overrides(transformer_state_dict)
+    diffusers_config = _get_ltx2_transformer_config(
+        version,
+        {
+            **inferred_overrides,
+            **(config_overrides or {}),
+        },
+    )
     special_keys_remap = {
         "video_embeddings_connector": _remove_key_inplace,
         "audio_embeddings_connector": _remove_key_inplace,
@@ -671,32 +758,50 @@ def convert_ltx2_transformer(
     with init_empty_weights():
         transformer = LTX2VideoTransformer3DModel.from_config(diffusers_config)
 
-    rename_dict = LTX_2_3_TRANSFORMER_KEYS_RENAME_DICT if version == "2.3" else LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT
+    rename_dict = LTX_2_3_TRANSFORMER_KEYS_RENAME_DICT if version in {"2.3", "2.5"} else LTX_2_0_TRANSFORMER_KEYS_RENAME_DICT
     _apply_remap_rules(transformer_state_dict, rename_dict, special_keys_remap)
     transformer.load_state_dict(transformer_state_dict, strict=True, assign=True)
     return transformer
 
 
 def convert_ltx2_connectors(original_state_dict: Dict[str, Any], version: str) -> LTX2TextConnectors:
-    diffusers_config = _get_ltx2_connectors_config(version)
     _, connector_state_dict = _split_transformer_and_connector_state_dict(original_state_dict)
     if not connector_state_dict:
         raise ValueError("No connector weights found in the provided state dict.")
+    diffusers_config = {
+        **_get_ltx2_connectors_config(version),
+        **_infer_ltx2_connectors_config_overrides(connector_state_dict),
+    }
 
     with init_empty_weights():
         connectors = LTX2TextConnectors.from_config(diffusers_config)
 
-    rename_dict = LTX_2_3_CONNECTORS_KEYS_RENAME_DICT if version == "2.3" else LTX_2_0_CONNECTORS_KEYS_RENAME_DICT
+    rename_dict = LTX_2_3_CONNECTORS_KEYS_RENAME_DICT if version in {"2.3", "2.5"} else LTX_2_0_CONNECTORS_KEYS_RENAME_DICT
     _apply_remap_rules(connector_state_dict, rename_dict, {})
     connectors.load_state_dict(connector_state_dict, strict=True, assign=True)
     return connectors
 
 
 def convert_ltx2_video_vae(original_state_dict: Dict[str, Any], version: str) -> AutoencoderKLLTX2Video:
+    if is_ltx2_diffusion_video_vae_state_dict(original_state_dict):
+        if version != "2.5":
+            raise ValueError("LTX-2 diffusion video VAE decoder weights require the LTX-2.5 VAE config.")
+        diffusers_config = _get_ltx2_video_vae_config(version)
+        with init_empty_weights():
+            vae = AutoencoderKLLTX2VideoDiffusionDecoder(**diffusers_config)
+        _apply_remap_rules(
+            original_state_dict,
+            LTX_2_5_DIFFUSION_VIDEO_VAE_RENAME_DICT,
+            LTX_2_5_DIFFUSION_VIDEO_VAE_SPECIAL_KEYS_REMAP,
+        )
+        vae.load_state_dict(original_state_dict, strict=True, assign=True)
+        return vae
     diffusers_config = _get_ltx2_video_vae_config(version)
     with init_empty_weights():
-        vae = AutoencoderKLLTX2Video.from_config(diffusers_config)
-    rename_dict = LTX_2_3_VIDEO_VAE_RENAME_DICT if version == "2.3" else LTX_2_0_VIDEO_VAE_RENAME_DICT
+        vae = AutoencoderKLLTX2Video.from_config(
+            {key: value for key, value in diffusers_config.items() if not key.startswith("diffusion_decoder_")}
+        )
+    rename_dict = LTX_2_3_VIDEO_VAE_RENAME_DICT if version in {"2.3", "2.5"} else LTX_2_0_VIDEO_VAE_RENAME_DICT
     _apply_remap_rules(original_state_dict, rename_dict, LTX_2_0_VAE_SPECIAL_KEYS_REMAP)
     vae.load_state_dict(original_state_dict, strict=True, assign=True)
     return vae
@@ -742,10 +847,12 @@ def convert_ltx2_audio_vae(
 def convert_ltx2_vocoder(original_state_dict: Dict[str, Any], version: str) -> LTX2Vocoder | LTX2VocoderWithBWE:
     diffusers_config = _get_ltx2_vocoder_config(version)
     with init_empty_weights():
-        vocoder_cls = LTX2VocoderWithBWE if version == "2.3" else LTX2Vocoder
+        vocoder_cls = LTX2VocoderWithBWE if version in {"2.3", "2.5"} else LTX2Vocoder
         vocoder = vocoder_cls.from_config(diffusers_config)
-    rename_dict = LTX_2_3_VOCODER_RENAME_DICT if version == "2.3" else LTX_2_0_VOCODER_RENAME_DICT
-    special_keys = {"ups.": _convert_ltx2_3_vocoder_upsamplers} if version == "2.3" else LTX_2_0_VOCODER_SPECIAL_KEYS_REMAP
+    rename_dict = LTX_2_3_VOCODER_RENAME_DICT if version in {"2.3", "2.5"} else LTX_2_0_VOCODER_RENAME_DICT
+    special_keys = (
+        {"ups.": _convert_ltx2_3_vocoder_upsamplers} if version in {"2.3", "2.5"} else LTX_2_0_VOCODER_SPECIAL_KEYS_REMAP
+    )
     _apply_remap_rules(original_state_dict, rename_dict, special_keys)
     vocoder.load_state_dict(original_state_dict, strict=True, assign=True)
     return vocoder

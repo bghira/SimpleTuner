@@ -24,6 +24,45 @@ class _WorkerConfig:
 
 
 class TestCheckpointInferenceWorker(unittest.TestCase):
+    def test_checkpoint_runtime_creates_distillation_modules_before_peft(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            trainer = MagicMock()
+            trainer.config = SimpleNamespace(
+                output_dir=temporary_directory,
+                model_family="minimaxh3",
+                validation_negative_prompt="",
+            )
+            trainer.model.text_encoders = []
+            trainer.model.tokenizers = []
+            trainer.model.uses_validation_negative_prompt.return_value = False
+            trainer.model.pipeline = object()
+            trainer.distiller = None
+
+            runtime = object.__new__(CheckpointInferenceRuntime)
+            runtime.checkpoint_name = "checkpoint-100"
+            runtime.session_dir = Path(temporary_directory) / "session"
+            runtime.job_id = "test-runtime"
+
+            with (
+                patch("simpletuner.inference.Trainer", return_value=trainer),
+                patch("simpletuner.inference.LocalDataBackend"),
+                patch("simpletuner.inference.TextEmbeddingCache") as embed_cache_class,
+                patch("simpletuner.inference.StateTracker"),
+                patch("simpletuner.inference.AttentionBackendController"),
+            ):
+                embed_cache_class.return_value.discover_all_files.return_value = None
+                runtime._load({}, lambda: False, False)
+
+            call_names = [call[0] for call in trainer.method_calls]
+            self.assertLess(
+                call_names.index("init_distillation_adapter_modules"),
+                call_names.index("init_trainable_peft_adapter"),
+            )
+            self.assertLess(
+                call_names.index("init_trainable_peft_adapter"),
+                call_names.index("init_distillation"),
+            )
+
     def test_flush_embed_cache_times_out_instead_of_blocking(self) -> None:
         runtime = object.__new__(CheckpointInferenceRuntime)
         thread = MagicMock()

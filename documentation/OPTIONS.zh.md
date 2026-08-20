@@ -4,6 +4,21 @@
 
 本指南以易读方式介绍 SimpleTuner `train.py` 中可用的命令行选项。这些选项提供高度可定制性，使你能按需求训练模型。
 
+### Kubeflow 单 GPU 服务器选项
+
+可选的 Kubeflow 集成将 GPU 准入委托给 Kueue，并通过 Kubeflow Trainer 创建一次性 Worker。使用 `pip install 'simpletuner[kubernetes]'` 安装，然后在集群内运行服务器：
+
+```bash
+simpletuner server --mode trainer --kubeflow \
+  --kubeflow-namespace training \
+  --kubeflow-runtime simpletuner-worker \
+  --kubeflow-queue gpu-training \
+  --kubeflow-worker-image registry.example.com/simpletuner:latest \
+  --kubeflow-orchestrator-url http://simpletuner-server.training.svc:8001
+```
+
+`--kubeflow-poll-interval` 控制 TrainJob 调谐频率，默认为五秒。集群管理员负责提供 TrainingRuntime、Kueue 队列、ServiceAccount 权限、镜像拉取配置以及共享模型/数据存储。
+
 ### JSON 配置文件格式
 
 默认 JSON 文件名为 `config.json`，键名与下方 `--arguments` 一致。JSON 中不需要前导 `--`，但也可以保留。
@@ -51,6 +66,37 @@ simpletuner configure config/foo/config.json
 - **说明**：
   - `diffusers` 为标准 PEFT/Diffusers 格式。
   - `comfyui` 会转换为 ComfyUI 风格键（`diffusion_model.*`，含 `lora_A/lora_B` 与 `.alpha` 张量）。Flux、Flux2、Lumina2、Z-Image 即便保持 `diffusers` 也会自动识别 ComfyUI 输入，但若希望保存时强制 ComfyUI 输出，请设为 `comfyui`。
+
+### `--minimax_music_train_component`
+
+- **内容**：选择接受训练的 MiniMax Music 3 组件。
+- **选项**：`transformer`（默认）、`language_model`
+- **说明**：
+  - `transformer` 在缓存的 Flow-VAE latent 上训练流匹配音乐 DiT（标准路径）。
+  - `language_model` 使用 RVQ 语义码的下一 token 交叉熵训练 Qwen3 自回归阶段。数据集必须提供预计算的原始逐码本音频 token（`audio_tokens_path` 元数据，形状为 `[frames, codebooks]`），以及 `prompt`（或 `tags`）和 `lyrics`。仅支持标准 PEFT LoRA，`--lora_format comfyui` 会被拒绝，且训练器内验证音频被禁用——请从保存的检查点渲染。
+
+### `--minimax_music_lm_max_frames`
+
+- **内容**：在 `--minimax_music_train_component=language_model` 时，将每首曲目的音频 token 序列截断为该数量的 25Hz 帧（从开头截取以保持歌词对齐）。
+- **默认**：`0`（训练完整曲目）
+- **说明**：
+  - 一帧为 40 毫秒；7500 帧即五分钟。如果长曲目耗尽显存，请降低该值。
+  - 被截断的样本不会获得音频结束目标，因此模型不会被教导提前停止。
+
+### `--minimax_music_lm_adapter`
+
+- **内容**：预缓存 DiT 条件时应用于 Qwen3 规划器的语言模型 LoRA 路径（带 `language_model.` 前缀键的 `pytorch_lora_weights.safetensors`，由 `--minimax_music_train_component=language_model` 产生）。
+- **相关**：`--minimax_music_lm_adapter_strength`（默认 `1.0`）缩放适配器增量。
+- **说明**：更换适配器或强度时请使用新的文本嵌入缓存目录；缓存不会自动失效。
+
+### `--minimax_music_lm_precache_mode`
+
+- **内容**：Qwen3 规划器为 DiT 训练生成缓存条件的方式。
+- **选项**：`text-only`（默认）、`audio-only`、`audio+text`
+- **说明**：
+  - `text-only` 从 caption 和歌词自回归采样（原有行为），隐藏状态描述的是规划器想象的曲目而非训练音频。
+  - `audio-only` 将样本的真实 RVQ 码（`audio_tokens_path` 元数据，原始逐码本索引）教师强制通过规划器，无文本前缀；`audio+text` 前置 caption 和歌词。两者都使逐帧隐藏状态与 DAV latent 一一对齐，并将码截断到 VAE 缓存覆盖的音频窗口。
+  - 更换模式时请使用新的文本嵌入缓存目录。
 
 ### `--minimax_h3_target_mode`
 
@@ -1103,6 +1149,7 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 - **`--ltx2_validation_pipeline_mode`**：选择 LTX-2 validation 只运行 trained model（`trained-stage`），还是运行两阶段 spatial upscaler validation pipeline（`spatial-upscale`）。
 - **`--ltx2_validation_spatial_upsampler_model`**：LTX-2 spatial latent upsampler 的 Hugging Face repo、本地目录或本地 `.safetensors` 文件。默认 `Lightricks/LTX-2.3`。
 - **`--ltx2_validation_spatial_upsampler_filename`**：当 model 选项指向 repo 或目录时使用的 upsampler 文件名。默认 `ltx-2.3-spatial-upscaler-x2-1.1.safetensors`。
+- **`--ltx2_validation_audio_guidance`**：验证时用于 LTX-2 音频 latents 的可选独立 CFG guidance scale。未设置时复用 `--validation_guidance`；需要 Comfy 风格 dual CFG 的视频/音频独立 scale 时设置它。
 - **spatial-upscale 的行为**：Stage 1 以请求的验证分辨率一半生成 video latents，spatial upsampler 将 latents 放大 2 倍，stage 2 使用 LTX-2 stage-2 sigma schedule 在请求分辨率重新去噪。
 - **限制**：Spatial-upscale validation 只用于 video；`--validation_audio_only` 会保持常规单阶段 validation 路径。
 
@@ -1165,8 +1212,10 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 
 ### `--train_batch_size`
 
-- **内容**：训练数据加载器的批大小。
+- **内容**：训练数据加载器的全局默认批大小。主要数据集可以用自己的 `train_batch_size` 覆盖采样器微批大小；没有覆盖值的数据集使用此值。
 - **原因**：影响内存消耗、收敛质量与训练速度。批越大结果通常越好，但过大可能导致过拟合或训练不稳定，并延长训练时间。需要实验，通常希望在不降低训练速度的前提下尽量用满显存。
+- **静态配置**：训练器级学习率缩放，以及其他必须使用单个固定批大小的配置或报告，即使数据集覆盖了微批大小，也仍使用此全局值。
+- **梯度累积**：当选中的数据集具有不同的解析后微批大小时，一次优化器更新的全局样本总数，是所有累积微步和所有数据并行 rank 上实际本地微批大小之和。被选中且没有覆盖值的数据集在对应 rank 上使用此全局默认值。常用的全局/有效批大小公式仍是配置参考值，而不是每次更新的准确样本数。梯度检查点不改变这一计算方式。
 
 ### `--gradient_accumulation_steps`
 
@@ -1177,18 +1226,18 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 
 ### `--allow_dataset_oversubscription` {#--allow_dataset_oversubscription}
 
-- **内容**：当数据集小于有效批大小时自动调整 `repeats`。
+- **内容**：当某个纵横比桶小于该数据集的 bucket 大小要求时，自动调整 `repeats`。
 - **原因**：避免多 GPU 配置下因数据集不足而训练失败。
 - **工作方式**：
-  - 计算**有效批大小**：`train_batch_size × num_gpus × gradient_accumulation_steps`
-  - 若某些纵横比桶样本数少于有效批大小，则自动增加 `repeats`
+  - 计算每个数据集的 bucket 大小要求：`解析后的数据集 train_batch_size × num_gpus × gradient_accumulation_steps`
+  - 若某些纵横比桶样本数少于该数据集的 bucket 大小要求，则自动增加 `repeats`
   - 仅在数据集配置未显式设置 `repeats` 时生效
   - 记录警告说明调整原因与结果
 - **适用场景**：
   - 小数据集（< 100 张）+ 多 GPU
   - 试验不同 batch 大小而无需重配数据集
   - 在收集完整数据集前做原型验证
-- **示例**：25 张图像、8 GPU、`train_batch_size=4` 时，有效批大小为 32。该标志会自动设定 `repeats=1`，提供 50 样本（25 × 2）。
+- **示例**：25 张图像、8 GPU、`train_batch_size=4` 时，该数据集的 bucket 大小要求为 32。该标志会自动设定 `repeats=1`，提供 50 样本（25 × 2）。
 - **说明**：不会覆盖 dataloader 配置中手动设置的 `repeats`。与 `--disable_bucket_pruning` 类似，此标志在不产生意外行为的前提下提供便利。
 
 更多关于多 GPU 数据集规模的细节见 [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription)。
@@ -1718,6 +1767,20 @@ LayerSync 通过在同一 Transformer 内让“学生”层对齐更强的“教
 
 > ℹ️ PixArt、SD3、Hunyuan 等 Transformer 模型使用 `transformer` 与 `transformer_ema` 子目录名称。
 
+### `--init_lora_step`
+
+- **内容**：从 `--init_lora` 加载的纯模型 adapter 继续全局步数计数。
+- **使用时机**：仅在完整 trainer checkpoint 不可用、但 LoRA 权重仍然保留时使用。
+- **自动推断**：省略此选项时，如果本地 `--init_lora` safetensors 文件包含 `global_step` metadata，SimpleTuner 会使用该值。显式值（包括 `0`）会覆盖 metadata。
+- **要求**：必须为非负数且小于 `--max_train_steps`；需要 `--init_lora`，且不能与 `--resume_from_checkpoint` 同时使用。
+- **状态**：checkpoint 与 validation 的节奏从该步数继续，但 optimizer、sampler 和 RNG state 会重新开始。`constant` 与 `constant_with_warmup` learning-rate schedule 会恢复到对应步数。
+
+### `--init_lora_ema`
+
+- **内容**：加载与 `--init_lora` 对应的 SimpleTuner 原始 `ema_model.pt` state。
+- **要求**：需要 `--init_lora` 和 `--use_ema=true`。
+- **注意**：这里需要的是 checkpoint 保存的原始 EMA state，而不是导出的 EMA LoRA safetensors 文件。
+
 ### `--delete_invalid_checkpoints`
 
 - **内容**：恢复时删除无法加载的本地检查点。
@@ -1771,6 +1834,7 @@ LayerSync 通过在同一 Transformer 内让“学生”层对齐更强的“教
 - `TRAINING_NUM_PROCESSES` 应设置为系统中的 GPU 数量。多数场景下已足够启用 DistributedDataParallel（DDP）。如果不想使用 `config.env`，可在 `config.json` 中设置 `num_processes`。
 - `TRAINING_DYNAMO_BACKEND` 默认 `no`，但可设置为任意支持的 torch.compile 后端（例如 `inductor`, `aot_eager`, `cudagraphs`），并与 `--dynamo_mode`、`--dynamo_fullgraph` 或 `--dynamo_use_regional_compilation` 配合微调。
 - `SIMPLETUNER_LOG_LEVEL` 默认 `INFO`，设置为 `DEBUG` 可在 `debug.log` 中记录更多问题报告信息。
+- `SIMPLETUNER_ALLOW_MODIFYING_BSZ=1` 在从检查点恢复时跳过采样器 batch_size 不匹配检查。仅在您有意在不同训练轮次间更改 `train_batch_size` 并接受采样器状态不一致的风险时使用。等效于 `--i_know_what_i_am_doing`。
 - `VENV_PATH` 可设置为 Python 虚拟环境的位置（如果不在常见 `.venv` 目录）。
 - `ACCELERATE_EXTRA_ARGS` 可留空，或包含额外参数，例如 `--multi_gpu` 或 FSDP 专用标志。
 
@@ -1844,7 +1908,9 @@ usage: train.py [-h] --model_family
                 [--peft_lora_mode {standard,singlora}]
                 [--peft_lora_target_modules PEFT_LORA_TARGET_MODULES]
                 [--singlora_ramp_up_steps SINGLORA_RAMP_UP_STEPS]
-                [--init_lora INIT_LORA] [--lycoris_config LYCORIS_CONFIG]
+                [--init_lora INIT_LORA] [--init_lora_step INIT_LORA_STEP]
+                [--init_lora_ema INIT_LORA_EMA]
+                [--lycoris_config LYCORIS_CONFIG]
                 [--init_lokr_norm INIT_LOKR_NORM]
                 [--flux_lora_target {mmdit,context,context+ffs,all,all+ffs,ai-toolkit,tiny,nano,controlnet,all+ffs+embedder,all+ffs+embedder+controlnet}]
                 [--use_dora [USE_DORA]]
@@ -1865,6 +1931,8 @@ usage: train.py [-h] --model_family
                 [--tokenizer_max_length TOKENIZER_MAX_LENGTH]
                 [--validation_step_interval VALIDATION_STEP_INTERVAL]
                 [--validation_epoch_interval VALIDATION_EPOCH_INTERVAL]
+                [--validate_after_step VALIDATE_AFTER_STEP]
+                [--validate_after_epoch VALIDATE_AFTER_EPOCH]
                 [--disable_benchmark [DISABLE_BENCHMARK]]
                 [--validation_prompt VALIDATION_PROMPT]
                 [--validation_input VALIDATION_INPUT]
@@ -2230,6 +2298,11 @@ options:
   --init_lora INIT_LORA
                         Specify an existing LoRA or LyCORIS safetensors file
                         to initialize the adapter
+  --init_lora_step INIT_LORA_STEP
+                        Continue global-step accounting from a model-only LoRA
+                        checkpoint without optimizer state
+  --init_lora_ema INIT_LORA_EMA
+                        Load a raw SimpleTuner EMA state alongside init_lora
   --lycoris_config LYCORIS_CONFIG
                         Path to LyCORIS configuration JSON file
   --init_lokr_norm INIT_LOKR_NORM
@@ -2277,6 +2350,12 @@ options:
                         Run validation every N training steps (deprecated alias: --validation_steps)
   --validation_epoch_interval VALIDATION_EPOCH_INTERVAL
                         Run validation every N training epochs
+  --validate_after_step VALIDATE_AFTER_STEP
+                        Skip scheduled validation until the global training
+                        step reaches this value
+  --validate_after_epoch VALIDATE_AFTER_EPOCH
+                        Skip scheduled validation until the training epoch
+                        reaches this value
   --disable_benchmark [DISABLE_BENCHMARK]
                         Skip generating baseline comparison images before
                         training starts
@@ -2327,9 +2406,11 @@ options:
   --validation_disable [VALIDATION_DISABLE]
                         Completely disable validation image generation
   --validation_prompt_library [VALIDATION_PROMPT_LIBRARY]
-                        Use SimpleTuner's built-in prompt library
+                        使用 SimpleTuner 内置 prompt 库。音乐/音频的
+                        caption + lyrics prompt 可使用 "audio"。
   --user_prompt_library USER_PROMPT_LIBRARY
-                        Path to custom JSON prompt library
+                        自定义 JSON prompt 库路径。条目可使用 prompt 或
+                        caption，并可选提供 lyrics。
   --eval_dataset_id EVAL_DATASET_ID
                         Specific dataset to use for evaluation metrics
   --validation_stitch_input_location {left,right}
@@ -2364,7 +2445,9 @@ options:
                         Source device used to generate validation seeds
   --i_know_what_i_am_doing [I_KNOW_WHAT_I_AM_DOING]
                         Unlock experimental overrides and bypass built-in
-                        safety limits.
+                        safety limits. Also bypasses the sampler batch-size
+                        mismatch check on resume (same effect as
+                        SIMPLETUNER_ALLOW_MODIFYING_BSZ=1).
   --flow_sigmoid_scale FLOW_SIGMOID_SCALE
                         Scale factor for sigmoid timestep sampling for flow-
                         matching models.

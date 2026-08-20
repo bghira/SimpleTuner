@@ -273,6 +273,8 @@ def mapping_to_cli_args(
 
         value_str = str(value).strip()
         if not value_str:
+            if isinstance(value, str) and field is not None and getattr(field, "allow_empty", False):
+                cli_args.append(_format_key_value(key, ""))
             continue
 
         cli_args.append(_format_key_value(key, value_str))

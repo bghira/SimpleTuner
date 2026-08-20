@@ -121,6 +121,15 @@ class DistillationBase:
         del config
         return set()
 
+    @classmethod
+    def adapter_dropout_override(cls) -> float | None:
+        """LoRA dropout the method's reference implementation trains with, or None to leave user config untouched.
+
+        Every currently supported reference (AnyFlow, DMD2, DCM, LCM-LoRA, Diffusion-DPO) trains adapters without
+        dropout; methods whose reference differs should override this.
+        """
+        return 0.0
+
     def toggle_adapter(self, enable=False):
         """
         Toggle the adapter on/off when using the same model for teacher and student.

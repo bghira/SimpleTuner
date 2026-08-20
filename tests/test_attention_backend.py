@@ -133,7 +133,7 @@ class TestAttentionBackendPersistence(unittest.TestCase):
             clear_quantization_mode=lambda: None,
             set_quantization_mode=lambda precision, mode: None,
             QUANT_INT8=3,
-            QUANT_BLOCK_WISE=2,
+            QUANT_TENSOR_WISE=0,
         )
 
         def fake_import(name):
@@ -296,7 +296,7 @@ class TestAttentionBackendPersistence(unittest.TestCase):
             set_quantization_mode=lambda precision, mode: quantization_mode_calls.append((precision, mode)),
             clear_quantization_mode=lambda: quantization_mode_calls.append("clear"),
             QUANT_INT8=30,
-            QUANT_BLOCK_WISE=20,
+            QUANT_TENSOR_WISE=10,
         )
         config = type("Config", (object,), {"attention_mechanism": "metal-flash-attention-int8"})()
 
@@ -319,7 +319,7 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         self.assertTrue(calls[0][5])
         self.assertEqual(calls[0][6], 0.5)
         self.assertFalse(calls[0][7])
-        self.assertEqual(quantization_mode_calls, [(30, 20)])
+        self.assertEqual(quantization_mode_calls, [(30, 10)])
 
     def test_restore_default_clears_metal_flash_attention_quantization_mode(self):
         quantization_mode_calls = []
@@ -332,7 +332,7 @@ class TestAttentionBackendPersistence(unittest.TestCase):
             set_quantization_mode=lambda precision, mode: quantization_mode_calls.append((precision, mode)),
             clear_quantization_mode=lambda: quantization_mode_calls.append("clear"),
             QUANT_INT8=3,
-            QUANT_BLOCK_WISE=2,
+            QUANT_TENSOR_WISE=0,
         )
         config = type("Config", (object,), {"attention_mechanism": "metal-flash-attention-int8"})()
 
@@ -343,16 +343,16 @@ class TestAttentionBackendPersistence(unittest.TestCase):
             AttentionBackendController.apply(config, AttentionPhase.TRAIN)
             AttentionBackendController.restore_default()
 
-        self.assertEqual(quantization_mode_calls, [(3, 2), "clear"])
+        self.assertEqual(quantization_mode_calls, [(3, 0), "clear"])
         self.assertIsNone(AttentionBackendController._metal_flash_attention_extension)
 
     def test_metal_flash_attention_int4_profile_uses_target_precision_4(self):
         profile = attention_backend_module._METAL_FLASH_ATTENTION_PROFILES["metal-flash-attention-int4"]
 
         self.assertEqual(profile.target_precision, 4)
-        self.assertEqual(profile.quant_mode, 2)
+        self.assertEqual(profile.quant_mode, 0)
         self.assertEqual(profile.target_precision_constant, "QUANT_INT4")
-        self.assertEqual(profile.quant_mode_constant, "QUANT_BLOCK_WISE")
+        self.assertEqual(profile.quant_mode_constant, "QUANT_TENSOR_WISE")
 
     def test_metal_flash_attention_wrapper_falls_back_when_unsupported(self):
         calls = []
@@ -629,6 +629,43 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         self.assertEqual(AttentionBackendController._diffusers_backend_name, "native-math")
         AttentionBackendController.restore_default()
         self.assertIsNone(AttentionBackendController._diffusers_backend_name)
+
+    def test_hub_backend_omits_empty_kernel_user_agent(self):
+        if not attention_backend_module._DIFFUSERS_BACKEND_ALIASES:
+            self.skipTest("Diffusers attention backend helpers unavailable in this environment.")
+
+        calls = []
+        kernels_module = ModuleType("kernels")
+        kernels_utils_module = ModuleType("kernels.utils")
+
+        def fake_hf_api(*args, **kwargs):
+            calls.append(dict(kwargs))
+            return object()
+
+        kernels_module.get_kernel = lambda *args, **kwargs: object()
+        kernels_utils_module.get_kernel = lambda *args, **kwargs: object()
+        kernels_utils_module.HfApi = fake_hf_api
+
+        class DummyContext:
+            def __enter__(self):
+                kernels_utils_module.HfApi(library_name="kernels", user_agent="")
+
+            def __exit__(self, *args):
+                return None
+
+        with (
+            patch.dict(sys.modules, {"kernels": kernels_module, "kernels.utils": kernels_utils_module}),
+            patch.object(attention_backend_module, "_check_attention_backend_requirements"),
+            patch.object(attention_backend_module, "diffusers_attention_backend", return_value=DummyContext()),
+        ):
+            AttentionBackendController._enable_diffusers_backend(
+                "flash-attn-3-hub",
+                object(),
+                trust_remote_code=True,
+            )
+
+        self.assertEqual(calls, [{"library_name": "kernels", "user_agent": None}])
+        self.assertIs(kernels_utils_module.HfApi, fake_hf_api)
 
     def test_packed_backend_dispatches_fixed_qkvpacked(self):
         class DummyKernel:

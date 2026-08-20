@@ -258,6 +258,105 @@ class TestValidationEpochBoundaryTiming(unittest.TestCase):
             "Epoch-end validation should not duplicate a step-interval validation.",
         )
 
+    def test_validate_after_step_keeps_interval_alignment(self):
+        validation = self._create_validation(
+            validation_epoch_interval=None,
+            validation_step_interval=10,
+            validate_after_step=25,
+        )
+        prompts = [{"prompt": "test"}]
+
+        validation.global_step = 20
+        validation.current_epoch = 1
+        validation.current_epoch_step = 20
+        self.assertFalse(
+            validation.should_perform_intermediary_validation(
+                step=20,
+                validation_prompts=prompts,
+                validation_type="intermediary",
+            )
+        )
+
+        validation.global_step = 25
+        validation.current_epoch_step = 25
+        self.assertFalse(
+            validation.should_perform_intermediary_validation(
+                step=25,
+                validation_prompts=prompts,
+                validation_type="intermediary",
+            ),
+            "The threshold alone should not run validation unless the interval also aligns.",
+        )
+
+        validation.global_step = 30
+        validation.current_epoch_step = 30
+        self.assertTrue(
+            validation.should_perform_intermediary_validation(
+                step=30,
+                validation_prompts=prompts,
+                validation_type="intermediary",
+            )
+        )
+
+    def test_validate_after_epoch_skips_epoch_schedule_until_threshold(self):
+        validation = self._create_validation(validate_after_epoch=2)
+        prompts = [{"prompt": "test"}]
+
+        validation.global_step = 244
+        validation.current_epoch = 1
+        validation.current_epoch_step = 244
+        self.assertFalse(
+            validation.should_perform_intermediary_validation(
+                step=244,
+                validation_prompts=prompts,
+                validation_type="intermediary",
+            )
+        )
+        self.assertIsNone(validation._pending_epoch_validation)
+
+        validation.global_step = 488
+        validation.current_epoch = 2
+        validation.current_epoch_step = 488
+        self.assertTrue(
+            validation.should_perform_intermediary_validation(
+                step=488,
+                validation_prompts=prompts,
+                validation_type="intermediary",
+            )
+        )
+        self.assertEqual(validation._pending_epoch_validation, 2)
+
+    def test_validate_after_step_and_epoch_require_both_thresholds(self):
+        validation = self._create_validation(
+            validation_epoch_interval=None,
+            validation_step_interval=100,
+            validate_after_step=300,
+            validate_after_epoch=3,
+        )
+        prompts = [{"prompt": "test"}]
+
+        validation.global_step = 300
+        validation.current_epoch = 2
+        validation.current_epoch_step = 300
+        self.assertFalse(
+            validation.should_perform_intermediary_validation(
+                step=300,
+                validation_prompts=prompts,
+                validation_type="intermediary",
+            )
+        )
+
+        validation.global_step = 500
+        validation.current_epoch = 3
+        validation.current_epoch_step = 500
+        self.assertTrue(
+            validation.should_perform_intermediary_validation(
+                step=500,
+                validation_prompts=prompts,
+                validation_type="intermediary",
+            )
+        )
+
 
 class TestValidationEpochStepReadyCalculation(unittest.TestCase):
     """Test the epoch_step_ready calculation specifically."""

@@ -176,6 +176,24 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         except Exception as e:
             raise e
 
+        saved_batch_size = previous_state.get("batch_size")
+        if "batch_size" in previous_state and saved_batch_size != self.batch_size:
+            _allow = os.environ.get("SIMPLETUNER_ALLOW_MODIFYING_BSZ", "").lower() in (
+                "1",
+                "true",
+                "yes",
+            ) or getattr(StateTracker.get_args(), "i_know_what_i_am_doing", False)
+            if not _allow:
+                raise ValueError(
+                    f"Dataset '{self.id}' checkpoint batch_size={saved_batch_size} does not match "
+                    f"current batch_size={self.batch_size}. Resume with the same per-dataset train_batch_size, "
+                    f"or set --i_know_what_i_am_doing / SIMPLETUNER_ALLOW_MODIFYING_BSZ=1 to bypass."
+                )
+            self.logger.warning(
+                f"Dataset '{self.id}': resuming with batch_size={self.batch_size} but checkpoint recorded "
+                f"batch_size={saved_batch_size}. Proceeding because override is set."
+            )
+
         # Checkpoints contain the rank-local schedule. Restore it before seen
         # state so legacy boolean flags can be expanded to all occurrences.
         saved_schedule = previous_state.get("aspect_ratio_bucket_indices")
@@ -569,6 +587,48 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             f"Bucket {bucket} is empty or doesn't have enough samples for a full batch. Removing from bucket list. {len(self.buckets)} remain."
         )
 
+    @staticmethod
+    def _positive_int(value):
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0 else None
+
+    def _configured_max_samples(self, data_backend_config):
+        configured_max_samples = self._positive_int(data_backend_config.get("max_num_samples"))
+        if configured_max_samples is not None:
+            return configured_max_samples
+        return self._positive_int(getattr(self.metadata_backend, "max_num_samples", None))
+
+    def _bucket_report_total(self, stage: str):
+        bucket_report = getattr(self.metadata_backend, "bucket_report", None)
+        bucket_summaries = getattr(bucket_report, "bucket_summaries", None)
+        if not isinstance(bucket_summaries, dict):
+            return None
+        summary = bucket_summaries.get(stage)
+        if not isinstance(summary, dict):
+            return None
+        return self._positive_int(summary.get("total_samples"))
+
+    def _model_card_sample_count(self, data_backend_config):
+        configured_max_samples = self._configured_max_samples(data_backend_config)
+        report_total = self._bucket_report_total("post_refresh")
+        if report_total is not None:
+            total_sample_count = report_total
+            approximate = False
+        else:
+            total_sample_count = sum(len(indices) for indices in self.metadata_backend.aspect_ratio_bucket_indices.values())
+            effective_dp_size, _dp_rank, _cp_size = get_cp_aware_dp_info(self.accelerator)
+            approximate = effective_dp_size > 1
+            if approximate:
+                total_sample_count *= effective_dp_size
+
+        if configured_max_samples is not None:
+            total_sample_count = min(total_sample_count, configured_max_samples)
+            approximate = False
+        return f"~{total_sample_count}" if approximate else total_sample_count
+
     def log_state(self, show_rank: bool = True, alt_stats: bool = False):
         # self.debug_log(
         #     f'Active Buckets: {", ".join(self.convert_to_human_readable(float(b), self.metadata_backend.aspect_ratio_bucket_indices[b], self.resolution) for b in self.buckets)}'
@@ -580,18 +640,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             # Return an overview instead of a snapshot.
             # Eg. return totals, and not "as it is now"
             data_backend_config = StateTracker.get_data_backend_config(self.id)
-            total_image_count = len(self.metadata_backend.seen_images) + len(self._get_unseen_images())
-            configured_max_samples = data_backend_config.get("max_num_samples")
-            try:
-                configured_max_samples = int(configured_max_samples)
-            except (TypeError, ValueError):
-                configured_max_samples = None
-            if configured_max_samples is not None and configured_max_samples > 0:
-                total_image_count = min(total_image_count * self.accelerator.num_processes, configured_max_samples)
-            elif self.accelerator.num_processes > 1:
-                # We don't know the direct count without more work, so we'll estimate it here for multi-GPU training.
-                total_image_count *= self.accelerator.num_processes
-                total_image_count = f"~{total_image_count}"
+            total_image_count = self._model_card_sample_count(data_backend_config)
             printed_state = [f"- Repeats: {data_backend_config.get('repeats', 0)}"]
             printed_state.append(f"- Total number of {self.sample_type_strs}: {total_image_count}")
             printed_state.append(f"- Total number of aspect buckets: {len(self.buckets)}")
@@ -658,12 +707,16 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
             if image_metadata is None:
                 image_metadata = {}
-            requires_crop = StateTracker.get_args().model_family not in [
-                "sd1x",
-                "sd2x",
-                "deepfloyd",
-                "ace_step",
-            ]
+            requires_crop = (
+                StateTracker.get_args().model_family
+                not in [
+                    "sd1x",
+                    "sd2x",
+                    "deepfloyd",
+                    "ace_step",
+                ]
+                and image_metadata.get("dataset_type") != "audio"
+            )
             if requires_crop and "crop_coordinates" not in image_metadata:
                 raise Exception(
                     f"An image was discovered ({image_path}) that did not have its metadata: {self.metadata_backend.get_metadata_by_filepath(image_path)}"

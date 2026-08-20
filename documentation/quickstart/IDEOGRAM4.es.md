@@ -14,7 +14,7 @@ Puntos de partida recomendados:
 
 - **Predeterminado:** pesos base FP8, pesos LoRA entrenables en bf16, rank 16-32.
 - **Baja VRAM:** NF4 para el modelo base.
-- **Alta VRAM:** pesos bf16-upcast si tienes suficiente VRAM y quieres evitar la carga cuantizada.
+- **Alta VRAM:** pesos bf16-upcast (`ideogram_fp8_base_upcast=true`) si tienes suficiente VRAM y quieres evitar la carga cuantizada. Esto decuantiza el checkpoint FP8 nativo al dtype de entrenamiento al cargar (transformer de ~18 GiB).
 
 Medido en H100 80GB con FP8 nativo (`base_model_precision=fp8-torchao`, `quantize_via=pipeline`), LoRA rank 32, mixed precision bf16, gradient checkpointing activado, entrenamiento square 1024px y validación desactivada:
 
@@ -129,7 +129,20 @@ La validación de Ideogram está desactivada hasta que la habilites:
 }
 ```
 
-Este flag es temporal. La ruta CFG upstream de Ideogram espera un transformer unconditional separado, mientras que SimpleTuner actualmente entrena solo el transformer conditional por defecto. Con el flag activo, la validación usa el transformer conditional también para el negative/unconditional pass, así que todavía puedes revisar prompts y negative prompts.
+La ruta CFG upstream de Ideogram espera un transformer unconditional separado que solo procesa imagen. Con `ideogram_validation=true` a solas, la validación aproxima el unconditional pass pasando los negative-prompt embeds por el transformer conditional, así que todavía puedes revisar prompts y negative prompts.
+
+Para ejecutar CFG asimétrico real en lugar del proxy, carga el transformer unconditional separado:
+
+```json
+{
+  "ideogram_validation": true,
+  "ideogram_load_unconditional_transformer": true
+}
+```
+
+Esto carga el transformer unconditional congelado (solo imagen) de Ideogram 4 junto al conditional. La validación ejecuta entonces el unconditional pass real con conditioning de texto en ceros, y la destilación AnyFlow calcula sus targets de fused guidance contra la rama unconditional real en lugar del proxy con negative prompts. Reserva unos 10 GiB extra de VRAM para el checkpoint FP8, o unos 18 GiB cuando `ideogram_fp8_base_upcast=true` lo decuantiza a bf16.
+
+Si no cabe, activa `ideogram_uncond_ramtorch=true` para mantener el transformer unconditional en RAM de CPU vía RamTorch y transmitir sus capas al acelerador en cada forward pass, sacrificando velocidad de generación por VRAM.
 
 ## Formato de captions
 

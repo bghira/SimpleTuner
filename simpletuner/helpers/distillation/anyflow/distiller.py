@@ -10,7 +10,10 @@ import torch.nn.functional as F
 from safetensors.torch import load_file, save_file
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
-from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_model_replica_data_info
+from simpletuner.helpers.data_backend.runtime.context_parallel_sync import (
+    gather_variable_batch_tensor,
+    resolve_distributed_batch_layout,
+)
 from simpletuner.helpers.distillation.anyflow.scheduler import AnyFlowValidationScheduler
 from simpletuner.helpers.distillation.common import DistillationBase
 from simpletuner.helpers.distillation.registry import DistillationRegistry
@@ -42,6 +45,7 @@ class AnyFlowDistiller(DistillationBase):
         "meanflow_weight_type": "beta08",
         "meanflow_adaptive_weighting": True,
         "meanflow_non_diffusion_max_sigma": 1.0,
+        "diffusion_target": "flow",
         "cotrain_forward": True,
         "rollout_step_counts": (2, 4, 8, 16, 50),
         "dmd_weight": 1.0,
@@ -60,6 +64,18 @@ class AnyFlowDistiller(DistillationBase):
 
     @classmethod
     def prepare_model_for_adapter(cls, model, config: Dict[str, Any]) -> None:
+        model_config = getattr(model, "config", None)
+        if isinstance(model_config, dict):
+            lora_dropout = model_config.get("lora_dropout", 0.0)
+        else:
+            lora_dropout = getattr(model_config, "lora_dropout", 0.0)
+        lora_dropout = float(lora_dropout or 0.0)
+        if lora_dropout != 0.0:
+            raise ValueError(
+                "AnyFlow requires lora_dropout=0.0. Independent dropout masks in the finite-difference forwards "
+                "corrupt the derivative target."
+            )
+
         component = cls._get_trained_component(model)
         enable_flowmap = getattr(component, "enable_flowmap_time_conditioning", None)
         if not callable(enable_flowmap):
@@ -74,8 +90,9 @@ class AnyFlowDistiller(DistillationBase):
 
     @classmethod
     def training_batch_requirements(cls, config: Dict[str, Any]) -> set[str]:
-        guidance_scale = float(config.get("fuse_guidance_scale", cls._DEFAULTS["fuse_guidance_scale"]))
-        return {"unconditional_text_embeddings"} if guidance_scale != 1.0 else set()
+        fuse_guidance = float(config.get("fuse_guidance_scale", cls._DEFAULTS["fuse_guidance_scale"]))
+        real_guidance = float(config.get("real_score_guidance_scale", cls._DEFAULTS["real_score_guidance_scale"]))
+        return {"unconditional_text_embeddings"} if fuse_guidance != 1.0 or real_guidance != 0.0 else set()
 
     def __init__(
         self,
@@ -111,6 +128,8 @@ class AnyFlowDistiller(DistillationBase):
         self._delta_initial_parameters = {
             name: parameter.detach().float().cpu().clone() for name, parameter in self._trainable_delta_parameters()
         }
+        self._rng_seed = self._resolve_rng_seed()
+        self._rng_generators: Dict[str, torch.Generator] = {}
 
         self._student_adapter_name: Optional[str] = None
         self._discriminator_adapter_name: Optional[str] = None
@@ -144,12 +163,17 @@ class AnyFlowDistiller(DistillationBase):
         batch["anyflow_timestep_interval"] = (batch["timesteps"].to(r_timesteps.dtype) - r_timesteps).abs()
 
         base_target = self._base_flow_target(batch, model=model)
+        meanflow_base_target = self._meanflow_base_target(
+            prepared_batch=batch,
+            t_sigmas=t_sigmas,
+            base_target=base_target,
+        )
         target = self._meanflow_target(
             prepared_batch=batch,
             model=model,
             t_sigmas=t_sigmas,
             r_sigmas=r_sigmas,
-            base_target=base_target,
+            base_target=meanflow_base_target,
         ).detach()
         batch["target"] = target
         batch["flow_target"] = target
@@ -253,6 +277,92 @@ class AnyFlowDistiller(DistillationBase):
     # ------------------------------------------------------------------
     # Configuration and adapter roles
     # ------------------------------------------------------------------
+    def _resolve_rng_seed(self) -> Optional[int]:
+        seed = self.config.get("seed")
+        if seed in (None, "", 0):
+            seed = getattr(getattr(self.teacher_model, "config", None), "seed", None)
+        if seed in (None, "", 0):
+            return None
+
+        seed = int(seed)
+        seed_for_each_device = self.config.get("seed_for_each_device")
+        if seed_for_each_device is None:
+            seed_for_each_device = getattr(getattr(self.teacher_model, "config", None), "seed_for_each_device", False)
+        if bool(seed_for_each_device):
+            accelerator = getattr(self.teacher_model, "accelerator", None)
+            seed += int(getattr(accelerator, "process_index", 0) or 0)
+        return seed
+
+    @staticmethod
+    def _canonical_rng_device(device: torch.device | str) -> torch.device:
+        torch_device = torch.device(device)
+        if torch_device.type == "cuda" and torch_device.index is None and torch.cuda.is_available():
+            return torch.device("cuda", torch.cuda.current_device())
+        return torch_device
+
+    def _rng_generator(self, device: torch.device | str) -> Optional[torch.Generator]:
+        if self._rng_seed is None:
+            return None
+
+        torch_device = self._canonical_rng_device(device)
+        key = str(torch_device)
+        generator = self._rng_generators.get(key)
+        if generator is None:
+            generator = torch.Generator(device=torch_device)
+            generator.manual_seed(self._rng_seed)
+            self._rng_generators[key] = generator
+        return generator
+
+    def _rand(
+        self,
+        size: Sequence[int] | torch.Size,
+        *,
+        device: torch.device | str,
+        dtype: Optional[torch.dtype] = None,
+    ) -> torch.Tensor:
+        torch_device = self._canonical_rng_device(device)
+        kwargs: Dict[str, Any] = {"device": torch_device}
+        if dtype is not None:
+            kwargs["dtype"] = dtype
+        generator = self._rng_generator(torch_device)
+        if generator is not None:
+            kwargs["generator"] = generator
+        return torch.rand(size, **kwargs)
+
+    def _randn(
+        self,
+        size: Sequence[int] | torch.Size,
+        *,
+        device: torch.device | str,
+        dtype: Optional[torch.dtype] = None,
+    ) -> torch.Tensor:
+        torch_device = self._canonical_rng_device(device)
+        kwargs: Dict[str, Any] = {"device": torch_device}
+        if dtype is not None:
+            kwargs["dtype"] = dtype
+        generator = self._rng_generator(torch_device)
+        if generator is not None:
+            kwargs["generator"] = generator
+        return torch.randn(size, **kwargs)
+
+    def _randn_like(self, tensor: torch.Tensor) -> torch.Tensor:
+        return self._randn(tuple(tensor.shape), device=tensor.device, dtype=tensor.dtype)
+
+    def _randint(
+        self,
+        high: int,
+        size: Sequence[int] | torch.Size,
+        *,
+        device: torch.device | str,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        torch_device = self._canonical_rng_device(device)
+        kwargs: Dict[str, Any] = {"device": torch_device, "dtype": dtype}
+        generator = self._rng_generator(torch_device)
+        if generator is not None:
+            kwargs["generator"] = generator
+        return torch.randint(high, size, **kwargs)
+
     @property
     def _device(self) -> torch.device:
         accelerator = getattr(self.teacher_model, "accelerator", None)
@@ -297,9 +407,18 @@ class AnyFlowDistiller(DistillationBase):
             raise ValueError("AnyFlow meanflow_non_diffusion_max_sigma must be in (0.0, 1.0].")
         self.config["meanflow_non_diffusion_max_sigma"] = non_diffusion_max_sigma
 
+        diffusion_target = str(self.config["diffusion_target"]).strip().lower()
+        if diffusion_target not in {"flow", "base_prediction"}:
+            raise ValueError("AnyFlow diffusion_target must be one of: flow, base_prediction.")
+        if diffusion_target == "base_prediction" and not self.low_rank_distillation:
+            raise ValueError("AnyFlow diffusion_target=base_prediction currently requires adapter distillation.")
+        self.config["diffusion_target"] = diffusion_target
+
         guidance_scale = float(self.config["fuse_guidance_scale"])
         if guidance_scale <= 0.0:
             raise ValueError("AnyFlow fuse_guidance_scale must be greater than zero.")
+        if diffusion_target == "base_prediction" and guidance_scale != 1.0:
+            raise ValueError("AnyFlow diffusion_target=base_prediction requires fuse_guidance_scale=1.0.")
         self.config["fuse_guidance_scale"] = guidance_scale
 
         weight_type = str(self.config["meanflow_weight_type"]).strip().lower()
@@ -412,26 +531,98 @@ class AnyFlowDistiller(DistillationBase):
     # ------------------------------------------------------------------
     # NVIDIA forward MeanFlow stage
     # ------------------------------------------------------------------
+    @contextmanager
+    def _frozen_base_adapter(self) -> Iterator[None]:
+        if self.config["stage"] == "onpolicy":
+            with self._adapter_role("real"):
+                yield
+            return
+
+        component = self._flowmap_component
+        was_training = component.training
+        try:
+            self.toggle_adapter(enable=False)
+            component.eval()
+            yield
+        finally:
+            self.toggle_adapter(enable=True)
+            component.train(was_training)
+
+    def _meanflow_base_target(
+        self,
+        *,
+        prepared_batch: Dict[str, Any],
+        t_sigmas: torch.Tensor,
+        base_target: torch.Tensor,
+    ) -> torch.Tensor:
+        if self.config["diffusion_target"] == "flow":
+            return base_target
+
+        with self._frozen_base_adapter(), torch.no_grad():
+            base_prediction = self._predict_at_sigmas(
+                prepared_batch,
+                prepared_batch["noisy_latents"],
+                t_sigmas,
+                t_sigmas,
+            ).detach()
+
+        base_prediction = base_prediction.to(device=base_target.device, dtype=base_target.dtype)
+        cosine, norm_ratio = self._chunked_per_sample_geometry(base_prediction, base_target)
+        prepared_batch["_anyflow_base_prediction_flow_cosine"] = cosine
+        prepared_batch["_anyflow_base_prediction_flow_norm_ratio"] = norm_ratio
+        prepared_batch["_anyflow_base_prediction_flow_mse"] = (
+            (base_prediction.float() - base_target.float()).square().flatten(1).mean(dim=1).detach()
+        )
+
+        diffusion_mask = prepared_batch["anyflow_diffusion_mask"].to(device=base_target.device, dtype=torch.bool)
+        diffusion_mask = self._broadcast_time(diffusion_mask, base_target)
+        return torch.where(diffusion_mask, base_prediction, base_target)
+
     def _prepare_meanflow_pair(self, prepared_batch: Dict[str, Any], model) -> tuple[torch.Tensor, torch.Tensor]:
         latents = prepared_batch["latents"]
         batch_size = int(latents.shape[0])
         device = latents.device
-        first = torch.rand(batch_size, device=device, dtype=torch.float32)
-        second = torch.rand(batch_size, device=device, dtype=torch.float32)
+        first = self._rand((batch_size,), device=device, dtype=torch.float32)
+        second = self._rand((batch_size,), device=device, dtype=torch.float32)
         t_base = torch.maximum(first, second)
         r_base = torch.minimum(first, second)
 
         accelerator = getattr(model, "accelerator", getattr(self.teacher_model, "accelerator", None))
-        process_index = int(getattr(accelerator, "process_index", 0) or 0)
-        num_processes = int(getattr(accelerator, "num_processes", 1) or 1)
-        data_parallel_enabled, data_rank, _, _, data_parallel_size = get_model_replica_data_info(accelerator)
-        if data_parallel_enabled:
-            process_index = data_rank
-            num_processes = data_parallel_size
-        global_batch_size = batch_size * num_processes
-        global_indices = process_index * batch_size + torch.arange(batch_size, device=device)
+        batch_layout = resolve_distributed_batch_layout(accelerator, batch_size)
+        self._distributed_batch_accelerator = accelerator
+        self._distributed_batch_layout = batch_layout
+        global_batch_size = batch_layout.global_batch_size
+        global_indices = batch_layout.local_batch_offset + torch.arange(batch_size, device=device)
         diffusion_count = round(float(self.config["diffusion_ratio"]) * global_batch_size)
         consistency_count = round(float(self.config["consistency_ratio"]) * global_batch_size)
+        effective_diffusion_count = min(diffusion_count, global_batch_size)
+        effective_consistency_count = min(consistency_count, global_batch_size - effective_diffusion_count)
+        arbitrary_count = global_batch_size - effective_diffusion_count - effective_consistency_count
+        if batch_layout.data_rank == 0 and not getattr(self, "_meanflow_branch_mix_logged", False):
+            self.logger.info(
+                "AnyFlow interval mixture at global batch %d: diffusion=%d, consistency=%d, arbitrary=%d.",
+                global_batch_size,
+                effective_diffusion_count,
+                effective_consistency_count,
+                arbitrary_count,
+            )
+            missing_branches = []
+            if float(self.config["diffusion_ratio"]) > 0.0 and effective_diffusion_count == 0:
+                missing_branches.append("diffusion")
+            if float(self.config["consistency_ratio"]) > 0.0 and effective_consistency_count == 0:
+                missing_branches.append("consistency")
+            arbitrary_ratio = 1.0 - float(self.config["diffusion_ratio"]) - float(self.config["consistency_ratio"])
+            if arbitrary_ratio > 0.0 and arbitrary_count == 0:
+                missing_branches.append("arbitrary")
+            if missing_branches:
+                self.logger.warning(
+                    "AnyFlow global batch %d rounds the configured interval mixture to zero %s samples. "
+                    "Increase the per-device batch size or data-parallel process count so every enabled branch "
+                    "is represented on each optimizer step.",
+                    global_batch_size,
+                    "/".join(missing_branches),
+                )
+            self._meanflow_branch_mix_logged = True
         diffusion_mask = global_indices < diffusion_count
         consistency_mask = (global_indices >= diffusion_count) & (global_indices < diffusion_count + consistency_count)
         arbitrary_mask = ~(diffusion_mask | consistency_mask)
@@ -506,7 +697,8 @@ class AnyFlowDistiller(DistillationBase):
         prediction = self._fuse_guidance_prediction(prepared_batch, prediction)
         per_sample = (prediction.float() - target.float()).square().flatten(1).mean(dim=1)
         t_sigmas = self._scalar_sigmas(prepared_batch).to(device=per_sample.device, dtype=per_sample.dtype)
-        per_sample = per_sample * self._meanflow_timestep_weight(t_sigmas)
+        timestep_weight = self._meanflow_timestep_weight(t_sigmas)
+        per_sample = per_sample * timestep_weight
         prepared_batch["_anyflow_pre_adaptive_loss"] = per_sample.detach()
         adaptive_scale = torch.ones_like(per_sample)
 
@@ -517,6 +709,21 @@ class AnyFlowDistiller(DistillationBase):
             global_diffusion_mask = self._gather_detached(diffusion_mask)
             if bool(global_diffusion_mask.any()):
                 diffusion_mean = global_loss[global_diffusion_mask].mean()
+                base_prediction_flow_mse = prepared_batch.get("_anyflow_base_prediction_flow_mse")
+                if torch.is_tensor(base_prediction_flow_mse):
+                    adaptive_reference = (
+                        base_prediction_flow_mse.to(
+                            device=per_sample.device,
+                            dtype=per_sample.dtype,
+                        )
+                        * timestep_weight
+                    )
+                    prepared_batch["_anyflow_adaptive_reference_loss"] = adaptive_reference.detach()
+                    global_adaptive_reference = self._gather_detached(adaptive_reference)
+                    diffusion_mean = torch.maximum(
+                        diffusion_mean,
+                        global_adaptive_reference[global_diffusion_mask].mean(),
+                    )
                 non_diffusion_mask = ~diffusion_mask
                 if bool(non_diffusion_mask.any()):
                     scale = diffusion_mean / (per_sample.detach()[non_diffusion_mask] + 1e-5)
@@ -551,7 +758,7 @@ class AnyFlowDistiller(DistillationBase):
             )
 
         sigma = self._sample_dmd_sigma(generated.shape[0], logit_normal=False, device=generated.device)
-        noise = torch.randn_like(generated)
+        noise = self._randn_like(generated)
         sigma_broadcast = self._broadcast_time(sigma, generated).to(generated.dtype)
         noisy = ((1.0 - sigma_broadcast) * generated + sigma_broadcast * noise).detach()
 
@@ -589,7 +796,7 @@ class AnyFlowDistiller(DistillationBase):
             ).detach()
 
         sigma = self._sample_dmd_sigma(generated.shape[0], logit_normal=True, device=generated.device)
-        noise = torch.randn_like(generated)
+        noise = self._randn_like(generated)
         sigma_broadcast = self._broadcast_time(sigma, generated).to(generated.dtype)
         noisy = (1.0 - sigma_broadcast) * generated + sigma_broadcast * noise
         prediction = self._predict_at_sigmas(dmd_batch, noisy, sigma, sigma)
@@ -606,7 +813,7 @@ class AnyFlowDistiller(DistillationBase):
         if grad_timestep < 0 or grad_timestep >= step_count:
             raise ValueError(f"AnyFlow grad_timestep must be in [0, {step_count}), got {grad_timestep}.")
 
-        latents = torch.randn_like(prepared_batch["latents"])
+        latents = self._randn_like(prepared_batch["latents"])
         base_sigmas = torch.linspace(1.0, 0.0, step_count + 1, device=latents.device, dtype=torch.float32)
         sigmas = self._apply_scheduler_shift(base_sigmas)
 
@@ -650,11 +857,7 @@ class AnyFlowDistiller(DistillationBase):
         negative = prepared_batch.get("negative_encoder_hidden_states")
         if not torch.is_tensor(negative):
             raise ValueError("AnyFlow real_score_guidance_scale requires cached negative_encoder_hidden_states.")
-        unconditional_batch = dict(prepared_batch)
-        unconditional_batch["encoder_hidden_states"] = negative
-        negative_tags = prepared_batch.get("negative_text_token_tags")
-        if torch.is_tensor(negative_tags):
-            unconditional_batch["text_token_tags"] = negative_tags
+        unconditional_batch = self._unconditional_batch(prepared_batch)
         unconditional_x0 = self._score_x0(unconditional_batch, noisy_latents, sigmas)
         return conditional_x0 + (conditional_x0 - unconditional_x0) * guidance
 
@@ -662,26 +865,22 @@ class AnyFlowDistiller(DistillationBase):
         steps = self.config["rollout_step_counts"]
         device = self._device
         if torch.distributed.is_available() and torch.distributed.is_initialized():
-            if torch.distributed.get_rank() == 0:
-                index = torch.randint(len(steps), (1,), device=device, dtype=torch.long)
-            else:
-                index = torch.zeros(1, device=device, dtype=torch.long)
+            index = self._randint(len(steps), (1,), device=device, dtype=torch.long)
             torch.distributed.broadcast(index, src=0)
             step_count = int(steps[int(index.item())])
-            if torch.distributed.get_rank() == 0:
-                grad_timestep = torch.randint(step_count, (1,), device=device, dtype=torch.long)
-            else:
-                grad_timestep = torch.zeros(1, device=device, dtype=torch.long)
+            grad_timestep = self._randint(step_count, (1,), device=device, dtype=torch.long)
             torch.distributed.broadcast(grad_timestep, src=0)
             return step_count, int(grad_timestep.item())
 
-        step_count = int(steps[int(torch.randint(len(steps), (1,)).item())])
-        grad_timestep = int(torch.randint(step_count, (1,)).item())
+        step_count = int(steps[int(self._randint(len(steps), (1,), device=device, dtype=torch.long).item())])
+        grad_timestep = int(self._randint(step_count, (1,), device=device, dtype=torch.long).item())
         return step_count, grad_timestep
 
     def _sample_dmd_sigma(self, batch_size: int, *, logit_normal: bool, device: torch.device) -> torch.Tensor:
         base = (
-            torch.sigmoid(torch.randn(batch_size, device=device)) if logit_normal else torch.rand(batch_size, device=device)
+            torch.sigmoid(self._randn((batch_size,), device=device))
+            if logit_normal
+            else self._rand((batch_size,), device=device)
         )
         sigma = self._apply_scheduler_shift(base)
         return sigma.clamp(
@@ -748,8 +947,29 @@ class AnyFlowDistiller(DistillationBase):
         if torch.is_tensor(negative_tags):
             batch["text_token_tags"] = negative_tags
         negative_mask = prepared_batch.get("negative_encoder_attention_mask")
+        batch.pop("encoder_attention_mask", None)
         if torch.is_tensor(negative_mask):
             batch["encoder_attention_mask"] = negative_mask
+        # Some families read model-specific conditioning aliases ahead of (or instead of) the
+        # generic keys: Ideogram prefers `prompt_embeds` when present, and Flux requires it.
+        # Swap the aliases to the unconditional tensors rather than popping them.
+        if "prompt_embeds" in batch:
+            batch["prompt_embeds"] = negative
+        for alias in ("attention_mask", "attention_masks"):
+            if alias in batch:
+                if torch.is_tensor(negative_mask):
+                    batch[alias] = negative_mask
+                else:
+                    batch.pop(alias)
+        negative_pooled = prepared_batch.get("negative_add_text_embeds")
+        if torch.is_tensor(negative_pooled):
+            if "add_text_embeds" in batch:
+                batch["add_text_embeds"] = negative_pooled
+            added_cond_kwargs = batch.get("added_cond_kwargs")
+            if isinstance(added_cond_kwargs, dict) and "text_embeds" in added_cond_kwargs:
+                batch["added_cond_kwargs"] = {**added_cond_kwargs, "text_embeds": negative_pooled}
+        # Lets families with a dedicated unconditional model (e.g. Ideogram) dispatch to it.
+        batch["is_unconditional_pass"] = True
         return batch
 
     def _slice_batch(self, prepared_batch: Dict[str, Any], requested_batch_size: int) -> Dict[str, Any]:
@@ -777,12 +997,16 @@ class AnyFlowDistiller(DistillationBase):
             "anyflow_interval": float(global_intervals.mean()),
             "anyflow_fuse_guidance_scale": float(self.config["fuse_guidance_scale"]),
             "anyflow_meanflow_non_diffusion_max_sigma": float(self.config["meanflow_non_diffusion_max_sigma"]),
+            "anyflow_diffusion_target_is_base_prediction": float(self.config["diffusion_target"] == "base_prediction"),
         }
         metric_tensors = {
             "t_sigma": prepared_batch.get("anyflow_t_sigmas"),
             "r_sigma": prepared_batch.get("anyflow_r_sigmas"),
             "target_base_cosine": prepared_batch.get("_anyflow_target_base_cosine"),
             "target_base_norm_ratio": prepared_batch.get("_anyflow_target_base_norm_ratio"),
+            "base_prediction_flow_cosine": prepared_batch.get("_anyflow_base_prediction_flow_cosine"),
+            "base_prediction_flow_norm_ratio": prepared_batch.get("_anyflow_base_prediction_flow_norm_ratio"),
+            "adaptive_reference_loss": prepared_batch.get("_anyflow_adaptive_reference_loss"),
             "pre_adaptive_loss": prepared_batch.get("_anyflow_pre_adaptive_loss"),
             "adaptive_scale": prepared_batch.get("_anyflow_adaptive_scale"),
             "post_adaptive_loss": prepared_batch.get("_anyflow_post_adaptive_loss"),
@@ -801,11 +1025,20 @@ class AnyFlowDistiller(DistillationBase):
         logs.update(self._delta_parameter_logs())
         return logs
 
+    _DELTA_PARAMETER_TAGS = (
+        "condition_embedder.delta_embedder",
+        "delta_adaln_embedder",
+        "delta_time_embed",
+        "delta_time_embedder",
+        "delta_timestep_embedder",
+        "delta_t_embedding",
+    )
+
     def _trainable_delta_parameters(self):
         for name, parameter in self._flowmap_component.named_parameters():
             if ".original_module." in name or not parameter.requires_grad:
                 continue
-            if "delta_adaln_embedder" in name or "delta_time_embedder" in name:
+            if any(tag in name for tag in self._DELTA_PARAMETER_TAGS):
                 yield name, parameter
 
     def _delta_parameter_logs(self) -> Dict[str, float]:
@@ -1020,13 +1253,16 @@ class AnyFlowDistiller(DistillationBase):
         if isinstance(hidden_states_buffer, dict):
             hidden_states_buffer.clear()
 
-    @staticmethod
-    def _gather_detached(tensor: torch.Tensor) -> torch.Tensor:
-        if not torch.distributed.is_available() or not torch.distributed.is_initialized():
-            return tensor.detach()
-        gathered = [torch.empty_like(tensor) for _ in range(torch.distributed.get_world_size())]
-        torch.distributed.all_gather(gathered, tensor.detach())
-        return torch.cat(gathered, dim=0)
+    def _gather_detached(self, tensor: torch.Tensor) -> torch.Tensor:
+        accelerator = getattr(
+            self,
+            "_distributed_batch_accelerator",
+            getattr(self.teacher_model, "accelerator", None),
+        )
+        layout = getattr(self, "_distributed_batch_layout", None)
+        if layout is None or layout.local_batch_size != tensor.shape[0]:
+            layout = resolve_distributed_batch_layout(accelerator, tensor.shape[0])
+        return gather_variable_batch_tensor(tensor, accelerator, layout)
 
     def _discriminator_state_dict(self) -> Dict[str, torch.Tensor]:
         adapter_name = str(self._discriminator_adapter_name)

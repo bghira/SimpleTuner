@@ -91,7 +91,7 @@ class WebshartMetadataBackend(MetadataBackend):
         if self.dataset_type not in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CONDITIONING, DatasetType.EVAL}:
             raise ValueError("WebshartMetadataBackend supports image, video, conditioning, and eval datasets only.")
 
-        self.caption_cache: Dict[str, Union[str, List[str]]] = {}
+        self.caption_cache: Dict[str, Union[str, List[str], dict]] = {}
 
         context = accelerator.main_process_first() if hasattr(accelerator, "main_process_first") else nullcontext()
         with context:
@@ -119,7 +119,7 @@ class WebshartMetadataBackend(MetadataBackend):
             return
         StateTracker.set_image_files([("", [], sample_ids)], data_backend_id=self.data_backend.id)
 
-    def caption_cache_entry(self, index: str) -> Optional[Union[str, List[str]]]:
+    def caption_cache_entry(self, index: str) -> Optional[Union[str, List[str], dict]]:
         index = self.data_backend.normalize_sample_id(index)
         caption = self.caption_cache.get(index, None)
         if caption is not None:
@@ -137,8 +137,13 @@ class WebshartMetadataBackend(MetadataBackend):
         if self.data_backend.exists(path):
             try:
                 raw = self.data_backend.read(path)
-                self.caption_cache = json.loads(raw)
-                return
+                loaded = json.loads(raw)
+                # An empty cache file (written before captions were indexed) must not
+                # short-circuit the rebuild below, or it wedges every startup into
+                # per-sample caption lookups.
+                if loaded:
+                    self.caption_cache = loaded
+                    return
             except Exception as exc:
                 logger.warning("Error loading webshart caption cache, regenerating when buckets refresh: %s", exc)
         self.caption_cache = {}
@@ -512,8 +517,13 @@ class WebshartMetadataBackend(MetadataBackend):
                             continue
                         bucket_key, sample_metadata = prepared
                         if require_captions and not sample_metadata.get("captions"):
-                            statistics["skipped"]["caption_missing"] += 1
-                            continue
+                            # Captions may live as sibling .txt tar members instead of embedded
+                            # metadata (e.g. cc12m); get_caption() range-reads those at runtime.
+                            # get_shard_metadata returns a flat mapping keyed by member filename.
+                            caption_member = Path(str(entry["filename"])).with_suffix(".txt").name
+                            if caption_member not in shard_metadata:
+                                statistics["skipped"]["caption_missing"] += 1
+                                continue
                         aspect_ratio_bucket_updates.setdefault(bucket_key, []).append(sample_path)
                         metadata_updates[sample_path] = sample_metadata
                         if sample_metadata.get("captions"):

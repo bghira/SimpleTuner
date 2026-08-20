@@ -161,7 +161,7 @@
     </div>
 
     <!-- Sampling -->
-    <div class="section-group" x-show="!['text_embeds','image_embeds'].includes(editingDataset.dataset_type) && matchesParamFilter('sampling', 'repeats', 'probability', 'weight', 'slider', 'concept', 'strength', 'regularisation', 'regularization')">
+    <div class="section-group" x-show="!['text_embeds','image_embeds'].includes(editingDataset.dataset_type) && matchesParamFilter('sampling', 'repeats', 'probability', 'weight', 'batch', 'slider', 'concept', 'strength', 'regularisation', 'regularization')">
         <h6 class="modal-section-title">Sampling</h6>
         <div class="form-check mb-2">
             <input class="form-check-input"
@@ -187,6 +187,17 @@
                        @input="markAsUnsaved()"
                        placeholder="0">
                 <div class="form-text small">0 = single pass, 1+ = extra sweeps</div>
+            </div>
+            <div class="col-md-4" x-show="supportsTrainBatchSize(editingDataset)">
+                <label class="form-label small">Batch Size <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#train_batch_size') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>
+                <input type="number"
+                       class="form-control form-control-sm"
+                       min="1"
+                       step="1"
+                       x-model.number.lazy="editingDataset.train_batch_size"
+                       @input="markAsUnsaved()"
+                       placeholder="Use global">
+                <div class="form-text small">Overrides global batch size for this dataset</div>
             </div>
             <div class="col-md-4">
                 <label class="form-label small">Max Samples <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#max_num_samples') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>

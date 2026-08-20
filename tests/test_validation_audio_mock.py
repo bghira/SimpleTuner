@@ -1,8 +1,11 @@
+import os
+import tempfile
 import unittest
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import torch
 
 from simpletuner.helpers.models.common import AudioModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
@@ -53,6 +56,7 @@ class MockAudioModel(AudioModelFoundation):
         return None
 
     def update_pipeline_call_kwargs(self, kwargs):
+        self.last_pipeline_kwargs = dict(kwargs)
         return kwargs
 
     def convert_text_embed_for_pipeline(self, embed, prompt=None):
@@ -119,7 +123,11 @@ class TestAudioValidation(unittest.TestCase):
         # Setup mocks
         mock_tqdm.side_effect = lambda x, **kwargs: x
         mock_setup_scheduler.return_value = None
-        mock_normalise.return_value = ValidationPrompt(shortname="test", prompt="test prompt")
+        mock_normalise.return_value = ValidationPrompt(
+            shortname="test",
+            prompt="test prompt",
+            lyrics="[verse]\nper prompt lyric",
+        )
         mock_prepare_prompts.return_value = {
             "validation_prompts": ["test prompt"],
             "validation_shortnames": ["test"],
@@ -162,6 +170,7 @@ class TestAudioValidation(unittest.TestCase):
         mock_config.validation_noise_scheduler = "ddim"
         mock_config.validation_seed_source = "cpu"
         mock_config.validation_seed = 42
+        mock_config.validation_lyrics = "[verse]\nglobal lyric"
         mock_config.weight_dtype = torch.float32
         mock_config.controlnet = False
         mock_config.control = False
@@ -197,10 +206,163 @@ class TestAudioValidation(unittest.TestCase):
         # Verify save_audio was called
         self.assertTrue(mock_save_audio.called)
         call_args = mock_save_audio.call_args
-        # args: (save_dir, validation_images, validation_shortname)
-        # validation_images is a dict {shortname: [audio_tensors]}
         self.assertIn("test", call_args[0][1])
         self.assertEqual(len(call_args[0][1]["test"]), 1)
+        self.assertEqual(validation.validation_images, {"test": []})
+        self.assertIn("test", validation.validation_audios)
+        self.assertEqual(len(validation.validation_audios["test"]), 1)
+        self.assertEqual(mock_model.last_pipeline_kwargs["lyrics"], "[verse]\nper prompt lyric")
+
+    def test_audio_validation_prompt_library_provides_lyrics(self):
+        class NoTextCacheModel:
+            def uses_text_embeddings_cache(self):
+                return False
+
+            def requires_conditioning_validation_inputs(self):
+                return False
+
+            def should_precompute_validation_negative_prompt(self):
+                return False
+
+        args = SimpleNamespace(
+            model_family="ace_step",
+            model_flavour="v15-base",
+            controlnet=False,
+            control=False,
+            validation_using_datasets=False,
+            validation_input=None,
+            validation_prompt_library="audio",
+            user_prompt_library=None,
+            validation_prompt=None,
+            validation_negative_prompt="None",
+            validation_disable_unconditional=True,
+            data_backend_config="config/examples/acestep-audio.json",
+        )
+
+        with (
+            patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args),
+            patch("simpletuner.helpers.training.validation.StateTracker.get_validation_sample_images", return_value=[]),
+        ):
+            metadata = prepare_validation_prompt_list(args, embed_cache=None, model=NoTextCacheModel())
+
+        entries = metadata["validation_prompts"]
+        self.assertIn("audio_bright_synth_pop", metadata["validation_shortnames"])
+        self.assertTrue(any(entry.lyrics and "\n" in entry.lyrics for entry in entries))
+
+    @patch("simpletuner.helpers.training.validation_audio.StateTracker.get_webhook_handler", return_value=None)
+    @patch("simpletuner.helpers.training.validation_audio.StateTracker.get_global_step", return_value=7)
+    @patch("simpletuner.helpers.training.validation.StateTracker")
+    @patch("simpletuner.helpers.training.validation.prepare_validation_prompt_list")
+    @patch("simpletuner.helpers.training.validation._normalise_validation_sample")
+    @patch("simpletuner.helpers.training.validation.Validation.setup_scheduler")
+    @patch("simpletuner.helpers.training.validation.tqdm")
+    def test_audio_validation_writes_wav_file(
+        self,
+        mock_tqdm,
+        mock_setup_scheduler,
+        mock_normalise,
+        mock_prepare_prompts,
+        mock_state_tracker,
+        _mock_audio_step,
+        _mock_audio_webhook,
+    ):
+        mock_tqdm.side_effect = lambda x, **kwargs: x
+        mock_setup_scheduler.return_value = None
+        mock_normalise.return_value = ValidationPrompt(shortname="test", prompt="test prompt")
+        mock_prepare_prompts.return_value = {
+            "validation_prompts": ["test prompt"],
+            "validation_shortnames": ["test"],
+            "validation_sample_images": [],
+        }
+        mock_state_tracker.get_global_resume_step.return_value = 0
+        mock_state_tracker.get_global_step.return_value = 7
+        mock_state_tracker.get_epoch.return_value = 0
+        mock_state_tracker.get_epoch_step.return_value = 0
+        mock_state_tracker.get_webhook_handler.return_value = None
+
+        mock_accelerator = MagicMock()
+        mock_accelerator.is_main_process = True
+        mock_accelerator.device = torch.device("cpu")
+        mock_accelerator.num_processes = 1
+        mock_accelerator.trackers = []
+
+        mock_model = MockAudioModel()
+        mock_pipeline_result = SimpleNamespace(audios=[torch.zeros(1, 1600)])
+        mock_model.pipeline.return_value = mock_pipeline_result
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_config = MagicMock()
+            mock_config.output_dir = tmpdir
+            mock_config.validation_num_inference_steps = 1
+            mock_config.num_validation_images = 1
+            mock_config.validation_guidance = 1.0
+            mock_config.validation_guidance_real = 1.0
+            mock_config.validation_no_cfg_until_timestep = None
+            mock_config.model_family = "ace_step"
+            mock_config.validation_randomize = False
+            mock_config.use_ema = False
+            mock_config.validation_adapter_mode = "none"
+            mock_config.validation_adapter_path = None
+            mock_config.validation_adapter_config = None
+            mock_config.validation_adapter_name = None
+            mock_config.validation_adapter_strength = 1.0
+            mock_config.validation_noise_scheduler = "ddim"
+            mock_config.validation_seed_source = "cpu"
+            mock_config.validation_seed = 42
+            mock_config.weight_dtype = torch.float32
+            mock_config.controlnet = False
+            mock_config.control = False
+            mock_config.should_abort.return_value = False
+            mock_config.validation_resolution = 256
+            mock_config.model_flavour = None
+            mock_state_tracker.get_args.return_value = mock_config
+
+            validation = Validation(
+                accelerator=mock_accelerator,
+                model=mock_model,
+                distiller=None,
+                args=mock_config,
+                validation_prompt_metadata={
+                    "validation_prompts": ["test prompt"],
+                    "validation_shortnames": ["test"],
+                    "validation_sample_images": ["mock_sample"],
+                },
+                vae_path=None,
+                weight_dtype=torch.float32,
+                embed_cache=MagicMock(compute_embeddings_for_prompts=MagicMock(return_value=None)),
+                ema_model=None,
+            )
+
+            validation.global_resume_step = 0
+            validation.run_validations(step=7, validation_type="intermediary", force_evaluation=True)
+
+            validation_dir = os.path.join(tmpdir, "validation_images")
+            wav_files = [name for name in os.listdir(validation_dir) if name.endswith(".wav")]
+
+        self.assertEqual(wav_files, ["step_7_test_0.wav"])
+
+    def test_audio_extraction_prefers_audios_field(self):
+        model = MockAudioModel()
+        expected_audio = torch.randn(1, 16000)
+        pipeline_result = SimpleNamespace(
+            audios=[expected_audio],
+            audio=object(),
+        )
+
+        extracted = model.extract_validation_audio(pipeline_result)
+
+        self.assertEqual(len(extracted), 1)
+        self.assertTrue(torch.equal(extracted[0], expected_audio))
+
+    def test_numpy_audio_validation_payload_round_trips_as_tensor(self):
+        audio = np.zeros((2, 1600), dtype=np.float32)
+
+        serialised = Validation._serialise_media(audio)
+        restored = Validation._deserialise_media(serialised)
+
+        self.assertTrue(torch.is_tensor(restored))
+        self.assertEqual(tuple(restored.shape), (2, 1600))
+        self.assertEqual(restored.dtype, torch.float32)
 
     @patch("simpletuner.helpers.training.validation_audio._tensor_to_wav_buffer")
     @patch("simpletuner.helpers.training.validation_audio.StateTracker")

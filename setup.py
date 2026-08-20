@@ -317,7 +317,7 @@ base_deps = [
     "hangul-romanize>=0.1.0",
     "optimum-quanto>=0.2.7",
     "lycoris-lora>=3.4.0",
-    "kernels>=0.15.2,<0.16.0",
+    "kernels>=0.16.0,<0.17.0",
     "torch-optimi>=0.2.1",
     "librosa>=0.10.2",
     "loguru>=0.7.2",
@@ -340,7 +340,7 @@ base_deps = [
     "aiosqlite>=0.19.0",
     "httpx>=0.28.0",
     "psutil>=5.9.0",
-    "webshart>=0.4.6",
+    "webshart>=0.5.2",
 ]
 
 # Nightly CUDA extras contain direct URLs that PyPI rejects, so only include them
@@ -386,6 +386,7 @@ extras_require = {
     "state-mysql": ["aiomysql>=0.2.0"],
     "state-redis": ["redis>=5.0.0"],
     "state-all": ["asyncpg>=0.29.0", "aiomysql>=0.2.0", "redis>=5.0.0"],
+    "kubernetes": ["kubernetes>=36.0.3,<37.0.0"],
     # All non-platform extras combined
     "all": [
         "pillow-jxl-plugin>=1.3.1",

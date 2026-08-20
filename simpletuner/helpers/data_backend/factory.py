@@ -29,14 +29,6 @@ class _ArgsProxy(SimpleNamespace):
             return getattr(self._base, item)
 
 
-def _get_arg_value(args: Any, key: str, default: Any = None) -> Any:
-    """Safely retrieve a value from an args mapping or namespace."""
-
-    if isinstance(args, dict):
-        return args.get(key, default)
-    return getattr(args, key, default)
-
-
 def _set_arg_value(args: Any, key: str, value: Any) -> None:
     """Safely set a value on an args mapping or namespace."""
 
@@ -104,6 +96,7 @@ from simpletuner.helpers.caching.distillation import DistillationCache
 from simpletuner.helpers.caching.image_embed import ImageEmbedCache
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.caching.vae import VAECache
+from simpletuner.helpers.configuration.platform_validation import validate_mps_train_batch_size
 from simpletuner.helpers.configuration.template_vars import resolve_value_placeholders
 from simpletuner.helpers.data_backend.aws import S3DataBackend
 from simpletuner.helpers.data_backend.base import BaseDataBackend
@@ -112,6 +105,8 @@ from simpletuner.helpers.data_backend.caption_dataset import CaptionDataset
 from simpletuner.helpers.data_backend.caption_sampler import CaptionSampler
 from simpletuner.helpers.data_backend.csv_url_list import CSVDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
+from simpletuner.helpers.data_backend.dataset_types import get_arg_value as _get_arg_value
+from simpletuner.helpers.data_backend.dataset_types import resolve_dataset_train_batch_size
 from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.data_backend.local import LocalDataBackend
 from simpletuner.helpers.data_backend.memory import MemoryDataBackend
@@ -309,6 +304,17 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             if key in backend:
                 output["config"][key] = backend[key]
     is_audio_dataset = dataset_type is DatasetType.AUDIO
+    has_training_batch_size = dataset_type not in {
+        DatasetType.TEXT_EMBEDS,
+        DatasetType.IMAGE_EMBEDS,
+        DatasetType.CONDITIONING_IMAGE_EMBEDS,
+        DatasetType.DISTILLATION_CACHE,
+    }
+    dataset_train_batch_size = (
+        resolve_dataset_train_batch_size(backend, args, dataset_type) if has_training_batch_size else None
+    )
+    if dataset_train_batch_size is not None:
+        validate_mps_train_batch_size(dataset_train_batch_size)
 
     start_epoch = normalize_start_epoch(backend.get("start_epoch", 1))
     start_step = normalize_start_step(backend.get("start_step", 0))
@@ -318,6 +324,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     output["config"]["start_step"] = start_step
     output["config"]["end_epoch"] = end_epoch
     output["config"]["end_step"] = end_step
+    if dataset_train_batch_size is not None:
+        output["config"]["train_batch_size"] = dataset_train_batch_size
 
     def _prepare_audio_settings(source: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize audio configuration settings from backend definitions."""
@@ -383,7 +391,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             truncation_mode = "beginning"
         audio_block["truncation_mode"] = truncation_mode
 
-        # Audio-only mode: standalone audio training without video (e.g., LTX-2 audio-only)
+        # Audio-only mode: standalone audio training without source video.
         audio_only_raw = audio_block.get("audio_only") or source.get("audio_only")
         if audio_only_raw is not None:
             audio_block["audio_only"] = bool(audio_only_raw)
@@ -428,7 +436,7 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     bucket_report = BucketReport(dataset_id=output["id"], dataset_type=output["dataset_type"])
     output["bucket_report"] = bucket_report
     bucket_report.set_constraints(
-        train_batch_size=_get_arg_value(args, "train_batch_size"),
+        train_batch_size=dataset_train_batch_size,
         repeats=int(backend.get("repeats", 0) or 0),
     )
     choices = [
@@ -777,13 +785,13 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
     if is_audio_dataset:
         output["config"]["audio"] = _prepare_audio_settings(backend)
         model_family_value = str(_get_arg_value(args, "model_family", "") or "").lower()
-        if model_family_value == "ace_step" and output["config"].get("caption_strategy") == "textfile":
+        if model_family_value in {"ace_step", "minimaxmusic"} and output["config"].get("caption_strategy") == "textfile":
             audio_settings = output["config"]["audio"]
             if not any(audio_settings.get(key) for key in ("lyrics_filename_format", "lyrics_extension", "lyrics_suffix")):
                 default_lyrics_format = "{filename}.lyrics"
                 audio_settings["lyrics_filename_format"] = default_lyrics_format
                 warning_log(
-                    f"(id={backend['id']}) ACE-Step textfile datasets will also load lyrics beside each sample "
+                    f"(id={backend['id']}) Audio textfile datasets will also load lyrics beside each sample "
                     f"using '{default_lyrics_format}'. Set audio.lyrics_filename_format to match your naming scheme."
                 )
             output["config"]["audio"] = audio_settings
@@ -1640,7 +1648,7 @@ class FactoryRegistry:
     def _validate_audio_only_datasets(self, data_backend_config: List[Dict[str, Any]]) -> None:
         """
         Validate audio-only datasets are only used with models that support them.
-        Audio-only mode allows training on audio without video (e.g., LTX-2 audio-only training).
+        Audio-only mode allows compatible video families to train on audio without source video.
         """
         supports_audio_only = self._supports_audio_only_training()
 
@@ -1661,7 +1669,7 @@ class FactoryRegistry:
                     raise ValueError(
                         f"Audio-only dataset '{backend_id}' is configured with audio.audio_only=true, "
                         f"but the current model does not support audio-only training. "
-                        f"Audio-only mode is currently only supported by LTX-2. "
+                        f"The current model family does not advertise SUPPORTS_FAKE_VIDEO_STREAM. "
                         f"Either use a compatible model or remove the audio_only setting."
                     )
                 info_log(
@@ -3141,6 +3149,11 @@ class FactoryRegistry:
             raise ValueError(f"Unknown metadata backend type: {metadata_backend}")
 
         video_config = init_backend["config"].get("video", {})
+        dataset_type_enum = ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE)
+        train_batch_size = init_backend["config"].get(
+            "train_batch_size",
+            resolve_dataset_train_batch_size(backend, self.args, dataset_type_enum),
+        )
         metadata_cache_root = backend.get(
             "instance_data_dir",
             backend.get("csv_cache_dir", backend.get("aws_data_prefix", "")),
@@ -3162,11 +3175,7 @@ class FactoryRegistry:
             maximum_num_frames=video_config.get("max_frames", None),
             num_frames=video_config.get("num_frames", None),
             resolution_type=backend.get("resolution_type", self.args.resolution_type),
-            batch_size=(
-                1
-                if ensure_dataset_type(backend.get("dataset_type"), default=DatasetType.IMAGE) is DatasetType.EVAL
-                else self.args.train_batch_size
-            ),
+            batch_size=train_batch_size,
             metadata_update_interval=backend.get("metadata_update_interval", self.args.metadata_update_interval),
             cache_file=os.path.join(
                 metadata_cache_root,
@@ -3281,8 +3290,12 @@ class FactoryRegistry:
             if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
             if init_backend["metadata_backend"].has_single_underfilled_bucket():
+                train_batch_size = init_backend["config"].get(
+                    "train_batch_size",
+                    resolve_dataset_train_batch_size(backend, self.args),
+                )
                 raise Exception(
-                    f"Cannot train using a dataset that has a single bucket with fewer than {self.args.train_batch_size} images."
+                    f"Cannot train using a dataset that has a single bucket with fewer than {train_batch_size} images."
                     f" You have to reduce your batch size, or increase your dataset size (id={init_backend['id']})."
                 )
 
@@ -3363,6 +3376,7 @@ class FactoryRegistry:
 
     def _handle_config_versioning(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
         """Handle configuration versioning and validation."""
+        runtime_mutable_keys = ("train_batch_size",)
         excluded_keys = [
             "probability",
             "repeats",
@@ -3380,6 +3394,7 @@ class FactoryRegistry:
             "start_epoch",
             "hash_filenames",  # always enabled, not user-configurable
             "_s2v_audio_autoinjected",  # runtime flag, not user-configurable
+            *runtime_mutable_keys,
         ]
         _latest_config_version = latest_config_version()
         current_config_version = _latest_config_version
@@ -3413,6 +3428,14 @@ class FactoryRegistry:
                                 f"Key {key} not found in the current backend config, using the existing value '{prev_config[key]}'."
                             )
                         init_backend["config"][key] = prev_config[key]
+
+        metadata_backend_config = getattr(init_backend["metadata_backend"], "config", None)
+        if isinstance(metadata_backend_config, dict):
+            for key in runtime_mutable_keys:
+                if key in init_backend["config"]:
+                    metadata_backend_config[key] = init_backend["config"][key]
+                else:
+                    metadata_backend_config.pop(key, None)
 
         runtime_linkage_keys = (
             "conditioning_data",
@@ -3559,7 +3582,10 @@ class FactoryRegistry:
             data_backend=init_backend["data_backend"],
             model=self.model,
             accelerator=self.accelerator,
-            batch_size=1 if dataset_type is DatasetType.EVAL else self.args.train_batch_size,
+            batch_size=init_backend["config"].get(
+                "train_batch_size",
+                resolve_dataset_train_batch_size(backend, self.args, dataset_type),
+            ),
             debug_aspect_buckets=self.args.debug_aspect_buckets,
             delete_unwanted_images=backend.get("delete_unwanted_images", self.args.delete_unwanted_images),
             resolution=backend.get("resolution", self.args.resolution),
@@ -3601,7 +3627,10 @@ class FactoryRegistry:
         repeats = max(int(init_backend["config"].get("repeats", 0) or 0), 0)
         shuffle = backend.get("shuffle", True)
         seed = getattr(self.args, "seed", 0)
-        batch_size = backend.get("train_batch_size", getattr(self.args, "train_batch_size", 1))
+        batch_size = init_backend["config"].get(
+            "train_batch_size",
+            resolve_dataset_train_batch_size(backend, self.args, DatasetType.CAPTION),
+        )
 
         init_backend["train_dataset"] = CaptionDataset(
             id=init_backend["id"],
@@ -3774,7 +3803,7 @@ class FactoryRegistry:
                 prompt_records,
                 return_concat=False,
                 load_from_cache=False,
-                split_between_processes=False,
+                split_between_processes=True,
             )
             info_log(f"(id={init_backend['id']}) Completed processing {len(captions)} captions.")
 
@@ -3911,7 +3940,7 @@ class FactoryRegistry:
                 prompt_records,
                 return_concat=False,
                 load_from_cache=False,
-                split_between_processes=False,
+                split_between_processes=True,
             )
             info_log(f"(id={dataset_id}) Completed processing {len(captions)} captions with image context.")
 
@@ -4465,6 +4494,7 @@ class FactoryRegistry:
         if isinstance(metadata_backend, CaptionMetadataBackend) and not built_on_rank:
             metadata_backend.load_image_metadata()
 
+        self._create_caption_dataloader(backend, init_backend)
         StateTracker.register_data_backend(init_backend)
         self.caption_backends[init_backend["id"]] = init_backend
         info_log(f"(id={init_backend['id']}) Caption dataset registered.")
