@@ -71,6 +71,10 @@ By default, `minimax_h3_target_mode: "auto"` resolves to video-only and avoids a
 
 Use `"av"` only when the dataset has target audio latents and you want joint audio/video training. You can set `h3_target_mode` or `minimax_h3_target_mode` inside a data backend entry to opt only selected backends into audio.
 
+For audio-only training, `dataset_type: "audio"` is sufficient. Because H3 advertises fake-video support, SimpleTuner
+records `audio.audio_only: true` in the normalized backend config, builds the placeholder video stream, and masks video
+loss. The explicit `audio_only` setting remains accepted but is not required.
+
 ## Experimental Sparse Attention
 
 MiniMax reports that H3 used train-aware, MoBA-style 3D sparse attention for video tokens during its final training stage. The initial public release uses dense attention, and MiniMax has not yet published the exact H3 block shape, retention budget, layer schedule, or production kernel. SimpleTuner therefore keeps its experimental approximation disabled by default.

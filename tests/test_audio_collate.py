@@ -76,6 +76,37 @@ class TestAudioCollate(unittest.TestCase):
         self.assertIsNotNone(result["latent_batch"])
         self.assertEqual(result["latent_batch"].shape, (2, *latent_shape))
 
+    def test_collate_uses_normalized_audio_only_mode(self):
+        self.mock_backend.get.side_effect = lambda key, default=None: {
+            "config": {
+                "dataset_type": "audio",
+                "instance_data_dir": "/tmp",
+                "audio": {"audio_only": True},
+            }
+        }.get(key, default)
+        batch = [
+            {
+                "training_samples": [
+                    {"image_path": "a.wav", "data_backend_id": "b1", "instance_prompt_text": "a"},
+                    {"image_path": "b.wav", "data_backend_id": "b1", "instance_prompt_text": "b"},
+                ],
+                "conditioning_samples": [],
+            }
+        ]
+        latents = [
+            {"latents": torch.randn(2, 16, 100)},
+            {"latents": torch.randn(2, 16, 100)},
+        ]
+
+        with patch("simpletuner.helpers.training.collate.compute_latents", return_value=latents):
+            result = collate_fn(batch)
+
+        self.assertTrue(result["is_audio_only"])
+        self.assertIsNone(result["latent_batch"])
+        self.assertEqual(result["audio_latent_batch"].shape, (2, 2, 16, 100))
+        torch.testing.assert_close(result["audio_latent_mask"], torch.ones(2))
+        torch.testing.assert_close(result["video_latent_mask"], torch.zeros(2))
+
     def test_check_latent_shapes_variable_lengths(self):
         # Verify check_latent_shapes raises error for differing lengths in training data
         latents = [torch.randn(8, 16, 100), torch.randn(8, 16, 110)]

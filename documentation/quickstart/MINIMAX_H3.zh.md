@@ -71,6 +71,9 @@ Negative prompting 不属于基础 H3 契约。SimpleTuner 为 de-distilled chec
 
 只有当 dataset 有 target audio latents 并需要联合音视频训练时才使用 `"av"`。也可以在 data backend 中设置 `h3_target_mode` 或 `minimax_h3_target_mode`。
 
+仅音频训练只需设置 `dataset_type: "audio"`。H3 声明支持 fake video，因此 SimpleTuner 会在规范化后的 backend
+配置中记录 `audio.audio_only: true`，构建占位视频流，并屏蔽视频 loss。仍可显式设置 `audio_only`，但这不是必需的。
+
 ## 实验性 Sparse Attention
 
 MiniMax 表示 H3 在最终训练阶段对视频 token 使用了 MoBA 风格的 3D sparse attention。初始公开版本使用 dense attention，MiniMax 还没有发布准确的 block shape、retention budget、layer schedule 或生产 kernel。因此 SimpleTuner 默认关闭这个实验性近似实现。
