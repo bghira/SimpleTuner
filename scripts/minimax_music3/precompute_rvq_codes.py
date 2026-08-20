@@ -64,7 +64,7 @@ def main() -> None:
             )
         )
 
-    pair_ids = [line for line in args.pair_ids_file.read_text().replace(",", "\n").split() if line]
+    pair_ids = [line.strip() for line in args.pair_ids_file.read_text().splitlines() if line.strip()]
     done = skipped = 0
     for index, pair_id in enumerate(pair_ids):
         if index % args.num_shards != args.shard_index:
