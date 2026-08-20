@@ -76,7 +76,7 @@ class MultiAspectDataset(Dataset):
                         f"Aspect ratios must be the same for all images in a batch. Expected: {first_aspect_ratio}, got: {calculated_aspect_ratio}"
                     )
 
-            if model_family not in ("deepfloyd", "ace_step"):
+            if model_family not in ("deepfloyd", "ace_step") and image_metadata.get("dataset_type") != "audio":
                 if image_metadata.get("original_size") is None or image_metadata.get("target_size") is None:
                     raise Exception(
                         f"Metadata was unavailable for image: {image_metadata['image_path']}. Ensure --skip_file_discovery=metadata is not set."
