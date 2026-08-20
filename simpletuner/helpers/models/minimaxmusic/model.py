@@ -818,6 +818,8 @@ class MiniMaxMusic(AudioModelFoundation):
         language_model = self.model
         embed_tokens = self.unwrap_model(language_model).get_input_embeddings()
         input_ids = prepared_batch["input_ids"]
+        if next(self.rvq_depth_decoder.parameters()).device != input_ids.device:
+            self.rvq_depth_decoder.to(input_ids.device)
         audio_codes = prepared_batch["audio_codes"]
         prompt_lengths = prepared_batch["prompt_lengths"]
         audio_lengths = prepared_batch["audio_lengths"]
