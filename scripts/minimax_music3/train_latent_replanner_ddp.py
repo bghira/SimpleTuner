@@ -101,6 +101,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--task-dropout", type=float, default=0.15)
     parser.add_argument(
+        "--dpo-weight",
+        type=float,
+        default=0.25,
+        help="on-policy flow-DPO weight (incontext only); chosen = true targets, rejected = few-step self-generations",
+    )
+    parser.add_argument("--dpo-beta", type=float, default=500.0)
+    parser.add_argument("--dpo-every", type=int, default=4, help="apply the DPO term every N steps")
+    parser.add_argument("--dpo-sample-steps", type=int, default=4, help="Euler steps for on-policy reject generation")
+    parser.add_argument(
         "--residual-loss-weighting",
         action="store_true",
         help="weight per-frame loss by |target - input| magnitude (0.5 uniform floor), per AUDIT",
@@ -567,6 +576,12 @@ def main() -> None:
             ),
             flush=True,
         )
+    reference_model = None
+    if args.dpo_weight > 0.0 and args.objective == "incontext":
+        import copy
+
+        reference_model = copy.deepcopy(model).eval()
+        reference_model.requires_grad_(False)
     wrapped = DistributedDataParallel(model, device_ids=[local_rank], find_unused_parameters=True) if distributed else model
     optimizer = torch.optim.AdamW(wrapped.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     start_step = 0
@@ -634,6 +649,10 @@ def main() -> None:
     step = start_step
     task_loss_sums = [0.0, 0.0, 0.0]
     task_loss_counts = [0, 0, 0]
+    dpo_loss_sum = 0.0
+    dpo_margin_sum = 0.0
+    dpo_margin_pos_sum = 0.0
+    dpo_count = 0
     started = time.perf_counter()
     data_iterator = iter(loader)
     epoch = 0
@@ -723,18 +742,59 @@ def main() -> None:
             frame_positions = keep
         else:
             frame_positions = None
-        velocity = wrapped(
-            noisy,
-            conditioning,
-            t,
-            layers,
-            style,
-            code_conditioning,
-            stream_latents,
-            task_ids,
-            context_latents,
-            frame_positions,
+        use_dpo = (
+            reference_model is not None
+            and args.objective == "incontext"
+            and args.target_mask_ratio == 0.0
+            and context_latents is not None
+            and step % args.dpo_every == 0
         )
+        if use_dpo:
+            model.eval()
+            with torch.no_grad():
+                rejected = sample(
+                    model,
+                    conditioning,
+                    args.dpo_sample_steps,
+                    torch.Generator(device="cpu").manual_seed(args.seed + step * world_size + rank),
+                    layers,
+                    style=style,
+                    code_conditioning=code_conditioning,
+                    context_latents=context_latents,
+                )
+            model.train()
+            noisy_rejected = (1.0 - t[:, None, None]) * rejected + t[:, None, None] * noise
+            rejected_target = noise - rejected
+
+            def _dup(tensor):
+                return torch.cat([tensor, tensor], dim=0) if tensor is not None else None
+
+            paired = wrapped(
+                torch.cat([noisy, noisy_rejected], dim=0),
+                _dup(conditioning),
+                torch.cat([t, t], dim=0),
+                _dup(layers),
+                _dup(style),
+                _dup(code_conditioning),
+                None,
+                _dup(task_ids),
+                _dup(context_latents),
+                None,
+            )
+            velocity, velocity_rejected = paired.chunk(2, dim=0)
+        else:
+            velocity = wrapped(
+                noisy,
+                conditioning,
+                t,
+                layers,
+                style,
+                code_conditioning,
+                stream_latents,
+                task_ids,
+                context_latents,
+                frame_positions,
+            )
         frame_error = (velocity - prediction_target).square().mean(dim=-1)
         if args.residual_loss_weighting and degraded_latents is not None:
             residual_mag = (clean - degraded_latents).square().mean(dim=-1).sqrt()
@@ -744,6 +804,32 @@ def main() -> None:
             frame_error = frame_error * weight
         per_sample = frame_error.mean(dim=1)
         loss = per_sample.mean()
+        if use_dpo:
+            error_chosen = (velocity - prediction_target).square().mean(dim=(1, 2))
+            error_rejected = (velocity_rejected - rejected_target).square().mean(dim=(1, 2))
+            with torch.no_grad():
+                reference_paired = reference_model(
+                    torch.cat([noisy, noisy_rejected], dim=0),
+                    _dup(conditioning),
+                    torch.cat([t, t], dim=0),
+                    _dup(layers),
+                    _dup(style),
+                    _dup(code_conditioning),
+                    None,
+                    _dup(task_ids),
+                    _dup(context_latents),
+                    None,
+                )
+                reference_chosen, reference_rejected = reference_paired.chunk(2, dim=0)
+                reference_error_chosen = (reference_chosen - prediction_target).square().mean(dim=(1, 2))
+                reference_error_rejected = (reference_rejected - rejected_target).square().mean(dim=(1, 2))
+            margin = (reference_error_chosen - error_chosen) - (reference_error_rejected - error_rejected)
+            dpo_loss = -F.logsigmoid(args.dpo_beta * margin).mean()
+            loss = loss + args.dpo_weight * dpo_loss
+            dpo_loss_sum += dpo_loss.item()
+            dpo_margin_sum += margin.mean().item()
+            dpo_margin_pos_sum += (margin > 0).float().mean().item()
+            dpo_count += 1
         if "task" in batch:
             tasks = batch["task"].to(device)
             for task_id in (0, 1, 2):
@@ -769,6 +855,14 @@ def main() -> None:
                     record[name] = round(task_loss_sums[task_id] / task_loss_counts[task_id], 6)
             task_loss_sums = [0.0, 0.0, 0.0]
             task_loss_counts = [0, 0, 0]
+            if dpo_count:
+                record["dpo_loss"] = round(dpo_loss_sum / dpo_count, 6)
+                record["dpo_margin"] = round(dpo_margin_sum / dpo_count, 6)
+                record["dpo_margin_pos"] = round(dpo_margin_pos_sum / dpo_count, 4)
+                dpo_loss_sum = 0.0
+                dpo_margin_sum = 0.0
+                dpo_margin_pos_sum = 0.0
+                dpo_count = 0
             print(json.dumps(record), flush=True)
         if step % args.eval_every == 0 or step == args.steps:
             if main_process:
