@@ -67,6 +67,22 @@ simpletuner configure config/foo/config.json
   - `diffusers` 为标准 PEFT/Diffusers 格式。
   - `comfyui` 会转换为 ComfyUI 风格键（`diffusion_model.*`，含 `lora_A/lora_B` 与 `.alpha` 张量）。Flux、Flux2、Lumina2、Z-Image 即便保持 `diffusers` 也会自动识别 ComfyUI 输入，但若希望保存时强制 ComfyUI 输出，请设为 `comfyui`。
 
+### `--minimax_music_train_component`
+
+- **内容**：选择接受训练的 MiniMax Music 3 组件。
+- **选项**：`transformer`（默认）、`language_model`
+- **说明**：
+  - `transformer` 在缓存的 Flow-VAE latent 上训练流匹配音乐 DiT（标准路径）。
+  - `language_model` 使用 RVQ 语义码的下一 token 交叉熵训练 Qwen3 自回归阶段。数据集必须提供预计算的原始逐码本音频 token（`audio_tokens_path` 元数据，形状为 `[frames, codebooks]`），以及 `prompt`（或 `tags`）和 `lyrics`。仅支持标准 PEFT LoRA，`--lora_format comfyui` 会被拒绝，且训练器内验证音频被禁用——请从保存的检查点渲染。
+
+### `--minimax_music_lm_max_frames`
+
+- **内容**：在 `--minimax_music_train_component=language_model` 时，将每首曲目的音频 token 序列截断为该数量的 25Hz 帧（从开头截取以保持歌词对齐）。
+- **默认**：`0`（训练完整曲目）
+- **说明**：
+  - 一帧为 40 毫秒；7500 帧即五分钟。如果长曲目耗尽显存，请降低该值。
+  - 被截断的样本不会获得音频结束目标，因此模型不会被教导提前停止。
+
 ### `--minimax_h3_target_mode`
 
 - **内容**：控制 MiniMax-H3 是否包含目标音频行。

@@ -32,6 +32,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--shard-index", type=int, default=0)
     parser.add_argument("--num-shards", type=int, default=1)
+    parser.add_argument(
+        "--raw-codes",
+        action="store_true",
+        help="store raw per-codebook indices without vocabulary offsets (required for SimpleTuner LM training)",
+    )
     return parser.parse_args()
 
 
@@ -71,8 +76,11 @@ def main() -> None:
         audio, sample_rate = sf.read(args.source_dir / pair_id, dtype="float32", always_2d=True)
         waveform = torch.from_numpy(audio.T.copy())
         codes = adapter.predict_codes(waveform, sample_rate, device=device, offload_after=False)
-        offsets = torch.tensor([0] + list(torch.tensor(vocab_sizes[:-1]).cumsum(0)), dtype=torch.long)[:books]
-        combined = (codes.long() + offsets[None, :]).to(torch.int32)
+        if args.raw_codes:
+            combined = codes.long().to(torch.int32)
+        else:
+            offsets = torch.tensor([0] + list(torch.tensor(vocab_sizes[:-1]).cumsum(0)), dtype=torch.long)[:books]
+            combined = (codes.long() + offsets[None, :]).to(torch.int32)
         torch.save({"codes": combined, "duration": audio.shape[0] / sample_rate}, output_path)
         done += 1
         if done % 100 == 0:

@@ -1022,5 +1022,150 @@ class MiniMaxMusicExampleConfigTests(unittest.TestCase):
                 self.assertEqual(data_config[0]["audio"]["max_duration_seconds"], settings["duration"])
 
 
+class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
+    def _lm_config(self, **overrides):
+        config = SimpleNamespace(
+            model_family="minimaxmusic",
+            model_flavour="music3",
+            pretrained_model_name_or_path="MiniMaxAI/MiniMax-Music3",
+            pretrained_vae_model_name_or_path=None,
+            vae_path=None,
+            minimax_music_train_component="language_model",
+            minimax_music_lm_max_frames=0,
+        )
+        for key, value in overrides.items():
+            setattr(config, key, value)
+        return config
+
+    def _lm_model(self, **config_overrides):
+        model = MiniMaxMusic(
+            config=self._lm_config(**config_overrides), accelerator=SimpleNamespace(device=torch.device("cpu"))
+        )
+        model.rvq_depth_decoder = SimpleNamespace(config=SimpleNamespace(num_codebooks=4, audio_vocab_size=8))
+        return model
+
+    class _FakeTokenizer:
+        def __call__(self, text, return_tensors=None):
+            token_count = max(2, min(len(text) // 16, 12))
+            return {"input_ids": torch.arange(token_count, dtype=torch.long).unsqueeze(0)}
+
+    def test_lm_mode_switches_component_contracts(self):
+        model = self._lm_model()
+        self.assertTrue(model._train_language_model)
+        self.assertTrue(model.uses_audio_tokens())
+        self.assertFalse(model.uses_audio_latents())
+        self.assertFalse(model.uses_text_embeddings_cache())
+        self.assertEqual(model.MODEL_SUBFOLDER, "language_model")
+        self.assertEqual(model._music_lora_component_name(), "language_model")
+        self.assertIn("q_proj", model.DEFAULT_LORA_TARGET)
+        self.assertIsNone(model.load_vae())
+
+    def test_lm_mode_defaults_off(self):
+        config = SimpleNamespace(
+            model_family="minimaxmusic",
+            model_flavour="music3",
+            pretrained_model_name_or_path="MiniMaxAI/MiniMax-Music3",
+            pretrained_vae_model_name_or_path=None,
+            vae_path=None,
+        )
+        model = MiniMaxMusic(config=config, accelerator=SimpleNamespace())
+        self.assertFalse(model._train_language_model)
+        self.assertFalse(model.uses_audio_tokens())
+        self.assertTrue(model.uses_audio_latents())
+        self.assertEqual(model.MODEL_SUBFOLDER, "transformer")
+
+    def test_lm_collate_builds_prompt_and_code_batches(self):
+        model = self._lm_model()
+        model.tokenizers = [self._FakeTokenizer()]
+        examples = [
+            {
+                "prompt": "fiona crapple, jazzy piano" * 4,
+                "lyrics": "some lyrics here" * 8,
+                "audio_tokens": torch.randint(0, 8, (10, 4)).clamp(max=7),
+            },
+            {
+                "prompt": "fiona crapple" * 8,
+                "lyrics": "other lyrics" * 4,
+                "audio_tokens": torch.randint(0, 8, (6, 4)).clamp(max=7),
+            },
+        ]
+        payload = model.collate_audio_tokens(examples)
+        self.assertEqual(payload["audio_codes"].shape, (2, 10, 4))
+        self.assertEqual(payload["audio_lengths"].tolist(), [10, 6])
+        self.assertTrue(bool(payload["has_audio_end"].all()))
+        self.assertEqual(payload["input_ids"].shape[0], 2)
+        self.assertEqual(payload["prompt_lengths"].shape[0], 2)
+
+    def test_lm_collate_truncates_and_drops_end_target(self):
+        model = self._lm_model(minimax_music_lm_max_frames=4)
+        model.tokenizers = [self._FakeTokenizer()]
+        examples = [
+            {
+                "prompt": "fiona crapple style",
+                "lyrics": "la la la",
+                "audio_tokens": torch.zeros((9, 4), dtype=torch.long),
+            }
+        ]
+        payload = model.collate_audio_tokens(examples)
+        self.assertEqual(payload["audio_lengths"].tolist(), [4])
+        self.assertFalse(bool(payload["has_audio_end"].any()))
+
+    def test_lm_collate_rejects_offset_baked_codes(self):
+        model = self._lm_model()
+        model.tokenizers = [self._FakeTokenizer()]
+        baked = torch.zeros((5, 4), dtype=torch.long)
+        baked[:, 1] = 20  # exceeds audio_vocab_size=8 -> offsets were baked in
+        examples = [{"prompt": "x", "lyrics": "y", "audio_tokens": baked}]
+        with self.assertRaises(ValueError):
+            model.collate_audio_tokens(examples)
+
+    def test_lm_loss_targets_audio_positions_only(self):
+        from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET, _AUDIO_END_TOKEN_ID
+
+        model = self._lm_model()
+        vocab = _AUDIO_CODE_OFFSET + 32
+        prompt_len, audio_len = 3, 2
+        codes = torch.tensor([[5, 0, 0, 0], [9, 0, 0, 0]], dtype=torch.long).unsqueeze(0)
+        logits = torch.zeros((1, prompt_len + audio_len, vocab))
+        logits[0, prompt_len - 1, 5 + _AUDIO_CODE_OFFSET] = 25.0
+        logits[0, prompt_len, 9 + _AUDIO_CODE_OFFSET] = 25.0
+        logits[0, prompt_len + 1, _AUDIO_END_TOKEN_ID] = 25.0
+        prepared = {
+            "audio_codes": codes,
+            "prompt_lengths": torch.tensor([prompt_len]),
+            "audio_lengths": torch.tensor([audio_len]),
+            "has_audio_end": torch.tensor([True]),
+        }
+        loss = model.loss(prepared, {"logits": logits})
+        self.assertLess(float(loss), 0.01)
+
+        # Truncated samples must not be pushed toward the end-of-audio token.
+        prepared["has_audio_end"] = torch.tensor([False])
+        logits[0, prompt_len + 1, _AUDIO_END_TOKEN_ID] = 0.0
+        loss = model.loss(prepared, {"logits": logits})
+        self.assertLess(float(loss), 0.01)
+
+    def test_lm_frame_embeds_apply_depth_offsets_and_scale(self):
+        from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET
+
+        model = self._lm_model()
+        hidden = 8
+        embed = torch.nn.Embedding(_AUDIO_CODE_OFFSET + 32, hidden)
+        depth_embed = torch.nn.Embedding(3 * 8, hidden)
+        model.model = SimpleNamespace(get_input_embeddings=lambda: embed)
+        model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
+        model.rvq_depth_decoder = SimpleNamespace(
+            config=SimpleNamespace(num_codebooks=4, audio_vocab_size=8),
+            audio_embeddings=depth_embed,
+        )
+        codes = torch.tensor([[3, 1, 2, 7], [6, 0, 5, 3]], dtype=torch.long)
+        result = model._lm_frame_embeds(codes)
+        offsets = torch.tensor([0, 8, 16])
+        expected = (embed(codes[:, 0] + _AUDIO_CODE_OFFSET) + depth_embed(codes[:, 1:] + offsets[None, :]).sum(dim=1)) * (
+            4**-0.5
+        )
+        self.assertTrue(torch.allclose(result, expected, atol=1e-6))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -164,6 +164,26 @@ simpletuner train env=minimaxmusic-training-demo --init_lora=/path/to/adapter.sa
 
 MiniMax Music 3 使用 SimpleTuner 的 flow-matching 训练路径，因此可使用 AnyFlow、TwinFlow、CREPA self-flow 和 LayerSync。建议先使用标准 LoRA，再逐个启用高级功能。
 
+## 语言模型（AR 阶段）训练
+
+规划 MiniMax Music 3 语义码的 Qwen3 语言模型可以代替音乐 DiT 进行训练——适用于 dreambooth 式触发词，将某种音乐风格绑定到一个关键词。
+
+```json
+{
+  "minimax_music_train_component": "language_model",
+  "minimax_music_lm_max_frames": 0
+}
+```
+
+要求以及与 DiT 训练的区别：
+
+- 每个数据集样本必须提供 `prompt`（或 `tags`）、`lyrics`，以及指向 `.pt` 文件的 `audio_tokens_path` 元数据，该文件包含形状为 `[frames, codebooks]` 的原始逐码本 RVQ 码（语义码 `< 16384`，残差码 `< audio_vocab_size`，不含词表偏移）。使用 `scripts/minimax_music3/precompute_rvq_codes.py --raw-codes` 导出。
+- 损失是语义码本上的下一 token 交叉熵，仅作用于音频位置；RVQ depth decoder 保持冻结，并提供残差码输入嵌入。
+- 仅支持标准 PEFT LoRA，`lora_format: "comfyui"` 会被拒绝。检查点保存带 `language_model.` 前缀键的 `pytorch_lora_weights.safetensors`。
+- 此模式下训练器内验证音频被禁用；请使用标准生成栈从保存的检查点渲染。
+- 此模式下不进行 VAE 或文本嵌入缓存——训练直接读取 token，因此 `cache_dir_vae` 和文本嵌入后端不会被使用。
+- 将触发关键词（例如 `"fiona crapple"`）放入每个样本的 caption/`prompt` 字段；歌词保持原样。
+
 ## 故障排查
 
 - **`VAE caching requires the original dav.pth checkpoint`**：使用 `SimpleTuner/MiniMax-Music-3-Encoder` 或 `MiniMaxAI/MiniMax-Music3`，把 `dav.pth` 放在本地 checkpoint 根目录，或将 `pretrained_vae_model_name_or_path` 指向包含它的位置。

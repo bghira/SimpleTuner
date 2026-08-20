@@ -1,0 +1,14 @@
+[
+  {
+    "id": "minimaxmusic-lm-demo-data",
+    "type": "huggingface",
+    "dataset_type": "audio",
+    "dataset_name": "your-org/minimaxmusic-audio-tokens",
+    "metadata_backend": "huggingface",
+    "caption_strategy": "huggingface",
+    "audio": {
+      "bucket_strategy": "duration",
+      "duration_interval": 30.0
+    }
+  }
+]

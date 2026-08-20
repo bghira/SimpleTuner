@@ -67,6 +67,22 @@ simpletuner configure config/foo/config.json
   - `diffusers` は標準の PEFT/Diffusers 形式です。
   - `comfyui` は ComfyUI 形式（`diffusion_model.*` と `lora_A/lora_B` + `.alpha`）に変換します。Flux、Flux2、Lumina2、Z-Image は `diffusers` のままでも ComfyUI 入力を自動検出しますが、保存時に ComfyUI 出力を強制したい場合は `comfyui` を指定してください。
 
+### `--minimax_music_train_component`
+
+- **内容**: トレーニング対象となる MiniMax Music 3 コンポーネントを選択します。
+- **選択肢**: `transformer`（デフォルト）、`language_model`
+- **メモ**:
+  - `transformer` はキャッシュされた Flow-VAE latent 上でフローマッチング音楽 DiT をトレーニングします（標準パス）。
+  - `language_model` は RVQ セマンティックコードの次トークン交差エントロピーで Qwen3 自己回帰ステージをトレーニングします。データセットは、`prompt`（または `tags`）と `lyrics` に加えて、事前計算された生のコードブック別オーディオトークン（`audio_tokens_path` メタデータ、形状 `[frames, codebooks]`）を提供する必要があります。標準 PEFT LoRA のみ対応、`--lora_format comfyui` は拒否され、トレーナー内の検証オーディオは無効になります——保存されたチェックポイントからレンダリングしてください。
+
+### `--minimax_music_lm_max_frames`
+
+- **内容**: `--minimax_music_train_component=language_model` の場合、各トラックのオーディオトークン列をこのフレーム数（25Hz）に切り詰めます（歌詞との整合を保つため先頭から取得）。
+- **デフォルト**: `0`（フルトラックでトレーニング）
+- **メモ**:
+  - 1 フレームは 40ms、7500 フレームは 5 分です。長いトラックで VRAM が不足する場合は下げてください。
+  - 切り詰められたサンプルにはオーディオ終端ターゲットが与えられないため、モデルが早期停止を学習することはありません。
+
 ### `--minimax_h3_target_mode`
 
 - **内容**: MiniMax-H3 がターゲット音声行を含めるかを制御します。

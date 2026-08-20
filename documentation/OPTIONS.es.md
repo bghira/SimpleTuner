@@ -67,6 +67,22 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
   - `diffusers` es el esquema estándar de PEFT/Diffusers.
   - `comfyui` convierte hacia/desde claves estilo ComfyUI (`diffusion_model.*` con tensores `lora_A/lora_B` y `.alpha`). Flux, Flux2, Lumina2 y Z-Image detectarán automáticamente entradas ComfyUI incluso si esto se deja en `diffusers`, pero cámbialo a `comfyui` para forzar salida ComfyUI al guardar.
 
+### `--minimax_music_train_component`
+
+- **Qué**: Selecciona qué componente de MiniMax Music 3 recibe el entrenamiento.
+- **Opciones**: `transformer` (predeterminado), `language_model`
+- **Notas**:
+  - `transformer` entrena el DiT musical de flow matching sobre latentes Flow-VAE en caché (la ruta estándar).
+  - `language_model` entrena la etapa autorregresiva Qwen3 con entropía cruzada de siguiente token sobre códigos semánticos RVQ. Los datasets deben proporcionar tokens de audio crudos por codebook precomputados (metadato `audio_tokens_path`, con forma `[frames, codebooks]`) junto con `prompt` (o `tags`) y `lyrics`. Solo se admite LoRA PEFT estándar, `--lora_format comfyui` se rechaza y el audio de validación dentro del entrenador está deshabilitado: renderiza desde los checkpoints guardados.
+
+### `--minimax_music_lm_max_frames`
+
+- **Qué**: Para `--minimax_music_train_component=language_model`, trunca la secuencia de tokens de audio de cada pista a esta cantidad de frames de 25Hz (tomados desde el inicio para mantener la alineación con la letra).
+- **Predeterminado**: `0` (entrenar con pistas completas)
+- **Notas**:
+  - Un frame son 40ms; 7500 frames son cinco minutos. Reduce este valor si las pistas largas agotan la VRAM.
+  - Las muestras truncadas no reciben objetivo de fin de audio, por lo que el modelo no aprende a detenerse antes de tiempo.
+
 ### `--minimax_h3_target_mode`
 
 - **Qué**: Controla si MiniMax-H3 incluye filas de audio objetivo.

@@ -67,6 +67,22 @@ Where `foo` is your config environment - or just use `config/config.json` if you
   - `diffusers` is the standard PEFT/Diffusers layout.
   - `comfyui` converts to/from ComfyUI-style keys (`diffusion_model.*` with `lora_A/lora_B` and `.alpha` tensors). Flux, Flux2, Lumina2, and Z-Image will auto-detect ComfyUI inputs even if this is left at `diffusers`, but set it to `comfyui` to force ComfyUI output when saving.
 
+### `--minimax_music_train_component`
+
+- **What**: Selects which MiniMax Music 3 component receives training.
+- **Choices**: `transformer` (default), `language_model`
+- **Notes**:
+  - `transformer` trains the flow-matching music DiT on cached Flow-VAE latents (the standard path).
+  - `language_model` trains the Qwen3 autoregressive stage with next-token cross-entropy on RVQ semantic codes. Datasets must provide precomputed raw per-codebook audio tokens (`audio_tokens_path` metadata, shaped `[frames, codebooks]`) alongside `prompt` (or `tags`) and `lyrics`. Only standard PEFT LoRA is supported, `--lora_format comfyui` is rejected, and in-trainer validation audio is disabled — render from saved checkpoints instead.
+
+### `--minimax_music_lm_max_frames`
+
+- **What**: For `--minimax_music_train_component=language_model`, truncates each track's audio token sequence to this many 25Hz frames (taken from the start so lyrics stay aligned).
+- **Default**: `0` (train on full tracks)
+- **Notes**:
+  - One frame is 40ms; 7500 frames is five minutes. Lower this if long tracks exhaust VRAM.
+  - Truncated samples do not receive an end-of-audio target, so the model is not taught to stop early.
+
 ### `--minimax_h3_target_mode`
 
 - **What**: Controls whether MiniMax-H3 includes target audio rows.

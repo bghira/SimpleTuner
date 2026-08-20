@@ -164,6 +164,26 @@ Si el adapter está en formato ComfyUI nativo, conserva `lora_format: "comfyui"`
 
 MiniMax Music 3 usa el flujo de entrenamiento flow-matching de SimpleTuner, así que AnyFlow, TwinFlow, CREPA self-flow y LayerSync están disponibles. Empieza con LoRA estándar y activa una función avanzada por vez.
 
+## Entrenamiento del modelo de lenguaje (etapa AR)
+
+El modelo de lenguaje Qwen3 que planifica los códigos semánticos de MiniMax Music 3 puede entrenarse en lugar del DiT musical — útil para palabras disparadoras estilo dreambooth que vinculan un estilo musical a una palabra clave.
+
+```json
+{
+  "minimax_music_train_component": "language_model",
+  "minimax_music_lm_max_frames": 0
+}
+```
+
+Requisitos y diferencias respecto al entrenamiento del DiT:
+
+- Cada muestra del dataset debe proporcionar `prompt` (o `tags`), `lyrics` y un metadato `audio_tokens_path` que apunte a un archivo `.pt` con códigos RVQ crudos por codebook con forma `[frames, codebooks]` (códigos semánticos `< 16384`, residuales `< audio_vocab_size`, sin offsets de vocabulario). Expórtalos con `scripts/minimax_music3/precompute_rvq_codes.py --raw-codes`.
+- La pérdida es entropía cruzada de siguiente token sobre el codebook semántico, enmascarada a las posiciones de audio; el depth decoder RVQ permanece congelado y aporta los embeddings de entrada de los códigos residuales.
+- Solo se admite LoRA PEFT estándar y `lora_format: "comfyui"` se rechaza. Los checkpoints guardan `pytorch_lora_weights.safetensors` con claves de adaptador con prefijo `language_model.`.
+- El audio de validación dentro del entrenador está deshabilitado en este modo; renderiza desde los checkpoints guardados con la pila de generación estándar.
+- En este modo no hay caché de VAE ni de embeddings de texto — el entrenamiento lee los tokens directamente, así que `cache_dir_vae` y los backends de text embeds no se usan.
+- Coloca tu palabra clave (p. ej. `"fiona crapple"`) en el campo caption/`prompt` de cada muestra; mantén las letras sin modificar.
+
 ## Solución de problemas
 
 - **`VAE caching requires the original dav.pth checkpoint`**: usa `SimpleTuner/MiniMax-Music-3-Encoder` o `MiniMaxAI/MiniMax-Music3`, conserva `dav.pth` en la raíz del checkpoint local, o apunta `pretrained_vae_model_name_or_path` a una ubicación que lo contenga.

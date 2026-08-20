@@ -225,6 +225,26 @@ MiniMax Music 3 uses SimpleTuner's flow-matching training path, so the same adva
 
 Start with standard LoRA first. Add one advanced feature at a time and keep validation clips short until memory use is understood.
 
+## Language Model (AR Stage) Training
+
+The Qwen3 language model that plans MiniMax Music 3's semantic codes can be trained instead of the music DiT — useful for dreambooth-style trigger words that bind a musical style to a keyword.
+
+```json
+{
+  "minimax_music_train_component": "language_model",
+  "minimax_music_lm_max_frames": 0
+}
+```
+
+Requirements and differences from DiT training:
+
+- Each dataset sample must provide `prompt` (or `tags`), `lyrics`, and `audio_tokens_path` metadata pointing at a `.pt` file of raw per-codebook RVQ codes shaped `[frames, codebooks]` (semantic codes `< 16384`, residual codes `< audio_vocab_size`, no vocabulary offsets baked in). Export them with `scripts/minimax_music3/precompute_rvq_codes.py --raw-codes`.
+- The loss is next-token cross-entropy on the semantic codebook, masked to audio positions; the RVQ depth decoder stays frozen and supplies the residual-code input embeddings.
+- Only standard PEFT LoRA is supported and `lora_format: "comfyui"` is rejected. Checkpoints save `pytorch_lora_weights.safetensors` with `language_model.`-prefixed adapter keys.
+- In-trainer validation audio is disabled in this mode; render from saved checkpoints with the standard generation stack instead.
+- No VAE or text-embed caching happens in this mode — training reads tokens directly, so `cache_dir_vae` and text embed backends are not used.
+- Put your trigger keyword (e.g. `"fiona crapple"`) in the caption/`prompt` field of every sample; keep lyrics verbatim.
+
 ## Troubleshooting
 
 - **`VAE caching requires the original dav.pth checkpoint`**: use `SimpleTuner/MiniMax-Music-3-Encoder`, `MiniMaxAI/MiniMax-Music3`, keep `dav.pth` at your local checkpoint root, or set `pretrained_vae_model_name_or_path` to a location containing it.
