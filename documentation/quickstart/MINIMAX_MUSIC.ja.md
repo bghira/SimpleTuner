@@ -179,7 +179,7 @@ MiniMax Music 3 のセマンティックコードを計画する Qwen3 言語モ
 
 要件と DiT トレーニングとの違い:
 
-- 各データセットサンプルは `prompt`（または `tags`）、`lyrics`、および `[frames, codebooks]` 形状の生のコードブック別 RVQ コードの `.pt` ファイルを指す `audio_tokens_path` メタデータを提供する必要があります（セマンティックコード `< 16384`、残差コード `< audio_vocab_size`、語彙オフセットなし）。`scripts/minimax_music3/precompute_rvq_codes.py --raw-codes` でエクスポートしてください。
+- 各データセットサンプルは `prompt`（または `tags`）、`lyrics`、および `[frames, codebooks]` 形状の生のコードブック別 RVQ コードの `.pt` ファイルを指す `audio_tokens_path` メタデータを提供する必要があります（セマンティックコード `< 16384`、残差コード `< audio_vocab_size`、語彙オフセットなし）。専用の `minimax-music3-latent-replanner` リポジトリにある `precompute_rvq_codes.py --raw-codes` でエクスポートしてください。
 - 損失はセマンティックコードブックの次トークン交差エントロピーで、オーディオ位置にマスクされます。RVQ depth decoder は凍結されたまま、残差コード入力エンベディングを供給します。
 - 標準 PEFT LoRA のみ対応で、`lora_format: "comfyui"` は拒否されます。チェックポイントは `language_model.` プレフィックス付きキーで `pytorch_lora_weights.safetensors` を保存します。
 - このモードではトレーナー内の検証オーディオは無効です。保存されたチェックポイントから標準生成スタックでレンダリングしてください。
@@ -192,3 +192,11 @@ MiniMax Music 3 のセマンティックコードを計画する Qwen3 言語モ
 - **`VAE caching requires the original dav.pth checkpoint`**: `SimpleTuner/MiniMax-Music-3-Encoder` または `MiniMaxAI/MiniMax-Music3` を使うか、ローカル checkpoint root に `dav.pth` を置くか、`pretrained_vae_model_name_or_path` をそれを含む場所に向けます。
 - **歌詞が使われない**: backend metadata に `lyrics` があることを確認するか、`caption_strategy: "textfile"` の場合は音声の横に `.lyrics` sidecar を置きます。
 - **Text embedding または validation OOM**: validation duration を短くし、int8 text encoder precision または text encoder offload を使います。
+
+## 関連する MiniMax Music 3 実験
+
+- [Open RVQ encoder](https://huggingface.co/SimpleTuner/open-rvq-encoder-minimax-music3)
+- [RVQ 参照音声統合](https://github.com/bghira/minimax-music3-rvq-reference-audio)
+- [Fiona Crapple LM LoRA](https://huggingface.co/terminusresearch/minimax-music3-lm-lora-fiona-crapple)
+- [Latent refiner](https://github.com/bghira/minimax-music3-latent-refiner) と [v0.10 weights](https://huggingface.co/terminusresearch/minimax-music3-latent-refiner-v0.10)
+- [Latent replanner](https://github.com/bghira/minimax-music3-latent-replanner) と [experiment log](https://huggingface.co/terminusresearch/minimax-music3-replanner-experiment)

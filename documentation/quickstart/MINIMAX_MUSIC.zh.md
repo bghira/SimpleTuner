@@ -179,7 +179,7 @@ MiniMax Music 3 使用 SimpleTuner 的 flow-matching 训练路径，因此可使
 
 要求以及与 DiT 训练的区别：
 
-- 每个数据集样本必须提供 `prompt`（或 `tags`）、`lyrics`，以及指向 `.pt` 文件的 `audio_tokens_path` 元数据，该文件包含形状为 `[frames, codebooks]` 的原始逐码本 RVQ 码（语义码 `< 16384`，残差码 `< audio_vocab_size`，不含词表偏移）。使用 `scripts/minimax_music3/precompute_rvq_codes.py --raw-codes` 导出。
+- 每个数据集样本必须提供 `prompt`（或 `tags`）、`lyrics`，以及指向 `.pt` 文件的 `audio_tokens_path` 元数据，该文件包含形状为 `[frames, codebooks]` 的原始逐码本 RVQ 码（语义码 `< 16384`，残差码 `< audio_vocab_size`，不含词表偏移）。请使用专用 `minimax-music3-latent-replanner` 仓库中的 `precompute_rvq_codes.py --raw-codes` 导出。
 - 损失是语义码本上的下一 token 交叉熵，仅作用于音频位置；RVQ depth decoder 保持冻结，并提供残差码输入嵌入。
 - 仅支持标准 PEFT LoRA，`lora_format: "comfyui"` 会被拒绝。检查点保存带 `language_model.` 前缀键的 `pytorch_lora_weights.safetensors`。
 - 此模式下训练器内验证音频被禁用；请使用标准生成栈从保存的检查点渲染。
@@ -192,3 +192,11 @@ MiniMax Music 3 使用 SimpleTuner 的 flow-matching 训练路径，因此可使
 - **`VAE caching requires the original dav.pth checkpoint`**：使用 `SimpleTuner/MiniMax-Music-3-Encoder` 或 `MiniMaxAI/MiniMax-Music3`，把 `dav.pth` 放在本地 checkpoint 根目录，或将 `pretrained_vae_model_name_or_path` 指向包含它的位置。
 - **歌词缺失**：确认 backend metadata 包含 `lyrics`，或使用 `caption_strategy: "textfile"` 时在音频旁边放置 `.lyrics` sidecar。
 - **Text embedding 或 validation OOM**：降低 validation duration，使用 int8 text encoder precision，或启用 text encoder offload。
+
+## 相关 MiniMax Music 3 实验
+
+- [开放 RVQ 编码器](https://huggingface.co/SimpleTuner/open-rvq-encoder-minimax-music3)
+- [RVQ 参考音频集成](https://github.com/bghira/minimax-music3-rvq-reference-audio)
+- [Fiona Crapple LM LoRA](https://huggingface.co/terminusresearch/minimax-music3-lm-lora-fiona-crapple)
+- [Latent refiner](https://github.com/bghira/minimax-music3-latent-refiner) 和 [v0.10 权重](https://huggingface.co/terminusresearch/minimax-music3-latent-refiner-v0.10)
+- [Latent replanner](https://github.com/bghira/minimax-music3-latent-replanner) 和 [实验记录](https://huggingface.co/terminusresearch/minimax-music3-replanner-experiment)

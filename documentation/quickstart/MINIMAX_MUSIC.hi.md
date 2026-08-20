@@ -179,7 +179,7 @@ MiniMax Music 3 के सिमेंटिक कोड की योजना
 
 आवश्यकताएँ और DiT प्रशिक्षण से अंतर:
 
-- प्रत्येक डेटासेट नमूने में `prompt` (या `tags`), `lyrics`, और `audio_tokens_path` मेटाडेटा होना चाहिए जो `[frames, codebooks]` आकार के कच्चे प्रति-कोडबुक RVQ कोड की `.pt` फ़ाइल की ओर इशारा करे (सिमेंटिक कोड `< 16384`, अवशिष्ट कोड `< audio_vocab_size`, कोई शब्दावली ऑफ़सेट नहीं)। इन्हें `scripts/minimax_music3/precompute_rvq_codes.py --raw-codes` से निर्यात करें।
+- प्रत्येक डेटासेट नमूने में `prompt` (या `tags`), `lyrics`, और `audio_tokens_path` मेटाडेटा होना चाहिए जो `[frames, codebooks]` आकार के कच्चे प्रति-कोडबुक RVQ कोड की `.pt` फ़ाइल की ओर इशारा करे (सिमेंटिक कोड `< 16384`, अवशिष्ट कोड `< audio_vocab_size`, कोई शब्दावली ऑफ़सेट नहीं)। इन्हें समर्पित `minimax-music3-latent-replanner` रिपॉजिटरी के `precompute_rvq_codes.py --raw-codes` से निर्यात करें।
 - हानि सिमेंटिक कोडबुक पर नेक्स्ट-टोकन क्रॉस-एंट्रॉपी है, जो ऑडियो स्थितियों तक सीमित है; RVQ depth decoder स्थिर रहता है और अवशिष्ट-कोड इनपुट एम्बेडिंग प्रदान करता है।
 - केवल मानक PEFT LoRA समर्थित है और `lora_format: "comfyui"` अस्वीकार किया जाता है। चेकपॉइंट `language_model.` उपसर्ग वाली कुंजियों के साथ `pytorch_lora_weights.safetensors` सहेजते हैं।
 - इस मोड में ट्रेनर के भीतर सत्यापन ऑडियो अक्षम है; सहेजे गए चेकपॉइंट से मानक जनरेशन स्टैक के साथ रेंडर करें।
@@ -192,3 +192,11 @@ MiniMax Music 3 के सिमेंटिक कोड की योजना
 - **`VAE caching requires the original dav.pth checkpoint`**: `SimpleTuner/MiniMax-Music-3-Encoder` या `MiniMaxAI/MiniMax-Music3` इस्तेमाल करें, local checkpoint root में `dav.pth` रखें, या `pretrained_vae_model_name_or_path` को ऐसे location पर point करें जहाँ यह मौजूद हो।
 - **Lyrics missing हैं**: backend metadata में `lyrics` confirm करें, या `caption_strategy: "textfile"` के साथ audio files के पास `.lyrics` sidecar रखें।
 - **Text embedding या validation OOM**: `validation_audio_duration` घटाएँ, int8 text encoder precision इस्तेमाल करें, या text encoder offload enable करें।
+
+## संबंधित MiniMax Music 3 प्रयोग
+
+- [ओपन RVQ encoder](https://huggingface.co/SimpleTuner/open-rvq-encoder-minimax-music3)
+- [RVQ reference-audio integration](https://github.com/bghira/minimax-music3-rvq-reference-audio)
+- [Fiona Crapple LM LoRA](https://huggingface.co/terminusresearch/minimax-music3-lm-lora-fiona-crapple)
+- [Latent refiner](https://github.com/bghira/minimax-music3-latent-refiner) और [v0.10 weights](https://huggingface.co/terminusresearch/minimax-music3-latent-refiner-v0.10)
+- [Latent replanner](https://github.com/bghira/minimax-music3-latent-replanner) और [experiment log](https://huggingface.co/terminusresearch/minimax-music3-replanner-experiment)

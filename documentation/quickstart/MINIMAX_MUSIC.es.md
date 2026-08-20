@@ -179,7 +179,7 @@ Consulta [fiona crapple](https://huggingface.co/terminusresearch/minimax-music3-
 
 Requisitos y diferencias respecto al entrenamiento del DiT:
 
-- Cada muestra del dataset debe proporcionar `prompt` (o `tags`), `lyrics` y un metadato `audio_tokens_path` que apunte a un archivo `.pt` con códigos RVQ crudos por codebook con forma `[frames, codebooks]` (códigos semánticos `< 16384`, residuales `< audio_vocab_size`, sin offsets de vocabulario). Expórtalos con `scripts/minimax_music3/precompute_rvq_codes.py --raw-codes`.
+- Cada muestra del dataset debe proporcionar `prompt` (o `tags`), `lyrics` y un metadato `audio_tokens_path` que apunte a un archivo `.pt` con códigos RVQ crudos por codebook con forma `[frames, codebooks]` (códigos semánticos `< 16384`, residuales `< audio_vocab_size`, sin offsets de vocabulario). Expórtalos con `precompute_rvq_codes.py --raw-codes` desde el repositorio dedicado `minimax-music3-latent-replanner`.
 - La pérdida es entropía cruzada de siguiente token sobre el codebook semántico, enmascarada a las posiciones de audio; el depth decoder RVQ permanece congelado y aporta los embeddings de entrada de los códigos residuales.
 - Solo se admite LoRA PEFT estándar y `lora_format: "comfyui"` se rechaza. Los checkpoints guardan `pytorch_lora_weights.safetensors` con claves de adaptador con prefijo `language_model.`.
 - El audio de validación dentro del entrenador está deshabilitado en este modo; renderiza desde los checkpoints guardados con la pila de generación estándar.
@@ -192,3 +192,11 @@ Requisitos y diferencias respecto al entrenamiento del DiT:
 - **`VAE caching requires the original dav.pth checkpoint`**: usa `SimpleTuner/MiniMax-Music-3-Encoder` o `MiniMaxAI/MiniMax-Music3`, conserva `dav.pth` en la raíz del checkpoint local, o apunta `pretrained_vae_model_name_or_path` a una ubicación que lo contenga.
 - **Lyrics ausentes**: confirma que los metadatos incluyen `lyrics`, o coloca archivos `.lyrics` junto al audio al usar `caption_strategy: "textfile"`.
 - **OOM en text embedding o validación**: reduce `validation_audio_duration`, usa int8 para el text encoder o habilita offload del text encoder.
+
+## Experimentos relacionados con MiniMax Music 3
+
+- [Encoders RVQ abiertos](https://huggingface.co/SimpleTuner/open-rvq-encoder-minimax-music3)
+- [Integración de audio de referencia RVQ](https://github.com/bghira/minimax-music3-rvq-reference-audio)
+- [LoRA del LM Fiona Crapple](https://huggingface.co/terminusresearch/minimax-music3-lm-lora-fiona-crapple)
+- [Refinador latente](https://github.com/bghira/minimax-music3-latent-refiner) y [pesos v0.10](https://huggingface.co/terminusresearch/minimax-music3-latent-refiner-v0.10)
+- [Replanificador latente](https://github.com/bghira/minimax-music3-latent-replanner) y [registro experimental](https://huggingface.co/terminusresearch/minimax-music3-replanner-experiment)
