@@ -154,6 +154,73 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         cache.model.encode_text_batch.assert_not_called()
         self.assertEqual(cache.write_queue.qsize(), 0)
 
+    def test_ondemand_cache_miss_returns_unpacked_format(self):
+        """On-demand encode round-trips through pack then unpack so the
+        returned format matches what load_from_cache would return."""
+        cache = _make_cache(TextEmbedCacheKey.CAPTION, text_cache_ondemand=True)
+
+        class PackingModel(_DummyModel):
+            def __init__(self):
+                super().__init__(TextEmbedCacheKey.CAPTION)
+                self.pack_input_dims = []
+
+            def encode_text_batch(self, prompts, is_negative_prompt=False, prompt_contexts=None):
+                return {
+                    "prompt_embeds": torch.arange(1 * 2 * 4, dtype=torch.float32).reshape(1, 2, 4),
+                    "attention_mask": torch.ones(1, 2, dtype=torch.bool),
+                }
+
+            def pack_text_embeddings_for_cache(self, embeddings):
+                self.pack_input_dims.append(embeddings["prompt_embeds"].shape[-1])
+                if embeddings["prompt_embeds"].shape[-1] == 2:
+                    return embeddings
+                packed = dict(embeddings)
+                packed["prompt_embeds"] = embeddings["prompt_embeds"][..., :2].contiguous()
+                return packed
+
+            def unpack_text_embeddings_from_cache(self, embeddings):
+                # Simulate restoring full width (mirrors load_from_cache path)
+                unpacked = dict(embeddings)
+                unpacked["prompt_embeds"] = torch.nn.functional.pad(embeddings["prompt_embeds"], (0, 2))
+                return unpacked
+
+        cache.model = PackingModel()
+        cache.load_from_cache = MagicMock(side_effect=FileNotFoundError("missing"))
+        cache.save_to_cache = MagicMock()
+
+        output = cache.compute_prompt_embeddings_with_model(
+            prompt_records=[{"prompt": "uncached prompt", "key": "uncached prompt", "metadata": {}}]
+        )
+
+        # Output should be in unpacked format (full width), same as cache-hit path
+        self.assertEqual(output["prompt_embeds"].shape, torch.Size([1, 2, 4]))
+        # save_to_cache receives unpacked data; it re-packs internally
+        saved_embeddings = cache.save_to_cache.call_args.args[1]
+        self.assertEqual(saved_embeddings["prompt_embeds"].shape, torch.Size([1, 2, 4]))
+        self.assertEqual(cache.model.pack_input_dims, [4])
+
+    def test_cache_miss_error_mentions_multi_caption_workaround(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION)
+
+        class CacheOnlyModel(_DummyModel):
+            def __init__(self):
+                super().__init__(TextEmbedCacheKey.CAPTION)
+
+            def unpack_text_embeddings_from_cache(self, embeddings):
+                return embeddings
+
+        cache.model = CacheOnlyModel()
+        cache.load_from_cache = MagicMock(side_effect=FileNotFoundError("missing"))
+
+        with self.assertRaisesRegex(RuntimeError, "multi-caption") as context:
+            cache.compute_prompt_embeddings_with_model(
+                prompt_records=[{"prompt": "alternate caption", "key": "alternate caption", "metadata": {}}]
+            )
+
+        message = str(context.exception)
+        self.assertIn("text_cache_ondemand: true", message)
+        self.assertIn("clear the text embedding cache and rerun precache", message)
+
     def test_resolve_key_value_caption_fallback(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION)
         record = {"prompt": "hello world"}
@@ -292,6 +359,9 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
                     }
                 )
 
+            def unpack_text_embeddings_from_cache(self, embeddings):
+                return embeddings
+
         cache.model = BatchModel()
 
         cache.compute_embeddings_for_prompts(
@@ -337,6 +407,9 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
                     "prompt_embeds": torch.ones(len(prompts), 2, 3),
                     "attention_mask": torch.ones(len(prompts), 2, dtype=torch.bool),
                 }
+
+            def unpack_text_embeddings_from_cache(self, embeddings):
+                return embeddings
 
         cache = TextEmbeddingCache(
             id="backend",
@@ -410,6 +483,9 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
                     "prompt_embeds": torch.ones(1, 2, 3),
                     "attention_mask": torch.ones(1, 2, dtype=torch.bool),
                 }
+
+            def unpack_text_embeddings_from_cache(self, embeddings):
+                return embeddings
 
         cache.model = ValidationAwareModel()
 

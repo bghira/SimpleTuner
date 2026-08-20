@@ -267,6 +267,38 @@ class PromptHandler:
         self.tokenizers = tokenizers
 
     @staticmethod
+    def _caption_payload_is_multi_value(caption) -> bool:
+        return isinstance(caption, (list, tuple, dict, numpy.ndarray, pd.Series))
+
+    @staticmethod
+    def _normalize_caption_payload(caption) -> list[str]:
+        if caption is None:
+            return []
+        if isinstance(caption, bytes):
+            caption = caption.decode("utf-8")
+        if isinstance(caption, str):
+            caption = caption.strip()
+            return [caption] if caption else []
+        if isinstance(caption, dict):
+            captions = []
+            for value in caption.values():
+                captions.extend(PromptHandler._normalize_caption_payload(value))
+            return captions
+        if isinstance(caption, (list, tuple, numpy.ndarray, pd.Series)):
+            captions = []
+            for value in caption:
+                captions.extend(PromptHandler._normalize_caption_payload(value))
+            return captions
+        caption = str(caption).strip()
+        return [caption] if caption else []
+
+    @staticmethod
+    def _restore_caption_payload_shape(caption, caption_values: list[str]):
+        if PromptHandler._caption_payload_is_multi_value(caption):
+            return caption_values
+        return caption_values[0] if caption_values else ""
+
+    @staticmethod
     def retrieve_prompt_column_from_parquet(
         sampler_backend_id: str,
     ) -> str:
@@ -338,18 +370,10 @@ class PromptHandler:
             raise CaptionNotFoundError(
                 f"Could not locate caption for image {image_path} in sampler_backend {sampler_backend_id} with filename column {filename_column}, caption column {caption_column}, and a parquet database with {len(parquet_db)} entries."
             )
-        if type(image_caption) == bytes:
-            image_caption = image_caption.decode("utf-8")
-        if type(image_caption) == str:
-            image_caption = image_caption.strip()
-        if type(image_caption) in (list, tuple, numpy.ndarray, pd.Series):
-            image_caption = [str(item).strip() for item in image_caption if item is not None]
+        caption_values = PromptHandler._normalize_caption_payload(image_caption)
         if prepend_instance_prompt:
-            if type(image_caption) == list:
-                image_caption = [instance_prompt + " " + x for x in image_caption]
-            else:
-                image_caption = instance_prompt + " " + image_caption
-        return image_caption
+            caption_values = [instance_prompt + " " + x for x in caption_values]
+        return PromptHandler._restore_caption_payload_shape(image_caption, caption_values)
 
     @staticmethod
     def prepare_instance_prompt_from_filename(
@@ -460,22 +484,13 @@ class PromptHandler:
             if caption is None:
                 raise CaptionNotFoundError(f"Could not find caption for {image_path} in HuggingFace dataset")
 
-        # Process the caption
-        if isinstance(caption, bytes):
-            caption = caption.decode("utf-8")
-        if isinstance(caption, str):
-            caption = caption.strip()
-        if isinstance(caption, (list, tuple, numpy.ndarray, pd.Series)):
-            caption = [str(item).strip() for item in caption if item is not None]
+        caption_values = PromptHandler._normalize_caption_payload(caption)
 
         # Prepend instance prompt if requested
         if prepend_instance_prompt and instance_prompt:
-            if isinstance(caption, list):
-                caption = [instance_prompt + " " + c for c in caption]
-            else:
-                caption = instance_prompt + " " + caption
+            caption_values = [instance_prompt + " " + c for c in caption_values]
 
-        return caption
+        return PromptHandler._restore_caption_payload_shape(caption, caption_values)
 
     @staticmethod
     def prepare_instance_prompt_from_webshart(
@@ -503,20 +518,12 @@ class PromptHandler:
         if caption is None:
             raise CaptionNotFoundError(f"Could not find caption for {image_path} in Webshart dataset")
 
-        if isinstance(caption, bytes):
-            caption = caption.decode("utf-8")
-        if isinstance(caption, str):
-            caption = caption.strip()
-        if isinstance(caption, (list, tuple, numpy.ndarray, pd.Series)):
-            caption = [str(item).strip() for item in caption if item is not None]
+        caption_values = PromptHandler._normalize_caption_payload(caption)
 
         if prepend_instance_prompt and instance_prompt:
-            if isinstance(caption, list):
-                caption = [instance_prompt + " " + c for c in caption]
-            else:
-                caption = instance_prompt + " " + caption
+            caption_values = [instance_prompt + " " + c for c in caption_values]
 
-        return caption
+        return PromptHandler._restore_caption_payload_shape(caption, caption_values)
 
     @staticmethod
     def magic_prompt(
@@ -625,7 +632,7 @@ class PromptHandler:
 
         # Apply shuffle expansion if enabled
         if shuffle_enabled and instance_prompt:
-            caption_values = instance_prompt if isinstance(instance_prompt, list) else [instance_prompt]
+            caption_values = PromptHandler._normalize_caption_payload(instance_prompt)
             expanded_captions = []
             for value in caption_values:
                 shuffled = CaptionShuffler.expand_with_shuffles(value, caption_shuffle_config)
@@ -795,7 +802,7 @@ class PromptHandler:
                     logger.error(f"Could not load caption for image {image_path}: {e}")
                     images_missing_captions.append(image_path)
                 else:
-                    caption_values = caption if isinstance(caption, (tuple, list, dict)) else [caption]
+                    caption_values = PromptHandler._normalize_caption_payload(caption)
 
                     # Apply shuffle expansion if enabled
                     if shuffle_enabled:

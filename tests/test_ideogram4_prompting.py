@@ -109,6 +109,28 @@ class Ideogram4PromptingTests(unittest.TestCase):
         self.assertEqual(converted["prompt_embeds"].shape, (1, 2, 4))
         self.assertEqual(negative["negative_prompt_embeds"].shape, (1, 2, 4))
 
+    def test_text_embed_collation_normalizes_cache_batch_to_cpu(self):
+        model = Ideogram4.__new__(Ideogram4)
+        device = torch.device("cpu")
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            device = torch.device("mps")
+        first = {
+            "prompt_embeds": torch.ones(1, 2, 4, device=device),
+            "attention_mask": torch.ones(1, 2, dtype=torch.bool, device=device),
+        }
+        second = {
+            "prompt_embeds": torch.ones(1, 1, 4),
+            "attention_masks": torch.ones(1, 1, dtype=torch.bool),
+        }
+
+        collated = model.collate_prompt_embeds([first, second])
+
+        self.assertEqual(collated["prompt_embeds"].device.type, "cpu")
+        self.assertEqual(collated["attention_masks"].device.type, "cpu")
+        self.assertEqual(collated["prompt_embeds"].shape, (2, 2, 4))
+
     def test_text_embed_cache_projection_uses_projection_component(self):
         model = Ideogram4.__new__(Ideogram4)
         model.config = types.SimpleNamespace(

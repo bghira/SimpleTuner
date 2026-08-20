@@ -678,10 +678,13 @@ class TextEmbeddingCache(WebhookMixin):
                                 f"\n-> error: {e}"
                                 f"\n-> id: {self.id}, data_backend id: {self.data_backend.id}"
                             )
-                            raise Exception(
-                                "Cache retrieval for text embed file failed. Ensure your dataloader config value for "
-                                "skip_file_discovery does not contain 'text', and that preserve_data_backend_cache is "
-                                "disabled or unset."
+                            raise RuntimeError(
+                                "Cache retrieval for text embed file failed. For Webshart or other multi-caption "
+                                "datasets, this can mean the existing text embedding cache was generated without every "
+                                "caption variant that training can request. Set text_cache_ondemand: true to compute "
+                                "missing embeds during training, or clear the text embedding cache and rerun precache. "
+                                "Also ensure skip_file_discovery does not contain 'text' and preserve_data_backend_cache "
+                                "is disabled or unset."
                             ) from e
                         if self.model.requires_text_embed_image_context() and not record.get("metadata"):
                             raise ValueError(
@@ -715,6 +718,8 @@ class TextEmbeddingCache(WebhookMixin):
                         prompt_contexts=prompt_contexts,
                         is_validation=is_validation,
                     )
+                    text_encoder_output = self.model.pack_text_embeddings_for_cache(text_encoder_output)
+                    text_encoder_output = self.model.unpack_text_embeddings_from_cache(text_encoder_output)
                     logger.debug(
                         f"Filename {filename} prompt embeds: {gather_dict_of_tensors_shapes(tensors=text_encoder_output)}, keys: {text_encoder_output.keys()}"
                     )

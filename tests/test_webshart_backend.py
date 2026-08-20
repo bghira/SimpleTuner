@@ -144,6 +144,14 @@ class TestWebshartDataBackend(unittest.TestCase):
 
         self.assertEqual(caption, "A moving subject.")
 
+    def test_get_caption_preserves_indexed_caption_variants(self):
+        backend = WebshartDataBackend.__new__(WebshartDataBackend)
+        backend.get_shard_metadata = Mock(return_value={"sample.mp4": {"captions": ["first caption", "second caption"]}})
+
+        caption = backend.get_caption("webshart://2/7/sample.mp4")
+
+        self.assertEqual(caption, ["first caption", "second caption"])
+
     def test_video_metadata_uses_indexed_frame_fields_and_probe_geometry(self):
         backend = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
         backend.dataset_type = DatasetType.VIDEO
