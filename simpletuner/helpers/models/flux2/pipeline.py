@@ -20,10 +20,10 @@ import numpy as np
 import PIL
 import torch
 from diffusers.loaders.lora_base import LoraBaseMixin, _fetch_state_dict
-from diffusers.loaders.lora_pipeline import _LOW_CPU_MEM_USAGE_DEFAULT_LORA, TRANSFORMER_NAME, USE_PEFT_BACKEND
+from diffusers.loaders.lora_pipeline import _LOW_CPU_MEM_USAGE_DEFAULT_LORA, TRANSFORMER_NAME
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
-from diffusers.utils import is_peft_version, is_torch_xla_available, logging, replace_example_docstring
+from diffusers.utils import USE_PEFT_BACKEND, is_peft_version, is_torch_xla_available, logging, replace_example_docstring
 from diffusers.utils.torch_utils import randn_tensor
 from huggingface_hub.utils import validate_hf_hub_args
 from transformers import AutoProcessor, Mistral3ForConditionalGeneration

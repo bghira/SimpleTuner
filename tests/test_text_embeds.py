@@ -1,5 +1,6 @@
 import unittest
 from contextlib import contextmanager
+from threading import Event, Thread
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -180,9 +181,7 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
             def unpack_text_embeddings_from_cache(self, embeddings):
                 # Simulate restoring full width (mirrors load_from_cache path)
                 unpacked = dict(embeddings)
-                unpacked["prompt_embeds"] = torch.nn.functional.pad(
-                    embeddings["prompt_embeds"], (0, 2)
-                )
+                unpacked["prompt_embeds"] = torch.nn.functional.pad(embeddings["prompt_embeds"], (0, 2))
                 return unpacked
 
         cache.model = PackingModel()
@@ -200,7 +199,7 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         self.assertEqual(saved_embeddings["prompt_embeds"].shape, torch.Size([1, 2, 4]))
         self.assertEqual(cache.model.pack_input_dims, [4])
 
-        def test_cache_miss_error_mentions_multi_caption_workaround(self):
+    def test_cache_miss_error_mentions_multi_caption_workaround(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION)
 
         class CacheOnlyModel(_DummyModel):
@@ -360,6 +359,9 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
                     }
                 )
 
+            def unpack_text_embeddings_from_cache(self, embeddings):
+                return embeddings
+
         cache.model = BatchModel()
 
         cache.compute_embeddings_for_prompts(
@@ -375,6 +377,93 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         cache.split_prompt_records_between_processes.assert_not_called()
         self.assertEqual(cache.model.encode_text_batch.call_count, 2)
         self.assertEqual(cache.save_to_cache.call_count, 2)
+
+    @patch("simpletuner.helpers.caching.text_embeds.StateTracker.get_text_cache_files", return_value={})
+    def test_compute_embeddings_waits_for_inflight_cache_write(self, _mock_cache_files):
+        write_started = Event()
+        release_write = Event()
+        backend = _DummyDataBackend()
+
+        def blocking_save(*_args, **_kwargs):
+            write_started.set()
+            release_write.wait(timeout=5)
+
+        backend.torch_save = blocking_save
+
+        @contextmanager
+        def split_between_processes(records):
+            yield records
+
+        accelerator = SimpleNamespace(device="cpu", num_processes=1, split_between_processes=split_between_processes)
+
+        class BatchModel(_DummyModel):
+            TEXT_ENCODER_CONFIGURATION = {"text_encoder": {}}
+
+            def __init__(self):
+                super().__init__(TextEmbedCacheKey.CAPTION)
+
+            def encode_text_batch(self, prompts, is_negative_prompt=False, prompt_contexts=None):
+                return {
+                    "prompt_embeds": torch.ones(len(prompts), 2, 3),
+                    "attention_mask": torch.ones(len(prompts), 2, dtype=torch.bool),
+                }
+
+            def unpack_text_embeddings_from_cache(self, embeddings):
+                return embeddings
+
+        cache = TextEmbeddingCache(
+            id="backend",
+            data_backend=backend,
+            text_encoders=[SimpleNamespace(device="cpu")],
+            tokenizers=[object()],
+            accelerator=accelerator,
+            cache_dir="/tmp/cache",
+            model_type="test",
+            prompt_handler=None,
+            model=BatchModel(),
+        )
+        errors = []
+
+        def compute_embeddings():
+            try:
+                cache.compute_embeddings_for_prompts(
+                    [{"prompt": "tiny dataset prompt", "key": "tiny"}],
+                    return_concat=False,
+                    load_from_cache=False,
+                    split_between_processes=False,
+                )
+            except Exception as error:
+                errors.append(error)
+
+        compute_thread = Thread(target=compute_embeddings)
+        try:
+            compute_thread.start()
+            self.assertTrue(write_started.wait(timeout=2), "background cache write did not start")
+            compute_thread.join(timeout=0.2)
+            self.assertTrue(compute_thread.is_alive(), "precompute returned before the cache write completed")
+
+            release_write.set()
+            compute_thread.join(timeout=2)
+            self.assertFalse(compute_thread.is_alive(), "precompute did not return after the cache write completed")
+            self.assertEqual(errors, [])
+        finally:
+            release_write.set()
+            compute_thread.join(timeout=2)
+            cache.process_write_batches = False
+            cache.batch_write_thread.join(timeout=2)
+
+    def test_wait_for_pending_writes_reports_background_failure(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION)
+        cache.process_write_batch = MagicMock(side_effect=OSError("disk write failed"))
+        cache.process_write_batches = False
+        cache.write_queue.put(({}, "failed.pt"))
+
+        with self.assertLogs("TextEmbeddingCache", level="ERROR"):
+            cache.batch_write_embeddings()
+
+        with self.assertRaisesRegex(RuntimeError, "text embedding cache writes failed") as context:
+            cache.wait_for_pending_writes()
+        self.assertIsInstance(context.exception.__cause__, OSError)
 
     @patch("simpletuner.helpers.caching.text_embeds.StateTracker.get_text_cache_files", return_value={})
     def test_validation_encode_marks_model_context(self, _mock_cache_files):
@@ -394,6 +483,9 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
                     "prompt_embeds": torch.ones(1, 2, 3),
                     "attention_mask": torch.ones(1, 2, dtype=torch.bool),
                 }
+
+            def unpack_text_embeddings_from_cache(self, embeddings):
+                return embeddings
 
         cache.model = ValidationAwareModel()
 

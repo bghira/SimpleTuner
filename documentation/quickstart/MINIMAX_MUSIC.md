@@ -225,8 +225,42 @@ MiniMax Music 3 uses SimpleTuner's flow-matching training path, so the same adva
 
 Start with standard LoRA first. Add one advanced feature at a time and keep validation clips short until memory use is understood.
 
+## Language Model (AR Stage) Training
+
+The Qwen3 language model that plans MiniMax Music 3's semantic codes can be trained instead of the music DiT — useful for dreambooth-style trigger words that bind a musical style to a keyword.
+
+See [fiona crapple](https://huggingface.co/terminusresearch/minimax-music3-lm-lora-fiona-crapple) for a complete LM LoRA training example produced with this mode, including its settings, checkpoints, and audio comparisons.
+
+```json
+{
+  "minimax_music_train_component": "language_model",
+  "minimax_music_lm_max_frames": 0
+}
+```
+
+Requirements and differences from DiT training:
+
+- Each dataset sample must provide `prompt` (or `tags`), `lyrics`, and `audio_tokens_path` metadata pointing at a `.pt` file of raw per-codebook RVQ codes shaped `[frames, codebooks]` (semantic codes `< 16384`, residual codes `< audio_vocab_size`, no vocabulary offsets baked in). Export them with `precompute_rvq_codes.py --raw-codes` from the dedicated `minimax-music3-latent-replanner` repository.
+- The loss is next-token cross-entropy on the semantic codebook, masked to audio positions; the RVQ depth decoder stays frozen and supplies the residual-code input embeddings.
+- Only standard PEFT LoRA is supported and `lora_format: "comfyui"` is rejected. Checkpoints save `pytorch_lora_weights.safetensors` with `language_model.`-prefixed adapter keys.
+- In-trainer validation audio is disabled in this mode; render from saved checkpoints with the standard generation stack instead.
+- No VAE or text-embed caching happens in this mode — training reads tokens directly, so `cache_dir_vae` and text embed backends are not used.
+- Put your trigger keyword (e.g. `"fiona crapple"`) in the caption/`prompt` field of every sample; keep lyrics verbatim.
+- **Prior preservation**: add a second audio backend with `is_regularisation_data: true` containing unrelated songs
+  (empty lyrics are allowed). On those batches the loss targets the frozen base model's own next-token distribution
+  instead of the ground-truth codes, so the LoRA stays surgical: unrelated captions keep predicting exactly as the
+  base model would, which sharply reduces style bleed.
+
 ## Troubleshooting
 
 - **`VAE caching requires the original dav.pth checkpoint`**: use `SimpleTuner/MiniMax-Music-3-Encoder`, `MiniMaxAI/MiniMax-Music3`, keep `dav.pth` at your local checkpoint root, or set `pretrained_vae_model_name_or_path` to a location containing it.
 - **Missing lyrics**: ensure the backend metadata contains `lyrics`, or place `.lyrics` sidecars next to audio files when using `caption_strategy: "textfile"`.
 - **Text embedding or validation OOM**: lower validation duration, use int8 text encoder precision, or enable text encoder offload.
+
+## Related MiniMax Music 3 experiments
+
+- [Open RVQ encoders](https://huggingface.co/SimpleTuner/open-rvq-encoder-minimax-music3)
+- [RVQ reference-audio integration](https://github.com/bghira/minimax-music3-rvq-reference-audio)
+- [Fiona Crapple LM LoRA](https://huggingface.co/terminusresearch/minimax-music3-lm-lora-fiona-crapple)
+- [Latent refiner](https://github.com/bghira/minimax-music3-latent-refiner) and [v0.10 weights](https://huggingface.co/terminusresearch/minimax-music3-latent-refiner-v0.10)
+- [Latent replanner](https://github.com/bghira/minimax-music3-latent-replanner) and [experiment log](https://huggingface.co/terminusresearch/minimax-music3-replanner-experiment)

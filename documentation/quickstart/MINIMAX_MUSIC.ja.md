@@ -164,8 +164,39 @@ adapter が native ComfyUI 形式なら、設定に `lora_format: "comfyui"` を
 
 MiniMax Music 3 は SimpleTuner の flow-matching 学習パスを使うため、AnyFlow、TwinFlow、CREPA self-flow、LayerSync を利用できます。まず標準 LoRA で始め、必要な機能を 1 つずつ追加してください。
 
+## 言語モデル（AR ステージ）のトレーニング
+
+MiniMax Music 3 のセマンティックコードを計画する Qwen3 言語モデルを、音楽 DiT の代わりにトレーニングできます — 音楽スタイルをキーワードに結びつける dreambooth 式トリガーワードに便利です。
+
+[fiona crapple](https://huggingface.co/terminusresearch/minimax-music3-lm-lora-fiona-crapple) は、このモードで作成した完全な LM LoRA トレーニング例で、設定、チェックポイント、音声比較が含まれています。
+
+```json
+{
+  "minimax_music_train_component": "language_model",
+  "minimax_music_lm_max_frames": 0
+}
+```
+
+要件と DiT トレーニングとの違い:
+
+- 各データセットサンプルは `prompt`（または `tags`）、`lyrics`、および `[frames, codebooks]` 形状の生のコードブック別 RVQ コードの `.pt` ファイルを指す `audio_tokens_path` メタデータを提供する必要があります（セマンティックコード `< 16384`、残差コード `< audio_vocab_size`、語彙オフセットなし）。専用の `minimax-music3-latent-replanner` リポジトリにある `precompute_rvq_codes.py --raw-codes` でエクスポートしてください。
+- 損失はセマンティックコードブックの次トークン交差エントロピーで、オーディオ位置にマスクされます。RVQ depth decoder は凍結されたまま、残差コード入力エンベディングを供給します。
+- 標準 PEFT LoRA のみ対応で、`lora_format: "comfyui"` は拒否されます。チェックポイントは `language_model.` プレフィックス付きキーで `pytorch_lora_weights.safetensors` を保存します。
+- このモードではトレーナー内の検証オーディオは無効です。保存されたチェックポイントから標準生成スタックでレンダリングしてください。
+- このモードでは VAE やテキストエンベッドのキャッシュは行われません — トレーニングはトークンを直接読み取るため、`cache_dir_vae` やテキストエンベッドバックエンドは使用されません。
+- トリガーキーワード（例: `"fiona crapple"`）を各サンプルの caption/`prompt` フィールドに入れ、歌詞はそのまま保持してください。
+- **プライア保存**: `is_regularisation_data: true` を付けた無関係な楽曲の第二のオーディオバックエンドを追加します（空の歌詞も許可）。それらのバッチでは、損失は正解コードではなく凍結されたベースモデル自身の次トークン分布を対象とするため、LoRA は外科的に保たれます。無関係なキャプションはベースモデルと全く同じように予測し続け、スタイルの漏れが大幅に減ります。
+
 ## トラブルシューティング
 
 - **`VAE caching requires the original dav.pth checkpoint`**: `SimpleTuner/MiniMax-Music-3-Encoder` または `MiniMaxAI/MiniMax-Music3` を使うか、ローカル checkpoint root に `dav.pth` を置くか、`pretrained_vae_model_name_or_path` をそれを含む場所に向けます。
 - **歌詞が使われない**: backend metadata に `lyrics` があることを確認するか、`caption_strategy: "textfile"` の場合は音声の横に `.lyrics` sidecar を置きます。
 - **Text embedding または validation OOM**: validation duration を短くし、int8 text encoder precision または text encoder offload を使います。
+
+## 関連する MiniMax Music 3 実験
+
+- [Open RVQ encoder](https://huggingface.co/SimpleTuner/open-rvq-encoder-minimax-music3)
+- [RVQ 参照音声統合](https://github.com/bghira/minimax-music3-rvq-reference-audio)
+- [Fiona Crapple LM LoRA](https://huggingface.co/terminusresearch/minimax-music3-lm-lora-fiona-crapple)
+- [Latent refiner](https://github.com/bghira/minimax-music3-latent-refiner) と [v0.10 weights](https://huggingface.co/terminusresearch/minimax-music3-latent-refiner-v0.10)
+- [Latent replanner](https://github.com/bghira/minimax-music3-latent-replanner) と [experiment log](https://huggingface.co/terminusresearch/minimax-music3-replanner-experiment)

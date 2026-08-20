@@ -6936,8 +6936,8 @@ class Trainer:
                         bsz = prepared_batch["latents"].shape[0]
                         training_logger.debug("Sending latent batch to GPU.")
                     else:
-                        batch_label = "tokens"
-                        bsz = prepared_batch["tokens"].shape[0]
+                        batch_label = "tokens" if "tokens" in prepared_batch else "input_ids"
+                        bsz = prepared_batch[batch_label].shape[0]
                         training_logger.debug("Sending token batch to GPU.")
 
                     expected_batch_size = self.config.train_batch_size

@@ -67,6 +67,37 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
   - `diffusers` es el esquema estándar de PEFT/Diffusers.
   - `comfyui` convierte hacia/desde claves estilo ComfyUI (`diffusion_model.*` con tensores `lora_A/lora_B` y `.alpha`). Flux, Flux2, Lumina2 y Z-Image detectarán automáticamente entradas ComfyUI incluso si esto se deja en `diffusers`, pero cámbialo a `comfyui` para forzar salida ComfyUI al guardar.
 
+### `--minimax_music_train_component`
+
+- **Qué**: Selecciona qué componente de MiniMax Music 3 recibe el entrenamiento.
+- **Opciones**: `transformer` (predeterminado), `language_model`
+- **Notas**:
+  - `transformer` entrena el DiT musical de flow matching sobre latentes Flow-VAE en caché (la ruta estándar).
+  - `language_model` entrena la etapa autorregresiva Qwen3 con entropía cruzada de siguiente token sobre códigos semánticos RVQ. Los datasets deben proporcionar tokens de audio crudos por codebook precomputados (metadato `audio_tokens_path`, con forma `[frames, codebooks]`) junto con `prompt` (o `tags`) y `lyrics`. Solo se admite LoRA PEFT estándar, `--lora_format comfyui` se rechaza y el audio de validación dentro del entrenador está deshabilitado: renderiza desde los checkpoints guardados.
+
+### `--minimax_music_lm_max_frames`
+
+- **Qué**: Para `--minimax_music_train_component=language_model`, trunca la secuencia de tokens de audio de cada pista a esta cantidad de frames de 25Hz (tomados desde el inicio para mantener la alineación con la letra).
+- **Predeterminado**: `0` (entrenar con pistas completas)
+- **Notas**:
+  - Un frame son 40ms; 7500 frames son cinco minutos. Reduce este valor si las pistas largas agotan la VRAM.
+  - Las muestras truncadas no reciben objetivo de fin de audio, por lo que el modelo no aprende a detenerse antes de tiempo.
+
+### `--minimax_music_lm_adapter`
+
+- **Qué**: Ruta a un LoRA del modelo de lenguaje (`pytorch_lora_weights.safetensors` con claves con prefijo `language_model.`, producido por `--minimax_music_train_component=language_model`) aplicado al planificador Qwen3 durante el pre-cacheo del condicionamiento del DiT.
+- **Relacionado**: `--minimax_music_lm_adapter_strength` (predeterminado `1.0`) escala el delta del adaptador.
+- **Notas**: Usa un directorio de caché de text-embeds nuevo al cambiar el adaptador o su fuerza; la caché no se invalida automáticamente.
+
+### `--minimax_music_lm_precache_mode`
+
+- **Qué**: Cómo el planificador Qwen3 produce el condicionamiento cacheado para entrenar el DiT.
+- **Opciones**: `text-only` (predeterminado), `audio-only`, `audio+text`
+- **Notas**:
+  - `text-only` muestrea un despliegue autorregresivo desde el caption y la letra (comportamiento original). Los estados ocultos describen la pista imaginada por el planificador, no el audio de entrenamiento.
+  - `audio-only` fuerza los códigos RVQ reales de la muestra (metadato `audio_tokens_path`, índices crudos por codebook) a través del planificador sin prefijo de texto; `audio+text` antepone el caption y la letra. Ambos alinean los estados ocultos por frame uno a uno con los latentes DAV y truncan los códigos a la ventana de audio que cubre la caché del VAE.
+  - Usa un directorio de caché de text-embeds nuevo al cambiar de modo.
+
 ### `--minimax_h3_target_mode`
 
 - **Qué**: Controla si MiniMax-H3 incluye filas de audio objetivo.

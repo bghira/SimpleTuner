@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -111,6 +112,7 @@ class MiniMaxMusic(AudioModelFoundation):
         "proj_out",
     ]
     DEFAULT_LYCORIS_TARGET = ["MiniMaxMusic3Attention", "MiniMaxMusic3TransformerBlock"]
+    _train_language_model = False
 
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
@@ -119,6 +121,15 @@ class MiniMaxMusic(AudioModelFoundation):
         self.language_model: Optional[Qwen3ForCausalLM] = None
         self.guider: Optional[ClassifierFreeGuidance] = None
         self.vae = None
+        train_component = str(getattr(config, "minimax_music_train_component", "transformer") or "transformer")
+        self._train_language_model = train_component == "language_model"
+        if self._train_language_model:
+            self.PREDICTION_TYPE = PredictionTypes.AUTOREGRESSIVE_NEXT_TOKEN
+            self.MODEL_CLASS = Qwen3ForCausalLM
+            self.MODEL_SUBFOLDER = "language_model"
+            self.AUTOENCODER_CLASS = None
+            self.TEXT_ENCODER_CONFIGURATION = {}
+            self.DEFAULT_LORA_TARGET = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
@@ -203,6 +214,9 @@ class MiniMaxMusic(AudioModelFoundation):
             "bucket_duration_seconds",
             "truncated_duration_seconds",
             "original_duration_seconds",
+            "audio_tokens",
+            "audio_tokens_path",
+            "data_backend_id",
         ):
             value = sample_metadata.get(key)
             if value not in (None, ""):
@@ -349,7 +363,30 @@ class MiniMaxMusic(AudioModelFoundation):
         return anyflow_config if isinstance(anyflow_config, dict) else {}
 
     def _music_lora_component_name(self) -> str:
-        return "transformer"
+        return "language_model" if self._train_language_model else "transformer"
+
+    def check_user_config(self):
+        super().check_user_config()
+        if self._train_language_model:
+            if normalize_lora_format(getattr(self.config, "lora_format", None)) == PEFTLoRAFormat.COMFYUI:
+                raise ValueError(
+                    "--lora_format comfyui applies to the music transformer; use the default diffusers format "
+                    "when training the language model."
+                )
+            if str(getattr(self.config, "model_type", "lora")).lower() == "lora" and (
+                str(getattr(self.config, "lora_type", "standard")).lower() != "standard"
+            ):
+                raise ValueError("MiniMax Music 3 language model training supports standard PEFT LoRA only.")
+            if not getattr(self.config, "validation_disable", False):
+                logger.warning(
+                    "MiniMax Music 3 language model training does not support in-trainer validation audio yet; "
+                    "disabling validation. Render audio from saved checkpoints instead."
+                )
+                self.config.validation_disable = True
+
+    def enable_gradient_checkpointing(self):
+        if self._train_language_model and self.model is not None:
+            self.unwrap_model(self.model).gradient_checkpointing_enable()
 
     def _music_transformer_uses_gate_first_swiglu(self) -> bool:
         transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
@@ -455,6 +492,23 @@ class MiniMaxMusic(AudioModelFoundation):
         return prepared
 
     def save_lora_weights(self, *args, **kwargs):
+        if self._train_language_model:
+            from safetensors.torch import save_file
+
+            save_directory = args[0] if args else kwargs.get("save_directory")
+            if save_directory is None:
+                raise ValueError("save_directory is required to save LoRA weights.")
+            os.makedirs(save_directory, exist_ok=True)
+            language_model = self.unwrap_model(self.model)
+            if not hasattr(language_model, "get_adapter_state_dict"):
+                raise NotImplementedError("MiniMax Music 3 language model LoRA saving requires a PEFT adapter.")
+            adapter_state = {
+                f"language_model.{key}": value.detach().cpu()
+                for key, value in language_model.get_adapter_state_dict().items()
+                if "lora_" in key
+            }
+            save_file(adapter_state, os.path.join(save_directory, "pytorch_lora_weights.safetensors"))
+            return None
         from simpletuner.helpers.models.minimaxmusic.modular_pipeline import (
             MINIMAX_MUSIC_FLOWMAP_DELTATIME_METADATA_KEY,
             MINIMAX_MUSIC_FLOWMAP_GATE_METADATA_KEY,
@@ -586,7 +640,42 @@ class MiniMaxMusic(AudioModelFoundation):
         except (EntryNotFoundError, LocalEntryNotFoundError, RepositoryNotFoundError, HFValidationError):
             return None
 
+    def uses_audio_latents(self) -> bool:
+        return not self._train_language_model
+
+    def uses_audio_tokens(self) -> bool:
+        return self._train_language_model
+
+    def uses_text_embeddings_cache(self) -> bool:
+        return not self._train_language_model
+
+    def load_model(self, move_to_device: bool = True):
+        if not self._train_language_model:
+            return super().load_model(move_to_device=move_to_device)
+        self.load_text_tokenizer()
+        base_path = self._checkpoint_path()
+        self.model = Qwen3ForCausalLM.from_pretrained(
+            base_path,
+            subfolder="language_model",
+            revision=getattr(self.config, "revision", None),
+            torch_dtype=self.config.weight_dtype,
+            trust_remote_code=True,
+        )
+        self.rvq_depth_decoder = MiniMaxMusic3RVQDepthDecoder.from_pretrained(
+            base_path,
+            subfolder="rvq_depth_decoder",
+            torch_dtype=self.config.weight_dtype,
+        )
+        self.rvq_depth_decoder.eval()
+        self.rvq_depth_decoder.requires_grad_(False)
+        if move_to_device:
+            self.model.to(self.accelerator.device)
+            self.rvq_depth_decoder.to(self.accelerator.device, dtype=self.config.weight_dtype)
+        return self.model
+
     def load_vae(self, move_to_device: bool = True):
+        if self._train_language_model:
+            return None
         if self.vae is None:
             checkpoint_path = self._vae_checkpoint_path()
             if self._has_diffusers_audio_vae(checkpoint_path):
@@ -619,6 +708,211 @@ class MiniMaxMusic(AudioModelFoundation):
             raise TypeError("MiniMax Music 3 DAV encode() must return a tensor.")
         return latents.to(dtype=self.config.weight_dtype)
 
+    def _lm_prompt_text(self, caption: str, lyrics: str) -> str:
+        return (
+            f"<|im_start|><|caption_start|>{_clean_caption(str(caption))}<|caption_end|>"
+            f"<|lyrics_start|>{_normalize_lyrics(str(lyrics))}<|lyrics_end|>"
+            f"<|im_end|><|audio_start|>"
+        )
+
+    def _lm_load_audio_codes(self, example: dict) -> torch.Tensor:
+        codes = example.get("audio_tokens")
+        if codes is None:
+            token_path = example.get("audio_tokens_path")
+            if not token_path:
+                raise ValueError(
+                    "MiniMax Music 3 language model training requires audio_tokens or audio_tokens_path metadata "
+                    "with raw per-codebook RVQ codes shaped [frames, codebooks]."
+                )
+            resolved = str(token_path)
+            if not os.path.isabs(resolved):
+                backend_id = example.get("data_backend_id")
+                from simpletuner.helpers.training.state_tracker import StateTracker
+
+                backend_cfg = StateTracker.get_data_backend_config(backend_id) if backend_id else {}
+                dataset_root = backend_cfg.get("instance_data_dir") if backend_cfg else None
+                if dataset_root:
+                    resolved = os.path.join(dataset_root, resolved)
+            if not os.path.exists(resolved):
+                raise FileNotFoundError(f"MiniMax Music 3 audio token file not found: {resolved}")
+            codes = torch.load(resolved, map_location="cpu", weights_only=True)
+        if isinstance(codes, dict):
+            codes = codes.get("codes")
+        if not isinstance(codes, torch.Tensor):
+            codes = torch.as_tensor(codes)
+        codes = codes.to(dtype=torch.long)
+        num_codebooks = int(self.rvq_depth_decoder.config.num_codebooks)
+        if codes.ndim != 2 or codes.shape[1] != num_codebooks:
+            raise ValueError(
+                f"MiniMax Music 3 audio codes must be shaped [frames, {num_codebooks}], got {tuple(codes.shape)}."
+            )
+        audio_vocab = int(self.rvq_depth_decoder.config.audio_vocab_size)
+        if int(codes[:, 0].max()) >= _SEMANTIC_VOCAB_SIZE or int(codes[:, 1:].max()) >= audio_vocab:
+            raise ValueError(
+                "MiniMax Music 3 audio codes must be raw per-codebook indices (semantic < "
+                f"{_SEMANTIC_VOCAB_SIZE}, residual < {audio_vocab}). Re-export them without vocabulary offsets."
+            )
+        return codes
+
+    def collate_audio_tokens(self, examples: list[dict]) -> dict:
+        if not self._train_language_model:
+            raise ValueError("collate_audio_tokens is only used when --minimax_music_train_component=language_model.")
+        self.load_text_tokenizer()
+        tokenizer = self.tokenizers[0]
+        max_frames = int(getattr(self.config, "minimax_music_lm_max_frames", 0) or 0)
+
+        input_id_rows = []
+        code_rows = []
+        prompt_lengths = []
+        audio_lengths = []
+        has_audio_end = []
+        prompts = []
+        for example in examples:
+            caption = example.get("prompt") or example.get("tags")
+            lyrics = example.get("lyrics")
+            if not isinstance(caption, str) or not caption.strip():
+                raise ValueError("MiniMax Music 3 language model training requires 'prompt' (or 'tags') metadata.")
+            if not isinstance(lyrics, str):
+                raise ValueError(
+                    "MiniMax Music 3 language model training requires 'lyrics' metadata (an empty string is "
+                    "allowed for instrumental or regularisation tracks)."
+                )
+            prompt_text = self._lm_prompt_text(caption, lyrics)
+            input_ids = tokenizer(prompt_text, return_tensors="pt")["input_ids"].squeeze(0)
+            if input_ids.shape[0] > _MAX_PROMPT_TOKENS:
+                raise ValueError(
+                    f"The assembled MiniMax Music 3 prompt has {input_ids.shape[0]} tokens; "
+                    f"the maximum is {_MAX_PROMPT_TOKENS}."
+                )
+            codes = self._lm_load_audio_codes(example)
+            truncated = False
+            if 0 < max_frames < codes.shape[0]:
+                codes = codes[:max_frames]
+                truncated = True
+            if codes.shape[0] > _MAX_AUDIO_FRAMES:
+                codes = codes[:_MAX_AUDIO_FRAMES]
+                truncated = True
+            input_id_rows.append(input_ids)
+            code_rows.append(codes)
+            prompt_lengths.append(int(input_ids.shape[0]))
+            audio_lengths.append(int(codes.shape[0]))
+            has_audio_end.append(not truncated)
+            prompts.append(caption)
+
+        input_ids = pad_sequence(input_id_rows, batch_first=True, padding_value=0)
+        audio_codes = pad_sequence(code_rows, batch_first=True, padding_value=0)
+        return {
+            "input_ids": input_ids,
+            "audio_codes": audio_codes,
+            "prompt_lengths": torch.tensor(prompt_lengths, dtype=torch.long),
+            "audio_lengths": torch.tensor(audio_lengths, dtype=torch.long),
+            "has_audio_end": torch.tensor(has_audio_end, dtype=torch.bool),
+            "prompts": prompts,
+        }
+
+    def _lm_frame_embeds(self, codes: torch.Tensor, language_model=None) -> torch.Tensor:
+        # codes: [frames, codebooks] raw per-book indices -> [frames, hidden] audio-frame input embeddings.
+        if language_model is None:
+            language_model = self.unwrap_model(self.model)
+        embed_tokens = language_model.get_input_embeddings()
+        depth = self.rvq_depth_decoder
+        num_codebooks = int(depth.config.num_codebooks)
+        audio_vocab = int(depth.config.audio_vocab_size)
+        semantic = embed_tokens(codes[:, 0] + _AUDIO_CODE_OFFSET)
+        offsets = (torch.arange(num_codebooks - 1, device=codes.device) * audio_vocab).unsqueeze(0)
+        residual = depth.audio_embeddings(codes[:, 1:] + offsets).sum(dim=1)
+        return (semantic + residual.to(semantic.dtype)) * num_codebooks**-0.5
+
+    def _lm_predict(self, prepared_batch: dict) -> Dict[str, object]:
+        language_model = self.model
+        embed_tokens = self.unwrap_model(language_model).get_input_embeddings()
+        input_ids = prepared_batch["input_ids"]
+        if next(self.rvq_depth_decoder.parameters()).device != input_ids.device:
+            self.rvq_depth_decoder.to(input_ids.device)
+        audio_codes = prepared_batch["audio_codes"]
+        prompt_lengths = prepared_batch["prompt_lengths"]
+        audio_lengths = prepared_batch["audio_lengths"]
+        sequences = []
+        for index in range(input_ids.shape[0]):
+            prompt_len = int(prompt_lengths[index])
+            audio_len = int(audio_lengths[index])
+            prompt_embeds = embed_tokens(input_ids[index, :prompt_len])
+            frame_embeds = self._lm_frame_embeds(audio_codes[index, :audio_len])
+            sequences.append(torch.cat((prompt_embeds, frame_embeds.to(prompt_embeds.dtype)), dim=0))
+        lengths = torch.tensor([seq.shape[0] for seq in sequences], device=input_ids.device)
+        inputs_embeds = pad_sequence(sequences, batch_first=True, padding_value=0.0)
+        attention_mask = torch.arange(inputs_embeds.shape[1], device=input_ids.device)[None, :] < lengths[:, None]
+        outputs = language_model(inputs_embeds=inputs_embeds, attention_mask=attention_mask.to(dtype=torch.long))
+        return {"logits": outputs.logits}
+
+    @contextmanager
+    def _lm_adapters_disabled(self):
+        language_model = self.unwrap_model(self.model)
+        language_model.disable_adapters()
+        try:
+            yield
+        finally:
+            language_model.enable_adapters()
+
+    def loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        if not self._train_language_model:
+            return super().loss(prepared_batch, model_output, apply_conditioning_mask)
+        del apply_conditioning_mask
+        logits = model_output["logits"]
+        audio_codes = prepared_batch["audio_codes"]
+        prompt_lengths = prepared_batch["prompt_lengths"]
+        audio_lengths = prepared_batch["audio_lengths"]
+        has_audio_end = prepared_batch["has_audio_end"]
+        targets = torch.full(logits.shape[:2], -100, dtype=torch.long, device=logits.device)
+        for index in range(logits.shape[0]):
+            prompt_len = int(prompt_lengths[index])
+            audio_len = int(audio_lengths[index])
+            if audio_len == 0:
+                raise ValueError("MiniMax Music 3 language model training received a sample with zero audio frames.")
+            start = prompt_len - 1
+            targets[index, start : start + audio_len] = audio_codes[index, :audio_len, 0] + _AUDIO_CODE_OFFSET
+            if bool(has_audio_end[index]):
+                targets[index, start + audio_len] = _AUDIO_END_TOKEN_ID
+        teacher_logits = None
+        if (
+            prepared_batch.get("is_regularisation_data")
+            and str(getattr(self.config, "model_type", "lora")).lower() == "lora"
+        ):
+            # Prior preservation: on regularisation batches the target is the frozen base model's own
+            # next-token distribution, so unrelated songs keep predicting as they would without the LoRA.
+            with torch.no_grad(), self._lm_adapters_disabled():
+                teacher_logits = self._lm_predict(prepared_batch)["logits"]
+
+        # Chunked losses: upcasting the full-vocab logits at once costs several GiB at long sequence lengths.
+        flat_logits = logits.reshape(-1, logits.shape[-1])
+        flat_targets = targets.reshape(-1)
+        total = flat_logits.new_zeros((), dtype=torch.float32)
+        count = 0
+        chunk = 512 if teacher_logits is not None else 1024
+        flat_teacher = teacher_logits.reshape(-1, teacher_logits.shape[-1]) if teacher_logits is not None else None
+        for start in range(0, flat_logits.shape[0], chunk):
+            piece_targets = flat_targets[start : start + chunk]
+            mask = piece_targets != -100
+            if not mask.any():
+                continue
+            piece = flat_logits[start : start + chunk][mask].float()
+            if flat_teacher is not None:
+                # Top-K soft targets: gathering the student's logits at the teacher's top tokens keeps the
+                # per-position autograd footprint at O(K) instead of O(vocab).
+                with torch.no_grad():
+                    teacher_piece = flat_teacher[start : start + chunk][mask].float()
+                    top_probs, top_indices = teacher_piece.softmax(dim=-1).topk(64, dim=-1)
+                    top_probs = top_probs / top_probs.sum(dim=-1, keepdim=True)
+                student_top = piece.gather(1, top_indices)
+                log_normalizer = piece.logsumexp(dim=-1, keepdim=True)
+                total = total - (top_probs * (student_top - log_normalizer)).sum()
+            else:
+                total = total + F.cross_entropy(piece, piece_targets[mask], reduction="sum")
+            count += int(mask.sum())
+        if count == 0:
+            raise ValueError("MiniMax Music 3 language model loss found no supervised positions.")
+        return total / count
+
     def load_text_tokenizer(self):
         if self.tokenizers is not None:
             return
@@ -643,6 +937,8 @@ class MiniMaxMusic(AudioModelFoundation):
             torch_dtype=self.config.weight_dtype,
             trust_remote_code=True,
         )
+        if getattr(self.config, "minimax_music_lm_adapter", None):
+            self._apply_lm_precache_adapter(language_model)
         rvq_depth_decoder = MiniMaxMusic3RVQDepthDecoder.from_pretrained(
             base_path,
             subfolder="rvq_depth_decoder",
@@ -710,6 +1006,80 @@ class MiniMaxMusic(AudioModelFoundation):
             return str(configured)
         return str(prompt)
 
+    def _apply_lm_precache_adapter(self, language_model) -> None:
+        from peft import LoraConfig
+        from safetensors.torch import load_file
+
+        adapter_path = str(self.config.minimax_music_lm_adapter)
+        strength = float(getattr(self.config, "minimax_music_lm_adapter_strength", 1.0) or 1.0)
+        state = load_file(adapter_path)
+        ranks = {value.shape[0] for key, value in state.items() if key.endswith(".lora_A.weight")}
+        if len(ranks) != 1:
+            raise ValueError(f"LM adapter {adapter_path} has mixed or missing LoRA ranks: {sorted(ranks)}")
+        rank = ranks.pop()
+        target_modules = sorted({key.split(".")[-3] for key in state if key.endswith(".lora_A.weight")})
+        language_model.add_adapter(LoraConfig(r=rank, lora_alpha=rank, target_modules=target_modules))
+        mapped = {}
+        for key, value in state.items():
+            new_key = (
+                key.removeprefix("language_model.")
+                .replace(".lora_A.weight", ".lora_A.default.weight")
+                .replace(".lora_B.weight", ".lora_B.default.weight")
+            )
+            tensor = value.to(self.config.weight_dtype)
+            if ".lora_B." in new_key:
+                tensor = tensor * strength
+            mapped[new_key] = tensor
+        _missing, unexpected = language_model.load_state_dict(mapped, strict=False)
+        if unexpected:
+            raise ValueError(f"LM adapter {adapter_path} carries unknown keys: {sorted(unexpected)[:4]}")
+        lora_names = [name for name, _ in language_model.named_parameters() if "lora_" in name]
+        loaded = sum(1 for name in lora_names if name in mapped)
+        if loaded != len(lora_names):
+            raise ValueError(f"LM adapter {adapter_path} loaded {loaded}/{len(lora_names)} LoRA tensors.")
+        logger.info("Applied LM precache adapter %s (%d tensors, strength %.2f).", adapter_path, loaded, strength)
+
+    @torch.no_grad()
+    def _teacher_forced_depth_hiddens(self, lm_hidden: torch.Tensor, codes: torch.Tensor) -> torch.Tensor:
+        # Teacher-forced prefix pass through the causal depth decoder reproduces the per-book hiddens the
+        # rollout collects one step at a time. lm_hidden: [frames, dim], codes: [frames, codebooks] raw.
+        depth = self.rvq_depth_decoder
+        num_codebooks = int(depth.config.num_codebooks)
+        audio_vocab = int(depth.config.audio_vocab_size)
+        sequence = [depth.projection(lm_hidden).unsqueeze(1)]
+        semantic_embed = self.language_model.model.embed_tokens(codes[:, 0] + _AUDIO_CODE_OFFSET)
+        sequence.append(depth.projection(semantic_embed).unsqueeze(1))
+        for index in range(1, num_codebooks - 1):
+            embed = depth.audio_embeddings(codes[:, index] + (index - 1) * audio_vocab)
+            sequence.append(depth.projection(embed).unsqueeze(1))
+        hidden = depth(torch.cat(sequence, dim=1))
+        return hidden[:, 1:num_codebooks, :].reshape(codes.shape[0], -1)
+
+    @torch.no_grad()
+    def _encode_teacher_forced_prompt(self, prompt: str, context: dict, mode: str) -> Dict[str, torch.Tensor]:
+        tokenizer = self.tokenizers[0]
+        language_model = self.language_model
+        codes = self._lm_load_audio_codes(context).to(self.accelerator.device)
+        window_seconds = self._audio_duration_for_context(context)
+        window_frames = max(1, int(round(window_seconds * self._frame_rate())))
+        codes = codes[: min(window_frames, _MAX_AUDIO_FRAMES)]
+        if mode == "audio+text":
+            prompt_text = self._lm_prompt_text(prompt, self._lyrics_for_context(context, str(prompt)))
+        else:
+            prompt_text = "<|audio_start|>"
+        input_ids = tokenizer(prompt_text, return_tensors="pt")["input_ids"].to(self.accelerator.device)
+        if input_ids.shape[1] > _MAX_PROMPT_TOKENS:
+            raise ValueError(f"The assembled MiniMax Music 3 prompt has {input_ids.shape[1]} tokens.")
+        prompt_embeds = language_model.model.embed_tokens(input_ids[0])
+        frame_embeds = self._lm_frame_embeds(codes, language_model=language_model)
+        sequence = torch.cat([prompt_embeds, frame_embeds.to(prompt_embeds.dtype)], dim=0).unsqueeze(0)
+        hidden = language_model.model(inputs_embeds=sequence).last_hidden_state[0]
+        prompt_len = input_ids.shape[1]
+        predictor_hidden = hidden[prompt_len - 1 : prompt_len - 1 + codes.shape[0]]
+        depth_hidden = self._teacher_forced_depth_hiddens(predictor_hidden, codes)
+        frame_hiddens = torch.cat([predictor_hidden, depth_hidden.to(predictor_hidden.dtype)], dim=-1)
+        return {"prompt_embeds": frame_hiddens.unsqueeze(0).to(dtype=self.config.weight_dtype)}
+
     @torch.no_grad()
     def _encode_single_prompt(self, prompt: str, context: dict) -> Dict[str, torch.Tensor]:
         self.load_text_encoder(move_to_device=True)
@@ -718,6 +1088,9 @@ class MiniMaxMusic(AudioModelFoundation):
         rvq_depth_decoder = self.rvq_depth_decoder
         if language_model is None or rvq_depth_decoder is None:
             raise ValueError("MiniMax Music 3 text components are not loaded.")
+        precache_mode = str(getattr(self.config, "minimax_music_lm_precache_mode", "text-only") or "text-only")
+        if precache_mode in ("audio-only", "audio+text"):
+            return self._encode_teacher_forced_prompt(str(prompt), context, precache_mode)
 
         prompt_text = (
             f"<|im_start|><|caption_start|>{_clean_caption(str(prompt))}<|caption_end|>"
@@ -906,6 +1279,14 @@ class MiniMaxMusic(AudioModelFoundation):
     def prepare_batch(self, batch: dict, state: dict) -> dict:
         if not batch:
             return batch
+        if self._train_language_model:
+            device = self.accelerator.device
+            for key in ("input_ids", "audio_codes", "prompt_lengths", "audio_lengths", "has_audio_end"):
+                value = batch.get(key)
+                if value is None:
+                    raise ValueError(f"MiniMax Music 3 language model batch is missing {key}.")
+                batch[key] = value.to(device=device)
+            return batch
         latent_batch = batch.get("latent_batch")
         if latent_batch is None:
             latent_batch = batch.get("audio_latent_batch")
@@ -1019,6 +1400,8 @@ class MiniMaxMusic(AudioModelFoundation):
         return hidden_states_buffer.get(f"layer_{int(block_idx)}")
 
     def model_predict(self, prepared_batch: dict) -> Dict[str, object]:
+        if self._train_language_model:
+            return self._lm_predict(prepared_batch)
         transformer = self.get_trained_component()
         if transformer is None:
             raise ValueError("MiniMax Music 3 transformer has not been loaded before model_predict was invoked.")
@@ -1060,6 +1443,11 @@ class MiniMaxMusic(AudioModelFoundation):
         }
 
     def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2AUDIO, load_base_model: bool = True):
+        if self._train_language_model:
+            raise NotImplementedError(
+                "MiniMax Music 3 language model training does not build an inference pipeline yet; "
+                "merge the LoRA into language_model/ and use the standard generation stack."
+            )
         if isinstance(pipeline_type, str):
             pipeline_type = PipelineTypes(pipeline_type)
         if pipeline_type not in self.PIPELINE_CLASSES:

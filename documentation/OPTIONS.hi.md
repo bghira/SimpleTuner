@@ -67,6 +67,37 @@ simpletuner configure config/foo/config.json
   - `diffusers` standard PEFT/Diffusers layout है।
   - `comfyui` keys को ComfyUI‑style में convert करता है (`diffusion_model.*` के साथ `lora_A/lora_B` और `.alpha` tensors)। Flux, Flux2, Lumina2, और Z‑Image ComfyUI inputs को auto‑detect करेंगे भले ही यह `diffusers` पर हो, लेकिन saving के लिए ComfyUI output force करने के लिए `comfyui` सेट करें।
 
+### `--minimax_music_train_component`
+
+- **क्या**: चुनता है कि MiniMax Music 3 का कौन सा घटक प्रशिक्षित होगा।
+- **विकल्प**: `transformer` (डिफ़ॉल्ट), `language_model`
+- **नोट्स**:
+  - `transformer` कैश किए गए Flow-VAE latents पर फ्लो-मैचिंग संगीत DiT को प्रशिक्षित करता है (मानक पथ)।
+  - `language_model` RVQ सिमेंटिक कोड पर नेक्स्ट-टोकन क्रॉस-एंट्रॉपी के साथ Qwen3 ऑटोरिग्रेसिव चरण को प्रशिक्षित करता है। डेटासेट को `prompt` (या `tags`) और `lyrics` के साथ पूर्व-गणित कच्चे प्रति-कोडबुक ऑडियो टोकन (`audio_tokens_path` मेटाडेटा, आकार `[frames, codebooks]`) प्रदान करने होंगे। केवल मानक PEFT LoRA समर्थित है, `--lora_format comfyui` अस्वीकार किया जाता है, और ट्रेनर के भीतर सत्यापन ऑडियो अक्षम है — सहेजे गए चेकपॉइंट से रेंडर करें।
+
+### `--minimax_music_lm_max_frames`
+
+- **क्या**: `--minimax_music_train_component=language_model` के लिए, प्रत्येक ट्रैक की ऑडियो टोकन शृंखला को इतने 25Hz फ्रेम तक काटता है (गीत के साथ संरेखण बनाए रखने के लिए शुरुआत से लिया गया)।
+- **डिफ़ॉल्ट**: `0` (पूर्ण ट्रैक पर प्रशिक्षण)
+- **नोट्स**:
+  - एक फ्रेम 40ms का है; 7500 फ्रेम पाँच मिनट हैं। यदि लंबे ट्रैक VRAM समाप्त कर दें तो इसे कम करें।
+  - काटे गए नमूनों को ऑडियो-समाप्ति लक्ष्य नहीं मिलता, इसलिए मॉडल जल्दी रुकना नहीं सीखता।
+
+### `--minimax_music_lm_adapter`
+
+- **क्या**: DiT कंडीशनिंग के प्री-कैश के दौरान Qwen3 योजनाकार पर लागू भाषा-मॉडल LoRA का पथ (`language_model.` उपसर्ग कुंजियों वाला `pytorch_lora_weights.safetensors`, `--minimax_music_train_component=language_model` से निर्मित)।
+- **संबंधित**: `--minimax_music_lm_adapter_strength` (डिफ़ॉल्ट `1.0`) अडैप्टर डेल्टा को स्केल करता है।
+- **नोट्स**: अडैप्टर या शक्ति बदलते समय नई टेक्स्ट-एम्बेड कैश निर्देशिका उपयोग करें; कैश स्वतः अमान्य नहीं होती।
+
+### `--minimax_music_lm_precache_mode`
+
+- **क्या**: Qwen3 योजनाकार DiT प्रशिक्षण के लिए कैश की गई कंडीशनिंग कैसे बनाता है।
+- **विकल्प**: `text-only` (डिफ़ॉल्ट), `audio-only`, `audio+text`
+- **नोट्स**:
+  - `text-only` कैप्शन और गीत से ऑटोरिग्रेसिव रोलआउट सैंपल करता है (मूल व्यवहार)। छिपी अवस्थाएँ योजनाकार की कल्पित ट्रैक का वर्णन करती हैं, प्रशिक्षण ऑडियो का नहीं।
+  - `audio-only` नमूने के वास्तविक RVQ कोड (`audio_tokens_path` मेटाडेटा, कच्चे प्रति-कोडबुक सूचकांक) बिना टेक्स्ट उपसर्ग के योजनाकार से टीचर-फोर्स करता है; `audio+text` कैप्शन और गीत आगे जोड़ता है। दोनों प्रति-फ्रेम छिपी अवस्थाओं को DAV latents के साथ एक-से-एक संरेखित करते हैं और कोड को VAE कैश द्वारा कवर की गई ऑडियो विंडो तक काटते हैं।
+  - मोड बदलते समय नई टेक्स्ट-एम्बेड कैश निर्देशिका उपयोग करें।
+
 ### `--minimax_h3_target_mode`
 
 - **What**: MiniMax-H3 target audio rows शामिल करे या नहीं, इसे नियंत्रित करता है।

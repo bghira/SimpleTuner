@@ -67,6 +67,37 @@ simpletuner configure config/foo/config.json
   - `diffusers` は標準の PEFT/Diffusers 形式です。
   - `comfyui` は ComfyUI 形式（`diffusion_model.*` と `lora_A/lora_B` + `.alpha`）に変換します。Flux、Flux2、Lumina2、Z-Image は `diffusers` のままでも ComfyUI 入力を自動検出しますが、保存時に ComfyUI 出力を強制したい場合は `comfyui` を指定してください。
 
+### `--minimax_music_train_component`
+
+- **内容**: トレーニング対象となる MiniMax Music 3 コンポーネントを選択します。
+- **選択肢**: `transformer`（デフォルト）、`language_model`
+- **メモ**:
+  - `transformer` はキャッシュされた Flow-VAE latent 上でフローマッチング音楽 DiT をトレーニングします（標準パス）。
+  - `language_model` は RVQ セマンティックコードの次トークン交差エントロピーで Qwen3 自己回帰ステージをトレーニングします。データセットは、`prompt`（または `tags`）と `lyrics` に加えて、事前計算された生のコードブック別オーディオトークン（`audio_tokens_path` メタデータ、形状 `[frames, codebooks]`）を提供する必要があります。標準 PEFT LoRA のみ対応、`--lora_format comfyui` は拒否され、トレーナー内の検証オーディオは無効になります——保存されたチェックポイントからレンダリングしてください。
+
+### `--minimax_music_lm_max_frames`
+
+- **内容**: `--minimax_music_train_component=language_model` の場合、各トラックのオーディオトークン列をこのフレーム数（25Hz）に切り詰めます（歌詞との整合を保つため先頭から取得）。
+- **デフォルト**: `0`（フルトラックでトレーニング）
+- **メモ**:
+  - 1 フレームは 40ms、7500 フレームは 5 分です。長いトラックで VRAM が不足する場合は下げてください。
+  - 切り詰められたサンプルにはオーディオ終端ターゲットが与えられないため、モデルが早期停止を学習することはありません。
+
+### `--minimax_music_lm_adapter`
+
+- **内容**: DiT 条件付けの事前キャッシュ時に Qwen3 プランナーへ適用する言語モデル LoRA のパス（`language_model.` プレフィックス付きキーの `pytorch_lora_weights.safetensors`、`--minimax_music_train_component=language_model` で生成）。
+- **関連**: `--minimax_music_lm_adapter_strength`（デフォルト `1.0`）はアダプタのデルタをスケールします。
+- **メモ**: アダプタや強度を変更する際は新しいテキスト埋め込みキャッシュディレクトリを使用してください。キャッシュは自動では無効化されません。
+
+### `--minimax_music_lm_precache_mode`
+
+- **内容**: Qwen3 プランナーが DiT トレーニング用のキャッシュ条件を生成する方法。
+- **選択肢**: `text-only`（デフォルト）、`audio-only`、`audio+text`
+- **メモ**:
+  - `text-only` はキャプションと歌詞から自己回帰ロールアウトをサンプリングします（従来の動作）。隠れ状態はプランナーが想像したトラックを表し、トレーニング音声ではありません。
+  - `audio-only` はサンプルの正解 RVQ コード（`audio_tokens_path` メタデータ、生のコードブック別インデックス）をテキストなしでプランナーに教師強制し、`audio+text` はキャプションと歌詞を前置します。どちらもフレームごとの隠れ状態を DAV latent と 1 対 1 に整列させ、VAE キャッシュがカバーする音声ウィンドウにコードを切り詰めます。
+  - モード変更時は新しいテキスト埋め込みキャッシュディレクトリを使用してください。
+
 ### `--minimax_h3_target_mode`
 
 - **内容**: MiniMax-H3 がターゲット音声行を含めるかを制御します。

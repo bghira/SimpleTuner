@@ -707,12 +707,16 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
             if image_metadata is None:
                 image_metadata = {}
-            requires_crop = StateTracker.get_args().model_family not in [
-                "sd1x",
-                "sd2x",
-                "deepfloyd",
-                "ace_step",
-            ]
+            requires_crop = (
+                StateTracker.get_args().model_family
+                not in [
+                    "sd1x",
+                    "sd2x",
+                    "deepfloyd",
+                    "ace_step",
+                ]
+                and image_metadata.get("dataset_type") != "audio"
+            )
             if requires_crop and "crop_coordinates" not in image_metadata:
                 raise Exception(
                     f"An image was discovered ({image_path}) that did not have its metadata: {self.metadata_backend.get_metadata_by_filepath(image_path)}"

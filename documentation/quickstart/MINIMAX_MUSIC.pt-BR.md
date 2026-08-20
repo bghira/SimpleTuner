@@ -164,8 +164,39 @@ Se o adapter estiver em formato ComfyUI nativo, mantenha `lora_format: "comfyui"
 
 MiniMax Music 3 usa o caminho de treinamento flow-matching do SimpleTuner, então AnyFlow, TwinFlow, CREPA self-flow e LayerSync estão disponíveis. Comece com LoRA padrão e ative um recurso avançado por vez.
 
+## Treinamento do modelo de linguagem (estágio AR)
+
+O modelo de linguagem Qwen3 que planeja os códigos semânticos do MiniMax Music 3 pode ser treinado no lugar do DiT musical — útil para palavras-gatilho estilo dreambooth que vinculam um estilo musical a uma palavra-chave.
+
+Veja [fiona crapple](https://huggingface.co/terminusresearch/minimax-music3-lm-lora-fiona-crapple) para um exemplo completo de treinamento de LM LoRA produzido com este modo, incluindo configurações, checkpoints e comparações de áudio.
+
+```json
+{
+  "minimax_music_train_component": "language_model",
+  "minimax_music_lm_max_frames": 0
+}
+```
+
+Requisitos e diferenças em relação ao treinamento do DiT:
+
+- Cada amostra do dataset deve fornecer `prompt` (ou `tags`), `lyrics` e o metadado `audio_tokens_path` apontando para um arquivo `.pt` de códigos RVQ brutos por codebook com formato `[frames, codebooks]` (códigos semânticos `< 16384`, residuais `< audio_vocab_size`, sem offsets de vocabulário). Exporte-os com `precompute_rvq_codes.py --raw-codes` do repositório dedicado `minimax-music3-latent-replanner`.
+- A perda é entropia cruzada de próximo token sobre o codebook semântico, mascarada às posições de áudio; o depth decoder RVQ permanece congelado e fornece os embeddings de entrada dos códigos residuais.
+- Apenas LoRA PEFT padrão é suportado e `lora_format: "comfyui"` é rejeitado. Os checkpoints salvam `pytorch_lora_weights.safetensors` com chaves de adaptador prefixadas com `language_model.`.
+- O áudio de validação no treinador fica desabilitado neste modo; renderize a partir dos checkpoints salvos com a pilha de geração padrão.
+- Não há cache de VAE nem de text embeds neste modo — o treinamento lê os tokens diretamente, então `cache_dir_vae` e backends de text embeds não são usados.
+- Coloque sua palavra-gatilho (por exemplo `"fiona crapple"`) no campo caption/`prompt` de cada amostra; mantenha as letras inalteradas.
+- **Preservação de prior**: adicione um segundo backend de áudio com `is_regularisation_data: true` contendo músicas não relacionadas (letras vazias são permitidas). Nesses lotes a perda mira a distribuição de próximo token do modelo base congelado em vez dos códigos reais, mantendo o LoRA cirúrgico: captions não relacionados continuam prevendo exatamente como o modelo base faria, reduzindo bastante o vazamento de estilo.
+
 ## Solução de problemas
 
 - **`VAE caching requires the original dav.pth checkpoint`**: use `SimpleTuner/MiniMax-Music-3-Encoder` ou `MiniMaxAI/MiniMax-Music3`, mantenha `dav.pth` na raiz do checkpoint local ou aponte `pretrained_vae_model_name_or_path` para um local que o contenha.
 - **Lyrics ausentes**: confirme que os metadados têm `lyrics`, ou coloque arquivos `.lyrics` ao lado dos áudios ao usar `caption_strategy: "textfile"`.
 - **OOM no text embedding ou validação**: reduza `validation_audio_duration`, use int8 no text encoder ou habilite offload do text encoder.
+
+## Experimentos relacionados ao MiniMax Music 3
+
+- [Encoders RVQ abertos](https://huggingface.co/SimpleTuner/open-rvq-encoder-minimax-music3)
+- [Integração de áudio de referência RVQ](https://github.com/bghira/minimax-music3-rvq-reference-audio)
+- [LoRA do LM Fiona Crapple](https://huggingface.co/terminusresearch/minimax-music3-lm-lora-fiona-crapple)
+- [Refinador latente](https://github.com/bghira/minimax-music3-latent-refiner) e [pesos v0.10](https://huggingface.co/terminusresearch/minimax-music3-latent-refiner-v0.10)
+- [Replanejador latente](https://github.com/bghira/minimax-music3-latent-replanner) e [registro experimental](https://huggingface.co/terminusresearch/minimax-music3-replanner-experiment)

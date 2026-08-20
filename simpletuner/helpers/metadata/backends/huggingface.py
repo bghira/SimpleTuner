@@ -577,15 +577,16 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                         if val:
                             sample_metadata[field] = str(val)
 
-                # Specific handling for lyrics column
+                # Specific handling for lyrics column. Empty strings are preserved: instrumental and
+                # regularisation tracks legitimately carry no lyrics.
                 if "lyrics" not in sample_metadata:
                     lyrics_val = self._get_nested_value(item, self.lyrics_column)
-                    if lyrics_val:
+                    if lyrics_val is not None:
                         sample_metadata["lyrics"] = str(lyrics_val)
                     # Fallback for norm_lyrics if not found via lyrics_column
                     elif self.lyrics_column != "norm_lyrics":
                         norm_lyrics = self._get_nested_value(item, "norm_lyrics")
-                        if norm_lyrics:
+                        if norm_lyrics is not None:
                             sample_metadata["lyrics"] = str(norm_lyrics)
                 for token_field in ("audio_tokens", "audio_tokens_path"):
                     token_value = self._get_nested_value(item, token_field)
