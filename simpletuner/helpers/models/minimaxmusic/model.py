@@ -855,11 +855,23 @@ class MiniMaxMusic(AudioModelFoundation):
             targets[index, start : start + audio_len] = audio_codes[index, :audio_len, 0] + _AUDIO_CODE_OFFSET
             if bool(has_audio_end[index]):
                 targets[index, start + audio_len] = _AUDIO_END_TOKEN_ID
-        return F.cross_entropy(
-            logits.reshape(-1, logits.shape[-1]).float(),
-            targets.reshape(-1),
-            ignore_index=-100,
-        )
+        # Chunked cross-entropy: upcasting the full-vocab logits at once costs several GiB at long sequence lengths.
+        flat_logits = logits.reshape(-1, logits.shape[-1])
+        flat_targets = targets.reshape(-1)
+        total = flat_logits.new_zeros((), dtype=torch.float32)
+        count = 0
+        chunk = 1024
+        for start in range(0, flat_logits.shape[0], chunk):
+            piece_targets = flat_targets[start : start + chunk]
+            mask = piece_targets != -100
+            if not mask.any():
+                continue
+            piece = flat_logits[start : start + chunk][mask].float()
+            total = total + F.cross_entropy(piece, piece_targets[mask], reduction="sum")
+            count += int(mask.sum())
+        if count == 0:
+            raise ValueError("MiniMax Music 3 language model loss found no supervised positions.")
+        return total / count
 
     def load_text_tokenizer(self):
         if self.tokenizers is not None:
