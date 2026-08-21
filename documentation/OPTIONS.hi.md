@@ -1289,6 +1289,13 @@ Multi‑GPU training के लिए dataset sizing पर अधिक वि�
 - **What**: loss landscape पर अधिक gradual weighting के साथ मॉडल ट्रेन करता है।
 - **Why**: pixel diffusion models training में विशिष्ट loss weighting schedule के बिना degrade हो सकते हैं। DeepFloyd में soft‑min‑snr‑gamma लगभग अनिवार्य पाया गया। Latent diffusion models में आपको सफलता मिल सकती है, लेकिन छोटे प्रयोगों में इससे blurry results होने की संभावना दिखी।
 
+### `--flow_cubic_schedule_weights`
+
+- **What**: 0 से 1 तक समान दूरी वाले points पर non-negative weights से density बनाकर flow-matching timesteps sample करता है। JSON array या comma-separated values दें। शून्य या एक weight uniform distribution चुनता है, दो weights linear density बनाते हैं, और तीन या अधिक monotone cubic-Hermite interpolation उपयोग करते हैं।
+- **Why**: Schedule को discrete timesteps तक सीमित किए बिना training को चुने हुए noise regions पर केंद्रित करता है। Model की native timestep convention और configured flow schedule shift लागू रहते हैं।
+- **Conflicts**: `--flow_use_uniform_schedule`, `--flow_use_beta_schedule`, `--flux_fast_schedule`, या `--flow_custom_timesteps` के साथ उपयोग नहीं किया जा सकता।
+- **Example**: `"flow_cubic_schedule_weights": [0.1, 1.0, 0.3, 2.0]`
+
 ### `--diff2flow_enabled`
 
 - **What**: epsilon या v‑prediction models के लिए Diffusion‑to‑Flow bridge सक्षम करता है।
@@ -1392,6 +1399,33 @@ Multi‑GPU training के लिए dataset sizing पर अधिक वि�
 - **What**: ReflexFlow frequency‑compensation (loss reweighting) term का weight।
 - **Default**: 1.0.
 - **Why**: reweighted flow‑matching loss को scale करता है, जैसा ReflexFlow paper में β₂ knob के रूप में बताया गया है।
+
+---
+
+## 🎯 iREPA (Improved Representation Alignment)
+
+iREPA convolution projector और per-frame spatial normalization से representation alignment में spatial structure बनाए रखता है। यह Transformers के CREPA और UNets के U-REPA को बेहतर बनाता है। [iREPA guide](experimental/IREPA.hi.md) देखें।
+
+### `--irepa_enabled`
+
+- **Type**: Boolean flag
+- **Default**: `false`
+- **What**: चालू CREPA या U-REPA path में iREPA spatial operations जोड़ता है।
+- **Note**: Transformer के लिए `crepa_enabled` या UNet के लिए `urepa_enabled` भी चालू करें।
+- **Training mode**: Full-model या standard PEFT LoRA। Auxiliary projector save न कर पाने के कारण LyCORIS supported नहीं है।
+
+### `--irepa_spatial_norm_alpha`
+
+- **Type**: Float
+- **Default**: `0.6`
+- **What**: Spatial standard deviation से divide करने से पहले teacher-feature mean subtraction को scale करता है।
+- **Note**: `0.6` latent-diffusion reference setting है; `1.0` हर channel को पूरी तरह center करता है।
+
+### `--irepa_projector_kernel_size`
+
+- **Type**: Integer (`1`, `3`, `5`, या `7`)
+- **Default**: `3`
+- **What**: Alignment projector का spatial convolution kernel सेट करता है।
 
 ---
 
@@ -1722,6 +1756,33 @@ urepa_use_tae = false
 
 ---
 
+## Internal Guidance
+
+Internal Guidance शुरुआती diffusion-transformer block को final output head वाले denoising target से supervise करता है। [Internal Guidance](experimental/INTERNAL_GUIDANCE.md) देखें।
+
+### `--internal_guidance_enabled`
+
+- **क्या**: Auxiliary denoising head और loss enable करता है।
+- **Support**: Standard PEFT LoRA या full-model diffusion transformer training। UNet, autoregressive और LyCORIS reject होते हैं।
+- **Default**: `false`
+
+### `--internal_guidance_loss_weight`
+
+- **क्या**: Intermediate loss multiplier।
+- **Default**: `0.5`; zero से अधिक होना चाहिए।
+
+### `--internal_guidance_block_index`
+
+- **क्या**: Zero-based transformer block।
+- **Default**: Transformer depth का एक चौथाई।
+
+### `--validation_internal_guidance_scale`
+
+- **क्या**: Validation sampling में `intermediate + scale * (final - intermediate)` लागू करता है।
+- **Default**: `1.0` (disabled); reference `1.4` उपयोग करता है।
+
+---
+
 ## 🔁 LayerSync (Hidden State Self-Alignment)
 
 LayerSync एक "student" layer को उसी transformer के एक मजबूत "teacher" layer से match करने के लिए प्रोत्साहित करता है, hidden tokens पर cosine similarity का उपयोग करके।
@@ -1831,8 +1892,19 @@ Upstream option mapping (LayerSync → SimpleTuner):
 ### `--report_to`
 
 - **What**: results और logs रिपोर्ट करने के लिए platform निर्दिष्ट करता है।
-- **Why**: TensorBoard, wandb, या comet_ml जैसी platforms के साथ integration सक्षम करता है। multiple trackers पर रिपोर्ट करने के लिए comma से अलग values उपयोग करें;
-- **Choices**: wandb, tensorboard, comet_ml
+- **Why**: स्थानीय या external monitoring चालू करता है। `simpletuner`, `output_dir` में JSONL, manifest, validation media metadata और self-contained HTML report लिखता है। `all` में local tracker शामिल है।
+- **Choices**: simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, all, none
+
+### `--validation_image_format`
+
+- **What**: `output_dir/validation_images` में save होने वाली images का format।
+- **Choices**: png, webp, jpeg
+- **Default**: png
+
+### `--validation_image_quality`
+
+- **What**: WebP और JPEG quality, 1 से 100।
+- **Default**: 90। PNG के लिए ignored है।
 
 ## Environment configuration variables
 
@@ -1985,6 +2057,7 @@ usage: train.py [-h] --model_family
                 [--flow_use_beta_schedule [FLOW_USE_BETA_SCHEDULE]]
                 [--flow_beta_schedule_alpha FLOW_BETA_SCHEDULE_ALPHA]
                 [--flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA]
+                [--flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
                 [--flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]]
                 [--mixflow_enabled [MIXFLOW_ENABLED]]
@@ -2110,7 +2183,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -2473,6 +2546,11 @@ options:
                         Alpha value for beta schedule (default: 2.0)
   --flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA
                         Beta value for beta schedule (default: 2.0)
+  --flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS
+                        Sample flow timesteps from a smooth density through
+                        equally spaced non-negative weights. Use a JSON array
+                        or comma-separated values; zero or one weight produces
+                        a uniform distribution.
   --flow_schedule_shift FLOW_SCHEDULE_SHIFT
                         Shift the noise schedule for flow-matching models
   --flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]
@@ -2868,7 +2946,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}
                         Method for model distillation
                         Distillation methods cannot be combined with
                         --train_text_encoder.

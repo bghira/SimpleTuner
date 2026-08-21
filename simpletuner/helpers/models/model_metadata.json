@@ -178,6 +178,15 @@
         "name": "Ideogram 4",
         "prediction_type": "flow_matching"
     },
+    "infinitetalk": {
+        "class_name": "InfiniteTalk",
+        "flavour_choices": [
+            "single-14b-480p"
+        ],
+        "module_path": "simpletuner.helpers.models.infinitetalk.model",
+        "name": "InfiniteTalk",
+        "prediction_type": "flow_matching"
+    },
     "kandinsky5_image": {
         "class_name": "Kandinsky5Image",
         "flavour_choices": [

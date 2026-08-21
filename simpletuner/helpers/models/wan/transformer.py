@@ -26,6 +26,7 @@ from diffusers.models._modeling_parallel import ContextParallelInput, ContextPar
 from diffusers.models.attention import FeedForward, _chunked_feed_forward
 from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.models.attention_processor import Attention
+from diffusers.models.cache_utils import CacheMixin
 from diffusers.models.embeddings import PixArtAlphaTextProjection, TimestepEmbedding, Timesteps, get_1d_rotary_pos_embed
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
@@ -533,10 +534,14 @@ class WanTransformerBlock(nn.Module):
         encoder_hidden_states: torch.Tensor,
         temb: torch.Tensor,
         rotary_emb: torch.Tensor,
+        audio_hidden_states: Optional[torch.Tensor] = None,
+        num_frames: Optional[int] = None,
         checkpoint_ffn: bool = False,
         checkpoint_fn: Any | None = None,
         offload_attention: bool = False,
     ) -> torch.Tensor:
+        if audio_hidden_states is not None:
+            raise ValueError(f"{self.__class__.__name__} does not support audio conditioning.")
         self._ensure_module_dtype(hidden_states.device, hidden_states.dtype)
 
         temb = temb.to(device=self.scale_shift_table.device, dtype=self.scale_shift_table.dtype, non_blocking=True)
@@ -647,7 +652,7 @@ class WanTransformerBlock(nn.Module):
         return _chunked_feed_forward(self.ffn, norm_hidden_states, chunk_dim, chunk_size)
 
 
-class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
+class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin, CacheMixin):
     r"""
     A Transformer model for video-like data used in the Wan model.
 
@@ -910,6 +915,7 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         timestep: torch.LongTensor,
         encoder_hidden_states: torch.Tensor,
         encoder_hidden_states_image: Optional[torch.Tensor] = None,
+        audio_hidden_states: Optional[torch.Tensor] = None,
         timestep_sign: Optional[torch.Tensor] = None,
         r_timestep: Optional[torch.Tensor] = None,
         skip_layers: Optional[List[int]] = None,
@@ -924,6 +930,7 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
         if attention_kwargs is not None:
             attention_kwargs = attention_kwargs.copy()
             lora_scale = attention_kwargs.pop("scale", 1.0)
+            audio_hidden_states = attention_kwargs.pop("_infinitetalk_audio_hidden_states", audio_hidden_states)
         else:
             lora_scale = 1.0
 
@@ -1055,6 +1062,8 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                     encoder_hidden_states,
                     timestep_proj,
                     current_rope,
+                    audio_hidden_states=audio_hidden_states,
+                    num_frames=post_patch_num_frames,
                     offload_attention=self.gradient_checkpointing_offload_attention,
                 )
 
@@ -1120,6 +1129,8 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                             encoder_hidden_states,
                             timestep_proj,
                             current_rope,
+                            audio_hidden_states=audio_hidden_states,
+                            num_frames=post_patch_num_frames,
                             checkpoint_ffn=True,
                             checkpoint_fn=checkpoint_fn,
                             offload_attention=self.gradient_checkpointing_offload_attention,
@@ -1138,6 +1149,8 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                                 checkpoint_encoder_hidden_states,
                                 checkpoint_temb,
                                 checkpoint_rope,
+                                audio_hidden_states=audio_hidden_states,
+                                num_frames=post_patch_num_frames,
                                 offload_attention=self.gradient_checkpointing_offload_attention,
                             )
 
@@ -1155,6 +1168,8 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                         encoder_hidden_states,
                         timestep_proj,
                         current_rope,
+                        audio_hidden_states=audio_hidden_states,
+                        num_frames=post_patch_num_frames,
                         offload_attention=self.gradient_checkpointing_offload_attention,
                     )
 

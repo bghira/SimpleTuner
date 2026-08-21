@@ -359,3 +359,7 @@ On the **Environment** page, you'll see the newly-configured training job, and b
 **NOTE**: The **Default** environment is special, and not recommended for use as a general training environment; its settings can be automatically merged into any environment that enables the option to do so, **Use environment defaults**:
 
 <img width="1521" height="991" alt="image" src="https://github.com/user-attachments/assets/9d18b0c1-608e-4ab2-be14-65b98907ec69" />
+
+## Local training metrics
+
+Choose **SimpleTuner (Local)** as the logging platform to record scalar charts and validation media in the output directory. Open **Metrics → Training Runs** to inspect them. See [Local training metrics](LOCAL_METRICS.md) for the file contract, offline report, compression options, and API.

@@ -4,11 +4,13 @@ Cross-frame Representation Alignment（CREPA）是视频模型的轻量正则项
 
 > **寻找图像模型？** 请参阅 [IMAGE_REPA.zh.md](IMAGE_REPA.zh.md) 了解图像 DiT 模型（Flux、SD3 等）的 REPA 支持以及 UNet 模型（SDXL、SD1.5、Kolors）的 U-REPA 支持。
 
+> **改进空间对齐：** [iREPA](IREPA.zh.md) 会对每个视频帧独立应用卷积投影器和教师归一化。
+
 ## 适用场景
 
 - 训练包含复杂运动、场景变化或遮挡的视频。
 - 微调视频 DiT（LoRA 或全量）时出现帧间闪烁/身份漂移。
-- 支持的模型家族：`kandinsky5_video`、`ltxvideo`、`sanavideo`、`wan`（其他家族未暴露 CREPA 钩子）。
+- 支持的模型家族：所有暴露 CREPA 隐藏状态捕获的视频 Transformer，包括 Kandinsky 5 Video、LTXVideo/LTX-2、HunyuanVideo、LongCat Video、MiniMax H3、SanaVideo、Wan/Wan S2V 和 Cosmos。
 - 有额外 VRAM（根据设置约 1–2GB）用于 DINO 编码器与 VAE，并需在训练时保持内存驻留以将 latent 解码为像素。
 
 ## 快速设置（WebUI）
@@ -162,7 +164,7 @@ CREPA 支持在训练过程中对系数（`crepa_lambda`）进行调度，包括
 
 ## 常见问题
 
-- 在不支持的家族上启用 CREPA 会导致缺失隐藏状态；仅限 `kandinsky5_video`、`ltxvideo`、`sanavideo`、`wan`。
+- 在没有 CREPA 隐藏状态捕获的家族上启用 CREPA 会导致缺失隐藏状态错误。
 - **Block index 太高** → “hidden states not returned”。降低索引；Transformer 块为 0-based。
 - **显存峰值** → 尝试 `crepa_spatial_align=false`、更小编码器（`dinov2_vits14` + `224`）或更低 block index。
 - **主干模式报错** → 同时设置 `crepa_block_index`（学生）与 `crepa_teacher_block_index`（教师）为存在的层。

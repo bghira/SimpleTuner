@@ -80,6 +80,7 @@ class FieldService:
         "flow_use_beta_schedule",
         "flow_beta_schedule_alpha",
         "flow_beta_schedule_beta",
+        "flow_cubic_schedule_weights",
         "flow_schedule_shift",
         "flow_schedule_auto_shift",
         "mixflow_enabled",

@@ -174,6 +174,10 @@ class DistillationBase:
         """Compute the distillation loss to be combined with the original loss."""
         return original_loss, {}
 
+    def prepare_model_output(self, model_output: Dict[str, Any]) -> None:
+        """Preserve forward outputs needed after model-owned auxiliary losses run."""
+        del model_output
+
     def pre_training_step(self, model, step):
         """Perform any setup needed before each training step."""
         pass

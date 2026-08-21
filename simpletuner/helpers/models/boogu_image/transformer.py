@@ -1119,6 +1119,7 @@ class BooguImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
         ref_image_hidden_states: Optional[List[List[torch.Tensor]]] = None,
         attention_kwargs: Optional[Dict[str, Any]] = None,
         return_dict: bool = False,
+        hidden_states_buffer: Optional[dict] = None,
     ) -> Union[torch.Tensor, Transformer2DModelOutput]:
         """
         Forward pass:
@@ -1316,6 +1317,17 @@ class BooguImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
                             encoder_seq_lengths,
                             seq_lengths,
                         )
+                    capture_layers = getattr(hidden_states_buffer, "capture_layers", None)
+                    if hidden_states_buffer is not None and (capture_layers is None or layer_idx in capture_layers):
+                        captured = [
+                            img_hidden_states[index, total_len - noise_len : total_len]
+                            for index, (total_len, noise_len) in enumerate(
+                                zip(combined_img_seq_lengths, l_effective_img_len)
+                            )
+                        ]
+                        if len({tensor.shape[0] for tensor in captured}) != 1:
+                            raise ValueError("Hidden-state capture requires equal latent token counts within a batch.")
+                        hidden_states_buffer[f"layer_{layer_idx}"] = torch.stack(captured)
 
                 if enable_double_stream_teacache:
                     self.teacache_params.previous_double_residual = (
@@ -1368,6 +1380,7 @@ class BooguImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
                 ori_hidden_states = hidden_states.clone()
 
             for layer_idx, layer in enumerate(self.single_stream_layers):
+                block_idx = self.num_double_stream_layers + layer_idx
                 if enable_taylorseer:
                     layer.current = self.current
                     layer.cache_dic = self.cache_dic
@@ -1375,7 +1388,7 @@ class BooguImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
                     self.current["layer"] = self.num_double_stream_layers + layer_idx
 
                 if torch.is_grad_enabled() and should_checkpoint_block(
-                    self.num_double_stream_layers + layer_idx,
+                    block_idx,
                     self.gradient_checkpointing,
                     self.gradient_checkpointing_interval,
                     self.gradient_checkpointing_segment_stride,
@@ -1385,6 +1398,15 @@ class BooguImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
                     )
                 else:
                     hidden_states = layer(hidden_states, joint_attention_mask, rotary_emb, temb)
+                capture_layers = getattr(hidden_states_buffer, "capture_layers", None)
+                if hidden_states_buffer is not None and (capture_layers is None or block_idx in capture_layers):
+                    captured = [
+                        hidden_states[index, seq_len - noise_len : seq_len]
+                        for index, (seq_len, noise_len) in enumerate(zip(seq_lengths, l_effective_img_len))
+                    ]
+                    if len({tensor.shape[0] for tensor in captured}) != 1:
+                        raise ValueError("Hidden-state capture requires equal latent token counts within a batch.")
+                    hidden_states_buffer[f"layer_{self.num_double_stream_layers + layer_idx}"] = torch.stack(captured)
 
             if self.enable_teacache:
                 self.teacache_params.previous_residual = hidden_states - ori_hidden_states

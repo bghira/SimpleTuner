@@ -647,6 +647,7 @@ class Ideogram4(ImageModelFoundation):
         latent_height: int,
         latent_width: int,
     ) -> dict:
+        hidden_states_buffer = self._new_hidden_state_buffer()
         # Mirrors the pipeline's asymmetric-CFG branch: image tokens only (no text
         # padding), zeroed llm conditioning, and no flowmap kwargs (the unconditional
         # transformer is never adapter-trained).
@@ -664,6 +665,7 @@ class Ideogram4(ImageModelFoundation):
             device=self.accelerator.device,
         )
         timesteps = self._prepare_model_predict_timesteps(prepared_batch["timesteps"], batch_size=batch_size)
+        capture_kwargs = {"hidden_states_buffer": hidden_states_buffer} if hidden_states_buffer is not None else {}
         model_output = self.unconditional_transformer(
             llm_features=llm_features,
             x=packed_latents,
@@ -671,11 +673,16 @@ class Ideogram4(ImageModelFoundation):
             position_ids=position_ids,
             segment_ids=segment_ids,
             indicator=indicator,
+            **capture_kwargs,
         )
         model_prediction = self._unpack_latents(model_output, latent_height, latent_width)
-        return {"model_prediction": self.raw_model_prediction_to_model_prediction(model_prediction)}
+        output = {"model_prediction": self.raw_model_prediction_to_model_prediction(model_prediction)}
+        if hidden_states_buffer is not None:
+            output["hidden_states_buffer"] = hidden_states_buffer
+        return output
 
     def model_predict(self, prepared_batch):
+        hidden_states_buffer = self._new_hidden_state_buffer()
         noisy_latents = prepared_batch["noisy_latents"].to(device=self.accelerator.device, dtype=self.config.weight_dtype)
         batch_size, _channels, latent_height, latent_width = noisy_latents.shape
         packed_latents = self._pack_latents(noisy_latents)
@@ -752,6 +759,7 @@ class Ideogram4(ImageModelFoundation):
             self._prepare_flowmap_model_predict_batch(prepared_batch, batch_size=batch_size)
         )
 
+        capture_kwargs = {"hidden_states_buffer": hidden_states_buffer} if hidden_states_buffer is not None else {}
         model_output = self.model(
             llm_features=llm_features,
             x=model_input,
@@ -759,11 +767,15 @@ class Ideogram4(ImageModelFoundation):
             position_ids=position_ids,
             segment_ids=segment_ids,
             indicator=indicator,
+            **capture_kwargs,
             **transformer_kwargs,
         )
         packed_prediction = model_output[:, text_tokens:]
         model_prediction = self._unpack_latents(packed_prediction, latent_height, latent_width)
-        return {"model_prediction": self.raw_model_prediction_to_model_prediction(model_prediction)}
+        output = {"model_prediction": self.raw_model_prediction_to_model_prediction(model_prediction)}
+        if hidden_states_buffer is not None:
+            output["hidden_states_buffer"] = hidden_states_buffer
+        return output
 
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         if self._mixflow_enabled():
@@ -776,7 +788,10 @@ class Ideogram4(ImageModelFoundation):
         mu = float(getattr(self.config, "ideogram_schedule_mu", 0.0) or 0.0)
         std = float(getattr(self.config, "ideogram_schedule_std", 1.5) or 1.5)
         schedule = get_schedule_for_resolution((image_height, image_width), known_mean=mu, std=std)
-        schedule_u = torch.rand((bsz,), device=device, dtype=torch.float32)
+        if self._uses_flow_cubic_schedule():
+            schedule_u = self._sample_flow_cubic_values(bsz, device)
+        else:
+            schedule_u = torch.rand((bsz,), device=device, dtype=torch.float32)
         model_t = schedule(schedule_u).to(device=device, dtype=torch.float32)
         sigmas = (1.0 - model_t).clamp(0.0, 1.0)
         timesteps = sigmas * 1000.0

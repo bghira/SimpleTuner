@@ -47,7 +47,7 @@ if should_log():
 else:
     logger.setLevel("ERROR")
 
-WAN_STYLE_LATENT_MODEL_FAMILIES = ("wan", "wan_s2v", "sanavideo", "anima")
+WAN_STYLE_LATENT_MODEL_FAMILIES = ("wan", "wan_s2v", "infinitetalk", "sanavideo", "anima")
 
 
 def prepare_sample(
@@ -917,7 +917,7 @@ class VAECache(WebhookMixin):
             from simpletuner.helpers.models.ltxvideo.autoencoder import AutoencoderKLLTXVideo as AutoencoderClass
         elif StateTracker.get_args().model_family == "ltxvideo2":
             from simpletuner.helpers.models.ltxvideo2.autoencoder import AutoencoderKLLTX2Video as AutoencoderClass
-        elif StateTracker.get_args().model_family in ["wan", "wan_s2v"]:
+        elif StateTracker.get_args().model_family in ["wan", "wan_s2v", "infinitetalk"]:
             from diffusers import AutoencoderKLWan as AutoencoderClass
         else:
             from diffusers import AutoencoderKL as AutoencoderClass
@@ -1057,6 +1057,7 @@ class VAECache(WebhookMixin):
             "ltxvideo2",
             "wan",
             "wan_s2v",
+            "infinitetalk",
             "sanavideo",
             "kandinsky5-video",
             "kandinsky5_video",

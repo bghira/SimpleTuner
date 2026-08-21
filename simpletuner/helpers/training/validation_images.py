@@ -5,9 +5,46 @@ import numpy as np
 import wandb
 from PIL import Image
 
+from simpletuner.helpers.training.local_metrics import record_validation_media
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
+
+
+def save_validation_image(
+    image,
+    save_dir,
+    filename_stem,
+    config,
+    *,
+    label,
+    index,
+    resolution,
+):
+    image_format = str(getattr(config, "validation_image_format", "png") or "png").lower()
+    if image_format not in {"png", "webp", "jpeg"}:
+        raise ValueError("validation_image_format must be one of: png, webp, jpeg.")
+    configured_quality = getattr(config, "validation_image_quality", 90)
+    quality = 90 if configured_quality is None else int(configured_quality)
+    if not 1 <= quality <= 100:
+        raise ValueError("validation_image_quality must be within [1, 100].")
+
+    extension = "jpg" if image_format == "jpeg" else image_format
+    save_path = os.path.join(save_dir, f"{filename_stem}.{extension}")
+    save_image = image.convert("RGB") if image_format == "jpeg" and getattr(image, "mode", None) != "RGB" else image
+    save_kwargs = {"format": image_format.upper()}
+    if image_format in {"webp", "jpeg"}:
+        save_kwargs["quality"] = quality
+    save_image.save(save_path, **save_kwargs)
+    record_validation_media(
+        config,
+        save_path,
+        media_type="image",
+        label=label,
+        index=index,
+        resolution=resolution,
+    )
+    return save_path
 
 
 def save_images(save_dir, validation_images, validation_shortname, validation_resolutions, config):
@@ -33,13 +70,20 @@ def save_images(save_dir, validation_images, validation_shortname, validation_re
             else:
                 res_label = f"{res}x{res}"
 
-        filename = f"step_{StateTracker.get_global_step()}_{validation_shortname}_{validation_img_idx}_{res_label}.png"
-        save_path = os.path.join(save_dir, filename)
+        filename_stem = f"step_{StateTracker.get_global_step()}_{validation_shortname}_{validation_img_idx}_{res_label}"
 
         try:
-            validation_image.save(save_path)
+            save_validation_image(
+                validation_image,
+                save_dir,
+                filename_stem,
+                config,
+                label=validation_shortname,
+                index=validation_img_idx,
+                resolution=res_label,
+            )
         except Exception as e:
-            logger.error(f"Failed to save validation image to {save_path}: {e}")
+            logger.error(f"Failed to save validation image {filename_stem}: {e}")
 
         validation_img_idx += 1
 

@@ -9,6 +9,7 @@ import simpletuner.helpers.distillation.flow_dpo  # noqa: F401
 import simpletuner.helpers.distillation.h3_drift  # noqa: F401
 import simpletuner.helpers.distillation.perflow.distiller  # noqa: F401
 import simpletuner.helpers.distillation.self_forcing.distiller  # noqa: F401
+import simpletuner.helpers.distillation.self_transcendence  # noqa: F401
 from simpletuner.helpers.distillation.common import DistillationBase, validate_distillation_text_encoder_training
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 
@@ -26,6 +27,7 @@ class DistillationMethod(Enum):
     ANYFLOW = "anyflow"
     H3_DRIFT = "h3_drift"
     SELF_FORCING = "self_forcing"
+    SELF_TRANSCENDENCE = "self_transcendence"
 
     @classmethod
     def from_string(cls, method: str):
@@ -217,6 +219,14 @@ class DistillerFactory:
                 student_model=student_model,
             )
         elif method == DistillationMethod.SELF_FORCING:
+            return DistillerFactory._create_registered_distiller(
+                registry_key=method.value,
+                teacher_model=teacher_model,
+                noise_scheduler=noise_scheduler,
+                distill_config=distill_config,
+                student_model=student_model,
+            )
+        elif method == DistillationMethod.SELF_TRANSCENDENCE:
             return DistillerFactory._create_registered_distiller(
                 registry_key=method.value,
                 teacher_model=teacher_model,

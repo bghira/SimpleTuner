@@ -211,13 +211,7 @@ class OmniGen(ImageModelFoundation):
         if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
             if self._mixflow_enabled():
                 return batch
-            # Get batch size and device
-            bsz = batch["latents"].shape[0]
-            device = batch["latents"].device
-
-            # Sample t using OmniGen's approach (normal -> sigmoid)
-            u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=device)
-            t = 1.0 / (1.0 + torch.exp(-u))  # sigmoid transformation
+            _, t = self.sample_flow_sigmas(batch=batch, state=state)
 
             # OmniGen uses timesteps from 0 to 1, NOT scaled by 1000
             batch["timesteps"] = t  # Keep as 0-1 range
@@ -244,8 +238,11 @@ class OmniGen(ImageModelFoundation):
             return super().sample_flow_sigmas(batch=batch, state=state)
         bsz = batch["latents"].shape[0]
         device = batch["latents"].device
-        u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=device)
-        t = 1.0 / (1.0 + torch.exp(-u))
+        if self._uses_flow_cubic_schedule():
+            t = self._sample_flow_cubic_values(bsz, device)
+        else:
+            u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=device)
+            t = torch.sigmoid(u)
         return t, t
 
     def flow_matching_timesteps_from_sigmas(

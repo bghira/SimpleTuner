@@ -21,6 +21,7 @@
 | HiDream | 17B (8.5B MoE) | [HIDREAM.hi.md](quickstart/HIDREAM.hi.md) |
 | Hunyuan Video | 8.3B | [HUNYUANVIDEO.hi.md](quickstart/HUNYUANVIDEO.hi.md) |
 | Ideogram 4 | 9B | [IDEOGRAM4.hi.md](quickstart/IDEOGRAM4.hi.md) |
+| InfiniteTalk | 14B | [INFINITETALK.hi.md](quickstart/INFINITETALK.hi.md) |
 | Kandinsky 5.0 Image | 6B (lite) | [KANDINSKY5_IMAGE.hi.md](quickstart/KANDINSKY5_IMAGE.hi.md) |
 | Kandinsky 5.0 Video | 2B lite, 19B pro | [KANDINSKY5_VIDEO.hi.md](quickstart/KANDINSKY5_VIDEO.hi.md) |
 | Kwai Kolors | 2.7B | [KOLORS.hi.md](quickstart/KOLORS.hi.md) |
@@ -72,6 +73,7 @@
 | HiDream | ✓ | ✓ | ✓* | ✓ | ✗ |
 | Hunyuan Video | ✓ | ✓ | ✓* | ✗ | ✓ I2V |
 | Ideogram 4 | ✓ | ✓ | ✓* | ✗ | ✗ |
+| InfiniteTalk | ✓ | ✓ | ✓* | ✗ | audio + I2V req |
 | Kandinsky 5.0 Image | ✓ | ✓ | ✓* | ✗ | ✓ I2I |
 | Kandinsky 5.0 Video | ✓ | ✓ | ✓* | ✗ | ✓ I2V |
 | Kwai Kolors | ✓ | ✓ | ✓ | ✗ | ✗ |
@@ -121,6 +123,7 @@
 | HiDream | int8/fp8/nf4 optional | bf16 |
 | Hunyuan Video | int8 optional | bf16 |
 | Ideogram 4 | fp8 default, nf4 optional | bf16 |
+| InfiniteTalk | int8 optional | bf16 |
 | Kandinsky 5.0 Image | int8 optional | bf16 |
 | Kandinsky 5.0 Video | int8 optional | bf16 |
 | Kwai Kolors | not recommended | bf16 |
@@ -170,6 +173,7 @@
 | HiDream | ✓ | ✓ | ✓ | ✗ |
 | Hunyuan Video | ✓ | ✓ | ✓ | ✓ |
 | Ideogram 4 | ✓ | ✓ | ✓ | ✗ |
+| InfiniteTalk | ✓ | ✓ | ✓ | ✓ |
 | Kandinsky 5.0 Image | ✓ | ✓ | ✓ | ✓ |
 | Kandinsky 5.0 Video | ✓ | ✓ | ✓ | ✓ |
 | Kwai Kolors | ✓ | ✗ | ✗ | ✗ |
@@ -204,49 +208,50 @@
 
 नीचे की हर `flow matching` row के लिए MixFlow post-training उपलब्ध है। [MixFlow guide](experimental/MIXFLOW.md) देखें।
 
-| मॉडल | Prediction | Flow Shift | TwinFlow | Self-Flow | LayerSync | Sliders |
-| --- | --- | :---: | :---: | :---: | :---: | :---: |
-| ACE-Step | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ |
-| Anima | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ |
-| Auraflow | flow matching | ✓ (SLG) | ✓ | ✓ | ✓ | ✓ |
-| Boogu-Image | flow matching | ✓ | ✗ | ✗ | ✗ | ✓ |
-| Chroma 1 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Cosmos2 | sample | ✗ | ✗ | ✓ | ✓ | ✓ |
-| Cosmos3 | flow matching | ✓ | ✗ | ✗ | ✗ | ✓ |
-| DeepFloyd IF | epsilon | ✗ | ✗ | ✗ | ✗ | ✓ |
-| ERNIE-Image | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ |
-| Flux.1 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Flux.2 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| HeartMuLa | autoregressive next-token | ✗ | ✗ | ✗ | ✗ | ✗ |
-| HiDream | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Hunyuan Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Ideogram 4 | flow matching | ✓ | ✗ | ✗ | ✗ | ✓ |
-| Kandinsky 5.0 Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Kandinsky 5.0 Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Kwai Kolors | epsilon | ✗ | ✗ | ✗ | ✗ | ✓ |
-| Krea2 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| LongCat Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| LongCat Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| LTX Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| LTX Video 2 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Lumina2 | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ |
-| Mage-Flow | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ |
-| MiniMax H3 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| MiniMax Music 3 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| OmniGen | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ |
-| PixArt Sigma | epsilon | ✗ | ✗ | ✓ | ✓ | ✓ |
-| Qwen Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Sana | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Sana Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| SD 1.x/2.x (Legacy) | epsilon / v-pred | ✗ | ✗ | ✗ | ✗ | ✓ |
-| Stable Diffusion 3 | flow matching | ✓ (SLG) | ✓ | ✓ | ✓ | ✓ |
-| Stable Diffusion XL | epsilon | ✗ | ✗ | ✗ | ✗ | ✓ |
-| Stable Cascade (Stage C) | epsilon | ✗ | ✗ | ✗ | ✗ | ✓ |
-| Wan Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Wan S2V | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ |
-| Z-Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Z-Image Omni | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
-| ZLab I1 | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ |
+| मॉडल | Prediction | Flow Shift | TwinFlow | Self-Flow | LayerSync | Internal Guidance | Sliders |
+| --- | --- | :---: | :---: | :---: | :---: | :---: | :---: |
+| ACE-Step | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ v1 | ✓ |
+| Anima | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| Auraflow | flow matching | ✓ (SLG) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Boogu-Image | flow matching | ✓ | ✗ | ✗ | ✗ | ✓ | ✓ |
+| Chroma 1 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Cosmos2 | sample | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| Cosmos3 | flow matching | ✓ | ✗ | ✗ | ✗ | ✓ | ✓ |
+| DeepFloyd IF | epsilon | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| ERNIE-Image | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| Flux.1 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Flux.2 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| HeartMuLa | autoregressive next-token | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| HiDream | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Hunyuan Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Ideogram 4 | flow matching | ✓ | ✗ | ✗ | ✗ | ✓ | ✓ |
+| InfiniteTalk | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Kandinsky 5.0 Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Kandinsky 5.0 Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Kwai Kolors | epsilon | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| Krea2 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| LongCat Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| LongCat Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| LTX Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| LTX Video 2 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Lumina2 | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| Mage-Flow | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
+| MiniMax H3 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| MiniMax Music 3 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| OmniGen | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| PixArt Sigma | epsilon | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| Qwen Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Sana | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Sana Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| SD 1.x/2.x (Legacy) | epsilon / v-pred | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| Stable Diffusion 3 | flow matching | ✓ (SLG) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Stable Diffusion XL | epsilon | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| Stable Cascade (Stage C) | epsilon | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| Wan Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Wan S2V | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| Z-Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Z-Image Omni | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ZLab I1 | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ |
 
 </details>
 
@@ -270,6 +275,7 @@
 | HiDream | CLIP-L/14 + CLIP-G/14 + T5 XXL v1.1 + Llama | 123M + 694M + 11B + not specified | AutoencoderKL |
 | Hunyuan Video | Hunyuan LLM | not specified | Hunyuan Video 3D VAE |
 | Ideogram 4 | Qwen3-VL-8B-Instruct | 8B | Ideogram AutoEncoder |
+| InfiniteTalk | UMT5 + Wav2Vec2 | निर्दिष्ट नहीं + 95M | Wan VAE |
 | Kandinsky 5.0 Image | Qwen2.5-VL + CLIP-L/14 | 7B + 123M | Flux VAE (AutoencoderKL) |
 | Kandinsky 5.0 Video | Qwen2.5-VL + CLIP-L/14 | 7B + 123M | Hunyuan Video VAE |
 | Kwai Kolors | ChatGLM-6B | 6B | AutoencoderKL |
@@ -300,7 +306,7 @@
 </details>
 
 *✓ = supported, ✓* = supported लेकिन full-rank training के लिए आम तौर पर DeepSpeed/FSDP2 चाहिए, ✗ = not supported. Ref Inputs मौजूदा reference/edit/I2V conditioning paths को दिखाता है; `opt` optional और `req` edit/I2V flavour में required है.*
-*TwinFlow native है जब `twinflow_enabled=true`; diffusion models को अभी भी `diff2flow_enabled=true` और `twinflow_allow_diff2flow=true` चाहिए। Self-Flow CREPA self-flow support है। LayerSync alignment के लिए hidden states expose करने वाले backbones को दिखाता है.*
+*TwinFlow native है जब `twinflow_enabled=true`; diffusion models को अभी भी `diff2flow_enabled=true` और `twinflow_allow_diff2flow=true` चाहिए। Self-Flow CREPA self-flow support है। Internal Guidance diffusion transformers पर auxiliary head उपयोग करता है। LayerSync alignment के लिए hidden states expose करने वाले backbones को दिखाता है.*
 
 ### तेज़ रास्ते: Z-Image Turbo और Flux Schnell
 

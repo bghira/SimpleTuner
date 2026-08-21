@@ -190,5 +190,24 @@ class TestValidationStartFields(unittest.TestCase):
                 self.assertEqual(min_rules[0].value, 0)
 
 
+class TestIrepaFields(unittest.TestCase):
+    def test_irepa_fields_are_model_neutral(self):
+        from simpletuner.simpletuner_sdk.server.services.field_registry.registry import FieldRegistry
+        from simpletuner.simpletuner_sdk.server.services.field_registry.types import FieldType
+
+        registry = FieldRegistry()
+        enabled = registry.get_field("irepa_enabled")
+        alpha = registry.get_field("irepa_spatial_norm_alpha")
+        kernel = registry.get_field("irepa_projector_kernel_size")
+
+        self.assertEqual(enabled.field_type, FieldType.CHECKBOX)
+        self.assertFalse(enabled.default_value)
+        self.assertIsNone(enabled.model_specific)
+        self.assertEqual(alpha.default_value, 0.6)
+        self.assertEqual(kernel.default_value, 3)
+        crepa_enabled = registry.get_field("crepa_enabled")
+        self.assertEqual(len({enabled.order, alpha.order, kernel.order, crepa_enabled.order}), 4)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -336,7 +336,7 @@ def _output_attribute(args, model):
 
 
 def _output_save_call(args):
-    if args.model_family in ["ltxvideo", "ltxvideo2", "wan", "wan_s2v"]:
+    if args.model_family in ["ltxvideo", "ltxvideo2", "wan", "wan_s2v", "infinitetalk"]:
         return f"""
 from diffusers.utils.export_utils import export_to_gif
 export_to_gif(model_output, "output.gif", fps={args.framerate})
@@ -483,6 +483,8 @@ def _model_card_family_tag(model_family: str):
         return "ltx-video" if model_family == "ltxvideo" else "ltx-2"
     if model_family in ("wan", "wan_s2v"):
         return "WanPipeline"
+    if model_family == "infinitetalk":
+        return "InfiniteTalkPipeline"
     return model_family
 
 
@@ -501,6 +503,7 @@ def _pipeline_tag(args):
         "sanavideo",
         "wan",
         "wan_s2v",
+        "infinitetalk",
     }
     if args.model_family in audio_model_families:
         return "text-to-audio"
@@ -836,6 +839,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
   - Number of GPUs: {StateTracker.get_accelerator().num_processes}
 - Gradient checkpointing: {StateTracker.get_args().gradient_checkpointing}
 - Prediction type: {model.PREDICTION_TYPE.value}{model.custom_model_card_schedule_info()}
+{f'- Internal Guidance: block {args.internal_guidance_block_index if args.internal_guidance_block_index is not None else "auto"}, loss weight {args.internal_guidance_loss_weight}, validation scale {args.validation_internal_guidance_scale}' if getattr(args, 'internal_guidance_enabled', False) else ''}
 - Optimizer: {StateTracker.get_args().optimizer}{f' (config={optimizer_config})' if optimizer_config not in [None, ''] else ''}
 - Trainable parameter precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else StateTracker.get_args().mixed_precision}
 - Base model precision: `{args.base_model_precision}`

@@ -1707,16 +1707,9 @@ class ACEStep(AudioModelFoundation):
             timesteps = flow_batch["timesteps"]
             noisy_latents = flow_batch["noisy_latents"]
         else:
-            # Sample timesteps via logit-normal to index scheduler sigmas (upstream behavior).
-            timesteps_tensor = self.noise_schedule.timesteps.to(device)
-            sigmas_tensor = self.noise_schedule.sigmas.to(device)
-            mean = getattr(self.config, "logit_mean", 0.0)
-            std = getattr(self.config, "logit_std", 1.0)
-            u = torch.normal(mean=mean, std=std, size=(bsz,), device=device)
-            u = torch.sigmoid(u)
-            indices = (u * (timesteps_tensor.shape[0] - 1)).long().clamp(0, timesteps_tensor.shape[0] - 1)
-            timesteps = timesteps_tensor[indices]
-            sigmas = sigmas_tensor[indices]
+            sampling_batch = dict(batch)
+            sampling_batch["latents"] = latents
+            sigmas, timesteps = self.sample_flow_sigmas(batch=sampling_batch, state=state)
             view_shape = [bsz] + [1] * (latents.ndim - 1)
             sigmas_expanded = sigmas.view(*view_shape).to(dtype=dtype)
             noisy_latents = sigmas_expanded * noise + (1.0 - sigmas_expanded) * latents
@@ -1774,8 +1767,10 @@ class ACEStep(AudioModelFoundation):
 
         mean = getattr(self.config, "logit_mean", 0.0)
         std = getattr(self.config, "logit_std", 1.0)
-        u = torch.normal(mean=mean, std=std, size=(bsz,), device=self.accelerator.device)
-        u = torch.sigmoid(u)
+        if self._uses_flow_cubic_schedule():
+            u = self._sample_flow_cubic_values(bsz, self.accelerator.device)
+        else:
+            u = torch.normal(mean=mean, std=std, size=(bsz,), device=self.accelerator.device).sigmoid()
         indices = (u * (timesteps_tensor.shape[0] - 1)).long().clamp(0, timesteps_tensor.shape[0] - 1)
         timesteps = timesteps_tensor[indices]
         sigmas = sigmas_tensor[indices]
@@ -1910,6 +1905,11 @@ class ACEStep(AudioModelFoundation):
             "crepa_hidden_states": self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer),
             "hidden_states_buffer": hidden_states_buffer,
         }
+
+    def _init_internal_guidance_regularizer(self):
+        if getattr(self.config, "internal_guidance_enabled", False) and self._is_v15_layout_active():
+            raise ValueError("Internal Guidance is not implemented for the ACE-Step v1.5 decoder layout.")
+        return super()._init_internal_guidance_regularizer()
 
     def loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
         """

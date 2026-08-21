@@ -251,7 +251,7 @@ class MusubiBlockSwapManager:
         return index in self.block_indices
 
     def stream_in(self, block: nn.Module, device: torch.device):
-        self._move_module(block, device)
+        self.move_module(block, device)
         # Verify the move succeeded
         if not _module_on_device(block, device):
             self._logger.error(
@@ -260,7 +260,10 @@ class MusubiBlockSwapManager:
             )
 
     def stream_out(self, block: nn.Module):
-        self._move_module(block, self.offload_device)
+        self.move_module(block, self.offload_device)
+
+    def move_module(self, module: nn.Module, device: torch.device):
+        self._move_module(module, device)
 
     def mark_blocks_for_offload(self, blocks: List[nn.Module]):
         for idx in self.block_indices:
