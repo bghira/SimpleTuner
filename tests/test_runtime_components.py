@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, Mock, patch
 import torch
 
 from simpletuner.helpers.data_backend.runtime import BatchFetcher
+from simpletuner.helpers.data_backend.runtime import batch_fetcher as batch_fetcher_module
 from simpletuner.helpers.data_backend.runtime import dataloader_iterator as dataloader_module
 from simpletuner.helpers.data_backend.runtime import get_backend_weight, random_dataloader_iterator, select_dataloader_index
 
@@ -112,7 +113,7 @@ class TestBatchFetcher(unittest.TestCase):
         self.assertGreater(mock_iterator.call_count, 1)
 
     @patch("simpletuner.helpers.data_backend.runtime.batch_fetcher.random_dataloader_iterator")
-    def test_prefetched_batches_use_consecutive_steps(self, mock_iterator):
+    def test_prefetch_starts_from_last_consumed_schedule_hint(self, mock_iterator):
         mock_iterator.side_effect = lambda step, datasets: {"step": step}
         fetcher = BatchFetcher(step=100, max_size=3, datasets=self.datasets)
 
@@ -122,6 +123,17 @@ class TestBatchFetcher(unittest.TestCase):
             [call.args[0] for call in mock_iterator.call_args_list],
             [100, 101, 102],
         )
+
+    def test_runtime_iterator_does_not_advance_epoch_state_during_prefetch(self):
+        mock_iterator = Mock(return_value={"batch": "data"})
+        with (
+            patch.object(batch_fetcher_module, "DEFAULT_RANDOM_ITERATOR", mock_iterator),
+            patch.object(batch_fetcher_module, "random_dataloader_iterator", mock_iterator),
+        ):
+            fetcher = BatchFetcher(step=100, max_size=1, datasets=self.datasets)
+            fetcher.fetch_responses()
+
+        mock_iterator.assert_called_once_with(100, self.datasets, update_epoch_step=False)
 
     @patch("simpletuner.helpers.data_backend.runtime.batch_fetcher.random_dataloader_iterator")
     def test_fetch_responses_queue_full_behavior(self, mock_iterator):
@@ -147,7 +159,8 @@ class TestBatchFetcher(unittest.TestCase):
         # Queue should be at maximum capacity
         self.assertEqual(fetcher.queue.qsize(), 1)
 
-    def test_next_response_with_data_available(self):
+    @patch("simpletuner.helpers.data_backend.runtime.batch_fetcher._set_epoch_step_for_training_step")
+    def test_next_response_with_data_available(self, mock_set_epoch_step):
         """Test next_response method when data is available"""
         fetcher = BatchFetcher(step=100, max_size=5, datasets=self.datasets)
 
@@ -163,8 +176,10 @@ class TestBatchFetcher(unittest.TestCase):
 
         # Verify correct data was returned
         self.assertEqual(result, test_data)
+        mock_set_epoch_step.assert_called_once_with(101)
 
-    def test_next_response_with_empty_queue(self):
+    @patch("simpletuner.helpers.data_backend.runtime.batch_fetcher._set_epoch_step_for_training_step")
+    def test_next_response_with_empty_queue(self, mock_set_epoch_step):
         """Test next_response method blocks when queue is empty"""
         fetcher = BatchFetcher(step=100, max_size=5, datasets=self.datasets)
 
@@ -192,6 +207,7 @@ class TestBatchFetcher(unittest.TestCase):
 
         # Verify step was updated
         self.assertEqual(fetcher.step, 101)
+        mock_set_epoch_step.assert_called_once_with(101)
 
     def test_stop_fetching(self):
         """Test stop_fetching method"""
@@ -419,6 +435,17 @@ class TestDataloaderIterator(unittest.TestCase):
 
         # Verify correct dataloader was returned
         self.assertEqual(result, "dataloader1")
+
+    @patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.StateTracker")
+    @patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.select_dataloader_index")
+    def test_random_dataloader_iterator_can_defer_epoch_state_update(self, mock_select, mock_state_tracker):
+        mock_select.return_value = "backend1"
+        backends = {"backend1": self.mock_backend1}
+
+        result = random_dataloader_iterator(step=100, backends=backends, update_epoch_step=False)
+
+        self.assertEqual(result, "dataloader1")
+        mock_state_tracker.set_epoch_step.assert_not_called()
 
     @patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.select_dataloader_index")
     def test_random_dataloader_iterator_multiple_backends(self, mock_select):
