@@ -1107,7 +1107,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
         routing_now = False  # are we inside a route?
         tread_mask_info = None
         saved_tokens = None  # copy of full‑seq image tokens
-        global_idx = 0  # counts over *all* transformer layers
+        global_idx = getattr(self, "_diffusion_blocks_active_global_start", 0)
         current_rope = image_rotary_emb
         combined_blocks = list(self.transformer_blocks) + list(self.single_transformer_blocks)
         musubi_manager = self._musubi_block_swap
