@@ -24,12 +24,31 @@ else:
     prefetch_log.setLevel(logging.ERROR)
 
 _SCALED_SAMPLERS: dict[int, "ScaledDatasetSampler"] = {}
+_MAX_TORCH_SEED = 2**63 - 1
 
 
 def prefetch_log_debug(message: str) -> None:
     from simpletuner.helpers.training.multi_process import rank_info
 
     prefetch_log.debug(f"{rank_info()} {message}")
+
+
+def _set_epoch_step_for_training_step(step: int) -> None:
+    args = StateTracker.get_args()
+    grad_steps = getattr(args, "gradient_accumulation_steps", 1) if args is not None else 1
+    if isinstance(grad_steps, (int, float)):
+        gradient_accumulation_steps = max(1, int(grad_steps))
+    else:
+        gradient_accumulation_steps = 1
+    StateTracker.set_epoch_step(int(step / gradient_accumulation_steps))
+
+
+def _selection_generator(step: int) -> torch.Generator:
+    args = StateTracker.get_args()
+    base_seed = getattr(args, "seed", 0) if args is not None else 0
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed((int(base_seed or 0) + int(step)) % _MAX_TORCH_SEED)
+    return generator
 
 
 def select_dataloader_index(step: int, backends: Dict[str, Any]) -> Optional[str]:
@@ -39,7 +58,8 @@ def select_dataloader_index(step: int, backends: Dict[str, Any]) -> Optional[str
     weights = []
     backend_ids = []
     inactive_ids = []
-    for backend_id, backend in backends.items():
+    for backend_id in sorted(backends):
+        backend = backends[backend_id]
         weight = get_backend_weight(backend_id, backend, step)
         if weight <= 0:
             inactive_ids.append(backend_id)
@@ -69,7 +89,7 @@ def select_dataloader_index(step: int, backends: Dict[str, Any]) -> Optional[str
         raise ValueError("All backend sampling weights are zero.")
     weights_tensor /= total
 
-    chosen_index = torch.multinomial(weights_tensor, 1).item()
+    chosen_index = torch.multinomial(weights_tensor, 1, generator=_selection_generator(step)).item()
     chosen_backend_id = backend_ids[chosen_index]
 
     return chosen_backend_id
@@ -171,7 +191,8 @@ class ScaledDatasetSampler:
 
     def rebuild(self, backends: Dict[str, Any]) -> None:
         self._groups = {"positive": [], "negative": [], "neutral": []}
-        for backend_id, backend in backends.items():
+        for backend_id in sorted(backends):
+            backend = backends[backend_id]
             strength = _read_slider_strength(backend_id, backend, self.slider_key)
             if strength is None:
                 self._groups["neutral"].append(backend_id)
@@ -226,7 +247,7 @@ class ScaledDatasetSampler:
         if total <= 0:
             return None
         weights_tensor /= total
-        chosen_index = torch.multinomial(weights_tensor, 1).item()
+        chosen_index = torch.multinomial(weights_tensor, 1, generator=_selection_generator(step)).item()
         return filtered_ids[chosen_index]
 
     def next_backend_id(self, step: int, backends: Dict[str, Any]) -> Optional[str]:
@@ -264,21 +285,20 @@ def _get_scaled_sampler(backends: Dict[str, Any]) -> Optional[ScaledDatasetSampl
     return sampler
 
 
-def random_dataloader_iterator(step: int, backends: Dict[str, Any]) -> Union[Any, bool]:
+def random_dataloader_iterator(
+    step: int,
+    backends: Dict[str, Any],
+    *,
+    update_epoch_step: bool = True,
+) -> Union[Any, bool]:
     if not backends:
         raise ValueError("No data backends provided to iterator.")
 
     prefetch_log_debug("Random dataloader iterator launched.")
-    args = StateTracker.get_args()
-    grad_steps = getattr(args, "gradient_accumulation_steps", 1) if args is not None else 1
-    if isinstance(grad_steps, (int, float)):
-        gradient_accumulation_steps = max(1, int(grad_steps))
-    else:
-        gradient_accumulation_steps = 1
     logger.debug(f"Backends to select from {backends}")
     while backends:
-        epoch_step = int(step / gradient_accumulation_steps)
-        StateTracker.set_epoch_step(epoch_step)
+        if update_epoch_step:
+            _set_epoch_step_for_training_step(step)
 
         sampler = _get_scaled_sampler(backends)
         chosen_backend_id = None
