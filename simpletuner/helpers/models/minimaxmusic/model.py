@@ -1260,12 +1260,17 @@ class MiniMaxMusic(AudioModelFoundation):
         return int(channels) if channels is not None else self.LATENT_CHANNEL_COUNT
 
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        if self._mixflow_enabled():
+            return super().sample_flow_sigmas(batch=batch, state=state)
         bsz = batch["latents"].shape[0]
         device = self.accelerator.device
         dtype = getattr(self.config, "weight_dtype", torch.float32)
         mean = float(getattr(self.config, "logit_mean", 0.0) or 0.0)
         std = float(getattr(self.config, "logit_std", 1.0) or 1.0)
-        u = torch.normal(mean=mean, std=std, size=(bsz,), device=device, dtype=torch.float32).sigmoid()
+        if self._uses_flow_cubic_schedule():
+            u = self._sample_flow_cubic_values(bsz, device)
+        else:
+            u = torch.normal(mean=mean, std=std, size=(bsz,), device=device, dtype=torch.float32).sigmoid()
         data_timesteps = u.to(dtype=dtype)
         noise_sigmas = (1.0 - data_timesteps).clamp(0.0, 1.0)
         return noise_sigmas, data_timesteps
@@ -1331,8 +1336,7 @@ class MiniMaxMusic(AudioModelFoundation):
         if crepa and crepa.enabled and getattr(crepa, "use_self_flow_features", False):
             batch = self._prepare_crepa_self_flow_batch(batch=batch, state=state)
         else:
-            self.expand_sigmas(batch)
-            batch["noisy_latents"] = batch["sigmas"] * input_noise + (1.0 - batch["sigmas"]) * latents
+            self._prepare_flow_noisy_latents(batch)
             if self._twinflow_active():
                 self._prepare_twinflow_metadata(batch)
         return batch

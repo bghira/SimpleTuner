@@ -1295,6 +1295,13 @@ Veja o guia [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) pa
 - **O que**: Treina usando um peso mais gradual na loss landscape.
 - **Por que**: Em pixel diffusion, modelos degradam sem um agendamento de loss especifico. Isso e o caso do DeepFloyd, onde soft-min-snr-gamma foi quase obrigatorio. Em difusao latente, pode funcionar, mas em experimentos pequenos pode produzir resultados borrados.
 
+### `--flow_cubic_schedule_weights`
+
+- **O que**: Amostra timesteps de flow matching de uma densidade definida por pesos nao negativos em pontos igualmente espacados entre 0 e 1. Aceita um array JSON ou valores separados por virgula. Zero ou um peso seleciona distribuicao uniforme, dois definem densidade linear e tres ou mais usam interpolacao cubica de Hermite monotona.
+- **Por que**: Concentra o treinamento em regioes de ruido escolhidas sem reduzir o schedule a timesteps discretos. As convencoes nativas de timestep do modelo e o flow schedule shift configurado continuam sendo aplicados.
+- **Conflitos**: Nao pode ser combinado com `--flow_use_uniform_schedule`, `--flow_use_beta_schedule`, `--flux_fast_schedule` ou `--flow_custom_timesteps`.
+- **Exemplo**: `"flow_cubic_schedule_weights": [0.1, 1.0, 0.3, 2.0]`
+
 ### `--diff2flow_enabled`
 
 - **O que**: Habilita a ponte Diffusion-to-Flow para modelos epsilon ou v-prediction.
@@ -1306,6 +1313,18 @@ Veja o guia [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) pa
 - **O que**: Treina com loss de Flow Matching em vez da loss de predicao nativa.
 - **Por que**: Quando habilitado com `--diff2flow_enabled`, calcula a loss contra o alvo flow (noise - latents) em vez do alvo nativo (epsilon ou velocity).
 - **Nota**: Requer `--diff2flow_enabled`.
+
+### `--mixflow_enabled`
+
+- **O que**: Habilita o pós-treinamento MixFlow com interpolação desacelerada para modelos Flow Matching.
+- **Por que**: Altera a amostragem de timesteps e a velocidade de interpolação sem mudar a arquitetura do modelo.
+- **Nota**: Não pode ser combinado com outros schedules de timestep. Consulte o [guia do MixFlow](experimental/MIXFLOW.pt-BR.md).
+
+### `--mixflow_gamma`
+
+- **O que**: Controla o intervalo da interpolação desacelerada do MixFlow.
+- **Intervalo**: `0.0` a `1.0`; padrão: `0.8`.
+- **Nota**: `0.0` preserva a interpolação padrão, mas mantém a amostragem de timesteps do MixFlow.
 
 ### `--scheduled_sampling_max_step_offset`
 
@@ -1386,6 +1405,33 @@ Veja o guia [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) pa
 - **O que**: Peso para o termo de compensacao por frequencia (reponderacao de loss) do ReflexFlow.
 - **Padrao**: 1.0.
 - **Por que**: Escala a loss flow-matching reponderada, seguindo o knob β₂ descrito no paper ReflexFlow.
+
+---
+
+## 🎯 iREPA (Alinhamento de Representacoes Melhorado)
+
+iREPA preserva a estrutura espacial com um projetor convolucional e normalizacao espacial por frame. Ele melhora CREPA para Transformers e U-REPA para UNets. Veja o [guia iREPA](experimental/IREPA.pt-BR.md).
+
+### `--irepa_enabled`
+
+- **Tipo**: Flag booleana
+- **Padrao**: `false`
+- **O que**: Melhora um caminho CREPA ou U-REPA ativo com as operacoes espaciais do iREPA.
+- **Nota**: Habilite tambem `crepa_enabled` para Transformer ou `urepa_enabled` para UNet.
+- **Modo de treinamento**: Modelo completo ou LoRA PEFT padrao. LyCORIS nao consegue salvar o projetor auxiliar e nao e suportado.
+
+### `--irepa_spatial_norm_alpha`
+
+- **Tipo**: Float
+- **Padrao**: `0.6`
+- **O que**: Escala a subtracao da media das features do teacher antes da divisao pelo desvio padrao espacial.
+- **Nota**: `0.6` e a configuracao de referencia para latent diffusion; `1.0` centraliza totalmente cada canal.
+
+### `--irepa_projector_kernel_size`
+
+- **Tipo**: Inteiro (`1`, `3`, `5` ou `7`)
+- **Padrao**: `3`
+- **O que**: Define o kernel da convolucao espacial do projetor.
 
 ---
 
@@ -1716,6 +1762,33 @@ urepa_use_tae = false
 
 ---
 
+## Internal Guidance
+
+Internal Guidance supervisiona um bloco inicial do diffusion transformer com o mesmo alvo de denoising da cabeça final. Consulte [Internal Guidance](experimental/INTERNAL_GUIDANCE.md).
+
+### `--internal_guidance_enabled`
+
+- **O que**: Ativa a cabeça e a loss auxiliar.
+- **Suporte**: Diffusion transformers com LoRA PEFT padrão ou treino completo. UNet, autoregressivo e LyCORIS são rejeitados.
+- **Padrão**: `false`
+
+### `--internal_guidance_loss_weight`
+
+- **O que**: Multiplicador da loss intermediária.
+- **Padrão**: `0.5`; deve ser maior que zero.
+
+### `--internal_guidance_block_index`
+
+- **O que**: Bloco transformer com índice zero-based.
+- **Padrão**: Um quarto da profundidade.
+
+### `--validation_internal_guidance_scale`
+
+- **O que**: Aplica `intermediate + scale * (final - intermediate)` na validation.
+- **Padrão**: `1.0` (desativado); a referência usa `1.4`.
+
+---
+
 ## 🔁 LayerSync (Hidden State Self-Alignment)
 
 LayerSync incentiva uma camada "estudante" a combinar com uma camada "professora" mais forte dentro do mesmo transformer, usando similaridade de cosseno sobre tokens ocultos.
@@ -1825,8 +1898,19 @@ Mapeamento de opcoes upstream (LayerSync → SimpleTuner):
 ### `--report_to`
 
 - **O que**: Especifica a plataforma para reportar resultados e logs.
-- **Por que**: Habilita integracao com TensorBoard, wandb ou comet_ml para monitoramento. Use multiplos valores separados por virgula para reportar a varios trackers.
-- **Opcoes**: wandb, tensorboard, comet_ml
+- **Por que**: Habilita monitoramento local ou externo. `simpletuner` grava JSONL, manifesto, metadados de validacao e um relatorio HTML autonomo em `output_dir`. `all` inclui o tracker local.
+- **Opcoes**: simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, all, none
+
+### `--validation_image_format`
+
+- **O que**: Formato das imagens salvas em `output_dir/validation_images`.
+- **Opcoes**: png, webp, jpeg
+- **Padrao**: png
+
+### `--validation_image_quality`
+
+- **O que**: Qualidade de WebP e JPEG, de 1 a 100.
+- **Padrao**: 90. Ignorado para PNG.
 
 ## Variaveis de configuracao do ambiente
 
@@ -1979,8 +2063,11 @@ usage: train.py [-h] --model_family
                 [--flow_use_beta_schedule [FLOW_USE_BETA_SCHEDULE]]
                 [--flow_beta_schedule_alpha FLOW_BETA_SCHEDULE_ALPHA]
                 [--flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA]
+                [--flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
                 [--flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]]
+                [--mixflow_enabled [MIXFLOW_ENABLED]]
+                [--mixflow_gamma MIXFLOW_GAMMA]
                 [--audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT]
                 [--flow_custom_timesteps FLOW_CUSTOM_TIMESTEPS]
                 [--flow_timesteps_mode {fixed-list,round-robin}]
@@ -2102,7 +2189,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -2466,10 +2553,21 @@ options:
                         Alpha value for beta schedule (default: 2.0)
   --flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA
                         Beta value for beta schedule (default: 2.0)
+  --flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS
+                        Sample flow timesteps from a smooth density through
+                        equally spaced non-negative weights. Use a JSON array
+                        or comma-separated values; zero or one weight produces
+                        a uniform distribution.
   --flow_schedule_shift FLOW_SCHEDULE_SHIFT
                         Shift the noise schedule for flow-matching models
   --flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]
                         Auto-adjust schedule shift based on image resolution
+  --mixflow_enabled [MIXFLOW_ENABLED]
+                        Enable MixFlow slowed-interpolation post-training for
+                        flow-matching models.
+  --mixflow_gamma MIXFLOW_GAMMA
+                        Set the MixFlow slowed-interpolation range coefficient
+                        (default: 0.8).
   --audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT
                         Shift the audio noise schedule for flow-matching
                         models with audio latents
@@ -2855,7 +2953,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}
                         Method for model distillation
                         Distillation methods cannot be combined with
                         --train_text_encoder.

@@ -295,14 +295,15 @@ class MiniMaxH3(VideoModelFoundation):
         return list(dict.fromkeys(targets))
 
     def get_lora_save_layers(self):
+        save_layers = list(super().get_lora_save_layers() or [])
         if not self._configured_anyflow():
-            return super().get_lora_save_layers()
+            return save_layers or None
         if not bool(self._anyflow_distillation_config().get("train_delta_embedder", True)):
-            return super().get_lora_save_layers()
+            return save_layers or None
         transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
         if transformer is not None and getattr(transformer, "delta_adaln_embedder", None) is not None:
-            return ["delta_adaln_embedder"]
-        return super().get_lora_save_layers()
+            save_layers.append("delta_adaln_embedder")
+        return list(dict.fromkeys(save_layers)) or None
 
     def _assert_anyflow_endpoint_parameters_trainable(self) -> None:
         if not self._configured_anyflow():
@@ -1413,7 +1414,16 @@ class MiniMaxH3(VideoModelFoundation):
             audio_sigmas = audio_sigmas.to(device=target_device, dtype=torch.float32)
             if audio_sigmas.ndim == 1:
                 audio_sigmas = audio_sigmas.view(audio_sigmas.shape[0], 1, 1, 1)
-        audio_noisy = (1 - audio_sigmas) * audio_latents + audio_sigmas * audio_input_noise
+        audio_interpolation_sigmas = audio_sigmas
+        if self._mixflow_enabled():
+            audio_sigma_1d = audio_sigmas.reshape(audio_sigmas.shape[0], -1)[:, 0]
+            audio_interpolation_sigma_1d = self._mixflow_interpolation_sigmas(
+                audio_sigma_1d,
+                batch["mixflow_slowdown_factors"],
+            )
+            audio_interpolation_sigmas = self._expand_sigma_values(audio_interpolation_sigma_1d, audio_latents)
+            batch["audio_mixflow_interpolation_sigmas"] = audio_interpolation_sigma_1d
+        audio_noisy = (1 - audio_interpolation_sigmas) * audio_latents + audio_interpolation_sigmas * audio_input_noise
 
         batch["audio_latents"] = audio_latents
         batch["audio_latent_mask"] = audio_mask

@@ -1,3 +1,4 @@
+import re
 from typing import Optional
 
 import torch
@@ -9,6 +10,18 @@ class HiddenStateBuffer(dict):
 
     Acts like a dict while providing a tiny bit of structure for code clarity.
     """
+
+    _LAYER_KEY = re.compile(r"^layer_(\d+)$")
+
+    def __init__(self, *args, capture_layers: Optional[set[int]] = None, **kwargs):
+        self.capture_layers = capture_layers
+        super().__init__(*args, **kwargs)
+
+    def __setitem__(self, key, value):
+        match = self._LAYER_KEY.match(key) if isinstance(key, str) else None
+        if match is not None and self.capture_layers is not None and int(match.group(1)) not in self.capture_layers:
+            return
+        super().__setitem__(key, value)
 
     def pop_layer(self, layer_idx: int):
         """Convenience helper for the common layer_{idx} key naming."""
@@ -54,7 +67,7 @@ class UNetMidBlockCapture:
             raise ValueError("UNet does not have a mid_block to capture from")
 
         def hook_fn(module, input, output):
-            self._captured = output.detach()
+            self._captured = output
 
         self._hook_handle = self.unet.mid_block.register_forward_hook(hook_fn)
 

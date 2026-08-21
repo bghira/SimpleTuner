@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import time
 import unittest
+from io import BytesIO
 
 import requests
+from PIL import Image
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
@@ -700,6 +702,15 @@ class MetricsGpuHealthDashboardTestCase(_TrainerPageMixin, WebUITestCase):
             trainer_page.switch_to_metrics_tab()
             trainer_page.wait_for_tab("metrics")
 
+            system_tab = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "[data-testid='system-metrics-tab']"))
+            )
+            system_tab.click()
+            driver.execute_script(
+                "const comp = Alpine.$data(document.getElementById('metrics-tab-content')); comp.heroDismissed = true;"
+                "const root = Alpine.$data(document.querySelector('.dashboard-wrapper')); root.eventDockCollapsed = true;"
+            )
+
             WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "#metrics-tab-content .gpu-dashboard"))
             )
@@ -728,6 +739,102 @@ class MetricsGpuHealthDashboardTestCase(_TrainerPageMixin, WebUITestCase):
             WebDriverWait(driver, 5).until(lambda d: history_container.get_attribute("data-history-series") == "Temp")
 
         self.for_each_browser("test_gpu_history_toggle_series", scenario)
+
+
+class TrainingMetricsDashboardTestCase(_TrainerPageMixin, WebUITestCase):
+    """Test local training run charts and validation media wiring."""
+
+    MAX_BROWSERS = 1
+
+    def test_training_run_metrics_and_validation_media(self) -> None:
+        self.with_sample_environment()
+        output_dir = self.home_path / "training-output"
+        validation_dir = output_dir / "validation_images"
+        validation_dir.mkdir(parents=True)
+
+        config_path = self.config_dir / "test-config" / "config.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config["--output_dir"] = str(output_dir)
+        config["--report_to"] = "simpletuner"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        self.seed_defaults(active_config="test-config", output_dir=str(output_dir))
+
+        manifest = {
+            "schema_version": 1,
+            "run_name": "Anima local metrics",
+            "project_name": "metrics-e2e",
+            "status": "completed",
+            "last_step": 20,
+            "record_count": 3,
+            "metric_names": ["learning_rate", "train_loss"],
+            "updated_at": "2026-08-21T12:00:00+00:00",
+        }
+        (output_dir / "training_metrics.json").write_text(json.dumps(manifest), encoding="utf-8")
+        records = [
+            {"step": step, "metrics": {"train_loss": loss, "learning_rate": step / 100000}}
+            for step, loss in ((0, 1.0), (10, 0.7), (20, 0.4))
+        ]
+        (output_dir / "training_metrics.jsonl").write_text(
+            "".join(f"{json.dumps(record)}\n" for record in records),
+            encoding="utf-8",
+        )
+        image_path = validation_dir / "step_20_prompt_0_64x64.png"
+        Image.new("RGB", (64, 64), color=(32, 160, 120)).save(image_path, format="PNG")
+        media = {
+            "step": 20,
+            "type": "image",
+            "label": "A green square",
+            "index": 0,
+            "resolution": "64x64",
+            "path": image_path.relative_to(output_dir).as_posix(),
+        }
+        (output_dir / "validation_media.jsonl").write_text(f"{json.dumps(media)}\n", encoding="utf-8")
+        (output_dir / "training_report.html").write_text("<html>report</html>", encoding="utf-8")
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_metrics_tab()
+            trainer_page.wait_for_tab("metrics")
+
+            run_select = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "[data-testid='training-run-select']"))
+            )
+            WebDriverWait(driver, 10).until(
+                lambda _driver: Select(run_select).first_selected_option.text.startswith("Anima")
+            )
+            canvas = WebDriverWait(driver, 10).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, "[data-testid='training-metrics-canvas']"))
+            )
+            self.assertGreater(canvas.size["width"], 300)
+            self.assertGreater(canvas.size["height"], 200)
+
+            image = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".training-media-grid > figure img"))
+            )
+            media_response = requests.get(image.get_attribute("src"), timeout=5)
+            self.assertEqual(media_response.status_code, 200, media_response.text)
+            self.assertEqual(media_response.headers["content-type"], "image/png")
+            self.assertEqual(Image.open(BytesIO(media_response.content)).size, (64, 64))
+
+            loss_toggle = driver.find_element(
+                By.XPATH,
+                "//div[contains(@class, 'training-metric-picker')]//label[span[text()='train_loss']]/input",
+            )
+            loss_toggle.click()
+            WebDriverWait(driver, 5).until(lambda _driver: not loss_toggle.is_selected())
+
+            driver.set_window_size(430, 900)
+            workspace = driver.find_element(By.CSS_SELECTOR, ".training-metrics-workspace")
+            WebDriverWait(driver, 5).until(lambda _driver: workspace.size["width"] > 0)
+            overflow = driver.execute_script(
+                "return arguments[0].scrollWidth - arguments[0].clientWidth;",
+                workspace,
+            )
+            self.assertLessEqual(overflow, 1)
+
+        self.for_each_browser("test_training_run_metrics_and_validation_media", scenario)
 
 
 class EventDockUptimeTestCase(_TrainerPageMixin, WebUITestCase):

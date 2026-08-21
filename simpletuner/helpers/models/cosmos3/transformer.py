@@ -902,6 +902,7 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
         action_noisy_frame_indexes: list[torch.Tensor] | None = None,
         action_domain_ids: list[torch.Tensor] | None = None,
         reasoner_memory_state: Cosmos3ReasonerMemoryState | dict | None = None,
+        hidden_states_buffer: dict | None = None,
         return_dict: bool = True,
     ) -> Cosmos3OmniTransformerOutput | tuple[list[torch.Tensor], list[torch.Tensor] | None, list[torch.Tensor] | None]:
         """Run a full denoising-step forward pass.
@@ -1075,6 +1076,9 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
                     )
                 else:
                     gen_seq = decoder_layer.forward_gen_only(gen_seq, rotary_gen, layer_kv[layer_idx])
+                capture_layers = getattr(hidden_states_buffer, "capture_layers", None)
+                if hidden_states_buffer is not None and (capture_layers is None or layer_idx in capture_layers):
+                    hidden_states_buffer[f"layer_{layer_idx}"] = gen_seq[vision_mse_loss_indexes_local].unsqueeze(0)
                 if musubi_offload_active and musubi_manager.is_managed_block(layer_idx):
                     musubi_manager.stream_out(decoder_layer)
             last_hidden_state = self.norm_moe_gen(gen_seq)
@@ -1082,6 +1086,7 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
             und_seq = hidden_states[:und_len]
             gen_seq = hidden_states[und_len:]
             rotary_emb = (cos[:und_len], sin[:und_len], cos[und_len:], sin[und_len:])
+            vision_gen_indexes = vision_mse_loss_indexes - und_len
             for layer_idx, decoder_layer in enumerate(self.layers):
                 if musubi_offload_active and musubi_manager.is_managed_block(layer_idx):
                     musubi_manager.stream_in(decoder_layer, gen_seq.device)
@@ -1100,6 +1105,9 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
                     und_seq, gen_seq = self._gradient_checkpointing_func(checkpointed_layer, und_seq, gen_seq, rotary_emb)
                 else:
                     und_seq, gen_seq = decoder_layer(und_seq, gen_seq, rotary_emb)
+                capture_layers = getattr(hidden_states_buffer, "capture_layers", None)
+                if hidden_states_buffer is not None and (capture_layers is None or layer_idx in capture_layers):
+                    hidden_states_buffer[f"layer_{layer_idx}"] = gen_seq[vision_gen_indexes].unsqueeze(0)
                 if musubi_offload_active and musubi_manager.is_managed_block(layer_idx):
                     musubi_manager.stream_out(decoder_layer)
             und_out = self.norm(und_seq)

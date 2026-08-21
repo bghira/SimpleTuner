@@ -484,6 +484,27 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="flow_cubic_schedule_weights",
+            arg_name="--flow_cubic_schedule_weights",
+            ui_label="Cubic Schedule Weights",
+            field_type=FieldType.TEXT_JSON,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=None,
+            help_text=(
+                "Sample flow timesteps from a smooth density through equally spaced non-negative weights. "
+                "Use a JSON array or comma-separated values; zero or one weight produces a uniform distribution."
+            ),
+            tooltip="Defines a custom cubic-Hermite timestep density over the normalized interval [0,1].",
+            documentation="OPTIONS.md#--flow_cubic_schedule_weights",
+            importance=ImportanceLevel.ADVANCED,
+            order=24.5,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="flow_schedule_shift",
             arg_name="--flow_schedule_shift",
             ui_label="Schedule Shift",
@@ -514,6 +535,48 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             tooltip="Automatically calculates optimal shift for different resolutions. May require learning rate adjustment.",
             importance=ImportanceLevel.ADVANCED,
             order=26,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="mixflow_enabled",
+            arg_name="--mixflow_enabled",
+            ui_label="MixFlow Training",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=False,
+            help_text="Enable MixFlow slowed-interpolation post-training for flow-matching models.",
+            tooltip="Samples model timesteps from Beta(2,1) and trains on a noisier interpolation to reduce sampling exposure bias.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=26.05,
+            documentation="OPTIONS.md#--mixflow_enabled",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="mixflow_gamma",
+            arg_name="--mixflow_gamma",
+            ui_label="MixFlow Gamma",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=0.8,
+            parser_type=ParserType.FLOAT,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be at least 0.0"),
+                ValidationRule(ValidationRuleType.MAX, value=1.0, message="Must be at most 1.0"),
+            ],
+            help_text="Set the MixFlow slowed-interpolation range coefficient (default: 0.8).",
+            tooltip="The interpolation sigma is sampled uniformly between the model sigma and sigma + gamma * (1 - sigma).",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=26.1,
+            dependencies=[FieldDependency(field="mixflow_enabled", operator="equals", value=True, action="show")],
+            documentation="OPTIONS.md#--mixflow_gamma",
         )
     )
 

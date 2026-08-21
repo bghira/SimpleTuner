@@ -119,6 +119,66 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="irepa_enabled",
+            arg_name="--irepa_enabled",
+            ui_label="Enable iREPA",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            help_text="Upgrade enabled CREPA or U-REPA alignment with iREPA spatial operations.",
+            tooltip="Also enable CREPA for transformer models or U-REPA for UNet models.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=6,
+            documentation="OPTIONS.md#--irepa_enabled",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="irepa_spatial_norm_alpha",
+            arg_name="--irepa_spatial_norm_alpha",
+            ui_label="iREPA Spatial Norm Alpha",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0.6,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="irepa_enabled", operator="equals", value=True)],
+            help_text="Mean-subtraction strength for iREPA teacher-feature spatial normalization.",
+            tooltip="0.6 matches the latent-diffusion reference recipe; 1.0 fully centers each feature channel.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=7,
+            documentation="OPTIONS.md#--irepa_spatial_norm_alpha",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="irepa_projector_kernel_size",
+            arg_name="--irepa_projector_kernel_size",
+            ui_label="iREPA Projector Kernel",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="loss_functions",
+            default_value=3,
+            choices=[
+                {"value": 1, "label": "1 x 1"},
+                {"value": 3, "label": "3 x 3 (Paper)"},
+                {"value": 5, "label": "5 x 5"},
+                {"value": 7, "label": "7 x 7"},
+            ],
+            dependencies=[FieldDependency(field="irepa_enabled", operator="equals", value=True)],
+            help_text="Spatial convolution kernel used by the iREPA projector.",
+            tooltip="Use 3 for the published iREPA architecture.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=7.1,
+            documentation="OPTIONS.md#--irepa_projector_kernel_size",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="crepa_enabled",
             arg_name="--crepa_enabled",
             ui_label="Enable CREPA",
@@ -707,6 +767,85 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="internal_guidance_enabled",
+            arg_name="--internal_guidance_enabled",
+            ui_label="Enable Internal Guidance",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            model_specific=[
+                name
+                for name, cls in ModelRegistry.model_families().items()
+                if getattr(getattr(cls, "MODEL_TYPE", None), "value", None) == "transformer"
+                and getattr(getattr(cls, "PREDICTION_TYPE", None), "value", None) != "autoregressive_next_token"
+            ],
+            help_text="Train an auxiliary denoising head from an early transformer block.",
+            tooltip="The auxiliary head predicts the same diffusion target as the final head and is saved with the adapter.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=23,
+            documentation="OPTIONS.md#--internal_guidance_enabled",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="internal_guidance_loss_weight",
+            arg_name="--internal_guidance_loss_weight",
+            ui_label="Internal Guidance Weight",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0.5,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0001, message="Must be greater than zero")],
+            dependencies=[FieldDependency(field="internal_guidance_enabled", operator="equals", value=True)],
+            help_text="Weight applied to the intermediate denoising loss.",
+            tooltip="The reference implementation uses 0.5.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=24,
+            documentation="OPTIONS.md#--internal_guidance_loss_weight",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="internal_guidance_block_index",
+            arg_name="--internal_guidance_block_index",
+            ui_label="Internal Guidance Block",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="internal_guidance_enabled", operator="equals", value=True)],
+            help_text="Zero-based transformer block whose output feeds the auxiliary head.",
+            tooltip="Defaults to one quarter of the transformer depth; earlier blocks worked best in the paper.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=25,
+            documentation="OPTIONS.md#--internal_guidance_block_index",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="validation_internal_guidance_scale",
+            arg_name="--validation_internal_guidance_scale",
+            ui_label="Internal Guidance Scale",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=1.0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0001, message="Must be greater than zero")],
+            dependencies=[FieldDependency(field="internal_guidance_enabled", operator="equals", value=True)],
+            help_text="Apply Internal Guidance extrapolation during validation sampling.",
+            tooltip="1.0 disables sampling guidance. The reference implementation uses 1.4 for its primary result.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=26,
+            documentation="OPTIONS.md#--validation_internal_guidance_scale",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="layersync_enabled",
             arg_name="--layersync_enabled",
             ui_label="Enable LayerSync",
@@ -717,7 +856,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Enable LayerSync self-alignment between two transformer blocks.",
             tooltip="Adds a cosine-similarity regularizer between student/teacher layers captured from the backbone.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=23,
+            order=27,
             documentation="OPTIONS.md#--layersync_enabled",
         )
     )
@@ -735,7 +874,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Block index to treat as the student for LayerSync (1-based depths accepted).",
             tooltip="Pick an earlier/weaker layer to receive guidance; accepts paper-style 1-based depths.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=24,
+            order=28,
             documentation="OPTIONS.md#--layersync_student_block",
         )
     )
@@ -753,7 +892,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Teacher block index; defaults to the student block when omitted (1-based depths accepted).",
             tooltip="Use a later/stronger layer to supervise the student; accepts paper-style 1-based depths.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=25,
+            order=29,
             documentation="OPTIONS.md#--layersync_teacher_block",
         )
     )
@@ -772,7 +911,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Strength multiplier for LayerSync alignment loss.",
             tooltip="Set >0 to activate LayerSync when enabled.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=26,
+            order=30,
             documentation="OPTIONS.md#--layersync_lambda",
         )
     )

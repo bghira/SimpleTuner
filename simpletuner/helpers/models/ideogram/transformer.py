@@ -387,6 +387,7 @@ class Ideogram4Transformer(nn.Module, PeftAdapterMixin):
         segment_ids: torch.Tensor,
         indicator: torch.Tensor,
         r_timestep: torch.Tensor | None = None,
+        hidden_states_buffer: dict | None = None,
     ) -> torch.Tensor:
         """Velocity prediction.
 
@@ -487,9 +488,17 @@ class Ideogram4Transformer(nn.Module, PeftAdapterMixin):
                     h = checkpoint_fn(layer, h, segment_ids, cos, sin, adaln_input, use_reentrant=False)
                 else:
                     h = layer(h, segment_ids=segment_ids, cos=cos, sin=sin, adaln_input=adaln_input)
+                capture_layers = getattr(hidden_states_buffer, "capture_layers", None)
+                if hidden_states_buffer is not None and (capture_layers is None or layer_idx in capture_layers):
+                    image_hidden = h[output_image_mask.squeeze(-1).bool()].reshape(batch_size, -1, h.shape[-1])
+                    hidden_states_buffer[f"layer_{layer_idx}"] = image_hidden
         else:
-            for layer in self.layers:
+            for layer_idx, layer in enumerate(self.layers):
                 h = layer(h, segment_ids=segment_ids, cos=cos, sin=sin, adaln_input=adaln_input)
+                capture_layers = getattr(hidden_states_buffer, "capture_layers", None)
+                if hidden_states_buffer is not None and (capture_layers is None or layer_idx in capture_layers):
+                    image_hidden = h[output_image_mask.squeeze(-1).bool()].reshape(batch_size, -1, h.shape[-1])
+                    hidden_states_buffer[f"layer_{layer_idx}"] = image_hidden
 
         out = self.final_layer(h, c=adaln_input)
         return out.to(torch.float32)

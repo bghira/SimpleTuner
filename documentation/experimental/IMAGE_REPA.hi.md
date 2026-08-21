@@ -9,6 +9,8 @@ SimpleTuner दो वेरिएंट को सपोर्ट करता 
 
 > **वीडियो मॉडल्स की तलाश है?** टेम्पोरल अलाइनमेंट वाले वीडियो मॉडल्स पर CREPA सपोर्ट के लिए [VIDEO_CREPA.hi.md](VIDEO_CREPA.hi.md) देखें।
 
+> **बेहतर spatial alignment:** [iREPA](IREPA.hi.md) दोनों REPA paths में convolution projector और teacher spatial normalization जोड़ता है।
+
 ## कब उपयोग करें
 
 ### REPA (DiT मॉडल्स)

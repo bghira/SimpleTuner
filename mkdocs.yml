@@ -69,6 +69,7 @@ plugins:
             Getting Started: 入门指南
             Installation: 安装
             Quick Start: 快速开始
+            Local Training Metrics: 本地训练指标
             Tutorials: 教程
             Model Guides: 模型指南
             Image Models: 图像模型
@@ -87,6 +88,7 @@ plugins:
             Getting Started: はじめに
             Installation: インストール
             Quick Start: クイックスタート
+            Local Training Metrics: ローカル学習メトリクス
             Tutorials: チュートリアル
             Model Guides: モデルガイド
             Image Models: 画像モデル
@@ -105,6 +107,7 @@ plugins:
             Getting Started: शुरुआत
             Installation: स्थापना
             Quick Start: त्वरित शुरुआत
+            Local Training Metrics: स्थानीय प्रशिक्षण मेट्रिक्स
             Tutorials: ट्यूटोरियल
             Model Guides: मॉडल गाइड
             Image Models: इमेज मॉडल
@@ -142,6 +145,7 @@ plugins:
             Getting Started: Primeiros passos
             Installation: Instalacao
             Quick Start: Inicio rapido
+            Local Training Metrics: Metricas locais de treinamento
             Tutorials: Tutoriais
             Model Guides: Guias de modelos
             Image Models: Modelos de imagem
@@ -164,6 +168,7 @@ plugins:
             Getting Started: Primeros pasos
             Installation: Instalación
             Quick Start: Inicio rápido
+            Local Training Metrics: Métricas locales de entrenamiento
             Tutorials: Tutoriales
             Model Guides: Guías de modelos
             Image Models: Modelos de imagen
@@ -237,6 +242,7 @@ nav:
     - Quick Start: QUICKSTART.md
     - Tutorials:
       - Web UI Tutorial: webui/TUTORIAL.md
+      - Local Training Metrics: webui/LOCAL_METRICS.md
       - CLI Tutorial: TUTORIAL.md
       - API Tutorial: api/TUTORIAL.md
 
@@ -272,6 +278,7 @@ nav:
       - Stable Cascade: quickstart/STABLE_CASCADE_C.md
     - Video Models:
       - Wan Video: quickstart/WAN.md
+      - InfiniteTalk: quickstart/INFINITETALK.md
       - LTX Video: quickstart/LTXVIDEO.md
       - LTX Video 2: quickstart/LTXVIDEO2.md
       - Cosmos3: quickstart/COSMOS3.md
@@ -357,10 +364,14 @@ nav:
       - DiffusionBlocks: experimental/DIFFUSION_BLOCKS.md
       - Diff2Flow: experimental/DIFF2FLOW.md
       - Flow-DPO: experimental/FLOW_DPO.md
+      - Internal Guidance: experimental/INTERNAL_GUIDANCE.md
+      - iREPA: experimental/IREPA.md
       - LayerSync: experimental/LAYERSYNC.md
       - Metal Flash Attention: experimental/METAL_FLASH_ATTENTION.md
+      - MixFlow: experimental/MIXFLOW.md
       - Prompt2Effect: experimental/PROMPT2EFFECT.md
       - Self-Flow: experimental/SELF_FLOW.md
+      - Self-Transcendence: experimental/SELF_TRANSCENDENCE.md
       - Segmented Checkpointing: experimental/SEGMENTED_CHECKPOINTING.md
       - Scheduled Sampling: experimental/SCHEDULED_SAMPLING.md
       - T-LoRA: experimental/T_LORA.md

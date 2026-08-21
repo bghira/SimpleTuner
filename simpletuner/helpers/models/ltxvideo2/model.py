@@ -1958,8 +1958,13 @@ class LTXVideo2(VideoModelFoundation):
                 audio_sigmas = audio_sigmas.to(device=target_device, dtype=torch.float32)
                 if audio_sigmas.ndim == 1:
                     audio_sigmas = audio_sigmas.view(audio_sigmas.shape[0], *([1] * (audio_latents.ndim - 1)))
-            audio_noisy = (1 - audio_sigmas) * audio_latents + audio_sigmas * audio_input_noise
             batch["audio_sigmas"] = audio_sigmas
+            audio_interpolation_sigmas = audio_sigmas
+            if self._mixflow_enabled():
+                interpolation_sigmas = batch["mixflow_interpolation_sigmas"]
+                audio_interpolation_sigmas = self._expand_sigma_values(interpolation_sigmas, audio_latents)
+                batch["audio_mixflow_interpolation_sigmas"] = interpolation_sigmas
+            audio_noisy = (1 - audio_interpolation_sigmas) * audio_latents + audio_interpolation_sigmas * audio_input_noise
 
             teacher_audio_sigmas = batch.get("crepa_teacher_audio_sigmas")
             if teacher_audio_sigmas is not None:
