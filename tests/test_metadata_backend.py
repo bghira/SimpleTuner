@@ -63,6 +63,76 @@ class TestMetadataBackend(unittest.TestCase):
         }
         self.assertEqual(len(self.metadata_backend), 3)
 
+    def test_probe_image_dimensions_applies_exif_orientation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image_path = Path(tmpdir) / "oriented.jpg"
+            exif = Image.Exif()
+            exif[0x0112] = 6
+            Image.new("RGB", (64, 32)).save(image_path, exif=exif)
+
+            metadata = self.metadata_backend._probe_image_dimensions(str(image_path))
+
+        self.assertEqual(metadata, {"original_size": (32, 64)})
+
+    def test_local_image_metadata_scan_skips_backend_read(self):
+        self.data_backend.type = "local"
+        self.metadata_backend.dataset_type = DatasetType.IMAGE
+        self.metadata_backend.dataset_config = {"dataset_type": "image", "crop": False}
+        self.data_backend.read.reset_mock()
+        prepared = SimpleNamespace(
+            crop_coordinates=(0, 0),
+            target_size=(512, 256),
+            intermediary_size=(512, 256),
+            aspect_ratio=2.0,
+        )
+
+        with (
+            patch.object(
+                self.metadata_backend,
+                "_probe_image_dimensions",
+                return_value={"original_size": (512, 256)},
+            ),
+            patch("simpletuner.helpers.metadata.backends.discovery.TrainingSample") as training_sample,
+        ):
+            training_sample.return_value.prepare.return_value = prepared
+            metadata_updates = {}
+            buckets = self.metadata_backend._process_for_bucket(
+                "image.png",
+                {},
+                metadata_updates=metadata_updates,
+            )
+
+        self.data_backend.read.assert_not_called()
+        self.assertEqual(buckets, {"2.0": ["image.png"]})
+        self.assertEqual(metadata_updates["image.png"]["original_size"], (512, 256))
+
+    def test_face_crop_forces_full_image_decode(self):
+        self.data_backend.type = "local"
+        self.metadata_backend.dataset_type = DatasetType.IMAGE
+        self.metadata_backend.dataset_config = {
+            "dataset_type": "image",
+            "crop": True,
+            "crop_style": "face",
+        }
+        self.data_backend.read = Mock(return_value=b"image payload")
+        prepared = SimpleNamespace(
+            crop_coordinates=(0, 0),
+            target_size=(512, 256),
+            intermediary_size=(512, 256),
+            aspect_ratio=2.0,
+        )
+
+        with (
+            patch.object(self.metadata_backend, "_probe_image_dimensions") as probe_dimensions,
+            patch("simpletuner.helpers.metadata.backends.discovery.load_image", return_value=self.test_image),
+            patch("simpletuner.helpers.metadata.backends.discovery.TrainingSample") as training_sample,
+        ):
+            training_sample.return_value.prepare.return_value = prepared
+            self.metadata_backend._process_for_bucket("image.png", {})
+
+        probe_dimensions.assert_not_called()
+        self.data_backend.read.assert_called_once_with("image.png")
+
     def test_discover_new_files(self):
         # Assuming that StateTracker.get_image_files returns known files
         # and list_files should return both known and potentially new files
