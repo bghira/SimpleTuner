@@ -126,18 +126,16 @@ def load_audio(source: AudioSource) -> Tuple[torch.Tensor, int]:
         _, ext = os.path.splitext(stream)
         if ext:
             format_hint = ext.lstrip(".")
-    # Container formats that may need ffmpeg fallback
-    container_formats = {"mp4", "mpeg", "mpg", "mkv", "webm", "avi", "mov", "m4a", "m4v"}
-
     try:
         waveform, sample_rate = torchaudio.load(stream, format=format_hint)
     except (RuntimeError, ImportError, OSError) as torchaudio_error:
-        # For file paths, try ffmpeg for container formats
-        if isinstance(stream, str) and format_hint and format_hint.lower() in container_formats:
+        # TorchCodec can fail to initialize independently of the input format, so
+        # let ffmpeg handle every filesystem path before using format-specific fallbacks.
+        if isinstance(stream, str):
             try:
                 waveform, sample_rate = _load_with_ffmpeg(stream)
             except Exception as ffmpeg_error:
-                logger.warning(f"ffmpeg fallback failed for {stream}: {ffmpeg_error}")
+                logger.warning("ffmpeg fallback failed for %s: %s", stream, ffmpeg_error)
                 raise torchaudio_error from ffmpeg_error
         elif hasattr(stream, "read"):
             try:
