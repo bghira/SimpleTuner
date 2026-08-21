@@ -3162,8 +3162,7 @@ class FactoryRegistry:
             **metadata_backend_args,
         )
 
-        # Metadata cache loading exposes its persisted config for validation;
-        # runtime config remains live-authoritative.
+        # Restore the live-authoritative runtime config after metadata cache loading.
         StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         metadata_backend = init_backend["metadata_backend"]
         if isinstance(getattr(metadata_backend, "aspect_ratio_bucket_indices", None), dict):
