@@ -206,6 +206,8 @@ The complete compatibility matrix is split by feature area so each table stays r
 <details>
 <summary>Flow, distillation, and alignment</summary>
 
+MixFlow post-training is available for every `flow matching` row below. See the [MixFlow guide](experimental/MIXFLOW.md).
+
 | Model | Prediction | Flow Shift | TwinFlow | Self-Flow | LayerSync | Internal Guidance | Sliders |
 | --- | --- | :---: | :---: | :---: | :---: | :---: | :---: |
 | ACE-Step | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ v1 | ✓ |

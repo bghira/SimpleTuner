@@ -778,6 +778,8 @@ class Ideogram4(ImageModelFoundation):
         return output
 
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        if self._mixflow_enabled():
+            return super().sample_flow_sigmas(batch=batch, state=state)
         bsz = batch["latents"].shape[0]
         device = self.accelerator.device
         latents = batch["latents"]

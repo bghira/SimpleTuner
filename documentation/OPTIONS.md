@@ -1314,6 +1314,18 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 - **Why**: When enabled alongside `--diff2flow_enabled`, this calculates the loss against the flow target (noise - latents) instead of the model's native target (epsilon or velocity).
 - **Note**: Requires `--diff2flow_enabled`.
 
+### `--mixflow_enabled`
+
+- **What**: Enables MixFlow slowed-interpolation post-training for flow-matching models.
+- **Why**: Changes timestep sampling and interpolation speed without changing the model architecture.
+- **Note**: Cannot be combined with competing timestep schedules. See the [MixFlow guide](experimental/MIXFLOW.md).
+
+### `--mixflow_gamma`
+
+- **What**: Controls the MixFlow slowed-interpolation range.
+- **Range**: `0.0` to `1.0`; default: `0.8`.
+- **Note**: `0.0` preserves standard interpolation while retaining MixFlow timestep sampling.
+
 ### `--scheduled_sampling_max_step_offset`
 
 - **What**: Maximum number of steps to "roll out" during training.
@@ -2056,6 +2068,8 @@ usage: train.py [-h] --model_family
                 [--flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
                 [--flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]]
+                [--mixflow_enabled [MIXFLOW_ENABLED]]
+                [--mixflow_gamma MIXFLOW_GAMMA]
                 [--audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT]
                 [--flow_custom_timesteps FLOW_CUSTOM_TIMESTEPS]
                 [--flow_timesteps_mode {fixed-list,round-robin}]
@@ -2548,6 +2562,12 @@ options:
                         Shift the noise schedule for flow-matching models
   --flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]
                         Auto-adjust schedule shift based on image resolution
+  --mixflow_enabled [MIXFLOW_ENABLED]
+                        Enable MixFlow slowed-interpolation post-training for
+                        flow-matching models.
+  --mixflow_gamma MIXFLOW_GAMMA
+                        Set the MixFlow slowed-interpolation range coefficient
+                        (default: 0.8).
   --audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT
                         Shift the audio noise schedule for flow-matching
                         models with audio latents

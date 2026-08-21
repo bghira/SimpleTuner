@@ -602,15 +602,19 @@ class Cosmos3Image(Cosmos2Image):
         batch["noise"] = noise
         batch["input_noise"] = noise
 
-        bsz = latents.shape[0]
-        if self._uses_flow_cubic_schedule():
-            t = self._sample_flow_cubic_values(bsz, latents.device)
+        if self._mixflow_enabled():
+            batch["sigmas"], batch["timesteps"] = self.sample_flow_sigmas(batch=batch, state=state)
+            self._prepare_flow_noisy_latents(batch)
         else:
-            u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=latents.device)
-            t = torch.sigmoid(u)
-        batch["sigmas"] = t
-        batch["timesteps"] = t * 1000.0
-        batch["noisy_latents"] = self._interpolate_flow_latents(latents, noise, t)
+            bsz = latents.shape[0]
+            if self._uses_flow_cubic_schedule():
+                t = self._sample_flow_cubic_values(bsz, latents.device)
+            else:
+                u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=latents.device)
+                t = torch.sigmoid(u)
+            batch["sigmas"] = t
+            batch["timesteps"] = t * 1000.0
+            batch["noisy_latents"] = self._interpolate_flow_latents(latents, noise, t)
 
         if self._is_i2v_flavour():
             conditioning_latents = batch.get("conditioning_latents")
@@ -660,7 +664,15 @@ class Cosmos3Image(Cosmos2Image):
             audio_noise = torch.randn_like(audio_latents)
             batch["audio_latents"] = audio_latents
             batch["audio_noise"] = audio_noise
-            batch["audio_noisy_latents"] = self._interpolate_flow_latents(audio_latents, audio_noise, t)
+            if self._mixflow_enabled():
+                interpolation_sigmas = batch["mixflow_interpolation_sigmas"]
+                batch["audio_noisy_latents"] = self._interpolate_flow_latents(
+                    audio_latents,
+                    audio_noise,
+                    1.0 - interpolation_sigmas,
+                )
+            else:
+                batch["audio_noisy_latents"] = self._interpolate_flow_latents(audio_latents, audio_noise, t)
             batch["audio_timesteps"] = batch["timesteps"]
             audio_latent_mask = batch.get("audio_latent_mask")
             if audio_latent_mask is not None and hasattr(audio_latent_mask, "to"):
@@ -668,6 +680,15 @@ class Cosmos3Image(Cosmos2Image):
 
         batch = self.prepare_batch_conditions(batch=batch, state=state)
         return batch
+
+    def flow_matching_timesteps_from_sigmas(
+        self,
+        sigmas: torch.Tensor,
+        *,
+        reference_timesteps: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        del reference_timesteps
+        return (1.0 - sigmas).clamp(0.0, 1.0) * 1000.0
 
     @staticmethod
     def _interpolate_flow_latents(latents: torch.Tensor, noise: torch.Tensor, t: torch.Tensor) -> torch.Tensor:

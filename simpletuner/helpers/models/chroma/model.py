@@ -301,8 +301,16 @@ class Chroma(ImageModelFoundation):
         input_noise = batch["input_noise"]
 
         adjusted_sigmas = self._adjust_chroma_sigmas(batch["sigmas"].to(device=latents.device, dtype=latents.dtype))
+        adjusted_interpolation_sigmas = adjusted_sigmas
+        if self._mixflow_enabled():
+            adjusted_interpolation_sigmas = self._mixflow_interpolation_sigmas(
+                adjusted_sigmas,
+                batch["mixflow_slowdown_factors"],
+            )
+            batch["mixflow_interpolation_sigmas"] = adjusted_interpolation_sigmas
         batch["sigmas"] = adjusted_sigmas
-        batch["noisy_latents"] = (1 - adjusted_sigmas) * latents + adjusted_sigmas * input_noise
+        interpolation_grid = self._expand_sigma_values(adjusted_interpolation_sigmas, latents)
+        batch["noisy_latents"] = (1 - interpolation_grid) * latents + interpolation_grid * input_noise
 
         if "crepa_self_flow_mask" in batch:
             batch["timesteps"] = self._sigma_grid_to_token_timesteps(adjusted_sigmas)

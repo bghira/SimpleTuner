@@ -1313,6 +1313,18 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 - **原因**：与 `--diff2flow_enabled` 一起启用时，将损失计算于 flow 目标（noise - latents），而非模型原生目标（epsilon 或 velocity）。
 - **说明**：需要 `--diff2flow_enabled`。
 
+### `--mixflow_enabled`
+
+- **内容**：为 Flow Matching 模型启用 MixFlow 减速插值后训练。
+- **原因**：在不改变模型架构的情况下调整时间步采样和插值速度。
+- **说明**：不能与其他时间步调度同时使用。参见 [MixFlow 指南](experimental/MIXFLOW.zh.md)。
+
+### `--mixflow_gamma`
+
+- **内容**：控制 MixFlow 减速插值范围。
+- **范围**：`0.0` 到 `1.0`；默认值：`0.8`。
+- **说明**：`0.0` 保留标准插值，但仍使用 MixFlow 时间步采样。
+
 ### `--scheduled_sampling_max_step_offset`
 
 - **内容**：训练中“rollout”的最大步数。
@@ -2053,6 +2065,8 @@ usage: train.py [-h] --model_family
                 [--flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
                 [--flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]]
+                [--mixflow_enabled [MIXFLOW_ENABLED]]
+                [--mixflow_gamma MIXFLOW_GAMMA]
                 [--audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT]
                 [--flow_custom_timesteps FLOW_CUSTOM_TIMESTEPS]
                 [--flow_timesteps_mode {fixed-list,round-robin}]
@@ -2544,6 +2558,12 @@ options:
                         Shift the noise schedule for flow-matching models
   --flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]
                         Auto-adjust schedule shift based on image resolution
+  --mixflow_enabled [MIXFLOW_ENABLED]
+                        Enable MixFlow slowed-interpolation post-training for
+                        flow-matching models.
+  --mixflow_gamma MIXFLOW_GAMMA
+                        Set the MixFlow slowed-interpolation range coefficient
+                        (default: 0.8).
   --audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT
                         Shift the audio noise schedule for flow-matching
                         models with audio latents

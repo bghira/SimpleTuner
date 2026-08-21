@@ -485,6 +485,8 @@ class SanaVideo(VideoModelFoundation):
         """
         Sample positions from the configured density, then look them up in Sana Video's scheduler table.
         """
+        if self._mixflow_enabled():
+            return super().sample_flow_sigmas(batch=batch, state=state)
         bsz = batch["latents"].shape[0]
         num_train_timesteps = self.noise_schedule.config.num_train_timesteps
         if self._uses_flow_cubic_schedule():

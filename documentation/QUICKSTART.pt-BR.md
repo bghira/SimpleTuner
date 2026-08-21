@@ -206,6 +206,8 @@ A matriz completa de compatibilidade é dividida por área de recurso para mante
 <details>
 <summary>Flow, destilação e alinhamento</summary>
 
+O pós-treinamento MixFlow está disponível para todas as linhas `flow matching` abaixo. Veja o [guia MixFlow](experimental/MIXFLOW.md).
+
 | Modelo | Prediction | Flow Shift | TwinFlow | Self-Flow | LayerSync | Internal Guidance | Sliders |
 | --- | --- | :---: | :---: | :---: | :---: | :---: | :---: |
 | ACE-Step | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ v1 | ✓ |

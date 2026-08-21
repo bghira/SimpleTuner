@@ -1414,7 +1414,16 @@ class MiniMaxH3(VideoModelFoundation):
             audio_sigmas = audio_sigmas.to(device=target_device, dtype=torch.float32)
             if audio_sigmas.ndim == 1:
                 audio_sigmas = audio_sigmas.view(audio_sigmas.shape[0], 1, 1, 1)
-        audio_noisy = (1 - audio_sigmas) * audio_latents + audio_sigmas * audio_input_noise
+        audio_interpolation_sigmas = audio_sigmas
+        if self._mixflow_enabled():
+            audio_sigma_1d = audio_sigmas.reshape(audio_sigmas.shape[0], -1)[:, 0]
+            audio_interpolation_sigma_1d = self._mixflow_interpolation_sigmas(
+                audio_sigma_1d,
+                batch["mixflow_slowdown_factors"],
+            )
+            audio_interpolation_sigmas = self._expand_sigma_values(audio_interpolation_sigma_1d, audio_latents)
+            batch["audio_mixflow_interpolation_sigmas"] = audio_interpolation_sigma_1d
+        audio_noisy = (1 - audio_interpolation_sigmas) * audio_latents + audio_interpolation_sigmas * audio_input_noise
 
         batch["audio_latents"] = audio_latents
         batch["audio_latent_mask"] = audio_mask

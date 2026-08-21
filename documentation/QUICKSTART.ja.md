@@ -206,6 +206,8 @@
 <details>
 <summary>Flow・蒸留・アラインメント</summary>
 
+下表の `flow matching` の全モデルで MixFlow post-training を利用できます。[MixFlow guide](experimental/MIXFLOW.md) を参照してください。
+
 | モデル | Prediction | Flow Shift | TwinFlow | Self-Flow | LayerSync | Internal Guidance | Sliders |
 | --- | --- | :---: | :---: | :---: | :---: | :---: | :---: |
 | ACE-Step | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ v1 | ✓ |

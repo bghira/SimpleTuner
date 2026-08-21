@@ -1619,10 +1619,21 @@ class ACEStep(AudioModelFoundation):
             encoder_hidden_states = encoder_hidden_states.to(device=device, dtype=dtype)
             encoder_attention_mask = encoder_attention_mask.to(device=device, dtype=torch.long)
 
-            timesteps = self._sample_v15_timesteps(latents.shape[0], device=device, dtype=dtype)
-            timestep_view = timesteps.view(latents.shape[0], *([1] * (latents.ndim - 1)))
             noise = torch.randn_like(latents, device=device, dtype=dtype)
-            noisy_latents = timestep_view * noise + (1.0 - timestep_view) * latents
+            mixflow_batch = None
+            if self._mixflow_enabled():
+                mixflow_batch = {"latents": latents, "noise": noise, "input_noise": noise}
+                mixflow_batch["sigmas"], mixflow_batch["timesteps"] = self.sample_flow_sigmas(
+                    batch=mixflow_batch,
+                    state=state,
+                )
+                self._prepare_flow_noisy_latents(mixflow_batch)
+                timesteps = mixflow_batch["timesteps"].to(device=device, dtype=dtype)
+                noisy_latents = mixflow_batch["noisy_latents"]
+            else:
+                timesteps = self._sample_v15_timesteps(latents.shape[0], device=device, dtype=dtype)
+                timestep_view = timesteps.view(latents.shape[0], *([1] * (latents.ndim - 1)))
+                noisy_latents = timestep_view * noise + (1.0 - timestep_view) * latents
             if not torch.isfinite(noisy_latents).all():
                 raise ValueError(
                     f"Non-finite noisy_latents detected (min={noisy_latents.min().item()}, max={noisy_latents.max().item()})"
@@ -1639,7 +1650,7 @@ class ACEStep(AudioModelFoundation):
 
             context_latents = self._build_v15_context_latents(latents.shape[1], latents.shape[0], device, dtype)
 
-            return {
+            prepared = {
                 "latents": latents,
                 "noise": noise,
                 "noisy_latents": noisy_latents,
@@ -1650,6 +1661,10 @@ class ACEStep(AudioModelFoundation):
                 "context_latents": context_latents,
                 "flow_target": noise - latents,
             }
+            if mixflow_batch is not None:
+                prepared["sigmas"] = mixflow_batch["sigmas"]
+                prepared["mixflow_interpolation_sigmas"] = mixflow_batch["mixflow_interpolation_sigmas"]
+            return prepared
 
         latent_metadata = batch.get("latent_metadata")
         batch["latent_attention_mask"] = self._build_audio_attention_mask(latent_batch, latent_metadata)
@@ -1682,16 +1697,22 @@ class ACEStep(AudioModelFoundation):
         lyric_token_ids = batch["lyric_token_ids"].to(device=device, dtype=torch.long)
         lyric_mask = batch["lyric_mask"].to(device=device, dtype=torch.long)
 
-        sampling_batch = dict(batch)
-        sampling_batch["latents"] = latents
-        sigmas, timesteps = self.sample_flow_sigmas(batch=sampling_batch, state=state)
         bsz = latents.shape[0]
-        # Expand sigmas to latent shape for mixing/noise and to feed the model
-        view_shape = [bsz] + [1] * (latents.ndim - 1)
-        sigmas_expanded = sigmas.view(*view_shape).to(dtype=dtype)
-
         noise = torch.randn_like(latents, device=device, dtype=dtype)
-        noisy_latents = sigmas_expanded * noise + (1.0 - sigmas_expanded) * latents
+        if self._mixflow_enabled():
+            flow_batch = {"latents": latents, "noise": noise, "input_noise": noise}
+            flow_batch["sigmas"], flow_batch["timesteps"] = self.sample_flow_sigmas(batch=flow_batch, state=state)
+            self._prepare_flow_noisy_latents(flow_batch)
+            sigmas_expanded = flow_batch["sigmas"]
+            timesteps = flow_batch["timesteps"]
+            noisy_latents = flow_batch["noisy_latents"]
+        else:
+            sampling_batch = dict(batch)
+            sampling_batch["latents"] = latents
+            sigmas, timesteps = self.sample_flow_sigmas(batch=sampling_batch, state=state)
+            view_shape = [bsz] + [1] * (latents.ndim - 1)
+            sigmas_expanded = sigmas.view(*view_shape).to(dtype=dtype)
+            noisy_latents = sigmas_expanded * noise + (1.0 - sigmas_expanded) * latents
         if not torch.isfinite(noisy_latents).all():
             raise ValueError(
                 f"Non-finite noisy_latents detected (min={noisy_latents.min().item()}, max={noisy_latents.max().item()})"
@@ -1722,6 +1743,8 @@ class ACEStep(AudioModelFoundation):
             "lyric_token_ids": lyric_token_ids,
             "lyric_mask": lyric_mask,
         }
+        if self._mixflow_enabled():
+            prepared["mixflow_interpolation_sigmas"] = flow_batch["mixflow_interpolation_sigmas"]
 
         ssl_hidden_states = self._gather_cached_ssl(latent_metadata)
         if ssl_hidden_states is not None:
@@ -1736,6 +1759,8 @@ class ACEStep(AudioModelFoundation):
         ACE-Step mirrors the upstream trainer: sample timesteps via a logit-normal,
         then look up sigmas from FlowMatchEulerDiscreteScheduler.
         """
+        if self._mixflow_enabled():
+            return super().sample_flow_sigmas(batch=batch, state=state)
         bsz = batch["latents"].shape[0]
         timesteps_tensor = self.noise_schedule.timesteps.to(self.accelerator.device)
         sigmas_tensor = self.noise_schedule.sigmas.to(self.accelerator.device)
@@ -1751,6 +1776,16 @@ class ACEStep(AudioModelFoundation):
         sigmas = sigmas_tensor[indices]
         # Flow sigmas are expected to be 1D; expand happens later via expand_sigmas.
         return sigmas, timesteps
+
+    def flow_matching_timesteps_from_sigmas(
+        self,
+        sigmas: torch.Tensor,
+        *,
+        reference_timesteps: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if self._is_v15_layout_active():
+            return sigmas
+        return super().flow_matching_timesteps_from_sigmas(sigmas, reference_timesteps=reference_timesteps)
 
     def model_predict(self, prepared_batch: dict) -> Dict[str, object]:
         transformer = self.get_trained_component()

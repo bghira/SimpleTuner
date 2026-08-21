@@ -367,6 +367,7 @@ nav:
       - iREPA: experimental/IREPA.md
       - LayerSync: experimental/LAYERSYNC.md
       - Metal Flash Attention: experimental/METAL_FLASH_ATTENTION.md
+      - MixFlow: experimental/MIXFLOW.md
       - Prompt2Effect: experimental/PROMPT2EFFECT.md
       - Self-Flow: experimental/SELF_FLOW.md
       - Self-Transcendence: experimental/SELF_TRANSCENDENCE.md

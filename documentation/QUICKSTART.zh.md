@@ -206,6 +206,8 @@
 <details>
 <summary>Flow、蒸馏与对齐</summary>
 
+下表中所有 `flow matching` 模型都支持 MixFlow 后训练。请参阅 [MixFlow 指南](experimental/MIXFLOW.md)。
+
 | 模型 | Prediction | Flow Shift | TwinFlow | Self-Flow | LayerSync | Internal Guidance | Sliders |
 | --- | --- | :---: | :---: | :---: | :---: | :---: | :---: |
 | ACE-Step | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ v1 | ✓ |
