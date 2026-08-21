@@ -13,6 +13,45 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def spatial_zscore(features: torch.Tensor, alpha: float = 1.0, eps: float = 1e-6) -> torch.Tensor:
+    """Normalize each feature channel over the spatial token dimension."""
+    if features.ndim not in (3, 4):
+        raise ValueError(f"iREPA spatial normalization expects 3D or 4D features, got {features.shape}")
+    spatial_dim = features.ndim - 2
+    mean = features.mean(dim=spatial_dim, keepdim=True)
+    correction = 1 if features.shape[spatial_dim] > 1 else 0
+    std = features.std(dim=spatial_dim, keepdim=True, correction=correction)
+    return (features - alpha * mean) / (std + eps)
+
+
+class SpatialConvProjector(nn.Module):
+    """Project frame tokens with an iREPA spatial convolution."""
+
+    def __init__(self, input_dim: int, output_dim: int, *, kernel_size: int = 3):
+        super().__init__()
+        if kernel_size <= 0 or kernel_size % 2 == 0:
+            raise ValueError("irepa_projector_kernel_size must be a positive odd integer.")
+        self.projection = nn.Conv2d(
+            input_dim,
+            output_dim,
+            kernel_size=kernel_size,
+            padding=kernel_size // 2,
+        )
+
+    def forward(self, hidden_states: torch.Tensor, *, spatial_shape: tuple[int, int]) -> torch.Tensor:
+        if hidden_states.ndim != 4:
+            raise ValueError(f"iREPA projector expects (B, T, N, D), got {hidden_states.shape}")
+        batch_size, frame_count, token_count, hidden_dim = hidden_states.shape
+        height, width = spatial_shape
+        if height * width != token_count:
+            raise ValueError(f"iREPA spatial shape {spatial_shape} does not match the {token_count} tokens in each frame.")
+        spatial = hidden_states.reshape(batch_size * frame_count, height, width, hidden_dim)
+        spatial = spatial.permute(0, 3, 1, 2).contiguous()
+        projected = self.projection(spatial)
+        projected = projected.permute(0, 2, 3, 1).contiguous()
+        return projected.reshape(batch_size, frame_count, token_count, -1)
+
+
 class QwenVLVisionEncoder(nn.Module):
     """Adapter exposing Qwen-VL visual features through the same shape as DINO."""
 
@@ -283,7 +322,14 @@ class CrepaRegularizer:
         self.hidden_size = hidden_size
         self.model_foundation = model_foundation
 
+        self.irepa_enabled = bool(getattr(config, "irepa_enabled", False))
         self.enabled = bool(getattr(config, "crepa_enabled", False))
+        spatial_norm_alpha = getattr(config, "irepa_spatial_norm_alpha", 0.6)
+        projector_kernel_size = getattr(config, "irepa_projector_kernel_size", 3)
+        self.irepa_spatial_norm_alpha = 0.6 if spatial_norm_alpha is None else float(spatial_norm_alpha)
+        self.irepa_projector_kernel_size = 3 if projector_kernel_size is None else int(projector_kernel_size)
+        if self.irepa_spatial_norm_alpha < 0:
+            raise ValueError("irepa_spatial_norm_alpha must be non-negative.")
         self.block_index = getattr(config, "crepa_block_index", None)
         raw_distance = getattr(config, "crepa_adjacent_distance", 1)
         self.distance = 1 if raw_distance is None else int(raw_distance)
@@ -356,15 +402,29 @@ class CrepaRegularizer:
                 raise RuntimeError("CREPA failed to determine encoder output dimension.")
 
         if self.projector is None:
-            self.projector = nn.Sequential(
-                nn.LayerNorm(self.hidden_size),
-                nn.Linear(self.hidden_size, target_dim),
-            )
+            if self.irepa_enabled:
+                self.projector = SpatialConvProjector(
+                    self.hidden_size,
+                    target_dim,
+                    kernel_size=self.irepa_projector_kernel_size,
+                )
+            else:
+                self.projector = nn.Sequential(
+                    nn.LayerNorm(self.hidden_size),
+                    nn.Linear(self.hidden_size, target_dim),
+                )
             # Register as part of the model to ensure optimizer coverage.
             setattr(model, "crepa_projector", self.projector)
 
         # Ensure the projector lives on the correct device/dtype.
         self.projector.to(device=self.device, dtype=torch.float32)
+
+    def reinitialize_projector(self, model: nn.Module):
+        """Recreate the training-owned projector after recursive model quantization."""
+        if not self.irepa_enabled:
+            return
+        self.projector = None
+        self.attach_to_model(model)
 
     def wants_hidden_states(self) -> bool:
         return self.enabled
@@ -391,6 +451,8 @@ class CrepaRegularizer:
         else:
             if frame_features is None:
                 raise ValueError(f"CREPA {self.feature_source.value} feature mode requires teacher features from the model.")
+        if self.irepa_enabled and latents is None:
+            raise ValueError("iREPA requires clean latents to recover the spatial token grid.")
         if self.projector is None:
             raise RuntimeError("CREPA projector was not initialised on the diffusion model.")
         if self.base_weight == 0:
@@ -404,13 +466,31 @@ class CrepaRegularizer:
             # Treat backbone features as a frozen teacher to avoid over-regularization.
             frame_features = frame_features.detach()
 
-        projected = self._project_hidden_states(hidden_states)  # (B, T_dit, N_dit, D_enc)
+        projected_spatial_shape = None
+        if self.irepa_enabled:
+            projected, projected_spatial_shape = self._project_irepa_hidden_states(hidden_states, latents)
+        else:
+            projected = self._project_hidden_states(hidden_states, latents=latents)
+
+        if self.irepa_enabled:
+            frame_features = spatial_zscore(frame_features, alpha=self.irepa_spatial_norm_alpha)
 
         # Temporal alignment: match frame count between projected and frame_features
         projected, frame_features = self._maybe_align_temporal(projected, frame_features)
 
         # Spatial alignment: match token count per frame
-        projected, frame_features = self._maybe_align_tokens(projected, frame_features)
+        feature_spatial_shape = None
+        if self.irepa_enabled:
+            feature_reference_shape = (
+                latents.shape[-2:] if self.uses_internal_teacher_features else (self.encoder_image_size,) * 2
+            )
+            feature_spatial_shape = self._infer_spatial_shape(frame_features.shape[2], feature_reference_shape)
+        projected, frame_features = self._maybe_align_tokens(
+            projected,
+            frame_features,
+            projected_spatial_shape=projected_spatial_shape,
+            feature_spatial_shape=feature_spatial_shape,
+        )
 
         projected = F.normalize(projected, dim=-1)
         frame_features = F.normalize(frame_features, dim=-1)
@@ -530,10 +610,14 @@ class CrepaRegularizer:
 
         return projected, frame_features
 
-    def _project_hidden_states(self, hidden_states: torch.Tensor) -> torch.Tensor:
+    def _project_hidden_states(self, hidden_states: torch.Tensor, latents: Optional[torch.Tensor] = None) -> torch.Tensor:
         # Expected shapes depend on mode:
         # VIDEO mode: (B, T, D) -> (B, T, 1, D) or already (B, T, P, D)
         # IMAGE mode: (B, S, D) -> (B, 1, S, D) or already (B, 1, S, D)
+        if self.irepa_enabled:
+            projected, _ = self._project_irepa_hidden_states(hidden_states, latents)
+            return projected
+
         if hidden_states.ndim == 3:
             if self.mode == CrepaMode.VIDEO:
                 # Video: (B, T, D) -> (B, T, 1, D) - T frames, 1 global token each
@@ -551,13 +635,116 @@ class CrepaRegularizer:
         projected = projected.view(b, t, p, -1)
         return projected
 
+    def _project_irepa_hidden_states(
+        self, hidden_states: torch.Tensor, latents: torch.Tensor
+    ) -> Tuple[torch.Tensor, tuple[int, int]]:
+        hidden_states, spatial_shape = self._reshape_irepa_hidden_states(hidden_states, latents)
+        projector_dtype = next(self.projector.parameters()).dtype
+        projected = self.projector(hidden_states.to(dtype=projector_dtype), spatial_shape=spatial_shape)
+        return projected, spatial_shape
+
+    def _reshape_irepa_hidden_states(
+        self, hidden_states: torch.Tensor, latents: Optional[torch.Tensor]
+    ) -> Tuple[torch.Tensor, tuple[int, int]]:
+        if latents is None:
+            raise ValueError("iREPA requires clean latents to recover the spatial token grid.")
+        if self.mode is CrepaMode.IMAGE:
+            if hidden_states.ndim == 3:
+                hidden_states = hidden_states.unsqueeze(1)
+            if hidden_states.ndim != 4:
+                raise ValueError(f"iREPA image features must have 3 or 4 dimensions, got {hidden_states.shape}")
+            spatial_shape = self._infer_spatial_shape(hidden_states.shape[2], latents.shape[-2:])
+            return hidden_states, spatial_shape
+
+        if hidden_states.ndim == 4:
+            spatial_shape = self._infer_spatial_shape(hidden_states.shape[2], latents.shape[-2:])
+            return hidden_states, spatial_shape
+        if hidden_states.ndim != 3:
+            raise ValueError(f"iREPA video features must have 3 or 4 dimensions, got {hidden_states.shape}")
+        if latents.ndim != 5:
+            raise ValueError(f"iREPA video alignment expects 5D clean latents, got {latents.shape}")
+
+        frame_count, spatial_shape = self._infer_video_layout(hidden_states.shape[1], latents.shape[-3:])
+        return hidden_states.reshape(hidden_states.shape[0], frame_count, -1, hidden_states.shape[-1]), spatial_shape
+
+    def _infer_video_layout(
+        self, token_count: int, latent_shape: torch.Size | tuple[int, ...]
+    ) -> Tuple[int, tuple[int, int]]:
+        latent_frames, latent_height, latent_width = (int(value) for value in latent_shape)
+        expected_frames, expected_height, expected_width = self._expected_patch_grid(
+            latent_frames, latent_height, latent_width
+        )
+        if expected_frames * expected_height * expected_width == token_count:
+            return expected_frames, (expected_height, expected_width)
+
+        candidates = []
+        for frame_count in range(1, min(token_count, latent_frames) + 1):
+            if token_count % frame_count:
+                continue
+            spatial_shape = self._infer_spatial_shape(token_count // frame_count, (latent_height, latent_width))
+            temporal_error = abs(math.log(frame_count / max(expected_frames, 1)))
+            candidates.append((temporal_error, -frame_count, frame_count, spatial_shape))
+        if not candidates:
+            raise ValueError(f"Unable to infer an iREPA video grid for {token_count} tokens and latents {latent_shape}.")
+        _, _, frame_count, spatial_shape = min(candidates)
+        return frame_count, spatial_shape
+
+    def _expected_patch_grid(self, frames: int, height: int, width: int) -> tuple[int, int, int]:
+        patch_t, patch_h, patch_w = 1, 1, 1
+        foundation = self.model_foundation
+        if foundation is not None:
+            model = foundation.get_trained_component()
+            model_config = getattr(model, "config", None)
+            raw_patch = getattr(model_config, "patch_size", 1)
+            raw_patch_t = getattr(model_config, "patch_size_t", None)
+            if isinstance(raw_patch, (tuple, list)):
+                if len(raw_patch) == 3:
+                    patch_t, patch_h, patch_w = (int(value) for value in raw_patch)
+                elif len(raw_patch) == 2:
+                    patch_h, patch_w = (int(value) for value in raw_patch)
+            else:
+                patch_h = patch_w = int(raw_patch)
+            patch_t = int(raw_patch_t) if raw_patch_t is not None else patch_t
+        return (
+            math.ceil(frames / max(patch_t, 1)),
+            math.ceil(height / max(patch_h, 1)),
+            math.ceil(width / max(patch_w, 1)),
+        )
+
+    @staticmethod
+    def _infer_spatial_shape(token_count: int, reference_shape: torch.Size | tuple[int, ...]) -> tuple[int, int]:
+        reference_height, reference_width = (int(value) for value in reference_shape)
+        reference_ratio = reference_width / max(reference_height, 1)
+        candidates = []
+        for height in range(1, math.isqrt(token_count) + 1):
+            if token_count % height:
+                continue
+            width = token_count // height
+            for candidate_height, candidate_width in ((height, width), (width, height)):
+                ratio_error = abs(math.log((candidate_width / candidate_height) / reference_ratio))
+                candidates.append((ratio_error, candidate_height, candidate_width))
+        if not candidates:
+            raise ValueError(f"Unable to infer an iREPA spatial grid for {token_count} tokens.")
+        _, height, width = min(candidates)
+        return height, width
+
     def _maybe_align_tokens(
-        self, projected: torch.Tensor, frame_features: torch.Tensor
+        self,
+        projected: torch.Tensor,
+        frame_features: torch.Tensor,
+        *,
+        projected_spatial_shape: Optional[tuple[int, int]] = None,
+        feature_spatial_shape: Optional[tuple[int, int]] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # Align spatial token counts. If disabled, fall back to global pooling.
         proj_tokens = projected.shape[2]
         enc_tokens = frame_features.shape[2]
-        if proj_tokens == enc_tokens:
+        matching_layout = (
+            projected_spatial_shape is None
+            or feature_spatial_shape is None
+            or projected_spatial_shape == feature_spatial_shape
+        )
+        if proj_tokens == enc_tokens and matching_layout:
             return projected, frame_features
 
         if not self.spatial_align:
@@ -565,22 +752,58 @@ class CrepaRegularizer:
             frame_features = frame_features.mean(dim=2, keepdim=True)
             return projected, frame_features
 
-        target_tokens = min(proj_tokens, enc_tokens)
-        projected = self._interpolate_tokens(projected, target_tokens)
-        frame_features = self._interpolate_tokens(frame_features, target_tokens)
+        if projected_spatial_shape is not None and feature_spatial_shape is not None:
+            target_shape = projected_spatial_shape if proj_tokens <= enc_tokens else feature_spatial_shape
+            target_tokens = target_shape[0] * target_shape[1]
+        else:
+            target_shape = None
+            target_tokens = min(proj_tokens, enc_tokens)
+        projected = self._interpolate_tokens(
+            projected,
+            target_tokens,
+            source_shape=projected_spatial_shape,
+            target_shape=target_shape,
+        )
+        frame_features = self._interpolate_tokens(
+            frame_features,
+            target_tokens,
+            source_shape=feature_spatial_shape,
+            target_shape=target_shape,
+        )
         return projected, frame_features
 
-    def _interpolate_tokens(self, tokens: torch.Tensor, target_tokens: int) -> torch.Tensor:
+    def _interpolate_tokens(
+        self,
+        tokens: torch.Tensor,
+        target_tokens: int,
+        *,
+        source_shape: Optional[tuple[int, int]] = None,
+        target_shape: Optional[tuple[int, int]] = None,
+    ) -> torch.Tensor:
         if tokens.shape[2] == target_tokens:
-            return tokens
+            if source_shape is None or target_shape is None or source_shape == target_shape:
+                return tokens
         b, t, n, d = tokens.shape
         flat = tokens.reshape(b * t, n, d).permute(0, 2, 1)  # (BT, D, N)
 
-        src_size = int(math.sqrt(n))
-        tgt_size = int(math.sqrt(target_tokens))
-        if src_size * src_size == n and tgt_size * tgt_size == target_tokens:
-            flat = flat.view(b * t, d, src_size, src_size)
-            interpolated = F.interpolate(flat, size=(tgt_size, tgt_size), mode="bilinear", align_corners=False)
+        if source_shape is None and target_shape is None:
+            src_size = math.isqrt(n)
+            tgt_size = math.isqrt(target_tokens)
+            if src_size * src_size == n and tgt_size * tgt_size == target_tokens:
+                flat = flat.view(b * t, d, src_size, src_size)
+                interpolated = F.interpolate(flat, size=(tgt_size, tgt_size), mode="bilinear", align_corners=False)
+                interpolated = interpolated.view(b * t, d, target_tokens)
+            else:
+                interpolated = F.interpolate(flat, size=target_tokens, mode="linear", align_corners=False)
+            return interpolated.permute(0, 2, 1).reshape(b, t, target_tokens, d)
+
+        if source_shape is None:
+            source_shape = self._infer_spatial_shape(n, (1, 1))
+        if target_shape is None:
+            target_shape = self._infer_spatial_shape(target_tokens, source_shape)
+        if source_shape[0] * source_shape[1] == n and target_shape[0] * target_shape[1] == target_tokens:
+            flat = flat.view(b * t, d, *source_shape)
+            interpolated = F.interpolate(flat, size=target_shape, mode="bilinear", align_corners=False)
             interpolated = interpolated.view(b * t, d, target_tokens)
         else:
             interpolated = F.interpolate(flat, size=target_tokens, mode="linear", align_corners=False)
@@ -773,7 +996,14 @@ class UrepaRegularizer:
         self.hidden_size = hidden_size
         self.model_foundation = model_foundation
 
+        self.irepa_enabled = bool(getattr(config, "irepa_enabled", False))
         self.enabled = bool(getattr(config, "urepa_enabled", False))
+        spatial_norm_alpha = getattr(config, "irepa_spatial_norm_alpha", 0.6)
+        projector_kernel_size = getattr(config, "irepa_projector_kernel_size", 3)
+        self.irepa_spatial_norm_alpha = 0.6 if spatial_norm_alpha is None else float(spatial_norm_alpha)
+        self.irepa_projector_kernel_size = 3 if projector_kernel_size is None else int(projector_kernel_size)
+        if self.irepa_spatial_norm_alpha < 0:
+            raise ValueError("irepa_spatial_norm_alpha must be non-negative.")
         self.base_weight = float(getattr(config, "urepa_lambda", 0.5) or 0.5)
         self.manifold_weight = float(getattr(config, "urepa_manifold_weight", 3.0) or 3.0)
 
@@ -834,13 +1064,27 @@ class UrepaRegularizer:
             raise RuntimeError("U-REPA failed to determine encoder output dimension.")
 
         if self.projector is None:
-            self.projector = nn.Sequential(
-                nn.LayerNorm(self.hidden_size),
-                nn.Linear(self.hidden_size, target_dim),
-            )
+            if self.irepa_enabled:
+                self.projector = SpatialConvProjector(
+                    self.hidden_size,
+                    target_dim,
+                    kernel_size=self.irepa_projector_kernel_size,
+                )
+            else:
+                self.projector = nn.Sequential(
+                    nn.LayerNorm(self.hidden_size),
+                    nn.Linear(self.hidden_size, target_dim),
+                )
             setattr(model, "urepa_projector", self.projector)
 
         self.projector.to(device=self.device, dtype=torch.float32)
+
+    def reinitialize_projector(self, model: nn.Module):
+        """Recreate the training-owned projector after recursive model quantization."""
+        if not self.irepa_enabled:
+            return
+        self.projector = None
+        self.attach_to_model(model)
 
     def wants_hidden_states(self) -> bool:
         return self.enabled
@@ -882,11 +1126,28 @@ class UrepaRegularizer:
         pixels = self._decode_latents(latents, vae)
         encoder_features = self._encode_pixels(pixels)  # (B, N_enc, D_enc)
 
+        if self.irepa_enabled:
+            encoder_features = spatial_zscore(encoder_features, alpha=self.irepa_spatial_norm_alpha)
+
         # Project hidden states from (B, C, H, W) to (B, N_proj, D_enc)
         projected = self._project_hidden_states(hidden_states)
 
         # Align spatial dimensions
-        projected, encoder_features = self._align_spatial(projected, encoder_features)
+        projected_spatial_shape = tuple(int(value) for value in hidden_states.shape[-2:]) if self.irepa_enabled else None
+        encoder_spatial_shape = (
+            CrepaRegularizer._infer_spatial_shape(
+                encoder_features.shape[1],
+                (self.encoder_image_size, self.encoder_image_size),
+            )
+            if self.irepa_enabled
+            else None
+        )
+        projected, encoder_features = self._align_spatial(
+            projected,
+            encoder_features,
+            projected_spatial_shape=projected_spatial_shape,
+            encoder_spatial_shape=encoder_spatial_shape,
+        )
 
         # Normalize for cosine similarity
         projected_norm = F.normalize(projected, dim=-1)
@@ -943,16 +1204,23 @@ class UrepaRegularizer:
             raise ValueError(f"U-REPA expected 4D hidden states (B, C, H, W), got {hidden_states.shape}")
 
         b, c, h, w = hidden_states.shape
-        # Reshape: (B, C, H, W) -> (B, H*W, C)
-        hidden_states = hidden_states.permute(0, 2, 3, 1).reshape(b, h * w, c)
-
-        # Project to encoder dimension
         projector_dtype = next(self.projector.parameters()).dtype
         hidden_states = hidden_states.to(dtype=projector_dtype)
-        projected = self.projector(hidden_states)
-        return projected
+        if self.irepa_enabled:
+            sequence = hidden_states.permute(0, 2, 3, 1).reshape(b, 1, h * w, c)
+            return self.projector(sequence, spatial_shape=(h, w)).squeeze(1)
 
-    def _align_spatial(self, projected: torch.Tensor, encoder_features: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        sequence = hidden_states.permute(0, 2, 3, 1).reshape(b, h * w, c)
+        return self.projector(sequence)
+
+    def _align_spatial(
+        self,
+        projected: torch.Tensor,
+        encoder_features: torch.Tensor,
+        *,
+        projected_spatial_shape: Optional[tuple[int, int]] = None,
+        encoder_spatial_shape: Optional[tuple[int, int]] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Align spatial token counts between projected features and encoder features.
 
@@ -961,19 +1229,52 @@ class UrepaRegularizer:
         n_proj = projected.shape[1]
         n_enc = encoder_features.shape[1]
 
-        if n_proj == n_enc:
+        matching_layout = (
+            projected_spatial_shape is None
+            or encoder_spatial_shape is None
+            or projected_spatial_shape == encoder_spatial_shape
+        )
+        if n_proj == n_enc and matching_layout:
             return projected, encoder_features
 
-        target_tokens = min(n_proj, n_enc)
-        projected = self._interpolate_tokens(projected, target_tokens)
-        encoder_features = self._interpolate_tokens(encoder_features, target_tokens)
+        if projected_spatial_shape is not None and encoder_spatial_shape is not None:
+            target_shape = projected_spatial_shape if n_proj <= n_enc else encoder_spatial_shape
+            target_tokens = target_shape[0] * target_shape[1]
+        else:
+            target_shape = None
+            target_tokens = min(n_proj, n_enc)
+        projected = self._interpolate_tokens(
+            projected,
+            target_tokens,
+            source_shape=projected_spatial_shape,
+            target_shape=target_shape,
+        )
+        encoder_features = self._interpolate_tokens(
+            encoder_features,
+            target_tokens,
+            source_shape=encoder_spatial_shape,
+            target_shape=target_shape,
+        )
         return projected, encoder_features
 
-    def _interpolate_tokens(self, tokens: torch.Tensor, target_tokens: int) -> torch.Tensor:
+    def _interpolate_tokens(
+        self,
+        tokens: torch.Tensor,
+        target_tokens: int,
+        *,
+        source_shape: Optional[tuple[int, int]] = None,
+        target_shape: Optional[tuple[int, int]] = None,
+    ) -> torch.Tensor:
         """Interpolate token sequence to target length using bilinear interpolation."""
         if tokens.shape[1] == target_tokens:
-            return tokens
+            if source_shape is None or target_shape is None or source_shape == target_shape:
+                return tokens
         b, n, d = tokens.shape
+
+        if source_shape is not None and target_shape is not None:
+            tokens = tokens.permute(0, 2, 1).reshape(b, d, *source_shape)
+            tokens = F.interpolate(tokens, size=target_shape, mode="bilinear", align_corners=False)
+            return tokens.reshape(b, d, target_tokens).permute(0, 2, 1)
 
         # Try 2D interpolation if tokens form a square grid
         src_size = int(math.sqrt(n))

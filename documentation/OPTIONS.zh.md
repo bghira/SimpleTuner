@@ -1388,6 +1388,33 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 
 ---
 
+## 🎯 iREPA（改进的表示对齐）
+
+iREPA 使用卷积投影器和逐帧空间归一化，在表示对齐中保留空间结构。它改进 Transformer 的 CREPA 和 UNet 的 U-REPA。参见 [iREPA 指南](experimental/IREPA.zh.md)。
+
+### `--irepa_enabled`
+
+- **类型**：布尔标志
+- **默认值**：`false`
+- **作用**：使用 iREPA 空间操作升级已启用的 CREPA 或 U-REPA 路径。
+- **说明**：Transformer 还需启用 `crepa_enabled`，UNet 还需启用 `urepa_enabled`。
+- **训练模式**：完整模型或标准 PEFT LoRA。LyCORIS 无法保存辅助投影器，因此不受支持。
+
+### `--irepa_spatial_norm_alpha`
+
+- **类型**：浮点数
+- **默认值**：`0.6`
+- **作用**：在除以空间标准差之前，缩放教师特征的均值减法。
+- **说明**：`0.6` 是 latent-diffusion 参考设置；`1.0` 会完全中心化每个通道。
+
+### `--irepa_projector_kernel_size`
+
+- **类型**：整数（`1`、`3`、`5` 或 `7`）
+- **默认值**：`3`
+- **作用**：设置对齐投影器的空间卷积核。
+
+---
+
 ## 🎯 CREPA（Cross-frame Representation Alignment）
 
 CREPA 是一种用于视频扩散模型微调的正则化技术，通过将隐藏状态与相邻帧的预训练视觉特征对齐来提升时间一致性。基于论文 ["Cross-Frame Representation Alignment for Fine-Tuning Video Diffusion Models"](https://arxiv.org/abs/2506.09229)。

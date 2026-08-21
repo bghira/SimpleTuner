@@ -295,14 +295,15 @@ class MiniMaxH3(VideoModelFoundation):
         return list(dict.fromkeys(targets))
 
     def get_lora_save_layers(self):
+        save_layers = list(super().get_lora_save_layers() or [])
         if not self._configured_anyflow():
-            return super().get_lora_save_layers()
+            return save_layers or None
         if not bool(self._anyflow_distillation_config().get("train_delta_embedder", True)):
-            return super().get_lora_save_layers()
+            return save_layers or None
         transformer = self.unwrap_model(self.model) if getattr(self, "model", None) is not None else None
         if transformer is not None and getattr(transformer, "delta_adaln_embedder", None) is not None:
-            return ["delta_adaln_embedder"]
-        return super().get_lora_save_layers()
+            save_layers.append("delta_adaln_embedder")
+        return list(dict.fromkeys(save_layers)) or None
 
     def _assert_anyflow_endpoint_parameters_trainable(self) -> None:
         if not self._configured_anyflow():

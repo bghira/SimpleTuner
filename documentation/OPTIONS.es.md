@@ -1385,6 +1385,33 @@ Consulta la guía [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscripti
 
 ---
 
+## 🎯 iREPA (Alineacion de Representaciones Mejorada)
+
+iREPA conserva la estructura espacial mediante un proyector convolucional y normalizacion espacial por frame. Mejora CREPA para Transformers y U-REPA para UNets. Consulta la [guia de iREPA](experimental/IREPA.es.md).
+
+### `--irepa_enabled`
+
+- **Tipo**: Flag booleana
+- **Predeterminado**: `false`
+- **Qué hace**: Mejora una ruta CREPA o U-REPA activa con las operaciones espaciales de iREPA.
+- **Nota**: Activa tambien `crepa_enabled` para Transformer o `urepa_enabled` para UNet.
+- **Modo de entrenamiento**: Modelo completo o LoRA PEFT estandar. LyCORIS no puede guardar el proyector auxiliar y no es compatible.
+
+### `--irepa_spatial_norm_alpha`
+
+- **Tipo**: Float
+- **Predeterminado**: `0.6`
+- **Qué hace**: Escala la resta de la media de las features del teacher antes de dividir por la desviacion estandar espacial.
+- **Nota**: `0.6` es la configuracion de referencia para latent diffusion; `1.0` centra por completo cada canal.
+
+### `--irepa_projector_kernel_size`
+
+- **Tipo**: Entero (`1`, `3`, `5` o `7`)
+- **Predeterminado**: `3`
+- **Qué hace**: Define el kernel de la convolucion espacial del proyector.
+
+---
+
 ## 🎯 CREPA (Cross-frame Representation Alignment)
 
 CREPA es una técnica de regularización para fine-tuning de modelos de difusión de video que mejora la consistencia temporal al alinear estados ocultos con características visuales preentrenadas de fotogramas adyacentes. Basado en el paper ["Cross-Frame Representation Alignment for Fine-Tuning Video Diffusion Models"](https://arxiv.org/abs/2506.09229).

@@ -902,7 +902,24 @@ class ModelFoundation(ABC):
     # LoRA/PEFT helpers (shared across model families)
     # -------------------------------------------------------------------------
     def get_lora_save_layers(self):
-        return None
+        model = self.get_trained_component(unwrap_model=False)
+        if model is None:
+            return None
+        modules = [name for name in ("crepa_projector", "urepa_projector") if hasattr(model, name)]
+        return modules or None
+
+    def refresh_representation_alignment_projectors(self):
+        model = self.get_trained_component(unwrap_model=False)
+        if model is None:
+            return
+        for regularizer_name, module_name in (
+            ("crepa_regularizer", "crepa_projector"),
+            ("urepa_regularizer", "urepa_projector"),
+        ):
+            regularizer = getattr(self, regularizer_name, None)
+            projector = getattr(model, module_name, None)
+            if regularizer is not None and projector is not None:
+                regularizer.projector = projector
 
     def _get_peft_lora_target_modules(self):
         if str(getattr(self.config, "lora_type", "standard")).lower() != "standard":
@@ -6255,11 +6272,36 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
 
     def post_model_load_setup(self):
         super().post_model_load_setup()
+        self._validate_irepa_adapter_support()
         self._init_crepa_regularizer()
         self._init_urepa_regularizer()
 
+    def post_quantization_setup(self):
+        super().post_quantization_setup()
+        if not getattr(self.config, "irepa_enabled", False):
+            return
+        model_component = self.get_trained_component(unwrap_model=False)
+        if model_component is None:
+            return
+        for regularizer in (self.crepa_regularizer, self.urepa_regularizer):
+            if regularizer is not None:
+                regularizer.reinitialize_projector(model_component)
+
+    def _validate_irepa_adapter_support(self):
+        if not getattr(self.config, "irepa_enabled", False):
+            return
+        if (
+            "lora" in str(getattr(self.config, "model_type", ""))
+            and str(getattr(self.config, "lora_type", "standard")).lower() == "lycoris"
+        ):
+            raise ValueError("iREPA supports full-model and standard PEFT LoRA training; LyCORIS is not supported.")
+
     def _init_crepa_regularizer(self):
-        if not getattr(self.config, "crepa_enabled", False):
+        crepa_enabled = bool(getattr(self.config, "crepa_enabled", False))
+        irepa_enabled = bool(getattr(self.config, "irepa_enabled", False))
+        if irepa_enabled and getattr(self, "MODEL_TYPE", None) == ModelTypes.TRANSFORMER and not crepa_enabled:
+            raise ValueError("iREPA requires crepa_enabled=true for transformer models.")
+        if not crepa_enabled:
             self.crepa_regularizer = None
             return
 
@@ -6317,7 +6359,11 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
 
     def _init_urepa_regularizer(self):
         """Initialize U-REPA regularizer for UNet-based models (SDXL, SD1.5, Kolors)."""
-        if not getattr(self.config, "urepa_enabled", False):
+        urepa_enabled = bool(getattr(self.config, "urepa_enabled", False))
+        irepa_enabled = bool(getattr(self.config, "irepa_enabled", False))
+        if irepa_enabled and getattr(self, "MODEL_TYPE", None) == ModelTypes.UNET and not urepa_enabled:
+            raise ValueError("iREPA requires urepa_enabled=true for UNet models.")
+        if not urepa_enabled:
             self.urepa_regularizer = None
             return
 

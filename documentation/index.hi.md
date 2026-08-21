@@ -72,9 +72,9 @@
 
     ---
 
-    AnyFlow, ConvRot-style SDNQ Hadamard quantization, segmented checkpointing, Unsloth-style checkpointing, Prompt2Effect, Self-Flow, Flow-DPO, LayerSync, Diff2Flow, Metal Flash Attention और Video CREPA जैसी research features
+    AnyFlow, ConvRot-style SDNQ Hadamard quantization, segmented checkpointing, Unsloth-style checkpointing, Prompt2Effect, Self-Flow, Flow-DPO, iREPA, LayerSync, Diff2Flow, Metal Flash Attention और Video CREPA जैसी research features
 
-    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: ConvRot / Hadamard SDNQ](experimental/CONVROT.md) · [:octicons-arrow-right-24: Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md) · [:octicons-arrow-right-24: Unsloth Checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) · [:octicons-arrow-right-24: Metal Flash Attention](experimental/METAL_FLASH_ATTENTION.md)
+    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: iREPA](experimental/IREPA.hi.md) · [:octicons-arrow-right-24: ConvRot / Hadamard SDNQ](experimental/CONVROT.md) · [:octicons-arrow-right-24: Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md) · [:octicons-arrow-right-24: Unsloth Checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) · [:octicons-arrow-right-24: Metal Flash Attention](experimental/METAL_FLASH_ATTENTION.md)
 
 </div>
 

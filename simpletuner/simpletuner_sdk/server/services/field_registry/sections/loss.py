@@ -119,6 +119,66 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="irepa_enabled",
+            arg_name="--irepa_enabled",
+            ui_label="Enable iREPA",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            help_text="Upgrade enabled CREPA or U-REPA alignment with iREPA spatial operations.",
+            tooltip="Also enable CREPA for transformer models or U-REPA for UNet models.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=6,
+            documentation="OPTIONS.md#--irepa_enabled",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="irepa_spatial_norm_alpha",
+            arg_name="--irepa_spatial_norm_alpha",
+            ui_label="iREPA Spatial Norm Alpha",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0.6,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="irepa_enabled", operator="equals", value=True)],
+            help_text="Mean-subtraction strength for iREPA teacher-feature spatial normalization.",
+            tooltip="0.6 matches the latent-diffusion reference recipe; 1.0 fully centers each feature channel.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=7,
+            documentation="OPTIONS.md#--irepa_spatial_norm_alpha",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="irepa_projector_kernel_size",
+            arg_name="--irepa_projector_kernel_size",
+            ui_label="iREPA Projector Kernel",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="loss_functions",
+            default_value=3,
+            choices=[
+                {"value": 1, "label": "1 x 1"},
+                {"value": 3, "label": "3 x 3 (Paper)"},
+                {"value": 5, "label": "5 x 5"},
+                {"value": 7, "label": "7 x 7"},
+            ],
+            dependencies=[FieldDependency(field="irepa_enabled", operator="equals", value=True)],
+            help_text="Spatial convolution kernel used by the iREPA projector.",
+            tooltip="Use 3 for the published iREPA architecture.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=8,
+            documentation="OPTIONS.md#--irepa_projector_kernel_size",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="crepa_enabled",
             arg_name="--crepa_enabled",
             ui_label="Enable CREPA",
