@@ -4,11 +4,13 @@ Cross-frame Representation Alignment (CREPA) es un regularizador ligero para mod
 
 > **¿Buscas modelos de imagen?** Consulta [IMAGE_REPA.es.md](IMAGE_REPA.es.md) para soporte REPA en modelos DiT de imagen (Flux, SD3, etc.) y U-REPA para modelos UNet (SDXL, SD1.5, Kolors).
 
+> **Alineación espacial mejorada:** [iREPA](IREPA.es.md) aplica el proyector convolucional y la normalización del teacher de forma independiente a cada frame.
+
 ## Cuándo usarlo
 
 - Estás entrenando con videos con movimiento complejo, cambios de escena u oclusiones.
 - Estás afinando un DiT de video (LoRA o completo) y ves parpadeo o deriva de identidad entre frames.
-- Familias de modelos compatibles: `kandinsky5_video`, `ltxvideo`, `sanavideo` y `wan` (otras familias no exponen los hooks de CREPA).
+- Familias compatibles: Transformers de video que exponen captura de hidden states CREPA, incluidos Kandinsky 5 Video, LTXVideo/LTX-2, HunyuanVideo, LongCat Video, MiniMax H3, SanaVideo, Wan/Wan S2V y Cosmos.
 - Tienes VRAM extra (CREPA añade ~1–2 GB según la configuración) para el encoder DINO y el VAE, que deben permanecer en memoria durante el entrenamiento para decodificar latentes a píxeles.
 
 ## Configuración rápida (WebUI)
@@ -162,7 +164,7 @@ El corte temprano previene artefactos de franjas en fondos uniformes.
 
 ## Errores comunes
 
-- Habilitar CREPA en familias no soportadas causa estados ocultos faltantes; usa `kandinsky5_video`, `ltxvideo`, `sanavideo` o `wan`.
+- Activar CREPA en una familia sin captura de hidden states produce un error de hidden state faltante.
 - **Índice de bloque demasiado alto** → “hidden states not returned”. Baja el índice; es de base cero en los bloques transformer.
 - **Picos de VRAM** → prueba `crepa_spatial_align=false`, un encoder más pequeño (`dinov2_vits14` + `224`) o un índice de bloque más bajo.
 - **Errores en modo backbone** → configura tanto `crepa_block_index` (estudiante) como `crepa_teacher_block_index` (maestro) con capas existentes.

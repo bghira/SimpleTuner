@@ -3304,6 +3304,7 @@ class Trainer:
             logger.info(lora_info_msg)
             self._send_webhook_msg(message=lora_info_msg)
             addkeys, misskeys = self.model.add_lora_adapter()
+            self.model.refresh_representation_alignment_projectors()
             if addkeys:
                 logger.warning(
                     "The following keys were found in %s, but are not part of the model and are ignored:\n %s.\nThis is most likely an error"

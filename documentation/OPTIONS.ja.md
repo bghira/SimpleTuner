@@ -1386,6 +1386,33 @@ Flux Kontext の検証もこのコンディショニングベースの経路を�
 
 ---
 
+## 🎯 iREPA（Improved Representation Alignment）
+
+iREPA は convolution projector と frame ごとの spatial normalization により、representation alignment の空間構造を保持します。Transformer の CREPA と UNet の U-REPA を改善します。[iREPA ガイド](experimental/IREPA.ja.md)を参照してください。
+
+### `--irepa_enabled`
+
+- **型**: Boolean flag
+- **既定値**: `false`
+- **内容**: 有効な CREPA または U-REPA path に iREPA spatial operations を追加します。
+- **注記**: Transformer では `crepa_enabled`、UNet では `urepa_enabled` も有効にします。
+- **Training mode**: Full-model または standard PEFT LoRA。LyCORIS は補助 projector を保存できないため未対応です。
+
+### `--irepa_spatial_norm_alpha`
+
+- **型**: Float
+- **既定値**: `0.6`
+- **内容**: spatial standard deviation で割る前の teacher-feature mean subtraction を調整します。
+- **注記**: `0.6` は latent-diffusion reference setting、`1.0` は完全な channel centering です。
+
+### `--irepa_projector_kernel_size`
+
+- **型**: Integer（`1`、`3`、`5`、`7`）
+- **既定値**: `3`
+- **内容**: alignment projector の spatial convolution kernel を設定します。
+
+---
+
 ## 🎯 CREPA（Cross-frame Representation Alignment）
 
 CREPA は動画拡散モデルのファインチューニング向け正則化手法で、隣接フレームの事前学習済み視覚特徴と隠れ状態を整合させることで時間的一貫性を向上させます。論文は ["Cross-Frame Representation Alignment for Fine-Tuning Video Diffusion Models"](https://arxiv.org/abs/2506.09229) を参照してください。

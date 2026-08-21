@@ -356,6 +356,7 @@ nav:
       - ConvRot / Hadamard SDNQ: experimental/CONVROT.md
       - Diff2Flow: experimental/DIFF2FLOW.md
       - Flow-DPO: experimental/FLOW_DPO.md
+      - iREPA: experimental/IREPA.md
       - LayerSync: experimental/LAYERSYNC.md
       - Metal Flash Attention: experimental/METAL_FLASH_ATTENTION.md
       - Prompt2Effect: experimental/PROMPT2EFFECT.md

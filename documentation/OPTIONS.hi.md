@@ -1383,6 +1383,33 @@ Multi‑GPU training के लिए dataset sizing पर अधिक वि�
 
 ---
 
+## 🎯 iREPA (Improved Representation Alignment)
+
+iREPA convolution projector और per-frame spatial normalization से representation alignment में spatial structure बनाए रखता है। यह Transformers के CREPA और UNets के U-REPA को बेहतर बनाता है। [iREPA guide](experimental/IREPA.hi.md) देखें।
+
+### `--irepa_enabled`
+
+- **Type**: Boolean flag
+- **Default**: `false`
+- **What**: चालू CREPA या U-REPA path में iREPA spatial operations जोड़ता है।
+- **Note**: Transformer के लिए `crepa_enabled` या UNet के लिए `urepa_enabled` भी चालू करें।
+- **Training mode**: Full-model या standard PEFT LoRA। Auxiliary projector save न कर पाने के कारण LyCORIS supported नहीं है।
+
+### `--irepa_spatial_norm_alpha`
+
+- **Type**: Float
+- **Default**: `0.6`
+- **What**: Spatial standard deviation से divide करने से पहले teacher-feature mean subtraction को scale करता है।
+- **Note**: `0.6` latent-diffusion reference setting है; `1.0` हर channel को पूरी तरह center करता है।
+
+### `--irepa_projector_kernel_size`
+
+- **Type**: Integer (`1`, `3`, `5`, या `7`)
+- **Default**: `3`
+- **What**: Alignment projector का spatial convolution kernel सेट करता है।
+
+---
+
 ## 🎯 CREPA (Cross-frame Representation Alignment)
 
 CREPA एक regularization तकनीक है जो video diffusion models की fine‑tuning में temporal consistency सुधारती है, adjacent frames से pretrained visual features के साथ hidden states align करके। यह पेपर ["Cross-Frame Representation Alignment for Fine-Tuning Video Diffusion Models"](https://arxiv.org/abs/2506.09229) पर आधारित है।
