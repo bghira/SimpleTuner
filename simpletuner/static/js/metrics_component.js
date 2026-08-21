@@ -6,6 +6,7 @@
 
 function metricsComponent(initialSettings = {}) {
     return {
+        ...window.trainingMetricsState(),
         // Configuration state
         prometheusEnabled: initialSettings.prometheus_enabled || false,
         selectedCategories: initialSettings.prometheus_categories || ['jobs', 'http'],
@@ -68,6 +69,7 @@ function metricsComponent(initialSettings = {}) {
 
             // Load categories, templates, circuit breaker status, and GPU health
             await Promise.all([
+                this.loadTrainingRuns(),
                 this.loadCategoriesAndTemplates(),
                 this.loadCircuitBreakers(),
                 this.loadGpuHealth(),
@@ -79,6 +81,14 @@ function metricsComponent(initialSettings = {}) {
             }
 
             this.startGpuHealthPolling();
+        },
+
+        destroy() {
+            if (this._gpuHealthTimer) {
+                window.clearInterval(this._gpuHealthTimer);
+                this._gpuHealthTimer = null;
+            }
+            this.destroyTrainingMetrics();
         },
 
         async loadCircuitBreakers() {

@@ -104,7 +104,7 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Choices**: `auto`, `video`, `av`
 - **Default**: `auto`
 - **Notes**:
-  - `auto` resolves to video-only, skipping audio VAE caching, collation, and target audio rows for H3.
+  - `auto` resolves to `av` when enabled audio data is detected and to `video` otherwise. Validation uses the same detected-data default.
   - Set `minimax_h3_target_mode` or `h3_target_mode` to `av` in a data backend entry to opt an auto-split or explicit audio backend into joint audio-video training.
 
 ### `--minimax_h3_sparse_attention`
@@ -193,6 +193,14 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Default**: `False`
 - **Why**: Required for ACE-Step v1.5 checkpoints, which ship custom `AutoModel` and tokenizer code in the upstream repository.
 - **Warning**: Enable this only for model repositories you trust.
+
+### `--diffusion_blocks_config`
+
+- **What**: JSON object or JSON file path enabling block-wise diffusion-transformer training.
+- **Required key**: `layers_per_block` sets the maximum consecutive denoiser layers executed for one noise range.
+- **Optional keys**: `overlap` (default `0.05`), `blocks_to_train`, `block_paths`, and `timestep_boundaries`.
+- **Behavior**: Samples one noise-range block per batch, executes only its layer group, and automatically enables unused-parameter detection for DDP.
+- **Limits**: Transformer denoisers only. See [DiffusionBlocks](experimental/DIFFUSION_BLOCKS.md) for compatibility and inference requirements.
 
 ### `--enable_group_offload`
 
@@ -1295,6 +1303,13 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 - **What**: Train a model using a more gradual weighting on the loss landscape.
 - **Why**: When training pixel diffusion models, they will simply degrade without using a specific loss weighting schedule. This is the case with DeepFloyd, where soft-min-snr-gamma was found to essentially be mandatory for good results. You may find success with latent diffusion model training, but in small experiments, it was found to potentially produce blurry results.
 
+### `--flow_cubic_schedule_weights`
+
+- **What**: Samples flow-matching timesteps from a density defined by non-negative weights at equally spaced points from 0 to 1. Use a JSON array or comma-separated values. Zero or one weight selects a uniform distribution, two weights define a linear density, and three or more use monotone cubic-Hermite interpolation.
+- **Why**: Concentrates training on selected noise regions without reducing the schedule to discrete timesteps. Native model timestep conventions and configured flow schedule shifting still apply.
+- **Conflicts**: Cannot be combined with `--flow_use_uniform_schedule`, `--flow_use_beta_schedule`, `--flux_fast_schedule`, or `--flow_custom_timesteps`.
+- **Example**: `"flow_cubic_schedule_weights": [0.1, 1.0, 0.3, 2.0]`
+
 ### `--diff2flow_enabled`
 
 - **What**: Enable the Diffusion-to-Flow bridge for epsilon or v-prediction models.
@@ -1306,6 +1321,18 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 - **What**: Train with Flow Matching loss instead of the native prediction loss.
 - **Why**: When enabled alongside `--diff2flow_enabled`, this calculates the loss against the flow target (noise - latents) instead of the model's native target (epsilon or velocity).
 - **Note**: Requires `--diff2flow_enabled`.
+
+### `--mixflow_enabled`
+
+- **What**: Enables MixFlow slowed-interpolation post-training for flow-matching models.
+- **Why**: Changes timestep sampling and interpolation speed without changing the model architecture.
+- **Note**: Cannot be combined with competing timestep schedules. See the [MixFlow guide](experimental/MIXFLOW.md).
+
+### `--mixflow_gamma`
+
+- **What**: Controls the MixFlow slowed-interpolation range.
+- **Range**: `0.0` to `1.0`; default: `0.8`.
+- **Note**: `0.0` preserves standard interpolation while retaining MixFlow timestep sampling.
 
 ### `--scheduled_sampling_max_step_offset`
 
@@ -1386,6 +1413,34 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 - **What**: Weight for the ReflexFlow frequency-compensation (loss reweighting) term.
 - **Default**: 1.0.
 - **Why**: Scales the reweighted flow-matching loss, matching the β₂ knob described in the ReflexFlow paper.
+
+---
+
+## 🎯 iREPA (Improved Representation Alignment)
+
+iREPA preserves spatial structure during representation alignment with a convolutional projector and per-frame spatial normalization. It upgrades CREPA for transformers and U-REPA for UNets. See [the iREPA guide](experimental/IREPA.md).
+
+### `--irepa_enabled`
+
+- **Type**: Boolean flag
+- **Default**: `false`
+- **What**: Upgrades an enabled CREPA or U-REPA path with iREPA spatial operations.
+- **Note**: Also enable `crepa_enabled` for transformer models or `urepa_enabled` for UNet models.
+- **Training mode**: Full-model or standard PEFT LoRA. LyCORIS is not supported because it cannot save the auxiliary projector.
+
+### `--irepa_spatial_norm_alpha`
+
+- **Type**: Float
+- **Default**: `0.6`
+- **What**: Scales teacher-feature mean subtraction before division by the spatial standard deviation.
+- **Note**: `0.6` is the latent-diffusion reference setting; `1.0` fully centers every channel.
+
+### `--irepa_projector_kernel_size`
+
+- **Type**: Integer (`1`, `3`, `5`, or `7`)
+- **Default**: `3`
+- **What**: Sets the spatial convolution kernel used by the alignment projector.
+- **Note**: `3` matches the published iREPA architecture.
 
 ---
 
@@ -1716,6 +1771,33 @@ urepa_use_tae = false
 
 ---
 
+## Internal Guidance
+
+Internal Guidance supervises an early diffusion-transformer block with the same denoising target as the final output head. See [Internal Guidance](experimental/INTERNAL_GUIDANCE.md).
+
+### `--internal_guidance_enabled`
+
+- **What**: Enable the auxiliary denoising head and loss.
+- **Support**: Diffusion transformers with standard PEFT LoRA or full-model training. UNet, autoregressive, and LyCORIS training are rejected.
+- **Default**: `false`
+
+### `--internal_guidance_loss_weight`
+
+- **What**: Multiplier for the intermediate denoising loss.
+- **Default**: `0.5`; must be greater than zero.
+
+### `--internal_guidance_block_index`
+
+- **What**: Zero-based transformer block used by the auxiliary head.
+- **Default**: One quarter of the transformer depth.
+
+### `--validation_internal_guidance_scale`
+
+- **What**: Apply `intermediate + scale * (final - intermediate)` during validation sampling.
+- **Default**: `1.0` (disabled). The reference implementation uses `1.4` for its primary result.
+
+---
+
 ## 🔁 LayerSync (Hidden State Self-Alignment)
 
 LayerSync encourages a "student" layer to match a stronger "teacher" layer inside the same transformer, using cosine similarity over hidden tokens.
@@ -1825,8 +1907,20 @@ Upstream option mapping (LayerSync → SimpleTuner):
 ### `--report_to`
 
 - **What**: Specifies the platform for reporting results and logs.
-- **Why**: Enables integration with platforms like TensorBoard, wandb, or comet_ml for monitoring. Use multiple values separated by a comma to report to multiple trackers;
-- **Choices**: wandb, tensorboard, comet_ml
+- **Why**: Enables local or external monitoring. `simpletuner` writes raw JSONL, a manifest, validation media metadata, and a self-contained HTML report to `output_dir`. Use comma-separated values for multiple trackers. `all` includes the local tracker.
+- **Choices**: simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, all, none
+
+### `--validation_image_format`
+
+- **What**: Format for validation images saved in `output_dir/validation_images`.
+- **Choices**: png, webp, jpeg
+- **Default**: png
+
+### `--validation_image_quality`
+
+- **What**: Encoding quality for WebP and JPEG validation images.
+- **Range**: 1 to 100
+- **Default**: 90. Ignored for PNG.
 
 ## Environment configuration variables
 
@@ -1979,8 +2073,11 @@ usage: train.py [-h] --model_family
                 [--flow_use_beta_schedule [FLOW_USE_BETA_SCHEDULE]]
                 [--flow_beta_schedule_alpha FLOW_BETA_SCHEDULE_ALPHA]
                 [--flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA]
+                [--flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
                 [--flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]]
+                [--mixflow_enabled [MIXFLOW_ENABLED]]
+                [--mixflow_gamma MIXFLOW_GAMMA]
                 [--audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT]
                 [--flow_custom_timesteps FLOW_CUSTOM_TIMESTEPS]
                 [--flow_timesteps_mode {fixed-list,round-robin}]
@@ -2102,7 +2199,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -2206,6 +2303,8 @@ options:
                         Path to ControlNet model weights to preload
   --tread_config TREAD_CONFIG
                         Configuration for TREAD training method
+  --diffusion_blocks_config DIFFUSION_BLOCKS_CONFIG
+                        Configuration for DiffusionBlocks training
   --pretrained_transformer_model_name_or_path PRETRAINED_TRANSFORMER_MODEL_NAME_OR_PATH
                         Path to pretrained transformer model
   --pretrained_transformer_subfolder PRETRAINED_TRANSFORMER_SUBFOLDER
@@ -2464,10 +2563,21 @@ options:
                         Alpha value for beta schedule (default: 2.0)
   --flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA
                         Beta value for beta schedule (default: 2.0)
+  --flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS
+                        Sample flow timesteps from a smooth density through
+                        equally spaced non-negative weights. Use a JSON array
+                        or comma-separated values; zero or one weight produces
+                        a uniform distribution.
   --flow_schedule_shift FLOW_SCHEDULE_SHIFT
                         Shift the noise schedule for flow-matching models
   --flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]
                         Auto-adjust schedule shift based on image resolution
+  --mixflow_enabled [MIXFLOW_ENABLED]
+                        Enable MixFlow slowed-interpolation post-training for
+                        flow-matching models.
+  --mixflow_gamma MIXFLOW_GAMMA
+                        Set the MixFlow slowed-interpolation range coefficient
+                        (default: 0.8).
   --audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT
                         Shift the audio noise schedule for flow-matching
                         models with audio latents
@@ -2855,7 +2965,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}
                         Method for model distillation
                         Distillation methods cannot be combined with
                         --train_text_encoder.

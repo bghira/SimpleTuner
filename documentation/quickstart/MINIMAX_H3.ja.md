@@ -61,7 +61,7 @@ Negative prompting は base H3 contract の一部ではありません。SimpleT
 
 ## Audio Target Mode
 
-`minimax_h3_target_mode: "auto"` は video-only になり、audio VAE work を避けます。
+`minimax_h3_target_mode: "auto"` は、有効な audio data が検出された場合は `av`、それ以外は `video` になります。Validation も同じ検出結果を使うため、audio-only および joint audio/video run では別の validation override なしで audio を生成します。Audio VAE work を避けるには `video` を明示します。
 
 ```json
 {
@@ -69,7 +69,20 @@ Negative prompting は base H3 contract の一部ではありません。SimpleT
 }
 ```
 
-dataset に target audio latents があり joint audio/video training したい場合だけ `"av"` を使います。data backend ごとに `h3_target_mode` または `minimax_h3_target_mode` でも設定できます。
+dataset に target audio latents があり joint audio/video training したい場合は `"av"` を明示できます。data backend ごとに `h3_target_mode` または `minimax_h3_target_mode` でも設定できます。
+
+Audio-only training では `dataset_type: "audio"` だけで十分です。H3 は fake-video support を提供するため、
+SimpleTuner は normalized backend config に `audio.audio_only: true` を記録し、placeholder video stream を作成して
+video loss を mask します。明示的な `audio_only` も使用できますが、必須ではありません。
+
+## Context parallelism
+
+H3 context parallelism は Ulysses と `context_parallel_strategy: "alltoall"` を使用します。packed sequence は CP
+degree に合わせて padding される場合があるため、local attention backend は mask を受け付ける必要があります。
+`native` と `cudnn` をサポートし、CP 有効時のその他の backend は SimpleTuner が `native` に置き換えます。
+
+約 8k audio tokens では、CP は主に communication と引き換えに activation memory と checkpointing を減らします。
+CP 単体では weights を shard しないため、より長い sequence または FSDP との併用でなければ DDP と比較してください。
 
 ## Experimental Sparse Attention
 

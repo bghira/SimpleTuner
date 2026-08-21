@@ -66,6 +66,7 @@ logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 # MiniMax-H3 tags every row of the packed sequence with the modality it belongs to and keeps one set of AdaLN
 # modulation parameters per (timestep, modality) pair: 0 = video, 1 = text, 2 = audio.
 MINIMAX_H3_MODALITY_NUM = 3
+_H3_MASKED_CONTEXT_PARALLEL_BACKENDS = frozenset({AttentionBackendName.NATIVE, AttentionBackendName._NATIVE_CUDNN})
 
 
 class _MiniMaxH3AllGather(torch.autograd.Function):
@@ -1414,19 +1415,23 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         if context_config is None and hasattr(config, "ring_degree"):
             context_config = config
         if context_config is not None:
+            ring_degree = int(getattr(context_config, "ring_degree", 1) or 1)
+            ulysses_degree = int(getattr(context_config, "ulysses_degree", 1) or 1)
+            if ring_degree != 1 or ulysses_degree <= 1:
+                raise ValueError('MiniMax-H3 context parallelism requires context_parallel_strategy="alltoall".')
             processor = self.transformer_blocks[0].attn.processor
             backend = processor._attention_backend
             if backend is None:
                 backend, _ = _AttentionBackendRegistry.get_active_backend()
             else:
                 backend = AttentionBackendName(backend)
-            if not _AttentionBackendRegistry._is_context_parallel_available(backend):
+            if backend not in _H3_MASKED_CONTEXT_PARALLEL_BACKENDS:
                 logger.warning(
-                    "MiniMax-H3 context parallelism cannot use attention backend %s; "
-                    "falling back to the native FlashAttention backend.",
+                    "MiniMax-H3 context parallelism cannot safely use attention backend %s because packed layouts "
+                    "may require an attention mask; falling back to native SDPA.",
                     backend.value,
                 )
-                self.set_attention_backend("_native_flash")
+                self.set_attention_backend("native")
         return super().enable_parallelism(config=config, cp_plan=cp_plan)
 
     @staticmethod

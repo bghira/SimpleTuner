@@ -22,6 +22,7 @@ class TestSanaVideoModel(unittest.TestCase):
         self.config.sana_complex_human_instruction = True
         self.config.validation_num_video_frames = 81
         self.config.flow_schedule_shift = 1.0
+        self.config.flow_cubic_schedule_weights = None
         self.config.tracker_run_name = "test_run"
 
         # Mock the pipeline classes so they don't try to load real models

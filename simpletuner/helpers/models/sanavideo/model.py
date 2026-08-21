@@ -467,14 +467,14 @@ class SanaVideo(VideoModelFoundation):
 
     def setup_training_noise_schedule(self):
         """
-        Sana training uses the canonical flow-matching schedule and ignores user-provided shift overrides.
+        Sana Video training uses its native flow-matching scheduler table and ignores shift overrides.
         """
         self.noise_schedule = FlowMatchEulerDiscreteScheduler.from_pretrained(
             get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path),
             subfolder="scheduler",
         )
         fix_flow_match_euler_schedule_bounds(self.noise_schedule)
-        # Lock Sana to the scheduler's built-in shift and distributions; ignore user overrides.
+        # Lock Sana Video to the scheduler's built-in shift. Its sampler applies custom density before table lookup.
         self.config.flow_schedule_shift = None
         self.config.flow_schedule_auto_shift = False
         self.config.flow_use_beta_schedule = False
@@ -483,11 +483,16 @@ class SanaVideo(VideoModelFoundation):
 
     def sample_flow_sigmas(self, batch: dict, state: dict):
         """
-        Sample sigmas uniformly from the scheduler tables (stateless) to mirror the reference Sana trainer.
+        Sample positions from the configured density, then look them up in Sana Video's scheduler table.
         """
+        if self._mixflow_enabled():
+            return super().sample_flow_sigmas(batch=batch, state=state)
         bsz = batch["latents"].shape[0]
         num_train_timesteps = self.noise_schedule.config.num_train_timesteps
-        u = torch.rand((bsz,), device=self.accelerator.device)
+        if self._uses_flow_cubic_schedule():
+            u = self._sample_flow_cubic_values(bsz, self.accelerator.device)
+        else:
+            u = torch.rand((bsz,), device=self.accelerator.device)
         indices = torch.clamp((u * num_train_timesteps).long(), max=num_train_timesteps - 1)
         scheduler_sigmas = self.noise_schedule.sigmas.to(device=self.accelerator.device, dtype=batch["latents"].dtype)
         scheduler_timesteps = self.noise_schedule.timesteps.to(device=self.accelerator.device)

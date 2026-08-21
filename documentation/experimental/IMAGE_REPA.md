@@ -9,6 +9,8 @@ SimpleTuner supports two variants:
 
 > **Looking for video models?** See [VIDEO_CREPA.md](VIDEO_CREPA.md) for CREPA support on video models with temporal alignment.
 
+> **Improved spatial alignment:** [iREPA](IREPA.md) adds a convolutional projector and spatial teacher normalization to both REPA variants.
+
 ## When to use it
 
 ### REPA (DiT models)

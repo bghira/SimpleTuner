@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 
 from simpletuner.helpers.training.multi_process import should_log
 
+from .dataloader_iterator import _set_epoch_step_for_training_step
 from .dataloader_iterator import random_dataloader_iterator as _runtime_random_iterator
 
 DEFAULT_KEEP_RUNNING_PROPERTY = None
@@ -49,6 +50,7 @@ def _resolve_random_iterator():
 
 
 class BatchFetcher:
+    """Prefetch batches using the last consumed training step as the first schedule hint."""
 
     def __init__(self, step: int, max_size: int = 10, datasets: Optional[Dict[str, Any]] = None) -> None:
         if DEFAULT_KEEP_RUNNING_PROPERTY is not None:
@@ -57,6 +59,7 @@ class BatchFetcher:
         self.datasets = datasets or {}
         self._keep_running = True
         self.step = step
+        self._next_fetch_step = step
 
     def start_fetching(self) -> threading.Thread:
         thread = threading.Thread(target=self.fetch_responses)
@@ -72,7 +75,14 @@ class BatchFetcher:
                 if self.queue.qsize() < self.queue.maxsize:
                     prefetch_log_debug(f"Queue size: {self.queue.qsize()}. Fetching more data.")
                     try:
-                        item = iterator_fn(self.step, self.datasets)
+                        if iterator_fn is DEFAULT_RANDOM_ITERATOR:
+                            item = iterator_fn(
+                                self._next_fetch_step,
+                                self.datasets,
+                                update_epoch_step=False,
+                            )
+                        else:
+                            item = iterator_fn(self._next_fetch_step, self.datasets)
                     except ValueError:
                         prefetch_log_debug("No datasets available during prefetch; stopping fetch thread.")
                         self._keep_running = False
@@ -84,6 +94,7 @@ class BatchFetcher:
                         logger.debug(f"BatchFetcher encountered exception: {exc}")
                         break
                     self.queue.put(item)
+                    self._next_fetch_step += 1
                     if self.queue.qsize() >= self.queue.maxsize:
                         prefetch_log_debug("Completed fetching data. Queue is full.")
                         if threading.current_thread() is threading.main_thread():
@@ -107,7 +118,9 @@ class BatchFetcher:
         while self.queue.empty():
             continue
         prefetch_log_debug("Queue has data. Yielding next item.")
-        return self.queue.get()
+        item = self.queue.get()
+        _set_epoch_step_for_training_step(step)
+        return item
 
     def stop_fetching(self) -> None:
         self._keep_running = False

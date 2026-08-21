@@ -123,6 +123,13 @@ class TestTextJsonFieldRegistration(unittest.TestCase):
         self.assertEqual(field.field_type, FieldType.TEXT_JSON)
         self.assertEqual(field.arg_name, "--tread_config")
 
+    def test_diffusion_blocks_config_is_text_json(self):
+        registry = FieldRegistry()
+        field = registry.get_field("diffusion_blocks_config")
+        self.assertIsNotNone(field)
+        self.assertEqual(field.field_type, FieldType.TEXT_JSON)
+        self.assertEqual(field.arg_name, "--diffusion_blocks_config")
+
     def test_validation_input_is_text_json(self):
         """validation_input should be registered as TEXT_JSON field type."""
         registry = FieldRegistry()

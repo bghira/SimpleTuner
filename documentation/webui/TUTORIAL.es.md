@@ -358,3 +358,7 @@ En la página **Environment**, verás el trabajo de entrenamiento recién config
 **NOTA**: El entorno **Default** es especial y no se recomienda usarlo como entorno de entrenamiento general; su configuración puede combinarse automáticamente en cualquier entorno que habilite la opción **Use environment defaults**:
 
 <img width="1521" height="991" alt="image" src="https://github.com/user-attachments/assets/9d18b0c1-608e-4ab2-be14-65b98907ec69" />
+
+## Métricas locales de entrenamiento
+
+Elige **SimpleTuner (Local)** como plataforma de logging y abre **Metrics → Training Runs**. Consulta [Métricas locales](LOCAL_METRICS.md) para conocer los archivos, el informe offline, la compresión y la API.

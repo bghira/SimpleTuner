@@ -20,6 +20,7 @@ class TestACEStepModel(unittest.TestCase):
         self.config.logit_mean = 0.0
         self.config.logit_std = 1.0
         self.config.flow_schedule_shift = 3.0
+        self.config.flow_cubic_schedule_weights = None
         self.config.model_family = "ace_step"
         self.config.pretrained_model_name_or_path = "dummy_path"
         self.config.pretrained_transformer_model_name_or_path = None

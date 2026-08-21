@@ -20,6 +20,14 @@
 
     [:octicons-arrow-right-24: Tutorial de Web UI](webui/TUTORIAL.md)
 
+-   :material-chart-line:{ .lg .middle } __Métricas locales__
+
+    ---
+
+    Guarda gráficas y comparaciones de validación con cada entrenamiento
+
+    [:octicons-arrow-right-24: Métricas locales](webui/LOCAL_METRICS.md)
+
 -   :material-closed-caption:{ .lg .middle } __CaptionFlow__
 
     ---
@@ -72,9 +80,9 @@
 
     ---
 
-    Funciones de investigación como AnyFlow, cuantización SDNQ Hadamard estilo ConvRot, checkpointing segmentado, checkpointing estilo Unsloth, Prompt2Effect, Self-Flow, Flow-DPO, LayerSync, Diff2Flow, Metal Flash Attention y Video CREPA
+    Funciones de investigación como AnyFlow, MixFlow, DiffusionBlocks, cuantización SDNQ Hadamard estilo ConvRot, checkpointing segmentado, checkpointing estilo Unsloth, Prompt2Effect, Self-Flow, Self-Transcendence, Flow-DPO, Internal Guidance, iREPA, LayerSync, Diff2Flow, Metal Flash Attention y Video CREPA
 
-    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: ConvRot / Hadamard SDNQ](experimental/CONVROT.md) · [:octicons-arrow-right-24: Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md) · [:octicons-arrow-right-24: Unsloth Checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) · [:octicons-arrow-right-24: Metal Flash Attention](experimental/METAL_FLASH_ATTENTION.md)
+    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: MixFlow](experimental/MIXFLOW.md) · [:octicons-arrow-right-24: DiffusionBlocks](experimental/DIFFUSION_BLOCKS.md) · [:octicons-arrow-right-24: Self-Transcendence](experimental/SELF_TRANSCENDENCE.md) · [:octicons-arrow-right-24: iREPA](experimental/IREPA.es.md) · [:octicons-arrow-right-24: ConvRot / Hadamard SDNQ](experimental/CONVROT.md) · [:octicons-arrow-right-24: Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md) · [:octicons-arrow-right-24: Unsloth Checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) · [:octicons-arrow-right-24: Metal Flash Attention](experimental/METAL_FLASH_ATTENTION.md)
 
 </div>
 

@@ -20,6 +20,14 @@
 
     [:octicons-arrow-right-24: Web UI チュートリアル](webui/TUTORIAL.md)
 
+-   :material-chart-line:{ .lg .middle } __ローカルメトリクス__
+
+    ---
+
+    学習ごとにスカラーチャートと検証比較を保存
+
+    [:octicons-arrow-right-24: ローカル学習メトリクス](webui/LOCAL_METRICS.md)
+
 -   :material-closed-caption:{ .lg .middle } __CaptionFlow__
 
     ---
@@ -72,9 +80,9 @@
 
     ---
 
-    AnyFlow、ConvRot 形式の SDNQ Hadamard 量子化、segmented checkpointing、Unsloth 形式 checkpointing、Prompt2Effect、Self-Flow、Flow-DPO、LayerSync、Diff2Flow、Metal Flash Attention、Video CREPA などの研究向け機能
+    AnyFlow、MixFlow、DiffusionBlocks、ConvRot 形式の SDNQ Hadamard 量子化、segmented checkpointing、Unsloth 形式 checkpointing、Prompt2Effect、Self-Flow、Self-Transcendence、Flow-DPO、iREPA、LayerSync、Diff2Flow、Metal Flash Attention、Video CREPA などの研究向け機能
 
-    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: ConvRot / Hadamard SDNQ](experimental/CONVROT.md) · [:octicons-arrow-right-24: Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md) · [:octicons-arrow-right-24: Unsloth Checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) · [:octicons-arrow-right-24: Metal Flash Attention](experimental/METAL_FLASH_ATTENTION.md)
+    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: MixFlow](experimental/MIXFLOW.md) · [:octicons-arrow-right-24: DiffusionBlocks](experimental/DIFFUSION_BLOCKS.md) · [:octicons-arrow-right-24: Self-Transcendence](experimental/SELF_TRANSCENDENCE.md) · [:octicons-arrow-right-24: iREPA](experimental/IREPA.ja.md) · [:octicons-arrow-right-24: ConvRot / Hadamard SDNQ](experimental/CONVROT.md) · [:octicons-arrow-right-24: Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md) · [:octicons-arrow-right-24: Unsloth Checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) · [:octicons-arrow-right-24: Metal Flash Attention](experimental/METAL_FLASH_ATTENTION.md)
 
 </div>
 

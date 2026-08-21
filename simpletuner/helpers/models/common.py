@@ -51,6 +51,11 @@ from simpletuner.helpers.training.custom_schedule import (
 )
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
 from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
+from simpletuner.helpers.training.internal_guidance import (
+    InternalGuidanceRegularizer,
+    infer_internal_guidance_block_count,
+    infer_internal_guidance_output_features,
+)
 from simpletuner.helpers.training.layersync import LayerSyncRegularizer
 from simpletuner.helpers.training.lora_format import (
     PEFTLoRAFormat,
@@ -72,6 +77,7 @@ from simpletuner.helpers.training.quantisation import (
     get_pipeline_quantization_builder,
 )
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.training.timestep_distribution import CubicSplineDistribution, parse_cubic_spline_weights
 from simpletuner.helpers.training.wrappers import unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 from simpletuner.helpers.utils.hidden_state_buffer import HiddenStateBuffer
@@ -118,6 +124,7 @@ flow_matching_model_families = [
     "ltxvideo2",
     "wan",
     "wan_s2v",
+    "infinitetalk",
     "sd3",
     "chroma",
     "hunyuanvideo",
@@ -145,6 +152,7 @@ upstream_config_sources = {
     "ltxvideo": "Lightricks/LTX-Video",
     "ltxvideo2": "Lightricks/LTX-2",
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "infinitetalk": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
     "hunyuanvideo": "tencent/HunyuanVideo-1.5",
     "ideogram": "ideogram-ai/ideogram-4-fp8",
     "krea2": "krea/Krea-2-Raw",
@@ -555,7 +563,9 @@ class ModelFoundation(ABC):
         self._twinflow_store_rng = False
         self._twinflow_allow_student_teacher = False
         self._twinflow_requires_ema = False
+        self.diffusion_blocks_controller = None
         self.layersync_regularizer: Optional[LayerSyncRegularizer] = None
+        self.internal_guidance_regularizer: Optional[InternalGuidanceRegularizer] = None
         self._validate_twinflow_config()
 
     def pack_text_embeddings_for_cache(self, embeddings):
@@ -902,7 +912,30 @@ class ModelFoundation(ABC):
     # LoRA/PEFT helpers (shared across model families)
     # -------------------------------------------------------------------------
     def get_lora_save_layers(self):
-        return None
+        modules = []
+        if getattr(getattr(self, "config", None), "internal_guidance_enabled", False):
+            modules.append(InternalGuidanceRegularizer.MODULE_NAME)
+        model = self.get_trained_component(unwrap_model=False)
+        if model is not None:
+            modules.extend(
+                name
+                for name in ("self_transcendence_projector", "crepa_projector", "urepa_projector")
+                if hasattr(model, name)
+            )
+        return modules or None
+
+    def refresh_representation_alignment_projectors(self):
+        model = self.get_trained_component(unwrap_model=False)
+        if model is None:
+            return
+        for regularizer_name, module_name in (
+            ("crepa_regularizer", "crepa_projector"),
+            ("urepa_regularizer", "urepa_projector"),
+        ):
+            regularizer = getattr(self, regularizer_name, None)
+            projector = getattr(model, module_name, None)
+            if regularizer is not None and projector is not None:
+                regularizer.projector = projector
 
     def _get_peft_lora_target_modules(self):
         if str(getattr(self.config, "lora_type", "standard")).lower() != "standard":
@@ -2094,6 +2127,171 @@ class ModelFoundation(ABC):
         Checks self.config values against important issues. Optionally implemented in child class.
         """
         pass
+
+    def diffusion_blocks_init(self) -> None:
+        raw_config = getattr(self.config, "diffusion_blocks_config", None)
+        if not raw_config:
+            return
+        if self.MODEL_TYPE is not ModelTypes.TRANSFORMER:
+            raise ValueError("DiffusionBlocks is only supported for transformer denoisers, not UNet model families.")
+        if not self.uses_noise_schedule():
+            raise ValueError("DiffusionBlocks requires a diffusion or flow-matching noise schedule.")
+        if getattr(self.config, "controlnet", False):
+            raise ValueError("DiffusionBlocks cannot be combined with ControlNet training.")
+        if (getattr(self.config, "musubi_blocks_to_swap", 0) or 0) > 0:
+            raise ValueError("DiffusionBlocks cannot be combined with Musubi block swapping.")
+        if getattr(self.config, "twinflow_enabled", False):
+            raise ValueError("DiffusionBlocks cannot be combined with TwinFlow multi-timestep teacher passes.")
+        if getattr(self.config, "scheduled_sampling_max_step_offset", 0):
+            raise ValueError("DiffusionBlocks cannot be combined with scheduled sampling multi-timestep passes.")
+        if getattr(self.config, "crepa_enabled", False):
+            raise ValueError("DiffusionBlocks cannot be combined with CREPA fixed-layer capture.")
+        if getattr(self.config, "layersync_enabled", False):
+            raise ValueError("DiffusionBlocks cannot be combined with LayerSync fixed-layer capture.")
+
+        from simpletuner.helpers.training.diffusion_blocks import DiffusionBlocksConfig, DiffusionBlocksController
+
+        component = self.unwrap_model(model=self.model)
+        config = DiffusionBlocksConfig.from_dict(raw_config)
+        self.diffusion_blocks_controller = DiffusionBlocksController(component, config)
+        logger.info(
+            "DiffusionBlocks enabled with %s noise-range blocks across %s.",
+            self.diffusion_blocks_controller.num_blocks,
+            ", ".join(self.diffusion_blocks_controller.block_paths),
+        )
+
+    def _sample_diffusion_blocks_flow_batch(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        controller = self.diffusion_blocks_controller
+        if controller is None:
+            return self.sample_flow_sigmas(batch=batch, state=state)
+
+        self._initialize_diffusion_blocks_flow_boundaries(batch)
+
+        block_index = controller.choose_training_block()
+        batch_size = batch["latents"].shape[0]
+        accepted_sigmas = []
+        accepted_timesteps = []
+        accepted_count = 0
+        for _ in range(128):
+            sigmas, timesteps = self.sample_flow_sigmas(batch=batch, state=state)
+            mask = controller.accepts_training_sigmas(sigmas, block_index)
+            if torch.any(mask):
+                accepted_sigmas.append(sigmas[mask])
+                accepted_timesteps.append(timesteps[mask])
+                accepted_count += int(mask.sum().item())
+                if accepted_count >= batch_size:
+                    break
+        if accepted_count < batch_size:
+            low, high = controller.sigma_range(block_index, include_overlap=True)
+            raise ValueError(
+                "DiffusionBlocks could not sample enough timesteps for block "
+                f"{block_index} in normalized range [{low:.6f}, {high:.6f}]. "
+                "Check flow_custom_timesteps or set compatible timestep_boundaries."
+            )
+
+        controller.set_training_block(block_index)
+        batch["diffusion_blocks_block_index"] = block_index
+        return torch.cat(accepted_sigmas, dim=0)[:batch_size], torch.cat(accepted_timesteps, dim=0)[:batch_size]
+
+    def _initialize_diffusion_blocks_flow_boundaries(self, batch: dict) -> None:
+        controller = self.diffusion_blocks_controller
+        if (
+            controller is None
+            or controller.boundaries_are_explicit
+            or getattr(controller, "_schedule_boundaries_initialized", False)
+        ):
+            return
+
+        quantiles = torch.linspace(0.0, 1.0, controller.num_blocks + 1, dtype=torch.float64)
+        custom_timesteps = self._normalize_flow_custom_timesteps(getattr(self.config, "flow_custom_timesteps", None))
+        apply_shift = custom_timesteps is None
+        if custom_timesteps is not None:
+            values = custom_timesteps.detach().double().cpu()
+            if torch.max(values) > 1.0:
+                values = values / 1000.0
+            boundaries = torch.quantile(values.clamp(0.0, 1.0), quantiles)
+        elif self.config.flow_use_uniform_schedule:
+            boundaries = quantiles.clone()
+        elif self.config.flow_use_beta_schedule:
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(0)
+                distribution = Beta(
+                    torch.tensor(float(self.config.flow_beta_schedule_alpha), dtype=torch.float64),
+                    torch.tensor(float(self.config.flow_beta_schedule_beta), dtype=torch.float64),
+                )
+                samples = distribution.sample((262144,))
+            boundaries = torch.quantile(samples, quantiles)
+        elif self.config.flux_fast_schedule:
+            samples = torch.tensor([1.0] * 7 + [0.75, 0.5, 0.25], dtype=torch.float64)
+            boundaries = torch.quantile(samples, quantiles)
+        else:
+            probabilities = quantiles.clamp(1e-7, 1.0 - 1e-7)
+            normal = torch.distributions.Normal(
+                torch.tensor(0.0, dtype=torch.float64), torch.tensor(1.0, dtype=torch.float64)
+            )
+            normal_values = normal.icdf(probabilities)
+            normal_values = normal_values + self._get_dataset_timestep_sampling_offset(batch)
+            boundaries = torch.sigmoid(float(self.config.flow_sigmoid_scale) * normal_values)
+
+        if apply_shift:
+            boundaries = apply_flow_schedule_shift(
+                self.config,
+                self.noise_schedule,
+                boundaries.to(device=batch["noise"].device),
+                batch["noise"],
+            ).cpu()
+        boundaries[0] = 0.0
+        boundaries[-1] = 1.0
+        controller.set_timestep_boundaries(boundaries.tolist())
+        controller._schedule_boundaries_initialized = True
+        resolved_config = dict(self.config.diffusion_blocks_config)
+        resolved_config["timestep_boundaries"] = list(controller.boundaries)
+        self.config.diffusion_blocks_config = resolved_config
+        logger.info("DiffusionBlocks equi-probability timestep boundaries: %s", list(controller.boundaries))
+
+    def apply_diffusion_blocks_trainable_filter(self) -> None:
+        if self.diffusion_blocks_controller is None:
+            return
+        frozen_parameters = self.diffusion_blocks_controller.freeze_unselected_blocks()
+        if frozen_parameters:
+            logger.info(
+                "DiffusionBlocks froze %s parameters outside blocks_to_train=%s.",
+                frozen_parameters,
+                list(self.diffusion_blocks_controller.trainable_blocks),
+            )
+
+    def _sample_diffusion_blocks_discrete_timesteps(self, weights: torch.Tensor, batch_size: int) -> torch.Tensor:
+        controller = self.diffusion_blocks_controller
+        if controller is None:
+            raise RuntimeError("DiffusionBlocks discrete sampling requires an initialized controller.")
+        if not controller.boundaries_are_explicit and not getattr(controller, "_schedule_boundaries_initialized", False):
+            cumulative = torch.cumsum(weights.detach().float().cpu(), dim=0)
+            if cumulative[-1] <= 0:
+                raise ValueError("DiffusionBlocks requires at least one non-zero timestep weight.")
+            cumulative = cumulative / cumulative[-1]
+            probabilities = torch.linspace(0.0, 1.0, controller.num_blocks + 1)[1:-1]
+            indices = torch.searchsorted(cumulative, probabilities, right=False)
+            denominator = max(weights.numel() - 1, 1)
+            boundaries = [0.0, *(indices.double() / denominator).tolist(), 1.0]
+            controller.set_timestep_boundaries(boundaries)
+            controller._schedule_boundaries_initialized = True
+            resolved_config = dict(self.config.diffusion_blocks_config)
+            resolved_config["timestep_boundaries"] = list(controller.boundaries)
+            self.config.diffusion_blocks_config = resolved_config
+            logger.info("DiffusionBlocks equi-probability timestep boundaries: %s", list(controller.boundaries))
+        block_index = controller.choose_training_block()
+        denominator = max(weights.numel() - 1, 1)
+        normalized_timesteps = torch.arange(weights.numel(), device=weights.device, dtype=torch.float32) / denominator
+        eligible = controller.accepts_training_sigmas(normalized_timesteps[:, None], block_index)
+        restricted_weights = weights * eligible.to(dtype=weights.dtype)
+        if not torch.any(restricted_weights > 0):
+            low, high = controller.sigma_range(block_index, include_overlap=True)
+            raise ValueError(
+                "DiffusionBlocks has no non-zero timestep weights for block "
+                f"{block_index} in normalized range [{low:.6f}, {high:.6f}]."
+            )
+        controller.set_training_block(block_index)
+        return torch.multinomial(restricted_weights, batch_size, replacement=True).long()
 
     def _model_config_path(self):
         return get_model_config_path(
@@ -3434,6 +3632,7 @@ class ModelFoundation(ABC):
 
         """
         self._init_layersync_regularizer()
+        self._init_internal_guidance_regularizer()
 
     def post_quantization_setup(self):
         """
@@ -4625,6 +4824,22 @@ class ModelFoundation(ABC):
 
         return tensor
 
+    def _flow_cubic_schedule_weights(self) -> Optional[tuple[float, ...]]:
+        return parse_cubic_spline_weights(getattr(self.config, "flow_cubic_schedule_weights", None))
+
+    def _uses_flow_cubic_schedule(self) -> bool:
+        return self._flow_cubic_schedule_weights() is not None
+
+    def _sample_flow_cubic_values(self, batch_size: int, device: torch.device) -> torch.Tensor:
+        weights = self._flow_cubic_schedule_weights()
+        if weights is None:
+            raise ValueError("flow_cubic_schedule_weights must be configured before sampling its distribution.")
+        cache_key = (weights, device.type, device.index)
+        if getattr(self, "_flow_cubic_distribution_cache_key", None) != cache_key:
+            self._flow_cubic_distribution = CubicSplineDistribution(weights, device=device)
+            self._flow_cubic_distribution_cache_key = cache_key
+        return self._flow_cubic_distribution.sample((batch_size,))
+
     def reset_flow_custom_timestep_cursor(self, global_step: int = 0) -> None:
         if hasattr(self, "_flow_custom_timestep_cursor"):
             delattr(self, "_flow_custom_timestep_cursor")
@@ -4689,6 +4904,80 @@ class ModelFoundation(ABC):
         config = StateTracker.get_data_backend_config(batch.get("data_backend_id"))
         return float(config.get("timestep_sampling_offset", 0.0))
 
+    def _mixflow_enabled(self) -> bool:
+        return getattr(self.config, "mixflow_enabled", False) is True
+
+    def validate_mixflow_config(self) -> None:
+        if not self._mixflow_enabled():
+            return
+        if self.PREDICTION_TYPE is not PredictionTypes.FLOW_MATCHING:
+            raise ValueError("mixflow_enabled requires a flow-matching model family.")
+        self._mixflow_gamma()
+
+        conflicts = {
+            "flux_fast_schedule": bool(getattr(self.config, "flux_fast_schedule", False)),
+            "flow_use_uniform_schedule": bool(getattr(self.config, "flow_use_uniform_schedule", False)),
+            "flow_use_beta_schedule": bool(getattr(self.config, "flow_use_beta_schedule", False)),
+            "flow_custom_timesteps": getattr(self.config, "flow_custom_timesteps", None) not in (None, "", "None"),
+            "crepa_self_flow": bool(getattr(self.config, "crepa_self_flow", False))
+            or getattr(self.config, "crepa_feature_source", None) == "self_flow",
+            "twinflow_enabled": bool(getattr(self.config, "twinflow_enabled", False)),
+            "scheduled_sampling_max_step_offset": int(getattr(self.config, "scheduled_sampling_max_step_offset", 0) or 0)
+            > 0,
+            "distillation_method": getattr(self.config, "distillation_method", None) not in (None, "", "None"),
+        }
+        enabled_conflicts = [name for name, enabled in conflicts.items() if enabled]
+        if enabled_conflicts:
+            raise ValueError("mixflow_enabled cannot be combined with: " + ", ".join(enabled_conflicts) + ".")
+
+    def _mixflow_gamma(self) -> float:
+        gamma = float(getattr(self.config, "mixflow_gamma", 0.8))
+        if not 0.0 <= gamma <= 1.0:
+            raise ValueError("mixflow_gamma must be between 0.0 and 1.0.")
+        return gamma
+
+    @staticmethod
+    def _expand_sigma_values(sigmas: torch.Tensor, latents: torch.Tensor) -> torch.Tensor:
+        if sigmas.shape[0] != latents.shape[0]:
+            raise ValueError(f"Flow sigma batch size {sigmas.shape[0]} does not match latent batch size {latents.shape[0]}.")
+        sigma_values = sigmas.reshape(sigmas.shape[0], -1)[:, 0]
+        return sigma_values.view(sigmas.shape[0], *([1] * (latents.ndim - 1))).to(
+            device=latents.device,
+            dtype=latents.dtype,
+        )
+
+    def _mixflow_interpolation_sigmas(
+        self,
+        sigmas: torch.Tensor,
+        slowdown_factors: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        sigma_values = sigmas.reshape(sigmas.shape[0], -1)[:, 0]
+        gamma = self._mixflow_gamma()
+        if gamma == 0.0:
+            return sigma_values
+        if slowdown_factors is None:
+            slowdown_factors = torch.rand_like(sigma_values)
+        return sigma_values + slowdown_factors * gamma * (1.0 - sigma_values)
+
+    def _prepare_flow_noisy_latents(self, batch: dict) -> dict:
+        """Build the flow input while keeping MixFlow's model and interpolation times distinct."""
+        latents = batch["latents"]
+        input_noise = batch["input_noise"]
+        interpolation_sigmas = batch["sigmas"].reshape(batch["sigmas"].shape[0], -1)[:, 0]
+        if self._mixflow_enabled():
+            gamma = self._mixflow_gamma()
+            slowdown_factors = (
+                torch.rand_like(interpolation_sigmas) if gamma > 0.0 else torch.zeros_like(interpolation_sigmas)
+            )
+            interpolation_sigmas = self._mixflow_interpolation_sigmas(batch["sigmas"], slowdown_factors)
+            batch["mixflow_slowdown_factors"] = slowdown_factors
+            batch["mixflow_interpolation_sigmas"] = interpolation_sigmas
+
+        self.expand_sigmas(batch)
+        interpolation_grid = self._expand_sigma_values(interpolation_sigmas, latents)
+        batch["noisy_latents"] = (1.0 - interpolation_grid) * latents + interpolation_grid * input_noise
+        return batch
+
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Sample flow-matching sigmas/timesteps for the current batch.
@@ -4696,6 +4985,14 @@ class ModelFoundation(ABC):
         Subclasses can override to implement model-specific sampling strategies.
         """
         bsz = batch["latents"].shape[0]
+        if getattr(self.config, "mixflow_enabled", False) is True:
+            # SimpleTuner's sigma increases toward noise, the inverse of the paper's data-ward t.
+            # t ~ Beta(2, 1) therefore becomes sigma = 1 - sqrt(U) ~ Beta(1, 2).
+            sigmas = 1.0 - torch.sqrt(torch.rand((bsz,), device=self.accelerator.device))
+            sigmas = apply_flow_schedule_shift(self.config, self.noise_schedule, sigmas, batch["noise"])
+            timesteps = self.flow_matching_timesteps_from_sigmas(sigmas)
+            return sigmas, timesteps
+
         custom_timesteps = self._normalize_flow_custom_timesteps(getattr(self.config, "flow_custom_timesteps", None))
         if custom_timesteps is not None:
             timestep_mode = str(getattr(self.config, "flow_timesteps_mode", "fixed-list") or "fixed-list").replace("_", "-")
@@ -4745,7 +5042,11 @@ class ModelFoundation(ABC):
                 timesteps = base_timesteps[indices]
             return sigmas, timesteps
 
-        if not self.config.flux_fast_schedule and not any(
+        cubic_weights = self._flow_cubic_schedule_weights()
+        if cubic_weights is not None:
+            sigmas = self._sample_flow_cubic_values(bsz, self.accelerator.device)
+            sigmas = apply_flow_schedule_shift(self.config, self.noise_schedule, sigmas, batch["noise"])
+        elif not self.config.flux_fast_schedule and not any(
             [
                 self.config.flow_use_beta_schedule,
                 self.config.flow_use_uniform_schedule,
@@ -4831,12 +5132,92 @@ class ModelFoundation(ABC):
             return
         self.layersync_regularizer = LayerSyncRegularizer(self.config)
 
+    def _infer_transformer_hidden_size(self) -> Optional[int]:
+        model = getattr(self, "model", None)
+        if model is None:
+            return None
+        config = getattr(self.unwrap_model(model=model), "config", None)
+        if config is None:
+            return None
+
+        heads = getattr(config, "num_attention_heads", None)
+        head_dim = getattr(config, "attention_head_dim", None)
+        if heads is not None and head_dim is not None:
+            return int(heads * head_dim)
+        for attribute in ("model_dim", "hidden_size", "dim", "inner_dim", "embed_dim", "emb_dim"):
+            value = getattr(config, attribute, None)
+            if value is not None:
+                return int(value)
+        return None
+
+    def _init_internal_guidance_regularizer(self):
+        if not getattr(self.config, "internal_guidance_enabled", False):
+            self.internal_guidance_regularizer = None
+            return
+        if self.MODEL_TYPE is not ModelTypes.TRANSFORMER:
+            raise ValueError("Internal Guidance is only supported for diffusion transformer models.")
+        if self.PREDICTION_TYPE is PredictionTypes.AUTOREGRESSIVE_NEXT_TOKEN:
+            raise ValueError("Internal Guidance is not defined for autoregressive next-token models.")
+        if str(getattr(self.config, "lora_type", "standard") or "standard").lower() == "lycoris":
+            raise ValueError(
+                "Internal Guidance requires standard PEFT LoRA or full-model training so its auxiliary head is "
+                "optimized and saved."
+            )
+
+        model_component = self.get_trained_component(unwrap_model=False)
+        if model_component is None:
+            raise ValueError("Internal Guidance requires an attached diffusion transformer.")
+        unwrapped = self.unwrap_model(model=model_component)
+        hidden_size = self._infer_transformer_hidden_size()
+        if hidden_size is None:
+            raise ValueError("Internal Guidance could not infer the transformer's hidden size.")
+
+        self.internal_guidance_regularizer = InternalGuidanceRegularizer(
+            self.config,
+            self.accelerator,
+            hidden_size=hidden_size,
+            output_features=infer_internal_guidance_output_features(unwrapped),
+            block_count=infer_internal_guidance_block_count(unwrapped),
+        )
+        self.internal_guidance_regularizer.attach_to_model(unwrapped, dtype=self.config.weight_dtype)
+
+    def _hidden_state_capture_layers(self) -> Optional[set[int]]:
+        capture_layers = set()
+        internal_guidance = getattr(self, "internal_guidance_regularizer", None)
+        if internal_guidance and internal_guidance.wants_hidden_states():
+            capture_layers.add(internal_guidance.block_index)
+
+        layersync = getattr(self, "layersync_regularizer", None)
+        if layersync and layersync.wants_hidden_states():
+            student_block = getattr(layersync, "student_block", None)
+            teacher_block = getattr(layersync, "teacher_block", None)
+            if student_block is None:
+                return None
+            for layer in (student_block, teacher_block):
+                if layer is None:
+                    continue
+                layer = int(layer)
+                capture_layers.add(layer)
+                if layer > 0:
+                    capture_layers.add(layer - 1)
+
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.wants_hidden_states():
+            # CREPA can request a different block dynamically for its EMA teacher pass.
+            return None
+        return capture_layers or None
+
     def _needs_hidden_state_buffer(self) -> bool:
         layersync = getattr(self, "layersync_regularizer", None)
         ls_needed = bool(layersync and layersync.wants_hidden_states())
         crepa = getattr(self, "crepa_regularizer", None)
         crepa_buffer = bool(crepa and crepa.wants_hidden_states())
-        return ls_needed or crepa_buffer
+        internal_guidance = getattr(self, "internal_guidance_regularizer", None)
+        internal_guidance_buffer = bool(internal_guidance and internal_guidance.wants_hidden_states())
+        distillation_method = getattr(self.config, "distillation_method", None)
+        method_value = getattr(distillation_method, "value", distillation_method)
+        self_transcendence = str(method_value).lower() == "self_transcendence"
+        return ls_needed or crepa_buffer or internal_guidance_buffer or self_transcendence
 
     def _validate_crepa_configuration(self) -> CrepaFeatureSource:
         feature_source = CrepaFeatureSource.from_config(self.config)
@@ -4888,7 +5269,16 @@ class ModelFoundation(ABC):
                     logger.exception("Failed to restore student weights after EMA teacher swap.")
 
     def _new_hidden_state_buffer(self) -> Optional[HiddenStateBuffer]:
-        return HiddenStateBuffer() if self._needs_hidden_state_buffer() else None
+        if not self._needs_hidden_state_buffer():
+            return None
+        return HiddenStateBuffer(capture_layers=self._hidden_state_capture_layers())
+
+    def internal_guidance_inference_context(self, enabled: bool = True):
+        internal_guidance = getattr(self, "internal_guidance_regularizer", None)
+        if not enabled or internal_guidance is None or not internal_guidance.enabled:
+            return contextlib.nullcontext()
+        scale = float(getattr(self.config, "validation_internal_guidance_scale", 1.0))
+        return internal_guidance.inference_context(scale)
 
     def _build_crepa_teacher_batch(self, prepared_batch: dict, crepa: CrepaRegularizer) -> dict:
         teacher_batch = dict(prepared_batch)
@@ -5534,20 +5924,25 @@ class ModelFoundation(ABC):
             batch["input_noise"] = noise
 
         if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
-            batch["sigmas"], batch["timesteps"] = self.sample_flow_sigmas(batch=batch, state=state)
+            if self.diffusion_blocks_controller is not None:
+                batch["sigmas"], batch["timesteps"] = self._sample_diffusion_blocks_flow_batch(batch=batch, state=state)
+            else:
+                batch["sigmas"], batch["timesteps"] = self.sample_flow_sigmas(batch=batch, state=state)
             crepa = getattr(self, "crepa_regularizer", None)
             if crepa and crepa.enabled and getattr(crepa, "use_self_flow_features", False):
                 batch = self._prepare_crepa_self_flow_batch(batch=batch, state=state)
             else:
-                self.expand_sigmas(batch)
-                batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch["sigmas"] * batch["input_noise"]
+                self._prepare_flow_noisy_latents(batch)
                 if self._twinflow_active():
                     self._prepare_twinflow_metadata(batch)
         else:
             weights = generate_timestep_weights(self.config, self.noise_schedule.config.num_train_timesteps).to(
                 self.accelerator.device
             )
-            if bsz > 1 and not self.config.disable_segmented_timestep_sampling:
+            if self.diffusion_blocks_controller is not None:
+                batch["timesteps"] = self._sample_diffusion_blocks_discrete_timesteps(weights, bsz)
+                batch["diffusion_blocks_block_index"] = self.diffusion_blocks_controller.training_block
+            elif bsz > 1 and not self.config.disable_segmented_timestep_sampling:
                 batch["timesteps"] = segmented_timestep_selection(
                     actual_num_timesteps=self.noise_schedule.config.num_train_timesteps,
                     bsz=bsz,
@@ -6026,6 +6421,16 @@ class ModelFoundation(ABC):
                     logger.exception("TwinFlow auxiliary loss failed; stopping because TwinFlow is explicitly enabled.")
                     raise
 
+            internal_guidance = getattr(self, "internal_guidance_regularizer", None)
+            if internal_guidance and internal_guidance.enabled:
+                internal_guidance_loss, internal_guidance_logs = internal_guidance.compute_loss(
+                    hidden_states_buffer,
+                    prepared_batch,
+                    self,
+                )
+                loss = loss + internal_guidance_loss
+                aux_logs = (aux_logs or {}) | internal_guidance_logs
+
             if apply_layersync:
                 loss, aux_logs = self._apply_layersync_regularizer(loss, aux_logs, hidden_states_buffer)
         finally:
@@ -6255,11 +6660,36 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
 
     def post_model_load_setup(self):
         super().post_model_load_setup()
+        self._validate_irepa_adapter_support()
         self._init_crepa_regularizer()
         self._init_urepa_regularizer()
 
+    def post_quantization_setup(self):
+        super().post_quantization_setup()
+        if not getattr(self.config, "irepa_enabled", False):
+            return
+        model_component = self.get_trained_component(unwrap_model=False)
+        if model_component is None:
+            return
+        for regularizer in (self.crepa_regularizer, self.urepa_regularizer):
+            if regularizer is not None:
+                regularizer.reinitialize_projector(model_component)
+
+    def _validate_irepa_adapter_support(self):
+        if not getattr(self.config, "irepa_enabled", False):
+            return
+        if (
+            "lora" in str(getattr(self.config, "model_type", ""))
+            and str(getattr(self.config, "lora_type", "standard")).lower() == "lycoris"
+        ):
+            raise ValueError("iREPA supports full-model and standard PEFT LoRA training; LyCORIS is not supported.")
+
     def _init_crepa_regularizer(self):
-        if not getattr(self.config, "crepa_enabled", False):
+        crepa_enabled = bool(getattr(self.config, "crepa_enabled", False))
+        irepa_enabled = bool(getattr(self.config, "irepa_enabled", False))
+        if irepa_enabled and getattr(self, "MODEL_TYPE", None) == ModelTypes.TRANSFORMER and not crepa_enabled:
+            raise ValueError("iREPA requires crepa_enabled=true for transformer models.")
+        if not crepa_enabled:
             self.crepa_regularizer = None
             return
 
@@ -6289,35 +6719,15 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
         self.crepa_regularizer.attach_to_model(model_component)
 
     def _infer_crepa_hidden_size(self) -> Optional[int]:
-        model = getattr(self, "model", None)
-        if model is None:
-            return None
-        unwrapped = self.unwrap_model(model=model)
-        config = getattr(unwrapped, "config", None)
-        if config is None:
-            return None
-        # Primary: num_attention_heads * attention_head_dim (most DiT models)
-        heads = getattr(config, "num_attention_heads", None)
-        head_dim = getattr(config, "attention_head_dim", None)
-        if heads is not None and head_dim is not None:
-            return int(heads * head_dim)
-        # Fallback: model_dim (Kandinsky5)
-        model_dim = getattr(config, "model_dim", None)
-        if model_dim is not None:
-            return int(model_dim)
-        # Fallback: hidden_size (some models expose this directly)
-        hidden_size = getattr(config, "hidden_size", None)
-        if hidden_size is not None:
-            return int(hidden_size)
-        # Fallback: dim (Z-Image and related single-stream transformer configs)
-        dim = getattr(config, "dim", None)
-        if dim is not None:
-            return int(dim)
-        return None
+        return self._infer_transformer_hidden_size()
 
     def _init_urepa_regularizer(self):
         """Initialize U-REPA regularizer for UNet-based models (SDXL, SD1.5, Kolors)."""
-        if not getattr(self.config, "urepa_enabled", False):
+        urepa_enabled = bool(getattr(self.config, "urepa_enabled", False))
+        irepa_enabled = bool(getattr(self.config, "irepa_enabled", False))
+        if irepa_enabled and getattr(self, "MODEL_TYPE", None) == ModelTypes.UNET and not urepa_enabled:
+            raise ValueError("iREPA requires urepa_enabled=true for UNet models.")
+        if not urepa_enabled:
             self.urepa_regularizer = None
             return
 

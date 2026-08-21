@@ -334,8 +334,46 @@ class TestMiniMaxH3SparseAttention(unittest.TestCase):
             result = model.enable_parallelism(config=SimpleNamespace(ring_degree=1, ulysses_degree=2))
 
         self.assertEqual(result, "enabled")
-        set_backend.assert_called_once_with("_native_flash")
+        set_backend.assert_called_once_with("native")
         enable_parallelism.assert_called_once()
+
+    def test_context_parallel_replaces_mask_incompatible_flash_backend(self):
+        model = tiny_h3_transformer(num_layers=1)
+        model.transformer_blocks[0].attn.processor._attention_backend = "_native_flash"
+
+        with (
+            patch.object(model, "set_attention_backend") as set_backend,
+            patch(
+                "diffusers.models.modeling_utils.ModelMixin.enable_parallelism",
+                return_value="enabled",
+            ),
+        ):
+            model.enable_parallelism(config=SimpleNamespace(ring_degree=1, ulysses_degree=2))
+
+        set_backend.assert_called_once_with("native")
+
+    def test_context_parallel_preserves_mask_capable_backend(self):
+        for backend in ("native", "_native_cudnn"):
+            with self.subTest(backend=backend):
+                model = tiny_h3_transformer(num_layers=1)
+                model.transformer_blocks[0].attn.processor._attention_backend = backend
+
+                with (
+                    patch.object(model, "set_attention_backend") as set_backend,
+                    patch("diffusers.models.modeling_utils.ModelMixin.enable_parallelism"),
+                ):
+                    model.enable_parallelism(config=SimpleNamespace(ring_degree=1, ulysses_degree=2))
+
+                set_backend.assert_not_called()
+
+    def test_context_parallel_rejects_ring_strategy(self):
+        model = tiny_h3_transformer(num_layers=1)
+
+        with (
+            patch("diffusers.models.modeling_utils.ModelMixin.enable_parallelism"),
+            self.assertRaisesRegex(ValueError, 'context_parallel_strategy="alltoall"'),
+        ):
+            model.enable_parallelism(config=SimpleNamespace(ring_degree=2, ulysses_degree=1))
 
     @unittest.skipUnless(torch.cuda.is_available(), "requires CUDA FlexAttention")
     def test_full_video_budget_matches_dense_forward_and_backward(self):
@@ -1179,6 +1217,50 @@ class MiniMaxH3Tests(unittest.TestCase):
             side_effect=lambda backend_id: configs.get(backend_id, {}),
         ):
             self.assertTrue(wrapper.uses_audio_latents_for_data_backend("audio"))
+
+    def test_minimax_h3_validation_auto_target_mode_uses_detected_audio_data(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(minimax_h3_target_mode="auto")
+        wrapper.configure_data_signals(has_audio=True)
+
+        pipeline_kwargs = wrapper.update_pipeline_call_kwargs({})
+
+        self.assertEqual(pipeline_kwargs["minimax_h3_target_mode"], "av")
+
+    def test_minimax_h3_validation_auto_target_mode_uses_video_without_audio_data(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(minimax_h3_target_mode="auto")
+        wrapper.configure_data_signals(has_video=True)
+
+        pipeline_kwargs = wrapper.update_pipeline_call_kwargs({})
+
+        self.assertEqual(pipeline_kwargs["minimax_h3_target_mode"], "video")
+
+    def test_minimax_h3_validation_preserves_explicit_pipeline_target_mode(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(minimax_h3_target_mode="auto")
+        wrapper.configure_data_signals(has_audio=True)
+
+        pipeline_kwargs = wrapper.update_pipeline_call_kwargs({"minimax_h3_target_mode": "video"})
+
+        self.assertEqual(pipeline_kwargs["minimax_h3_target_mode"], "video")
+
+    def test_minimax_h3_validation_uses_audio_vae_sample_rate(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.audio_vae = SimpleNamespace(config=SimpleNamespace(sampling_rate=48000))
+
+        self.assertEqual(wrapper.validation_audio_sample_rate(), 48000)
+
+    def test_minimax_h3_validation_forwards_configured_frame_count(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(
+            minimax_h3_target_mode="video",
+            validation_num_video_frames=345,
+        )
+
+        pipeline_kwargs = wrapper.update_pipeline_call_kwargs({})
+
+        self.assertEqual(pipeline_kwargs["num_frames"], 345)
 
     def test_transformer_cached_reference_mode_reuses_static_kv(self):
         model = tiny_h3_transformer(num_layers=1)

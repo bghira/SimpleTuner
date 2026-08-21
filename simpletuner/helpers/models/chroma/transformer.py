@@ -930,7 +930,7 @@ class ChromaTransformer2DModel(
         routing_now = False
         tread_mask_info = None
         saved_tokens = None
-        global_idx = 0
+        global_idx = getattr(self, "_diffusion_blocks_active_global_start", 0)
         current_rope = image_rotary_emb
 
         if routes:

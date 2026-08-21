@@ -1016,6 +1016,27 @@ def register_model_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="diffusion_blocks_config",
+            arg_name="--diffusion_blocks_config",
+            ui_label="DiffusionBlocks Configuration",
+            field_type=FieldType.TEXT_JSON,
+            tab="model",
+            section="architecture",
+            subsection="advanced",
+            default_value=None,
+            placeholder='{"layers_per_block": 4, "overlap": 0.05}',
+            help_text="Configuration for DiffusionBlocks training",
+            tooltip=(
+                "JSON configuration for DiffusionBlocks. Each training batch executes only the transformer layer "
+                "group assigned to its sampled noise range."
+            ),
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=24,
+        )
+    )
+
     # Pretrained Transformer Model Path
     registry._add_field(
         ConfigField(

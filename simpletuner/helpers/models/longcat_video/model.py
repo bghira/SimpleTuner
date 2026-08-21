@@ -405,22 +405,35 @@ class LongCatVideo(VideoModelFoundation):
         if capture_hidden and hidden_states_buffer is None:
             hidden_states_buffer = HiddenStateBuffer()
             created_capture_buffer = True
-        if created_capture_buffer and hidden_states_buffer is not None and capture_layer is not None:
-            hidden_states_buffer.capture_layers = {int(capture_layer)}
 
-        model_pred = self.model(
-            noisy_latents,
-            encoder_hidden_states=encoder_hidden_states,
-            encoder_attention_mask=encoder_attention_mask,
-            timestep=timesteps,
-            timestep_sign=(
-                prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
-            ),
-            num_cond_latents=cond_count,
-            return_dict=False,
-            hidden_states_buffer=hidden_states_buffer,
-            **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
-        )[0]
+        original_capture_layers = None
+        restore_capture_layers = False
+        if capture_hidden and hidden_states_buffer is not None and capture_layer is not None:
+            if created_capture_buffer:
+                hidden_states_buffer.capture_layers = {int(capture_layer)}
+            else:
+                original_capture_layers = hidden_states_buffer.capture_layers
+            if not created_capture_buffer and original_capture_layers is not None:
+                hidden_states_buffer.capture_layers = {*original_capture_layers, int(capture_layer)}
+                restore_capture_layers = True
+
+        try:
+            model_pred = self.model(
+                noisy_latents,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=encoder_attention_mask,
+                timestep=timesteps,
+                timestep_sign=(
+                    prepared_batch.get("twinflow_time_sign") if getattr(self.config, "twinflow_enabled", False) else None
+                ),
+                num_cond_latents=cond_count,
+                return_dict=False,
+                hidden_states_buffer=hidden_states_buffer,
+                **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
+            )[0]
+        finally:
+            if restore_capture_layers:
+                hidden_states_buffer.capture_layers = original_capture_layers
 
         if cond_count > 0 and model_pred.dim() == 5 and model_pred.shape[2] > cond_count:
             model_pred = model_pred[:, :, cond_count:, :, :]

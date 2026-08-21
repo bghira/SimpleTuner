@@ -627,22 +627,11 @@ def collate_fn(batch):
     data_backend = StateTracker.get_data_backend(batch_backend_id)
     training_data_root = data_backend.get("config", {}).get("instance_data_dir")
 
-    # Check for audio-only mode on models that support training without source video.
-    # Can be explicit (audio.audio_only: true) or implicit (audio dataset + model supports audio-only)
+    # Factory normalization resolves model capability and explicit configuration once.
     backend_config_for_audio_check = data_backend.get("config", {})
-    is_audio_only = False
-    if backend_config_for_audio_check.get("dataset_type") == "audio":
-        audio_config = backend_config_for_audio_check.get("audio", {})
-        explicit_audio_only = audio_config.get("audio_only", False)
-        # Check for implicit audio-only mode: model supports it and this is an audio dataset
-        implicit_audio_only = False
-        model_for_audio_check = StateTracker.get_model()
-        if model_for_audio_check is not None:
-            try:
-                implicit_audio_only = bool(model_for_audio_check.supports_audio_only_training())
-            except (AttributeError, TypeError):
-                implicit_audio_only = False
-        is_audio_only = explicit_audio_only or implicit_audio_only
+    is_audio_only = backend_config_for_audio_check.get("dataset_type") == "audio" and bool(
+        backend_config_for_audio_check.get("audio", {}).get("audio_only", False)
+    )
 
     model = StateTracker.get_model()
     uses_audio_tokens = False

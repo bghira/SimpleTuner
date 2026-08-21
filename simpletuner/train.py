@@ -114,9 +114,11 @@ def _run_training(trainer: Trainer) -> None:
     trainer.init_controlnet_model()
     trainer.init_tread_model()
     trainer.init_precision()
+    trainer.init_diffusion_blocks_model()
     trainer.init_freeze_models()
     trainer.init_distillation_adapter_modules()
     trainer.init_trainable_peft_adapter()
+    trainer.init_diffusion_blocks_trainable_filter()
     trainer.init_ema_model()
     # EMA must be quantised if the base model is as well.
     trainer.init_precision(ema_only=True)

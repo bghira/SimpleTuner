@@ -110,10 +110,10 @@ After=network.target
 [Service]
 Type=simple
 User=trainer
-WorkingDirectory=/home/trainer/simpletuner-workspace
+WorkingDirectory=/opt/simpletuner
 Environment="SIMPLETUNER_HOST=127.0.0.1"
 Environment="SIMPLETUNER_PORT=8001"
-ExecStart=/home/trainer/simpletuner-workspace/.venv/bin/simpletuner server
+ExecStart=/opt/simpletuner/.venv/bin/simpletuner server
 Restart=on-failure
 
 [Install]
@@ -914,3 +914,7 @@ curl -s -X POST http://localhost:8001/api/queue/submit \
 - **在云端 GPU 上运行训练**，通过 Replicate——参见[云端训练教程](../experimental/cloud/TUTORIAL.md)
 
 通过这些模式，您可以完全脚本化 SimpleTuner 训练而无需接触 WebUI，同时仍然依赖久经考验的 CLI 设置流程。
+
+### 本地指标 API
+
+设置 `report_to=simpletuner` 后，使用 `GET /api/metrics/training/runs` 获取列表，使用 `GET /api/metrics/training/runs/{environment}` 读取运行。支持 `start_step`、`end_step`、`max_points` 和 `metric`。参阅[本地训练指标](../webui/LOCAL_METRICS.md)。

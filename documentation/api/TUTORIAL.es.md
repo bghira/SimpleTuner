@@ -110,10 +110,10 @@ After=network.target
 [Service]
 Type=simple
 User=trainer
-WorkingDirectory=/home/trainer/simpletuner-workspace
+WorkingDirectory=/opt/simpletuner
 Environment="SIMPLETUNER_HOST=127.0.0.1"
 Environment="SIMPLETUNER_PORT=8001"
-ExecStart=/home/trainer/simpletuner-workspace/.venv/bin/simpletuner server
+ExecStart=/opt/simpletuner/.venv/bin/simpletuner server
 Restart=on-failure
 
 [Install]
@@ -916,3 +916,7 @@ Las etiquetas soportan patrones glob (`*` coincide con cualquier caracter).
 - **Ejecuta entrenamiento en GPUs en la nube** vía Replicate—ver el [Tutorial de entrenamiento en la nube](../experimental/cloud/TUTORIAL.md)
 
 Con estos patrones puedes automatizar por completo el entrenamiento de SimpleTuner sin tocar la WebUI, mientras sigues apoyándote en el proceso de configuración CLI probado en batalla.
+
+### Endpoints de métricas locales
+
+Con `report_to=simpletuner`, lista ejecuciones con `GET /api/metrics/training/runs` y lee una con `GET /api/metrics/training/runs/{environment}`. Admite filtros `start_step`, `end_step`, `max_points` y `metric`. Consulta [Métricas locales](../webui/LOCAL_METRICS.md).

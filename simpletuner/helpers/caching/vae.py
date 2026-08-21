@@ -47,7 +47,7 @@ if should_log():
 else:
     logger.setLevel("ERROR")
 
-WAN_STYLE_LATENT_MODEL_FAMILIES = ("wan", "wan_s2v", "sanavideo", "anima")
+WAN_STYLE_LATENT_MODEL_FAMILIES = ("wan", "wan_s2v", "infinitetalk", "sanavideo", "anima")
 
 
 def prepare_sample(
@@ -805,9 +805,9 @@ class VAECache(WebhookMixin):
             return self._clone_metadata_value(value)
         return value
 
-    def _gather_sample_metadata(self, filepaths):
+    def _gather_sample_metadata(self, filepaths, samples: torch.Tensor | None = None):
         metadata_entries = []
-        for filepath in filepaths:
+        for index, filepath in enumerate(filepaths):
             resolved_metadata = None
             try:
                 resolved_metadata = StateTracker.get_metadata_by_filepath(
@@ -821,11 +821,14 @@ class VAECache(WebhookMixin):
                 except Exception as exc:
                     logger.debug(f"Metadata backend lookup failed for {filepath}: {exc}")
                     resolved_metadata = None
+            resolved_metadata = dict(resolved_metadata or {})
+            if self.dataset_type_enum is DatasetType.AUDIO and torch.is_tensor(samples):
+                resolved_metadata["num_samples"] = int(samples[index].shape[-1])
             metadata_entries.append(
                 {
                     "filepath": filepath,
                     "data_backend_id": self.id,
-                    "metadata": resolved_metadata or {},
+                    "metadata": resolved_metadata,
                 }
             )
         return metadata_entries
@@ -914,7 +917,7 @@ class VAECache(WebhookMixin):
             from simpletuner.helpers.models.ltxvideo.autoencoder import AutoencoderKLLTXVideo as AutoencoderClass
         elif StateTracker.get_args().model_family == "ltxvideo2":
             from simpletuner.helpers.models.ltxvideo2.autoencoder import AutoencoderKLLTX2Video as AutoencoderClass
-        elif StateTracker.get_args().model_family in ["wan", "wan_s2v"]:
+        elif StateTracker.get_args().model_family in ["wan", "wan_s2v", "infinitetalk"]:
             from diffusers import AutoencoderKLWan as AutoencoderClass
         else:
             from diffusers import AutoencoderKL as AutoencoderClass
@@ -1054,6 +1057,7 @@ class VAECache(WebhookMixin):
             "ltxvideo2",
             "wan",
             "wan_s2v",
+            "infinitetalk",
             "sanavideo",
             "kandinsky5-video",
             "kandinsky5_video",
@@ -1300,7 +1304,10 @@ class VAECache(WebhookMixin):
                     for idx, fp in enumerate(debug_filepaths):
                         self._log_audio_tensor_stats("audio_waveform_batch", processed_images[idx], fp)
                 processed_images = self.model.pre_vae_encode_transform_sample(processed_images)
-                metadata_for_batch = self._gather_sample_metadata([filepaths[i] for i in uncached_image_indices])
+                metadata_for_batch = self._gather_sample_metadata(
+                    [filepaths[i] for i in uncached_image_indices],
+                    samples=processed_images,
+                )
                 latents_uncached = self.model.encode_cache_batch(
                     self.vae,
                     processed_images,
@@ -1638,7 +1645,7 @@ class VAECache(WebhookMixin):
         waveform, sample_rate = self._coerce_audio_waveform(raw_sample, metadata, filepath)
         if waveform is None:
             return None
-        waveform, metadata = self._truncate_audio_waveform_to_max_duration(
+        waveform, metadata = self._truncate_audio_waveform_to_target_duration(
             waveform=waveform,
             sample_rate=sample_rate,
             metadata=metadata,
@@ -1702,22 +1709,27 @@ class VAECache(WebhookMixin):
         metadata["duration_seconds"] = float(waveform.shape[-1]) / float(sample_rate)
         return waveform, metadata
 
-    def _truncate_audio_waveform_to_max_duration(self, waveform, sample_rate, metadata: dict, filepath: str):
+    def _truncate_audio_waveform_to_target_duration(self, waveform, sample_rate, metadata: dict, filepath: str):
         if sample_rate is None:
             return waveform, metadata
         backend_config = StateTracker.get_data_backend_config(data_backend_id=self.id) or {}
         audio_config = backend_config.get("audio") or {}
-        max_duration = audio_config.get("max_duration_seconds")
-        if max_duration is None:
-            return waveform, metadata
-        try:
-            max_duration = float(max_duration)
-        except (TypeError, ValueError):
-            return waveform, metadata
-        if max_duration <= 0:
+        duration_limits = [audio_config.get("max_duration_seconds")]
+        if not audio_config.get("source_from_video", False):
+            duration_limits.append(metadata.get("bucket_duration_seconds"))
+        resolved_limits = []
+        for duration_limit in duration_limits:
+            try:
+                duration_limit = float(duration_limit)
+            except (TypeError, ValueError):
+                continue
+            if duration_limit > 0:
+                resolved_limits.append(duration_limit)
+        if not resolved_limits:
             return waveform, metadata
 
-        target_samples = int(round(max_duration * float(sample_rate)))
+        target_duration = min(resolved_limits)
+        target_samples = int(round(target_duration * float(sample_rate)))
         if target_samples <= 0 or waveform.shape[-1] <= target_samples:
             return waveform, metadata
 
@@ -1734,7 +1746,7 @@ class VAECache(WebhookMixin):
         metadata["duration_seconds"] = float(waveform.shape[-1]) / float(sample_rate)
         metadata["truncated_duration_seconds"] = metadata["duration_seconds"]
         logger.debug(
-            "Truncated audio sample %s to %.2fs for audio.max_duration_seconds.",
+            "Truncated audio sample %s to %.2fs for its configured duration limit.",
             filepath,
             metadata["duration_seconds"],
         )
@@ -1826,26 +1838,23 @@ class VAECache(WebhookMixin):
             output_values = []
             while qlen > 0:
                 vae_input_images, vae_input_filepaths, vae_output_filepaths = [], [], []
-                batch_aspect_bucket = None
                 count_to_process = min(qlen, self.vae_batch_size)
                 for _ in range(0, count_to_process):
                     if image_pixel_values:
                         (
                             pixel_values,
                             filepath,
-                            aspect_bucket,
+                            _aspect_bucket,
                             is_final_sample,
                         ) = image_pixel_values.pop()
                     else:
                         (
                             pixel_values,
                             filepath,
-                            aspect_bucket,
+                            _aspect_bucket,
                             is_final_sample,
                         ) = self.vae_input_queue.get()
 
-                    if batch_aspect_bucket is None:
-                        batch_aspect_bucket = aspect_bucket
                     vae_input_images.append(pixel_values)
                     vae_input_filepaths.append(filepath)
                     vae_output_filepaths.append(self.generate_vae_cache_filename(filepath)[0])
@@ -1854,17 +1863,32 @@ class VAECache(WebhookMixin):
                         # we need to respect is_final_sample value and not retrieve the *next* element yet.
                         break
 
-                latents = self.encode_images(
-                    [sample.to(dtype=self._cache_vae_dtype()) for sample in vae_input_images],
-                    vae_input_filepaths,
-                    load_from_cache=False,
-                )
-                if latents is None:
-                    raise ValueError("Received None from encode_images")
-                for output_file, latent_vector, filepath in zip(vae_output_filepaths, latents, vae_input_filepaths):
-                    if latent_vector is None:
-                        raise ValueError(f"Latent vector is None for filepath {filepath}")
-                    output_value = (output_file, filepath, latent_vector)
+                indexed_batch = list(enumerate(zip(vae_input_images, vae_input_filepaths, vae_output_filepaths)))
+                if self.dataset_type_enum is DatasetType.AUDIO:
+                    grouped_batch = {}
+                    for index, entry in indexed_batch:
+                        grouped_batch.setdefault(tuple(entry[0].shape), []).append((index, entry))
+                    encode_groups = grouped_batch.values()
+                else:
+                    encode_groups = (indexed_batch,)
+
+                encoded_batch = []
+                for encode_group in encode_groups:
+                    group_images = [entry[0] for _, entry in encode_group]
+                    group_filepaths = [entry[1] for _, entry in encode_group]
+                    latents = self.encode_images(
+                        [sample.to(dtype=self._cache_vae_dtype()) for sample in group_images],
+                        group_filepaths,
+                        load_from_cache=False,
+                    )
+                    if latents is None:
+                        raise ValueError("Received None from encode_images")
+                    for (index, (_, filepath, output_file)), latent_vector in zip(encode_group, latents):
+                        if latent_vector is None:
+                            raise ValueError(f"Latent vector is None for filepath {filepath}")
+                        encoded_batch.append((index, (output_file, filepath, latent_vector)))
+
+                for _, output_value in sorted(encoded_batch):
                     output_values.append(output_value)
                     if not disable_queue:
                         logger.debug("Adding outputs to write queue")

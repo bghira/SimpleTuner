@@ -869,8 +869,358 @@
     flex: 0 0 auto;
 }
 
+.metrics-section-tabs {
+    display: inline-flex;
+    gap: 0.25rem;
+    margin-bottom: 1rem;
+    padding: 0.25rem;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 0.5rem;
+    background: rgba(15, 23, 42, 0.45);
+}
+
+.metrics-section-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-height: 2.25rem;
+    padding: 0.4rem 0.75rem;
+    border: 0;
+    border-radius: 0.375rem;
+    color: #94a3b8;
+    background: transparent;
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+
+.metrics-section-tab:hover,
+.metrics-section-tab.active {
+    color: #f8fafc;
+    background: rgba(99, 102, 241, 0.2);
+}
+
+.training-metrics-workspace {
+    min-width: 0;
+}
+
+.training-metrics-toolbar,
+.training-tool-header,
+.training-run-actions,
+.training-latest-values,
+.training-media-steps {
+    display: flex;
+    align-items: center;
+}
+
+.training-metrics-toolbar {
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.training-metrics-toolbar h2,
+.training-tool-header h3 {
+    margin: 0;
+    color: #f8fafc;
+    letter-spacing: 0;
+}
+
+.training-metrics-toolbar h2 {
+    font-size: 1.25rem;
+}
+
+.training-metrics-toolbar p,
+.training-tool-header span {
+    margin: 0.2rem 0 0;
+    color: #94a3b8;
+    font-size: 0.8rem;
+}
+
+.training-run-actions {
+    justify-content: flex-end;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.training-run-actions .form-select {
+    width: min(22rem, 55vw);
+}
+
+.training-metrics-empty {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    min-height: 9rem;
+    padding: 1.25rem;
+    border: 1px dashed rgba(148, 163, 184, 0.35);
+    border-radius: 0.5rem;
+    color: #94a3b8;
+}
+
+.training-metrics-empty > i {
+    font-size: 1.5rem;
+}
+
+.training-metrics-empty strong,
+.training-metrics-empty span {
+    display: block;
+}
+
+.training-metrics-empty strong {
+    color: #e2e8f0;
+}
+
+.training-run-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-bottom: 1rem;
+    border-block: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.training-run-summary > div {
+    padding: 0.8rem 1rem;
+    border-right: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.training-run-summary > div:last-child {
+    border-right: 0;
+}
+
+.training-run-summary span,
+.training-run-summary strong {
+    display: block;
+}
+
+.training-run-summary span {
+    margin-bottom: 0.2rem;
+    color: #94a3b8;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+}
+
+.training-run-summary strong {
+    overflow: hidden;
+    color: #f8fafc;
+    font-size: 0.95rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.training-metrics-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(18rem, 2fr);
+    gap: 1rem;
+}
+
+.training-chart-tool,
+.training-media-tool {
+    min-width: 0;
+    padding: 1rem;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 0.5rem;
+    background: rgba(15, 23, 42, 0.38);
+}
+
+.training-tool-header {
+    justify-content: space-between;
+    gap: 0.75rem;
+    align-items: flex-start;
+}
+
+.training-tool-header h3 {
+    font-size: 0.95rem;
+}
+
+.training-tool-header .form-select {
+    max-width: 13rem;
+}
+
+.training-metric-picker {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.35rem;
+    max-width: 70%;
+    flex-wrap: wrap;
+}
+
+.training-metric-picker label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    max-width: 14rem;
+    padding: 0.25rem 0.45rem;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 0.25rem;
+    color: #94a3b8;
+    font-size: 0.7rem;
+    cursor: pointer;
+}
+
+.training-metric-picker label.selected {
+    border-color: rgba(56, 189, 248, 0.6);
+    color: #e0f2fe;
+    background: rgba(14, 165, 233, 0.12);
+}
+
+.training-metric-picker input {
+    width: 0.8rem;
+    height: 0.8rem;
+}
+
+.training-metric-picker span {
+    overflow: hidden;
+    margin: 0;
+    color: inherit;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.training-latest-values {
+    gap: 0.75rem;
+    min-height: 3.4rem;
+    margin: 0.75rem 0;
+    overflow-x: auto;
+}
+
+.training-latest-values > div {
+    min-width: 7rem;
+}
+
+.training-latest-values span,
+.training-latest-values strong {
+    display: block;
+}
+
+.training-latest-values span {
+    overflow: hidden;
+    color: #94a3b8;
+    font-size: 0.7rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.training-latest-values strong {
+    color: #e2e8f0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85rem;
+}
+
+.training-chart-canvas-wrap {
+    position: relative;
+    height: 24rem;
+}
+
+.training-chart-canvas-wrap canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.training-media-steps {
+    gap: 0.25rem;
+    margin: 0.8rem 0;
+    overflow-x: auto;
+}
+
+.training-media-steps button {
+    min-width: 2.5rem;
+    padding: 0.25rem 0.45rem;
+    border: 1px solid rgba(148, 163, 184, 0.2);
+    border-radius: 0.25rem;
+    color: #94a3b8;
+    background: transparent;
+    font-size: 0.7rem;
+}
+
+.training-media-steps button.active {
+    border-color: #38bdf8;
+    color: #e0f2fe;
+    background: rgba(14, 165, 233, 0.14);
+}
+
+.training-media-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.6rem;
+}
+
+.training-media-grid figure {
+    min-width: 0;
+    margin: 0;
+}
+
+.training-media-grid img,
+.training-media-grid video {
+    display: block;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 0.25rem;
+    background: #020617;
+    object-fit: contain;
+}
+
+.training-media-grid audio {
+    display: block;
+    width: 100%;
+    min-height: 3rem;
+}
+
+.training-media-grid figcaption {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-top: 0.3rem;
+    color: #94a3b8;
+    font-size: 0.7rem;
+}
+
+.training-media-empty {
+    padding: 3rem 1rem;
+    color: #94a3b8;
+    text-align: center;
+}
+
+@media (max-width: 1100px) {
+    .training-metrics-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* Responsive */
 @media (max-width: 576px) {
+    .training-metrics-toolbar,
+    .training-tool-header {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .training-run-actions {
+        justify-content: flex-start;
+    }
+
+    .training-run-actions .form-select,
+    .training-tool-header .form-select,
+    .training-metric-picker {
+        width: 100%;
+        max-width: none;
+    }
+
+    .training-run-summary {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .training-run-summary > div:nth-child(2) {
+        border-right: 0;
+    }
+
+    .training-metrics-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .training-chart-canvas-wrap {
+        height: 18rem;
+    }
+
     .gpu-stats-grid {
         grid-template-columns: repeat(2, 1fr);
     }

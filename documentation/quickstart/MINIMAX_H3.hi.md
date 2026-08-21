@@ -61,7 +61,7 @@ Negative prompting base H3 contract का हिस्सा नहीं ह�
 
 ## Audio Target Mode
 
-`minimax_h3_target_mode: "auto"` video-only बनता है और audio VAE work बचाता है:
+`minimax_h3_target_mode: "auto"` enabled audio data मिलने पर `av`, अन्यथा `video` में resolve होता है। Validation भी इसी detected-data default का उपयोग करता है, इसलिए audio-only और joint audio/video runs अलग validation override के बिना audio बनाते हैं। Audio VAE work से बचने के लिए `video` explicitly set करें:
 
 ```json
 {
@@ -69,7 +69,20 @@ Negative prompting base H3 contract का हिस्सा नहीं ह�
 }
 ```
 
-`"av"` तभी use करें जब dataset में target audio latents हों और joint audio/video training चाहिए। Per-backend `h3_target_mode` या `minimax_h3_target_mode` भी set कर सकते हैं।
+जब dataset में target audio latents हों और joint audio/video training चाहिए, तब `"av"` explicitly use कर सकते हैं। Per-backend `h3_target_mode` या `minimax_h3_target_mode` भी set कर सकते हैं।
+
+Audio-only training के लिए `dataset_type: "audio"` पर्याप्त है। H3 fake-video support advertise करता है, इसलिए
+SimpleTuner normalized backend config में `audio.audio_only: true` record करता है, placeholder video stream बनाता है,
+और video loss mask करता है। Explicit `audio_only` setting valid है, लेकिन required नहीं है।
+
+## Context parallelism
+
+H3 context parallelism Ulysses को `context_parallel_strategy: "alltoall"` के साथ use करता है। Packed sequence को CP
+degree तक pad किया जा सकता है, इसलिए local attention backend को mask accept करना होगा। `native` और `cudnn` supported
+हैं; CP enabled होने पर SimpleTuner दूसरे backend choices को `native` से replace करता है।
+
+लगभग 8k audio tokens पर CP communication के बदले activation memory घटाता है और हल्का checkpointing देता है। CP अपने
+आप weights shard नहीं करता, इसलिए लंबी sequence या FSDP combination के बिना इसे DDP के विरुद्ध benchmark करें।
 
 ## Experimental Sparse Attention
 

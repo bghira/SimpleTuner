@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import torch
 
@@ -92,6 +93,36 @@ class ValidationPipelineKwargsTests(unittest.TestCase):
         result = self.validation._extract_pipeline_media(SimpleNamespace(videos=videos))
 
         self.assertIs(result, videos)
+
+    def test_pipeline_media_extraction_prefers_video_over_audio(self):
+        videos = [["frame-1", "frame-2"]]
+        audio = torch.zeros(1, 48000)
+
+        result = self.validation._extract_pipeline_media(SimpleNamespace(videos=videos, audios=None, audio=audio))
+
+        self.assertIs(result, videos)
+
+    def test_selective_pipeline_placement_moves_non_transformer_modules(self):
+        transformer = torch.nn.Linear(1, 1)
+        image_encoder = torch.nn.Linear(1, 1)
+        self.validation.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        self.validation.model = SimpleNamespace(
+            MODEL_TYPE=SimpleNamespace(value="transformer"),
+            pipeline=SimpleNamespace(
+                transformer=transformer,
+                components={"transformer": transformer, "image_encoder": image_encoder, "scheduler": object()},
+            ),
+            _module_has_meta_tensors=lambda module: False,
+        )
+
+        with (
+            patch.object(transformer, "to", wraps=transformer.to) as transformer_to,
+            patch.object(image_encoder, "to", wraps=image_encoder.to) as image_encoder_to,
+        ):
+            self.validation._move_pipeline_components_except_model()
+
+        transformer_to.assert_not_called()
+        image_encoder_to.assert_called_once_with(torch.device("cpu"))
 
 
 if __name__ == "__main__":
