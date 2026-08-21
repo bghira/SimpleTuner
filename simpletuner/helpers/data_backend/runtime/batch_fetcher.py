@@ -57,6 +57,7 @@ class BatchFetcher:
         self.datasets = datasets or {}
         self._keep_running = True
         self.step = step
+        self._next_fetch_step = step
 
     def start_fetching(self) -> threading.Thread:
         thread = threading.Thread(target=self.fetch_responses)
@@ -72,7 +73,7 @@ class BatchFetcher:
                 if self.queue.qsize() < self.queue.maxsize:
                     prefetch_log_debug(f"Queue size: {self.queue.qsize()}. Fetching more data.")
                     try:
-                        item = iterator_fn(self.step, self.datasets)
+                        item = iterator_fn(self._next_fetch_step, self.datasets)
                     except ValueError:
                         prefetch_log_debug("No datasets available during prefetch; stopping fetch thread.")
                         self._keep_running = False
@@ -84,6 +85,7 @@ class BatchFetcher:
                         logger.debug(f"BatchFetcher encountered exception: {exc}")
                         break
                     self.queue.put(item)
+                    self._next_fetch_step += 1
                     if self.queue.qsize() >= self.queue.maxsize:
                         prefetch_log_debug("Completed fetching data. Queue is full.")
                         if threading.current_thread() is threading.main_thread():

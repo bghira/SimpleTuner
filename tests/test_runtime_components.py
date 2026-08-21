@@ -11,6 +11,7 @@ import random
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 from typing import Any, Dict
 from unittest.mock import MagicMock, Mock, patch
 
@@ -109,6 +110,18 @@ class TestBatchFetcher(unittest.TestCase):
 
         # Verify iterator was called multiple times
         self.assertGreater(mock_iterator.call_count, 1)
+
+    @patch("simpletuner.helpers.data_backend.runtime.batch_fetcher.random_dataloader_iterator")
+    def test_prefetched_batches_use_consecutive_steps(self, mock_iterator):
+        mock_iterator.side_effect = lambda step, datasets: {"step": step}
+        fetcher = BatchFetcher(step=100, max_size=3, datasets=self.datasets)
+
+        fetcher.fetch_responses()
+
+        self.assertEqual(
+            [call.args[0] for call in mock_iterator.call_args_list],
+            [100, 101, 102],
+        )
 
     @patch("simpletuner.helpers.data_backend.runtime.batch_fetcher.random_dataloader_iterator")
     def test_fetch_responses_queue_full_behavior(self, mock_iterator):
@@ -325,6 +338,19 @@ class TestDataloaderIterator(unittest.TestCase):
         # Should get both backends eventually with random selection
         self.assertTrue(len(results) >= 1)  # At least one backend selected
         self.assertTrue(all(r in ["backend1", "backend2"] for r in results))
+
+    @patch("simpletuner.helpers.data_backend.runtime.dataloader_iterator.StateTracker.get_args")
+    def test_select_dataloader_index_is_independent_of_global_rng(self, mock_get_args):
+        mock_get_args.return_value = SimpleNamespace(seed=1234, data_backend_sampling="uniform")
+        backends = {"backend1": self.mock_backend1, "backend2": self.mock_backend2}
+
+        torch.manual_seed(1)
+        first_sequence = [select_dataloader_index(step=step, backends=backends) for step in range(32)]
+        torch.manual_seed(987654)
+        torch.rand(127)
+        second_sequence = [select_dataloader_index(step=step, backends=backends) for step in range(32)]
+
+        self.assertEqual(first_sequence, second_sequence)
 
     def test_select_dataloader_index_empty_backends(self):
         """Test select_dataloader_index with empty backends"""
