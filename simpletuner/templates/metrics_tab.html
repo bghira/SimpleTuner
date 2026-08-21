@@ -12,7 +12,7 @@
      x-data='metricsComponent({{ metrics_ctx | tojson | safe }})'
      x-init="init()">
 
-    <div class="metrics-section-tabs" role="tablist" aria-label="Metrics sections">
+    <div class="metrics-section-tabs" role="group" aria-label="Metrics sections">
         <button type="button"
                 class="metrics-section-tab"
                 :class="{ 'active': activeMetricsSection === 'training' }"
@@ -155,7 +155,7 @@
                                 </template>
                             </select>
                         </div>
-                        <div class="training-media-steps" role="tablist" aria-label="Validation steps">
+                        <div class="training-media-steps" role="group" aria-label="Validation steps">
                             <template x-for="step in trainingMediaSteps()" :key="step">
                                 <button type="button"
                                         :class="{ 'active': selectedTrainingMediaStep === step }"
