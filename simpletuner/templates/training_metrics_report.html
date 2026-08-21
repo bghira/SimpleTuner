@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SimpleTuner Training Report</title>
+    <style>__SIMPLETUNER_REPORT_CSS__</style>
+</head>
+<body>
+    <main class="report-shell">
+        <header class="report-header">
+            <div>
+                <div class="report-kicker">SimpleTuner training report</div>
+                <h1 id="run-name">Training run</h1>
+            </div>
+            <div class="report-meta" id="run-meta"></div>
+        </header>
+
+        <section class="report-summary" id="run-summary"></section>
+
+        <section class="report-section">
+            <div class="report-section-header">
+                <h2>Scalar metrics</h2>
+                <div class="report-meta" id="chart-step"></div>
+            </div>
+            <div class="metric-picker" id="metric-picker"></div>
+            <div class="chart-frame">
+                <canvas id="metrics-chart"></canvas>
+                <div class="chart-tooltip" id="chart-tooltip" hidden></div>
+            </div>
+        </section>
+
+        <section class="report-section">
+            <div class="report-section-header">
+                <h2>Validation media</h2>
+                <div class="media-controls">
+                    <label class="report-meta" for="media-label">Prompt</label>
+                    <select id="media-label"></select>
+                </div>
+            </div>
+            <div class="media-timeline" id="media-timeline"></div>
+            <div class="media-grid" id="media-grid"></div>
+        </section>
+    </main>
+
+    <script id="training-metrics-data" type="application/json">__SIMPLETUNER_REPORT_DATA__</script>
+    <script>__SIMPLETUNER_CHART_JS__</script>
+    <script>
+        (function () {
+            const payload = JSON.parse(document.getElementById('training-metrics-data').textContent);
+            const charts = window.TrainingMetricsCharts;
+            const run = payload.run || {};
+            const records = payload.records || [];
+            const media = payload.media || [];
+            const names = charts.metricNames(records);
+            let selectedMetrics = charts.defaultMetricNames(names);
+            let selectedLabel = null;
+            let selectedStep = null;
+
+            function escapeHtml(value) {
+                return String(value)
+                    .replaceAll('&', '&amp;')
+                    .replaceAll('<', '&lt;')
+                    .replaceAll('>', '&gt;')
+                    .replaceAll('"', '&quot;')
+                    .replaceAll("'", '&#039;');
+            }
+
+            document.getElementById('run-name').textContent = run.run_name || 'Training run';
+            document.getElementById('run-meta').textContent = [run.project_name, run.status].filter(Boolean).join(' · ');
+
+            const summary = [
+                ['Last step', run.last_step ?? '—'],
+                ['Metric records', run.record_count ?? records.length],
+                ['Scalar series', names.length],
+                ['Validation items', media.length],
+            ];
+            document.getElementById('run-summary').innerHTML = summary.map(([label, value]) =>
+                `<div class="report-stat"><div class="report-stat-label">${escapeHtml(label)}</div><div class="report-stat-value">${escapeHtml(value)}</div></div>`
+            ).join('');
+
+            const tooltip = document.getElementById('chart-tooltip');
+            const chart = new charts.TrainingMetricsChart(document.getElementById('metrics-chart'), {
+                onHover(info) {
+                    if (!info) {
+                        tooltip.hidden = true;
+                        return;
+                    }
+                    const rows = info.metrics.filter((metric) => typeof metric.value === 'number').map((metric) =>
+                        `<div class="chart-tooltip-row"><span style="color:${metric.color}">${escapeHtml(metric.name)}</span><strong>${escapeHtml(charts.formatMetricValue(metric.value))}</strong></div>`
+                    ).join('');
+                    tooltip.innerHTML = `<strong>Step ${escapeHtml(info.record.step)}</strong>${rows}`;
+                    tooltip.style.left = `${Math.min(info.x + 12, tooltip.parentElement.clientWidth - 200)}px`;
+                    tooltip.style.top = '12px';
+                    tooltip.hidden = false;
+                },
+            });
+
+            function renderMetricPicker() {
+                const picker = document.getElementById('metric-picker');
+                picker.innerHTML = '';
+                names.forEach((name) => {
+                    const index = selectedMetrics.indexOf(name);
+                    const label = document.createElement('label');
+                    label.className = index >= 0 ? 'active' : '';
+                    label.style.setProperty('--metric-color', charts.COLORS[Math.max(0, index) % charts.COLORS.length]);
+                    const input = document.createElement('input');
+                    input.type = 'checkbox';
+                    input.checked = index >= 0;
+                    input.addEventListener('change', () => {
+                        if (input.checked && !selectedMetrics.includes(name)) selectedMetrics.push(name);
+                        if (!input.checked) selectedMetrics = selectedMetrics.filter((entry) => entry !== name);
+                        selectedMetrics = selectedMetrics.slice(-charts.COLORS.length);
+                        renderMetricPicker();
+                        chart.setData(records, selectedMetrics);
+                    });
+                    label.append(input, document.createTextNode(name));
+                    picker.appendChild(label);
+                });
+            }
+
+            function mediaForSelection() {
+                return media.filter((item) => item.label === selectedLabel && Number(item.step) === Number(selectedStep));
+            }
+
+            function renderMedia() {
+                const labels = Array.from(new Set(media.map((item) => item.label))).sort();
+                const select = document.getElementById('media-label');
+                select.innerHTML = '';
+                labels.forEach((label) => {
+                    const option = document.createElement('option');
+                    option.value = label;
+                    option.textContent = label;
+                    select.appendChild(option);
+                });
+                if (!selectedLabel || !labels.includes(selectedLabel)) selectedLabel = labels[0] || null;
+                select.value = selectedLabel || '';
+                select.onchange = () => {
+                    selectedLabel = select.value;
+                    selectedStep = null;
+                    renderMedia();
+                };
+
+                const steps = Array.from(new Set(media.filter((item) => item.label === selectedLabel).map((item) => Number(item.step)))).sort((a, b) => a - b);
+                if (selectedStep === null || !steps.includes(selectedStep)) selectedStep = steps[steps.length - 1] ?? null;
+                const timeline = document.getElementById('media-timeline');
+                timeline.innerHTML = '';
+                steps.forEach((step) => {
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = `media-step${step === selectedStep ? ' active' : ''}`;
+                    button.textContent = `Step ${step}`;
+                    button.onclick = () => {
+                        selectedStep = step;
+                        renderMedia();
+                    };
+                    timeline.appendChild(button);
+                });
+
+                const grid = document.getElementById('media-grid');
+                grid.innerHTML = '';
+                const selected = mediaForSelection();
+                if (!selected.length) {
+                    grid.innerHTML = '<div class="report-empty">No validation media</div>';
+                    return;
+                }
+                selected.forEach((item) => {
+                    const wrapper = document.createElement('article');
+                    wrapper.className = 'media-item';
+                    let element;
+                    if (item.type === 'video') {
+                        element = document.createElement('video');
+                        element.controls = true;
+                    } else if (item.type === 'audio') {
+                        element = document.createElement('audio');
+                        element.controls = true;
+                    } else {
+                        element = document.createElement('img');
+                        element.loading = 'lazy';
+                        element.alt = `${item.label} at step ${item.step}`;
+                    }
+                    element.src = item.path;
+                    const caption = document.createElement('div');
+                    caption.className = 'media-caption';
+                    caption.textContent = [item.resolution, `sample ${Number(item.index) + 1}`].filter(Boolean).join(' · ');
+                    wrapper.append(element, caption);
+                    grid.appendChild(wrapper);
+                });
+            }
+
+            renderMetricPicker();
+            chart.setData(records, selectedMetrics);
+            renderMedia();
+        })();
+    </script>
+</body>
+</html>

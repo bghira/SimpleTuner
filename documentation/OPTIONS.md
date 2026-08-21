@@ -1295,6 +1295,13 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 - **What**: Train a model using a more gradual weighting on the loss landscape.
 - **Why**: When training pixel diffusion models, they will simply degrade without using a specific loss weighting schedule. This is the case with DeepFloyd, where soft-min-snr-gamma was found to essentially be mandatory for good results. You may find success with latent diffusion model training, but in small experiments, it was found to potentially produce blurry results.
 
+### `--flow_cubic_schedule_weights`
+
+- **What**: Samples flow-matching timesteps from a density defined by non-negative weights at equally spaced points from 0 to 1. Use a JSON array or comma-separated values. Zero or one weight selects a uniform distribution, two weights define a linear density, and three or more use monotone cubic-Hermite interpolation.
+- **Why**: Concentrates training on selected noise regions without reducing the schedule to discrete timesteps. Native model timestep conventions and configured flow schedule shifting still apply.
+- **Conflicts**: Cannot be combined with `--flow_use_uniform_schedule`, `--flow_use_beta_schedule`, `--flux_fast_schedule`, or `--flow_custom_timesteps`.
+- **Example**: `"flow_cubic_schedule_weights": [0.1, 1.0, 0.3, 2.0]`
+
 ### `--diff2flow_enabled`
 
 - **What**: Enable the Diffusion-to-Flow bridge for epsilon or v-prediction models.
@@ -1386,6 +1393,34 @@ See the [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) guide 
 - **What**: Weight for the ReflexFlow frequency-compensation (loss reweighting) term.
 - **Default**: 1.0.
 - **Why**: Scales the reweighted flow-matching loss, matching the β₂ knob described in the ReflexFlow paper.
+
+---
+
+## 🎯 iREPA (Improved Representation Alignment)
+
+iREPA preserves spatial structure during representation alignment with a convolutional projector and per-frame spatial normalization. It upgrades CREPA for transformers and U-REPA for UNets. See [the iREPA guide](experimental/IREPA.md).
+
+### `--irepa_enabled`
+
+- **Type**: Boolean flag
+- **Default**: `false`
+- **What**: Upgrades an enabled CREPA or U-REPA path with iREPA spatial operations.
+- **Note**: Also enable `crepa_enabled` for transformer models or `urepa_enabled` for UNet models.
+- **Training mode**: Full-model or standard PEFT LoRA. LyCORIS is not supported because it cannot save the auxiliary projector.
+
+### `--irepa_spatial_norm_alpha`
+
+- **Type**: Float
+- **Default**: `0.6`
+- **What**: Scales teacher-feature mean subtraction before division by the spatial standard deviation.
+- **Note**: `0.6` is the latent-diffusion reference setting; `1.0` fully centers every channel.
+
+### `--irepa_projector_kernel_size`
+
+- **Type**: Integer (`1`, `3`, `5`, or `7`)
+- **Default**: `3`
+- **What**: Sets the spatial convolution kernel used by the alignment projector.
+- **Note**: `3` matches the published iREPA architecture.
 
 ---
 
@@ -1825,8 +1860,20 @@ Upstream option mapping (LayerSync → SimpleTuner):
 ### `--report_to`
 
 - **What**: Specifies the platform for reporting results and logs.
-- **Why**: Enables integration with platforms like TensorBoard, wandb, or comet_ml for monitoring. Use multiple values separated by a comma to report to multiple trackers;
-- **Choices**: wandb, tensorboard, comet_ml
+- **Why**: Enables local or external monitoring. `simpletuner` writes raw JSONL, a manifest, validation media metadata, and a self-contained HTML report to `output_dir`. Use comma-separated values for multiple trackers. `all` includes the local tracker.
+- **Choices**: simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, all, none
+
+### `--validation_image_format`
+
+- **What**: Format for validation images saved in `output_dir/validation_images`.
+- **Choices**: png, webp, jpeg
+- **Default**: png
+
+### `--validation_image_quality`
+
+- **What**: Encoding quality for WebP and JPEG validation images.
+- **Range**: 1 to 100
+- **Default**: 90. Ignored for PNG.
 
 ## Environment configuration variables
 
@@ -1979,6 +2026,7 @@ usage: train.py [-h] --model_family
                 [--flow_use_beta_schedule [FLOW_USE_BETA_SCHEDULE]]
                 [--flow_beta_schedule_alpha FLOW_BETA_SCHEDULE_ALPHA]
                 [--flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA]
+                [--flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
                 [--flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]]
                 [--audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT]
@@ -2464,6 +2512,11 @@ options:
                         Alpha value for beta schedule (default: 2.0)
   --flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA
                         Beta value for beta schedule (default: 2.0)
+  --flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS
+                        Sample flow timesteps from a smooth density through
+                        equally spaced non-negative weights. Use a JSON array
+                        or comma-separated values; zero or one weight produces
+                        a uniform distribution.
   --flow_schedule_shift FLOW_SCHEDULE_SHIFT
                         Shift the noise schedule for flow-matching models
   --flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]

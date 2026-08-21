@@ -358,3 +358,7 @@ consumer हार्डवेयर पर सेटअप आसान बन�
 **नोट**: **Default** environment विशेष है, और इसे सामान्य training environment के रूप में उपयोग करने की सलाह नहीं है; इसकी settings को किसी भी environment में स्वचालित रूप से merge किया जा सकता है जो **Use environment defaults** विकल्प सक्षम करता है:
 
 <img width="1521" height="991" alt="image" src="https://github.com/user-attachments/assets/9d18b0c1-608e-4ab2-be14-65b98907ec69" />
+
+## स्थानीय प्रशिक्षण मेट्रिक्स
+
+Logging platform में **SimpleTuner (Local)** चुनें और **Metrics → Training Runs** खोलें। Files, offline report, compression और API के लिए [स्थानीय मेट्रिक्स](LOCAL_METRICS.md) देखें।

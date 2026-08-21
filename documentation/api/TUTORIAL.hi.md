@@ -110,10 +110,10 @@ After=network.target
 [Service]
 Type=simple
 User=trainer
-WorkingDirectory=/home/trainer/simpletuner-workspace
+WorkingDirectory=/opt/simpletuner
 Environment="SIMPLETUNER_HOST=127.0.0.1"
 Environment="SIMPLETUNER_PORT=8001"
-ExecStart=/home/trainer/simpletuner-workspace/.venv/bin/simpletuner server
+ExecStart=/opt/simpletuner/.venv/bin/simpletuner server
 Restart=on-failure
 
 [Install]
@@ -908,3 +908,7 @@ Labels glob patterns सपोर्ट करते हैं (`*` किसी
 - Replicate के जरिए **cloud GPUs पर training चलाएं**—देखें [Cloud Training Tutorial](../experimental/cloud/TUTORIAL.md)
 
 इन पैटर्न्स के साथ आप WebUI छुए बिना SimpleTuner training पूरी तरह स्क्रिप्ट कर सकते हैं, जबकि setup process के लिए भरोसेमंद CLI का सहारा बना रहता है।
+
+### स्थानीय मेट्रिक्स API
+
+`report_to=simpletuner` के साथ `GET /api/metrics/training/runs` से runs की सूची और `GET /api/metrics/training/runs/{environment}` से एक run पढ़ें। `start_step`, `end_step`, `max_points` और `metric` filters उपलब्ध हैं। [स्थानीय मेट्रिक्स](../webui/LOCAL_METRICS.md) देखें।

@@ -74,6 +74,7 @@ from simpletuner.helpers.training.evaluation import ModelEvaluator
 from simpletuner.helpers.training.exceptions import GPUHealthError
 from simpletuner.helpers.training.gpu_circuit_breaker import get_current_gpu_index, get_gpu_circuit_breaker, is_cuda_error
 from simpletuner.helpers.training.iteration_tracker import IterationTracker
+from simpletuner.helpers.training.local_metrics import LocalMetricsTracker
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.multi_process import broadcast_object_from_main, should_log
@@ -914,10 +915,11 @@ class Trainer:
             custom_tracker_name = None
         setattr(self.config, "custom_tracker", custom_tracker_name)
 
-        _, tracker_run_name = self._resolve_tracker_identifiers()
+        tracker_project_name, tracker_run_name = self._resolve_tracker_identifiers()
         logging_dir_value = getattr(self.config, "logging_dir", None)
 
         custom_tracker_instance: Optional[GeneralTracker] = None
+        local_metrics_tracker: Optional[LocalMetricsTracker] = None
 
         def _ensure_custom_tracker() -> GeneralTracker:
             nonlocal custom_tracker_instance
@@ -928,6 +930,17 @@ class Trainer:
             custom_tracker_instance = self._load_custom_tracker(custom_tracker_name, tracker_run_name, logging_dir_value)
             self.custom_tracker = custom_tracker_instance
             return custom_tracker_instance
+
+        def _ensure_local_metrics_tracker() -> LocalMetricsTracker:
+            nonlocal local_metrics_tracker
+            if local_metrics_tracker is None:
+                local_metrics_tracker = LocalMetricsTracker(
+                    run_name=tracker_run_name,
+                    project_name=tracker_project_name,
+                    output_dir=self.config.output_dir,
+                )
+                self.local_metrics_tracker = local_metrics_tracker
+            return local_metrics_tracker
 
         checkpoint_step_interval_value = getattr(self.config, "checkpoint_step_interval", None)
         if checkpoint_step_interval_value in (None, "", "None", 0):
@@ -950,15 +963,28 @@ class Trainer:
                 report_to = None
             elif normalized_report == "custom-tracker":
                 report_to = _ensure_custom_tracker()
+            elif normalized_report == "simpletuner":
+                report_to = _ensure_local_metrics_tracker()
+            elif normalized_report == "all":
+                report_to = [_ensure_local_metrics_tracker(), "all"]
             else:
                 report_to = report_to_value.strip()
         elif isinstance(report_to_value, (list, tuple)):
             resolved_trackers: List[object] = []
             for entry in report_to_value:
-                if isinstance(entry, str) and entry.strip().lower() == "custom-tracker":
-                    resolved_trackers.append(_ensure_custom_tracker())
+                normalized_entry = entry.strip().lower() if isinstance(entry, str) else None
+                if normalized_entry == "custom-tracker":
+                    tracker = _ensure_custom_tracker()
+                elif normalized_entry == "simpletuner":
+                    tracker = _ensure_local_metrics_tracker()
                 else:
-                    resolved_trackers.append(entry)
+                    tracker = entry
+                if tracker not in resolved_trackers:
+                    resolved_trackers.append(tracker)
+            if any(isinstance(entry, str) and entry.strip().lower() == "all" for entry in report_to_value):
+                tracker = _ensure_local_metrics_tracker()
+                if tracker not in resolved_trackers:
+                    resolved_trackers.insert(0, tracker)
             report_to = resolved_trackers
         else:
             report_to = report_to_value
@@ -3304,6 +3330,7 @@ class Trainer:
             logger.info(lora_info_msg)
             self._send_webhook_msg(message=lora_info_msg)
             addkeys, misskeys = self.model.add_lora_adapter()
+            self.model.refresh_representation_alignment_projectors()
             if addkeys:
                 logger.warning(
                     "The following keys were found in %s, but are not part of the model and are ignored:\n %s.\nThis is most likely an error"
@@ -5330,6 +5357,11 @@ class Trainer:
         model = wrapped_model
         while hasattr(model, "module"):
             model = model.module
+        get_base_model = getattr(model, "get_base_model", None)
+        if callable(get_base_model):
+            base_model = get_base_model()
+            if base_model is not model:
+                model = base_model
 
         # Get the block swap manager if it exists
         block_swap_manager = getattr(model, "_musubi_block_swap", None)
@@ -5344,8 +5376,9 @@ class Trainer:
         double_blocks = list(getattr(model, "transformer_blocks", []) or [])
         single_blocks = list(getattr(model, "single_transformer_blocks", []) or [])
         layer_blocks = list(getattr(model, "layers", []) or [])
+        wan_blocks = list(getattr(model, "blocks", []) or [])
 
-        all_blocks = text_blocks + visual_blocks + double_blocks + single_blocks + layer_blocks
+        all_blocks = text_blocks + visual_blocks + double_blocks + single_blocks + layer_blocks + wan_blocks
         total_blocks = len(all_blocks)
 
         # Determine which block indices are managed by block swap
@@ -5371,19 +5404,37 @@ class Trainer:
             "single_transformer_blocks",
             "transformer_blocks",
             "layers",
+            "blocks",
         }
+        with torch.no_grad():
+            for param in model._parameters.values():
+                if param is not None and param.device != target_device:
+                    param.data = param.data.to(target_device, non_blocking=True)
+            for name, buffer in model._buffers.items():
+                if buffer is not None and buffer.device != target_device:
+                    model._buffers[name] = buffer.to(target_device, non_blocking=True)
+
         for name, child in model.named_children():
             if name not in block_module_names:
-                child.to(target_device)
+                if block_swap_manager is not None:
+                    block_swap_manager.move_module(child, target_device)
+                else:
+                    child.to(target_device)
                 torch.cuda.empty_cache()
 
         # Move non-managed blocks to GPU, keep managed blocks on CPU
         for idx, block in enumerate(all_blocks):
             if idx in managed_indices:
-                # Keep on CPU - block swap will stream it in during forward
+                if block_swap_manager is not None:
+                    block_swap_manager.stream_out(block)
+                else:
+                    block.to("cpu")
                 logger.debug("Block %d: keeping on CPU (managed by block swap)", idx)
             else:
-                block.to(target_device)
+                if block_swap_manager is not None:
+                    block_swap_manager.stream_in(block, target_device)
+                else:
+                    block.to(target_device)
                 torch.cuda.empty_cache()
 
         logger.info("Model moved to %s with block swap active", target_device)
@@ -5443,6 +5494,8 @@ class Trainer:
                 else:
                     self.model.get_trained_component(unwrap_model=False).to(target_device, dtype=self.config.weight_dtype)
                 self._report_cuda_usage_if_requested("after_move_trained_component")
+            elif musubi_block_swap_active and is_accelerator_target:
+                self._move_model_with_block_swap(self.model.get_trained_component(unwrap_model=False))
             elif ramtorch_enabled and is_accelerator_target:
                 # RamTorch is applied before PEFT adapters are injected. Refresh
                 # accelerator residency here so untargeted layers and newly-created

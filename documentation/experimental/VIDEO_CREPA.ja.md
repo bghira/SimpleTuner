@@ -4,11 +4,13 @@ Cross-frame Representation Alignment（CREPA）は動画モデル向けの軽量
 
 > **画像モデルをお探しですか？** 画像DiTモデル（Flux、SD3など）のREPAサポートとUNetモデル（SDXL、SD1.5、Kolors）のU-REPAサポートについては [IMAGE_REPA.ja.md](IMAGE_REPA.ja.md) をご覧ください。
 
+> **空間 alignment の改善:** [iREPA](IREPA.ja.md) は各 video frame に convolution projector と teacher normalization を独立適用します。
+
 ## 使いどき
 
 - 複雑な動き、シーン変化、オクルージョンを含む動画を学習している。
 - 動画 DiT（LoRA またはフル）を微調整していてフリッカー/アイデンティティドリフトが見える。
-- 対応モデルファミリー: `kandinsky5_video`, `ltxvideo`, `sanavideo`, `wan`（他は CREPA フックがありません）。
+- 対応モデルファミリー: CREPA hidden-state capture を公開する video Transformer。Kandinsky 5 Video、LTXVideo/LTX-2、HunyuanVideo、LongCat Video、MiniMax H3、SanaVideo、Wan/Wan S2V、Cosmos を含みます。
 - 追加の VRAM（設定により約 1〜2GB）があり、DINO エンコーダと VAE を訓練中にメモリ保持できる。
 
 ## クイック設定（WebUI）
@@ -162,7 +164,7 @@ CREPA は訓練中に係数（`crepa_lambda`）をスケジュールする機能
 
 ## よくある落とし穴
 
-- 未対応ファミリーで CREPA を有効化すると隠れ状態が取れません。`kandinsky5_video`, `ltxvideo`, `sanavideo`, `wan` に限定してください。
+- CREPA hidden-state capture がないファミリーでは missing hidden state error になります。
 - **ブロックインデックスが高すぎる** → “hidden states not returned”。インデックスを下げてください。Transformer ブロックは 0 始まりです。
 - **VRAM スパイク** → `crepa_spatial_align=false`、小さいエンコーダ（`dinov2_vits14` + `224`）、またはブロックインデックスを下げる。
 - **バックボーンモードのエラー** → `crepa_block_index`（学生）と `crepa_teacher_block_index`（教師）を実在するレイヤーに設定。

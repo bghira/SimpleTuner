@@ -9,6 +9,8 @@ SimpleTunerは2つのバリアントをサポートしています：
 
 > **動画モデルをお探しですか？** 時間的アラインメント付きの動画モデルCREPAサポートについては [VIDEO_CREPA.ja.md](VIDEO_CREPA.ja.md) をご覧ください。
 
+> **空間 alignment の改善:** [iREPA](IREPA.ja.md) は両方の REPA path に convolution projector と teacher spatial normalization を追加します。
+
 ## 使用するタイミング
 
 ### REPA（DiTモデル）

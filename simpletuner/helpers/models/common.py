@@ -72,6 +72,7 @@ from simpletuner.helpers.training.quantisation import (
     get_pipeline_quantization_builder,
 )
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.training.timestep_distribution import CubicSplineDistribution, parse_cubic_spline_weights
 from simpletuner.helpers.training.wrappers import unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 from simpletuner.helpers.utils.hidden_state_buffer import HiddenStateBuffer
@@ -118,6 +119,7 @@ flow_matching_model_families = [
     "ltxvideo2",
     "wan",
     "wan_s2v",
+    "infinitetalk",
     "sd3",
     "chroma",
     "hunyuanvideo",
@@ -145,6 +147,7 @@ upstream_config_sources = {
     "ltxvideo": "Lightricks/LTX-Video",
     "ltxvideo2": "Lightricks/LTX-2",
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "infinitetalk": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
     "hunyuanvideo": "tencent/HunyuanVideo-1.5",
     "ideogram": "ideogram-ai/ideogram-4-fp8",
     "krea2": "krea/Krea-2-Raw",
@@ -902,10 +905,26 @@ class ModelFoundation(ABC):
     # LoRA/PEFT helpers (shared across model families)
     # -------------------------------------------------------------------------
     def get_lora_save_layers(self):
-        component = self.get_trained_component(unwrap_model=False)
-        if component is not None and hasattr(component, "self_transcendence_projector"):
-            return ["self_transcendence_projector"]
-        return None
+        model = self.get_trained_component(unwrap_model=False)
+        if model is None:
+            return None
+        modules = [
+            name for name in ("self_transcendence_projector", "crepa_projector", "urepa_projector") if hasattr(model, name)
+        ]
+        return modules or None
+
+    def refresh_representation_alignment_projectors(self):
+        model = self.get_trained_component(unwrap_model=False)
+        if model is None:
+            return
+        for regularizer_name, module_name in (
+            ("crepa_regularizer", "crepa_projector"),
+            ("urepa_regularizer", "urepa_projector"),
+        ):
+            regularizer = getattr(self, regularizer_name, None)
+            projector = getattr(model, module_name, None)
+            if regularizer is not None and projector is not None:
+                regularizer.projector = projector
 
     def _get_peft_lora_target_modules(self):
         if str(getattr(self.config, "lora_type", "standard")).lower() != "standard":
@@ -4628,6 +4647,22 @@ class ModelFoundation(ABC):
 
         return tensor
 
+    def _flow_cubic_schedule_weights(self) -> Optional[tuple[float, ...]]:
+        return parse_cubic_spline_weights(getattr(self.config, "flow_cubic_schedule_weights", None))
+
+    def _uses_flow_cubic_schedule(self) -> bool:
+        return self._flow_cubic_schedule_weights() is not None
+
+    def _sample_flow_cubic_values(self, batch_size: int, device: torch.device) -> torch.Tensor:
+        weights = self._flow_cubic_schedule_weights()
+        if weights is None:
+            raise ValueError("flow_cubic_schedule_weights must be configured before sampling its distribution.")
+        cache_key = (weights, device.type, device.index)
+        if getattr(self, "_flow_cubic_distribution_cache_key", None) != cache_key:
+            self._flow_cubic_distribution = CubicSplineDistribution(weights, device=device)
+            self._flow_cubic_distribution_cache_key = cache_key
+        return self._flow_cubic_distribution.sample((batch_size,))
+
     def reset_flow_custom_timestep_cursor(self, global_step: int = 0) -> None:
         if hasattr(self, "_flow_custom_timestep_cursor"):
             delattr(self, "_flow_custom_timestep_cursor")
@@ -4748,7 +4783,11 @@ class ModelFoundation(ABC):
                 timesteps = base_timesteps[indices]
             return sigmas, timesteps
 
-        if not self.config.flux_fast_schedule and not any(
+        cubic_weights = self._flow_cubic_schedule_weights()
+        if cubic_weights is not None:
+            sigmas = self._sample_flow_cubic_values(bsz, self.accelerator.device)
+            sigmas = apply_flow_schedule_shift(self.config, self.noise_schedule, sigmas, batch["noise"])
+        elif not self.config.flux_fast_schedule and not any(
             [
                 self.config.flow_use_beta_schedule,
                 self.config.flow_use_uniform_schedule,
@@ -6261,11 +6300,36 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
 
     def post_model_load_setup(self):
         super().post_model_load_setup()
+        self._validate_irepa_adapter_support()
         self._init_crepa_regularizer()
         self._init_urepa_regularizer()
 
+    def post_quantization_setup(self):
+        super().post_quantization_setup()
+        if not getattr(self.config, "irepa_enabled", False):
+            return
+        model_component = self.get_trained_component(unwrap_model=False)
+        if model_component is None:
+            return
+        for regularizer in (self.crepa_regularizer, self.urepa_regularizer):
+            if regularizer is not None:
+                regularizer.reinitialize_projector(model_component)
+
+    def _validate_irepa_adapter_support(self):
+        if not getattr(self.config, "irepa_enabled", False):
+            return
+        if (
+            "lora" in str(getattr(self.config, "model_type", ""))
+            and str(getattr(self.config, "lora_type", "standard")).lower() == "lycoris"
+        ):
+            raise ValueError("iREPA supports full-model and standard PEFT LoRA training; LyCORIS is not supported.")
+
     def _init_crepa_regularizer(self):
-        if not getattr(self.config, "crepa_enabled", False):
+        crepa_enabled = bool(getattr(self.config, "crepa_enabled", False))
+        irepa_enabled = bool(getattr(self.config, "irepa_enabled", False))
+        if irepa_enabled and getattr(self, "MODEL_TYPE", None) == ModelTypes.TRANSFORMER and not crepa_enabled:
+            raise ValueError("iREPA requires crepa_enabled=true for transformer models.")
+        if not crepa_enabled:
             self.crepa_regularizer = None
             return
 
@@ -6323,7 +6387,11 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
 
     def _init_urepa_regularizer(self):
         """Initialize U-REPA regularizer for UNet-based models (SDXL, SD1.5, Kolors)."""
-        if not getattr(self.config, "urepa_enabled", False):
+        urepa_enabled = bool(getattr(self.config, "urepa_enabled", False))
+        irepa_enabled = bool(getattr(self.config, "irepa_enabled", False))
+        if irepa_enabled and getattr(self, "MODEL_TYPE", None) == ModelTypes.UNET and not urepa_enabled:
+            raise ValueError("iREPA requires urepa_enabled=true for UNet models.")
+        if not urepa_enabled:
             self.urepa_regularizer = None
             return
 

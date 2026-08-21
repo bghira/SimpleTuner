@@ -110,10 +110,10 @@ After=network.target
 [Service]
 Type=simple
 User=trainer
-WorkingDirectory=/home/trainer/simpletuner-workspace
+WorkingDirectory=/opt/simpletuner
 Environment="SIMPLETUNER_HOST=127.0.0.1"
 Environment="SIMPLETUNER_PORT=8001"
-ExecStart=/home/trainer/simpletuner-workspace/.venv/bin/simpletuner server
+ExecStart=/opt/simpletuner/.venv/bin/simpletuner server
 Restart=on-failure
 
 [Install]
@@ -912,3 +912,7 @@ curl -s -X POST http://localhost:8001/api/queue/submit \
 - **クラウドGPUでトレーニングを実行**するにはReplicateを使用—[クラウドトレーニングチュートリアル](../experimental/cloud/TUTORIAL.md)を参照
 
 これらのパターンを使用すると、実証済みのCLIセットアッププロセスに依存しながら、WebUIに触れることなくSimpleTunerトレーニングを完全にスクリプト化できます。
+
+### ローカルメトリクス API
+
+`report_to=simpletuner` の場合、`GET /api/metrics/training/runs` で一覧を取得し、`GET /api/metrics/training/runs/{environment}` で読み込みます。`start_step`、`end_step`、`max_points`、`metric` が使えます。詳細は [ローカルメトリクス](../webui/LOCAL_METRICS.md) を参照してください。

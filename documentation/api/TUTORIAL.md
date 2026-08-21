@@ -110,10 +110,10 @@ After=network.target
 [Service]
 Type=simple
 User=trainer
-WorkingDirectory=/home/trainer/simpletuner-workspace
+WorkingDirectory=/opt/simpletuner
 Environment="SIMPLETUNER_HOST=127.0.0.1"
 Environment="SIMPLETUNER_PORT=8001"
-ExecStart=/home/trainer/simpletuner-workspace/.venv/bin/simpletuner server
+ExecStart=/opt/simpletuner/.venv/bin/simpletuner server
 Restart=on-failure
 
 [Install]
@@ -912,3 +912,7 @@ Labels support glob patterns (`*` matches any characters).
 - **Run training on cloud GPUs** via Replicate—see the [Cloud Training Tutorial](../experimental/cloud/TUTORIAL.md)
 
 With these patterns you can fully script SimpleTuner training without touching the WebUI, while still relying on the battle-tested CLI setup process.
+
+### Local metric endpoints
+
+With `report_to=simpletuner`, list runs at `GET /api/metrics/training/runs` and read one at `GET /api/metrics/training/runs/{environment}`. The latter accepts `start_step`, `end_step`, `max_points`, and repeated `metric` filters. See [Local training metrics](../webui/LOCAL_METRICS.md).

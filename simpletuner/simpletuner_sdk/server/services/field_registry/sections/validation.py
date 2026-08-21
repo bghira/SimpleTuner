@@ -205,6 +205,54 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="validation_image_format",
+            arg_name="--validation_image_format",
+            ui_label="Validation Image Format",
+            field_type=FieldType.SELECT,
+            tab="validation",
+            section="validation_schedule",
+            default_value="png",
+            choices=[
+                {"value": "png", "label": "PNG"},
+                {"value": "webp", "label": "WebP"},
+                {"value": "jpeg", "label": "JPEG"},
+            ],
+            help_text="Image format used for validation files saved in the output directory",
+            tooltip="WebP and JPEG reduce archive size. PNG preserves the existing lossless output.",
+            importance=ImportanceLevel.ADVANCED,
+            order=3.1,
+            subsection="advanced",
+            documentation="OPTIONS.md#--validation_image_format",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="validation_image_quality",
+            arg_name="--validation_image_quality",
+            ui_label="Validation Image Quality",
+            field_type=FieldType.NUMBER,
+            tab="validation",
+            section="validation_schedule",
+            default_value=90,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1"),
+                ValidationRule(ValidationRuleType.MAX, value=100, message="Must be at most 100"),
+            ],
+            dependencies=[
+                FieldDependency(field="validation_image_format", operator="in", values=["webp", "jpeg"], action="show")
+            ],
+            help_text="Encoding quality for WebP and JPEG validation images",
+            tooltip="Higher values retain more detail and use more disk space.",
+            importance=ImportanceLevel.ADVANCED,
+            order=3.2,
+            subsection="advanced",
+            documentation="OPTIONS.md#--validation_image_quality",
+        )
+    )
+
     # Number of Eval Images
     registry._add_field(
         ConfigField(

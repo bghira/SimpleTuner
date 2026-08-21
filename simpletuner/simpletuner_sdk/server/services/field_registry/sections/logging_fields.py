@@ -23,6 +23,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             section="project_settings",
             default_value="none",
             choices=[
+                {"value": "simpletuner", "label": "SimpleTuner (Local)"},
                 {"value": "tensorboard", "label": "TensorBoard"},
                 {"value": "wandb", "label": "Weights & Biases"},
                 {"value": "swanlab", "label": "SwanLab"},
@@ -32,7 +33,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
                 {"value": "none", "label": "None"},
             ],
             help_text="Where to log training metrics",
-            tooltip="WandB provides cloud logging. TensorBoard is local. 'All' logs to all configured platforms.",
+            tooltip="SimpleTuner writes local charts and an offline report. 'All' includes the local report and available external platforms.",
             importance=ImportanceLevel.IMPORTANT,
             order=1,
             documentation="OPTIONS.md#--report_to",

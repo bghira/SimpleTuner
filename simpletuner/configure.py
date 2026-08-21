@@ -108,6 +108,7 @@ default_models = {
     "ltxvideo": "Lightricks/LTX-Video",
     "wan": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
     "wan_s2v": "tolgacangoz/Wan2.2-S2V-14B-Diffusers",
+    "infinitetalk": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
     "hidream": "HiDream-ai/HiDream-I1-Full",
     "auraflow": "terminusresearch/auraflow-v0.3",
     "deepfloyd": "DeepFloyd/DeepFloyd-IF-I-XL-v1.0",
@@ -125,6 +126,7 @@ default_cfg = {
     "hidream": 2.5,
     "wan": 4.0,
     "wan_s2v": 4.5,
+    "infinitetalk": 5.0,
     "sana": 3.8,
     "omnigen": 3.2,
     "deepfloyd": 6.0,
@@ -144,6 +146,7 @@ model_labels = {
     "ltxvideo": "LTX Video",
     "wan": "WanX",
     "wan_s2v": "WanS2V",
+    "infinitetalk": "InfiniteTalk",
     "hidream": "HiDream I1",
     "sana": "Sana",
 }
