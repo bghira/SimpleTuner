@@ -4034,6 +4034,7 @@ class Validation:
                     self.save_dir,
                     validation_audios,
                     decorated_shortname,
+                    config=self.config,
                 )
                 validation_audio.log_audio_to_webhook(
                     validation_audios,
@@ -4046,6 +4047,7 @@ class Validation:
                     validation_audios,
                     decorated_shortname,
                     sample_rate=sample_rate,
+                    config=self.config,
                 )
                 validation_audio.log_audio_to_webhook(
                     validation_audios,
@@ -5129,60 +5131,6 @@ class Validation:
             ema_validation_images,
             validation_audio_results,
         )
-
-    def _save_videos(self, validation_images, validation_shortname, validation_prompt):
-        validation_img_idx = 0
-        from diffusers.utils.export_utils import export_to_video
-
-        video_paths: list[str] = []
-        for validation_image in validation_images[validation_shortname]:
-            # Get the validation resolution for this index
-            if validation_img_idx < len(self.validation_resolutions):
-                resolution = self.validation_resolutions[validation_img_idx]
-                if isinstance(resolution, str):
-                    if "x" in resolution:
-                        res_label = resolution
-                    else:
-                        res_label = f"{resolution}x{resolution}"
-                elif isinstance(resolution, tuple):
-                    res_label = f"{resolution[0]}x{resolution[1]}"
-                else:
-                    res_label = f"{resolution}x{resolution}"
-            else:
-                # Fallback to actual size if somehow out of bounds
-                logger.warning(f"Image index {validation_img_idx} exceeds validation resolutions list")
-                if type(validation_image) is list:
-                    size_x, size_y = validation_image[0].size
-                else:
-                    size_x, size_y = validation_image.size
-                res_label = f"{size_x}x{size_y}"
-
-            # convert array of numpy to array of pil:
-            validation_image = MultiaspectImage.numpy_list_to_pil(validation_image)
-            if type(validation_image) is not list:
-                # save as single image instead
-                validation_image.save(
-                    os.path.join(
-                        self.save_dir,
-                        f"step_{StateTracker.get_global_step()}_{validation_shortname}_{validation_img_idx}_{res_label}.png",
-                    )
-                )
-                validation_img_idx += 1
-                continue
-
-            video_path = os.path.join(
-                self.save_dir,
-                f"step_{StateTracker.get_global_step()}_{validation_shortname}_{validation_img_idx}_{res_label}.mp4",
-            )
-            export_to_video(
-                validation_image,
-                video_path,
-                fps=int(getattr(self.config, "framerate", None) or 16),
-            )
-            video_paths.append(video_path)
-            validation_img_idx += 1
-        if video_paths:
-            self.validation_video_paths[validation_shortname] = video_paths
 
     def _log_validations_to_trackers(self, validation_images, validation_audios=None):
         if isinstance(self.model, AudioModelFoundation):

@@ -20,6 +20,14 @@
 
     [:octicons-arrow-right-24: Tutorial de Web UI](webui/TUTORIAL.md)
 
+-   :material-chart-line:{ .lg .middle } __Métricas locales__
+
+    ---
+
+    Guarda gráficas y comparaciones de validación con cada entrenamiento
+
+    [:octicons-arrow-right-24: Métricas locales](webui/LOCAL_METRICS.md)
+
 -   :material-closed-caption:{ .lg .middle } __CaptionFlow__
 
     ---

@@ -20,6 +20,14 @@
 
     [:octicons-arrow-right-24: Web 界面教程](webui/TUTORIAL.md)
 
+-   :material-chart-line:{ .lg .middle } __本地指标__
+
+    ---
+
+    为每次训练保存标量图表和验证对比
+
+    [:octicons-arrow-right-24: 本地训练指标](webui/LOCAL_METRICS.md)
+
 -   :material-closed-caption:{ .lg .middle } __CaptionFlow__
 
     ---

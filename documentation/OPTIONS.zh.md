@@ -1858,8 +1858,19 @@ LayerSync 通过在同一 Transformer 内让“学生”层对齐更强的“教
 ### `--report_to`
 
 - **内容**：指定结果与日志的上报平台。
-- **原因**：可与 TensorBoard、wandb、comet_ml 集成监控。多个值用逗号分隔；
-- **选项**：wandb, tensorboard, comet_ml
+- **原因**：启用本地或外部监控。`simpletuner` 会在 `output_dir` 中写入 JSONL、运行清单、验证媒体元数据和独立 HTML 报告。`all` 包含本地 tracker。
+- **选项**：simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, all, none
+
+### `--validation_image_format`
+
+- **内容**：保存到 `output_dir/validation_images` 的图像格式。
+- **选项**：png, webp, jpeg
+- **默认值**：png
+
+### `--validation_image_quality`
+
+- **内容**：WebP 和 JPEG 的质量，范围 1 到 100。
+- **默认值**：90。PNG 会忽略此项。
 
 ## 环境配置变量
 

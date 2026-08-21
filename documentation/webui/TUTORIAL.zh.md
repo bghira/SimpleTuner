@@ -358,3 +358,7 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 **注意**：**默认**环境是特殊的，不建议用作通用训练环境；它的设置可以自动合并到任何启用了**使用环境默认值**选项的环境中：
 
 <img width="1521" height="991" alt="image" src="https://github.com/user-attachments/assets/9d18b0c1-608e-4ab2-be14-65b98907ec69" />
+
+## 本地训练指标
+
+选择 **SimpleTuner (Local)** 作为 logging platform，然后打开 **Metrics → Training Runs**。文件格式、离线报告、压缩和 API 请参阅[本地训练指标](LOCAL_METRICS.md)。

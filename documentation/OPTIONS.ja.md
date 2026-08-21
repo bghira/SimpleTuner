@@ -1856,8 +1856,19 @@ LayerSync は同一 Transformer 内の「学生」レイヤーを、より強い
 ### `--report_to`
 
 - **内容**: 結果とログの報告先プラットフォーム。
-- **理由**: TensorBoard、wandb、comet_ml などと連携して監視できます。複数指定はカンマ区切りです。
-- **選択肢**: wandb, tensorboard, comet_ml
+- **理由**: ローカルまたは外部監視を有効にします。`simpletuner` は JSONL、マニフェスト、検証メディア情報、自己完結 HTML を `output_dir` に保存します。`all` にはローカルトラッカーも含まれます。
+- **選択肢**: simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, all, none
+
+### `--validation_image_format`
+
+- **内容**: `output_dir/validation_images` に保存する画像形式。
+- **選択肢**: png, webp, jpeg
+- **デフォルト**: png
+
+### `--validation_image_quality`
+
+- **内容**: WebP と JPEG の品質（1 から 100）。
+- **デフォルト**: 90。PNG では無視されます。
 
 ## 環境設定変数
 

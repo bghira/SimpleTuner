@@ -20,6 +20,14 @@
 
     [:octicons-arrow-right-24: Web UI チュートリアル](webui/TUTORIAL.md)
 
+-   :material-chart-line:{ .lg .middle } __ローカルメトリクス__
+
+    ---
+
+    学習ごとにスカラーチャートと検証比較を保存
+
+    [:octicons-arrow-right-24: ローカル学習メトリクス](webui/LOCAL_METRICS.md)
+
 -   :material-closed-caption:{ .lg .middle } __CaptionFlow__
 
     ---

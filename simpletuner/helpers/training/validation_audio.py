@@ -9,12 +9,13 @@ import scipy.io.wavfile
 import torch
 import wandb
 
+from simpletuner.helpers.training.local_metrics import record_validation_media
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
 
 
-def save_audio(save_dir, validation_audios, validation_shortname, sample_rate=44100):
+def save_audio(save_dir, validation_audios, validation_shortname, sample_rate=44100, config=None):
     """
     Save validation audio to disk using scipy (no torchcodec dependency).
     validation_audios: dict where key is shortname, value is list of audio tensors (C, T) or (T,)
@@ -49,6 +50,13 @@ def save_audio(save_dir, validation_audios, validation_shortname, sample_rate=44
                 f"min={audio_np.min()}, max={audio_np.max()}"
             )
             scipy.io.wavfile.write(save_path, sample_rate, audio_np)
+            record_validation_media(
+                config,
+                save_path,
+                media_type="audio",
+                label=validation_shortname,
+                index=idx,
+            )
             saved_paths.append(save_path)
         except Exception as e:
             logger.error(f"Failed to save validation audio to {save_path}: {e}")

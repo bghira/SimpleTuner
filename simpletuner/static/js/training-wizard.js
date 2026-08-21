@@ -1163,6 +1163,7 @@ function trainingWizardComponent() {
                     // Fallback to hardcoded options
                     this.loggingProviders = [
                         { value: 'none', label: 'None' },
+                        { value: 'simpletuner', label: 'SimpleTuner (Local)' },
                         { value: 'wandb', label: 'Weights & Biases' },
                         { value: 'tensorboard', label: 'TensorBoard' },
                         { value: 'comet_ml', label: 'Comet ML' },
@@ -1186,6 +1187,7 @@ function trainingWizardComponent() {
                     // Fallback
                     this.loggingProviders = [
                         { value: 'none', label: 'None' },
+                        { value: 'simpletuner', label: 'SimpleTuner (Local)' },
                         { value: 'wandb', label: 'Weights & Biases' },
                         { value: 'tensorboard', label: 'TensorBoard' },
                         { value: 'comet_ml', label: 'Comet ML' },
