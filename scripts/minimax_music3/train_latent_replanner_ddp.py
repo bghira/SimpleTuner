@@ -101,6 +101,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--task-dropout", type=float, default=0.15)
     parser.add_argument(
+        "--edit-labels-file",
+        type=Path,
+        default=None,
+        help="json mapping pair id -> edit label; labels become the transfer-task vocabulary for task conditioning",
+    )
+    parser.add_argument(
         "--bridge-context-ref",
         action="store_true",
         help="bridge objective: also attach the degraded latents as in-context reference tokens",
@@ -155,6 +161,8 @@ class PairCropDataset(Dataset):
         identity_rate: float = 0.0,
         degrade_rate: float = 0.0,
         eval_degrade: bool = False,
+        edit_labels: dict[str, str] | None = None,
+        task_vocab: list[str] | None = None,
     ):
         self.source_dir = source_dir
         self.target_dir = target_dir
@@ -166,6 +174,14 @@ class PairCropDataset(Dataset):
         self.identity_rate = identity_rate
         self.degrade_rate = degrade_rate
         self.eval_degrade = eval_degrade
+        self.task_vocab = task_vocab or ["transfer", "identity", "restore"]
+        self.transfer_task_ids = {}
+        if edit_labels:
+            for pair_id, label in edit_labels.items():
+                if label not in self.task_vocab:
+                    raise ValueError(f"edit label {label!r} for {pair_id} is not in the task vocabulary")
+                self.transfer_task_ids[pair_id] = self.task_vocab.index(label)
+        self.skipped_items = 0
 
     def __len__(self) -> int:
         return len(self.pair_ids)
@@ -174,7 +190,19 @@ class PairCropDataset(Dataset):
         for hop in range(5):
             try:
                 return self._load_item((index + hop) % len(self.pair_ids))
-            except Exception:
+            except Exception as exc:
+                self.skipped_items += 1
+                if self.skipped_items % 25 == 1:
+                    print(
+                        json.dumps(
+                            {
+                                "dataset_skip": self.pair_ids[(index + hop) % len(self.pair_ids)],
+                                "total_skipped": self.skipped_items,
+                                "error": str(exc)[:120],
+                            }
+                        ),
+                        flush=True,
+                    )
                 if hop == 4:
                     raise
         raise RuntimeError("unreachable")
@@ -278,7 +306,7 @@ class PairCropDataset(Dataset):
         else:
             input_audio = source_44k_crop
         item = {
-            "task": 1 if identity else (2 if restore else 0),
+            "task": 1 if identity else (2 if restore else self.transfer_task_ids.get(pair_id, 0)),
             "source": source_crop,
             "target": target_crop,
             "degraded": input_audio,
@@ -421,6 +449,7 @@ def bridge_sample(
     code_conditioning=None,
     stream_latents=None,
     context_latents=None,
+    task=None,
 ):
     """Deterministic Euler along the clean<->degraded bridge. restore: t 1->0 from degraded; degrade: t 0->1 from clean."""
     latents = degraded_latents.clone()
@@ -431,7 +460,15 @@ def bridge_sample(
     for index in range(steps):
         t = schedule[index].expand(latents.shape[0])
         velocity = model(
-            latents, conditioning, t, layer_conditioning, style, code_conditioning, stream_latents, None, context_latents
+            latents,
+            conditioning,
+            t,
+            layer_conditioning,
+            style,
+            code_conditioning,
+            stream_latents,
+            task,
+            context_latents,
         )
         latents = latents - (schedule[index] - schedule[index + 1]) * velocity
     return latents
@@ -443,7 +480,7 @@ def ddpm_alpha_bar(t: torch.Tensor) -> torch.Tensor:
 
 @torch.no_grad()
 def ddpm_ancestral_sample(
-    model, conditioning, steps, generator, layer_conditioning=None, style=None, code_conditioning=None
+    model, conditioning, steps, generator, layer_conditioning=None, style=None, code_conditioning=None, task=None
 ):
     device = conditioning.device
     latents = torch.randn(
@@ -455,7 +492,7 @@ def ddpm_ancestral_sample(
         t_next = times[index + 1]
         abar = ddpm_alpha_bar(t)[:, None, None]
         abar_next = ddpm_alpha_bar(t_next.expand(latents.shape[0]))[:, None, None]
-        v = model(latents, conditioning, t, layer_conditioning, style, code_conditioning)
+        v = model(latents, conditioning, t, layer_conditioning, style, code_conditioning, None, task)
         x0 = abar.sqrt() * latents - (1 - abar).sqrt() * v
         eps = (1 - abar).sqrt() * latents + abar.sqrt() * v
         if index == steps - 1:
@@ -495,6 +532,17 @@ def main() -> None:
     train_ids = pair_ids[: -args.holdout_count]
     holdout_ids = pair_ids[-args.holdout_count :]
 
+    edit_labels = None
+    task_vocab = ["transfer", "identity", "restore"]
+    if args.edit_labels_file is not None:
+        edit_labels = json.loads(args.edit_labels_file.read_text())
+        missing = [pair_id for pair_id in pair_ids if pair_id not in edit_labels]
+        if missing:
+            raise ValueError(f"{len(missing)} pair ids have no edit label, e.g. {missing[:3]}")
+        task_vocab = task_vocab + sorted({label for label in edit_labels.values() if label not in task_vocab})
+    if main_process:
+        print(json.dumps({"task_vocab": task_vocab}), flush=True)
+
     dataset = PairCropDataset(
         args.source_dir,
         args.target_dir,
@@ -505,6 +553,8 @@ def main() -> None:
         codes_per_crop=args.codes_per_crop,
         identity_rate=args.identity_rate,
         degrade_rate=args.degrade_rate,
+        edit_labels=edit_labels,
+        task_vocab=task_vocab,
     )
     sampler = (
         DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True, seed=args.seed, drop_last=True)
@@ -578,7 +628,7 @@ def main() -> None:
     if args.objective == "incontext" or args.bridge_context_ref:
         model.enable_context_editing()
     if args.task_conditioning:
-        model.enable_task_conditioning(3)
+        model.enable_task_conditioning(len(task_vocab))
     if args.codes_dir is not None:
         codes_meta = json.loads((args.codes_dir / "meta.json").read_text())
         model.enable_code_conditioning(codes_meta["total_vocab"], codes_meta["books"])
@@ -604,13 +654,9 @@ def main() -> None:
             ),
             flush=True,
         )
-    reference_model = None
-    if args.dpo_weight > 0.0 and args.objective == "incontext":
-        import copy
-
-        reference_model = copy.deepcopy(model).eval()
-        reference_model.requires_grad_(False)
-    wrapped = DistributedDataParallel(model, device_ids=[local_rank], find_unused_parameters=True) if distributed else model
+    wrapped = (
+        DistributedDataParallel(model, device_ids=[local_rank], find_unused_parameters=True) if distributed else model
+    )
     optimizer = torch.optim.AdamW(wrapped.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     start_step = 0
     if args.resume is not None:
@@ -618,6 +664,12 @@ def main() -> None:
         model.load_state_dict(payload["model"])
         optimizer.load_state_dict(payload["optimizer"])
         start_step = int(payload["step"])
+    reference_model = None
+    if args.dpo_weight > 0.0 and args.objective == "incontext":
+        import copy
+
+        reference_model = copy.deepcopy(model).eval()
+        reference_model.requires_grad_(False)
 
     holdout_batch = None
     holdout_latents = holdout_layers = None
@@ -631,6 +683,8 @@ def main() -> None:
             codes_dir=args.codes_dir,
             codes_per_crop=args.codes_per_crop,
             eval_degrade=args.eval_degrade,
+            edit_labels=edit_labels,
+            task_vocab=task_vocab,
         )
         holdout_items = [holdout_dataset[index] for index in range(len(holdout_dataset))]
         holdout_batch = collate_crops(holdout_items)
@@ -653,9 +707,9 @@ def main() -> None:
         if args.clap_from_source:
             import torchaudio as _ta2
 
-            holdout_clap_input = _ta2.functional.resample(holdout_batch["source"], MERT_SAMPLE_RATE, SAMPLE_RATE).repeat(
-                1, 2, 1
-            )
+            holdout_clap_input = _ta2.functional.resample(
+                holdout_batch["source"], MERT_SAMPLE_RATE, SAMPLE_RATE
+            ).repeat(1, 2, 1)
             holdout_style = extractor.clap_audio_embedding(holdout_clap_input)
         else:
             holdout_style = extractor.clap_audio_embedding(holdout_batch["target"])
@@ -675,8 +729,8 @@ def main() -> None:
         return min(1.0, step / max(1, args.warmup_steps))
 
     step = start_step
-    task_loss_sums = [0.0, 0.0, 0.0]
-    task_loss_counts = [0, 0, 0]
+    task_loss_sums = [0.0] * len(task_vocab)
+    task_loss_counts = [0] * len(task_vocab)
     dpo_loss_sum = 0.0
     dpo_margin_sum = 0.0
     dpo_margin_pos_sum = 0.0
@@ -750,7 +804,7 @@ def main() -> None:
         if args.task_conditioning and "task" in batch:
             task_ids = batch["task"].to(device)
             null_mask = torch.rand(batch_size, device=device) < args.task_dropout
-            task_ids = torch.where(null_mask, torch.full_like(task_ids, 3), task_ids)
+            task_ids = torch.where(null_mask, torch.full_like(task_ids, len(task_vocab)), task_ids)
         if args.target_mask_ratio > 0.0:
             frame_total = noisy.shape[1]
             keep_count = max(8, int(frame_total * (1.0 - args.target_mask_ratio)))
@@ -790,6 +844,7 @@ def main() -> None:
                         style=style,
                         code_conditioning=code_conditioning,
                         context_latents=context_latents,
+                        task=task_ids,
                     )
                 model.train()
             noisy_rejected = (1.0 - t[:, None, None]) * rejected + t[:, None, None] * noise
@@ -862,7 +917,7 @@ def main() -> None:
             dpo_count += 1
         if "task" in batch:
             tasks = batch["task"].to(device)
-            for task_id in (0, 1, 2):
+            for task_id in range(len(task_vocab)):
                 mask = tasks == task_id
                 if mask.any():
                     task_loss_sums[task_id] += per_sample[mask].sum().item()
@@ -880,11 +935,11 @@ def main() -> None:
                 "steps_per_second": round((step - start_step) / (time.perf_counter() - started), 3),
                 "epoch": epoch,
             }
-            for task_id, name in ((0, "loss_transfer"), (1, "loss_identity"), (2, "loss_restore")):
+            for task_id, name in enumerate(task_vocab):
                 if task_loss_counts[task_id]:
-                    record[name] = round(task_loss_sums[task_id] / task_loss_counts[task_id], 6)
-            task_loss_sums = [0.0, 0.0, 0.0]
-            task_loss_counts = [0, 0, 0]
+                    record[f"loss_{name}"] = round(task_loss_sums[task_id] / task_loss_counts[task_id], 6)
+            task_loss_sums = [0.0] * len(task_vocab)
+            task_loss_counts = [0] * len(task_vocab)
             if dpo_count:
                 record["dpo_loss"] = round(dpo_loss_sum / dpo_count, 6)
                 record["dpo_margin"] = round(dpo_margin_sum / dpo_count, 6)
@@ -900,12 +955,19 @@ def main() -> None:
                 chunks = []
                 for start in range(0, holdout_layers.shape[0], 8):
                     chunk_layers = holdout_layers[start : start + 8].to(device).float()
-                    chunk_degraded = holdout_degraded[start : start + 8].to(device) if holdout_degraded is not None else None
+                    chunk_degraded = (
+                        holdout_degraded[start : start + 8].to(device) if holdout_degraded is not None else None
+                    )
                     gen = torch.Generator(device="cpu").manual_seed(args.seed + start)
                     kwargs = dict(
                         style=holdout_style[start : start + 8],
                         code_conditioning=(
                             holdout_codes[start : start + 8].to(device).float() if holdout_codes is not None else None
+                        ),
+                        task=(
+                            holdout_batch["task"][start : start + 8].to(device)
+                            if args.task_conditioning and "task" in holdout_batch
+                            else None
                         ),
                     )
                     if args.objective == "bridge":
@@ -925,7 +987,12 @@ def main() -> None:
                     elif args.objective == "ddpm":
                         chunks.append(
                             ddpm_ancestral_sample(
-                                model, chunk_layers[:, args.mert_input_layer], args.sample_steps, gen, chunk_layers, **kwargs
+                                model,
+                                chunk_layers[:, args.mert_input_layer],
+                                args.sample_steps,
+                                gen,
+                                chunk_layers,
+                                **kwargs,
                             )
                         )
                     elif args.objective == "incontext":
@@ -961,26 +1028,29 @@ def main() -> None:
                 diagonal = confusion.diagonal()
                 count = confusion.shape[0]
                 residual_metric = None
+                eval_record = {
+                    "step": step,
+                    "holdout_diag_mean": round(diagonal.mean().item(), 4),
+                    "holdout_diag_min": round(diagonal.min().item(), 4),
+                    "holdout_diag_max": round(diagonal.max().item(), 4),
+                    "holdout_offdiag_mean": round(
+                        ((confusion.sum() - diagonal.sum()) / (count * (count - 1))).item(), 4
+                    ),
+                }
                 if holdout_degraded is not None:
                     degraded_denorm = holdout_degraded.to(device) * latent_std + latent_mean
                     residual_generated = (denormalized - degraded_denorm).flatten(1)
                     residual_true = (holdout_latents - degraded_denorm).flatten(1)
-                    residual_metric = round(F.cosine_similarity(residual_generated, residual_true, dim=1).mean().item(), 4)
-                print(
-                    json.dumps(
-                        {
-                            "step": step,
-                            "holdout_diag_mean": round(diagonal.mean().item(), 4),
-                            "holdout_diag_min": round(diagonal.min().item(), 4),
-                            "holdout_diag_max": round(diagonal.max().item(), 4),
-                            "holdout_offdiag_mean": round(
-                                ((confusion.sum() - diagonal.sum()) / (count * (count - 1))).item(), 4
-                            ),
-                            "holdout_residual_cos": residual_metric,
-                        }
-                    ),
-                    flush=True,
-                )
+                    residual_cos = F.cosine_similarity(residual_generated, residual_true, dim=1)
+                    residual_metric = round(residual_cos.mean().item(), 4)
+                    if "task" in holdout_batch:
+                        holdout_tasks = holdout_batch["task"].to(residual_cos.device)
+                        for task_id, name in enumerate(task_vocab):
+                            mask = holdout_tasks == task_id
+                            if mask.any():
+                                eval_record[f"holdout_residual_cos_{name}"] = round(residual_cos[mask].mean().item(), 4)
+                eval_record["holdout_residual_cos"] = residual_metric
+                print(json.dumps(eval_record), flush=True)
                 checkpoint_dir = args.output_dir / f"checkpoint-{step}"
                 checkpoint_dir.mkdir(parents=True, exist_ok=True)
                 torch.save(
@@ -989,6 +1059,7 @@ def main() -> None:
                         "optimizer": optimizer.state_dict(),
                         "step": step,
                         "args": {k: str(v) for k, v in vars(args).items()},
+                        "task_vocab": task_vocab,
                     },
                     checkpoint_dir / "state.pt",
                 )
@@ -1013,10 +1084,23 @@ def main() -> None:
                             SAMPLE_RATE,
                         )
                         sf.write(
-                            args.output_dir / f"holdout{index}_source.flac",
-                            holdout_batch["source"][index].T.numpy(),
-                            MERT_SAMPLE_RATE,
+                            args.output_dir / f"holdout{index}_input.flac",
+                            holdout_batch["degraded"][index].T.numpy(),
+                            SAMPLE_RATE,
                         )
+                        sf.write(
+                            args.output_dir / f"holdout{index}_target.flac",
+                            holdout_batch["target"][index].T.numpy(),
+                            SAMPLE_RATE,
+                        )
+                if step == args.eval_every:
+                    render_labels = {}
+                    for index in range(min(args.render_count, count)):
+                        entry = {"pair_id": holdout_ids[index]}
+                        if "task" in holdout_batch:
+                            entry["task"] = task_vocab[int(holdout_batch["task"][index])]
+                        render_labels[f"holdout{index}"] = entry
+                    (args.output_dir / "holdout_render_labels.json").write_text(json.dumps(render_labels, indent=2))
             barrier(distributed)
 
     if distributed:

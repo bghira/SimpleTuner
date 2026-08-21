@@ -217,7 +217,9 @@ class LatentReplanner(nn.Module):
     def embed_codes(self, codes: torch.Tensor, frame_count: int) -> torch.Tensor:
         """codes [B, Tc, books] (already offset per book) -> [B, frame_count, code_dim]."""
         embedded = self.code_embed(codes).sum(dim=-2)
-        return F.interpolate(embedded.transpose(1, 2), size=frame_count, mode="linear", align_corners=True).transpose(1, 2)
+        return F.interpolate(embedded.transpose(1, 2), size=frame_count, mode="linear", align_corners=True).transpose(
+            1, 2
+        )
 
     def enable_layer_conditioning(self, cond_dim: int, mert_layer_count: int) -> None:
         """Map DiT block i to MERT hidden-state 1+i, repeating the penultimate layer past the match."""
@@ -257,7 +259,10 @@ class LatentReplanner(nn.Module):
         time_conditioning = self.time_embed(self.timestep_features(t))
         if self.task_embed is not None:
             if task is None:
-                task = torch.full((t.shape[0],), self.task_embed.num_embeddings - 1, dtype=torch.long, device=t.device)
+                raise ValueError(
+                    "model is task-conditioned; pass task ids (use index "
+                    f"{self.task_embed.num_embeddings - 1} explicitly for the trained null)"
+                )
             time_conditioning = time_conditioning + self.task_embed(task)
         if self.style_proj is not None:
             if style is None:
@@ -294,6 +299,7 @@ def sample(
     edit_strength: float = 1.0,
     degraded_latents: torch.Tensor | None = None,
     context_latents: torch.Tensor | None = None,
+    task: torch.Tensor | None = None,
 ) -> torch.Tensor:
     noise = torch.randn(
         conditioning.shape[0],
@@ -312,7 +318,15 @@ def sample(
     for index in range(steps):
         t = schedule[index].expand(latents.shape[0])
         velocity = model(
-            latents, conditioning, t, layer_conditioning, style, code_conditioning, degraded_latents, None, context_latents
+            latents,
+            conditioning,
+            t,
+            layer_conditioning,
+            style,
+            code_conditioning,
+            degraded_latents,
+            task,
+            context_latents,
         )
         latents = latents - (schedule[index] - schedule[index + 1]) * velocity
     return latents
@@ -375,7 +389,10 @@ def main() -> None:
 
     model = LatentReplanner(128, conditioning.shape[-1], args.d_model, args.depth, args.heads).to(device)
     parameter_count = sum(parameter.numel() for parameter in model.parameters())
-    print(json.dumps({"parameters": parameter_count, "frames": frame_count, "cond_dim": conditioning.shape[-1]}), flush=True)
+    print(
+        json.dumps({"parameters": parameter_count, "frames": frame_count, "cond_dim": conditioning.shape[-1]}),
+        flush=True,
+    )
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
     generator = torch.Generator(device="cpu").manual_seed(args.seed)
 
@@ -414,7 +431,9 @@ def main() -> None:
             frame_cosine = F.cosine_similarity(denormalized, target_latents.to(device), dim=-1).mean()
             with torch.no_grad():
                 audio = dav.decode(denormalized.transpose(0, 1).unsqueeze(0).to(dav.dtype))
-            sf.write(args.output_dir / f"generated_step{step}.flac", audio.squeeze(0).float().cpu().T.numpy(), SAMPLE_RATE)
+            sf.write(
+                args.output_dir / f"generated_step{step}.flac", audio.squeeze(0).float().cpu().T.numpy(), SAMPLE_RATE
+            )
             torch.save(
                 {
                     "model": model.state_dict(),
