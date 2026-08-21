@@ -194,6 +194,14 @@ simpletuner configure config/foo/config.json
 - **Why**: ACE-Step v1.5 checkpoints के लिए आवश्यक है, क्योंकि upstream repository में custom `AutoModel` और tokenizer code शामिल है।
 - **Warning**: इसे केवल उन्हीं model repositories के लिए सक्षम करें जिन पर आप भरोसा करते हैं।
 
+### `--diffusion_blocks_config`
+
+- **What**: Diffusion Transformer block-wise training enable करने वाला JSON object या JSON file path।
+- **Required key**: `layers_per_block` हर noise range में चलने वाली consecutive denoiser layers की अधिकतम संख्या तय करता है।
+- **Optional keys**: `overlap` (default `0.05`), `blocks_to_train`, `block_paths`, और `timestep_boundaries`।
+- **Behavior**: हर batch में एक noise block sample करता है, केवल उसका layer group चलाता है, और DDP unused-parameter detection अपने आप enable करता है।
+- **Limits**: केवल Transformer denoisers। [DiffusionBlocks](experimental/DIFFUSION_BLOCKS.hi.md) देखें।
+
 ### `--enable_group_offload`
 
 - **What**: diffusers की grouped module offloading सक्षम करता है ताकि forward passes के बीच model blocks को CPU (या disk) पर stage किया जा सके।
@@ -2287,6 +2295,8 @@ options:
                         Path to ControlNet model weights to preload
   --tread_config TREAD_CONFIG
                         Configuration for TREAD training method
+  --diffusion_blocks_config DIFFUSION_BLOCKS_CONFIG
+                        Configuration for DiffusionBlocks training
   --pretrained_transformer_model_name_or_path PRETRAINED_TRANSFORMER_MODEL_NAME_OR_PATH
                         Path to pretrained transformer model
   --pretrained_transformer_subfolder PRETRAINED_TRANSFORMER_SUBFOLDER

@@ -194,6 +194,14 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Why**: Required for ACE-Step v1.5 checkpoints, which ship custom `AutoModel` and tokenizer code in the upstream repository.
 - **Warning**: Enable this only for model repositories you trust.
 
+### `--diffusion_blocks_config`
+
+- **What**: JSON object or JSON file path enabling block-wise diffusion-transformer training.
+- **Required key**: `layers_per_block` sets the maximum consecutive denoiser layers executed for one noise range.
+- **Optional keys**: `overlap` (default `0.05`), `blocks_to_train`, `block_paths`, and `timestep_boundaries`.
+- **Behavior**: Samples one noise-range block per batch, executes only its layer group, and automatically enables unused-parameter detection for DDP.
+- **Limits**: Transformer denoisers only. See [DiffusionBlocks](experimental/DIFFUSION_BLOCKS.md) for compatibility and inference requirements.
+
 ### `--enable_group_offload`
 
 - **What**: Enables diffusers' grouped module offloading so model blocks can be staged on CPU (or disk) between forward passes.
@@ -2295,6 +2303,8 @@ options:
                         Path to ControlNet model weights to preload
   --tread_config TREAD_CONFIG
                         Configuration for TREAD training method
+  --diffusion_blocks_config DIFFUSION_BLOCKS_CONFIG
+                        Configuration for DiffusionBlocks training
   --pretrained_transformer_model_name_or_path PRETRAINED_TRANSFORMER_MODEL_NAME_OR_PATH
                         Path to pretrained transformer model
   --pretrained_transformer_subfolder PRETRAINED_TRANSFORMER_SUBFOLDER

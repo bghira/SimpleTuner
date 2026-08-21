@@ -446,6 +446,43 @@ class TestAnimaModel(unittest.TestCase):
         model.disable_gradient_checkpointing()
         self.assertFalse(model.core.gradient_checkpointing)
 
+    def test_transformer_diffusion_blocks_routes_only_core_layers(self):
+        from simpletuner.helpers.models.anima.transformer import AnimaTransformerModel
+        from simpletuner.helpers.training.diffusion_blocks import DiffusionBlocksConfig, DiffusionBlocksController
+
+        model = AnimaTransformerModel(
+            in_channels=2,
+            out_channels=2,
+            num_attention_heads=2,
+            attention_head_dim=4,
+            num_layers=4,
+            mlp_ratio=2.0,
+            text_embed_dim=8,
+            adaln_lora_dim=8,
+            max_size=(2, 4, 4),
+            patch_size=(1, 2, 2),
+            adapter_dim=8,
+            adapter_layers=1,
+            adapter_heads=2,
+        )
+        controller = DiffusionBlocksController(model, DiffusionBlocksConfig(layers_per_block=2))
+        hidden_states = torch.randn(1, 2, 1, 4, 4)
+        encoder_hidden_states = torch.randn(1, 3, 8)
+
+        with torch.no_grad():
+            output = model.eval()(
+                hidden_states=hidden_states,
+                timestep=torch.tensor([0.9]),
+                encoder_hidden_states=encoder_hidden_states,
+                return_dict=False,
+            )
+
+        self.assertEqual(output[0].shape, hidden_states.shape)
+        self.assertEqual(controller.block_paths, ["core.transformer_blocks"])
+        self.assertEqual(controller.active_block, 0)
+        self.assertEqual(len(list(model.core.transformer_blocks)), 2)
+        self.assertEqual(len(list(model.llm_adapter.blocks)), 1)
+
     def test_diffusers_transformer_loads_sibling_llm_adapter(self):
         from tempfile import TemporaryDirectory
 

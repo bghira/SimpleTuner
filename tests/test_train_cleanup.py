@@ -67,6 +67,10 @@ class _FakeTrainer:
     def init_tread_model(self, *_, **__):
         return None
 
+    def init_diffusion_blocks_model(self, *_, **__):
+        self.init_order.append("diffusion_blocks")
+        return None
+
     def init_freeze_models(self, *_, **__):
         return None
 
@@ -76,6 +80,10 @@ class _FakeTrainer:
 
     def init_trainable_peft_adapter(self, *_, **__):
         self.init_order.append("peft_adapter")
+        return None
+
+    def init_diffusion_blocks_trainable_filter(self, *_, **__):
+        self.init_order.append("diffusion_blocks_filter")
         return None
 
     def init_ema_model(self, *_, **__):
@@ -216,6 +224,8 @@ class TrainEntryCleanupTest(unittest.TestCase):
             "distillation adapter module setup was not called",
         )
         self.assertIn("peft_adapter", trainer.init_order, "PEFT adapter setup was not called")
+        self.assertIn("diffusion_blocks", trainer.init_order, "DiffusionBlocks setup was not called")
+        self.assertIn("diffusion_blocks_filter", trainer.init_order, "DiffusionBlocks filtering was not called")
         self.assertIn("distillation", trainer.init_order, "distillation setup was not called")
         self.assertLess(
             trainer.init_order.index("distillation_adapter_modules"),
@@ -224,6 +234,11 @@ class TrainEntryCleanupTest(unittest.TestCase):
         )
         self.assertLess(
             trainer.init_order.index("peft_adapter"),
+            trainer.init_order.index("diffusion_blocks_filter"),
+            "DiffusionBlocks filtering should run after PEFT setup",
+        )
+        self.assertLess(
+            trainer.init_order.index("diffusion_blocks_filter"),
             trainer.init_order.index("distillation"),
             "distillation setup should run after PEFT setup",
         )

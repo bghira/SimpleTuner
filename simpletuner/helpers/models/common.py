@@ -563,6 +563,7 @@ class ModelFoundation(ABC):
         self._twinflow_store_rng = False
         self._twinflow_allow_student_teacher = False
         self._twinflow_requires_ema = False
+        self.diffusion_blocks_controller = None
         self.layersync_regularizer: Optional[LayerSyncRegularizer] = None
         self.internal_guidance_regularizer: Optional[InternalGuidanceRegularizer] = None
         self._validate_twinflow_config()
@@ -2126,6 +2127,171 @@ class ModelFoundation(ABC):
         Checks self.config values against important issues. Optionally implemented in child class.
         """
         pass
+
+    def diffusion_blocks_init(self) -> None:
+        raw_config = getattr(self.config, "diffusion_blocks_config", None)
+        if not raw_config:
+            return
+        if self.MODEL_TYPE is not ModelTypes.TRANSFORMER:
+            raise ValueError("DiffusionBlocks is only supported for transformer denoisers, not UNet model families.")
+        if not self.uses_noise_schedule():
+            raise ValueError("DiffusionBlocks requires a diffusion or flow-matching noise schedule.")
+        if getattr(self.config, "controlnet", False):
+            raise ValueError("DiffusionBlocks cannot be combined with ControlNet training.")
+        if (getattr(self.config, "musubi_blocks_to_swap", 0) or 0) > 0:
+            raise ValueError("DiffusionBlocks cannot be combined with Musubi block swapping.")
+        if getattr(self.config, "twinflow_enabled", False):
+            raise ValueError("DiffusionBlocks cannot be combined with TwinFlow multi-timestep teacher passes.")
+        if getattr(self.config, "scheduled_sampling_max_step_offset", 0):
+            raise ValueError("DiffusionBlocks cannot be combined with scheduled sampling multi-timestep passes.")
+        if getattr(self.config, "crepa_enabled", False):
+            raise ValueError("DiffusionBlocks cannot be combined with CREPA fixed-layer capture.")
+        if getattr(self.config, "layersync_enabled", False):
+            raise ValueError("DiffusionBlocks cannot be combined with LayerSync fixed-layer capture.")
+
+        from simpletuner.helpers.training.diffusion_blocks import DiffusionBlocksConfig, DiffusionBlocksController
+
+        component = self.unwrap_model(model=self.model)
+        config = DiffusionBlocksConfig.from_dict(raw_config)
+        self.diffusion_blocks_controller = DiffusionBlocksController(component, config)
+        logger.info(
+            "DiffusionBlocks enabled with %s noise-range blocks across %s.",
+            self.diffusion_blocks_controller.num_blocks,
+            ", ".join(self.diffusion_blocks_controller.block_paths),
+        )
+
+    def _sample_diffusion_blocks_flow_batch(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        controller = self.diffusion_blocks_controller
+        if controller is None:
+            return self.sample_flow_sigmas(batch=batch, state=state)
+
+        self._initialize_diffusion_blocks_flow_boundaries(batch)
+
+        block_index = controller.choose_training_block()
+        batch_size = batch["latents"].shape[0]
+        accepted_sigmas = []
+        accepted_timesteps = []
+        accepted_count = 0
+        for _ in range(128):
+            sigmas, timesteps = self.sample_flow_sigmas(batch=batch, state=state)
+            mask = controller.accepts_training_sigmas(sigmas, block_index)
+            if torch.any(mask):
+                accepted_sigmas.append(sigmas[mask])
+                accepted_timesteps.append(timesteps[mask])
+                accepted_count += int(mask.sum().item())
+                if accepted_count >= batch_size:
+                    break
+        if accepted_count < batch_size:
+            low, high = controller.sigma_range(block_index, include_overlap=True)
+            raise ValueError(
+                "DiffusionBlocks could not sample enough timesteps for block "
+                f"{block_index} in normalized range [{low:.6f}, {high:.6f}]. "
+                "Check flow_custom_timesteps or set compatible timestep_boundaries."
+            )
+
+        controller.set_training_block(block_index)
+        batch["diffusion_blocks_block_index"] = block_index
+        return torch.cat(accepted_sigmas, dim=0)[:batch_size], torch.cat(accepted_timesteps, dim=0)[:batch_size]
+
+    def _initialize_diffusion_blocks_flow_boundaries(self, batch: dict) -> None:
+        controller = self.diffusion_blocks_controller
+        if (
+            controller is None
+            or controller.boundaries_are_explicit
+            or getattr(controller, "_schedule_boundaries_initialized", False)
+        ):
+            return
+
+        quantiles = torch.linspace(0.0, 1.0, controller.num_blocks + 1, dtype=torch.float64)
+        custom_timesteps = self._normalize_flow_custom_timesteps(getattr(self.config, "flow_custom_timesteps", None))
+        apply_shift = custom_timesteps is None
+        if custom_timesteps is not None:
+            values = custom_timesteps.detach().double().cpu()
+            if torch.max(values) > 1.0:
+                values = values / 1000.0
+            boundaries = torch.quantile(values.clamp(0.0, 1.0), quantiles)
+        elif self.config.flow_use_uniform_schedule:
+            boundaries = quantiles.clone()
+        elif self.config.flow_use_beta_schedule:
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(0)
+                distribution = Beta(
+                    torch.tensor(float(self.config.flow_beta_schedule_alpha), dtype=torch.float64),
+                    torch.tensor(float(self.config.flow_beta_schedule_beta), dtype=torch.float64),
+                )
+                samples = distribution.sample((262144,))
+            boundaries = torch.quantile(samples, quantiles)
+        elif self.config.flux_fast_schedule:
+            samples = torch.tensor([1.0] * 7 + [0.75, 0.5, 0.25], dtype=torch.float64)
+            boundaries = torch.quantile(samples, quantiles)
+        else:
+            probabilities = quantiles.clamp(1e-7, 1.0 - 1e-7)
+            normal = torch.distributions.Normal(
+                torch.tensor(0.0, dtype=torch.float64), torch.tensor(1.0, dtype=torch.float64)
+            )
+            normal_values = normal.icdf(probabilities)
+            normal_values = normal_values + self._get_dataset_timestep_sampling_offset(batch)
+            boundaries = torch.sigmoid(float(self.config.flow_sigmoid_scale) * normal_values)
+
+        if apply_shift:
+            boundaries = apply_flow_schedule_shift(
+                self.config,
+                self.noise_schedule,
+                boundaries.to(device=batch["noise"].device),
+                batch["noise"],
+            ).cpu()
+        boundaries[0] = 0.0
+        boundaries[-1] = 1.0
+        controller.set_timestep_boundaries(boundaries.tolist())
+        controller._schedule_boundaries_initialized = True
+        resolved_config = dict(self.config.diffusion_blocks_config)
+        resolved_config["timestep_boundaries"] = list(controller.boundaries)
+        self.config.diffusion_blocks_config = resolved_config
+        logger.info("DiffusionBlocks equi-probability timestep boundaries: %s", list(controller.boundaries))
+
+    def apply_diffusion_blocks_trainable_filter(self) -> None:
+        if self.diffusion_blocks_controller is None:
+            return
+        frozen_parameters = self.diffusion_blocks_controller.freeze_unselected_blocks()
+        if frozen_parameters:
+            logger.info(
+                "DiffusionBlocks froze %s parameters outside blocks_to_train=%s.",
+                frozen_parameters,
+                list(self.diffusion_blocks_controller.trainable_blocks),
+            )
+
+    def _sample_diffusion_blocks_discrete_timesteps(self, weights: torch.Tensor, batch_size: int) -> torch.Tensor:
+        controller = self.diffusion_blocks_controller
+        if controller is None:
+            raise RuntimeError("DiffusionBlocks discrete sampling requires an initialized controller.")
+        if not controller.boundaries_are_explicit and not getattr(controller, "_schedule_boundaries_initialized", False):
+            cumulative = torch.cumsum(weights.detach().float().cpu(), dim=0)
+            if cumulative[-1] <= 0:
+                raise ValueError("DiffusionBlocks requires at least one non-zero timestep weight.")
+            cumulative = cumulative / cumulative[-1]
+            probabilities = torch.linspace(0.0, 1.0, controller.num_blocks + 1)[1:-1]
+            indices = torch.searchsorted(cumulative, probabilities, right=False)
+            denominator = max(weights.numel() - 1, 1)
+            boundaries = [0.0, *(indices.double() / denominator).tolist(), 1.0]
+            controller.set_timestep_boundaries(boundaries)
+            controller._schedule_boundaries_initialized = True
+            resolved_config = dict(self.config.diffusion_blocks_config)
+            resolved_config["timestep_boundaries"] = list(controller.boundaries)
+            self.config.diffusion_blocks_config = resolved_config
+            logger.info("DiffusionBlocks equi-probability timestep boundaries: %s", list(controller.boundaries))
+        block_index = controller.choose_training_block()
+        denominator = max(weights.numel() - 1, 1)
+        normalized_timesteps = torch.arange(weights.numel(), device=weights.device, dtype=torch.float32) / denominator
+        eligible = controller.accepts_training_sigmas(normalized_timesteps[:, None], block_index)
+        restricted_weights = weights * eligible.to(dtype=weights.dtype)
+        if not torch.any(restricted_weights > 0):
+            low, high = controller.sigma_range(block_index, include_overlap=True)
+            raise ValueError(
+                "DiffusionBlocks has no non-zero timestep weights for block "
+                f"{block_index} in normalized range [{low:.6f}, {high:.6f}]."
+            )
+        controller.set_training_block(block_index)
+        return torch.multinomial(restricted_weights, batch_size, replacement=True).long()
 
     def _model_config_path(self):
         return get_model_config_path(
@@ -5758,7 +5924,10 @@ class ModelFoundation(ABC):
             batch["input_noise"] = noise
 
         if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
-            batch["sigmas"], batch["timesteps"] = self.sample_flow_sigmas(batch=batch, state=state)
+            if self.diffusion_blocks_controller is not None:
+                batch["sigmas"], batch["timesteps"] = self._sample_diffusion_blocks_flow_batch(batch=batch, state=state)
+            else:
+                batch["sigmas"], batch["timesteps"] = self.sample_flow_sigmas(batch=batch, state=state)
             crepa = getattr(self, "crepa_regularizer", None)
             if crepa and crepa.enabled and getattr(crepa, "use_self_flow_features", False):
                 batch = self._prepare_crepa_self_flow_batch(batch=batch, state=state)
@@ -5770,7 +5939,10 @@ class ModelFoundation(ABC):
             weights = generate_timestep_weights(self.config, self.noise_schedule.config.num_train_timesteps).to(
                 self.accelerator.device
             )
-            if bsz > 1 and not self.config.disable_segmented_timestep_sampling:
+            if self.diffusion_blocks_controller is not None:
+                batch["timesteps"] = self._sample_diffusion_blocks_discrete_timesteps(weights, bsz)
+                batch["diffusion_blocks_block_index"] = self.diffusion_blocks_controller.training_block
+            elif bsz > 1 and not self.config.disable_segmented_timestep_sampling:
                 batch["timesteps"] = segmented_timestep_selection(
                     actual_num_timesteps=self.noise_schedule.config.num_train_timesteps,
                     bsz=bsz,

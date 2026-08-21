@@ -361,6 +361,7 @@ nav:
     - Experimental:
       - AnyFlow: experimental/ANYFLOW.md
       - ConvRot / Hadamard SDNQ: experimental/CONVROT.md
+      - DiffusionBlocks: experimental/DIFFUSION_BLOCKS.md
       - Diff2Flow: experimental/DIFF2FLOW.md
       - Flow-DPO: experimental/FLOW_DPO.md
       - Internal Guidance: experimental/INTERNAL_GUIDANCE.md

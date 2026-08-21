@@ -766,6 +766,15 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
                 logger.error(f"Could not load tread_config: {e}")
                 raise
 
+    if getattr(args, "diffusion_blocks_config", None) is not None:
+        try:
+            args.diffusion_blocks_config = _parse_json_like_option(args.diffusion_blocks_config, "diffusion_blocks_config")
+        except ValueError as exc:
+            logger.error(str(exc))
+            raise
+        if not isinstance(args.diffusion_blocks_config, dict):
+            raise ValueError("diffusion_blocks_config must be a JSON object or a path to a JSON object.")
+
     if args.sla_config is not None and isinstance(args.sla_config, str):
         candidate = args.sla_config.strip()
         if candidate.startswith("{"):

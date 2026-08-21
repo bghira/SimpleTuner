@@ -194,6 +194,14 @@ simpletuner configure config/foo/config.json
 - **原因**：ACE-Step v1.5 checkpoint 需要它，因为上游仓库包含自定义的 `AutoModel` 和 tokenizer 代码。
 - **警告**：仅对你信任的模型仓库启用此选项。
 
+### `--diffusion_blocks_config`
+
+- **作用**：JSON 对象或 JSON 文件路径，用于启用 diffusion Transformer 分块训练。
+- **必填键**：`layers_per_block` 设置每个噪声区间执行的最大连续 denoiser 层数。
+- **可选键**：`overlap`（默认 `0.05`）、`blocks_to_train`、`block_paths`、`timestep_boundaries`。
+- **行为**：每个 batch 采样一个噪声块，只执行对应层组，并为 DDP 自动启用 unused-parameter 检测。
+- **限制**：仅支持 Transformer denoiser。详见 [DiffusionBlocks](experimental/DIFFUSION_BLOCKS.zh.md)。
+
 ### `--enable_group_offload`
 
 - **内容**：启用 diffusers 的分组模块卸载，使模型块在前向之间驻留在 CPU（或磁盘）。
@@ -2291,6 +2299,8 @@ options:
                         Path to ControlNet model weights to preload
   --tread_config TREAD_CONFIG
                         Configuration for TREAD training method
+  --diffusion_blocks_config DIFFUSION_BLOCKS_CONFIG
+                        Configuration for DiffusionBlocks training
   --pretrained_transformer_model_name_or_path PRETRAINED_TRANSFORMER_MODEL_NAME_OR_PATH
                         Path to pretrained transformer model
   --pretrained_transformer_subfolder PRETRAINED_TRANSFORMER_SUBFOLDER

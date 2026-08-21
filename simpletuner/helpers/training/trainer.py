@@ -1218,6 +1218,10 @@ class Trainer:
 
     def _resolve_ddp_find_unused_parameters(self) -> bool | None:
         find_unused_cfg = getattr(self.config, "find_unused_parameters", None)
+        if getattr(self.config, "diffusion_blocks_config", None):
+            if find_unused_cfg is False:
+                raise ValueError("DiffusionBlocks requires find_unused_parameters=true for DDP training.")
+            return True
         if find_unused_cfg is not None:
             return bool(find_unused_cfg)
 
@@ -1947,10 +1951,12 @@ class Trainer:
                     self.init_precision,
                     self.init_controlnet_model,
                     self.init_tread_model,
+                    self.init_diffusion_blocks_model,
                     self.init_gligen_layers,
                     self.init_freeze_models,
                     self.init_distillation_adapter_modules,
                     self.init_trainable_peft_adapter,
+                    self.init_diffusion_blocks_trainable_filter,
                     self.init_lyrics_embedder_training,
                 ]
             )
@@ -3267,6 +3273,15 @@ class Trainer:
             return
         self.model.tread_init()
         self.accelerator.wait_for_everyone()
+
+    def init_diffusion_blocks_model(self):
+        if not getattr(self.config, "diffusion_blocks_config", None):
+            return
+        self.model.diffusion_blocks_init()
+        self.accelerator.wait_for_everyone()
+
+    def init_diffusion_blocks_trainable_filter(self):
+        self.model.apply_diffusion_blocks_trainable_filter()
 
     def init_gligen_layers(self):
         """Inject GLIGEN grounding layers into the model after it has been loaded."""
