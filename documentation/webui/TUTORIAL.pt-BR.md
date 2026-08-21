@@ -357,3 +357,7 @@ Na pagina **Environment**, voce vera o job configurado e botoes para baixar ou d
 **NOTA**: O ambiente **Default** e especial e nao e recomendado como ambiente de treinamento geral; suas configuracoes podem ser mescladas automaticamente a qualquer ambiente que habilite a opcao **Use environment defaults**:
 
 <img width="1521" height="991" alt="image" src="https://github.com/user-attachments/assets/9d18b0c1-608e-4ab2-be14-65b98907ec69" />
+
+## Métricas locais de treinamento
+
+Escolha **SimpleTuner (Local)** como plataforma de logging e abra **Metrics → Training Runs**. Consulte [Métricas locais](LOCAL_METRICS.md) para ver os arquivos, relatório offline, compressão e API.

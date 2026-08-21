@@ -74,6 +74,7 @@ from simpletuner.helpers.training.evaluation import ModelEvaluator
 from simpletuner.helpers.training.exceptions import GPUHealthError
 from simpletuner.helpers.training.gpu_circuit_breaker import get_current_gpu_index, get_gpu_circuit_breaker, is_cuda_error
 from simpletuner.helpers.training.iteration_tracker import IterationTracker
+from simpletuner.helpers.training.local_metrics import LocalMetricsTracker
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.multi_process import broadcast_object_from_main, should_log
@@ -914,10 +915,11 @@ class Trainer:
             custom_tracker_name = None
         setattr(self.config, "custom_tracker", custom_tracker_name)
 
-        _, tracker_run_name = self._resolve_tracker_identifiers()
+        tracker_project_name, tracker_run_name = self._resolve_tracker_identifiers()
         logging_dir_value = getattr(self.config, "logging_dir", None)
 
         custom_tracker_instance: Optional[GeneralTracker] = None
+        local_metrics_tracker: Optional[LocalMetricsTracker] = None
 
         def _ensure_custom_tracker() -> GeneralTracker:
             nonlocal custom_tracker_instance
@@ -928,6 +930,17 @@ class Trainer:
             custom_tracker_instance = self._load_custom_tracker(custom_tracker_name, tracker_run_name, logging_dir_value)
             self.custom_tracker = custom_tracker_instance
             return custom_tracker_instance
+
+        def _ensure_local_metrics_tracker() -> LocalMetricsTracker:
+            nonlocal local_metrics_tracker
+            if local_metrics_tracker is None:
+                local_metrics_tracker = LocalMetricsTracker(
+                    run_name=tracker_run_name,
+                    project_name=tracker_project_name,
+                    output_dir=self.config.output_dir,
+                )
+                self.local_metrics_tracker = local_metrics_tracker
+            return local_metrics_tracker
 
         checkpoint_step_interval_value = getattr(self.config, "checkpoint_step_interval", None)
         if checkpoint_step_interval_value in (None, "", "None", 0):
@@ -950,15 +963,28 @@ class Trainer:
                 report_to = None
             elif normalized_report == "custom-tracker":
                 report_to = _ensure_custom_tracker()
+            elif normalized_report == "simpletuner":
+                report_to = _ensure_local_metrics_tracker()
+            elif normalized_report == "all":
+                report_to = [_ensure_local_metrics_tracker(), "all"]
             else:
                 report_to = report_to_value.strip()
         elif isinstance(report_to_value, (list, tuple)):
             resolved_trackers: List[object] = []
             for entry in report_to_value:
-                if isinstance(entry, str) and entry.strip().lower() == "custom-tracker":
-                    resolved_trackers.append(_ensure_custom_tracker())
+                normalized_entry = entry.strip().lower() if isinstance(entry, str) else None
+                if normalized_entry == "custom-tracker":
+                    tracker = _ensure_custom_tracker()
+                elif normalized_entry == "simpletuner":
+                    tracker = _ensure_local_metrics_tracker()
                 else:
-                    resolved_trackers.append(entry)
+                    tracker = entry
+                if tracker not in resolved_trackers:
+                    resolved_trackers.append(tracker)
+            if any(isinstance(entry, str) and entry.strip().lower() == "all" for entry in report_to_value):
+                tracker = _ensure_local_metrics_tracker()
+                if tracker not in resolved_trackers:
+                    resolved_trackers.insert(0, tracker)
             report_to = resolved_trackers
         else:
             report_to = report_to_value

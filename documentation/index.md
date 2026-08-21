@@ -20,6 +20,14 @@
 
     [:octicons-arrow-right-24: Web UI Tutorial](webui/TUTORIAL.md)
 
+-   :material-chart-line:{ .lg .middle } __Local Metrics__
+
+    ---
+
+    Store scalar charts and validation comparisons with each training run
+
+    [:octicons-arrow-right-24: Local Training Metrics](webui/LOCAL_METRICS.md)
+
 -   :material-closed-caption:{ .lg .middle } __CaptionFlow__
 
     ---

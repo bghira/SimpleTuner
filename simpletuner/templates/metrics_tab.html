@@ -12,6 +12,189 @@
      x-data='metricsComponent({{ metrics_ctx | tojson | safe }})'
      x-init="init()">
 
+    <div class="metrics-section-tabs" role="tablist" aria-label="Metrics sections">
+        <button type="button"
+                class="metrics-section-tab"
+                :class="{ 'active': activeMetricsSection === 'training' }"
+                @click="setMetricsSection('training')"
+                data-testid="training-runs-tab">
+            <i class="fas fa-chart-line"></i>
+            Training Runs
+        </button>
+        <button type="button"
+                class="metrics-section-tab"
+                :class="{ 'active': activeMetricsSection === 'system' }"
+                @click="setMetricsSection('system')"
+                data-testid="system-metrics-tab">
+            <i class="fas fa-server"></i>
+            System
+        </button>
+    </div>
+
+    <section class="training-metrics-workspace"
+             x-show="activeMetricsSection === 'training'"
+             x-cloak
+             aria-label="Training run metrics">
+        <div class="training-metrics-toolbar">
+            <div>
+                <h2>Training Runs</h2>
+                <p>Scalar history and validation outputs saved with each environment.</p>
+            </div>
+            <div class="training-run-actions">
+                <label class="visually-hidden" for="training-run-select">Training environment</label>
+                <select id="training-run-select"
+                        class="form-select form-select-sm"
+                        :value="selectedTrainingEnvironment"
+                        @change="selectTrainingRun($event.target.value)"
+                        :disabled="trainingMetricsLoading || !trainingRuns.length"
+                        data-testid="training-run-select">
+                    <template x-for="run in trainingRuns" :key="run.environment">
+                        <option :value="run.environment" x-text="run.run_name + ' · ' + run.environment"></option>
+                    </template>
+                </select>
+                <button type="button"
+                        class="btn btn-sm btn-outline-secondary"
+                        @click="loadTrainingRuns()"
+                        :disabled="trainingMetricsLoading"
+                        title="Refresh training metrics">
+                    <i class="fas" :class="trainingMetricsLoading ? 'fa-spinner fa-spin' : 'fa-sync-alt'"></i>
+                </button>
+                <a class="btn btn-sm btn-outline-info"
+                   :href="trainingReportUrl()"
+                   target="_blank"
+                   rel="noopener"
+                   x-show="trainingRunData && trainingRunData.run.has_report">
+                    <i class="fas fa-file-code me-1"></i>Offline report
+                </a>
+            </div>
+        </div>
+
+        <template x-if="trainingMetricsError">
+            <div class="alert alert-danger" role="alert" data-testid="training-metrics-error">
+                <i class="fas fa-exclamation-circle me-2"></i><span x-text="trainingMetricsError"></span>
+            </div>
+        </template>
+
+        <template x-if="!trainingMetricsLoading && !trainingRuns.length && !trainingMetricsError">
+            <div class="training-metrics-empty">
+                <i class="fas fa-chart-line"></i>
+                <div>
+                    <strong>No local training runs</strong>
+                    <span>Set <code>report_to=simpletuner</code> in a training environment to record one.</span>
+                </div>
+            </div>
+        </template>
+
+        <template x-if="trainingRunData">
+            <div>
+                <div class="training-run-summary">
+                    <div>
+                        <span>Status</span>
+                        <strong x-text="trainingRunData.run.status"></strong>
+                    </div>
+                    <div>
+                        <span>Model family</span>
+                        <strong x-text="trainingRunData.run.model_family || 'Unknown'"></strong>
+                    </div>
+                    <div>
+                        <span>Latest step</span>
+                        <strong x-text="(trainingRunData.run.last_step ?? 0).toLocaleString()"></strong>
+                    </div>
+                    <div>
+                        <span>Samples</span>
+                        <strong x-text="(trainingRunData.run.record_count || 0).toLocaleString()"></strong>
+                    </div>
+                </div>
+
+                <div class="training-metrics-layout">
+                    <section class="training-chart-tool" aria-label="Scalar chart">
+                        <div class="training-tool-header">
+                            <div>
+                                <h3>Scalars</h3>
+                                <span x-show="trainingChartHover"
+                                      x-text="trainingChartHover ? 'Step ' + trainingChartHover.record.step.toLocaleString() : ''"></span>
+                            </div>
+                            <div class="training-metric-picker" aria-label="Chart metrics">
+                                <template x-for="metric in trainingRunData.available_metrics" :key="metric">
+                                    <label :class="{ 'selected': selectedTrainingMetrics.includes(metric) }">
+                                        <input type="checkbox"
+                                               :checked="selectedTrainingMetrics.includes(metric)"
+                                               @change="toggleTrainingMetric(metric)"
+                                               :disabled="!selectedTrainingMetrics.includes(metric) && selectedTrainingMetrics.length >= 8">
+                                        <span x-text="metric"></span>
+                                    </label>
+                                </template>
+                            </div>
+                        </div>
+                        <div class="training-latest-values">
+                            <template x-for="metric in latestTrainingMetrics()" :key="metric.name">
+                                <div>
+                                    <span x-text="metric.name"></span>
+                                    <strong x-text="formatTrainingMetric(metric.value)"></strong>
+                                </div>
+                            </template>
+                        </div>
+                        <div class="training-chart-canvas-wrap">
+                            <canvas x-ref="trainingMetricsCanvas" data-testid="training-metrics-canvas"></canvas>
+                        </div>
+                    </section>
+
+                    <section class="training-media-tool" aria-label="Validation media">
+                        <div class="training-tool-header">
+                            <div>
+                                <h3>Validation</h3>
+                                <span>Compare saved outputs by prompt and step.</span>
+                            </div>
+                            <select class="form-select form-select-sm"
+                                    :value="selectedTrainingMediaLabel"
+                                    @change="selectTrainingMediaLabel($event.target.value)"
+                                    :disabled="!trainingMediaLabels().length"
+                                    aria-label="Validation prompt">
+                                <template x-for="label in trainingMediaLabels()" :key="label">
+                                    <option :value="label" x-text="label"></option>
+                                </template>
+                            </select>
+                        </div>
+                        <div class="training-media-steps" role="tablist" aria-label="Validation steps">
+                            <template x-for="step in trainingMediaSteps()" :key="step">
+                                <button type="button"
+                                        :class="{ 'active': selectedTrainingMediaStep === step }"
+                                        @click="selectedTrainingMediaStep = step"
+                                        x-text="step.toLocaleString()"></button>
+                            </template>
+                        </div>
+                        <template x-if="!selectedTrainingMedia().length">
+                            <div class="training-media-empty">No validation media was recorded for this run.</div>
+                        </template>
+                        <div class="training-media-grid">
+                            <template x-for="item in selectedTrainingMedia()" :key="item.path">
+                                <figure>
+                                    <img x-show="item.type === 'image'"
+                                         :src="item.type === 'image' ? item.url : null"
+                                         :alt="item.label + ' at step ' + item.step">
+                                    <video x-show="item.type === 'video'"
+                                           :src="item.type === 'video' ? item.url : null"
+                                           controls
+                                           preload="metadata"></video>
+                                    <audio x-show="item.type === 'audio'"
+                                           :src="item.type === 'audio' ? item.url : null"
+                                           controls
+                                           preload="metadata"></audio>
+                                    <figcaption>
+                                        <span x-text="'Output ' + (item.index + 1)"></span>
+                                        <span x-text="item.resolution || item.type"></span>
+                                    </figcaption>
+                                </figure>
+                            </template>
+                        </div>
+                    </section>
+                </div>
+            </div>
+        </template>
+    </section>
+
+    <div x-show="activeMetricsSection === 'system'" x-cloak>
+
     <!-- Hero CTA (shown when Prometheus not configured) -->
     <template x-if="!prometheusEnabled && !heroDismissed">
         {% call hero_cta(
@@ -448,25 +631,6 @@
                     </div><!-- /collapse -->
                 </div>
 
-                <!-- Tensorboard Placeholder -->
-                <div class="metrics-card mt-3 disabled-card">
-                    <div class="metrics-card-header">
-                        <h5 class="mb-0">
-                            <i class="fas fa-chart-area me-2"></i>Tensorboard
-                            <span class="badge bg-secondary ms-2">Coming Soon</span>
-                        </h5>
-                    </div>
-                    <div class="metrics-card-body text-muted">
-                        <p class="mb-2 small">
-                            Real-time training metrics from running jobs will be available here in a future update.
-                        </p>
-                        <ul class="small mb-0">
-                            <li>Loss curves and learning rate schedules</li>
-                            <li>Validation metrics and sample images</li>
-                            <li>GPU utilization and memory usage</li>
-                        </ul>
-                    </div>
-                </div>
             </div>
 
             <!-- Preview Panel -->
@@ -527,6 +691,7 @@
                 </div>
             </div>
         </div>
+    </div>
     </div>
 
     <!-- Toast for copy feedback -->

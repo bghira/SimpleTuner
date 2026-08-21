@@ -1817,8 +1817,19 @@ Mapeamento de opcoes upstream (LayerSync → SimpleTuner):
 ### `--report_to`
 
 - **O que**: Especifica a plataforma para reportar resultados e logs.
-- **Por que**: Habilita integracao com TensorBoard, wandb ou comet_ml para monitoramento. Use multiplos valores separados por virgula para reportar a varios trackers.
-- **Opcoes**: wandb, tensorboard, comet_ml
+- **Por que**: Habilita monitoramento local ou externo. `simpletuner` grava JSONL, manifesto, metadados de validacao e um relatorio HTML autonomo em `output_dir`. `all` inclui o tracker local.
+- **Opcoes**: simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, all, none
+
+### `--validation_image_format`
+
+- **O que**: Formato das imagens salvas em `output_dir/validation_images`.
+- **Opcoes**: png, webp, jpeg
+- **Padrao**: png
+
+### `--validation_image_quality`
+
+- **O que**: Qualidade de WebP e JPEG, de 1 a 100.
+- **Padrao**: 90. Ignorado para PNG.
 
 ## Variaveis de configuracao do ambiente
 

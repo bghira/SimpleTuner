@@ -1819,8 +1819,19 @@ Upstream option mapping (LayerSync → SimpleTuner):
 ### `--report_to`
 
 - **What**: results और logs रिपोर्ट करने के लिए platform निर्दिष्ट करता है।
-- **Why**: TensorBoard, wandb, या comet_ml जैसी platforms के साथ integration सक्षम करता है। multiple trackers पर रिपोर्ट करने के लिए comma से अलग values उपयोग करें;
-- **Choices**: wandb, tensorboard, comet_ml
+- **Why**: स्थानीय या external monitoring चालू करता है। `simpletuner`, `output_dir` में JSONL, manifest, validation media metadata और self-contained HTML report लिखता है। `all` में local tracker शामिल है।
+- **Choices**: simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, all, none
+
+### `--validation_image_format`
+
+- **What**: `output_dir/validation_images` में save होने वाली images का format।
+- **Choices**: png, webp, jpeg
+- **Default**: png
+
+### `--validation_image_quality`
+
+- **What**: WebP और JPEG quality, 1 से 100।
+- **Default**: 90। PNG के लिए ignored है।
 
 ## Environment configuration variables
 

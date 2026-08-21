@@ -20,6 +20,14 @@
 
     [:octicons-arrow-right-24: वेब UI ट्यूटोरियल](webui/TUTORIAL.md)
 
+-   :material-chart-line:{ .lg .middle } __स्थानीय मेट्रिक्स__
+
+    ---
+
+    हर training run के साथ scalar charts और validation comparisons रखें
+
+    [:octicons-arrow-right-24: स्थानीय प्रशिक्षण मेट्रिक्स](webui/LOCAL_METRICS.md)
+
 -   :material-closed-caption:{ .lg .middle } __CaptionFlow__
 
     ---
