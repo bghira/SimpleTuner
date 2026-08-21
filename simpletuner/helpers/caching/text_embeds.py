@@ -136,7 +136,7 @@ class TextEmbeddingCache(WebhookMixin):
                 normalized = f"{dataset_id}:{canonicalize_data_uri(data_path)}"
         return normalized
 
-    def create_hash(self, key_value):
+    def create_hash(self, key_value, prompt=None):
         normalized_key = self._normalize_key_value(key_value)
         # Precomputed part of the format string
         hash_format = f"-{self.model_type}"
@@ -144,6 +144,10 @@ class TextEmbeddingCache(WebhookMixin):
         # Reuse the hash object
         md5_hash = hashlib.md5()
         md5_hash.update(str(normalized_key).encode())
+        # Path keys preserve sample context but are shared by multiline caption alternatives.
+        if self._requires_path_based_keys and prompt:
+            md5_hash.update(b"\0prompt\0")
+            md5_hash.update(str(prompt).encode())
         # logger.debug(f"Hashing caption: {caption}")
         result = md5_hash.hexdigest() + hash_format
         # logger.debug(f"-> {result}")
@@ -171,11 +175,14 @@ class TextEmbeddingCache(WebhookMixin):
 
     def hash_prompt_with_path(self, prompt_record: PromptCacheRecord):
         key_value = self._resolve_cache_key_value(prompt_record)
-        return os.path.join(self.cache_dir, self.create_hash(key_value) + ".pt")
+        return os.path.join(
+            self.cache_dir,
+            self.create_hash(key_value, prompt=prompt_record.get("prompt")) + ".pt",
+        )
 
     def hash_prompt(self, prompt_record: PromptCacheRecord):
         key_value = prompt_record.get("key") or prompt_record.get("prompt")
-        return self.create_hash(key_value) + ".pt"
+        return self.create_hash(key_value, prompt=prompt_record.get("prompt")) + ".pt"
 
     def _normalize_prompt_records(self, prompts: Optional[Sequence[Any]]) -> List[PromptCacheRecord]:
         normalized: List[PromptCacheRecord] = []

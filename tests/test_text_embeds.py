@@ -1,3 +1,4 @@
+import os
 import unittest
 from contextlib import contextmanager
 from threading import Event, Thread
@@ -247,6 +248,29 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
 
         self.assertEqual(path_normalized, canonical)
 
+    def test_path_keyed_hash_distinguishes_prompt_variants(self):
+        cache = _make_cache(TextEmbedCacheKey.DATASET_AND_FILENAME)
+        first = cache.hash_prompt_with_path({"prompt": "caption one", "key": "dataset-1:path/to/sample.png"})
+        second = cache.hash_prompt_with_path({"prompt": "caption two", "key": "dataset-1:path/to/sample.png"})
+
+        self.assertNotEqual(first, second)
+
+    def test_caption_keyed_hash_does_not_add_prompt_component(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION)
+        first = cache.hash_prompt_with_path({"prompt": "caption one", "key": "shared-key"})
+        second = cache.hash_prompt_with_path({"prompt": "caption two", "key": "shared-key"})
+
+        self.assertEqual(first, second)
+
+    def test_path_keyed_empty_prompt_preserves_sentinel_hash(self):
+        cache = _make_cache(TextEmbedCacheKey.DATASET_AND_FILENAME)
+        record = {"prompt": "", "key": "__caption_dropout__"}
+
+        self.assertEqual(
+            cache.hash_prompt_with_path(record),
+            os.path.join(cache.cache_dir, cache.create_hash("__caption_dropout__") + ".pt"),
+        )
+
     def test_normalize_prompts_infers_key_from_metadata(self):
         cache = _make_cache(TextEmbedCacheKey.DATASET_AND_FILENAME)
         record = {
@@ -291,7 +315,7 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
         )
 
     @patch("simpletuner.helpers.caching.text_embeds.StateTracker.get_text_cache_files", return_value={})
-    def test_compute_embeddings_deduplicates_uncached_multi_prompt_key(self, _mock_cache_files):
+    def test_compute_embeddings_caches_each_uncached_path_keyed_prompt(self, _mock_cache_files):
         cache = _make_cache(TextEmbedCacheKey.DATASET_AND_FILENAME)
         saved = []
         cache.save_to_cache = lambda filename, embeddings: saved.append((filename, embeddings))
@@ -337,9 +361,12 @@ class TextEmbeddingCacheKeyTests(unittest.TestCase):
 
         self.assertEqual(
             cache.model.calls,
-            [(["caption one"], [{"data_backend_id": "dataset-1", "dataset_relative_path": "path/to/sample.png"}])],
+            [
+                (["caption one"], [{"data_backend_id": "dataset-1", "dataset_relative_path": "path/to/sample.png"}]),
+                (["caption two"], [{"data_backend_id": "dataset-1", "dataset_relative_path": "path/to/sample.png"}]),
+            ],
         )
-        self.assertEqual(len(saved), 1)
+        self.assertEqual(len(saved), 2)
 
     @patch("simpletuner.helpers.caching.text_embeds.StateTracker.get_text_cache_files", return_value={})
     def test_compute_embeddings_does_not_resplit_rank_local_records(self, _mock_cache_files):
