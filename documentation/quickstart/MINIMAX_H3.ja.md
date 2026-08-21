@@ -75,6 +75,15 @@ Audio-only training では `dataset_type: "audio"` だけで十分です。H3 �
 SimpleTuner は normalized backend config に `audio.audio_only: true` を記録し、placeholder video stream を作成して
 video loss を mask します。明示的な `audio_only` も使用できますが、必須ではありません。
 
+## Context parallelism
+
+H3 context parallelism は Ulysses と `context_parallel_strategy: "alltoall"` を使用します。packed sequence は CP
+degree に合わせて padding される場合があるため、local attention backend は mask を受け付ける必要があります。
+`native` と `cudnn` をサポートし、CP 有効時のその他の backend は SimpleTuner が `native` に置き換えます。
+
+約 8k audio tokens では、CP は主に communication と引き換えに activation memory と checkpointing を減らします。
+CP 単体では weights を shard しないため、より長い sequence または FSDP との併用でなければ DDP と比較してください。
+
 ## Experimental Sparse Attention
 
 MiniMax は、H3 の最終 training stage で MoBA-style 3D sparse attention を video tokens に使ったと述べています。初期 public release は dense attention を使っており、MiniMax は正確な block shape、retention budget、layer schedule、production kernel をまだ公開していません。そのため SimpleTuner ではこの experimental approximation をデフォルトで無効にしています。
