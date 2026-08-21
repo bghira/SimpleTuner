@@ -484,6 +484,27 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="flow_cubic_schedule_weights",
+            arg_name="--flow_cubic_schedule_weights",
+            ui_label="Cubic Schedule Weights",
+            field_type=FieldType.TEXT_JSON,
+            tab="training",
+            section="loss_functions",
+            subsection="advanced",
+            default_value=None,
+            help_text=(
+                "Sample flow timesteps from a smooth density through equally spaced non-negative weights. "
+                "Use a JSON array or comma-separated values; zero or one weight produces a uniform distribution."
+            ),
+            tooltip="Defines a custom cubic-Hermite timestep density over the normalized interval [0,1].",
+            documentation="OPTIONS.md#--flow_cubic_schedule_weights",
+            importance=ImportanceLevel.ADVANCED,
+            order=24.5,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="flow_schedule_shift",
             arg_name="--flow_schedule_shift",
             ui_label="Schedule Shift",

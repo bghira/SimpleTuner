@@ -32,6 +32,7 @@ from simpletuner.helpers.training.optimizer_param import is_optimizer_deprecated
 from simpletuner.helpers.training.quantisation import MANUAL_QUANTIZATION_PRESETS, PIPELINE_QUANTIZATION_PRESETS
 from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.training.timestep_distribution import parse_cubic_spline_weights
 from simpletuner.simpletuner_sdk.server.services.field_registry.types import (
     ConfigField,
     FieldType,
@@ -1036,6 +1037,23 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         info_log(f"{log_msg} {int(args.validation_resolution)}px")
     if args.timestep_bias_portion < 0.0 or args.timestep_bias_portion > 1.0:
         raise ValueError("Timestep bias portion must be between 0.0 and 1.0.")
+
+    cubic_schedule_weights = parse_cubic_spline_weights(getattr(args, "flow_cubic_schedule_weights", None))
+    if cubic_schedule_weights is not None:
+        conflicting_schedules = []
+        if args.flow_use_uniform_schedule:
+            conflicting_schedules.append("--flow_use_uniform_schedule")
+        if args.flow_use_beta_schedule:
+            conflicting_schedules.append("--flow_use_beta_schedule")
+        if args.flux_fast_schedule:
+            conflicting_schedules.append("--flux_fast_schedule")
+        if getattr(args, "flow_custom_timesteps", None) not in (None, "", "None"):
+            conflicting_schedules.append("--flow_custom_timesteps")
+        if conflicting_schedules:
+            raise ValueError(
+                "--flow_cubic_schedule_weights cannot be combined with " + ", ".join(conflicting_schedules) + "."
+            )
+        args.flow_cubic_schedule_weights = list(cubic_schedule_weights)
 
     if args.metadata_update_interval < 60:
         raise ValueError("Metadata update interval must be at least 60 seconds.")

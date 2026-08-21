@@ -1294,6 +1294,13 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 - **内容**：使用更渐进的损失权重进行训练。
 - **原因**：像素扩散模型若不使用特定损失权重会退化。对 DeepFloyd 而言，soft-min-snr-gamma 基本必需。潜在扩散模型可能也有效，但小规模实验中可能产生模糊结果。
 
+### `--flow_cubic_schedule_weights`
+
+- **内容**：根据 0 到 1 之间等距点上的非负权重定义密度，并从中采样流匹配时间步。可使用 JSON 数组或逗号分隔值。零个或一个权重表示均匀分布，两个权重表示线性密度，三个及以上使用单调三次 Hermite 插值。
+- **原因**：无需把调度离散为固定时间步，即可将训练集中在指定噪声区域。模型原生时间步约定和已配置的 flow schedule shift 仍然生效。
+- **冲突**：不能与 `--flow_use_uniform_schedule`、`--flow_use_beta_schedule`、`--flux_fast_schedule` 或 `--flow_custom_timesteps` 同时使用。
+- **示例**：`"flow_cubic_schedule_weights": [0.1, 1.0, 0.3, 2.0]`
+
 ### `--diff2flow_enabled`
 
 - **内容**：为 epsilon 或 v-prediction 模型启用 Diffusion-to-Flow 桥接。
@@ -1978,6 +1985,7 @@ usage: train.py [-h] --model_family
                 [--flow_use_beta_schedule [FLOW_USE_BETA_SCHEDULE]]
                 [--flow_beta_schedule_alpha FLOW_BETA_SCHEDULE_ALPHA]
                 [--flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA]
+                [--flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
                 [--flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]]
                 [--audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT]
@@ -2462,6 +2470,11 @@ options:
                         Alpha value for beta schedule (default: 2.0)
   --flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA
                         Beta value for beta schedule (default: 2.0)
+  --flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS
+                        Sample flow timesteps from a smooth density through
+                        equally spaced non-negative weights. Use a JSON array
+                        or comma-separated values; zero or one weight produces
+                        a uniform distribution.
   --flow_schedule_shift FLOW_SCHEDULE_SHIFT
                         Shift the noise schedule for flow-matching models
   --flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]
