@@ -104,7 +104,7 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **Opcoes**: `auto`, `video`, `av`
 - **Padrao**: `auto`
 - **Notas**:
-  - `auto` resolve para `av` quando dados de audio habilitados sao detectados e para `video` caso contrario. A validacao usa o mesmo padrao detectado nos dados.
+  - `auto` resolve para `av` quando dados de áudio habilitados são detectados e para `video` caso contrário. A validação usa o mesmo padrão detectado nos dados.
   - Defina `minimax_h3_target_mode` ou `h3_target_mode` como `av` em uma entrada de data backend para ativar treino conjunto audio-video em um backend de audio auto-split ou explicito.
 
 ### `--minimax_h3_sparse_attention`
