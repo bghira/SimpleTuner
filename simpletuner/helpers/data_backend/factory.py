@@ -3162,6 +3162,9 @@ class FactoryRegistry:
             **metadata_backend_args,
         )
 
+        # Metadata cache loading exposes its persisted config for validation;
+        # runtime config remains live-authoritative.
+        StateTracker.set_data_backend_config(init_backend["id"], init_backend["config"])
         metadata_backend = init_backend["metadata_backend"]
         if isinstance(getattr(metadata_backend, "aspect_ratio_bucket_indices", None), dict):
             metadata_backend.aspect_ratio_bucket_indices = _coerce_bucket_keys(metadata_backend.aspect_ratio_bucket_indices)
@@ -3345,10 +3348,16 @@ class FactoryRegistry:
 
     def _handle_config_versioning(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
         """Handle configuration versioning and validation."""
-        runtime_mutable_keys = ("train_batch_size",)
+        runtime_mutable_keys = (
+            "train_batch_size",
+            "repeats",
+            "start_epoch",
+            "start_step",
+            "end_epoch",
+            "end_step",
+        )
         excluded_keys = [
             "probability",
-            "repeats",
             "ignore_epochs",
             "caption_filter_list",
             "vae_cache_clear_each_epoch",
@@ -3359,8 +3368,6 @@ class FactoryRegistry:
             "video",
             "conditioning_data",
             "conditioning",
-            "start_step",
-            "start_epoch",
             "hash_filenames",  # always enabled, not user-configurable
             "_s2v_audio_autoinjected",  # runtime flag, not user-configurable
             *runtime_mutable_keys,

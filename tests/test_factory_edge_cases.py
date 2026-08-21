@@ -645,6 +645,146 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertEqual(backend["train_batch_size"], 4)
         self.assertEqual(result["config"]["train_batch_size"], 4)
 
+    def test_cached_runtime_config_does_not_override_live_values(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
+
+        self.args.train_batch_size = 8
+        backend = {
+            "id": "image-runtime-config",
+            "type": "local",
+            "dataset_type": "image",
+            "instance_data_dir": self.temp_dir,
+            "train_batch_size": 4,
+            "repeats": 2,
+            "start_epoch": 3,
+            "start_step": 12000,
+            "end_epoch": 6,
+            "end_step": 24000,
+        }
+        init_backend = init_backend_config(backend, self.args, self.accelerator)
+        expected_runtime_config = {
+            key: init_backend["config"][key]
+            for key in ("train_batch_size", "repeats", "start_epoch", "start_step", "end_epoch", "end_step")
+        }
+        metadata_backend = MagicMock()
+        metadata_backend.config = {
+            "train_batch_size": 1,
+            "repeats": 0,
+            "start_epoch": 1,
+            "start_step": 0,
+            "end_epoch": None,
+            "end_step": None,
+        }
+        metadata_backend.__len__.return_value = 1
+        init_backend["metadata_backend"] = metadata_backend
+
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        with patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config"):
+            factory._handle_config_versioning(backend, init_backend)
+
+        self.assertEqual(
+            {key: init_backend["config"][key] for key in expected_runtime_config},
+            expected_runtime_config,
+        )
+        self.assertEqual(
+            {key: metadata_backend.config[key] for key in expected_runtime_config},
+            expected_runtime_config,
+        )
+        self.assertEqual(
+            {key: backend[key] for key in expected_runtime_config},
+            expected_runtime_config,
+        )
+
+    def test_cached_runtime_defaults_are_removed_when_absent_from_live_config(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
+
+        backend = {
+            "id": "image-runtime-defaults",
+            "type": "local",
+            "dataset_type": "image",
+            "instance_data_dir": self.temp_dir,
+        }
+        init_backend = init_backend_config(backend, self.args, self.accelerator)
+        metadata_backend = MagicMock()
+        metadata_backend.config = {
+            "repeats": 4,
+            "end_epoch": 8,
+            "end_step": 16000,
+        }
+        metadata_backend.__len__.return_value = 1
+        init_backend["metadata_backend"] = metadata_backend
+
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        with patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config"):
+            factory._handle_config_versioning(backend, init_backend)
+
+        self.assertNotIn("repeats", init_backend["config"])
+        self.assertIsNone(init_backend["config"]["end_epoch"])
+        self.assertIsNone(init_backend["config"]["end_step"])
+        self.assertNotIn("repeats", metadata_backend.config)
+        self.assertIsNone(metadata_backend.config["end_epoch"])
+        self.assertIsNone(metadata_backend.config["end_step"])
+
+    def test_metadata_cache_reload_does_not_leave_stale_runtime_config_active(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
+
+        backend = {
+            "id": "image-runtime-reload",
+            "type": "local",
+            "dataset_type": "image",
+            "instance_data_dir": self.temp_dir,
+            "repeats": 3,
+            "start_step": 12000,
+        }
+        init_backend = init_backend_config(backend, self.args, self.accelerator)
+        init_backend["data_backend"] = MagicMock(id=backend["id"])
+        init_backend["instance_data_dir"] = backend["instance_data_dir"]
+        live_config = init_backend["config"].copy()
+        observed_configs = []
+
+        def set_config(data_backend_id, config):
+            self.assertEqual(data_backend_id, backend["id"])
+            observed_configs.append(config.copy())
+
+        def create_metadata_backend(**kwargs):
+            set_config(backend["id"], {**live_config, "repeats": 0, "start_step": 0})
+            metadata_backend = MagicMock()
+            metadata_backend.aspect_ratio_bucket_indices = {}
+            return metadata_backend
+
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        with (
+            patch(
+                "simpletuner.helpers.metadata.backends.discovery.DiscoveryMetadataBackend",
+                side_effect=create_metadata_backend,
+            ),
+            patch(
+                "simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config",
+                side_effect=set_config,
+            ),
+        ):
+            factory._configure_metadata_backend(backend, init_backend)
+
+        self.assertEqual(observed_configs[-1], live_config)
+
     def test_inline_conditioning_auto_generation_for_image_dataset(self):
         """Inline conditioning blocks on image datasets should spawn auto-generated conditioning datasets."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
