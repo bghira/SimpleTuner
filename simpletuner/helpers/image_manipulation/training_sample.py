@@ -143,6 +143,15 @@ class TrainingSample:
         image = data_backend["data_backend"].read_image(image_path)
         return TrainingSample(image, data_backend_id, image_path=image_path)
 
+    @staticmethod
+    def _path_is_within(path: str, root: str) -> bool:
+        path = os.path.abspath(path)
+        root = os.path.abspath(root)
+        try:
+            return os.path.commonpath([path, root]) == root
+        except ValueError:
+            return False
+
     def training_sample_path(self, training_dataset_id: str) -> str:
         """get primary training sample path for conditioning sample"""
         training_backend = StateTracker.get_data_backend(training_dataset_id)
@@ -161,14 +170,14 @@ class TrainingSample:
         cond_data_dir = cond_backend["config"]["instance_data_dir"]
         if os.path.isabs(self._image_path):
             conditioning_root = os.path.abspath(cond_data_dir) if cond_data_dir else None
-            if conditioning_root and self._image_path.startswith(conditioning_root):
+            if conditioning_root and self._path_is_within(self._image_path, conditioning_root):
                 relative_path = os.path.relpath(self._image_path, conditioning_root)
                 training_sample_path = os.path.join(training_data_dir, relative_path) if training_data_dir else relative_path
             else:
                 training_sample_path = self._image_path
         else:
             relative_path = self._image_path
-            if cond_data_dir and relative_path.startswith(cond_data_dir):
+            if cond_data_dir and self._path_is_within(relative_path, cond_data_dir):
                 relative_path = os.path.relpath(relative_path, cond_data_dir)
             training_sample_path = os.path.join(training_data_dir, relative_path) if training_data_dir else relative_path
 
