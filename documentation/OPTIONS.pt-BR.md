@@ -1299,6 +1299,18 @@ Veja o guia [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) pa
 - **Por que**: Quando habilitado com `--diff2flow_enabled`, calcula a loss contra o alvo flow (noise - latents) em vez do alvo nativo (epsilon ou velocity).
 - **Nota**: Requer `--diff2flow_enabled`.
 
+### `--mixflow_enabled`
+
+- **O que**: Habilita o pós-treinamento MixFlow com interpolação desacelerada para modelos Flow Matching.
+- **Por que**: Altera a amostragem de timesteps e a velocidade de interpolação sem mudar a arquitetura do modelo.
+- **Nota**: Não pode ser combinado com outros schedules de timestep. Consulte o [guia do MixFlow](experimental/MIXFLOW.pt-BR.md).
+
+### `--mixflow_gamma`
+
+- **O que**: Controla o intervalo da interpolação desacelerada do MixFlow.
+- **Intervalo**: `0.0` a `1.0`; padrão: `0.8`.
+- **Nota**: `0.0` preserva a interpolação padrão, mas mantém a amostragem de timesteps do MixFlow.
+
 ### `--scheduled_sampling_max_step_offset`
 
 - **O que**: Numero maximo de passos para "roll out" durante o treinamento.

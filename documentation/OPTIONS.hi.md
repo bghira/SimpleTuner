@@ -1301,6 +1301,18 @@ Multi‑GPU training के लिए dataset sizing पर अधिक वि�
 - **Why**: `--diff2flow_enabled` के साथ enabled होने पर, loss को model के native target (epsilon या velocity) की जगह flow target (noise - latents) के खिलाफ compute करता है।
 - **Note**: `--diff2flow_enabled` आवश्यक है।
 
+### `--mixflow_enabled`
+
+- **What**: Flow Matching models के लिए MixFlow slowed-interpolation post-training सक्षम करता है।
+- **Why**: Model architecture बदले बिना timestep sampling और interpolation speed बदलता है।
+- **Note**: इसे अन्य timestep schedules के साथ उपयोग नहीं किया जा सकता। [MixFlow guide](experimental/MIXFLOW.hi.md) देखें।
+
+### `--mixflow_gamma`
+
+- **What**: MixFlow slowed-interpolation range को नियंत्रित करता है।
+- **Range**: `0.0` से `1.0`; default: `0.8`।
+- **Note**: `0.0` standard interpolation को बनाए रखते हुए MixFlow timestep sampling का उपयोग करता है।
+
 ### `--scheduled_sampling_max_step_offset`
 
 - **What**: training के दौरान "roll out" होने वाले steps की अधिकतम संख्या।

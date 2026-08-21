@@ -1304,6 +1304,18 @@ Flux Kontext の検証もこのコンディショニングベースの経路を�
 - **理由**: `--diff2flow_enabled` と併用すると、モデルのネイティブターゲット（epsilon または velocity）ではなく flow ターゲット（noise - latents）に対して損失を計算します。
 - **注記**: `--diff2flow_enabled` が必要です。
 
+### `--mixflow_enabled`
+
+- **内容**: Flow Matching モデルで MixFlow の減速補間による追加学習を有効にします。
+- **理由**: モデル構造を変更せずに、タイムステップのサンプリングと補間速度を変更します。
+- **注記**: 他のタイムステップスケジュールとは併用できません。[MixFlow ガイド](experimental/MIXFLOW.ja.md)を参照してください。
+
+### `--mixflow_gamma`
+
+- **内容**: MixFlow の減速補間範囲を制御します。
+- **範囲**: `0.0` から `1.0`。既定値は `0.8` です。
+- **注記**: `0.0` は標準補間を維持しながら、MixFlow のタイムステップサンプリングを使用します。
+
 ### `--scheduled_sampling_max_step_offset`
 
 - **内容**: 学習中に「ロールアウト」する最大ステップ数。
