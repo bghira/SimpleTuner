@@ -4982,7 +4982,7 @@ class ModelFoundation(ABC):
         internal_guidance = getattr(self, "internal_guidance_regularizer", None)
         if not enabled or internal_guidance is None or not internal_guidance.enabled:
             return contextlib.nullcontext()
-        scale = float(getattr(self.config, "validation_internal_guidance_scale", 1.0) or 1.0)
+        scale = float(getattr(self.config, "validation_internal_guidance_scale", 1.0))
         return internal_guidance.inference_context(scale)
 
     def _build_crepa_teacher_batch(self, prepared_batch: dict, crepa: CrepaRegularizer) -> dict:

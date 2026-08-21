@@ -141,6 +141,13 @@ class InternalGuidanceRegularizerTests(unittest.TestCase):
         self.assertTrue(torch.allclose(guided, torch.full_like(guided, 1.5)))
         self.assertEqual(self.foundation.model.forward, original_forward)
 
+    def test_foundation_inference_context_rejects_explicit_zero_scale(self):
+        self.foundation.config.validation_internal_guidance_scale = 0.0
+
+        with self.assertRaisesRegex(ValueError, "must be greater than zero"):
+            with ModelFoundation.internal_guidance_inference_context(self.foundation):
+                pass
+
     def test_peft_modules_to_save_include_head(self):
         self.assertEqual(
             ModelFoundation.get_lora_save_layers(self.foundation),
