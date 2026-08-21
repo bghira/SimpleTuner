@@ -5,13 +5,15 @@ from unittest.mock import patch
 
 import torch
 
-from simpletuner.helpers.models.common import ModelFoundation
+from simpletuner.helpers.models.common import ImageModelFoundation, ModelFoundation, ModelTypes
 from simpletuner.helpers.training.crepa import (
     CrepaFeatureSource,
     CrepaMode,
     CrepaRegularizer,
     CrepaScheduler,
+    SpatialConvProjector,
     UrepaRegularizer,
+    spatial_zscore,
 )
 from simpletuner.helpers.training.ema import EMAModel
 from simpletuner.helpers.utils.hidden_state_buffer import UNetMidBlockCapture
@@ -88,6 +90,223 @@ class _DummyQwenVLModel(torch.nn.Module):
             for index in range(image_grid_thw.shape[0])
         )
         return SimpleNamespace(pooler_output=features)
+
+
+class IrepaTests(unittest.TestCase):
+    def test_transformer_irepa_requires_crepa(self):
+        foundation = SimpleNamespace(
+            config=SimpleNamespace(irepa_enabled=True, crepa_enabled=False),
+            MODEL_TYPE=ModelTypes.TRANSFORMER,
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires crepa_enabled"):
+            ImageModelFoundation._init_crepa_regularizer(foundation)
+
+    def test_unet_irepa_requires_urepa(self):
+        foundation = SimpleNamespace(
+            config=SimpleNamespace(irepa_enabled=True, urepa_enabled=False),
+            MODEL_TYPE=ModelTypes.UNET,
+        )
+
+        with self.assertRaisesRegex(ValueError, "requires urepa_enabled"):
+            ImageModelFoundation._init_urepa_regularizer(foundation)
+
+    def test_irepa_rejects_lycoris(self):
+        foundation = SimpleNamespace(
+            config=SimpleNamespace(irepa_enabled=True, model_type="lora", lora_type="lycoris"),
+        )
+
+        with self.assertRaisesRegex(ValueError, "LyCORIS is not supported"):
+            ImageModelFoundation._validate_irepa_adapter_support(foundation)
+
+    def test_peft_saves_alignment_projectors(self):
+        model = torch.nn.Module()
+        model.crepa_projector = SpatialConvProjector(4, 8)
+        foundation = SimpleNamespace(get_trained_component=lambda unwrap_model=False: model)
+
+        self.assertEqual(ModelFoundation.get_lora_save_layers(foundation), ["crepa_projector"])
+
+    def test_peft_refreshes_and_trains_wrapped_alignment_projector(self):
+        from peft import LoraConfig, get_peft_model_state_dict, inject_adapter_in_model
+
+        model = torch.nn.Module()
+        model.linear = torch.nn.Linear(4, 4)
+        original = SpatialConvProjector(4, 8)
+        model.crepa_projector = original
+        foundation = SimpleNamespace(
+            crepa_regularizer=SimpleNamespace(projector=original),
+            urepa_regularizer=None,
+            get_trained_component=lambda unwrap_model=False: model,
+        )
+        inject_adapter_in_model(
+            LoraConfig(r=2, target_modules=["linear"], modules_to_save=["crepa_projector"]),
+            model,
+        )
+
+        ModelFoundation.refresh_representation_alignment_projectors(foundation)
+        hidden = torch.randn(1, 1, 4, 4)
+        foundation.crepa_regularizer.projector(hidden, spatial_shape=(2, 2)).sum().backward()
+        projector_grads = [parameter.grad for parameter in model.crepa_projector.parameters() if parameter.requires_grad]
+        saved_keys = get_peft_model_state_dict(model)
+
+        self.assertIs(foundation.crepa_regularizer.projector, model.crepa_projector)
+        self.assertTrue(projector_grads)
+        self.assertTrue(all(gradient is not None for gradient in projector_grads))
+        self.assertTrue(any("crepa_projector" in key for key in saved_keys))
+
+    def test_irepa_reinitializes_projector_after_quantization(self):
+        config = SimpleNamespace(
+            crepa_enabled=True,
+            crepa_block_index=1,
+            crepa_feature_source="backbone",
+            irepa_enabled=True,
+            irepa_projector_kernel_size=3,
+        )
+        regularizer = CrepaRegularizer(
+            config,
+            SimpleNamespace(device=torch.device("cpu")),
+            hidden_size=4,
+        )
+        model = torch.nn.Module()
+        regularizer.attach_to_model(model)
+        original = model.crepa_projector
+
+        regularizer.reinitialize_projector(model)
+
+        self.assertIs(model.crepa_projector, regularizer.projector)
+        self.assertIsNot(model.crepa_projector, original)
+        self.assertEqual(next(model.crepa_projector.parameters()).dtype, torch.float32)
+
+    def test_spatial_conv_projector_rejects_invalid_kernel(self):
+        with self.assertRaisesRegex(ValueError, "positive odd integer"):
+            SpatialConvProjector(8, 8, kernel_size=0)
+
+        with self.assertRaisesRegex(ValueError, "positive odd integer"):
+            SpatialConvProjector(8, 8, kernel_size=2)
+
+    def test_spatial_zscore_normalizes_each_frame(self):
+        features = torch.tensor(
+            [
+                [
+                    [[1.0, 10.0], [2.0, 20.0], [3.0, 30.0], [4.0, 40.0]],
+                    [[10.0, 1.0], [20.0, 2.0], [30.0, 3.0], [40.0, 4.0]],
+                ]
+            ]
+        )
+
+        normalized = spatial_zscore(features, alpha=1.0)
+
+        torch.testing.assert_close(normalized.mean(dim=2), torch.zeros(1, 2, 2), atol=1e-6, rtol=0)
+        torch.testing.assert_close(normalized.std(dim=2), torch.ones(1, 2, 2), atol=1e-6, rtol=0)
+
+    def test_spatial_conv_projector_preserves_rectangular_frame_layout(self):
+        projector = SpatialConvProjector(1, 1, kernel_size=3)
+        projector.projection.weight.data.fill_(1.0)
+        projector.projection.bias.data.zero_()
+        hidden = torch.cat(
+            [
+                torch.ones(1, 1, 6, 1),
+                torch.full((1, 1, 6, 1), 10.0),
+            ],
+            dim=1,
+        )
+
+        projected = projector(hidden, spatial_shape=(2, 3))
+
+        self.assertEqual(projected.shape, (1, 2, 6, 1))
+        torch.testing.assert_close(projected[0, 0, :, 0], torch.tensor([4.0, 6.0, 4.0, 4.0, 6.0, 4.0]))
+        torch.testing.assert_close(projected[0, 1, :, 0], torch.tensor([40.0, 60.0, 40.0, 40.0, 60.0, 40.0]))
+
+    def test_irepa_uses_framewise_video_geometry(self):
+        config = SimpleNamespace(
+            irepa_enabled=True,
+            irepa_spatial_norm_alpha=0.6,
+            irepa_projector_kernel_size=3,
+            crepa_enabled=True,
+            crepa_block_index=0,
+            crepa_feature_source="backbone",
+            crepa_adjacent_distance=1,
+            crepa_adjacent_tau=1.0,
+            crepa_lambda=0.5,
+        )
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = CrepaRegularizer(config, accelerator, hidden_size=4)
+        model = torch.nn.Module()
+
+        reg.attach_to_model(model)
+        hidden = torch.randn(1, 12, 4)
+        latents = torch.randn(1, 4, 2, 2, 3)
+        projected = reg._project_hidden_states(hidden, latents=latents)
+
+        self.assertTrue(reg.enabled)
+        self.assertIsInstance(model.crepa_projector, SpatialConvProjector)
+        self.assertEqual(projected.shape, (1, 2, 6, 4))
+
+    def test_irepa_resamples_equal_token_counts_with_different_layouts(self):
+        config = SimpleNamespace(
+            irepa_enabled=True,
+            crepa_enabled=True,
+            crepa_block_index=0,
+            crepa_feature_source="backbone",
+            crepa_adjacent_distance=1,
+            crepa_adjacent_tau=1.0,
+            crepa_lambda=0.5,
+        )
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = CrepaRegularizer(config, accelerator, hidden_size=1)
+        projected = torch.zeros(1, 1, 16, 1)
+        teacher = torch.arange(16, dtype=torch.float32).reshape(1, 1, 16, 1)
+
+        _, aligned_teacher = reg._maybe_align_tokens(
+            projected,
+            teacher,
+            projected_spatial_shape=(2, 8),
+            feature_spatial_shape=(4, 4),
+        )
+
+        self.assertFalse(torch.equal(aligned_teacher, teacher))
+
+    def test_irepa_uses_conv_projector_for_urepa(self):
+        config = SimpleNamespace(
+            irepa_enabled=True,
+            irepa_spatial_norm_alpha=0.6,
+            irepa_projector_kernel_size=3,
+            urepa_enabled=True,
+            urepa_lambda=0.5,
+            urepa_manifold_weight=3.0,
+        )
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = UrepaRegularizer(config, accelerator, hidden_size=4)
+        reg.encoder_dim = 8
+        reg._load_encoder = lambda: None
+        model = torch.nn.Module()
+
+        reg.attach_to_model(model)
+        projected = reg._project_hidden_states(torch.randn(1, 4, 2, 3))
+
+        self.assertTrue(reg.enabled)
+        self.assertIsInstance(model.urepa_projector, SpatialConvProjector)
+        self.assertEqual(projected.shape, (1, 6, 8))
+
+    def test_legacy_crepa_projector_is_unchanged(self):
+        config = SimpleNamespace(
+            irepa_enabled=False,
+            crepa_enabled=True,
+            crepa_block_index=0,
+            crepa_feature_source="backbone",
+            crepa_adjacent_distance=1,
+            crepa_adjacent_tau=1.0,
+            crepa_lambda=0.5,
+        )
+        accelerator = SimpleNamespace(device=torch.device("cpu"))
+        reg = CrepaRegularizer(config, accelerator, hidden_size=4)
+        model = torch.nn.Module()
+
+        reg.attach_to_model(model)
+
+        self.assertIsInstance(model.crepa_projector, torch.nn.Sequential)
+        self.assertIsInstance(model.crepa_projector[0], torch.nn.LayerNorm)
+        self.assertIsInstance(model.crepa_projector[1], torch.nn.Linear)
 
 
 class CrepaDecodeTests(unittest.TestCase):
@@ -1113,6 +1332,18 @@ class UNetMidBlockCaptureTests(unittest.TestCase):
         # Should have captured the mid_block output
         self.assertIsNotNone(captured)
         self.assertEqual(captured.shape, (2, 4, 8, 8))
+
+    def test_capture_preserves_gradient_graph(self):
+        unet = self._make_dummy_unet()
+        x = torch.randn(2, 4, 8, 8, requires_grad=True)
+
+        with UNetMidBlockCapture(unet) as capture:
+            _ = unet(x)
+            captured = capture.get_captured()
+            captured.sum().backward()
+
+        self.assertIsNotNone(x.grad)
+        self.assertIsNotNone(unet.mid_block.conv.weight.grad)
 
     def test_context_manager_usage(self):
         """UNetMidBlockCapture should work as context manager."""

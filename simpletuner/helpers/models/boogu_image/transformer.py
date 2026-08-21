@@ -1118,8 +1118,8 @@ class BooguImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
         instruction_attention_mask: torch.Tensor,
         ref_image_hidden_states: Optional[List[List[torch.Tensor]]] = None,
         attention_kwargs: Optional[Dict[str, Any]] = None,
-        hidden_states_buffer: Optional[dict] = None,
         return_dict: bool = False,
+        hidden_states_buffer: Optional[dict] = None,
     ) -> Union[torch.Tensor, Transformer2DModelOutput]:
         """
         Forward pass:
@@ -1319,12 +1319,15 @@ class BooguImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
                         )
                     capture_layers = getattr(hidden_states_buffer, "capture_layers", None)
                     if hidden_states_buffer is not None and (capture_layers is None or layer_idx in capture_layers):
-                        hidden_states_buffer[f"layer_{layer_idx}"] = torch.stack(
-                            [
-                                img_hidden_states[i, img_len - noise_len : img_len]
-                                for i, (img_len, noise_len) in enumerate(zip(combined_img_seq_lengths, l_effective_img_len))
-                            ]
-                        )
+                        captured = [
+                            img_hidden_states[index, total_len - noise_len : total_len]
+                            for index, (total_len, noise_len) in enumerate(
+                                zip(combined_img_seq_lengths, l_effective_img_len)
+                            )
+                        ]
+                        if len({tensor.shape[0] for tensor in captured}) != 1:
+                            raise ValueError("Hidden-state capture requires equal latent token counts within a batch.")
+                        hidden_states_buffer[f"layer_{layer_idx}"] = torch.stack(captured)
 
                 if enable_double_stream_teacache:
                     self.teacache_params.previous_double_residual = (
@@ -1397,12 +1400,13 @@ class BooguImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
                     hidden_states = layer(hidden_states, joint_attention_mask, rotary_emb, temb)
                 capture_layers = getattr(hidden_states_buffer, "capture_layers", None)
                 if hidden_states_buffer is not None and (capture_layers is None or block_idx in capture_layers):
-                    hidden_states_buffer[f"layer_{block_idx}"] = torch.stack(
-                        [
-                            hidden_states[i, seq_len - img_len : seq_len]
-                            for i, (seq_len, img_len) in enumerate(zip(seq_lengths, l_effective_img_len))
-                        ]
-                    )
+                    captured = [
+                        hidden_states[index, seq_len - noise_len : seq_len]
+                        for index, (seq_len, noise_len) in enumerate(zip(seq_lengths, l_effective_img_len))
+                    ]
+                    if len({tensor.shape[0] for tensor in captured}) != 1:
+                        raise ValueError("Hidden-state capture requires equal latent token counts within a batch.")
+                    hidden_states_buffer[f"layer_{self.num_double_stream_layers + layer_idx}"] = torch.stack(captured)
 
             if self.enable_teacache:
                 self.teacache_params.previous_residual = hidden_states - ori_hidden_states

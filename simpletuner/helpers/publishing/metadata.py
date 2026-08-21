@@ -336,7 +336,7 @@ def _output_attribute(args, model):
 
 
 def _output_save_call(args):
-    if args.model_family in ["ltxvideo", "ltxvideo2", "wan", "wan_s2v"]:
+    if args.model_family in ["ltxvideo", "ltxvideo2", "wan", "wan_s2v", "infinitetalk"]:
         return f"""
 from diffusers.utils.export_utils import export_to_gif
 export_to_gif(model_output, "output.gif", fps={args.framerate})
@@ -483,6 +483,8 @@ def _model_card_family_tag(model_family: str):
         return "ltx-video" if model_family == "ltxvideo" else "ltx-2"
     if model_family in ("wan", "wan_s2v"):
         return "WanPipeline"
+    if model_family == "infinitetalk":
+        return "InfiniteTalkPipeline"
     return model_family
 
 
@@ -501,6 +503,7 @@ def _pipeline_tag(args):
         "sanavideo",
         "wan",
         "wan_s2v",
+        "infinitetalk",
     }
     if args.model_family in audio_model_families:
         return "text-to-audio"

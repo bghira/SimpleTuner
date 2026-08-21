@@ -295,7 +295,7 @@ class MiniMaxH3(VideoModelFoundation):
         return list(dict.fromkeys(targets))
 
     def get_lora_save_layers(self):
-        save_layers = super().get_lora_save_layers() or []
+        save_layers = list(super().get_lora_save_layers() or [])
         if not self._configured_anyflow():
             return save_layers or None
         if not bool(self._anyflow_distillation_config().get("train_delta_embedder", True)):

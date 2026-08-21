@@ -20,6 +20,14 @@
 
     [:octicons-arrow-right-24: Web UI Tutorial](webui/TUTORIAL.md)
 
+-   :material-chart-line:{ .lg .middle } __Local Metrics__
+
+    ---
+
+    Store scalar charts and validation comparisons with each training run
+
+    [:octicons-arrow-right-24: Local Training Metrics](webui/LOCAL_METRICS.md)
+
 -   :material-closed-caption:{ .lg .middle } __CaptionFlow__
 
     ---
@@ -72,9 +80,9 @@
 
     ---
 
-    Research features such as AnyFlow, ConvRot-style SDNQ Hadamard quantization, segmented checkpointing, Unsloth-style checkpointing, Prompt2Effect, Self-Flow, Flow-DPO, Internal Guidance, LayerSync, Diff2Flow, Metal Flash Attention, and Video CREPA
+    Research features such as AnyFlow, ConvRot-style SDNQ Hadamard quantization, segmented checkpointing, Unsloth-style checkpointing, Prompt2Effect, Self-Flow, Self-Transcendence, Flow-DPO, Internal Guidance, iREPA, LayerSync, Diff2Flow, Metal Flash Attention, and Video CREPA
 
-    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: ConvRot / Hadamard SDNQ](experimental/CONVROT.md) · [:octicons-arrow-right-24: Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md) · [:octicons-arrow-right-24: Unsloth Checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) · [:octicons-arrow-right-24: Metal Flash Attention](experimental/METAL_FLASH_ATTENTION.md)
+    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: Self-Transcendence](experimental/SELF_TRANSCENDENCE.md) · [:octicons-arrow-right-24: iREPA](experimental/IREPA.md) · [:octicons-arrow-right-24: ConvRot / Hadamard SDNQ](experimental/CONVROT.md) · [:octicons-arrow-right-24: Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md) · [:octicons-arrow-right-24: Unsloth Checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) · [:octicons-arrow-right-24: Metal Flash Attention](experimental/METAL_FLASH_ATTENTION.md)
 
 </div>
 

@@ -1292,6 +1292,13 @@ Flux Kontext の検証もこのコンディショニングベースの経路を�
 - **内容**: 損失地形に対してより緩やかな重み付けで学習します。
 - **理由**: ピクセル拡散モデルの学習では、特定の損失重み付けがないと劣化することがあります。DeepFloyd では soft-min-snr-gamma が良好な結果にほぼ必須でした。潜在拡散モデルでは成功する場合もありますが、少数の実験ではぼやけた結果になる可能性がありました。
 
+### `--flow_cubic_schedule_weights`
+
+- **内容**: 0 から 1 の等間隔点に置いた非負の重みで密度を定義し、flow-matching の timestep をサンプリングします。JSON 配列またはカンマ区切り値を使用します。重みが 0 個または 1 個なら一様分布、2 個なら線形密度、3 個以上なら単調 cubic-Hermite 補間です。
+- **理由**: schedule を離散 timestep に限定せず、選択したノイズ領域へ学習を集中できます。モデル固有の timestep 規約と設定済みの flow schedule shift は引き続き適用されます。
+- **競合**: `--flow_use_uniform_schedule`、`--flow_use_beta_schedule`、`--flux_fast_schedule`、`--flow_custom_timesteps` とは併用できません。
+- **例**: `"flow_cubic_schedule_weights": [0.1, 1.0, 0.3, 2.0]`
+
 ### `--diff2flow_enabled`
 
 - **内容**: epsilon または v-prediction モデル向けに Diffusion-to-Flow ブリッジを有効化します。
@@ -1383,6 +1390,33 @@ Flux Kontext の検証もこのコンディショニングベースの経路を�
 - **内容**: ReflexFlow の周波数補償（損失再重み付け）項の重み。
 - **既定**: 1.0。
 - **理由**: 再重み付けされた flow-matching 損失をスケールし、ReflexFlow 論文の β₂ に対応します。
+
+---
+
+## 🎯 iREPA（Improved Representation Alignment）
+
+iREPA は convolution projector と frame ごとの spatial normalization により、representation alignment の空間構造を保持します。Transformer の CREPA と UNet の U-REPA を改善します。[iREPA ガイド](experimental/IREPA.ja.md)を参照してください。
+
+### `--irepa_enabled`
+
+- **型**: Boolean flag
+- **既定値**: `false`
+- **内容**: 有効な CREPA または U-REPA path に iREPA spatial operations を追加します。
+- **注記**: Transformer では `crepa_enabled`、UNet では `urepa_enabled` も有効にします。
+- **Training mode**: Full-model または standard PEFT LoRA。LyCORIS は補助 projector を保存できないため未対応です。
+
+### `--irepa_spatial_norm_alpha`
+
+- **型**: Float
+- **既定値**: `0.6`
+- **内容**: spatial standard deviation で割る前の teacher-feature mean subtraction を調整します。
+- **注記**: `0.6` は latent-diffusion reference setting、`1.0` は完全な channel centering です。
+
+### `--irepa_projector_kernel_size`
+
+- **型**: Integer（`1`、`3`、`5`、`7`）
+- **既定値**: `3`
+- **内容**: alignment projector の spatial convolution kernel を設定します。
 
 ---
 
@@ -1849,8 +1883,19 @@ LayerSync は同一 Transformer 内の「学生」レイヤーを、より強い
 ### `--report_to`
 
 - **内容**: 結果とログの報告先プラットフォーム。
-- **理由**: TensorBoard、wandb、comet_ml などと連携して監視できます。複数指定はカンマ区切りです。
-- **選択肢**: wandb, tensorboard, comet_ml
+- **理由**: ローカルまたは外部監視を有効にします。`simpletuner` は JSONL、マニフェスト、検証メディア情報、自己完結 HTML を `output_dir` に保存します。`all` にはローカルトラッカーも含まれます。
+- **選択肢**: simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, all, none
+
+### `--validation_image_format`
+
+- **内容**: `output_dir/validation_images` に保存する画像形式。
+- **選択肢**: png, webp, jpeg
+- **デフォルト**: png
+
+### `--validation_image_quality`
+
+- **内容**: WebP と JPEG の品質（1 から 100）。
+- **デフォルト**: 90。PNG では無視されます。
 
 ## 環境設定変数
 
@@ -2003,6 +2048,7 @@ usage: train.py [-h] --model_family
                 [--flow_use_beta_schedule [FLOW_USE_BETA_SCHEDULE]]
                 [--flow_beta_schedule_alpha FLOW_BETA_SCHEDULE_ALPHA]
                 [--flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA]
+                [--flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
                 [--flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]]
                 [--audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT]
@@ -2126,7 +2172,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -2488,6 +2534,11 @@ options:
                         Alpha value for beta schedule (default: 2.0)
   --flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA
                         Beta value for beta schedule (default: 2.0)
+  --flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS
+                        Sample flow timesteps from a smooth density through
+                        equally spaced non-negative weights. Use a JSON array
+                        or comma-separated values; zero or one weight produces
+                        a uniform distribution.
   --flow_schedule_shift FLOW_SCHEDULE_SHIFT
                         Shift the noise schedule for flow-matching models
   --flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]
@@ -2877,7 +2928,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}
                         Method for model distillation
                         Distillation methods cannot be combined with
                         --train_text_encoder.

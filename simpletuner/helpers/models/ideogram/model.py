@@ -786,7 +786,10 @@ class Ideogram4(ImageModelFoundation):
         mu = float(getattr(self.config, "ideogram_schedule_mu", 0.0) or 0.0)
         std = float(getattr(self.config, "ideogram_schedule_std", 1.5) or 1.5)
         schedule = get_schedule_for_resolution((image_height, image_width), known_mean=mu, std=std)
-        schedule_u = torch.rand((bsz,), device=device, dtype=torch.float32)
+        if self._uses_flow_cubic_schedule():
+            schedule_u = self._sample_flow_cubic_values(bsz, device)
+        else:
+            schedule_u = torch.rand((bsz,), device=device, dtype=torch.float32)
         model_t = schedule(schedule_u).to(device=device, dtype=torch.float32)
         sigmas = (1.0 - model_t).clamp(0.0, 1.0)
         timesteps = sigmas * 1000.0

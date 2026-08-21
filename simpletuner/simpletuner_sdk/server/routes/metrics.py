@@ -10,11 +10,16 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
+from simpletuner.simpletuner_sdk.server.services.training_metrics_service import (
+    TRAINING_METRICS_SERVICE,
+    TrainingMetricsServiceError,
+)
 
 from .cloud._shared import (
     BillingResponse,
@@ -35,6 +40,62 @@ router = APIRouter(prefix="/api/metrics", tags=["metrics"])
 from .cloud.metrics_config import router as metrics_config_router
 
 router.include_router(metrics_config_router, prefix="/config")
+
+
+def _call_training_metrics_service(func, *args, **kwargs):
+    try:
+        return func(*args, **kwargs)
+    except TrainingMetricsServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.get("/training/runs")
+async def list_training_runs(
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """List saved environments containing SimpleTuner local metrics."""
+    return _call_training_metrics_service(TRAINING_METRICS_SERVICE.list_runs)
+
+
+@router.get("/training/runs/{environment}")
+async def get_training_run(
+    environment: str,
+    start_step: Optional[int] = Query(None, ge=0),
+    end_step: Optional[int] = Query(None, ge=0),
+    max_points: int = Query(2000, ge=2, le=10000),
+    metric: Optional[List[str]] = Query(None),
+    _user: User = Depends(get_current_user),
+) -> Dict[str, Any]:
+    """Read bounded scalar history and validation media for one environment."""
+    if start_step is not None and end_step is not None and start_step > end_step:
+        raise HTTPException(status_code=400, detail="start_step must be less than or equal to end_step.")
+    return _call_training_metrics_service(
+        TRAINING_METRICS_SERVICE.get_run,
+        environment,
+        start_step=start_step,
+        end_step=end_step,
+        max_points=max_points,
+        metric_names=metric,
+    )
+
+
+@router.get("/training/runs/{environment}/media/{relative_path:path}")
+async def get_training_run_media(
+    environment: str,
+    relative_path: str,
+    _user: User = Depends(get_current_user),
+):
+    path = _call_training_metrics_service(TRAINING_METRICS_SERVICE.media_path, environment, relative_path)
+    return FileResponse(path)
+
+
+@router.get("/training/runs/{environment}/report")
+async def get_training_run_report(
+    environment: str,
+    _user: User = Depends(get_current_user),
+):
+    path = _call_training_metrics_service(TRAINING_METRICS_SERVICE.report_path, environment)
+    return FileResponse(path, media_type="text/html")
 
 
 async def check_cost_limit(store, provider: str) -> CostLimitStatusResponse:

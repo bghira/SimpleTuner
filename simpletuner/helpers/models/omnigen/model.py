@@ -209,13 +209,7 @@ class OmniGen(ImageModelFoundation):
     def prepare_batch_conditions(self, batch: dict, state: dict) -> dict:
         """OmniGen-specific flow matching preparation"""
         if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
-            # Get batch size and device
-            bsz = batch["latents"].shape[0]
-            device = batch["latents"].device
-
-            # Sample t using OmniGen's approach (normal -> sigmoid)
-            u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=device)
-            t = 1.0 / (1.0 + torch.exp(-u))  # sigmoid transformation
+            _, t = self.sample_flow_sigmas(batch=batch, state=state)
 
             # OmniGen uses timesteps from 0 to 1, NOT scaled by 1000
             batch["timesteps"] = t  # Keep as 0-1 range
@@ -240,8 +234,11 @@ class OmniGen(ImageModelFoundation):
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         bsz = batch["latents"].shape[0]
         device = batch["latents"].device
-        u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=device)
-        t = 1.0 / (1.0 + torch.exp(-u))
+        if self._uses_flow_cubic_schedule():
+            t = self._sample_flow_cubic_values(bsz, device)
+        else:
+            u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=device)
+            t = torch.sigmoid(u)
         return t, t
 
     def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:

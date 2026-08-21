@@ -67,7 +67,7 @@ class UNetMidBlockCapture:
             raise ValueError("UNet does not have a mid_block to capture from")
 
         def hook_fn(module, input, output):
-            self._captured = output.detach()
+            self._captured = output
 
         self._hook_handle = self.unet.mid_block.register_forward_hook(hook_fn)
 

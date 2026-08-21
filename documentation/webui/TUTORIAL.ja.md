@@ -358,3 +358,7 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 **注意**: **デフォルト**環境は特別であり、一般的なトレーニング環境として使用することは推奨されません。その設定は、そのオプションを有効にする任意の環境に自動的にマージできます、**環境のデフォルトを使用**:
 
 <img width="1521" height="991" alt="image" src="https://github.com/user-attachments/assets/9d18b0c1-608e-4ab2-be14-65b98907ec69" />
+
+## ローカル学習メトリクス
+
+logging platform に **SimpleTuner (Local)** を選び、**Metrics → Training Runs** を開きます。ファイル、offline report、圧縮、API は [ローカル学習メトリクス](LOCAL_METRICS.md) を参照してください。

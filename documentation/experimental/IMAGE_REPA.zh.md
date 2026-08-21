@@ -9,6 +9,8 @@ SimpleTuner 支持两种变体：
 
 > **寻找视频模型？** 请参阅 [VIDEO_CREPA.zh.md](VIDEO_CREPA.zh.md) 了解带时间对齐的视频模型 CREPA 支持。
 
+> **改进空间对齐：** [iREPA](IREPA.zh.md) 为两种 REPA 路径加入卷积投影器和教师空间归一化。
+
 ## 何时使用
 
 ### REPA（DiT 模型）

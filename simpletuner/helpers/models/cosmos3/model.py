@@ -603,8 +603,11 @@ class Cosmos3Image(Cosmos2Image):
         batch["input_noise"] = noise
 
         bsz = latents.shape[0]
-        u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=latents.device)
-        t = torch.sigmoid(u)
+        if self._uses_flow_cubic_schedule():
+            t = self._sample_flow_cubic_values(bsz, latents.device)
+        else:
+            u = torch.normal(mean=0.0, std=1.0, size=(bsz,), device=latents.device)
+            t = torch.sigmoid(u)
         batch["sigmas"] = t
         batch["timesteps"] = t * 1000.0
         batch["noisy_latents"] = self._interpolate_flow_latents(latents, noise, t)

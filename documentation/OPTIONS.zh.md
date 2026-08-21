@@ -1294,6 +1294,13 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 - **内容**：使用更渐进的损失权重进行训练。
 - **原因**：像素扩散模型若不使用特定损失权重会退化。对 DeepFloyd 而言，soft-min-snr-gamma 基本必需。潜在扩散模型可能也有效，但小规模实验中可能产生模糊结果。
 
+### `--flow_cubic_schedule_weights`
+
+- **内容**：根据 0 到 1 之间等距点上的非负权重定义密度，并从中采样流匹配时间步。可使用 JSON 数组或逗号分隔值。零个或一个权重表示均匀分布，两个权重表示线性密度，三个及以上使用单调三次 Hermite 插值。
+- **原因**：无需把调度离散为固定时间步，即可将训练集中在指定噪声区域。模型原生时间步约定和已配置的 flow schedule shift 仍然生效。
+- **冲突**：不能与 `--flow_use_uniform_schedule`、`--flow_use_beta_schedule`、`--flux_fast_schedule` 或 `--flow_custom_timesteps` 同时使用。
+- **示例**：`"flow_cubic_schedule_weights": [0.1, 1.0, 0.3, 2.0]`
+
 ### `--diff2flow_enabled`
 
 - **内容**：为 epsilon 或 v-prediction 模型启用 Diffusion-to-Flow 桥接。
@@ -1385,6 +1392,33 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 - **内容**：ReflexFlow 频率补偿（损失重加权）项的权重。
 - **默认**：1.0。
 - **原因**：缩放重加权后的 flow-matching 损失，对应 ReflexFlow 论文中的 β₂。
+
+---
+
+## 🎯 iREPA（改进的表示对齐）
+
+iREPA 使用卷积投影器和逐帧空间归一化，在表示对齐中保留空间结构。它改进 Transformer 的 CREPA 和 UNet 的 U-REPA。参见 [iREPA 指南](experimental/IREPA.zh.md)。
+
+### `--irepa_enabled`
+
+- **类型**：布尔标志
+- **默认值**：`false`
+- **作用**：使用 iREPA 空间操作升级已启用的 CREPA 或 U-REPA 路径。
+- **说明**：Transformer 还需启用 `crepa_enabled`，UNet 还需启用 `urepa_enabled`。
+- **训练模式**：完整模型或标准 PEFT LoRA。LyCORIS 无法保存辅助投影器，因此不受支持。
+
+### `--irepa_spatial_norm_alpha`
+
+- **类型**：浮点数
+- **默认值**：`0.6`
+- **作用**：在除以空间标准差之前，缩放教师特征的均值减法。
+- **说明**：`0.6` 是 latent-diffusion 参考设置；`1.0` 会完全中心化每个通道。
+
+### `--irepa_projector_kernel_size`
+
+- **类型**：整数（`1`、`3`、`5` 或 `7`）
+- **默认值**：`3`
+- **作用**：设置对齐投影器的空间卷积核。
 
 ---
 
@@ -1851,8 +1885,19 @@ LayerSync 通过在同一 Transformer 内让“学生”层对齐更强的“教
 ### `--report_to`
 
 - **内容**：指定结果与日志的上报平台。
-- **原因**：可与 TensorBoard、wandb、comet_ml 集成监控。多个值用逗号分隔；
-- **选项**：wandb, tensorboard, comet_ml
+- **原因**：启用本地或外部监控。`simpletuner` 会在 `output_dir` 中写入 JSONL、运行清单、验证媒体元数据和独立 HTML 报告。`all` 包含本地 tracker。
+- **选项**：simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, all, none
+
+### `--validation_image_format`
+
+- **内容**：保存到 `output_dir/validation_images` 的图像格式。
+- **选项**：png, webp, jpeg
+- **默认值**：png
+
+### `--validation_image_quality`
+
+- **内容**：WebP 和 JPEG 的质量，范围 1 到 100。
+- **默认值**：90。PNG 会忽略此项。
 
 ## 环境配置变量
 
@@ -2005,6 +2050,7 @@ usage: train.py [-h] --model_family
                 [--flow_use_beta_schedule [FLOW_USE_BETA_SCHEDULE]]
                 [--flow_beta_schedule_alpha FLOW_BETA_SCHEDULE_ALPHA]
                 [--flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA]
+                [--flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
                 [--flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]]
                 [--audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT]
@@ -2128,7 +2174,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -2489,6 +2535,11 @@ options:
                         Alpha value for beta schedule (default: 2.0)
   --flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA
                         Beta value for beta schedule (default: 2.0)
+  --flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS
+                        Sample flow timesteps from a smooth density through
+                        equally spaced non-negative weights. Use a JSON array
+                        or comma-separated values; zero or one weight produces
+                        a uniform distribution.
   --flow_schedule_shift FLOW_SCHEDULE_SHIFT
                         Shift the noise schedule for flow-matching models
   --flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]
@@ -2878,7 +2929,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}
                         Method for model distillation
                         Distillation methods cannot be combined with
                         --train_text_encoder.

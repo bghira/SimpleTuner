@@ -15,6 +15,8 @@ from PIL import Image
 
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training import validation_audio
+from simpletuner.helpers.training import validation_images as validation_images_utils
+from simpletuner.helpers.training.local_metrics import record_validation_media
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
@@ -108,6 +110,7 @@ def save_videos(
             validation_audios,
             validation_shortname,
             sample_rate=audio_sample_rate,
+            config=config,
         )
         return audio_paths
 
@@ -146,12 +149,19 @@ def save_videos(
 
         if not isinstance(validation_image, list):
             # save as single image instead
-            filename = f"step_{StateTracker.get_global_step()}_{validation_shortname}_{validation_img_idx}_{res_label}.png"
-            save_path = os.path.join(save_dir, filename)
+            filename_stem = f"step_{StateTracker.get_global_step()}_{validation_shortname}_{validation_img_idx}_{res_label}"
             try:
-                validation_image.save(save_path)
+                validation_images_utils.save_validation_image(
+                    validation_image,
+                    save_dir,
+                    filename_stem,
+                    config,
+                    label=validation_shortname,
+                    index=validation_img_idx,
+                    resolution=res_label,
+                )
             except Exception as e:
-                logger.error(f"Failed to save validation image to {save_path}: {e}")
+                logger.error(f"Failed to save validation image {filename_stem}: {e}")
             validation_img_idx += 1
             continue
 
@@ -167,6 +177,14 @@ def save_videos(
             video_paths.append(video_path)
             if audio_list is not None:
                 _mux_audio_into_video(video_path, audio_list[validation_img_idx], audio_sample_rate)
+            record_validation_media(
+                config,
+                video_path,
+                media_type="video",
+                label=validation_shortname,
+                index=validation_img_idx,
+                resolution=res_label,
+            )
         except Exception as e:
             logger.error(f"Failed to save validation video to {video_path}: {e}")
 
