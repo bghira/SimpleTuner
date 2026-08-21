@@ -9,7 +9,7 @@ SimpleTuner soporta dos variantes:
 
 > **¿Buscas modelos de video?** Consulta [VIDEO_CREPA.es.md](VIDEO_CREPA.es.md) para soporte CREPA en modelos de video con alineamiento temporal.
 
-> **Alineacion espacial mejorada:** [iREPA](IREPA.es.md) agrega un proyector convolucional y normalizacion espacial del teacher a ambas rutas REPA.
+> **Alineación espacial mejorada:** [iREPA](IREPA.es.md) agrega un proyector convolucional y normalización espacial del teacher a ambas rutas REPA.
 
 ## Cuándo usarlo
 

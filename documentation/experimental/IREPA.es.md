@@ -1,8 +1,8 @@
 # iREPA
 
-iREPA mejora la alineacion de representaciones al conservar la estructura espacial en la ruta de alineacion. Sustituye el proyector lineal por token por una convolucion espacial y normaliza cada canal de las features del teacher con z-score sobre los patches de la imagen.
+iREPA mejora la alineación de representaciones al conservar la estructura espacial en la ruta de alineación. Sustituye el proyector lineal por token por una convolución espacial y normaliza cada canal de las features del teacher con z-score sobre los patches de la imagen.
 
-SimpleTuner usa el motor existente segun el backbone: los modelos Transformer de imagen usan REPA/CREPA; los modelos Transformer de video aplican iREPA por frame y conservan la loss temporal de CREPA; los modelos UNet usan el mid-block y la manifold loss de U-REPA. La cuadricula rectangular se deriva de la forma de los latents limpios.
+SimpleTuner usa el motor existente según el backbone: los modelos Transformer de imagen usan REPA/CREPA; los modelos Transformer de video aplican iREPA por frame y conservan la loss temporal de CREPA; los modelos UNet usan el mid-block y la manifold loss de U-REPA. La cuadrícula rectangular se deriva de la forma de los latents limpios.
 
 ```json
 {
@@ -17,8 +17,8 @@ SimpleTuner usa el motor existente segun el backbone: los modelos Transformer de
 
 Activa `crepa_enabled` con iREPA para Transformer o `urepa_enabled` con iREPA para UNet. Las opciones `crepa_*` o `urepa_*` controlan teacher, peso, capa y schedule. `0.6` corresponde a la receta de latent diffusion; kernel `3` es la arquitectura publicada.
 
-iREPA requiere hidden states con patch tokens espaciales y latents limpios para recuperar la cuadricula. En video, la convolucion no mezcla frames.
+iREPA requiere hidden states con patch tokens espaciales y latents limpios para recuperar la cuadrícula. En video, la convolución no mezcla frames.
 
-Usa entrenamiento de modelo completo o LoRA PEFT estandar. LyCORIS no puede guardar el proyector auxiliar y no es compatible.
+Usa entrenamiento de modelo completo o LoRA PEFT estándar. LyCORIS no puede guardar el proyector auxiliar y no es compatible.
 
 Referencia: [What Matters for Representation Alignment: Global Information or Spatial Structure?](https://arxiv.org/abs/2512.10794)

@@ -4,7 +4,7 @@ Cross-frame Representation Alignment (CREPA) es un regularizador ligero para mod
 
 > **¿Buscas modelos de imagen?** Consulta [IMAGE_REPA.es.md](IMAGE_REPA.es.md) para soporte REPA en modelos DiT de imagen (Flux, SD3, etc.) y U-REPA para modelos UNet (SDXL, SD1.5, Kolors).
 
-> **Alineacion espacial mejorada:** [iREPA](IREPA.es.md) aplica el proyector convolucional y la normalizacion del teacher de forma independiente a cada frame.
+> **Alineación espacial mejorada:** [iREPA](IREPA.es.md) aplica el proyector convolucional y la normalización del teacher de forma independiente a cada frame.
 
 ## Cuándo usarlo
 

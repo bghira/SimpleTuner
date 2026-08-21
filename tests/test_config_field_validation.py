@@ -205,6 +205,8 @@ class TestIrepaFields(unittest.TestCase):
         self.assertIsNone(enabled.model_specific)
         self.assertEqual(alpha.default_value, 0.6)
         self.assertEqual(kernel.default_value, 3)
+        crepa_enabled = registry.get_field("crepa_enabled")
+        self.assertEqual(len({enabled.order, alpha.order, kernel.order, crepa_enabled.order}), 4)
 
 
 if __name__ == "__main__":

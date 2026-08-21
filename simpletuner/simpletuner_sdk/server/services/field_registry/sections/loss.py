@@ -172,7 +172,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Spatial convolution kernel used by the iREPA projector.",
             tooltip="Use 3 for the published iREPA architecture.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=8,
+            order=7.1,
             documentation="OPTIONS.md#--irepa_projector_kernel_size",
         )
     )
