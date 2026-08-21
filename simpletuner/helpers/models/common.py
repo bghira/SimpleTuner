@@ -902,6 +902,9 @@ class ModelFoundation(ABC):
     # LoRA/PEFT helpers (shared across model families)
     # -------------------------------------------------------------------------
     def get_lora_save_layers(self):
+        component = self.get_trained_component(unwrap_model=False)
+        if component is not None and hasattr(component, "self_transcendence_projector"):
+            return ["self_transcendence_projector"]
         return None
 
     def _get_peft_lora_target_modules(self):
@@ -4836,7 +4839,10 @@ class ModelFoundation(ABC):
         ls_needed = bool(layersync and layersync.wants_hidden_states())
         crepa = getattr(self, "crepa_regularizer", None)
         crepa_buffer = bool(crepa and crepa.wants_hidden_states())
-        return ls_needed or crepa_buffer
+        distillation_method = getattr(self.config, "distillation_method", None)
+        method_value = getattr(distillation_method, "value", distillation_method)
+        self_transcendence = str(method_value).lower() == "self_transcendence"
+        return ls_needed or crepa_buffer or self_transcendence
 
     def _validate_crepa_configuration(self) -> CrepaFeatureSource:
         feature_source = CrepaFeatureSource.from_config(self.config)

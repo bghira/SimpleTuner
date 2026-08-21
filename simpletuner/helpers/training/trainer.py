@@ -6043,6 +6043,9 @@ class Trainer:
             apply_conditioning_mask=True,
         )
         diffusion_loss = loss.clone()
+        distiller = getattr(self, "distiller", None)
+        if distiller is not None:
+            distiller.prepare_model_output(model_pred)
         loss, aux_loss_logs = self.model.auxiliary_loss(
             prepared_batch=prepared_batch,
             model_output=model_pred,
