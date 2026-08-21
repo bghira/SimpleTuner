@@ -194,11 +194,17 @@ class SelfTranscendenceDistiller(DistillationBase):
         component = self.teacher_model.get_trained_component(unwrap_model=False)
         prefix = getattr(self.teacher_model, "MODEL_SUBFOLDER", None) or self.teacher_model.MODEL_TYPE.value
         try:
-            load_lora_weights(
+            additional_keys, missing_keys = load_lora_weights(
                 {prefix: component},
                 self.teacher_adapter_path,
                 use_dora=bool(getattr(self.teacher_model.config, "use_dora", False)),
             )
+            if missing_keys:
+                missing = ", ".join(sorted(missing_keys))
+                raise ValueError(f"Self-Transcendence teacher adapter is missing required tensors: {missing}")
+            if additional_keys:
+                additional = ", ".join(sorted(additional_keys))
+                self.logger.warning("Self-Transcendence teacher adapter contains unused tensors: %s", additional)
             teacher_parameters = [parameter.detach().clone() for parameter in parameters]
         finally:
             for parameter, student in zip(parameters, student_parameters):

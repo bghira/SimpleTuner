@@ -1,5 +1,7 @@
+import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import torch
 import torch.nn as nn
@@ -83,6 +85,22 @@ class SelfTranscendenceDistillerTests(unittest.TestCase):
         distiller = SelfTranscendenceDistiller(foundation, config=settings)
         with self.assertRaises(FileNotFoundError):
             distiller.pre_training_step(foundation, 0)
+
+    def test_incomplete_teacher_adapter_fails_before_teacher_capture(self):
+        foundation = _Foundation()
+        with tempfile.NamedTemporaryFile(suffix=".safetensors") as adapter:
+            settings = _config("self", teacher_adapter_path=adapter.name)
+            SelfTranscendenceDistiller.prepare_model_for_adapter(foundation, settings)
+            distiller = SelfTranscendenceDistiller(foundation, config=settings)
+
+            with patch(
+                "simpletuner.helpers.training.adapter.load_lora_weights",
+                return_value=(set(), {"transformer.block.lora_A.weight"}),
+            ):
+                with self.assertRaisesRegex(ValueError, "missing required tensors"):
+                    distiller.pre_training_step(foundation, 0)
+
+        self.assertIsNone(distiller._teacher_parameters)
 
     def test_prepare_model_attaches_three_layer_projector(self):
         foundation = _Foundation()
