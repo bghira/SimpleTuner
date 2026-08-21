@@ -75,6 +75,15 @@ Para treino somente de audio, `dataset_type: "audio"` e suficiente. Como o H3 de
 SimpleTuner registra `audio.audio_only: true` na configuracao normalizada, cria o video placeholder e mascara a loss de
 video. A opcao explicita `audio_only` continua aceita, mas nao e obrigatoria.
 
+## Paralelismo de contexto
+
+O context parallelism do H3 usa Ulysses com `context_parallel_strategy: "alltoall"`. A sequencia packed pode receber
+padding ate o grau CP, entao o backend de attention local precisa aceitar uma mascara. `native` e `cudnn` sao suportados;
+o SimpleTuner substitui outros backends por `native` quando CP esta ativo.
+
+Com cerca de 8k audio tokens, CP troca comunicacao por menos memoria de activations e checkpointing mais leve. CP nao
+divide os weights sozinho; compare com DDP salvo quando a sequencia for maior ou CP estiver combinado com FSDP.
+
 ## Atenção sparse experimental
 
 A MiniMax informa que o H3 usou atenção sparse 3D estilo MoBA durante a etapa final de treinamento. O release público inicial usa atenção densa, e a MiniMax ainda não publicou o block shape, retention budget, layer schedule ou kernel de produção exatos. Por isso o SimpleTuner deixa esta aproximação experimental desativada por padrão.
