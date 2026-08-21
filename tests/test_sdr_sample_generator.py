@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 from PIL import Image
@@ -91,6 +93,24 @@ class TestSDRDownsampleSampleGenerator(unittest.TestCase):
 
         self.assertEqual(filename, "clip.png")
         self.assertEqual(full_path, "/tmp/conditioning/clip.png")
+
+    def test_generated_target_relativizes_absolute_source_against_relative_root(self):
+        with TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_root = root / "datasets" / "videos"
+            target_root = root / "cache" / "conditioning"
+            source_path = source_root / "nested" / "clip.mp4"
+
+            generator = DataGenerator.__new__(DataGenerator)
+            generator.source_instance_dir = str(source_root.relative_to(root))
+            generator.target_instance_dir = str(target_root)
+            generator.sample_generator = I2VFirstFrameSampleGenerator({"type": "i2v_first_frame"})
+
+            with unittest.mock.patch("simpletuner.helpers.data_generation.conditioning.os.getcwd", return_value=str(root)):
+                full_path, filename = generator.generate_target_filename(str(source_path))
+
+            self.assertEqual(filename, "clip.png")
+            self.assertEqual(full_path, str(target_root / "nested" / "clip.png"))
 
 
 if __name__ == "__main__":

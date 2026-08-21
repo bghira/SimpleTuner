@@ -613,6 +613,33 @@ except ImportError:
 
 
 class TestTrainer(unittest.TestCase):
+    def test_musubi_placement_supports_wan_blocks_and_root_parameters(self):
+        class ToyWan(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.root_weight = torch.nn.Parameter(torch.ones(1))
+                self.embedding = torch.nn.Linear(1, 1)
+                self.blocks = torch.nn.ModuleList([torch.nn.Linear(1, 1) for _ in range(3)])
+                self._musubi_block_swap = MagicMock()
+                self._musubi_block_swap.block_indices = {2}
+                self._musubi_block_swap.offload_device = torch.device("cpu")
+
+        model = ToyWan()
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        trainer.config = SimpleNamespace(musubi_blocks_to_swap=1)
+
+        with patch.object(model.blocks, "to", wraps=model.blocks.to) as blocks_to:
+            trainer._move_model_with_block_swap(model)
+
+        blocks_to.assert_not_called()
+        model._musubi_block_swap.move_module.assert_called_once_with(model.embedding, torch.device("cpu"))
+        self.assertEqual(
+            model._musubi_block_swap.stream_in.call_args_list,
+            [call(model.blocks[0], torch.device("cpu")), call(model.blocks[1], torch.device("cpu"))],
+        )
+        model._musubi_block_swap.stream_out.assert_called_once_with(model.blocks[2])
+
     def test_init_text_encoder_disables_fsdp_cpu_ram_efficient_loading_during_load(self):
         trainer = object.__new__(Trainer)
         observed_env_values = []

@@ -136,6 +136,74 @@ class TestTrainingSample(unittest.TestCase):
 
         self.assertEqual(sample.training_sample_path(source_backend_id), "17.mp4")
 
+    def test_training_sample_path_resolves_relative_pairing_inside_source_root(self):
+        class SourceBackend:
+            def get_abs_path(self, sample_path):
+                return os.path.abspath(sample_path)
+
+        source_backend_id = "source"
+        conditioning_backend_id = "conditioning"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_root = os.path.join(tmpdir, "source")
+            conditioning_root = os.path.join(tmpdir, "conditioning")
+            original_get_data_backend = StateTracker.get_data_backend
+            StateTracker.get_data_backend = MagicMock(
+                side_effect=lambda backend_id: {
+                    source_backend_id: {
+                        "config": {"instance_data_dir": source_root},
+                        "data_backend": SourceBackend(),
+                    },
+                    conditioning_backend_id: {
+                        "config": {"instance_data_dir": conditioning_root},
+                        "data_backend": MagicMock(),
+                    },
+                }[backend_id]
+            )
+            self.addCleanup(setattr, StateTracker, "get_data_backend", original_get_data_backend)
+
+            sample = TrainingSample(
+                self.image,
+                conditioning_backend_id,
+                {**self.image_metadata, "training_sample_path": "17.mp4"},
+                image_path=os.path.join(conditioning_root, "17.png"),
+            )
+
+            self.assertEqual(sample.training_sample_path(source_backend_id), os.path.join(source_root, "17.mp4"))
+
+    def test_training_sample_path_resolves_relative_conditioning_path_inside_source_root(self):
+        class SourceBackend:
+            def get_abs_path(self, sample_path):
+                return os.path.abspath(sample_path)
+
+        source_backend_id = "source"
+        conditioning_backend_id = "conditioning"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_root = os.path.join(tmpdir, "source")
+            conditioning_root = os.path.join(tmpdir, "conditioning")
+            original_get_data_backend = StateTracker.get_data_backend
+            StateTracker.get_data_backend = MagicMock(
+                side_effect=lambda backend_id: {
+                    source_backend_id: {
+                        "config": {"instance_data_dir": source_root},
+                        "data_backend": SourceBackend(),
+                    },
+                    conditioning_backend_id: {
+                        "config": {"instance_data_dir": conditioning_root},
+                        "data_backend": MagicMock(),
+                    },
+                }[backend_id]
+            )
+            self.addCleanup(setattr, StateTracker, "get_data_backend", original_get_data_backend)
+
+            sample = TrainingSample(
+                self.image,
+                conditioning_backend_id,
+                self.image_metadata,
+                image_path="17.png",
+            )
+
+            self.assertEqual(sample.training_sample_path(source_backend_id), os.path.join(source_root, "17.png"))
+
     def test_i2v_first_frame_metadata_copy_targets_png_and_preserves_pairing_path(self):
         class FakeMetadata:
             def __init__(self):

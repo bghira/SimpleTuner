@@ -149,26 +149,30 @@ class TrainingSample:
         cond_backend = StateTracker.get_data_backend(self.data_backend_id)
         if training_backend is None:
             raise ValueError(f"No training dataset registered for backend “{training_dataset_id}”.")
-        if isinstance(self.image_metadata, dict) and self.image_metadata.get("training_sample_path"):
-            return training_backend["data_backend"].get_abs_path(self.image_metadata["training_sample_path"])
         training_data_dir = training_backend["config"]["instance_data_dir"]
+        if isinstance(self.image_metadata, dict) and self.image_metadata.get("training_sample_path"):
+            training_sample_path = self.image_metadata["training_sample_path"]
+            if training_data_dir and not os.path.isabs(training_sample_path):
+                training_sample_path = os.path.join(training_data_dir, training_sample_path)
+            return training_backend["data_backend"].get_abs_path(training_sample_path)
+        if not self._image_path:
+            raise ValueError("Cannot determine training sample path: no image path provided.")
+
         cond_data_dir = cond_backend["config"]["instance_data_dir"]
         if os.path.isabs(self._image_path):
-            cond_data_dir = os.path.abspath(cond_data_dir)
-            training_data_dir = os.path.abspath(training_data_dir)
-        if (
-            cond_data_dir
-            and self._image_path.startswith(cond_data_dir)
-            and not training_backend["config"].get("instance_data_dir")
-        ):
-            cond_relpath = os.path.relpath(self._image_path, cond_data_dir)
+            conditioning_root = os.path.abspath(cond_data_dir) if cond_data_dir else None
+            if conditioning_root and self._image_path.startswith(conditioning_root):
+                relative_path = os.path.relpath(self._image_path, conditioning_root)
+                training_sample_path = os.path.join(training_data_dir, relative_path) if training_data_dir else relative_path
+            else:
+                training_sample_path = self._image_path
         else:
-            cond_relpath = self._image_path.replace(cond_data_dir, training_data_dir, 1)
-        if not cond_relpath:
-            raise ValueError("Cannot determine training sample path: no image path provided.")
-        training_sample_path = training_backend["data_backend"].get_abs_path(cond_relpath)
+            relative_path = self._image_path
+            if cond_data_dir and relative_path.startswith(cond_data_dir):
+                relative_path = os.path.relpath(relative_path, cond_data_dir)
+            training_sample_path = os.path.join(training_data_dir, relative_path) if training_data_dir else relative_path
 
-        return training_sample_path
+        return training_backend["data_backend"].get_abs_path(training_sample_path)
 
     def _validate_image_metadata(self) -> bool:
         """check if metadata has required keys to skip calculations

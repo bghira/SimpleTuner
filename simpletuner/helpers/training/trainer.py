@@ -5330,6 +5330,11 @@ class Trainer:
         model = wrapped_model
         while hasattr(model, "module"):
             model = model.module
+        get_base_model = getattr(model, "get_base_model", None)
+        if callable(get_base_model):
+            base_model = get_base_model()
+            if base_model is not model:
+                model = base_model
 
         # Get the block swap manager if it exists
         block_swap_manager = getattr(model, "_musubi_block_swap", None)
@@ -5344,8 +5349,9 @@ class Trainer:
         double_blocks = list(getattr(model, "transformer_blocks", []) or [])
         single_blocks = list(getattr(model, "single_transformer_blocks", []) or [])
         layer_blocks = list(getattr(model, "layers", []) or [])
+        wan_blocks = list(getattr(model, "blocks", []) or [])
 
-        all_blocks = text_blocks + visual_blocks + double_blocks + single_blocks + layer_blocks
+        all_blocks = text_blocks + visual_blocks + double_blocks + single_blocks + layer_blocks + wan_blocks
         total_blocks = len(all_blocks)
 
         # Determine which block indices are managed by block swap
@@ -5371,19 +5377,37 @@ class Trainer:
             "single_transformer_blocks",
             "transformer_blocks",
             "layers",
+            "blocks",
         }
+        with torch.no_grad():
+            for param in model._parameters.values():
+                if param is not None and param.device != target_device:
+                    param.data = param.data.to(target_device, non_blocking=True)
+            for name, buffer in model._buffers.items():
+                if buffer is not None and buffer.device != target_device:
+                    model._buffers[name] = buffer.to(target_device, non_blocking=True)
+
         for name, child in model.named_children():
             if name not in block_module_names:
-                child.to(target_device)
+                if block_swap_manager is not None:
+                    block_swap_manager.move_module(child, target_device)
+                else:
+                    child.to(target_device)
                 torch.cuda.empty_cache()
 
         # Move non-managed blocks to GPU, keep managed blocks on CPU
         for idx, block in enumerate(all_blocks):
             if idx in managed_indices:
-                # Keep on CPU - block swap will stream it in during forward
+                if block_swap_manager is not None:
+                    block_swap_manager.stream_out(block)
+                else:
+                    block.to("cpu")
                 logger.debug("Block %d: keeping on CPU (managed by block swap)", idx)
             else:
-                block.to(target_device)
+                if block_swap_manager is not None:
+                    block_swap_manager.stream_in(block, target_device)
+                else:
+                    block.to(target_device)
                 torch.cuda.empty_cache()
 
         logger.info("Model moved to %s with block swap active", target_device)
@@ -5443,6 +5467,8 @@ class Trainer:
                 else:
                     self.model.get_trained_component(unwrap_model=False).to(target_device, dtype=self.config.weight_dtype)
                 self._report_cuda_usage_if_requested("after_move_trained_component")
+            elif musubi_block_swap_active and is_accelerator_target:
+                self._move_model_with_block_swap(self.model.get_trained_component(unwrap_model=False))
             elif ramtorch_enabled and is_accelerator_target:
                 # RamTorch is applied before PEFT adapters are injected. Refresh
                 # accelerator residency here so untargeted layers and newly-created

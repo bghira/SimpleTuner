@@ -272,6 +272,7 @@ nav:
       - Stable Cascade: quickstart/STABLE_CASCADE_C.md
     - Video Models:
       - Wan Video: quickstart/WAN.md
+      - InfiniteTalk: quickstart/INFINITETALK.md
       - LTX Video: quickstart/LTXVIDEO.md
       - LTX Video 2: quickstart/LTXVIDEO2.md
       - Cosmos3: quickstart/COSMOS3.md

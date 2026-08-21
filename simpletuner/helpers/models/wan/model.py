@@ -1395,6 +1395,7 @@ class Wan(VideoModelFoundation):
             ),
             "return_dict": False,
         }
+        wan_transformer_kwargs = self.update_model_predict_kwargs(prepared_batch, wan_transformer_kwargs)
 
         capture_hidden = bool(crepa and crepa.wants_hidden_states() and capture_block_index is not None)
         if capture_hidden:
@@ -1473,6 +1474,9 @@ class Wan(VideoModelFoundation):
             "crepa_hidden_states": crepa_hidden,
             "hidden_states_buffer": hidden_states_buffer,
         }
+
+    def update_model_predict_kwargs(self, prepared_batch: dict, transformer_kwargs: dict) -> dict:
+        return transformer_kwargs
 
     def check_user_config(self):
         """

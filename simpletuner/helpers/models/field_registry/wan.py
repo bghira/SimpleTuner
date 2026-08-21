@@ -21,7 +21,7 @@ def register_fields(registry) -> None:
             help_text="Split Wan feed-forward layers into smaller chunks to reduce peak VRAM usage.",
             tooltip="Available for Wan models. Breaks long MLPs into mini-batches so checkpoint recomputes allocate less memory.",
             importance=ImportanceLevel.ADVANCED,
-            model_specific=["wan", "wan_s2v"],
+            model_specific=["wan", "wan_s2v", "infinitetalk"],
             order=8,
         )
     )
@@ -39,7 +39,7 @@ def register_fields(registry) -> None:
             help_text="Number of samples processed per chunk when feed-forward chunking is enabled.",
             tooltip="Leave blank for auto. Lower values reduce memory further but increase wall-clock time.",
             importance=ImportanceLevel.ADVANCED,
-            model_specific=["wan", "wan_s2v"],
+            model_specific=["wan", "wan_s2v", "infinitetalk"],
             order=9,
             dependencies=[
                 FieldDependency(field="enable_chunked_feed_forward", operator="equals", value=True, action="show")
