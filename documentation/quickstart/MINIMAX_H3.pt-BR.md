@@ -71,6 +71,10 @@ Negative prompting não faz parte do contrato base do H3. SimpleTuner mantém re
 
 Use `"av"` só quando o dataset tiver target audio latents e você quiser joint audio/video training. Também pode configurar por backend com `h3_target_mode` ou `minimax_h3_target_mode`.
 
+Para treino somente de audio, `dataset_type: "audio"` e suficiente. Como o H3 declara suporte a fake video, o
+SimpleTuner registra `audio.audio_only: true` na configuracao normalizada, cria o video placeholder e mascara a loss de
+video. A opcao explicita `audio_only` continua aceita, mas nao e obrigatoria.
+
 ## Atenção sparse experimental
 
 A MiniMax informa que o H3 usou atenção sparse 3D estilo MoBA durante a etapa final de treinamento. O release público inicial usa atenção densa, e a MiniMax ainda não publicou o block shape, retention budget, layer schedule ou kernel de produção exatos. Por isso o SimpleTuner deixa esta aproximação experimental desativada por padrão.

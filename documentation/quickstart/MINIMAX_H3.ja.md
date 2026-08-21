@@ -71,6 +71,10 @@ Negative prompting は base H3 contract の一部ではありません。SimpleT
 
 dataset に target audio latents があり joint audio/video training したい場合だけ `"av"` を使います。data backend ごとに `h3_target_mode` または `minimax_h3_target_mode` でも設定できます。
 
+Audio-only training では `dataset_type: "audio"` だけで十分です。H3 は fake-video support を提供するため、
+SimpleTuner は normalized backend config に `audio.audio_only: true` を記録し、placeholder video stream を作成して
+video loss を mask します。明示的な `audio_only` も使用できますが、必須ではありません。
+
 ## Experimental Sparse Attention
 
 MiniMax は、H3 の最終 training stage で MoBA-style 3D sparse attention を video tokens に使ったと述べています。初期 public release は dense attention を使っており、MiniMax は正確な block shape、retention budget、layer schedule、production kernel をまだ公開していません。そのため SimpleTuner ではこの experimental approximation をデフォルトで無効にしています。

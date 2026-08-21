@@ -103,6 +103,48 @@ class TestFactoryEdgeCases(unittest.TestCase):
             json.dump(config_data, f, indent=2)
         return config_path
 
+    def test_audio_dataset_materializes_audio_only_for_capable_model(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        self.model.supports_audio_only_training.return_value = True
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        initialized = {
+            "dataset_type": "audio",
+            "config": {"dataset_type": "audio", "audio": {}},
+        }
+
+        enabled = factory._materialize_audio_only_mode({"dataset_type": "audio"}, initialized)
+
+        self.assertTrue(enabled)
+        self.assertTrue(initialized["config"]["audio"]["audio_only"])
+
+    def test_audio_dataset_does_not_materialize_audio_only_for_incapable_model(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        self.model.supports_audio_only_training.return_value = False
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        initialized = {
+            "dataset_type": "audio",
+            "config": {"dataset_type": "audio", "audio": {}},
+        }
+
+        enabled = factory._materialize_audio_only_mode({"dataset_type": "audio"}, initialized)
+
+        self.assertFalse(enabled)
+        self.assertNotIn("audio_only", initialized["config"]["audio"])
+
     def test_config_file_not_found(self):
         """Test behavior when config file doesn't exist."""
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
