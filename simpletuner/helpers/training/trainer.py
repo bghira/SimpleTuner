@@ -763,9 +763,13 @@ class Trainer:
             os.environ["TORCHINDUCTOR_DISABLED_PASSES"] = ",".join(disabled_passes)
 
         try:
-            import torch._inductor.config as inductor_config
+            inductor_config = importlib.import_module("torch._inductor.config")
         except Exception as exc:
             logger.warning("Unable to configure TorchInductor pass disables: %s", exc)
+            return
+
+        if not hasattr(inductor_config, "disabled_passes"):
+            logger.info("TorchInductor config.disabled_passes is unavailable; retaining the environment-only pass disable.")
             return
 
         if getattr(inductor_config, "disabled_passes", "") != os.environ["TORCHINDUCTOR_DISABLED_PASSES"]:

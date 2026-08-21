@@ -3605,6 +3605,22 @@ class TestTrainer(unittest.TestCase):
                 os.environ["TORCHINDUCTOR_DISABLED_PASSES"] = original_env
             inductor_config.disabled_passes = original_config
 
+    @patch("simpletuner.helpers.training.trainer.importlib.import_module")
+    def test_configure_inductor_dynamic_training_passes_allows_missing_config_option(self, import_module):
+        trainer = object.__new__(Trainer)
+        original_env = os.environ.get("TORCHINDUCTOR_DISABLED_PASSES")
+        import_module.return_value = object()
+
+        try:
+            os.environ.pop("TORCHINDUCTOR_DISABLED_PASSES", None)
+            trainer._configure_inductor_dynamic_training_passes("inductor")
+            self.assertEqual(os.environ["TORCHINDUCTOR_DISABLED_PASSES"], "PASS_PATTERN_1")
+        finally:
+            if original_env is None:
+                os.environ.pop("TORCHINDUCTOR_DISABLED_PASSES", None)
+            else:
+                os.environ["TORCHINDUCTOR_DISABLED_PASSES"] = original_env
+
     @patch("simpletuner.helpers.training.trainer.TorchDynamoPlugin")
     @patch("simpletuner.helpers.training.trainer.Accelerator")
     def test_dynamo_plugin_created_when_advanced_options_enabled(self, mock_accelerator, mock_dynamo_plugin):
