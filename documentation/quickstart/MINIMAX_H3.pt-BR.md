@@ -75,7 +75,7 @@ Para treino somente de audio, `dataset_type: "audio"` e suficiente. Como o H3 de
 SimpleTuner registra `audio.audio_only: true` na configuracao normalizada, cria o video placeholder e mascara a loss de
 video. A opcao explicita `audio_only` continua aceita, mas nao e obrigatoria.
 
-## Context parallelism
+## Paralelismo de contexto
 
 O context parallelism do H3 usa Ulysses com `context_parallel_strategy: "alltoall"`. A sequencia packed pode receber
 padding ate o grau CP, entao o backend de attention local precisa aceitar uma mascara. `native` e `cudnn` sao suportados;

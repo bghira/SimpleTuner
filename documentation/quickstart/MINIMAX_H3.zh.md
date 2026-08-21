@@ -74,7 +74,7 @@ Negative prompting 不属于基础 H3 契约。SimpleTuner 为 de-distilled chec
 仅音频训练只需设置 `dataset_type: "audio"`。H3 声明支持 fake video，因此 SimpleTuner 会在规范化后的 backend
 配置中记录 `audio.audio_only: true`，构建占位视频流，并屏蔽视频 loss。仍可显式设置 `audio_only`，但这不是必需的。
 
-## Context parallelism
+## 上下文并行
 
 H3 context parallelism 使用 Ulysses 和 `context_parallel_strategy: "alltoall"`。packed sequence 可能会 padding 到
 CP degree，因此本地 attention backend 必须支持 mask。`native` 和 `cudnn` 受支持；启用 CP 时，SimpleTuner 会把
