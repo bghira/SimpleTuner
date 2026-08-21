@@ -752,6 +752,8 @@ class Ideogram4(ImageModelFoundation):
             self._prepare_flowmap_model_predict_batch(prepared_batch, batch_size=batch_size)
         )
 
+        hidden_states_buffer = self._new_hidden_state_buffer()
+        capture_kwargs = {"hidden_states_buffer": hidden_states_buffer} if hidden_states_buffer is not None else {}
         model_output = self.model(
             llm_features=llm_features,
             x=model_input,
@@ -759,11 +761,15 @@ class Ideogram4(ImageModelFoundation):
             position_ids=position_ids,
             segment_ids=segment_ids,
             indicator=indicator,
+            **capture_kwargs,
             **transformer_kwargs,
         )
         packed_prediction = model_output[:, text_tokens:]
         model_prediction = self._unpack_latents(packed_prediction, latent_height, latent_width)
-        return {"model_prediction": self.raw_model_prediction_to_model_prediction(model_prediction)}
+        output = {"model_prediction": self.raw_model_prediction_to_model_prediction(model_prediction)}
+        if hidden_states_buffer is not None:
+            output["hidden_states_buffer"] = hidden_states_buffer
+        return output
 
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         bsz = batch["latents"].shape[0]

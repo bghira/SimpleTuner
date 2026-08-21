@@ -443,6 +443,8 @@ class BooguImage(ImageModelFoundation):
         if instruction_embeds is None or instruction_mask is None:
             raise ValueError("Boogu training requires cached instruction embeddings and attention masks.")
 
+        hidden_states_buffer = self._new_hidden_state_buffer()
+        capture_kwargs = {"hidden_states_buffer": hidden_states_buffer} if hidden_states_buffer is not None else {}
         model_pred = self.get_trained_component(base_model=True)(
             latents,
             timestep,
@@ -450,10 +452,14 @@ class BooguImage(ImageModelFoundation):
             self._freqs_cis(),
             instruction_mask.to(device=self.accelerator.device, dtype=torch.bool),
             ref_image_hidden_states=prepared_batch.get("ref_image_hidden_states"),
+            **capture_kwargs,
         )
         if hasattr(model_pred, "sample"):
             model_pred = model_pred.sample
-        return {"model_prediction": model_pred}
+        output = {"model_prediction": model_pred}
+        if hidden_states_buffer is not None:
+            output["hidden_states_buffer"] = hidden_states_buffer
+        return output
 
     def post_model_load_setup(self):
         super().post_model_load_setup()

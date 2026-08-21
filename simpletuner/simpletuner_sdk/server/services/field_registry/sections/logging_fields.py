@@ -415,11 +415,12 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
                 {"value": "flow_dpo", "label": "Flow-DPO"},
                 {"value": "anyflow", "label": "AnyFlow"},
                 {"value": "h3_drift", "label": "H3 Drift"},
+                {"value": "self_transcendence", "label": "Self-Transcendence"},
             ],
             help_text="Method for model distillation",
             tooltip=(
                 "Select the distillation approach to use when converting models "
-                "(LCM, DCM, DMD, PerFlow, Flow-DPO, AnyFlow, or H3 Drift). "
+                "(LCM, DCM, DMD, PerFlow, Flow-DPO, AnyFlow, H3 Drift, or Self-Transcendence). "
                 "Distillation cannot be combined with text encoder training."
             ),
             importance=ImportanceLevel.ADVANCED,

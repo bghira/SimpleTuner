@@ -908,7 +908,9 @@ class ModelFoundation(ABC):
         model = self.get_trained_component(unwrap_model=False)
         if model is None:
             return None
-        modules = [name for name in ("crepa_projector", "urepa_projector") if hasattr(model, name)]
+        modules = [
+            name for name in ("self_transcendence_projector", "crepa_projector", "urepa_projector") if hasattr(model, name)
+        ]
         return modules or None
 
     def refresh_representation_alignment_projectors(self):
@@ -4876,7 +4878,10 @@ class ModelFoundation(ABC):
         ls_needed = bool(layersync and layersync.wants_hidden_states())
         crepa = getattr(self, "crepa_regularizer", None)
         crepa_buffer = bool(crepa and crepa.wants_hidden_states())
-        return ls_needed or crepa_buffer
+        distillation_method = getattr(self.config, "distillation_method", None)
+        method_value = getattr(distillation_method, "value", distillation_method)
+        self_transcendence = str(method_value).lower() == "self_transcendence"
+        return ls_needed or crepa_buffer or self_transcendence
 
     def _validate_crepa_configuration(self) -> CrepaFeatureSource:
         feature_source = CrepaFeatureSource.from_config(self.config)

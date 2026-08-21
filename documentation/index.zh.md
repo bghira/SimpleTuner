@@ -80,9 +80,9 @@
 
     ---
 
-    AnyFlow、ConvRot 风格的 SDNQ Hadamard 量化、segmented checkpointing、Unsloth 风格 checkpointing、Prompt2Effect、Self-Flow、Flow-DPO、iREPA、LayerSync、Diff2Flow、Metal Flash Attention、Video CREPA 等研究功能
+    AnyFlow、ConvRot 风格的 SDNQ Hadamard 量化、segmented checkpointing、Unsloth 风格 checkpointing、Prompt2Effect、Self-Flow、Self-Transcendence、Flow-DPO、iREPA、LayerSync、Diff2Flow、Metal Flash Attention、Video CREPA 等研究功能
 
-    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: iREPA](experimental/IREPA.zh.md) · [:octicons-arrow-right-24: ConvRot / Hadamard SDNQ](experimental/CONVROT.md) · [:octicons-arrow-right-24: Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md) · [:octicons-arrow-right-24: Unsloth Checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) · [:octicons-arrow-right-24: Metal Flash Attention](experimental/METAL_FLASH_ATTENTION.md)
+    [:octicons-arrow-right-24: AnyFlow](experimental/ANYFLOW.md) · [:octicons-arrow-right-24: Self-Transcendence](experimental/SELF_TRANSCENDENCE.md) · [:octicons-arrow-right-24: iREPA](experimental/IREPA.zh.md) · [:octicons-arrow-right-24: ConvRot / Hadamard SDNQ](experimental/CONVROT.md) · [:octicons-arrow-right-24: Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md) · [:octicons-arrow-right-24: Unsloth Checkpointing](experimental/UNSLOTH_CHECKPOINTING.md) · [:octicons-arrow-right-24: Metal Flash Attention](experimental/METAL_FLASH_ATTENTION.md)
 
 </div>
 
