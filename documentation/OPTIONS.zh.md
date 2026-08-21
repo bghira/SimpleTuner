@@ -1749,6 +1749,33 @@ urepa_use_tae = false
 
 ---
 
+## Internal Guidance
+
+Internal Guidance 使用与最终 output head 相同的 denoising target 监督早期 diffusion-transformer block。参见 [Internal Guidance](experimental/INTERNAL_GUIDANCE.md)。
+
+### `--internal_guidance_enabled`
+
+- **作用**：启用辅助 denoising head 和 loss。
+- **支持**：使用标准 PEFT LoRA 或完整训练的 diffusion transformer。不支持 UNet、autoregressive 和 LyCORIS。
+- **默认**：`false`
+
+### `--internal_guidance_loss_weight`
+
+- **作用**：Intermediate loss 权重。
+- **默认**：`0.5`，必须大于 0。
+
+### `--internal_guidance_block_index`
+
+- **作用**：从 0 开始的 transformer block。
+- **默认**：Transformer 深度的四分之一。
+
+### `--validation_internal_guidance_scale`
+
+- **作用**：Validation sampling 时应用 `intermediate + scale * (final - intermediate)`。
+- **默认**：`1.0`（禁用）；参考实现使用 `1.4`。
+
+---
+
 ## 🔁 LayerSync（隐藏状态自对齐）
 
 LayerSync 通过在同一 Transformer 内让“学生”层对齐更强的“教师”层，使用隐藏 token 的余弦相似度进行对齐。

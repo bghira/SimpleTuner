@@ -1744,6 +1744,33 @@ urepa_use_tae = false
 
 ---
 
+## Internal Guidance
+
+Internal Guidance शुरुआती diffusion-transformer block को final output head वाले denoising target से supervise करता है। [Internal Guidance](experimental/INTERNAL_GUIDANCE.md) देखें।
+
+### `--internal_guidance_enabled`
+
+- **क्या**: Auxiliary denoising head और loss enable करता है।
+- **Support**: Standard PEFT LoRA या full-model diffusion transformer training। UNet, autoregressive और LyCORIS reject होते हैं।
+- **Default**: `false`
+
+### `--internal_guidance_loss_weight`
+
+- **क्या**: Intermediate loss multiplier।
+- **Default**: `0.5`; zero से अधिक होना चाहिए।
+
+### `--internal_guidance_block_index`
+
+- **क्या**: Zero-based transformer block।
+- **Default**: Transformer depth का एक चौथाई।
+
+### `--validation_internal_guidance_scale`
+
+- **क्या**: Validation sampling में `intermediate + scale * (final - intermediate)` लागू करता है।
+- **Default**: `1.0` (disabled); reference `1.4` उपयोग करता है।
+
+---
+
 ## 🔁 LayerSync (Hidden State Self-Alignment)
 
 LayerSync एक "student" layer को उसी transformer के एक मजबूत "teacher" layer से match करने के लिए प्रोत्साहित करता है, hidden tokens पर cosine similarity का उपयोग करके।

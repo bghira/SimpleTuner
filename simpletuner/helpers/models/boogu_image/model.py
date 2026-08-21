@@ -430,6 +430,7 @@ class BooguImage(ImageModelFoundation):
         return BooguImageRotaryPosEmbed.get_freqs_cis(config.axes_dim_rope, config.axes_lens, theta=10000)
 
     def model_predict(self, prepared_batch, custom_timesteps: list = None):
+        hidden_states_buffer = self._new_hidden_state_buffer()
         latents = prepared_batch["noisy_latents"].to(device=self.accelerator.device, dtype=self.config.weight_dtype)
         timestep = prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=self.config.weight_dtype)
         if timestep.ndim == 0:
@@ -443,7 +444,6 @@ class BooguImage(ImageModelFoundation):
         if instruction_embeds is None or instruction_mask is None:
             raise ValueError("Boogu training requires cached instruction embeddings and attention masks.")
 
-        hidden_states_buffer = self._new_hidden_state_buffer()
         capture_kwargs = {"hidden_states_buffer": hidden_states_buffer} if hidden_states_buffer is not None else {}
         model_pred = self.get_trained_component(base_model=True)(
             latents,

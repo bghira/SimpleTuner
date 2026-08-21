@@ -767,6 +767,85 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="internal_guidance_enabled",
+            arg_name="--internal_guidance_enabled",
+            ui_label="Enable Internal Guidance",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            model_specific=[
+                name
+                for name, cls in ModelRegistry.model_families().items()
+                if getattr(getattr(cls, "MODEL_TYPE", None), "value", None) == "transformer"
+                and getattr(getattr(cls, "PREDICTION_TYPE", None), "value", None) != "autoregressive_next_token"
+            ],
+            help_text="Train an auxiliary denoising head from an early transformer block.",
+            tooltip="The auxiliary head predicts the same diffusion target as the final head and is saved with the adapter.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=23,
+            documentation="OPTIONS.md#--internal_guidance_enabled",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="internal_guidance_loss_weight",
+            arg_name="--internal_guidance_loss_weight",
+            ui_label="Internal Guidance Weight",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0.5,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0001, message="Must be greater than zero")],
+            dependencies=[FieldDependency(field="internal_guidance_enabled", operator="equals", value=True)],
+            help_text="Weight applied to the intermediate denoising loss.",
+            tooltip="The reference implementation uses 0.5.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=24,
+            documentation="OPTIONS.md#--internal_guidance_loss_weight",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="internal_guidance_block_index",
+            arg_name="--internal_guidance_block_index",
+            ui_label="Internal Guidance Block",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be non-negative")],
+            dependencies=[FieldDependency(field="internal_guidance_enabled", operator="equals", value=True)],
+            help_text="Zero-based transformer block whose output feeds the auxiliary head.",
+            tooltip="Defaults to one quarter of the transformer depth; earlier blocks worked best in the paper.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=25,
+            documentation="OPTIONS.md#--internal_guidance_block_index",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="validation_internal_guidance_scale",
+            arg_name="--validation_internal_guidance_scale",
+            ui_label="Internal Guidance Scale",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=1.0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0001, message="Must be greater than zero")],
+            dependencies=[FieldDependency(field="internal_guidance_enabled", operator="equals", value=True)],
+            help_text="Apply Internal Guidance extrapolation during validation sampling.",
+            tooltip="1.0 disables sampling guidance. The reference implementation uses 1.4 for its primary result.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=26,
+            documentation="OPTIONS.md#--validation_internal_guidance_scale",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="layersync_enabled",
             arg_name="--layersync_enabled",
             ui_label="Enable LayerSync",
@@ -777,7 +856,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Enable LayerSync self-alignment between two transformer blocks.",
             tooltip="Adds a cosine-similarity regularizer between student/teacher layers captured from the backbone.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=23,
+            order=27,
             documentation="OPTIONS.md#--layersync_enabled",
         )
     )
@@ -795,7 +874,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Block index to treat as the student for LayerSync (1-based depths accepted).",
             tooltip="Pick an earlier/weaker layer to receive guidance; accepts paper-style 1-based depths.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=24,
+            order=28,
             documentation="OPTIONS.md#--layersync_student_block",
         )
     )
@@ -813,7 +892,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Teacher block index; defaults to the student block when omitted (1-based depths accepted).",
             tooltip="Use a later/stronger layer to supervise the student; accepts paper-style 1-based depths.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=25,
+            order=29,
             documentation="OPTIONS.md#--layersync_teacher_block",
         )
     )
@@ -832,7 +911,7 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             help_text="Strength multiplier for LayerSync alignment loss.",
             tooltip="Set >0 to activate LayerSync when enabled.",
             importance=ImportanceLevel.EXPERIMENTAL,
-            order=26,
+            order=30,
             documentation="OPTIONS.md#--layersync_lambda",
         )
     )

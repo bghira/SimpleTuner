@@ -1751,6 +1751,33 @@ urepa_use_tae = false
 
 ---
 
+## Internal Guidance
+
+Internal Guidance supervises an early diffusion-transformer block with the same denoising target as the final output head. See [Internal Guidance](experimental/INTERNAL_GUIDANCE.md).
+
+### `--internal_guidance_enabled`
+
+- **What**: Enable the auxiliary denoising head and loss.
+- **Support**: Diffusion transformers with standard PEFT LoRA or full-model training. UNet, autoregressive, and LyCORIS training are rejected.
+- **Default**: `false`
+
+### `--internal_guidance_loss_weight`
+
+- **What**: Multiplier for the intermediate denoising loss.
+- **Default**: `0.5`; must be greater than zero.
+
+### `--internal_guidance_block_index`
+
+- **What**: Zero-based transformer block used by the auxiliary head.
+- **Default**: One quarter of the transformer depth.
+
+### `--validation_internal_guidance_scale`
+
+- **What**: Apply `intermediate + scale * (final - intermediate)` during validation sampling.
+- **Default**: `1.0` (disabled). The reference implementation uses `1.4` for its primary result.
+
+---
+
 ## 🔁 LayerSync (Hidden State Self-Alignment)
 
 LayerSync encourages a "student" layer to match a stronger "teacher" layer inside the same transformer, using cosine similarity over hidden tokens.

@@ -728,6 +728,8 @@ class Cosmos3Image(Cosmos2Image):
         return pipeline
 
     def model_predict(self, prepared_batch):
+        hidden_states_buffer = self._new_hidden_state_buffer()
+        per_sample_hidden_states = []
         adapter = self._get_training_pipeline_adapter()
         noisy_latents = prepared_batch["noisy_latents"]
         timesteps = prepared_batch["timesteps"].to(device=noisy_latents.device, dtype=torch.float32)
@@ -741,6 +743,11 @@ class Cosmos3Image(Cosmos2Image):
         vision_predictions = []
         sound_predictions = [] if torch.is_tensor(audio_noisy_latents) else None
         for sample_idx, (prompt, sample_latents) in enumerate(zip(prompts, noisy_latents)):
+            sample_hidden_states = (
+                type(hidden_states_buffer)(capture_layers=hidden_states_buffer.capture_layers)
+                if hidden_states_buffer is not None
+                else None
+            )
             reasoner_cache = reasoner_cache_batch[sample_idx] if isinstance(reasoner_cache_batch, list) else None
             model_out = self._predict_single_sample(
                 adapter=adapter,
@@ -752,6 +759,7 @@ class Cosmos3Image(Cosmos2Image):
                 sound_timestep=audio_timesteps[sample_idx] if torch.is_tensor(audio_timesteps) else timesteps[sample_idx],
                 reasoner_cache=reasoner_cache,
                 condition_frame_indexes=condition_frame_indexes,
+                hidden_states_buffer=sample_hidden_states,
             )
             vision_predictions.append(model_out[0][0])
             if sound_predictions is not None:
@@ -760,8 +768,23 @@ class Cosmos3Image(Cosmos2Image):
                         "Cosmos3 transformer returned no sound prediction for a batch containing sound tokens."
                     )
                 sound_predictions.append(model_out[1][0])
+            if sample_hidden_states is not None:
+                per_sample_hidden_states.append(sample_hidden_states)
+
+        if hidden_states_buffer is not None:
+            layer_keys = (
+                [f"layer_{layer_idx}" for layer_idx in hidden_states_buffer.capture_layers]
+                if hidden_states_buffer.capture_layers is not None
+                else list(per_sample_hidden_states[0])
+            )
+            for layer_key in layer_keys:
+                hidden_states_buffer[layer_key] = torch.cat(
+                    [sample[layer_key] for sample in per_sample_hidden_states], dim=0
+                )
 
         output = {"model_prediction": torch.cat(vision_predictions, dim=0)}
+        if hidden_states_buffer is not None:
+            output["hidden_states_buffer"] = hidden_states_buffer
         if sound_predictions is not None:
             output["audio_model_prediction"] = torch.stack(sound_predictions, dim=0)
         return output
@@ -778,6 +801,7 @@ class Cosmos3Image(Cosmos2Image):
         sound_timestep: torch.Tensor | None = None,
         reasoner_cache: dict | None = None,
         condition_frame_indexes: list[int] | None = None,
+        hidden_states_buffer: dict | None = None,
     ):
         device = vision_tokens.device
         _, _, latent_t, latent_h, latent_w = vision_tokens.shape
@@ -868,6 +892,7 @@ class Cosmos3Image(Cosmos2Image):
             vision_timesteps=vision_timestep.expand(vision_segment["num_noisy_vision_tokens"]),
             vision_noisy_frame_indexes=vision_segment["vision_noisy_frame_indexes"],
             reasoner_memory_state=reasoner_memory_state,
+            hidden_states_buffer=hidden_states_buffer,
             return_dict=False,
             **sound_kwargs,
         )

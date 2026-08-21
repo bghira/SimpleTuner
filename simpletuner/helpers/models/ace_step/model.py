@@ -1871,6 +1871,11 @@ class ACEStep(AudioModelFoundation):
             "hidden_states_buffer": hidden_states_buffer,
         }
 
+    def _init_internal_guidance_regularizer(self):
+        if getattr(self.config, "internal_guidance_enabled", False) and self._is_v15_layout_active():
+            raise ValueError("Internal Guidance is not implemented for the ACE-Step v1.5 decoder layout.")
+        return super()._init_internal_guidance_regularizer()
+
     def loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
         """
         Override base loss to mask out padding regions in audio latents.
