@@ -326,6 +326,7 @@ class Trainer:
         if getattr(self, "config", None) is not None and self.config.model_family in ModelRegistry.model_families().keys():
             self.model = ModelRegistry.model_families()[self.config.model_family](self.config, self.accelerator)
             self.model.check_user_config()
+            self.model.validate_mixflow_config()
             StateTracker.set_model(self.model)
             if getattr(self.config, "optimizer", None) == "muon":
                 if not getattr(self.model, "SUPPORTS_MUON_CLIP", False):

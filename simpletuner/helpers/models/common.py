@@ -4689,6 +4689,80 @@ class ModelFoundation(ABC):
         config = StateTracker.get_data_backend_config(batch.get("data_backend_id"))
         return float(config.get("timestep_sampling_offset", 0.0))
 
+    def _mixflow_enabled(self) -> bool:
+        return getattr(self.config, "mixflow_enabled", False) is True
+
+    def validate_mixflow_config(self) -> None:
+        if not self._mixflow_enabled():
+            return
+        if self.PREDICTION_TYPE is not PredictionTypes.FLOW_MATCHING:
+            raise ValueError("mixflow_enabled requires a flow-matching model family.")
+        self._mixflow_gamma()
+
+        conflicts = {
+            "flux_fast_schedule": bool(getattr(self.config, "flux_fast_schedule", False)),
+            "flow_use_uniform_schedule": bool(getattr(self.config, "flow_use_uniform_schedule", False)),
+            "flow_use_beta_schedule": bool(getattr(self.config, "flow_use_beta_schedule", False)),
+            "flow_custom_timesteps": getattr(self.config, "flow_custom_timesteps", None) not in (None, "", "None"),
+            "crepa_self_flow": bool(getattr(self.config, "crepa_self_flow", False))
+            or getattr(self.config, "crepa_feature_source", None) == "self_flow",
+            "twinflow_enabled": bool(getattr(self.config, "twinflow_enabled", False)),
+            "scheduled_sampling_max_step_offset": int(getattr(self.config, "scheduled_sampling_max_step_offset", 0) or 0)
+            > 0,
+            "distillation_method": getattr(self.config, "distillation_method", None) not in (None, "", "None"),
+        }
+        enabled_conflicts = [name for name, enabled in conflicts.items() if enabled]
+        if enabled_conflicts:
+            raise ValueError("mixflow_enabled cannot be combined with: " + ", ".join(enabled_conflicts) + ".")
+
+    def _mixflow_gamma(self) -> float:
+        gamma = float(getattr(self.config, "mixflow_gamma", 0.8))
+        if not 0.0 <= gamma <= 1.0:
+            raise ValueError("mixflow_gamma must be between 0.0 and 1.0.")
+        return gamma
+
+    @staticmethod
+    def _expand_sigma_values(sigmas: torch.Tensor, latents: torch.Tensor) -> torch.Tensor:
+        if sigmas.shape[0] != latents.shape[0]:
+            raise ValueError(f"Flow sigma batch size {sigmas.shape[0]} does not match latent batch size {latents.shape[0]}.")
+        sigma_values = sigmas.reshape(sigmas.shape[0], -1)[:, 0]
+        return sigma_values.view(sigmas.shape[0], *([1] * (latents.ndim - 1))).to(
+            device=latents.device,
+            dtype=latents.dtype,
+        )
+
+    def _mixflow_interpolation_sigmas(
+        self,
+        sigmas: torch.Tensor,
+        slowdown_factors: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        sigma_values = sigmas.reshape(sigmas.shape[0], -1)[:, 0]
+        gamma = self._mixflow_gamma()
+        if gamma == 0.0:
+            return sigma_values
+        if slowdown_factors is None:
+            slowdown_factors = torch.rand_like(sigma_values)
+        return sigma_values + slowdown_factors * gamma * (1.0 - sigma_values)
+
+    def _prepare_flow_noisy_latents(self, batch: dict) -> dict:
+        """Build the flow input while keeping MixFlow's model and interpolation times distinct."""
+        latents = batch["latents"]
+        input_noise = batch["input_noise"]
+        interpolation_sigmas = batch["sigmas"].reshape(batch["sigmas"].shape[0], -1)[:, 0]
+        if self._mixflow_enabled():
+            gamma = self._mixflow_gamma()
+            slowdown_factors = (
+                torch.rand_like(interpolation_sigmas) if gamma > 0.0 else torch.zeros_like(interpolation_sigmas)
+            )
+            interpolation_sigmas = self._mixflow_interpolation_sigmas(batch["sigmas"], slowdown_factors)
+            batch["mixflow_slowdown_factors"] = slowdown_factors
+            batch["mixflow_interpolation_sigmas"] = interpolation_sigmas
+
+        self.expand_sigmas(batch)
+        interpolation_grid = self._expand_sigma_values(interpolation_sigmas, latents)
+        batch["noisy_latents"] = (1.0 - interpolation_grid) * latents + interpolation_grid * input_noise
+        return batch
+
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Sample flow-matching sigmas/timesteps for the current batch.
@@ -4696,6 +4770,14 @@ class ModelFoundation(ABC):
         Subclasses can override to implement model-specific sampling strategies.
         """
         bsz = batch["latents"].shape[0]
+        if getattr(self.config, "mixflow_enabled", False) is True:
+            # SimpleTuner's sigma increases toward noise, the inverse of the paper's data-ward t.
+            # t ~ Beta(2, 1) therefore becomes sigma = 1 - sqrt(U) ~ Beta(1, 2).
+            sigmas = 1.0 - torch.sqrt(torch.rand((bsz,), device=self.accelerator.device))
+            sigmas = apply_flow_schedule_shift(self.config, self.noise_schedule, sigmas, batch["noise"])
+            timesteps = self.flow_matching_timesteps_from_sigmas(sigmas)
+            return sigmas, timesteps
+
         custom_timesteps = self._normalize_flow_custom_timesteps(getattr(self.config, "flow_custom_timesteps", None))
         if custom_timesteps is not None:
             timestep_mode = str(getattr(self.config, "flow_timesteps_mode", "fixed-list") or "fixed-list").replace("_", "-")
@@ -5539,8 +5621,7 @@ class ModelFoundation(ABC):
             if crepa and crepa.enabled and getattr(crepa, "use_self_flow_features", False):
                 batch = self._prepare_crepa_self_flow_batch(batch=batch, state=state)
             else:
-                self.expand_sigmas(batch)
-                batch["noisy_latents"] = (1 - batch["sigmas"]) * batch["latents"] + batch["sigmas"] * batch["input_noise"]
+                self._prepare_flow_noisy_latents(batch)
                 if self._twinflow_active():
                     self._prepare_twinflow_metadata(batch)
         else:

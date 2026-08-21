@@ -202,6 +202,8 @@
 <details>
 <summary>Flow, distillation, and alignment</summary>
 
+नीचे की हर `flow matching` row के लिए MixFlow post-training उपलब्ध है। [MixFlow guide](experimental/MIXFLOW.md) देखें।
+
 | मॉडल | Prediction | Flow Shift | TwinFlow | Self-Flow | LayerSync | Sliders |
 | --- | --- | :---: | :---: | :---: | :---: | :---: |
 | ACE-Step | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ |

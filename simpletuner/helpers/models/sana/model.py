@@ -304,6 +304,8 @@ class Sana(ImageModelFoundation):
         """
         Sample sigmas uniformly from the scheduler tables (stateless) to mirror the reference Sana trainer.
         """
+        if self._mixflow_enabled():
+            return super().sample_flow_sigmas(batch=batch, state=state)
         bsz = batch["latents"].shape[0]
         num_train_timesteps = self.noise_schedule.config.num_train_timesteps
         u = torch.rand((bsz,), device=self.accelerator.device)
