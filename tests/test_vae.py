@@ -3,6 +3,7 @@ import sys
 import types
 import unittest
 from hashlib import sha256
+from queue import Queue
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -235,6 +236,108 @@ class MiniAudioModel(AudioModelFoundation):
 
 
 class TestVaeCacheAudio(unittest.TestCase):
+    def test_audio_batch_metadata_uses_encoded_waveform_length(self):
+        vae_cache = VAECache.__new__(VAECache)
+        vae_cache.id = "audio-cache"
+        vae_cache.dataset_type_enum = DatasetType.AUDIO
+        vae_cache._metadata_search_types = ["image", "video", "conditioning", "audio"]
+        vae_cache.metadata_backend = DummyMetadataBackend(metadata={"track.wav": {"num_samples": 350}})
+
+        with patch.object(StateTracker, "get_metadata_by_filepath", return_value=None):
+            entries = vae_cache._gather_sample_metadata(["track.wav"], samples=torch.zeros(1, 2, 300))
+
+        self.assertEqual(entries[0]["metadata"]["num_samples"], 300)
+        self.assertEqual(vae_cache.metadata_backend._metadata["track.wav"]["num_samples"], 350)
+
+    def test_audio_preparation_truncates_to_duration_bucket(self):
+        vae_cache = VAECache.__new__(VAECache)
+        vae_cache.id = "audio-cache"
+        vae_cache.metadata_backend = DummyMetadataBackend(
+            metadata={
+                "track.wav": {
+                    "bucket_duration_seconds": 3.0,
+                    "truncation_mode": "beginning",
+                }
+            }
+        )
+        vae_cache._log_audio_tensor_stats = MagicMock()
+
+        with patch.object(
+            StateTracker,
+            "get_data_backend_config",
+            return_value={"audio": {"source_from_video": False}},
+        ):
+            prepared = vae_cache._prepare_audio_sample(
+                "track.wav",
+                {"waveform": torch.arange(700, dtype=torch.float32).reshape(2, 350), "sample_rate": 100},
+            )
+
+        self.assertEqual(prepared["waveform"].shape, (2, 300))
+        self.assertEqual(prepared["metadata"]["duration_seconds"], 3.0)
+
+    def test_audio_preparation_preserves_max_duration_limit(self):
+        vae_cache = VAECache.__new__(VAECache)
+        vae_cache.id = "audio-cache"
+        vae_cache.metadata_backend = DummyMetadataBackend(metadata={"track.wav": {}})
+        vae_cache._log_audio_tensor_stats = MagicMock()
+
+        with patch.object(
+            StateTracker,
+            "get_data_backend_config",
+            return_value={"audio": {"max_duration_seconds": 3.0}},
+        ):
+            prepared = vae_cache._prepare_audio_sample(
+                "track.wav",
+                {"waveform": torch.zeros(2, 350), "sample_rate": 100},
+            )
+
+        self.assertEqual(prepared["waveform"].shape, (2, 300))
+
+    def test_video_audio_preparation_does_not_truncate_to_duration_bucket(self):
+        vae_cache = VAECache.__new__(VAECache)
+        vae_cache.id = "audio-cache"
+        vae_cache.metadata_backend = DummyMetadataBackend(
+            metadata={"track.mp4": {"bucket_duration_seconds": 3.0, "truncation_mode": "beginning"}}
+        )
+        vae_cache._log_audio_tensor_stats = MagicMock()
+
+        with patch.object(
+            StateTracker,
+            "get_data_backend_config",
+            return_value={"audio": {"source_from_video": True}},
+        ):
+            prepared = vae_cache._prepare_audio_sample(
+                "track.mp4",
+                {"waveform": torch.zeros(2, 350), "sample_rate": 100},
+            )
+
+        self.assertEqual(prepared["waveform"].shape, (2, 350))
+
+    def test_audio_vae_queue_partitions_variable_length_waveforms(self):
+        vae_cache = VAECache.__new__(VAECache)
+        vae_cache.dataset_type_enum = DatasetType.AUDIO
+        vae_cache.vae_batch_size = 4
+        vae_cache.vae_input_queue = Queue()
+        vae_cache._cache_vae_dtype = MagicMock(return_value=torch.float32)
+        vae_cache.generate_vae_cache_filename = MagicMock(side_effect=lambda filepath: (f"{filepath}.pt", f"{filepath}.pt"))
+        vae_cache.encode_images = MagicMock(
+            side_effect=lambda images, filepaths, load_from_cache: [torch.zeros(1) for _ in images]
+        )
+        vae_cache._handle_metadata_filtered_sample = MagicMock()
+        vae_cache.debug_log = MagicMock()
+        vae_cache.vae_input_queue.put((torch.zeros(2, 100), "short.wav", "3s", False))
+        vae_cache.vae_input_queue.put((torch.zeros(2, 120), "long.wav", "3s", False))
+        vae_cache.vae_input_queue.put((torch.zeros(2, 100), "short-2.wav", "3s", True))
+
+        output = vae_cache._encode_images_in_batch(disable_queue=True)
+
+        self.assertEqual([entry[1] for entry in output], ["short.wav", "long.wav", "short-2.wav"])
+        self.assertEqual(vae_cache.encode_images.call_count, 2)
+        encoded_shapes = [
+            [tuple(sample.shape) for sample in call.args[0]] for call in vae_cache.encode_images.call_args_list
+        ]
+        self.assertEqual(encoded_shapes, [[(2, 100), (2, 100)], [(2, 120)]])
+
     @patch("simpletuner.helpers.caching.vae.StateTracker.set_vae_cache_files")
     @patch("simpletuner.helpers.caching.vae.StateTracker.get_vae_cache_files", return_value=[])
     @patch("simpletuner.helpers.caching.vae.StateTracker.set_image_files", return_value={})
