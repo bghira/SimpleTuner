@@ -1265,7 +1265,10 @@ class MiniMaxMusic(AudioModelFoundation):
         dtype = getattr(self.config, "weight_dtype", torch.float32)
         mean = float(getattr(self.config, "logit_mean", 0.0) or 0.0)
         std = float(getattr(self.config, "logit_std", 1.0) or 1.0)
-        u = torch.normal(mean=mean, std=std, size=(bsz,), device=device, dtype=torch.float32).sigmoid()
+        if self._uses_flow_cubic_schedule():
+            u = self._sample_flow_cubic_values(bsz, device)
+        else:
+            u = torch.normal(mean=mean, std=std, size=(bsz,), device=device, dtype=torch.float32).sigmoid()
         data_timesteps = u.to(dtype=dtype)
         noise_sigmas = (1.0 - data_timesteps).clamp(0.0, 1.0)
         return noise_sigmas, data_timesteps

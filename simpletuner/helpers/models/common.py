@@ -72,6 +72,7 @@ from simpletuner.helpers.training.quantisation import (
     get_pipeline_quantization_builder,
 )
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.training.timestep_distribution import CubicSplineDistribution, parse_cubic_spline_weights
 from simpletuner.helpers.training.wrappers import unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 from simpletuner.helpers.utils.hidden_state_buffer import HiddenStateBuffer
@@ -4642,6 +4643,22 @@ class ModelFoundation(ABC):
 
         return tensor
 
+    def _flow_cubic_schedule_weights(self) -> Optional[tuple[float, ...]]:
+        return parse_cubic_spline_weights(getattr(self.config, "flow_cubic_schedule_weights", None))
+
+    def _uses_flow_cubic_schedule(self) -> bool:
+        return self._flow_cubic_schedule_weights() is not None
+
+    def _sample_flow_cubic_values(self, batch_size: int, device: torch.device) -> torch.Tensor:
+        weights = self._flow_cubic_schedule_weights()
+        if weights is None:
+            raise ValueError("flow_cubic_schedule_weights must be configured before sampling its distribution.")
+        cache_key = (weights, device.type, device.index)
+        if getattr(self, "_flow_cubic_distribution_cache_key", None) != cache_key:
+            self._flow_cubic_distribution = CubicSplineDistribution(weights, device=device)
+            self._flow_cubic_distribution_cache_key = cache_key
+        return self._flow_cubic_distribution.sample((batch_size,))
+
     def reset_flow_custom_timestep_cursor(self, global_step: int = 0) -> None:
         if hasattr(self, "_flow_custom_timestep_cursor"):
             delattr(self, "_flow_custom_timestep_cursor")
@@ -4762,7 +4779,11 @@ class ModelFoundation(ABC):
                 timesteps = base_timesteps[indices]
             return sigmas, timesteps
 
-        if not self.config.flux_fast_schedule and not any(
+        cubic_weights = self._flow_cubic_schedule_weights()
+        if cubic_weights is not None:
+            sigmas = self._sample_flow_cubic_values(bsz, self.accelerator.device)
+            sigmas = apply_flow_schedule_shift(self.config, self.noise_schedule, sigmas, batch["noise"])
+        elif not self.config.flux_fast_schedule and not any(
             [
                 self.config.flow_use_beta_schedule,
                 self.config.flow_use_uniform_schedule,

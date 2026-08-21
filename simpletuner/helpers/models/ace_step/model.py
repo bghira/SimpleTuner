@@ -1682,17 +1682,10 @@ class ACEStep(AudioModelFoundation):
         lyric_token_ids = batch["lyric_token_ids"].to(device=device, dtype=torch.long)
         lyric_mask = batch["lyric_mask"].to(device=device, dtype=torch.long)
 
-        # Sample timesteps via logit-normal to index scheduler sigmas (upstream behavior).
-        timesteps_tensor = self.noise_schedule.timesteps.to(device)
-        sigmas_tensor = self.noise_schedule.sigmas.to(device)
+        sampling_batch = dict(batch)
+        sampling_batch["latents"] = latents
+        sigmas, timesteps = self.sample_flow_sigmas(batch=sampling_batch, state=state)
         bsz = latents.shape[0]
-        mean = getattr(self.config, "logit_mean", 0.0)
-        std = getattr(self.config, "logit_std", 1.0)
-        u = torch.normal(mean=mean, std=std, size=(bsz,), device=device)
-        u = torch.sigmoid(u)
-        indices = (u * (timesteps_tensor.shape[0] - 1)).long().clamp(0, timesteps_tensor.shape[0] - 1)
-        timesteps = timesteps_tensor[indices]
-        sigmas = sigmas_tensor[indices]
         # Expand sigmas to latent shape for mixing/noise and to feed the model
         view_shape = [bsz] + [1] * (latents.ndim - 1)
         sigmas_expanded = sigmas.view(*view_shape).to(dtype=dtype)
@@ -1749,8 +1742,10 @@ class ACEStep(AudioModelFoundation):
 
         mean = getattr(self.config, "logit_mean", 0.0)
         std = getattr(self.config, "logit_std", 1.0)
-        u = torch.normal(mean=mean, std=std, size=(bsz,), device=self.accelerator.device)
-        u = torch.sigmoid(u)
+        if self._uses_flow_cubic_schedule():
+            u = self._sample_flow_cubic_values(bsz, self.accelerator.device)
+        else:
+            u = torch.normal(mean=mean, std=std, size=(bsz,), device=self.accelerator.device).sigmoid()
         indices = (u * (timesteps_tensor.shape[0] - 1)).long().clamp(0, timesteps_tensor.shape[0] - 1)
         timesteps = timesteps_tensor[indices]
         sigmas = sigmas_tensor[indices]

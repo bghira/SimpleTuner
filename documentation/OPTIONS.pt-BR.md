@@ -1287,6 +1287,13 @@ Veja o guia [DATALOADER.md](DATALOADER.md#automatic-dataset-oversubscription) pa
 - **O que**: Treina usando um peso mais gradual na loss landscape.
 - **Por que**: Em pixel diffusion, modelos degradam sem um agendamento de loss especifico. Isso e o caso do DeepFloyd, onde soft-min-snr-gamma foi quase obrigatorio. Em difusao latente, pode funcionar, mas em experimentos pequenos pode produzir resultados borrados.
 
+### `--flow_cubic_schedule_weights`
+
+- **O que**: Amostra timesteps de flow matching de uma densidade definida por pesos nao negativos em pontos igualmente espacados entre 0 e 1. Aceita um array JSON ou valores separados por virgula. Zero ou um peso seleciona distribuicao uniforme, dois definem densidade linear e tres ou mais usam interpolacao cubica de Hermite monotona.
+- **Por que**: Concentra o treinamento em regioes de ruido escolhidas sem reduzir o schedule a timesteps discretos. As convencoes nativas de timestep do modelo e o flow schedule shift configurado continuam sendo aplicados.
+- **Conflitos**: Nao pode ser combinado com `--flow_use_uniform_schedule`, `--flow_use_beta_schedule`, `--flux_fast_schedule` ou `--flow_custom_timesteps`.
+- **Exemplo**: `"flow_cubic_schedule_weights": [0.1, 1.0, 0.3, 2.0]`
+
 ### `--diff2flow_enabled`
 
 - **O que**: Habilita a ponte Diffusion-to-Flow para modelos epsilon ou v-prediction.
@@ -1998,6 +2005,7 @@ usage: train.py [-h] --model_family
                 [--flow_use_beta_schedule [FLOW_USE_BETA_SCHEDULE]]
                 [--flow_beta_schedule_alpha FLOW_BETA_SCHEDULE_ALPHA]
                 [--flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA]
+                [--flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
                 [--flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]]
                 [--audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT]
@@ -2483,6 +2491,11 @@ options:
                         Alpha value for beta schedule (default: 2.0)
   --flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA
                         Beta value for beta schedule (default: 2.0)
+  --flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS
+                        Sample flow timesteps from a smooth density through
+                        equally spaced non-negative weights. Use a JSON array
+                        or comma-separated values; zero or one weight produces
+                        a uniform distribution.
   --flow_schedule_shift FLOW_SCHEDULE_SHIFT
                         Shift the noise schedule for flow-matching models
   --flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]

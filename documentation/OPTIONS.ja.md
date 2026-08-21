@@ -1292,6 +1292,13 @@ Flux Kontext の検証もこのコンディショニングベースの経路を�
 - **内容**: 損失地形に対してより緩やかな重み付けで学習します。
 - **理由**: ピクセル拡散モデルの学習では、特定の損失重み付けがないと劣化することがあります。DeepFloyd では soft-min-snr-gamma が良好な結果にほぼ必須でした。潜在拡散モデルでは成功する場合もありますが、少数の実験ではぼやけた結果になる可能性がありました。
 
+### `--flow_cubic_schedule_weights`
+
+- **内容**: 0 から 1 の等間隔点に置いた非負の重みで密度を定義し、flow-matching の timestep をサンプリングします。JSON 配列またはカンマ区切り値を使用します。重みが 0 個または 1 個なら一様分布、2 個なら線形密度、3 個以上なら単調 cubic-Hermite 補間です。
+- **理由**: schedule を離散 timestep に限定せず、選択したノイズ領域へ学習を集中できます。モデル固有の timestep 規約と設定済みの flow schedule shift は引き続き適用されます。
+- **競合**: `--flow_use_uniform_schedule`、`--flow_use_beta_schedule`、`--flux_fast_schedule`、`--flow_custom_timesteps` とは併用できません。
+- **例**: `"flow_cubic_schedule_weights": [0.1, 1.0, 0.3, 2.0]`
+
 ### `--diff2flow_enabled`
 
 - **内容**: epsilon または v-prediction モデル向けに Diffusion-to-Flow ブリッジを有効化します。
@@ -2003,6 +2010,7 @@ usage: train.py [-h] --model_family
                 [--flow_use_beta_schedule [FLOW_USE_BETA_SCHEDULE]]
                 [--flow_beta_schedule_alpha FLOW_BETA_SCHEDULE_ALPHA]
                 [--flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA]
+                [--flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS]
                 [--flow_schedule_shift FLOW_SCHEDULE_SHIFT]
                 [--flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]]
                 [--audio_flow_schedule_shift AUDIO_FLOW_SCHEDULE_SHIFT]
@@ -2488,6 +2496,11 @@ options:
                         Alpha value for beta schedule (default: 2.0)
   --flow_beta_schedule_beta FLOW_BETA_SCHEDULE_BETA
                         Beta value for beta schedule (default: 2.0)
+  --flow_cubic_schedule_weights FLOW_CUBIC_SCHEDULE_WEIGHTS
+                        Sample flow timesteps from a smooth density through
+                        equally spaced non-negative weights. Use a JSON array
+                        or comma-separated values; zero or one weight produces
+                        a uniform distribution.
   --flow_schedule_shift FLOW_SCHEDULE_SHIFT
                         Shift the noise schedule for flow-matching models
   --flow_schedule_auto_shift [FLOW_SCHEDULE_AUTO_SHIFT]
