@@ -104,7 +104,7 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 - **Opciones**: `auto`, `video`, `av`
 - **Predeterminado**: `auto`
 - **Notas**:
-  - `auto` se resuelve como solo video, omitiendo caché VAE de audio, colación y filas de audio objetivo para H3.
+  - `auto` se resuelve como `av` cuando se detectan datos de audio habilitados y como `video` en caso contrario. La validación usa el mismo valor predeterminado detectado en los datos.
   - Define `minimax_h3_target_mode` o `h3_target_mode` como `av` en una entrada de data backend para activar entrenamiento conjunto audio-video en un backend de audio auto-split o explícito.
 
 ### `--minimax_h3_sparse_attention`

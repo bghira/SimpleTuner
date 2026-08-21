@@ -104,7 +104,7 @@ simpletuner configure config/foo/config.json
 - **选项**：`auto`, `video`, `av`
 - **默认**：`auto`
 - **说明**：
-  - `auto` 会解析为仅视频，跳过 H3 的音频 VAE 缓存、collate 和目标音频行。
+  - `auto` 在检测到已启用的音频数据时解析为 `av`，否则解析为 `video`。验证使用相同的数据检测默认值。
   - 如需让 auto-split 或显式音频 backend 进行联合音视频训练，请在 data backend 条目中将 `minimax_h3_target_mode` 或 `h3_target_mode` 设为 `av`。
 
 ### `--minimax_h3_sparse_attention`

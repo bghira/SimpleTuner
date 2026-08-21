@@ -61,7 +61,7 @@ Negative prompting 不属于基础 H3 契约。SimpleTuner 为 de-distilled chec
 
 ## 音频目标模式
 
-`minimax_h3_target_mode: "auto"` 会解析为 video-only，并避免 audio VAE 工作：
+`minimax_h3_target_mode: "auto"` 在检测到已启用的音频数据时解析为 `av`，否则解析为 `video`。验证使用相同的数据检测默认值，因此仅音频和联合音视频训练无需单独覆盖验证设置即可生成音频。要避免 audio VAE 工作，请显式设置 `video`：
 
 ```json
 {
@@ -69,7 +69,7 @@ Negative prompting 不属于基础 H3 契约。SimpleTuner 为 de-distilled chec
 }
 ```
 
-只有当 dataset 有 target audio latents 并需要联合音视频训练时才使用 `"av"`。也可以在 data backend 中设置 `h3_target_mode` 或 `minimax_h3_target_mode`。
+当 dataset 有 target audio latents 并需要联合音视频训练时，可以显式设置 `"av"`。也可以在 data backend 中设置 `h3_target_mode` 或 `minimax_h3_target_mode`。
 
 仅音频训练只需设置 `dataset_type: "audio"`。H3 声明支持 fake video，因此 SimpleTuner 会在规范化后的 backend
 配置中记录 `audio.audio_only: true`，构建占位视频流，并屏蔽视频 loss。仍可显式设置 `audio_only`，但这不是必需的。

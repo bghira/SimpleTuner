@@ -1218,6 +1218,50 @@ class MiniMaxH3Tests(unittest.TestCase):
         ):
             self.assertTrue(wrapper.uses_audio_latents_for_data_backend("audio"))
 
+    def test_minimax_h3_validation_auto_target_mode_uses_detected_audio_data(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(minimax_h3_target_mode="auto")
+        wrapper.configure_data_signals(has_audio=True)
+
+        pipeline_kwargs = wrapper.update_pipeline_call_kwargs({})
+
+        self.assertEqual(pipeline_kwargs["minimax_h3_target_mode"], "av")
+
+    def test_minimax_h3_validation_auto_target_mode_uses_video_without_audio_data(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(minimax_h3_target_mode="auto")
+        wrapper.configure_data_signals(has_video=True)
+
+        pipeline_kwargs = wrapper.update_pipeline_call_kwargs({})
+
+        self.assertEqual(pipeline_kwargs["minimax_h3_target_mode"], "video")
+
+    def test_minimax_h3_validation_preserves_explicit_pipeline_target_mode(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(minimax_h3_target_mode="auto")
+        wrapper.configure_data_signals(has_audio=True)
+
+        pipeline_kwargs = wrapper.update_pipeline_call_kwargs({"minimax_h3_target_mode": "video"})
+
+        self.assertEqual(pipeline_kwargs["minimax_h3_target_mode"], "video")
+
+    def test_minimax_h3_validation_uses_audio_vae_sample_rate(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.audio_vae = SimpleNamespace(config=SimpleNamespace(sampling_rate=48000))
+
+        self.assertEqual(wrapper.validation_audio_sample_rate(), 48000)
+
+    def test_minimax_h3_validation_forwards_configured_frame_count(self):
+        wrapper = MiniMaxH3.__new__(MiniMaxH3)
+        wrapper.config = SimpleNamespace(
+            minimax_h3_target_mode="video",
+            validation_num_video_frames=345,
+        )
+
+        pipeline_kwargs = wrapper.update_pipeline_call_kwargs({})
+
+        self.assertEqual(pipeline_kwargs["num_frames"], 345)
+
     def test_transformer_cached_reference_mode_reuses_static_kv(self):
         model = tiny_h3_transformer(num_layers=1)
         model.eval()
