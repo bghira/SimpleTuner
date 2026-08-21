@@ -93,6 +93,14 @@ class ValidationPipelineKwargsTests(unittest.TestCase):
 
         self.assertIs(result, videos)
 
+    def test_pipeline_media_extraction_prefers_video_over_audio(self):
+        videos = [["frame-1", "frame-2"]]
+        audio = torch.zeros(1, 48000)
+
+        result = self.validation._extract_pipeline_media(SimpleNamespace(videos=videos, audios=None, audio=audio))
+
+        self.assertIs(result, videos)
+
 
 if __name__ == "__main__":
     unittest.main()
