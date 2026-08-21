@@ -51,6 +51,11 @@ from simpletuner.helpers.training.custom_schedule import (
 )
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
 from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
+from simpletuner.helpers.training.internal_guidance import (
+    InternalGuidanceRegularizer,
+    infer_internal_guidance_block_count,
+    infer_internal_guidance_output_features,
+)
 from simpletuner.helpers.training.layersync import LayerSyncRegularizer
 from simpletuner.helpers.training.lora_format import (
     PEFTLoRAFormat,
@@ -556,6 +561,7 @@ class ModelFoundation(ABC):
         self._twinflow_allow_student_teacher = False
         self._twinflow_requires_ema = False
         self.layersync_regularizer: Optional[LayerSyncRegularizer] = None
+        self.internal_guidance_regularizer: Optional[InternalGuidanceRegularizer] = None
         self._validate_twinflow_config()
 
     def pack_text_embeddings_for_cache(self, embeddings):
@@ -902,6 +908,8 @@ class ModelFoundation(ABC):
     # LoRA/PEFT helpers (shared across model families)
     # -------------------------------------------------------------------------
     def get_lora_save_layers(self):
+        if getattr(self.config, "internal_guidance_enabled", False):
+            return [InternalGuidanceRegularizer.MODULE_NAME]
         return None
 
     def _get_peft_lora_target_modules(self):
@@ -3434,6 +3442,7 @@ class ModelFoundation(ABC):
 
         """
         self._init_layersync_regularizer()
+        self._init_internal_guidance_regularizer()
 
     def post_quantization_setup(self):
         """
@@ -4831,12 +4840,89 @@ class ModelFoundation(ABC):
             return
         self.layersync_regularizer = LayerSyncRegularizer(self.config)
 
+    def _infer_transformer_hidden_size(self) -> Optional[int]:
+        model = getattr(self, "model", None)
+        if model is None:
+            return None
+        config = getattr(self.unwrap_model(model=model), "config", None)
+        if config is None:
+            return None
+
+        heads = getattr(config, "num_attention_heads", None)
+        head_dim = getattr(config, "attention_head_dim", None)
+        if heads is not None and head_dim is not None:
+            return int(heads * head_dim)
+        for attribute in ("model_dim", "hidden_size", "dim", "inner_dim", "embed_dim", "emb_dim"):
+            value = getattr(config, attribute, None)
+            if value is not None:
+                return int(value)
+        return None
+
+    def _init_internal_guidance_regularizer(self):
+        if not getattr(self.config, "internal_guidance_enabled", False):
+            self.internal_guidance_regularizer = None
+            return
+        if self.MODEL_TYPE is not ModelTypes.TRANSFORMER:
+            raise ValueError("Internal Guidance is only supported for diffusion transformer models.")
+        if self.PREDICTION_TYPE is PredictionTypes.AUTOREGRESSIVE_NEXT_TOKEN:
+            raise ValueError("Internal Guidance is not defined for autoregressive next-token models.")
+        if str(getattr(self.config, "lora_type", "standard") or "standard").lower() == "lycoris":
+            raise ValueError(
+                "Internal Guidance requires standard PEFT LoRA or full-model training so its auxiliary head is "
+                "optimized and saved."
+            )
+
+        model_component = self.get_trained_component(unwrap_model=False)
+        if model_component is None:
+            raise ValueError("Internal Guidance requires an attached diffusion transformer.")
+        unwrapped = self.unwrap_model(model=model_component)
+        hidden_size = self._infer_transformer_hidden_size()
+        if hidden_size is None:
+            raise ValueError("Internal Guidance could not infer the transformer's hidden size.")
+
+        self.internal_guidance_regularizer = InternalGuidanceRegularizer(
+            self.config,
+            self.accelerator,
+            hidden_size=hidden_size,
+            output_features=infer_internal_guidance_output_features(unwrapped),
+            block_count=infer_internal_guidance_block_count(unwrapped),
+        )
+        self.internal_guidance_regularizer.attach_to_model(unwrapped, dtype=self.config.weight_dtype)
+
+    def _hidden_state_capture_layers(self) -> Optional[set[int]]:
+        capture_layers = set()
+        internal_guidance = getattr(self, "internal_guidance_regularizer", None)
+        if internal_guidance and internal_guidance.wants_hidden_states():
+            capture_layers.add(internal_guidance.block_index)
+
+        layersync = getattr(self, "layersync_regularizer", None)
+        if layersync and layersync.wants_hidden_states():
+            student_block = getattr(layersync, "student_block", None)
+            teacher_block = getattr(layersync, "teacher_block", None)
+            if student_block is None:
+                return None
+            for layer in (student_block, teacher_block):
+                if layer is None:
+                    continue
+                layer = int(layer)
+                capture_layers.add(layer)
+                if layer > 0:
+                    capture_layers.add(layer - 1)
+
+        crepa = getattr(self, "crepa_regularizer", None)
+        if crepa and crepa.wants_hidden_states():
+            # CREPA can request a different block dynamically for its EMA teacher pass.
+            return None
+        return capture_layers or None
+
     def _needs_hidden_state_buffer(self) -> bool:
         layersync = getattr(self, "layersync_regularizer", None)
         ls_needed = bool(layersync and layersync.wants_hidden_states())
         crepa = getattr(self, "crepa_regularizer", None)
         crepa_buffer = bool(crepa and crepa.wants_hidden_states())
-        return ls_needed or crepa_buffer
+        internal_guidance = getattr(self, "internal_guidance_regularizer", None)
+        internal_guidance_buffer = bool(internal_guidance and internal_guidance.wants_hidden_states())
+        return ls_needed or crepa_buffer or internal_guidance_buffer
 
     def _validate_crepa_configuration(self) -> CrepaFeatureSource:
         feature_source = CrepaFeatureSource.from_config(self.config)
@@ -4888,7 +4974,16 @@ class ModelFoundation(ABC):
                     logger.exception("Failed to restore student weights after EMA teacher swap.")
 
     def _new_hidden_state_buffer(self) -> Optional[HiddenStateBuffer]:
-        return HiddenStateBuffer() if self._needs_hidden_state_buffer() else None
+        if not self._needs_hidden_state_buffer():
+            return None
+        return HiddenStateBuffer(capture_layers=self._hidden_state_capture_layers())
+
+    def internal_guidance_inference_context(self, enabled: bool = True):
+        internal_guidance = getattr(self, "internal_guidance_regularizer", None)
+        if not enabled or internal_guidance is None or not internal_guidance.enabled:
+            return contextlib.nullcontext()
+        scale = float(getattr(self.config, "validation_internal_guidance_scale", 1.0) or 1.0)
+        return internal_guidance.inference_context(scale)
 
     def _build_crepa_teacher_batch(self, prepared_batch: dict, crepa: CrepaRegularizer) -> dict:
         teacher_batch = dict(prepared_batch)
@@ -6026,6 +6121,16 @@ class ModelFoundation(ABC):
                     logger.exception("TwinFlow auxiliary loss failed; stopping because TwinFlow is explicitly enabled.")
                     raise
 
+            internal_guidance = getattr(self, "internal_guidance_regularizer", None)
+            if internal_guidance and internal_guidance.enabled:
+                internal_guidance_loss, internal_guidance_logs = internal_guidance.compute_loss(
+                    hidden_states_buffer,
+                    prepared_batch,
+                    self,
+                )
+                loss = loss + internal_guidance_loss
+                aux_logs = (aux_logs or {}) | internal_guidance_logs
+
             if apply_layersync:
                 loss, aux_logs = self._apply_layersync_regularizer(loss, aux_logs, hidden_states_buffer)
         finally:
@@ -6289,31 +6394,7 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
         self.crepa_regularizer.attach_to_model(model_component)
 
     def _infer_crepa_hidden_size(self) -> Optional[int]:
-        model = getattr(self, "model", None)
-        if model is None:
-            return None
-        unwrapped = self.unwrap_model(model=model)
-        config = getattr(unwrapped, "config", None)
-        if config is None:
-            return None
-        # Primary: num_attention_heads * attention_head_dim (most DiT models)
-        heads = getattr(config, "num_attention_heads", None)
-        head_dim = getattr(config, "attention_head_dim", None)
-        if heads is not None and head_dim is not None:
-            return int(heads * head_dim)
-        # Fallback: model_dim (Kandinsky5)
-        model_dim = getattr(config, "model_dim", None)
-        if model_dim is not None:
-            return int(model_dim)
-        # Fallback: hidden_size (some models expose this directly)
-        hidden_size = getattr(config, "hidden_size", None)
-        if hidden_size is not None:
-            return int(hidden_size)
-        # Fallback: dim (Z-Image and related single-stream transformer configs)
-        dim = getattr(config, "dim", None)
-        if dim is not None:
-            return int(dim)
-        return None
+        return self._infer_transformer_hidden_size()
 
     def _init_urepa_regularizer(self):
         """Initialize U-REPA regularizer for UNet-based models (SDXL, SD1.5, Kolors)."""

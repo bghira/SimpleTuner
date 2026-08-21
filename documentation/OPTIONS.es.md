@@ -1712,6 +1712,33 @@ urepa_use_tae = false
 
 ---
 
+## Internal Guidance
+
+Internal Guidance supervisa un bloque temprano del diffusion transformer con el mismo objetivo de denoising que la cabeza final. Consulte [Internal Guidance](experimental/INTERNAL_GUIDANCE.md).
+
+### `--internal_guidance_enabled`
+
+- **Qué hace**: Activa la cabeza y pérdida auxiliar.
+- **Compatibilidad**: Diffusion transformers con LoRA PEFT estándar o entrenamiento completo. UNet, autoregresivo y LyCORIS se rechazan.
+- **Predeterminado**: `false`
+
+### `--internal_guidance_loss_weight`
+
+- **Qué hace**: Multiplica la pérdida intermedia.
+- **Predeterminado**: `0.5`; debe ser mayor que cero.
+
+### `--internal_guidance_block_index`
+
+- **Qué hace**: Bloque transformer con índice desde cero.
+- **Predeterminado**: Un cuarto de la profundidad.
+
+### `--validation_internal_guidance_scale`
+
+- **Qué hace**: Aplica `intermediate + scale * (final - intermediate)` durante validation.
+- **Predeterminado**: `1.0` (desactivado); la referencia usa `1.4`.
+
+---
+
 ## 🔁 LayerSync (Autoalineación de estados ocultos)
 
 LayerSync anima a una capa "estudiante" a igualar una capa "maestra" más fuerte dentro del mismo transformer, usando similitud coseno sobre tokens ocultos.

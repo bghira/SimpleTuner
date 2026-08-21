@@ -430,6 +430,7 @@ class BooguImage(ImageModelFoundation):
         return BooguImageRotaryPosEmbed.get_freqs_cis(config.axes_dim_rope, config.axes_lens, theta=10000)
 
     def model_predict(self, prepared_batch, custom_timesteps: list = None):
+        hidden_states_buffer = self._new_hidden_state_buffer()
         latents = prepared_batch["noisy_latents"].to(device=self.accelerator.device, dtype=self.config.weight_dtype)
         timestep = prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=self.config.weight_dtype)
         if timestep.ndim == 0:
@@ -450,10 +451,14 @@ class BooguImage(ImageModelFoundation):
             self._freqs_cis(),
             instruction_mask.to(device=self.accelerator.device, dtype=torch.bool),
             ref_image_hidden_states=prepared_batch.get("ref_image_hidden_states"),
+            hidden_states_buffer=hidden_states_buffer,
         )
         if hasattr(model_pred, "sample"):
             model_pred = model_pred.sample
-        return {"model_prediction": model_pred}
+        output = {"model_prediction": model_pred}
+        if hidden_states_buffer is not None:
+            output["hidden_states_buffer"] = hidden_states_buffer
+        return output
 
     def post_model_load_setup(self):
         super().post_model_load_setup()

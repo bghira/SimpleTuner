@@ -1713,6 +1713,33 @@ urepa_use_tae = false
 
 ---
 
+## Internal Guidance
+
+Internal Guidance は前段の diffusion-transformer block を final output head と同じ denoising target で学習します。[Internal Guidance](experimental/INTERNAL_GUIDANCE.md) を参照してください。
+
+### `--internal_guidance_enabled`
+
+- **内容**: 補助 denoising head と loss を有効化。
+- **対応**: standard PEFT LoRA または full-model の diffusion transformer。UNet、autoregressive、LyCORIS は拒否されます。
+- **既定**: `false`
+
+### `--internal_guidance_loss_weight`
+
+- **内容**: Intermediate loss の倍率。
+- **既定**: `0.5`。0 より大きい値が必要です。
+
+### `--internal_guidance_block_index`
+
+- **内容**: 0-based transformer block。
+- **既定**: Transformer depth の 1/4。
+
+### `--validation_internal_guidance_scale`
+
+- **内容**: Validation sampling で `intermediate + scale * (final - intermediate)` を適用。
+- **既定**: `1.0`（無効）。reference は `1.4`。
+
+---
+
 ## 🔁 LayerSync（隠れ状態の自己整合）
 
 LayerSync は同一 Transformer 内の「学生」レイヤーを、より強い「教師」レイヤーに合わせることで、隠れトークンのコサイン類似度を用いて整合させます。

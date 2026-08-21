@@ -4933,7 +4933,10 @@ class Validation:
                             if self.model.VALIDATION_USE_AUTOCAST
                             else torch.amp.autocast(self.inference_device.type, enabled=False)
                         )
-                        with autocast_ctx:
+                        with (
+                            autocast_ctx,
+                            self.model.internal_guidance_inference_context(enabled=validation_type != "base_model"),
+                        ):
                             if self.model.supports_multistage_validation():
                                 pipeline_result = self.model.run_multistage_validation(
                                     filtered_pipeline_kwargs,
