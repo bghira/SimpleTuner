@@ -57,6 +57,7 @@ Guías paso a paso para entrenar cada arquitectura de modelo compatible.
 | Modelo | Parámetros | Licencia | Permite uso comercial | Guía |
 | ------- | ------------ | --- | :---: | ------- |
 | **Wan Video** | 1.3-14B | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Sí | [Guía de Wan](WAN.md) |
+| **InfiniteTalk** | 14B | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Sí | [Guía de InfiniteTalk](INFINITETALK.es.md) |
 | **LTX Video** | 5B | [LTX Video OpenRAIL-M](https://huggingface.co/Lightricks/LTX-Video-0.9.5/blob/main/ltx-video-2b-v0.9.5.license.txt) | Aplican condiciones<sup>10</sup> | [Guía de LTX](LTXVIDEO.md) |
 | **LTX Video 2** | 19B | [LTX-2 Community](https://ltx.io/model/license) | Aplican condiciones<sup>10</sup> | [Guía de LTX Video 2](LTXVIDEO2.md) |
 | **Cosmos3** | 4-65B | [OpenMDW 1.1](https://github.com/OpenMDW/openmdw/blob/main/1.1/LICENSE.OpenMDW-1.1) | Sí | [Guía de Cosmos3](COSMOS3.es.md) |

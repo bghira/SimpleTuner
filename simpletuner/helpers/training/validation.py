@@ -521,6 +521,9 @@ def retrieve_validation_images():
     if _validation_input_is_configured(args):
         return retrieve_validation_input_images(args)
 
+    if getattr(model, "requires_s2v_validation_inputs", lambda: False)():
+        return retrieve_validation_s2v_samples()
+
     # For i2v models, allow using simple image datasets when validation_using_datasets is True.
     # This bypasses the complex conditioning dataset pairing requirement.
     use_simple_image_path_for_i2v = model.requires_validation_i2v_samples() and getattr(
@@ -531,10 +534,6 @@ def retrieve_validation_images():
         model.requires_validation_edit_captions() or model.requires_validation_i2v_samples()
     ) and not use_simple_image_path_for_i2v:
         return retrieve_validation_edit_images()
-
-    # Check for S2V models that need audio conditioning
-    if getattr(model, "requires_s2v_validation_inputs", lambda: False)():
-        return retrieve_validation_s2v_samples()
 
     # When using simple image path for i2v, we want image datasets, not conditioning datasets.
     requires_cond_input = (
@@ -654,11 +653,14 @@ def retrieve_validation_edit_images() -> list[ValidationPrompt]:
                     search_dataset_types=["conditioning"],
                 )
                 image_dataset_dir_prefix = sampler.metadata_backend.instance_data_dir
-                if image_dataset_dir_prefix is not None and image_dataset_dir_prefix in sample_path:
-                    rel_path = sample_path.replace(image_dataset_dir_prefix, "")
-                    # remove trailing '/'
-                    rel_path = rel_path.lstrip("/")
-                    logger.debug(f"Removed prefix, got relative path: {rel_path}")
+                if image_dataset_dir_prefix is None:
+                    continue
+                dataset_root = os.path.abspath(image_dataset_dir_prefix)
+                absolute_sample_path = os.path.abspath(sample_path)
+                if os.path.commonpath((dataset_root, absolute_sample_path)) != dataset_root:
+                    continue
+                rel_path = os.path.relpath(absolute_sample_path, dataset_root)
+                logger.debug(f"Removed prefix, got relative path: {rel_path}")
                 logger.debug(f"Metadata: {meta}")
             except Exception:
                 continue  # metadata missing → skip
@@ -3041,6 +3043,15 @@ class Validation:
             self.model.pipeline.scheduler = scheduler
         return scheduler
 
+    def _move_pipeline_components_except_model(self):
+        pipeline_model = getattr(self.model.pipeline, self.model.MODEL_TYPE.value, None)
+        for component in self.model.pipeline.components.values():
+            if component is pipeline_model or not isinstance(component, torch.nn.Module):
+                continue
+            if self.model._module_has_meta_tensors(component):
+                continue
+            component.to(self.accelerator.device)
+
     def setup_pipeline(self, validation_type):
         if hasattr(self.accelerator, "_lycoris_wrapped_network"):
             self.accelerator._lycoris_wrapped_network.set_multiplier(
@@ -3124,14 +3135,17 @@ class Validation:
                 logger.info(
                     "Skipping pipeline.to for TorchAO-quantized base model to avoid weight swap errors during validation."
                 )
+                self._move_pipeline_components_except_model()
             elif "quanto" in base_precision:
                 logger.info(
                     "Skipping pipeline.to for Quanto-quantized base model to avoid QLinear weight swap errors during validation."
                 )
+                self._move_pipeline_components_except_model()
             elif musubi_active:
                 logger.info(
                     "Skipping pipeline.to for musubi block-swap model; block placement is managed by the forward pass."
                 )
+                self._move_pipeline_components_except_model()
             else:
                 self.model.pipeline.to(self.accelerator.device)
 

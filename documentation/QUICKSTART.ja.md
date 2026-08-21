@@ -21,6 +21,7 @@
 | HiDream | 17B (8.5B MoE) | [HIDREAM.ja.md](quickstart/HIDREAM.ja.md) |
 | Hunyuan Video | 8.3B | [HUNYUANVIDEO.ja.md](quickstart/HUNYUANVIDEO.ja.md) |
 | Ideogram 4 | 9B | [IDEOGRAM4.ja.md](quickstart/IDEOGRAM4.ja.md) |
+| InfiniteTalk | 14B | [INFINITETALK.ja.md](quickstart/INFINITETALK.ja.md) |
 | Kandinsky 5.0 Image | 6B (lite) | [KANDINSKY5_IMAGE.ja.md](quickstart/KANDINSKY5_IMAGE.ja.md) |
 | Kandinsky 5.0 Video | 2B lite, 19B pro | [KANDINSKY5_VIDEO.ja.md](quickstart/KANDINSKY5_VIDEO.ja.md) |
 | Kwai Kolors | 2.7B | [KOLORS.ja.md](quickstart/KOLORS.ja.md) |
@@ -72,6 +73,7 @@
 | HiDream | ✓ | ✓ | ✓* | ✓ | ✗ |
 | Hunyuan Video | ✓ | ✓ | ✓* | ✗ | ✓ I2V |
 | Ideogram 4 | ✓ | ✓ | ✓* | ✗ | ✗ |
+| InfiniteTalk | ✓ | ✓ | ✓* | ✗ | audio + I2V req |
 | Kandinsky 5.0 Image | ✓ | ✓ | ✓* | ✗ | ✓ I2I |
 | Kandinsky 5.0 Video | ✓ | ✓ | ✓* | ✗ | ✓ I2V |
 | Kwai Kolors | ✓ | ✓ | ✓ | ✗ | ✗ |
@@ -121,6 +123,7 @@
 | HiDream | int8/fp8/nf4 optional | bf16 |
 | Hunyuan Video | int8 optional | bf16 |
 | Ideogram 4 | fp8 default, nf4 optional | bf16 |
+| InfiniteTalk | int8 optional | bf16 |
 | Kandinsky 5.0 Image | int8 optional | bf16 |
 | Kandinsky 5.0 Video | int8 optional | bf16 |
 | Kwai Kolors | not recommended | bf16 |
@@ -170,6 +173,7 @@
 | HiDream | ✓ | ✓ | ✓ | ✗ |
 | Hunyuan Video | ✓ | ✓ | ✓ | ✓ |
 | Ideogram 4 | ✓ | ✓ | ✓ | ✗ |
+| InfiniteTalk | ✓ | ✓ | ✓ | ✓ |
 | Kandinsky 5.0 Image | ✓ | ✓ | ✓ | ✓ |
 | Kandinsky 5.0 Video | ✓ | ✓ | ✓ | ✓ |
 | Kwai Kolors | ✓ | ✗ | ✗ | ✗ |
@@ -219,6 +223,7 @@
 | HiDream | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Hunyuan Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Ideogram 4 | flow matching | ✓ | ✗ | ✗ | ✗ | ✓ |
+| InfiniteTalk | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kandinsky 5.0 Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kandinsky 5.0 Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Kwai Kolors | epsilon | ✗ | ✗ | ✗ | ✗ | ✓ |
@@ -268,6 +273,7 @@
 | HiDream | CLIP-L/14 + CLIP-G/14 + T5 XXL v1.1 + Llama | 123M + 694M + 11B + not specified | AutoencoderKL |
 | Hunyuan Video | Hunyuan LLM | not specified | Hunyuan Video 3D VAE |
 | Ideogram 4 | Qwen3-VL-8B-Instruct | 8B | Ideogram AutoEncoder |
+| InfiniteTalk | UMT5 + Wav2Vec2 | 未指定 + 95M | Wan VAE |
 | Kandinsky 5.0 Image | Qwen2.5-VL + CLIP-L/14 | 7B + 123M | Flux VAE (AutoencoderKL) |
 | Kandinsky 5.0 Video | Qwen2.5-VL + CLIP-L/14 | 7B + 123M | Hunyuan Video VAE |
 | Kwai Kolors | ChatGLM-6B | 6B | AutoencoderKL |

@@ -415,7 +415,16 @@ class DataGenerator:
 
         subpath = ""
         if self.source_instance_dir:
-            subpath = os.path.dirname(source_filepath).replace(self.source_instance_dir, "").lstrip(os.sep)
+            source_path = Path(source_filepath)
+            source_root = Path(self.source_instance_dir)
+            if source_path.is_absolute():
+                source_root = Path(os.path.abspath(source_root))
+            try:
+                relative_source = source_path.relative_to(source_root)
+            except ValueError:
+                relative_source = Path(source_path.name)
+            if relative_source.parent != Path("."):
+                subpath = str(relative_source.parent)
 
         full_path = (
             os.path.join(self.target_instance_dir, subpath, filename)
