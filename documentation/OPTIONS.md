@@ -104,7 +104,7 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Choices**: `auto`, `video`, `av`
 - **Default**: `auto`
 - **Notes**:
-  - `auto` resolves to video-only, skipping audio VAE caching, collation, and target audio rows for H3.
+  - `auto` resolves to `av` when enabled audio data is detected and to `video` otherwise. Validation uses the same detected-data default.
   - Set `minimax_h3_target_mode` or `h3_target_mode` to `av` in a data backend entry to opt an auto-split or explicit audio backend into joint audio-video training.
 
 ### `--minimax_h3_sparse_attention`

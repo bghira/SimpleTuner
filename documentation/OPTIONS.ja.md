@@ -104,7 +104,7 @@ simpletuner configure config/foo/config.json
 - **選択肢**: `auto`, `video`, `av`
 - **既定**: `auto`
 - **注記**:
-  - `auto` は video-only として扱われ、H3 の audio VAE cache、collate、ターゲット音声行を省略します。
+  - `auto` は有効な audio data が検出された場合は `av`、それ以外は `video` になります。Validation も同じ detected-data default を使います。
   - auto-split または明示的な audio backend で joint audio-video training を使う場合は、data backend entry に `minimax_h3_target_mode` または `h3_target_mode` を `av` として設定します。
 
 ### `--minimax_h3_sparse_attention`

@@ -61,7 +61,7 @@ Negative prompting is not part of the base H3 contract. SimpleTuner keeps real C
 
 ## Audio Target Mode
 
-By default, `minimax_h3_target_mode: "auto"` resolves to video-only and avoids audio VAE work:
+By default, `minimax_h3_target_mode: "auto"` resolves to `av` when enabled audio data is detected and to `video` otherwise. Validation uses the same detected-data default, so audio-only and joint audio/video runs render audio without a separate validation override. Set `video` explicitly to avoid audio VAE work:
 
 ```json
 {
@@ -69,7 +69,7 @@ By default, `minimax_h3_target_mode: "auto"` resolves to video-only and avoids a
 }
 ```
 
-Use `"av"` only when the dataset has target audio latents and you want joint audio/video training. You can set `h3_target_mode` or `minimax_h3_target_mode` inside a data backend entry to opt only selected backends into audio.
+Use `"av"` explicitly when the dataset has target audio latents and you want joint audio/video training. You can set `h3_target_mode` or `minimax_h3_target_mode` inside a data backend entry to opt only selected backends into audio.
 
 For audio-only training, `dataset_type: "audio"` is sufficient. Because H3 advertises fake-video support, SimpleTuner
 records `audio.audio_only: true` in the normalized backend config, builds the placeholder video stream, and masks video

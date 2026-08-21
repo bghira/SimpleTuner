@@ -1213,8 +1213,14 @@ class MiniMaxH3(VideoModelFoundation):
         sampling_rate = getattr(getattr(self.audio_vae, "config", None), "sampling_rate", None)
         return int(sampling_rate) if sampling_rate else None
 
+    def _h3_target_mode_for_validation(self) -> str:
+        mode = self._configured_h3_target_mode()
+        if mode == "auto":
+            return "av" if getattr(self, "_data_has_audio", False) else "video"
+        return mode
+
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
-        pipeline_kwargs.setdefault("minimax_h3_target_mode", self._configured_h3_target_mode())
+        pipeline_kwargs.setdefault("minimax_h3_target_mode", self._h3_target_mode_for_validation())
         num_frames = getattr(self.config, "validation_num_video_frames", None)
         if num_frames:
             pipeline_kwargs.setdefault("num_frames", int(num_frames))

@@ -61,7 +61,7 @@ Negative prompting は base H3 contract の一部ではありません。SimpleT
 
 ## Audio Target Mode
 
-`minimax_h3_target_mode: "auto"` は video-only になり、audio VAE work を避けます。
+`minimax_h3_target_mode: "auto"` は、有効な audio data が検出された場合は `av`、それ以外は `video` になります。Validation も同じ検出結果を使うため、audio-only および joint audio/video run では別の validation override なしで audio を生成します。Audio VAE work を避けるには `video` を明示します。
 
 ```json
 {
@@ -69,7 +69,7 @@ Negative prompting は base H3 contract の一部ではありません。SimpleT
 }
 ```
 
-dataset に target audio latents があり joint audio/video training したい場合だけ `"av"` を使います。data backend ごとに `h3_target_mode` または `minimax_h3_target_mode` でも設定できます。
+dataset に target audio latents があり joint audio/video training したい場合は `"av"` を明示できます。data backend ごとに `h3_target_mode` または `minimax_h3_target_mode` でも設定できます。
 
 Audio-only training では `dataset_type: "audio"` だけで十分です。H3 は fake-video support を提供するため、
 SimpleTuner は normalized backend config に `audio.audio_only: true` を記録し、placeholder video stream を作成して
