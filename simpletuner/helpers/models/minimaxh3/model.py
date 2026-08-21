@@ -479,7 +479,7 @@ class MiniMaxH3(VideoModelFoundation):
     def _model_config_path(self):
         model_path = getattr(self.config, "pretrained_model_name_or_path", None)
         transformer_path = getattr(self.config, "pretrained_transformer_model_name_or_path", None)
-        if _is_single_file_path(model_path) or _is_single_file_path(transformer_path):
+        if _is_single_file_path(model_path) or (not model_path and _is_single_file_path(transformer_path)):
             return MINIMAX_H3_BASE_REPO
         return super()._model_config_path()
 
