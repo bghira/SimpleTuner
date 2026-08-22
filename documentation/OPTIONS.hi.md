@@ -1793,7 +1793,7 @@ Internal Guidance शुरुआती diffusion-transformer block को final
 
 ## Explorative Modeling (XM)
 
-XM कई training candidates score करता है और हर supervised sample या token block को सबसे अच्छी तरह explain करने वाले candidate पर ही backprop करता है। चुने गए target के लिए model family में support implement होना चाहिए।
+XM कई training candidates score करता है और हर supervised sample या token block को सबसे अच्छी तरह explain करने वाले candidate पर ही backprop करता है। चुने गए target के लिए model family में support implement होना चाहिए। User guide के लिए [Explorative Modeling](experimental/EXPLORATION_MODELING.hi.md) देखें।
 
 ### `--xm_enabled`
 
@@ -1825,7 +1825,7 @@ XM कई training candidates score करता है और हर supervised
 
 ## NextLat
 
-NextLat एक छोटा auxiliary predictor जोड़ता है जो हर captured hidden token को अगले hidden token पर map करता है। इसके लिए ऐसा transformer model family चाहिए जो SimpleTuner hidden-state buffer से hidden states expose करे।
+NextLat एक छोटा auxiliary predictor जोड़ता है जो हर captured hidden token को अगले hidden token पर map करता है। इसके लिए ऐसा transformer model family चाहिए जो SimpleTuner hidden-state buffer से hidden states expose करे। User guide के लिए [NextLat](experimental/NEXTLAT.hi.md) देखें।
 
 ### `--nextlat_enabled`
 

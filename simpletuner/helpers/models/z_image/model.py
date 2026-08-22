@@ -605,7 +605,6 @@ class ZImage(ImageModelFoundation):
         return self._model_predict_single(prepared_batch, custom_timesteps=custom_timesteps)
 
     @staticmethod
-    @staticmethod
     def _repeat_xm_candidate_sequence(value, candidate_count: int):
         if isinstance(value, tuple):
             return tuple(item for _ in range(candidate_count) for item in value)

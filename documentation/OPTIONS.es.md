@@ -1795,7 +1795,7 @@ Internal Guidance supervisa un bloque temprano del diffusion transformer con el 
 
 ## Explorative Modeling (XM)
 
-XM evalúa varios candidatos de entrenamiento y retropropaga solo el que mejor explica cada muestra supervisada o bloque de tokens. Cada familia de modelo debe implementar soporte para el objetivo seleccionado.
+XM evalúa varios candidatos de entrenamiento y retropropaga solo el que mejor explica cada muestra supervisada o bloque de tokens. Cada familia de modelo debe implementar soporte para el objetivo seleccionado. Consulta [Explorative Modeling](experimental/EXPLORATION_MODELING.es.md) para la guía de usuario.
 
 ### `--xm_enabled`
 
@@ -1827,7 +1827,7 @@ XM evalúa varios candidatos de entrenamiento y retropropaga solo el que mejor e
 
 ## NextLat
 
-NextLat añade un predictor auxiliar pequeño que mapea cada token oculto capturado al siguiente token oculto. Requiere una familia transformer que exponga hidden states mediante el buffer de SimpleTuner.
+NextLat añade un predictor auxiliar pequeño que mapea cada token oculto capturado al siguiente token oculto. Requiere una familia transformer que exponga hidden states mediante el buffer de SimpleTuner. Consulta [NextLat](experimental/NEXTLAT.es.md) para la guía de usuario.
 
 ### `--nextlat_enabled`
 

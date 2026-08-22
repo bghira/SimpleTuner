@@ -1800,7 +1800,7 @@ Internal Guidance supervises an early diffusion-transformer block with the same 
 
 ## Explorative Modeling (XM)
 
-XM scores multiple training candidates and backpropagates only the candidate that best explains each supervised sample or token block. Model families must implement support for the selected target before this option has any effect.
+XM scores multiple training candidates and backpropagates only the candidate that best explains each supervised sample or token block. Model families must implement support for the selected target before this option has any effect. See [Explorative Modeling](experimental/EXPLORATION_MODELING.md) for the user guide.
 
 ### `--xm_enabled`
 
@@ -1832,7 +1832,7 @@ XM scores multiple training candidates and backpropagates only the candidate tha
 
 ## NextLat
 
-NextLat adds a small auxiliary predictor that maps each captured hidden token to the next hidden token. It requires a transformer family that exposes hidden states through SimpleTuner's hidden-state buffer.
+NextLat adds a small auxiliary predictor that maps each captured hidden token to the next hidden token. It requires a transformer family that exposes hidden states through SimpleTuner's hidden-state buffer. See [NextLat](experimental/NEXTLAT.md) for the user guide.
 
 ### `--nextlat_enabled`
 

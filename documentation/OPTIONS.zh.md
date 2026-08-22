@@ -1798,7 +1798,7 @@ Internal Guidance 使用与最终 output head 相同的 denoising target 监督�
 
 ## Explorative Modeling (XM)
 
-XM 会评估多个训练候选，并只对最能解释每个监督样本或 token block 的候选进行反向传播。所选 target 需要对应模型家族实现支持。
+XM 会评估多个训练候选，并只对最能解释每个监督样本或 token block 的候选进行反向传播。所选 target 需要对应模型家族实现支持。用户指南见 [Explorative Modeling](experimental/EXPLORATION_MODELING.zh.md)。
 
 ### `--xm_enabled`
 
@@ -1830,7 +1830,7 @@ XM 会评估多个训练候选，并只对最能解释每个监督样本或 toke
 
 ## NextLat
 
-NextLat 添加一个小型辅助 predictor，把每个捕获的 hidden token 映射到下一个 hidden token。它要求 transformer 模型家族能通过 SimpleTuner hidden-state buffer 暴露 hidden states。
+NextLat 添加一个小型辅助 predictor，把每个捕获的 hidden token 映射到下一个 hidden token。它要求 transformer 模型家族能通过 SimpleTuner hidden-state buffer 暴露 hidden states。用户指南见 [NextLat](experimental/NEXTLAT.zh.md)。
 
 ### `--nextlat_enabled`
 

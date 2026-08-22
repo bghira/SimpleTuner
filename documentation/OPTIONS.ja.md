@@ -1796,7 +1796,7 @@ Internal Guidance は前段の diffusion-transformer block を final output head
 
 ## Explorative Modeling (XM)
 
-XM は複数の学習候補を評価し、各 supervised sample または token block を最もよく説明する候補だけを backprop します。選択した target は各 model family 側の対応実装が必要です。
+XM は複数の学習候補を評価し、各 supervised sample または token block を最もよく説明する候補だけを backprop します。選択した target は各 model family 側の対応実装が必要です。User guide は [Explorative Modeling](experimental/EXPLORATION_MODELING.ja.md) を参照してください。
 
 ### `--xm_enabled`
 
@@ -1828,7 +1828,7 @@ XM は複数の学習候補を評価し、各 supervised sample または token 
 
 ## NextLat
 
-NextLat は、capture した各 hidden token から次の hidden token を予測する小さな補助 predictor を追加します。SimpleTuner の hidden-state buffer へ hidden state を出せる transformer family が必要です。
+NextLat は、capture した各 hidden token から次の hidden token を予測する小さな補助 predictor を追加します。SimpleTuner の hidden-state buffer へ hidden state を出せる transformer family が必要です。User guide は [NextLat](experimental/NEXTLAT.ja.md) を参照してください。
 
 ### `--nextlat_enabled`
 
