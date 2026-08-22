@@ -36,6 +36,7 @@ from simpletuner.helpers.models.minimaxh3.packing import (
     MINIMAX_H3_AUDIO_LATENTS_PER_SECOND,
     MINIMAX_H3_FPS,
     MINIMAX_H3_KEYFRAME_NOISE_AUG,
+    MINIMAX_H3_MAX_DURATION,
     MINIMAX_H3_PIXEL_MEAN,
     MINIMAX_H3_PIXEL_STD,
     MINIMAX_H3_TEXT_TAG,
@@ -1279,6 +1280,29 @@ class MiniMaxH3(VideoModelFoundation):
             dtype=dtype,
         )
 
+    @staticmethod
+    def _max_audio_only_audio_latents() -> int:
+        max_frames = int(MINIMAX_H3_MAX_DURATION * MINIMAX_H3_FPS)
+        while max_frames > 1 and align_num_frames(max_frames) > int(MINIMAX_H3_MAX_DURATION * MINIMAX_H3_FPS):
+            max_frames -= 1
+        return audio_latent_num_frames(align_num_frames(max_frames))
+
+    def _trim_audio_only_latents_for_supported_duration(self, batch: dict) -> None:
+        audio_latents = batch.get("audio_latent_batch")
+        audio_latents_dict = audio_latents if isinstance(audio_latents, dict) else None
+        if audio_latents_dict is not None:
+            audio_latents = audio_latents_dict.get("latents")
+        if not torch.is_tensor(audio_latents) or audio_latents.ndim != 4:
+            return
+        max_audio_latents = self._max_audio_only_audio_latents()
+        if int(audio_latents.shape[-1]) <= max_audio_latents:
+            return
+        audio_latents = audio_latents[..., :max_audio_latents].contiguous()
+        if audio_latents_dict is not None:
+            audio_latents_dict["latents"] = audio_latents
+        else:
+            batch["audio_latent_batch"] = audio_latents
+
     def _build_fake_video_latents(self, batch: dict, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         audio_latents = batch.get("audio_latent_batch")
         if isinstance(audio_latents, dict):
@@ -1310,6 +1334,7 @@ class MiniMaxH3(VideoModelFoundation):
 
     def prepare_batch(self, batch: dict, state: dict) -> dict:
         if batch.get("is_audio_only", False) and batch.get("latent_batch") is None:
+            self._trim_audio_only_latents_for_supported_duration(batch)
             batch["latent_batch"] = self._build_fake_video_latents(
                 batch,
                 self.accelerator.device,
@@ -1629,7 +1654,7 @@ class MiniMaxH3(VideoModelFoundation):
         return float(flat[0].item())
 
     def model_predict(self, prepared_batch):
-        if self._xm_noise_candidates_enabled():
+        if self._xm_noise_candidates_enabled() and prepared_batch.get("xm_winner_indices") is None:
             self._prepare_xm_noise_candidates(prepared_batch)
             model_output = self._model_predict_for_prepared_batch(prepared_batch)
             model_output["xm_candidate_count"] = self.xm_config.candidate_count

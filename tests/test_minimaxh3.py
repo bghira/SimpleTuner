@@ -142,6 +142,32 @@ class H3ContextParallelOutputGatherTests(unittest.TestCase):
         self.assertTrue(torch.equal(tensor.grad, torch.ones_like(tensor)))
 
 
+class H3AudioOnlyLatentLimitTests(unittest.TestCase):
+    def _model(self):
+        model = MiniMaxH3.__new__(MiniMaxH3)
+        model.model = SimpleNamespace(config=SimpleNamespace(patch_size=(1, 2, 2)))
+        model.unwrap_model = lambda transformer: transformer
+        return model
+
+    def test_audio_only_latents_are_trimmed_to_h3_duration_limit(self):
+        model = self._model()
+        batch = {"audio_latent_batch": torch.zeros(1, 2, 3, 1602)}
+
+        model._trim_audio_only_latents_for_supported_duration(batch)
+
+        self.assertEqual(batch["audio_latent_batch"].shape[-1], 575)
+
+    def test_audio_only_dict_latents_are_trimmed_before_fake_video_build(self):
+        model = self._model()
+        batch = {"audio_latent_batch": {"latents": torch.zeros(1, 2, 3, 1602)}}
+
+        model._trim_audio_only_latents_for_supported_duration(batch)
+        fake_video = model._build_fake_video_latents(batch, torch.device("cpu"), torch.float32)
+
+        self.assertEqual(batch["audio_latent_batch"]["latents"].shape[-1], 575)
+        self.assertEqual(tuple(fake_video.shape), (1, 24, 102, 2, 2))
+
+
 def tiny_inputs(batch_size: int = 1):
     text_tags = torch.full((5,), MINIMAX_H3_TEXT_TAG, dtype=torch.long)
     layout = build_packed_sequence(

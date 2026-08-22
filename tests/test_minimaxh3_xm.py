@@ -132,6 +132,22 @@ class MiniMaxH3XMTests(unittest.TestCase):
         model._model_predict_for_prepared_batch.assert_called_once()
         self.assertEqual(output["xm_candidate_count"], 2)
 
+    def test_model_predict_skips_xm_expansion_after_winner_selection(self):
+        model = self._model(candidate_count=2)
+        model._prepare_xm_noise_candidates = MagicMock()
+        model._model_predict_for_prepared_batch = MagicMock(return_value={"model_prediction": torch.zeros(1, 1)})
+
+        output = model.model_predict(
+            {
+                "latents": torch.zeros(1, 1),
+                "xm_winner_indices": torch.tensor([0]),
+            }
+        )
+
+        model._prepare_xm_noise_candidates.assert_not_called()
+        model._model_predict_for_prepared_batch.assert_called_once()
+        self.assertNotIn("xm_candidate_count", output)
+
     def test_xm_loss_selects_winners_and_trims_before_auxiliary_loss(self):
         model = self._model(candidate_count=2)
         latents = torch.zeros(4, 1, 1, 1, 1)
