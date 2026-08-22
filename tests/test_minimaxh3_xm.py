@@ -96,6 +96,31 @@ class MiniMaxH3XMTests(unittest.TestCase):
         self.assertTrue(torch.allclose(batch["audio_target"], batch["audio_latents"] - audio_noise))
         self.assertEqual(batch["xm_candidate_count"], 3)
 
+    def test_prepare_xm_noise_candidates_replaces_existing_audio_target(self):
+        model = self._model(candidate_count=2)
+        latents = torch.zeros(1, 2, 1, 2, 2)
+        audio_latents = torch.zeros(1, 2, 3, 2)
+        video_noise = torch.ones(2, 2, 1, 2, 2)
+        audio_noise = torch.ones(2, 2, 3, 2) * 2.0
+        batch = {
+            "latents": latents,
+            "noisy_latents": torch.zeros_like(latents),
+            "sigmas": torch.tensor([0.25], dtype=torch.float32),
+            "timesteps": torch.tensor([250.0], dtype=torch.float32),
+            "encoder_hidden_states": torch.zeros(1, 2, 3),
+            "conditioning_latents": torch.ones(1, 2, 1, 2, 2),
+            "audio_latents": audio_latents,
+            "audio_noisy_latents": torch.zeros_like(audio_latents),
+            "audio_sigmas": torch.tensor([0.1], dtype=torch.float32),
+            "audio_timesteps": torch.tensor([0.9], dtype=torch.float32),
+            "audio_target": torch.full_like(audio_latents, 99.0),
+        }
+
+        with patch("torch.randn_like", side_effect=[video_noise, audio_noise]):
+            model._prepare_xm_noise_candidates(batch)
+
+        self.assertTrue(torch.equal(batch["audio_target"], batch["audio_latents"] - audio_noise))
+
     def test_model_predict_tags_xm_output(self):
         model = self._model(candidate_count=2)
         model._prepare_xm_noise_candidates = MagicMock()

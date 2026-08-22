@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -39,6 +41,22 @@ class _MinimalHuggingfaceMetadataBackend(HuggingfaceMetadataBackend):
 
 
 class HuggingfaceMetadataBackendTests(unittest.TestCase):
+    def test_audio_caption_falls_back_to_text_sibling(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            audio_path = Path(tmpdir) / "song.flac"
+            audio_path.touch()
+            audio_path.with_suffix(".txt").write_text("riff-heavy caption", encoding="utf-8")
+            media = SimpleNamespace(_hf_encoded={"path": str(audio_path)})
+
+            backend = HuggingfaceMetadataBackend.__new__(HuggingfaceMetadataBackend)
+            backend.dataset_type = "audio"
+            backend.caption_column = "caption"
+            backend.fallback_caption_column = None
+            backend.audio_caption_fields = ["prompt", "tags"]
+            backend.description_column = "description"
+
+            self.assertEqual(backend._extract_caption_from_item({"audio": media}), "riff-heavy caption")
+
     @patch("simpletuner.helpers.metadata.backends.huggingface.TrainingSample")
     def test_video_without_maximum_num_frames_is_not_flagged_as_too_many(self, mock_training_sample):
         prepared = SimpleNamespace(

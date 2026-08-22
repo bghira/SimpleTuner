@@ -33,6 +33,13 @@ class DummyTransformer(nn.Module):
         self.model = SimpleNamespace(layers=nn.ModuleList([nn.Linear(4, 4) for _ in range(3)]))
 
 
+class TransformerBlocksOnly(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.config = SimpleNamespace(hidden_size=4)
+        self.transformer_blocks = nn.ModuleList([nn.Linear(4, 4) for _ in range(2)])
+
+
 class NextLatXmTests(unittest.TestCase):
     def test_field_registry_exposes_nextlat_and_xm_options(self):
         registry = FieldRegistry()
@@ -113,6 +120,25 @@ class NextLatXmTests(unittest.TestCase):
         self.assertGreater(loss.item(), 0.0)
         self.assertIn("nextlat_loss", logs)
         self.assertIn("nextlat_state_loss", logs)
+
+    def test_nextlat_block_count_accepts_transformer_blocks_without_single_blocks(self):
+        self.assertEqual(infer_nextlat_block_count(TransformerBlocksOnly()), 2)
+
+    def test_nextlat_predictor_accepts_bfloat16_hidden_states_with_float_parameters(self):
+        config = SimpleNamespace(
+            nextlat_enabled=True,
+            nextlat_weight=0.5,
+            nextlat_block_index=-1,
+            nextlat_state_loss="smooth_l1",
+            nextlat_kl_weight=0.0,
+        )
+        regularizer = NextLatRegularizer(config, DummyAccelerator(), hidden_size=4, block_count=1)
+        regularizer.attach_to_model(nn.Module(), dtype=torch.float32)
+        hidden = torch.randn(2, 5, 4, dtype=torch.bfloat16)
+
+        loss, _ = regularizer.compute_loss({"layer_0": hidden}, {})
+
+        self.assertGreaterEqual(loss.item(), 0.0)
 
 
 if __name__ == "__main__":
