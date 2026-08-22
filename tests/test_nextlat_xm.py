@@ -40,6 +40,13 @@ class TransformerBlocksOnly(nn.Module):
         self.transformer_blocks = nn.ModuleList([nn.Linear(4, 4) for _ in range(2)])
 
 
+class AttentionInnerDimDiffers(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.config = SimpleNamespace(hidden_size=4, num_attention_heads=3, attention_head_dim=2)
+        self.transformer_blocks = nn.ModuleList([nn.Linear(4, 4)])
+
+
 class NextLatXmTests(unittest.TestCase):
     def test_field_registry_exposes_nextlat_and_xm_options(self):
         registry = FieldRegistry()
@@ -123,6 +130,9 @@ class NextLatXmTests(unittest.TestCase):
 
     def test_nextlat_block_count_accepts_transformer_blocks_without_single_blocks(self):
         self.assertEqual(infer_nextlat_block_count(TransformerBlocksOnly()), 2)
+
+    def test_nextlat_hidden_size_prefers_token_width_over_attention_inner_dim(self):
+        self.assertEqual(infer_nextlat_hidden_size(AttentionInnerDimDiffers()), 4)
 
     def test_nextlat_predictor_accepts_bfloat16_hidden_states_with_float_parameters(self):
         config = SimpleNamespace(
