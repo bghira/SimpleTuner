@@ -208,50 +208,50 @@ A matriz completa de compatibilidade é dividida por área de recurso para mante
 
 O pós-treinamento MixFlow está disponível para todas as linhas `flow matching` abaixo. Veja o [guia MixFlow](experimental/MIXFLOW.md).
 
-| Modelo | Prediction | Flow Shift | TwinFlow | Self-Flow | LayerSync | Internal Guidance | Sliders |
-| --- | --- | :---: | :---: | :---: | :---: | :---: | :---: |
-| ACE-Step | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ v1 | ✓ |
-| Anima | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ |
-| Auraflow | flow matching | ✓ (SLG) | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Boogu-Image | flow matching | ✓ | ✗ | ✗ | ✗ | ✓ | ✓ |
-| Chroma 1 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Cosmos2 | sample | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
-| Cosmos3 | flow matching | ✓ | ✗ | ✗ | ✗ | ✓ | ✓ |
-| DeepFloyd IF | epsilon | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
-| ERNIE-Image | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| Flux.1 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Flux.2 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| HeartMuLa | autoregressive next-token | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| HiDream | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Hunyuan Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Ideogram 4 | flow matching | ✓ | ✗ | ✗ | ✗ | ✓ | ✓ |
-| InfiniteTalk | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Kandinsky 5.0 Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Kandinsky 5.0 Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Kwai Kolors | epsilon | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
-| Krea2 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| LongCat Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| LongCat Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| LTX Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| LTX Video 2 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Lumina2 | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ |
-| Mage-Flow | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| MiniMax H3 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| MiniMax Music 3 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| OmniGen | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ |
-| PixArt Sigma | epsilon | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
-| Qwen Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Sana | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Sana Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| SD 1.x/2.x (Legacy) | epsilon / v-pred | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
-| Stable Diffusion 3 | flow matching | ✓ (SLG) | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Stable Diffusion XL | epsilon | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
-| Stable Cascade (Stage C) | epsilon | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
-| Wan Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Wan S2V | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ |
-| Z-Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Z-Image Omni | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| ZLab I1 | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| Modelo | Prediction | Flow Shift | TwinFlow | Self-Flow | LayerSync | NextLat | XM | Internal Guidance | Sliders |
+| --- | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| ACE-Step | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ v1 | ✓ |
+| Anima | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Auraflow | flow matching | ✓ (SLG) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Boogu-Image | flow matching | ✓ | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| Chroma 1 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Cosmos2 | sample | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Cosmos3 | flow matching | ✓ | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| DeepFloyd IF | epsilon | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ | ✓ |
+| ERNIE-Image | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ | ✗ | ✓ | ✓ |
+| Flux.1 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Flux.2 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| HeartMuLa | autoregressive next-token | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ | ✗ | ✗ |
+| HiDream | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Hunyuan Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Ideogram 4 | flow matching | ✓ | ✗ | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ |
+| InfiniteTalk | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Kandinsky 5.0 Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Kandinsky 5.0 Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Kwai Kolors | epsilon | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| Krea2 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| LongCat Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| LongCat Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| LTX Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ |
+| LTX Video 2 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Lumina2 | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Mage-Flow | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| MiniMax H3 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| MiniMax Music 3 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| OmniGen | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| PixArt Sigma | epsilon | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Qwen Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Sana | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Sana Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ |
+| SD 1.x/2.x (Legacy) | epsilon / v-pred | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ | ✓ |
+| Stable Diffusion 3 | flow matching | ✓ (SLG) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Stable Diffusion XL | epsilon | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ | ✓ |
+| Stable Cascade (Stage C) | epsilon | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ | ✓ |
+| Wan Video | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Wan S2V | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Z-Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Z-Image Omni | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ |
+| ZLab I1 | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 </details>
 
@@ -306,7 +306,7 @@ O pós-treinamento MixFlow está disponível para todas as linhas `flow matching
 </details>
 
 *✓ = suportado, ✓* = suportado mas normalmente requer DeepSpeed/FSDP2 para treinamento full-rank, ✗ = não suportado. Ref Inputs marca rotas existentes de condicionamento por referência/edição/I2V; `opt` significa opcional e `req` significa obrigatório para o flavour de edição/I2V.*
-*TwinFlow é nativo quando `twinflow_enabled=true`; modelos de difusão ainda exigem `diff2flow_enabled=true` e `twinflow_allow_diff2flow=true`. Self-Flow se refere ao suporte CREPA self-flow. Internal Guidance usa uma cabeça auxiliar em diffusion transformers. LayerSync marca backbones que expõem hidden states para alinhamento.*
+*TwinFlow é nativo quando `twinflow_enabled=true`; modelos de difusão ainda exigem `diff2flow_enabled=true` e `twinflow_allow_diff2flow=true`. Self-Flow se refere ao suporte CREPA self-flow. Internal Guidance usa uma cabeça auxiliar em diffusion transformers. LayerSync marca backbones que expõem hidden states para alinhamento. NextLat usa hidden states capturados para o objetivo auxiliar next-latent. XM marca suporte a Explorative Modeling: seleção de candidatos de ruído para modelos de difusão e seleção de rota para modelos autorregressivos de tokens.*
 
 ### Caminhos rápidos: Z-Image Turbo e Flux Schnell
 

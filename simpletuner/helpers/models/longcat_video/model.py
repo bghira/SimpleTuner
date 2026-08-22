@@ -191,6 +191,7 @@ class LongCatVideo(VideoModelFoundation):
 
     def __init__(self, config: dict, accelerator):
         super().__init__(config, accelerator)
+        self._validate_xm_support()
         if getattr(self.config, "aspect_bucket_alignment", None) != 64:
             logger.warning(
                 "LongCat-Video requires aspect_bucket_alignment=64. Overriding from %s.",
@@ -385,6 +386,14 @@ class LongCatVideo(VideoModelFoundation):
         return self.config, self.noise_schedule
 
     def model_predict(self, prepared_batch):
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch, family_name=self.NAME)
+            model_output = self._model_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch)
+
+    def _model_predict_single(self, prepared_batch):
         noisy_latents = prepared_batch["noisy_latents"].to(self.accelerator.device, dtype=self.config.weight_dtype)
         encoder_hidden_states = prepared_batch["encoder_hidden_states"].to(
             self.accelerator.device, dtype=self.config.weight_dtype

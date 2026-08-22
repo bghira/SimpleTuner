@@ -107,6 +107,17 @@ class Kandinsky5Video(VideoModelFoundation):
     def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
         return self._prepare_video_crepa_self_flow_batch(batch=batch, state=state)
 
+    def __init__(self, config: dict, accelerator):
+        super().__init__(config, accelerator)
+        self._validate_xm_support()
+
+    def _repeat_xm_candidate_value(self, value, candidate_count: int, batch_size: int):
+        if isinstance(value, list) and len(value) == batch_size:
+            return value * candidate_count
+        if isinstance(value, tuple) and len(value) == batch_size:
+            return tuple(list(value) * candidate_count)
+        return super()._repeat_xm_candidate_value(value, candidate_count, batch_size)
+
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
         # Kandinsky5Video has 34 transformer blocks (2 text + 32 visual)
@@ -433,6 +444,14 @@ class Kandinsky5Video(VideoModelFoundation):
         return super().requires_conditioning_latents()
 
     def model_predict(self, prepared_batch: dict):
+        if self._xm_noise_candidates_enabled(prepared_batch):
+            self._prepare_xm_noise_candidates(prepared_batch, family_name=self.NAME)
+            model_output = self._model_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch)
+
+    def _model_predict_single(self, prepared_batch: dict):
         """
         Forward pass through the transformer with proper rope positions and visual conditioning.
         """

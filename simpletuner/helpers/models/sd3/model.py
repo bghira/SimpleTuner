@@ -1,8 +1,11 @@
 import logging
 import os
+import random
+from dataclasses import fields, is_dataclass, replace
 from typing import Optional
 
 import torch
+import torch.nn.functional as F
 from diffusers import AutoencoderKL, SD3ControlNetModel
 from transformers import CLIPTextModelWithProjection, CLIPTokenizer, T5EncoderModel, T5TokenizerFast
 
@@ -20,6 +23,7 @@ from simpletuner.helpers.models.sd3.controlnet import StableDiffusion3ControlNet
 from simpletuner.helpers.models.sd3.pipeline import StableDiffusion3Img2ImgPipeline, StableDiffusion3Pipeline
 from simpletuner.helpers.models.sd3.transformer import SD3Transformer2DModel
 from simpletuner.helpers.models.tae.types import ImageTAESpec
+from simpletuner.helpers.training.explorative_modeling import repeat_batch_for_candidates
 
 logger = logging.getLogger(__name__)
 is_primary_process = True
@@ -176,6 +180,10 @@ class SD3(ImageModelFoundation):
         if block_idx is None:
             return None
         return hidden_states_buffer.get(f"layer_{int(block_idx)}")
+
+    def __init__(self, config, accelerator):
+        super().__init__(config, accelerator)
+        self._validate_xm_support()
 
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
@@ -449,6 +457,87 @@ class SD3(ImageModelFoundation):
         return prompt_embeds, pooled_prompt_embeds
 
     def model_predict(self, prepared_batch):
+        if self._xm_noise_candidates_enabled(prepared_batch):
+            self._prepare_xm_noise_candidates(prepared_batch)
+            model_output = self._model_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch)
+
+    def _repeat_xm_candidate_value(self, value, candidate_count: int, batch_size: int):
+        if torch.is_tensor(value):
+            if value.ndim == 0 or value.shape[0] != batch_size:
+                return value
+            return repeat_batch_for_candidates(value, candidate_count)
+        if isinstance(value, list):
+            if len(value) == batch_size:
+                return value * candidate_count
+            return [self._repeat_xm_candidate_value(item, candidate_count, batch_size) for item in value]
+        if isinstance(value, tuple):
+            if len(value) == batch_size:
+                return tuple(list(value) * candidate_count)
+            return tuple(self._repeat_xm_candidate_value(item, candidate_count, batch_size) for item in value)
+        if isinstance(value, dict):
+            return {key: self._repeat_xm_candidate_value(item, candidate_count, batch_size) for key, item in value.items()}
+        if is_dataclass(value) and not isinstance(value, type):
+            replacements = {
+                field.name: self._repeat_xm_candidate_value(getattr(value, field.name), candidate_count, batch_size)
+                for field in fields(value)
+            }
+            return replace(value, **replacements)
+        return value
+
+    def _prepare_xm_noise_candidates(self, prepared_batch: dict) -> dict:
+        xm_config = self.xm_config
+        candidate_count = int(xm_config.candidate_count)
+        latents = prepared_batch.get("latents")
+        timesteps = prepared_batch.get("timesteps")
+        sigmas = prepared_batch.get("sigmas")
+        if not torch.is_tensor(latents) or not torch.is_tensor(timesteps) or not torch.is_tensor(sigmas):
+            raise ValueError("SD3 XM noise-candidate training requires latents, timesteps, and sigmas tensors.")
+        if "noisy_latents" not in prepared_batch:
+            raise ValueError("SD3 XM noise-candidate training requires prepared noisy_latents.")
+        if prepared_batch.get("target") is not None:
+            raise ValueError("SD3 XM noise-candidate training cannot be used with an explicit prepared target.")
+
+        batch_size = latents.shape[0]
+        expanded_batch = {
+            key: self._repeat_xm_candidate_value(value, candidate_count, batch_size) for key, value in prepared_batch.items()
+        }
+        expanded_latents = expanded_batch["latents"]
+        candidate_noise = torch.randn_like(expanded_latents)
+        sigma_source = expanded_batch.get("mixflow_interpolation_sigmas")
+        if sigma_source is None:
+            sigma_source = expanded_batch["sigmas"]
+        if not torch.is_tensor(sigma_source):
+            raise ValueError("SD3 XM noise-candidate training requires tensor sigmas for interpolation.")
+        flat_sigmas = sigma_source.reshape(sigma_source.shape[0], -1)
+        if flat_sigmas.shape[1] > 1 and not torch.allclose(flat_sigmas, flat_sigmas[:, :1].expand_as(flat_sigmas)):
+            raise ValueError("SD3 XM noise-candidate training requires per-sample scalar sigmas.")
+        interpolation_grid = self._expand_sigma_values(sigma_source, expanded_latents)
+        expanded_batch["noise"] = candidate_noise
+        expanded_batch["input_noise"] = candidate_noise
+        expanded_batch["noisy_latents"] = (
+            1.0 - interpolation_grid
+        ) * expanded_latents + interpolation_grid * candidate_noise
+        expanded_batch["flow_target"] = self.get_flow_matching_target(
+            expanded_batch,
+            latents=expanded_latents,
+            noise=candidate_noise,
+            prefer_explicit_target=False,
+        ).to(device=expanded_latents.device, dtype=expanded_latents.dtype)
+        expanded_batch.pop("twinflow_tt", None)
+        expanded_batch.pop("twinflow_rng_state", None)
+        if self._twinflow_active():
+            self._prepare_twinflow_metadata(expanded_batch)
+        expanded_batch["xm_candidate_count"] = candidate_count
+        expanded_batch["xm_original_batch_size"] = batch_size
+
+        prepared_batch.clear()
+        prepared_batch.update(expanded_batch)
+        return prepared_batch
+
+    def _model_predict_single(self, prepared_batch):
         hidden_states_buffer = self._new_hidden_state_buffer()
         timesteps = prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=self.config.weight_dtype)
         grounding_kwargs = self._build_grounding_position_net_kwargs(prepared_batch.get("grounding_batch"))
@@ -535,6 +624,14 @@ class SD3(ImageModelFoundation):
         return conditioning_latents
 
     def controlnet_predict(self, prepared_batch: dict) -> dict:
+        if self._xm_noise_candidates_enabled(prepared_batch):
+            self._prepare_xm_noise_candidates(prepared_batch)
+            model_output = self._controlnet_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._controlnet_predict_single(prepared_batch)
+
+    def _controlnet_predict_single(self, prepared_batch: dict) -> dict:
         """
         Perform a forward pass with ControlNet for SD3 model.
 
@@ -590,6 +687,85 @@ class SD3(ImageModelFoundation):
         )[0]
 
         return {"model_prediction": model_pred}
+
+    def loss_with_logs(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        candidate_count = model_output.get("xm_candidate_count") if isinstance(model_output, dict) else None
+        if not candidate_count:
+            return super().loss_with_logs(
+                prepared_batch,
+                model_output,
+                apply_conditioning_mask=apply_conditioning_mask,
+            )
+        return self._xm_noise_loss_with_logs(
+            prepared_batch,
+            model_output,
+            candidate_count=int(candidate_count),
+            apply_conditioning_mask=apply_conditioning_mask,
+        )
+
+    def _xm_diffusion_loss_tensor(
+        self, prepared_batch: dict, model_output: dict, apply_conditioning_mask: bool
+    ) -> torch.Tensor:
+        target = self.get_prediction_target(prepared_batch)
+        if target is None:
+            raise ValueError("Target is None. Cannot compute SD3 XM loss.")
+        model_pred = model_output["model_prediction"]
+        if model_pred.shape != target.shape:
+            raise ValueError(
+                f"SD3 XM loss expected prediction and target shapes to match, got {tuple(model_pred.shape)} and {tuple(target.shape)}."
+            )
+
+        loss_type = getattr(self.config, "loss_type", "l2")
+        if loss_type in ["huber", "smooth_l1"]:
+            timesteps = prepared_batch["timesteps"]
+            if getattr(self.config, "huber_schedule", "constant") != "constant":
+                losses = []
+                for idx in range(model_pred.shape[0]):
+                    huber_c = self.compute_scheduled_huber_c(timesteps[idx : idx + 1]).item()
+                    losses.append(
+                        self.conditional_loss(
+                            model_pred[idx : idx + 1].float(),
+                            target[idx : idx + 1].float(),
+                            reduction="none",
+                            loss_type=loss_type,
+                            huber_c=huber_c,
+                        )
+                    )
+                loss = torch.cat(losses, dim=0)
+            else:
+                loss = self.conditional_loss(
+                    model_pred.float(),
+                    target.float(),
+                    reduction="none",
+                    loss_type=loss_type,
+                    huber_c=getattr(self.config, "huber_c", 0.1),
+                )
+        elif loss_type == "l2":
+            loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
+        else:
+            raise ValueError(f"SD3 XM noise-candidate training does not support loss_type={loss_type!r}.")
+
+        loss_mask_type = prepared_batch.get("loss_mask_type")
+        if not loss_mask_type:
+            legacy_type = prepared_batch.get("conditioning_type")
+            if legacy_type in ("mask", "segmentation"):
+                loss_mask_type = legacy_type
+        if loss_mask_type == "mask" and apply_conditioning_mask:
+            mask_image = (
+                prepared_batch["conditioning_pixel_values"].to(dtype=loss.dtype, device=loss.device)[:, 0].unsqueeze(1)
+            )
+            mask_image = torch.nn.functional.interpolate(mask_image, size=loss.shape[2:], mode="area")
+            mask_image = mask_image / 2 + 0.5
+            loss = loss * mask_image
+        elif loss_mask_type == "segmentation" and apply_conditioning_mask:
+            if random.random() < self.config.masked_loss_probability:
+                mask_image = prepared_batch["conditioning_pixel_values"].to(dtype=loss.dtype, device=loss.device)
+                mask_image = torch.sum(mask_image, dim=1, keepdim=True) / 3
+                mask_image = torch.nn.functional.interpolate(mask_image, size=loss.shape[2:], mode="area")
+                mask_image = mask_image / 2 + 0.5
+                mask_image = (mask_image > 0).to(dtype=loss.dtype, device=loss.device)
+                loss = loss * mask_image
+        return loss
 
     def get_lora_target_layers(self):
         manual_targets = self._get_peft_lora_target_modules()

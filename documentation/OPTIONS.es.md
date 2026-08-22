@@ -1793,6 +1793,70 @@ Internal Guidance supervisa un bloque temprano del diffusion transformer con el 
 
 ---
 
+## Explorative Modeling (XM)
+
+XM evalúa varios candidatos de entrenamiento y retropropaga solo el que mejor explica cada muestra supervisada o bloque de tokens. Cada familia de modelo debe implementar soporte para el objetivo seleccionado. Consulta [Explorative Modeling](experimental/EXPLORATION_MODELING.es.md) para la guía de usuario.
+
+### `--xm_enabled`
+
+- **Qué hace**: Activa la selección de candidatos XM.
+- **Predeterminado**: `false`
+
+### `--xm_candidate_count`
+
+- **Qué hace**: Número de ruidos o rutas latentes candidatas por muestra.
+- **Predeterminado**: `1`; debe ser al menos `2` cuando XM está habilitado.
+
+### `--xm_training_target`
+
+- **Qué hace**: Tipo de candidato. Use `noise` para diffusion/flow y `route` para planners AR/RVQ.
+- **Opciones**: `noise`, `route`
+- **Predeterminado**: `noise`
+
+### `--xm_selection_scope`
+
+- **Qué hace**: Selecciona ganadores por `sample` o por `block` de tokens/fotogramas.
+- **Predeterminado**: `sample`
+
+### `--xm_block_size`
+
+- **Qué hace**: Tamaño del tramo de tokens o fotogramas para XM por bloques. `0` usa toda la secuencia supervisada.
+- **Predeterminado**: `0`
+
+---
+
+## NextLat
+
+NextLat añade un predictor auxiliar pequeño que mapea cada token oculto capturado al siguiente token oculto. Requiere una familia transformer que exponga hidden states mediante el buffer de SimpleTuner. Consulta [NextLat](experimental/NEXTLAT.es.md) para la guía de usuario.
+
+### `--nextlat_enabled`
+
+- **Qué hace**: Activa predicción de hidden states NextLat.
+- **Predeterminado**: `false`
+
+### `--nextlat_block_index`
+
+- **Qué hace**: Bloque transformer zero-based a capturar.
+- **Predeterminado**: `-1`, que usa el último bloque compatible.
+
+### `--nextlat_weight`
+
+- **Qué hace**: Multiplicador de la loss auxiliar NextLat.
+- **Predeterminado**: `0.0`; debe ser mayor que cero cuando NextLat está habilitado.
+
+### `--nextlat_state_loss`
+
+- **Qué hace**: Distancia para predecir el siguiente hidden state.
+- **Opciones**: `smooth_l1`, `mse`
+- **Predeterminado**: `smooth_l1`
+
+### `--nextlat_kl_weight`
+
+- **Qué hace**: Peso KL opcional cuando la familia de modelo proporciona una cabeza de logits para hidden states predichos.
+- **Predeterminado**: `0.0`
+
+---
+
 ## 🔁 LayerSync (Autoalineación de estados ocultos)
 
 LayerSync anima a una capa "estudiante" a igualar una capa "maestra" más fuerte dentro del mismo transformer, usando similitud coseno sobre tokens ocultos.

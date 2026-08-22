@@ -236,6 +236,68 @@ class QwenImage(ImageModelFoundation):
         self._conditioning_image_embedder = None
         self._conditioning_processor = None
         self.processor = None
+        self._validate_xm_support()
+
+    def _repeat_xm_candidate_value(self, value, candidate_count: int, batch_size: int):
+        if torch.is_tensor(value):
+            if value.ndim == 0 or value.shape[0] != batch_size:
+                return value
+            return self._repeat_xm_candidate_tensor(value, candidate_count)
+        if isinstance(value, dict):
+            return {key: self._repeat_xm_candidate_value(item, candidate_count, batch_size) for key, item in value.items()}
+        if isinstance(value, list):
+            if len(value) == batch_size:
+                return list(value) * candidate_count
+            return [self._repeat_xm_candidate_value(item, candidate_count, batch_size) for item in value]
+        if isinstance(value, tuple):
+            if len(value) == batch_size:
+                return tuple(list(value) * candidate_count)
+            return tuple(self._repeat_xm_candidate_value(item, candidate_count, batch_size) for item in value)
+        return value
+
+    def _prepare_xm_noise_candidates(self, prepared_batch: dict) -> dict:
+        xm_config = self.xm_config
+        candidate_count = xm_config.candidate_count
+        latents = prepared_batch.get("latents")
+        timesteps = prepared_batch.get("timesteps")
+        sigmas = prepared_batch.get("sigmas")
+        if not torch.is_tensor(latents) or not torch.is_tensor(timesteps) or not torch.is_tensor(sigmas):
+            raise ValueError("Qwen Image XM noise-candidate training requires latents, timesteps, and sigmas tensors.")
+        if "noisy_latents" not in prepared_batch:
+            raise ValueError("Qwen Image XM noise-candidate training requires prepared noisy_latents.")
+        if prepared_batch.get("target") is not None:
+            raise ValueError("Qwen Image XM noise-candidate training cannot be used with an explicit prepared target.")
+
+        batch_size = latents.shape[0]
+        expanded_batch = {
+            key: self._repeat_xm_candidate_value(value, candidate_count, batch_size) for key, value in prepared_batch.items()
+        }
+
+        expanded_latents = expanded_batch["latents"]
+        candidate_noise = torch.randn_like(expanded_latents)
+        sigma_source = expanded_batch.get("mixflow_interpolation_sigmas")
+        if sigma_source is None:
+            sigma_source = expanded_batch["sigmas"]
+        if not torch.is_tensor(sigma_source):
+            raise ValueError("Qwen Image XM noise-candidate training requires tensor sigmas for interpolation.")
+        interpolation_grid = self._expand_sigma_values(sigma_source, expanded_latents)
+        expanded_batch["noise"] = candidate_noise
+        expanded_batch["input_noise"] = candidate_noise
+        expanded_batch["noisy_latents"] = (
+            1.0 - interpolation_grid
+        ) * expanded_latents + interpolation_grid * candidate_noise
+        expanded_batch["flow_target"] = self.get_flow_matching_target(
+            expanded_batch,
+            latents=expanded_latents,
+            noise=candidate_noise,
+            prefer_explicit_target=False,
+        ).to(device=expanded_latents.device, dtype=expanded_latents.dtype)
+        expanded_batch["xm_candidate_count"] = candidate_count
+        expanded_batch["xm_original_batch_size"] = batch_size
+
+        prepared_batch.clear()
+        prepared_batch.update(expanded_batch)
+        return prepared_batch
 
     def _load_processor_for_pipeline(self):
         if self.processor is not None:
@@ -1049,6 +1111,14 @@ class QwenImage(ImageModelFoundation):
         return batch
 
     def model_predict(self, prepared_batch):
+        if self._xm_noise_candidates_enabled(prepared_batch):
+            self._prepare_xm_noise_candidates(prepared_batch)
+            model_output = self._model_predict_for_prepared_batch(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_for_prepared_batch(prepared_batch)
+
+    def _model_predict_for_prepared_batch(self, prepared_batch):
         if self._is_edit_v1_flavour():
             return self._model_predict_edit_v1(prepared_batch)
         if self._is_edit_v2_flavour() or self._is_edit_v2_plus_flavour():
@@ -1565,6 +1635,102 @@ class QwenImage(ImageModelFoundation):
             "hidden_states_buffer": hidden_states_buffer,
         }
 
+    def loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        candidate_count = model_output.get("xm_candidate_count") if isinstance(model_output, dict) else None
+        if not candidate_count:
+            return super().loss(
+                prepared_batch,
+                model_output,
+                apply_conditioning_mask=apply_conditioning_mask,
+            )
+        loss, _ = self._xm_noise_loss_with_logs(
+            prepared_batch,
+            model_output,
+            candidate_count=int(candidate_count),
+            apply_conditioning_mask=apply_conditioning_mask,
+        )
+        return loss
+
+    def loss_with_logs(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        candidate_count = model_output.get("xm_candidate_count") if isinstance(model_output, dict) else None
+        if not candidate_count:
+            return super().loss_with_logs(
+                prepared_batch,
+                model_output,
+                apply_conditioning_mask=apply_conditioning_mask,
+            )
+        return self._xm_noise_loss_with_logs(
+            prepared_batch,
+            model_output,
+            candidate_count=int(candidate_count),
+            apply_conditioning_mask=apply_conditioning_mask,
+        )
+
+    def _xm_diffusion_loss_tensor(
+        self,
+        prepared_batch: dict,
+        model_output: dict,
+        *,
+        apply_conditioning_mask: bool,
+    ) -> torch.Tensor:
+        target = self.get_prediction_target(prepared_batch)
+        if target is None:
+            raise ValueError("Target is None. Cannot compute Qwen Image XM loss.")
+        model_pred = model_output["model_prediction"]
+        loss_type = getattr(self.config, "loss_type", "l2")
+        if loss_type in ["huber", "smooth_l1"]:
+            timesteps = prepared_batch["timesteps"]
+            if getattr(self.config, "huber_schedule", "constant") != "constant":
+                losses = []
+                for idx in range(model_pred.shape[0]):
+                    huber_c = self.compute_scheduled_huber_c(timesteps[idx : idx + 1]).item()
+                    losses.append(
+                        self.conditional_loss(
+                            model_pred[idx : idx + 1].float(),
+                            target[idx : idx + 1].float(),
+                            reduction="none",
+                            loss_type=loss_type,
+                            huber_c=huber_c,
+                        )
+                    )
+                loss = torch.cat(losses, dim=0)
+            else:
+                loss = self.conditional_loss(
+                    model_pred.float(),
+                    target.float(),
+                    reduction="none",
+                    loss_type=loss_type,
+                    huber_c=getattr(self.config, "huber_c", 0.1),
+                )
+        elif loss_type == "l2":
+            loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
+        else:
+            raise ValueError(f"Qwen Image XM noise-candidate training does not support loss_type={loss_type!r}.")
+
+        loss_mask_type = prepared_batch.get("loss_mask_type")
+        if not loss_mask_type:
+            legacy_type = prepared_batch.get("conditioning_type")
+            if legacy_type in ("mask", "segmentation"):
+                loss_mask_type = legacy_type
+        if loss_mask_type == "mask" and apply_conditioning_mask:
+            mask_image = (
+                prepared_batch["conditioning_pixel_values"].to(dtype=loss.dtype, device=loss.device)[:, 0].unsqueeze(1)
+            )
+            mask_image = torch.nn.functional.interpolate(mask_image, size=loss.shape[2:], mode="area")
+            mask_image = mask_image / 2 + 0.5
+            loss = loss * mask_image
+        elif loss_mask_type == "segmentation" and apply_conditioning_mask:
+            if random.random() < self.config.masked_loss_probability:
+                mask_image = prepared_batch["conditioning_pixel_values"].to(dtype=loss.dtype, device=loss.device)
+                mask_image = torch.sum(mask_image, dim=1, keepdim=True) / 3
+                mask_image = torch.nn.functional.interpolate(mask_image, size=loss.shape[2:], mode="area")
+                mask_image = mask_image / 2 + 0.5
+                mask_image = (mask_image > 0).to(dtype=loss.dtype, device=loss.device)
+                loss = loss * mask_image
+        elif loss_mask_type not in (None, "mask", "segmentation"):
+            raise ValueError(f"Qwen Image XM noise-candidate training does not support loss_mask_type={loss_mask_type!r}.")
+        return loss
+
     def pre_vae_encode_transform_sample(self, sample):
         """
         Pre-encode transform for the sample before passing it to the VAE.
@@ -1696,6 +1862,7 @@ class QwenImage(ImageModelFoundation):
         if self.config.prediction_type != "flow_matching":
             logger.warning(f"{self.NAME} uses flow matching. " "Overriding prediction_type to 'flow_matching'.")
             self.config.prediction_type = "flow_matching"
+        self._validate_xm_support()
 
     def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
         args = super().pretrained_load_args(pretrained_load_args)

@@ -59,6 +59,10 @@ class ZLabI1(ImageModelFoundation):
         "3b": "bghira/zlab-i1-diffusers",
     }
 
+    def __init__(self, config, accelerator):
+        super().__init__(config, accelerator)
+        self._validate_xm_support()
+
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
             "name": "T5Gemma 2B",
@@ -288,6 +292,14 @@ class ZLabI1(ImageModelFoundation):
             return mask_lat.flatten(2).squeeze(1) > 0.5
 
     def model_predict(self, prepared_batch, custom_timesteps: list = None):
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch, family_name=self.NAME)
+            model_output = self._model_predict_single(prepared_batch, custom_timesteps=custom_timesteps)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch, custom_timesteps=custom_timesteps)
+
+    def _model_predict_single(self, prepared_batch, custom_timesteps: list = None):
         latents = prepared_batch["noisy_latents"]
         if latents.shape[1] != self.LATENT_CHANNEL_COUNT:
             raise ValueError(

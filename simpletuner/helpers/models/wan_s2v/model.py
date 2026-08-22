@@ -47,6 +47,7 @@ class WanS2V(VideoModelFoundation):
     DEFAULT_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     SLIDER_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     DEFAULT_LYCORIS_TARGET = ["Attention"]
+    XM_SEQUENCE_LIST_KEYS = frozenset({"conditioning_pixel_values_multi"})
 
     MODEL_CLASS = WanS2VTransformer3DModel
     MODEL_SUBFOLDER = "transformer"
@@ -92,6 +93,7 @@ class WanS2V(VideoModelFoundation):
         self._audio_processor = None
         self._audio_encoder_lock = threading.Lock()
         self._s2v_warned_missing_audio = False
+        self._validate_xm_support()
 
     def _load_audio_encoder(self):
         """Lazy-load the Wav2Vec2 audio encoder."""
@@ -139,6 +141,26 @@ class WanS2V(VideoModelFoundation):
 
     def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
         return self._prepare_video_crepa_self_flow_batch(batch=batch, state=state)
+
+    def _s2v_xm_batch_major_lists(self, values: dict, batch_size: int) -> dict:
+        return {
+            key: list(value)
+            for key, value in values.items()
+            if isinstance(value, list) and key not in self.XM_SEQUENCE_LIST_KEYS and len(value) == batch_size
+        }
+
+    def _prepare_xm_noise_candidates(self, prepared_batch: dict) -> dict:
+        self._validate_xm_support()
+        latents = prepared_batch.get("latents")
+        batch_size = latents.shape[0] if torch.is_tensor(latents) and latents.ndim > 0 else None
+        batch_major_lists = self._s2v_xm_batch_major_lists(prepared_batch, batch_size) if batch_size is not None else {}
+
+        result = super()._prepare_xm_noise_candidates(prepared_batch, family_name=self.NAME)
+
+        candidate_count = int(prepared_batch.get("xm_candidate_count", self.xm_config.candidate_count))
+        for key, value in batch_major_lists.items():
+            prepared_batch[key] = value * candidate_count
+        return result
 
     def requires_s2v_validation_inputs(self) -> bool:
         """S2V validation requires audio inputs."""
@@ -313,6 +335,9 @@ class WanS2V(VideoModelFoundation):
 
     def model_predict(self, prepared_batch):
         """Forward pass through S2V transformer with TREAD and CREPA support."""
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch)
+
         B, C, T, H, W = prepared_batch["noisy_latents"].shape
         device = prepared_batch["noisy_latents"].device
         dtype = self.config.weight_dtype
@@ -417,11 +442,14 @@ class WanS2V(VideoModelFoundation):
             model_pred = model_output[0] if isinstance(model_output, tuple) else model_output
             crepa_hidden = None
 
-        return {
+        result = {
             "model_prediction": model_pred,
             "crepa_hidden_states": crepa_hidden,
             "hidden_states_buffer": hidden_states_buffer,
         }
+        if prepared_batch.get("xm_candidate_count"):
+            result["xm_candidate_count"] = prepared_batch["xm_candidate_count"]
+        return result
 
     def check_user_config(self):
         """Validate configuration for S2V training."""

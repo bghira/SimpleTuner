@@ -20,6 +20,14 @@ from simpletuner.helpers.models.heartmula.modeling_heartmula import HeartMuLaMod
 from simpletuner.helpers.models.heartmula.pipeline import HeartMuLaGenPipeline
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.adapter import load_lora_weights
+from simpletuner.helpers.training.explorative_modeling import (
+    blockwise_cross_entropy,
+    reshape_candidate_batch,
+    route_usage_histogram,
+    select_min_candidate_loss,
+    select_winning_candidates,
+)
+from simpletuner.helpers.training.nextlat import NextLatRegularizer, nextlat_enabled_from_config
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
@@ -101,6 +109,11 @@ class HeartMuLa(AudioModelFoundation):
     def check_user_config(self):
         super().check_user_config()
         self.DEFAULT_PIPELINE_TYPE = PipelineTypes.TEXT2AUDIO
+        if self.xm_config.enabled:
+            if self.xm_config.training_target != "route":
+                raise ValueError("HeartMuLa XM supports xm_training_target='route' only.")
+            if self.xm_config.selection_scope == "block" and self.xm_config.block_size <= 1:
+                raise ValueError("HeartMuLa XM block selection requires xm_block_size greater than 1.")
 
     def uses_audio_latents(self) -> bool:
         return False
@@ -174,9 +187,63 @@ class HeartMuLa(AudioModelFoundation):
             torch_dtype=self.config.weight_dtype,
             revision=self.config.revision,
         )
+        self._configure_xm_route_embeddings()
+        self.post_model_load_setup()
         if move_to_device:
             self.model.to(self.accelerator.device)
         return self.model
+
+    def _xm_route_active(self) -> bool:
+        return self.xm_config.enabled and self.xm_config.training_target == "route"
+
+    def _configure_xm_route_embeddings(self) -> None:
+        if not self._xm_route_active():
+            return
+        if self.model is None:
+            raise ValueError("HeartMuLa must load the transformer before configuring XM routes.")
+        transformer = self.unwrap_model(model=self.model)
+        configure = getattr(transformer, "configure_xm_route_embeddings", None)
+        if not callable(configure):
+            raise ValueError("HeartMuLa transformer does not expose XM route embedding configuration.")
+        configure(self.xm_config.candidate_count)
+
+    def _init_nextlat_regularizer(self):
+        if not nextlat_enabled_from_config(self.config):
+            self.nextlat_regularizer = None
+            return
+        if str(getattr(self.config, "lora_type", "standard") or "standard").lower() == "lycoris":
+            raise ValueError(
+                "NextLat requires standard PEFT LoRA or full-model training so its predictor is optimized and saved."
+            )
+        model_component = self.get_trained_component(unwrap_model=False)
+        if model_component is None:
+            raise ValueError("NextLat requires an attached HeartMuLa transformer.")
+        unwrapped = self.unwrap_model(model=model_component)
+        backbone = getattr(unwrapped, "backbone", None)
+        layers = getattr(backbone, "layers", None)
+        if backbone is None or layers is None:
+            raise ValueError("HeartMuLa NextLat requires a backbone with layer hidden states.")
+        hidden_size = getattr(getattr(backbone, "config", None), "hidden_size", None)
+        if hidden_size is None:
+            raise ValueError("HeartMuLa NextLat could not infer the backbone hidden size.")
+        block_count = len(layers)
+        if block_count <= 0:
+            raise ValueError("HeartMuLa NextLat requires at least one backbone layer.")
+        self.nextlat_regularizer = NextLatRegularizer(
+            self.config,
+            self.accelerator,
+            hidden_size=int(hidden_size),
+            block_count=block_count,
+        )
+        self.nextlat_regularizer.attach_to_model(unwrapped, dtype=self.config.weight_dtype)
+
+    def get_lora_save_layers(self):
+        save_layers = list(super().get_lora_save_layers() or [])
+        if self._xm_route_active():
+            transformer = self.unwrap_model(self.model) if self.model is not None else None
+            if transformer is not None and getattr(transformer, "xm_route_embeddings", None) is not None:
+                save_layers.append("xm_route_embeddings")
+        return list(dict.fromkeys(save_layers)) or None
 
     def get_pipeline(self, pipeline_type: str = PipelineTypes.TEXT2AUDIO, load_base_model: bool = True):
         if isinstance(pipeline_type, str):
@@ -281,16 +348,59 @@ class HeartMuLa(AudioModelFoundation):
         del custom_timesteps
         tokens = prepared_batch["tokens"]
         tokens_mask = prepared_batch["tokens_mask"]
+        audio_frame_mask = prepared_batch.get("audio_frame_mask")
+        candidate_count = self.xm_config.candidate_count if self._xm_route_active() else 1
+
+        route_candidate_ids = None
+        route_mask = None
+        if self._xm_route_active():
+            if audio_frame_mask is None:
+                raise ValueError("HeartMuLa XM route training requires audio_frame_mask.")
+            transformer = self.unwrap_model(model=self.model)
+            if getattr(transformer, "xm_route_embeddings", None) is None:
+                raise ValueError("HeartMuLa XM route embeddings were not configured before model_predict.")
+            original_batch = tokens.shape[0]
+            tokens = tokens.repeat(candidate_count, 1, 1)
+            tokens_mask = tokens_mask.repeat(candidate_count, 1, 1)
+            expanded_frame_mask = audio_frame_mask.repeat(candidate_count, 1)
+            route_candidate_ids = torch.arange(candidate_count, device=tokens.device).repeat_interleave(original_batch)
+            route_mask = torch.zeros_like(expanded_frame_mask, dtype=torch.bool)
+            route_mask[:, :-1] = expanded_frame_mask[:, 1:]
+
         attention_mask = tokens_mask.any(dim=-1).to(dtype=torch.long)
-        return self.model(
+        hidden_states_buffer = self._new_hidden_state_buffer()
+        model_output = self.model(
             tokens=tokens,
             tokens_mask=tokens_mask,
             attention_mask=attention_mask,
+            route_candidate_ids=route_candidate_ids,
+            route_mask=route_mask,
+            hidden_states_buffer=hidden_states_buffer,
             **self._get_flowmap_r_timestep_forward_kwargs(prepared_batch),
         )
+        model_output["hidden_states_buffer"] = hidden_states_buffer
+        if self._xm_route_active():
+            model_output["xm_candidate_count"] = candidate_count
+        return model_output
 
     def loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
         del apply_conditioning_mask
+        if self.xm_config.enabled and self.xm_config.training_target != "route":
+            raise ValueError("HeartMuLa XM supports xm_training_target='route' only.")
+        if self._xm_route_active():
+            return self._xm_route_loss(prepared_batch, model_output)
+        return self._autoregressive_token_loss(prepared_batch, model_output)
+
+    def loss_with_logs(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        loss = self.loss(prepared_batch, model_output, apply_conditioning_mask=apply_conditioning_mask)
+        logs = None
+        usage = model_output.get("xm_route_usage") if isinstance(model_output, dict) else None
+        if usage is not None:
+            logs = {f"xm_route_usage/{idx}": value.item() for idx, value in enumerate(usage)}
+            logs["xm_route_loss"] = loss.detach().item()
+        return loss, logs
+
+    def _autoregressive_token_loss(self, prepared_batch: dict, model_output):
         tokens = prepared_batch["tokens"]
         audio_frame_mask = prepared_batch["audio_frame_mask"]
         if tokens.dim() != 3:
@@ -324,6 +434,102 @@ class HeartMuLa(AudioModelFoundation):
         loss_rest = loss_rest.sum() / denom_rest
 
         return loss0 + loss_rest
+
+    def _xm_block_size(self) -> int:
+        if self.xm_config.selection_scope == "block":
+            return self.xm_config.block_size
+        return 0
+
+    def _xm_route_loss(self, prepared_batch: dict, model_output) -> torch.Tensor:
+        tokens = prepared_batch["tokens"]
+        audio_frame_mask = prepared_batch.get("audio_frame_mask")
+        if tokens.dim() != 3:
+            raise ValueError(f"HeartMuLa tokens must have shape [batch, seq_len, num_codebooks+1], got {tokens.shape}.")
+        if audio_frame_mask is None:
+            raise ValueError("HeartMuLa XM route loss requires audio_frame_mask.")
+
+        candidate_count = int(model_output.get("xm_candidate_count", 0) or 0)
+        if candidate_count != self.xm_config.candidate_count:
+            raise ValueError("HeartMuLa XM route loss received output without the configured candidate expansion.")
+
+        target_audio = tokens[:, 1:, :-1]
+        frame_mask = audio_frame_mask[:, 1:]
+        if frame_mask.numel() == 0:
+            raise ValueError("HeartMuLa batch does not contain audio frames.")
+
+        codebook0_logits = model_output["codebook0_logits"]
+        codebook_logits = model_output["codebook_logits"]
+        batch_size = tokens.shape[0]
+        expanded_batch = batch_size * candidate_count
+        if codebook0_logits.shape[0] != expanded_batch or codebook_logits.shape[0] != expanded_batch:
+            raise ValueError("HeartMuLa XM route logits do not match the expected candidate-expanded batch size.")
+
+        ignore_index = -100
+        expanded_targets = target_audio.repeat(candidate_count, 1, 1)
+        expanded_mask = frame_mask.repeat(candidate_count, 1).to(dtype=torch.bool)
+        block_size = self._xm_block_size()
+
+        targets0 = expanded_targets[:, :, 0].masked_fill(~expanded_mask, ignore_index)
+        loss0 = blockwise_cross_entropy(
+            codebook0_logits,
+            targets0,
+            ignore_index=ignore_index,
+            block_size=block_size,
+        )
+
+        rest_codebooks = expanded_targets.shape[-1] - 1
+        if rest_codebooks <= 0:
+            raise ValueError("HeartMuLa XM route loss requires at least two audio codebooks.")
+        rest_logits = codebook_logits.permute(0, 2, 1, 3).reshape(
+            expanded_batch * rest_codebooks,
+            expanded_targets.shape[1],
+            codebook_logits.shape[-1],
+        )
+        rest_targets = (
+            expanded_targets[:, :, 1:]
+            .permute(0, 2, 1)
+            .reshape(
+                expanded_batch * rest_codebooks,
+                expanded_targets.shape[1],
+            )
+        )
+        rest_mask = (
+            expanded_mask[:, None, :]
+            .expand(-1, rest_codebooks, -1)
+            .reshape(
+                expanded_batch * rest_codebooks,
+                expanded_targets.shape[1],
+            )
+        )
+        rest_targets = rest_targets.masked_fill(~rest_mask, ignore_index)
+        loss_rest = blockwise_cross_entropy(
+            rest_logits,
+            rest_targets,
+            ignore_index=ignore_index,
+            block_size=block_size,
+        ).view(expanded_batch, rest_codebooks)
+        candidate_sample_losses = loss0 + loss_rest.mean(dim=1)
+
+        candidate_losses = reshape_candidate_batch(candidate_sample_losses, candidate_count)
+        selected_loss, winner_indices = select_min_candidate_loss(candidate_losses)
+        model_output["xm_winner_indices"] = winner_indices.detach()
+        usage = route_usage_histogram(winner_indices.detach(), candidate_count)
+        if usage is not None:
+            model_output["xm_route_usage"] = usage
+        self._select_xm_winning_outputs(model_output, winner_indices, candidate_count)
+        return selected_loss
+
+    def _select_xm_winning_outputs(self, model_output: dict, winner_indices: torch.Tensor, candidate_count: int) -> None:
+        for key in ("codebook0_logits", "codebook_logits", "hidden_states"):
+            value = model_output.get(key)
+            if torch.is_tensor(value) and value.shape[0] == winner_indices.shape[0] * candidate_count:
+                model_output[key] = select_winning_candidates(value, winner_indices, candidate_count)
+        hidden_states_buffer = model_output.get("hidden_states_buffer")
+        if hidden_states_buffer is None:
+            return
+        for key, value in list(hidden_states_buffer.items()):
+            if torch.is_tensor(value) and value.shape[0] == winner_indices.shape[0] * candidate_count:
+                hidden_states_buffer[key] = select_winning_candidates(value, winner_indices, candidate_count)
 
     def _normalize_tags(self, tags: str) -> str:
         tags = tags.strip().lower()

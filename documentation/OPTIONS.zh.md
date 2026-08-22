@@ -1796,6 +1796,70 @@ Internal Guidance 使用与最终 output head 相同的 denoising target 监督�
 
 ---
 
+## Explorative Modeling (XM)
+
+XM 会评估多个训练候选，并只对最能解释每个监督样本或 token block 的候选进行反向传播。所选 target 需要对应模型家族实现支持。用户指南见 [Explorative Modeling](experimental/EXPLORATION_MODELING.zh.md)。
+
+### `--xm_enabled`
+
+- **作用**：启用 XM 候选选择。
+- **默认**：`false`
+
+### `--xm_candidate_count`
+
+- **作用**：每个样本要评分的 noise 或 route latent 候选数量。
+- **默认**：`1`；启用 XM 时必须至少为 `2`。
+
+### `--xm_training_target`
+
+- **作用**：候选类型。Diffusion/flow 模型使用 `noise`，AR/RVQ planner 使用 `route`。
+- **选项**：`noise`、`route`
+- **默认**：`noise`
+
+### `--xm_selection_scope`
+
+- **作用**：按 `sample` 或 token/frame `block` 选择获胜候选。
+- **默认**：`sample`
+
+### `--xm_block_size`
+
+- **作用**：Block-level XM 使用的 token 或 frame span。`0` 表示使用完整监督序列。
+- **默认**：`0`
+
+---
+
+## NextLat
+
+NextLat 添加一个小型辅助 predictor，把每个捕获的 hidden token 映射到下一个 hidden token。它要求 transformer 模型家族能通过 SimpleTuner hidden-state buffer 暴露 hidden states。用户指南见 [NextLat](experimental/NEXTLAT.zh.md)。
+
+### `--nextlat_enabled`
+
+- **作用**：启用 NextLat hidden-state prediction。
+- **默认**：`false`
+
+### `--nextlat_block_index`
+
+- **作用**：要捕获的 0-based transformer block。
+- **默认**：`-1`，表示使用最后一个支持的 block。
+
+### `--nextlat_weight`
+
+- **作用**：NextLat 辅助 loss 的权重。
+- **默认**：`0.0`；启用 NextLat 时必须大于 0。
+
+### `--nextlat_state_loss`
+
+- **作用**：预测下一个 hidden state 的距离函数。
+- **选项**：`smooth_l1`、`mse`
+- **默认**：`smooth_l1`
+
+### `--nextlat_kl_weight`
+
+- **作用**：当模型家族为预测 hidden state 提供 logits head 时使用的可选 KL 一致性权重。
+- **默认**：`0.0`
+
+---
+
 ## 🔁 LayerSync（隐藏状态自对齐）
 
 LayerSync 通过在同一 Transformer 内让“学生”层对齐更强的“教师”层，使用隐藏 token 的余弦相似度进行对齐。

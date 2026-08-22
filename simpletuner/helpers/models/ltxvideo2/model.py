@@ -1,7 +1,9 @@
 import json
 import logging
 import os
+import random
 import threading
+from dataclasses import fields, is_dataclass, replace
 from typing import Any, Dict, Optional, Sequence
 
 import safetensors.torch
@@ -971,6 +973,7 @@ class LTXVideo2(VideoModelFoundation):
 
     def post_model_load_setup(self):
         super().post_model_load_setup()
+        self._validate_xm_support()
         self._load_connectors(move_to_device=True)
 
     def before_accelerator_prepare(self):
@@ -2349,7 +2352,101 @@ class LTXVideo2(VideoModelFoundation):
             modules = getattr(transformer, "_modules", None)
         return transformer
 
+    def _repeat_xm_candidate_value(self, value, candidate_count: int, batch_size: int):
+        if torch.is_tensor(value):
+            if value.ndim == 0 or value.shape[0] != batch_size:
+                return value
+            return self._repeat_xm_candidate_tensor(value, candidate_count)
+        if isinstance(value, dict):
+            return {key: self._repeat_xm_candidate_value(item, candidate_count, batch_size) for key, item in value.items()}
+        if is_dataclass(value) and not isinstance(value, type):
+            replacements = {
+                field.name: self._repeat_xm_candidate_value(getattr(value, field.name), candidate_count, batch_size)
+                for field in fields(value)
+            }
+            return replace(value, **replacements)
+        if isinstance(value, list):
+            if len(value) == batch_size:
+                return list(value) * candidate_count
+            return [self._repeat_xm_candidate_value(item, candidate_count, batch_size) for item in value]
+        if isinstance(value, tuple):
+            if len(value) == batch_size:
+                return tuple(list(value) * candidate_count)
+            return tuple(self._repeat_xm_candidate_value(item, candidate_count, batch_size) for item in value)
+        return value
+
+    def _prepare_xm_noise_candidates(self, prepared_batch: dict) -> dict:
+        xm_config = self.xm_config
+        candidate_count = xm_config.candidate_count
+        latents = prepared_batch.get("latents")
+        audio_latents = prepared_batch.get("audio_latents")
+        timesteps = prepared_batch.get("timesteps")
+        sigmas = prepared_batch.get("sigmas")
+        if (
+            not torch.is_tensor(latents)
+            or not torch.is_tensor(audio_latents)
+            or not torch.is_tensor(timesteps)
+            or not torch.is_tensor(sigmas)
+        ):
+            raise ValueError(
+                "LTXVideo2 XM noise-candidate training requires latents, audio_latents, timesteps, and sigmas tensors."
+            )
+        if "noisy_latents" not in prepared_batch or "audio_noisy_latents" not in prepared_batch:
+            raise ValueError("LTXVideo2 XM noise-candidate training requires prepared video and audio noisy latents.")
+        if prepared_batch.get("target") is not None:
+            raise ValueError("LTXVideo2 XM noise-candidate training cannot be used with an explicit prepared target.")
+        if prepared_batch.get("is_audio_only", False):
+            raise ValueError("LTXVideo2 XM noise-candidate training does not support audio-only batches.")
+
+        batch_size = latents.shape[0]
+        expanded_batch = {
+            key: self._repeat_xm_candidate_value(value, candidate_count, batch_size) for key, value in prepared_batch.items()
+        }
+        expanded_latents = expanded_batch["latents"]
+        candidate_noise = torch.randn_like(expanded_latents)
+        sigma_source = expanded_batch.get("mixflow_interpolation_sigmas")
+        if sigma_source is None:
+            sigma_source = expanded_batch["sigmas"]
+        if not torch.is_tensor(sigma_source):
+            raise ValueError("LTXVideo2 XM noise-candidate training requires tensor sigmas for video interpolation.")
+        interpolation_grid = self._expand_sigma_values(sigma_source, expanded_latents)
+        expanded_batch["noise"] = candidate_noise
+        expanded_batch["input_noise"] = candidate_noise
+        expanded_batch["noisy_latents"] = (
+            1.0 - interpolation_grid
+        ) * expanded_latents + interpolation_grid * candidate_noise
+        expanded_batch["flow_target"] = self.get_flow_matching_target(
+            expanded_batch,
+            latents=expanded_latents,
+            noise=candidate_noise,
+            prefer_explicit_target=False,
+        ).to(device=expanded_latents.device, dtype=expanded_latents.dtype)
+
+        expanded_audio_latents = expanded_batch["audio_latents"]
+        candidate_audio_noise = torch.randn_like(expanded_audio_latents)
+        audio_sigma_source = expanded_batch.get("audio_mixflow_interpolation_sigmas")
+        if audio_sigma_source is None:
+            audio_sigma_source = expanded_batch.get("audio_sigmas")
+        if audio_sigma_source is None:
+            audio_sigma_source = expanded_batch["sigmas"]
+        if not torch.is_tensor(audio_sigma_source):
+            raise ValueError("LTXVideo2 XM noise-candidate training requires tensor sigmas for audio interpolation.")
+        audio_interpolation_grid = self._expand_sigma_values(audio_sigma_source, expanded_audio_latents)
+        expanded_batch["audio_noise"] = candidate_audio_noise
+        expanded_batch["audio_noisy_latents"] = (
+            1.0 - audio_interpolation_grid
+        ) * expanded_audio_latents + audio_interpolation_grid * candidate_audio_noise
+        expanded_batch["xm_candidate_count"] = candidate_count
+        expanded_batch["xm_original_batch_size"] = batch_size
+
+        prepared_batch.clear()
+        prepared_batch.update(expanded_batch)
+        return prepared_batch
+
     def model_predict(self, prepared_batch):
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch)
+
         noisy_latents = prepared_batch["noisy_latents"]
         if noisy_latents.shape[1] != self.LATENT_CHANNEL_COUNT:
             raise ValueError(
@@ -2647,12 +2744,15 @@ class LTXVideo2(VideoModelFoundation):
             patch_size_t=None,
         )
 
-        return {
+        result = {
             "model_prediction": video_pred,
             "audio_prediction": audio_pred,
             "crepa_hidden_states": crepa_hidden,
             "hidden_states_buffer": hidden_states_buffer,
         }
+        if prepared_batch.get("xm_candidate_count"):
+            result["xm_candidate_count"] = prepared_batch["xm_candidate_count"]
+        return result
 
     def tread_init(self):
         """
@@ -2685,6 +2785,15 @@ class LTXVideo2(VideoModelFoundation):
         return apply_musubi_pretrained_defaults(self.config, args)
 
     def loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        candidate_count = model_output.get("xm_candidate_count") if isinstance(model_output, dict) else None
+        if candidate_count:
+            loss, _ = self._xm_noise_loss_with_logs(
+                prepared_batch=prepared_batch,
+                model_output=model_output,
+                candidate_count=int(candidate_count),
+                apply_conditioning_mask=apply_conditioning_mask,
+            )
+            return loss
         total_loss, _, _, _ = self._compute_av_loss(
             prepared_batch=prepared_batch,
             model_output=model_output,
@@ -2693,6 +2802,14 @@ class LTXVideo2(VideoModelFoundation):
         return total_loss
 
     def loss_with_logs(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        candidate_count = model_output.get("xm_candidate_count") if isinstance(model_output, dict) else None
+        if candidate_count:
+            return self._xm_noise_loss_with_logs(
+                prepared_batch=prepared_batch,
+                model_output=model_output,
+                candidate_count=int(candidate_count),
+                apply_conditioning_mask=apply_conditioning_mask,
+            )
         total_loss, video_loss, audio_loss, audio_weight = self._compute_av_loss(
             prepared_batch=prepared_batch,
             model_output=model_output,
@@ -2710,6 +2827,171 @@ class LTXVideo2(VideoModelFoundation):
             if audio_weight != 1.0:
                 logs["audio_loss_weighted"] = (audio_loss * audio_weight).detach().item()
         return total_loss, logs
+
+    def _xm_noise_loss_with_logs(
+        self,
+        prepared_batch: dict,
+        model_output: dict,
+        *,
+        candidate_count: int,
+        apply_conditioning_mask: bool,
+    ):
+        sample_losses = self._xm_av_sample_loss_tensor(
+            prepared_batch,
+            model_output,
+            apply_conditioning_mask=apply_conditioning_mask,
+        )
+        selected_loss, winner_indices, candidate_losses = self._select_xm_winning_sample_losses(
+            sample_losses,
+            prepared_batch,
+            model_output,
+            candidate_count=candidate_count,
+            family_name="LTXVideo2",
+        )
+        return selected_loss, self._xm_candidate_logs(
+            selected_loss,
+            candidate_losses,
+            winner_indices,
+            candidate_count,
+        )
+
+    def _xm_av_sample_loss_tensor(
+        self,
+        prepared_batch: dict,
+        model_output: dict,
+        *,
+        apply_conditioning_mask: bool,
+    ) -> torch.Tensor:
+        video_loss = self._xm_video_sample_loss_tensor(
+            prepared_batch,
+            model_output,
+            apply_conditioning_mask=apply_conditioning_mask,
+        )
+        audio_pred = model_output.get("audio_prediction")
+        if audio_pred is None:
+            return video_loss
+        audio_noise = prepared_batch.get("audio_noise")
+        audio_latents = prepared_batch.get("audio_latents")
+        if audio_noise is None or audio_latents is None:
+            raise ValueError("LTXVideo2 XM audio loss requires audio_noise and audio_latents.")
+        weight = float(getattr(self.config, "audio_loss_weight", 1.0) or 1.0)
+        if weight == 0.0:
+            return video_loss
+        audio_target = audio_noise - audio_latents
+        audio_loss = (audio_pred.float() - audio_target.float()) ** 2
+        audio_mask = prepared_batch.get("audio_latent_mask")
+        if audio_mask is not None:
+            if torch.all(audio_mask == 0):
+                return video_loss
+            mask = audio_mask.view(audio_mask.shape[0], *([1] * (audio_loss.ndim - 1))).to(
+                device=audio_loss.device,
+                dtype=audio_loss.dtype,
+            )
+            audio_loss = audio_loss * mask
+            sample_audio_loss = audio_loss.mean(dim=tuple(range(1, audio_loss.ndim))).div(
+                mask.mean(dim=tuple(range(1, mask.ndim))).clamp(min=1e-8)
+            )
+        else:
+            sample_audio_loss = audio_loss.mean(dim=tuple(range(1, audio_loss.ndim)))
+        return video_loss + sample_audio_loss * weight
+
+    def _xm_video_sample_loss_tensor(
+        self,
+        prepared_batch: dict,
+        model_output: dict,
+        *,
+        apply_conditioning_mask: bool,
+    ) -> torch.Tensor:
+        video_mask = prepared_batch.get("video_latent_mask")
+        is_audio_only = video_mask is not None and torch.all(video_mask == 0)
+        if is_audio_only:
+            return torch.zeros(
+                model_output["model_prediction"].shape[0],
+                device=model_output["model_prediction"].device,
+                dtype=torch.float32,
+            )
+
+        target = self.get_prediction_target(prepared_batch)
+        if target is None:
+            raise ValueError("Target is None. Cannot compute LTXVideo2 XM video loss.")
+        model_pred = model_output["model_prediction"]
+        loss_type = getattr(self.config, "loss_type", "l2")
+        loss = self._xm_loss_tensor(model_pred, target, prepared_batch)
+
+        if prepared_batch.get("video_loss_mask") is not None:
+            transformer = self._ltx2_transformer_module()
+            patch_size = getattr(transformer.config, "patch_size", 1)
+            patch_size_t = getattr(transformer.config, "patch_size_t", 1)
+            pred_tokens = pack_ltx2_latents(model_pred, patch_size, patch_size_t)
+            target_tokens = pack_ltx2_latents(target, patch_size, patch_size_t).to(device=pred_tokens.device)
+            loss = self.conditional_loss(
+                pred_tokens.float(),
+                target_tokens.float(),
+                reduction="none",
+                loss_type=loss_type,
+                huber_c=getattr(self.config, "huber_c", 0.1),
+            )
+            mask = prepared_batch["video_loss_mask"].to(device=loss.device, dtype=loss.dtype)
+            if mask.shape != loss.shape[:2]:
+                raise ValueError(
+                    f"LTX-2 video_loss_mask shape {mask.shape} does not match token loss shape {loss.shape[:2]}."
+                )
+            mask = mask.unsqueeze(-1)
+            return (loss * mask).mean(dim=[-2, -1]).div(mask.mean(dim=[-2, -1]).clamp(min=1e-8))
+
+        loss_mask_type = prepared_batch.get("loss_mask_type")
+        if not loss_mask_type:
+            legacy_type = prepared_batch.get("conditioning_type")
+            if legacy_type in ("mask", "segmentation"):
+                loss_mask_type = legacy_type
+        if loss_mask_type == "mask" and apply_conditioning_mask:
+            mask_image = (
+                prepared_batch["conditioning_pixel_values"].to(dtype=loss.dtype, device=loss.device)[:, 0].unsqueeze(1)
+            )
+            mask_image = torch.nn.functional.interpolate(mask_image, size=loss.shape[2:], mode="area")
+            mask_image = mask_image / 2 + 0.5
+            loss = loss * mask_image
+        elif loss_mask_type == "segmentation" and apply_conditioning_mask:
+            if random.random() < self.config.masked_loss_probability:
+                mask_image = prepared_batch["conditioning_pixel_values"].to(dtype=loss.dtype, device=loss.device)
+                mask_image = torch.sum(mask_image, dim=1, keepdim=True) / 3
+                mask_image = torch.nn.functional.interpolate(mask_image, size=loss.shape[2:], mode="area")
+                mask_image = mask_image / 2 + 0.5
+                mask_image = (mask_image > 0).to(dtype=loss.dtype, device=loss.device)
+                loss = loss * mask_image
+        elif loss_mask_type not in (None, "mask", "segmentation"):
+            raise ValueError(f"LTXVideo2 XM noise-candidate training does not support loss_mask_type={loss_mask_type!r}.")
+
+        return loss.mean(dim=tuple(range(1, loss.ndim)))
+
+    def _xm_loss_tensor(self, model_pred: torch.Tensor, target: torch.Tensor, prepared_batch: dict) -> torch.Tensor:
+        loss_type = getattr(self.config, "loss_type", "l2")
+        if loss_type in ["huber", "smooth_l1"]:
+            timesteps = prepared_batch["timesteps"]
+            if getattr(self.config, "huber_schedule", "constant") != "constant":
+                losses = []
+                for idx in range(model_pred.shape[0]):
+                    huber_c = self.compute_scheduled_huber_c(timesteps[idx : idx + 1]).item()
+                    losses.append(
+                        self.conditional_loss(
+                            model_pred[idx : idx + 1].float(),
+                            target[idx : idx + 1].float(),
+                            reduction="none",
+                            loss_type=loss_type,
+                            huber_c=huber_c,
+                        )
+                    )
+                return torch.cat(losses, dim=0)
+            return self.conditional_loss(
+                model_pred.float(),
+                target.float(),
+                reduction="none",
+                loss_type=loss_type,
+                huber_c=getattr(self.config, "huber_c", 0.1),
+            )
+        if loss_type == "l2":
+            return F.mse_loss(model_pred.float(), target.float(), reduction="none")
+        raise ValueError(f"LTXVideo2 XM noise-candidate training does not support loss_type={loss_type!r}.")
 
     def _compute_ltx2_masked_video_loss(self, prepared_batch: dict, model_output) -> torch.Tensor:
         target = self.get_prediction_target(prepared_batch)

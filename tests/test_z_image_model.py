@@ -5,6 +5,7 @@ from unittest import mock
 import torch
 
 from simpletuner.helpers.models.z_image.model import ZImage
+from simpletuner.helpers.training.explorative_modeling import ExplorativeModelingConfig
 
 
 class DummyAccelerator:
@@ -47,11 +48,23 @@ class ZImageModelTests(unittest.TestCase):
             flow_schedule_shift=1.0,
             crepa_self_flow_mask_ratio=0.5,
             controlnet=False,
+            loss_type="l2",
+            huber_schedule="constant",
+            huber_c=0.1,
         )
         model.model = DummyTransformer()
         model._new_hidden_state_buffer = lambda: {}
         model.crepa_regularizer = types.SimpleNamespace(enabled=True, block_index=2)
         return model
+
+    def _enable_xm(self, model, candidate_count: int = 2):
+        model.xm_config = ExplorativeModelingConfig(
+            enabled=True,
+            candidate_count=candidate_count,
+            training_target="noise",
+            selection_scope="sample",
+            block_size=0,
+        )
 
     def test_ic_lora_capability_flags(self):
         model = self._build_model()
@@ -243,6 +256,77 @@ class ZImageModelTests(unittest.TestCase):
         self.assertEqual(updated["timesteps"].shape, torch.Size([1, 16]))
         self.assertEqual(updated["crepa_teacher_timesteps"].shape, torch.Size([1]))
         self.assertEqual(updated["crepa_teacher_noisy_latents"].shape, torch.Size([1, 16, 8, 8]))
+
+    def test_xm_noise_candidates_expand_batch_and_conditioning_sequence(self):
+        model = self._build_model()
+        self._enable_xm(model, candidate_count=3)
+        batch = {
+            "latents": torch.ones(2, 1, 2, 2),
+            "noise": torch.zeros(2, 1, 2, 2),
+            "input_noise": torch.zeros(2, 1, 2, 2),
+            "noisy_latents": torch.zeros(2, 1, 2, 2),
+            "sigmas": torch.full((2, 1, 1, 1), 0.25),
+            "timesteps": torch.tensor([250.0, 750.0]),
+            "encoder_hidden_states": torch.randn(2, 4, 3),
+            "encoder_attention_mask": torch.ones(2, 4, dtype=torch.bool),
+            "conditioning_latents": [
+                torch.full((1, 1, 2, 1), 2.0),
+                torch.full((1, 1, 2, 1), 3.0),
+            ],
+        }
+
+        model._prepare_xm_noise_candidates(batch)
+
+        self.assertEqual(tuple(batch["latents"].shape), (6, 1, 2, 2))
+        self.assertTrue(torch.equal(batch["timesteps"], torch.tensor([250.0, 750.0, 250.0, 750.0, 250.0, 750.0])))
+        self.assertEqual(len(batch["conditioning_latents"]), 6)
+        self.assertTrue(torch.equal(batch["conditioning_latents"][0], batch["conditioning_latents"][2]))
+        expected_noisy = 0.75 * batch["latents"] + 0.25 * batch["noise"]
+        self.assertTrue(torch.allclose(batch["noisy_latents"], expected_noisy))
+
+    def test_xm_loss_selects_winners_and_trims_hidden_states(self):
+        model = self._build_model()
+        self._enable_xm(model, candidate_count=2)
+        latents = torch.zeros(4, 1, 1, 1)
+        noise = torch.tensor([0.0, 1.0, 2.0, 3.0]).view(4, 1, 1, 1)
+        target = noise - latents
+        prediction = torch.tensor([5.0, 1.0, 2.0, -4.0]).view(4, 1, 1, 1)
+        prepared_batch = {
+            "latents": latents,
+            "noise": noise,
+            "noisy_latents": noise,
+            "sigmas": torch.ones(4, 1, 1, 1),
+            "timesteps": torch.tensor([100.0, 200.0, 100.0, 200.0]),
+        }
+        hidden = torch.arange(4 * 3 * 2, dtype=torch.float32).reshape(4, 3, 2)
+        model_output = {
+            "model_prediction": prediction,
+            "hidden_states_buffer": {"layer_0": hidden.clone()},
+            "xm_candidate_count": 2,
+        }
+
+        loss, logs = model.loss_with_logs(prepared_batch, model_output)
+
+        self.assertAlmostEqual(loss.item(), 0.0)
+        self.assertTrue(torch.equal(model_output["xm_winner_indices"], torch.tensor([1, 0])))
+        self.assertTrue(torch.equal(model_output["model_prediction"], target[[2, 1]]))
+        self.assertTrue(torch.equal(prepared_batch["noise"], noise[[2, 1]]))
+        self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"], hidden[[2, 1]]))
+        self.assertEqual(logs["xm_candidate_0_wins"], 1.0)
+        self.assertEqual(logs["xm_candidate_1_wins"], 1.0)
+
+    def test_xm_rejects_route_mode(self):
+        model = self._build_model()
+        model.xm_config = ExplorativeModelingConfig(
+            enabled=True,
+            candidate_count=2,
+            training_target="route",
+            selection_scope="sample",
+            block_size=0,
+        )
+
+        with self.assertRaisesRegex(ValueError, "xm_training_target='noise'"):
+            model._validate_xm_support()
 
 
 if __name__ == "__main__":

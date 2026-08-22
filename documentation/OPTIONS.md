@@ -1798,6 +1798,70 @@ Internal Guidance supervises an early diffusion-transformer block with the same 
 
 ---
 
+## Explorative Modeling (XM)
+
+XM scores multiple training candidates and backpropagates only the candidate that best explains each supervised sample or token block. Model families must implement support for the selected target before this option has any effect. See [Explorative Modeling](experimental/EXPLORATION_MODELING.md) for the user guide.
+
+### `--xm_enabled`
+
+- **What**: Enable XM candidate selection.
+- **Default**: `false`
+
+### `--xm_candidate_count`
+
+- **What**: Number of candidate noises or route latents to score for each sample.
+- **Default**: `1`; must be at least `2` when XM is enabled.
+
+### `--xm_training_target`
+
+- **What**: Candidate type. Use `noise` for diffusion/flow models and `route` for AR/RVQ planners.
+- **Choices**: `noise`, `route`
+- **Default**: `noise`
+
+### `--xm_selection_scope`
+
+- **What**: Select winners over each `sample` or over token/frame `block`s.
+- **Default**: `sample`
+
+### `--xm_block_size`
+
+- **What**: Token or frame span used by block-level XM. `0` means the full supervised sequence.
+- **Default**: `0`
+
+---
+
+## NextLat
+
+NextLat adds a small auxiliary predictor that maps each captured hidden token to the next hidden token. It requires a transformer family that exposes hidden states through SimpleTuner's hidden-state buffer. See [NextLat](experimental/NEXTLAT.md) for the user guide.
+
+### `--nextlat_enabled`
+
+- **What**: Enable NextLat hidden-state prediction.
+- **Default**: `false`
+
+### `--nextlat_block_index`
+
+- **What**: Zero-based transformer block to capture.
+- **Default**: `-1`, meaning the final supported block.
+
+### `--nextlat_weight`
+
+- **What**: Multiplier for the NextLat auxiliary loss.
+- **Default**: `0.0`; must be greater than zero when NextLat is enabled.
+
+### `--nextlat_state_loss`
+
+- **What**: Distance function for next hidden-state prediction.
+- **Choices**: `smooth_l1`, `mse`
+- **Default**: `smooth_l1`
+
+### `--nextlat_kl_weight`
+
+- **What**: Optional KL agreement weight when a model family provides a logits head for predicted hidden states.
+- **Default**: `0.0`
+
+---
+
 ## 🔁 LayerSync (Hidden State Self-Alignment)
 
 LayerSync encourages a "student" layer to match a stronger "teacher" layer inside the same transformer, using cosine similarity over hidden tokens.

@@ -9,6 +9,31 @@ import torch
 from safetensors.torch import save_file
 
 
+class _RecordingInfiniteTalkTransformer(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.last_kwargs = None
+
+    def forward(
+        self,
+        hidden_states,
+        encoder_hidden_states,
+        timestep,
+        audio_hidden_states,
+        r_timestep=None,
+        **kwargs,
+    ):
+        self.last_kwargs = {
+            "hidden_states": hidden_states,
+            "encoder_hidden_states": encoder_hidden_states,
+            "timestep": timestep,
+            "audio_hidden_states": audio_hidden_states,
+            "r_timestep": r_timestep,
+            **kwargs,
+        }
+        return (torch.zeros_like(hidden_states),)
+
+
 class InfiniteTalkAudioTests(unittest.TestCase):
     def test_waveform_alignment_matches_video_cache_duration(self):
         from simpletuner.helpers.models.infinitetalk.audio import align_waveform_to_video_frames
@@ -157,6 +182,39 @@ class InfiniteTalkTransformerTests(unittest.TestCase):
 
 
 class InfiniteTalkModelTests(unittest.TestCase):
+    def _infinitetalk_xm_shell(self, *, candidate_count: int = 2):
+        from simpletuner.helpers.models.infinitetalk.model import InfiniteTalk
+        from simpletuner.helpers.training.explorative_modeling import ExplorativeModelingConfig
+
+        model = object.__new__(InfiniteTalk)
+        model.config = SimpleNamespace(
+            controlnet=False,
+            input_perturbation=0.0,
+            loss_type="l2",
+            scheduled_sampling_max_step_offset=0,
+            scheduled_sampling_reflexflow=False,
+            tread_config=None,
+            twinflow_enabled=False,
+            weight_dtype=torch.float32,
+        )
+        model.xm_config = ExplorativeModelingConfig(
+            enabled=True,
+            candidate_count=candidate_count,
+            training_target="noise",
+            selection_scope="sample",
+            block_size=0,
+        )
+        model.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model.crepa_regularizer = None
+        model.internal_guidance_regularizer = None
+        model.nextlat_regularizer = None
+        model.unwrap_model = mock.MagicMock(side_effect=lambda model=None, **_: model)
+        model._new_hidden_state_buffer = mock.MagicMock(return_value={})
+        model._build_grounding_position_net_kwargs = mock.MagicMock(return_value=None)
+        model._apply_i2v_conditioning_to_kwargs = mock.MagicMock()
+        model._twinflow_active = mock.MagicMock(return_value=False)
+        return model
+
     def test_model_metadata_registration(self):
         metadata_path = Path(__file__).parents[1] / "simpletuner/helpers/models/model_metadata.json"
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -204,6 +262,38 @@ class InfiniteTalkModelTests(unittest.TestCase):
         self.assertNotIn("_validation_negative_prompt_text", result)
         self.assertNotIn("num_images_per_prompt", result)
         self.assertEqual(result["num_videos_per_prompt"], 2)
+
+    def test_model_predict_inherits_wan_xm_and_expands_audio_states(self):
+        from simpletuner.helpers.models.infinitetalk.model import InfiniteTalk
+
+        model = self._infinitetalk_xm_shell(candidate_count=2)
+        transformer = _RecordingInfiniteTalkTransformer()
+        model.model = transformer
+        latents = torch.zeros(2, 1, 1, 2, 2)
+        candidate_noise = torch.ones(4, 1, 1, 2, 2)
+        audio_hidden_states = torch.arange(2 * 3 * 4, dtype=torch.float32).view(2, 3, 4)
+        batch = {
+            "latents": latents,
+            "noise": torch.zeros_like(latents),
+            "input_noise": torch.zeros_like(latents),
+            "noisy_latents": torch.zeros_like(latents),
+            "sigmas": torch.tensor([0.25, 0.75]),
+            "timesteps": torch.tensor([250.0, 750.0]),
+            "encoder_hidden_states": torch.randn(2, 4, 8),
+            "infinitetalk_audio_hidden_states": audio_hidden_states.clone(),
+        }
+
+        with mock.patch("torch.randn_like", return_value=candidate_noise):
+            result = InfiniteTalk.model_predict(model, batch)
+
+        self.assertEqual(result["xm_candidate_count"], 2)
+        self.assertEqual(tuple(transformer.last_kwargs["hidden_states"].shape), (4, 1, 1, 2, 2))
+        self.assertTrue(
+            torch.equal(
+                transformer.last_kwargs["audio_hidden_states"],
+                audio_hidden_states.repeat(2, 1, 1),
+            )
+        )
 
     def test_config_accepts_cli_string_framerate(self):
         from simpletuner.helpers.models.infinitetalk.model import InfiniteTalk

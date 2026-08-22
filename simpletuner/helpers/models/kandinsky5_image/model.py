@@ -387,6 +387,13 @@ class Kandinsky5Image(ImageModelFoundation):
         flavour = getattr(self.config, "model_flavour", None)
         return flavour is not None and flavour.startswith("i2i")
 
+    def _repeat_xm_candidate_value(self, value, candidate_count: int, batch_size: int):
+        if isinstance(value, list) and len(value) == batch_size:
+            return value * candidate_count
+        if isinstance(value, tuple) and len(value) == batch_size:
+            return tuple(list(value) * candidate_count)
+        return super()._repeat_xm_candidate_value(value, candidate_count, batch_size)
+
     def requires_conditioning_dataset(self) -> bool:
         return self._is_i2i_flavour() or super().requires_conditioning_dataset()
 
@@ -408,6 +415,14 @@ class Kandinsky5Image(ImageModelFoundation):
         return super().requires_conditioning_latents()
 
     def model_predict(self, prepared_batch: dict):
+        if self._xm_noise_candidates_enabled(prepared_batch):
+            self._prepare_xm_noise_candidates(prepared_batch, family_name=self.NAME)
+            model_output = self._model_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch)
+
+    def _model_predict_single(self, prepared_batch: dict):
         """
         Forward through the transformer; image case uses single-frame latents.
         """
@@ -561,6 +576,7 @@ class Kandinsky5Image(ImageModelFoundation):
         from simpletuner.helpers.models.kandinsky5_image.pipeline_kandinsky5_i2i import Kandinsky5I2IPipeline
 
         self.PIPELINE_CLASSES[PipelineTypes.IMG2IMG] = Kandinsky5I2IPipeline
+        self._validate_xm_support()
 
     def check_user_config(self):
         """
