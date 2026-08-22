@@ -73,7 +73,7 @@ simpletuner configure config/foo/config.json
 - **विकल्प**: `transformer` (डिफ़ॉल्ट), `language_model`
 - **नोट्स**:
   - `transformer` कैश किए गए Flow-VAE latents पर फ्लो-मैचिंग संगीत DiT को प्रशिक्षित करता है (मानक पथ)।
-  - `language_model` RVQ सिमेंटिक कोड पर नेक्स्ट-टोकन क्रॉस-एंट्रॉपी के साथ Qwen3 ऑटोरिग्रेसिव चरण को प्रशिक्षित करता है। डेटासेट को `prompt` (या `tags`) और `lyrics` के साथ पूर्व-गणित कच्चे प्रति-कोडबुक ऑडियो टोकन (`audio_tokens_path` मेटाडेटा, आकार `[frames, codebooks]`) प्रदान करने होंगे। केवल मानक PEFT LoRA समर्थित है, `--lora_format comfyui` अस्वीकार किया जाता है, और ट्रेनर के भीतर सत्यापन ऑडियो अक्षम है — सहेजे गए चेकपॉइंट से रेंडर करें।
+  - `language_model` RVQ सिमेंटिक कोड पर नेक्स्ट-टोकन क्रॉस-एंट्रॉपी के साथ Qwen3 ऑटोरिग्रेसिव चरण को प्रशिक्षित करता है। `dataset_type=audio` के लिए, SimpleTuner VAE cache समय raw waveform को MiniMax Music DAV और default v4 RVQ encoder से कोड में बदलता है। डेटासेट फिर भी `prompt` (या `tags`) और `lyrics` के साथ पूर्व-गणित कच्चे प्रति-कोडबुक ऑडियो टोकन (`audio_tokens` या `audio_tokens_path`, आकार `[frames, codebooks]`) दे सकते हैं। केवल मानक PEFT LoRA समर्थित है, `--lora_format comfyui` अस्वीकार किया जाता है, और ट्रेनर के भीतर सत्यापन ऑडियो अक्षम है — सहेजे गए चेकपॉइंट से रेंडर करें।
 
 ### `--minimax_music_lm_max_frames`
 
@@ -82,6 +82,31 @@ simpletuner configure config/foo/config.json
 - **नोट्स**:
   - एक फ्रेम 40ms का है; 7500 फ्रेम पाँच मिनट हैं। यदि लंबे ट्रैक VRAM समाप्त कर दें तो इसे कम करें।
   - काटे गए नमूनों को ऑडियो-समाप्ति लक्ष्य नहीं मिलता, इसलिए मॉडल जल्दी रुकना नहीं सीखता।
+
+### `--minimax_music_rvq_encoder_model_name_or_path`
+
+- **क्या**: केवल MiniMax Music `language_model` training के लिए: Hub repository या local directory जिसमें RVQ encoder हो, जो cached DAV audio latents को प्रति-codebook audio codes में बदलता है।
+- **डिफ़ॉल्ट**: `SimpleTuner/open-rvq-encoder-minimax-music3-169m-v4`
+- **संबंधित**: `--minimax_music_rvq_encoder_subfolder` का default `final` है; `--minimax_music_rvq_encoder_revision` Hub revision pin कर सकता है।
+- **नोट्स**: Default package में `rvq_encoder_config.json`, `rvq_encoder.safetensors`, और muP base-shape metadata शामिल हैं। इसे केवल तब बदलें जब आप MiniMax Music 3 codebooks के लिए trained compatible RVQ encoder इस्तेमाल कर रहे हों।
+
+### `--minimax_music_rvq_encoder_subfolder`
+
+- **क्या**: RVQ encoder repository या local directory के अंदर subfolder।
+- **डिफ़ॉल्ट**: `final`
+- **नोट्स**: चुने गए folder में `rvq_encoder_config.json`, `rvq_encoder.safetensors`, और जरूरी muP base-shape metadata होना चाहिए।
+
+### `--minimax_music_rvq_encoder_revision`
+
+- **क्या**: `--minimax_music_rvq_encoder_model_name_or_path` के लिए optional Hub revision।
+- **डिफ़ॉल्ट**: unset; जब main `--revision` दिया जाता है तो वही इस्तेमाल होता है।
+- **नोट्स**: इसे तब इस्तेमाल करें जब RVQ encoder को MiniMax Music 3 base checkpoint से अलग pin करना हो।
+
+### `--minimax_music_rvq_vae_model_name_or_path`
+
+- **क्या**: केवल MiniMax Music `language_model` training के लिए: VAE caching के दौरान RVQ encoder से पहले इस्तेमाल होने वाला DAV/audio VAE repository, local directory, या `dav.pth` file।
+- **डिफ़ॉल्ट**: unset; पहले `--pretrained_vae_model_name_or_path` इस्तेमाल होता है, फिर `SimpleTuner/MiniMax-Music-3-Encoder`।
+- **नोट्स**: यह waveform से DAV latent बनाने वाला encoder stage है। फिर RVQ encoder उन DAV latents को उस code tensor में बदलता है जिसे global LM predict करना सीखता है।
 
 ### `--minimax_music_lm_adapter`
 

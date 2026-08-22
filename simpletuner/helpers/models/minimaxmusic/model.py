@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 import torch
@@ -74,6 +76,47 @@ from simpletuner.helpers.training.lora_format import (
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_RVQ_ENCODER_MODEL = "SimpleTuner/open-rvq-encoder-minimax-music3-169m-v4"
+DEFAULT_RVQ_ENCODER_SUBFOLDER = "final"
+DEFAULT_LM_AUDIO_VAE_MODEL = "SimpleTuner/MiniMax-Music-3-Encoder"
+
+
+class MiniMaxMusicRVQCacheEncoder(nn.Module):
+    """Cache-time encoder that turns waveforms into MiniMax Music RVQ code tensors."""
+
+    def __init__(self, *, audio_vae: MiniMaxMusic3DAV, rvq_encoder: nn.Module):
+        super().__init__()
+        self.audio_vae = audio_vae
+        self.rvq_encoder = rvq_encoder
+        self.config = getattr(rvq_encoder, "config", SimpleNamespace())
+
+    @property
+    def device(self) -> torch.device:
+        try:
+            return next(self.rvq_encoder.parameters()).device
+        except StopIteration:
+            return torch.device("cpu")
+
+    @property
+    def dtype(self) -> torch.dtype:
+        return torch.float32
+
+    def to(self, device=None, dtype=None, **kwargs):
+        del dtype
+        self.audio_vae.to(device=device, dtype=torch.float32, **kwargs)
+        self.rvq_encoder.to(device=device, dtype=torch.float32, **kwargs)
+        return self
+
+    def requires_grad_(self, requires_grad: bool = False):
+        self.audio_vae.requires_grad_(requires_grad)
+        self.rvq_encoder.requires_grad_(requires_grad)
+        return self
+
+    def eval(self):
+        self.audio_vae.eval()
+        self.rvq_encoder.eval()
+        return self
+
 
 class MiniMaxMusic(AudioModelFoundation):
     NAME = "MiniMax Music 3"
@@ -123,10 +166,13 @@ class MiniMaxMusic(AudioModelFoundation):
     XM_ROUTE_EMBEDDING_MODULE_NAME = "xm_route_embeddings"
 
     def __init__(self, config, accelerator):
+        user_pretrained_vae_model_name_or_path = getattr(config, "pretrained_vae_model_name_or_path", None)
         super().__init__(config, accelerator)
+        self._user_pretrained_vae_model_name_or_path = user_pretrained_vae_model_name_or_path
         self.condition_encoder: Optional[MiniMaxMusic3ConditionEncoder] = None
         self.rvq_depth_decoder: Optional[MiniMaxMusic3RVQDepthDecoder] = None
         self.language_model: Optional[Qwen3ForCausalLM] = None
+        self.lm_rvq_cache_encoder: Optional[MiniMaxMusicRVQCacheEncoder] = None
         self.guider: Optional[ClassifierFreeGuidance] = None
         self.vae = None
         train_component = str(getattr(config, "minimax_music_train_component", "transformer") or "transformer")
@@ -135,7 +181,7 @@ class MiniMaxMusic(AudioModelFoundation):
             self.PREDICTION_TYPE = PredictionTypes.AUTOREGRESSIVE_NEXT_TOKEN
             self.MODEL_CLASS = Qwen3ForCausalLM
             self.MODEL_SUBFOLDER = "language_model"
-            self.AUTOENCODER_CLASS = None
+            self.AUTOENCODER_CLASS = MiniMaxMusicRVQCacheEncoder
             self.TEXT_ENCODER_CONFIGURATION = {}
             self.DEFAULT_LORA_TARGET = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
@@ -683,6 +729,11 @@ class MiniMaxMusic(AudioModelFoundation):
     def uses_text_embeddings_cache(self) -> bool:
         return not self._train_language_model
 
+    def get_vae_for_dataset_type(self, dataset_type: str):
+        if self._train_language_model and str(dataset_type).lower() == "audio":
+            return self.load_lm_rvq_cache_encoder(move_to_device=True)
+        return super().get_vae_for_dataset_type(dataset_type)
+
     def load_model(self, move_to_device: bool = True):
         if not self._train_language_model:
             return super().load_model(move_to_device=move_to_device)
@@ -730,7 +781,108 @@ class MiniMaxMusic(AudioModelFoundation):
             self.vae.to(self.accelerator.device, dtype=vae_dtype)
         return self.vae
 
+    def _lm_rvq_encoder_path(self) -> str:
+        return getattr(self.config, "minimax_music_rvq_encoder_model_name_or_path", None) or DEFAULT_RVQ_ENCODER_MODEL
+
+    def _lm_rvq_encoder_subfolder(self) -> str:
+        return (getattr(self.config, "minimax_music_rvq_encoder_subfolder", None) or DEFAULT_RVQ_ENCODER_SUBFOLDER).strip(
+            "/"
+        )
+
+    def _lm_rvq_encoder_revision(self) -> Optional[str]:
+        return getattr(self.config, "minimax_music_rvq_encoder_revision", None) or getattr(self.config, "revision", None)
+
+    def _resolve_lm_rvq_file(self, filename: str) -> str:
+        root = self._lm_rvq_encoder_path()
+        subfolder = self._lm_rvq_encoder_subfolder()
+        if os.path.isdir(root):
+            candidates = []
+            if subfolder:
+                candidates.append(os.path.join(root, subfolder, filename))
+            candidates.append(os.path.join(root, filename))
+            for candidate in candidates:
+                if os.path.isfile(candidate):
+                    return candidate
+            raise FileNotFoundError(f"MiniMax Music RVQ encoder file not found under {root}: {filename}")
+        repo_filename = f"{subfolder}/{filename}" if subfolder else filename
+        return hf_hub_download(
+            root,
+            repo_filename,
+            revision=self._lm_rvq_encoder_revision(),
+            repo_type="model",
+        )
+
+    def _lm_audio_vae_path(self) -> str:
+        return (
+            getattr(self.config, "minimax_music_rvq_vae_model_name_or_path", None)
+            or self._user_pretrained_vae_model_name_or_path
+            or DEFAULT_LM_AUDIO_VAE_MODEL
+        )
+
+    def _load_lm_audio_vae(self) -> MiniMaxMusic3DAV:
+        checkpoint_path = self._lm_audio_vae_path()
+        if self._has_diffusers_audio_vae(checkpoint_path):
+            return self._load_diffusers_audio_vae(checkpoint_path)
+        if os.path.isfile(checkpoint_path):
+            return MiniMaxMusic3DAV.from_original_dav(checkpoint_path)
+        if os.path.isdir(checkpoint_path):
+            dav_path = os.path.join(checkpoint_path, "dav.pth")
+            if os.path.isfile(dav_path):
+                return MiniMaxMusic3DAV.from_original_dav(dav_path)
+        dav_checkpoint = None
+        try:
+            dav_checkpoint = hf_hub_download(
+                checkpoint_path,
+                "dav.pth",
+                revision=getattr(self.config, "revision", None),
+                repo_type="model",
+            )
+        except (EntryNotFoundError, LocalEntryNotFoundError, RepositoryNotFoundError, HFValidationError):
+            dav_checkpoint = None
+        if dav_checkpoint is not None:
+            return MiniMaxMusic3DAV.from_original_dav(dav_checkpoint)
+        return self._load_diffusers_audio_vae(checkpoint_path)
+
+    def load_lm_rvq_cache_encoder(self, move_to_device: bool = True) -> MiniMaxMusicRVQCacheEncoder:
+        if not self._train_language_model:
+            raise ValueError("MiniMax Music RVQ cache encoder is only used for language_model training.")
+        if self.lm_rvq_cache_encoder is None:
+            from safetensors.torch import load_file as load_safetensors_file
+
+            from scripts.train_minimax_music_rvq_encoder import (
+                MiniMaxMusicRVQEncoder,
+                RVQEncoderConfig,
+                _load_mup_package,
+                _validate_mup_shape_metadata,
+            )
+
+            config_path = self._resolve_lm_rvq_file("rvq_encoder_config.json")
+            config_values = json.loads(Path(config_path).read_text(encoding="utf-8"))
+            config_values["codebook_vocab_sizes"] = tuple(int(value) for value in config_values["codebook_vocab_sizes"])
+            config_values["conv_dilations"] = tuple(int(value) for value in config_values["conv_dilations"])
+            rvq_config = RVQEncoderConfig(**config_values)
+            rvq_encoder = MiniMaxMusicRVQEncoder(rvq_config)
+            if rvq_config.mup:
+                base_shapes_path = self._resolve_lm_rvq_file("mup_base_shapes.bsh")
+                self._resolve_lm_rvq_file("mup_base_shapes.bsh.meta.json")
+                _validate_mup_shape_metadata(base_shapes_path, rvq_encoder)
+                _load_mup_package().set_base_shapes(rvq_encoder, base_shapes_path, rescale_params=False)
+            state_path = self._resolve_lm_rvq_file("rvq_encoder.safetensors")
+            rvq_encoder.load_state_dict(load_safetensors_file(state_path, device="cpu"), strict=True)
+            rvq_encoder.eval()
+            rvq_encoder.requires_grad_(False)
+
+            audio_vae = self._load_lm_audio_vae()
+            audio_vae.eval()
+            audio_vae.requires_grad_(False)
+            self.lm_rvq_cache_encoder = MiniMaxMusicRVQCacheEncoder(audio_vae=audio_vae, rvq_encoder=rvq_encoder)
+        if move_to_device:
+            self.lm_rvq_cache_encoder.to(self.accelerator.device)
+        return self.lm_rvq_cache_encoder
+
     def encode_cache_batch(self, vae, samples, metadata_entries: Optional[list] = None):
+        if self._train_language_model:
+            return self._encode_lm_rvq_cache_batch(vae, samples, metadata_entries=metadata_entries)
         del metadata_entries
         if not hasattr(vae, "encode"):
             raise RuntimeError(
@@ -744,6 +896,128 @@ class MiniMaxMusic(AudioModelFoundation):
             raise TypeError("MiniMax Music 3 DAV encode() must return a tensor.")
         return latents.to(dtype=self.config.weight_dtype)
 
+    @staticmethod
+    def _lm_legacy_frame_latent_starts(n_frames: int) -> list[int]:
+        latent_rate_num = 441
+        latent_rate_den = 128
+        chunk_frames = 200
+        chunk_hop_frames = 100
+        stitched_hop_latents = 345
+        non_first_chunk_owned_from = 25
+        num_windows = max(1, (n_frames - 1) // chunk_hop_frames)
+        starts = []
+        for frame_index in range(n_frames + 1):
+            chunk_index = min(
+                max((frame_index - non_first_chunk_owned_from) // chunk_hop_frames, 0),
+                num_windows - 1,
+            )
+            local_frame = frame_index - chunk_index * chunk_hop_frames
+            current_chunk_frames = min(chunk_frames, n_frames - chunk_index * chunk_hop_frames)
+            chunk_latents = current_chunk_frames * latent_rate_num // latent_rate_den
+            local_latent = (local_frame * chunk_latents + current_chunk_frames - 1) // current_chunk_frames
+            starts.append(chunk_index * stitched_hop_latents + local_latent)
+        return starts
+
+    @staticmethod
+    def _lm_build_pool_matrix(bounds: list[int], latent_frames: int, device: torch.device) -> torch.Tensor:
+        if len(bounds) < 2:
+            raise ValueError("At least two frame/latent boundaries are required.")
+        local_bounds = [max(0, min(int(value), latent_frames)) for value in bounds]
+        pool = torch.zeros((len(local_bounds) - 1, latent_frames), dtype=torch.float32, device=device)
+        for frame_index, (start, end) in enumerate(zip(local_bounds[:-1], local_bounds[1:])):
+            if end <= start:
+                end = min(start + 1, latent_frames)
+                start = max(0, end - 1)
+            pool[frame_index, start:end] = 1.0 / float(end - start)
+        return pool
+
+    def _lm_frame_count_for_rvq_cache(
+        self,
+        *,
+        latent_frames: int,
+        sample_frames: int,
+        sample_rate: int,
+    ) -> int:
+        duration_frames = max(1, int(round(float(sample_frames) / float(sample_rate) * self._frame_rate())))
+        frame_count = min(duration_frames, _MAX_AUDIO_FRAMES)
+        while frame_count > 1 and self._lm_legacy_frame_latent_starts(frame_count)[-1] > latent_frames:
+            frame_count -= 1
+        return frame_count
+
+    def _resample_lm_audio_if_needed(
+        self,
+        waveform: torch.Tensor,
+        *,
+        source_rate: Optional[int],
+        target_rate: int,
+    ) -> torch.Tensor:
+        if source_rate is None or int(source_rate) == int(target_rate):
+            return waveform
+        import torchaudio
+
+        return torchaudio.functional.resample(waveform, int(source_rate), int(target_rate))
+
+    def _encode_lm_rvq_cache_batch(
+        self,
+        cache_encoder,
+        samples: torch.Tensor,
+        metadata_entries: Optional[list] = None,
+    ) -> torch.Tensor:
+        if not isinstance(cache_encoder, MiniMaxMusicRVQCacheEncoder):
+            raise TypeError(
+                "MiniMax Music LM VAE cache expects MiniMaxMusicRVQCacheEncoder; " f"received {type(cache_encoder)}."
+            )
+        if samples.ndim != 3:
+            raise ValueError(
+                f"MiniMax Music LM RVQ cache expects audio [batch, channels, samples], got {tuple(samples.shape)}."
+            )
+
+        target_rate = int(getattr(cache_encoder.audio_vae.config, "sampling_rate", 44100) or 44100)
+        entries = metadata_entries or [{} for _ in range(samples.shape[0])]
+        code_rows = []
+        with torch.no_grad():
+            for index in range(samples.shape[0]):
+                entry = entries[index] if index < len(entries) else {}
+                metadata = entry.get("metadata", {}) if isinstance(entry, dict) else {}
+                backend_id = entry.get("data_backend_id") if isinstance(entry, dict) else None
+                backend_audio_config = {}
+                if backend_id:
+                    from simpletuner.helpers.training.state_tracker import StateTracker
+
+                    backend_audio_config = (StateTracker.get_data_backend_config(backend_id) or {}).get("audio", {})
+                source_rate = (
+                    metadata.get("sample_rate") or metadata.get("sampling_rate") or backend_audio_config.get("sample_rate")
+                )
+                waveform = samples[index : index + 1].to(device=self.accelerator.device, dtype=torch.float32)
+                waveform = self._resample_lm_audio_if_needed(
+                    waveform.squeeze(0),
+                    source_rate=int(source_rate) if source_rate else None,
+                    target_rate=target_rate,
+                ).unsqueeze(0)
+                latents = cache_encoder.audio_vae.encode(waveform)
+                if not isinstance(latents, torch.Tensor):
+                    raise TypeError("MiniMax Music LM RVQ cache DAV encode() must return a tensor.")
+                latent_rows = latents[0].transpose(0, 1).contiguous()
+                latent_frames = int(latent_rows.shape[0])
+                frame_count = self._lm_frame_count_for_rvq_cache(
+                    latent_frames=latent_frames,
+                    sample_frames=int(waveform.shape[-1]),
+                    sample_rate=target_rate,
+                )
+                bounds = self._lm_legacy_frame_latent_starts(frame_count)
+                pool = self._lm_build_pool_matrix(bounds, latent_frames, device=latent_rows.device).unsqueeze(0)
+                logits = cache_encoder.rvq_encoder(
+                    latent_rows.unsqueeze(0).to(dtype=torch.float32),
+                    pool,
+                )
+                if not isinstance(logits, (list, tuple)) or len(logits) == 0:
+                    raise TypeError("MiniMax Music RVQ encoder must return one logits tensor per codebook.")
+                codes = torch.stack([book_logits.argmax(dim=-1).squeeze(0) for book_logits in logits], dim=-1)
+                code_rows.append(codes.to(device="cpu", dtype=torch.long))
+        if len(code_rows) == 1:
+            return code_rows[0].unsqueeze(0)
+        return pad_sequence(code_rows, batch_first=True, padding_value=0)
+
     def _lm_prompt_text(self, caption: str, lyrics: str) -> str:
         return (
             f"<|im_start|><|caption_start|>{_clean_caption(str(caption))}<|caption_end|>"
@@ -755,25 +1029,36 @@ class MiniMaxMusic(AudioModelFoundation):
         codes = example.get("audio_tokens")
         if codes is None:
             token_path = example.get("audio_tokens_path")
-            if not token_path:
-                raise ValueError(
-                    "MiniMax Music 3 language model training requires audio_tokens or audio_tokens_path metadata "
-                    "with raw per-codebook RVQ codes shaped [frames, codebooks]."
-                )
-            resolved = str(token_path)
-            if not os.path.isabs(resolved):
+            if token_path:
+                resolved = str(token_path)
+                if not os.path.isabs(resolved):
+                    backend_id = example.get("data_backend_id")
+                    from simpletuner.helpers.training.state_tracker import StateTracker
+
+                    backend_cfg = StateTracker.get_data_backend_config(backend_id) if backend_id else {}
+                    dataset_root = backend_cfg.get("instance_data_dir") if backend_cfg else None
+                    if dataset_root:
+                        resolved = os.path.join(dataset_root, resolved)
+                if not os.path.exists(resolved):
+                    raise FileNotFoundError(f"MiniMax Music 3 audio token file not found: {resolved}")
+                codes = torch.load(resolved, map_location="cpu", weights_only=True)
+            else:
                 backend_id = example.get("data_backend_id")
+                filepath = example.get("image_path") or example.get("filepath")
+                if not backend_id or not filepath:
+                    raise ValueError(
+                        "MiniMax Music 3 language model training requires audio_tokens, audio_tokens_path, "
+                        "or an audio dataset sample with data_backend_id and image_path so the RVQ VAE cache can "
+                        "provide raw per-codebook codes."
+                    )
                 from simpletuner.helpers.training.state_tracker import StateTracker
 
-                backend_cfg = StateTracker.get_data_backend_config(backend_id) if backend_id else {}
-                dataset_root = backend_cfg.get("instance_data_dir") if backend_cfg else None
-                if dataset_root:
-                    resolved = os.path.join(dataset_root, resolved)
-            if not os.path.exists(resolved):
-                raise FileNotFoundError(f"MiniMax Music 3 audio token file not found: {resolved}")
-            codes = torch.load(resolved, map_location="cpu", weights_only=True)
+                codes = StateTracker.get_vaecache(id=backend_id).retrieve_from_cache(filepath)
         if isinstance(codes, dict):
-            codes = codes.get("codes")
+            for key in ("codes", "audio_tokens", "latents"):
+                if codes.get(key) is not None:
+                    codes = codes[key]
+                    break
         if not isinstance(codes, torch.Tensor):
             codes = torch.as_tensor(codes)
         codes = codes.to(dtype=torch.long)

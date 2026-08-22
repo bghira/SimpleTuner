@@ -73,7 +73,7 @@ simpletuner configure config/foo/config.json
 - **選択肢**: `transformer`（デフォルト）、`language_model`
 - **メモ**:
   - `transformer` はキャッシュされた Flow-VAE latent 上でフローマッチング音楽 DiT をトレーニングします（標準パス）。
-  - `language_model` は RVQ セマンティックコードの次トークン交差エントロピーで Qwen3 自己回帰ステージをトレーニングします。データセットは、`prompt`（または `tags`）と `lyrics` に加えて、事前計算された生のコードブック別オーディオトークン（`audio_tokens_path` メタデータ、形状 `[frames, codebooks]`）を提供する必要があります。標準 PEFT LoRA のみ対応、`--lora_format comfyui` は拒否され、トレーナー内の検証オーディオは無効になります——保存されたチェックポイントからレンダリングしてください。
+  - `language_model` は RVQ セマンティックコードの次トークン交差エントロピーで Qwen3 自己回帰ステージをトレーニングします。`dataset_type=audio` では、SimpleTuner が VAE キャッシュ時に MiniMax Music DAV とデフォルトの v4 RVQ エンコーダーで raw waveform をコード化します。データセットは引き続き、`prompt`（または `tags`）と `lyrics` に加えて、事前計算された生のコードブック別オーディオトークン（`audio_tokens` または `audio_tokens_path`、形状 `[frames, codebooks]`）を提供できます。標準 PEFT LoRA のみ対応、`--lora_format comfyui` は拒否され、トレーナー内の検証オーディオは無効になります——保存されたチェックポイントからレンダリングしてください。
 
 ### `--minimax_music_lm_max_frames`
 
@@ -82,6 +82,31 @@ simpletuner configure config/foo/config.json
 - **メモ**:
   - 1 フレームは 40ms、7500 フレームは 5 分です。長いトラックで VRAM が不足する場合は下げてください。
   - 切り詰められたサンプルにはオーディオ終端ターゲットが与えられないため、モデルが早期停止を学習することはありません。
+
+### `--minimax_music_rvq_encoder_model_name_or_path`
+
+- **内容**: MiniMax Music の `language_model` トレーニング専用です。キャッシュ済み DAV オーディオ latent をコードブック別オーディオコードへ変換する RVQ エンコーダーを含む Hub リポジトリまたはローカルディレクトリです。
+- **デフォルト**: `SimpleTuner/open-rvq-encoder-minimax-music3-169m-v4`
+- **関連**: `--minimax_music_rvq_encoder_subfolder` はデフォルトで `final`、`--minimax_music_rvq_encoder_revision` は Hub revision の固定に使えます。
+- **メモ**: デフォルトパッケージには `rvq_encoder_config.json`、`rvq_encoder.safetensors`、muP base-shape メタデータが含まれます。MiniMax Music 3 の codebook 用にトレーニングされた互換 RVQ エンコーダーを使う場合だけ変更してください。
+
+### `--minimax_music_rvq_encoder_subfolder`
+
+- **内容**: RVQ エンコーダーのリポジトリまたはローカルディレクトリ内のサブフォルダです。
+- **デフォルト**: `final`
+- **メモ**: 選択したフォルダには `rvq_encoder_config.json`、`rvq_encoder.safetensors`、必要な muP base-shape メタデータが含まれている必要があります。
+
+### `--minimax_music_rvq_encoder_revision`
+
+- **内容**: `--minimax_music_rvq_encoder_model_name_or_path` 用の任意の Hub revision です。
+- **デフォルト**: 未設定。主な `--revision` が指定されている場合はそれを使用します。
+- **メモ**: RVQ エンコーダーを MiniMax Music 3 ベースチェックポイントとは別に固定したい場合に使用します。
+
+### `--minimax_music_rvq_vae_model_name_or_path`
+
+- **内容**: MiniMax Music の `language_model` トレーニング専用です。VAE キャッシュ中、RVQ エンコーダーの前に使う DAV/audio VAE のリポジトリ、ローカルディレクトリ、または `dav.pth` ファイルです。
+- **デフォルト**: 未設定。まず `--pretrained_vae_model_name_or_path` を使用し、その後 `SimpleTuner/MiniMax-Music-3-Encoder` を使用します。
+- **メモ**: これは waveform を DAV latent にするエンコード段階です。その後、RVQ エンコーダーが DAV latent をグローバル LM の予測対象コードテンソルへ変換します。
 
 ### `--minimax_music_lm_adapter`
 

@@ -73,7 +73,7 @@ simpletuner configure config/foo/config.json
 - **选项**：`transformer`（默认）、`language_model`
 - **说明**：
   - `transformer` 在缓存的 Flow-VAE latent 上训练流匹配音乐 DiT（标准路径）。
-  - `language_model` 使用 RVQ 语义码的下一 token 交叉熵训练 Qwen3 自回归阶段。数据集必须提供预计算的原始逐码本音频 token（`audio_tokens_path` 元数据，形状为 `[frames, codebooks]`），以及 `prompt`（或 `tags`）和 `lyrics`。仅支持标准 PEFT LoRA，`--lora_format comfyui` 会被拒绝，且训练器内验证音频被禁用——请从保存的检查点渲染。
+  - `language_model` 使用 RVQ 语义码的下一 token 交叉熵训练 Qwen3 自回归阶段。对于 `dataset_type=audio`，SimpleTuner 会在 VAE 缓存阶段用 MiniMax Music DAV 和默认 v4 RVQ 编码器把原始 waveform 编成代码。数据集仍可提供预计算的原始逐码本音频 token（`audio_tokens` 或 `audio_tokens_path`，形状为 `[frames, codebooks]`），以及 `prompt`（或 `tags`）和 `lyrics`。仅支持标准 PEFT LoRA，`--lora_format comfyui` 会被拒绝，且训练器内验证音频被禁用——请从保存的检查点渲染。
 
 ### `--minimax_music_lm_max_frames`
 
@@ -82,6 +82,31 @@ simpletuner configure config/foo/config.json
 - **说明**：
   - 一帧为 40 毫秒；7500 帧即五分钟。如果长曲目耗尽显存，请降低该值。
   - 被截断的样本不会获得音频结束目标，因此模型不会被教导提前停止。
+
+### `--minimax_music_rvq_encoder_model_name_or_path`
+
+- **内容**：仅用于 MiniMax Music `language_model` 训练：包含 RVQ 编码器的 Hub 仓库或本地目录，用于将缓存的 DAV 音频 latent 转成逐码本音频代码。
+- **默认**：`SimpleTuner/open-rvq-encoder-minimax-music3-169m-v4`
+- **相关**：`--minimax_music_rvq_encoder_subfolder` 默认是 `final`；`--minimax_music_rvq_encoder_revision` 可固定 Hub revision。
+- **说明**：默认包包含 `rvq_encoder_config.json`、`rvq_encoder.safetensors` 和 muP base-shape 元数据。只有在使用为 MiniMax Music 3 codebook 训练的兼容 RVQ 编码器时才更改。
+
+### `--minimax_music_rvq_encoder_subfolder`
+
+- **内容**：RVQ 编码器仓库或本地目录中的子文件夹。
+- **默认**：`final`
+- **说明**：所选文件夹必须包含 `rvq_encoder_config.json`、`rvq_encoder.safetensors` 以及所需的 muP base-shape 元数据。
+
+### `--minimax_music_rvq_encoder_revision`
+
+- **内容**：`--minimax_music_rvq_encoder_model_name_or_path` 的可选 Hub revision。
+- **默认**：未设置；如果提供了主 `--revision`，则使用它。
+- **说明**：当 RVQ 编码器需要与 MiniMax Music 3 基础 checkpoint 分开固定版本时使用。
+
+### `--minimax_music_rvq_vae_model_name_or_path`
+
+- **内容**：仅用于 MiniMax Music `language_model` 训练：VAE 缓存时在 RVQ 编码器之前使用的 DAV/audio VAE 仓库、本地目录或 `dav.pth` 文件。
+- **默认**：未设置；先使用 `--pretrained_vae_model_name_or_path`，然后使用 `SimpleTuner/MiniMax-Music-3-Encoder`。
+- **说明**：这是 waveform 到 DAV latent 的编码阶段。随后 RVQ 编码器会把这些 DAV latent 转成全局 LM 学习预测的代码张量。
 
 ### `--minimax_music_lm_adapter`
 

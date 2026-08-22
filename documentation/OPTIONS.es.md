@@ -73,7 +73,7 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 - **Opciones**: `transformer` (predeterminado), `language_model`
 - **Notas**:
   - `transformer` entrena el DiT musical de flow matching sobre latentes Flow-VAE en caché (la ruta estándar).
-  - `language_model` entrena la etapa autorregresiva Qwen3 con entropía cruzada de siguiente token sobre códigos semánticos RVQ. Los datasets deben proporcionar tokens de audio crudos por codebook precomputados (metadato `audio_tokens_path`, con forma `[frames, codebooks]`) junto con `prompt` (o `tags`) y `lyrics`. Solo se admite LoRA PEFT estándar, `--lora_format comfyui` se rechaza y el audio de validación dentro del entrenador está deshabilitado: renderiza desde los checkpoints guardados.
+  - `language_model` entrena la etapa autorregresiva Qwen3 con entropía cruzada de siguiente token sobre códigos semánticos RVQ. Para `dataset_type=audio`, SimpleTuner codifica las ondas crudas mediante el DAV de MiniMax Music y el codificador RVQ v4 predeterminado durante la caché VAE. Los datasets aún pueden proporcionar tokens de audio crudos por codebook precomputados (`audio_tokens` o `audio_tokens_path`, con forma `[frames, codebooks]`) junto con `prompt` (o `tags`) y `lyrics`. Solo se admite LoRA PEFT estándar, `--lora_format comfyui` se rechaza y el audio de validación dentro del entrenador está deshabilitado: renderiza desde los checkpoints guardados.
 
 ### `--minimax_music_lm_max_frames`
 
@@ -82,6 +82,31 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 - **Notas**:
   - Un frame son 40ms; 7500 frames son cinco minutos. Reduce este valor si las pistas largas agotan la VRAM.
   - Las muestras truncadas no reciben objetivo de fin de audio, por lo que el modelo no aprende a detenerse antes de tiempo.
+
+### `--minimax_music_rvq_encoder_model_name_or_path`
+
+- **Qué**: Solo para entrenamiento `language_model` de MiniMax Music: repositorio Hub o directorio local con el codificador RVQ que convierte latentes DAV cacheados en códigos de audio por codebook.
+- **Predeterminado**: `SimpleTuner/open-rvq-encoder-minimax-music3-169m-v4`
+- **Relacionado**: `--minimax_music_rvq_encoder_subfolder` usa `final` por defecto; `--minimax_music_rvq_encoder_revision` puede fijar una revisión de Hub.
+- **Notas**: El paquete predeterminado incluye `rvq_encoder_config.json`, `rvq_encoder.safetensors` y metadatos muP de formas base. Cámbialo solo si usas un codificador RVQ compatible entrenado para los codebooks de MiniMax Music 3.
+
+### `--minimax_music_rvq_encoder_subfolder`
+
+- **Qué**: Subcarpeta dentro del repositorio o directorio local del codificador RVQ.
+- **Predeterminado**: `final`
+- **Notas**: La carpeta seleccionada debe contener `rvq_encoder_config.json`, `rvq_encoder.safetensors` y cualquier metadato muP de formas base requerido.
+
+### `--minimax_music_rvq_encoder_revision`
+
+- **Qué**: Revisión Hub opcional para `--minimax_music_rvq_encoder_model_name_or_path`.
+- **Predeterminado**: sin definir; se usa el valor principal de `--revision` cuando existe.
+- **Notas**: Úsalo cuando el codificador RVQ deba fijarse por separado del checkpoint base de MiniMax Music 3.
+
+### `--minimax_music_rvq_vae_model_name_or_path`
+
+- **Qué**: Solo para entrenamiento `language_model` de MiniMax Music: repositorio, directorio local o archivo `dav.pth` del DAV/audio VAE usado antes del codificador RVQ durante la caché VAE.
+- **Predeterminado**: sin definir; se usa primero `--pretrained_vae_model_name_or_path` y luego `SimpleTuner/MiniMax-Music-3-Encoder`.
+- **Notas**: Esta es la etapa que convierte la onda en latentes DAV. Después, el codificador RVQ convierte esos latentes DAV en el tensor de códigos que aprende a predecir el LM global.
 
 ### `--minimax_music_lm_adapter`
 

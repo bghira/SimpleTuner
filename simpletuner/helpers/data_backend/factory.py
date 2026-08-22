@@ -4109,13 +4109,18 @@ class FactoryRegistry:
             return
         if dataset_type_enum is DatasetType.AUDIO:
             uses_audio_latents = False
+            uses_audio_tokens = False
             try:
                 uses_audio_latents = bool(self.model.uses_audio_latents_for_data_backend(init_backend.get("id")))
             except AttributeError:
                 uses_audio_latents = False
-            if not uses_audio_latents:
+            try:
+                uses_audio_tokens = bool(self.model.uses_audio_tokens())
+            except AttributeError:
+                uses_audio_tokens = False
+            if not uses_audio_latents and not uses_audio_tokens:
                 info_log(
-                    f"(id={init_backend['id']}) Skipping VAE cache for audio dataset; model does not use audio latents."
+                    f"(id={init_backend['id']}) Skipping VAE cache for audio dataset; model does not use audio latents or tokens."
                 )
                 return
         vae_cache_dir = backend.get("cache_dir_vae", None)
