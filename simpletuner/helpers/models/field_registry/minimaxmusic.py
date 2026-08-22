@@ -19,8 +19,9 @@ def register_fields(registry) -> None:
             help_text=(
                 "Which MiniMax Music 3 component receives training. transformer trains the flow-matching music "
                 "DiT on cached Flow-VAE latents. language_model trains the Qwen3 autoregressive stage with "
-                "next-token cross-entropy on RVQ semantic codes; datasets must provide precomputed audio tokens "
-                "(audio_tokens_path metadata) alongside caption and lyrics."
+                "next-token cross-entropy on RVQ semantic codes; raw audio datasets are encoded through the "
+                "MiniMax Music RVQ cache encoder unless the dataset provides audio_tokens or audio_tokens_path "
+                "metadata alongside caption and lyrics."
             ),
             tooltip=(
                 "language_model mode is for style/keyword adaptation of the AR planner (dreambooth-style trigger "
@@ -29,6 +30,87 @@ def register_fields(registry) -> None:
             importance=ImportanceLevel.ADVANCED,
             order=39,
             documentation="OPTIONS.md#--minimax_music_train_component",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="minimax_music_rvq_encoder_model_name_or_path",
+            arg_name="--minimax_music_rvq_encoder_model_name_or_path",
+            ui_label="MiniMax Music RVQ Encoder",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="model_specific",
+            model_specific=["minimaxmusic"],
+            default_value="SimpleTuner/open-rvq-encoder-minimax-music3-169m-v4",
+            help_text=(
+                "MiniMax Music language_model training only: model repository or local directory containing the "
+                "RVQ encoder config and weights used to convert cached DAV audio latents into per-codebook codes."
+            ),
+            tooltip="The default is SimpleTuner's v4 open RVQ encoder for MiniMax Music 3.",
+            importance=ImportanceLevel.ADVANCED,
+            order=44,
+            documentation="OPTIONS.md#--minimax_music_rvq_encoder_model_name_or_path",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="minimax_music_rvq_encoder_subfolder",
+            arg_name="--minimax_music_rvq_encoder_subfolder",
+            ui_label="MiniMax Music RVQ Encoder Subfolder",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="model_specific",
+            model_specific=["minimaxmusic"],
+            default_value="final",
+            help_text=(
+                "Subfolder within the RVQ encoder repository or local directory that contains "
+                "rvq_encoder_config.json, rvq_encoder.safetensors, and any muP base-shape metadata."
+            ),
+            tooltip="Leave at final for the default SimpleTuner v4 RVQ encoder package.",
+            importance=ImportanceLevel.ADVANCED,
+            order=45,
+            documentation="OPTIONS.md#--minimax_music_rvq_encoder_subfolder",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="minimax_music_rvq_encoder_revision",
+            arg_name="--minimax_music_rvq_encoder_revision",
+            ui_label="MiniMax Music RVQ Encoder Revision",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="model_specific",
+            model_specific=["minimaxmusic"],
+            default_value="",
+            help_text=(
+                "Optional Hub revision for the RVQ encoder. If unset, SimpleTuner uses the main training revision "
+                "setting when one is provided."
+            ),
+            tooltip="Use this only when pinning a specific RVQ encoder checkpoint revision.",
+            importance=ImportanceLevel.ADVANCED,
+            order=46,
+            documentation="OPTIONS.md#--minimax_music_rvq_encoder_revision",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="minimax_music_rvq_vae_model_name_or_path",
+            arg_name="--minimax_music_rvq_vae_model_name_or_path",
+            ui_label="MiniMax Music RVQ Audio VAE",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="model_specific",
+            model_specific=["minimaxmusic"],
+            default_value="",
+            help_text=(
+                "MiniMax Music language_model training only: DAV/audio VAE repository, local directory, or dav.pth "
+                "file used before the RVQ encoder. If unset in config, the standard pretrained VAE path is used "
+                "before this default."
+            ),
+            tooltip="This is the audio encoder stage, not the RVQ code predictor.",
+            importance=ImportanceLevel.ADVANCED,
+            order=47,
+            documentation="OPTIONS.md#--minimax_music_rvq_vae_model_name_or_path",
         )
     )
     registry._add_field(
