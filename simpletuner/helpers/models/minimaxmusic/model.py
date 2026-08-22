@@ -113,9 +113,142 @@ class MiniMaxMusicRVQCacheEncoder(nn.Module):
         return self
 
     def eval(self):
+        super().eval()
         self.audio_vae.eval()
         self.rvq_encoder.eval()
         return self
+
+    @staticmethod
+    def _legacy_frame_latent_starts(n_frames: int) -> list[int]:
+        latent_rate_num = 441
+        latent_rate_den = 128
+        chunk_frames = 200
+        chunk_hop_frames = 100
+        stitched_hop_latents = 345
+        non_first_chunk_owned_from = 25
+        num_windows = max(1, (n_frames - 1) // chunk_hop_frames)
+        starts = []
+        for frame_index in range(n_frames + 1):
+            chunk_index = min(
+                max((frame_index - non_first_chunk_owned_from) // chunk_hop_frames, 0),
+                num_windows - 1,
+            )
+            local_frame = frame_index - chunk_index * chunk_hop_frames
+            current_chunk_frames = min(chunk_frames, n_frames - chunk_index * chunk_hop_frames)
+            chunk_latents = current_chunk_frames * latent_rate_num // latent_rate_den
+            local_latent = (local_frame * chunk_latents + current_chunk_frames - 1) // current_chunk_frames
+            starts.append(chunk_index * stitched_hop_latents + local_latent)
+        return starts
+
+    @staticmethod
+    def _build_window_pool(bounds: list[int], device: torch.device) -> tuple[torch.Tensor, int, int]:
+        if len(bounds) < 2:
+            raise ValueError("At least two frame/latent boundaries are required.")
+        origin = int(bounds[0])
+        local_bounds = [int(value) - origin for value in bounds]
+        latent_count = local_bounds[-1]
+        if latent_count <= 0:
+            raise ValueError(f"Invalid MiniMax Music RVQ latent bounds: {bounds[:4]}...{bounds[-4:]}.")
+        pool = torch.zeros((len(local_bounds) - 1, latent_count), dtype=torch.float32, device=device)
+        for frame_index, (start, end) in enumerate(zip(local_bounds[:-1], local_bounds[1:])):
+            if end <= start:
+                raise ValueError(f"MiniMax Music RVQ frame {frame_index} has invalid latent span [{start}, {end}).")
+            pool[frame_index, start:end] = 1.0 / float(end - start)
+        return pool, origin, int(bounds[-1])
+
+    def _max_position_embeddings(self) -> int:
+        configured = getattr(getattr(self.rvq_encoder, "config", None), "max_position_embeddings", None)
+        if configured is not None:
+            return int(configured)
+        position = getattr(self.rvq_encoder, "position", None)
+        if torch.is_tensor(position) and position.ndim >= 2:
+            return int(position.shape[1])
+        raise ValueError("MiniMax Music RVQ encoder does not expose max_position_embeddings.")
+
+    @classmethod
+    def _frame_count_for_cache(
+        cls,
+        *,
+        latent_frames: int,
+        sample_frames: int,
+        sample_rate: int,
+        frame_rate: float,
+    ) -> int:
+        duration_frames = max(1, int(round(float(sample_frames) / float(sample_rate) * float(frame_rate))))
+        frame_count = min(duration_frames, _MAX_AUDIO_FRAMES)
+        while frame_count > 1 and cls._legacy_frame_latent_starts(frame_count)[-1] > latent_frames:
+            frame_count -= 1
+        return frame_count
+
+    @staticmethod
+    def _resample_audio_if_needed(
+        waveform: torch.Tensor,
+        *,
+        source_rate: Optional[int],
+        target_rate: int,
+    ) -> torch.Tensor:
+        if source_rate is None or int(source_rate) == int(target_rate):
+            return waveform
+        import torchaudio
+
+        return torchaudio.functional.resample(waveform, int(source_rate), int(target_rate))
+
+    @torch.no_grad()
+    def encode_audio_codes(
+        self,
+        samples: torch.Tensor,
+        *,
+        sample_rates: Optional[list[Optional[int]]] = None,
+        device: Optional[torch.device] = None,
+        frame_rate: float = 25.0,
+    ) -> torch.Tensor:
+        if samples.ndim != 3:
+            raise ValueError(
+                f"MiniMax Music LM RVQ cache expects audio [batch, channels, samples], got {tuple(samples.shape)}."
+            )
+
+        device = device or self.device
+        target_rate = int(getattr(self.audio_vae.config, "sampling_rate", 44100) or 44100)
+        sample_rates = sample_rates or [None for _ in range(samples.shape[0])]
+        code_rows = []
+        for index in range(samples.shape[0]):
+            source_rate = sample_rates[index] if index < len(sample_rates) else None
+            waveform = samples[index : index + 1].to(device=device, dtype=self.dtype)
+            waveform = self._resample_audio_if_needed(
+                waveform.squeeze(0),
+                source_rate=int(source_rate) if source_rate else None,
+                target_rate=target_rate,
+            ).unsqueeze(0)
+            latents = self.audio_vae.encode(waveform)
+            if not isinstance(latents, torch.Tensor):
+                raise TypeError("MiniMax Music LM RVQ cache DAV encode() must return a tensor.")
+            latent_rows = latents[0].transpose(0, 1).contiguous()
+            latent_frames = int(latent_rows.shape[0])
+            frame_count = self._frame_count_for_cache(
+                latent_frames=latent_frames,
+                sample_frames=int(waveform.shape[-1]),
+                sample_rate=target_rate,
+                frame_rate=frame_rate,
+            )
+            bounds = self._legacy_frame_latent_starts(frame_count)
+            max_window = self._max_position_embeddings()
+            code_windows = []
+            for frame_start in range(0, frame_count, max_window):
+                frame_end = min(frame_start + max_window, frame_count)
+                pool, latent_start, latent_end = self._build_window_pool(
+                    bounds[frame_start : frame_end + 1],
+                    device=latent_rows.device,
+                )
+                window_latents = latent_rows[latent_start:latent_end].unsqueeze(0).to(dtype=torch.float32)
+                logits = self.rvq_encoder(window_latents, pool.unsqueeze(0))
+                if not isinstance(logits, (list, tuple)) or len(logits) == 0:
+                    raise TypeError("MiniMax Music RVQ encoder must return one logits tensor per codebook.")
+                code_windows.append(torch.stack([book_logits.argmax(dim=-1).squeeze(0) for book_logits in logits], dim=-1))
+            codes = torch.cat(code_windows, dim=0)
+            code_rows.append(codes.to(device="cpu", dtype=torch.long))
+        if len(code_rows) == 1:
+            return code_rows[0].unsqueeze(0)
+        return pad_sequence(code_rows, batch_first=True, padding_value=0)
 
 
 class MiniMaxMusic(AudioModelFoundation):
@@ -762,7 +895,8 @@ class MiniMaxMusic(AudioModelFoundation):
 
     def load_vae(self, move_to_device: bool = True):
         if self._train_language_model:
-            return None
+            self.vae = self.load_lm_rvq_cache_encoder(move_to_device=move_to_device)
+            return self.vae
         if self.vae is None:
             checkpoint_path = self._vae_checkpoint_path()
             if self._has_diffusers_audio_vae(checkpoint_path):
@@ -896,67 +1030,6 @@ class MiniMaxMusic(AudioModelFoundation):
             raise TypeError("MiniMax Music 3 DAV encode() must return a tensor.")
         return latents.to(dtype=self.config.weight_dtype)
 
-    @staticmethod
-    def _lm_legacy_frame_latent_starts(n_frames: int) -> list[int]:
-        latent_rate_num = 441
-        latent_rate_den = 128
-        chunk_frames = 200
-        chunk_hop_frames = 100
-        stitched_hop_latents = 345
-        non_first_chunk_owned_from = 25
-        num_windows = max(1, (n_frames - 1) // chunk_hop_frames)
-        starts = []
-        for frame_index in range(n_frames + 1):
-            chunk_index = min(
-                max((frame_index - non_first_chunk_owned_from) // chunk_hop_frames, 0),
-                num_windows - 1,
-            )
-            local_frame = frame_index - chunk_index * chunk_hop_frames
-            current_chunk_frames = min(chunk_frames, n_frames - chunk_index * chunk_hop_frames)
-            chunk_latents = current_chunk_frames * latent_rate_num // latent_rate_den
-            local_latent = (local_frame * chunk_latents + current_chunk_frames - 1) // current_chunk_frames
-            starts.append(chunk_index * stitched_hop_latents + local_latent)
-        return starts
-
-    @staticmethod
-    def _lm_build_pool_matrix(bounds: list[int], latent_frames: int, device: torch.device) -> torch.Tensor:
-        if len(bounds) < 2:
-            raise ValueError("At least two frame/latent boundaries are required.")
-        local_bounds = [max(0, min(int(value), latent_frames)) for value in bounds]
-        pool = torch.zeros((len(local_bounds) - 1, latent_frames), dtype=torch.float32, device=device)
-        for frame_index, (start, end) in enumerate(zip(local_bounds[:-1], local_bounds[1:])):
-            if end <= start:
-                end = min(start + 1, latent_frames)
-                start = max(0, end - 1)
-            pool[frame_index, start:end] = 1.0 / float(end - start)
-        return pool
-
-    def _lm_frame_count_for_rvq_cache(
-        self,
-        *,
-        latent_frames: int,
-        sample_frames: int,
-        sample_rate: int,
-    ) -> int:
-        duration_frames = max(1, int(round(float(sample_frames) / float(sample_rate) * self._frame_rate())))
-        frame_count = min(duration_frames, _MAX_AUDIO_FRAMES)
-        while frame_count > 1 and self._lm_legacy_frame_latent_starts(frame_count)[-1] > latent_frames:
-            frame_count -= 1
-        return frame_count
-
-    def _resample_lm_audio_if_needed(
-        self,
-        waveform: torch.Tensor,
-        *,
-        source_rate: Optional[int],
-        target_rate: int,
-    ) -> torch.Tensor:
-        if source_rate is None or int(source_rate) == int(target_rate):
-            return waveform
-        import torchaudio
-
-        return torchaudio.functional.resample(waveform, int(source_rate), int(target_rate))
-
     def _encode_lm_rvq_cache_batch(
         self,
         cache_encoder,
@@ -967,56 +1040,28 @@ class MiniMaxMusic(AudioModelFoundation):
             raise TypeError(
                 "MiniMax Music LM VAE cache expects MiniMaxMusicRVQCacheEncoder; " f"received {type(cache_encoder)}."
             )
-        if samples.ndim != 3:
-            raise ValueError(
-                f"MiniMax Music LM RVQ cache expects audio [batch, channels, samples], got {tuple(samples.shape)}."
-            )
 
-        target_rate = int(getattr(cache_encoder.audio_vae.config, "sampling_rate", 44100) or 44100)
         entries = metadata_entries or [{} for _ in range(samples.shape[0])]
-        code_rows = []
-        with torch.no_grad():
-            for index in range(samples.shape[0]):
-                entry = entries[index] if index < len(entries) else {}
-                metadata = entry.get("metadata", {}) if isinstance(entry, dict) else {}
-                backend_id = entry.get("data_backend_id") if isinstance(entry, dict) else None
-                backend_audio_config = {}
-                if backend_id:
-                    from simpletuner.helpers.training.state_tracker import StateTracker
+        sample_rates = []
+        for index in range(samples.shape[0]):
+            entry = entries[index] if index < len(entries) else {}
+            metadata = entry.get("metadata", {}) if isinstance(entry, dict) else {}
+            backend_id = entry.get("data_backend_id") if isinstance(entry, dict) else None
+            backend_audio_config = {}
+            if backend_id:
+                from simpletuner.helpers.training.state_tracker import StateTracker
 
-                    backend_audio_config = (StateTracker.get_data_backend_config(backend_id) or {}).get("audio", {})
-                source_rate = (
-                    metadata.get("sample_rate") or metadata.get("sampling_rate") or backend_audio_config.get("sample_rate")
-                )
-                waveform = samples[index : index + 1].to(device=self.accelerator.device, dtype=torch.float32)
-                waveform = self._resample_lm_audio_if_needed(
-                    waveform.squeeze(0),
-                    source_rate=int(source_rate) if source_rate else None,
-                    target_rate=target_rate,
-                ).unsqueeze(0)
-                latents = cache_encoder.audio_vae.encode(waveform)
-                if not isinstance(latents, torch.Tensor):
-                    raise TypeError("MiniMax Music LM RVQ cache DAV encode() must return a tensor.")
-                latent_rows = latents[0].transpose(0, 1).contiguous()
-                latent_frames = int(latent_rows.shape[0])
-                frame_count = self._lm_frame_count_for_rvq_cache(
-                    latent_frames=latent_frames,
-                    sample_frames=int(waveform.shape[-1]),
-                    sample_rate=target_rate,
-                )
-                bounds = self._lm_legacy_frame_latent_starts(frame_count)
-                pool = self._lm_build_pool_matrix(bounds, latent_frames, device=latent_rows.device).unsqueeze(0)
-                logits = cache_encoder.rvq_encoder(
-                    latent_rows.unsqueeze(0).to(dtype=torch.float32),
-                    pool,
-                )
-                if not isinstance(logits, (list, tuple)) or len(logits) == 0:
-                    raise TypeError("MiniMax Music RVQ encoder must return one logits tensor per codebook.")
-                codes = torch.stack([book_logits.argmax(dim=-1).squeeze(0) for book_logits in logits], dim=-1)
-                code_rows.append(codes.to(device="cpu", dtype=torch.long))
-        if len(code_rows) == 1:
-            return code_rows[0].unsqueeze(0)
-        return pad_sequence(code_rows, batch_first=True, padding_value=0)
+                backend_audio_config = (StateTracker.get_data_backend_config(backend_id) or {}).get("audio", {})
+            source_rate = (
+                metadata.get("sample_rate") or metadata.get("sampling_rate") or backend_audio_config.get("sample_rate")
+            )
+            sample_rates.append(int(source_rate) if source_rate else None)
+        return cache_encoder.encode_audio_codes(
+            samples,
+            sample_rates=sample_rates,
+            device=self.accelerator.device,
+            frame_rate=self._frame_rate(),
+        )
 
     def _lm_prompt_text(self, caption: str, lyrics: str) -> str:
         return (
@@ -1459,6 +1504,27 @@ class MiniMaxMusic(AudioModelFoundation):
         self.condition_encoder = condition_encoder
         self.text_encoders = [language_model]
         self.text_encoder_1 = language_model
+
+    def move_text_encoders_for_vae_cache(self, target_device):
+        components = (
+            ("language_model", self.language_model),
+            ("rvq_depth_decoder", self.rvq_depth_decoder),
+            ("condition_encoder", self.condition_encoder),
+        )
+        target = torch.device(target_device)
+        for component_name, component in components:
+            if component is None:
+                continue
+            if component_name == "language_model" and self._ramtorch_text_encoders_requested():
+                logger.debug("Skipping %s VAE-cache move because ramtorch_text_encoder is enabled.", component_name)
+                continue
+            if target.type == "cpu":
+                component.to(target)
+            else:
+                component.to(target, dtype=self.config.weight_dtype)
+        if self.language_model is not None:
+            self.text_encoders = [self.language_model]
+            self.text_encoder_1 = self.language_model
 
     def load_condition_encoder(self, move_to_device: bool = True):
         if self.condition_encoder is None:

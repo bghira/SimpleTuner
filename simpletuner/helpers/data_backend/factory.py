@@ -1420,6 +1420,12 @@ class FactoryRegistry:
         except RuntimeError:
             self.metrics["memory_usage"]["start"] = self._get_memory_usage()
 
+    def _move_text_encoders_for_vae_cache(self, target_device: str):
+        model_hook = getattr(self.model, "move_text_encoders_for_vae_cache", None)
+        if callable(model_hook):
+            return model_hook(target_device=target_device)
+        return move_text_encoders(self.args, self.text_encoders, target_device)
+
     def _get_memory_usage(self) -> float:
         """Get current memory usage in MB."""
         try:
@@ -4149,7 +4155,7 @@ class FactoryRegistry:
                 raise ValueError(
                     f"VAE image embed cache directory {vae_cache_dir} is not set. This is required for the VAE image embed cache."
                 )
-        move_text_encoders(self.args, self.text_encoders, "cpu")
+        self._move_text_encoders_for_vae_cache("cpu")
 
         video_config = init_backend["config"].get("video", {})
         vae = StateTracker.get_vae()
@@ -4661,7 +4667,7 @@ class FactoryRegistry:
             logger.debug(f"Encoding images during training: {init_backend['vaecache'].vae_cache_ondemand}")
             if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
-        move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
+        self._move_text_encoders_for_vae_cache(self.accelerator.device)
         init_backend_debug_info = {
             k: v for k, v in init_backend.items() if isinstance(v, Union[list, int, float, str, dict, tuple])
         }
@@ -4928,6 +4934,8 @@ def get_huggingface_backend(
     identifier: str,
     dataset_name: str,
     dataset_type: str,
+    dataset_config: str = None,
+    data_files=None,
     split: str = "train",
     revision: str = None,
     image_column: str = "image",
@@ -4981,6 +4989,8 @@ def get_huggingface_backend(
         accelerator=accelerator,
         id=identifier,
         dataset_name=dataset_name,
+        dataset_config=dataset_config,
+        data_files=data_files,
         dataset_type=dataset_type,
         split=split,
         revision=revision,

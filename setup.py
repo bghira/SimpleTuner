@@ -334,6 +334,7 @@ base_deps = [
     "hf-xet>=1.1.5",
     "peft-singlora>=0.2.0",
     "vector-quantize-pytorch>=1.27.15",
+    "mup>=1.0.0",
     "cryptography>=41.0.0",
     "torchcodec>=0.10.0",
     "sdnq>=0.2.3",

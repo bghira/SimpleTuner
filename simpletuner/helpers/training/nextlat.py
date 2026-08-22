@@ -52,6 +52,7 @@ def infer_nextlat_hidden_size(model: nn.Module) -> int:
 
 def infer_nextlat_block_count(model: nn.Module) -> int:
     candidates = (
+        ("transformer_blocks",),
         ("transformer_blocks", "single_transformer_blocks"),
         ("joint_transformer_blocks", "single_transformer_blocks"),
         ("double_stream_layers", "single_stream_layers"),
@@ -86,6 +87,9 @@ class NextLatPredictor(nn.Module):
         if hidden_states.ndim < 3:
             raise ValueError("NextLat expects hidden states with batch, token, and feature dimensions.")
         tokens = hidden_states.reshape(hidden_states.shape[0], -1, hidden_states.shape[-1])
+        parameter_dtype = self.norm.weight.dtype
+        if tokens.dtype != parameter_dtype:
+            tokens = tokens.to(dtype=parameter_dtype)
         return self.down(F.gelu(self.up(self.norm(tokens))))
 
 

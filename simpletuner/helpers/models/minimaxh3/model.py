@@ -1570,8 +1570,7 @@ class MiniMaxH3(VideoModelFoundation):
 
     def _prepare_xm_noise_candidates(self, prepared_batch: dict) -> dict:
         self._validate_xm_support()
-        if prepared_batch.get("audio_target") is not None:
-            raise ValueError(f"{self.NAME} XM noise-candidate training cannot be used with an explicit audio_target.")
+        prepared_batch.pop("audio_target", None)
         if isinstance(prepared_batch.get("conditioning_latents"), list):
             raise ValueError(f"{self.NAME} XM noise-candidate training requires conditioning_latents to be one tensor.")
 

@@ -1033,6 +1033,7 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
             vae_path=None,
             minimax_music_train_component="language_model",
             minimax_music_lm_max_frames=0,
+            weight_dtype=torch.float32,
         )
         for key, value in overrides.items():
             setattr(config, key, value)
@@ -1087,16 +1088,18 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
             return torch.ones(waveform.shape[0], 128, latent_frames, device=waveform.device, dtype=torch.float32)
 
     class _FakeRVQEncoder(torch.nn.Module):
-        def __init__(self, codebooks=4, vocab=8):
+        def __init__(self, codebooks=4, vocab=8, max_position_embeddings=128):
             super().__init__()
             self.weight = torch.nn.Parameter(torch.zeros(1))
             self.codebooks = codebooks
             self.vocab = vocab
-            self.config = SimpleNamespace(max_position_embeddings=128)
+            self.config = SimpleNamespace(max_position_embeddings=max_position_embeddings)
+            self.pool_shapes = []
 
         def forward(self, latents, pool, teacher_forcing_targets=None):
             del latents, teacher_forcing_targets
             batch, frames, _ = pool.shape
+            self.pool_shapes.append(tuple(pool.shape))
             logits = []
             for book in range(self.codebooks):
                 values = torch.zeros(batch, frames, self.vocab, device=pool.device)
@@ -1106,6 +1109,12 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
 
     def test_lm_mode_switches_component_contracts(self):
         model = self._lm_model()
+        cache_encoder = MiniMaxMusicRVQCacheEncoder(
+            audio_vae=self._FakeAudioVAE(),
+            rvq_encoder=self._FakeRVQEncoder(codebooks=4, vocab=8),
+        )
+        model.load_lm_rvq_cache_encoder = MagicMock(return_value=cache_encoder)
+
         self.assertTrue(model._train_language_model)
         self.assertTrue(model.uses_audio_tokens())
         self.assertFalse(model.uses_audio_latents())
@@ -1114,7 +1123,36 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         self.assertEqual(model.MODEL_SUBFOLDER, "language_model")
         self.assertEqual(model._music_lora_component_name(), "language_model")
         self.assertIn("q_proj", model.DEFAULT_LORA_TARGET)
-        self.assertIsNone(model.load_vae())
+        self.assertIs(model.load_vae(), cache_encoder)
+        self.assertIs(model.vae, cache_encoder)
+        self.assertEqual(model.vae.dtype, torch.float32)
+        model.load_lm_rvq_cache_encoder.assert_called_once_with(move_to_device=True)
+
+    def test_lm_vae_cache_text_offload_moves_all_lm_components(self):
+        model = self._lm_model(weight_dtype=torch.bfloat16)
+        language_model = MagicMock()
+        depth_decoder = MagicMock()
+        condition_encoder = MagicMock()
+        model.language_model = language_model
+        model.rvq_depth_decoder = depth_decoder
+        model.condition_encoder = condition_encoder
+
+        model.move_text_encoders_for_vae_cache("cpu")
+
+        language_model.to.assert_called_once_with(torch.device("cpu"))
+        depth_decoder.to.assert_called_once_with(torch.device("cpu"))
+        condition_encoder.to.assert_called_once_with(torch.device("cpu"))
+        self.assertEqual(model.text_encoders, [language_model])
+        self.assertIs(model.text_encoder_1, language_model)
+
+        for component in (language_model, depth_decoder, condition_encoder):
+            component.to.reset_mock()
+
+        model.move_text_encoders_for_vae_cache(torch.device("cuda"))
+
+        language_model.to.assert_called_once_with(torch.device("cuda"), dtype=torch.bfloat16)
+        depth_decoder.to.assert_called_once_with(torch.device("cuda"), dtype=torch.bfloat16)
+        condition_encoder.to.assert_called_once_with(torch.device("cuda"), dtype=torch.bfloat16)
 
     def test_lm_rvq_audio_vae_path_prefers_explicit_override_then_shared_vae(self):
         model = self._lm_model()
@@ -1226,6 +1264,24 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         self.assertEqual(codes.shape[0], 1)
         self.assertEqual(codes.shape[2], 4)
         self.assertTrue(torch.equal(codes[0, 0], torch.tensor([0, 1, 2, 3])))
+
+    def test_lm_encode_cache_batch_chunks_to_rvq_position_limit(self):
+        model = self._lm_model()
+        rvq_encoder = self._FakeRVQEncoder(codebooks=4, vocab=8, max_position_embeddings=3)
+        cache_encoder = MiniMaxMusicRVQCacheEncoder(
+            audio_vae=self._FakeAudioVAE(),
+            rvq_encoder=rvq_encoder,
+        )
+        samples = torch.zeros(1, 2, 44100)
+        codes = model.encode_cache_batch(
+            cache_encoder,
+            samples,
+            metadata_entries=[{"metadata": {"sample_rate": 44100}, "data_backend_id": "songs"}],
+        )
+
+        self.assertGreater(codes.shape[1], 3)
+        self.assertGreater(len(rvq_encoder.pool_shapes), 1)
+        self.assertTrue(all(shape[1] <= 3 for shape in rvq_encoder.pool_shapes))
 
     def test_lm_loss_targets_audio_positions_only(self):
         from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET, _AUDIO_END_TOKEN_ID
