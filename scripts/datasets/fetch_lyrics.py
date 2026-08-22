@@ -20,6 +20,7 @@ Usage:
 import argparse
 import logging
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -49,6 +50,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aiff", ".opus"}
+
+TITLE_VERSION_JUNK = re.compile(r"\s*\((?:[^)]*version|live[^)]*)\)\s*$", re.IGNORECASE)
+
+
+def normalize_title(title):
+    """Strip release qualifiers like '(Album Version)' or '(Live ...)' that break search."""
+    prev = None
+    while prev != title:
+        prev = title
+        title = TITLE_VERSION_JUNK.sub("", title)
+    return title.strip() or None
 
 
 def scrape_genius_tokenless(artist, title):
@@ -239,6 +251,8 @@ def main():
             continue
 
         artist, title, local_lyrics = extract_metadata(filepath)
+        if title:
+            title = normalize_title(title)
 
         final_lyrics = None
         source = "None"
