@@ -749,6 +749,16 @@ class MiniMaxH3Tests(unittest.TestCase):
         resolved = model_cls.get_real_class() if hasattr(model_cls, "get_real_class") else model_cls
         self.assertIs(resolved, MiniMaxH3)
 
+    def test_model_config_path_keeps_local_components_with_single_file_transformer(self):
+        model = MiniMaxH3.__new__(MiniMaxH3)
+        model.config = SimpleNamespace(
+            model_family="minimaxh3",
+            pretrained_model_name_or_path="/src/model",
+            pretrained_transformer_model_name_or_path="/src/weights/transformer.safetensors",
+        )
+
+        self.assertEqual(model._model_config_path(), "/src/model")
+
     def test_image_mode_keeps_single_frame_geometry(self):
         self.assertEqual(MiniMaxH3.adjust_video_frames(1), 1)
         self.assertEqual(align_num_frames(1), 1)
