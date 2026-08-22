@@ -35,14 +35,14 @@ def _resolve_module_path(model: nn.Module, path: str):
 def infer_nextlat_hidden_size(model: nn.Module) -> int:
     config = getattr(model, "config", None)
     if config is not None:
-        heads = _config_value(config, "num_attention_heads")
-        head_dim = _config_value(config, "attention_head_dim")
-        if heads is not None and head_dim is not None:
-            return int(heads * head_dim)
         for attribute in ("hidden_size", "d_model", "model_dim", "dim", "inner_dim", "embed_dim", "emb_dim", "n_embd"):
             value = _config_value(config, attribute)
             if value is not None:
                 return int(value)
+        heads = _config_value(config, "num_attention_heads")
+        head_dim = _config_value(config, "attention_head_dim")
+        if heads is not None and head_dim is not None:
+            return int(heads * head_dim)
 
     for module in model.modules():
         if isinstance(module, nn.LayerNorm) and module.normalized_shape:
