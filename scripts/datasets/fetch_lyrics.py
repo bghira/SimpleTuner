@@ -98,11 +98,25 @@ def scrape_genius_tokenless(artist, title):
             # Fallback for older layouts
             lyrics_div = soup.find("div", class_="lyrics")
             if lyrics_div:
-                return lyrics_div.get_text(separator="\n")
-            return None
+                lyrics_divs = [lyrics_div]
+            else:
+                return None
 
-        # Join multiple containers (e.g. verses separated by ads/images)
-        lyrics_text = "\n".join([div.get_text(separator="\n") for div in lyrics_divs])
+        lyrics_parts = []
+        for div in lyrics_divs:
+            # Drop the leading metadata block (contributors, translations, description).
+            header = div.find("div", class_=lambda c: c and "LyricsHeader__Container" in c)
+            if header:
+                header.decompose()
+            # Real line breaks are <br> tags; annotated phrases are inline <a>/<span>/<i>
+            # and must not become line breaks.
+            for br in div.find_all("br"):
+                br.replace_with("\n")
+            part = div.get_text()
+            if part:
+                lyrics_parts.append(part)
+
+        lyrics_text = "\n".join(lyrics_parts)
         return lyrics_text
 
     except Exception as e:
@@ -184,7 +198,12 @@ def clean_lyrics(text):
         return None
     # Remove Genius specific headers like "Embed" or "Contributors" at the end if present
     # (lyricsgenius usually handles this, but basic cleanup is good)
-    return text.strip()
+    lines = [line.strip() for line in text.splitlines()]
+    cleaned = []
+    for line in lines:
+        if line or (cleaned and cleaned[-1]):
+            cleaned.append(line)
+    return "\n".join(cleaned).strip() or None
 
 
 def main():
