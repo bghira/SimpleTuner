@@ -11,7 +11,7 @@ from safetensors.torch import load_file
 
 from simpletuner.helpers.models.common import PipelineTypes, TextEmbedCacheKey
 from simpletuner.helpers.models.minimaxmusic.condition_encoder import MiniMaxMusic3ConditionEncoder
-from simpletuner.helpers.models.minimaxmusic.model import MiniMaxMusic
+from simpletuner.helpers.models.minimaxmusic.model import MiniMaxMusic, MiniMaxMusicRVQCacheEncoder
 from simpletuner.helpers.models.minimaxmusic.modular_pipeline import (
     MINIMAX_MUSIC_SWIGLU_GATE_FIRST_METADATA_KEY,
     MiniMaxMusic3ModularPipeline,
@@ -21,6 +21,7 @@ from simpletuner.helpers.models.minimaxmusic.modular_pipeline import (
 from simpletuner.helpers.models.minimaxmusic.transformer import MiniMaxMusic3AttnProcessor, MiniMaxMusic3Transformer1DModel
 from simpletuner.helpers.models.minimaxmusic.vocoder import MiniMaxMusic3DAV
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 
 def _tiny_transformer(enable_time_sign_embed: bool = False, **kwargs) -> MiniMaxMusic3Transformer1DModel:
@@ -1076,16 +1077,57 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
                 hidden_states = tuple(inputs_embeds + float(index) for index in range(self.layer_count + 1))
             return SimpleNamespace(logits=self.lm_head(inputs_embeds), hidden_states=hidden_states)
 
+    class _FakeAudioVAE(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.config = SimpleNamespace(sampling_rate=44100)
+
+        def encode(self, waveform):
+            latent_frames = max(4, waveform.shape[-1] // 512)
+            return torch.ones(waveform.shape[0], 128, latent_frames, device=waveform.device, dtype=torch.float32)
+
+    class _FakeRVQEncoder(torch.nn.Module):
+        def __init__(self, codebooks=4, vocab=8):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.zeros(1))
+            self.codebooks = codebooks
+            self.vocab = vocab
+            self.config = SimpleNamespace(max_position_embeddings=128)
+
+        def forward(self, latents, pool, teacher_forcing_targets=None):
+            del latents, teacher_forcing_targets
+            batch, frames, _ = pool.shape
+            logits = []
+            for book in range(self.codebooks):
+                values = torch.zeros(batch, frames, self.vocab, device=pool.device)
+                values[..., book % self.vocab] = 1.0
+                logits.append(values)
+            return logits
+
     def test_lm_mode_switches_component_contracts(self):
         model = self._lm_model()
         self.assertTrue(model._train_language_model)
         self.assertTrue(model.uses_audio_tokens())
         self.assertFalse(model.uses_audio_latents())
         self.assertFalse(model.uses_text_embeddings_cache())
+        self.assertIs(model.AUTOENCODER_CLASS, MiniMaxMusicRVQCacheEncoder)
         self.assertEqual(model.MODEL_SUBFOLDER, "language_model")
         self.assertEqual(model._music_lora_component_name(), "language_model")
         self.assertIn("q_proj", model.DEFAULT_LORA_TARGET)
         self.assertIsNone(model.load_vae())
+
+    def test_lm_rvq_audio_vae_path_prefers_explicit_override_then_shared_vae(self):
+        model = self._lm_model()
+        self.assertEqual(model._lm_audio_vae_path(), "SimpleTuner/MiniMax-Music-3-Encoder")
+
+        model = self._lm_model(pretrained_vae_model_name_or_path="shared/dav")
+        self.assertEqual(model._lm_audio_vae_path(), "shared/dav")
+
+        model = self._lm_model(
+            pretrained_vae_model_name_or_path="shared/dav",
+            minimax_music_rvq_vae_model_name_or_path="rvq/specific-dav",
+        )
+        self.assertEqual(model._lm_audio_vae_path(), "rvq/specific-dav")
 
     def test_lm_mode_defaults_off(self):
         config = SimpleNamespace(
@@ -1145,6 +1187,45 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         examples = [{"prompt": "x", "lyrics": "y", "audio_tokens": baked}]
         with self.assertRaises(ValueError):
             model.collate_audio_tokens(examples)
+
+    def test_lm_collate_uses_rvq_vae_cache_when_tokens_are_absent(self):
+        model = self._lm_model()
+        model.tokenizers = [self._FakeTokenizer()]
+        cached = torch.tensor([[1, 0, 0, 0], [2, 1, 0, 0]], dtype=torch.long)
+        vae_cache = SimpleNamespace(retrieve_from_cache=MagicMock(return_value=cached))
+        with patch.object(StateTracker, "get_vaecache", return_value=vae_cache):
+            payload = model.collate_audio_tokens(
+                [
+                    {
+                        "prompt": "fiona crapple style",
+                        "lyrics": "la la la",
+                        "data_backend_id": "songs",
+                        "image_path": "song.flac",
+                    }
+                ]
+            )
+
+        vae_cache.retrieve_from_cache.assert_called_once_with("song.flac")
+        self.assertTrue(torch.equal(payload["audio_codes"][0, :2], cached))
+        self.assertEqual(payload["audio_lengths"].tolist(), [2])
+
+    def test_lm_encode_cache_batch_uses_rvq_encoder(self):
+        model = self._lm_model()
+        cache_encoder = MiniMaxMusicRVQCacheEncoder(
+            audio_vae=self._FakeAudioVAE(),
+            rvq_encoder=self._FakeRVQEncoder(codebooks=4, vocab=8),
+        )
+        samples = torch.zeros(1, 2, 4410)
+        codes = model.encode_cache_batch(
+            cache_encoder,
+            samples,
+            metadata_entries=[{"metadata": {"sample_rate": 44100}, "data_backend_id": "songs"}],
+        )
+
+        self.assertEqual(codes.ndim, 3)
+        self.assertEqual(codes.shape[0], 1)
+        self.assertEqual(codes.shape[2], 4)
+        self.assertTrue(torch.equal(codes[0, 0], torch.tensor([0, 1, 2, 3])))
 
     def test_lm_loss_targets_audio_positions_only(self):
         from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET, _AUDIO_END_TOKEN_ID
