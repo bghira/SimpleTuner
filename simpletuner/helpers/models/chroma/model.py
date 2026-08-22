@@ -79,6 +79,33 @@ class Chroma(ImageModelFoundation):
         },
     }
 
+    def __init__(self, config, accelerator):
+        super().__init__(config, accelerator)
+        self._validate_xm_support()
+
+    def _repeat_xm_candidate_value(self, value, candidate_count: int, batch_size: int):
+        if isinstance(value, list) and len(value) == batch_size:
+            return list(value) * candidate_count
+        if isinstance(value, tuple) and len(value) == batch_size:
+            return tuple(list(value) * candidate_count)
+        return super()._repeat_xm_candidate_value(value, candidate_count, batch_size)
+
+    def _prepare_xm_noise_candidates(self, prepared_batch: dict) -> dict:
+        self._validate_xm_support()
+        result = super()._prepare_xm_noise_candidates(prepared_batch, family_name=self.NAME)
+
+        teacher_sigmas = prepared_batch.get("crepa_teacher_sigmas")
+        if torch.is_tensor(teacher_sigmas):
+            latents = prepared_batch["latents"]
+            input_noise = prepared_batch["input_noise"]
+            teacher_grid = self._expand_sigma_values(
+                teacher_sigmas.to(device=latents.device, dtype=latents.dtype),
+                latents,
+            )
+            prepared_batch["crepa_teacher_noisy_latents"] = (1 - teacher_grid) * latents + teacher_grid * input_noise
+
+        return result
+
     def supports_crepa_self_flow(self) -> bool:
         return True
 
@@ -568,6 +595,14 @@ class Chroma(ImageModelFoundation):
         raise NotImplementedError(f"Unknown LoRA target type {self.config.lora_type}.")
 
     def model_predict(self, prepared_batch):
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch)
+            model_output = self._model_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch)
+
+    def _model_predict_single(self, prepared_batch):
         batch_size, _, height, width = prepared_batch["latents"].shape
         hidden_states_buffer = self._new_hidden_state_buffer()
         packed_noisy_latents = pack_latents(
@@ -681,6 +716,14 @@ class Chroma(ImageModelFoundation):
         }
 
     def controlnet_predict(self, prepared_batch: dict) -> dict:
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch)
+            model_output = self._controlnet_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._controlnet_predict_single(prepared_batch)
+
+    def _controlnet_predict_single(self, prepared_batch: dict) -> dict:
         conditioning_latents = prepared_batch.get("conditioning_latents")
         if conditioning_latents is None:
             raise ValueError("conditioning_latents must be provided for ControlNet training")

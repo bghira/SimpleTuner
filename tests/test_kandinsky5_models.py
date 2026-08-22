@@ -12,6 +12,7 @@ from simpletuner.helpers.models.kandinsky5_video.model import Kandinsky5Video
 from simpletuner.helpers.models.kandinsky5_video.pipeline_kandinsky5_i2v import Kandinsky5I2VPipeline
 from simpletuner.helpers.models.kandinsky5_video.pipeline_kandinsky5_t2v import Kandinsky5T2VPipeline
 from simpletuner.helpers.models.kandinsky5_video.transformer_kandinsky5 import Kandinsky5Transformer3DModel
+from simpletuner.helpers.training.explorative_modeling import ExplorativeModelingConfig
 
 
 def make_tiny_kandinsky_transformer(visual_cond: bool) -> Kandinsky5Transformer3DModel:
@@ -166,8 +167,157 @@ class Kandinsky5ImageModelTests(unittest.TestCase):
         self.model.unwrap_model = lambda model=None: model or self.model
         self.model.model = make_tiny_kandinsky_transformer(visual_cond=False)
 
+    def _enable_xm(self, *, candidate_count=2, training_target="noise", selection_scope="sample", block_size=0):
+        self.model.xm_config = ExplorativeModelingConfig(
+            enabled=True,
+            candidate_count=candidate_count,
+            training_target=training_target,
+            selection_scope=selection_scope,
+            block_size=block_size,
+        )
+
     def test_model_supports_crepa_self_flow(self):
         self.assertTrue(self.model.supports_crepa_self_flow())
+
+    def test_validate_xm_support_rejects_unsupported_image_settings(self):
+        self._enable_xm(training_target="route")
+        with self.assertRaisesRegex(ValueError, "xm_training_target='noise'"):
+            self.model._validate_xm_support()
+
+        self._enable_xm(selection_scope="block")
+        with self.assertRaisesRegex(ValueError, "xm_selection_scope='sample'"):
+            self.model._validate_xm_support()
+
+        self._enable_xm(block_size=2)
+        with self.assertRaisesRegex(ValueError, "xm_block_size=0"):
+            self.model._validate_xm_support()
+
+    def test_prepare_xm_noise_candidates_expands_image_batch_candidate_major(self):
+        self._enable_xm(candidate_count=3)
+        latents = torch.arange(2 * 16 * 2 * 2, dtype=torch.float32).view(2, 16, 2, 2)
+        candidate_noise = torch.full((6, 16, 2, 2), 3.0)
+        encoder_hidden_states = torch.randn(2, 2, 8)
+        attention_masks = torch.tensor([[1, 1], [1, 0]], dtype=torch.int32)
+        text_embeds = torch.randn(2, 4)
+        conditioning_latents = torch.randn(2, 16, 2, 2)
+        r_timesteps = torch.tensor([0.1, 0.2], dtype=torch.float32)
+        prepared_batch = {
+            "latents": latents.clone(),
+            "noise": torch.zeros_like(latents),
+            "input_noise": torch.zeros_like(latents),
+            "noisy_latents": torch.zeros_like(latents),
+            "sigmas": torch.tensor([0.25, 0.75], dtype=torch.float32),
+            "timesteps": torch.tensor([250.0, 750.0], dtype=torch.float32),
+            "encoder_hidden_states": encoder_hidden_states,
+            "attention_masks": attention_masks,
+            "added_cond_kwargs": {"text_embeds": text_embeds},
+            "conditioning_latents": conditioning_latents,
+            "flowmap_r_timesteps": r_timesteps,
+            "metadata": ["a", "b"],
+        }
+
+        with patch("torch.randn_like", return_value=candidate_noise):
+            self.model._prepare_xm_noise_candidates(prepared_batch, family_name=self.model.NAME)
+
+        self.assertEqual(prepared_batch["xm_candidate_count"], 3)
+        self.assertEqual(prepared_batch["xm_original_batch_size"], 2)
+        self.assertTrue(torch.equal(prepared_batch["latents"], latents.repeat(3, 1, 1, 1)))
+        self.assertTrue(torch.equal(prepared_batch["noise"], candidate_noise))
+        self.assertTrue(torch.equal(prepared_batch["input_noise"], candidate_noise))
+        expected_sigmas = torch.tensor([0.25, 0.75, 0.25, 0.75, 0.25, 0.75]).view(6, 1, 1, 1)
+        expected_noisy = (1.0 - expected_sigmas) * prepared_batch["latents"] + expected_sigmas * candidate_noise
+        self.assertTrue(torch.allclose(prepared_batch["noisy_latents"], expected_noisy))
+        self.assertTrue(torch.equal(prepared_batch["flow_target"], candidate_noise - prepared_batch["latents"]))
+        self.assertTrue(torch.equal(prepared_batch["encoder_hidden_states"], encoder_hidden_states.repeat(3, 1, 1)))
+        self.assertTrue(torch.equal(prepared_batch["attention_masks"], attention_masks.repeat(3, 1)))
+        self.assertTrue(torch.equal(prepared_batch["added_cond_kwargs"]["text_embeds"], text_embeds.repeat(3, 1)))
+        self.assertTrue(torch.equal(prepared_batch["conditioning_latents"], conditioning_latents.repeat(3, 1, 1, 1)))
+        self.assertTrue(torch.equal(prepared_batch["flowmap_r_timesteps"], r_timesteps.repeat(3)))
+        self.assertEqual(prepared_batch["metadata"], ["a", "b", "a", "b", "a", "b"])
+
+    def test_model_predict_returns_xm_candidate_count_for_image(self):
+        self._enable_xm(candidate_count=2)
+        transformer = MagicMock(config=SimpleNamespace(visual_cond=False))
+        transformer.return_value = SimpleNamespace(sample=torch.zeros(4, 1, 2, 2, 16))
+        self.model.model = transformer
+        latents = torch.randn(2, 16, 2, 2)
+        candidate_noise = torch.randn(4, 16, 2, 2)
+        prepared_batch = {
+            "latents": latents,
+            "noise": torch.zeros_like(latents),
+            "input_noise": torch.zeros_like(latents),
+            "noisy_latents": torch.zeros_like(latents),
+            "sigmas": torch.full((2, 1, 1, 1), 0.25),
+            "timesteps": torch.tensor([250.0, 750.0], dtype=torch.float32),
+            "encoder_hidden_states": torch.randn(2, 2, 8),
+            "added_cond_kwargs": {"text_embeds": torch.randn(2, 4)},
+        }
+
+        with patch("torch.randn_like", return_value=candidate_noise):
+            result = self.model.model_predict(prepared_batch)
+
+        self.assertEqual(result["xm_candidate_count"], 2)
+        self.assertEqual(tuple(result["model_prediction"].shape), (4, 16, 2, 2))
+        self.assertEqual(tuple(transformer.call_args.kwargs["hidden_states"].shape), (4, 1, 2, 2, 16))
+
+    def test_xm_loss_selects_image_winners_before_nextlat_auxiliary_loss(self):
+        self._enable_xm(candidate_count=2)
+        self.model.config.loss_type = "l2"
+        self.model.config.huber_schedule = "constant"
+        self.model.config.huber_c = 0.1
+        latents = torch.zeros(4, 1, 1, 1)
+        noise = torch.tensor([0.0, 1.0, 2.0, 3.0]).view(4, 1, 1, 1)
+        target = noise - latents
+        prediction = torch.tensor([5.0, 1.0, 2.0, -4.0]).view(4, 1, 1, 1)
+        hidden = torch.arange(4 * 3 * 2, dtype=torch.float32).view(4, 3, 2)
+        prepared_batch = {
+            "latents": latents,
+            "noise": noise,
+            "input_noise": noise,
+            "noisy_latents": noise,
+            "sigmas": torch.ones(4, 1, 1, 1),
+            "timesteps": torch.tensor([100.0, 200.0, 100.0, 200.0]),
+            "added_cond_kwargs": {"text_embeds": torch.arange(4 * 2, dtype=torch.float32).view(4, 2)},
+        }
+        model_output = {
+            "model_prediction": prediction,
+            "hidden_states_buffer": {"layer_0": hidden.clone()},
+            "xm_candidate_count": 2,
+        }
+
+        loss, logs = self.model.loss_with_logs(prepared_batch, model_output)
+
+        self.assertAlmostEqual(loss.item(), 0.0)
+        self.assertTrue(torch.equal(model_output["xm_winner_indices"], torch.tensor([1, 0])))
+        self.assertTrue(torch.equal(model_output["model_prediction"], target[[2, 1]]))
+        self.assertTrue(torch.equal(prepared_batch["noise"], noise[[2, 1]]))
+        self.assertEqual(tuple(prepared_batch["added_cond_kwargs"]["text_embeds"].shape), (2, 2))
+        self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"], hidden[[2, 1]]))
+        self.assertNotIn("xm_candidate_count", model_output)
+        self.assertEqual(logs["xm_candidate_0_wins"], 1.0)
+        self.assertEqual(logs["xm_candidate_1_wins"], 1.0)
+
+        class FakeNextLat:
+            enabled = True
+
+            def __init__(self):
+                self.hidden_shape = None
+                self.prediction_shape = None
+
+            def compute_loss(self, hidden_states_buffer, output):
+                self.hidden_shape = tuple(hidden_states_buffer["layer_0"].shape)
+                self.prediction_shape = tuple(output["model_prediction"].shape)
+                return torch.tensor(0.5), {"nextlat_loss": 0.5}
+
+        nextlat = FakeNextLat()
+        self.model.nextlat_regularizer = nextlat
+        self.model.crepa_regularizer = None
+        aux_loss, aux_logs = self.model.auxiliary_loss(model_output, prepared_batch, loss)
+
+        self.assertEqual(nextlat.hidden_shape, (2, 3, 2))
+        self.assertEqual(nextlat.prediction_shape, (2, 1, 1, 1))
+        self.assertAlmostEqual(aux_loss.item(), 0.5)
+        self.assertEqual(aux_logs["nextlat_loss"], 0.5)
 
     def test_convert_text_embed_for_pipeline_generates_cu_seqlens(self):
         embeds = torch.randn(2, 3, 4)
@@ -428,8 +578,140 @@ class Kandinsky5VideoModelTests(unittest.TestCase):
         self.model.unwrap_model = lambda model=None: model or self.model
         self.model.model = make_tiny_kandinsky_transformer(visual_cond=False)
 
+    def _enable_xm(self, *, candidate_count=2, training_target="noise", selection_scope="sample", block_size=0):
+        self.model.xm_config = ExplorativeModelingConfig(
+            enabled=True,
+            candidate_count=candidate_count,
+            training_target=training_target,
+            selection_scope=selection_scope,
+            block_size=block_size,
+        )
+
     def test_model_supports_crepa_self_flow(self):
         self.assertTrue(self.model.supports_crepa_self_flow())
+
+    def test_validate_xm_support_rejects_unsupported_video_settings(self):
+        self._enable_xm(training_target="route")
+        with self.assertRaisesRegex(ValueError, "xm_training_target='noise'"):
+            self.model._validate_xm_support()
+
+        self._enable_xm(selection_scope="block")
+        with self.assertRaisesRegex(ValueError, "xm_selection_scope='sample'"):
+            self.model._validate_xm_support()
+
+        self._enable_xm(block_size=2)
+        with self.assertRaisesRegex(ValueError, "xm_block_size=0"):
+            self.model._validate_xm_support()
+
+    def test_prepare_xm_noise_candidates_expands_video_batch_candidate_major(self):
+        self._enable_xm(candidate_count=3)
+        latents = torch.arange(2 * 16 * 2 * 2 * 2, dtype=torch.float32).view(2, 16, 2, 2, 2)
+        candidate_noise = torch.full((6, 16, 2, 2, 2), 3.0)
+        encoder_hidden_states = torch.randn(2, 2, 8)
+        attention_masks = torch.tensor([[1, 1], [1, 0]], dtype=torch.int32)
+        text_embeds = torch.randn(2, 4)
+        conditioning_latents = torch.randn(2, 16, 2, 2)
+        r_timesteps = torch.tensor([0.1, 0.2], dtype=torch.float32)
+        prepared_batch = {
+            "latents": latents.clone(),
+            "noise": torch.zeros_like(latents),
+            "input_noise": torch.zeros_like(latents),
+            "noisy_latents": torch.zeros_like(latents),
+            "sigmas": torch.tensor([0.25, 0.75], dtype=torch.float32),
+            "timesteps": torch.tensor([250.0, 750.0], dtype=torch.float32),
+            "encoder_hidden_states": encoder_hidden_states,
+            "attention_masks": attention_masks,
+            "added_cond_kwargs": {"text_embeds": text_embeds},
+            "conditioning_latents": conditioning_latents,
+            "flowmap_r_timesteps": r_timesteps,
+            "is_i2v_data": True,
+            "metadata": ["a", "b"],
+        }
+
+        with patch("torch.randn_like", return_value=candidate_noise):
+            self.model._prepare_xm_noise_candidates(prepared_batch, family_name=self.model.NAME)
+
+        self.assertEqual(prepared_batch["xm_candidate_count"], 3)
+        self.assertEqual(prepared_batch["xm_original_batch_size"], 2)
+        self.assertTrue(torch.equal(prepared_batch["latents"], latents.repeat(3, 1, 1, 1, 1)))
+        self.assertTrue(torch.equal(prepared_batch["noise"], candidate_noise))
+        expected_sigmas = torch.tensor([0.25, 0.75, 0.25, 0.75, 0.25, 0.75]).view(6, 1, 1, 1, 1)
+        expected_noisy = (1.0 - expected_sigmas) * prepared_batch["latents"] + expected_sigmas * candidate_noise
+        self.assertTrue(torch.allclose(prepared_batch["noisy_latents"], expected_noisy))
+        self.assertTrue(torch.equal(prepared_batch["flow_target"], candidate_noise - prepared_batch["latents"]))
+        self.assertTrue(torch.equal(prepared_batch["encoder_hidden_states"], encoder_hidden_states.repeat(3, 1, 1)))
+        self.assertTrue(torch.equal(prepared_batch["attention_masks"], attention_masks.repeat(3, 1)))
+        self.assertTrue(torch.equal(prepared_batch["added_cond_kwargs"]["text_embeds"], text_embeds.repeat(3, 1)))
+        self.assertTrue(torch.equal(prepared_batch["conditioning_latents"], conditioning_latents.repeat(3, 1, 1, 1)))
+        self.assertTrue(torch.equal(prepared_batch["flowmap_r_timesteps"], r_timesteps.repeat(3)))
+        self.assertEqual(prepared_batch["metadata"], ["a", "b", "a", "b", "a", "b"])
+
+    def test_model_predict_returns_xm_candidate_count_for_i2v_video(self):
+        self._enable_xm(candidate_count=2)
+        transformer = MagicMock(config=SimpleNamespace(visual_cond=True))
+        transformer.return_value = SimpleNamespace(sample=torch.zeros(4, 2, 2, 2, 16))
+        self.model.model = transformer
+        latents = torch.randn(2, 16, 2, 2, 2)
+        candidate_noise = torch.randn(4, 16, 2, 2, 2)
+        prepared_batch = {
+            "latents": latents,
+            "noise": torch.zeros_like(latents),
+            "input_noise": torch.zeros_like(latents),
+            "noisy_latents": torch.zeros_like(latents),
+            "sigmas": torch.full((2, 1, 1, 1, 1), 0.25),
+            "timesteps": torch.tensor([250.0, 750.0], dtype=torch.float32),
+            "encoder_hidden_states": torch.randn(2, 2, 8),
+            "added_cond_kwargs": {"text_embeds": torch.randn(2, 4)},
+            "conditioning_latents": torch.randn(2, 16, 2, 2),
+            "is_i2v_data": True,
+        }
+
+        with patch("torch.randn_like", return_value=candidate_noise):
+            result = self.model.model_predict(prepared_batch)
+
+        hidden_states = transformer.call_args.kwargs["hidden_states"]
+        self.assertEqual(result["xm_candidate_count"], 2)
+        self.assertEqual(tuple(result["model_prediction"].shape), (4, 16, 2, 2, 2))
+        self.assertEqual(tuple(hidden_states.shape), (4, 2, 2, 2, 33))
+        self.assertTrue(torch.all(hidden_states[:, 0, :, :, 32:] == 1.0))
+        self.assertTrue(torch.all(hidden_states[:, 1:, :, :, 32:] == 0.0))
+
+    def test_xm_loss_selects_video_winners_and_hidden_buffer(self):
+        self._enable_xm(candidate_count=2)
+        self.model.config.loss_type = "l2"
+        self.model.config.huber_schedule = "constant"
+        self.model.config.huber_c = 0.1
+        latents = torch.zeros(4, 1, 1, 1, 1)
+        noise = torch.tensor([0.0, 1.0, 2.0, 3.0]).view(4, 1, 1, 1, 1)
+        target = noise - latents
+        prediction = torch.tensor([5.0, 1.0, 2.0, -4.0]).view(4, 1, 1, 1, 1)
+        hidden = torch.arange(4 * 3 * 2, dtype=torch.float32).view(4, 3, 2)
+        prepared_batch = {
+            "latents": latents,
+            "noise": noise,
+            "input_noise": noise,
+            "noisy_latents": noise,
+            "sigmas": torch.ones(4, 1, 1, 1, 1),
+            "timesteps": torch.tensor([100.0, 200.0, 100.0, 200.0]),
+            "metadata": ["a", "b", "a", "b"],
+        }
+        model_output = {
+            "model_prediction": prediction,
+            "hidden_states_buffer": {"layer_0": hidden.clone()},
+            "xm_candidate_count": 2,
+        }
+
+        loss, logs = self.model.loss_with_logs(prepared_batch, model_output)
+
+        self.assertAlmostEqual(loss.item(), 0.0)
+        self.assertTrue(torch.equal(model_output["xm_winner_indices"], torch.tensor([1, 0])))
+        self.assertTrue(torch.equal(model_output["model_prediction"], target[[2, 1]]))
+        self.assertTrue(torch.equal(prepared_batch["noise"], noise[[2, 1]]))
+        self.assertEqual(prepared_batch["metadata"], ["a", "b"])
+        self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"], hidden[[2, 1]]))
+        self.assertNotIn("xm_candidate_count", model_output)
+        self.assertEqual(logs["xm_candidate_0_wins"], 1.0)
+        self.assertEqual(logs["xm_candidate_1_wins"], 1.0)
 
     def test_convert_text_embed_for_pipeline_video_builds_cu_seqlens(self):
         embeds = torch.randn(1, 2, 6)

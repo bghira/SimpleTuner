@@ -57,6 +57,10 @@ class Lumina2(ImageModelFoundation):
     }
     MODEL_LICENSE = "apache-2.0"
 
+    def __init__(self, config, accelerator):
+        super().__init__(config, accelerator)
+        self._validate_xm_support()
+
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
             "name": "Gemma2",
@@ -173,6 +177,14 @@ class Lumina2(ImageModelFoundation):
         return prompt_embeds, prompt_attention_mask
 
     def model_predict(self, prepared_batch):
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch, family_name="Lumina2")
+            model_output = self._model_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch)
+
+    def _model_predict_single(self, prepared_batch):
         """
         Perform model prediction for Lumina2.
 

@@ -189,6 +189,8 @@ class HeartMuLaModel(PreTrainedModel):
         uncond_mask: torch.Tensor | None = None,
         continuous_segments: torch.Tensor | None = None,
         starts: list[int] | None = None,
+        route_candidate_ids: torch.Tensor | None = None,
+        route_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         embeds = self._embed_tokens(tokens, uncond_mask=uncond_mask)
         masked_embeds = embeds * tokens_mask.unsqueeze(-1).to(dtype=embeds.dtype)
@@ -205,7 +207,38 @@ class HeartMuLaModel(PreTrainedModel):
             batch_indices = torch.arange(hidden.shape[0], device=hidden.device)
             hidden[batch_indices, starts] = segments
 
+        if route_candidate_ids is not None:
+            route_embeddings = getattr(self, "xm_route_embeddings", None)
+            if route_embeddings is None:
+                raise ValueError("HeartMuLa XM route embeddings have not been configured.")
+            if route_candidate_ids.ndim != 1 or route_candidate_ids.shape[0] != hidden.shape[0]:
+                raise ValueError("HeartMuLa route_candidate_ids must have shape [batch] matching the expanded token batch.")
+            if route_mask is None:
+                raise ValueError("HeartMuLa XM route training requires route_mask to identify supervised positions.")
+            if route_mask.shape != hidden.shape[:2]:
+                raise ValueError(
+                    f"HeartMuLa route_mask must have shape {tuple(hidden.shape[:2])}, got {tuple(route_mask.shape)}."
+                )
+            route = route_embeddings(route_candidate_ids.to(device=hidden.device, dtype=torch.long)).to(dtype=hidden.dtype)
+            hidden = hidden + route[:, None, :] * route_mask.unsqueeze(-1).to(dtype=hidden.dtype)
+
         return hidden
+
+    def configure_xm_route_embeddings(self, candidate_count: int) -> None:
+        if candidate_count < 2:
+            raise ValueError("HeartMuLa XM route embeddings require at least two candidates.")
+        existing = getattr(self, "xm_route_embeddings", None)
+        if existing is not None:
+            if existing.num_embeddings != candidate_count:
+                raise ValueError("HeartMuLa XM route candidate count does not match the existing route embedding table.")
+            return
+        self.xm_route_embeddings = nn.Embedding(
+            candidate_count,
+            self.text_embeddings.embedding_dim,
+            device=self.text_embeddings.weight.device,
+            dtype=self.text_embeddings.weight.dtype,
+        )
+        nn.init.normal_(self.xm_route_embeddings.weight, mean=0.0, std=0.02)
 
     def forward_backbone(
         self,
@@ -215,6 +248,7 @@ class HeartMuLaModel(PreTrainedModel):
         position_ids: torch.Tensor | None = None,
         past_key_values=None,
         use_cache: bool = True,
+        output_hidden_states: bool = False,
     ):
         return self.backbone(
             inputs_embeds=inputs_embeds,
@@ -222,6 +256,7 @@ class HeartMuLaModel(PreTrainedModel):
             position_ids=position_ids,
             past_key_values=past_key_values,
             use_cache=use_cache,
+            output_hidden_states=output_hidden_states,
             return_dict=True,
         )
 
@@ -249,6 +284,9 @@ class HeartMuLaModel(PreTrainedModel):
         tokens_mask: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
         r_timestep: torch.Tensor | None = None,
+        route_candidate_ids: torch.Tensor | None = None,
+        route_mask: torch.Tensor | None = None,
+        hidden_states_buffer: dict | None = None,
         **kwargs,
     ) -> Dict[str, torch.Tensor]:
         if r_timestep is not None:
@@ -260,9 +298,21 @@ class HeartMuLaModel(PreTrainedModel):
             )
         if attention_mask is None:
             attention_mask = tokens_mask.any(dim=-1).to(dtype=torch.long)
-        hidden = self._build_backbone_inputs(tokens, tokens_mask)
-        outputs = self.forward_backbone(inputs_embeds=hidden, attention_mask=attention_mask, use_cache=False)
+        hidden = self._build_backbone_inputs(
+            tokens,
+            tokens_mask,
+            route_candidate_ids=route_candidate_ids,
+            route_mask=route_mask,
+        )
+        outputs = self.forward_backbone(
+            inputs_embeds=hidden,
+            attention_mask=attention_mask,
+            use_cache=False,
+            output_hidden_states=hidden_states_buffer is not None,
+        )
         hidden_states = outputs.last_hidden_state
+        if hidden_states_buffer is not None:
+            self._store_backbone_hidden_states(outputs, hidden_states_buffer)
 
         codebook0_logits, codebook_logits = self._predict_audio_tokens(hidden_states, tokens)
         return {
@@ -270,6 +320,21 @@ class HeartMuLaModel(PreTrainedModel):
             "codebook_logits": codebook_logits,
             "hidden_states": hidden_states,
         }
+
+    def _store_backbone_hidden_states(self, outputs, hidden_states_buffer: dict) -> None:
+        layer_hidden_states = getattr(outputs, "hidden_states", None)
+        if layer_hidden_states is None:
+            raise ValueError("HeartMuLa backbone did not return layer hidden states for NextLat capture.")
+        available_layers = len(layer_hidden_states) - 1
+        capture_layers = getattr(hidden_states_buffer, "capture_layers", None)
+        requested_layers = range(available_layers) if capture_layers is None else sorted(capture_layers)
+        for layer_idx in requested_layers:
+            if layer_idx < 0 or layer_idx >= available_layers:
+                raise ValueError(
+                    f"HeartMuLa hidden-state capture requested layer {layer_idx}, "
+                    f"but the backbone exposes layers 0 through {available_layers - 1}."
+                )
+            hidden_states_buffer[f"layer_{layer_idx}"] = layer_hidden_states[layer_idx + 1]
 
     def _predict_audio_tokens(self, hidden_states: torch.Tensor, tokens: torch.Tensor):
         if hidden_states.dim() != 3:

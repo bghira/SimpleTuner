@@ -3,7 +3,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 from simpletuner.helpers.models.registry import ModelRegistry
 
-from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ValidationRule, ValidationRuleType
+from ..types import ConfigField, FieldDependency, FieldType, ImportanceLevel, ParserType, ValidationRule, ValidationRuleType
 
 if TYPE_CHECKING:
     from ..registry import FieldRegistry
@@ -114,6 +114,222 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
             tooltip="Lower values reduce how often masked loss is applied, useful for datasets with sparse masks.",
             importance=ImportanceLevel.ADVANCED,
             order=5,
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="xm_enabled",
+            arg_name="--xm_enabled",
+            ui_label="Enable XM",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            help_text="Enable Explorative Modeling candidate selection for model families that implement XM support.",
+            tooltip="XM scores multiple training candidates and backpropagates the candidate that best explains each sample or block.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=5.1,
+            documentation="OPTIONS.md#--xm_enabled",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="xm_candidate_count",
+            arg_name="--xm_candidate_count",
+            ui_label="XM Candidates",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=1,
+            validation_rules=[
+                ValidationRule(
+                    ValidationRuleType.MIN,
+                    value=2,
+                    message="XM candidate count must be at least 2.",
+                    condition={"xm_enabled": True},
+                )
+            ],
+            dependencies=[FieldDependency(field="xm_enabled", operator="equals", value=True)],
+            help_text="Number of candidate noise samples or route embeddings to score for each supervised example.",
+            tooltip="Start with 2 or 4; cost scales roughly linearly until model-specific batching optimizations are added.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            parser_type=ParserType.INTEGER,
+            order=5.2,
+            documentation="OPTIONS.md#--xm_candidate_count",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="xm_training_target",
+            arg_name="--xm_training_target",
+            ui_label="XM Training Target",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="loss_functions",
+            default_value="noise",
+            choices=[
+                {"value": "noise", "label": "Noise / latent candidates"},
+                {"value": "route", "label": "AR route candidates"},
+            ],
+            dependencies=[FieldDependency(field="xm_enabled", operator="equals", value=True)],
+            help_text="Type of candidate explored by the model family: diffusion/flow noise latents or AR route latents.",
+            tooltip="Use noise for diffusion or flow models. Use route for RVQ/autoregressive planners that implement route embeddings.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=5.3,
+            documentation="OPTIONS.md#--xm_training_target",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="xm_selection_scope",
+            arg_name="--xm_selection_scope",
+            ui_label="XM Selection Scope",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="loss_functions",
+            default_value="sample",
+            choices=[
+                {"value": "sample", "label": "Whole sample"},
+                {"value": "block", "label": "Token/frame blocks"},
+            ],
+            dependencies=[FieldDependency(field="xm_enabled", operator="equals", value=True)],
+            help_text="Granularity used when selecting the best candidate.",
+            tooltip="Sample scope is safest for diffusion. Block scope is intended for AR/RVQ models with stable route spans.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=5.4,
+            documentation="OPTIONS.md#--xm_selection_scope",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="xm_block_size",
+            arg_name="--xm_block_size",
+            ui_label="XM Block Size",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0,
+            validation_rules=[
+                ValidationRule(ValidationRuleType.MIN, value=0, message="XM block size must be non-negative.")
+            ],
+            dependencies=[
+                FieldDependency(field="xm_enabled", operator="equals", value=True),
+                FieldDependency(field="xm_selection_scope", operator="equals", value="block"),
+            ],
+            help_text="Token or frame span length for block-level XM selection. 0 means the full supervised sequence.",
+            tooltip="Avoid 1 for music/RVQ route selection because it allows route switching every token.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            parser_type=ParserType.INTEGER,
+            order=5.5,
+            documentation="OPTIONS.md#--xm_block_size",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="nextlat_enabled",
+            arg_name="--nextlat_enabled",
+            ui_label="Enable NextLat",
+            field_type=FieldType.CHECKBOX,
+            tab="training",
+            section="loss_functions",
+            default_value=False,
+            help_text="Enable NextLat hidden-state prediction for transformer families that expose token hidden states.",
+            tooltip="Adds a small predictor that maps each captured hidden token to the next hidden token.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=5.6,
+            documentation="OPTIONS.md#--nextlat_enabled",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="nextlat_block_index",
+            arg_name="--nextlat_block_index",
+            ui_label="NextLat Block Index",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=-1,
+            dependencies=[FieldDependency(field="nextlat_enabled", operator="equals", value=True)],
+            help_text="Zero-based transformer block to capture for NextLat. -1 uses the model's final supported block.",
+            tooltip="Use a late block for AR planners and a middle-to-late block for diffusion/video transformers.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            parser_type=ParserType.INTEGER,
+            order=5.7,
+            documentation="OPTIONS.md#--nextlat_block_index",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="nextlat_weight",
+            arg_name="--nextlat_weight",
+            ui_label="NextLat Weight",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0.0,
+            validation_rules=[
+                ValidationRule(
+                    ValidationRuleType.MIN,
+                    value=0.0001,
+                    message="NextLat weight must be greater than zero when enabled.",
+                    condition={"nextlat_enabled": True},
+                )
+            ],
+            dependencies=[FieldDependency(field="nextlat_enabled", operator="equals", value=True)],
+            help_text="Multiplier for the NextLat hidden-state prediction loss.",
+            tooltip="Must be greater than zero when NextLat is enabled.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=5.8,
+            documentation="OPTIONS.md#--nextlat_weight",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="nextlat_state_loss",
+            arg_name="--nextlat_state_loss",
+            ui_label="NextLat State Loss",
+            field_type=FieldType.SELECT,
+            tab="training",
+            section="loss_functions",
+            default_value="smooth_l1",
+            choices=[
+                {"value": "smooth_l1", "label": "Smooth L1"},
+                {"value": "mse", "label": "MSE"},
+            ],
+            dependencies=[FieldDependency(field="nextlat_enabled", operator="equals", value=True)],
+            help_text="Distance function for next hidden-state prediction.",
+            tooltip="Smooth L1 is less sensitive to rare large hidden-state errors.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=5.9,
+            documentation="OPTIONS.md#--nextlat_state_loss",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="nextlat_kl_weight",
+            arg_name="--nextlat_kl_weight",
+            ui_label="NextLat KL Weight",
+            field_type=FieldType.NUMBER,
+            tab="training",
+            section="loss_functions",
+            default_value=0.0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0.0, message="KL weight must be non-negative.")],
+            dependencies=[FieldDependency(field="nextlat_enabled", operator="equals", value=True)],
+            help_text="Optional KL agreement weight when a model family provides a logits head for predicted hidden states.",
+            tooltip="Leave at 0 unless the model-family implementation supplies nextlat_logits_head.",
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=5.95,
+            documentation="OPTIONS.md#--nextlat_kl_weight",
         )
     )
 

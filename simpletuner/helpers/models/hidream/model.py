@@ -84,6 +84,10 @@ class HiDream(ImageModelFoundation):
     }
     MODEL_LICENSE = "other"
 
+    def __init__(self, config, accelerator):
+        super().__init__(config, accelerator)
+        self._validate_xm_support()
+
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
             "name": "CLIP-L/14",
@@ -520,6 +524,14 @@ class HiDream(ImageModelFoundation):
         )
 
     def model_predict(self, prepared_batch):
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch, family_name="HiDream")
+            model_output = self._model_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch)
+
+    def _model_predict_single(self, prepared_batch):
         """
         Process a batch through the transformer model.
 
@@ -626,6 +638,14 @@ class HiDream(ImageModelFoundation):
         }
 
     def controlnet_predict(self, prepared_batch: dict) -> dict:
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch, family_name="HiDream")
+            model_output = self._controlnet_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._controlnet_predict_single(prepared_batch)
+
+    def _controlnet_predict_single(self, prepared_batch: dict) -> dict:
         """
         Perform a forward pass with ControlNet for HiDream model.
 

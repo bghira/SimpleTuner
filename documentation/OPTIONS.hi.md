@@ -1791,6 +1791,70 @@ Internal Guidance शुरुआती diffusion-transformer block को final
 
 ---
 
+## Explorative Modeling (XM)
+
+XM कई training candidates score करता है और हर supervised sample या token block को सबसे अच्छी तरह explain करने वाले candidate पर ही backprop करता है। चुने गए target के लिए model family में support implement होना चाहिए।
+
+### `--xm_enabled`
+
+- **क्या**: XM candidate selection enable करता है।
+- **Default**: `false`
+
+### `--xm_candidate_count`
+
+- **क्या**: हर sample के लिए score किए जाने वाले noise या route latent candidates की संख्या।
+- **Default**: `1`; XM enabled होने पर कम से कम `2` होना चाहिए।
+
+### `--xm_training_target`
+
+- **क्या**: Candidate type। Diffusion/flow models के लिए `noise`, AR/RVQ planners के लिए `route` उपयोग करें।
+- **Choices**: `noise`, `route`
+- **Default**: `noise`
+
+### `--xm_selection_scope`
+
+- **क्या**: Winners को `sample` या token/frame `block` पर चुनता है।
+- **Default**: `sample`
+
+### `--xm_block_size`
+
+- **क्या**: Block-level XM के लिए token या frame span। `0` पूरी supervised sequence उपयोग करता है।
+- **Default**: `0`
+
+---
+
+## NextLat
+
+NextLat एक छोटा auxiliary predictor जोड़ता है जो हर captured hidden token को अगले hidden token पर map करता है। इसके लिए ऐसा transformer model family चाहिए जो SimpleTuner hidden-state buffer से hidden states expose करे।
+
+### `--nextlat_enabled`
+
+- **क्या**: NextLat hidden-state prediction enable करता है।
+- **Default**: `false`
+
+### `--nextlat_block_index`
+
+- **क्या**: Capture करने वाला zero-based transformer block।
+- **Default**: `-1`, यानी अंतिम supported block।
+
+### `--nextlat_weight`
+
+- **क्या**: NextLat auxiliary loss multiplier।
+- **Default**: `0.0`; NextLat enabled होने पर zero से अधिक होना चाहिए।
+
+### `--nextlat_state_loss`
+
+- **क्या**: अगले hidden state prediction के लिए distance function।
+- **Choices**: `smooth_l1`, `mse`
+- **Default**: `smooth_l1`
+
+### `--nextlat_kl_weight`
+
+- **क्या**: जब model family predicted hidden states के लिए logits head देती है तो optional KL agreement weight।
+- **Default**: `0.0`
+
+---
+
 ## 🔁 LayerSync (Hidden State Self-Alignment)
 
 LayerSync एक "student" layer को उसी transformer के एक मजबूत "teacher" layer से match करने के लिए प्रोत्साहित करता है, hidden tokens पर cosine similarity का उपयोग करके।

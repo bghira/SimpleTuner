@@ -18,6 +18,7 @@ from simpletuner.helpers.models.mageflow.vendor.models.modules import mage_layer
 from simpletuner.helpers.models.mageflow.vendor.models.modules.text_encoder import _resolve_hf_attn_impl
 from simpletuner.helpers.models.mageflow.vendor.pipeline import _build_pack_ctx, _lens_to_cu
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.training.explorative_modeling import ExplorativeModelingConfig
 
 
 def _tiny_transformer(depth=1, enable_time_sign_embed=False):
@@ -40,6 +41,32 @@ def _mageflow_class():
 
 
 class MageFlowModelTests(unittest.TestCase):
+    def _xm_shell(self, candidate_count: int = 2):
+        model_cls = _mageflow_class()
+        model = object.__new__(model_cls)
+        model.config = SimpleNamespace(
+            weight_dtype=torch.float32,
+            input_perturbation=0.0,
+            scheduled_sampling_reflexflow=False,
+            scheduled_sampling_max_step_offset=0,
+            twinflow_enabled=False,
+            model_flavour="base",
+            controlnet=False,
+            loss_type="l2",
+            huber_schedule="constant",
+            huber_c=0.1,
+        )
+        model.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        model.diff2flow_bridge = None
+        model.xm_config = ExplorativeModelingConfig(
+            enabled=True,
+            candidate_count=candidate_count,
+            training_target="noise",
+            selection_scope="sample",
+            block_size=0,
+        )
+        return model
+
     def test_model_metadata_contains_mageflow(self):
         metadata_path = Path(__file__).parent.parent / "simpletuner/helpers/models/model_metadata.json"
         metadata = json.loads(metadata_path.read_text())
@@ -533,6 +560,95 @@ class MageFlowModelTests(unittest.TestCase):
         self.assertTrue(wrapper.called)
         self.assertEqual(result["model_prediction"].shape, (1, 4, 2, 2))
         self.assertIsNone(result["hidden_states_buffer"])
+
+    def test_xm_noise_candidates_expand_candidate_major(self):
+        model = self._xm_shell(candidate_count=3)
+        batch = {
+            "latents": torch.ones(2, 1, 2, 2),
+            "noise": torch.zeros(2, 1, 2, 2),
+            "input_noise": torch.zeros(2, 1, 2, 2),
+            "noisy_latents": torch.zeros(2, 1, 2, 2),
+            "sigmas": torch.full((2, 1, 1, 1), 0.25),
+            "timesteps": torch.tensor([250.0, 750.0]),
+            "prompt_embeds": torch.randn(2, 4, 8),
+            "attention_masks": torch.ones(2, 4, dtype=torch.bool),
+        }
+
+        model._prepare_xm_noise_candidates(batch, family_name=model.NAME)
+
+        self.assertEqual(tuple(batch["latents"].shape), (6, 1, 2, 2))
+        self.assertTrue(torch.equal(batch["timesteps"], torch.tensor([250.0, 750.0, 250.0, 750.0, 250.0, 750.0])))
+        expected_noisy = 0.75 * batch["latents"] + 0.25 * batch["noise"]
+        self.assertTrue(torch.allclose(batch["noisy_latents"], expected_noisy))
+        self.assertEqual(batch["xm_candidate_count"], 3)
+
+    def test_xm_loss_selects_winners_and_trims_hidden_states(self):
+        model = self._xm_shell(candidate_count=2)
+        latents = torch.zeros(4, 1, 1, 1)
+        noise = torch.tensor([0.0, 1.0, 2.0, 3.0]).view(4, 1, 1, 1)
+        target = noise - latents
+        prediction = torch.tensor([5.0, 1.0, 2.0, -4.0]).view(4, 1, 1, 1)
+        prepared_batch = {
+            "latents": latents,
+            "noise": noise,
+            "noisy_latents": noise,
+            "sigmas": torch.ones(4, 1, 1, 1),
+            "timesteps": torch.tensor([100.0, 200.0, 100.0, 200.0]),
+        }
+        hidden = torch.arange(4 * 3 * 2, dtype=torch.float32).reshape(4, 3, 2)
+        model_output = {
+            "model_prediction": prediction,
+            "hidden_states_buffer": {"layer_0": hidden.clone()},
+            "xm_candidate_count": 2,
+        }
+
+        loss, logs = model.loss_with_logs(prepared_batch, model_output)
+
+        self.assertAlmostEqual(loss.item(), 0.0)
+        self.assertTrue(torch.equal(model_output["xm_winner_indices"], torch.tensor([1, 0])))
+        self.assertTrue(torch.equal(model_output["model_prediction"], target[[2, 1]]))
+        self.assertTrue(torch.equal(prepared_batch["noise"], noise[[2, 1]]))
+        self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"], hidden[[2, 1]]))
+        self.assertEqual(logs["xm_candidate_0_wins"], 1.0)
+        self.assertEqual(logs["xm_candidate_1_wins"], 1.0)
+
+    def test_xm_model_predict_returns_candidate_count(self):
+        model = self._xm_shell(candidate_count=2)
+
+        class WrappedModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.img_shape = None
+                self.txt_shape = None
+
+            def forward(self, img, txt, **kwargs):
+                del kwargs
+                self.img_shape = tuple(img.shape)
+                self.txt_shape = tuple(txt.shape)
+                return torch.zeros_like(img)
+
+        wrapper = WrappedModel()
+        model.model = wrapper
+        model.crepa_regularizer = None
+        model.layersync_regularizer = None
+        model._new_hidden_state_buffer = lambda: None
+        model.get_trained_component = lambda base_model=True, unwrap_model=False: wrapper
+        batch = {
+            "latents": torch.zeros(2, 4, 2, 2),
+            "noise": torch.zeros(2, 4, 2, 2),
+            "input_noise": torch.zeros(2, 4, 2, 2),
+            "noisy_latents": torch.zeros(2, 4, 2, 2),
+            "sigmas": torch.tensor([0.25, 0.75]),
+            "timesteps": torch.tensor([250.0, 750.0]),
+            "prompt_embeds": torch.randn(2, 3, 8),
+            "attention_masks": torch.ones(2, 3, dtype=torch.bool),
+        }
+
+        result = model.model_predict(batch)
+
+        self.assertEqual(result["xm_candidate_count"], 2)
+        self.assertEqual(wrapper.img_shape, (1, 16, 4))
+        self.assertEqual(wrapper.txt_shape, (1, 12, 8))
 
     def test_pack_latents_tracks_rectangular_target_shape(self):
         model_cls = _mageflow_class()

@@ -1789,6 +1789,70 @@ Internal Guidance supervisiona um bloco inicial do diffusion transformer com o m
 
 ---
 
+## Explorative Modeling (XM)
+
+XM avalia varios candidatos de treino e retropropaga apenas o candidato que melhor explica cada amostra supervisionada ou bloco de tokens. Cada familia de modelo precisa implementar suporte para o alvo selecionado.
+
+### `--xm_enabled`
+
+- **O que**: Habilita selecao de candidatos XM.
+- **Padrao**: `false`
+
+### `--xm_candidate_count`
+
+- **O que**: Numero de ruidos ou rotas latentes candidatas por amostra.
+- **Padrao**: `1`; deve ser pelo menos `2` quando XM esta habilitado.
+
+### `--xm_training_target`
+
+- **O que**: Tipo de candidato. Use `noise` para diffusion/flow e `route` para planners AR/RVQ.
+- **Escolhas**: `noise`, `route`
+- **Padrao**: `noise`
+
+### `--xm_selection_scope`
+
+- **O que**: Seleciona vencedores por `sample` ou por `block` de tokens/frames.
+- **Padrao**: `sample`
+
+### `--xm_block_size`
+
+- **O que**: Tamanho do trecho de tokens ou frames para XM por blocos. `0` usa toda a sequencia supervisionada.
+- **Padrao**: `0`
+
+---
+
+## NextLat
+
+NextLat adiciona um pequeno preditor auxiliar que mapeia cada token oculto capturado para o proximo token oculto. Requer uma familia transformer que exponha hidden states pelo buffer do SimpleTuner.
+
+### `--nextlat_enabled`
+
+- **O que**: Habilita predicao de hidden states NextLat.
+- **Padrao**: `false`
+
+### `--nextlat_block_index`
+
+- **O que**: Bloco transformer zero-based a capturar.
+- **Padrao**: `-1`, que usa o ultimo bloco compativel.
+
+### `--nextlat_weight`
+
+- **O que**: Multiplicador da loss auxiliar NextLat.
+- **Padrao**: `0.0`; deve ser maior que zero quando NextLat esta habilitado.
+
+### `--nextlat_state_loss`
+
+- **O que**: Distancia para prever o proximo hidden state.
+- **Escolhas**: `smooth_l1`, `mse`
+- **Padrao**: `smooth_l1`
+
+### `--nextlat_kl_weight`
+
+- **O que**: Peso KL opcional quando a familia de modelo fornece uma cabeca de logits para hidden states previstos.
+- **Padrao**: `0.0`
+
+---
+
 ## 🔁 LayerSync (Hidden State Self-Alignment)
 
 LayerSync incentiva uma camada "estudante" a combinar com uma camada "professora" mais forte dentro do mesmo transformer, usando similaridade de cosseno sobre tokens ocultos.

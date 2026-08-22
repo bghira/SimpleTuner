@@ -55,6 +55,7 @@ from simpletuner.helpers.models.minimaxh3.sparse_attention import initialize_min
 from simpletuner.helpers.models.minimaxh3.transformer import MiniMaxH3Transformer3DModel
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
+from simpletuner.helpers.training.explorative_modeling import reduce_loss_to_samples, reshape_candidate_batch
 from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
 from simpletuner.helpers.training.lora_format import (
     PEFTLoRAFormat,
@@ -193,6 +194,7 @@ class MiniMaxH3(VideoModelFoundation):
         self._warned_missing_audio = False
         self._warned_audio_disabled = False
         self._warned_image_audio_disabled = False
+        self._validate_xm_support()
 
     def post_model_load_setup(self):
         super().post_model_load_setup()
@@ -1562,6 +1564,60 @@ class MiniMaxH3(VideoModelFoundation):
             audio_rows.shape[-1],
         ).permute(0, 1, 3, 2)
 
+    @staticmethod
+    def _h3_xm_batch_major_lists(values: dict, batch_size: int) -> dict:
+        return {key: list(value) for key, value in values.items() if isinstance(value, list) and len(value) == batch_size}
+
+    def _prepare_xm_noise_candidates(self, prepared_batch: dict) -> dict:
+        self._validate_xm_support()
+        if prepared_batch.get("audio_target") is not None:
+            raise ValueError(f"{self.NAME} XM noise-candidate training cannot be used with an explicit audio_target.")
+        if isinstance(prepared_batch.get("conditioning_latents"), list):
+            raise ValueError(f"{self.NAME} XM noise-candidate training requires conditioning_latents to be one tensor.")
+
+        latents = prepared_batch.get("latents")
+        batch_size = latents.shape[0] if torch.is_tensor(latents) and latents.ndim > 0 else None
+        batch_major_lists = self._h3_xm_batch_major_lists(prepared_batch, batch_size) if batch_size is not None else {}
+        shared_text_token_tags = prepared_batch.get("text_token_tags")
+        if not (torch.is_tensor(shared_text_token_tags) and shared_text_token_tags.ndim == 1):
+            shared_text_token_tags = None
+        text_encoder_output = prepared_batch.get("text_encoder_output")
+        shared_output_text_token_tags = None
+        if isinstance(text_encoder_output, dict):
+            output_tags = text_encoder_output.get("text_token_tags")
+            if torch.is_tensor(output_tags) and output_tags.ndim == 1:
+                shared_output_text_token_tags = output_tags
+
+        result = super()._prepare_xm_noise_candidates(prepared_batch, family_name=self.NAME)
+
+        candidate_count = int(prepared_batch.get("xm_candidate_count", self.xm_config.candidate_count))
+        for key, value in batch_major_lists.items():
+            prepared_batch[key] = value * candidate_count
+        if shared_text_token_tags is not None:
+            prepared_batch["text_token_tags"] = shared_text_token_tags
+        if shared_output_text_token_tags is not None and isinstance(prepared_batch.get("text_encoder_output"), dict):
+            prepared_batch["text_encoder_output"]["text_token_tags"] = shared_output_text_token_tags
+
+        audio_latents = prepared_batch.get("audio_latents")
+        if torch.is_tensor(audio_latents):
+            audio_noise = torch.randn_like(audio_latents)
+            interpolation_sigmas = prepared_batch.get("audio_mixflow_interpolation_sigmas")
+            if interpolation_sigmas is None:
+                interpolation_sigmas = prepared_batch.get("audio_sigmas")
+            if not torch.is_tensor(interpolation_sigmas):
+                raise ValueError(f"{self.NAME} XM noise-candidate training requires tensor audio sigmas.")
+            audio_sigma_grid = self._expand_sigma_values(interpolation_sigmas, audio_latents)
+            prepared_batch["audio_noise"] = audio_noise
+            prepared_batch["audio_input_noise"] = audio_noise
+            prepared_batch["audio_noisy_latents"] = (
+                (1.0 - audio_sigma_grid) * audio_latents + audio_sigma_grid * audio_noise
+            ).to(device=audio_latents.device, dtype=prepared_batch["noisy_latents"].dtype)
+            prepared_batch["audio_target"] = (audio_latents - audio_noise).to(
+                device=audio_latents.device,
+                dtype=audio_latents.dtype,
+            )
+        return result
+
     def _scalar_timestep(self, value: torch.Tensor, name: str) -> float:
         if not torch.is_tensor(value):
             return float(value)
@@ -1574,6 +1630,14 @@ class MiniMaxH3(VideoModelFoundation):
         return float(flat[0].item())
 
     def model_predict(self, prepared_batch):
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch)
+            model_output = self._model_predict_for_prepared_batch(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_for_prepared_batch(prepared_batch)
+
+    def _model_predict_for_prepared_batch(self, prepared_batch):
         noisy_latents = prepared_batch["noisy_latents"].to(self.accelerator.device, dtype=self.config.weight_dtype)
         audio_noisy = prepared_batch.get("audio_noisy_latents")
         h3_target_mode = prepared_batch.get(
@@ -1799,6 +1863,15 @@ class MiniMaxH3(VideoModelFoundation):
         return self.get_flow_matching_target(prepared_batch, prefer_explicit_target=False)
 
     def loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        candidate_count = model_output.get("xm_candidate_count") if isinstance(model_output, dict) else None
+        if candidate_count:
+            loss, _ = self._xm_noise_loss_with_logs(
+                prepared_batch,
+                model_output,
+                candidate_count=int(candidate_count),
+                apply_conditioning_mask=apply_conditioning_mask,
+            )
+            return loss
         total_loss, _, _, _ = self._compute_av_loss(
             prepared_batch=prepared_batch,
             model_output=model_output,
@@ -1807,6 +1880,14 @@ class MiniMaxH3(VideoModelFoundation):
         return total_loss
 
     def loss_with_logs(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        candidate_count = model_output.get("xm_candidate_count") if isinstance(model_output, dict) else None
+        if candidate_count:
+            return self._xm_noise_loss_with_logs(
+                prepared_batch,
+                model_output,
+                candidate_count=int(candidate_count),
+                apply_conditioning_mask=apply_conditioning_mask,
+            )
         total_loss, video_loss, audio_loss, audio_weight = self._compute_av_loss(
             prepared_batch=prepared_batch,
             model_output=model_output,
@@ -1818,6 +1899,96 @@ class MiniMaxH3(VideoModelFoundation):
             if audio_weight != 1.0:
                 logs["audio_loss_weighted"] = (audio_loss * audio_weight).detach().item()
         return total_loss, logs
+
+    def _xm_audio_sample_loss_tensor(self, prepared_batch: dict, model_output: dict) -> torch.Tensor | None:
+        audio_pred = model_output.get("audio_prediction")
+        if audio_pred is None:
+            return None
+
+        audio_target = prepared_batch.get("audio_target")
+        if audio_target is not None:
+            if not torch.is_tensor(audio_target):
+                raise ValueError(f"MiniMax-H3 audio_target must be a tensor, got {type(audio_target)}.")
+            audio_target = audio_target.to(device=audio_pred.device, dtype=audio_pred.dtype)
+            if audio_target.shape != audio_pred.shape:
+                raise ValueError(
+                    f"MiniMax-H3 audio_target shape {tuple(audio_target.shape)} does not match "
+                    f"audio_prediction shape {tuple(audio_pred.shape)}."
+                )
+            audio_target = audio_target.detach()
+        else:
+            audio_latents = prepared_batch.get("audio_latents")
+            audio_noise = prepared_batch.get("audio_noise")
+            if audio_latents is None or audio_noise is None:
+                return None
+            audio_target = (audio_latents - audio_noise).to(device=audio_pred.device, dtype=audio_pred.dtype)
+
+        audio_loss = (audio_pred.float() - audio_target.float()) ** 2
+        audio_mask = prepared_batch.get("audio_latent_mask")
+        if audio_mask is not None:
+            mask = audio_mask.to(device=audio_loss.device, dtype=audio_loss.dtype).view(
+                audio_mask.shape[0],
+                *([1] * (audio_loss.ndim - 1)),
+            )
+            audio_loss = audio_loss * (mask > 0).to(dtype=audio_loss.dtype)
+        return reduce_loss_to_samples(audio_loss)
+
+    def _xm_noise_loss_with_logs(
+        self,
+        prepared_batch: dict,
+        model_output: dict,
+        *,
+        candidate_count: int,
+        apply_conditioning_mask: bool,
+    ):
+        video_loss_tensor = self._xm_diffusion_loss_tensor(
+            prepared_batch,
+            model_output,
+            apply_conditioning_mask=apply_conditioning_mask,
+            family_name=self.NAME,
+        )
+        video_sample_losses = reduce_loss_to_samples(video_loss_tensor)
+        video_mask = prepared_batch.get("video_latent_mask")
+        if torch.is_tensor(video_mask):
+            video_mask = video_mask.to(device=video_sample_losses.device)
+            video_sample_losses = torch.where(
+                video_mask.reshape(video_mask.shape[0], -1)[:, 0] > 0, video_sample_losses, 0.0
+            )
+
+        audio_sample_losses = self._xm_audio_sample_loss_tensor(prepared_batch, model_output)
+        audio_weight = float(getattr(self.config, "audio_loss_weight", 1.0) or 1.0)
+        sample_losses = video_sample_losses
+        if audio_sample_losses is not None and audio_weight != 0.0:
+            sample_losses = sample_losses + audio_sample_losses.to(device=sample_losses.device) * audio_weight
+
+        selected_loss, winner_indices, candidate_losses = self._select_xm_winning_sample_losses(
+            sample_losses,
+            prepared_batch,
+            model_output,
+            candidate_count=candidate_count,
+            family_name=self.NAME,
+        )
+
+        video_candidate_losses = reshape_candidate_batch(video_sample_losses, candidate_count)
+        batch_positions = torch.arange(winner_indices.shape[0], device=video_candidate_losses.device)
+        selected_video_loss = video_candidate_losses[
+            winner_indices.to(video_candidate_losses.device), batch_positions
+        ].mean()
+        selected_audio_loss = None
+        if audio_sample_losses is not None:
+            audio_candidate_losses = reshape_candidate_batch(audio_sample_losses, candidate_count)
+            selected_audio_loss = audio_candidate_losses[
+                winner_indices.to(audio_candidate_losses.device),
+                torch.arange(winner_indices.shape[0], device=audio_candidate_losses.device),
+            ].mean()
+
+        logs = self._xm_candidate_logs(selected_loss, candidate_losses, winner_indices, candidate_count)
+        logs["video_loss"] = selected_video_loss.detach().item()
+        if selected_audio_loss is not None:
+            logs["audio_loss"] = selected_audio_loss.detach().item()
+            if audio_weight != 1.0:
+                logs["audio_loss_weighted"] = (selected_audio_loss * audio_weight).detach().item()
+        return selected_loss, logs
 
     def _compute_av_loss(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
         video_mask = prepared_batch.get("video_latent_mask")

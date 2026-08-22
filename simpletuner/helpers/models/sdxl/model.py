@@ -248,6 +248,14 @@ class SDXL(ImageModelFoundation):
         self.controlnet.to(self.accelerator.device, self.config.weight_dtype)
 
     def controlnet_predict(self, prepared_batch: dict) -> dict:
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch)
+            model_output = self._controlnet_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._controlnet_predict_single(prepared_batch)
+
+    def _controlnet_predict_single(self, prepared_batch: dict) -> dict:
         # ControlNet conditioning.
         controlnet_image = prepared_batch["conditioning_pixel_values"].to(
             device=self.accelerator.device, dtype=self.config.weight_dtype
@@ -288,6 +296,14 @@ class SDXL(ImageModelFoundation):
         }
 
     def model_predict(self, prepared_batch):
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch)
+            model_output = self._model_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch)
+
+    def _model_predict_single(self, prepared_batch):
         logger.debug(
             "Input shapes:"
             f"\n{prepared_batch['noisy_latents'].shape}"
@@ -355,6 +371,30 @@ class SDXL(ImageModelFoundation):
             "hidden_states_buffer": None,
             "urepa_hidden_states": urepa_hidden,
         }
+
+    def _repeat_xm_candidate_value(self, value, candidate_count: int, batch_size: int):
+        if isinstance(value, list) and len(value) == batch_size:
+            return list(value) * candidate_count
+        if isinstance(value, tuple) and len(value) == batch_size:
+            return tuple(list(value) * candidate_count)
+        return super()._repeat_xm_candidate_value(value, candidate_count, batch_size)
+
+    @staticmethod
+    def _select_xm_batch_major_sequence(value, winner_indices: torch.Tensor, candidate_count: int):
+        batch_size = winner_indices.shape[0]
+        if len(value) != batch_size * candidate_count:
+            return value
+        winners = winner_indices.detach().to(device="cpu", dtype=torch.long).tolist()
+        selected = [value[int(winner) * batch_size + sample_idx] for sample_idx, winner in enumerate(winners)]
+        return tuple(selected) if isinstance(value, tuple) else selected
+
+    @staticmethod
+    def _xm_batch_major_sequences(values: dict, batch_size: int) -> dict:
+        return {key: value for key, value in values.items() if isinstance(value, (list, tuple)) and len(value) == batch_size}
+
+    def _prepare_xm_noise_candidates(self, prepared_batch: dict) -> dict:
+        self._validate_xm_support()
+        return super()._prepare_xm_noise_candidates(prepared_batch, family_name=self.NAME)
 
     def post_model_load_setup(self):
         """
@@ -590,6 +630,7 @@ class SDXL(ImageModelFoundation):
         """
         Checks self.config values against important issues. Optionally implemented in child class.
         """
+        self._validate_xm_support()
         if self.config.unet_attention_slice:
             if torch.backends.mps.is_available():
                 logger.warning(

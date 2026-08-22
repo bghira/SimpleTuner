@@ -23,6 +23,7 @@ from simpletuner.helpers.models.cosmos3.reasoner import (
     Cosmos3ReasonerConfig,
 )
 from simpletuner.helpers.models.cosmos3.transformer import Cosmos3OmniTransformer, Cosmos3ReasonerMemoryState
+from simpletuner.helpers.training.explorative_modeling import ExplorativeModelingConfig
 
 
 class TestableCosmos3Image(Cosmos3Image):
@@ -187,6 +188,22 @@ class Cosmos3ModelTests(unittest.TestCase):
         )
         return pipeline, tokenizer
 
+    def _enable_xm(
+        self,
+        model,
+        candidate_count: int = 2,
+        training_target: str = "noise",
+        selection_scope: str = "sample",
+        block_size: int = 0,
+    ):
+        model.xm_config = ExplorativeModelingConfig(
+            enabled=True,
+            candidate_count=candidate_count,
+            training_target=training_target,
+            selection_scope=selection_scope,
+            block_size=block_size,
+        )
+
     def test_model_attributes(self):
         self.assertEqual(Cosmos3Image.DEFAULT_MODEL_FLAVOUR, "nano")
         self.assertEqual(
@@ -213,6 +230,153 @@ class Cosmos3ModelTests(unittest.TestCase):
         self.assertEqual(Cosmos3OmniPipeline.__module__, "simpletuner.helpers.models.cosmos3.pipeline")
         self.assertEqual(Cosmos3AVAEAudioTokenizer.__module__, "simpletuner.helpers.models.cosmos3.audio_tokenizer")
         self.assertEqual(Cosmos3Image.MODEL_LICENSE, "openmdw-1.1")
+
+    def test_xm_rejects_route_block_and_block_size(self):
+        model = TestableCosmos3Image()
+        self._enable_xm(model, training_target="route")
+        with self.assertRaisesRegex(ValueError, "xm_training_target='noise'"):
+            model._xm_noise_candidates_enabled()
+
+        self._enable_xm(model, selection_scope="block")
+        with self.assertRaisesRegex(ValueError, "xm_selection_scope='sample'"):
+            model._xm_noise_candidates_enabled()
+
+        self._enable_xm(model, block_size=2)
+        with self.assertRaisesRegex(ValueError, "xm_block_size=0"):
+            model._xm_noise_candidates_enabled()
+
+    def test_xm_noise_candidates_expand_candidate_major_with_cosmos3_conditioning(self):
+        model = TestableCosmos3Image()
+        self._enable_xm(model, candidate_count=3)
+        latents = torch.arange(8, dtype=torch.float32).reshape(2, 1, 2, 2, 1)
+        audio_latents = torch.arange(12, dtype=torch.float32).reshape(2, 2, 3)
+        vision_noise = torch.arange(24, dtype=torch.float32).reshape(6, 1, 2, 2, 1)
+        audio_noise = torch.arange(36, dtype=torch.float32).reshape(6, 2, 3)
+        reasoner_cache = [{"cache_signature": "sample-0"}, {"cache_signature": "sample-1"}]
+        batch = {
+            "latents": latents.clone(),
+            "noise": torch.zeros_like(latents),
+            "input_noise": torch.zeros_like(latents),
+            "noisy_latents": latents.clone(),
+            "sigmas": torch.tensor([0.25, 0.75], dtype=torch.float32),
+            "timesteps": torch.tensor([250.0, 750.0], dtype=torch.float32),
+            "prompts": ["prompt 0", "prompt 1"],
+            "text_encoder_output": {"cosmos3_reasoner_cache": reasoner_cache},
+            "conditioning_latents": latents.clone(),
+            "vision_loss_mask": torch.ones(2, 1, 2, 2, 1),
+            "audio_latents": audio_latents.clone(),
+            "audio_noise": torch.zeros_like(audio_latents),
+            "audio_noisy_latents": audio_latents.clone(),
+            "audio_timesteps": torch.tensor([250.0, 750.0], dtype=torch.float32),
+            "audio_latent_mask": torch.ones(2),
+            "latent_metadata": [{"id": 0}, {"id": 1}],
+        }
+
+        with mock.patch("torch.randn_like", side_effect=[vision_noise, audio_noise]):
+            model._prepare_xm_noise_candidates(batch)
+
+        self.assertEqual(tuple(batch["latents"].shape), (6, 1, 2, 2, 1))
+        self.assertTrue(torch.equal(batch["latents"][:2], latents))
+        self.assertTrue(torch.equal(batch["latents"][2:4], latents))
+        self.assertEqual(batch["prompts"], ["prompt 0", "prompt 1", "prompt 0", "prompt 1", "prompt 0", "prompt 1"])
+        self.assertEqual(
+            [entry["cache_signature"] for entry in batch["text_encoder_output"]["cosmos3_reasoner_cache"]],
+            ["sample-0", "sample-1", "sample-0", "sample-1", "sample-0", "sample-1"],
+        )
+        timestep_grid = batch["sigmas"].view(6, 1, 1, 1, 1)
+        expected_noisy = (1.0 - timestep_grid) * batch["noise"] + timestep_grid * batch["latents"]
+        self.assertTrue(torch.allclose(batch["noisy_latents"], expected_noisy))
+        audio_timestep_grid = batch["sigmas"].view(6, 1, 1)
+        expected_audio_noisy = (1.0 - audio_timestep_grid) * batch["audio_noise"] + audio_timestep_grid * batch[
+            "audio_latents"
+        ]
+        self.assertTrue(torch.allclose(batch["audio_noisy_latents"], expected_audio_noisy))
+        self.assertTrue(torch.equal(batch["flow_target"], batch["noise"] - batch["latents"]))
+        self.assertEqual(batch["latent_metadata"], [{"id": 0}, {"id": 1}, {"id": 0}, {"id": 1}, {"id": 0}, {"id": 1}])
+        self.assertEqual(batch["xm_candidate_count"], 3)
+
+    def test_xm_noise_candidates_preserve_super_i2v_conditioned_frame(self):
+        model = TestableCosmos3Image()
+        model.config.model_flavour = "super-i2v"
+        self._enable_xm(model, candidate_count=2)
+        latents = torch.zeros(2, 1, 2, 1, 1)
+        conditioning_latents = torch.full_like(latents, -3.0)
+        batch = {
+            "latents": latents,
+            "noise": torch.zeros_like(latents),
+            "input_noise": torch.zeros_like(latents),
+            "noisy_latents": latents.clone(),
+            "sigmas": torch.tensor([0.25, 0.75], dtype=torch.float32),
+            "timesteps": torch.tensor([250.0, 750.0], dtype=torch.float32),
+            "prompts": ["prompt 0", "prompt 1"],
+            "conditioning_latents": conditioning_latents,
+            "vision_loss_mask": torch.ones(2, 1, 2, 1, 1),
+        }
+        candidate_noise = torch.ones(4, 1, 2, 1, 1)
+
+        with mock.patch("torch.randn_like", return_value=candidate_noise):
+            model._prepare_xm_noise_candidates(batch)
+
+        self.assertTrue(torch.equal(batch["noisy_latents"][:, :, 0], batch["conditioning_latents"][:, :, 0]))
+        self.assertTrue(torch.equal(batch["conditioning_latents"][:2], conditioning_latents))
+        self.assertTrue(torch.equal(batch["conditioning_latents"][2:], conditioning_latents))
+
+    def test_xm_loss_selects_winners_and_trims_cosmos3_lists(self):
+        model = TestableCosmos3Image()
+        self._enable_xm(model, candidate_count=2)
+        latents = torch.zeros(4, 1, 1, 1, 1)
+        noise = torch.tensor([0.0, 1.0, 2.0, 3.0], dtype=torch.float32).view(4, 1, 1, 1, 1)
+        prediction = torch.tensor([5.0, 1.0, 2.0, -4.0], dtype=torch.float32).view(4, 1, 1, 1, 1)
+        audio_latents = torch.zeros(4, 1, 1)
+        audio_noise = torch.zeros(4, 1, 1)
+        hidden = torch.arange(4 * 3 * 2, dtype=torch.float32).reshape(4, 3, 2)
+        prepared_batch = {
+            "latents": latents,
+            "noise": noise,
+            "noisy_latents": noise,
+            "sigmas": torch.ones(4),
+            "timesteps": torch.ones(4),
+            "prompts": ["s0-c0", "s1-c0", "s0-c1", "s1-c1"],
+            "text_encoder_output": {
+                "cosmos3_reasoner_cache": [
+                    {"cache_signature": "s0-c0"},
+                    {"cache_signature": "s1-c0"},
+                    {"cache_signature": "s0-c1"},
+                    {"cache_signature": "s1-c1"},
+                ]
+            },
+            "latent_metadata": [{"id": "s0-c0"}, {"id": "s1-c0"}, {"id": "s0-c1"}, {"id": "s1-c1"}],
+            "audio_latents": audio_latents,
+            "audio_noise": audio_noise,
+            "audio_noisy_latents": audio_noise,
+            "audio_latent_mask": torch.ones(4),
+            "xm_candidate_count": 2,
+            "xm_original_batch_size": 2,
+        }
+        model_output = {
+            "model_prediction": prediction,
+            "audio_model_prediction": torch.zeros_like(audio_noise),
+            "hidden_states_buffer": {"layer_0": hidden.clone()},
+            "xm_candidate_count": 2,
+        }
+
+        loss, logs = model.loss_with_logs(prepared_batch, model_output)
+
+        self.assertAlmostEqual(loss.item(), 0.0)
+        self.assertTrue(torch.equal(model_output["xm_winner_indices"], torch.tensor([1, 0])))
+        self.assertTrue(torch.equal(model_output["model_prediction"], prediction[[2, 1]]))
+        self.assertTrue(torch.equal(model_output["audio_model_prediction"], audio_noise[[2, 1]]))
+        self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"], hidden[[2, 1]]))
+        self.assertEqual(prepared_batch["prompts"], ["s0-c1", "s1-c0"])
+        self.assertEqual(
+            [entry["cache_signature"] for entry in prepared_batch["text_encoder_output"]["cosmos3_reasoner_cache"]],
+            ["s0-c1", "s1-c0"],
+        )
+        self.assertEqual(prepared_batch["latent_metadata"], [{"id": "s0-c1"}, {"id": "s1-c0"}])
+        self.assertNotIn("xm_candidate_count", model_output)
+        self.assertNotIn("xm_candidate_count", prepared_batch)
+        self.assertEqual(logs["xm_candidate_0_wins"], 1.0)
+        self.assertEqual(logs["xm_candidate_1_wins"], 1.0)
 
     def test_uses_text_embedding_cache_for_reasoner_payloads(self):
         model = TestableCosmos3Image()

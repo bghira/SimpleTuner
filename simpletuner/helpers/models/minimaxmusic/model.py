@@ -15,6 +15,7 @@ from diffusers import FlowMatchEulerDiscreteScheduler
 from diffusers.guiders import ClassifierFreeGuidance
 from huggingface_hub import hf_hub_download
 from huggingface_hub.utils import EntryNotFoundError, HFValidationError, LocalEntryNotFoundError, RepositoryNotFoundError
+from torch import nn
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoTokenizer, Qwen3ForCausalLM
 
@@ -58,6 +59,12 @@ from simpletuner.helpers.models.minimaxmusic.transformer import MiniMaxMusic3Tra
 from simpletuner.helpers.models.minimaxmusic.vocoder import MiniMaxMusic3DAV, MiniMaxMusic3Vocoder
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
+from simpletuner.helpers.training.explorative_modeling import (
+    blockwise_cross_entropy,
+    route_usage_histogram,
+    select_min_candidate_loss,
+    select_winning_candidates,
+)
 from simpletuner.helpers.training.lora_format import (
     PEFTLoRAFormat,
     collect_lora_ranks,
@@ -113,6 +120,7 @@ class MiniMaxMusic(AudioModelFoundation):
     ]
     DEFAULT_LYCORIS_TARGET = ["MiniMaxMusic3Attention", "MiniMaxMusic3TransformerBlock"]
     _train_language_model = False
+    XM_ROUTE_EMBEDDING_MODULE_NAME = "xm_route_embeddings"
 
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
@@ -344,6 +352,8 @@ class MiniMaxMusic(AudioModelFoundation):
 
     def post_model_load_setup(self):
         super().post_model_load_setup()
+        if self._lm_xm_route_enabled():
+            self._ensure_lm_xm_route_embeddings()
         if self._configured_anyflow():
             transformer = self.unwrap_model(self.model)
             anyflow_config = self._anyflow_distillation_config()
@@ -367,6 +377,17 @@ class MiniMaxMusic(AudioModelFoundation):
 
     def check_user_config(self):
         super().check_user_config()
+        if getattr(self.xm_config, "enabled", False):
+            if self._train_language_model:
+                if self.xm_config.training_target != "route":
+                    raise ValueError(
+                        "MiniMax Music 3 language model training supports XM only with xm_training_target=route."
+                    )
+            elif self.xm_config.training_target == "route":
+                raise ValueError(
+                    "MiniMax Music 3 XM route training is implemented only for "
+                    "--minimax_music_train_component=language_model."
+                )
         if self._train_language_model:
             if normalize_lora_format(getattr(self.config, "lora_format", None)) == PEFTLoRAFormat.COMFYUI:
                 raise ValueError(
@@ -505,7 +526,12 @@ class MiniMaxMusic(AudioModelFoundation):
             adapter_state = {
                 f"language_model.{key}": value.detach().cpu()
                 for key, value in language_model.get_adapter_state_dict().items()
-                if "lora_" in key
+                if (
+                    "lora_" in key
+                    or ".modules_to_save." in key
+                    or self.XM_ROUTE_EMBEDDING_MODULE_NAME in key
+                    or "nextlat_predictor" in key
+                )
             }
             save_file(adapter_state, os.path.join(save_directory, "pytorch_lora_weights.safetensors"))
             return None
@@ -582,7 +608,15 @@ class MiniMaxMusic(AudioModelFoundation):
             )
         logger.info("MiniMax Music 3 AnyFlow endpoint conditioning is trainable through: %s", ", ".join(trainable))
 
+    def get_lora_save_layers(self):
+        save_layers = list(super().get_lora_save_layers() or [])
+        if self._lm_xm_route_enabled():
+            save_layers.append(self.XM_ROUTE_EMBEDDING_MODULE_NAME)
+        return list(dict.fromkeys(save_layers)) or None
+
     def add_lora_adapter(self):
+        if self._lm_xm_route_enabled():
+            self._ensure_lm_xm_route_embeddings()
         result = super().add_lora_adapter()
         self._assert_anyflow_endpoint_parameters_trainable()
         return result
@@ -671,6 +705,8 @@ class MiniMaxMusic(AudioModelFoundation):
         if move_to_device:
             self.model.to(self.accelerator.device)
             self.rvq_depth_decoder.to(self.accelerator.device, dtype=self.config.weight_dtype)
+        self.apply_gradient_checkpointing_settings()
+        self.post_model_load_setup()
         return self.model
 
     def load_vae(self, move_to_device: bool = True):
@@ -823,6 +859,144 @@ class MiniMaxMusic(AudioModelFoundation):
         residual = depth.audio_embeddings(codes[:, 1:] + offsets).sum(dim=1)
         return (semantic + residual.to(semantic.dtype)) * num_codebooks**-0.5
 
+    def _lm_xm_route_enabled(self) -> bool:
+        xm_config = getattr(self, "xm_config", None)
+        return bool(
+            self._train_language_model
+            and xm_config is not None
+            and xm_config.enabled
+            and xm_config.training_target == "route"
+        )
+
+    def _lm_hidden_size(self, language_model=None) -> int:
+        if language_model is None:
+            language_model = self.unwrap_model(self.model)
+        config = getattr(language_model, "config", None)
+        hidden_size = getattr(config, "hidden_size", None)
+        if hidden_size is not None:
+            return int(hidden_size)
+        return int(language_model.get_input_embeddings().embedding_dim)
+
+    @staticmethod
+    def _unwrap_lm_route_embedding(module) -> nn.Embedding:
+        if isinstance(module, nn.Embedding):
+            return module
+        original = getattr(module, "original_module", None)
+        if isinstance(original, nn.Embedding):
+            return original
+        modules_to_save = getattr(module, "modules_to_save", None)
+        if isinstance(modules_to_save, nn.ModuleDict):
+            for saved in modules_to_save.values():
+                if isinstance(saved, nn.Embedding):
+                    return saved
+        raise TypeError(f"MiniMax Music 3 XM route module must wrap an nn.Embedding, got {type(module)}.")
+
+    def _ensure_lm_xm_route_embeddings(self, language_model=None) -> nn.Module:
+        if not self._lm_xm_route_enabled():
+            raise ValueError("MiniMax Music 3 XM route embeddings were requested while XM route training is disabled.")
+        if language_model is None:
+            language_model = self.unwrap_model(self.model)
+        if language_model is None:
+            raise ValueError("MiniMax Music 3 XM route embeddings require a loaded language model.")
+
+        candidate_count = int(self.xm_config.candidate_count)
+        hidden_size = self._lm_hidden_size(language_model)
+        existing = getattr(language_model, self.XM_ROUTE_EMBEDDING_MODULE_NAME, None)
+        if existing is not None:
+            unwrapped = self._unwrap_lm_route_embedding(existing)
+            if unwrapped.num_embeddings != candidate_count or unwrapped.embedding_dim != hidden_size:
+                raise ValueError(
+                    f"{self.XM_ROUTE_EMBEDDING_MODULE_NAME} has shape "
+                    f"({unwrapped.num_embeddings}, {unwrapped.embedding_dim}), expected "
+                    f"({candidate_count}, {hidden_size})."
+                )
+            return existing
+
+        route_embeddings = nn.Embedding(candidate_count, hidden_size)
+        initializer_range = float(getattr(getattr(language_model, "config", None), "initializer_range", 0.02) or 0.02)
+        nn.init.normal_(route_embeddings.weight, mean=0.0, std=initializer_range)
+        route_embeddings.to(
+            device=language_model.get_input_embeddings().weight.device,
+            dtype=language_model.get_input_embeddings().weight.dtype,
+        )
+        setattr(language_model, self.XM_ROUTE_EMBEDDING_MODULE_NAME, route_embeddings)
+        return route_embeddings
+
+    def _lm_supervised_targets(self, prepared_batch: dict, *, seq_len: int, device: torch.device) -> torch.Tensor:
+        audio_codes = prepared_batch["audio_codes"]
+        prompt_lengths = prepared_batch["prompt_lengths"]
+        audio_lengths = prepared_batch["audio_lengths"]
+        has_audio_end = prepared_batch["has_audio_end"]
+        targets = torch.full((prompt_lengths.shape[0], seq_len), -100, dtype=torch.long, device=device)
+        for index in range(prompt_lengths.shape[0]):
+            prompt_len = int(prompt_lengths[index])
+            audio_len = int(audio_lengths[index])
+            if audio_len == 0:
+                raise ValueError("MiniMax Music 3 language model training received a sample with zero audio frames.")
+            start = prompt_len - 1
+            end = start + audio_len
+            if end > seq_len:
+                raise ValueError(f"MiniMax Music 3 supervised audio span [{start}, {end}) exceeds logits length {seq_len}.")
+            targets[index, start:end] = audio_codes[index, :audio_len, 0].to(device=device) + _AUDIO_CODE_OFFSET
+            if bool(has_audio_end[index]):
+                if end >= seq_len:
+                    raise ValueError(f"MiniMax Music 3 audio-end target position {end} exceeds logits length {seq_len}.")
+                targets[index, end] = _AUDIO_END_TOKEN_ID
+        return targets
+
+    def _lm_supervised_position_mask(self, prepared_batch: dict, *, seq_len: int, device: torch.device) -> torch.Tensor:
+        targets = self._lm_supervised_targets(prepared_batch, seq_len=seq_len, device=device)
+        return targets.ne(-100)
+
+    @staticmethod
+    def _lm_pack_supervised_hidden_states(hidden_states: torch.Tensor, supervised_mask: torch.Tensor) -> torch.Tensor:
+        counts = supervised_mask.sum(dim=1)
+        min_count = int(counts.min().item()) if counts.numel() else 0
+        if min_count < 2:
+            raise ValueError("NextLat for MiniMax Music 3 language model training requires at least two supervised tokens.")
+        packed = [hidden_states[index, supervised_mask[index]][:min_count] for index in range(hidden_states.shape[0])]
+        return torch.stack(packed, dim=0)
+
+    def _lm_capture_hidden_states(self, outputs, hidden_states_buffer, supervised_mask: torch.Tensor) -> None:
+        if hidden_states_buffer is None:
+            return
+        hidden_states = getattr(outputs, "hidden_states", None)
+        if hidden_states is None:
+            raise ValueError("NextLat is enabled, but Qwen did not return hidden states for MiniMax Music 3 LM training.")
+        capture_layers = getattr(hidden_states_buffer, "capture_layers", None)
+        for block_idx, block_hidden in enumerate(hidden_states[1:]):
+            if capture_layers is not None and block_idx not in capture_layers:
+                continue
+            hidden_states_buffer[f"layer_{block_idx}"] = self._lm_pack_supervised_hidden_states(
+                block_hidden,
+                supervised_mask,
+            )
+
+    def _lm_apply_xm_routes(
+        self,
+        inputs_embeds: torch.Tensor,
+        attention_mask: torch.Tensor,
+        supervised_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        route_embeddings = self._ensure_lm_xm_route_embeddings()
+        candidate_count = int(self.xm_config.candidate_count)
+        batch_size = inputs_embeds.shape[0]
+        inputs_embeds = inputs_embeds.repeat((candidate_count, 1, 1))
+        attention_mask = attention_mask.repeat((candidate_count, 1))
+        supervised_mask = supervised_mask.repeat((candidate_count, 1))
+        candidate_ids = torch.arange(candidate_count, device=inputs_embeds.device).repeat_interleave(batch_size)
+        routes = route_embeddings(candidate_ids).to(device=inputs_embeds.device, dtype=inputs_embeds.dtype)
+        inputs_embeds = inputs_embeds + supervised_mask.unsqueeze(-1).to(dtype=inputs_embeds.dtype) * routes[:, None, :]
+        return inputs_embeds, attention_mask, supervised_mask
+
+    def _lm_select_xm_hidden_states(self, hidden_states_buffer, winner_indices: torch.Tensor) -> None:
+        if hidden_states_buffer is None:
+            return
+        candidate_count = int(self.xm_config.candidate_count)
+        for key, value in list(hidden_states_buffer.items()):
+            if torch.is_tensor(value) and value.shape[0] % candidate_count == 0:
+                hidden_states_buffer[key] = select_winning_candidates(value, winner_indices, candidate_count)
+
     def _lm_predict(self, prepared_batch: dict) -> Dict[str, object]:
         language_model = self.model
         embed_tokens = self.unwrap_model(language_model).get_input_embeddings()
@@ -842,8 +1016,25 @@ class MiniMaxMusic(AudioModelFoundation):
         lengths = torch.tensor([seq.shape[0] for seq in sequences], device=input_ids.device)
         inputs_embeds = pad_sequence(sequences, batch_first=True, padding_value=0.0)
         attention_mask = torch.arange(inputs_embeds.shape[1], device=input_ids.device)[None, :] < lengths[:, None]
-        outputs = language_model(inputs_embeds=inputs_embeds, attention_mask=attention_mask.to(dtype=torch.long))
-        return {"logits": outputs.logits}
+        hidden_states_buffer = self._new_hidden_state_buffer()
+        supervised_mask = self._lm_supervised_position_mask(
+            prepared_batch,
+            seq_len=inputs_embeds.shape[1],
+            device=input_ids.device,
+        )
+        if self._lm_xm_route_enabled():
+            inputs_embeds, attention_mask, supervised_mask = self._lm_apply_xm_routes(
+                inputs_embeds,
+                attention_mask,
+                supervised_mask,
+            )
+        outputs = language_model(
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask.to(dtype=torch.long),
+            output_hidden_states=hidden_states_buffer is not None,
+        )
+        self._lm_capture_hidden_states(outputs, hidden_states_buffer, supervised_mask)
+        return {"logits": outputs.logits, "hidden_states_buffer": hidden_states_buffer}
 
     @contextmanager
     def _lm_adapters_disabled(self):
@@ -859,33 +1050,44 @@ class MiniMaxMusic(AudioModelFoundation):
             return super().loss(prepared_batch, model_output, apply_conditioning_mask)
         del apply_conditioning_mask
         logits = model_output["logits"]
-        audio_codes = prepared_batch["audio_codes"]
-        prompt_lengths = prepared_batch["prompt_lengths"]
-        audio_lengths = prepared_batch["audio_lengths"]
-        has_audio_end = prepared_batch["has_audio_end"]
-        targets = torch.full(logits.shape[:2], -100, dtype=torch.long, device=logits.device)
-        for index in range(logits.shape[0]):
-            prompt_len = int(prompt_lengths[index])
-            audio_len = int(audio_lengths[index])
-            if audio_len == 0:
-                raise ValueError("MiniMax Music 3 language model training received a sample with zero audio frames.")
-            start = prompt_len - 1
-            targets[index, start : start + audio_len] = audio_codes[index, :audio_len, 0] + _AUDIO_CODE_OFFSET
-            if bool(has_audio_end[index]):
-                targets[index, start + audio_len] = _AUDIO_END_TOKEN_ID
+        base_targets = self._lm_supervised_targets(prepared_batch, seq_len=logits.shape[1], device=logits.device)
+        xm_route_active = self._lm_xm_route_enabled()
         teacher_logits = None
         if (
             prepared_batch.get("is_regularisation_data")
             and str(getattr(self.config, "model_type", "lora")).lower() == "lora"
         ):
+            if xm_route_active:
+                raise ValueError(
+                    "MiniMax Music 3 XM route selection is not implemented for regularisation-data teacher losses."
+                )
             # Prior preservation: on regularisation batches the target is the frozen base model's own
             # next-token distribution, so unrelated songs keep predicting as they would without the LoRA.
             with torch.no_grad(), self._lm_adapters_disabled():
                 teacher_logits = self._lm_predict(prepared_batch)["logits"]
 
+        if xm_route_active:
+            candidate_count = int(self.xm_config.candidate_count)
+            if logits.shape[0] != base_targets.shape[0] * candidate_count:
+                raise ValueError(
+                    f"MiniMax Music 3 XM expected {base_targets.shape[0] * candidate_count} candidate logits rows, "
+                    f"got {logits.shape[0]}."
+                )
+            targets = base_targets.repeat((candidate_count, 1))
+            block_size = self.xm_config.block_size if self.xm_config.selection_scope == "block" else 0
+            per_candidate = blockwise_cross_entropy(logits, targets, block_size=block_size)
+            candidate_losses = per_candidate.reshape(candidate_count, base_targets.shape[0])
+            selected_loss, winner_indices = select_min_candidate_loss(candidate_losses)
+            model_output["xm_winner_indices"] = winner_indices.detach()
+            usage = route_usage_histogram(winner_indices.detach(), candidate_count)
+            if usage is not None:
+                model_output["xm_route_usage"] = usage.to(device=logits.device)
+            self._lm_select_xm_hidden_states(model_output.get("hidden_states_buffer"), winner_indices)
+            return selected_loss
+
         # Chunked losses: upcasting the full-vocab logits at once costs several GiB at long sequence lengths.
         flat_logits = logits.reshape(-1, logits.shape[-1])
-        flat_targets = targets.reshape(-1)
+        flat_targets = base_targets.reshape(-1)
         total = flat_logits.new_zeros((), dtype=torch.float32)
         count = 0
         chunk = 512 if teacher_logits is not None else 1024
@@ -912,6 +1114,17 @@ class MiniMaxMusic(AudioModelFoundation):
         if count == 0:
             raise ValueError("MiniMax Music 3 language model loss found no supervised positions.")
         return total / count
+
+    def loss_with_logs(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        loss = self.loss(prepared_batch, model_output, apply_conditioning_mask=apply_conditioning_mask)
+        if not self._lm_xm_route_enabled():
+            return loss, None
+        logs = {}
+        usage = model_output.get("xm_route_usage")
+        if torch.is_tensor(usage):
+            for index, value in enumerate(usage.detach().float().cpu().tolist()):
+                logs[f"xm_route_{index}_usage"] = value
+        return loss, logs or None
 
     def load_text_tokenizer(self):
         if self.tokenizers is not None:

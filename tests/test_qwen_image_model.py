@@ -1,12 +1,13 @@
 import contextlib
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import torch
 
 from simpletuner.helpers.models.common import PipelineTypes
 from simpletuner.helpers.models.qwen_image.model import QwenImage
+from simpletuner.helpers.training.explorative_modeling import ExplorativeModelingConfig
 
 
 class _DummyTransformer:
@@ -35,6 +36,13 @@ class QwenImageModelTests(unittest.TestCase):
         self.model._is_edit_v2_flavour = lambda: False
         self.model._is_edit_v2_plus_flavour = lambda: False
         self.model.crepa_regularizer = SimpleNamespace(enabled=True, block_index=3)
+        self.model.xm_config = ExplorativeModelingConfig(
+            enabled=False,
+            candidate_count=1,
+            training_target="noise",
+            selection_scope="sample",
+            block_size=0,
+        )
         self.model.model = _DummyTransformer()
 
         class _Pipeline:
@@ -51,6 +59,132 @@ class QwenImageModelTests(unittest.TestCase):
                 return torch.randn(batch_size, out_channels, latent_h, latent_w)
 
         self.model.PIPELINE_CLASSES = {PipelineTypes.TEXT2IMG: _Pipeline}
+
+    def _enable_xm(self, *, training_target="noise", selection_scope="sample", block_size=0, candidate_count=2):
+        self.model.xm_config = ExplorativeModelingConfig(
+            enabled=True,
+            candidate_count=candidate_count,
+            training_target=training_target,
+            selection_scope=selection_scope,
+            block_size=block_size,
+        )
+
+    def test_validate_xm_support_rejects_unsupported_qwen_settings(self):
+        self._enable_xm(training_target="route")
+        with self.assertRaisesRegex(ValueError, "xm_training_target='noise'"):
+            self.model._validate_xm_support()
+
+        self._enable_xm(selection_scope="block", block_size=2)
+        with self.assertRaisesRegex(ValueError, "xm_selection_scope='sample'"):
+            self.model._validate_xm_support()
+
+        self._enable_xm(block_size=2)
+        with self.assertRaisesRegex(ValueError, "xm_block_size"):
+            self.model._validate_xm_support()
+
+    def test_xm_noise_candidates_expand_qwen_conditioning_candidate_major(self):
+        self._enable_xm(candidate_count=3)
+        latents = torch.arange(2 * 1 * 2 * 2, dtype=torch.float32).view(2, 1, 2, 2)
+        candidate_noise = torch.full((6, 1, 2, 2), 4.0)
+        batch = {
+            "latents": latents.clone(),
+            "noise": torch.zeros_like(latents),
+            "input_noise": torch.zeros_like(latents),
+            "noisy_latents": torch.zeros_like(latents),
+            "sigmas": torch.tensor([0.25, 0.75]),
+            "timesteps": torch.tensor([250.0, 750.0]),
+            "prompt_embeds": torch.arange(2 * 4 * 3, dtype=torch.float32).view(2, 4, 3),
+            "encoder_attention_mask": torch.tensor([[1, 1, 1, 0], [1, 1, 0, 0]], dtype=torch.int64),
+            "flowmap_r_timesteps": torch.tensor([0.1, 0.2]),
+            "image_ids": torch.tensor([[10, 11], [20, 21]]),
+            "metadata": ["a", "b"],
+            "control_latent_list": [[torch.ones(1, 2, 2)], [torch.full((1, 2, 2), 2.0)]],
+            "conditioning_latents": [torch.full((2, 1, 2, 2), 3.0)],
+        }
+
+        with patch("torch.randn_like", return_value=candidate_noise):
+            self.model._prepare_xm_noise_candidates(batch)
+
+        self.assertEqual(tuple(batch["latents"].shape), (6, 1, 2, 2))
+        self.assertTrue(torch.equal(batch["latents"], latents.repeat(3, 1, 1, 1)))
+        self.assertTrue(torch.equal(batch["timesteps"], torch.tensor([250.0, 750.0, 250.0, 750.0, 250.0, 750.0])))
+        self.assertTrue(torch.equal(batch["flowmap_r_timesteps"], torch.tensor([0.1, 0.2, 0.1, 0.2, 0.1, 0.2])))
+        self.assertEqual(batch["metadata"], ["a", "b", "a", "b", "a", "b"])
+        self.assertEqual(len(batch["control_latent_list"]), 6)
+        self.assertEqual(tuple(batch["conditioning_latents"][0].shape), (6, 1, 2, 2))
+        sigma_grid = batch["sigmas"].view(6, 1, 1, 1)
+        expected_noisy = (1.0 - sigma_grid) * batch["latents"] + sigma_grid * candidate_noise
+        self.assertTrue(torch.allclose(batch["noisy_latents"], expected_noisy))
+        self.assertTrue(torch.allclose(batch["flow_target"], candidate_noise - batch["latents"]))
+        self.assertEqual(batch["xm_candidate_count"], 3)
+
+    def test_xm_loss_selects_winners_before_nextlat_auxiliary_loss(self):
+        self._enable_xm()
+        latents = torch.zeros(4, 1, 1, 1)
+        noise = torch.tensor([0.0, 1.0, 2.0, 3.0]).view(4, 1, 1, 1)
+        target = noise - latents
+        prediction = torch.tensor([5.0, 1.0, 2.0, -4.0]).view(4, 1, 1, 1)
+        prepared_batch = {
+            "latents": latents,
+            "noise": noise,
+            "input_noise": noise,
+            "noisy_latents": noise,
+            "sigmas": torch.ones(4),
+            "timesteps": torch.tensor([100.0, 200.0, 100.0, 200.0]),
+            "metadata": ["a", "b", "a", "b"],
+            "control_latent_list": [["a0"], ["b0"], ["a1"], ["b1"]],
+        }
+        hidden = torch.arange(4 * 3 * 2, dtype=torch.float32).reshape(4, 3, 2)
+        model_output = {
+            "model_prediction": prediction,
+            "crepa_hidden_states": hidden.clone(),
+            "hidden_states_buffer": {"layer_0": hidden.clone()},
+            "xm_candidate_count": 2,
+        }
+
+        loss, logs = self.model.loss_with_logs(prepared_batch, model_output)
+
+        self.assertAlmostEqual(loss.item(), 0.0)
+        self.assertTrue(torch.equal(model_output["xm_winner_indices"], torch.tensor([1, 0])))
+        self.assertTrue(torch.equal(model_output["model_prediction"], target[[2, 1]]))
+        self.assertTrue(torch.equal(prepared_batch["noise"], noise[[2, 1]]))
+        self.assertEqual(prepared_batch["metadata"], ["a", "b"])
+        self.assertEqual(prepared_batch["control_latent_list"], [["a1"], ["b0"]])
+        self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"], hidden[[2, 1]]))
+        self.assertNotIn("xm_candidate_count", model_output)
+        self.assertIn("xm_winner_indices", prepared_batch)
+        self.assertEqual(logs["xm_candidate_0_wins"], 1.0)
+        self.assertEqual(logs["xm_candidate_1_wins"], 1.0)
+
+        class FakeNextLat:
+            enabled = True
+
+            def __init__(self):
+                self.hidden_shape = None
+                self.prediction_shape = None
+
+            def compute_loss(self, hidden_states_buffer, output):
+                self.hidden_shape = tuple(hidden_states_buffer["layer_0"].shape)
+                self.prediction_shape = tuple(output["model_prediction"].shape)
+                return torch.tensor(0.5), {"nextlat_loss": 0.5}
+
+        nextlat = FakeNextLat()
+        self.model.nextlat_regularizer = nextlat
+        self.model.crepa_regularizer = None
+        self.model.internal_guidance_regularizer = None
+        self.model._twinflow_active = MagicMock(return_value=False)
+        aux_loss, aux_logs = self.model.auxiliary_loss(
+            model_output=model_output,
+            prepared_batch=prepared_batch,
+            loss=loss,
+            apply_layersync=False,
+            clear_hidden_state_buffer=False,
+        )
+
+        self.assertEqual(nextlat.hidden_shape, (2, 3, 2))
+        self.assertEqual(nextlat.prediction_shape, (2, 1, 1, 1))
+        self.assertAlmostEqual(aux_loss.item(), 0.5)
+        self.assertEqual(aux_logs["nextlat_loss"], 0.5)
 
     def test_model_predict_uses_crepa_capture_block_override(self):
         hidden_states_buffer = {}

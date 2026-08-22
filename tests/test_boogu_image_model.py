@@ -14,7 +14,12 @@ from simpletuner.helpers.models.boogu_image.transformer import BooguImageTransfo
 from simpletuner.helpers.models.common import PipelineTypes
 from simpletuner.helpers.models.flux.model import Flux
 from simpletuner.helpers.training.attention_backend import _DIFFUSERS_BACKEND_ALIASES
+from simpletuner.helpers.training.explorative_modeling import ExplorativeModelingConfig
 from simpletuner.helpers.training.quantisation import _torchao_filter_fn
+
+
+class DummyAccelerator:
+    device = torch.device("cpu")
 
 
 class BooguImageModelTests(unittest.TestCase):
@@ -28,6 +33,25 @@ class BooguImageModelTests(unittest.TestCase):
             revision=None,
             variant=None,
         )
+
+    def _boogu_xm_shell(self, *, candidate_count=2, training_target="noise", selection_scope="sample"):
+        model = object.__new__(BooguImage)
+        model.config = SimpleNamespace(
+            weight_dtype=torch.float32,
+            loss_type="l2",
+            huber_schedule="constant",
+            huber_c=0.1,
+            model_flavour="v0.1-edit",
+        )
+        model.accelerator = DummyAccelerator()
+        model.xm_config = ExplorativeModelingConfig(
+            enabled=True,
+            candidate_count=candidate_count,
+            training_target=training_target,
+            selection_scope=selection_scope,
+            block_size=2 if selection_scope == "block" else 0,
+        )
+        return model
 
     def test_flavour_paths_include_requested_variants(self):
         self.assertEqual(BooguImage.HUGGINGFACE_PATHS["v0.1-base"], "SimpleTuner/Boogu-Image-0.1-Base")
@@ -183,6 +207,127 @@ class BooguImageModelTests(unittest.TestCase):
 
         self.assertTrue(torch.equal(noise_sigmas, torch.tensor([0.25, 0.75])))
         self.assertTrue(torch.equal(timesteps, torch.tensor([0.75, 0.25])))
+
+    def test_xm_support_rejects_route_and_block_modes(self):
+        with self.assertRaisesRegex(ValueError, "xm_training_target='noise'"):
+            self._boogu_xm_shell(training_target="route")._validate_xm_support()
+
+        with self.assertRaisesRegex(ValueError, "xm_selection_scope='sample'"):
+            self._boogu_xm_shell(selection_scope="block")._validate_xm_support()
+
+    def test_xm_noise_candidates_expand_edit_conditioning_candidate_major(self):
+        model = self._boogu_xm_shell(candidate_count=3)
+        batch = {
+            "latents": torch.ones(2, 1, 2, 2),
+            "noise": torch.zeros(2, 1, 2, 2),
+            "input_noise": torch.zeros(2, 1, 2, 2),
+            "noisy_latents": torch.zeros(2, 1, 2, 2),
+            "sigmas": torch.full((2, 1, 1, 1), 0.25),
+            "timesteps": torch.tensor([0.25, 0.75]),
+            "encoder_hidden_states": torch.randn(2, 4, 3),
+            "encoder_attention_mask": torch.ones(2, 4, dtype=torch.bool),
+            "conditioning_latents": [torch.full((2, 1, 2, 2), 2.0)],
+            "ref_image_hidden_states": [[torch.ones(1, 2, 2)], [torch.full((1, 2, 2), 2.0)]],
+            "metadata": [{"name": "a"}, {"name": "b"}],
+        }
+
+        model._prepare_xm_noise_candidates(batch)
+
+        self.assertEqual(tuple(batch["latents"].shape), (6, 1, 2, 2))
+        self.assertTrue(torch.equal(batch["timesteps"], torch.tensor([0.25, 0.75, 0.25, 0.75, 0.25, 0.75])))
+        self.assertEqual(tuple(batch["encoder_hidden_states"].shape), (6, 4, 3))
+        self.assertEqual(tuple(batch["conditioning_latents"][0].shape), (6, 1, 2, 2))
+        self.assertEqual([item["name"] for item in batch["metadata"]], ["a", "b", "a", "b", "a", "b"])
+        self.assertEqual(len(batch["ref_image_hidden_states"]), 6)
+        expected_noisy = 0.75 * batch["latents"] + 0.25 * batch["noise"]
+        self.assertTrue(torch.allclose(batch["noisy_latents"], expected_noisy))
+        self.assertEqual(batch["xm_candidate_count"], 3)
+
+    def test_model_predict_xm_expands_before_transformer_with_prompt_and_edit_conditioning(self):
+        model = self._boogu_xm_shell(candidate_count=2)
+        hidden_states_buffer = {}
+        model._new_hidden_state_buffer = lambda: hidden_states_buffer
+        model._freqs_cis = lambda: "freqs"
+        forward_calls = []
+
+        class FakeTransformer:
+            def __call__(self, *args, **kwargs):
+                forward_calls.append((args, kwargs))
+                kwargs["hidden_states_buffer"]["layer_2"] = torch.ones(args[0].shape[0], 4, 8)
+                return SimpleNamespace(sample=torch.zeros_like(args[0]))
+
+        model.get_trained_component = lambda *, base_model=False: FakeTransformer()
+        prepared_batch = {
+            "latents": torch.randn(2, 1, 2, 2),
+            "noise": torch.randn(2, 1, 2, 2),
+            "noisy_latents": torch.randn(2, 1, 2, 2),
+            "sigmas": torch.full((2, 1, 1, 1), 0.5),
+            "timesteps": torch.tensor([0.25, 0.75]),
+            "encoder_hidden_states": torch.randn(2, 3, 4),
+            "encoder_attention_mask": torch.ones(2, 3, dtype=torch.bool),
+            "ref_image_hidden_states": [[torch.randn(1, 2, 2)], [torch.randn(1, 2, 2)]],
+        }
+
+        result = model.model_predict(prepared_batch)
+
+        args, kwargs = forward_calls[0]
+        self.assertEqual(tuple(args[0].shape), (4, 1, 2, 2))
+        self.assertEqual(tuple(args[1].shape), (4,))
+        self.assertEqual(tuple(args[2].shape), (4, 3, 4))
+        self.assertEqual(tuple(args[4].shape), (4, 3))
+        self.assertEqual(len(kwargs["ref_image_hidden_states"]), 4)
+        self.assertEqual(tuple(result["model_prediction"].shape), (4, 1, 2, 2))
+        self.assertEqual(result["xm_candidate_count"], 2)
+
+    def test_xm_loss_selects_winners_and_trims_nextlat_hidden_states(self):
+        model = self._boogu_xm_shell(candidate_count=2)
+        latents = torch.zeros(4, 1, 1, 1)
+        noise = torch.tensor([0.0, 1.0, 2.0, 3.0]).view(4, 1, 1, 1)
+        target = latents - noise
+        prediction = torch.tensor([5.0, -1.0, -2.0, -4.0]).view(4, 1, 1, 1)
+        prepared_batch = {
+            "latents": latents,
+            "noise": noise,
+            "noisy_latents": noise,
+            "sigmas": torch.ones(4, 1, 1, 1),
+            "timesteps": torch.tensor([0.25, 0.75, 0.25, 0.75]),
+        }
+        hidden = torch.arange(4 * 3 * 2, dtype=torch.float32).reshape(4, 3, 2)
+        model_output = {
+            "model_prediction": prediction,
+            "hidden_states_buffer": {"layer_1": hidden.clone()},
+            "xm_candidate_count": 2,
+        }
+
+        loss, logs = model.loss_with_logs(prepared_batch, model_output)
+
+        self.assertAlmostEqual(loss.item(), 0.0)
+        self.assertTrue(torch.equal(model_output["xm_winner_indices"], torch.tensor([1, 0])))
+        self.assertTrue(torch.equal(model_output["model_prediction"], target[[2, 1]]))
+        self.assertTrue(torch.equal(prepared_batch["noise"], noise[[2, 1]]))
+        self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_1"], hidden[[2, 1]]))
+        self.assertEqual(logs["xm_candidate_0_wins"], 1.0)
+        self.assertEqual(logs["xm_candidate_1_wins"], 1.0)
+
+    def test_xm_loss_rejects_segmentation_mask(self):
+        model = self._boogu_xm_shell(candidate_count=2)
+        prepared_batch = {
+            "latents": torch.zeros(4, 1, 1, 1),
+            "noise": torch.zeros(4, 1, 1, 1),
+            "noisy_latents": torch.zeros(4, 1, 1, 1),
+            "sigmas": torch.ones(4, 1, 1, 1),
+            "timesteps": torch.tensor([0.25, 0.75, 0.25, 0.75]),
+            "loss_mask_type": "segmentation",
+            "conditioning_pixel_values": torch.ones(4, 3, 2, 2),
+        }
+        model_output = {
+            "model_prediction": torch.zeros(4, 1, 1, 1),
+            "hidden_states_buffer": {},
+            "xm_candidate_count": 2,
+        }
+
+        with self.assertRaisesRegex(ValueError, "segmentation masked loss"):
+            model.loss_with_logs(prepared_batch, model_output)
 
     def test_torchao_filter_skips_boogu_reference_image_modules(self):
         self.assertFalse(_torchao_filter_fn(torch.nn.Linear(16, 16), "ref_image_refiner.0.attn.to_q"))

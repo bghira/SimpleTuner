@@ -1049,6 +1049,33 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
             token_count = max(2, min(len(text) // 16, 12))
             return {"input_ids": torch.arange(token_count, dtype=torch.long).unsqueeze(0)}
 
+    class _FakeDepthDecoder(torch.nn.Module):
+        def __init__(self, hidden_size=6, codebooks=4, audio_vocab=8):
+            super().__init__()
+            self.config = SimpleNamespace(num_codebooks=codebooks, audio_vocab_size=audio_vocab)
+            self.audio_embeddings = torch.nn.Embedding((codebooks - 1) * audio_vocab, hidden_size)
+
+    class _FakeLanguageModel(torch.nn.Module):
+        def __init__(self, vocab_size, hidden_size=6, layer_count=2):
+            super().__init__()
+            self.config = SimpleNamespace(vocab_size=vocab_size, hidden_size=hidden_size, initializer_range=0.02)
+            self.embed_tokens = torch.nn.Embedding(vocab_size, hidden_size)
+            self.lm_head = torch.nn.Linear(hidden_size, vocab_size, bias=False)
+            self.layer_count = layer_count
+            self.last_inputs_embeds = None
+            self.last_attention_mask = None
+
+        def get_input_embeddings(self):
+            return self.embed_tokens
+
+        def forward(self, *, inputs_embeds, attention_mask, output_hidden_states=False, **_kwargs):
+            self.last_inputs_embeds = inputs_embeds.detach().clone()
+            self.last_attention_mask = attention_mask.detach().clone()
+            hidden_states = None
+            if output_hidden_states:
+                hidden_states = tuple(inputs_embeds + float(index) for index in range(self.layer_count + 1))
+            return SimpleNamespace(logits=self.lm_head(inputs_embeds), hidden_states=hidden_states)
+
     def test_lm_mode_switches_component_contracts(self):
         model = self._lm_model()
         self.assertTrue(model._train_language_model)
@@ -1267,6 +1294,141 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
             4**-0.5
         )
         self.assertTrue(torch.allclose(result, expected, atol=1e-6))
+
+    def test_lm_xm_route_prediction_expands_candidates_over_supervised_span(self):
+        from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET
+
+        model = self._lm_model(
+            xm_enabled=True,
+            xm_candidate_count=2,
+            xm_training_target="route",
+            xm_selection_scope="sample",
+        )
+        model.model = self._FakeLanguageModel(vocab_size=_AUDIO_CODE_OFFSET + 32)
+        model.rvq_depth_decoder = self._FakeDepthDecoder()
+        model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
+        model._new_hidden_state_buffer = lambda: None
+        prepared = {
+            "input_ids": torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]], dtype=torch.long),
+            "audio_codes": torch.tensor(
+                [
+                    [[1, 0, 0, 0], [2, 1, 0, 0]],
+                    [[3, 0, 1, 0], [4, 0, 0, 1]],
+                ],
+                dtype=torch.long,
+            ),
+            "prompt_lengths": torch.tensor([3, 2]),
+            "audio_lengths": torch.tensor([2, 2]),
+            "has_audio_end": torch.tensor([True, False]),
+        }
+
+        output = model._lm_predict(prepared)
+
+        self.assertEqual(output["logits"].shape[0], 4)
+        inputs = model.model.last_inputs_embeds
+        route_delta = model.model.xm_route_embeddings.weight[1] - model.model.xm_route_embeddings.weight[0]
+        self.assertTrue(torch.allclose(inputs[2, 2] - inputs[0, 2], route_delta, atol=1e-6))
+        self.assertTrue(torch.allclose(inputs[2, 3] - inputs[0, 3], route_delta, atol=1e-6))
+        self.assertTrue(torch.allclose(inputs[2, 4] - inputs[0, 4], route_delta, atol=1e-6))
+        self.assertTrue(torch.allclose(inputs[3, 1] - inputs[1, 1], route_delta, atol=1e-6))
+        self.assertTrue(torch.allclose(inputs[3, 2] - inputs[1, 2], route_delta, atol=1e-6))
+        self.assertTrue(torch.allclose(inputs[3, 0] - inputs[1, 0], torch.zeros_like(route_delta), atol=1e-6))
+
+    def test_lm_xm_route_loss_selects_candidate_per_sample(self):
+        from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET
+
+        model = self._lm_model(
+            xm_enabled=True,
+            xm_candidate_count=2,
+            xm_training_target="route",
+            xm_selection_scope="block",
+            xm_block_size=2,
+        )
+        vocab = _AUDIO_CODE_OFFSET + 32
+        prompt_len, audio_len = 3, 2
+        prepared = {
+            "audio_codes": torch.tensor(
+                [
+                    [[5, 0, 0, 0], [6, 0, 0, 0]],
+                    [[7, 0, 0, 0], [8, 0, 0, 0]],
+                ],
+                dtype=torch.long,
+            ),
+            "prompt_lengths": torch.tensor([prompt_len, prompt_len]),
+            "audio_lengths": torch.tensor([audio_len, audio_len]),
+            "has_audio_end": torch.tensor([False, False]),
+        }
+        logits = torch.zeros((4, prompt_len + audio_len, vocab))
+        logits[0, prompt_len - 1, _AUDIO_CODE_OFFSET + 5] = 20.0
+        logits[0, prompt_len, _AUDIO_CODE_OFFSET + 6] = 20.0
+        logits[3, prompt_len - 1, _AUDIO_CODE_OFFSET + 7] = 20.0
+        logits[3, prompt_len, _AUDIO_CODE_OFFSET + 8] = 20.0
+        hidden = torch.arange(4 * 3 * 2, dtype=torch.float32).reshape(4, 3, 2)
+        model_output = {"logits": logits, "hidden_states_buffer": {"layer_0": hidden}}
+
+        loss = model.loss(prepared, model_output)
+
+        self.assertLess(float(loss), 0.01)
+        self.assertEqual(model_output["xm_winner_indices"].tolist(), [0, 1])
+        self.assertEqual(model_output["xm_route_usage"].tolist(), [1.0, 1.0])
+        self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"][0], hidden[0]))
+        self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"][1], hidden[3]))
+
+    def test_lm_xm_route_module_is_saved_with_lora_adapter(self):
+        model = self._lm_model(
+            xm_enabled=True,
+            xm_candidate_count=2,
+            xm_training_target="route",
+            xm_selection_scope="sample",
+        )
+        model.model = SimpleNamespace(
+            get_adapter_state_dict=lambda: {
+                "model.layers.0.self_attn.q_proj.lora_A.weight": torch.ones(1, 1),
+                "xm_route_embeddings.weight": torch.ones(2, 3),
+                "unrelated.weight": torch.ones(1),
+            }
+        )
+        model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model.save_lora_weights(tmpdir)
+            state = load_file(str(Path(tmpdir) / "pytorch_lora_weights.safetensors"))
+
+        self.assertIn("language_model.model.layers.0.self_attn.q_proj.lora_A.weight", state)
+        self.assertIn("language_model.xm_route_embeddings.weight", state)
+        self.assertNotIn("language_model.unrelated.weight", state)
+
+    def test_lm_nextlat_captures_supervised_qwen_hidden_states(self):
+        from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET
+        from simpletuner.helpers.utils.hidden_state_buffer import HiddenStateBuffer
+
+        model = self._lm_model(nextlat_enabled=True, nextlat_weight=0.1)
+        model.model = self._FakeLanguageModel(vocab_size=_AUDIO_CODE_OFFSET + 32, layer_count=2)
+        model.rvq_depth_decoder = self._FakeDepthDecoder()
+        model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
+        model._new_hidden_state_buffer = lambda: HiddenStateBuffer(capture_layers={1})
+        prepared = {
+            "input_ids": torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]], dtype=torch.long),
+            "audio_codes": torch.tensor(
+                [
+                    [[1, 0, 0, 0], [2, 1, 0, 0], [3, 0, 1, 0]],
+                    [[4, 0, 0, 1], [5, 0, 0, 2], [6, 0, 1, 0]],
+                ],
+                dtype=torch.long,
+            ),
+            "prompt_lengths": torch.tensor([3, 2]),
+            "audio_lengths": torch.tensor([3, 3]),
+            "has_audio_end": torch.tensor([False, False]),
+        }
+
+        output = model._lm_predict(prepared)
+
+        self.assertIn("layer_1", output["hidden_states_buffer"])
+        captured = output["hidden_states_buffer"]["layer_1"]
+        self.assertEqual(captured.shape, (2, 3, 6))
+        full_hidden = model.model.last_inputs_embeds + 2.0
+        self.assertTrue(torch.allclose(captured[0], full_hidden[0, 2:5]))
+        self.assertTrue(torch.allclose(captured[1], full_hidden[1, 1:4]))
 
 
 if __name__ == "__main__":

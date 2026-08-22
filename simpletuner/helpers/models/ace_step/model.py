@@ -1788,6 +1788,97 @@ class ACEStep(AudioModelFoundation):
         return super().flow_matching_timesteps_from_sigmas(sigmas, reference_timesteps=reference_timesteps)
 
     def model_predict(self, prepared_batch: dict) -> Dict[str, object]:
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch)
+            model_output = self._model_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch)
+
+    def _repeat_xm_candidate_value(self, value, candidate_count: int, batch_size: int):
+        if torch.is_tensor(value):
+            if value.ndim == 0 or value.shape[0] != batch_size:
+                return value
+            return self._repeat_xm_candidate_tensor(value, candidate_count)
+        if isinstance(value, list):
+            if len(value) == batch_size:
+                return list(value) * candidate_count
+            return [self._repeat_xm_candidate_value(item, candidate_count, batch_size) for item in value]
+        if isinstance(value, tuple):
+            if len(value) == batch_size:
+                return tuple(list(value) * candidate_count)
+            return tuple(self._repeat_xm_candidate_value(item, candidate_count, batch_size) for item in value)
+        return value
+
+    def _repeat_xm_ssl_hidden_states(self, value, candidate_count: int, batch_size: int):
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            raise ValueError("ACE-Step XM expected ssl_hidden_states to be an encoder-major list.")
+        expanded = []
+        for encoder_states in value:
+            if not isinstance(encoder_states, list):
+                expanded.append(self._repeat_xm_candidate_value(encoder_states, candidate_count, batch_size))
+                continue
+            if len(encoder_states) != batch_size:
+                raise ValueError(
+                    "ACE-Step XM expected each ssl_hidden_states encoder entry to contain one tensor per sample."
+                )
+            expanded.append(list(encoder_states) * candidate_count)
+        return expanded
+
+    def _prepare_xm_noise_candidates(self, prepared_batch: dict) -> dict:
+        xm_config = self.xm_config
+        candidate_count = int(xm_config.candidate_count)
+        latents = prepared_batch.get("latents")
+        timesteps = prepared_batch.get("timesteps")
+        if not torch.is_tensor(latents) or not torch.is_tensor(timesteps):
+            raise ValueError("ACE-Step XM noise-candidate training requires latents and timesteps tensors.")
+        if "noisy_latents" not in prepared_batch:
+            raise ValueError("ACE-Step XM noise-candidate training requires prepared noisy_latents.")
+        if prepared_batch.get("target") is not None:
+            raise ValueError("ACE-Step XM noise-candidate training cannot be used with an explicit prepared target.")
+
+        batch_size = latents.shape[0]
+        expanded_batch = {}
+        for key, value in prepared_batch.items():
+            if key == "ssl_hidden_states":
+                expanded_batch[key] = self._repeat_xm_ssl_hidden_states(value, candidate_count, batch_size)
+            else:
+                expanded_batch[key] = self._repeat_xm_candidate_value(value, candidate_count, batch_size)
+
+        expanded_latents = expanded_batch["latents"]
+        candidate_noise = torch.randn_like(expanded_latents)
+        sigma_source = expanded_batch.get("mixflow_interpolation_sigmas")
+        if sigma_source is None:
+            sigma_source = expanded_batch.get("sigmas")
+        if torch.is_tensor(sigma_source):
+            interpolation_grid = self._expand_sigma_values(sigma_source, expanded_latents)
+            expanded_batch["noisy_latents"] = (
+                1.0 - interpolation_grid
+            ) * expanded_latents + interpolation_grid * candidate_noise
+        elif self._is_v15_layout_active():
+            timestep_grid = (
+                expanded_batch["timesteps"]
+                .reshape(expanded_latents.shape[0], -1)[:, 0]
+                .view(expanded_latents.shape[0], *([1] * (expanded_latents.ndim - 1)))
+            )
+            timestep_grid = timestep_grid.to(device=expanded_latents.device, dtype=expanded_latents.dtype)
+            expanded_batch["noisy_latents"] = timestep_grid * candidate_noise + (1.0 - timestep_grid) * expanded_latents
+        else:
+            raise ValueError("ACE-Step XM noise-candidate training requires sigmas for non-v1.5 flow interpolation.")
+
+        expanded_batch["noise"] = candidate_noise
+        expanded_batch["input_noise"] = candidate_noise
+        expanded_batch["flow_target"] = candidate_noise - expanded_latents
+        expanded_batch["xm_candidate_count"] = candidate_count
+        expanded_batch["xm_original_batch_size"] = batch_size
+
+        prepared_batch.clear()
+        prepared_batch.update(expanded_batch)
+        return prepared_batch
+
+    def _model_predict_single(self, prepared_batch: dict) -> Dict[str, object]:
         transformer = self.get_trained_component()
         if transformer is None:
             raise ValueError("ACE-Step transformer has not been loaded before model_predict was invoked.")
@@ -1905,6 +1996,81 @@ class ACEStep(AudioModelFoundation):
             "crepa_hidden_states": self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer),
             "hidden_states_buffer": hidden_states_buffer,
         }
+
+    def loss_with_logs(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        candidate_count = model_output.get("xm_candidate_count") if isinstance(model_output, dict) else None
+        if not candidate_count:
+            return super().loss_with_logs(
+                prepared_batch,
+                model_output,
+                apply_conditioning_mask=apply_conditioning_mask,
+            )
+        return self._xm_noise_loss_with_logs(
+            prepared_batch,
+            model_output,
+            candidate_count=int(candidate_count),
+            apply_conditioning_mask=apply_conditioning_mask,
+        )
+
+    def _xm_noise_loss_with_logs(
+        self,
+        prepared_batch: dict,
+        model_output: dict,
+        *,
+        candidate_count: int,
+        apply_conditioning_mask: bool,
+    ):
+        loss_tensor = self._xm_loss_tensor(
+            prepared_batch,
+            model_output,
+            apply_conditioning_mask=apply_conditioning_mask,
+        )
+        selected_loss, winner_indices, candidate_losses = self._select_xm_winning_loss_tensor(
+            loss_tensor,
+            prepared_batch,
+            model_output,
+            candidate_count=candidate_count,
+            family_name="ACE-Step",
+        )
+        return selected_loss, self._xm_candidate_logs(
+            selected_loss,
+            candidate_losses,
+            winner_indices,
+            candidate_count,
+        )
+
+    def _xm_loss_tensor(self, prepared_batch: dict, model_output: dict, apply_conditioning_mask: bool) -> torch.Tensor:
+        model_pred = model_output.get("model_prediction")
+        if model_pred is None:
+            model_pred = model_output.get("sample")
+        if model_pred is None:
+            raise ValueError("ACE-Step XM loss requires model_prediction.")
+        target = prepared_batch.get("flow_target") if self._is_v15_layout_active() else prepared_batch.get("latents")
+        if target is None:
+            raise ValueError("ACE-Step XM loss requires a flow target for v1.5 or latents for v1.")
+        if model_pred.shape != target.shape:
+            raise ValueError(
+                f"ACE-Step XM loss expected prediction and target shapes to match, got {tuple(model_pred.shape)} and {tuple(target.shape)}."
+            )
+
+        loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
+        attention_mask = prepared_batch.get("attention_mask")
+        if attention_mask is None:
+            return loss
+        if not torch.is_tensor(attention_mask):
+            raise ValueError("ACE-Step XM masked loss requires attention_mask to be a tensor.")
+        if model_pred.ndim == 3:
+            mask = attention_mask.to(device=loss.device, dtype=loss.dtype).unsqueeze(-1).expand_as(loss)
+        elif model_pred.ndim == 4:
+            mask = (
+                attention_mask.to(device=loss.device, dtype=loss.dtype)
+                .unsqueeze(1)
+                .unsqueeze(1)
+                .expand(-1, loss.shape[1], loss.shape[2], -1)
+            )
+        else:
+            raise ValueError(f"ACE-Step XM masked loss does not support model_prediction rank {model_pred.ndim}.")
+        return loss * mask
 
     def _init_internal_guidance_regularizer(self):
         if getattr(self.config, "internal_guidance_enabled", False) and self._is_v15_layout_active():

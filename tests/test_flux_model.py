@@ -7,6 +7,8 @@ from diffusers.models.attention_processor import Attention
 
 from simpletuner.helpers.models.flux.attention import FluxFusedFlashAttnProcessor3, FluxFusedSDPAProcessor
 from simpletuner.helpers.models.flux.model import Flux
+from simpletuner.helpers.training.explorative_modeling import ExplorativeModelingConfig
+from simpletuner.helpers.training.grounding.types import GroundingBatch
 
 
 class FluxModelTests(unittest.TestCase):
@@ -32,6 +34,156 @@ class FluxModelTests(unittest.TestCase):
         self.model._new_hidden_state_buffer = MagicMock(return_value={})
         self.model.crepa_regularizer = SimpleNamespace(enabled=True, block_index=2)
         self.model.sample_flow_sigmas = MagicMock(return_value=(torch.tensor([750.0]), torch.tensor([750.0])))
+
+    def _enable_xm(self, candidate_count=2):
+        self.model.xm_config = ExplorativeModelingConfig(
+            enabled=True,
+            candidate_count=candidate_count,
+            training_target="noise",
+            selection_scope="sample",
+            block_size=0,
+        )
+
+    def test_validate_xm_support_rejects_unsupported_flux_settings(self):
+        self.model.xm_config = ExplorativeModelingConfig(
+            enabled=True,
+            candidate_count=2,
+            training_target="route",
+            selection_scope="sample",
+            block_size=0,
+        )
+
+        with self.assertRaisesRegex(ValueError, "xm_training_target='noise'"):
+            self.model._validate_xm_support()
+
+        self.model.xm_config = ExplorativeModelingConfig(
+            enabled=True,
+            candidate_count=2,
+            training_target="noise",
+            selection_scope="block",
+            block_size=2,
+        )
+
+        with self.assertRaisesRegex(ValueError, "xm_selection_scope='sample'"):
+            self.model._validate_xm_support()
+
+    def test_model_predict_expands_xm_candidates_and_repeats_conditioning(self):
+        self._enable_xm(candidate_count=2)
+        self.model.config.flux_guidance_mode = "random-range"
+        self.model.config.flux_guidance_min = 1.0
+        self.model.config.flux_guidance_max = 2.0
+        self.model.get_trained_component = MagicMock(
+            return_value=SimpleNamespace(config=SimpleNamespace(guidance_embeds=True))
+        )
+        hidden_states_buffer = {}
+        self.model._new_hidden_state_buffer = MagicMock(return_value=hidden_states_buffer)
+
+        def _forward(**kwargs):
+            kwargs["hidden_states_buffer"]["layer_2"] = torch.arange(4 * 5 * 2, dtype=torch.float32).view(4, 5, 2)
+            return (torch.zeros(4, 5, 64),)
+
+        self.model.model = MagicMock(side_effect=_forward)
+        latents = torch.arange(2 * 16 * 4 * 4, dtype=torch.float32).view(2, 16, 4, 4)
+        candidate_noise = torch.full((4, 16, 4, 4), 3.0)
+        grounding_batch = GroundingBatch(
+            boxes=torch.arange(2 * 1 * 4, dtype=torch.float32).view(2, 1, 4),
+            validity_mask=torch.ones(2, 1),
+            spatial_masks=torch.ones(2, 1, 2, 2),
+            text_embeds=torch.ones(2, 1, 6),
+            image_embeds=None,
+            text_masks=torch.ones(2, 1),
+            image_masks=torch.ones(2, 1),
+            max_entities=1,
+        )
+        prepared_batch = {
+            "noisy_latents": torch.zeros_like(latents),
+            "latents": latents.clone(),
+            "noise": torch.zeros_like(latents),
+            "sigmas": torch.full((2, 1, 1, 1), 0.25),
+            "timesteps": torch.tensor([100.0, 200.0]),
+            "prompt_embeds": torch.randn(2, 3, 16),
+            "add_text_embeds": torch.randn(2, 8),
+            "conditioning_packed_latents": torch.randn(2, 1, 64),
+            "conditioning_ids": torch.zeros(2, 1, 3),
+            "grounding_batch": grounding_batch,
+        }
+
+        with (
+            patch("torch.randn_like", return_value=candidate_noise),
+            patch("random.uniform", side_effect=[1.25, 1.75]),
+        ):
+            result = self.model.model_predict(prepared_batch)
+
+        transformer_kwargs = self.model.model.call_args.kwargs
+        self.assertEqual(result["xm_candidate_count"], 2)
+        self.assertEqual(tuple(prepared_batch["latents"].shape), (4, 16, 4, 4))
+        self.assertTrue(torch.equal(prepared_batch["latents"], latents.repeat(2, 1, 1, 1)))
+        self.assertTrue(torch.equal(prepared_batch["noise"], candidate_noise))
+        expected_noisy = 0.75 * prepared_batch["latents"] + 0.25 * candidate_noise
+        self.assertTrue(torch.allclose(prepared_batch["noisy_latents"], expected_noisy))
+        self.assertTrue(torch.equal(prepared_batch["flow_target"], candidate_noise - prepared_batch["latents"]))
+        self.assertTrue(torch.equal(transformer_kwargs["guidance"], torch.tensor([1.25, 1.75, 1.25, 1.75])))
+        self.assertEqual(tuple(transformer_kwargs["hidden_states"].shape), (4, 5, 64))
+        self.assertEqual(tuple(transformer_kwargs["grounding_kwargs"]["boxes"].shape), (4, 1, 4))
+        self.assertEqual(tuple(result["hidden_states_buffer"]["layer_2"].shape), (4, 5, 2))
+
+    def test_xm_loss_selects_winners_before_nextlat_auxiliary_loss(self):
+        self._enable_xm(candidate_count=2)
+        self.model.config.loss_type = "l2"
+        self.model.config.huber_schedule = "constant"
+        self.model.config.huber_c = 0.1
+        latents = torch.zeros(4, 1, 1, 1)
+        noise = torch.tensor([0.0, 1.0, 2.0, 3.0]).view(4, 1, 1, 1)
+        target = noise - latents
+        prediction = torch.tensor([5.0, 1.0, 2.0, -4.0]).view(4, 1, 1, 1)
+        prepared_batch = {
+            "latents": latents,
+            "noise": noise,
+            "noisy_latents": noise,
+            "sigmas": torch.ones(4, 1, 1, 1),
+            "timesteps": torch.tensor([100.0, 200.0, 100.0, 200.0]),
+            "conditioning_packed_latents": torch.arange(4 * 2 * 3, dtype=torch.float32).view(4, 2, 3),
+        }
+        hidden = torch.arange(4 * 3 * 2, dtype=torch.float32).reshape(4, 3, 2)
+        model_output = {
+            "model_prediction": prediction,
+            "hidden_states_buffer": {"layer_0": hidden.clone()},
+            "xm_candidate_count": 2,
+        }
+
+        loss, logs = self.model.loss_with_logs(prepared_batch, model_output)
+
+        self.assertAlmostEqual(loss.item(), 0.0)
+        self.assertTrue(torch.equal(model_output["xm_winner_indices"], torch.tensor([1, 0])))
+        self.assertTrue(torch.equal(model_output["model_prediction"], target[[2, 1]]))
+        self.assertTrue(torch.equal(prepared_batch["noise"], noise[[2, 1]]))
+        self.assertEqual(tuple(prepared_batch["conditioning_packed_latents"].shape), (2, 2, 3))
+        self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"], hidden[[2, 1]]))
+        self.assertNotIn("xm_candidate_count", model_output)
+        self.assertEqual(logs["xm_candidate_0_wins"], 1.0)
+        self.assertEqual(logs["xm_candidate_1_wins"], 1.0)
+
+        class FakeNextLat:
+            enabled = True
+
+            def __init__(self):
+                self.hidden_shape = None
+                self.prediction_shape = None
+
+            def compute_loss(self, hidden_states_buffer, output):
+                self.hidden_shape = tuple(hidden_states_buffer["layer_0"].shape)
+                self.prediction_shape = tuple(output["model_prediction"].shape)
+                return torch.tensor(0.5), {"nextlat_loss": 0.5}
+
+        nextlat = FakeNextLat()
+        self.model.nextlat_regularizer = nextlat
+        self.model.crepa_regularizer = None
+        aux_loss, aux_logs = self.model.auxiliary_loss(model_output, prepared_batch, loss)
+
+        self.assertEqual(tuple(nextlat.hidden_shape), (2, 3, 2))
+        self.assertEqual(tuple(nextlat.prediction_shape), (2, 1, 1, 1))
+        self.assertAlmostEqual(aux_loss.item(), 0.5)
+        self.assertEqual(aux_logs["nextlat_loss"], 0.5)
 
     def test_model_predict_uses_crepa_capture_block_override(self):
         hidden_states_buffer = {}

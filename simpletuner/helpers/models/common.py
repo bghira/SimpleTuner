@@ -41,6 +41,7 @@ from simpletuner.helpers.models.foundation_mixins import (
     VideoTransformMixin,
 )
 from simpletuner.helpers.models.tae import load_tae_decoder
+from simpletuner.helpers.models.xm_mixin import ExplorativeModelingMixin
 from simpletuner.helpers.scheduled_sampling import build_rollout_schedule
 from simpletuner.helpers.training.adapter import load_lora_weights
 from simpletuner.helpers.training.crepa import CrepaFeatureSource, CrepaMode, CrepaRegularizer, UrepaRegularizer
@@ -50,6 +51,7 @@ from simpletuner.helpers.training.custom_schedule import (
     segmented_timestep_selection,
 )
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
+from simpletuner.helpers.training.explorative_modeling import ExplorativeModelingConfig
 from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
 from simpletuner.helpers.training.internal_guidance import (
     InternalGuidanceRegularizer,
@@ -69,6 +71,12 @@ from simpletuner.helpers.training.lora_format import (
 )
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank
+from simpletuner.helpers.training.nextlat import (
+    NextLatRegularizer,
+    infer_nextlat_block_count,
+    infer_nextlat_hidden_size,
+    nextlat_enabled_from_config,
+)
 from simpletuner.helpers.training.quantisation import (
     MANUAL_QUANTIZATION_PRESETS,
     PIPELINE_ONLY_PRESETS,
@@ -432,7 +440,7 @@ class PipelineConditioningImageEmbedder:
         return embeddings
 
 
-class ModelFoundation(ABC):
+class ModelFoundation(ExplorativeModelingMixin, ABC):
     """
     Base class that contains all the universal logic:
       - Noise schedule, prediction target (epsilon, sample, v_prediction, flow-matching)
@@ -566,6 +574,8 @@ class ModelFoundation(ABC):
         self.diffusion_blocks_controller = None
         self.layersync_regularizer: Optional[LayerSyncRegularizer] = None
         self.internal_guidance_regularizer: Optional[InternalGuidanceRegularizer] = None
+        self.nextlat_regularizer: Optional[NextLatRegularizer] = None
+        self.xm_config = ExplorativeModelingConfig.from_config(config)
         self._validate_twinflow_config()
 
     def pack_text_embeddings_for_cache(self, embeddings):
@@ -915,6 +925,8 @@ class ModelFoundation(ABC):
         modules = []
         if getattr(getattr(self, "config", None), "internal_guidance_enabled", False):
             modules.append(InternalGuidanceRegularizer.MODULE_NAME)
+        if nextlat_enabled_from_config(getattr(self, "config", None)):
+            modules.append(NextLatRegularizer.MODULE_NAME)
         model = self.get_trained_component(unwrap_model=False)
         if model is not None:
             modules.extend(
@@ -3633,6 +3645,7 @@ class ModelFoundation(ABC):
         """
         self._init_layersync_regularizer()
         self._init_internal_guidance_regularizer()
+        self._init_nextlat_regularizer()
 
     def post_quantization_setup(self):
         """
@@ -5181,11 +5194,39 @@ class ModelFoundation(ABC):
         )
         self.internal_guidance_regularizer.attach_to_model(unwrapped, dtype=self.config.weight_dtype)
 
+    def _init_nextlat_regularizer(self):
+        if not nextlat_enabled_from_config(self.config):
+            self.nextlat_regularizer = None
+            return
+        if self.MODEL_TYPE is not ModelTypes.TRANSFORMER:
+            raise ValueError("NextLat is only supported for transformer model families.")
+        if str(getattr(self.config, "lora_type", "standard") or "standard").lower() == "lycoris":
+            raise ValueError(
+                "NextLat requires standard PEFT LoRA or full-model training so its predictor is optimized and saved."
+            )
+
+        model_component = self.get_trained_component(unwrap_model=False)
+        if model_component is None:
+            raise ValueError("NextLat requires an attached transformer component.")
+        unwrapped = self.unwrap_model(model=model_component)
+        hidden_size = infer_nextlat_hidden_size(unwrapped)
+        block_count = infer_nextlat_block_count(unwrapped)
+        self.nextlat_regularizer = NextLatRegularizer(
+            self.config,
+            self.accelerator,
+            hidden_size=hidden_size,
+            block_count=block_count,
+        )
+        self.nextlat_regularizer.attach_to_model(unwrapped, dtype=self.config.weight_dtype)
+
     def _hidden_state_capture_layers(self) -> Optional[set[int]]:
         capture_layers = set()
         internal_guidance = getattr(self, "internal_guidance_regularizer", None)
         if internal_guidance and internal_guidance.wants_hidden_states():
             capture_layers.add(internal_guidance.block_index)
+        nextlat = getattr(self, "nextlat_regularizer", None)
+        if nextlat and nextlat.wants_hidden_states():
+            capture_layers.add(nextlat.block_index)
 
         layersync = getattr(self, "layersync_regularizer", None)
         if layersync and layersync.wants_hidden_states():
@@ -5214,10 +5255,12 @@ class ModelFoundation(ABC):
         crepa_buffer = bool(crepa and crepa.wants_hidden_states())
         internal_guidance = getattr(self, "internal_guidance_regularizer", None)
         internal_guidance_buffer = bool(internal_guidance and internal_guidance.wants_hidden_states())
+        nextlat = getattr(self, "nextlat_regularizer", None)
+        nextlat_buffer = bool(nextlat and nextlat.wants_hidden_states())
         distillation_method = getattr(self.config, "distillation_method", None)
         method_value = getattr(distillation_method, "value", distillation_method)
         self_transcendence = str(method_value).lower() == "self_transcendence"
-        return ls_needed or crepa_buffer or internal_guidance_buffer or self_transcendence
+        return ls_needed or crepa_buffer or internal_guidance_buffer or nextlat_buffer or self_transcendence
 
     def _validate_crepa_configuration(self) -> CrepaFeatureSource:
         feature_source = CrepaFeatureSource.from_config(self.config)
@@ -6386,12 +6429,6 @@ class ModelFoundation(ABC):
         loss = loss.mean()
         return loss
 
-    def loss_with_logs(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
-        """
-        Computes loss and optional per-batch metrics for logging.
-        """
-        return self.loss(prepared_batch, model_output, apply_conditioning_mask=apply_conditioning_mask), None
-
     def auxiliary_loss(
         self,
         model_output,
@@ -6430,6 +6467,12 @@ class ModelFoundation(ABC):
                 )
                 loss = loss + internal_guidance_loss
                 aux_logs = (aux_logs or {}) | internal_guidance_logs
+
+            nextlat = getattr(self, "nextlat_regularizer", None)
+            if nextlat and nextlat.enabled:
+                nextlat_loss, nextlat_logs = nextlat.compute_loss(hidden_states_buffer, model_output)
+                loss = loss + nextlat_loss
+                aux_logs = (aux_logs or {}) | nextlat_logs
 
             if apply_layersync:
                 loss, aux_logs = self._apply_layersync_regularizer(loss, aux_logs, hidden_states_buffer)

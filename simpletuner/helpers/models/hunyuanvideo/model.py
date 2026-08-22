@@ -239,6 +239,18 @@ class HunyuanVideo(VideoModelFoundation):
         if getattr(self.config, "validation_guidance", None) is None:
             default_cfg = PIPELINE_CONFIGS.get(self._transformer_version, {})
             self.config.validation_guidance = default_cfg.get("guidance_scale", 6.0)
+        self._validate_xm_support()
+
+    def _repeat_xm_candidate_value(self, value, candidate_count: int, batch_size: int):
+        if isinstance(value, list):
+            if len(value) == batch_size:
+                return list(value) * candidate_count
+            return [self._repeat_xm_candidate_value(item, candidate_count, batch_size) for item in value]
+        if isinstance(value, tuple):
+            if len(value) == batch_size:
+                return tuple(list(value) * candidate_count)
+            return tuple(self._repeat_xm_candidate_value(item, candidate_count, batch_size) for item in value)
+        return super()._repeat_xm_candidate_value(value, candidate_count, batch_size)
 
     def _resolve_transformer_version(self) -> str:
         flavour = getattr(self.config, "model_flavour", self.DEFAULT_MODEL_FLAVOUR) or self.DEFAULT_MODEL_FLAVOUR
@@ -639,6 +651,14 @@ class HunyuanVideo(VideoModelFoundation):
         return prompt_embeds, prompt_attention_mask, prompt_embeds_2, prompt_attention_mask_2
 
     def model_predict(self, prepared_batch):
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch, family_name=self.NAME)
+            model_output = self._model_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch)
+
+    def _model_predict_single(self, prepared_batch):
         latents = prepared_batch["noisy_latents"].to(self.config.weight_dtype)
         if latents.dim() != 5:
             raise ValueError(f"Expected 5D video latents, got shape {latents.shape}")

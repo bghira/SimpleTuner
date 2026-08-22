@@ -1794,6 +1794,70 @@ Internal Guidance は前段の diffusion-transformer block を final output head
 
 ---
 
+## Explorative Modeling (XM)
+
+XM は複数の学習候補を評価し、各 supervised sample または token block を最もよく説明する候補だけを backprop します。選択した target は各 model family 側の対応実装が必要です。
+
+### `--xm_enabled`
+
+- **内容**: XM candidate selection を有効化。
+- **既定**: `false`
+
+### `--xm_candidate_count`
+
+- **内容**: 各 sample に対して評価する noise または route latent の候補数。
+- **既定**: `1`。XM 有効時は `2` 以上が必要です。
+
+### `--xm_training_target`
+
+- **内容**: 候補タイプ。Diffusion/flow では `noise`、AR/RVQ planner では `route` を使います。
+- **選択肢**: `noise`, `route`
+- **既定**: `noise`
+
+### `--xm_selection_scope`
+
+- **内容**: 勝者を `sample` 単位または token/frame `block` 単位で選びます。
+- **既定**: `sample`
+
+### `--xm_block_size`
+
+- **内容**: block-level XM の token/frame span。`0` は supervised sequence 全体を使います。
+- **既定**: `0`
+
+---
+
+## NextLat
+
+NextLat は、capture した各 hidden token から次の hidden token を予測する小さな補助 predictor を追加します。SimpleTuner の hidden-state buffer へ hidden state を出せる transformer family が必要です。
+
+### `--nextlat_enabled`
+
+- **内容**: NextLat hidden-state prediction を有効化。
+- **既定**: `false`
+
+### `--nextlat_block_index`
+
+- **内容**: Capture する 0-based transformer block。
+- **既定**: `-1`。対応する最後の block を使います。
+
+### `--nextlat_weight`
+
+- **内容**: NextLat auxiliary loss の倍率。
+- **既定**: `0.0`。NextLat 有効時は 0 より大きい値が必要です。
+
+### `--nextlat_state_loss`
+
+- **内容**: 次の hidden state 予測に使う距離関数。
+- **選択肢**: `smooth_l1`, `mse`
+- **既定**: `smooth_l1`
+
+### `--nextlat_kl_weight`
+
+- **内容**: Model family が predicted hidden state 用 logits head を提供する場合の optional KL agreement weight。
+- **既定**: `0.0`
+
+---
+
 ## 🔁 LayerSync（隠れ状態の自己整合）
 
 LayerSync は同一 Transformer 内の「学生」レイヤーを、より強い「教師」レイヤーに合わせることで、隠れトークンのコサイン類似度を用いて整合させます。

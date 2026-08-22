@@ -203,6 +203,24 @@ class LongCatImage(ImageModelFoundation):
         if self._is_edit_flavour():
             pipeline_classes[PipelineTypes.TEXT2IMG] = LongCatImageEditPipeline
         self.PIPELINE_CLASSES = pipeline_classes
+        self._validate_xm_support()
+
+    @staticmethod
+    def _longcat_xm_batch_major_lists(values: dict, batch_size: int) -> dict:
+        return {key: list(value) for key, value in values.items() if isinstance(value, list) and len(value) == batch_size}
+
+    def _prepare_xm_noise_candidates(self, prepared_batch: dict) -> dict:
+        self._validate_xm_support()
+        latents = prepared_batch.get("latents")
+        batch_size = latents.shape[0] if torch.is_tensor(latents) and latents.ndim > 0 else None
+        batch_major_lists = self._longcat_xm_batch_major_lists(prepared_batch, batch_size) if batch_size is not None else {}
+
+        result = super()._prepare_xm_noise_candidates(prepared_batch, family_name=self.NAME)
+
+        candidate_count = int(prepared_batch.get("xm_candidate_count", self.xm_config.candidate_count))
+        for key, value in batch_major_lists.items():
+            prepared_batch[key] = value * candidate_count
+        return result
 
     def _get_model_flavour(self) -> Optional[str]:
         return getattr(self.config, "model_flavour", None)
@@ -643,6 +661,14 @@ class LongCatImage(ImageModelFoundation):
         }
 
     def model_predict(self, prepared_batch):
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch)
+            model_output = self._model_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch)
+
+    def _model_predict_single(self, prepared_batch):
         prompt_embeds = prepared_batch["prompt_embeds"].to(
             device=self.accelerator.device,
             dtype=self.config.base_weight_dtype if hasattr(self.config, "base_weight_dtype") else self.config.weight_dtype,
