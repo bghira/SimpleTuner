@@ -451,18 +451,14 @@ def _model_card_optional_value(args, name: str):
     return None
 
 
-def _model_card_training_modes(args) -> str:
+def _model_card_training_modes(args, model: Optional[ModelFoundation] = None) -> str:
     lines = []
-    if getattr(args, "model_family", None) == "minimaxmusic":
-        train_component = str(_model_card_optional_value(args, "minimax_music_train_component") or "transformer")
-        component_labels = {
-            "language_model": "language_model (global LM / RVQ planner)",
-            "transformer": "transformer (DiT/audio denoiser)",
-        }
-        lines.append(f"- MiniMax Music train component: `{component_labels.get(train_component, train_component)}`")
-        lm_max_frames = _model_card_optional_value(args, "minimax_music_lm_max_frames")
-        if lm_max_frames:
-            lines.append(f"- MiniMax Music LM max frames: `{lm_max_frames}`")
+    model_specific_info = ""
+    if model and hasattr(model, "custom_model_card_training_mode_info"):
+        model_specific_info = model.custom_model_card_training_mode_info(args) or ""
+        if not isinstance(model_specific_info, str):
+            model_specific_info = ""
+        model_specific_info = model_specific_info.strip()
 
     if _model_card_bool(args, "nextlat_enabled"):
         lines.append("- NextLat: Enabled")
@@ -478,9 +474,14 @@ def _model_card_training_modes(args) -> str:
         lines.append(f"  - Training target: `{_model_card_optional_value(args, 'xm_training_target')}`")
         lines.append(f"  - Block size: `{_model_card_optional_value(args, 'xm_block_size')}`")
 
-    if not lines:
+    if not lines and not model_specific_info:
         return ""
-    return "## Training modes\n\n" + "\n".join(lines) + "\n\n"
+    blocks = []
+    if model_specific_info:
+        blocks.append(model_specific_info)
+    if lines:
+        blocks.append("\n".join(lines))
+    return "## Training modes\n\n" + "\n".join(blocks) + "\n\n"
 
 
 def save_metadata_sample(
@@ -914,7 +915,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 {('- SLA: Enabled (you MUST use SLA for inference; sla_attention.pt contains attention weights)') if StateTracker.get_args().attention_mechanism == 'sla' else ''}
 {lora_info(args=StateTracker.get_args())}
 
-{_model_card_training_modes(args)}
+{_model_card_training_modes(args, model=model)}
 ## Datasets
 
 {datasets_str}

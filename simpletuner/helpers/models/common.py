@@ -6913,6 +6913,12 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
         """
         return []
 
+    def custom_model_card_training_mode_info(self, args) -> str:
+        """
+        Override this in a subclass to add model-specific training mode details to model cards.
+        """
+        return ""
+
     def custom_model_card_code_example(self, repo_id: str = None) -> str:
         """
         Override this to provide custom code examples for model cards.

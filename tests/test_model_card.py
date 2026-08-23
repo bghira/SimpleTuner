@@ -335,6 +335,10 @@ class TestMetadataFunctions(unittest.TestCase):
         model.validation_audio_sample_rate.return_value = 44100
         model.custom_model_card_schedule_info.return_value = ""
         model.custom_model_card_code_example.return_value = "```python\npass\n```"
+        model.custom_model_card_training_mode_info.return_value = (
+            "- MiniMax Music train component: `language_model (global LM / RVQ planner)`\n"
+            "- MiniMax Music LM max frames: `128`"
+        )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with (
@@ -375,6 +379,19 @@ class TestMetadataFunctions(unittest.TestCase):
             self.assertIn("- XM: Enabled", readme)
             self.assertIn("  - Candidate count: `2`", readme)
             self.assertIn("  - Training target: `route`", readme)
+            model.custom_model_card_training_mode_info.assert_called_once_with(self.args)
+
+    def test_minimax_music_model_card_training_mode_info(self):
+        from simpletuner.helpers.models.minimaxmusic.model import MiniMaxMusic
+
+        self.args.minimax_music_train_component = "language_model"
+        self.args.minimax_music_lm_max_frames = 128
+        model = MiniMaxMusic.__new__(MiniMaxMusic)
+
+        details = model.custom_model_card_training_mode_info(self.args)
+
+        self.assertIn("- MiniMax Music train component: `language_model (global LM / RVQ planner)`", details)
+        self.assertIn("- MiniMax Music LM max frames: `128`", details)
 
     def test_hub_commit_message_omits_diffusion_schedule_fields_for_flow_matching(self):
         hub_manager = object.__new__(HubManager)
