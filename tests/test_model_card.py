@@ -41,6 +41,7 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.model_type = "lora"
         self.args.model_family = "sdxl"
         self.args.validation_prompt = "A test prompt"
+        self.args.validation_disable = False
         self.args.validation_negative_prompt = "A negative prompt"
         self.args.validation_num_inference_steps = 50
         self.args.validation_guidance = 7.5
@@ -84,6 +85,18 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.t5_padding = "unmodified"
         self.args.enable_xformers_memory_efficient_attention = False
         self.args.attention_mechanism = "diffusers"
+        self.args.minimax_music_train_component = None
+        self.args.minimax_music_lm_max_frames = None
+        self.args.nextlat_enabled = False
+        self.args.nextlat_block_index = -1
+        self.args.nextlat_weight = 0.0
+        self.args.nextlat_state_loss = "smooth_l1"
+        self.args.nextlat_kl_weight = 0.0
+        self.args.xm_enabled = False
+        self.args.xm_candidate_count = 1
+        self.args.xm_selection_scope = "sample"
+        self.args.xm_training_target = "noise"
+        self.args.xm_block_size = 0
         self.mock_model = MagicMock(MODEL_TYPE=MagicMock(value="unet"))
 
     def test_model_imports(self):
@@ -292,6 +305,76 @@ class TestMetadataFunctions(unittest.TestCase):
                 self.args.model_family = model_family
                 self.assertEqual(_pipeline_tag(self.args), "text-to-audio")
                 self.assertEqual(_secondary_pipeline_tag(self.args), "audio")
+
+    def test_minimax_music_model_card_reports_modes_and_disabled_validation(self):
+        self.args.model_family = "minimaxmusic"
+        self.args.model_type = "lora"
+        self.args.lora_type = "standard"
+        self.args.peft_lora_mode = "standard"
+        self.args.controlnet = False
+        self.args.control = False
+        self.args.validation_disable = True
+        self.args.model_card_note = ""
+        self.args.minimax_music_train_component = "language_model"
+        self.args.minimax_music_lm_max_frames = 128
+        self.args.nextlat_enabled = True
+        self.args.nextlat_block_index = -1
+        self.args.nextlat_weight = 0.1
+        self.args.nextlat_state_loss = "smooth_l1"
+        self.args.nextlat_kl_weight = 0.0
+        self.args.xm_enabled = True
+        self.args.xm_candidate_count = 2
+        self.args.xm_selection_scope = "block"
+        self.args.xm_training_target = "route"
+        self.args.xm_block_size = 16
+        model = MagicMock(
+            MODEL_LICENSE="other",
+            PREDICTION_TYPE=SimpleNamespace(value="autoregressive_next_token"),
+            gligen=False,
+        )
+        model.validation_audio_sample_rate.return_value = 44100
+        model.custom_model_card_schedule_info.return_value = ""
+        model.custom_model_card_code_example.return_value = "```python\npass\n```"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_model_family", return_value="minimaxmusic"),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_data_backends", return_value={}),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_weight_dtype", return_value=torch.bfloat16),
+                patch(
+                    "simpletuner.helpers.publishing.metadata.StateTracker.get_accelerator",
+                    return_value=MagicMock(num_processes=1),
+                ),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_args", return_value=self.args),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_model", return_value=model),
+            ):
+                save_model_card(
+                    repo_id="test-repo",
+                    images=None,
+                    audios=None,
+                    base_model="MiniMaxAI/MiniMax-Music3",
+                    train_text_encoder=False,
+                    prompt="",
+                    validation_prompts=None,
+                    validation_shortnames=None,
+                    repo_folder=tmpdir,
+                    model=model,
+                    global_step=6000,
+                    epoch=250,
+                )
+
+            readme = Path(tmpdir, "README.md").read_text(encoding="utf-8")
+            self.assertIn("Validation was disabled during training.", readme)
+            self.assertNotIn("## Validation settings", readme)
+            self.assertNotIn("<Gallery />", readme)
+            self.assertIn("## Training modes", readme)
+            self.assertIn("- MiniMax Music train component: `language_model (global LM / RVQ planner)`", readme)
+            self.assertIn("- MiniMax Music LM max frames: `128`", readme)
+            self.assertIn("- NextLat: Enabled", readme)
+            self.assertIn("  - Weight: `0.1`", readme)
+            self.assertIn("- XM: Enabled", readme)
+            self.assertIn("  - Candidate count: `2`", readme)
+            self.assertIn("  - Training target: `route`", readme)
 
     def test_hub_commit_message_omits_diffusion_schedule_fields_for_flow_matching(self):
         hub_manager = object.__new__(HubManager)
