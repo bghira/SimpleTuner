@@ -318,6 +318,18 @@ class MiniMaxMusic(AudioModelFoundation):
             self.TEXT_ENCODER_CONFIGURATION = {}
             self.DEFAULT_LORA_TARGET = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
+    def custom_model_card_training_mode_info(self, args) -> str:
+        train_component = str(getattr(args, "minimax_music_train_component", "transformer") or "transformer")
+        component_labels = {
+            "language_model": "language_model (global LM / RVQ planner)",
+            "transformer": "transformer (DiT/audio denoiser)",
+        }
+        lines = [f"- MiniMax Music train component: `{component_labels.get(train_component, train_component)}`"]
+        lm_max_frames = getattr(args, "minimax_music_lm_max_frames", None)
+        if lm_max_frames:
+            lines.append(f"- MiniMax Music LM max frames: `{lm_max_frames}`")
+        return "\n".join(lines)
+
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
         return 35
