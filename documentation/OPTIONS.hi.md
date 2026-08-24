@@ -123,6 +123,7 @@ simpletuner configure config/foo/config.json
   - Positive limits native 128-frame intervals में नीचे round होते हैं।
   - `random` में cap के अंदर target और कम-से-कम एक context segment आना चाहिए।
   - End-of-audio target तभी मिलता है जब sampled span वास्तविक track end तक पहुँचे।
+  - जब terminal और non-terminal दोनों spans उपलब्ध हों, 25% continuation samples स्पष्ट रूप से वास्तविक track end चुनते हैं। बाकी 75% valid non-terminal endpoints या offsets पर uniform रहते हैं, इसलिए लंबे tracks पर EOS supervision कम नहीं होती।
 
 ### `--minimax_music_rvq_encoder_model_name_or_path`
 

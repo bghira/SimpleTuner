@@ -201,7 +201,7 @@ Memory-limited full-prefix continuation config:
 }
 ```
 
-उसी memory cap में positioned continuation के लिए crop mode को `random` करें। Positioned crops prompt में time range जोड़ते हैं और `lyrics_window` न होने पर full-track lyrics हटाते हैं। Sampling पूरी cached RVQ sequence पर LM collate के समय होती है; dataset audio या cache नहीं बदलता।
+उसी memory cap में positioned continuation के लिए crop mode को `random` करें। Positioned crops prompt में time range जोड़ते हैं और `lyrics_window` न होने पर full-track lyrics हटाते हैं। जब terminal और non-terminal spans दोनों संभव हों, एक fixed 25% samples वास्तविक track end तक पहुँचते हैं ताकि EOS supervision track length पर निर्भर न हो। Sampling पूरी cached RVQ sequence पर LM collate के समय होती है; dataset audio या cache नहीं बदलता।
 - **प्रायर संरक्षण**: `is_regularisation_data: true` के साथ असंबंधित गीतों वाला दूसरा ऑडियो बैकएंड जोड़ें (खाली गीत मान्य हैं)। उन बैचों पर हानि वास्तविक कोड के बजाय स्थिर आधार मॉडल के अपने नेक्स्ट-टोकन वितरण को लक्षित करती है, जिससे LoRA सटीक रहता है: असंबंधित कैप्शन ठीक वैसे ही भविष्यवाणी करते रहते हैं जैसे आधार मॉडल करता, और शैली का रिसाव बहुत कम हो जाता है।
 
 ## Troubleshooting

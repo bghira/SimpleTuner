@@ -123,6 +123,7 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
   - Limites positivos são arredondados para baixo em intervalos de 128 frames.
   - Em `random`, o limite deve comportar o alvo e pelo menos um segmento de contexto.
   - O alvo de fim de áudio só é adicionado quando o trecho chega ao fim real da faixa.
+  - Quando trechos terminais e não terminais são possíveis, 25% das amostras de continuation selecionam explicitamente o fim real. Os outros 75% permanecem uniformes entre finais ou offsets não terminais válidos, evitando que a supervisão EOS diminua em faixas longas.
 
 ### `--minimax_music_rvq_encoder_model_name_or_path`
 

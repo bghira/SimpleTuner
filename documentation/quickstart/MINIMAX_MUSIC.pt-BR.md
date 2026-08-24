@@ -201,7 +201,7 @@ Exemplo de continuation full-prefix com limite de memória:
 }
 ```
 
-Mude o crop mode para `random` para treinar continuations posicionadas com o mesmo limite. Esses recortes adicionam o intervalo temporal ao prompt e omitem letras completas sem `lyrics_window`. A amostragem ocorre no collate LM sobre a sequência RVQ completa em cache; não altera o áudio nem o cache do dataset.
+Mude o crop mode para `random` para treinar continuations posicionadas com o mesmo limite. Esses recortes adicionam o intervalo temporal ao prompt e omitem letras completas sem `lyrics_window`. Quando trechos terminais e não terminais são possíveis, 25% fixos das amostras chegam ao fim real para que a supervisão EOS não dependa do tamanho da faixa. A amostragem ocorre no collate LM sobre a sequência RVQ completa em cache; não altera o áudio nem o cache do dataset.
 - **Preservação de prior**: adicione um segundo backend de áudio com `is_regularisation_data: true` contendo músicas não relacionadas (letras vazias são permitidas). Nesses lotes a perda mira a distribuição de próximo token do modelo base congelado em vez dos códigos reais, mantendo o LoRA cirúrgico: captions não relacionados continuam prevendo exatamente como o modelo base faria, reduzindo bastante o vazamento de estilo.
 
 ## Solução de problemas

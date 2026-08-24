@@ -1306,7 +1306,7 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         model.tokenizers = [self._FakeTokenizer()]
         codes = torch.arange(36, dtype=torch.long).reshape(9, 4) % 8
 
-        with patch.object(model, "_lm_choose_frame_value", return_value=9):
+        with patch.object(model, "_lm_should_sample_terminal_endpoint", return_value=True):
             payload = model.collate_audio_tokens(
                 [{"prompt": "example style", "lyrics": "full track lyrics", "audio_tokens": codes}]
             )
@@ -1334,7 +1334,10 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         model.tokenizers = [tokenizer]
         codes = torch.arange(48, dtype=torch.long).reshape(12, 4) % 8
 
-        with patch.object(model, "_lm_choose_frame_value", side_effect=[8, 4]):
+        with (
+            patch.object(model, "_lm_should_sample_terminal_endpoint", return_value=True),
+            patch.object(model, "_lm_choose_frame_value", return_value=8),
+        ):
             payload = model.collate_audio_tokens(
                 [{"prompt": "example style", "lyrics": "full track lyrics", "audio_tokens": codes}]
             )
@@ -1347,6 +1350,51 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         self.assertIn("<|window_start|>0.16s", tokenizer.texts[0])
         self.assertIn("<|window_end|>0.48s", tokenizer.texts[0])
         self.assertNotIn("full track lyrics", tokenizer.texts[0])
+
+    def test_lm_continuation_nonterminal_draws_stay_uniform_over_other_endpoints(self):
+        model = self._lm_model(
+            _native_segment_frames=2,
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_target_frames=4,
+            minimax_music_lm_min_duration_seconds=0.08,
+        )
+
+        with (
+            patch.object(model, "_lm_should_sample_terminal_endpoint", return_value=False),
+            patch.object(model, "_lm_choose_frame_value", return_value=6) as choose,
+        ):
+            span = model._lm_continuation_span(9)
+
+        self.assertEqual(span, (0, 6, 2))
+        choose.assert_called_once_with([4, 6, 8])
+
+    def test_lm_continuation_terminal_probability_has_an_exact_boundary(self):
+        model = self._lm_model()
+
+        with patch("torch.rand", return_value=torch.tensor(0.249)):
+            self.assertTrue(model._lm_should_sample_terminal_endpoint())
+        with patch("torch.rand", return_value=torch.tensor(0.25)):
+            self.assertFalse(model._lm_should_sample_terminal_endpoint())
+
+    def test_lm_continuation_random_nonterminal_draw_excludes_tail_offset(self):
+        model = self._lm_model(
+            _native_segment_frames=2,
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_target_frames=4,
+            minimax_music_lm_continuation_crop_mode="random",
+            minimax_music_lm_min_duration_seconds=0.08,
+            minimax_music_lm_max_duration_seconds=0.32,
+        )
+
+        with (
+            patch.object(model, "_lm_should_sample_terminal_endpoint", return_value=False),
+            patch.object(model, "_lm_choose_frame_value", side_effect=[8, 2]) as choose,
+        ):
+            span = model._lm_continuation_span(14)
+
+        self.assertEqual(span, (2, 10, 4))
+        self.assertEqual(choose.call_args_list[0].args[0], [6, 8])
+        self.assertEqual(choose.call_args_list[1].args[0], [0, 2, 4])
 
     def test_lm_collate_continuation_random_falls_back_to_full_for_short_track(self):
         model = self._lm_model(

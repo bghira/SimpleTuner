@@ -299,6 +299,7 @@ class MiniMaxMusic(AudioModelFoundation):
     _train_language_model = False
     XM_ROUTE_EMBEDDING_MODULE_NAME = "xm_route_embeddings"
     LM_NATIVE_SEGMENT_FRAMES = 128
+    LM_CONTINUATION_TERMINAL_PROBABILITY = 0.25
 
     def __init__(self, config, accelerator):
         user_pretrained_vae_model_name_or_path = getattr(config, "pretrained_vae_model_name_or_path", None)
@@ -1157,21 +1158,16 @@ class MiniMaxMusic(AudioModelFoundation):
         index = int(torch.randint(0, len(values), (1,)).item())
         return values[index]
 
-    def _lm_aligned_frame_values(
-        self,
-        minimum: int,
-        maximum: int,
-        *,
-        include_terminal: Optional[int] = None,
-    ) -> list[int]:
+    def _lm_should_sample_terminal_endpoint(self) -> bool:
+        probability = float(self.LM_CONTINUATION_TERMINAL_PROBABILITY)
+        return probability >= 1.0 or (probability > 0.0 and float(torch.rand(()).item()) < probability)
+
+    def _lm_aligned_frame_values(self, minimum: int, maximum: int) -> list[int]:
         if maximum < minimum:
             return []
         interval = self.LM_NATIVE_SEGMENT_FRAMES
         first = math.ceil(minimum / interval) * interval
-        values = list(range(first, maximum + 1, interval))
-        if include_terminal is not None and minimum <= include_terminal <= maximum:
-            values.append(int(include_terminal))
-        return sorted(set(values))
+        return list(range(first, maximum + 1, interval))
 
     def _lm_continuation_span(self, available_frames: int) -> tuple[int, int, int]:
         target_frames = min(self._lm_continuation_target_frames(), available_frames)
@@ -1192,30 +1188,33 @@ class MiniMaxMusic(AudioModelFoundation):
         if crop_mode == "random":
             min_visible = max(min_visible, target_frames + self.LM_NATIVE_SEGMENT_FRAMES)
             if available_frames >= min_visible and max_visible >= min_visible:
-                include_terminal = available_frames if max_visible == available_frames else None
-                visible_lengths = self._lm_aligned_frame_values(
-                    min_visible,
-                    max_visible,
-                    include_terminal=include_terminal,
-                )
-                visible_length = self._lm_choose_frame_value(visible_lengths)
+                visible_lengths = self._lm_aligned_frame_values(min_visible, max_visible)
+                if max_visible == available_frames and available_frames not in visible_lengths:
+                    visible_lengths.append(available_frames)
+                nonterminal_lengths = [length for length in visible_lengths if length < available_frames]
+                use_terminal = not nonterminal_lengths or self._lm_should_sample_terminal_endpoint()
+                length_candidates = visible_lengths if use_terminal else nonterminal_lengths
+                visible_length = self._lm_choose_frame_value(length_candidates)
                 max_start = available_frames - visible_length
-                starts = list(range(0, max_start + 1, self.LM_NATIVE_SEGMENT_FRAMES))
-                starts.append(max_start)
-                start_frame = self._lm_choose_frame_value(sorted(set(starts)))
+                if use_terminal:
+                    start_frame = max_start
+                else:
+                    starts = list(range(0, max_start + 1, self.LM_NATIVE_SEGMENT_FRAMES))
+                    starts = [start for start in starts if start < max_start]
+                    start_frame = self._lm_choose_frame_value(starts)
                 end_frame = start_frame + visible_length
                 return start_frame, end_frame, visible_length - target_frames
 
         if max_visible < min_visible:
             end_frame = max_visible
         else:
-            include_terminal = available_frames if max_visible == available_frames else None
-            endpoints = self._lm_aligned_frame_values(
-                min_visible,
-                max_visible,
-                include_terminal=include_terminal,
-            )
-            end_frame = self._lm_choose_frame_value(endpoints)
+            endpoints = self._lm_aligned_frame_values(min_visible, max_visible)
+            terminal_available = max_visible == available_frames
+            nonterminal_endpoints = [end for end in endpoints if not terminal_available or end < available_frames]
+            if terminal_available and (not nonterminal_endpoints or self._lm_should_sample_terminal_endpoint()):
+                end_frame = available_frames
+            else:
+                end_frame = self._lm_choose_frame_value(nonterminal_endpoints)
         return 0, end_frame, max(0, end_frame - target_frames)
 
     def _lm_prompt_text(

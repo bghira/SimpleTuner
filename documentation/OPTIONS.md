@@ -123,6 +123,7 @@ Where `foo` is your config environment - or just use `config/config.json` if you
   - Positive limits round down in native 128-frame (5.12-second) intervals.
   - For `random`, the cap must fit the supervised target plus at least one native context segment.
   - A sample receives an end-of-audio target only when its sampled span reaches the real track end.
+  - When both terminal and non-terminal spans are available, 25% of continuation samples explicitly select the real track end. The other 75% remain uniform over valid non-terminal endpoints or offsets, so EOS supervision does not become rarer on longer tracks.
 
 ### `--minimax_music_rvq_encoder_model_name_or_path`
 

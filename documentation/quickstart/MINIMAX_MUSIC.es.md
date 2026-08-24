@@ -201,7 +201,7 @@ Ejemplo de continuación con prefijo completo y límite de memoria:
 }
 ```
 
-Cambia el modo a `random` para entrenar continuaciones posicionadas con el mismo límite. Esos recortes añaden su rango temporal al prompt y omiten las letras completas salvo que exista `lyrics_window`. El muestreo ocurre durante el collate LM sobre la secuencia RVQ completa almacenada; no modifica el audio ni la caché del dataset.
+Cambia el modo a `random` para entrenar continuaciones posicionadas con el mismo límite. Esos recortes añaden su rango temporal al prompt y omiten las letras completas salvo que exista `lyrics_window`. Cuando son posibles tramos terminales y no terminales, un 25% fijo alcanza el final real para que la supervisión EOS no dependa de la longitud de la pista. El muestreo ocurre durante el collate LM sobre la secuencia RVQ completa almacenada; no modifica el audio ni la caché del dataset.
 - **Preservación de prior**: añade un segundo backend de audio con `is_regularisation_data: true` que contenga canciones no relacionadas (se permiten letras vacías). En esos lotes la pérdida apunta a la distribución de siguiente token del modelo base congelado en lugar de los códigos reales, de modo que el LoRA se mantiene quirúrgico: los captions no relacionados siguen prediciendo exactamente como lo haría el modelo base, lo que reduce notablemente el sangrado de estilo.
 
 ## Solución de problemas

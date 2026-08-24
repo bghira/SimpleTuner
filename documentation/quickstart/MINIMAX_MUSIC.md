@@ -262,7 +262,7 @@ A bounded full-prefix continuation configuration looks like this:
 }
 ```
 
-Change the crop mode to `random` to train positioned continuations within the same memory cap. Positioned crops add their time range to the prompt and omit full-track lyrics unless `lyrics_window` is available. This sampling happens during LM collate over the complete cached RVQ sequence; it does not alter the dataset audio or cache.
+Change the crop mode to `random` to train positioned continuations within the same memory cap. Positioned crops add their time range to the prompt and omit full-track lyrics unless `lyrics_window` is available. When terminal and non-terminal spans are both possible, a fixed 25% of samples reach the real track end so EOS supervision is independent of track length. This sampling happens during LM collate over the complete cached RVQ sequence; it does not alter the dataset audio or cache.
 - **Prior preservation**: add a second audio backend with `is_regularisation_data: true` containing unrelated songs
   (empty lyrics are allowed). On those batches the loss targets the frozen base model's own next-token distribution
   instead of the ground-truth codes, so the LoRA stays surgical: unrelated captions keep predicting exactly as the

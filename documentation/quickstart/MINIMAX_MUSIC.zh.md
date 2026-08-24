@@ -201,7 +201,7 @@ MiniMax Music 3 使用 SimpleTuner 的 flow-matching 训练路径，因此可使
 }
 ```
 
-把 crop mode 改为 `random`，即可在相同显存上限下训练定位 continuation。定位片段会把时间范围加入 prompt；没有 `lyrics_window` 时会省略完整歌词。采样发生在完整缓存 RVQ 序列的 LM collate 阶段，不会修改数据集音频或缓存。
+把 crop mode 改为 `random`，即可在相同显存上限下训练定位 continuation。定位片段会把时间范围加入 prompt；没有 `lyrics_window` 时会省略完整歌词。当终止和非终止片段都可用时，固定 25% 的样本会到达真实曲目末尾，使 EOS 监督不依赖曲目长度。采样发生在完整缓存 RVQ 序列的 LM collate 阶段，不会修改数据集音频或缓存。
 - **先验保持**：添加第二个音频后端并设置 `is_regularisation_data: true`，其中包含无关歌曲（允许空歌词）。在这些批次上，损失以冻结基础模型自身的下一 token 分布为目标，而不是真实码，因此 LoRA 保持外科手术式的精准：无关的 caption 仍然会像基础模型那样预测，大幅减少风格渗漏。
 
 ## 故障排查

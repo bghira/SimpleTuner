@@ -123,6 +123,7 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
   - Los límites positivos se redondean hacia abajo en intervalos de 128 frames.
   - En `random`, el límite debe contener el objetivo y al menos un segmento de contexto.
   - Solo se añade el objetivo de fin de audio cuando el tramo alcanza el final real de la pista.
+  - Cuando existen tramos terminales y no terminales, el 25% de las muestras de continuación selecciona explícitamente el final real. El 75% restante se distribuye uniformemente entre finales o desplazamientos no terminales válidos, evitando que la supervisión EOS disminuya en pistas largas.
 
 ### `--minimax_music_rvq_encoder_model_name_or_path`
 

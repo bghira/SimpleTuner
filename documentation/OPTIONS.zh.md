@@ -123,6 +123,7 @@ simpletuner configure config/foo/config.json
   - 正数上限按原生 128 帧间隔向下取整。
   - 对 `random`，上限必须容纳监督目标和至少一个上下文分段。
   - 只有采样片段到达真实曲目末尾时，才添加音频结束目标。
+  - 当终止和非终止片段都可用时，25% 的 continuation 样本会显式选择真实曲目末尾；其余 75% 在有效的非终止终点或偏移中均匀采样，因此 EOS 监督不会随曲目变长而变稀。
 
 ### `--minimax_music_rvq_encoder_model_name_or_path`
 
