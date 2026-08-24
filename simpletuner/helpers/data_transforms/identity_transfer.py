@@ -223,7 +223,6 @@ class IdentityTransferTransform(DataTransformTask):
         transform = self._normalise_transform_config(existing_backend_ids)
         transform_id = transform["id"]
         output_dir = self._output_dir()
-        transform_root = Path(output_dir) / "cache" / "data_transforms" / transform_id
         model_cache_dir = Path(transform["model"]["cache_dir"])
         generated_dir = Path(transform["target"]["instance_data_dir"])
         fingerprint = self._fingerprint(transform)
