@@ -331,6 +331,10 @@ class MiniMaxMusic(AudioModelFoundation):
         lm_max_frames = getattr(args, "minimax_music_lm_max_frames", None)
         if lm_max_frames:
             lines.append(f"- MiniMax Music LM max frames: `{lm_max_frames}`")
+        if train_component == "language_model":
+            lines.append(
+                "- MiniMax Music LM window mode: " f"`{getattr(args, 'minimax_music_lm_window_mode', 'prefix') or 'prefix'}`"
+            )
         return "\n".join(lines)
 
     @classmethod
