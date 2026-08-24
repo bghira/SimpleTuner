@@ -12,6 +12,7 @@ __pycache__
 # Large or generated artifacts
 cache
 datasets
+artifacts
 output
 dist
 build

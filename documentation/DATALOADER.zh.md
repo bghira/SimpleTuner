@@ -774,8 +774,9 @@ effective_batch_size = 数据集 train_batch_size × num_gpus × gradient_accumu
 ### `is_regularisation_data`
 
 - 也可写作 `is_regularization_data`
-- 为 LyCORIS 适配器启用父教师训练，使该数据集的预测目标更倾向于基础模型的结果。
-  - 目前不支持标准 LoRA。
+- 启用父教师训练，使该数据集的预测目标更倾向于冻结基础模型的结果。
+  - 大多数 diffusion family 目前需要 LyCORIS 适配器。
+  - MiniMax Music 3 的 `language_model` 训练支持标准 PEFT LoRA regularisation batch，包括 XM route selection。其目标是冻结基础 planner 的下一 token 分布。
 
 ### `delete_unwanted_images`
 

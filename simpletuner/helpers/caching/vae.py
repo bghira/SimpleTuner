@@ -1740,10 +1740,24 @@ class VAECache(WebhookMixin):
             start = random.randint(0, waveform.shape[-1] - target_samples)
         else:
             start = 0
+        original_samples = int(waveform.shape[-1])
         waveform = waveform[:, start : start + target_samples].contiguous()
         metadata = dict(metadata)
+        original_duration = metadata.get("original_duration_seconds") or metadata.get("duration_seconds")
+        try:
+            original_duration = float(original_duration)
+        except (TypeError, ValueError):
+            original_duration = float(original_samples) / float(sample_rate)
+        crop_start_seconds = float(start) / float(sample_rate)
+        crop_duration_seconds = float(waveform.shape[-1]) / float(sample_rate)
         metadata["num_samples"] = waveform.shape[-1]
-        metadata["duration_seconds"] = float(waveform.shape[-1]) / float(sample_rate)
+        metadata["original_num_samples"] = metadata.get("original_num_samples") or original_samples
+        metadata["original_duration_seconds"] = original_duration
+        metadata["audio_crop_start_seconds"] = crop_start_seconds
+        metadata["audio_crop_duration_seconds"] = crop_duration_seconds
+        metadata["audio_crop_end_seconds"] = crop_start_seconds + crop_duration_seconds
+        metadata["audio_crop_is_terminal"] = bool(start + target_samples >= original_samples)
+        metadata["duration_seconds"] = crop_duration_seconds
         metadata["truncated_duration_seconds"] = metadata["duration_seconds"]
         logger.debug(
             "Truncated audio sample %s to %.2fs for its configured duration limit.",

@@ -775,8 +775,9 @@ effective_batch_size = dataset train_batch_size × num_gpus × gradient_accumula
 ### `is_regularisation_data`
 
 - इसे `is_regularization_data` भी लिखा जा सकता है
-- LyCORIS adapters के लिए parent‑teacher training सक्षम करता है ताकि prediction target दिए गए dataset के लिए base model के परिणाम को प्राथमिकता दे।
-  - Standard LoRA फिलहाल समर्थित नहीं हैं।
+- parent-teacher training सक्षम करता है ताकि prediction target दिए गए dataset के लिए frozen base model के परिणाम को प्राथमिकता दे।
+  - अधिकांश diffusion families को फिलहाल LyCORIS adapters चाहिए।
+  - MiniMax Music 3 `language_model` training standard PEFT LoRA regularisation batches को support करता है, जिसमें XM route selection भी शामिल है। इसका target frozen base planner का next-token distribution होता है।
 
 ### `delete_unwanted_images`
 
