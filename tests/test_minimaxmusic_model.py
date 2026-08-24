@@ -1580,7 +1580,7 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         codes = torch.tensor([[5, 0, 0, 0], [9, 0, 0, 0]], dtype=torch.long).unsqueeze(0)
         teacher = torch.randn(1, prompt_len + audio_len, vocab)
         model._lm_adapters_disabled = lambda: nullcontext()
-        model._lm_predict = lambda batch: {"logits": teacher}
+        model._lm_predict = lambda batch, **kwargs: {"logits": teacher}
         prepared = {
             "audio_codes": codes,
             "prompt_lengths": torch.tensor([prompt_len]),
@@ -1769,6 +1769,55 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         self.assertEqual(model_output["xm_route_usage"].tolist(), [1.0, 1.0])
         self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"][0], hidden[0]))
         self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"][1], hidden[3]))
+
+    def test_lm_xm_route_regularisation_selects_candidate_against_frozen_teacher(self):
+        from contextlib import nullcontext
+
+        from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET
+
+        model = self._lm_model(
+            xm_enabled=True,
+            xm_candidate_count=2,
+            xm_training_target="route",
+            xm_selection_scope="block",
+            xm_block_size=2,
+        )
+        model.config.model_type = "lora"
+        vocab = _AUDIO_CODE_OFFSET + 16
+        prompt_len, audio_len = 3, 2
+        prepared = {
+            "audio_codes": torch.tensor(
+                [
+                    [[5, 0, 0, 0], [6, 0, 0, 0]],
+                    [[7, 0, 0, 0], [8, 0, 0, 0]],
+                ],
+                dtype=torch.long,
+            ),
+            "prompt_lengths": torch.tensor([prompt_len, prompt_len]),
+            "audio_lengths": torch.tensor([audio_len, audio_len]),
+            "has_audio_end": torch.tensor([False, False]),
+            "is_regularisation_data": True,
+        }
+        teacher = torch.randn(2, prompt_len + audio_len, vocab)
+        candidates = teacher.repeat((2, 1, 1))
+        candidates[1] = candidates[1].roll(1, dims=-1)
+        candidates[2] = candidates[2].roll(1, dims=-1)
+        model._lm_adapters_disabled = lambda: nullcontext()
+        route_flags = []
+
+        def teacher_predict(batch, *, apply_xm_routes=True):
+            route_flags.append(apply_xm_routes)
+            return {"logits": teacher}
+
+        model._lm_predict = teacher_predict
+        model_output = {"logits": candidates}
+
+        loss = model.loss(prepared, model_output)
+
+        self.assertTrue(torch.isfinite(loss))
+        self.assertEqual(route_flags, [False])
+        self.assertEqual(model_output["xm_winner_indices"].tolist(), [0, 1])
+        self.assertEqual(model_output["xm_route_usage"].tolist(), [1.0, 1.0])
 
     def test_lm_xm_route_module_is_saved_with_lora_adapter(self):
         model = self._lm_model(

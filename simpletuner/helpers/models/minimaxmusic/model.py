@@ -1557,7 +1557,7 @@ class MiniMaxMusic(AudioModelFoundation):
             if torch.is_tensor(value) and value.shape[0] % candidate_count == 0:
                 hidden_states_buffer[key] = select_winning_candidates(value, winner_indices, candidate_count)
 
-    def _lm_predict(self, prepared_batch: dict) -> Dict[str, object]:
+    def _lm_predict(self, prepared_batch: dict, *, apply_xm_routes: bool = True) -> Dict[str, object]:
         language_model = self.model
         embed_tokens = self.unwrap_model(language_model).get_input_embeddings()
         input_ids = prepared_batch["input_ids"]
@@ -1582,7 +1582,7 @@ class MiniMaxMusic(AudioModelFoundation):
             seq_len=inputs_embeds.shape[1],
             device=input_ids.device,
         )
-        if self._lm_xm_route_enabled():
+        if self._lm_xm_route_enabled() and apply_xm_routes:
             inputs_embeds, attention_mask, supervised_mask = self._lm_apply_xm_routes(
                 inputs_embeds,
                 attention_mask,
@@ -1595,6 +1595,47 @@ class MiniMaxMusic(AudioModelFoundation):
         )
         self._lm_capture_hidden_states(outputs, hidden_states_buffer, supervised_mask)
         return {"logits": outputs.logits, "hidden_states_buffer": hidden_states_buffer}
+
+    @staticmethod
+    def _lm_teacher_cross_entropy_per_sample(
+        student_logits: torch.Tensor,
+        teacher_logits: torch.Tensor,
+        valid_mask: torch.Tensor,
+        *,
+        block_size: int = 0,
+    ) -> torch.Tensor:
+        if student_logits.shape != teacher_logits.shape:
+            raise ValueError(
+                "MiniMax Music 3 regularisation student and teacher logits must have matching shapes; "
+                f"got {tuple(student_logits.shape)} and {tuple(teacher_logits.shape)}."
+            )
+        if valid_mask.shape != student_logits.shape[:2]:
+            raise ValueError(
+                f"MiniMax Music 3 regularisation mask must have shape {tuple(student_logits.shape[:2])}, "
+                f"got {tuple(valid_mask.shape)}."
+            )
+
+        sample_losses = []
+        top_k = min(64, student_logits.shape[-1])
+        for sample_index in range(student_logits.shape[0]):
+            positions = valid_mask[sample_index].nonzero(as_tuple=False).flatten()
+            if positions.numel() == 0:
+                raise ValueError("MiniMax Music 3 language model loss found no supervised positions.")
+            student_piece = student_logits[sample_index, positions].float()
+            with torch.no_grad():
+                teacher_piece = teacher_logits[sample_index, positions].float()
+                top_probs, top_indices = teacher_piece.softmax(dim=-1).topk(top_k, dim=-1)
+                top_probs = top_probs / top_probs.sum(dim=-1, keepdim=True)
+            student_top = student_piece.gather(1, top_indices)
+            token_losses = -(top_probs * (student_top - student_piece.logsumexp(dim=-1, keepdim=True))).sum(dim=-1)
+
+            if block_size > 0:
+                block_ids = torch.div(positions, block_size, rounding_mode="floor")
+                block_losses = [token_losses[block_ids == block_id].mean() for block_id in block_ids.unique()]
+                sample_losses.append(torch.stack(block_losses).mean())
+            else:
+                sample_losses.append(token_losses.mean())
+        return torch.stack(sample_losses)
 
     @contextmanager
     def _lm_adapters_disabled(self):
@@ -1617,14 +1658,10 @@ class MiniMaxMusic(AudioModelFoundation):
             prepared_batch.get("is_regularisation_data")
             and str(getattr(self.config, "model_type", "lora")).lower() == "lora"
         ):
-            if xm_route_active:
-                raise ValueError(
-                    "MiniMax Music 3 XM route selection is not implemented for regularisation-data teacher losses."
-                )
             # Prior preservation: on regularisation batches the target is the frozen base model's own
             # next-token distribution, so unrelated songs keep predicting as they would without the LoRA.
             with torch.no_grad(), self._lm_adapters_disabled():
-                teacher_logits = self._lm_predict(prepared_batch)["logits"]
+                teacher_logits = self._lm_predict(prepared_batch, apply_xm_routes=False)["logits"]
 
         if xm_route_active:
             candidate_count = int(self.xm_config.candidate_count)
@@ -1633,10 +1670,25 @@ class MiniMaxMusic(AudioModelFoundation):
                     f"MiniMax Music 3 XM expected {base_targets.shape[0] * candidate_count} candidate logits rows, "
                     f"got {logits.shape[0]}."
                 )
-            targets = base_targets.repeat((candidate_count, 1))
             block_size = self.xm_config.block_size if self.xm_config.selection_scope == "block" else 0
-            per_candidate = blockwise_cross_entropy(logits, targets, block_size=block_size)
-            candidate_losses = per_candidate.reshape(candidate_count, base_targets.shape[0])
+            if teacher_logits is not None:
+                valid_mask = base_targets.ne(-100)
+                candidate_view = logits.reshape(candidate_count, base_targets.shape[0], *logits.shape[1:])
+                candidate_losses = torch.stack(
+                    [
+                        self._lm_teacher_cross_entropy_per_sample(
+                            candidate_view[candidate_index],
+                            teacher_logits,
+                            valid_mask,
+                            block_size=block_size,
+                        )
+                        for candidate_index in range(candidate_count)
+                    ]
+                )
+            else:
+                targets = base_targets.repeat((candidate_count, 1))
+                per_candidate = blockwise_cross_entropy(logits, targets, block_size=block_size)
+                candidate_losses = per_candidate.reshape(candidate_count, base_targets.shape[0])
             selected_loss, winner_indices = select_min_candidate_loss(candidate_losses)
             model_output["xm_winner_indices"] = winner_indices.detach()
             usage = route_usage_histogram(winner_indices.detach(), candidate_count)
