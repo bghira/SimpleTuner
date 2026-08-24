@@ -73,6 +73,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         if dataset_type == "video":
             self.sample_type_str = "video"
             self.sample_type_strs = "videos"
+        elif dataset_type == "audio":
+            self.sample_type_str = "audio"
+            self.sample_type_strs = "audio"
         self.logger = get_logger(
             f"MultiAspectSampler-{self.id}",
             os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"),
@@ -707,6 +710,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
             if image_metadata is None:
                 image_metadata = {}
+            image_metadata.setdefault("dataset_type", self.dataset_type)
             requires_crop = (
                 StateTracker.get_args().model_family
                 not in [
@@ -715,6 +719,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     "deepfloyd",
                     "ace_step",
                 ]
+                and self.dataset_type != "audio"
                 and image_metadata.get("dataset_type") != "audio"
             )
             if requires_crop and "crop_coordinates" not in image_metadata:

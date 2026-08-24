@@ -173,7 +173,8 @@ MiniMax Music 3 使用 SimpleTuner 的 flow-matching 训练路径，因此可使
 ```json
 {
   "minimax_music_train_component": "language_model",
-  "minimax_music_lm_max_frames": 0
+  "minimax_music_lm_max_frames": 0,
+  "minimax_music_lm_window_mode": "prefix"
 }
 ```
 
@@ -185,6 +186,22 @@ MiniMax Music 3 使用 SimpleTuner 的 flow-matching 训练路径，因此可使
 - 此模式下训练器内验证音频被禁用；请使用标准生成栈从保存的检查点渲染。
 - 此模式下不进行 VAE 或文本嵌入缓存——训练直接读取 token，因此 `cache_dir_vae` 和文本嵌入后端不会被使用。
 - 将触发关键词（例如 `"fiona crapple"`）放入每个样本的 caption/`prompt` 字段；歌词保持原样。
+- 对较短的帧上限运行，设置 `minimax_music_lm_window_mode: "random"` 可采样带位置的 RVQ 窗口，而不是总是训练前奏。随机窗口会把开始/结束/时长加入 prompt，并省略完整歌词，除非样本提供 `lyrics_window`。
+- 对歌曲结构训练，请使用 `minimax_music_lm_window_mode: "continuation"`。末尾的 `minimax_music_lm_target_frames` 接受损失，更早的可见帧作为被屏蔽的因果上下文。`full` 裁剪总是从歌曲开头开始；`random` 可在曲目内移动，同时在目标前保留至少一个原生 128 帧上下文分段。时长按原生 128 帧/5.12 秒间隔对齐；最大值 `0` 使用可用曲目长度。
+
+带显存上限的 full-prefix continuation 配置示例：
+
+```json
+{
+  "minimax_music_lm_window_mode": "continuation",
+  "minimax_music_lm_target_frames": 128,
+  "minimax_music_lm_continuation_crop_mode": "full",
+  "minimax_music_lm_min_duration_seconds": 5.12,
+  "minimax_music_lm_max_duration_seconds": 30.72
+}
+```
+
+把 crop mode 改为 `random`，即可在相同显存上限下训练定位 continuation。定位片段会把时间范围加入 prompt；没有 `lyrics_window` 时会省略完整歌词。当终止和非终止片段都可用时，固定 25% 的样本会到达真实曲目末尾，使 EOS 监督不依赖曲目长度。采样发生在完整缓存 RVQ 序列的 LM collate 阶段，不会修改数据集音频或缓存。
 - **先验保持**：添加第二个音频后端并设置 `is_regularisation_data: true`，其中包含无关歌曲（允许空歌词）。在这些批次上，损失以冻结基础模型自身的下一 token 分布为目标，而不是真实码，因此 LoRA 保持外科手术式的精准：无关的 caption 仍然会像基础模型那样预测，大幅减少风格渗漏。
 
 ## 故障排查

@@ -77,11 +77,53 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 ### `--minimax_music_lm_max_frames`
 
-- **What**: For `--minimax_music_train_component=language_model`, truncates each track's audio token sequence to this many 25Hz frames (taken from the start so lyrics stay aligned).
+- **What**: For `--minimax_music_train_component=language_model`, caps `prefix` and isolated `random` windows in 25Hz audio frames.
 - **Default**: `0` (train on full tracks)
 - **Notes**:
-  - One frame is 40ms; 7500 frames is five minutes. Lower this if long tracks exhaust VRAM.
+  - One frame is 40ms; 7500 frames is five minutes.
+  - `continuation` mode uses its separate target-frame and duration settings below.
   - Truncated samples do not receive an end-of-audio target, so the model is not taught to stop early.
+
+### `--minimax_music_lm_window_mode`
+
+- **What**: Chooses how the language-model training sequence is constructed.
+- **Choices**: `prefix` (default), `random`, `continuation`
+- **Notes**:
+  - `prefix` takes the start of the track. This keeps full-track lyrics most plausible, but short caps mostly teach intros.
+  - `random` samples a contiguous RVQ window during collate, adds start/end/duration text to the prompt, and omits full-track lyrics for cropped windows unless the sample provides `lyrics_window`.
+  - `continuation` samples a bounded visible span and applies loss only to its final target frames. Use the continuation options below to control its context geometry.
+  - Isolated `random` requires a positive `--minimax_music_lm_max_frames`; `continuation` does not use that option.
+
+### `--minimax_music_lm_target_frames`
+
+- **What**: In `continuation` mode, sets how many final 25Hz frames in each visible span receive next-token loss.
+- **Default**: `128` (one native RVQ segment, or 5.12 seconds)
+- **Notes**: Earlier visible frames remain causal context and are masked from cross-entropy.
+
+### `--minimax_music_lm_continuation_crop_mode`
+
+- **What**: Chooses where a `continuation` visible span starts.
+- **Choices**: `full` (default), `random`
+- **Notes**:
+  - `full` always starts at song frame zero. It preserves the opening and samples an endpoint between the configured duration bounds.
+  - `random` may omit the beginning of the song. It retains at least one native 128-frame segment of context before the supervised target and adds the span position to the prompt.
+  - Positioned random spans omit full-track lyrics unless the sample provides `lyrics_window`. Tracks too short for both one context segment and the target fall back to a full prefix.
+
+### `--minimax_music_lm_min_duration_seconds`
+
+- **What**: Sets the minimum model-visible span duration in `continuation` mode.
+- **Default**: `5.12`
+- **Notes**: The minimum rounds up in native 128-frame (5.12-second) intervals. Random continuation spans may be longer because they must also contain one native context segment before the target.
+
+### `--minimax_music_lm_max_duration_seconds`
+
+- **What**: Caps the model-visible span duration in `continuation` mode without changing the cached RVQ track.
+- **Default**: `0` (use the available track length)
+- **Notes**:
+  - Positive limits round down in native 128-frame (5.12-second) intervals.
+  - For `random`, the cap must fit the supervised target plus at least one native context segment.
+  - A sample receives an end-of-audio target only when its sampled span reaches the real track end.
+  - When both terminal and non-terminal spans are available, 25% of continuation samples explicitly select the real track end. The other 75% remain uniform over valid non-terminal endpoints or offsets, so EOS supervision does not become rarer on longer tracks.
 
 ### `--minimax_music_rvq_encoder_model_name_or_path`
 

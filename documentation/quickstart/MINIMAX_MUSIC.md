@@ -234,7 +234,8 @@ See [fiona crapple](https://huggingface.co/terminusresearch/minimax-music3-lm-lo
 ```json
 {
   "minimax_music_train_component": "language_model",
-  "minimax_music_lm_max_frames": 0
+  "minimax_music_lm_max_frames": 0,
+  "minimax_music_lm_window_mode": "prefix"
 }
 ```
 
@@ -246,6 +247,22 @@ Requirements and differences from DiT training:
 - In-trainer validation audio is disabled in this mode; render from saved checkpoints with the standard generation stack instead.
 - No VAE or text-embed caching happens in this mode — training reads tokens directly, so `cache_dir_vae` and text embed backends are not used.
 - Put your trigger keyword (e.g. `"fiona crapple"`) in the caption/`prompt` field of every sample; keep lyrics verbatim.
+- For short capped runs, set `minimax_music_lm_window_mode: "random"` to sample positioned RVQ windows instead of always training on intros. Random windows add their start/end/duration to the prompt and omit full-track lyrics unless the sample provides `lyrics_window`.
+- For song-structure training, use `minimax_music_lm_window_mode: "continuation"`. The final `minimax_music_lm_target_frames` receive loss while earlier visible frames are masked causal context. `full` continuation crops always begin at the song start; `random` continuation crops can move through the track while retaining at least one native 128-frame context segment. Minimum and maximum visible durations snap to the model's native 128-frame/5.12-second interval; a maximum of `0` uses the available track length.
+
+A bounded full-prefix continuation configuration looks like this:
+
+```json
+{
+  "minimax_music_lm_window_mode": "continuation",
+  "minimax_music_lm_target_frames": 128,
+  "minimax_music_lm_continuation_crop_mode": "full",
+  "minimax_music_lm_min_duration_seconds": 5.12,
+  "minimax_music_lm_max_duration_seconds": 30.72
+}
+```
+
+Change the crop mode to `random` to train positioned continuations within the same memory cap. Positioned crops add their time range to the prompt and omit full-track lyrics unless `lyrics_window` is available. When terminal and non-terminal spans are both possible, a fixed 25% of samples reach the real track end so EOS supervision is independent of track length. This sampling happens during LM collate over the complete cached RVQ sequence; it does not alter the dataset audio or cache.
 - **Prior preservation**: add a second audio backend with `is_regularisation_data: true` containing unrelated songs
   (empty lyrics are allowed). On those batches the loss targets the frozen base model's own next-token distribution
   instead of the ground-truth codes, so the LoRA stays surgical: unrelated captions keep predicting exactly as the

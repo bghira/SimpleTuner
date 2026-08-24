@@ -32,6 +32,10 @@ class TestModelFieldRegistry(unittest.TestCase):
             "minimax_h3_sparse_video_kv_fraction",
             "minimax_h3_sparse_share_heads",
             "minimax_h3_sparse_start_layer",
+            "minimax_music_lm_target_frames",
+            "minimax_music_lm_continuation_crop_mode",
+            "minimax_music_lm_min_duration_seconds",
+            "minimax_music_lm_max_duration_seconds",
         ]
 
         for field_name in expected_fields:
@@ -80,6 +84,18 @@ class TestModelFieldRegistry(unittest.TestCase):
 
         self.assertIn("validation_lyrics", validation_fields)
         self.assertIn("validation_audio_duration", validation_fields)
+
+    def test_minimaxmusic_exposes_continuation_geometry_fields(self):
+        target_frames = self.registry.get_field("minimax_music_lm_target_frames")
+        crop_mode = self.registry.get_field("minimax_music_lm_continuation_crop_mode")
+        min_duration = self.registry.get_field("minimax_music_lm_min_duration_seconds")
+        max_duration = self.registry.get_field("minimax_music_lm_max_duration_seconds")
+
+        self.assertEqual(target_frames.default_value, 128)
+        self.assertEqual(crop_mode.default_value, "full")
+        self.assertEqual([choice["value"] for choice in crop_mode.choices], ["full", "random"])
+        self.assertEqual(min_duration.default_value, 5.12)
+        self.assertEqual(max_duration.default_value, 0.0)
 
 
 if __name__ == "__main__":
