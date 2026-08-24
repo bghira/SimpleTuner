@@ -379,6 +379,7 @@ nav:
       - T-LoRA: experimental/T_LORA.md
       - Unsloth-Style Checkpointing: experimental/UNSLOTH_CHECKPOINTING.md
       - Video CREPA: experimental/VIDEO_CREPA.md
+      - Voice Cloning Data Transforms: experimental/VOICE_CLONING.md
     - Development:
       - Factory Architecture: development/FACTORY_ARCHITECTURE.md
       - Web UI Implementation: webui/IMPLEMENTATION.md

@@ -257,6 +257,13 @@ LTX-2 使用原生纯音频分支；MiniMax-H3 在打包序列中为每个 laten
 - **注记:** 如果有多个条件数据集，可指定 `id` 数组。训练 Flux Kontext 时，可在条件之间随机切换或拼接输入，用于更高级的多图像合成任务。
 - **Flow-DPO:** 使用 [`--distillation_method=flow_dpo`](experimental/FLOW_DPO.zh.md) 时，在这里配对一个 `reference_strict` conditioning 数据集。
 
+### `data_transforms`
+
+- **取值:** 一个 transform 对象，或 transform 对象数组
+- **说明:** 在常规 dataloader 设置开始前，把源数据集展开为一个或多个生成的训练数据集。除非 transform 明确要求克隆元数据，生成的数据集会被当作普通主训练数据集处理。
+- **音频 identity transfer:** `{"task": "identity_transfer", "method": "rvc"}` 可用于 `dataset_type: "audio"` 后端。它会为声音身份迁移准备生成音频 split，并在输出目录中缓存 voice artifacts 和生成文件。参见 [Voice Cloning Data Transforms](experimental/VOICE_CLONING.zh.md)。
+- **状态:** 第一版实现包含 transform registry、缓存 manifest 检查、Hub artifact 复用/上传流程、DDP 感知的启动 sharding hook，以及本地 RVC 日志。原生 RVC 训练/转换仍为实验性质；除非缓存中已经存在匹配的生成 split，否则会明确失败。
+
 ### `instance_data_dir` / `aws_data_prefix`
 
 - **Local:** 文件系统中的数据路径。

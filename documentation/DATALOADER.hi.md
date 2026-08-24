@@ -258,6 +258,13 @@ Memory backends के लिए Linux या macOS और मौजूदा ca
 - **Note:** यदि आपके पास कई conditioning datasets हैं, तो आप उन्हें `id` values के array के रूप में दे सकते हैं। Flux Kontext ट्रेन करते समय, यह conditions के बीच random switching या multi‑image compositing tasks के लिए inputs stitch करने की अनुमति देता है।
 - **Flow-DPO:** [`--distillation_method=flow_dpo`](experimental/FLOW_DPO.hi.md) इस्तेमाल करते समय यहां `reference_strict` conditioning dataset pair करें।
 
+### `data_transforms`
+
+- **Values:** एक transform object या transform objects का array
+- **Description:** Normal dataloader setup शुरू होने से पहले source dataset को एक या अधिक generated training datasets में expand करता है। Generated datasets को regular primary datasets की तरह treat किया जाता है, जब तक transform explicitly metadata clone न मांगे।
+- **Audio identity transfer:** `{"task": "identity_transfer", "method": "rvc"}` `dataset_type: "audio"` backends के लिए उपलब्ध है। यह voice identity transfer के लिए generated audio split तैयार करता है और output directory में cached voice artifacts तथा generated files रखता है। देखें [Voice Cloning Data Transforms](experimental/VOICE_CLONING.hi.md)।
+- **Status:** पहली implementation transform registry, cache manifest checks, Hub artifact reuse/push plumbing, DDP-aware startup sharding hooks, और local RVC logs देती है। Native RVC training/conversion अभी experimental है और cache में matching generated split न होने पर साफ error देगा।
+
 ### `instance_data_dir` / `aws_data_prefix`
 
 - **Local:** filesystem पर डेटा का path.

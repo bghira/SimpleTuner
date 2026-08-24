@@ -258,6 +258,13 @@ Backends de memória exigem Linux ou macOS e RAM ou swap suficiente para o cache
 - **Nota:** Se você tiver múltiplos datasets de condicionamento, pode especificá-los como um array de valores `id`. Ao treinar Flux Kontext, isso permite alternar aleatoriamente entre condições ou juntar entradas para treinar tarefas mais avançadas de composição multi-imagem.
 - **Flow-DPO:** Pareie aqui um dataset `reference_strict` ao usar [`--distillation_method=flow_dpo`](experimental/FLOW_DPO.pt-BR.md).
 
+### `data_transforms`
+
+- **Valores:** um objeto de transform ou um array de objetos de transform
+- **Descrição:** Expande um dataset fonte em um ou mais datasets de treinamento gerados antes da configuração normal do dataloader. Datasets gerados são tratados como datasets primários normais, a menos que o transform peça explicitamente clonagem de metadados.
+- **Identity transfer de áudio:** `{"task": "identity_transfer", "method": "rvc"}` está disponível para backends com `dataset_type: "audio"`. Ele prepara um split de áudio gerado para transferência de identidade vocal e usa o diretório de saída para artefatos de voz em cache e arquivos gerados. Consulte [Voice Cloning Data Transforms](experimental/VOICE_CLONING.pt-BR.md).
+- **Status:** A primeira implementação fornece o registro de transforms, verificações de manifest de cache, reutilização/envio de artefatos para o Hub, hooks de sharding de inicialização compatíveis com DDP e logs locais de RVC. O treinamento/conversão RVC nativo ainda é experimental e falhará explicitamente salvo se já existir um split gerado compatível no cache.
+
 ### `instance_data_dir` / `aws_data_prefix`
 
 - **Local:** Caminho para os dados no sistema de arquivos.
