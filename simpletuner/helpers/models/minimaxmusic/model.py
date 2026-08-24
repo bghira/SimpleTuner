@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -297,6 +298,8 @@ class MiniMaxMusic(AudioModelFoundation):
     DEFAULT_LYCORIS_TARGET = ["MiniMaxMusic3Attention", "MiniMaxMusic3TransformerBlock"]
     _train_language_model = False
     XM_ROUTE_EMBEDDING_MODULE_NAME = "xm_route_embeddings"
+    LM_NATIVE_SEGMENT_FRAMES = 128
+    LM_CONTINUATION_TERMINAL_PROBABILITY = 0.25
 
     def __init__(self, config, accelerator):
         user_pretrained_vae_model_name_or_path = getattr(config, "pretrained_vae_model_name_or_path", None)
@@ -328,9 +331,6 @@ class MiniMaxMusic(AudioModelFoundation):
         lm_max_frames = getattr(args, "minimax_music_lm_max_frames", None)
         if lm_max_frames:
             lines.append(f"- MiniMax Music LM max frames: `{lm_max_frames}`")
-            lines.append(
-                "- MiniMax Music LM window mode: " f"`{getattr(args, 'minimax_music_lm_window_mode', 'prefix') or 'prefix'}`"
-            )
         return "\n".join(lines)
 
     @classmethod
@@ -416,10 +416,6 @@ class MiniMaxMusic(AudioModelFoundation):
             "bucket_duration_seconds",
             "truncated_duration_seconds",
             "original_duration_seconds",
-            "audio_crop_start_seconds",
-            "audio_crop_end_seconds",
-            "audio_crop_duration_seconds",
-            "audio_crop_is_terminal",
             "audio_tokens",
             "audio_tokens_path",
             "data_backend_id",
@@ -589,11 +585,43 @@ class MiniMaxMusic(AudioModelFoundation):
         if self._train_language_model:
             window_mode = self._lm_window_mode()
             max_frames = int(getattr(self.config, "minimax_music_lm_max_frames", 0) or 0)
-            if window_mode in {"random", "continuation"} and max_frames <= 0:
+            if window_mode == "random" and max_frames <= 0:
                 raise ValueError(
-                    f"--minimax_music_lm_window_mode={window_mode} requires "
-                    "--minimax_music_lm_max_frames to be greater than 0."
+                    "--minimax_music_lm_window_mode=random requires --minimax_music_lm_max_frames " "to be greater than 0."
                 )
+            if window_mode == "continuation":
+                target_frames = self._lm_continuation_target_frames()
+                min_duration = self._lm_continuation_min_duration_seconds()
+                max_duration = self._lm_continuation_max_duration_seconds()
+                crop_mode = self._lm_continuation_crop_mode()
+                if target_frames <= 0:
+                    raise ValueError("--minimax_music_lm_target_frames must be greater than 0.")
+                if target_frames > _MAX_AUDIO_FRAMES:
+                    raise ValueError(
+                        f"--minimax_music_lm_target_frames cannot exceed {_MAX_AUDIO_FRAMES}; got {target_frames}."
+                    )
+                if min_duration <= 0:
+                    raise ValueError("--minimax_music_lm_min_duration_seconds must be greater than 0.")
+                if max_duration < 0:
+                    raise ValueError("--minimax_music_lm_max_duration_seconds must be 0 or greater.")
+                if max_duration and max_duration < min_duration:
+                    raise ValueError(
+                        "--minimax_music_lm_max_duration_seconds must be greater than or equal to "
+                        "--minimax_music_lm_min_duration_seconds."
+                    )
+                min_duration_frames = self._lm_duration_to_aligned_frames(min_duration, round_up=True)
+                max_duration_frames = self._lm_duration_to_aligned_frames(max_duration, round_up=False)
+                required_frames = max(
+                    min_duration_frames,
+                    target_frames + (self.LM_NATIVE_SEGMENT_FRAMES if crop_mode == "random" else 0),
+                )
+                if max_duration and max_duration_frames < required_frames:
+                    required_seconds = required_frames / self._frame_rate()
+                    raise ValueError(
+                        f"--minimax_music_lm_continuation_crop_mode={crop_mode} requires "
+                        "--minimax_music_lm_max_duration_seconds to allow at least "
+                        f"{required_frames} frames ({required_seconds:.2f}s)."
+                    )
             if normalize_lora_format(getattr(self.config, "lora_format", None)) == PEFTLoRAFormat.COMFYUI:
                 raise ValueError(
                     "--lora_format comfyui applies to the music transformer; use the default diffusers format "
@@ -1061,7 +1089,7 @@ class MiniMaxMusic(AudioModelFoundation):
         cache_encoder,
         samples: torch.Tensor,
         metadata_entries: Optional[list] = None,
-    ) -> torch.Tensor | dict:
+    ) -> dict:
         if not isinstance(cache_encoder, MiniMaxMusicRVQCacheEncoder):
             raise TypeError(
                 "MiniMax Music LM VAE cache expects MiniMaxMusicRVQCacheEncoder; " f"received {type(cache_encoder)}."
@@ -1203,6 +1231,100 @@ class MiniMaxMusic(AudioModelFoundation):
             raise ValueError("MiniMax Music 3 LM window mode must be one of: prefix, random, continuation.")
         return mode
 
+    def _lm_continuation_crop_mode(self) -> str:
+        mode = str(getattr(self.config, "minimax_music_lm_continuation_crop_mode", "full") or "full").strip().lower()
+        if mode not in {"full", "random"}:
+            raise ValueError("MiniMax Music 3 LM continuation crop mode must be one of: full, random.")
+        return mode
+
+    def _lm_continuation_target_frames(self) -> int:
+        configured = getattr(self.config, "minimax_music_lm_target_frames", None)
+        return self.LM_NATIVE_SEGMENT_FRAMES if configured is None else int(configured)
+
+    def _lm_continuation_min_duration_seconds(self) -> float:
+        default = self.LM_NATIVE_SEGMENT_FRAMES / self._frame_rate()
+        configured = getattr(self.config, "minimax_music_lm_min_duration_seconds", None)
+        return default if configured is None else float(configured)
+
+    def _lm_continuation_max_duration_seconds(self) -> float:
+        return float(getattr(self.config, "minimax_music_lm_max_duration_seconds", 0.0) or 0.0)
+
+    def _lm_duration_to_aligned_frames(self, duration_seconds: float, *, round_up: bool) -> int:
+        if duration_seconds <= 0:
+            return 0
+        segment_count = duration_seconds * self._frame_rate() / self.LM_NATIVE_SEGMENT_FRAMES
+        if round_up:
+            segment_count = math.ceil(segment_count - 1e-9)
+        else:
+            segment_count = math.floor(segment_count + 1e-9)
+        return max(int(segment_count), 0) * self.LM_NATIVE_SEGMENT_FRAMES
+
+    @staticmethod
+    def _lm_choose_frame_value(values: list[int]) -> int:
+        if not values:
+            raise ValueError("MiniMax Music 3 LM window sampling received no valid frame values.")
+        index = int(torch.randint(0, len(values), (1,)).item())
+        return values[index]
+
+    def _lm_should_sample_terminal_endpoint(self) -> bool:
+        probability = float(self.LM_CONTINUATION_TERMINAL_PROBABILITY)
+        return probability >= 1.0 or (probability > 0.0 and float(torch.rand(()).item()) < probability)
+
+    def _lm_aligned_frame_values(self, minimum: int, maximum: int) -> list[int]:
+        if maximum < minimum:
+            return []
+        interval = self.LM_NATIVE_SEGMENT_FRAMES
+        first = math.ceil(minimum / interval) * interval
+        return list(range(first, maximum + 1, interval))
+
+    def _lm_continuation_span(self, available_frames: int) -> tuple[int, int, int]:
+        target_frames = min(self._lm_continuation_target_frames(), available_frames)
+        min_visible = max(
+            target_frames,
+            self._lm_duration_to_aligned_frames(
+                self._lm_continuation_min_duration_seconds(),
+                round_up=True,
+            ),
+        )
+        configured_max = self._lm_duration_to_aligned_frames(
+            self._lm_continuation_max_duration_seconds(),
+            round_up=False,
+        )
+        max_visible = min(available_frames, configured_max or available_frames)
+        crop_mode = self._lm_continuation_crop_mode()
+
+        if crop_mode == "random":
+            min_visible = max(min_visible, target_frames + self.LM_NATIVE_SEGMENT_FRAMES)
+            if available_frames >= min_visible and max_visible >= min_visible:
+                visible_lengths = self._lm_aligned_frame_values(min_visible, max_visible)
+                if max_visible == available_frames and available_frames not in visible_lengths:
+                    visible_lengths.append(available_frames)
+                nonterminal_lengths = [length for length in visible_lengths if length < available_frames]
+                use_terminal = not nonterminal_lengths or self._lm_should_sample_terminal_endpoint()
+                length_candidates = visible_lengths if use_terminal else nonterminal_lengths
+                visible_length = self._lm_choose_frame_value(length_candidates)
+                max_start = available_frames - visible_length
+                if use_terminal:
+                    start_frame = max_start
+                else:
+                    starts = list(range(0, max_start + 1, self.LM_NATIVE_SEGMENT_FRAMES))
+                    starts = [start for start in starts if start < max_start]
+                    start_frame = self._lm_choose_frame_value(starts)
+                end_frame = start_frame + visible_length
+                return start_frame, end_frame, visible_length - target_frames
+
+        if max_visible < min_visible:
+            end_frame = max_visible
+        else:
+            endpoints = self._lm_aligned_frame_values(min_visible, max_visible)
+            terminal_available = max_visible == available_frames
+            nonterminal_endpoints = [end for end in endpoints if not terminal_available or end < available_frames]
+            if terminal_available and (not nonterminal_endpoints or self._lm_should_sample_terminal_endpoint()):
+                end_frame = available_frames
+            else:
+                end_frame = self._lm_choose_frame_value(nonterminal_endpoints)
+        return 0, end_frame, max(0, end_frame - target_frames)
+
     def _lm_prompt_text(
         self,
         caption: str,
@@ -1211,10 +1333,10 @@ class MiniMaxMusic(AudioModelFoundation):
         window_start_frame: int = 0,
         window_frame_count: Optional[int] = None,
         total_frame_count: Optional[int] = None,
-        window_mode: str = "prefix",
+        include_window_metadata: bool = False,
     ) -> str:
         window_text = ""
-        if window_frame_count is not None:
+        if include_window_metadata and window_frame_count is not None:
             frame_rate = self._frame_rate()
             start_seconds = float(window_start_frame) / frame_rate
             end_seconds = float(window_start_frame + window_frame_count) / frame_rate
@@ -1241,21 +1363,22 @@ class MiniMaxMusic(AudioModelFoundation):
     ) -> tuple[torch.Tensor, int, int, bool]:
         original_frames = int(codes.shape[0])
         available_frames = min(original_frames, _MAX_AUDIO_FRAMES)
+        if window_mode == "continuation":
+            start_frame, end_frame, loss_start_frame = self._lm_continuation_span(available_frames)
+            return (
+                codes[start_frame:end_frame],
+                start_frame,
+                loss_start_frame,
+                end_frame < original_frames,
+            )
+
         frame_limit = max_frames if 0 < max_frames < available_frames else available_frames
         start_frame = 0
-        loss_start_frame = 0
-        if frame_limit < available_frames and window_mode in {"random", "continuation"}:
+        if frame_limit < available_frames and window_mode == "random":
             max_start = available_frames - frame_limit
             start_frame = int(torch.randint(0, max_start + 1, (1,)).item())
-        if window_mode == "continuation":
-            end_frame = start_frame + frame_limit
-            sliced_codes = codes[:end_frame]
-            loss_start_frame = start_frame
-            truncated = end_frame < original_frames
-        else:
-            sliced_codes = codes[start_frame : start_frame + frame_limit]
-            truncated = frame_limit < original_frames
-        return sliced_codes, start_frame, loss_start_frame, truncated
+        end_frame = start_frame + frame_limit
+        return codes[start_frame:end_frame], start_frame, 0, end_frame < original_frames
 
     def _lm_load_audio_codes(self, example: dict) -> tuple[torch.Tensor, dict]:
         codes = example.get("audio_tokens")
@@ -1358,22 +1481,28 @@ class MiniMaxMusic(AudioModelFoundation):
             )
             codes, start_frame, loss_start_frame, truncated = self._lm_slice_audio_codes(codes, max_frames, window_mode)
             absolute_start_frame = source_start_frame + start_frame
-            sequence_start_frame = source_start_frame if window_mode == "continuation" else absolute_start_frame
-            sequence_end_frame = sequence_start_frame + int(codes.shape[0])
+            sequence_end_frame = absolute_start_frame + int(codes.shape[0])
+            continuation_random = (
+                window_mode == "continuation" and self._lm_continuation_crop_mode() == "random" and start_frame > 0
+            )
             cached_source_excerpt = source_start_frame > 0 or not source_crop_is_terminal
-            prefix_truncated_excerpt = window_mode == "prefix" and truncated
-            random_excerpt = window_mode == "random" and (truncated or sequence_end_frame < total_frames)
-            include_window_context = cached_source_excerpt or prefix_truncated_excerpt or random_excerpt
+            prefix_truncated_excerpt = window_mode == "prefix" and (truncated or sequence_end_frame < total_frames)
+            random_excerpt = window_mode == "random" and (
+                truncated or sequence_end_frame < total_frames or cached_source_excerpt
+            )
+            include_window_context = (
+                cached_source_excerpt or prefix_truncated_excerpt or random_excerpt or continuation_random
+            )
             prompt_lyrics = lyrics
             if include_window_context:
                 prompt_lyrics = example.get("lyrics_window") if isinstance(example.get("lyrics_window"), str) else ""
             prompt_text = self._lm_prompt_text(
                 caption,
                 prompt_lyrics,
-                window_start_frame=sequence_start_frame,
+                window_start_frame=absolute_start_frame,
                 window_frame_count=int(codes.shape[0]) if include_window_context else None,
                 total_frame_count=total_frames,
-                window_mode=window_mode,
+                include_window_metadata=include_window_context,
             )
             input_ids = tokenizer(prompt_text, return_tensors="pt")["input_ids"].squeeze(0)
             if input_ids.shape[0] > _MAX_PROMPT_TOKENS:
@@ -1590,7 +1719,7 @@ class MiniMaxMusic(AudioModelFoundation):
             seq_len=inputs_embeds.shape[1],
             device=input_ids.device,
         )
-        if apply_xm_routes and self._lm_xm_route_enabled():
+        if self._lm_xm_route_enabled() and apply_xm_routes:
             inputs_embeds, attention_mask, supervised_mask = self._lm_apply_xm_routes(
                 inputs_embeds,
                 attention_mask,
@@ -1605,57 +1734,45 @@ class MiniMaxMusic(AudioModelFoundation):
         return {"logits": outputs.logits, "hidden_states_buffer": hidden_states_buffer}
 
     @staticmethod
-    def _lm_xm_teacher_candidate_losses(
-        logits: torch.Tensor,
+    def _lm_teacher_cross_entropy_per_sample(
+        student_logits: torch.Tensor,
         teacher_logits: torch.Tensor,
-        supervised_mask: torch.Tensor,
+        valid_mask: torch.Tensor,
         *,
-        candidate_count: int,
-        block_size: int,
+        block_size: int = 0,
     ) -> torch.Tensor:
-        batch_size, seq_len = teacher_logits.shape[:2]
-        expected_shape = (candidate_count * batch_size, seq_len, teacher_logits.shape[-1])
-        if tuple(logits.shape) != expected_shape:
-            raise ValueError(f"XM student logits must have shape {expected_shape}, got {tuple(logits.shape)}.")
-        if tuple(supervised_mask.shape) != (batch_size, seq_len):
+        if student_logits.shape != teacher_logits.shape:
             raise ValueError(
-                f"XM supervised mask must have shape {(batch_size, seq_len)}, got {tuple(supervised_mask.shape)}."
+                "MiniMax Music 3 regularisation student and teacher logits must have matching shapes; "
+                f"got {tuple(student_logits.shape)} and {tuple(teacher_logits.shape)}."
+            )
+        if valid_mask.shape != student_logits.shape[:2]:
+            raise ValueError(
+                f"MiniMax Music 3 regularisation mask must have shape {tuple(student_logits.shape[:2])}, "
+                f"got {tuple(valid_mask.shape)}."
             )
 
-        candidates = logits.reshape(candidate_count, batch_size, seq_len, logits.shape[-1])
-        token_losses = torch.empty(
-            (candidate_count, batch_size, seq_len),
-            device=logits.device,
-            dtype=torch.float32,
-        )
-        for start in range(0, seq_len, 64):
-            end = min(start + 64, seq_len)
+        sample_losses = []
+        top_k = min(64, student_logits.shape[-1])
+        for sample_index in range(student_logits.shape[0]):
+            positions = valid_mask[sample_index].nonzero(as_tuple=False).flatten()
+            if positions.numel() == 0:
+                raise ValueError("MiniMax Music 3 language model loss found no supervised positions.")
+            student_piece = student_logits[sample_index, positions].float()
             with torch.no_grad():
-                teacher_piece = teacher_logits[:, start:end].float()
-                top_probs, top_indices = teacher_piece.softmax(dim=-1).topk(64, dim=-1)
+                teacher_piece = teacher_logits[sample_index, positions].float()
+                top_probs, top_indices = teacher_piece.softmax(dim=-1).topk(top_k, dim=-1)
                 top_probs = top_probs / top_probs.sum(dim=-1, keepdim=True)
-            student_piece = candidates[:, :, start:end].float()
-            gather_indices = top_indices.unsqueeze(0).expand(candidate_count, -1, -1, -1)
-            student_top = student_piece.gather(-1, gather_indices)
-            log_normalizer = student_piece.logsumexp(dim=-1, keepdim=True)
-            token_losses[:, :, start:end] = -(top_probs.unsqueeze(0) * (student_top - log_normalizer)).sum(dim=-1)
+            student_top = student_piece.gather(1, top_indices)
+            token_losses = -(top_probs * (student_top - student_piece.logsumexp(dim=-1, keepdim=True))).sum(dim=-1)
 
-        valid = supervised_mask.unsqueeze(0).expand(candidate_count, -1, -1)
-        if block_size <= 0:
-            denominator = valid.sum(dim=-1).clamp_min(1)
-            return (token_losses * valid).sum(dim=-1) / denominator
-
-        pad = (-seq_len) % block_size
-        if pad:
-            token_losses = F.pad(token_losses, (0, pad))
-            valid = F.pad(valid, (0, pad))
-        block_losses = token_losses.reshape(candidate_count, batch_size, -1, block_size)
-        block_valid = valid.reshape(candidate_count, batch_size, -1, block_size)
-        block_denominator = block_valid.sum(dim=-1).clamp_min(1)
-        reduced_blocks = (block_losses * block_valid).sum(dim=-1) / block_denominator
-        has_block = block_valid.any(dim=-1)
-        sample_denominator = has_block.sum(dim=-1).clamp_min(1)
-        return (reduced_blocks * has_block).sum(dim=-1) / sample_denominator
+            if block_size > 0:
+                block_ids = torch.div(positions, block_size, rounding_mode="floor")
+                block_losses = [token_losses[block_ids == block_id].mean() for block_id in block_ids.unique()]
+                sample_losses.append(torch.stack(block_losses).mean())
+            else:
+                sample_losses.append(token_losses.mean())
+        return torch.stack(sample_losses)
 
     @contextmanager
     def _lm_adapters_disabled(self):
@@ -1691,18 +1808,24 @@ class MiniMaxMusic(AudioModelFoundation):
                     f"got {logits.shape[0]}."
                 )
             block_size = self.xm_config.block_size if self.xm_config.selection_scope == "block" else 0
-            if teacher_logits is None:
+            if teacher_logits is not None:
+                valid_mask = base_targets.ne(-100)
+                candidate_view = logits.reshape(candidate_count, base_targets.shape[0], *logits.shape[1:])
+                candidate_losses = torch.stack(
+                    [
+                        self._lm_teacher_cross_entropy_per_sample(
+                            candidate_view[candidate_index],
+                            teacher_logits,
+                            valid_mask,
+                            block_size=block_size,
+                        )
+                        for candidate_index in range(candidate_count)
+                    ]
+                )
+            else:
                 targets = base_targets.repeat((candidate_count, 1))
                 per_candidate = blockwise_cross_entropy(logits, targets, block_size=block_size)
                 candidate_losses = per_candidate.reshape(candidate_count, base_targets.shape[0])
-            else:
-                candidate_losses = self._lm_xm_teacher_candidate_losses(
-                    logits,
-                    teacher_logits,
-                    base_targets.ne(-100),
-                    candidate_count=candidate_count,
-                    block_size=block_size,
-                )
             selected_loss, winner_indices = select_min_candidate_loss(candidate_losses)
             model_output["xm_winner_indices"] = winner_indices.detach()
             usage = route_usage_histogram(winner_indices.detach(), candidate_count)

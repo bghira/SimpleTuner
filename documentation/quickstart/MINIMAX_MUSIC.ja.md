@@ -187,58 +187,22 @@ MiniMax Music 3 のセマンティックコードを計画する Qwen3 言語モ
 - このモードでは VAE やテキストエンベッドのキャッシュは行われません — トレーニングはトークンを直接読み取るため、`cache_dir_vae` やテキストエンベッドバックエンドは使用されません。
 - トリガーキーワード（例: `"fiona crapple"`）を各サンプルの caption/`prompt` フィールドに入れ、歌詞はそのまま保持してください。
 - 短いフレーム上限での実行では、常にイントロだけを学習しないように `minimax_music_lm_window_mode: "random"` を設定して、位置付き RVQ 窓をサンプリングできます。ランダム窓は開始/終了/長さをプロンプトへ追加し、サンプルが `lyrics_window` を持つ場合を除いてフルトラック歌詞を省きます。
-- Cropped-window training で、すべての crop を finished clip として教えないでください。出力が crop boundary で繰り返し fade out したり解決したりする場合は、crop label と target を確認します。Interior window は interior window として supervised されるべきで、end-of-audio の挙動は本当の曲末尾でだけ教えるべきです。
-- 曲構成のトレーニングには `minimax_music_lm_window_mode: "continuation"` を使います。ターゲット窓をサンプリングし、トラック先頭からその窓までの全オーディオトークンを因果コンテキストとして保持し、それ以前のコンテキストの損失をマスクします。孤立した random crop より多くのメモリを使いますが、すべての抜粋を曲の冒頭として教えることを避けられます。
-- 小さな LM オーディオデータセットでは攻撃的な optimizer を慎重に扱ってください。Prodigy は高い learning rate で大きく行き過ぎることがあり、Lion は最初の 1000 step 以内で過適応することがあります。高速な optimizer を試す前に AdamW を baseline にしてください。
-- **プライア保存**: `is_regularisation_data: true` を付けた instrumental または無関係な楽曲の第二のオーディオバックエンドを追加します（空の歌詞も許可）。それらのバッチでは、損失は正解コードではなく凍結されたベースモデル自身の次トークン分布を対象とするため、LoRA は外科的に保たれます。regularisation caption はベースモデルと全く同じように予測し続け、スタイルの漏れが大幅に減ります。
+- 曲構成のトレーニングには `minimax_music_lm_window_mode: "continuation"` を使います。末尾の `minimax_music_lm_target_frames` に損失を適用し、それ以前の可視フレームはマスクされた因果コンテキストになります。`full` は常に曲頭から始まり、`random` は最低 1 個のネイティブ 128 フレームコンテキストを保ちながら曲中を移動できます。時間はネイティブ 128 フレーム/5.12 秒間隔に揃えられ、最大値 `0` は利用可能な曲長を使います。
 
-### スタイルと歌手データセットの設定
+メモリ上限付き full-prefix continuation の例:
 
-音楽スタイルの適応と歌手アイデンティティの適応では、必要なデータセット設計が異なります。歌手名を詳細な音楽 caption の代わりにしないでください。
-
-#### 音楽スタイル
-
-音楽スタイルは比較的許容範囲が広いです。特定の声質ではなく、ジャンル、アレンジ、プロダクションを目的にする場合、24 曲以上の多様なトラックで有用な adapter になることがあります。
-
-- ターゲットスタイルから外れない範囲で多様性を確保します。推論時にユーザーが指定しそうなテンポ、楽器構成、制作上の特徴、ムード、近いサブジャンルを含めます。
-- 各音声サンプルに複数の完全なスタイル caption を与えます。trigger word だけでは dataset が平均的な関連付けに圧縮され、その幅を再現する制御を学べません。
-- 声質は副次的なものとして扱います。複数の vocalist や instrumental material を使い、単一の声が誤って学習済みスタイルの一部にならないようにします。
-- 固定 validation prompt と複数の checkpoint strength で collapse を確認します。スタイル adapter は、多数の optimizer step が必要になる前に有用になることがよくあります。
-
-`caption_strategy: "textfile"` とデフォルトの `disable_multiline_split: false` では、`.txt` sidecar の空でない各行が個別の caption candidate になります。SimpleTuner はその audio item をサンプリングするたびに 1 つの candidate を選びます。すべての行を 1 つの grouped caption として結合するわけではありません。DiT workflow は各 distinct caption を個別にキャッシュしますが、LM training は選ばれた caption をオンラインで tokenize し、text-embedding cache は使いません。例:
-
-```text
-syncopated art rock, dry drums, angular guitar, abrupt dynamic changes
-melodic alternative metal, layered harmonies, restless bass, theatrical pacing
-tense progressive rock, odd-meter accents, sparse verse, explosive refrain
+```json
+{
+  "minimax_music_lm_window_mode": "continuation",
+  "minimax_music_lm_target_frames": 128,
+  "minimax_music_lm_continuation_crop_mode": "full",
+  "minimax_music_lm_min_duration_seconds": 5.12,
+  "minimax_music_lm_max_duration_seconds": 30.72
+}
 ```
 
-これは caption augmentation であり、multiline prompt ではありません。ある training example で model が見るのは、これらの行のうち 1 つです。
-
-#### 歌手アイデンティティ
-
-歌手アイデンティティはかなり許容範囲が狭いです。歌手ごとに 1 つの adapter を作り、別の vocalist を含む track や section はすべて除外してください。duet、交互の verse、backing lead、guest appearance も含みます。`[Verse: ...]` や `[Chorus: ...]` のような lyric tag で混在した声を確実に分離することはできません。
-
-- 各 caption candidate に同じ一意の singer trigger を入れ、その後に完全で多様な style description を続けます。trigger を 1 行、description を別行にするのは誤りです。一度に選ばれるのは 1 行だけだからです。
-- 狭い single-genre の singer dataset では、通常は portable な singer identity ではなく、その arrangement の中の singer を学習します。Identity delta は、常に同時に現れる genre、instrumentation、mix、song structure と絡み合うため、trigger は in-domain でしか効かないことがあります。Cross-genre vocal control には、singer dataset 内の意味のある genre と arrangement の多様性が必要です。
-- 歌詞は忠実に保ちますが、identity を教えるために lyric section label に頼らないでください。有用な信号は audio と caption の関連付けから来ます。
-- 非常に小さい corpus では、instrumental counterpart が prior preservation として使えます。丁寧に分離した 6 本の vocal track でも、それらの track から作った regularisation と組み合わせれば使える場合があります。
-
-```text
-vocalist_xyz, sparse alternative rock, dry drums, tense verse, explosive refrain
-vocalist_xyz, melodic art metal, layered guitar, mid-tempo groove, close vocal
-vocalist_xyz, acoustic chamber rock, hand percussion, soft opening, dramatic lift
-```
-
-実用的な regularisation workflow では Demucs で vocal を除去します:
-
-```bash
-python -m demucs --two-stems=vocals path/to/track.wav
-```
-
-生成された各 `no_vocals.wav` を別の audio backend に置き、singer trigger のない style-only の `.txt` caption と、`[Instrumental]` を含む `.lyrics` sidecar を用意します。その backend に `is_regularisation_data: true` を設定します。Regularisation batch は凍結された base planner を target にするため、adapter が小さな vocal corpus の周りでスタイル全体を書き換えるのではなく、「この音楽」と「この歌手」を分けやすくなります。
-
-大きく多様な single-singer corpus では、この regularisation branch なしで始め、validation で style bleed や base-model damage が見えた場合だけ追加してください。Vocal dataset が十分な coverage を持つ場合、regularisation は identity acquisition を遅くすることがあります。追加の preservation signal が、すでに多様な identity gradient をさらに薄める、という説明はあり得ますが、一般則ではなく tuning hypothesis として扱ってください。
+同じ上限で位置付き continuation を学習するには crop mode を `random` に変更します。位置付き区間は時間範囲をプロンプトへ追加し、`lyrics_window` がなければフルトラック歌詞を省きます。終端区間と非終端区間の両方が可能な場合、固定 25% のサンプルが実際の曲末へ達するため、EOS 教師信号は曲長に依存しません。サンプリングは完全なキャッシュ済み RVQ シーケンスに対する LM collate 時に行われ、データセットの音声やキャッシュは変更しません。
+- **プライア保存**: `is_regularisation_data: true` を付けた無関係な楽曲の第二のオーディオバックエンドを追加します（空の歌詞も許可）。それらのバッチでは、損失は正解コードではなく凍結されたベースモデル自身の次トークン分布を対象とするため、LoRA は外科的に保たれます。無関係なキャプションはベースモデルと全く同じように予測し続け、スタイルの漏れが大幅に減ります。
 
 ## トラブルシューティング
 

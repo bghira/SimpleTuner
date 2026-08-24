@@ -248,61 +248,25 @@ Requirements and differences from DiT training:
 - No VAE or text-embed caching happens in this mode — training reads tokens directly, so `cache_dir_vae` and text embed backends are not used.
 - Put your trigger keyword (e.g. `"fiona crapple"`) in the caption/`prompt` field of every sample; keep lyrics verbatim.
 - For short capped runs, set `minimax_music_lm_window_mode: "random"` to sample positioned RVQ windows instead of always training on intros. Random windows add their start/end/duration to the prompt and omit full-track lyrics unless the sample provides `lyrics_window`.
-- Do not let cropped-window training teach every crop as a finished clip. If outputs repeatedly fade out or resolve at crop boundaries, inspect the crop labels and targets: interior windows should be supervised as interior windows, while end-of-audio behavior should only be taught at real song endings.
-- For song-structure training, use `minimax_music_lm_window_mode: "continuation"`. It samples a target window, keeps all audio tokens from the beginning of the track through that window as causal context, and masks loss on the preceding context. This costs more memory than an isolated random crop but avoids teaching every excerpt as a song opening.
-- Treat aggressive optimizers carefully on small LM audio datasets. Prodigy can overshoot badly at high learning rates, and Lion can over-adapt within the first thousand steps; use AdamW as the baseline before testing faster optimizers.
-- **Prior preservation**: add a second audio backend with `is_regularisation_data: true` containing instrumentals or unrelated songs
+- For song-structure training, use `minimax_music_lm_window_mode: "continuation"`. The final `minimax_music_lm_target_frames` receive loss while earlier visible frames are masked causal context. `full` continuation crops always begin at the song start; `random` continuation crops can move through the track while retaining at least one native 128-frame context segment. Minimum and maximum visible durations snap to the model's native 128-frame/5.12-second interval; a maximum of `0` uses the available track length.
+
+A bounded full-prefix continuation configuration looks like this:
+
+```json
+{
+  "minimax_music_lm_window_mode": "continuation",
+  "minimax_music_lm_target_frames": 128,
+  "minimax_music_lm_continuation_crop_mode": "full",
+  "minimax_music_lm_min_duration_seconds": 5.12,
+  "minimax_music_lm_max_duration_seconds": 30.72
+}
+```
+
+Change the crop mode to `random` to train positioned continuations within the same memory cap. Positioned crops add their time range to the prompt and omit full-track lyrics unless `lyrics_window` is available. When terminal and non-terminal spans are both possible, a fixed 25% of samples reach the real track end so EOS supervision is independent of track length. This sampling happens during LM collate over the complete cached RVQ sequence; it does not alter the dataset audio or cache.
+- **Prior preservation**: add a second audio backend with `is_regularisation_data: true` containing unrelated songs
   (empty lyrics are allowed). On those batches the loss targets the frozen base model's own next-token distribution
-  instead of the ground-truth codes, so the LoRA stays surgical: regularisation captions keep predicting exactly as the
+  instead of the ground-truth codes, so the LoRA stays surgical: unrelated captions keep predicting exactly as the
   base model would, which sharply reduces style bleed.
-
-### How to Configure Style and Singer Datasets
-
-Style adaptation and singer-identity adaptation need different dataset designs. Do not treat a singer name as a shortcut for a detailed music caption.
-
-#### Music styles
-
-Music styles are comparatively forgiving. A varied set of 24 or more tracks can be enough for a useful adapter when the objective is genre, arrangement, or production style rather than a particular vocal timbre.
-
-- Optimize for diversity without leaving the target style. Include plausible tempos, instrument combinations, production choices, moods, and neighboring subgenres that a user might request at inference time.
-- Give each audio sample several complete style captions. A trigger word by itself compresses the dataset into an averaged association and does not teach the controls needed to reproduce its range.
-- Treat vocal timbre as incidental. Use multiple vocalists or instrumental material so one voice does not accidentally become part of the learned style.
-- Watch for collapse with fixed validation prompts and several checkpoint strengths. Style adapters often become useful before they need a large number of optimizer steps.
-
-With `caption_strategy: "textfile"` and the default `disable_multiline_split: false`, every non-empty line in a `.txt` sidecar is a separate caption candidate. SimpleTuner selects one candidate whenever it samples that audio item; it does not combine all lines into one grouped caption. DiT workflows cache each distinct caption independently, while LM training tokenizes the selected caption online and does not use a text-embedding cache. For example:
-
-```text
-syncopated art rock, dry drums, angular guitar, abrupt dynamic changes
-melodic alternative metal, layered harmonies, restless bass, theatrical pacing
-tense progressive rock, odd-meter accents, sparse verse, explosive refrain
-```
-
-This is caption augmentation, not a multiline prompt: the model sees one of those lines for a given training example.
-
-#### Singer identity
-
-Singer identity is substantially less forgiving. Build one adapter per singer and remove every track or section containing another vocalist, including duets, alternating verses, backing leads, and guest appearances. Naming singers in `[Verse: ...]` or `[Chorus: ...]` lyric tags is not a reliable way to disentangle mixed voices.
-
-- Put the same unique singer trigger in every caption candidate, followed by a complete and varied style description. A trigger on one line and descriptions on separate lines is wrong because only one line is selected at a time.
-- A narrow single-genre singer dataset usually learns the singer inside that arrangement, not a portable singer identity. The identity delta is entangled with the genre, instrumentation, mix, and song structure it always co-occurs with, so the trigger may only work in-domain. Cross-genre vocal control requires meaningful genre and arrangement variety in the singer dataset.
-- Keep the lyrics faithful, but do not rely on lyric section labels to teach identity. The audio and caption association carries the useful signal.
-- For a very small corpus, instrumental counterparts can provide prior preservation. Six carefully isolated vocal tracks can be workable when paired with regularisation constructed from those tracks.
-
-```text
-vocalist_xyz, sparse alternative rock, dry drums, tense verse, explosive refrain
-vocalist_xyz, melodic art metal, layered guitar, mid-tempo groove, close vocal
-vocalist_xyz, acoustic chamber rock, hand percussion, soft opening, dramatic lift
-```
-
-One practical regularisation workflow uses Demucs to remove vocals:
-
-```bash
-python -m demucs --two-stems=vocals path/to/track.wav
-```
-
-Place each resulting `no_vocals.wav` in a separate audio backend with a style-only `.txt` caption, no singer trigger, and a `.lyrics` sidecar containing `[Instrumental]`. Set `is_regularisation_data: true` on that backend. Regularisation batches target the frozen base planner, helping the adapter separate "this music" from "this singer" instead of rewriting the whole style around a tiny vocal corpus.
-
-For a larger, diverse single-singer corpus, start without this regularisation branch and add it only if validation shows style bleed or base-model damage. Empirically, regularisation can slow identity acquisition when the vocal dataset already supplies enough coverage. A plausible explanation is that the extra preservation signal further dilutes an already diverse identity gradient, but treat that as a tuning hypothesis rather than a general rule.
 
 ## Troubleshooting
 

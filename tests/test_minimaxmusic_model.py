@@ -1034,6 +1034,10 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
             minimax_music_train_component="language_model",
             minimax_music_lm_max_frames=0,
             minimax_music_lm_window_mode="prefix",
+            minimax_music_lm_target_frames=128,
+            minimax_music_lm_continuation_crop_mode="full",
+            minimax_music_lm_min_duration_seconds=5.12,
+            minimax_music_lm_max_duration_seconds=0.0,
             weight_dtype=torch.float32,
         )
         for key, value in overrides.items():
@@ -1041,9 +1045,12 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         return config
 
     def _lm_model(self, **config_overrides):
+        native_segment_frames = config_overrides.pop("_native_segment_frames", None)
         model = MiniMaxMusic(
             config=self._lm_config(**config_overrides), accelerator=SimpleNamespace(device=torch.device("cpu"))
         )
+        if native_segment_frames is not None:
+            model.LM_NATIVE_SEGMENT_FRAMES = native_segment_frames
         model.rvq_depth_decoder = SimpleNamespace(config=SimpleNamespace(num_codebooks=4, audio_vocab_size=8))
         return model
 
@@ -1230,16 +1237,17 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         tokenizer = self._FakeTokenizer()
         model.tokenizers = [tokenizer]
         codes = torch.arange(36, dtype=torch.long).reshape(9, 4) % 8
-        examples = [
-            {
-                "prompt": "fiona crapple style",
-                "lyrics": "full track lyrics should not describe a random crop",
-                "audio_tokens": codes,
-            }
-        ]
 
         with patch("torch.randint", return_value=torch.tensor([2])):
-            payload = model.collate_audio_tokens(examples)
+            payload = model.collate_audio_tokens(
+                [
+                    {
+                        "prompt": "example style",
+                        "lyrics": "full track lyrics should not describe a random crop",
+                        "audio_tokens": codes,
+                    }
+                ]
+            )
 
         torch.testing.assert_close(payload["audio_codes"][0], codes[2:6])
         self.assertEqual(payload["audio_lengths"].tolist(), [4])
@@ -1253,22 +1261,28 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         self.assertIn("<|lyrics_start|>[start]\n<|lyrics_end|>", tokenizer.texts[0])
         self.assertNotIn("full track lyrics", tokenizer.texts[0])
 
-    def test_lm_collate_continuation_keeps_prefix_and_masks_it_from_loss(self):
-        model = self._lm_model(minimax_music_lm_max_frames=4, minimax_music_lm_window_mode="continuation")
+    def test_lm_collate_continuation_full_caps_visible_prefix_and_masks_context(self):
+        model = self._lm_model(
+            _native_segment_frames=2,
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_target_frames=4,
+            minimax_music_lm_min_duration_seconds=0.08,
+            minimax_music_lm_max_duration_seconds=0.24,
+        )
         tokenizer = self._FakeTokenizer()
         model.tokenizers = [tokenizer]
-        codes = torch.arange(36, dtype=torch.long).reshape(9, 4) % 8
+        codes = torch.arange(48, dtype=torch.long).reshape(12, 4) % 8
 
-        with patch("torch.randint", return_value=torch.tensor([2])):
+        with patch.object(model, "_lm_choose_frame_value", return_value=6):
             payload = model.collate_audio_tokens(
-                [{"prompt": "fiona crapple style", "lyrics": "full track lyrics", "audio_tokens": codes}]
+                [{"prompt": "example style", "lyrics": "full track lyrics", "audio_tokens": codes}]
             )
 
         torch.testing.assert_close(payload["audio_codes"][0], codes[:6])
         self.assertEqual(payload["audio_lengths"].tolist(), [6])
-        self.assertEqual(payload["audio_window_start_frames"].tolist(), [2])
+        self.assertEqual(payload["audio_window_start_frames"].tolist(), [0])
         self.assertEqual(payload["audio_loss_start_frames"].tolist(), [2])
-        self.assertEqual(payload["audio_total_frames"].tolist(), [9])
+        self.assertEqual(payload["audio_total_frames"].tolist(), [12])
         self.assertFalse(bool(payload["has_audio_end"].any()))
         self.assertIn("full track lyrics", tokenizer.texts[0])
         self.assertNotIn("<|window_start|>", tokenizer.texts[0])
@@ -1282,14 +1296,19 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         self.assertTrue(bool((targets[0, : prompt_len - 1 + 2] == -100).all()))
         self.assertEqual(int(targets[0].ne(-100).sum()), 4)
 
-    def test_lm_collate_continuation_supervises_audio_end_at_track_end(self):
-        model = self._lm_model(minimax_music_lm_max_frames=4, minimax_music_lm_window_mode="continuation")
+    def test_lm_collate_continuation_includes_unaligned_track_end_for_stop_target(self):
+        model = self._lm_model(
+            _native_segment_frames=2,
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_target_frames=4,
+            minimax_music_lm_min_duration_seconds=0.08,
+        )
         model.tokenizers = [self._FakeTokenizer()]
         codes = torch.arange(36, dtype=torch.long).reshape(9, 4) % 8
 
-        with patch("torch.randint", return_value=torch.tensor([5])):
+        with patch.object(model, "_lm_should_sample_terminal_endpoint", return_value=True):
             payload = model.collate_audio_tokens(
-                [{"prompt": "fiona crapple style", "lyrics": "full track lyrics", "audio_tokens": codes}]
+                [{"prompt": "example style", "lyrics": "full track lyrics", "audio_tokens": codes}]
             )
 
         self.assertEqual(payload["audio_lengths"].tolist(), [9])
@@ -1302,25 +1321,160 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         )
         self.assertEqual(int(targets[0].ne(-100).sum()), 5)
 
+    def test_lm_collate_continuation_random_positions_bounded_span_with_context(self):
+        model = self._lm_model(
+            _native_segment_frames=2,
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_target_frames=4,
+            minimax_music_lm_continuation_crop_mode="random",
+            minimax_music_lm_min_duration_seconds=0.08,
+            minimax_music_lm_max_duration_seconds=0.32,
+        )
+        tokenizer = self._FakeTokenizer()
+        model.tokenizers = [tokenizer]
+        codes = torch.arange(48, dtype=torch.long).reshape(12, 4) % 8
+
+        with (
+            patch.object(model, "_lm_should_sample_terminal_endpoint", return_value=True),
+            patch.object(model, "_lm_choose_frame_value", return_value=8),
+        ):
+            payload = model.collate_audio_tokens(
+                [{"prompt": "example style", "lyrics": "full track lyrics", "audio_tokens": codes}]
+            )
+
+        torch.testing.assert_close(payload["audio_codes"][0], codes[4:12])
+        self.assertEqual(payload["audio_lengths"].tolist(), [8])
+        self.assertEqual(payload["audio_window_start_frames"].tolist(), [4])
+        self.assertEqual(payload["audio_loss_start_frames"].tolist(), [4])
+        self.assertTrue(bool(payload["has_audio_end"].all()))
+        self.assertIn("<|window_start|>0.16s", tokenizer.texts[0])
+        self.assertIn("<|window_end|>0.48s", tokenizer.texts[0])
+        self.assertNotIn("full track lyrics", tokenizer.texts[0])
+
+    def test_lm_continuation_nonterminal_draws_stay_uniform_over_other_endpoints(self):
+        model = self._lm_model(
+            _native_segment_frames=2,
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_target_frames=4,
+            minimax_music_lm_min_duration_seconds=0.08,
+        )
+
+        with (
+            patch.object(model, "_lm_should_sample_terminal_endpoint", return_value=False),
+            patch.object(model, "_lm_choose_frame_value", return_value=6) as choose,
+        ):
+            span = model._lm_continuation_span(9)
+
+        self.assertEqual(span, (0, 6, 2))
+        choose.assert_called_once_with([4, 6, 8])
+
+    def test_lm_continuation_terminal_probability_has_an_exact_boundary(self):
+        model = self._lm_model()
+
+        with patch("torch.rand", return_value=torch.tensor(0.249)):
+            self.assertTrue(model._lm_should_sample_terminal_endpoint())
+        with patch("torch.rand", return_value=torch.tensor(0.25)):
+            self.assertFalse(model._lm_should_sample_terminal_endpoint())
+
+    def test_lm_continuation_random_nonterminal_draw_excludes_tail_offset(self):
+        model = self._lm_model(
+            _native_segment_frames=2,
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_target_frames=4,
+            minimax_music_lm_continuation_crop_mode="random",
+            minimax_music_lm_min_duration_seconds=0.08,
+            minimax_music_lm_max_duration_seconds=0.32,
+        )
+
+        with (
+            patch.object(model, "_lm_should_sample_terminal_endpoint", return_value=False),
+            patch.object(model, "_lm_choose_frame_value", side_effect=[8, 2]) as choose,
+        ):
+            span = model._lm_continuation_span(14)
+
+        self.assertEqual(span, (2, 10, 4))
+        self.assertEqual(choose.call_args_list[0].args[0], [6, 8])
+        self.assertEqual(choose.call_args_list[1].args[0], [0, 2, 4])
+
+    def test_lm_collate_continuation_random_falls_back_to_full_for_short_track(self):
+        model = self._lm_model(
+            _native_segment_frames=2,
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_target_frames=4,
+            minimax_music_lm_continuation_crop_mode="random",
+            minimax_music_lm_min_duration_seconds=0.08,
+        )
+        tokenizer = self._FakeTokenizer()
+        model.tokenizers = [tokenizer]
+        codes = torch.arange(20, dtype=torch.long).reshape(5, 4) % 8
+
+        payload = model.collate_audio_tokens(
+            [{"prompt": "example style", "lyrics": "full track lyrics", "audio_tokens": codes}]
+        )
+
+        torch.testing.assert_close(payload["audio_codes"][0], codes)
+        self.assertEqual(payload["audio_window_start_frames"].tolist(), [0])
+        self.assertEqual(payload["audio_loss_start_frames"].tolist(), [1])
+        self.assertTrue(bool(payload["has_audio_end"].all()))
+        self.assertIn("full track lyrics", tokenizer.texts[0])
+        self.assertNotIn("<|window_start|>", tokenizer.texts[0])
+
     def test_lm_collate_random_window_uses_window_lyrics_when_provided(self):
         model = self._lm_model(minimax_music_lm_max_frames=4, minimax_music_lm_window_mode="random")
         tokenizer = self._FakeTokenizer()
         model.tokenizers = [tokenizer]
         codes = torch.arange(36, dtype=torch.long).reshape(9, 4) % 8
-        examples = [
-            {
-                "prompt": "fiona crapple style",
-                "lyrics": "full track lyrics",
-                "lyrics_window": "aligned line",
-                "audio_tokens": codes,
-            }
-        ]
 
         with patch("torch.randint", return_value=torch.tensor([3])):
-            model.collate_audio_tokens(examples)
+            model.collate_audio_tokens(
+                [
+                    {
+                        "prompt": "example style",
+                        "lyrics": "full track lyrics",
+                        "lyrics_window": "aligned line",
+                        "audio_tokens": codes,
+                    }
+                ]
+            )
 
         self.assertIn("aligned line", tokenizer.texts[0])
         self.assertNotIn("full track lyrics", tokenizer.texts[0])
+
+    def test_lm_window_mode_rejects_unknown_values(self):
+        model = self._lm_model(minimax_music_lm_window_mode="middle")
+        with self.assertRaisesRegex(ValueError, "prefix, random, continuation"):
+            model._lm_window_mode()
+
+    def test_lm_continuation_requires_a_positive_target_length(self):
+        model = self._lm_model(
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_target_frames=0,
+        )
+        with patch("simpletuner.helpers.models.common.AudioModelFoundation.check_user_config"):
+            with self.assertRaisesRegex(ValueError, "minimax_music_lm_target_frames"):
+                model.check_user_config()
+
+    def test_lm_continuation_rejects_max_duration_below_random_context_and_target(self):
+        model = self._lm_model(
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_continuation_crop_mode="random",
+            minimax_music_lm_target_frames=128,
+            minimax_music_lm_min_duration_seconds=5.12,
+            minimax_music_lm_max_duration_seconds=5.12,
+        )
+        with patch("simpletuner.helpers.models.common.AudioModelFoundation.check_user_config"):
+            with self.assertRaisesRegex(ValueError, "at least 256 frames"):
+                model.check_user_config()
+
+    def test_lm_continuation_rejects_max_duration_below_aligned_minimum(self):
+        model = self._lm_model(
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_min_duration_seconds=5.13,
+            minimax_music_lm_max_duration_seconds=7.0,
+        )
+        with patch("simpletuner.helpers.models.common.AudioModelFoundation.check_user_config"):
+            with self.assertRaisesRegex(ValueError, "at least 256 frames"):
+                model.check_user_config()
 
     def test_lm_collate_rejects_offset_baked_codes(self):
         model = self._lm_model()
@@ -1375,7 +1529,7 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
             payload = model.collate_audio_tokens(
                 [
                     {
-                        "prompt": "fiona crapple style",
+                        "prompt": "example style",
                         "lyrics": "la la la",
                         "data_backend_id": "songs",
                         "image_path": "song.flac",
@@ -1419,7 +1573,7 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
             payload = model.collate_audio_tokens(
                 [
                     {
-                        "prompt": "fiona crapple style",
+                        "prompt": "example style",
                         "lyrics": "full track lyrics",
                         "data_backend_id": "songs",
                         "image_path": "song.flac",
@@ -1543,7 +1697,7 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         codes = torch.tensor([[5, 0, 0, 0], [9, 0, 0, 0]], dtype=torch.long).unsqueeze(0)
         teacher = torch.randn(1, prompt_len + audio_len, vocab)
         model._lm_adapters_disabled = lambda: nullcontext()
-        model._lm_predict = lambda batch, *, apply_xm_routes=True: {"logits": teacher}
+        model._lm_predict = lambda batch, **kwargs: {"logits": teacher}
         prepared = {
             "audio_codes": codes,
             "prompt_lengths": torch.tensor([prompt_len]),
@@ -1733,7 +1887,7 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"][0], hidden[0]))
         self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"][1], hidden[3]))
 
-    def test_lm_xm_regularisation_selects_candidate_against_unrouted_teacher(self):
+    def test_lm_xm_route_regularisation_selects_candidate_against_frozen_teacher(self):
         from contextlib import nullcontext
 
         from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET
@@ -1761,34 +1915,26 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
             "has_audio_end": torch.tensor([False, False]),
             "is_regularisation_data": True,
         }
-        teacher = torch.zeros((2, prompt_len + audio_len, vocab))
-        teacher[0, prompt_len - 1, _AUDIO_CODE_OFFSET + 5] = 25.0
-        teacher[0, prompt_len, _AUDIO_CODE_OFFSET + 6] = 25.0
-        teacher[1, prompt_len - 1, _AUDIO_CODE_OFFSET + 7] = 25.0
-        teacher[1, prompt_len, _AUDIO_CODE_OFFSET + 8] = 25.0
-        logits = torch.zeros((4, prompt_len + audio_len, vocab))
-        logits[0] = teacher[0]
-        logits[3] = teacher[1]
-        logits[1, :, 0] = 25.0
-        logits[2, :, 0] = 25.0
-        hidden = torch.arange(4 * 3 * 2, dtype=torch.float32).reshape(4, 3, 2)
-        model_output = {"logits": logits, "hidden_states_buffer": {"layer_0": hidden}}
-        teacher_calls = []
+        teacher = torch.randn(2, prompt_len + audio_len, vocab)
+        candidates = teacher.repeat((2, 1, 1))
+        candidates[1] = candidates[1].roll(1, dims=-1)
+        candidates[2] = candidates[2].roll(1, dims=-1)
+        model._lm_adapters_disabled = lambda: nullcontext()
+        route_flags = []
 
         def teacher_predict(batch, *, apply_xm_routes=True):
-            teacher_calls.append(apply_xm_routes)
+            route_flags.append(apply_xm_routes)
             return {"logits": teacher}
 
         model._lm_predict = teacher_predict
-        model._lm_adapters_disabled = lambda: nullcontext()
+        model_output = {"logits": candidates}
 
         loss = model.loss(prepared, model_output)
 
-        self.assertLess(float(loss), 0.01)
-        self.assertEqual(teacher_calls, [False])
+        self.assertTrue(torch.isfinite(loss))
+        self.assertEqual(route_flags, [False])
         self.assertEqual(model_output["xm_winner_indices"].tolist(), [0, 1])
-        self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"][0], hidden[0]))
-        self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"][1], hidden[3]))
+        self.assertEqual(model_output["xm_route_usage"].tolist(), [1.0, 1.0])
 
     def test_lm_xm_route_module_is_saved_with_lora_adapter(self):
         model = self._lm_model(

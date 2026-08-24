@@ -77,22 +77,53 @@ simpletuner configure config/foo/config.json
 
 ### `--minimax_music_lm_max_frames`
 
-- **क्या**: `--minimax_music_train_component=language_model` के लिए, 25Hz ऑडियो फ्रेम में target-window की लंबाई तय करता है।
+- **क्या**: `--minimax_music_train_component=language_model` के लिए, `prefix` और अलग `random` windows को 25Hz audio frames में सीमित करता है।
 - **डिफ़ॉल्ट**: `0` (पूर्ण ट्रैक पर प्रशिक्षण)
 - **नोट्स**:
-  - एक फ्रेम 40ms का है; 7500 फ्रेम पाँच मिनट हैं। `prefix` और `random` input को भी इसी लंबाई तक सीमित करते हैं।
-  - `continuation` में input ट्रैक की शुरुआत से target-window के अंत तक सभी फ्रेम रखता है; loss केवल `max_frames` targets पर होने के बावजूद देर की windows अधिक VRAM लेती हैं।
+  - एक फ्रेम 40ms का है; 7500 फ्रेम पाँच मिनट हैं।
+  - `continuation` mode नीचे दिए अलग target-frame और duration settings इस्तेमाल करता है।
   - काटे गए नमूनों को ऑडियो-समाप्ति लक्ष्य नहीं मिलता, इसलिए मॉडल जल्दी रुकना नहीं सीखता।
 
 ### `--minimax_music_lm_window_mode`
 
-- **क्या**: जब `--minimax_music_lm_max_frames` किसी लंबे ट्रैक को काटता है, तब कौन-सी ऑडियो विंडो उपयोग होगी।
+- **क्या**: Language-model training sequence कैसे बनेगा, यह चुनता है।
 - **विकल्प**: `prefix` (डिफ़ॉल्ट), `random`, `continuation`
 - **नोट्स**:
   - `prefix` ट्रैक की शुरुआत लेता है। इससे पूरी lyrics सबसे ज़्यादा उपयुक्त रहती हैं, लेकिन छोटे caps ज़्यादातर intro सिखाते हैं।
   - `random` collate समय एक सतत RVQ window sample करता है, prompt में start/end/duration text जोड़ता है, और cropped windows के लिए full-track lyrics हटा देता है जब तक sample `lyrics_window` न दे।
-  - `continuation` target window sample करता है, उससे पहले के सभी frames को causal context रखता है, और loss केवल target window पर लगाता है।
-  - `random` और `continuation` को केवल positive `--minimax_music_lm_max_frames` के साथ इस्तेमाल करें।
+  - `continuation` सीमित visible span sample करता है और loss केवल उसके अंतिम target frames पर लगाता है।
+  - अलग `random` के लिए positive `--minimax_music_lm_max_frames` चाहिए; `continuation` यह option इस्तेमाल नहीं करता।
+
+### `--minimax_music_lm_target_frames`
+
+- **क्या**: `continuation` में अंतिम कितने 25Hz frames पर next-token loss लगेगा।
+- **डिफ़ॉल्ट**: `128` (एक native RVQ segment, 5.12 सेकंड)
+- **नोट्स**: पहले के visible frames causal context रहते हैं और cross-entropy से mask होते हैं।
+
+### `--minimax_music_lm_continuation_crop_mode`
+
+- **क्या**: `continuation` visible span कहाँ से शुरू होगा।
+- **विकल्प**: `full` (डिफ़ॉल्ट), `random`
+- **नोट्स**:
+  - `full` हमेशा song frame zero से शुरू होता है और duration bounds के बीच endpoint sample करता है।
+  - `random` शुरुआत छोड़ सकता है, लेकिन target से पहले कम-से-कम एक native 128-frame context segment रखता है और prompt में position जोड़ता है।
+  - Positioned random spans full-track lyrics हटाते हैं, जब तक `lyrics_window` न हो। बहुत छोटे tracks full prefix पर fallback करते हैं।
+
+### `--minimax_music_lm_min_duration_seconds`
+
+- **क्या**: `continuation` में model-visible span की न्यूनतम अवधि।
+- **डिफ़ॉल्ट**: `5.12`
+- **नोट्स**: यह native 128-frame (5.12-second) intervals में ऊपर round होती है। Random spans context segment रखने के लिए इससे लंबे हो सकते हैं।
+
+### `--minimax_music_lm_max_duration_seconds`
+
+- **क्या**: Cached RVQ track बदले बिना `continuation` visible duration को सीमित करता है।
+- **डिफ़ॉल्ट**: `0` (उपलब्ध track length)
+- **नोट्स**:
+  - Positive limits native 128-frame intervals में नीचे round होते हैं।
+  - `random` में cap के अंदर target और कम-से-कम एक context segment आना चाहिए।
+  - End-of-audio target तभी मिलता है जब sampled span वास्तविक track end तक पहुँचे।
+  - जब terminal और non-terminal दोनों spans उपलब्ध हों, 25% continuation samples स्पष्ट रूप से वास्तविक track end चुनते हैं। बाकी 75% valid non-terminal endpoints या offsets पर uniform रहते हैं, इसलिए लंबे tracks पर EOS supervision कम नहीं होती।
 
 ### `--minimax_music_rvq_encoder_model_name_or_path`
 

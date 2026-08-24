@@ -77,22 +77,53 @@ simpletuner configure config/foo/config.json
 
 ### `--minimax_music_lm_max_frames`
 
-- **内容**：在 `--minimax_music_train_component=language_model` 时，以 25Hz 音频帧为单位设置目标窗口长度。
+- **内容**：在 `--minimax_music_train_component=language_model` 时，以 25Hz 音频帧为单位限制 `prefix` 和独立 `random` 窗口。
 - **默认**：`0`（训练完整曲目）
 - **说明**：
-  - 一帧为 40 毫秒；7500 帧即五分钟。`prefix` 和 `random` 也会把输入限制为该长度。
-  - 在 `continuation` 模式下，输入会保留从曲目开头到目标窗口末尾的所有帧；即使损失只覆盖 `max_frames` 个目标，靠后的窗口仍会使用更多显存。
+  - 一帧为 40 毫秒；7500 帧即五分钟。
+  - `continuation` 使用下方独立的目标帧数和时长设置。
   - 被截断的样本不会获得音频结束目标，因此模型不会被教导提前停止。
 
 ### `--minimax_music_lm_window_mode`
 
-- **内容**：当 `--minimax_music_lm_max_frames` 截取较长曲目时，选择使用哪个音频窗口。
+- **内容**：选择语言模型训练序列的构造方式。
 - **选项**：`prefix`（默认）、`random`、`continuation`
 - **说明**：
   - `prefix` 使用曲目开头。它最能保持完整歌词的合理性，但较短上限主要会教模型学习前奏。
   - `random` 在 collate 时采样一个连续 RVQ 窗口，把开始/结束/总时长文本加入 prompt；对被截取的窗口会省略完整歌词，除非样本提供 `lyrics_window`。
-  - `continuation` 采样目标窗口，保留此前所有帧作为因果上下文，并且只对目标窗口计算损失。
-  - 仅在 `--minimax_music_lm_max_frames` 为正数时使用 `random` 和 `continuation`。
+  - `continuation` 采样有界的可见片段，仅对末尾目标帧计算损失。
+  - 独立 `random` 需要正数 `--minimax_music_lm_max_frames`；`continuation` 不使用该选项。
+
+### `--minimax_music_lm_target_frames`
+
+- **内容**：在 `continuation` 中，设置可见片段末尾有多少个 25Hz 帧接受下一 token 损失。
+- **默认**：`128`（一个原生 RVQ 分段，即 5.12 秒）
+- **说明**：更早的可见帧保留为因果上下文，并从交叉熵中屏蔽。
+
+### `--minimax_music_lm_continuation_crop_mode`
+
+- **内容**：选择 `continuation` 可见片段的起点。
+- **选项**：`full`（默认）、`random`
+- **说明**：
+  - `full` 总是从歌曲第 0 帧开始，并在配置的时长范围内采样终点。
+  - `random` 可以省略曲目开头，但会在监督目标前保留至少一个原生 128 帧上下文分段，并把位置加入 prompt。
+  - 定位随机片段会省略完整歌词，除非样本提供 `lyrics_window`。过短曲目会回退到完整前缀。
+
+### `--minimax_music_lm_min_duration_seconds`
+
+- **内容**：设置 `continuation` 中模型可见片段的最短时长。
+- **默认**：`5.12`
+- **说明**：按原生 128 帧（5.12 秒）间隔向上取整。随机片段为了保留上下文可能更长。
+
+### `--minimax_music_lm_max_duration_seconds`
+
+- **内容**：在不更改缓存 RVQ 曲目的情况下，限制 `continuation` 的模型可见时长。
+- **默认**：`0`（使用可用曲目长度）
+- **说明**：
+  - 正数上限按原生 128 帧间隔向下取整。
+  - 对 `random`，上限必须容纳监督目标和至少一个上下文分段。
+  - 只有采样片段到达真实曲目末尾时，才添加音频结束目标。
+  - 当终止和非终止片段都可用时，25% 的 continuation 样本会显式选择真实曲目末尾；其余 75% 在有效的非终止终点或偏移中均匀采样，因此 EOS 监督不会随曲目变长而变稀。
 
 ### `--minimax_music_rvq_encoder_model_name_or_path`
 

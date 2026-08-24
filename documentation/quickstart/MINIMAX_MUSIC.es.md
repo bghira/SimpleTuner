@@ -187,58 +187,22 @@ Requisitos y diferencias respecto al entrenamiento del DiT:
 - En este modo no hay caché de VAE ni de embeddings de texto — el entrenamiento lee los tokens directamente, así que `cache_dir_vae` y los backends de text embeds no se usan.
 - Coloca tu palabra clave (p. ej. `"fiona crapple"`) en el campo caption/`prompt` de cada muestra; mantén las letras sin modificar.
 - Para ejecuciones cortas con límite de frames, usa `minimax_music_lm_window_mode: "random"` para muestrear ventanas RVQ posicionadas en vez de entrenar siempre intros. Las ventanas aleatorias agregan inicio/fin/duración al prompt y omiten la letra completa salvo que la muestra proporcione `lyrics_window`.
-- No permitas que el entrenamiento con ventanas recortadas enseñe cada recorte como un clip terminado. Si las salidas se desvanecen o resuelven repetidamente en los bordes del recorte, revisa las etiquetas y objetivos del recorte: las ventanas interiores deben supervisarse como ventanas interiores, y el comportamiento de fin de audio solo debe enseñarse en finales reales de canción.
-- Para entrenar la estructura de la canción, usa `minimax_music_lm_window_mode: "continuation"`. Muestrea una ventana objetivo, conserva como contexto causal todos los tokens de audio desde el inicio de la pista hasta esa ventana y enmascara la pérdida del contexto anterior. Usa más memoria que un recorte aleatorio aislado, pero evita enseñar cada fragmento como si fuera el inicio de una canción.
-- Trata con cuidado los optimizadores agresivos en datasets pequeños de audio para LM. Prodigy puede pasarse mucho con learning rates altos, y Lion puede sobreadaptarse dentro de los primeros mil pasos; usa AdamW como baseline antes de probar optimizadores más rápidos.
-- **Preservación de prior**: añade un segundo backend de audio con `is_regularisation_data: true` que contenga instrumentales o canciones no relacionadas (se permiten letras vacías). En esos lotes la pérdida apunta a la distribución de siguiente token del modelo base congelado en lugar de los códigos reales, de modo que el LoRA se mantiene quirúrgico: las captions de regularización siguen prediciendo exactamente como lo haría el modelo base, lo que reduce notablemente el sangrado de estilo.
+- Para entrenar la estructura de canciones, usa `minimax_music_lm_window_mode: "continuation"`. Los últimos `minimax_music_lm_target_frames` reciben pérdida y los frames visibles anteriores quedan como contexto causal enmascarado. Los recortes `full` empiezan en el inicio de la canción; los `random` pueden desplazarse por la pista conservando al menos un segmento nativo de 128 frames. Las duraciones se ajustan al intervalo nativo de 128 frames/5,12 segundos; un máximo de `0` usa la pista disponible.
 
-### Cómo configurar datasets de estilo y cantante
+Ejemplo de continuación con prefijo completo y límite de memoria:
 
-La adaptación de estilo musical y la adaptación de identidad vocal necesitan diseños de dataset distintos. No trates el nombre de un cantante como sustituto de una caption musical detallada.
-
-#### Estilos musicales
-
-Los estilos musicales toleran más variación. Un conjunto variado de 24 o más pistas puede bastar para un adapter útil cuando el objetivo es género, arreglo o producción, no un timbre vocal concreto.
-
-- Optimiza la diversidad sin salirte del estilo objetivo. Incluye tempos, instrumentos, producción, estados de ánimo y subgéneros cercanos que un usuario podría pedir en inferencia.
-- Da a cada muestra varias captions de estilo completas. Un trigger por sí solo comprime el dataset en una asociación promediada y no enseña los controles necesarios para reproducir su rango.
-- Trata el timbre vocal como incidental. Usa varios vocalistas o material instrumental para que una voz no se convierta accidentalmente en parte del estilo aprendido.
-- Vigila el colapso con prompts de validación fijos y varias intensidades de checkpoint. Los adapters de estilo suelen volverse útiles antes de requerir muchos pasos.
-
-Con `caption_strategy: "textfile"` y el valor predeterminado `disable_multiline_split: false`, cada línea no vacía de un sidecar `.txt` es una caption candidata separada. SimpleTuner elige una candidata cada vez que samplea ese audio; no combina todas las líneas en una caption agrupada. Los flujos DiT cachean cada caption distinta por separado, mientras que el entrenamiento LM tokeniza la caption seleccionada en línea y no usa caché de text embeddings. Por ejemplo:
-
-```text
-rock artístico sincopado, batería seca, guitarra angular, cambios dinámicos abruptos
-metal alternativo melódico, armonías por capas, bajo inquieto, ritmo teatral
-rock progresivo tenso, acentos de métrica irregular, verso escaso, estribillo explosivo
+```json
+{
+  "minimax_music_lm_window_mode": "continuation",
+  "minimax_music_lm_target_frames": 128,
+  "minimax_music_lm_continuation_crop_mode": "full",
+  "minimax_music_lm_min_duration_seconds": 5.12,
+  "minimax_music_lm_max_duration_seconds": 30.72
+}
 ```
 
-Esto es aumento de captions, no un prompt multilinea: el modelo ve una de esas líneas para un ejemplo de entrenamiento dado.
-
-#### Identidad del cantante
-
-La identidad del cantante es mucho menos tolerante. Construye un adapter por cantante y elimina toda pista o sección que contenga otro vocalista, incluidos duetos, versos alternados, voces principales de apoyo y apariciones invitadas. Etiquetas de letra como `[Verse: ...]` o `[Chorus: ...]` no separan voces de forma fiable.
-
-- Pon el mismo trigger único de cantante en cada caption candidata, seguido de una descripción de estilo completa y variada. Un trigger en una línea y descripciones en líneas separadas es incorrecto porque solo se elige una línea cada vez.
-- Un dataset de cantante estrecho y de un solo género suele aprender al cantante dentro de ese arreglo, no una identidad vocal portátil. El delta de identidad queda entrelazado con el género, la instrumentación, la mezcla y la estructura de canción con los que siempre aparece, por lo que el trigger puede funcionar solo dentro del dominio. El control vocal entre géneros requiere variedad real de género y arreglo en el dataset del cantante.
-- Mantén las letras fieles, pero no dependas de etiquetas de sección para enseñar identidad. La asociación entre audio y caption lleva la señal útil.
-- Para un corpus muy pequeño, las contrapartes instrumentales pueden servir como preservación de prior. Seis pistas vocales cuidadosamente aisladas pueden funcionar si se emparejan con regularización construida desde esas pistas.
-
-```text
-vocalista_xyz, rock alternativo escaso, batería seca, verso tenso, estribillo explosivo
-vocalista_xyz, art metal melódico, guitarra por capas, groove medio, voz cercana
-vocalista_xyz, rock acústico de cámara, percusión manual, apertura suave, ascenso dramático
-```
-
-Un flujo práctico de regularización usa Demucs para quitar voces:
-
-```bash
-python -m demucs --two-stems=vocals path/to/track.wav
-```
-
-Coloca cada `no_vocals.wav` resultante en un backend de audio separado con una caption `.txt` solo de estilo, sin trigger de cantante, y un sidecar `.lyrics` que contenga `[Instrumental]`. Activa `is_regularisation_data: true` en ese backend. Los lotes de regularización apuntan al planner base congelado y ayudan al adapter a separar "esta música" de "este cantante" en lugar de reescribir todo el estilo alrededor de un corpus vocal diminuto.
-
-Para un corpus grande y diverso de un solo cantante, empieza sin esta rama de regularización y añádela solo si la validación muestra sangrado de estilo o daño al modelo base. La regularización puede ralentizar la adquisición de identidad cuando el dataset vocal ya tiene suficiente cobertura. Una explicación plausible es que la señal extra de preservación diluye aún más un gradiente de identidad ya diverso, pero trátalo como hipótesis de ajuste, no como regla general.
+Cambia el modo a `random` para entrenar continuaciones posicionadas con el mismo límite. Esos recortes añaden su rango temporal al prompt y omiten las letras completas salvo que exista `lyrics_window`. Cuando son posibles tramos terminales y no terminales, un 25% fijo alcanza el final real para que la supervisión EOS no dependa de la longitud de la pista. El muestreo ocurre durante el collate LM sobre la secuencia RVQ completa almacenada; no modifica el audio ni la caché del dataset.
+- **Preservación de prior**: añade un segundo backend de audio con `is_regularisation_data: true` que contenga canciones no relacionadas (se permiten letras vacías). En esos lotes la pérdida apunta a la distribución de siguiente token del modelo base congelado en lugar de los códigos reales, de modo que el LoRA se mantiene quirúrgico: los captions no relacionados siguen prediciendo exactamente como lo haría el modelo base, lo que reduce notablemente el sangrado de estilo.
 
 ## Solución de problemas
 

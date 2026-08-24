@@ -438,21 +438,23 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         if not str(self.metadata_file).endswith(".json"):
             full_metadata_path = f"{self.metadata_file}_{self.id}.json"
         logger.debug(f"Loading metadata from {full_metadata_path}")
-        self.image_metadata = {}
-        self.image_metadata_loaded = False
-
         if self.data_backend.exists(full_metadata_path):
             try:
                 raw = self.data_backend.read(full_metadata_path)
                 if raw:
-                    self.image_metadata = json.loads(raw)
-                    self.image_metadata_loaded = True
-                    logger.info(f"Loaded {len(self.image_metadata)} metadata entries from {full_metadata_path}")
+                    loaded_metadata = json.loads(raw)
+                    with self.metadata_semaphor:
+                        self.image_metadata = loaded_metadata
+                        self.image_metadata_loaded = True
+                    logger.info(f"Loaded {len(loaded_metadata)} metadata entries from {full_metadata_path}")
                 else:
                     logger.warning(f"Metadata file exists but is empty: {full_metadata_path}")
             except Exception as e:
                 logger.error(f"Error loading metadata: {e}")
         else:
+            with self.metadata_semaphor:
+                self.image_metadata = {}
+                self.image_metadata_loaded = False
             logger.debug(f"Metadata file does not exist: {full_metadata_path}")
 
     def _passes_quality_filter(self, quality_assessment: Dict) -> bool:

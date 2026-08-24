@@ -187,58 +187,22 @@ MiniMax Music 3 के सिमेंटिक कोड की योजना
 - इस मोड में कोई VAE या टेक्स्ट-एम्बेड कैशिंग नहीं होती — प्रशिक्षण सीधे टोकन पढ़ता है, इसलिए `cache_dir_vae` और टेक्स्ट एम्बेड बैकएंड उपयोग नहीं होते।
 - अपना ट्रिगर कीवर्ड (जैसे `"fiona crapple"`) हर नमूने के caption/`prompt` फ़ील्ड में रखें; गीत ज्यों के त्यों रखें।
 - Short capped runs के लिए `minimax_music_lm_window_mode: "random"` सेट करें ताकि हमेशा intros पर प्रशिक्षण न होकर positioned RVQ windows sample हों। Random windows prompt में start/end/duration जोड़ती हैं और full-track lyrics हटाती हैं, जब तक sample `lyrics_window` न दे।
-- Cropped-window training को हर crop को finished clip की तरह सिखाने न दें। अगर outputs बार-बार crop boundaries पर fade out या resolve करते हैं, तो crop labels और targets जाँचें: interior windows को interior windows की तरह supervise किया जाना चाहिए, और end-of-audio behavior केवल वास्तविक song endings पर सिखाया जाना चाहिए।
-- Song structure training के लिए `minimax_music_lm_window_mode: "continuation"` इस्तेमाल करें। यह target window sample करता है, track की शुरुआत से उस window तक सभी audio tokens को causal context रखता है, और पिछले context का loss mask करता है। यह isolated random crop से अधिक memory लेता है, लेकिन हर excerpt को song opening की तरह सिखाने से बचाता है।
-- छोटे LM audio datasets पर aggressive optimizers सावधानी से इस्तेमाल करें। High learning rates पर Prodigy बहुत आगे निकल सकता है, और Lion पहले हजार steps में over-adapt कर सकता है; तेज optimizers आज़माने से पहले AdamW को baseline रखें।
-- **प्रायर संरक्षण**: `is_regularisation_data: true` के साथ instrumentals या असंबंधित गीतों वाला दूसरा ऑडियो बैकएंड जोड़ें (खाली गीत मान्य हैं)। उन बैचों पर हानि वास्तविक कोड के बजाय स्थिर आधार मॉडल के अपने नेक्स्ट-टोकन वितरण को लक्षित करती है, जिससे LoRA सटीक रहता है: regularisation captions ठीक वैसे ही भविष्यवाणी करते रहते हैं जैसे आधार मॉडल करता, और शैली का रिसाव बहुत कम हो जाता है।
+- Song structure training के लिए `minimax_music_lm_window_mode: "continuation"` इस्तेमाल करें। अंतिम `minimax_music_lm_target_frames` पर loss लगता है और पहले के visible frames masked causal context रहते हैं। `full` crops हमेशा song start से शुरू होते हैं; `random` crops track में आगे जा सकते हैं और कम-से-कम एक native 128-frame context segment रखते हैं। Duration model के native 128-frame/5.12-second interval पर snap होती है; maximum `0` उपलब्ध track length इस्तेमाल करता है।
 
-### Style और singer datasets कैसे configure करें
+Memory-limited full-prefix continuation config:
 
-Music style adaptation और singer-identity adaptation को अलग dataset design चाहिए। Singer name को detailed music caption का shortcut न मानें।
-
-#### Music styles
-
-Music styles अपेक्षाकृत forgiving होते हैं। यदि लक्ष्य genre, arrangement या production style है, न कि कोई खास vocal timbre, तो 24 या अधिक varied tracks वाला set उपयोगी adapter के लिए पर्याप्त हो सकता है।
-
-- Target style से बाहर गए बिना diversity बढ़ाएँ। ऐसे tempos, instruments, production choices, moods और neighboring subgenres शामिल करें जिन्हें user inference में मांग सकता है।
-- हर audio sample को कई complete style captions दें। केवल trigger word dataset को averaged association में compress करता है और उसके range को reproduce करने के controls नहीं सिखाता।
-- Vocal timbre को incidental मानें। Multiple vocalists या instrumental material इस्तेमाल करें ताकि कोई एक voice गलती से learned style का हिस्सा न बन जाए।
-- Fixed validation prompts और कई checkpoint strengths से collapse देखें। Style adapters अक्सर बहुत अधिक optimizer steps से पहले ही useful हो जाते हैं।
-
-`caption_strategy: "textfile"` और default `disable_multiline_split: false` के साथ, `.txt` sidecar की हर non-empty line अलग caption candidate होती है। SimpleTuner हर बार उस audio item को sample करते समय एक candidate चुनता है; वह सभी lines को एक grouped caption में combine नहीं करता। DiT workflows हर distinct caption को अलग cache करते हैं, जबकि LM training selected caption को online tokenize करती है और text-embedding cache का उपयोग नहीं करती। उदाहरण:
-
-```text
-syncopated art rock, dry drums, angular guitar, abrupt dynamic changes
-melodic alternative metal, layered harmonies, restless bass, theatrical pacing
-tense progressive rock, odd-meter accents, sparse verse, explosive refrain
+```json
+{
+  "minimax_music_lm_window_mode": "continuation",
+  "minimax_music_lm_target_frames": 128,
+  "minimax_music_lm_continuation_crop_mode": "full",
+  "minimax_music_lm_min_duration_seconds": 5.12,
+  "minimax_music_lm_max_duration_seconds": 30.72
+}
 ```
 
-यह caption augmentation है, multiline prompt नहीं: किसी training example के लिए model इन lines में से एक देखता है।
-
-#### Singer identity
-
-Singer identity बहुत कम forgiving है। हर singer के लिए अलग adapter बनाएँ और ऐसी हर track या section हटाएँ जिसमें दूसरा vocalist हो, जैसे duet, alternating verses, backing leads और guest appearances। `[Verse: ...]` या `[Chorus: ...]` जैसे lyric tags mixed voices को reliably disentangle नहीं करते।
-
-- हर caption candidate में वही unique singer trigger रखें, उसके बाद complete और varied style description दें। Trigger को एक line पर और descriptions को अलग lines पर रखना गलत है, क्योंकि एक समय में केवल एक line चुनी जाती है।
-- Narrow single-genre singer dataset आम तौर पर उस arrangement के भीतर singer सीखता है, portable singer identity नहीं। Identity delta उस genre, instrumentation, mix और song structure से entangled हो जाता है जिसके साथ वह हमेशा co-occur करता है, इसलिए trigger केवल in-domain काम कर सकता है। Cross-genre vocal control के लिए singer dataset में meaningful genre और arrangement variety चाहिए।
-- Lyrics faithful रखें, लेकिन identity सिखाने के लिए lyric section labels पर निर्भर न रहें। उपयोगी signal audio और caption association से आता है।
-- बहुत छोटे corpus के लिए instrumental counterparts prior preservation दे सकते हैं। Six carefully isolated vocal tracks workable हो सकते हैं जब उन्हें उन्हीं tracks से बनी regularisation के साथ pair किया जाए।
-
-```text
-vocalist_xyz, sparse alternative rock, dry drums, tense verse, explosive refrain
-vocalist_xyz, melodic art metal, layered guitar, mid-tempo groove, close vocal
-vocalist_xyz, acoustic chamber rock, hand percussion, soft opening, dramatic lift
-```
-
-एक practical regularisation workflow vocals हटाने के लिए Demucs इस्तेमाल करता है:
-
-```bash
-python -m demucs --two-stems=vocals path/to/track.wav
-```
-
-हर resulting `no_vocals.wav` को अलग audio backend में रखें, style-only `.txt` caption के साथ, singer trigger के बिना, और `.lyrics` sidecar में `[Instrumental]` लिखें। उस backend पर `is_regularisation_data: true` set करें। Regularisation batches frozen base planner को target करते हैं, जिससे adapter "यह music" और "यह singer" को अलग करना सीखता है, छोटे vocal corpus के आसपास पूरे style को rewrite करने के बजाय।
-
-बड़े और diverse single-singer corpus के लिए इस regularisation branch के बिना शुरू करें और इसे केवल तब जोड़ें जब validation style bleed या base-model damage दिखाए। जब vocal dataset पहले से पर्याप्त coverage देता है, regularisation identity acquisition को धीमा कर सकता है। एक plausible explanation यह है कि extra preservation signal पहले से diverse identity gradient को और dilute करता है, लेकिन इसे tuning hypothesis मानें, general rule नहीं।
+उसी memory cap में positioned continuation के लिए crop mode को `random` करें। Positioned crops prompt में time range जोड़ते हैं और `lyrics_window` न होने पर full-track lyrics हटाते हैं। जब terminal और non-terminal spans दोनों संभव हों, एक fixed 25% samples वास्तविक track end तक पहुँचते हैं ताकि EOS supervision track length पर निर्भर न हो। Sampling पूरी cached RVQ sequence पर LM collate के समय होती है; dataset audio या cache नहीं बदलता।
+- **प्रायर संरक्षण**: `is_regularisation_data: true` के साथ असंबंधित गीतों वाला दूसरा ऑडियो बैकएंड जोड़ें (खाली गीत मान्य हैं)। उन बैचों पर हानि वास्तविक कोड के बजाय स्थिर आधार मॉडल के अपने नेक्स्ट-टोकन वितरण को लक्षित करती है, जिससे LoRA सटीक रहता है: असंबंधित कैप्शन ठीक वैसे ही भविष्यवाणी करते रहते हैं जैसे आधार मॉडल करता, और शैली का रिसाव बहुत कम हो जाता है।
 
 ## Troubleshooting
 
