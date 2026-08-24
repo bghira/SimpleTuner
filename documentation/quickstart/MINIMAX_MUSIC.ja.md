@@ -187,7 +187,21 @@ MiniMax Music 3 のセマンティックコードを計画する Qwen3 言語モ
 - このモードでは VAE やテキストエンベッドのキャッシュは行われません — トレーニングはトークンを直接読み取るため、`cache_dir_vae` やテキストエンベッドバックエンドは使用されません。
 - トリガーキーワード（例: `"fiona crapple"`）を各サンプルの caption/`prompt` フィールドに入れ、歌詞はそのまま保持してください。
 - 短いフレーム上限での実行では、常にイントロだけを学習しないように `minimax_music_lm_window_mode: "random"` を設定して、位置付き RVQ 窓をサンプリングできます。ランダム窓は開始/終了/長さをプロンプトへ追加し、サンプルが `lyrics_window` を持つ場合を除いてフルトラック歌詞を省きます。
-- 曲構成のトレーニングには `minimax_music_lm_window_mode: "continuation"` を使います。ターゲット窓をサンプリングし、トラック先頭からの全オーディオトークンを因果コンテキストとして保持し、それ以前のコンテキストの損失をマスクします。
+- 曲構成のトレーニングには `minimax_music_lm_window_mode: "continuation"` を使います。末尾の `minimax_music_lm_target_frames` に損失を適用し、それ以前の可視フレームはマスクされた因果コンテキストになります。`full` は常に曲頭から始まり、`random` は最低 1 個のネイティブ 128 フレームコンテキストを保ちながら曲中を移動できます。時間はネイティブ 128 フレーム/5.12 秒間隔に揃えられ、最大値 `0` は利用可能な曲長を使います。
+
+メモリ上限付き full-prefix continuation の例:
+
+```json
+{
+  "minimax_music_lm_window_mode": "continuation",
+  "minimax_music_lm_target_frames": 128,
+  "minimax_music_lm_continuation_crop_mode": "full",
+  "minimax_music_lm_min_duration_seconds": 5.12,
+  "minimax_music_lm_max_duration_seconds": 30.72
+}
+```
+
+同じ上限で位置付き continuation を学習するには crop mode を `random` に変更します。位置付き区間は時間範囲をプロンプトへ追加し、`lyrics_window` がなければフルトラック歌詞を省きます。サンプリングは完全なキャッシュ済み RVQ シーケンスに対する LM collate 時に行われ、データセットの音声やキャッシュは変更しません。
 - **プライア保存**: `is_regularisation_data: true` を付けた無関係な楽曲の第二のオーディオバックエンドを追加します（空の歌詞も許可）。それらのバッチでは、損失は正解コードではなく凍結されたベースモデル自身の次トークン分布を対象とするため、LoRA は外科的に保たれます。無関係なキャプションはベースモデルと全く同じように予測し続け、スタイルの漏れが大幅に減ります。
 
 ## トラブルシューティング

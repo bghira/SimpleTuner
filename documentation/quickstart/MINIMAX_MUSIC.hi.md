@@ -187,7 +187,21 @@ MiniMax Music 3 के सिमेंटिक कोड की योजना
 - इस मोड में कोई VAE या टेक्स्ट-एम्बेड कैशिंग नहीं होती — प्रशिक्षण सीधे टोकन पढ़ता है, इसलिए `cache_dir_vae` और टेक्स्ट एम्बेड बैकएंड उपयोग नहीं होते।
 - अपना ट्रिगर कीवर्ड (जैसे `"fiona crapple"`) हर नमूने के caption/`prompt` फ़ील्ड में रखें; गीत ज्यों के त्यों रखें।
 - Short capped runs के लिए `minimax_music_lm_window_mode: "random"` सेट करें ताकि हमेशा intros पर प्रशिक्षण न होकर positioned RVQ windows sample हों। Random windows prompt में start/end/duration जोड़ती हैं और full-track lyrics हटाती हैं, जब तक sample `lyrics_window` न दे।
-- Song structure training के लिए `minimax_music_lm_window_mode: "continuation"` इस्तेमाल करें। यह target window sample करता है, track की शुरुआत से सभी audio tokens को causal context रखता है, और पिछले context का loss mask करता है।
+- Song structure training के लिए `minimax_music_lm_window_mode: "continuation"` इस्तेमाल करें। अंतिम `minimax_music_lm_target_frames` पर loss लगता है और पहले के visible frames masked causal context रहते हैं। `full` crops हमेशा song start से शुरू होते हैं; `random` crops track में आगे जा सकते हैं और कम-से-कम एक native 128-frame context segment रखते हैं। Duration model के native 128-frame/5.12-second interval पर snap होती है; maximum `0` उपलब्ध track length इस्तेमाल करता है।
+
+Memory-limited full-prefix continuation config:
+
+```json
+{
+  "minimax_music_lm_window_mode": "continuation",
+  "minimax_music_lm_target_frames": 128,
+  "minimax_music_lm_continuation_crop_mode": "full",
+  "minimax_music_lm_min_duration_seconds": 5.12,
+  "minimax_music_lm_max_duration_seconds": 30.72
+}
+```
+
+उसी memory cap में positioned continuation के लिए crop mode को `random` करें। Positioned crops prompt में time range जोड़ते हैं और `lyrics_window` न होने पर full-track lyrics हटाते हैं। Sampling पूरी cached RVQ sequence पर LM collate के समय होती है; dataset audio या cache नहीं बदलता।
 - **प्रायर संरक्षण**: `is_regularisation_data: true` के साथ असंबंधित गीतों वाला दूसरा ऑडियो बैकएंड जोड़ें (खाली गीत मान्य हैं)। उन बैचों पर हानि वास्तविक कोड के बजाय स्थिर आधार मॉडल के अपने नेक्स्ट-टोकन वितरण को लक्षित करती है, जिससे LoRA सटीक रहता है: असंबंधित कैप्शन ठीक वैसे ही भविष्यवाणी करते रहते हैं जैसे आधार मॉडल करता, और शैली का रिसाव बहुत कम हो जाता है।
 
 ## Troubleshooting

@@ -77,22 +77,52 @@ simpletuner configure config/foo/config.json
 
 ### `--minimax_music_lm_max_frames`
 
-- **内容**: `--minimax_music_train_component=language_model` の場合、25Hz オーディオフレーム単位でターゲット窓の長さを設定します。
+- **内容**: `--minimax_music_train_component=language_model` で、`prefix` と独立した `random` 窓を 25Hz オーディオフレーム単位で制限します。
 - **デフォルト**: `0`（フルトラックでトレーニング）
 - **メモ**:
-  - 1 フレームは 40ms、7500 フレームは 5 分です。`prefix` と `random` では入力もこの長さに制限されます。
-  - `continuation` ではトラック先頭からターゲット窓末尾までを入力に保持するため、損失が `max_frames` 個のターゲットだけでも後半の窓ほど多くの VRAM を使います。
+  - 1 フレームは 40ms、7500 フレームは 5 分です。
+  - `continuation` は下記の専用ターゲットフレームおよび時間設定を使います。
   - 切り詰められたサンプルにはオーディオ終端ターゲットが与えられないため、モデルが早期停止を学習することはありません。
 
 ### `--minimax_music_lm_window_mode`
 
-- **内容**: `--minimax_music_lm_max_frames` が長いトラックを切るとき、どのオーディオ窓を使うかを選びます。
+- **内容**: 言語モデルのトレーニングシーケンスの構築方法を選びます。
 - **選択肢**: `prefix`（デフォルト）、`random`、`continuation`
 - **メモ**:
   - `prefix` はトラックの先頭を使います。フルトラック歌詞との対応は最も自然ですが、短い上限では主にイントロを学習します。
   - `random` は collate 時に連続した RVQ 窓をサンプリングし、開始/終了/長さのテキストをプロンプトに追加します。切り詰めた窓では、サンプルが `lyrics_window` を持つ場合を除いてフルトラック歌詞を省きます。
-  - `continuation` はターゲット窓をサンプリングし、それ以前の全フレームを因果コンテキストとして保持し、損失をターゲット窓だけに適用します。
-  - `random` と `continuation` は正の `--minimax_music_lm_max_frames` と一緒に使ってください。
+  - `continuation` は上限付き可視区間をサンプリングし、最後のターゲットフレームだけに損失を適用します。
+  - 独立した `random` には正の `--minimax_music_lm_max_frames` が必要ですが、`continuation` はこの設定を使いません。
+
+### `--minimax_music_lm_target_frames`
+
+- **内容**: `continuation` で、可視区間末尾の何個の 25Hz フレームに次トークン損失を適用するかを設定します。
+- **デフォルト**: `128`（ネイティブ RVQ セグメント 1 個、5.12 秒）
+- **メモ**: それ以前の可視フレームは因果コンテキストとして残り、交差エントロピーからマスクされます。
+
+### `--minimax_music_lm_continuation_crop_mode`
+
+- **内容**: `continuation` の可視区間の開始位置を選びます。
+- **選択肢**: `full`（デフォルト）、`random`
+- **メモ**:
+  - `full` は常に曲のフレーム 0 から始まり、時間範囲内の終点をサンプリングします。
+  - `random` は曲頭を省略できますが、ターゲット前に最低 1 個のネイティブ 128 フレームコンテキストを保持し、位置をプロンプトへ追加します。
+  - 位置付き区間では `lyrics_window` がない限りフルトラック歌詞を省きます。短すぎる曲はフル prefix にフォールバックします。
+
+### `--minimax_music_lm_min_duration_seconds`
+
+- **内容**: `continuation` でモデルから見える区間の最小時間です。
+- **デフォルト**: `5.12`
+- **メモ**: ネイティブ 128 フレーム（5.12 秒）間隔へ切り上げます。`random` はコンテキスト確保のため、これより長くなる場合があります。
+
+### `--minimax_music_lm_max_duration_seconds`
+
+- **内容**: キャッシュ済み RVQ トラックを変更せず、`continuation` の可視時間に上限を付けます。
+- **デフォルト**: `0`（利用可能なトラック長）
+- **メモ**:
+  - 正の上限はネイティブ 128 フレーム間隔へ切り下げます。
+  - `random` ではターゲットと最低 1 個のコンテキストセグメントが上限内に収まる必要があります。
+  - オーディオ終端ターゲットは、サンプリング区間が実際の曲末へ達した場合だけ追加されます。
 
 ### `--minimax_music_rvq_encoder_model_name_or_path`
 

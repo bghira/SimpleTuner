@@ -77,22 +77,52 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 
 ### `--minimax_music_lm_max_frames`
 
-- **O quê**: Para `--minimax_music_train_component=language_model`, define o tamanho da janela-alvo em frames de áudio de 25Hz.
+- **O quê**: Para `--minimax_music_train_component=language_model`, limita janelas `prefix` e `random` isoladas em frames de áudio de 25Hz.
 - **Padrão**: `0` (treinar com faixas completas)
 - **Notas**:
-  - Um frame são 40ms; 7500 frames são cinco minutos. `prefix` e `random` também limitam a entrada a esse tamanho.
-  - Em `continuation`, a entrada mantém todos os frames do início da faixa até o fim da janela-alvo; janelas tardias usam mais VRAM mesmo que a perda cubra apenas `max_frames` alvos.
+  - Um frame são 40ms; 7500 frames são cinco minutos.
+  - `continuation` usa suas próprias configurações de frames-alvo e duração descritas abaixo.
   - Amostras truncadas não recebem alvo de fim de áudio, então o modelo não aprende a parar cedo demais.
 
 ### `--minimax_music_lm_window_mode`
 
-- **O quê**: Escolhe qual janela de áudio é usada quando `--minimax_music_lm_max_frames` corta uma faixa mais longa.
+- **O quê**: Escolhe como a sequência de treinamento do modelo de linguagem é construída.
 - **Opções**: `prefix` (padrão), `random`, `continuation`
 - **Notas**:
   - `prefix` usa o início da faixa. Isso mantém letras completas mais plausíveis, mas limites curtos ensinam principalmente introduções.
   - `random` amostra uma janela RVQ contígua durante o collate, adiciona texto de início/fim/duração ao prompt e omite letras completas em janelas cortadas, a menos que a amostra forneça `lyrics_window`.
-  - `continuation` amostra uma janela-alvo, mantém todos os frames anteriores como contexto causal e aplica a perda apenas à janela-alvo.
-  - Use `random` e `continuation` apenas com `--minimax_music_lm_max_frames` positivo.
+  - `continuation` amostra um trecho visível limitado e aplica perda apenas aos frames-alvo finais.
+  - `random` isolado exige `--minimax_music_lm_max_frames` positivo; `continuation` não usa essa opção.
+
+### `--minimax_music_lm_target_frames`
+
+- **O quê**: Em `continuation`, define quantos frames finais de 25Hz recebem perda de próximo token.
+- **Padrão**: `128` (um segmento RVQ nativo, 5,12 segundos)
+- **Notas**: Frames visíveis anteriores permanecem como contexto causal e são mascarados da entropia cruzada.
+
+### `--minimax_music_lm_continuation_crop_mode`
+
+- **O quê**: Escolhe onde começa o trecho visível de `continuation`.
+- **Opções**: `full` (padrão), `random`
+- **Notas**:
+  - `full` sempre começa no frame zero da música e amostra um fim entre os limites de duração.
+  - `random` pode omitir o início, mas mantém pelo menos um segmento nativo de 128 frames antes do alvo e adiciona a posição ao prompt.
+  - Trechos posicionados omitem letras completas salvo se houver `lyrics_window`. Faixas muito curtas usam um prefixo completo.
+
+### `--minimax_music_lm_min_duration_seconds`
+
+- **O quê**: Duração mínima visível pelo modelo em `continuation`.
+- **Padrão**: `5.12`
+- **Notas**: Arredondada para cima em intervalos nativos de 128 frames (5,12 segundos). Trechos `random` podem ser maiores para reservar contexto.
+
+### `--minimax_music_lm_max_duration_seconds`
+
+- **O quê**: Limita a duração visível em `continuation` sem alterar a faixa RVQ em cache.
+- **Padrão**: `0` (usar o tamanho disponível)
+- **Notas**:
+  - Limites positivos são arredondados para baixo em intervalos de 128 frames.
+  - Em `random`, o limite deve comportar o alvo e pelo menos um segmento de contexto.
+  - O alvo de fim de áudio só é adicionado quando o trecho chega ao fim real da faixa.
 
 ### `--minimax_music_rvq_encoder_model_name_or_path`
 

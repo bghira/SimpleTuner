@@ -187,7 +187,21 @@ Requisitos y diferencias respecto al entrenamiento del DiT:
 - En este modo no hay caché de VAE ni de embeddings de texto — el entrenamiento lee los tokens directamente, así que `cache_dir_vae` y los backends de text embeds no se usan.
 - Coloca tu palabra clave (p. ej. `"fiona crapple"`) en el campo caption/`prompt` de cada muestra; mantén las letras sin modificar.
 - Para ejecuciones cortas con límite de frames, usa `minimax_music_lm_window_mode: "random"` para muestrear ventanas RVQ posicionadas en vez de entrenar siempre intros. Las ventanas aleatorias agregan inicio/fin/duración al prompt y omiten la letra completa salvo que la muestra proporcione `lyrics_window`.
-- Para entrenar la estructura de la canción, usa `minimax_music_lm_window_mode: "continuation"`. Muestrea una ventana objetivo, conserva como contexto causal todos los tokens de audio desde el inicio de la pista y enmascara la pérdida del contexto anterior.
+- Para entrenar la estructura de canciones, usa `minimax_music_lm_window_mode: "continuation"`. Los últimos `minimax_music_lm_target_frames` reciben pérdida y los frames visibles anteriores quedan como contexto causal enmascarado. Los recortes `full` empiezan en el inicio de la canción; los `random` pueden desplazarse por la pista conservando al menos un segmento nativo de 128 frames. Las duraciones se ajustan al intervalo nativo de 128 frames/5,12 segundos; un máximo de `0` usa la pista disponible.
+
+Ejemplo de continuación con prefijo completo y límite de memoria:
+
+```json
+{
+  "minimax_music_lm_window_mode": "continuation",
+  "minimax_music_lm_target_frames": 128,
+  "minimax_music_lm_continuation_crop_mode": "full",
+  "minimax_music_lm_min_duration_seconds": 5.12,
+  "minimax_music_lm_max_duration_seconds": 30.72
+}
+```
+
+Cambia el modo a `random` para entrenar continuaciones posicionadas con el mismo límite. Esos recortes añaden su rango temporal al prompt y omiten las letras completas salvo que exista `lyrics_window`. El muestreo ocurre durante el collate LM sobre la secuencia RVQ completa almacenada; no modifica el audio ni la caché del dataset.
 - **Preservación de prior**: añade un segundo backend de audio con `is_regularisation_data: true` que contenga canciones no relacionadas (se permiten letras vacías). En esos lotes la pérdida apunta a la distribución de siguiente token del modelo base congelado en lugar de los códigos reales, de modo que el LoRA se mantiene quirúrgico: los captions no relacionados siguen prediciendo exactamente como lo haría el modelo base, lo que reduce notablemente el sangrado de estilo.
 
 ## Solución de problemas
