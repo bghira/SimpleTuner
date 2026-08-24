@@ -3,7 +3,12 @@
 import json
 import os
 import pathlib
+import sys
 from typing import Any, Dict, List, Optional, Tuple
+
+_PINNED_SIMPLETUNER_ROOT = pathlib.Path(__file__).resolve().parent / "SimpleTuner"
+if _PINNED_SIMPLETUNER_ROOT.is_dir():
+    sys.path.insert(0, str(_PINNED_SIMPLETUNER_ROOT))
 
 from cog import BasePredictor, Input, Path, Secret
 
