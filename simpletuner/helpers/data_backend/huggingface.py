@@ -151,6 +151,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                     logger.warning("Dataset has exactly 8200 items - this might be a single shard!")
 
             self._configure_video_column()
+            self._configure_audio_column()
 
             # Apply filter if provided
             if self.filter_func and not self.streaming:
@@ -184,6 +185,21 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             self.dataset = self.dataset.cast_column(self.video_column, Video(decode=False))
         except Exception as exc:
             logger.warning("Failed to cast video column '%s' to decode=False: %s", self.video_column, exc)
+
+    def _configure_audio_column(self) -> None:
+        if self.dataset_type is not DatasetType.AUDIO or self.streaming or self.dataset_name == "audiofolder":
+            return
+
+        try:
+            from datasets import Audio
+        except ImportError:
+            logger.warning("datasets.Audio not available; cannot disable audio decoding.")
+            return
+
+        try:
+            self.dataset = self.dataset.cast_column(self.audio_column, Audio(decode=False))
+        except Exception as exc:
+            logger.warning("Failed to cast audio column '%s' to decode=False: %s", self.audio_column, exc)
 
     @staticmethod
     def _coerce_to_bytes(payload: Any) -> Optional[bytes]:

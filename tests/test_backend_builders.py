@@ -659,6 +659,26 @@ class TestHuggingfaceBackendBuilder(unittest.TestCase):
 
             self.assertEqual(backend.read("0.wav"), b"audio bytes")
 
+    @patch("datasets.Audio")
+    def test_huggingface_audio_column_disables_decode(self, mock_audio):
+        backend = HuggingfaceDatasetsBackend(
+            accelerator=self.accelerator,
+            id="test_audio",
+            dataset_name="example/audio-dataset",
+            dataset_type=DatasetType.AUDIO,
+            auto_load=False,
+        )
+        dataset = MagicMock()
+        decoded_dataset = MagicMock()
+        dataset.cast_column.return_value = decoded_dataset
+        backend.dataset = dataset
+
+        backend._configure_audio_column()
+
+        mock_audio.assert_called_once_with(decode=False)
+        dataset.cast_column.assert_called_once_with("audio", mock_audio.return_value)
+        self.assertIs(backend.dataset, decoded_dataset)
+
     @patch("simpletuner.helpers.data_backend.builders.huggingface.HuggingfaceDatasetsBackend")
     def test_build_assigns_default_cache_dir_when_missing(self, mock_hf_backend_class):
         """Default cache directory should be derived when none is provided."""
