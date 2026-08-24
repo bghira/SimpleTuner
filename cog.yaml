@@ -4,12 +4,14 @@ build:
   cuda: "12.8"
   python_version: "3.12"
   system_packages:
+    - ffmpeg
     - git
+    - libsndfile1
   run:
     - rm -rf SimpleTuner && git clone --depth 1 --branch main https://github.com/bghira/SimpleTuner.git SimpleTuner
     - pip install --upgrade pip
-    - printf '%s\n' 'torch==2.11.0+cu128' 'torchvision==0.26.0+cu128' 'torchaudio==2.11.0+cu128' > /tmp/constraints-cuda128.txt
-    - pip install --index-url https://download.pytorch.org/whl/cu128 -c /tmp/constraints-cuda128.txt torch torchvision torchaudio
+    - printf '%s\n' 'torch==2.11.0+cu128' 'torchvision==0.26.0+cu128' 'torchaudio==2.11.0+cu128' 'torchcodec==0.11.1+cu128' > /tmp/constraints-cuda128.txt
+    - pip install --index-url https://download.pytorch.org/whl/cu128 -c /tmp/constraints-cuda128.txt torch torchvision torchaudio torchcodec
     - pip install --extra-index-url https://download.pytorch.org/whl/cu128 -c /tmp/constraints-cuda128.txt -e "./SimpleTuner[cuda,jxl]"
     - pip install 'mup>=1.0.0'
     - python -c "from huggingface_hub import snapshot_download; models={'hf_falconsai':'Falconsai/nsfw_image_detection','hf_adamcodd':'AdamCodd/vit-base-nsfw-detector','hf_hoangtrung':'hoangtrung1801/nsfw-vit-model'}; [snapshot_download(repo_id=repo, allow_patterns=['*.json','*.safetensors','*.bin','*.txt'], local_dir=f'/opt/nsfw-classifier-comparison/{key}') for key, repo in models.items()]"
