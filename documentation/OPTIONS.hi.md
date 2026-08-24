@@ -77,11 +77,22 @@ simpletuner configure config/foo/config.json
 
 ### `--minimax_music_lm_max_frames`
 
-- **क्या**: `--minimax_music_train_component=language_model` के लिए, प्रत्येक ट्रैक की ऑडियो टोकन शृंखला को इतने 25Hz फ्रेम तक काटता है (गीत के साथ संरेखण बनाए रखने के लिए शुरुआत से लिया गया)।
+- **क्या**: `--minimax_music_train_component=language_model` के लिए, 25Hz ऑडियो फ्रेम में target-window की लंबाई तय करता है।
 - **डिफ़ॉल्ट**: `0` (पूर्ण ट्रैक पर प्रशिक्षण)
 - **नोट्स**:
-  - एक फ्रेम 40ms का है; 7500 फ्रेम पाँच मिनट हैं। यदि लंबे ट्रैक VRAM समाप्त कर दें तो इसे कम करें।
+  - एक फ्रेम 40ms का है; 7500 फ्रेम पाँच मिनट हैं। `prefix` और `random` input को भी इसी लंबाई तक सीमित करते हैं।
+  - `continuation` में input ट्रैक की शुरुआत से target-window के अंत तक सभी फ्रेम रखता है; loss केवल `max_frames` targets पर होने के बावजूद देर की windows अधिक VRAM लेती हैं।
   - काटे गए नमूनों को ऑडियो-समाप्ति लक्ष्य नहीं मिलता, इसलिए मॉडल जल्दी रुकना नहीं सीखता।
+
+### `--minimax_music_lm_window_mode`
+
+- **क्या**: जब `--minimax_music_lm_max_frames` किसी लंबे ट्रैक को काटता है, तब कौन-सी ऑडियो विंडो उपयोग होगी।
+- **विकल्प**: `prefix` (डिफ़ॉल्ट), `random`, `continuation`
+- **नोट्स**:
+  - `prefix` ट्रैक की शुरुआत लेता है। इससे पूरी lyrics सबसे ज़्यादा उपयुक्त रहती हैं, लेकिन छोटे caps ज़्यादातर intro सिखाते हैं।
+  - `random` collate समय एक सतत RVQ window sample करता है, prompt में start/end/duration text जोड़ता है, और cropped windows के लिए full-track lyrics हटा देता है जब तक sample `lyrics_window` न दे।
+  - `continuation` target window sample करता है, उससे पहले के सभी frames को causal context रखता है, और loss केवल target window पर लगाता है।
+  - `random` और `continuation` को केवल positive `--minimax_music_lm_max_frames` के साथ इस्तेमाल करें।
 
 ### `--minimax_music_rvq_encoder_model_name_or_path`
 

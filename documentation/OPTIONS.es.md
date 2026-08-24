@@ -77,11 +77,22 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 
 ### `--minimax_music_lm_max_frames`
 
-- **Qué**: Para `--minimax_music_train_component=language_model`, trunca la secuencia de tokens de audio de cada pista a esta cantidad de frames de 25Hz (tomados desde el inicio para mantener la alineación con la letra).
+- **Qué**: Para `--minimax_music_train_component=language_model`, fija el tamaño de la ventana objetivo en frames de audio de 25Hz.
 - **Predeterminado**: `0` (entrenar con pistas completas)
 - **Notas**:
-  - Un frame son 40ms; 7500 frames son cinco minutos. Reduce este valor si las pistas largas agotan la VRAM.
+  - Un frame son 40ms; 7500 frames son cinco minutos. `prefix` y `random` también limitan la entrada a esta longitud.
+  - En modo `continuation`, la entrada conserva todos los frames desde el inicio de la pista hasta el final de la ventana objetivo; las ventanas tardías usan más VRAM aunque la pérdida solo cubra `max_frames` objetivos.
   - Las muestras truncadas no reciben objetivo de fin de audio, por lo que el modelo no aprende a detenerse antes de tiempo.
+
+### `--minimax_music_lm_window_mode`
+
+- **Qué**: Elige qué ventana de audio se usa cuando `--minimax_music_lm_max_frames` recorta una pista más larga.
+- **Opciones**: `prefix` (predeterminado), `random`, `continuation`
+- **Notas**:
+  - `prefix` toma el inicio de la pista. Esto mantiene más plausibles las letras completas, pero con límites cortos enseña sobre todo intros.
+  - `random` muestrea una ventana RVQ contigua durante el collate, agrega al prompt texto con inicio/fin/duración, y omite las letras completas en ventanas recortadas salvo que la muestra proporcione `lyrics_window`.
+  - `continuation` muestrea una ventana objetivo, conserva todos los frames anteriores como contexto causal y aplica la pérdida solo a la ventana objetivo.
+  - Usa `random` y `continuation` solo con un `--minimax_music_lm_max_frames` positivo.
 
 ### `--minimax_music_rvq_encoder_model_name_or_path`
 

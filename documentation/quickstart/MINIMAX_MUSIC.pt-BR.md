@@ -173,7 +173,8 @@ Veja [fiona crapple](https://huggingface.co/terminusresearch/minimax-music3-lm-l
 ```json
 {
   "minimax_music_train_component": "language_model",
-  "minimax_music_lm_max_frames": 0
+  "minimax_music_lm_max_frames": 0,
+  "minimax_music_lm_window_mode": "prefix"
 }
 ```
 
@@ -185,7 +186,59 @@ Requisitos e diferenças em relação ao treinamento do DiT:
 - O áudio de validação no treinador fica desabilitado neste modo; renderize a partir dos checkpoints salvos com a pilha de geração padrão.
 - Não há cache de VAE nem de text embeds neste modo — o treinamento lê os tokens diretamente, então `cache_dir_vae` e backends de text embeds não são usados.
 - Coloque sua palavra-gatilho (por exemplo `"fiona crapple"`) no campo caption/`prompt` de cada amostra; mantenha as letras inalteradas.
-- **Preservação de prior**: adicione um segundo backend de áudio com `is_regularisation_data: true` contendo músicas não relacionadas (letras vazias são permitidas). Nesses lotes a perda mira a distribuição de próximo token do modelo base congelado em vez dos códigos reais, mantendo o LoRA cirúrgico: captions não relacionados continuam prevendo exatamente como o modelo base faria, reduzindo bastante o vazamento de estilo.
+- Para execuções curtas com limite de frames, use `minimax_music_lm_window_mode: "random"` para amostrar janelas RVQ posicionadas em vez de treinar sempre introduções. Janelas aleatórias adicionam início/fim/duração ao prompt e omitem letras completas, a menos que a amostra forneça `lyrics_window`.
+- Não deixe o treinamento com janelas recortadas ensinar cada recorte como um clipe terminado. Se as saídas fizerem fade ou resolverem repetidamente nas bordas do recorte, inspecione os rótulos e alvos do recorte: janelas internas devem ser supervisionadas como janelas internas, e o comportamento de fim de áudio só deve ser ensinado em finais reais de música.
+- Para treinar a estrutura da música, use `minimax_music_lm_window_mode: "continuation"`. Ele amostra uma janela-alvo, mantém todos os tokens de áudio desde o início da faixa até essa janela como contexto causal e mascara a perda do contexto anterior. Isso usa mais memória que um recorte aleatório isolado, mas evita ensinar cada trecho como abertura de música.
+- Use otimizadores agressivos com cuidado em datasets pequenos de áudio para LM. Prodigy pode passar muito do ponto com learning rates altos, e Lion pode se sobreadaptar dentro dos primeiros mil passos; use AdamW como baseline antes de testar otimizadores mais rápidos.
+- **Preservação de prior**: adicione um segundo backend de áudio com `is_regularisation_data: true` contendo instrumentais ou músicas não relacionadas (letras vazias são permitidas). Nesses lotes a perda mira a distribuição de próximo token do modelo base congelado em vez dos códigos reais, mantendo o LoRA cirúrgico: captions de regularização continuam prevendo exatamente como o modelo base faria, reduzindo bastante o vazamento de estilo.
+
+### Como configurar datasets de estilo e cantor
+
+Adaptação de estilo musical e adaptação de identidade vocal precisam de designs de dataset diferentes. Não trate o nome de um cantor como atalho para uma caption musical detalhada.
+
+#### Estilos musicais
+
+Estilos musicais são mais tolerantes. Um conjunto variado de 24 ou mais faixas pode ser suficiente para um adapter útil quando o objetivo é gênero, arranjo ou produção, e não um timbre vocal específico.
+
+- Otimize para diversidade sem sair do estilo-alvo. Inclua tempos, combinações de instrumentos, escolhas de produção, climas e subgêneros próximos que um usuário poderia pedir na inferência.
+- Dê várias captions de estilo completas para cada amostra de áudio. Um trigger sozinho comprime o dataset em uma associação média e não ensina os controles necessários para reproduzir sua amplitude.
+- Trate o timbre vocal como incidental. Use vários vocalistas ou material instrumental para que uma voz não vire acidentalmente parte do estilo aprendido.
+- Observe colapso com prompts de validação fixos e várias forças de checkpoint. Adapters de estilo costumam ficar úteis antes de precisarem de muitos passos.
+
+Com `caption_strategy: "textfile"` e o padrão `disable_multiline_split: false`, cada linha não vazia em um sidecar `.txt` é uma caption candidata separada. O SimpleTuner escolhe uma candidata sempre que amostra aquele áudio; ele não combina todas as linhas em uma caption agrupada. Workflows DiT cacheiam cada caption distinta separadamente, enquanto o treinamento LM tokeniza a caption selecionada online e não usa cache de text embeddings. Por exemplo:
+
+```text
+rock artístico sincopado, bateria seca, guitarra angular, mudanças dinâmicas abruptas
+metal alternativo melódico, harmonias em camadas, baixo inquieto, andamento teatral
+rock progressivo tenso, acentos de métrica irregular, verso esparso, refrão explosivo
+```
+
+Isso é aumento de captions, não um prompt multilinha: o modelo vê uma dessas linhas para um exemplo de treinamento.
+
+#### Identidade do cantor
+
+Identidade do cantor é muito menos tolerante. Construa um adapter por cantor e remova toda faixa ou seção que contenha outro vocalista, incluindo duetos, versos alternados, backing leads e participações. Etiquetas de letra como `[Verse: ...]` ou `[Chorus: ...]` não separam vozes de forma confiável.
+
+- Coloque o mesmo trigger único do cantor em cada caption candidata, seguido de uma descrição de estilo completa e variada. Um trigger em uma linha e descrições em linhas separadas está errado porque só uma linha é escolhida por vez.
+- Um dataset de cantor estreito e de um único gênero geralmente aprende o cantor dentro daquele arranjo, não uma identidade vocal portátil. O delta de identidade fica entrelaçado com o gênero, a instrumentação, a mixagem e a estrutura de música com que sempre coocorre, então o trigger pode funcionar apenas dentro do domínio. Controle vocal entre gêneros exige variedade real de gênero e arranjo no dataset do cantor.
+- Mantenha as letras fiéis, mas não dependa de etiquetas de seção para ensinar identidade. A associação entre áudio e caption carrega o sinal útil.
+- Para um corpus muito pequeno, contrapartes instrumentais podem fornecer preservação de prior. Seis faixas vocais cuidadosamente isoladas podem funcionar quando pareadas com regularização construída a partir dessas faixas.
+
+```text
+vocalista_xyz, rock alternativo esparso, bateria seca, verso tenso, refrão explosivo
+vocalista_xyz, art metal melódico, guitarra em camadas, groove médio, vocal próximo
+vocalista_xyz, rock acústico de câmara, percussão manual, abertura suave, elevação dramática
+```
+
+Um workflow prático de regularização usa Demucs para remover vocais:
+
+```bash
+python -m demucs --two-stems=vocals path/to/track.wav
+```
+
+Coloque cada `no_vocals.wav` resultante em um backend de áudio separado com uma caption `.txt` apenas de estilo, sem trigger de cantor, e um sidecar `.lyrics` contendo `[Instrumental]`. Defina `is_regularisation_data: true` nesse backend. Lotes de regularização miram o planner base congelado, ajudando o adapter a separar "esta música" de "este cantor" em vez de reescrever todo o estilo ao redor de um corpus vocal minúsculo.
+
+Para um corpus maior e diverso de um único cantor, comece sem esse branch de regularização e adicione-o apenas se a validação mostrar vazamento de estilo ou dano ao modelo base. A regularização pode retardar a aquisição de identidade quando o dataset vocal já fornece cobertura suficiente. Uma explicação plausível é que o sinal extra de preservação dilui ainda mais um gradiente de identidade já diverso, mas trate isso como hipótese de ajuste, não como regra geral.
 
 ## Solução de problemas
 

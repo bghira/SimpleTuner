@@ -775,8 +775,9 @@ Neste exemplo, o dataset de 512px é usado para steps 1-300, então o dataset de
 ### `is_regularisation_data`
 
 - Também pode ser escrito como `is_regularization_data`
-- Habilita treinamento parent-teacher para adapters LyCORIS para que o alvo de predição prefira o resultado do modelo base para um dado dataset.
-  - LoRA padrão não é suportado no momento.
+- Habilita treinamento parent-teacher para que o alvo de predição prefira o resultado do modelo base congelado para um dado dataset.
+  - A maioria das famílias de difusão atualmente requer adapters LyCORIS.
+  - O treinamento `language_model` do MiniMax Music 3 suporta lotes de regularização com LoRA PEFT padrão, incluindo seleção de rota XM. O alvo é a distribuição de próximo token do planner base congelado.
 
 ### `delete_unwanted_images`
 

@@ -775,8 +775,9 @@ effective_batch_size = データセットの train_batch_size × num_gpus × gra
 ### `is_regularisation_data`
 
 - `is_regularization_data` と綴ることもできます。
-- LyCORIS アダプタ向けに親教師学習を有効化し、指定データセットに対してベースモデルの結果を優先する予測ターゲットにします。
-  - 標準 LoRA は現在サポートされていません。
+- 親教師学習を有効化し、指定データセットに対して凍結ベースモデルの結果を優先する予測ターゲットにします。
+  - ほとんどの diffusion family では現在 LyCORIS アダプタが必要です。
+  - MiniMax Music 3 の `language_model` トレーニングでは、XM route selection を含む標準 PEFT LoRA の regularisation batch がサポートされます。ターゲットは凍結されたベース planner の次トークン分布です。
 
 ### `delete_unwanted_images`
 

@@ -77,11 +77,22 @@ simpletuner configure config/foo/config.json
 
 ### `--minimax_music_lm_max_frames`
 
-- **内容**: `--minimax_music_train_component=language_model` の場合、各トラックのオーディオトークン列をこのフレーム数（25Hz）に切り詰めます（歌詞との整合を保つため先頭から取得）。
+- **内容**: `--minimax_music_train_component=language_model` の場合、25Hz オーディオフレーム単位でターゲット窓の長さを設定します。
 - **デフォルト**: `0`（フルトラックでトレーニング）
 - **メモ**:
-  - 1 フレームは 40ms、7500 フレームは 5 分です。長いトラックで VRAM が不足する場合は下げてください。
+  - 1 フレームは 40ms、7500 フレームは 5 分です。`prefix` と `random` では入力もこの長さに制限されます。
+  - `continuation` ではトラック先頭からターゲット窓末尾までを入力に保持するため、損失が `max_frames` 個のターゲットだけでも後半の窓ほど多くの VRAM を使います。
   - 切り詰められたサンプルにはオーディオ終端ターゲットが与えられないため、モデルが早期停止を学習することはありません。
+
+### `--minimax_music_lm_window_mode`
+
+- **内容**: `--minimax_music_lm_max_frames` が長いトラックを切るとき、どのオーディオ窓を使うかを選びます。
+- **選択肢**: `prefix`（デフォルト）、`random`、`continuation`
+- **メモ**:
+  - `prefix` はトラックの先頭を使います。フルトラック歌詞との対応は最も自然ですが、短い上限では主にイントロを学習します。
+  - `random` は collate 時に連続した RVQ 窓をサンプリングし、開始/終了/長さのテキストをプロンプトに追加します。切り詰めた窓では、サンプルが `lyrics_window` を持つ場合を除いてフルトラック歌詞を省きます。
+  - `continuation` はターゲット窓をサンプリングし、それ以前の全フレームを因果コンテキストとして保持し、損失をターゲット窓だけに適用します。
+  - `random` と `continuation` は正の `--minimax_music_lm_max_frames` と一緒に使ってください。
 
 ### `--minimax_music_rvq_encoder_model_name_or_path`
 

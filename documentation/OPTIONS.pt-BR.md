@@ -77,11 +77,22 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 
 ### `--minimax_music_lm_max_frames`
 
-- **O quê**: Para `--minimax_music_train_component=language_model`, trunca a sequência de tokens de áudio de cada faixa para esta quantidade de frames de 25Hz (a partir do início, para manter o alinhamento com a letra).
+- **O quê**: Para `--minimax_music_train_component=language_model`, define o tamanho da janela-alvo em frames de áudio de 25Hz.
 - **Padrão**: `0` (treinar com faixas completas)
 - **Notas**:
-  - Um frame são 40ms; 7500 frames são cinco minutos. Reduza se faixas longas esgotarem a VRAM.
+  - Um frame são 40ms; 7500 frames são cinco minutos. `prefix` e `random` também limitam a entrada a esse tamanho.
+  - Em `continuation`, a entrada mantém todos os frames do início da faixa até o fim da janela-alvo; janelas tardias usam mais VRAM mesmo que a perda cubra apenas `max_frames` alvos.
   - Amostras truncadas não recebem alvo de fim de áudio, então o modelo não aprende a parar cedo demais.
+
+### `--minimax_music_lm_window_mode`
+
+- **O quê**: Escolhe qual janela de áudio é usada quando `--minimax_music_lm_max_frames` corta uma faixa mais longa.
+- **Opções**: `prefix` (padrão), `random`, `continuation`
+- **Notas**:
+  - `prefix` usa o início da faixa. Isso mantém letras completas mais plausíveis, mas limites curtos ensinam principalmente introduções.
+  - `random` amostra uma janela RVQ contígua durante o collate, adiciona texto de início/fim/duração ao prompt e omite letras completas em janelas cortadas, a menos que a amostra forneça `lyrics_window`.
+  - `continuation` amostra uma janela-alvo, mantém todos os frames anteriores como contexto causal e aplica a perda apenas à janela-alvo.
+  - Use `random` e `continuation` apenas com `--minimax_music_lm_max_frames` positivo.
 
 ### `--minimax_music_rvq_encoder_model_name_or_path`
 

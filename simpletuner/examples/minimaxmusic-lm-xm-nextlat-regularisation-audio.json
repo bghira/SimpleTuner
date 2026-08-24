@@ -1,0 +1,44 @@
+[
+  {
+    "id": "minimaxmusic-lm-style-data",
+    "type": "huggingface",
+    "dataset_type": "audio",
+    "dataset_name": "RareConcepts/suno-reggae-test-dataset",
+    "metadata_backend": "huggingface",
+    "caption_strategy": "huggingface",
+    "cache_dir_vae": "cache/vae/{model_family}/minimaxmusic-lm-style-data",
+    "audio": {
+      "bucket_strategy": "duration",
+      "channels": 2,
+      "duration_interval": 30.0,
+      "sample_rate": 44100
+    }
+  },
+  {
+    "id": "minimaxmusic-lm-regularisation-data",
+    "type": "huggingface",
+    "dataset_type": "audio",
+    "dataset_name": "Yi3852/ACEStep-Songs",
+    "split": "train[:128]",
+    "max_num_samples": 128,
+    "metadata_backend": "huggingface",
+    "caption_strategy": "huggingface",
+    "audio_column": "audio",
+    "cache_dir_vae": "cache/vae/{model_family}/minimaxmusic-lm-regularisation-data",
+    "audio": {
+      "bucket_strategy": "duration",
+      "channels": 2,
+      "duration_interval": 30.0,
+      "sample_rate": 44100
+    },
+    "huggingface": {
+      "audio_caption_fields": [
+        "prompt"
+      ],
+      "audio_column": "audio",
+      "lyrics_column": "lyrics"
+    },
+    "probability": 0.5,
+    "is_regularisation_data": true
+  }
+]

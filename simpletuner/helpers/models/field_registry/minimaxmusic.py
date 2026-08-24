@@ -48,7 +48,7 @@ def register_fields(registry) -> None:
             ),
             tooltip="The default is SimpleTuner's v4 open RVQ encoder for MiniMax Music 3.",
             importance=ImportanceLevel.ADVANCED,
-            order=44,
+            order=45,
             documentation="OPTIONS.md#--minimax_music_rvq_encoder_model_name_or_path",
         )
     )
@@ -68,7 +68,7 @@ def register_fields(registry) -> None:
             ),
             tooltip="Leave at final for the default SimpleTuner v4 RVQ encoder package.",
             importance=ImportanceLevel.ADVANCED,
-            order=45,
+            order=46,
             documentation="OPTIONS.md#--minimax_music_rvq_encoder_subfolder",
         )
     )
@@ -88,7 +88,7 @@ def register_fields(registry) -> None:
             ),
             tooltip="Use this only when pinning a specific RVQ encoder checkpoint revision.",
             importance=ImportanceLevel.ADVANCED,
-            order=46,
+            order=47,
             documentation="OPTIONS.md#--minimax_music_rvq_encoder_revision",
         )
     )
@@ -109,7 +109,7 @@ def register_fields(registry) -> None:
             ),
             tooltip="This is the audio encoder stage, not the RVQ code predictor.",
             importance=ImportanceLevel.ADVANCED,
-            order=47,
+            order=48,
             documentation="OPTIONS.md#--minimax_music_rvq_vae_model_name_or_path",
         )
     )
@@ -130,7 +130,7 @@ def register_fields(registry) -> None:
             ),
             tooltip="Produced by --minimax_music_train_component=language_model runs.",
             importance=ImportanceLevel.ADVANCED,
-            order=41,
+            order=42,
             documentation="OPTIONS.md#--minimax_music_lm_adapter",
         )
     )
@@ -147,7 +147,7 @@ def register_fields(registry) -> None:
             help_text="Scale applied to the LM adapter's delta while pre-caching (lora_B weights are scaled).",
             tooltip="1.0 is full strength.",
             importance=ImportanceLevel.ADVANCED,
-            order=42,
+            order=43,
             documentation="OPTIONS.md#--minimax_music_lm_adapter",
         )
     )
@@ -177,7 +177,7 @@ def register_fields(registry) -> None:
                 "them to the same audio window the VAE cache covers."
             ),
             importance=ImportanceLevel.ADVANCED,
-            order=43,
+            order=44,
             documentation="OPTIONS.md#--minimax_music_lm_precache_mode",
         )
     )
@@ -192,13 +192,41 @@ def register_fields(registry) -> None:
             model_specific=["minimaxmusic"],
             default_value=0,
             help_text=(
-                "language_model training only: truncate each track's audio token sequence to this many 25Hz frames, "
-                "taken from the start so lyrics stay aligned. 0 trains on full tracks. Truncated samples do not "
-                "receive an end-of-audio target."
+                "language_model training only: set the 25Hz target-window length. prefix and random also cap the "
+                "input to this length; continuation keeps every frame from the song start through the target-window "
+                "end and masks loss on the preceding context. 0 trains on full tracks."
             ),
             tooltip="One frame is 40ms. 7500 frames = 5 minutes. Lower this if long tracks exhaust VRAM.",
             importance=ImportanceLevel.ADVANCED,
             order=40,
             documentation="OPTIONS.md#--minimax_music_lm_max_frames",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="minimax_music_lm_window_mode",
+            arg_name="--minimax_music_lm_window_mode",
+            ui_label="MiniMax Music LM Window Mode",
+            field_type=FieldType.SELECT,
+            tab="model",
+            section="model_specific",
+            model_specific=["minimaxmusic"],
+            default_value="prefix",
+            choices=[
+                {"value": "prefix", "label": "Prefix window"},
+                {"value": "random", "label": "Random positioned window"},
+                {"value": "continuation", "label": "Causal continuation window"},
+            ],
+            help_text=(
+                "language_model training only: when max audio frames truncates a track, prefix takes the start of "
+                "the track. random samples a different contiguous RVQ window at collate time, adds its start/end "
+                "time to the prompt, and omits full-track lyrics unless a sample provides lyrics_window metadata. "
+                "continuation samples a target window, keeps all earlier song frames as causal context, and applies "
+                "loss only to the target window."
+            ),
+            tooltip="Use continuation to teach later song structure without treating each crop as a new song.",
+            importance=ImportanceLevel.ADVANCED,
+            order=41,
+            documentation="OPTIONS.md#--minimax_music_lm_window_mode",
         )
     )

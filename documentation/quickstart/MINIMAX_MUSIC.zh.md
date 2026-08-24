@@ -173,7 +173,8 @@ MiniMax Music 3 使用 SimpleTuner 的 flow-matching 训练路径，因此可使
 ```json
 {
   "minimax_music_train_component": "language_model",
-  "minimax_music_lm_max_frames": 0
+  "minimax_music_lm_max_frames": 0,
+  "minimax_music_lm_window_mode": "prefix"
 }
 ```
 
@@ -185,7 +186,59 @@ MiniMax Music 3 使用 SimpleTuner 的 flow-matching 训练路径，因此可使
 - 此模式下训练器内验证音频被禁用；请使用标准生成栈从保存的检查点渲染。
 - 此模式下不进行 VAE 或文本嵌入缓存——训练直接读取 token，因此 `cache_dir_vae` 和文本嵌入后端不会被使用。
 - 将触发关键词（例如 `"fiona crapple"`）放入每个样本的 caption/`prompt` 字段；歌词保持原样。
-- **先验保持**：添加第二个音频后端并设置 `is_regularisation_data: true`，其中包含无关歌曲（允许空歌词）。在这些批次上，损失以冻结基础模型自身的下一 token 分布为目标，而不是真实码，因此 LoRA 保持外科手术式的精准：无关的 caption 仍然会像基础模型那样预测，大幅减少风格渗漏。
+- 对较短的帧上限运行，设置 `minimax_music_lm_window_mode: "random"` 可采样带位置的 RVQ 窗口，而不是总是训练前奏。随机窗口会把开始/结束/时长加入 prompt，并省略完整歌词，除非样本提供 `lyrics_window`。
+- 不要让 cropped-window training 把每个裁剪窗口都当作已结束片段来教。如果输出反复在 crop boundary 处 fade out 或收束，请检查 crop label 和 target：内部窗口应该按内部窗口监督，end-of-audio 行为只应在真实歌曲结尾处教授。
+- 对歌曲结构训练，请使用 `minimax_music_lm_window_mode: "continuation"`。它会采样目标窗口，保留从曲目开头到该窗口的所有音频 token 作为因果上下文，并屏蔽此前上下文的损失。它比孤立的随机裁剪使用更多显存，但能避免把每个片段都当作歌曲开头来教。
+- 在小型 LM 音频数据集上要谨慎使用激进 optimizer。Prodigy 在较高 learning rate 下可能严重越界，Lion 可能在前一千步内过度适配；先用 AdamW 作为 baseline，再测试更快的 optimizer。
+- **先验保持**：添加第二个音频后端并设置 `is_regularisation_data: true`，其中包含纯音乐或无关歌曲（允许空歌词）。在这些批次上，损失以冻结基础模型自身的下一 token 分布为目标，而不是真实码，因此 LoRA 保持外科手术式的精准：regularisation caption 仍然会像基础模型那样预测，大幅减少风格渗漏。
+
+### 如何配置风格和歌手数据集
+
+音乐风格适配和歌手身份适配需要不同的数据集设计。不要把歌手名当作详细音乐 caption 的替代品。
+
+#### 音乐风格
+
+音乐风格相对宽容。如果目标是流派、编曲或制作风格，而不是某个具体声线，24 首以上的多样化曲目就可能足以训练出有用的 adapter。
+
+- 在不偏离目标风格的前提下优化多样性。包含推理时用户可能会请求的 tempo、乐器组合、制作选择、情绪和相邻子流派。
+- 为每个音频样本提供多个完整的风格 caption。单独的 trigger word 会把数据集压缩成平均关联，不能教会模型复现其范围所需的控制。
+- 将 vocal timbre 视为附带信息。使用多个 vocalist 或 instrumental material，避免某个声音意外成为学习到的风格的一部分。
+- 用固定 validation prompt 和多个 checkpoint strength 观察 collapse。Style adapter 往往在需要大量 optimizer step 之前就已经有用。
+
+使用 `caption_strategy: "textfile"` 且保持默认 `disable_multiline_split: false` 时，`.txt` sidecar 中每个非空行都是单独的 caption candidate。SimpleTuner 每次采样该音频条目时会选择一个 candidate；它不会把所有行合并为一个 grouped caption。DiT workflow 会分别缓存每个不同 caption，而 LM training 会在线 tokenize 被选中的 caption，不使用 text-embedding cache。例如：
+
+```text
+syncopated art rock, dry drums, angular guitar, abrupt dynamic changes
+melodic alternative metal, layered harmonies, restless bass, theatrical pacing
+tense progressive rock, odd-meter accents, sparse verse, explosive refrain
+```
+
+这是 caption augmentation，不是 multiline prompt：对于某个训练样本，模型只会看到其中一行。
+
+#### 歌手身份
+
+歌手身份宽容度低得多。每个歌手构建一个 adapter，并移除所有包含其他 vocalist 的 track 或 section，包括 duet、交替 verse、backing lead 和 guest appearance。`[Verse: ...]` 或 `[Chorus: ...]` 这样的歌词标签不能可靠地解开混合声音。
+
+- 在每个 caption candidate 中放入同一个唯一 singer trigger，后面接完整且多样的风格描述。把 trigger 放在一行、描述放在其他行是错误的，因为每次只会选择一行。
+- 狭窄的单一流派歌手数据集通常学到的是该编曲中的歌手，而不是可迁移的歌手身份。Identity delta 会与总是共同出现的 genre、instrumentation、mix 和 song structure 纠缠，因此 trigger 可能只在域内有效。跨流派 vocal control 需要歌手数据集中有实际的 genre 和 arrangement 多样性。
+- 保持 lyrics 忠实，但不要依靠歌词 section label 来教授身份。真正有用的信号来自 audio 和 caption 的关联。
+- 对非常小的 corpus，instrumental counterpart 可以提供 prior preservation。六首仔细隔离的 vocal track 在与这些 track 构建出的 regularisation 配对时可能可用。
+
+```text
+vocalist_xyz, sparse alternative rock, dry drums, tense verse, explosive refrain
+vocalist_xyz, melodic art metal, layered guitar, mid-tempo groove, close vocal
+vocalist_xyz, acoustic chamber rock, hand percussion, soft opening, dramatic lift
+```
+
+一种实用的 regularisation workflow 使用 Demucs 去除人声：
+
+```bash
+python -m demucs --two-stems=vocals path/to/track.wav
+```
+
+将每个生成的 `no_vocals.wav` 放入单独的 audio backend，配上只描述风格的 `.txt` caption，不包含 singer trigger，并放置内容为 `[Instrumental]` 的 `.lyrics` sidecar。在该 backend 上设置 `is_regularisation_data: true`。Regularisation batch 的目标是冻结的 base planner，帮助 adapter 区分“这种音乐”和“这个歌手”，而不是围绕很小的 vocal corpus 重写整个风格。
+
+对于更大且多样的单歌手 corpus，先不要添加这个 regularisation branch；只有当 validation 显示 style bleed 或 base-model damage 时再加入。若 vocal dataset 已经提供足够覆盖，regularisation 可能会减慢身份学习。一个合理解释是额外的 preservation signal 会进一步稀释已经多样的 identity gradient，但请把它当作调参假设，而不是通用规则。
 
 ## 故障排查
 

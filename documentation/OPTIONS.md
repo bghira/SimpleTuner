@@ -77,11 +77,22 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 ### `--minimax_music_lm_max_frames`
 
-- **What**: For `--minimax_music_train_component=language_model`, truncates each track's audio token sequence to this many 25Hz frames (taken from the start so lyrics stay aligned).
+- **What**: For `--minimax_music_train_component=language_model`, sets the target-window length in 25Hz audio frames.
 - **Default**: `0` (train on full tracks)
 - **Notes**:
-  - One frame is 40ms; 7500 frames is five minutes. Lower this if long tracks exhaust VRAM.
+  - One frame is 40ms; 7500 frames is five minutes. `prefix` and `random` also cap the input sequence to this length.
+  - In `continuation` mode, the input contains every frame from the song start through the sampled target-window end, so late windows use more memory even though only `max_frames` targets contribute loss.
   - Truncated samples do not receive an end-of-audio target, so the model is not taught to stop early.
+
+### `--minimax_music_lm_window_mode`
+
+- **What**: Chooses which audio window is used when `--minimax_music_lm_max_frames` cuts a longer track.
+- **Choices**: `prefix` (default), `random`, `continuation`
+- **Notes**:
+  - `prefix` takes the start of the track. This keeps full-track lyrics most plausible, but short caps mostly teach intros.
+  - `random` samples a contiguous RVQ window during collate, adds start/end/duration text to the prompt, and omits full-track lyrics for cropped windows unless the sample provides `lyrics_window`.
+  - `continuation` samples the same sized target window but feeds every earlier audio frame as causal context. Loss is masked before the target boundary, so later structure is learned without pretending that each crop is a new song.
+  - Use `random` and `continuation` only with a positive `--minimax_music_lm_max_frames`.
 
 ### `--minimax_music_rvq_encoder_model_name_or_path`
 

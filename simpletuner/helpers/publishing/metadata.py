@@ -627,11 +627,6 @@ def _extract_audio_format_hints(metadata_backend, config: dict) -> tuple[Optiona
     num_channels = config.get("num_channels") or config.get("audio_num_channels")
     if metadata_backend is None:
         return sample_rate, num_channels
-    try:
-        metadata_backend.load_image_metadata()
-    except Exception:
-        # If metadata isn't available, fallback to config-only hints.
-        return sample_rate, num_channels
     entries = getattr(metadata_backend, "image_metadata", {}) or {}
     if not entries and hasattr(metadata_backend, "get_metadata"):
         try:
@@ -655,7 +650,6 @@ def _audio_dataset_overview(dataset_id: str, dataset_backend: dict) -> str:
     sample_count = None
     if metadata_backend is not None:
         try:
-            metadata_backend.load_image_metadata()
             sample_count = len(getattr(metadata_backend, "image_metadata", {}) or {})
         except Exception:
             sample_count = None
