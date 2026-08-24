@@ -173,7 +173,8 @@ Veja [fiona crapple](https://huggingface.co/terminusresearch/minimax-music3-lm-l
 ```json
 {
   "minimax_music_train_component": "language_model",
-  "minimax_music_lm_max_frames": 0
+  "minimax_music_lm_max_frames": 0,
+  "minimax_music_lm_window_mode": "prefix"
 }
 ```
 
@@ -185,6 +186,8 @@ Requisitos e diferenças em relação ao treinamento do DiT:
 - O áudio de validação no treinador fica desabilitado neste modo; renderize a partir dos checkpoints salvos com a pilha de geração padrão.
 - Não há cache de VAE nem de text embeds neste modo — o treinamento lê os tokens diretamente, então `cache_dir_vae` e backends de text embeds não são usados.
 - Coloque sua palavra-gatilho (por exemplo `"fiona crapple"`) no campo caption/`prompt` de cada amostra; mantenha as letras inalteradas.
+- Para execuções curtas com limite de frames, use `minimax_music_lm_window_mode: "random"` para amostrar janelas RVQ posicionadas em vez de treinar sempre introduções. Janelas aleatórias adicionam início/fim/duração ao prompt e omitem letras completas, a menos que a amostra forneça `lyrics_window`.
+- Para treinar a estrutura da música, use `minimax_music_lm_window_mode: "continuation"`. Ele amostra uma janela-alvo, mantém todos os tokens de áudio desde o início da faixa como contexto causal e mascara a perda do contexto anterior.
 - **Preservação de prior**: adicione um segundo backend de áudio com `is_regularisation_data: true` contendo músicas não relacionadas (letras vazias são permitidas). Nesses lotes a perda mira a distribuição de próximo token do modelo base congelado em vez dos códigos reais, mantendo o LoRA cirúrgico: captions não relacionados continuam prevendo exatamente como o modelo base faria, reduzindo bastante o vazamento de estilo.
 
 ## Solução de problemas

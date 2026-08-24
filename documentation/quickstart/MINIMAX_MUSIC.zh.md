@@ -173,7 +173,8 @@ MiniMax Music 3 使用 SimpleTuner 的 flow-matching 训练路径，因此可使
 ```json
 {
   "minimax_music_train_component": "language_model",
-  "minimax_music_lm_max_frames": 0
+  "minimax_music_lm_max_frames": 0,
+  "minimax_music_lm_window_mode": "prefix"
 }
 ```
 
@@ -185,6 +186,8 @@ MiniMax Music 3 使用 SimpleTuner 的 flow-matching 训练路径，因此可使
 - 此模式下训练器内验证音频被禁用；请使用标准生成栈从保存的检查点渲染。
 - 此模式下不进行 VAE 或文本嵌入缓存——训练直接读取 token，因此 `cache_dir_vae` 和文本嵌入后端不会被使用。
 - 将触发关键词（例如 `"fiona crapple"`）放入每个样本的 caption/`prompt` 字段；歌词保持原样。
+- 对较短的帧上限运行，设置 `minimax_music_lm_window_mode: "random"` 可采样带位置的 RVQ 窗口，而不是总是训练前奏。随机窗口会把开始/结束/时长加入 prompt，并省略完整歌词，除非样本提供 `lyrics_window`。
+- 对歌曲结构训练，请使用 `minimax_music_lm_window_mode: "continuation"`。它会采样目标窗口，保留从曲目开头开始的所有音频 token 作为因果上下文，并屏蔽此前上下文的损失。
 - **先验保持**：添加第二个音频后端并设置 `is_regularisation_data: true`，其中包含无关歌曲（允许空歌词）。在这些批次上，损失以冻结基础模型自身的下一 token 分布为目标，而不是真实码，因此 LoRA 保持外科手术式的精准：无关的 caption 仍然会像基础模型那样预测，大幅减少风格渗漏。
 
 ## 故障排查

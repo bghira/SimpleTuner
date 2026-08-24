@@ -77,11 +77,22 @@ simpletuner configure config/foo/config.json
 
 ### `--minimax_music_lm_max_frames`
 
-- **内容**：在 `--minimax_music_train_component=language_model` 时，将每首曲目的音频 token 序列截断为该数量的 25Hz 帧（从开头截取以保持歌词对齐）。
+- **内容**：在 `--minimax_music_train_component=language_model` 时，以 25Hz 音频帧为单位设置目标窗口长度。
 - **默认**：`0`（训练完整曲目）
 - **说明**：
-  - 一帧为 40 毫秒；7500 帧即五分钟。如果长曲目耗尽显存，请降低该值。
+  - 一帧为 40 毫秒；7500 帧即五分钟。`prefix` 和 `random` 也会把输入限制为该长度。
+  - 在 `continuation` 模式下，输入会保留从曲目开头到目标窗口末尾的所有帧；即使损失只覆盖 `max_frames` 个目标，靠后的窗口仍会使用更多显存。
   - 被截断的样本不会获得音频结束目标，因此模型不会被教导提前停止。
+
+### `--minimax_music_lm_window_mode`
+
+- **内容**：当 `--minimax_music_lm_max_frames` 截取较长曲目时，选择使用哪个音频窗口。
+- **选项**：`prefix`（默认）、`random`、`continuation`
+- **说明**：
+  - `prefix` 使用曲目开头。它最能保持完整歌词的合理性，但较短上限主要会教模型学习前奏。
+  - `random` 在 collate 时采样一个连续 RVQ 窗口，把开始/结束/总时长文本加入 prompt；对被截取的窗口会省略完整歌词，除非样本提供 `lyrics_window`。
+  - `continuation` 采样目标窗口，保留此前所有帧作为因果上下文，并且只对目标窗口计算损失。
+  - 仅在 `--minimax_music_lm_max_frames` 为正数时使用 `random` 和 `continuation`。
 
 ### `--minimax_music_rvq_encoder_model_name_or_path`
 

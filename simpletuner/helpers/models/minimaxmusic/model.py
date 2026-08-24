@@ -580,6 +580,13 @@ class MiniMaxMusic(AudioModelFoundation):
                     "--minimax_music_train_component=language_model."
                 )
         if self._train_language_model:
+            window_mode = self._lm_window_mode()
+            max_frames = int(getattr(self.config, "minimax_music_lm_max_frames", 0) or 0)
+            if window_mode in {"random", "continuation"} and max_frames <= 0:
+                raise ValueError(
+                    f"--minimax_music_lm_window_mode={window_mode} requires "
+                    "--minimax_music_lm_max_frames to be greater than 0."
+                )
             if normalize_lora_format(getattr(self.config, "lora_format", None)) == PEFTLoRAFormat.COMFYUI:
                 raise ValueError(
                     "--lora_format comfyui applies to the music transformer; use the default diffusers format "
@@ -1075,12 +1082,65 @@ class MiniMaxMusic(AudioModelFoundation):
             frame_rate=self._frame_rate(),
         )
 
-    def _lm_prompt_text(self, caption: str, lyrics: str) -> str:
+    def _lm_window_mode(self) -> str:
+        mode = str(getattr(self.config, "minimax_music_lm_window_mode", "prefix") or "prefix").strip().lower()
+        if mode not in {"prefix", "random", "continuation"}:
+            raise ValueError("MiniMax Music 3 LM window mode must be one of: prefix, random, continuation.")
+        return mode
+
+    def _lm_prompt_text(
+        self,
+        caption: str,
+        lyrics: str,
+        *,
+        window_start_frame: int = 0,
+        window_frame_count: Optional[int] = None,
+        total_frame_count: Optional[int] = None,
+        window_mode: str = "prefix",
+    ) -> str:
+        window_text = ""
+        if window_mode == "random" and window_frame_count is not None:
+            frame_rate = self._frame_rate()
+            start_seconds = float(window_start_frame) / frame_rate
+            end_seconds = float(window_start_frame + window_frame_count) / frame_rate
+            total_seconds = (
+                float(total_frame_count) / frame_rate
+                if total_frame_count is not None and total_frame_count > 0
+                else end_seconds
+            )
+            window_text = (
+                f"<|window_start|>{start_seconds:.2f}s<|window_end|>{end_seconds:.2f}s"
+                f"<|track_duration|>{total_seconds:.2f}s<|window_kind|>audio_excerpt"
+            )
         return (
             f"<|im_start|><|caption_start|>{_clean_caption(str(caption))}<|caption_end|>"
-            f"<|lyrics_start|>{_normalize_lyrics(str(lyrics))}<|lyrics_end|>"
+            f"{window_text}<|lyrics_start|>{_normalize_lyrics(str(lyrics))}<|lyrics_end|>"
             f"<|im_end|><|audio_start|>"
         )
+
+    def _lm_slice_audio_codes(
+        self,
+        codes: torch.Tensor,
+        max_frames: int,
+        window_mode: str,
+    ) -> tuple[torch.Tensor, int, int, bool]:
+        original_frames = int(codes.shape[0])
+        available_frames = min(original_frames, _MAX_AUDIO_FRAMES)
+        frame_limit = max_frames if 0 < max_frames < available_frames else available_frames
+        start_frame = 0
+        loss_start_frame = 0
+        if frame_limit < available_frames and window_mode in {"random", "continuation"}:
+            max_start = available_frames - frame_limit
+            start_frame = int(torch.randint(0, max_start + 1, (1,)).item())
+        if window_mode == "continuation":
+            end_frame = start_frame + frame_limit
+            sliced_codes = codes[:end_frame]
+            loss_start_frame = start_frame
+            truncated = end_frame < original_frames
+        else:
+            sliced_codes = codes[start_frame : start_frame + frame_limit]
+            truncated = frame_limit < original_frames
+        return sliced_codes, start_frame, loss_start_frame, truncated
 
     def _lm_load_audio_codes(self, example: dict) -> torch.Tensor:
         codes = example.get("audio_tokens")
@@ -1138,11 +1198,15 @@ class MiniMaxMusic(AudioModelFoundation):
         self.load_text_tokenizer()
         tokenizer = self.tokenizers[0]
         max_frames = int(getattr(self.config, "minimax_music_lm_max_frames", 0) or 0)
+        window_mode = self._lm_window_mode()
 
         input_id_rows = []
         code_rows = []
         prompt_lengths = []
         audio_lengths = []
+        audio_window_start_frames = []
+        audio_loss_start_frames = []
+        audio_total_frames = []
         has_audio_end = []
         prompts = []
         for example in examples:
@@ -1155,25 +1219,33 @@ class MiniMaxMusic(AudioModelFoundation):
                     "MiniMax Music 3 language model training requires 'lyrics' metadata (an empty string is "
                     "allowed for instrumental or regularisation tracks)."
                 )
-            prompt_text = self._lm_prompt_text(caption, lyrics)
+            codes = self._lm_load_audio_codes(example)
+            total_frames = int(codes.shape[0])
+            codes, start_frame, loss_start_frame, truncated = self._lm_slice_audio_codes(codes, max_frames, window_mode)
+            prompt_lyrics = lyrics
+            if window_mode == "random" and truncated:
+                prompt_lyrics = example.get("lyrics_window") if isinstance(example.get("lyrics_window"), str) else ""
+            prompt_text = self._lm_prompt_text(
+                caption,
+                prompt_lyrics,
+                window_start_frame=start_frame,
+                window_frame_count=int(codes.shape[0]) if window_mode == "random" and truncated else None,
+                total_frame_count=total_frames,
+                window_mode=window_mode,
+            )
             input_ids = tokenizer(prompt_text, return_tensors="pt")["input_ids"].squeeze(0)
             if input_ids.shape[0] > _MAX_PROMPT_TOKENS:
                 raise ValueError(
                     f"The assembled MiniMax Music 3 prompt has {input_ids.shape[0]} tokens; "
                     f"the maximum is {_MAX_PROMPT_TOKENS}."
                 )
-            codes = self._lm_load_audio_codes(example)
-            truncated = False
-            if 0 < max_frames < codes.shape[0]:
-                codes = codes[:max_frames]
-                truncated = True
-            if codes.shape[0] > _MAX_AUDIO_FRAMES:
-                codes = codes[:_MAX_AUDIO_FRAMES]
-                truncated = True
             input_id_rows.append(input_ids)
             code_rows.append(codes)
             prompt_lengths.append(int(input_ids.shape[0]))
             audio_lengths.append(int(codes.shape[0]))
+            audio_window_start_frames.append(start_frame)
+            audio_loss_start_frames.append(loss_start_frame)
+            audio_total_frames.append(total_frames)
             has_audio_end.append(not truncated)
             prompts.append(caption)
 
@@ -1184,6 +1256,9 @@ class MiniMaxMusic(AudioModelFoundation):
             "audio_codes": audio_codes,
             "prompt_lengths": torch.tensor(prompt_lengths, dtype=torch.long),
             "audio_lengths": torch.tensor(audio_lengths, dtype=torch.long),
+            "audio_window_start_frames": torch.tensor(audio_window_start_frames, dtype=torch.long),
+            "audio_loss_start_frames": torch.tensor(audio_loss_start_frames, dtype=torch.long),
+            "audio_total_frames": torch.tensor(audio_total_frames, dtype=torch.long),
             "has_audio_end": torch.tensor(has_audio_end, dtype=torch.bool),
             "prompts": prompts,
         }
@@ -1268,18 +1343,27 @@ class MiniMaxMusic(AudioModelFoundation):
         audio_codes = prepared_batch["audio_codes"]
         prompt_lengths = prepared_batch["prompt_lengths"]
         audio_lengths = prepared_batch["audio_lengths"]
+        audio_loss_start_frames = prepared_batch.get("audio_loss_start_frames")
         has_audio_end = prepared_batch["has_audio_end"]
         targets = torch.full((prompt_lengths.shape[0], seq_len), -100, dtype=torch.long, device=device)
         for index in range(prompt_lengths.shape[0]):
             prompt_len = int(prompt_lengths[index])
             audio_len = int(audio_lengths[index])
+            loss_start_frame = int(audio_loss_start_frames[index]) if audio_loss_start_frames is not None else 0
             if audio_len == 0:
                 raise ValueError("MiniMax Music 3 language model training received a sample with zero audio frames.")
-            start = prompt_len - 1
-            end = start + audio_len
+            if not 0 <= loss_start_frame < audio_len:
+                raise ValueError(
+                    "MiniMax Music 3 LM continuation loss start must be within the audio sequence; "
+                    f"received {loss_start_frame} for {audio_len} frames."
+                )
+            start = prompt_len - 1 + loss_start_frame
+            end = prompt_len - 1 + audio_len
             if end > seq_len:
                 raise ValueError(f"MiniMax Music 3 supervised audio span [{start}, {end}) exceeds logits length {seq_len}.")
-            targets[index, start:end] = audio_codes[index, :audio_len, 0].to(device=device) + _AUDIO_CODE_OFFSET
+            targets[index, start:end] = (
+                audio_codes[index, loss_start_frame:audio_len, 0].to(device=device) + _AUDIO_CODE_OFFSET
+            )
             if bool(has_audio_end[index]):
                 if end >= seq_len:
                     raise ValueError(f"MiniMax Music 3 audio-end target position {end} exceeds logits length {seq_len}.")
@@ -1867,6 +1951,10 @@ class MiniMaxMusic(AudioModelFoundation):
                 if value is None:
                     raise ValueError(f"MiniMax Music 3 language model batch is missing {key}.")
                 batch[key] = value.to(device=device)
+            loss_starts = batch.get("audio_loss_start_frames")
+            if loss_starts is None:
+                loss_starts = torch.zeros_like(batch["audio_lengths"])
+            batch["audio_loss_start_frames"] = loss_starts.to(device=device)
             return batch
         latent_batch = batch.get("latent_batch")
         if latent_batch is None:

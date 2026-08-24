@@ -234,7 +234,8 @@ See [fiona crapple](https://huggingface.co/terminusresearch/minimax-music3-lm-lo
 ```json
 {
   "minimax_music_train_component": "language_model",
-  "minimax_music_lm_max_frames": 0
+  "minimax_music_lm_max_frames": 0,
+  "minimax_music_lm_window_mode": "prefix"
 }
 ```
 
@@ -246,6 +247,8 @@ Requirements and differences from DiT training:
 - In-trainer validation audio is disabled in this mode; render from saved checkpoints with the standard generation stack instead.
 - No VAE or text-embed caching happens in this mode — training reads tokens directly, so `cache_dir_vae` and text embed backends are not used.
 - Put your trigger keyword (e.g. `"fiona crapple"`) in the caption/`prompt` field of every sample; keep lyrics verbatim.
+- For short capped runs, set `minimax_music_lm_window_mode: "random"` to sample positioned RVQ windows instead of always training on intros. Random windows add their start/end/duration to the prompt and omit full-track lyrics unless the sample provides `lyrics_window`.
+- For song-structure training, use `minimax_music_lm_window_mode: "continuation"`. It samples a target window, keeps all audio tokens from the beginning of the track through that window as causal context, and masks loss on the preceding context. This costs more memory than an isolated random crop but avoids teaching every excerpt as a song opening.
 - **Prior preservation**: add a second audio backend with `is_regularisation_data: true` containing unrelated songs
   (empty lyrics are allowed). On those batches the loss targets the frozen base model's own next-token distribution
   instead of the ground-truth codes, so the LoRA stays surgical: unrelated captions keep predicting exactly as the
