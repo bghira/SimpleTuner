@@ -1506,6 +1506,86 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         self.assertTrue(torch.equal(payload["audio_codes"][0, :2], cached))
         self.assertEqual(payload["audio_lengths"].tolist(), [2])
 
+    def test_lm_collate_cached_nonterminal_crop_uses_absolute_position_and_drops_audio_end(self):
+        model = self._lm_model()
+        tokenizer = self._FakeTokenizer()
+        model.tokenizers = [tokenizer]
+        cached = torch.tensor([[1, 0, 0, 0], [2, 1, 0, 0]], dtype=torch.long)
+        vae_cache = SimpleNamespace(
+            retrieve_from_cache=MagicMock(
+                return_value={
+                    "latents": cached,
+                    "metadata": {
+                        "audio_crop_start_seconds": 30.0,
+                        "audio_crop_end_seconds": 30.08,
+                        "audio_crop_is_terminal": False,
+                        "original_duration_seconds": 60.0,
+                    },
+                }
+            )
+        )
+
+        with patch.object(StateTracker, "get_vaecache", return_value=vae_cache):
+            payload = model.collate_audio_tokens(
+                [
+                    {
+                        "prompt": "fiona crapple style",
+                        "lyrics": "full track lyrics",
+                        "data_backend_id": "songs",
+                        "image_path": "song.flac",
+                    }
+                ]
+            )
+
+        self.assertEqual(payload["audio_window_start_frames"].tolist(), [750])
+        self.assertEqual(payload["audio_total_frames"].tolist(), [1500])
+        self.assertFalse(bool(payload["has_audio_end"].any()))
+        self.assertIn("<|window_start|>30.00s", tokenizer.texts[0])
+        self.assertIn("<|window_end|>30.08s", tokenizer.texts[0])
+        self.assertIn("<|track_duration|>60.00s", tokenizer.texts[0])
+        self.assertNotIn("full track lyrics", tokenizer.texts[0])
+
+    def test_lm_collate_random_cached_crop_anchors_to_source_position(self):
+        model = self._lm_model(minimax_music_lm_max_frames=4, minimax_music_lm_window_mode="random")
+        tokenizer = self._FakeTokenizer()
+        model.tokenizers = [tokenizer]
+        cached = torch.arange(36, dtype=torch.long).reshape(9, 4) % 8
+        vae_cache = SimpleNamespace(
+            retrieve_from_cache=MagicMock(
+                return_value={
+                    "latents": cached,
+                    "metadata": {
+                        "audio_crop_start_seconds": 30.0,
+                        "audio_crop_end_seconds": 30.36,
+                        "audio_crop_is_terminal": False,
+                        "original_duration_seconds": 60.0,
+                    },
+                }
+            )
+        )
+
+        with (
+            patch.object(StateTracker, "get_vaecache", return_value=vae_cache),
+            patch("torch.randint", return_value=torch.tensor([2])),
+        ):
+            payload = model.collate_audio_tokens(
+                [
+                    {
+                        "prompt": "fiona crapple style",
+                        "lyrics": "full track lyrics",
+                        "data_backend_id": "songs",
+                        "image_path": "song.flac",
+                    }
+                ]
+            )
+
+        torch.testing.assert_close(payload["audio_codes"][0], cached[2:6])
+        self.assertEqual(payload["audio_window_start_frames"].tolist(), [752])
+        self.assertEqual(payload["audio_total_frames"].tolist(), [1500])
+        self.assertFalse(bool(payload["has_audio_end"].any()))
+        self.assertIn("<|window_start|>30.08s", tokenizer.texts[0])
+        self.assertIn("<|window_end|>30.24s", tokenizer.texts[0])
+
     def test_lm_encode_cache_batch_uses_rvq_encoder(self):
         model = self._lm_model()
         cache_encoder = MiniMaxMusicRVQCacheEncoder(
@@ -1513,16 +1593,19 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
             rvq_encoder=self._FakeRVQEncoder(codebooks=4, vocab=8),
         )
         samples = torch.zeros(1, 2, 4410)
-        codes = model.encode_cache_batch(
+        cache_entry = model.encode_cache_batch(
             cache_encoder,
             samples,
             metadata_entries=[{"metadata": {"sample_rate": 44100}, "data_backend_id": "songs"}],
         )
+        codes = cache_entry["latents"]
 
         self.assertEqual(codes.ndim, 3)
         self.assertEqual(codes.shape[0], 1)
         self.assertEqual(codes.shape[2], 4)
         self.assertTrue(torch.equal(codes[0, 0], torch.tensor([0, 1, 2, 3])))
+        self.assertEqual(cache_entry["metadata"][0]["audio_crop_start_seconds"], 0.0)
+        self.assertTrue(cache_entry["metadata"][0]["audio_crop_is_terminal"])
 
     def test_lm_encode_cache_batch_chunks_to_rvq_position_limit(self):
         model = self._lm_model()
@@ -1532,15 +1615,45 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
             rvq_encoder=rvq_encoder,
         )
         samples = torch.zeros(1, 2, 44100)
-        codes = model.encode_cache_batch(
+        cache_entry = model.encode_cache_batch(
             cache_encoder,
             samples,
             metadata_entries=[{"metadata": {"sample_rate": 44100}, "data_backend_id": "songs"}],
         )
+        codes = cache_entry["latents"]
 
         self.assertGreater(codes.shape[1], 3)
         self.assertGreater(len(rvq_encoder.pool_shapes), 1)
         self.assertTrue(all(shape[1] <= 3 for shape in rvq_encoder.pool_shapes))
+
+    def test_lm_encode_cache_batch_preserves_audio_crop_metadata(self):
+        model = self._lm_model()
+        cache_encoder = MiniMaxMusicRVQCacheEncoder(
+            audio_vae=self._FakeAudioVAE(),
+            rvq_encoder=self._FakeRVQEncoder(codebooks=4, vocab=8),
+        )
+
+        payload = model.encode_cache_batch(
+            cache_encoder,
+            torch.zeros(1, 2, 4410),
+            metadata_entries=[
+                {
+                    "metadata": {
+                        "sample_rate": 44100,
+                        "audio_crop_start_seconds": 30.0,
+                        "audio_crop_end_seconds": 30.1,
+                        "audio_crop_is_terminal": False,
+                        "original_duration_seconds": 60.0,
+                    },
+                    "data_backend_id": "songs",
+                }
+            ],
+        )
+
+        self.assertEqual(payload["metadata"][0]["audio_crop_start_seconds"], 30.0)
+        self.assertEqual(payload["metadata"][0]["audio_crop_end_seconds"], 30.1)
+        self.assertEqual(payload["metadata"][0]["original_duration_seconds"], 60.0)
+        self.assertFalse(payload["metadata"][0]["audio_crop_is_terminal"])
 
     def test_lm_loss_targets_audio_positions_only(self):
         from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET, _AUDIO_END_TOKEN_ID
