@@ -258,6 +258,13 @@ Hugging Face の音声データセットでは、キャプション（プロン�
 - **注記:** 複数の条件データセットがある場合は `id` の配列を指定できます。Flux Kontext の学習時には、条件をランダムに切り替えたり入力を結合したりして、より高度な複数画像合成タスクの学習が可能です。
 - **Flow-DPO:** [`--distillation_method=flow_dpo`](experimental/FLOW_DPO.ja.md) を使う場合は、ここで `reference_strict` conditioning データセットをペアにします。
 
+### `data_transforms`
+
+- **Values:** transform オブジェクト、または transform オブジェクトの配列
+- **Description:** 通常の dataloader 設定が始まる前に、ソース dataset から 1 つ以上の生成済み training dataset を展開します。transform が明示的に metadata clone を要求しない限り、生成 dataset は通常の primary dataset として扱われます。
+- **Audio identity transfer:** `{"task": "identity_transfer", "method": "rvc"}` は `dataset_type: "audio"` の backend で利用できます。音声 identity transfer 用の生成 audio split を準備し、output directory に voice artifact と生成ファイルをキャッシュします。詳しくは [Voice Cloning Data Transforms](experimental/VOICE_CLONING.ja.md) を参照してください。
+- **Status:** 最初の実装では transform registry、cache manifest の確認、Hub artifact の reuse/push、DDP 対応の startup sharding hook、ローカル RVC log を提供します。ネイティブ RVC training/conversion はまだ experimental であり、互換性のある生成 split が cache に存在しない場合は明示的に失敗します。
+
 ### `instance_data_dir` / `aws_data_prefix`
 
 - **Local:** ファイルシステム上のデータパス。

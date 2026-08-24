@@ -593,6 +593,14 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "defaultValue": False,
                 },
                 {
+                    "id": "data_transforms",
+                    "label": "data transforms",
+                    "description": "optional generated audio split configuration, such as identity_transfer",
+                    "type": "textarea",
+                    "placeholder": '[{"task":"identity_transfer","id":"voice-transfer","model":{"train_if_missing":true}}]',
+                    "advanced": True,
+                },
+                {
                     "id": "cache_dir_vae",
                     "label": "vae cache directory",
                     "description": "directory used for cached audio latents",

@@ -228,4 +228,44 @@ describe('Dataloader Section Audio Capabilities', () => {
             expect(component.normalizeBoolean(undefined)).toBe(false);
         });
     });
+
+    describe('identity transfer helpers', () => {
+        test('adds default identity transfer transform for audio datasets', () => {
+            const component = createComponentWithContext({});
+            component.markAsUnsaved = jest.fn();
+            const dataset = {
+                id: 'voice-source',
+                dataset_type: 'audio',
+                data_transforms: []
+            };
+
+            component.setIdentityTransferEnabled(dataset, true);
+
+            expect(dataset.data_transforms).toHaveLength(1);
+            expect(dataset.data_transforms[0].task).toBe('identity_transfer');
+            expect(dataset.data_transforms[0].method).toBe('rvc');
+            expect(dataset.data_transforms[0].model.train_if_missing).toBe(true);
+            expect(dataset.data_transforms[0].model.build_index).toBe(true);
+            expect(dataset.data_transforms[0].conversion.audio_mode).toBe('vocal_only');
+            expect(component.identityTransferEnabled(dataset)).toBe(true);
+        });
+
+        test('removes identity transfer transform without touching other transforms', () => {
+            const component = createComponentWithContext({});
+            component.markAsUnsaved = jest.fn();
+            const dataset = {
+                id: 'voice-source',
+                dataset_type: 'audio',
+                data_transforms: [
+                    { task: 'identity_transfer', method: 'rvc' },
+                    { task: 'other_transform' }
+                ]
+            };
+
+            component.setIdentityTransferEnabled(dataset, false);
+
+            expect(dataset.data_transforms).toEqual([{ task: 'other_transform' }]);
+            expect(component.identityTransferEnabled(dataset)).toBe(false);
+        });
+    });
 });

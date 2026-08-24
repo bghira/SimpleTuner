@@ -182,6 +182,133 @@
                     </div>
                 </div>
             </div>
+
+            <div class="section-group" x-show="matchesParamFilter('identity', 'transfer', 'voice', 'clone', 'rvc', 'hub', 'demucs')" x-cloak>
+                <h6 class="modal-section-title">Voice Identity Transfer</h6>
+                <div class="row g-2">
+                    <div class="col-12">
+                        <div class="form-check form-switch">
+                            <input type="checkbox"
+                                   class="form-check-input"
+                                   :id="'audio-identity-transfer-' + editingDataset.id"
+                                   :checked="identityTransferEnabled(editingDataset)"
+                                   @change="setIdentityTransferEnabled(editingDataset, $event.target.checked)">
+                            <label class="form-check-label" :for="'audio-identity-transfer-' + editingDataset.id">
+                                RVC identity transfer
+                                <a x-show="showDocLinks" href="{{ docs_url('experimental/VOICE_CLONING.md') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <template x-if="identityTransferEnabled(editingDataset)">
+                    <div class="row g-2 mt-1" x-init="identityTransferTransform(editingDataset)">
+                        <div class="col-md-4">
+                            <label class="form-label small">Transform ID</label>
+                            <input type="text"
+                                   class="form-control form-control-sm"
+                                   x-model.lazy="identityTransferTransform(editingDataset).id"
+                                   @input="markAsUnsaved()"
+                                   placeholder="voice-transfer">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">Hub Model ID</label>
+                            <input type="text"
+                                   class="form-control form-control-sm"
+                                   x-model.lazy="identityTransferTransform(editingDataset).model.hub_model_id"
+                                   @input="markAsUnsaved()"
+                                   placeholder="org/voice-artifact">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">Model Cache Dir</label>
+                            <input type="text"
+                                   class="form-control form-control-sm"
+                                   x-model.lazy="identityTransferTransform(editingDataset).model.cache_dir"
+                                   @input="markAsUnsaved()"
+                                   placeholder="output/cache/data_transforms/.../rvc_model">
+                        </div>
+
+                        <div class="col-md-4">
+                            <label class="form-label small">Audio Mode</label>
+                            <select class="form-select form-select-sm"
+                                    x-model="identityTransferTransform(editingDataset).conversion.audio_mode"
+                                    @change="markAsUnsaved()">
+                                <option value="vocal_only">Vocal only</option>
+                                <option value="separate_convert_remix">Separate, convert, remix</option>
+                                <option value="full_mix_convert">Full mix convert</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">Separation</label>
+                            <select class="form-select form-select-sm"
+                                    x-model="identityTransferTransform(editingDataset).conversion.separation_method"
+                                    @change="markAsUnsaved()">
+                                <option value="demucs">Demucs</option>
+                                <option value="none">None</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">Generated Split Path</label>
+                            <input type="text"
+                                   class="form-control form-control-sm"
+                                   x-model.lazy="identityTransferTransform(editingDataset).target.instance_data_dir"
+                                   @input="markAsUnsaved()"
+                                   placeholder="output/cache/data_transforms/.../generated_audio">
+                        </div>
+
+                        <div class="col-md-4">
+                            <div class="form-check form-switch mt-4">
+                                <input type="checkbox"
+                                       class="form-check-input"
+                                       :id="'identity-train-missing-' + editingDataset.id"
+                                       x-model="identityTransferTransform(editingDataset).model.train_if_missing"
+                                       @change="markAsUnsaved()">
+                                <label class="form-check-label small" :for="'identity-train-missing-' + editingDataset.id">Train if missing</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch mt-4">
+                                <input type="checkbox"
+                                       class="form-check-input"
+                                       :id="'identity-build-index-' + editingDataset.id"
+                                       x-model="identityTransferTransform(editingDataset).model.build_index"
+                                       @change="markAsUnsaved()">
+                                <label class="form-check-label small" :for="'identity-build-index-' + editingDataset.id">Build retrieval index</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch mt-4">
+                                <input type="checkbox"
+                                       class="form-check-input"
+                                       :id="'identity-force-retrain-' + editingDataset.id"
+                                       x-model="identityTransferTransform(editingDataset).model.force_retrain"
+                                       @change="markAsUnsaved()">
+                                <label class="form-check-label small" :for="'identity-force-retrain-' + editingDataset.id">Force retrain</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch mt-2">
+                                <input type="checkbox"
+                                       class="form-check-input"
+                                       :id="'identity-reuse-hub-' + editingDataset.id"
+                                       x-model="identityTransferTransform(editingDataset).model.reuse_from_hub"
+                                       @change="markAsUnsaved()">
+                                <label class="form-check-label small" :for="'identity-reuse-hub-' + editingDataset.id">Reuse from Hub</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch mt-2">
+                                <input type="checkbox"
+                                       class="form-check-input"
+                                       :id="'identity-push-hub-' + editingDataset.id"
+                                       x-model="identityTransferTransform(editingDataset).model.push_to_hub"
+                                       @change="markAsUnsaved()">
+                                <label class="form-check-label small" :for="'identity-push-hub-' + editingDataset.id">Push to Hub</label>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
         </div>
     </template>
 </div>
