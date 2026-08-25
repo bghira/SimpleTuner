@@ -909,7 +909,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 - Optimizer: {StateTracker.get_args().optimizer}{f' (config={optimizer_config})' if optimizer_config not in [None, ''] else ''}
 - Trainable parameter precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else StateTracker.get_args().mixed_precision}
 - Base model precision: `{args.base_model_precision}`
-- Caption dropout probability: {StateTracker.get_args().caption_dropout_probability or 0.0 * 100}%
+- Caption dropout probability: {(StateTracker.get_args().caption_dropout_probability or 0.0) * 100}%
 {'- Xformers: Enabled' if StateTracker.get_args().attention_mechanism == 'xformers' else ''}
 {f'- SageAttention: Enabled {sage_usage}' if StateTracker.get_args().attention_mechanism == 'sageattention' else ''}
 {('- SLA: Enabled (you MUST use SLA for inference; sla_attention.pt contains attention weights)') if StateTracker.get_args().attention_mechanism == 'sla' else ''}
