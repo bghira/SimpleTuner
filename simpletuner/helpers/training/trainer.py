@@ -103,7 +103,7 @@ from simpletuner.helpers.training.script_runner import run_hook_script
 from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
-from simpletuner.helpers.training.wrappers import unwrap_model
+from simpletuner.helpers.training.wrappers import rebind_prepared_forward, unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 from simpletuner.helpers.utils.checkpoint_manager import (
     CHECKPOINT_GUARD_FILENAME,
@@ -4574,6 +4574,7 @@ class Trainer:
                 accelerator_state.parallelism_config = standalone_cp_prepare_config
         for label, prepared in zip(prepared_labels, results):
             if label == "primary_model":
+                prepared = rebind_prepared_forward(prepared, primary_model)
                 self.model.set_prepared_model(prepared)
                 # If we skipped device placement for block swap, move the model incrementally
                 if musubi_block_swap_active:
@@ -4636,6 +4637,7 @@ class Trainer:
             self.model.before_accelerator_prepare()
 
         prepared_model = self.accelerator.prepare_model(primary_model, evaluation_mode=True)
+        prepared_model = rebind_prepared_forward(prepared_model, primary_model)
         self.model.set_prepared_model(prepared_model)
         prepared_model.eval()
 
