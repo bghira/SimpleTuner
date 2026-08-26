@@ -2291,19 +2291,60 @@ function trainerComponent() {
                     normalized.model.build_index = model.build_index === undefined ? true : this.normalizeBoolean(model.build_index);
                     normalized.model.reuse_from_hub = model.reuse_from_hub === undefined ? true : this.normalizeBoolean(model.reuse_from_hub);
                     normalized.model.push_to_hub = this.normalizeBoolean(model.push_to_hub);
+                    normalized.model.public = this.normalizeBoolean(model.public);
 
                     const hubModelId = this._coerceString(model.hub_model_id);
                     if (hubModelId) normalized.model.hub_model_id = hubModelId;
+                    const modelName = this._coerceString(model.model_name);
+                    if (modelName) normalized.model.model_name = modelName;
                     const cacheDir = this._coerceString(model.cache_dir);
                     if (cacheDir) normalized.model.cache_dir = cacheDir;
+                    const identityDataDir = this._coerceString(model.identity_data_dir);
+                    if (identityDataDir) normalized.model.identity_data_dir = identityDataDir;
+                    const assetHubModelId = this._coerceString(model.asset_hub_model_id);
+                    if (assetHubModelId) normalized.model.asset_hub_model_id = assetHubModelId;
+                    const pretrainedGeneratorPath = this._coerceString(model.pretrained_generator_path);
+                    if (pretrainedGeneratorPath) normalized.model.pretrained_generator_path = pretrainedGeneratorPath;
+                    const pretrainedDiscriminatorPath = this._coerceString(model.pretrained_discriminator_path);
+                    if (pretrainedDiscriminatorPath) normalized.model.pretrained_discriminator_path = pretrainedDiscriminatorPath;
+                    const rmvpeModelPath = this._coerceString(model.rmvpe_model_path);
+                    if (rmvpeModelPath) normalized.model.rmvpe_model_path = rmvpeModelPath;
+                    const hubertModelPath = this._coerceString(model.hubert_model_path);
+                    if (hubertModelPath) normalized.model.hubert_model_path = hubertModelPath;
+                    const sampleRate = parseInt(model.sample_rate, 10);
+                    if (Number.isFinite(sampleRate) && sampleRate > 0) normalized.model.sample_rate = sampleRate;
+                    const identityAudioMode = this._coerceString(model.identity_audio_mode) || 'separate';
+                    if (['separate', 'vocal_only'].includes(identityAudioMode)) {
+                        normalized.model.identity_audio_mode = identityAudioMode;
+                    }
+                    const trainingSteps = parseInt(model.training_steps, 10);
+                    if (Number.isFinite(trainingSteps) && trainingSteps > 0) {
+                        normalized.model.training_steps = trainingSteps;
+                    }
+                    const batchSize = parseInt(model.batch_size, 10);
+                    if (Number.isFinite(batchSize) && batchSize > 0) {
+                        normalized.model.batch_size = batchSize;
+                    }
+                    const learningRate = parseFloat(model.learning_rate);
+                    if (Number.isFinite(learningRate) && learningRate > 0) {
+                        normalized.model.learning_rate = learningRate;
+                    }
 
-                    const audioMode = this._coerceString(conversion.audio_mode) || 'vocal_only';
+                    const audioMode = this._coerceString(conversion.audio_mode) || 'separate_convert_remix';
                     if (['vocal_only', 'separate_convert_remix', 'full_mix_convert'].includes(audioMode)) {
                         normalized.conversion.audio_mode = audioMode;
                     } else {
-                        normalized.conversion.audio_mode = 'vocal_only';
+                        normalized.conversion.audio_mode = 'separate_convert_remix';
                     }
                     normalized.conversion.separation_method = this._coerceString(conversion.separation_method) || 'demucs';
+                    const timbreStrength = parseFloat(conversion.timbre_strength);
+                    if (Number.isFinite(timbreStrength)) {
+                        normalized.conversion.timbre_strength = Math.max(0, Math.min(1, timbreStrength));
+                    }
+                    const retrievalStrength = parseFloat(conversion.retrieval_strength);
+                    if (Number.isFinite(retrievalStrength)) {
+                        normalized.conversion.retrieval_strength = Math.max(0, Math.min(1, retrievalStrength));
+                    }
 
                     const targetId = this._coerceString(target.id);
                     if (targetId) normalized.target.id = targetId;

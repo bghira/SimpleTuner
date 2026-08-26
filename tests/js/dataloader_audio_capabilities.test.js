@@ -246,7 +246,18 @@ describe('Dataloader Section Audio Capabilities', () => {
             expect(dataset.data_transforms[0].method).toBe('rvc');
             expect(dataset.data_transforms[0].model.train_if_missing).toBe(true);
             expect(dataset.data_transforms[0].model.build_index).toBe(true);
-            expect(dataset.data_transforms[0].conversion.audio_mode).toBe('vocal_only');
+            expect(dataset.data_transforms[0].model.push_to_hub).toBe(false);
+            expect(dataset.data_transforms[0].model.public).toBe(false);
+            expect(dataset.data_transforms[0].model.asset_hub_model_id).toBe('lj1995/VoiceConversionWebUI');
+            expect(dataset.data_transforms[0].model.model_name).toBe('voice-source RVC voice');
+            expect(dataset.data_transforms[0].model.sample_rate).toBe(48000);
+            expect(dataset.data_transforms[0].model.identity_audio_mode).toBe('separate');
+            expect(dataset.data_transforms[0].model.training_steps).toBe(1000);
+            expect(dataset.data_transforms[0].model.batch_size).toBe(4);
+            expect(dataset.data_transforms[0].model.learning_rate).toBe(0.0001);
+            expect(dataset.data_transforms[0].conversion.audio_mode).toBe('separate_convert_remix');
+            expect(dataset.data_transforms[0].conversion.timbre_strength).toBe(1.0);
+            expect(dataset.data_transforms[0].conversion.retrieval_strength).toBe(0.75);
             expect(component.identityTransferEnabled(dataset)).toBe(true);
         });
 
