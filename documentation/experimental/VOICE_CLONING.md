@@ -78,7 +78,7 @@ continue with normal metadata discovery, bucketing, caching, and training
 
 ## RVC-Style Identity Transfer
 
-The first intended implementation is RVC-style voice conversion.
+The first implementation is RVC-style voice conversion using the same core ingredients that make community RVC trainers work: HuBERT/ContentVec-style content features, RMVPE pitch extraction, an NSF/VITS generator, a multi-period discriminator, adversarial and mel reconstruction losses, and an optional nearest-neighbor retrieval index.
 
 In this context, the "RVC model" is voice-specific. It is trained from the target identity dataset. The retrieval index is also voice-specific and is built from features from the same target voice. Broad pretrained components, such as content features, pitch extraction, or separation models, are reusable infrastructure; the conversion model and index are the artist- or speaker-specific artifacts.
 
@@ -93,7 +93,7 @@ SimpleTuner should be able to:
 
 ## Default Behavior
 
-The planned defaults are conservative:
+The defaults are conservative. In this workflow, the audio backend is the expansion music that should be converted, `model.identity_data_dir` is the target voice dataset, and `target.instance_data_dir` is the generated output split.
 
 | Setting | Default | Why |
 | --- | --- | --- |
@@ -102,11 +102,22 @@ The planned defaults are conservative:
 | `train_if_missing` | `true` | SimpleTuner should be able to bootstrap the voice model from the target dataset. |
 | `force_retrain` | `false` | Reuse a valid cached voice model when possible. |
 | `build_index` | `true` | Retrieval usually improves identity stability and reduces leakage. |
+| `identity_data_dir` | required when training on demand | Points to clean vocal examples of the voice to transfer into the expansion songs. |
+| `identity_audio_mode` | `separate` | Runs Demucs on identity clips before training. Use `vocal_only` when the identity dataset already contains vocal stems. |
+| `asset_hub_model_id` | `lj1995/VoiceConversionWebUI` | Provides the default MIT-licensed RVC assets: HuBERT, RMVPE, and v2 48k pretrained generator/discriminator checkpoints. |
+| `model_name` | transform or Hub repo name | Human-readable name saved into the RVC artifact so downloaded caches are identifiable outside their folder name. |
+| `sample_rate` | `48000` | The current implementation targets RVC v2 48k assets. Other rates need matching pretrained assets and configs. |
+| `training_steps` | `1000` | Runs the RVC generator/discriminator fine-tuning stage during startup. Increase for larger or more varied identity datasets. |
+| `batch_size` | `4` | RVC training batch size before distributed sharding. Lower it for memory pressure. |
+| `learning_rate` | `1e-4` | Matches the standard RVC AdamW default. |
 | `hub_model_id` | unset | No remote voice-model cache is used unless the user opts in. |
 | `reuse_from_hub` | `true` when `hub_model_id` is set | Check the Hub before spending time training an on-demand model. |
 | `push_to_hub` | `false` | Uploading a voice model should be explicit because the artifact represents a voice identity. |
+| `public` | `false` | Hub uploads are private by default. Set this to `true` only when the voice artifact can be published publicly. |
 | `audio_mode` | `separate_convert_remix` for full songs, `vocal_only` for vocal stems | Full mixes need separation; stems do not. |
 | `separation_method` | `demucs` when separation is needed | Demucs is the expected default stem separator. |
+| `timbre_strength` | `1.0` | Controls how strongly the synthesized target-voice vocal replaces the source vocal. Lower values blend source and converted vocals. |
+| `retrieval_strength` | `0.75` | Blends nearest target-voice content frames from the saved retrieval index into the generator input. |
 | generated split type | primary `audio` dataset | The generated data is trained like normal audio, not used as conditioning. |
 | cache location | inside `output_dir` | Keeps generated artifacts tied to the training run and reusable on restart. |
 | captions | copy source captions unless configured otherwise | The new split should preserve lyrics and arrangement context. |
@@ -135,17 +146,18 @@ else:
     stop and ask for a model path or a reusable cache
 ```
 
-The Hub repository should use a SimpleTuner-specific layout rather than a loose collection of files:
+The Hub repository uses the `huggingface-hub-rvc` layout rather than a loose collection of files:
 
 ```text
+config.json
 voice_transform/
     manifest.json
-    model.pth
+    model.safetensors
+    features.safetensors
     index.index
-    README.md
 ```
 
-The manifest is the contract. It should record the target identity dataset fingerprint, RVC training settings, index settings, expected sample rate, tool versions, and the SimpleTuner voice-transform format version. SimpleTuner should not reuse a Hub artifact that lacks this manifest or whose manifest does not match the current transform. That avoids silently applying the wrong voice model to a new dataset.
+`config.json` records the package-level RVC metadata, including `model_name`. The voice manifest is the SimpleTuner contract. It should record the target identity dataset fingerprint, RVC training settings, index settings, expected sample rate, tool versions, and the SimpleTuner voice-transform format version. SimpleTuner should not reuse a Hub artifact that lacks this manifest or whose manifest does not match the current transform. That avoids silently applying the wrong voice model to a new dataset.
 
 Publishing should be opt-in. A reasonable pseudo config is:
 
@@ -154,10 +166,11 @@ identity_transfer:
     method: rvc
     model:
         train_if_missing: true
+        model_name: Target voice RVC
         hub_model_id: org/target-voice-rvc
         reuse_from_hub: true
         push_to_hub: true
-        private: true
+        public: false
 ```
 
 For private identities, keep the Hub repository private unless you have explicit permission to publish the voice model. Generated audio and model artifacts may have different sharing rights, so treat their upload settings separately.
@@ -178,6 +191,10 @@ Audio dataset
             Force retrain: off
             Build retrieval index: on
             Hub model id: optional
+            RVC asset repo: lj1995/VoiceConversionWebUI
+            Training steps: 1000
+            Batch size: 4
+            Learning rate: 1e-4
             Reuse from Hub: on when Hub model id is set
             Push RVC model to Hub: off by default
             Hub repo privacy: private by default
@@ -235,7 +252,7 @@ output_dir/
             summary.json
 ```
 
-Useful local stats include RVC training loss, pitch loss if enabled, reconstruction or discriminator loss when applicable, samples processed, elapsed time, DDP world size, cache hit or miss reason, and whether the final model came from local cache, Hub cache, or on-demand training.
+Useful local stats include generator loss, discriminator loss, mel loss, KL loss, samples processed, elapsed time, DDP world size, cache hit or miss reason, and whether the final model came from local cache, Hub cache, or on-demand training.
 
 These stats are local-only unless a future implementation explicitly adds external logger integration for RVC transforms.
 
@@ -330,6 +347,16 @@ This is important because voice-conversion training and full-song separation can
 
 ## Practical Dataset Advice
 
+For the target voice in `model.identity_data_dir`, duration matters less than clean voiced coverage.
+
+- **Smoke test:** 30-60 seconds of clean vocal audio can prove the pipeline runs, but the converted voice will usually be rough.
+- **Usable starter:** 5-10 minutes of clean isolated voice is a reasonable first target for a personal voice dataset.
+- **Singing identity:** 10-30 minutes is better when you need pitch range, vowels, dynamics, articulation, and expressive phrasing.
+
+Use many short clips rather than one long file. Clips around 5-20 seconds are easier to inspect, separate, and reuse. The current RVC trainer resamples identity audio to 48 kHz and truncates each identity file to `max_seconds_per_file`, which defaults to `180`. If a user provides one 30-minute file, only the first three minutes are used by default. Splitting the dataset avoids accidentally throwing away useful vocal coverage.
+
+The standalone [`huggingface-hub-rvc`](https://github.com/SimpleTuner-io/huggingface-hub-rvc) project can train, save, load, and publish the RVC artifact without running a full SimpleTuner training job. Inside SimpleTuner, `scripts/run_rvc_model.py` provides a direct entrypoint for experimenting with the RVC training and conversion portion of the pipeline. Use it when you want to tune the identity dataset, Demucs mode, retrieval strength, transfer strength, or Hub artifact reuse before spending time on the main LoRA training run.
+
 - Keep one target vocalist per generated LoRA when identity control matters.
 - Prefer clean, dry vocal examples for training the voice-conversion model.
 - Avoid duets unless the goal is specifically to learn the duet blend.
@@ -348,6 +375,7 @@ This is important because voice-conversion training and full-song separation can
 | Vocal identity is weak | Voice-conversion model needs cleaner target data, more target data, or a stronger retrieval index. |
 | Captions do not control the voice | Captions still mention source-vocal identity or omit the target identity. |
 | The main model learns artifacts | Generated audio quality is too low or too dominant in the train mix. |
+| Converted vocals are monotonic or robotic | The RVC path is missing proper F0 extraction, pretrained generator/discriminator initialization, adversarial training, or enough clean target vocal data. |
 
 ## Relationship To Regularisation Data
 
@@ -363,4 +391,4 @@ Treat these as separate levers:
 
 ## Status
 
-This page describes the intended user-facing behavior for an experimental `data_transforms` workflow. The important design constraint is that identity transfer should become a first-class SimpleTuner audio training feature: train or reuse the voice-conversion model, build or reuse the retrieval index, generate the expanded split, cache the results, and then continue into normal training without requiring a separate manual preprocessing stage.
+This page describes an experimental `data_transforms` workflow. The current implementation trains or reuses a SimpleTuner RVC v2 F0 artifact, extracts HuBERT content features and RMVPE pitch from identity clips, fine-tunes the pretrained RVC generator/discriminator, builds a retrieval index, generates the expanded split, caches the results, and then continues into normal training without requiring a separate manual preprocessing stage.

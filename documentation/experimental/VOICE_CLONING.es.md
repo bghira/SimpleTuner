@@ -78,7 +78,7 @@ continue with normal metadata discovery, bucketing, caching, and training
 
 ## Transferencia de Identidad Estilo RVC
 
-La primera implementacion prevista es conversion de voz estilo RVC.
+La primera implementacion es conversion de voz estilo RVC, usando features HuBERT, pitch RMVPE, generator NSF/VITS, multi-period discriminator, losses mel/adversarial e indice de retrieval opcional.
 
 En este contexto, el "modelo RVC" es especifico de la voz. Se entrena desde el dataset de identidad objetivo. El indice de recuperacion tambien es especifico de la voz y se construye desde features de esa misma voz. Componentes preentrenados amplios, como features de contenido, extraccion de pitch o modelos de separacion, son infraestructura reutilizable; el modelo de conversion y el indice son artifacts especificos del cantante o hablante.
 
@@ -93,7 +93,7 @@ SimpleTuner deberia poder:
 
 ## Comportamiento Por Defecto
 
-Los defaults planificados son conservadores:
+Los defaults son conservadores. En este workflow, el backend de audio es la musica de expansion que se convertira, `model.identity_data_dir` es el dataset de la voz objetivo, y `target.instance_data_dir` es solo la ruta del split generado.
 
 | Setting | Default | Por que |
 | --- | --- | --- |
@@ -102,11 +102,22 @@ Los defaults planificados son conservadores:
 | `train_if_missing` | `true` | SimpleTuner debe poder bootstrapear el modelo vocal desde el dataset objetivo. |
 | `force_retrain` | `false` | Reutiliza un modelo cacheado valido cuando sea posible. |
 | `build_index` | `true` | Retrieval suele mejorar estabilidad de identidad y reducir leakage. |
+| `identity_data_dir` | obligatorio en entrenamiento bajo demanda | Apunta a ejemplos vocales limpios de la voz que se transferira a las canciones de expansion. |
+| `identity_audio_mode` | `separate` | Ejecuta Demucs en los clips de identidad antes del entrenamiento. Usa `vocal_only` si el dataset de identidad ya contiene vocal stems. |
+| `asset_hub_model_id` | `lj1995/VoiceConversionWebUI` | Default RVC asset repository for HuBERT, RMVPE, and v2 48k pretrained generator/discriminator checkpoints. |
+| `model_name` | transform or Hub repo name | Human-readable name saved into the RVC artifact so downloaded caches are identifiable outside their folder name. |
+| `sample_rate` | `48000` | Current implementation targets RVC v2 48k assets. Other rates need matching pretrained assets and configs. |
+| `training_steps` | `1000` | Runs RVC generator/discriminator fine-tuning during startup. Increase for larger or more varied identity datasets. |
+| `batch_size` | `4` | RVC training batch size before distributed sharding. Lower it for memory pressure. |
+| `learning_rate` | `1e-4` | Standard RVC AdamW default. |
 | `hub_model_id` | sin definir | No se usa cache remoto de modelo vocal sin opt-in del usuario. |
 | `reuse_from_hub` | `true` cuando `hub_model_id` esta definido | Revisa el Hub antes de gastar tiempo entrenando un modelo bajo demanda. |
 | `push_to_hub` | `false` | Subir un modelo vocal debe ser explicito porque el artifact representa una identidad vocal. |
+| `public` | `false` | Hub uploads are private by default. Set this to `true` only when the voice artifact can be published publicly. |
 | `audio_mode` | `separate_convert_remix` para canciones completas, `vocal_only` para vocal stems | Las mezclas completas necesitan separacion; los stems no. |
 | `separation_method` | `demucs` cuando se necesita separacion | Demucs es el stem separator default esperado. |
+| `timbre_strength` | `1.0` | Controls how strongly the synthesized target voice replaces the source vocal. Lower values blend source and converted vocals. |
+| `retrieval_strength` | `0.75` | Blends nearest target-voice content frames from the retrieval index into the generator input. |
 | tipo del split generado | dataset primario `audio` | Los datos generados entrenan como audio normal, no como conditioning. |
 | ubicacion de cache | dentro de `output_dir` | Mantiene artifacts ligados al entrenamiento y reutilizables al reiniciar. |
 | captions | copia captions fuente salvo configuracion diferente | El nuevo split debe preservar letras y contexto de arreglo. |
@@ -138,11 +149,12 @@ else:
 El repositorio del Hub debe usar un layout especifico de SimpleTuner, no una coleccion suelta de archivos:
 
 ```text
+config.json
 voice_transform/
     manifest.json
-    model.pth
+    model.safetensors
+    features.safetensors
     index.index
-    README.md
 ```
 
 El manifest es el contrato. Debe registrar el fingerprint del dataset de identidad objetivo, settings de entrenamiento RVC, settings del indice, sample rate esperado, versiones de herramientas y version del formato voice-transform de SimpleTuner. SimpleTuner no debe reutilizar un artifact del Hub si no tiene este manifest o si el manifest no coincide con el transform actual. Eso evita aplicar silenciosamente el modelo vocal equivocado a un dataset nuevo.
@@ -154,10 +166,11 @@ identity_transfer:
     method: rvc
     model:
         train_if_missing: true
+        model_name: Target voice RVC
         hub_model_id: org/target-voice-rvc
         reuse_from_hub: true
         push_to_hub: true
-        private: true
+        public: false
 ```
 
 Para identidades privadas, mantén el repositorio del Hub privado salvo permiso explicito para publicar el modelo vocal. El audio generado y los artifacts del modelo pueden tener derechos diferentes, asi que trata sus settings de upload por separado.
@@ -324,6 +337,16 @@ El manifest debe registrar fingerprint del dataset de identidad, settings del tr
 
 ## Consejos Practicos
 
+Para la voz objetivo en `model.identity_data_dir`, la duracion importa menos que tener cobertura vocal limpia.
+
+- **Prueba rapida:** 30-60 segundos de audio vocal limpio pueden demostrar que el pipeline funciona, pero la voz convertida normalmente sera rudimentaria.
+- **Inicio usable:** 5-10 minutos de voz aislada limpia es un primer objetivo razonable para un dataset de voz personal.
+- **Identidad cantada:** 10-30 minutos es mejor cuando necesitas rango de pitch, vocales, dinamica, articulacion y fraseo expresivo.
+
+Usa muchos clips cortos en vez de un solo archivo largo. Clips de 5-20 segundos son mas faciles de revisar, separar y reutilizar. El trainer RVC actual remuestrea audio de identidad a 48 kHz y trunca cada archivo de identidad a `max_seconds_per_file`, que por defecto es `180`. Si un usuario proporciona un archivo de 30 minutos, por defecto solo se usan los primeros tres minutos. Dividir el dataset evita descartar por accidente cobertura vocal util.
+
+El proyecto standalone [`huggingface-hub-rvc`](https://github.com/SimpleTuner-io/huggingface-hub-rvc) puede entrenar, guardar, cargar y publicar el artifact RVC sin ejecutar un job completo de SimpleTuner. Dentro de SimpleTuner, `scripts/run_rvc_model.py` ofrece una entrada directa para experimentar con la parte de entrenamiento y conversion RVC del pipeline. Usalo cuando quieras ajustar el dataset de identidad, modo Demucs, retrieval strength, transfer strength o reutilizacion de artifacts del Hub antes de gastar tiempo en el entrenamiento LoRA principal.
+
 - Mantén una voz objetivo por LoRA cuando importa el control de identidad.
 - Prefiere ejemplos vocales limpios y secos para entrenar el modelo de conversion.
 - Evita duetos salvo que el objetivo sea aprender la mezcla del dueto.
@@ -356,4 +379,4 @@ Tratalos como controles separados:
 
 ## Estado
 
-Esta pagina describe el comportamiento previsto para un workflow experimental `data_transforms`. La restriccion importante de diseno es que identity transfer sea una funcion de audio de primera clase en SimpleTuner: entrenar o reutilizar el modelo de voice conversion, construir o reutilizar el indice, generar el split expandido, cachear resultados y continuar al entrenamiento normal sin exigir una segunda etapa manual de preprocessing.
+Esta pagina describe un workflow experimental `data_transforms`. La implementacion actual entrena o reutiliza un artifact RVC v2 F0 de SimpleTuner, extrae features HuBERT y pitch RMVPE de los clips de identidad, ajusta el generador/discriminador RVC preentrenado, genera el split expandido, cachea los resultados y continua al entrenamiento normal sin exigir una segunda etapa manual de preprocessing.
