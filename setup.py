@@ -320,6 +320,7 @@ base_deps = [
     "kernels>=0.16.0,<0.17.0",
     "torch-optimi>=0.2.1",
     "librosa>=0.10.2",
+    "huggingface-hub-rvc>=0.1.3",
     "loguru>=0.7.2",
     "toml>=0.10.2",
     "fastapi[standard]>=0.115.0",
