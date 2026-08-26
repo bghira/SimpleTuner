@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".wav", ".ogg", ".m4a", ".aiff", ".opus"}
 
 TITLE_VERSION_JUNK = re.compile(r"\s*\((?:[^)]*version|live[^)]*)\)\s*$", re.IGNORECASE)
+NUMBERED_ARTIST_TITLE = re.compile(r"^\s*\d+\s*-\s*(?P<artist>.+?)\s*-\s*(?P<title>.+?)\s*$")
 
 
 def normalize_title(title):
@@ -61,6 +62,28 @@ def normalize_title(title):
         prev = title
         title = TITLE_VERSION_JUNK.sub("", title)
     return title.strip() or None
+
+
+def metadata_from_numbered_filename(filepath):
+    """Parse filenames like '001 - Artist - Title.mp3' when embedded tags are generic."""
+    match = NUMBERED_ARTIST_TITLE.match(Path(filepath).stem)
+    if not match:
+        return None, None
+    artist = match.group("artist").strip()
+    title = normalize_title(match.group("title").strip())
+    return artist or None, title
+
+
+def prefer_filename_metadata(filepath, artist, title):
+    """Use filename metadata when tags contain compilation placeholders."""
+    filename_artist, filename_title = metadata_from_numbered_filename(filepath)
+    if not filename_artist or not filename_title:
+        return artist, title
+    generic_artist = not artist or artist.strip().lower() in {"various artists", "various", "unknown artist"}
+    numbered_title = bool(title and NUMBERED_ARTIST_TITLE.match(title.strip()))
+    if generic_artist or numbered_title:
+        return filename_artist, filename_title
+    return artist, title
 
 
 def scrape_genius_tokenless(artist, title):
@@ -238,7 +261,7 @@ def main():
         genius.verbose = False  # Quieter output
         genius.remove_section_headers = False  # Keep [Verse], [Chorus] structure - ACE-Step likes this!
     elif lyricsgenius:
-        print("Notice: No Genius Token provided. Only local ID3 tags will be checked.")
+        print("Notice: No Genius token provided. Local tags and tokenless Genius scraping will be checked.")
 
     files = [p for p in root_dir.rglob("*") if p.suffix.lower() in AUDIO_EXTENSIONS]
     logger.info(f"Found {len(files)} audio files.")
@@ -251,6 +274,7 @@ def main():
             continue
 
         artist, title, local_lyrics = extract_metadata(filepath)
+        artist, title = prefer_filename_metadata(filepath, artist, title)
         if title:
             title = normalize_title(title)
 
