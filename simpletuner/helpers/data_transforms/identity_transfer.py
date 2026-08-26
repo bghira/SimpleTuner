@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import shutil
+import tempfile
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -101,13 +102,28 @@ class RVCTrainer:
         source_backend_config: Dict[str, Any],
         transform_config: Dict[str, Any],
         cache_dir: Path,
+        fingerprint: str,
+        manifest_base: Dict[str, Any],
         accelerator: Any = None,
         logger: Optional[RVCTransformLogger] = None,
     ) -> VoiceModelArtifact:
-        world_size = int(getattr(accelerator, "num_processes", 1) or 1)
-        raise NotImplementedError(
-            "On-demand RVC training is configured, but the native RVC trainer is not implemented yet. "
-            f"The transform runner reached the trainer with DDP world_size={world_size}."
+        from simpletuner.helpers.rvc.simple import SimpleRVCTrainer
+
+        artifact = SimpleRVCTrainer().train(
+            source_backend_config=source_backend_config,
+            transform_config=transform_config,
+            cache_dir=cache_dir,
+            fingerprint=fingerprint,
+            manifest_base=manifest_base,
+            accelerator=accelerator,
+            run_logger=logger,
+        )
+        return VoiceModelArtifact(
+            cache_dir=artifact.cache_dir,
+            manifest_path=artifact.manifest_path,
+            model_path=artifact.model_path,
+            index_path=artifact.index_path,
+            manifest=artifact.manifest,
         )
 
 
@@ -122,81 +138,82 @@ class RVCConverter:
         accelerator: Any = None,
         logger: Optional[RVCTransformLogger] = None,
     ) -> None:
-        raise NotImplementedError(
-            "RVC identity transfer conversion is configured, but the native converter is not implemented yet."
+        from simpletuner.helpers.rvc.simple import SimpleRVCArtifact, SimpleRVCConverter
+
+        simple_artifact = SimpleRVCArtifact(
+            cache_dir=artifact.cache_dir,
+            manifest_path=artifact.manifest_path,
+            model_path=artifact.model_path,
+            index_path=artifact.index_path,
+            manifest=artifact.manifest,
+        )
+        SimpleRVCConverter().convert(
+            source_backend_config=source_backend_config,
+            target_backend_config=target_backend_config,
+            transform_config=transform_config,
+            artifact=simple_artifact,
+            input_paths=input_paths,
+            accelerator=accelerator,
+            run_logger=logger,
         )
 
 
 class HubVoiceModelCache:
-    def __init__(self, hub_model_id: str, token: Optional[str] = None) -> None:
+    def __init__(self, hub_model_id: str, token: Optional[str] = None, public: bool = False) -> None:
         self.hub_model_id = hub_model_id
         self.token = token
+        self.public = public
 
     def download_if_compatible(self, cache_dir: Path, fingerprint: str) -> Optional[VoiceModelArtifact]:
         try:
-            from huggingface_hub import hf_hub_download
             from huggingface_hub.errors import EntryNotFoundError, RepositoryNotFoundError
+            from huggingface_hub_rvc import RVCPipeline
         except ImportError as exc:
-            raise ImportError("huggingface_hub is required when identity_transfer.reuse_from_hub is enabled.") from exc
+            raise ImportError(
+                "huggingface_hub and huggingface_hub_rvc are required when identity_transfer.reuse_from_hub is enabled."
+            ) from exc
 
         try:
-            manifest_file = hf_hub_download(
-                repo_id=self.hub_model_id,
-                filename="voice_transform/manifest.json",
+            pipeline = RVCPipeline.from_pretrained(
+                self.hub_model_id,
                 token=self.token,
             )
         except (EntryNotFoundError, RepositoryNotFoundError):
             return None
 
-        manifest = json.loads(Path(manifest_file).read_text(encoding="utf-8"))
+        manifest = pipeline.artifact.manifest
         if not _manifest_matches(manifest, fingerprint):
             return None
 
-        model_file = hf_hub_download(
-            repo_id=self.hub_model_id,
-            filename="voice_transform/model.pth",
-            token=self.token,
-        )
-        index_file: Optional[str]
-        try:
-            index_file = hf_hub_download(
-                repo_id=self.hub_model_id,
-                filename="voice_transform/index.index",
-                token=self.token,
-            )
-        except EntryNotFoundError:
-            index_file = None
-
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        local_manifest = cache_dir / "manifest.json"
-        local_model = cache_dir / "model.pth"
-        local_index = cache_dir / "index.index"
-        shutil.copy2(manifest_file, local_manifest)
-        shutil.copy2(model_file, local_model)
-        if index_file:
-            shutil.copy2(index_file, local_index)
-        return VoiceModelArtifact(
-            cache_dir=cache_dir,
-            manifest_path=local_manifest,
-            model_path=local_model,
-            index_path=local_index if index_file else None,
-            manifest=manifest,
-        )
+        pipeline.save_pretrained(cache_dir)
+        return _voice_model_artifact_from_hub_pipeline(RVCPipeline.from_pretrained(cache_dir, local_files_only=True))
 
     def upload(self, artifact: VoiceModelArtifact) -> None:
         try:
-            from huggingface_hub import HfApi
+            from huggingface_hub_rvc import RVCConfig, RVCPipeline
+            from huggingface_hub_rvc._runtime import SimpleRVCArtifact
         except ImportError as exc:
-            raise ImportError("huggingface_hub is required when identity_transfer.push_to_hub is enabled.") from exc
+            raise ImportError("huggingface_hub_rvc is required when identity_transfer.push_to_hub is enabled.") from exc
 
-        api = HfApi(token=self.token)
-        api.create_repo(repo_id=self.hub_model_id, repo_type="model", exist_ok=True)
-        api.upload_folder(
-            repo_id=self.hub_model_id,
-            repo_type="model",
-            folder_path=str(artifact.cache_dir),
-            path_in_repo="voice_transform",
+        simple_artifact = SimpleRVCArtifact(
+            cache_dir=artifact.cache_dir,
+            manifest_path=artifact.manifest_path,
+            model_path=artifact.model_path,
+            index_path=artifact.index_path,
+            manifest=artifact.manifest,
         )
+        pipeline = RVCPipeline(
+            artifact=simple_artifact,
+            config=RVCConfig(model_name=_voice_model_name(artifact.manifest, self.hub_model_id)),
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pipeline.save_pretrained(
+                temp_dir,
+                push_to_hub=True,
+                repo_id=self.hub_model_id,
+                token=self.token,
+                private=not self.public,
+            )
 
 
 def _manifest_matches(manifest: Dict[str, Any], fingerprint: str) -> bool:
@@ -207,6 +224,27 @@ def _manifest_matches(manifest: Dict[str, Any], fingerprint: str) -> bool:
         and manifest.get("method") == "rvc"
         and manifest.get("fingerprint") == fingerprint
     )
+
+
+def _voice_model_artifact_from_hub_pipeline(pipeline: Any) -> VoiceModelArtifact:
+    artifact = pipeline.artifact
+    return VoiceModelArtifact(
+        cache_dir=artifact.cache_dir,
+        manifest_path=artifact.manifest_path,
+        model_path=artifact.model_path,
+        index_path=artifact.index_path,
+        manifest=artifact.manifest,
+    )
+
+
+def _voice_model_name(manifest: Dict[str, Any], hub_model_id: Optional[str] = None) -> str:
+    voice_model = manifest.get("voice_model") or {}
+    name = manifest.get("model_name") or voice_model.get("model_name")
+    if name:
+        return str(name)
+    if hub_model_id:
+        return hub_model_id.rstrip("/").rsplit("/", 1)[-1]
+    return "RVC Voice Model"
 
 
 @register_data_transform
@@ -225,18 +263,19 @@ class IdentityTransferTransform(DataTransformTask):
         output_dir = self._output_dir()
         model_cache_dir = Path(transform["model"]["cache_dir"])
         generated_dir = Path(transform["target"]["instance_data_dir"])
-        fingerprint = self._fingerprint(transform)
+        generated_fingerprint = self._generated_fingerprint(transform)
+        voice_model_fingerprint = self._voice_model_fingerprint(transform)
         run_logger = RVCTransformLogger(output_dir, accelerator=self.accelerator)
 
         target_backend_config = self._target_backend_config(transform, generated_dir)
-        if self._generated_cache_matches(generated_dir, fingerprint):
+        if self._generated_cache_matches(generated_dir, generated_fingerprint):
             run_logger.event(transform_id, "generated_cache_reused", path=str(generated_dir))
             run_logger.summary(
                 transform_id, status="reused_generated_cache", generated_backend_id=target_backend_config["id"]
             )
             return [target_backend_config]
 
-        artifact = self._resolve_voice_model(transform, fingerprint, model_cache_dir, run_logger)
+        artifact = self._resolve_voice_model(transform, voice_model_fingerprint, model_cache_dir, run_logger)
         if not self._is_main_process():
             self._wait_for_everyone()
             run_logger.summary(
@@ -261,7 +300,7 @@ class IdentityTransferTransform(DataTransformTask):
             accelerator=self.accelerator,
             logger=run_logger,
         )
-        self._write_generated_manifest(generated_dir, fingerprint, transform)
+        self._write_generated_manifest(generated_dir, generated_fingerprint, transform)
         self._wait_for_everyone()
         run_logger.summary(transform_id, status="generated", generated_backend_id=target_backend_config["id"])
         return [target_backend_config]
@@ -287,12 +326,23 @@ class IdentityTransferTransform(DataTransformTask):
         model.setdefault("build_index", True)
         model.setdefault("reuse_from_hub", bool(model.get("hub_model_id")))
         model.setdefault("push_to_hub", False)
+        model.setdefault("public", False)
         model.setdefault("cache_dir", str(transform_root / "rvc_model"))
+        model.setdefault("asset_hub_model_id", "lj1995/VoiceConversionWebUI")
+        model.setdefault("model_name", _voice_model_name({}, model.get("hub_model_id") or transform_id))
+        model.setdefault("sample_rate", 48000)
+        model.setdefault("identity_audio_mode", "separate")
+        model.setdefault("training_steps", 1000)
+        model.setdefault("batch_size", 4)
+        model.setdefault("learning_rate", 1e-4)
+        model.setdefault("max_seconds_per_file", 180.0)
         transform["model"] = model
 
         conversion = deepcopy(transform.get("conversion") or {})
-        conversion.setdefault("audio_mode", "vocal_only")
+        conversion.setdefault("audio_mode", "separate_convert_remix")
         conversion.setdefault("separation_method", "demucs")
+        conversion.setdefault("timbre_strength", 1.0)
+        conversion.setdefault("retrieval_strength", 0.75)
         transform["conversion"] = conversion
 
         target = deepcopy(transform.get("target") or {})
@@ -379,27 +429,36 @@ class IdentityTransferTransform(DataTransformTask):
             source_backend_config=self.source_backend_config,
             transform_config=transform,
             cache_dir=model_cache_dir,
+            fingerprint=fingerprint,
+            manifest_base=self._manifest(fingerprint, transform),
             accelerator=self.accelerator,
             logger=run_logger,
         )
         if model_cfg.get("push_to_hub", False):
             if not hub_model_id:
                 raise ValueError("identity_transfer.model.push_to_hub requires identity_transfer.model.hub_model_id.")
-            HubVoiceModelCache(hub_model_id, token=model_cfg.get("hub_token")).upload(artifact)
+            HubVoiceModelCache(
+                hub_model_id,
+                token=model_cfg.get("hub_token"),
+                public=bool(model_cfg.get("public", False)),
+            ).upload(artifact)
             run_logger.event(transform_id, "voice_model_pushed", hub_model_id=hub_model_id)
         return artifact
 
     def _local_artifact(self, cache_dir: Path, fingerprint: str) -> Optional[VoiceModelArtifact]:
-        manifest_path = cache_dir / "manifest.json"
-        model_path = cache_dir / "model.pth"
-        index_path = cache_dir / "index.index"
+        artifact_dir = cache_dir / "voice_transform" if (cache_dir / "voice_transform").exists() else cache_dir
+        manifest_path = artifact_dir / "manifest.json"
+        model_path = artifact_dir / "model.safetensors"
+        if not model_path.exists():
+            model_path = artifact_dir / "model.pth"
+        index_path = artifact_dir / "index.index"
         if not manifest_path.exists() or not model_path.exists():
             return None
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if not _manifest_matches(manifest, fingerprint):
             return None
         return VoiceModelArtifact(
-            cache_dir=cache_dir,
+            cache_dir=artifact_dir,
             manifest_path=manifest_path,
             model_path=model_path,
             index_path=index_path if index_path.exists() else None,
@@ -415,32 +474,53 @@ class IdentityTransferTransform(DataTransformTask):
 
     def _write_generated_manifest(self, generated_dir: Path, fingerprint: str, transform: Dict[str, Any]) -> None:
         generated_dir.mkdir(parents=True, exist_ok=True)
-        manifest = self._manifest(fingerprint, transform)
+        manifest = self._manifest(fingerprint, transform, source_dataset_id=self.source_backend_config["id"])
         (generated_dir / ".simpletuner_identity_transfer.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True),
             encoding="utf-8",
         )
 
-    def _manifest(self, fingerprint: str, transform: Dict[str, Any]) -> Dict[str, Any]:
-        return {
+    def _manifest(
+        self,
+        fingerprint: str,
+        transform: Dict[str, Any],
+        source_dataset_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        manifest = {
             "format": VOICE_TRANSFORM_FORMAT,
             "format_version": VOICE_TRANSFORM_FORMAT_VERSION,
             "task": self.TASK,
             "method": "rvc",
             "fingerprint": fingerprint,
-            "source_dataset_id": self.source_backend_config["id"],
             "transform_id": transform["id"],
             "created_by": "simpletuner",
             "created_at": _utc_now(),
         }
+        if source_dataset_id is not None:
+            manifest["source_dataset_id"] = source_dataset_id
+        return manifest
 
-    def _fingerprint(self, transform: Dict[str, Any]) -> str:
+    def _generated_fingerprint(self, transform: Dict[str, Any]) -> str:
         source_cfg = deepcopy(self.source_backend_config)
         source_cfg.pop("data_transforms", None)
         transform_for_hash = deepcopy(transform)
         model_cfg = transform_for_hash.get("model") or {}
-        for transient_key in ("hub_token", "push_to_hub", "reuse_from_hub"):
+        for transient_key in (
+            "asset_hub_token",
+            "cache_dir",
+            "device",
+            "demucs_device",
+            "force_retrain",
+            "hub_model_id",
+            "hub_token",
+            "model_name",
+            "push_to_hub",
+            "public",
+            "reuse_from_hub",
+            "train_if_missing",
+        ):
             model_cfg.pop(transient_key, None)
+        model_cfg["voice_model_fingerprint"] = self._voice_model_fingerprint(transform)
         transform_for_hash["model"] = model_cfg
         return _sha256_json(
             {
@@ -449,6 +529,34 @@ class IdentityTransferTransform(DataTransformTask):
                 "format_version": VOICE_TRANSFORM_FORMAT_VERSION,
             }
         )
+
+    def _voice_model_fingerprint(self, transform: Dict[str, Any]) -> str:
+        model_cfg = deepcopy(transform.get("model") or {})
+        for transient_key in (
+            "asset_hub_token",
+            "cache_dir",
+            "device",
+            "demucs_device",
+            "force_retrain",
+            "hub_model_id",
+            "hub_token",
+            "model_name",
+            "push_to_hub",
+            "public",
+            "reuse_from_hub",
+            "train_if_missing",
+        ):
+            model_cfg.pop(transient_key, None)
+        return _sha256_json(
+            {
+                "method": transform.get("method", "rvc"),
+                "model": model_cfg,
+                "format_version": VOICE_TRANSFORM_FORMAT_VERSION,
+            }
+        )
+
+    def _fingerprint(self, transform: Dict[str, Any]) -> str:
+        return self._generated_fingerprint(transform)
 
     def _discover_source_audio_paths(self) -> List[str]:
         source_type = self.source_backend_config.get("type")
