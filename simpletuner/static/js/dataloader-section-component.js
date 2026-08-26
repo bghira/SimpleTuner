@@ -629,11 +629,21 @@ function dataloaderSectionComponent() {
                     build_index: true,
                     reuse_from_hub: true,
                     push_to_hub: false,
-                    force_retrain: false
+                    public: false,
+                    force_retrain: false,
+                    asset_hub_model_id: 'lj1995/VoiceConversionWebUI',
+                    model_name: `${dataset.id || 'audio'} RVC voice`,
+                    sample_rate: 48000,
+                    identity_audio_mode: 'separate',
+                    training_steps: 1000,
+                    batch_size: 4,
+                    learning_rate: 0.0001
                 },
                 conversion: {
-                    audio_mode: 'vocal_only',
-                    separation_method: 'demucs'
+                    audio_mode: 'separate_convert_remix',
+                    separation_method: 'demucs',
+                    timbre_strength: 1.0,
+                    retrieval_strength: 0.75
                 },
                 target: {}
             };
@@ -647,9 +657,19 @@ function dataloaderSectionComponent() {
         if (transform.model.build_index === undefined) transform.model.build_index = true;
         if (transform.model.reuse_from_hub === undefined) transform.model.reuse_from_hub = true;
         if (transform.model.push_to_hub === undefined) transform.model.push_to_hub = false;
+        if (transform.model.public === undefined) transform.model.public = false;
         if (transform.model.force_retrain === undefined) transform.model.force_retrain = false;
-        transform.conversion.audio_mode = transform.conversion.audio_mode || 'vocal_only';
+        transform.model.asset_hub_model_id = transform.model.asset_hub_model_id || 'lj1995/VoiceConversionWebUI';
+        transform.model.model_name = transform.model.model_name || `${dataset.id || 'audio'} RVC voice`;
+        if (transform.model.sample_rate === undefined) transform.model.sample_rate = 48000;
+        transform.model.identity_audio_mode = transform.model.identity_audio_mode || 'separate';
+        if (transform.model.training_steps === undefined) transform.model.training_steps = 1000;
+        if (transform.model.batch_size === undefined) transform.model.batch_size = 4;
+        if (transform.model.learning_rate === undefined) transform.model.learning_rate = 0.0001;
+        transform.conversion.audio_mode = transform.conversion.audio_mode || 'separate_convert_remix';
         transform.conversion.separation_method = transform.conversion.separation_method || 'demucs';
+        if (transform.conversion.timbre_strength === undefined) transform.conversion.timbre_strength = 1.0;
+        if (transform.conversion.retrieval_strength === undefined) transform.conversion.retrieval_strength = 0.75;
         return transform;
     },
     identityTransferEnabled(dataset) {

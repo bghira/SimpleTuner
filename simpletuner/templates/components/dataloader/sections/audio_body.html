@@ -220,12 +220,82 @@
                                    placeholder="org/voice-artifact">
                         </div>
                         <div class="col-md-4">
+                            <label class="form-label small">Model Name</label>
+                            <input type="text"
+                                   class="form-control form-control-sm"
+                                   x-model.lazy="identityTransferTransform(editingDataset).model.model_name"
+                                   @input="markAsUnsaved()"
+                                   placeholder="Target voice RVC">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">RVC Asset Repo</label>
+                            <input type="text"
+                                   class="form-control form-control-sm"
+                                   x-model.lazy="identityTransferTransform(editingDataset).model.asset_hub_model_id"
+                                   @input="markAsUnsaved()"
+                                   placeholder="lj1995/VoiceConversionWebUI">
+                        </div>
+                        <div class="col-md-4">
                             <label class="form-label small">Model Cache Dir</label>
                             <input type="text"
                                    class="form-control form-control-sm"
                                    x-model.lazy="identityTransferTransform(editingDataset).model.cache_dir"
                                    @input="markAsUnsaved()"
                                    placeholder="output/cache/data_transforms/.../rvc_model">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">Identity Data Dir</label>
+                            <input type="text"
+                                   class="form-control form-control-sm"
+                                   x-model.lazy="identityTransferTransform(editingDataset).model.identity_data_dir"
+                                   @input="markAsUnsaved()"
+                                   placeholder="/path/to/target-vocal-stems">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">Sample Rate</label>
+                            <input type="number"
+                                   class="form-control form-control-sm"
+                                   x-model.number="identityTransferTransform(editingDataset).model.sample_rate"
+                                   @input="markAsUnsaved()"
+                                   min="48000"
+                                   max="48000"
+                                   step="1">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">Identity Audio</label>
+                            <select class="form-select form-select-sm"
+                                    x-model="identityTransferTransform(editingDataset).model.identity_audio_mode"
+                                    @change="markAsUnsaved()">
+                                <option value="separate">Separate vocals</option>
+                                <option value="vocal_only">Already vocal stems</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">Training Steps</label>
+                            <input type="number"
+                                   class="form-control form-control-sm"
+                                   x-model.number="identityTransferTransform(editingDataset).model.training_steps"
+                                   @input="markAsUnsaved()"
+                                   min="1"
+                                   step="100">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">RVC Batch Size</label>
+                            <input type="number"
+                                   class="form-control form-control-sm"
+                                   x-model.number="identityTransferTransform(editingDataset).model.batch_size"
+                                   @input="markAsUnsaved()"
+                                   min="1"
+                                   step="1">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">RVC Learning Rate</label>
+                            <input type="number"
+                                   class="form-control form-control-sm"
+                                   x-model.number="identityTransferTransform(editingDataset).model.learning_rate"
+                                   @input="markAsUnsaved()"
+                                   min="0"
+                                   step="0.00001">
                         </div>
 
                         <div class="col-md-4">
@@ -254,6 +324,26 @@
                                    x-model.lazy="identityTransferTransform(editingDataset).target.instance_data_dir"
                                    @input="markAsUnsaved()"
                                    placeholder="output/cache/data_transforms/.../generated_audio">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">Transfer Strength</label>
+                            <input type="number"
+                                   class="form-control form-control-sm"
+                                   x-model.number="identityTransferTransform(editingDataset).conversion.timbre_strength"
+                                   @input="markAsUnsaved()"
+                                   min="0"
+                                   max="1"
+                                   step="0.05">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">Retrieval Strength</label>
+                            <input type="number"
+                                   class="form-control form-control-sm"
+                                   x-model.number="identityTransferTransform(editingDataset).conversion.retrieval_strength"
+                                   @input="markAsUnsaved()"
+                                   min="0"
+                                   max="1"
+                                   step="0.05">
                         </div>
 
                         <div class="col-md-4">
@@ -304,6 +394,16 @@
                                        x-model="identityTransferTransform(editingDataset).model.push_to_hub"
                                        @change="markAsUnsaved()">
                                 <label class="form-check-label small" :for="'identity-push-hub-' + editingDataset.id">Push to Hub</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check form-switch mt-2">
+                                <input type="checkbox"
+                                       class="form-check-input"
+                                       :id="'identity-public-hub-' + editingDataset.id"
+                                       x-model="identityTransferTransform(editingDataset).model.public"
+                                       @change="markAsUnsaved()">
+                                <label class="form-check-label small" :for="'identity-public-hub-' + editingDataset.id">Public Hub repo</label>
                             </div>
                         </div>
                     </div>

@@ -597,7 +597,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "label": "data transforms",
                     "description": "optional generated audio split configuration, such as identity_transfer",
                     "type": "textarea",
-                    "placeholder": '[{"task":"identity_transfer","id":"voice-transfer","model":{"train_if_missing":true}}]',
+                    "placeholder": '[{"task":"identity_transfer","id":"voice-transfer","model":{"train_if_missing":true,"model_name":"Target voice RVC","hub_model_id":"org/target-voice-rvc","push_to_hub":false,"public":false}}]',
                     "advanced": True,
                 },
                 {
