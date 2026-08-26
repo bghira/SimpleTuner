@@ -78,7 +78,7 @@ continue with normal metadata discovery, bucketing, caching, and training
 
 ## RVC 风格的身份迁移
 
-第一个计划支持的实现是 RVC 风格的语音转换。
+第一个实现是 RVC 风格的语音转换，使用 HuBERT 内容特征、RMVPE 音高提取、NSF/VITS generator、multi-period discriminator、mel/adversarial losses，以及可选 retrieval index。
 
 这里的“RVC 模型”是声音专用的。它从目标身份数据集中训练得到。检索索引也是声音专用的，并由同一目标声音的特征构建。内容特征、音高提取、分离模型等预训练组件是可复用基础设施；转换模型和索引才是歌手或说话人专用的工件。
 
@@ -93,7 +93,7 @@ SimpleTuner 应该能够：
 
 ## 默认行为
 
-计划默认值比较保守：
+默认值比较保守。在这个 workflow 中，音频 backend 是要被转换的扩展音乐，`model.identity_data_dir` 是目标声音数据集，`target.instance_data_dir` 只是生成输出 split 的路径。
 
 | 设置 | 默认值 | 原因 |
 | --- | --- | --- |
@@ -102,11 +102,22 @@ SimpleTuner 应该能够：
 | `train_if_missing` | `true` | SimpleTuner 应能从目标数据集启动训练声音模型。 |
 | `force_retrain` | `false` | 尽量复用有效缓存模型。 |
 | `build_index` | `true` | 检索通常能提高身份稳定性并减少泄漏。 |
+| `identity_data_dir` | 按需训练时必填 | 指向要迁移到扩展歌曲中的干净目标声音示例。 |
+| `identity_audio_mode` | `separate` | 训练前对身份音频运行 Demucs。若身份数据集已是人声 stems，请用 `vocal_only`。 |
+| `asset_hub_model_id` | `lj1995/VoiceConversionWebUI` | Default RVC asset repository for HuBERT, RMVPE, and v2 48k pretrained generator/discriminator checkpoints. |
+| `model_name` | transform or Hub repo name | Human-readable name saved into the RVC artifact so downloaded caches are identifiable outside their folder name. |
+| `sample_rate` | `48000` | Current implementation targets RVC v2 48k assets. Other rates need matching pretrained assets and configs. |
+| `training_steps` | `1000` | Runs RVC generator/discriminator fine-tuning during startup. Increase for larger or more varied identity datasets. |
+| `batch_size` | `4` | RVC training batch size before distributed sharding. Lower it for memory pressure. |
+| `learning_rate` | `1e-4` | Standard RVC AdamW default. |
 | `hub_model_id` | 未设置 | 用户未显式启用时，不使用远程声音模型缓存。 |
 | `reuse_from_hub` | 设置 `hub_model_id` 时为 `true` | 在花时间按需训练前先检查 Hub。 |
 | `push_to_hub` | `false` | 声音模型代表一个声音身份，上传必须显式开启。 |
+| `public` | `false` | Hub uploads are private by default. Set this to `true` only when the voice artifact can be published publicly. |
 | `audio_mode` | 完整歌曲默认 `separate_convert_remix`，人声 stem 默认 `vocal_only` | 完整混音需要分离；stem 不需要。 |
 | `separation_method` | 需要分离时使用 `demucs` | Demucs 是预期默认 stem 分离器。 |
+| `timbre_strength` | `1.0` | Controls how strongly the synthesized target voice replaces the source vocal. Lower values blend source and converted vocals. |
+| `retrieval_strength` | `0.75` | Blends nearest target-voice content frames from the retrieval index into the generator input. |
 | 生成 split 类型 | 主 `audio` 数据集 | 生成数据像普通音频一样训练，不作为 conditioning。 |
 | 缓存位置 | `output_dir` 内 | 让生成工件绑定训练运行，并能重启复用。 |
 | captions | 默认复制源 captions，除非另有配置 | 新 split 应保留歌词和编曲上下文。 |
@@ -138,11 +149,12 @@ else:
 Hub 仓库应使用 SimpleTuner 专用布局，而不是松散文件集合：
 
 ```text
+config.json
 voice_transform/
     manifest.json
-    model.pth
+    model.safetensors
+    features.safetensors
     index.index
-    README.md
 ```
 
 Manifest 是契约。它应记录目标身份数据集指纹、RVC 训练设置、索引设置、预期采样率、工具版本和 SimpleTuner voice-transform 格式版本。缺少 manifest 或 manifest 与当前 transform 不匹配时，SimpleTuner 不应复用该 Hub 工件。这样可以避免把错误声音模型静默应用到新数据集。
@@ -154,10 +166,11 @@ identity_transfer:
     method: rvc
     model:
         train_if_missing: true
+        model_name: Target voice RVC
         hub_model_id: org/target-voice-rvc
         reuse_from_hub: true
         push_to_hub: true
-        private: true
+        public: false
 ```
 
 对于私有声音身份，除非有明确授权，否则 Hub 仓库应保持私有。生成音频和模型工件可能有不同共享权利，因此应分别处理上传设置。
@@ -235,7 +248,7 @@ output_dir/
             summary.json
 ```
 
-有用的本地统计包括 RVC 训练 loss、启用时的 pitch loss、适用时的 reconstruction 或 discriminator loss、已处理样本数、耗时、DDP world size、缓存命中或未命中原因，以及最终模型来自本地缓存、Hub 缓存还是按需训练。
+有用的本地统计包括 generator loss、discriminator loss、mel loss、KL loss、已处理样本数、耗时、DDP world size、缓存命中或未命中原因，以及最终模型来自本地缓存、Hub 缓存还是按需训练。
 
 除非未来实现明确为 RVC transforms 添加外部 logger 集成，否则这些统计仅保存在本地。
 
@@ -324,6 +337,16 @@ Manifest 应记录身份数据集指纹、变换设置、扩展源数据指纹�
 
 ## 实用数据集建议
 
+对于 `model.identity_data_dir` 里的目标声音，干净的有声覆盖比单纯时长更重要。
+
+- **快速冒烟测试：** 30-60 秒干净人声可以证明 pipeline 能跑通，但转换声音通常会比较粗糙。
+- **可用起点：** 对个人声音数据集来说，5-10 分钟干净、独立的人声是合理的第一目标。
+- **歌唱身份：** 如果需要覆盖音高范围、元音、动态、咬字和表现性 phrasing，10-30 分钟会更好。
+
+请使用许多短 clip，而不是一个很长的文件。5-20 秒左右的 clip 更容易检查、分离和复用。当前 RVC trainer 会把身份音频重采样到 48 kHz，并把每个身份文件截断到 `max_seconds_per_file`，默认值是 `180`。如果用户提供一个 30 分钟文件，默认只会使用前三分钟。拆分数据集可以避免意外丢掉有用的人声覆盖。
+
+独立的 [`huggingface-hub-rvc`](https://github.com/SimpleTuner-io/huggingface-hub-rvc) 项目可以在不运行完整 SimpleTuner 训练任务的情况下训练、保存、加载和发布 RVC artifact。在 SimpleTuner 中，`scripts/run_rvc_model.py` 提供了一个直接入口，用于更深入地实验 pipeline 的 RVC 训练和转换部分。若想在主 LoRA 训练前调试身份数据集、Demucs 模式、retrieval strength、transfer strength 或 Hub artifact 复用，请先使用它。
+
 - 身份控制重要时，每个 LoRA 保持一个目标歌手。
 - 用干净、较干的人声样本训练语音转换模型。
 - 除非目标就是学习合唱混合，否则避免二重唱。
@@ -356,4 +379,4 @@ Manifest 应记录身份数据集指纹、变换设置、扩展源数据指纹�
 
 ## 状态
 
-本文描述计划中的实验性 `data_transforms` 工作流的用户体验。核心设计约束是：身份迁移应成为 SimpleTuner 的一等音频训练功能，能够训练或复用语音转换模型、构建或复用检索索引、生成扩展 split、缓存结果，然后直接进入正常训练，而不要求用户手动执行第二个预处理阶段。
+本文描述实验性的 `data_transforms` workflow。当前实现会训练或复用 SimpleTuner RVC v2 F0 artifact，从身份音频中提取 HuBERT content features 和 RMVPE pitch，微调预训练 RVC generator/discriminator，构建 retrieval index，生成扩展 split，缓存结果，然后直接进入正常训练，不要求用户手动执行第二个 preprocessing 阶段。

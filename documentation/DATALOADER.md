@@ -265,7 +265,8 @@ Memory backends require Linux or macOS and enough RAM or swap for the existing c
 - **Values:** a transform object or an array of transform objects
 - **Description:** Expands a source dataset into one or more generated training datasets before normal dataloader setup begins. Generated datasets are treated as regular primary datasets unless the transform explicitly asks to clone metadata.
 - **Audio identity transfer:** `{"task": "identity_transfer", "method": "rvc"}` is available for `dataset_type: "audio"` backends. It prepares a generated audio split for voice identity transfer and uses the output directory for cached voice artifacts and generated files. See [Voice Cloning Data Transforms](experimental/VOICE_CLONING.md).
-- **Status:** The first implementation provides the transform registry, cache manifest checks, Hub artifact reuse/push plumbing, DDP-aware startup sharding hooks, and local RVC logs. Native RVC training/conversion is still experimental and will fail loudly unless a matching generated split already exists in the cache.
+- **Identity data:** Put the music to be converted in the audio backend's `instance_data_dir`, put the target voice examples in `model.identity_data_dir`, and put the generated split path in `target.instance_data_dir`.
+- **Status:** The experimental implementation includes cache manifest checks, Hub artifact reuse/push through the `huggingface-hub-rvc` artifact layout, DDP-aware startup sharding, local RVC logs, and a compact SimpleTuner voice-transfer trainer/converter. Full-song remix mode uses Demucs for vocal separation; vocal-stem mode does not need separation.
 
 ### `instance_data_dir` / `aws_data_prefix`
 

@@ -78,7 +78,7 @@ continue with normal metadata discovery, bucketing, caching, and training
 
 ## RVC 形式の Identity Transfer
 
-最初に想定している実装は RVC 形式の voice conversion です。
+最初の実装は RVC 形式の voice conversion で、HuBERT content features、RMVPE pitch extraction、NSF/VITS generator、multi-period discriminator、mel/adversarial losses、optional retrieval index を使います。
 
 ここでいう「RVC model」は voice-specific です。対象 identity dataset から学習されます。retrieval index も voice-specific で、同じ対象声の特徴から構築されます。content feature、pitch 抽出、separation model などの広い pretrained component は再利用される基盤です。一方、conversion model と index は歌手または話者固有の artifact です。
 
@@ -93,7 +93,7 @@ SimpleTuner は以下を行えるべきです。
 
 ## Default Behavior
 
-計画中の default は保守的です。
+default は保守的です。この workflow では、audio backend は変換したい拡張用の楽曲、`model.identity_data_dir` は対象 voice dataset、`target.instance_data_dir` は生成 output split の path です。
 
 | Setting | Default | 理由 |
 | --- | --- | --- |
@@ -102,11 +102,22 @@ SimpleTuner は以下を行えるべきです。
 | `train_if_missing` | `true` | SimpleTuner が対象 dataset から voice model を bootstrap できるようにします。 |
 | `force_retrain` | `false` | 有効な cache model をできるだけ再利用します。 |
 | `build_index` | `true` | retrieval は identity の安定性を上げ、漏れを減らしやすいです。 |
+| `identity_data_dir` | on-demand training では必須 | 拡張楽曲へ移したい対象 voice の clean vocal examples を指します。 |
+| `identity_audio_mode` | `separate` | training 前に identity clips へ Demucs を実行します。identity dataset が既に vocal stems の場合は `vocal_only` を使います。 |
+| `asset_hub_model_id` | `lj1995/VoiceConversionWebUI` | Default RVC asset repository for HuBERT, RMVPE, and v2 48k pretrained generator/discriminator checkpoints. |
+| `model_name` | transform or Hub repo name | Human-readable name saved into the RVC artifact so downloaded caches are identifiable outside their folder name. |
+| `sample_rate` | `48000` | Current implementation targets RVC v2 48k assets. Other rates need matching pretrained assets and configs. |
+| `training_steps` | `1000` | Runs RVC generator/discriminator fine-tuning during startup. Increase for larger or more varied identity datasets. |
+| `batch_size` | `4` | RVC training batch size before distributed sharding. Lower it for memory pressure. |
+| `learning_rate` | `1e-4` | Standard RVC AdamW default. |
 | `hub_model_id` | unset | user が opt-in しない限り remote voice-model cache は使いません。 |
 | `reuse_from_hub` | `hub_model_id` が設定されている場合は `true` | on-demand model を学習する前に Hub を確認します。 |
 | `push_to_hub` | `false` | voice model は声の identity を表すため、upload は明示的であるべきです。 |
+| `public` | `false` | Hub uploads are private by default. Set this to `true` only when the voice artifact can be published publicly. |
 | `audio_mode` | full song は `separate_convert_remix`、vocal stem は `vocal_only` | full mix には分離が必要で、stem には不要です。 |
 | `separation_method` | 分離が必要なら `demucs` | Demucs が想定 default の stem separator です。 |
+| `timbre_strength` | `1.0` | Controls how strongly the synthesized target voice replaces the source vocal. Lower values blend source and converted vocals. |
+| `retrieval_strength` | `0.75` | Blends nearest target-voice content frames from the retrieval index into the generator input. |
 | generated split type | primary `audio` dataset | 生成データは conditioning ではなく通常音声として学習します。 |
 | cache location | `output_dir` 内 | artifact を training run に結び付け、restart で再利用しやすくします。 |
 | captions | 設定がなければ source captions を copy | 新しい split は歌詞と編曲文脈を保持すべきです。 |
@@ -138,11 +149,12 @@ else:
 Hub repository は、単なる file collection ではなく SimpleTuner-specific layout を使うべきです。
 
 ```text
+config.json
 voice_transform/
     manifest.json
-    model.pth
+    model.safetensors
+    features.safetensors
     index.index
-    README.md
 ```
 
 manifest が contract です。target identity dataset fingerprint、RVC training settings、index settings、expected sample rate、tool versions、SimpleTuner voice-transform format version を記録します。manifest がない、または current transform と一致しない Hub artifact を SimpleTuner は再利用すべきではありません。これにより、間違った voice model を新しい dataset に黙って適用する事故を避けられます。
@@ -154,10 +166,11 @@ identity_transfer:
     method: rvc
     model:
         train_if_missing: true
+        model_name: Target voice RVC
         hub_model_id: org/target-voice-rvc
         reuse_from_hub: true
         push_to_hub: true
-        private: true
+        public: false
 ```
 
 private identity の場合、明示的な許可がない限り Hub repository は private のままにしてください。generated audio と model artifact は共有権利が異なる場合があるため、upload settings は別々に扱います。
@@ -235,7 +248,7 @@ output_dir/
             summary.json
 ```
 
-有用な local stats には、RVC training loss、pitch loss が有効な場合の値、該当する reconstruction/discriminator loss、processed samples、elapsed time、DDP world size、cache hit/miss reason、final model が local cache、Hub cache、on-demand training のどれから来たかが含まれます。
+有用な local stats には、generator loss、discriminator loss、mel loss、KL loss、processed samples、elapsed time、DDP world size、cache hit/miss reason、final model が local cache、Hub cache、on-demand training のどれから来たかが含まれます。
 
 これらの stats は、将来 RVC transforms 向けの external logger integration が明示的に追加されるまでは local-only です。
 
@@ -324,6 +337,16 @@ manifest には identity dataset fingerprint、transform settings、source expan
 
 ## Dataset Advice
 
+`model.identity_data_dir` の target voice では、長さそのものより clean voiced coverage が重要です。
+
+- **Smoke test:** 30-60 秒の clean vocal audio で pipeline が動くことは確認できますが、converted voice は通常かなり粗くなります。
+- **Usable starter:** 個人 voice dataset の最初の目標としては、5-10 分の clean isolated voice が現実的です。
+- **Singing identity:** pitch range、vowels、dynamics、articulation、expressive phrasing が必要な場合は 10-30 分の方が良いです。
+
+1 つの長い file ではなく、多数の短い clip を使ってください。5-20 秒程度の clip は確認、分離、再利用がしやすくなります。現在の RVC trainer は identity audio を 48 kHz に resample し、各 identity file を `max_seconds_per_file` で truncate します。default は `180` です。ユーザーが 30 分の file を 1 つ渡した場合、default では最初の 3 分だけが使われます。dataset を分割すると、有用な vocal coverage を誤って捨てることを避けられます。
+
+standalone の [`huggingface-hub-rvc`](https://github.com/SimpleTuner-io/huggingface-hub-rvc) project は、SimpleTuner の full training job を実行せずに RVC artifact を train、save、load、publish できます。SimpleTuner 内では `scripts/run_rvc_model.py` が、pipeline の RVC training/conversion 部分を直接試す entrypoint です。main LoRA training に時間を使う前に、identity dataset、Demucs mode、retrieval strength、transfer strength、Hub artifact reuse を調整したい場合に使ってください。
+
 - identity control が重要なら、1 つの LoRA に target vocalist は 1 人だけにします。
 - voice-conversion model にはクリーンで dry な vocal examples を優先します。
 - duet blend を学びたい場合以外は duet を避けます。
@@ -356,4 +379,4 @@ regularisation data は通常、LoRA に base model の挙動を保たせるた�
 
 ## Status
 
-このページは、実験的な `data_transforms` workflow の意図した user-facing behavior を説明しています。重要な設計制約は、identity transfer を SimpleTuner の first-class audio training feature にすることです。voice-conversion model の学習または再利用、retrieval index の構築または再利用、expanded split の生成、結果の cache、そして別の手動 preprocessing stage なしで通常 training へ進むことを目指します。
+このページは、実験的な `data_transforms` workflow を説明します。現在の実装は SimpleTuner RVC v2 F0 artifact を学習または再利用し、identity clips から HuBERT content features と RMVPE pitch を抽出し、pretrained RVC generator/discriminator を fine-tune し、expanded split を生成して cache し、別の手動 preprocessing stage なしで通常 training へ進みます。
