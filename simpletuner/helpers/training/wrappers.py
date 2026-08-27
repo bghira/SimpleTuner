@@ -1,3 +1,5 @@
+from types import MethodType
+
 from diffusers.utils.torch_utils import is_compiled_module
 
 
@@ -26,6 +28,20 @@ def unwrap_model(accelerator, model, keep_fp32_wrapper: bool = True):
         except TypeError:
             model = accelerator.unwrap_model(model)
     return _unwrap_execution_wrappers(model)
+
+
+def rebind_prepared_forward(prepared, original):
+    if original is None or prepared is original:
+        return prepared
+    target = prepared
+    while target is not None and target is not original:
+        for attribute in ("forward", "_original_forward"):
+            bound = target.__dict__.get(attribute)
+            function = getattr(bound, "__func__", None)
+            if function is not None and getattr(bound, "__self__", None) is original:
+                setattr(target, attribute, MethodType(function, target))
+        target = target.__dict__.get("_modules", {}).get("module")
+    return prepared
 
 
 def gather_dict_of_tensors_shapes(tensors: dict) -> dict:
