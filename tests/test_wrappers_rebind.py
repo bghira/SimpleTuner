@@ -149,6 +149,61 @@ class RebindPreparedForwardTests(unittest.TestCase):
         self.assertIs(compiled.__dict__.get("forward"), before)
         self.assertIs(original.__dict__["forward"].__self__, original)
 
+    def test_rebinds_the_inner_twin_under_ddp(self):
+        import torch.distributed as dist
+        from torch.nn.parallel import DistributedDataParallel
+
+        dist.init_process_group("gloo", store=dist.HashStore(), rank=0, world_size=1)
+        try:
+            original = _install_mixed_precision_forward(_Tiny())
+            twin = compile_regions(DistributedDataParallel(original), backend="eager")
+
+            self.assertIsInstance(twin, DistributedDataParallel)
+            self.assertIsNot(twin.module, original)
+            self.assertIs(twin.module.__dict__["forward"].__self__, original)
+
+            self.assertIs(rebind_prepared_forward(twin, original), twin)
+            self.assertIs(twin.module.__dict__["forward"].__self__, twin.module)
+            self.assertIs(twin.module.__dict__["_original_forward"].__self__, twin.module)
+            self.assertIs(original.__dict__["forward"].__self__, original)
+
+            twin.module.gradient_checkpointing = True
+            x = torch.ones(1, 4)
+            out = twin(x)
+
+            self.assertIs(twin.module.executed_by[-1], twin.module)
+            self.assertIsInstance(twin.module.executed_by[-1].blocks[0], OptimizedModule)
+            torch.testing.assert_close(out, x * 2)
+        finally:
+            dist.destroy_process_group()
+
+    def test_noop_when_accelerate_already_rebound_the_inner_twin_under_ddp(self):
+        import torch.distributed as dist
+        from torch.nn.parallel import DistributedDataParallel
+
+        dist.init_process_group("gloo", store=dist.HashStore(), rank=0, world_size=1)
+        try:
+            original = _install_mixed_precision_forward(_Tiny())
+            twin = compile_regions(DistributedDataParallel(original), backend="eager")
+            inner = twin.module
+            inner.forward = MethodType(inner.__dict__["forward"].__func__, inner)
+            inner._original_forward = MethodType(inner.__dict__["_original_forward"].__func__, inner)
+            before_forward = inner.__dict__["forward"]
+            before_original_forward = inner.__dict__["_original_forward"]
+
+            self.assertIs(rebind_prepared_forward(twin, original), twin)
+            self.assertIs(inner.__dict__["forward"], before_forward)
+            self.assertIs(inner.__dict__["_original_forward"], before_original_forward)
+            self.assertNotIn("forward", twin.__dict__)
+            self.assertIs(original.__dict__["forward"].__self__, original)
+
+            inner.gradient_checkpointing = True
+            x = torch.ones(1, 4)
+            torch.testing.assert_close(twin(x), x * 2)
+            self.assertIs(inner.executed_by[-1], inner)
+        finally:
+            dist.destroy_process_group()
+
     def test_noop_for_a_module_wrapper_with_dot_module(self):
         original = _install_mixed_precision_forward(_Tiny())
 

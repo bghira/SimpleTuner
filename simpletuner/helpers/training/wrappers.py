@@ -33,11 +33,14 @@ def unwrap_model(accelerator, model, keep_fp32_wrapper: bool = True):
 def rebind_prepared_forward(prepared, original):
     if original is None or prepared is original:
         return prepared
-    for attribute in ("forward", "_original_forward"):
-        bound = prepared.__dict__.get(attribute)
-        function = getattr(bound, "__func__", None)
-        if function is not None and getattr(bound, "__self__", None) is original:
-            setattr(prepared, attribute, MethodType(function, prepared))
+    target = prepared
+    while target is not None and target is not original:
+        for attribute in ("forward", "_original_forward"):
+            bound = target.__dict__.get(attribute)
+            function = getattr(bound, "__func__", None)
+            if function is not None and getattr(bound, "__self__", None) is original:
+                setattr(target, attribute, MethodType(function, target))
+        target = target.__dict__.get("_modules", {}).get("module")
     return prepared
 
 
