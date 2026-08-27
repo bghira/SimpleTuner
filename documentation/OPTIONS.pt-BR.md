@@ -784,6 +784,13 @@ Isso e util para ferramentas de monitoramento que recebem webhooks de varios tre
 - **O que**: Aumenta ou reduz o numero de lotes mantidos em memoria.
 - **Por que**: Quando prefetch esta habilitado, o padrao e manter 10 entradas por GPU/processo em memoria. Esse valor pode ser ajustado para preparar mais ou menos lotes.
 
+### `--dataloader_prefetch_device_threshold_mb`
+
+- **O que**: Carga minima unica do lote na CPU, em MiB, que o prefetch fixa na memoria e transfere em um stream CUDA dedicado. `0` desativa o staging no dispositivo.
+- **Por que**: Embeddings em cache muito grandes podem serializar a transferencia para o dispositivo com o trabalho do modelo. Esta opcao sobrepoe a transferencia ao calculo da GPU.
+- **Memoria**: Cada entrada preparada na fila consome memoria fixa do host e memoria do acelerador. Comece com `dataloader_prefetch_qlen: 2` e meça antes de aumentar.
+- **Compatibilidade**: Requer `dataloader_prefetch: true` e CUDA. Nao e compativel com paralelismo de contexto.
+
 ### `--compress_disk_cache`
 
 - **O que**: Compacta em disco os caches de VAE e embeddings de texto.
@@ -2223,6 +2230,7 @@ usage: train.py [-h] --model_family
                 [--torch_num_threads TORCH_NUM_THREADS]
                 [--dataloader_prefetch [DATALOADER_PREFETCH]]
                 [--dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN]
+                [--dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB]
                 [--aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT]
                 [--aspect_bucket_alignment {8,16,24,32,64}]
                 [--minimum_image_size MINIMUM_IMAGE_SIZE]
@@ -2875,6 +2883,10 @@ options:
                         so that it can be immediately available
   --dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN
                         Set the number of prefetched batches
+  --dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB
+                        Minimum CPU batch payload in MiB to page-lock and
+                        transfer on a dedicated CUDA stream during dataloader
+                        prefetch; 0 disables device staging
   --aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT
                         The number of workers to use for aspect bucketing.
                         This is a CPU-bound task, so the number of workers

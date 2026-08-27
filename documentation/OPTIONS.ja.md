@@ -786,6 +786,13 @@ Accelerate の既定値を使いたい項目は省略してください（例: �
 - **内容**: メモリに保持するバッチ数を増減します。
 - **理由**: dataloader prefetch の既定では GPU/プロセスあたり 10 エントリを保持します。多すぎる/少なすぎる場合に調整できます。
 
+### `--dataloader_prefetch_device_threshold_mb`
+
+- **内容**: dataloader prefetch がページロックし、専用 CUDA ストリームで転送する CPU バッチの最小ユニークペイロードを MiB 単位で指定します。`0` でデバイスへのステージングを無効にします。
+- **理由**: 非常に大きなキャッシュ済み埋め込みでは、ホストからデバイスへの転送とモデル処理が直列化される場合があります。この設定により転送と GPU 計算を重ねます。
+- **メモリ**: ステージングされた各キューエントリは、固定ホストメモリとアクセラレータメモリの両方を消費します。`dataloader_prefetch_qlen: 2` から始め、増やす前にプロファイルしてください。
+- **互換性**: `dataloader_prefetch: true` と CUDA が必要です。context parallelism とは併用できません。
+
 ### `--compress_disk_cache`
 
 - **内容**: VAE とテキスト埋め込みキャッシュをディスク上で圧縮します。
@@ -2228,6 +2235,7 @@ usage: train.py [-h] --model_family
                 [--torch_num_threads TORCH_NUM_THREADS]
                 [--dataloader_prefetch [DATALOADER_PREFETCH]]
                 [--dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN]
+                [--dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB]
                 [--aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT]
                 [--aspect_bucket_alignment {8,16,24,32,64}]
                 [--minimum_image_size MINIMUM_IMAGE_SIZE]
@@ -2880,6 +2888,10 @@ options:
                         so that it can be immediately available
   --dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN
                         Set the number of prefetched batches
+  --dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB
+                        Minimum CPU batch payload in MiB to page-lock and
+                        transfer on a dedicated CUDA stream during dataloader
+                        prefetch; 0 disables device staging
   --aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT
                         The number of workers to use for aspect bucketing.
                         This is a CPU-bound task, so the number of workers

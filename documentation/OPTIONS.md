@@ -792,6 +792,13 @@ This is useful for monitoring tools receiving webhooks from multiple training ru
 - **What**: Increase or reduce the number of batches held in memory.
 - **Why**: When using dataloader prefetch, a default of 10 entries are kept in memory per GPU/process. This may be too much or too little. This value can be adjusted to increase the number of batches prepared in advance.
 
+### `--dataloader_prefetch_device_threshold_mb`
+
+- **What**: Minimum unique CPU batch payload, in MiB, that is page-locked and transferred on a dedicated CUDA stream by dataloader prefetch. `0` disables device staging.
+- **Why**: Very large cached embeddings can otherwise serialize host-to-device transfer with model work. This option overlaps the transfer with GPU compute.
+- **Memory**: Every staged queue entry consumes both pinned host memory and accelerator memory. Start with `dataloader_prefetch_qlen: 2` and profile before increasing it.
+- **Compatibility**: Requires `dataloader_prefetch: true` and CUDA. It is not supported with context parallelism.
+
 ### `--compress_disk_cache`
 
 - **What**: Compress the VAE and text embed caches on-disk.
@@ -2233,6 +2240,7 @@ usage: train.py [-h] --model_family
                 [--torch_num_threads TORCH_NUM_THREADS]
                 [--dataloader_prefetch [DATALOADER_PREFETCH]]
                 [--dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN]
+                [--dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB]
                 [--aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT]
                 [--aspect_bucket_alignment {8,16,24,32,64}]
                 [--minimum_image_size MINIMUM_IMAGE_SIZE]
@@ -2887,6 +2895,10 @@ options:
                         so that it can be immediately available
   --dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN
                         Set the number of prefetched batches
+  --dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB
+                        Minimum CPU batch payload in MiB to page-lock and
+                        transfer on a dedicated CUDA stream during dataloader
+                        prefetch; 0 disables device staging
   --aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT
                         The number of workers to use for aspect bucketing.
                         This is a CPU-bound task, so the number of workers
