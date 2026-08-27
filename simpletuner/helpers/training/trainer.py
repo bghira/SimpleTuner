@@ -69,7 +69,11 @@ from simpletuner.helpers.training.deepspeed import prepare_model_for_deepspeed
 from simpletuner.helpers.training.deepspeed_optimizers import DEFAULT_OPTIMIZER as DS_DEFAULT_OPTIMIZER
 from simpletuner.helpers.training.deepspeed_optimizers import sanitize_optimizer_block
 from simpletuner.helpers.training.default_settings.safety_check import safety_check
-from simpletuner.helpers.training.dynamo import install_cudagraph_workarounds, mark_cudagraph_step_begin
+from simpletuner.helpers.training.dynamo import (
+    apply_checkpointing_cudagraph_compatibility,
+    install_cudagraph_workarounds,
+    mark_cudagraph_step_begin,
+)
 from simpletuner.helpers.training.evaluation import ModelEvaluator
 from simpletuner.helpers.training.exceptions import GPUHealthError
 from simpletuner.helpers.training.gpu_circuit_breaker import get_current_gpu_index, get_gpu_circuit_breaker, is_cuda_error
@@ -893,12 +897,16 @@ class Trainer:
         except ValueError:
             raise
 
+        apply_checkpointing_cudagraph_compatibility(self.config)
+
         dynamo_backend_env = "no"
         if resolved_dynamo_backend and resolved_dynamo_backend != DynamoBackend.NO:
             dynamo_backend_env = resolved_dynamo_backend.value.lower()
         elif isinstance(dynamo_backend_value, str) and dynamo_backend_value.strip():
             dynamo_backend_env = dynamo_backend_value.strip().lower()
         os.environ["TRAINING_DYNAMO_BACKEND"] = dynamo_backend_env
+        dynamo_mode_env = str(getattr(self.config, "dynamo_mode", "") or "").strip().lower()
+        os.environ["TRAINING_DYNAMO_MODE"] = dynamo_mode_env
         self._configure_inductor_dynamic_training_passes(dynamo_backend_env)
         install_cudagraph_workarounds(self.config)
 
