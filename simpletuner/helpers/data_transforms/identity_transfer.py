@@ -26,6 +26,8 @@ else:
 
 VOICE_TRANSFORM_FORMAT = "simpletuner-voice-transform"
 VOICE_TRANSFORM_FORMAT_VERSION = 1
+AUDIO_EXTENSIONS = {".flac", ".wav", ".mp3", ".ogg", ".m4a", ".aac", ".opus"}
+HF_DATASET_URI_PREFIX = "hf://datasets/"
 
 
 def _utc_now() -> str:
@@ -247,10 +249,41 @@ def _voice_model_name(manifest: Dict[str, Any], hub_model_id: Optional[str] = No
     return "RVC Voice Model"
 
 
+def _flatten_data_files(data_files: Any) -> List[str]:
+    if data_files is None:
+        return []
+    if isinstance(data_files, str):
+        return [data_files]
+    if isinstance(data_files, dict):
+        values: List[str] = []
+        for value in data_files.values():
+            values.extend(_flatten_data_files(value))
+        return values
+    if isinstance(data_files, (list, tuple)):
+        values = []
+        for value in data_files:
+            values.extend(_flatten_data_files(value))
+        return values
+    return []
+
+
+def _parse_hf_dataset_uri(uri: str) -> tuple[str, str]:
+    if not uri.startswith(HF_DATASET_URI_PREFIX):
+        raise ValueError(f"Expected a Hugging Face dataset URI starting with {HF_DATASET_URI_PREFIX!r}: {uri!r}")
+    path = uri[len(HF_DATASET_URI_PREFIX) :].lstrip("/")
+    parts = path.split("/", 2)
+    if len(parts) < 2 or not parts[0] or not parts[1]:
+        raise ValueError(f"Hugging Face dataset URI must include an org/name repo id: {uri!r}")
+    repo_id = f"{parts[0]}/{parts[1]}"
+    pattern = parts[2] if len(parts) > 2 and parts[2] else "**/*"
+    return repo_id, pattern
+
+
 @register_data_transform
 class IdentityTransferTransform(DataTransformTask):
     TASK = "identity_transfer"
     SUPPORTED_SOURCE_DATASET_TYPES = ("audio",)
+    SOURCE_ONLY_BY_DEFAULT = True
     REQUIRES_METADATA_CLONE = False
 
     def prepare(self, existing_backend_ids: set[str]) -> List[Dict[str, Any]]:
@@ -275,6 +308,7 @@ class IdentityTransferTransform(DataTransformTask):
             )
             return [target_backend_config]
 
+        transform = self._with_materialized_identity_backend(transform, run_logger)
         artifact = self._resolve_voice_model(transform, voice_model_fingerprint, model_cache_dir, run_logger)
         if not self._is_main_process():
             self._wait_for_everyone()
@@ -283,7 +317,8 @@ class IdentityTransferTransform(DataTransformTask):
             )
             return [target_backend_config]
 
-        input_paths = self._rank_shard(self._discover_source_audio_paths())
+        runtime_source_backend = self._materialized_source_backend(transform, run_logger)
+        input_paths = self._rank_shard(self._discover_source_audio_paths(runtime_source_backend))
         run_logger.event(
             transform_id,
             "conversion_start",
@@ -292,7 +327,7 @@ class IdentityTransferTransform(DataTransformTask):
             world_size=self._world_size(),
         )
         RVCConverter().convert(
-            source_backend_config=self.source_backend_config,
+            source_backend_config=runtime_source_backend,
             target_backend_config=target_backend_config,
             transform_config=transform,
             artifact=artifact,
@@ -336,6 +371,8 @@ class IdentityTransferTransform(DataTransformTask):
         model.setdefault("batch_size", 4)
         model.setdefault("learning_rate", 1e-4)
         model.setdefault("max_seconds_per_file", 180.0)
+        if "identity_data_backend" in model and not isinstance(model["identity_data_backend"], dict):
+            raise ValueError("identity_transfer.model.identity_data_backend must be a dataset backend config dictionary.")
         transform["model"] = model
 
         conversion = deepcopy(transform.get("conversion") or {})
@@ -393,6 +430,9 @@ class IdentityTransferTransform(DataTransformTask):
         target_audio.update(deepcopy(target.get("audio") or {}))
         if target_audio:
             target_cfg["audio"] = target_audio
+        if target_cfg.get("type") != source_cfg.get("type"):
+            for storage_key in ("huggingface", "parquet", "csv", "audio_column"):
+                target_cfg.pop(storage_key, None)
         return target_cfg
 
     def _resolve_voice_model(
@@ -561,20 +601,158 @@ class IdentityTransferTransform(DataTransformTask):
     def _fingerprint(self, transform: Dict[str, Any]) -> str:
         return self._generated_fingerprint(transform)
 
-    def _discover_source_audio_paths(self) -> List[str]:
+    def _materialized_source_backend(
+        self,
+        transform: Dict[str, Any],
+        run_logger: RVCTransformLogger,
+    ) -> Dict[str, Any]:
         source_type = self.source_backend_config.get("type")
+        if source_type == "local":
+            return self.source_backend_config
+        if source_type != "huggingface":
+            raise NotImplementedError(
+                "identity_transfer input discovery is currently implemented for local and Hugging Face audio source "
+                f"backends only. Received type={source_type!r}."
+            )
+
+        materialized_dir = Path(self._output_dir()) / "cache" / "data_transforms" / transform["id"] / "source_audio"
+        self._materialize_huggingface_backend(
+            self.source_backend_config,
+            materialized_dir,
+            run_logger,
+            transform["id"],
+            role="source",
+        )
+        runtime_backend = deepcopy(self.source_backend_config)
+        runtime_backend["type"] = "local"
+        runtime_backend["metadata_backend"] = "discovery"
+        runtime_backend["caption_strategy"] = runtime_backend.get("caption_strategy") or "textfile"
+        runtime_backend["instance_data_dir"] = str(materialized_dir)
+        runtime_backend.pop("huggingface", None)
+        runtime_backend.pop("data_files", None)
+        return runtime_backend
+
+    def _with_materialized_identity_backend(
+        self,
+        transform: Dict[str, Any],
+        run_logger: RVCTransformLogger,
+    ) -> Dict[str, Any]:
+        model_cfg = transform.get("model") or {}
+        identity_backend = model_cfg.get("identity_data_backend")
+        identity_data_dir = model_cfg.get("identity_data_dir") or model_cfg.get("voice_data_dir")
+        if not identity_backend and not (
+            isinstance(identity_data_dir, str) and identity_data_dir.startswith(HF_DATASET_URI_PREFIX)
+        ):
+            return transform
+
+        materialized_dir = Path(self._output_dir()) / "cache" / "data_transforms" / transform["id"] / "identity_audio"
+        if identity_backend:
+            backend_config = deepcopy(identity_backend)
+        else:
+            backend_config = {
+                "id": f"{transform['id']}-identity",
+                "type": "huggingface",
+                "dataset_type": "audio",
+                "data_files": {"train": identity_data_dir},
+                "huggingface": {"data_files": {"train": identity_data_dir}},
+            }
+        self._materialize_huggingface_backend(
+            backend_config,
+            materialized_dir,
+            run_logger,
+            transform["id"],
+            role="identity",
+        )
+        runtime_transform = deepcopy(transform)
+        runtime_transform["model"]["identity_data_dir"] = str(materialized_dir)
+        runtime_transform["model"].pop("voice_data_dir", None)
+        return runtime_transform
+
+    def _materialize_huggingface_backend(
+        self,
+        backend_config: Dict[str, Any],
+        destination: Path,
+        run_logger: RVCTransformLogger,
+        transform_id: str,
+        role: str,
+    ) -> None:
+        if backend_config.get("type") != "huggingface":
+            raise ValueError(f"identity_transfer {role} materialization expected a Hugging Face backend config.")
+
+        data_files = _flatten_data_files(backend_config.get("data_files"))
+        hf_config = backend_config.get("huggingface") or {}
+        data_files.extend(_flatten_data_files(hf_config.get("data_files")))
+        data_files = [value for value in dict.fromkeys(data_files) if value.startswith(HF_DATASET_URI_PREFIX)]
+        if not data_files:
+            raise ValueError(
+                f"identity_transfer Hugging Face {role} backend requires data_files entries using hf://datasets/ URIs."
+            )
+
+        repo_patterns: Dict[str, set[str]] = {}
+        for uri in data_files:
+            repo_id, pattern = _parse_hf_dataset_uri(uri)
+            repo_patterns.setdefault(repo_id, set()).add(pattern)
+
+        if len(repo_patterns) != 1:
+            repos = ", ".join(sorted(repo_patterns))
+            raise ValueError(
+                f"identity_transfer Hugging Face {role} materialization currently expects one dataset repo, got: {repos}"
+            )
+
+        repo_id, patterns = next(iter(repo_patterns.items()))
+        allow_patterns = sorted(patterns | {"**/*.txt", "**/*.lyrics"})
+        run_logger.event(
+            transform_id,
+            "huggingface_materialization_start",
+            role=role,
+            repo_id=repo_id,
+            destination=str(destination),
+            allow_patterns=allow_patterns,
+        )
+        if self._is_main_process():
+            destination.mkdir(parents=True, exist_ok=True)
+            try:
+                from huggingface_hub import snapshot_download
+            except ImportError as exc:
+                raise ImportError("huggingface_hub is required for identity_transfer Hugging Face sources.") from exc
+            snapshot_path = Path(
+                snapshot_download(
+                    repo_id=repo_id,
+                    repo_type="dataset",
+                    allow_patterns=allow_patterns,
+                    token=hf_config.get("token") or backend_config.get("token"),
+                )
+            )
+            if destination.exists():
+                shutil.rmtree(destination)
+            shutil.copytree(snapshot_path, destination)
+        self._wait_for_everyone()
+        if not destination.exists():
+            raise FileNotFoundError(f"identity_transfer failed to materialize Hugging Face {role} data at {destination}")
+        discovered = self._discover_source_audio_paths({"type": "local", "instance_data_dir": str(destination)})
+        run_logger.event(
+            transform_id,
+            "huggingface_materialization_complete",
+            role=role,
+            repo_id=repo_id,
+            file_count=len(discovered),
+            destination=str(destination),
+        )
+
+    def _discover_source_audio_paths(self, backend_config: Optional[Dict[str, Any]] = None) -> List[str]:
+        backend_config = backend_config or self.source_backend_config
+        source_type = backend_config.get("type")
         if source_type != "local":
             raise NotImplementedError(
                 "identity_transfer input discovery is currently implemented for local audio source backends only."
             )
-        instance_data_dir = self.source_backend_config.get("instance_data_dir")
+        instance_data_dir = backend_config.get("instance_data_dir")
         if not instance_data_dir:
             raise ValueError("identity_transfer local source backend requires instance_data_dir.")
-        audio_exts = {".flac", ".wav", ".mp3", ".ogg", ".m4a", ".aac", ".opus"}
         root = Path(instance_data_dir)
         if not root.exists():
             raise FileNotFoundError(f"identity_transfer source instance_data_dir does not exist: {instance_data_dir}")
-        paths = [str(path) for path in sorted(root.rglob("*")) if path.suffix.lower() in audio_exts]
+        paths = [str(path) for path in sorted(root.rglob("*")) if path.suffix.lower() in AUDIO_EXTENSIONS]
         if not paths:
             raise ValueError(f"identity_transfer found no audio files under {instance_data_dir}.")
         return paths

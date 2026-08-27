@@ -89,7 +89,8 @@ class TestIdentityTransferTransform(unittest.TestCase):
             ],
         )
 
-        generated = config[1]
+        self.assertEqual(len(config), 1)
+        generated = config[0]
         self.assertEqual(generated["id"], "artist-source_identity_transfer")
         self.assertEqual(generated["dataset_type"], "audio")
         self.assertEqual(generated["generated_by"], "data_transforms")
@@ -384,12 +385,159 @@ class TestIdentityTransferTransform(unittest.TestCase):
                 ],
             )
 
-        generated = config[1]
+        self.assertEqual(len(config), 1)
+        generated = config[0]
         self.assertEqual(generated["id"], "voice-transfer")
         self.assertTrue((generated_dir / "source.wav").exists())
         self.assertEqual((generated_dir / "source.txt").read_text(encoding="utf-8"), "rock vocal test")
         model_path = Path(self.args.output_dir) / "cache" / "data_transforms" / "voice-transfer" / "rvc_model" / "model.pth"
         self.assertTrue(model_path.exists())
+
+    def test_primary_dataset_remains_when_identity_transfer_source_is_auxiliary(self):
+        generated_dir = Path(self.temp_dir) / "generated"
+        identity_dir = Path(self.temp_dir) / "identity"
+        self._write_wav(identity_dir / "voice.wav", frequency=320.0)
+
+        def fake_train(_self, source_backend_config, transform_config, cache_dir, fingerprint, manifest_base, **_kwargs):
+            cache_dir.mkdir(parents=True)
+            model_path = cache_dir / "model.pth"
+            manifest_path = cache_dir / "manifest.json"
+            model_path.write_bytes(b"rvc")
+            manifest = {**manifest_base, "fingerprint": fingerprint, "voice_model": {"kind": "simpletuner-rvc-v2-f0"}}
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            return VoiceModelArtifact(cache_dir, manifest_path, model_path, None, manifest)
+
+        def fake_convert(_self, source_backend_config, target_backend_config, *_args, **_kwargs):
+            output_dir = Path(target_backend_config["instance_data_dir"])
+            output_dir.mkdir(parents=True)
+            shutil.copy2(Path(source_backend_config["instance_data_dir"]) / "sample.flac", output_dir / "sample.wav")
+
+        primary_backend = {**self.source_backend, "id": "primary-singer"}
+        transform_source = {
+            **self.source_backend,
+            "id": "random-expansion",
+            "data_transforms": [
+                {
+                    "task": "identity_transfer",
+                    "id": "voice-transfer",
+                    "model": {
+                        "identity_data_dir": str(identity_dir),
+                        "sample_rate": 48000,
+                        "identity_audio_mode": "vocal_only",
+                    },
+                    "conversion": {"audio_mode": "vocal_only"},
+                    "target": {"instance_data_dir": str(generated_dir)},
+                }
+            ],
+        }
+
+        with (
+            patch("simpletuner.helpers.data_transforms.identity_transfer.RVCTrainer.train", new=fake_train),
+            patch("simpletuner.helpers.data_transforms.identity_transfer.RVCConverter.convert", new=fake_convert),
+        ):
+            config = process_data_transforms(
+                global_config=self.args,
+                data_backend_config=[primary_backend, transform_source],
+            )
+
+        self.assertEqual([backend["id"] for backend in config], ["primary-singer", "voice-transfer"])
+        self.assertTrue((generated_dir / "sample.wav").exists())
+
+    def test_huggingface_source_and_identity_backend_materialize_before_rvc(self):
+        hf_source = Path(self.temp_dir) / "hf-source-snapshot"
+        hf_identity = Path(self.temp_dir) / "hf-identity-snapshot"
+        generated_dir = Path(self.temp_dir) / "generated-hf"
+        self._write_wav(hf_source / "source.wav", frequency=180.0)
+        self._write_wav(hf_identity / "voice.wav", frequency=320.0)
+        (hf_source / "source.txt").write_text("diverse rock source", encoding="utf-8")
+        (hf_source / "source.lyrics").write_text("[verse]\nwords", encoding="utf-8")
+
+        def fake_snapshot_download(repo_id, **kwargs):
+            self.assertEqual(kwargs["repo_type"], "dataset")
+            self.assertIn("**/*.txt", kwargs["allow_patterns"])
+            self.assertIn("**/*.lyrics", kwargs["allow_patterns"])
+            if repo_id == "RareConcepts/random-test-music-data":
+                return str(hf_source)
+            if repo_id == "RareConcepts/music-test-data-serj-vocals":
+                return str(hf_identity)
+            raise AssertionError(f"unexpected repo_id={repo_id}")
+
+        def fake_train(_self, source_backend_config, transform_config, cache_dir, fingerprint, manifest_base, **_kwargs):
+            identity_dir = Path(transform_config["model"]["identity_data_dir"])
+            self.assertTrue((identity_dir / "voice.wav").exists())
+            cache_dir.mkdir(parents=True)
+            model_path = cache_dir / "model.pth"
+            manifest_path = cache_dir / "manifest.json"
+            model_path.write_bytes(b"rvc")
+            manifest = {**manifest_base, "fingerprint": fingerprint, "voice_model": {"kind": "simpletuner-rvc-v2-f0"}}
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            return VoiceModelArtifact(cache_dir, manifest_path, model_path, None, manifest)
+
+        def fake_convert(
+            _self, source_backend_config, target_backend_config, transform_config, artifact, input_paths, **_kwargs
+        ):
+            self.assertEqual(source_backend_config["type"], "local")
+            self.assertTrue(Path(source_backend_config["instance_data_dir"]).exists())
+            self.assertEqual([Path(path).name for path in input_paths], ["source.wav"])
+            output_dir = Path(target_backend_config["instance_data_dir"])
+            output_dir.mkdir(parents=True)
+            shutil.copy2(Path(input_paths[0]), output_dir / "source.wav")
+            shutil.copy2(Path(input_paths[0]).with_suffix(".txt"), output_dir / "source.txt")
+            shutil.copy2(Path(input_paths[0]).with_suffix(".lyrics"), output_dir / "source.lyrics")
+
+        with (
+            patch("huggingface_hub.snapshot_download", new=fake_snapshot_download),
+            patch("simpletuner.helpers.data_transforms.identity_transfer.RVCTrainer.train", new=fake_train),
+            patch("simpletuner.helpers.data_transforms.identity_transfer.RVCConverter.convert", new=fake_convert),
+        ):
+            config = process_data_transforms(
+                global_config=self.args,
+                data_backend_config=[
+                    {
+                        "id": "random-expansion-hf",
+                        "type": "huggingface",
+                        "dataset_type": "audio",
+                        "metadata_backend": "huggingface",
+                        "caption_strategy": "huggingface",
+                        "data_files": {"train": "hf://datasets/RareConcepts/random-test-music-data/**/*.wav"},
+                        "huggingface": {
+                            "data_files": {
+                                "train": "hf://datasets/RareConcepts/random-test-music-data/**/*.wav",
+                            },
+                        },
+                        "audio": {"sample_rate": 48000, "channels": 2},
+                        "data_transforms": [
+                            {
+                                "task": "identity_transfer",
+                                "id": "voice-transfer-hf",
+                                "model": {
+                                    "identity_data_backend": {
+                                        "id": "serj-identity",
+                                        "type": "huggingface",
+                                        "dataset_type": "audio",
+                                        "data_files": {
+                                            "train": "hf://datasets/RareConcepts/music-test-data-serj-vocals/**/*.wav",
+                                        },
+                                    },
+                                    "sample_rate": 48000,
+                                    "identity_audio_mode": "vocal_only",
+                                },
+                                "conversion": {"audio_mode": "vocal_only"},
+                                "target": {"instance_data_dir": str(generated_dir)},
+                            }
+                        ],
+                    }
+                ],
+            )
+
+        self.assertEqual(len(config), 1)
+        generated = config[0]
+        self.assertEqual(generated["id"], "voice-transfer-hf")
+        self.assertEqual(generated["type"], "local")
+        self.assertNotIn("huggingface", generated)
+        self.assertTrue((generated_dir / "source.wav").exists())
+        self.assertTrue((generated_dir / "source.txt").exists())
+        self.assertTrue((generated_dir / "source.lyrics").exists())
 
     def test_training_requires_identity_data_dir(self):
         transform = self._transform({"task": "identity_transfer"})

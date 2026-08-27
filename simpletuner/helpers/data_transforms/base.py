@@ -12,6 +12,7 @@ class DataTransformTask(ABC):
 
     TASK: str = ""
     SUPPORTED_SOURCE_DATASET_TYPES: tuple[str, ...] = ()
+    SOURCE_ONLY_BY_DEFAULT = False
     REQUIRES_METADATA_CLONE = False
 
     def __init__(
@@ -84,11 +85,15 @@ def process_data_transforms(
         if backend.get("disabled", False) or backend.get("disable", False):
             continue
 
-        for transform_config in _normalise_transform_list(backend.get("id", "<unknown>"), backend.get("data_transforms")):
+        transform_configs = _normalise_transform_list(backend.get("id", "<unknown>"), backend.get("data_transforms"))
+        source_only = bool(backend.get("data_transform_source_only", False))
+        for transform_config in transform_configs:
             task_name = transform_config.get("task")
             if not task_name:
                 raise ValueError(f"data_transforms entry for backend {backend.get('id')!r} requires a 'task' value.")
+            source_only = source_only or bool(transform_config.get("source_only", False))
             task_cls = get_data_transform_task(str(task_name))
+            source_only = source_only or bool(getattr(task_cls, "SOURCE_ONLY_BY_DEFAULT", False))
             task = task_cls(
                 global_config=global_config,
                 source_backend_config=backend,
@@ -105,7 +110,9 @@ def process_data_transforms(
                     raise ValueError(f"Data transform {task_name!r} generated duplicate backend id {backend_id!r}.")
                 existing_backend_ids.add(backend_id)
                 generated_backends.append(new_backend)
+        if source_only and transform_configs:
+            backend["_data_transform_source_only"] = True
 
     if generated_backends:
         data_backend_config.extend(generated_backends)
-    return data_backend_config
+    return [backend for backend in data_backend_config if not backend.get("_data_transform_source_only", False)]
