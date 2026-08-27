@@ -102,16 +102,7 @@ simpletuner configure
 
 Wan, SimpleTuner के सबसे भारी मॉडलों में से एक है। अगर आप VRAM सीमा के करीब हैं तो ग्रुप्ड ऑफलोडिंग चालू करें:
 
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
 
-- केवल CUDA डिवाइस `--group_offload_use_stream` को सम्मानित करते हैं; ROCm/MPS अपने आप fallback करते हैं।
 - डिस्क स्टेजिंग को कमेंटेड रखें जब तक CPU मेमोरी bottleneck न हो।
 - `--enable_model_cpu_offload` ग्रुप ऑफलोडिंग के साथ mutually exclusive है।
 

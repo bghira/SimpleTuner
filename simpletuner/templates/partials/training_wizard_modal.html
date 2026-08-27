@@ -199,7 +199,7 @@
                 <div class="mt-4" x-show="answers.model_type === 'full'" x-transition>
                     <h6 class="wizard-question-small">Acceleration Strategy</h6>
                     <p class="text-muted small">
-                        Choose how SimpleTuner should manage large-model training. You can enable grouped CPU offloading, Hugging Face Accelerate + DeepSpeed, or PyTorch FSDP2 sharding. Hardware &gt; Accelerate retains all advanced switches for later tweaks.
+                        Choose how SimpleTuner should manage large-model training. You can enable Hugging Face Accelerate + DeepSpeed or PyTorch FSDP2 sharding. Hardware &gt; Accelerate retains all advanced switches for later tweaks.
                     </p>
 
                     <div class="btn-group w-100 flex-wrap mb-3" role="group" aria-label="Full Training Strategy">
@@ -208,12 +208,6 @@
                                 :class="{ 'active': answers.full_training_strategy === 'none' }"
                                 @click.prevent="selectFullTrainingStrategy('none')">
                             None
-                        </button>
-                        <button type="button"
-                                class="btn btn-outline-secondary"
-                                :class="{ 'active': answers.full_training_strategy === 'group_offload' }"
-                                @click.prevent="selectFullTrainingStrategy('group_offload')">
-                            Group Offload
                         </button>
                         <button type="button"
                                 class="btn btn-outline-secondary"
@@ -233,55 +227,6 @@
                          x-show="answers.full_training_strategy === 'none'">
                         <i class="fas fa-microchip me-2"></i>
                         Keep the default single-process Accelerate launch. You can still enable CPU offload or sharding later from Hardware &gt; Accelerate if your run requires it.
-                    </div>
-
-                    <div class="mt-4"
-                         x-show="answers.full_training_strategy === 'group_offload'"
-                         x-transition>
-                        <h6 class="wizard-question-small">Group Offload Options</h6>
-                        <p class="text-muted small">
-                            Diffusers&rsquo; group offload moves configured module groups to CPU (or disk) between forward passes, freeing VRAM on small GPUs. SimpleTuner wires the correct CLI flags automatically.
-                        </p>
-
-                        <div class="row g-3">
-                            <div class="col-md-6">
-                                <label class="form-label">Offload Granularity</label>
-                                <select class="form-select"
-                                        x-model="answers.group_offload_type">
-                                    <option value="block_level">Block level (balanced)</option>
-                                    <option value="leaf_level">Leaf level (max savings)</option>
-                                </select>
-                                <div class="form-text">Block level keeps multiple layers together for higher throughput; leaf level maximises memory savings.</div>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Blocks per Group</label>
-                                <input type="number"
-                                       min="1"
-                                       class="form-control"
-                                       :disabled="answers.group_offload_type !== 'block_level'"
-                                       x-model.number="answers.group_offload_blocks_per_group">
-                                <div class="form-text">Only used with block-level grouping. Higher values reduce transfers but require more VRAM.</div>
-                            </div>
-                        </div>
-
-                        <div class="form-check mt-3">
-                            <input class="form-check-input"
-                                   type="checkbox"
-                                   id="group-offload-stream"
-                                   x-model="answers.group_offload_use_stream">
-                            <label class="form-check-label" for="group-offload-stream">
-                                Use CUDA streams to overlap offload transfers with compute
-                            </label>
-                        </div>
-
-                        <div class="mt-3">
-                            <label class="form-label">Optional Disk Spill Path</label>
-                            <input type="text"
-                                   class="form-control"
-                                   placeholder="/tmp/simpletuner-offload"
-                                   x-model="answers.group_offload_to_disk_path">
-                            <div class="form-text">Leave blank to keep tensors in host RAM. Provide a fast NVMe directory when memory is extremely tight.</div>
-                        </div>
                     </div>
 
                     <div class="mt-4"
@@ -595,7 +540,7 @@
                         <input type="range" class="form-range"
                                min="0" :max="maxSwappableBlocks"
                                x-model.number="customBlockSwapCount"
-                               @input="if (customBlockSwapCount > 0) { delete selectedPresets['RAMTORCH']; delete selectedPresets['GROUP_OFFLOAD']; selectedPresets = {...selectedPresets}; }">
+                               @input="if (customBlockSwapCount > 0) { delete selectedPresets['RAMTORCH']; selectedPresets = {...selectedPresets}; }">
                         <div class="form-text">
                             Set a custom number of blocks to swap if presets don't match your needs.
                             Higher values save more VRAM, use more system RAM, and increase training time.

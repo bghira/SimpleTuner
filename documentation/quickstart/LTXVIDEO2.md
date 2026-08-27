@@ -11,10 +11,8 @@ LTX Video 2 is a heavy **19B** model. It combines:
 
 This setup is VRAM-intensive, and the VAE pre-caching step can spike memory usage.
 
-- **Single-GPU training**: Start with `train_batch_size: 1` and enable group offload.
   - **Note**: The initial **VAE pre-caching step** can require more VRAM. You may need CPU offloading or a larger GPU just for the caching phase.
   - **Tip**: Set `"offload_during_startup": true` in your `config.json` to ensure the VAE and text encoder are not loaded to the GPU at the same time, which significantly reduces pre-caching memory pressure.
-- **Multi-GPU training**: **FSDP2** or aggressive **Group Offload** is recommended if you need more headroom.
 - **System RAM**: 64GB+ is recommended for larger runs; more RAM helps with caching.
 
 ### Observed performance and memory (field reports)
@@ -30,25 +28,6 @@ This setup is VRAM-intensive, and the VAE pre-caching step can spike memory usag
   - ~8 sec/step on A100-80G SXM4 (no compile).
   - ~16 sec/step on 7900XTX (local run).
   - ~30 min for 200 steps on A100-80G SXM4.
-
-### Memory offloading (Critical)
-
-For most single-GPU setups training LTX Video 2, you should enable grouped offloading. It is optional but recommended to keep VRAM headroom for larger batches/resolutions.
-
-Add this to your `config.json`:
-
-<details>
-<summary>View example config</summary>
-
-```json
-{
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
-  "group_offload_blocks_per_group": 1,
-  "group_offload_use_stream": true
-}
-```
-</details>
 
 ## Prerequisites
 
@@ -239,7 +218,6 @@ Video training is extremely demanding. If you OOM:
 
 1.  **Reduce Resolution**: Try 480p (`480x854` or similar).
 2.  **Reduce Frames**: Drop `validation_num_video_frames` and dataset `num_frames` to `33` or `49`.
-3.  **Check Offload**: Ensure `--enable_group_offload` is active.
 
 ### Validation Video Quality
 

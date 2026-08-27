@@ -45,7 +45,6 @@ Solo el grupo activo crea activations del Transformer. Un run con todos los bloq
 
 Para jobs independientes, configura `blocks_to_train` por job. Los grupos no asignados se congelan y no reciben optimizer state. Combina los checkpoints por propiedad de parametros antes de inferencia.
 
-Group offload es compatible. Musubi block swap no lo es.
 
 ## Inferencia
 

@@ -558,14 +558,13 @@ class MemoryPresetsSession:
     BACKEND_LABELS = {
         "RAMTORCH": "RamTorch Streaming",
         "MUSUBI_BLOCK_SWAP": "Block Swap",
-        "GROUP_OFFLOAD": "Group Offload",
         "DEEPSPEED_ZERO_1": "DeepSpeed ZeRO-1",
         "DEEPSPEED_ZERO_2": "DeepSpeed ZeRO-2",
         "DEEPSPEED_ZERO_3": "DeepSpeed ZeRO-3",
     }
 
     # These backends are mutually exclusive
-    EXCLUSIVE_BACKENDS = {"RAMTORCH", "GROUP_OFFLOAD", "MUSUBI_BLOCK_SWAP"}
+    EXCLUSIVE_BACKENDS = {"RAMTORCH", "MUSUBI_BLOCK_SWAP"}
 
     def __init__(self, model_family: str):
         self.model_family = model_family
@@ -673,8 +672,8 @@ class MemoryPresetsSession:
                 for other in self.EXCLUSIVE_BACKENDS:
                     if other != backend_name and other in self.selected_presets:
                         del self.selected_presets[other]
-                # Clear custom block swap when selecting RamTorch or Group Offload
-                if backend_name in {"RAMTORCH", "GROUP_OFFLOAD"}:
+                # RamTorch and block swapping use competing residency managers.
+                if backend_name == "RAMTORCH":
                     self.custom_block_swap_count = 0
             # If preset has a group, deselect other presets in the same group
             if preset.group:
@@ -692,9 +691,8 @@ class MemoryPresetsSession:
         """Set a custom block swap count, clearing exclusive backends."""
         self.custom_block_swap_count = max(0, min(count, self.max_swappable_blocks or 0))
         if self.custom_block_swap_count > 0:
-            # Clear RamTorch and Group Offload when using custom block swap
+            # Clear RamTorch when using custom block swap.
             self.selected_presets.pop("RAMTORCH", None)
-            self.selected_presets.pop("GROUP_OFFLOAD", None)
 
     def get_selected_config(self) -> Dict[str, Any]:
         """Merge all selected presets' configs into one dictionary."""
@@ -1925,8 +1923,6 @@ class SimpleTunerNCurses:
         "ramtorch": False,
         "ramtorch_target_modules": "",
         "musubi_blocks_to_swap": 0,
-        "enable_group_offload": False,
-        "group_offload_type": "",
         "deepspeed_config": "",
     }
 

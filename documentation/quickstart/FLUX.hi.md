@@ -160,23 +160,6 @@ SimpleTuner में ऐसे प्रयोगात्मक फीचर�
 
 </details>
 
-### Memory offloading (वैकल्पिक)
-
-Flux diffusers v0.33+ के जरिए grouped module offloading सपोर्ट करता है। यह transformer weights की वजह से VRAM bottleneck होने पर VRAM दबाव को काफी कम करता है। आप इसे `TRAINER_EXTRA_ARGS` (या WebUI Hardware page) में यह flags जोड़कर सक्षम कर सकते हैं:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- `--group_offload_use_stream` केवल CUDA devices पर प्रभावी है; SimpleTuner ROCm, MPS और CPU backends पर streams स्वतः बंद कर देता है।
-- इसे `--enable_model_cpu_offload` के साथ **साथ में न** उपयोग करें — दोनों strategies परस्पर असंगत हैं।
-- `--group_offload_to_disk_path` उपयोग करते समय तेज़ local SSD/NVMe target चुनें।
-
 #### Validation prompts
 
 `config/config.json` के अंदर "primary validation prompt" होता है, जो आमतौर पर वही मुख्य instance_prompt होता है जिस पर आप अपने single subject या style को ट्रेन कर रहे होते हैं। इसके अलावा, एक JSON फ़ाइल बनाई जा सकती है जिसमें validations के दौरान चलाने के लिए अतिरिक्त prompts होते हैं।

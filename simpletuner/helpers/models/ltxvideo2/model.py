@@ -1159,7 +1159,6 @@ class LTXVideo2(VideoModelFoundation):
                     "Use unquantized split weights or a Diffusers-compatible repository."
                 )
 
-            self._group_offload_configured = False
             state_dict = self._load_ltx25_transformer_state_dict()
             overrides = self._build_transformer_config_overrides()
             self.model = convert_ltx2_transformer(
@@ -1213,7 +1212,6 @@ class LTXVideo2(VideoModelFoundation):
                 "Convert the checkpoint to diffusers format or disable pipeline quantization."
             )
 
-        self._group_offload_configured = False
         ckpt_path = self._resolve_ltx2_checkpoint_path()
         logger.info("Loading LTX-2 transformer from combined checkpoint %s", ckpt_path)
         state_dict = load_ltx2_state_dict_from_checkpoint(ckpt_path, LTX2_TRANSFORMER_PREFIX)

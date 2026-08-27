@@ -45,28 +45,6 @@ pip install 'simpletuner[apple]'
 
 Keep `quantize_via=cpu` so quantisation runs on the host before the model moves to the GPU. Native FP8 and NF4 are CUDA-only and unavailable on Apple; SDNQ is the supported low-memory path on MPS. Expect slower steps than CUDA: there is no fused FP8 matmul on MPS (weights run as SDNQ int8, or bf16 without quantisation), SDNQ uses its Triton-free eager path, and the `float64` schedule math runs on CPU. Budget a unified-memory machine accordingly.
 
-### Memory offloading
-
-Grouped module offloading can reduce VRAM pressure when the transformer weights are the bottleneck:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream
-```
-
-Optional disk offload:
-
-```bash
---group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- Streams are only effective on CUDA; SimpleTuner disables them on ROCm, MPS, and CPU backends.
-- Do not combine group offload with other CPU offload strategies.
-- Group offload is not compatible with Quanto quantisation.
-- Prefer fast local NVMe when offloading to disk.
-
 ### Torch compile
 
 For `torch.compile`, prefer regional compilation with native FP8 weights:

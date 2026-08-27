@@ -11,10 +11,8 @@ LTX Video 2 es un modelo pesado de **19B**. Combina:
 
 Esta configuración es intensiva en VRAM, y el pre-caché del VAE puede disparar el uso de memoria.
 
-- **Entrenamiento en una sola GPU**: Empieza con `train_batch_size: 1` y habilita group offload.
   - **Nota**: El **pre-caché del VAE** puede requerir más VRAM. Podrías necesitar offloading a CPU o una GPU más grande solo para la fase de caché.
   - **Consejo**: Configura `"offload_during_startup": true` en tu `config.json` para asegurar que el VAE y el codificador de texto no se carguen en la GPU al mismo tiempo, lo que reduce mucho la presión de memoria durante el pre-caché.
-- **Entrenamiento multi-GPU**: Se recomienda **FSDP2** o **Group Offload** agresivo si necesitas más margen.
 - **RAM del sistema**: Se recomiendan 64GB+ para ejecuciones grandes; más RAM ayuda con el caché.
 
 ### Rendimiento y memoria observados (reportes de campo)
@@ -30,25 +28,6 @@ Esta configuración es intensiva en VRAM, y el pre-caché del VAE puede disparar
   - ~8 s/step en A100-80G SXM4 (sin compilación).
   - ~16 s/step en 7900XTX (ejecución local).
   - ~30 min por 200 steps en A100-80G SXM4.
-
-### Offloading de memoria (crítico)
-
-Para la mayoría de configuraciones de una sola GPU entrenando LTX Video 2, deberías habilitar offloading agrupado. Es opcional pero recomendado para mantener margen de VRAM con lotes/resoluciones mayores.
-
-Agrega esto a tu `config.json`:
-
-<details>
-<summary>Ver ejemplo de config</summary>
-
-```json
-{
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
-  "group_offload_blocks_per_group": 1,
-  "group_offload_use_stream": true
-}
-```
-</details>
 
 ## Requisitos previos
 
@@ -237,7 +216,6 @@ El entrenamiento de video es extremadamente exigente. Si haces OOM:
 
 1.  **Reduce la resolución**: Prueba 480p (`480x854` o similar).
 2.  **Reduce frames**: Baja `validation_num_video_frames` y `num_frames` del dataset a `33` o `49`.
-3.  **Revisa el offload**: Asegúrate de que `--enable_group_offload` esté activo.
 
 ### Calidad del video de validación
 

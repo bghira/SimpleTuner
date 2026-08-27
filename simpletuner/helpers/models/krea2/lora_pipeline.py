@@ -356,7 +356,6 @@ class Krea2LoraLoaderMixin(LoraBaseMixin):
         (
             is_model_cpu_offload,
             is_sequential_cpu_offload,
-            is_group_offload,
         ) = unpack_offload_state(offload_state)
 
         peft_kwargs = {}
@@ -369,7 +368,7 @@ class Krea2LoraLoaderMixin(LoraBaseMixin):
             if incompatible_keys is not None:
                 logger.info(f"Loaded KREA2 LoRA with incompatible keys: {incompatible_keys}")
         finally:
-            restore_offload_state(_pipeline, is_model_cpu_offload, is_sequential_cpu_offload, is_group_offload)
+            restore_offload_state(_pipeline, is_model_cpu_offload, is_sequential_cpu_offload)
 
     @classmethod
     # Copied from diffusers.loaders.lora_pipeline.CogVideoXLoraLoaderMixin.save_lora_weights

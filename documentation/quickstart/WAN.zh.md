@@ -148,23 +148,6 @@ simpletuner configure
 
 > ⚠️ 对于位于 Hugging Face Hub 访问受限国家的用户，您应该将 `HF_ENDPOINT=https://hf-mirror.com` 添加到 `~/.bashrc` 或 `~/.zshrc`，具体取决于您系统使用的 `$SHELL`。
 
-### 内存卸载（可选）
-
-Wan 是 SimpleTuner 支持的最重型模型之一。如果您接近 VRAM 上限，请启用分组卸载：
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# 可选：将卸载的权重溢出到磁盘而不是 RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- 只有 CUDA 设备支持 `--group_offload_use_stream`；ROCm/MPS 会自动回退。
-- 除非 CPU 内存是瓶颈，否则请保持磁盘暂存为注释状态。
-- `--enable_model_cpu_offload` 与分组卸载互斥。
-
 ### 前馈层分块（可选）
 
 如果 14B 检查点在梯度检查点期间仍然 OOM，请对 Wan 前馈层进行分块：

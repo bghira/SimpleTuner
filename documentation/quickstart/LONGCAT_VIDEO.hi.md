@@ -64,7 +64,6 @@ http://localhost:8001 खोलें और मॉडल फैमिली `lo
 
 वैकल्पिक VRAM बचत विकल्प:
 - `lora_rank` कम करें (4–8) और `int8-quanto` बेस प्रिसिजन उपयोग करें।
-- group offload सक्षम करें: `--enable_group_offload --group_offload_type block_level --group_offload_blocks_per_group 1`.
 - यदि previews OOM करें तो पहले `validation_resolution`, frames, या steps घटाएँ।
 - Attention डिफ़ॉल्ट: CUDA पर, LongCat‑Video उपलब्ध होने पर bundled block‑sparse Triton kernel का उपयोग करता है और अन्यथा standard dispatcher पर fallback करता है। कोई टॉगल ज़रूरी नहीं। यदि आपको खास तौर पर xFormers चाहिए, तो config/CLI में `attention_implementation: "xformers"` सेट करें।
 
@@ -108,7 +107,6 @@ simpletuner train --config config/config.json
 
 - **Height/width errors**: सुनिश्चित करें कि दोनों 16 से विभाज्य हों और 64px ग्रिड पर रहें।
 - **MPS float64 warnings**: आंतरिक रूप से संभाले जाते हैं; प्रिसिजन bf16/float32 रखें।
-- **OOM**: पहले validation resolution/frames घटाएँ, फिर LoRA rank कम करें, group offload सक्षम करें, या `int8-quanto`/`fp8-torchao` पर जाएँ।
 - **CFG के साथ blank negatives**: यदि नेगेटिव प्रॉम्प्ट न दें, तो पाइपलाइन खाली नेगेटिव अपने‑आप डालती है।
 
 ---

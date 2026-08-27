@@ -12,17 +12,6 @@ ERNIE 不是轻量模型，建议按大型单流 transformer 的硬件标准准�
 
 不建议使用 Apple GPU 训练。
 
-### 可选的显存卸载
-
-ERNIE 很适合启用 RamTorch，因为文本编码器比较大。如果还需要更多显存空间，可以再加 grouped module offload：
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream
-```
-
 ## 安装
 
 ```bash

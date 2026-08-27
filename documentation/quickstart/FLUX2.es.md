@@ -364,20 +364,6 @@ O vía script:
 ./train.sh
 ```
 
-### Offloading de memoria
-
-Para entornos con memoria limitada, FLUX.2 admite offloading en grupo para el transformer y opcionalmente el codificador de texto Mistral-3:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
---group_offload_text_encoder
-```
-
-El flag `--group_offload_text_encoder` se recomienda para FLUX.2 ya que el codificador de texto Mistral 24B se beneficia significativamente del offloading durante el caché de embeddings de texto. También puedes agregar `--group_offload_vae` para incluir el VAE en el offloading durante el caché de latentes.
-
 ## Prompts de validación
 
 Crea `config/user_prompt_library.json`:
@@ -443,7 +429,6 @@ Mistral-3 es grande; considera:
 - Habilita cuantización (`int8-quanto` o `int4-quanto`)
 - Habilita gradient checkpointing
 - Reduce el tamaño del lote
-- Habilita group offloading
 - Usa TREAD para eficiencia de enrutamiento de tokens
 
 ## Avanzado: configuración de TREAD

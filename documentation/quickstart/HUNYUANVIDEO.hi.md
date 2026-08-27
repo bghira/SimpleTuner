@@ -10,26 +10,6 @@ Hunyuan Video 1.5 एक बड़ा मॉडल है (8.3B पैराम�
 - **अनुशंसित**: 720p प्रशिक्षण या बड़े batch sizes के लिए A6000 / A100 (48GB‑80GB)।
 - **सिस्टम RAM**: मॉडल लोडिंग संभालने के लिए **64GB+** अनुशंसित है।
 
-### मेमोरी ऑफ़लोडिंग (वैकल्पिक)
-
-अपने `config.json` में यह जोड़ें:
-
-<details>
-<summary>उदाहरण कॉन्फ़िग देखें</summary>
-
-```json
-{
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
-  "group_offload_blocks_per_group": 1,
-  "group_offload_use_stream": true
-}
-```
-</details>
-
-- `--group_offload_use_stream`: केवल CUDA डिवाइसेस पर काम करता है।
-- इसे `--enable_model_cpu_offload` के साथ **न** मिलाएँ।
-
 ## पूर्वापेक्षाएँ
 
 सुनिश्चित करें कि Python इंस्टॉल है; SimpleTuner 3.10 से 3.12 के साथ अच्छा काम करता है।
@@ -147,8 +127,6 @@ HunyuanVideo के लिए key configuration overrides:
   "mixed_precision": "bf16",
   "optimizer": "adamw_bf16",
   "lora_rank": 16,
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
   "dataset_backend_config": "config/multidatabackend.json"
 }
 ```
@@ -239,7 +217,6 @@ simpletuner train
 
 ### VRAM Optimization
 
-- **Group Offload**: consumer GPUs के लिए आवश्यक। सुनिश्चित करें कि `enable_group_offload` true है।
 - **Resolution**: सीमित VRAM हो तो 480p (`854x480` या समान) पर टिकें। 720p (`1280x720`) मेमोरी उपयोग काफी बढ़ाता है।
 - **Quantization**: `base_model_precision` उपयोग करें (`bf16` डिफ़ॉल्ट); अतिरिक्त बचत के लिए `int8-torchao` काम करता है, लेकिन गति कम होगी।
 - **VAE patch convolution**: HunyuanVideo VAE OOMs के लिए `--vae_enable_patch_conv=true` सेट करें (या UI में टॉगल करें)। यह 3D conv/attention को slice करता है और peak VRAM कम करता है; throughput थोड़ा घटेगा।

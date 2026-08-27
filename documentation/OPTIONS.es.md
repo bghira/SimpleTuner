@@ -269,39 +269,6 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 - **Comportamiento**: Muestrea un bloque de ruido por batch, ejecuta solo su grupo y activa deteccion de parametros no usados en DDP.
 - **Limites**: Solo denoisers Transformer. Consulta [DiffusionBlocks](experimental/DIFFUSION_BLOCKS.es.md).
 
-### `--enable_group_offload`
-
-- **Qué**: Habilita el offload de módulos agrupados de diffusers para que los bloques del modelo se puedan preparar en CPU (o disco) entre pasadas hacia delante.
-- **Por qué**: Reduce drásticamente el uso máximo de VRAM en transformadores grandes (Flux, Wan, Auraflow, LTXVideo, Cosmos2Image) con un impacto mínimo en rendimiento cuando se usa con streams CUDA.
-- **Notas**:
-  - Es mutuamente excluyente con `--enable_model_cpu_offload`; elige una estrategia por ejecución.
-  - Requiere diffusers **v0.33.0** o más reciente.
-
-### `--group_offload_type`
-
-- **Opciones**: `block_level` (predeterminado), `leaf_level`
-- **Qué**: Controla cómo se agrupan las capas. `block_level` equilibra el ahorro de VRAM con el rendimiento, mientras que `leaf_level` maximiza el ahorro a costa de más transferencias de CPU.
-
-### `--group_offload_blocks_per_group`
-
-- **Qué**: Al usar `block_level`, el número de bloques de transformer que se agrupan en un solo grupo de offload.
-- **Predeterminado**: `1`
-- **Por qué**: Aumentar este número reduce la frecuencia de transferencias (más rápido) pero mantiene más parámetros en el acelerador (usa más VRAM).
-
-### `--group_offload_use_stream`
-
-- **Qué**: Usa un stream CUDA dedicado para solapar transferencias host/dispositivo con cómputo.
-- **Predeterminado**: `False`
-- **Notas**:
-  - Recurre automáticamente a transferencias estilo CPU en backends no CUDA (Apple MPS, ROCm, CPU).
-  - Recomendado al entrenar en GPUs NVIDIA con capacidad de motor de copia disponible.
-
-### `--group_offload_to_disk_path`
-
-- **Qué**: Ruta de directorio usada para volcar parámetros agrupados a disco en lugar de RAM.
-- **Por qué**: Útil para presupuestos de RAM de CPU extremadamente ajustados (p. ej., estación de trabajo con gran NVMe).
-- **Consejo**: Usa un SSD local rápido; los sistemas de archivos de red ralentizarán significativamente el entrenamiento.
-
 ### `--musubi_blocks_to_swap`
 
 - **Qué**: Intercambio de bloques Musubi para LongCat-Video, Wan, LTXVideo, Kandinsky5-Video, Qwen-Image, Flux, Flux.2, zlab i1, Cosmos2Image, HunyuanVideo y Krea 2: mantiene los últimos N bloques del transformer en CPU y transmite pesos por bloque durante el forward.
@@ -320,7 +287,6 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 - **Por qué**: Comparte los pesos Linear en memoria de CPU y los transmite al acelerador para reducir la presión de VRAM.
 - **Notas**:
   - Requiere CUDA o ROCm (no compatible con Apple/MPS).
-  - Es mutuamente excluyente con `--enable_group_offload`.
   - Habilita automáticamente `--set_grads_to_none`.
 
 ### `--ramtorch_target_modules`

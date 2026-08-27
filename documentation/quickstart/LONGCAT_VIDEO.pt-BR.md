@@ -64,7 +64,6 @@ Abra http://localhost:8001 e escolha a família de modelo `longcat_video`.
 
 Economias opcionais de VRAM:
 - Reduza `lora_rank` (4–8) e use precisão base `int8-quanto`.
-- Ative group offload: `--enable_group_offload --group_offload_type block_level --group_offload_blocks_per_group 1`.
 - Diminua `validation_resolution`, frames ou steps primeiro se as prévias derem OOM.
 - Padrões de atenção: em CUDA, LongCat-Video usa automaticamente o kernel block-sparse Triton incluído quando disponível e recua para o dispatcher padrão caso contrário. Não precisa de toggle. Se você quiser xFormers especificamente, defina `attention_implementation: "xformers"` no seu config/CLI.
 
@@ -108,7 +107,6 @@ Na seção `video` do seu dataset, você pode configurar como os vídeos são ag
 
 - **Erros de altura/largura**: garanta que ambas sejam divisíveis por 16 e permaneçam na grade de 64px.
 - **Avisos de float64 no MPS**: tratados internamente; mantenha a precisão em bf16/float32.
-- **OOM**: diminua resolução/frames de validação primeiro, reduza `lora_rank`, ative group offload, ou mude para `int8-quanto`/`fp8-torchao`.
 - **Negativos em branco com CFG**: se você omitir um prompt negativo, o pipeline insere um vazio automaticamente.
 
 ---

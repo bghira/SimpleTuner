@@ -198,7 +198,6 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 - **What**: Offloads text encoder weights to CPU when VAE caching is going.
 - **Why**: This is useful for large models like HiDream and Wan 2.1, which can OOM when loading the VAE cache. This option does not impact quality of training, but for very large text encoders or slow CPUs, it can extend startup time substantially with many datasets. This is disabled by default due to this reason.
-- **Tip**: Complements the group offloading feature below for especially memory-constrained systems.
 
 ### `--offload_during_save`
 
@@ -269,39 +268,6 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Behavior**: Samples one noise-range block per batch, executes only its layer group, and automatically enables unused-parameter detection for DDP.
 - **Limits**: Transformer denoisers only. See [DiffusionBlocks](experimental/DIFFUSION_BLOCKS.md) for compatibility and inference requirements.
 
-### `--enable_group_offload`
-
-- **What**: Enables diffusers' grouped module offloading so model blocks can be staged on CPU (or disk) between forward passes.
-- **Why**: Dramatically reduces peak VRAM usage on large transformers (Flux, Wan, Auraflow, LTXVideo, Cosmos2Image) with minimal performance impact when used with CUDA streams.
-- **Notes**:
-  - Mutually exclusive with `--enable_model_cpu_offload` — pick one strategy per run.
-  - Requires diffusers **v0.33.0** or newer.
-
-### `--group_offload_type`
-
-- **Choices**: `block_level` (default), `leaf_level`
-- **What**: Controls how layers are grouped. `block_level` balances VRAM savings with throughput, while `leaf_level` maximises savings at the cost of more CPU transfers.
-
-### `--group_offload_blocks_per_group`
-
-- **What**: When using `block_level`, the number of transformer blocks to bundle into a single offload group.
-- **Default**: `1`
-- **Why**: Increasing this number reduces transfer frequency (faster) but keeps more parameters resident on the accelerator (uses more VRAM).
-
-### `--group_offload_use_stream`
-
-- **What**: Uses a dedicated CUDA stream to overlap host/device transfers with compute.
-- **Default**: `False`
-- **Notes**:
-  - Automatically falls back to CPU-style transfers on non-CUDA backends (Apple MPS, ROCm, CPU).
-  - Recommended when training on NVIDIA GPUs with spare copy engine capacity.
-
-### `--group_offload_to_disk_path`
-
-- **What**: Directory path used to spill grouped parameters to disk instead of RAM.
-- **Why**: Useful for extremely tight CPU RAM budgets (e.g., workstation with large NVMe drive).
-- **Tip**: Use a fast local SSD; network filesystems will significantly slow training.
-
 ### `--musubi_blocks_to_swap`
 
 - **What**: Musubi block swap for LongCat-Video, Wan, LTXVideo, Kandinsky5-Video, Qwen-Image, Flux, Flux.2, zlab i1, Cosmos2Image, HunyuanVideo, and Krea 2 — keep the last N transformer blocks on CPU and stream weights per block during forward.
@@ -320,7 +286,6 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Why**: Shares Linear weights in CPU memory and streams them to the accelerator to reduce VRAM pressure.
 - **Notes**:
   - Requires CUDA or ROCm (not supported on Apple/MPS).
-  - Mutually exclusive with `--enable_group_offload`.
   - Automatically enables `--set_grads_to_none`.
 
 ### `--ramtorch_target_modules`

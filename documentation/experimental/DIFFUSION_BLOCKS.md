@@ -55,7 +55,6 @@ Only the active layer group builds transformer activations. This is the main mem
 
 An all-block run eventually allocates optimizer state for every trainable group. To reproduce independent block jobs, set `blocks_to_train` separately per job. Those jobs freeze unowned groups and allocate no optimizer state for them. Their checkpoints must be combined by parameter ownership before inference.
 
-Model weights remain resident unless another compatible offload method is enabled. Group offload is compatible. Musubi block swap is not.
 
 ## Inference
 

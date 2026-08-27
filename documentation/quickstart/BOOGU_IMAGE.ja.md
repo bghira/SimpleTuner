@@ -22,28 +22,6 @@ Boogu-Image は大型の transformer 画像モデルとして扱ってくださ�
 
 メモリ使用量は rank、optimizer、validation 解像度、offload、compile、FP8 の有無で変わります。単一 H100 では、同梱 PEFT LoRA 例を 1024px、benchmark と validation 有効で 1000 steps 学習できます。
 
-小さい GPU では FP8 weights、rank 8-16、`train_batch_size=1`、gradient checkpointing、model/group offload から始めてください。
-
-### メモリ offload
-
-transformer weight がボトルネックの場合、group offload で VRAM を下げられます:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream
-```
-
-任意の disk offload:
-
-```bash
---group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- stream は CUDA でのみ有効です。SimpleTuner は ROCm、MPS、CPU では無効化します。
-- group offload を他の CPU offload と組み合わせないでください。
-- disk offload には高速なローカル NVMe を推奨します。
 
 ### Torch compile と attention
 

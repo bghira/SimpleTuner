@@ -14,7 +14,6 @@ class AccelerationBackend(Enum):
     RAMTORCH = auto()
     MUSUBI_BLOCK_SWAP = auto()
     FEED_FORWARD_CHUNKING = auto()
-    GROUP_OFFLOAD = auto()
     DEEPSPEED_ZERO_1 = auto()
     DEEPSPEED_ZERO_2 = auto()
     DEEPSPEED_ZERO_3 = auto()

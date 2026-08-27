@@ -120,4 +120,3 @@ Asegúrate de que los frames de condicionamiento estén presentes en los datos d
 - **Imagen de condicionamiento faltante**: proporciona un dataset de condicionamiento vía `conditioning_data` con nombres de archivo coincidentes; configura `eval_dataset_id` al ID de tu split de validación.
 - **Errores de alto/ancho**: mantén dimensiones divisibles por 16 y en la cuadrícula de 64px.
 - **Deriva del primer frame**: baja guidance (3.5–4.0) o reduce pasos.
-- **OOM**: baja resolución/frames de validación, reduce `lora_rank`, habilita group offload o usa `int8-quanto`/`fp8-torchao`.

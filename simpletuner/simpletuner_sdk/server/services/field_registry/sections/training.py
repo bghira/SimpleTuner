@@ -320,25 +320,6 @@ def register_training_fields(registry: "FieldRegistry") -> None:
         )
     )
 
-    # Group Offloading
-    registry._add_field(
-        ConfigField(
-            name="enable_group_offload",
-            arg_name="--enable_group_offload",
-            ui_label="Enable Group Offloading",
-            field_type=FieldType.CHECKBOX,
-            tab="model",
-            section="memory_optimization",
-            default_value=False,
-            dependencies=[FieldDependency(field="ramtorch", operator="not_equals", value=True)],
-            help_text="Offload groups of layers to CPU (or disk) between forward passes to reduce VRAM.",
-            tooltip="Useful when training large models on limited VRAM. May slow training slightly depending on hardware.",
-            importance=ImportanceLevel.ADVANCED,
-            order=3,
-            documentation="OPTIONS.md#--enable_group_offload",
-        )
-    )
-
     # RamTorch Offloading
     registry._add_field(
         ConfigField(
@@ -355,7 +336,6 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             order=5,
             dependencies=[
-                FieldDependency(field="enable_group_offload", operator="not_equals", value=True),
                 FieldDependency(field="musubi_blocks_to_swap", operator="equals", value=0, action="enable"),
             ],
             documentation="OPTIONS.md#--ramtorch",
@@ -511,121 +491,6 @@ def register_training_fields(registry: "FieldRegistry") -> None:
             order=13,
             dependencies=[FieldDependency(field="ramtorch", operator="equals", value=True, action="show")],
             documentation="OPTIONS.md#--ramtorch_disable_extensions",
-        )
-    )
-
-    registry._add_field(
-        ConfigField(
-            name="group_offload_type",
-            arg_name="--group_offload_type",
-            ui_label="Group Offload Granularity",
-            field_type=FieldType.SELECT,
-            tab="model",
-            section="memory_optimization",
-            default_value="block_level",
-            choices=[
-                {"value": "block_level", "label": "Block level (balanced)"},
-                {"value": "leaf_level", "label": "Layer level (max savings)"},
-            ],
-            help_text="Choose how modules are grouped when offloading.",
-            tooltip="Block level transfers multiple layers together for better throughput. Leaf level maximises memory savings.",
-            importance=ImportanceLevel.ADVANCED,
-            order=4,
-            dependencies=[FieldDependency(field="enable_group_offload", operator="equals", value=True, action="show")],
-            documentation="OPTIONS.md#--group_offload_type",
-        )
-    )
-
-    registry._add_field(
-        ConfigField(
-            name="group_offload_blocks_per_group",
-            arg_name="--group_offload_blocks_per_group",
-            ui_label="Blocks per Group",
-            field_type=FieldType.NUMBER,
-            tab="model",
-            section="memory_optimization",
-            default_value=1,
-            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Must be at least 1 block")],
-            help_text="Number of transformer blocks to bundle when using block-level offloading.",
-            tooltip="Higher values reduce CPU transfers but increase VRAM usage.",
-            importance=ImportanceLevel.ADVANCED,
-            order=5,
-            dependencies=[
-                FieldDependency(field="enable_group_offload", operator="equals", value=True, action="show"),
-                FieldDependency(field="group_offload_type", operator="equals", value="block_level", action="enable"),
-            ],
-            documentation="OPTIONS.md#--group_offload_blocks_per_group",
-        )
-    )
-
-    registry._add_field(
-        ConfigField(
-            name="group_offload_use_stream",
-            arg_name="--group_offload_use_stream",
-            ui_label="Use CUDA Streams for Offload",
-            field_type=FieldType.CHECKBOX,
-            tab="model",
-            section="memory_optimization",
-            default_value=False,
-            help_text="Overlap data transfers with compute using CUDA streams (only available on CUDA devices).",
-            tooltip="Recommended when training on GPUs with CUDA; automatically disabled on other backends.",
-            importance=ImportanceLevel.ADVANCED,
-            order=6,
-            dependencies=[FieldDependency(field="enable_group_offload", operator="equals", value=True, action="show")],
-            documentation="OPTIONS.md#--group_offload_use_stream",
-        )
-    )
-
-    registry._add_field(
-        ConfigField(
-            name="group_offload_to_disk_path",
-            arg_name="--group_offload_to_disk_path",
-            ui_label="Group Offload Disk Path",
-            field_type=FieldType.TEXT,
-            tab="model",
-            section="memory_optimization",
-            default_value="",
-            placeholder="/tmp/simpletuner-offload",
-            help_text="Optional directory to spill parameters when offloading (useful on memory-constrained hosts).",
-            tooltip="Leave empty to keep offloaded weights in RAM. Directory is created if it does not exist.",
-            importance=ImportanceLevel.ADVANCED,
-            order=7,
-            dependencies=[FieldDependency(field="enable_group_offload", operator="equals", value=True, action="show")],
-            documentation="OPTIONS.md#--group_offload_to_disk_path",
-        )
-    )
-
-    registry._add_field(
-        ConfigField(
-            name="group_offload_text_encoder",
-            arg_name="--group_offload_text_encoder",
-            ui_label="Include Text Encoder in Group Offload",
-            field_type=FieldType.CHECKBOX,
-            tab="model",
-            section="memory_optimization",
-            default_value=False,
-            help_text="Include text encoder(s) in group offloading to reduce VRAM during embedding caching.",
-            tooltip="Recommended for large text encoders (e.g., FLUX.2's 24B Mistral). Only useful during text embed generation.",
-            importance=ImportanceLevel.ADVANCED,
-            order=8,
-            dependencies=[FieldDependency(field="enable_group_offload", operator="equals", value=True, action="show")],
-        )
-    )
-
-    registry._add_field(
-        ConfigField(
-            name="group_offload_vae",
-            arg_name="--group_offload_vae",
-            ui_label="Include VAE in Group Offload",
-            field_type=FieldType.CHECKBOX,
-            tab="model",
-            section="memory_optimization",
-            default_value=False,
-            help_text="Include VAE in group offloading to reduce VRAM during latent caching.",
-            tooltip="Useful for memory-constrained setups during VAE encoding. Only affects latent cache generation.",
-            importance=ImportanceLevel.ADVANCED,
-            order=9,
-            dependencies=[FieldDependency(field="enable_group_offload", operator="equals", value=True, action="show")],
         )
     )
 

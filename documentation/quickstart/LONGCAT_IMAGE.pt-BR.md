@@ -67,7 +67,6 @@ Acesse http://localhost:8001 e escolha a família de modelo `longcat_image`.
 - Comprimento máximo de tokens 512 (Qwen-2.5-VL).
 
 Economias opcionais de memória (escolha conforme seu hardware):
-- `--enable_group_offload --group_offload_type block_level --group_offload_blocks_per_group 1`
 - Reduza `lora_rank` (4–8) e/ou use precisão base `int8-quanto`.
 - Se a validação der OOM, diminua `validation_resolution` ou steps primeiro.
 
@@ -115,7 +114,6 @@ simpletuner validate \
 
 - **Erros de float64 no MPS**: tratados internamente; mantenha seu config em float32/bf16.
 - **Incompatibilidade de canais em prévias**: corrigido ao desempacotar latentes antes de decodificar (incluído no código deste guia).
-- **OOM**: diminua `validation_resolution`, reduza `lora_rank`, ative group offload, ou mude para `int8-quanto` / `fp8-torchao`.
 - **Tokenização lenta**: Qwen-2.5-VL limita em 512 tokens; evite prompts muito longos.
 
 ---

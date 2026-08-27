@@ -51,19 +51,6 @@ SimpleTuner はデフォルトで分割済み Cosmos3 transformer components を
 - `gradient_checkpointing` を有効にします。
 - Transformer load-time memory を減らすには split generator components を使います。
 
-任意の group offload:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream
-```
-
-- Streams は CUDA のみです。
-- `--enable_model_cpu_offload` と併用しません。
-- system RAM が不足する場合は `--group_offload_to_disk_path /fast-ssd/simpletuner-offload` を追加します。
-
 ## Installation
 
 ```bash

@@ -119,4 +119,3 @@ simpletuner train --config config/config.json
 - **条件付き latent がない**: `conditioning_data` で参照データセットを紐づけ、ファイル名が一致していることを確認してください。
 - **MPS dtype エラー**: パイプラインが MPS で pos‑ids を float32 に自動ダウンキャストします。残りは float32/bf16 のままでOK。
 - **プレビューのチャネル不一致**: デコード前に latent を un‑patchify（この SimpleTuner バージョンを維持）。
-- **edit 時の OOM**: 検証解像度/ステップ数を下げ、`lora_rank` を減らす、group offload を有効化し、`int8-quanto`/`fp8-torchao` を優先します。

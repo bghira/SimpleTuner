@@ -198,7 +198,6 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 
 - **O que**: Faz offload dos pesos do text encoder para CPU enquanto o cache de VAE esta sendo criado.
 - **Por que**: Isso e util para modelos grandes como HiDream e Wan 2.1, que podem dar OOM ao carregar o cache de VAE. Essa opcao nao afeta a qualidade do treinamento, mas para text encoders muito grandes ou CPUs lentas pode aumentar bastante o tempo de inicializacao com muitos datasets. Por isso, fica desabilitada por padrao.
-- **Dica**: Complementa o recurso de offload em grupo abaixo para sistemas com memoria muito restrita.
 
 ### `--offload_during_save`
 
@@ -269,39 +268,6 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **Comportamento**: Amostra um bloco de ruido por batch, executa somente seu grupo e ativa deteccao de parametros nao usados no DDP.
 - **Limites**: Apenas denoisers Transformer. Veja [DiffusionBlocks](experimental/DIFFUSION_BLOCKS.pt-BR.md).
 
-### `--enable_group_offload`
-
-- **O que**: Habilita offload de modulos em grupo do diffusers para que blocos do modelo possam ser estagiados na CPU (ou disco) entre forward passes.
-- **Por que**: Reduz drasticamente o pico de VRAM em transformers grandes (Flux, Wan, Auraflow, LTXVideo, Cosmos2Image) com impacto minimo de performance quando usado com streams CUDA.
-- **Notas**:
-  - Mutuamente exclusivo com `--enable_model_cpu_offload` — escolha uma estrategia por execucao.
-  - Requer diffusers **v0.33.0** ou superior.
-
-### `--group_offload_type`
-
-- **Opcoes**: `block_level` (padrao), `leaf_level`
-- **O que**: Controla como as camadas sao agrupadas. `block_level` equilibra economia de VRAM com throughput, enquanto `leaf_level` maximiza a economia ao custo de mais transferencias CPU.
-
-### `--group_offload_blocks_per_group`
-
-- **O que**: Ao usar `block_level`, o numero de blocos transformer agrupados em um grupo de offload.
-- **Padrao**: `1`
-- **Por que**: Aumentar esse numero reduz a frequencia de transferencias (mais rapido) mas mantem mais parametros residentes no acelerador (mais VRAM).
-
-### `--group_offload_use_stream`
-
-- **O que**: Usa uma stream CUDA dedicada para sobrepor transferencias host/device com compute.
-- **Padrao**: `False`
-- **Notas**:
-  - Faz fallback automatico para transferencias estilo CPU em backends nao-CUDA (Apple MPS, ROCm, CPU).
-  - Recomendado ao treinar em GPUs NVIDIA com capacidade de copy engine sobrando.
-
-### `--group_offload_to_disk_path`
-
-- **O que**: Caminho de diretorio usado para despejar parametros em disco em vez de RAM.
-- **Por que**: Util para orcamentos de RAM muito apertados (ex.: workstation com NVMe grande).
-- **Dica**: Use um SSD local rapido; filesystems de rede desaceleram bastante o treino.
-
 ### `--musubi_blocks_to_swap`
 
 - **O que**: Musubi block swap para LongCat-Video, Wan, LTXVideo, Kandinsky5-Video, Qwen-Image, Flux, Flux.2, zlab i1, Cosmos2Image, HunyuanVideo e Krea 2 — mantem os ultimos N blocos transformer na CPU e faz streaming de pesos por bloco durante o forward.
@@ -320,7 +286,6 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **Por que**: Compartilha pesos Linear na memoria da CPU e faz streaming para o acelerador para reduzir pressao de VRAM.
 - **Notas**:
   - Requer CUDA ou ROCm (nao suportado no Apple/MPS).
-  - Mutuamente exclusivo com `--enable_group_offload`.
   - Habilita automaticamente `--set_grads_to_none`.
 
 ### `--ramtorch_target_modules`
