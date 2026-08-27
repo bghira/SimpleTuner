@@ -29,6 +29,8 @@ Esta configuración es intensiva en VRAM, y el pre-caché del VAE puede disparar
   - ~16 s/step en 7900XTX (ejecución local).
   - ~30 min por 200 steps en A100-80G SXM4.
 
+> ⚠️ **Prueba la compilación regional antes de mantenerla activada.** `dynamo_use_regional_compilation` no acelera universalmente LTX Video 2 y puede reducir el rendimiento estable incluso después del calentamiento de la compilación. Compara ejecuciones eager y compiladas con el mismo lote, número de frames y resolución fijos, y evalúa varios steps de entrenamiento posteriores al calentamiento en vez de los steps iniciales de compilación.
+
 ## Requisitos previos
 
 Asegúrate de que Python 3.12 esté instalado.

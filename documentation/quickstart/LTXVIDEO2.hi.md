@@ -29,6 +29,8 @@ LTX Video 2 एक भारी **19B** मॉडल है। यह निम�
   - 7900XTX पर ~16 sec/step (लोकल रन)।
   - A100-80G SXM4 पर 200 steps ~30 मिनट।
 
+> ⚠️ **Regional compilation को enabled रखने से पहले test करें।** `dynamo_use_regional_compilation` LTX Video 2 के लिए हमेशा speedup नहीं देता और compilation warm up होने के बाद भी steady-state throughput घटा सकता है। समान fixed batch, frame count और resolution पर eager तथा compiled runs की तुलना करें, और शुरुआती compilation steps के बजाय warmup के बाद के कई training steps से निर्णय लें।
+
 ## पूर्वापेक्षाएँ
 
 Python 3.12 इंस्टॉल होना सुनिश्चित करें।
