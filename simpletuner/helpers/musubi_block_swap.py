@@ -199,7 +199,9 @@ class MusubiBlockSwapManager:
         self._warned_grad = False
         self._warned_device = False
         self._logger = logger
+        self._forward_hooks: List[torch.utils.hooks.RemovableHandle] = []
         self._backward_hooks: List[torch.utils.hooks.RemovableHandle] = []
+        self._hooked_block_ids: tuple[int, ...] = ()
         self._backward_hook_device: Optional[torch.device] = None
 
     @classmethod
@@ -242,7 +244,7 @@ class MusubiBlockSwapManager:
             return False
 
         blocks_list = list(blocks)
-        self._ensure_backward_hooks(blocks_list, compute_device, grad_enabled)
+        self._ensure_lifecycle_hooks(blocks_list, compute_device, grad_enabled)
 
         self.mark_blocks_for_offload(blocks_list)
         return True
@@ -271,26 +273,47 @@ class MusubiBlockSwapManager:
                 continue
             self._move_module(blocks[idx], self.offload_device)
 
-    def _clear_backward_hooks(self):
-        for handle in self._backward_hooks:
+    def _clear_lifecycle_hooks(self):
+        for handle in self._forward_hooks + self._backward_hooks:
             try:
                 handle.remove()
             except Exception:
                 continue
+        self._forward_hooks.clear()
         self._backward_hooks.clear()
+        self._hooked_block_ids = ()
         self._backward_hook_device = None
 
-    def _ensure_backward_hooks(self, blocks: List[nn.Module], compute_device: torch.device, grad_enabled: bool) -> None:
-        if not grad_enabled:
+    def _ensure_lifecycle_hooks(self, blocks: List[nn.Module], compute_device: torch.device, grad_enabled: bool) -> None:
+        managed_blocks = [block for idx, block in enumerate(blocks) if self.is_managed_block(idx)]
+        managed_block_ids = tuple(id(block) for block in managed_blocks)
+        hooks_ready = self._forward_hooks and (not grad_enabled or self._backward_hooks)
+        if self._backward_hook_device == compute_device and self._hooked_block_ids == managed_block_ids and hooks_ready:
             return
 
-        if self._backward_hook_device == compute_device and self._backward_hooks:
-            return
+        self._clear_lifecycle_hooks()
+        self._hooked_block_ids = managed_block_ids
+        self._backward_hook_device = compute_device
 
-        self._clear_backward_hooks()
+        for block in managed_blocks:
 
-        for idx, block in enumerate(blocks):
-            if not self.is_managed_block(idx):
+            def _make_forward_pre_hook(owner_block):
+                def _pre_hook(_module, _args):
+                    self.stream_in(owner_block, compute_device)
+
+                return _pre_hook
+
+            def _make_forward_hook(owner_block):
+                def _forward_hook(_module, _args, output):
+                    self.stream_out(owner_block)
+                    return output
+
+                return _forward_hook
+
+            self._forward_hooks.append(block.register_forward_pre_hook(_make_forward_pre_hook(block)))
+            self._forward_hooks.append(block.register_forward_hook(_make_forward_hook(block), always_call=True))
+
+            if not grad_enabled:
                 continue
 
             def _make_pre_hook(owner_block):
@@ -300,13 +323,18 @@ class MusubiBlockSwapManager:
 
                 return _pre_hook
 
+            def _make_post_hook(owner_block):
+                def _post_hook(_module, _grad_input, _grad_output):
+                    self.stream_out(owner_block)
+
+                return _post_hook
+
             # Module-level hooks on the block itself can fire too late for saved
             # tensors inside child ops, so every descendant streams the owning
             # block back in before its own backward work begins.
             for hook_module in block.modules():
                 self._backward_hooks.append(hook_module.register_full_backward_pre_hook(_make_pre_hook(block)))
-
-        self._backward_hook_device = compute_device
+            self._backward_hooks.append(block.register_full_backward_hook(_make_post_hook(block)))
 
     def _move_module(self, module: nn.Module, device: torch.device):
         if _module_on_device(module, device):

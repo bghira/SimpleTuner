@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import torch
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 from simpletuner.helpers.musubi_block_swap import MusubiBlockSwapManager, _module_on_device, prepare_musubi_model_for_ddp
 
@@ -130,6 +131,53 @@ class MusubiBlockSwapTests(unittest.TestCase):
         self.assertEqual(block.adapter_weight.device.type, device.type)
         self.assertEqual(block.adapter_scalar.device.type, device.type)
         self.assertEqual(block[0].weight.device.type, "cpu")
+
+    @unittest.skipUnless(
+        torch.cuda.is_available(),
+        "CUDA is required for the block-swap training lifecycle test",
+    )
+    def test_checkpointed_training_reoffloads_frozen_blocks_after_backward(self):
+        device = torch.device("cuda")
+
+        class AdapterBlock(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.base = nn.Linear(64, 64, bias=False)
+                self.adapter_down = nn.Linear(64, 8, bias=False)
+                self.adapter_up = nn.Linear(8, 64, bias=False)
+                self.base.weight.requires_grad_(False)
+
+            def forward(self, hidden_states):
+                return torch.nn.functional.silu(self.base(hidden_states) + self.adapter_up(self.adapter_down(hidden_states)))
+
+        blocks = nn.ModuleList([AdapterBlock().to(device) for _ in range(3)])
+        manager = MusubiBlockSwapManager(
+            block_indices=list(range(len(blocks))),
+            offload_device=torch.device("cpu"),
+            logger=logging.getLogger(__name__),
+        )
+        manager.activate(blocks, device, grad_enabled=True)
+        optimizer = torch.optim.SGD(
+            [parameter for block in blocks for parameter in block.parameters() if parameter.requires_grad],
+            lr=0.01,
+        )
+
+        hidden_states = torch.randn(2, 16, 64, device=device, requires_grad=True)
+        for block in blocks:
+            manager.stream_in(block, device)
+            hidden_states = checkpoint(block, hidden_states, use_reentrant=False)
+            manager.stream_out(block)
+
+        self.assertTrue(all(block.base.weight.device.type == "cpu" for block in blocks))
+        loss = hidden_states.square().mean()
+        loss.backward()
+
+        self.assertTrue(all(block.base.weight.device.type == "cpu" for block in blocks))
+        self.assertTrue(all(block.adapter_down.weight.device.type == "cuda" for block in blocks))
+        self.assertTrue(all(block.adapter_up.weight.device.type == "cuda" for block in blocks))
+        self.assertTrue(all(block.adapter_down.weight.grad is not None for block in blocks))
+        self.assertTrue(all(block.adapter_up.weight.grad is not None for block in blocks))
+        optimizer.step()
 
 
 if __name__ == "__main__":
