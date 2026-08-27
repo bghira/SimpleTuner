@@ -311,8 +311,14 @@ class MageFlowTransformer2DModel(MageFlow, ModelMixin, ConfigMixin, PeftAdapterM
 
             _ensure_module_device(getattr(block, "img_mod", None), img.device)
             _ensure_module_device(getattr(block, "txt_mod", None), img.device)
+            checkpoint_this_block = (
+                index_block not in skip_layers_set
+                and self.training
+                and self.checkpoint
+                and self.gradient_checkpointing_scope == "layer"
+            )
             if musubi_offload_active and musubi_manager.is_managed_block(index_block):
-                musubi_manager.stream_in(block, img.device)
+                musubi_manager.stream_in(block, img.device, checkpointed=checkpoint_this_block)
             if index_block in skip_layers_set:
                 pass
             elif self.training and self.checkpoint and self.gradient_checkpointing_scope == "ffn":

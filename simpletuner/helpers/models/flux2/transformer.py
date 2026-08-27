@@ -1315,9 +1315,14 @@ class Flux2Transformer2DModel(
                 break
 
             global_layer_idx = index_block
+            checkpoint_this_block = grad_enabled and self.gradient_checkpointing
 
             if musubi_offload_active and musubi_manager.is_managed_block(global_layer_idx):
-                musubi_manager.stream_in(block, hidden_states.device)
+                musubi_manager.stream_in(
+                    block,
+                    hidden_states.device,
+                    checkpointed=checkpoint_this_block,
+                )
 
             # Check for TREAD routing
             if self._tread_router is not None and self.training:
@@ -1356,7 +1361,7 @@ class Flux2Transformer2DModel(
                 torch.cat([current_pe_txt[1], current_pe_img[1]], dim=0),
             )
 
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
+            if checkpoint_this_block:
 
                 def create_custom_forward(module):
                     def custom_forward(*inputs):
@@ -1442,9 +1447,14 @@ class Flux2Transformer2DModel(
                 break
 
             global_layer_idx = num_double + index_block
+            checkpoint_this_block = grad_enabled and self.gradient_checkpointing
 
             if musubi_offload_active and musubi_manager.is_managed_block(global_layer_idx):
-                musubi_manager.stream_in(block, hidden_states.device)
+                musubi_manager.stream_in(
+                    block,
+                    hidden_states.device,
+                    checkpointed=checkpoint_this_block,
+                )
 
             # Check for TREAD routing
             if self._tread_router is not None and self.training:
@@ -1490,7 +1500,7 @@ class Flux2Transformer2DModel(
                     tread_routing_info = None
                     current_concat_pe = concat_rotary_emb
 
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
+            if checkpoint_this_block:
 
                 def create_custom_forward(module):
                     def custom_forward(*inputs):

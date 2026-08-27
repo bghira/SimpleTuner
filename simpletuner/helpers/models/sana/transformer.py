@@ -721,8 +721,18 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
         capture_idx = 0
         for i, block in enumerate(self.transformer_blocks):
+            checkpoint_this_block = (
+                self.training
+                and self.gradient_checkpointing
+                and should_checkpoint_block(
+                    i,
+                    True,
+                    self.gradient_checkpointing_interval,
+                    self.gradient_checkpointing_segment_stride,
+                )
+            )
             if musubi_offload_active and musubi_manager.is_managed_block(i):
-                musubi_manager.stream_in(block, hidden_states.device)
+                musubi_manager.stream_in(block, hidden_states.device, checkpointed=checkpoint_this_block)
             mask_info = None
             original_hidden_states = None
 
@@ -744,16 +754,7 @@ class SanaTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                         original_hidden_states = hidden_states
                         hidden_states = router.start_route(hidden_states, mask_info)
                         break
-            if (
-                self.training
-                and self.gradient_checkpointing
-                and should_checkpoint_block(
-                    i,
-                    True,
-                    self.gradient_checkpointing_interval,
-                    self.gradient_checkpointing_segment_stride,
-                )
-            ):
+            if checkpoint_this_block:
 
                 def create_custom_forward(module):
                     def custom_forward(*inputs):

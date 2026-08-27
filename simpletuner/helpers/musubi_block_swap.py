@@ -1,5 +1,7 @@
 import logging
-from typing import Iterable, List, Optional
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
+from typing import Any, Iterable, List, Optional
 
 import torch
 import torch.nn as nn
@@ -103,6 +105,18 @@ def _module_has_local_quantized_payload(module: nn.Module) -> bool:
     )
 
 
+def _module_has_cpu_h2d_payload(module: nn.Module) -> bool:
+    has_frozen_parameter = any(
+        parameter.device.type == "cpu"
+        and (not parameter.requires_grad or _is_quanto_tensor(parameter) or _is_sdnq_tensor(parameter))
+        for parameter in module.parameters()
+    )
+    has_quantized_buffer = any(
+        buffer.device.type == "cpu" and (_is_quanto_tensor(buffer) or _is_sdnq_tensor(buffer)) for buffer in module.buffers()
+    )
+    return has_frozen_parameter or has_quantized_buffer
+
+
 def _move_quanto_tensor_to_device(tensor, device: torch.device):
     if not _same_device(tensor.device, device):
         tensor.data = tensor.data.to(device, non_blocking=True)
@@ -173,19 +187,224 @@ def prepare_musubi_model_for_ddp(module: nn.Module, device: torch.device) -> tup
     target_device = torch.device(device)
     moved_trainable = 0
     for param in module.parameters():
-        if not param.requires_grad or _same_device(param.device, target_device):
+        is_quantized_payload = _is_quanto_tensor(param) or _is_sdnq_tensor(param)
+        if not param.requires_grad or is_quantized_payload or _same_device(param.device, target_device):
             continue
         param.data = param.data.to(target_device, non_blocking=True)
         if param.grad is not None:
             param.grad = param.grad.to(target_device, non_blocking=True)
         moved_trainable += 1
 
-    ignored_names = {name for name, param in module.named_parameters() if not param.requires_grad}
+    ignored_names = {
+        name
+        for name, param in module.named_parameters()
+        if not param.requires_grad or _is_quanto_tensor(param) or _is_sdnq_tensor(param)
+    }
     ignored_names.update(name for name, _buffer in module.named_buffers())
     existing = set(getattr(module, "_ddp_params_and_buffers_to_ignore", set()))
     newly_ignored = ignored_names - existing
     module._ddp_params_and_buffers_to_ignore = existing | ignored_names
     return moved_trainable, len(newly_ignored)
+
+
+@dataclass
+class _TensorTree:
+    tensor_type: type
+    metadata: Any
+    outer_size: tuple[int, ...]
+    outer_stride: tuple[int, ...]
+    children: tuple[tuple[str, "_TensorTree"], ...]
+    leaf_index: Optional[int] = None
+
+    def rebuild(self, leaves: List[torch.Tensor]) -> torch.Tensor:
+        if self.leaf_index is not None:
+            return leaves[self.leaf_index]
+        inner_tensors = {name: child.rebuild(leaves) for name, child in self.children}
+        return self.tensor_type.__tensor_unflatten__(
+            inner_tensors,
+            self.metadata,
+            self.outer_size,
+            self.outer_stride,
+        )
+
+
+def _flatten_tensor_tree(tensor: torch.Tensor, leaves: List[torch.Tensor]) -> _TensorTree:
+    if type(tensor) is torch.Tensor:
+        leaf_index = len(leaves)
+        leaves.append(tensor)
+        return _TensorTree(
+            tensor_type=torch.Tensor,
+            metadata=None,
+            outer_size=tuple(tensor.size()),
+            outer_stride=tuple(tensor.stride()),
+            children=(),
+            leaf_index=leaf_index,
+        )
+
+    flatten = getattr(tensor, "__tensor_flatten__", None)
+    if flatten is None:
+        raise TypeError(
+            f"Musubi H2D block swap cannot stream tensor type "
+            f"{type(tensor).__module__}.{type(tensor).__name__}: __tensor_flatten__ is unavailable."
+        )
+    child_names, metadata = flatten()
+    children = []
+    for child_name in child_names:
+        child = getattr(tensor, child_name)
+        if not isinstance(child, torch.Tensor):
+            raise TypeError(
+                f"Musubi H2D block swap expected tensor field {child_name!r} on "
+                f"{type(tensor).__module__}.{type(tensor).__name__}."
+            )
+        children.append((child_name, _flatten_tensor_tree(child, leaves)))
+    return _TensorTree(
+        tensor_type=type(tensor),
+        metadata=metadata,
+        outer_size=tuple(tensor.size()),
+        outer_stride=tuple(tensor.stride()),
+        children=tuple(children),
+    )
+
+
+@dataclass
+class _FrozenTensorBinding:
+    owner: nn.Module
+    name: str
+    parameter: Optional[nn.Parameter]
+    tree: _TensorTree
+    replace_parameter: bool = False
+
+    def bind(self, leaves: List[torch.Tensor]) -> None:
+        tensor = self.tree.rebuild(leaves)
+        if self.parameter is not None:
+            if self.replace_parameter:
+                self.owner._parameters[self.name] = tensor
+            else:
+                self.parameter.data = tensor
+        else:
+            self.owner._buffers[self.name] = tensor
+
+
+@dataclass
+class _H2DRingSlot:
+    flat: torch.Tensor
+    leaves: List[torch.Tensor]
+    owner_block_id: Optional[int] = None
+    reusable_event: Optional[torch.cuda.Event] = None
+    load_event: Optional[torch.cuda.Event] = None
+
+
+@dataclass
+class _H2DBlockState:
+    block: nn.Module
+    cpu_flat: torch.Tensor
+    cpu_leaves: List[torch.Tensor]
+    bindings: List[_FrozenTensorBinding]
+    signature: tuple
+    slot: Optional[_H2DRingSlot] = None
+
+    def bind(self, leaves: List[torch.Tensor]) -> None:
+        for binding in self.bindings:
+            binding.bind(leaves)
+
+
+def _required_storage_elements(shape: tuple[int, ...], stride: tuple[int, ...]) -> int:
+    if not shape or any(size == 0 for size in shape):
+        return 0 if shape else 1
+    if any(value < 0 for value in stride):
+        raise ValueError("Musubi H2D block swap does not support negative-stride frozen tensors.")
+    return 1 + sum((size - 1) * step for size, step in zip(shape, stride))
+
+
+def _flat_tensor_layout(leaves: List[torch.Tensor]) -> tuple[tuple, int]:
+    alignment = 256
+    offset = 0
+    layout = []
+    for leaf in leaves:
+        offset = (offset + alignment - 1) // alignment * alignment
+        shape = tuple(leaf.size())
+        stride = tuple(leaf.stride())
+        storage_elements = _required_storage_elements(shape, stride)
+        storage_bytes = storage_elements * leaf.element_size()
+        layout.append((offset, shape, stride, leaf.dtype, storage_bytes))
+        offset += storage_bytes
+    return tuple(layout), offset
+
+
+def _flat_tensor_views(flat: torch.Tensor, layout: tuple) -> List[torch.Tensor]:
+    views = []
+    for offset, shape, stride, dtype, storage_bytes in layout:
+        storage = flat[offset : offset + storage_bytes].view(dtype)
+        views.append(storage.as_strided(shape, stride))
+    return views
+
+
+class _StagedH2DCopier:
+    """Copies pageable block masters through a small pinned pool on a worker thread."""
+
+    def __init__(self, device: torch.device, staging_count: int):
+        self.device = device
+        self.device_index = device.index if device.index is not None else torch.cuda.current_device()
+        self.staging_count = max(1, staging_count)
+        self.copy_stream = torch.cuda.Stream(device=device)
+        self._worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="musubi-h2d")
+        self._futures: dict[int, Future] = {}
+        self._staging: dict[int, List[torch.Tensor]] = {}
+        self._staging_free: dict[int, List[Optional[torch.cuda.Event]]] = {}
+        self._next_staging: dict[int, int] = {}
+
+    def _ensure_staging(self, nbytes: int) -> None:
+        if nbytes in self._staging:
+            return
+        self._staging[nbytes] = [
+            torch.empty(nbytes, dtype=torch.uint8, device="cpu", pin_memory=True) for _ in range(self.staging_count)
+        ]
+        self._staging_free[nbytes] = [None] * self.staging_count
+        self._next_staging[nbytes] = 0
+
+    def _copy(
+        self,
+        destination: torch.Tensor,
+        source: torch.Tensor,
+        reusable_event: Optional[torch.cuda.Event],
+    ) -> torch.cuda.Event:
+        torch.cuda.set_device(self.device_index)
+        nbytes = source.numel()
+        index = self._next_staging[nbytes]
+        self._next_staging[nbytes] = (index + 1) % self.staging_count
+        staging = self._staging[nbytes][index]
+        staging_free = self._staging_free[nbytes][index]
+        if staging_free is not None:
+            staging_free.synchronize()
+
+        staging.copy_(source)
+        with torch.cuda.stream(self.copy_stream):
+            if reusable_event is not None:
+                self.copy_stream.wait_event(reusable_event)
+            destination.copy_(staging, non_blocking=True)
+            complete = self.copy_stream.record_event()
+        self._staging_free[nbytes][index] = complete
+        return complete
+
+    def submit(
+        self,
+        key: int,
+        destination: torch.Tensor,
+        source: torch.Tensor,
+        reusable_event: Optional[torch.cuda.Event],
+    ) -> None:
+        self._ensure_staging(source.numel())
+        self._futures[key] = self._worker.submit(self._copy, destination, source, reusable_event)
+
+    def wait(self, key: int) -> torch.cuda.Event:
+        return self._futures.pop(key).result()
+
+    def close(self) -> None:
+        for future in list(self._futures.values()):
+            future.result()
+        self._futures.clear()
+        self.copy_stream.synchronize()
+        self._worker.shutdown(wait=True)
 
 
 class MusubiBlockSwapManager:
@@ -203,6 +422,18 @@ class MusubiBlockSwapManager:
         self._backward_hooks: List[torch.utils.hooks.RemovableHandle] = []
         self._hooked_block_ids: tuple[int, ...] = ()
         self._backward_hook_device: Optional[torch.device] = None
+        self._h2d_block_modes: dict[int, bool] = {}
+        self._h2d_block_states: dict[int, _H2DBlockState] = {}
+        self._h2d_ring_pools: dict[tuple, List[_H2DRingSlot]] = {}
+        self._h2d_copiers: dict[torch.device, _StagedH2DCopier] = {}
+        self._h2d_ring_size = 2
+
+    def __del__(self):
+        for copier in getattr(self, "_h2d_copiers", {}).values():
+            try:
+                copier.close()
+            except Exception:
+                continue
 
     @classmethod
     def build(
@@ -252,7 +483,20 @@ class MusubiBlockSwapManager:
     def is_managed_block(self, index: int) -> bool:
         return index in self.block_indices
 
-    def stream_in(self, block: nn.Module, device: torch.device):
+    def stream_in(self, block: nn.Module, device: torch.device, checkpointed: Optional[bool] = None):
+        block_id = id(block)
+        if checkpointed is not None:
+            self._h2d_block_modes[block_id] = bool(
+                checkpointed
+                and device.type == "cuda"
+                and self.offload_device.type == "cpu"
+                and _module_has_cpu_h2d_payload(block)
+            )
+        if self._h2d_block_modes.get(block_id, False):
+            state = self._h2d_state(block, device)
+            self._load_h2d_state(state, device)
+            return
+
         self.move_module(block, device)
         # Verify the move succeeded
         if not _module_on_device(block, device):
@@ -262,6 +506,10 @@ class MusubiBlockSwapManager:
             )
 
     def stream_out(self, block: nn.Module):
+        state = self._h2d_block_states.get(id(block))
+        if self._h2d_block_modes.get(id(block), False) and state is not None:
+            self._release_h2d_state(state)
+            return
         self.move_module(block, self.offload_device)
 
     def move_module(self, module: nn.Module, device: torch.device):
@@ -272,6 +520,113 @@ class MusubiBlockSwapManager:
             if idx < 0 or idx >= len(blocks):
                 continue
             self._move_module(blocks[idx], self.offload_device)
+
+    def _h2d_state(self, block: nn.Module, device: torch.device) -> _H2DBlockState:
+        block_id = id(block)
+        existing = self._h2d_block_states.get(block_id)
+        if existing is not None:
+            return existing
+
+        cpu_leaves: List[torch.Tensor] = []
+        bindings: List[_FrozenTensorBinding] = []
+        for owner in block.modules():
+            for name, parameter in owner._parameters.items():
+                is_quantized_payload = parameter is not None and (_is_quanto_tensor(parameter) or _is_sdnq_tensor(parameter))
+                if parameter is None or (parameter.requires_grad and not is_quantized_payload):
+                    continue
+                tree = _flatten_tensor_tree(parameter.detach(), cpu_leaves)
+                bindings.append(
+                    _FrozenTensorBinding(
+                        owner=owner,
+                        name=name,
+                        parameter=parameter,
+                        tree=tree,
+                        replace_parameter=is_quantized_payload,
+                    )
+                )
+            for name, buffer in owner._buffers.items():
+                if buffer is None or buffer.device.type != "cpu":
+                    continue
+                tree = _flatten_tensor_tree(buffer, cpu_leaves)
+                bindings.append(
+                    _FrozenTensorBinding(
+                        owner=owner,
+                        name=name,
+                        parameter=None,
+                        tree=tree,
+                    )
+                )
+
+        if not cpu_leaves:
+            raise ValueError("Musubi H2D block swap found no frozen tensor payloads in a checkpointed block.")
+        for leaf in cpu_leaves:
+            if leaf.device.type != "cpu":
+                raise ValueError(f"Musubi H2D CPU master must be on CPU before ring initialization, got {leaf.device}.")
+
+        layout, total_bytes = _flat_tensor_layout(cpu_leaves)
+        cpu_flat = torch.empty(total_bytes, dtype=torch.uint8, device="cpu")
+        packed_cpu_leaves = _flat_tensor_views(cpu_flat, layout)
+        for destination, source in zip(packed_cpu_leaves, cpu_leaves):
+            destination.copy_(source)
+
+        signature = (layout, total_bytes)
+        state = _H2DBlockState(
+            block=block,
+            cpu_flat=cpu_flat,
+            cpu_leaves=packed_cpu_leaves,
+            bindings=bindings,
+            signature=signature,
+        )
+        state.bind(state.cpu_leaves)
+        self._h2d_block_states[block_id] = state
+        pool_key = (device, signature)
+        if pool_key not in self._h2d_ring_pools:
+            slots = []
+            for _ in range(self._h2d_ring_size):
+                flat = torch.empty(total_bytes, dtype=torch.uint8, device=device)
+                slots.append(_H2DRingSlot(flat=flat, leaves=_flat_tensor_views(flat, layout)))
+            self._h2d_ring_pools[pool_key] = slots
+        return state
+
+    def _h2d_copier(self, device: torch.device) -> _StagedH2DCopier:
+        copier = self._h2d_copiers.get(device)
+        if copier is None:
+            copier = _StagedH2DCopier(device, staging_count=self._h2d_ring_size)
+            self._h2d_copiers[device] = copier
+        return copier
+
+    def _load_h2d_state(self, state: _H2DBlockState, device: torch.device) -> None:
+        if state.slot is not None:
+            if state.slot.load_event is not None:
+                torch.cuda.current_stream(device).wait_event(state.slot.load_event)
+            state.bind(state.slot.leaves)
+            return
+
+        slots = self._h2d_ring_pools[(device, state.signature)]
+        slot = next((candidate for candidate in slots if candidate.owner_block_id is None), None)
+        if slot is None:
+            raise RuntimeError(
+                "Musubi H2D ring has no reusable slot. A checkpointed block retained a slot past its execution."
+            )
+
+        copier = self._h2d_copier(device)
+        copier.submit(id(state.block), slot.flat, state.cpu_flat, slot.reusable_event)
+        slot.load_event = copier.wait(id(state.block))
+
+        slot.owner_block_id = id(state.block)
+        state.slot = slot
+        state.bind(slot.leaves)
+        torch.cuda.current_stream(device).wait_event(slot.load_event)
+
+    def _release_h2d_state(self, state: _H2DBlockState) -> None:
+        slot = state.slot
+        if slot is None:
+            return
+        device = slot.leaves[0].device
+        slot.reusable_event = torch.cuda.current_stream(device).record_event()
+        state.bind(state.cpu_leaves)
+        state.slot = None
+        slot.owner_block_id = None
 
     def _clear_lifecycle_hooks(self):
         for handle in self._forward_hooks + self._backward_hooks:
@@ -305,7 +660,8 @@ class MusubiBlockSwapManager:
 
             def _make_forward_hook(owner_block):
                 def _forward_hook(_module, _args, output):
-                    self.stream_out(owner_block)
+                    if not self._h2d_block_modes.get(id(owner_block), False):
+                        self.stream_out(owner_block)
                     return output
 
                 return _forward_hook

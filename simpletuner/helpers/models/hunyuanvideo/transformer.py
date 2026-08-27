@@ -1056,13 +1056,14 @@ class HunyuanVideo15Transformer3DModel(
                 and self.gradient_checkpointing_interval > 1
                 and hidden_states_buffer is None
                 and not self.gradient_checkpointing_backend.endswith("-ffn")
+                and not musubi_offload_active
             )
 
             if use_sequential_segments:
 
                 def run_segment_block(idx, block, segment_hidden_states, segment_encoder_hidden_states):
                     if musubi_offload_active and musubi_manager.is_managed_block(idx):
-                        musubi_manager.stream_in(block, segment_hidden_states.device)
+                        musubi_manager.stream_in(block, segment_hidden_states.device, checkpointed=True)
                     result = block(
                         segment_hidden_states,
                         segment_encoder_hidden_states,
@@ -1087,15 +1088,22 @@ class HunyuanVideo15Transformer3DModel(
                 )
             else:
                 for idx, block in enumerate(self.transformer_blocks):
-                    if musubi_offload_active and musubi_manager.is_managed_block(idx):
-                        musubi_manager.stream_in(block, hidden_states.device)
                     checkpoint_this_block = should_checkpoint_block(
                         idx,
                         True,
                         self.gradient_checkpointing_interval,
                         self.gradient_checkpointing_segment_stride,
                     )
-                    if checkpoint_this_block and not self.gradient_checkpointing_backend.endswith("-ffn"):
+                    checkpoint_entire_block = checkpoint_this_block and not self.gradient_checkpointing_backend.endswith(
+                        "-ffn"
+                    )
+                    if musubi_offload_active and musubi_manager.is_managed_block(idx):
+                        musubi_manager.stream_in(
+                            block,
+                            hidden_states.device,
+                            checkpointed=checkpoint_entire_block,
+                        )
+                    if checkpoint_entire_block:
                         hidden_states, encoder_hidden_states = checkpoint_fn(
                             block,
                             hidden_states,
@@ -1134,7 +1142,7 @@ class HunyuanVideo15Transformer3DModel(
         else:
             for idx, block in enumerate(self.transformer_blocks):
                 if musubi_offload_active and musubi_manager.is_managed_block(idx):
-                    musubi_manager.stream_in(block, hidden_states.device)
+                    musubi_manager.stream_in(block, hidden_states.device, checkpointed=False)
                 hidden_states, encoder_hidden_states = block(
                     hidden_states,
                     encoder_hidden_states,

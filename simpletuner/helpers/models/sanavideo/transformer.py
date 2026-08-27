@@ -1046,14 +1046,19 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
             )
         elif torch.is_grad_enabled() and self.gradient_checkpointing:
             for index_block, block in enumerate(self.transformer_blocks):
-                if musubi_offload_active and musubi_manager.is_managed_block(index_block):
-                    musubi_manager.stream_in(block, hidden_states.device)
-                if should_checkpoint_block(
+                checkpoint_this_block = should_checkpoint_block(
                     index_block,
                     self.gradient_checkpointing,
                     self.gradient_checkpointing_interval,
                     self.gradient_checkpointing_segment_stride,
-                ):
+                )
+                if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+                    musubi_manager.stream_in(
+                        block,
+                        hidden_states.device,
+                        checkpointed=checkpoint_this_block and not self.gradient_checkpointing_backend.endswith("-ffn"),
+                    )
+                if checkpoint_this_block:
                     if self.gradient_checkpointing_backend.startswith("unsloth"):
                         from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 
@@ -1121,7 +1126,7 @@ class SanaVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         else:
             for index_block, block in enumerate(self.transformer_blocks):
                 if musubi_offload_active and musubi_manager.is_managed_block(index_block):
-                    musubi_manager.stream_in(block, hidden_states.device)
+                    musubi_manager.stream_in(block, hidden_states.device, checkpointed=False)
                 hidden_states = block(
                     hidden_states,
                     attention_mask,

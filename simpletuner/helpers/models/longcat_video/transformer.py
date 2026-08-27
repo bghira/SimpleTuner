@@ -1297,15 +1297,16 @@ class LongCatVideoTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
         kv_cache_dict_ret = {}
         capture_idx = 0
         for i, block in enumerate(self.blocks):
-            if musubi_offload_active and musubi_manager.is_managed_block(i):
-                musubi_manager.stream_in(block, hidden_states.device)
-
-            if grad_enabled and should_checkpoint_block(
+            checkpoint_this_block = grad_enabled and should_checkpoint_block(
                 capture_idx,
                 self.gradient_checkpointing,
                 self.gradient_checkpointing_interval,
                 self.gradient_checkpointing_segment_stride,
-            ):
+            )
+            if musubi_offload_active and musubi_manager.is_managed_block(i):
+                musubi_manager.stream_in(block, hidden_states.device, checkpointed=checkpoint_this_block)
+
+            if checkpoint_this_block:
                 if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 

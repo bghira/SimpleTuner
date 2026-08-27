@@ -2290,15 +2290,20 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                 if block_idx in skip_set:
                     continue
 
-                if musubi_offload_active and musubi_manager.is_managed_block(block_idx):
-                    musubi_manager.stream_in(block, hidden_states.device)
-
-                if grad_enabled and should_checkpoint_block(
+                checkpoint_this_block = grad_enabled and should_checkpoint_block(
                     block_idx,
                     self.gradient_checkpointing,
                     self.gradient_checkpointing_interval,
                     self.gradient_checkpointing_segment_stride,
-                ):
+                )
+                if musubi_offload_active and musubi_manager.is_managed_block(block_idx):
+                    musubi_manager.stream_in(
+                        block,
+                        hidden_states.device,
+                        checkpointed=checkpoint_this_block and not self.gradient_checkpointing_backend.endswith("-ffn"),
+                    )
+
+                if checkpoint_this_block:
                     if self.gradient_checkpointing_backend.startswith("unsloth"):
                         from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 

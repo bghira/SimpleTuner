@@ -584,7 +584,11 @@ class MiniMaxMusicModelTests(unittest.TestCase):
         )
 
         manager.activate.assert_called_once()
-        manager.stream_in.assert_called_once_with(transformer.transformer_blocks[1], torch.device("cpu"))
+        manager.stream_in.assert_called_once_with(
+            transformer.transformer_blocks[1],
+            torch.device("cpu"),
+            checkpointed=False,
+        )
         manager.stream_out.assert_called_once_with(transformer.transformer_blocks[1])
 
     def test_transformer_accepts_tokenwise_timesteps_for_self_flow(self):

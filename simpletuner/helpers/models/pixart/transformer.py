@@ -672,8 +672,6 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
                 )
                 continue
 
-            if musubi_offload_active and musubi_manager.is_managed_block(index_block):
-                musubi_manager.stream_in(block, hidden_states.device)
             # TREAD: START a route?
             if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
@@ -686,12 +684,16 @@ class PixArtTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAda
                 hidden_states = router.start_route(hidden_states, tread_mask_info)
                 routing_now = True
 
-            if torch.is_grad_enabled() and should_checkpoint_block(
+            checkpoint_this_block = torch.is_grad_enabled() and should_checkpoint_block(
                 index_block,
                 self.gradient_checkpointing,
                 self.gradient_checkpointing_interval,
                 self.gradient_checkpointing_segment_stride,
-            ):
+            )
+            if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+                musubi_manager.stream_in(block, hidden_states.device, checkpointed=checkpoint_this_block)
+
+            if checkpoint_this_block:
                 if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 

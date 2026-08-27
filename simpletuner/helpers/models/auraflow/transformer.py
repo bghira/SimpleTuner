@@ -806,8 +806,6 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
 
         # MMDiT blocks.
         for index_block, block in enumerate(self.joint_transformer_blocks):
-            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
-                musubi_manager.stream_in(block, hidden_states.device)
             # TREAD: START a route?
             if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
@@ -827,7 +825,7 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
                     hidden_states = hidden_states + block_controlnet_hidden_states[index_block // interval_control]
                 continue
 
-            if (
+            checkpoint_this_block = (
                 self.training
                 and torch.is_grad_enabled()
                 and should_checkpoint_block(
@@ -836,7 +834,11 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
                     self.gradient_checkpointing_interval,
                     self.gradient_checkpointing_segment_stride,
                 )
-            ):
+            )
+            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                musubi_manager.stream_in(block, hidden_states.device, checkpointed=checkpoint_this_block)
+
+            if checkpoint_this_block:
 
                 if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
@@ -916,9 +918,6 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
             for index_block, block in enumerate(self.single_transformer_blocks):
                 actual_index = len(self.joint_transformer_blocks) + index_block
 
-                if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
-                    musubi_manager.stream_in(block, combined_hidden_states.device)
-
                 # TREAD: START a route?
                 if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
                     mask_ratio = routes[route_ptr]["selection_ratio"]
@@ -959,7 +958,7 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
                         )
                     continue
 
-                if (
+                checkpoint_this_block = (
                     self.training
                     and torch.is_grad_enabled()
                     and should_checkpoint_block(
@@ -968,7 +967,15 @@ class AuraFlowTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftA
                         self.gradient_checkpointing_interval,
                         self.gradient_checkpointing_segment_stride,
                     )
-                ):
+                )
+                if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                    musubi_manager.stream_in(
+                        block,
+                        combined_hidden_states.device,
+                        checkpointed=checkpoint_this_block,
+                    )
+
+                if checkpoint_this_block:
 
                     if self.gradient_checkpointing_backend.startswith("unsloth"):
                         from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
