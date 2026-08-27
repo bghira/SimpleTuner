@@ -1666,8 +1666,18 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
         # Process through double stream blocks
         capture_idx = 0
         for bid, block in enumerate(self.double_stream_blocks):
+            checkpoint_this_block = self.training and should_checkpoint_block(
+                bid,
+                self.gradient_checkpointing,
+                self.gradient_checkpointing_interval,
+                self.gradient_checkpointing_segment_stride,
+            )
             if musubi_offload_active and musubi_manager.is_managed_block(block_id):
-                musubi_manager.stream_in(block, hidden_states.device)
+                musubi_manager.stream_in(
+                    block,
+                    hidden_states.device,
+                    checkpointed=checkpoint_this_block,
+                )
             # TREAD routing for this layer
             if use_routing:
                 # Check if this layer should use routing
@@ -1698,12 +1708,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             )
 
             # Process through the block with optional gradient checkpointing
-            if self.training and should_checkpoint_block(
-                bid,
-                self.gradient_checkpointing,
-                self.gradient_checkpointing_interval,
-                self.gradient_checkpointing_segment_stride,
-            ):
+            if checkpoint_this_block:
 
                 def create_custom_forward(module, return_dict=None):
                     def custom_forward(*inputs):
@@ -1797,8 +1802,18 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
 
         # 7. Process through single stream blocks
         for bid, block in enumerate(self.single_stream_blocks):
+            checkpoint_this_block = self.training and should_checkpoint_block(
+                len(self.double_stream_blocks) + bid,
+                self.gradient_checkpointing,
+                self.gradient_checkpointing_interval,
+                self.gradient_checkpointing_segment_stride,
+            )
             if musubi_offload_active and musubi_manager.is_managed_block(block_id):
-                musubi_manager.stream_in(block, hidden_states.device)
+                musubi_manager.stream_in(
+                    block,
+                    hidden_states.device,
+                    checkpointed=checkpoint_this_block,
+                )
             # TREAD routing for single stream layers
             if use_routing:
                 # Check if this layer should use routing
@@ -1835,12 +1850,7 @@ class HiDreamImageTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, P
             hidden_states = torch.cat([hidden_states, cur_llama_embedding], dim=1)
 
             # Process through the block with optional gradient checkpointing
-            if self.training and should_checkpoint_block(
-                len(self.double_stream_blocks) + bid,
-                self.gradient_checkpointing,
-                self.gradient_checkpointing_interval,
-                self.gradient_checkpointing_segment_stride,
-            ):
+            if checkpoint_this_block:
 
                 def create_custom_forward(module, return_dict=None):
                     def custom_forward(*inputs):

@@ -707,7 +707,7 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
     @staticmethod
     def _stream_in_for_checkpoint_recompute(musubi_manager, layer_idx: int, layer: nn.Module, device: torch.device) -> None:
         if musubi_manager is not None and musubi_manager.is_managed_block(layer_idx):
-            musubi_manager.stream_in(layer, device)
+            musubi_manager.stream_in(layer, device, checkpointed=True)
 
     # -------------------------------------------------------------------------
     # Pure-tensor packing/unpacking helpers (no layer state).
@@ -1057,9 +1057,14 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
             gen_seq = hidden_states
             rotary_gen = (cos[und_len:], sin[und_len:])
             for layer_idx, decoder_layer in enumerate(self.layers):
+                checkpoint_this_block = self._should_gradient_checkpoint_layer(layer_idx)
                 if musubi_offload_active and musubi_manager.is_managed_block(layer_idx):
-                    musubi_manager.stream_in(decoder_layer, gen_seq.device)
-                if self._should_gradient_checkpoint_layer(layer_idx):
+                    musubi_manager.stream_in(
+                        decoder_layer,
+                        gen_seq.device,
+                        checkpointed=checkpoint_this_block,
+                    )
+                if checkpoint_this_block:
 
                     def checkpointed_gen_only(
                         x,
@@ -1088,9 +1093,14 @@ class Cosmos3OmniTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, Attentio
             rotary_emb = (cos[:und_len], sin[:und_len], cos[und_len:], sin[und_len:])
             vision_gen_indexes = vision_mse_loss_indexes - und_len
             for layer_idx, decoder_layer in enumerate(self.layers):
+                checkpoint_this_block = self._should_gradient_checkpoint_layer(layer_idx)
                 if musubi_offload_active and musubi_manager.is_managed_block(layer_idx):
-                    musubi_manager.stream_in(decoder_layer, gen_seq.device)
-                if self._should_gradient_checkpoint_layer(layer_idx):
+                    musubi_manager.stream_in(
+                        decoder_layer,
+                        gen_seq.device,
+                        checkpointed=checkpoint_this_block,
+                    )
+                if checkpoint_this_block:
 
                     def checkpointed_layer(
                         und,

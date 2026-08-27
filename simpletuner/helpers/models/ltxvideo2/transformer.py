@@ -2117,10 +2117,11 @@ class LTX2VideoTransformer3DModel(
                 musubi_offload_active = musubi_manager.activate(self.transformer_blocks, hidden_states.device, grad_enabled)
 
             for block_idx, block in enumerate(self.transformer_blocks):
+                checkpoint_this_block = torch.is_grad_enabled() and self.gradient_checkpointing
                 if musubi_offload_active and musubi_manager.is_managed_block(block_idx):
-                    musubi_manager.stream_in(block, hidden_states.device)
+                    musubi_manager.stream_in(block, hidden_states.device, checkpointed=checkpoint_this_block)
 
-                if torch.is_grad_enabled() and self.gradient_checkpointing:
+                if checkpoint_this_block:
                     checkpoint_kwargs = {"use_reentrant": False, **_transformerengine_checkpoint_kwargs(block)}
                     hidden_states, audio_hidden_states = simpletuner_checkpoint(
                         block,
@@ -2555,10 +2556,15 @@ class LTX2VideoTransformer3DModel(
                 )
                 routing_now = True
 
+            checkpoint_this_block = torch.is_grad_enabled() and self.gradient_checkpointing
             if musubi_offload_active and musubi_manager.is_managed_block(block_idx):
-                musubi_manager.stream_in(block, hidden_states.device)
+                musubi_manager.stream_in(
+                    block,
+                    hidden_states.device,
+                    checkpointed=checkpoint_this_block and not self.gradient_checkpointing_backend.endswith("-ffn"),
+                )
 
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
+            if checkpoint_this_block:
                 if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 

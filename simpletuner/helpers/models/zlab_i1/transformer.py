@@ -880,8 +880,18 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             image_tokens, text_tokens = segmented_state[:2]
         else:
             for block in self.in_blocks:
+                checkpoint_this_block = (
+                    global_idx not in skip_set
+                    and torch.is_grad_enabled()
+                    and should_checkpoint_block(
+                        global_idx,
+                        self.gradient_checkpointing,
+                        self.gradient_checkpointing_interval,
+                        self.gradient_checkpointing_segment_stride,
+                    )
+                )
                 if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
-                    musubi_manager.stream_in(block, x.device)
+                    musubi_manager.stream_in(block, x.device, checkpointed=checkpoint_this_block)
                 maybe_start_route()
                 if global_idx not in skip_set:
                     image_tokens, text_tokens = run_block(block)
@@ -893,8 +903,18 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     musubi_manager.stream_out(block)
                 global_idx += 1
 
+            checkpoint_this_block = (
+                global_idx not in skip_set
+                and torch.is_grad_enabled()
+                and should_checkpoint_block(
+                    global_idx,
+                    self.gradient_checkpointing,
+                    self.gradient_checkpointing_interval,
+                    self.gradient_checkpointing_segment_stride,
+                )
+            )
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
-                musubi_manager.stream_in(self.mid_block, x.device)
+                musubi_manager.stream_in(self.mid_block, x.device, checkpointed=checkpoint_this_block)
             maybe_start_route()
             if global_idx not in skip_set:
                 image_tokens, text_tokens = run_block(self.mid_block)
@@ -906,8 +926,18 @@ class ZlabI1Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             global_idx += 1
 
             for block in self.out_blocks:
+                checkpoint_this_block = (
+                    global_idx not in skip_set
+                    and torch.is_grad_enabled()
+                    and should_checkpoint_block(
+                        global_idx,
+                        self.gradient_checkpointing,
+                        self.gradient_checkpointing_interval,
+                        self.gradient_checkpointing_segment_stride,
+                    )
+                )
                 if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
-                    musubi_manager.stream_in(block, x.device)
+                    musubi_manager.stream_in(block, x.device, checkpointed=checkpoint_this_block)
                 maybe_start_route()
                 skip = skips.pop()
                 if global_idx not in skip_set:

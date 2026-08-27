@@ -1106,8 +1106,13 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                 if skip_layers is not None and i in skip_layers:
                     continue
 
+                checkpoint_this_block = torch.is_grad_enabled() and self.gradient_checkpointing
                 if musubi_offload_active and musubi_manager.is_managed_block(i):
-                    musubi_manager.stream_in(block, hidden_states.device)
+                    musubi_manager.stream_in(
+                        block,
+                        hidden_states.device,
+                        checkpointed=checkpoint_this_block and not self.gradient_checkpointing_backend.endswith("-ffn"),
+                    )
 
                 # Apply transformer block
                 # Each block does:
@@ -1115,7 +1120,7 @@ class WanTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrigi
                 # 2. Cross-attention from video to text tokens
                 # 3. Feed-forward on video tokens
                 # Only video tokens are routed; text tokens always remain full sequence
-                if torch.is_grad_enabled() and self.gradient_checkpointing:
+                if checkpoint_this_block:
                     if self.gradient_checkpointing_backend.startswith("unsloth"):
                         from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 

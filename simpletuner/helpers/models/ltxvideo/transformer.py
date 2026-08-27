@@ -768,14 +768,18 @@ class LTXVideoTransformer3DModel(
                         )
                         hidden_states = router.start_route(hidden_states, mask_info)
                         break
-            if musubi_offload_active and musubi_manager.is_managed_block(bid):
-                musubi_manager.stream_in(block, hidden_states.device)
             checkpoint_this_block = should_checkpoint_block(
                 bid,
                 grad_enabled and self.gradient_checkpointing,
                 self.gradient_checkpointing_interval,
                 self.gradient_checkpointing_segment_stride,
             )
+            if musubi_offload_active and musubi_manager.is_managed_block(bid):
+                musubi_manager.stream_in(
+                    block,
+                    hidden_states.device,
+                    checkpointed=checkpoint_this_block and not self.gradient_checkpointing_backend.endswith("-ffn"),
+                )
             if checkpoint_this_block:
                 if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint

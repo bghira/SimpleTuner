@@ -1208,8 +1208,18 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                     capture_idx += len(segment_blocks)
                     continue
 
+            checkpoint_this_block = (
+                self.training
+                and self.gradient_checkpointing
+                and not run_gap_eagerly
+                and (self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0)
+            )
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
-                musubi_manager.stream_in(block, hidden_states.device)
+                musubi_manager.stream_in(
+                    block,
+                    hidden_states.device,
+                    checkpointed=checkpoint_this_block and not self.gradient_checkpointing_backend.endswith("-ffn"),
+                )
             # TREAD: START a route?
             if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
@@ -1237,12 +1247,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
 
                 # concatenate text + image rope
                 current_rope = tuple(torch.cat([tr, ir], dim=1) for tr, ir in zip(text_rope_b, img_rope_r))
-            if (
-                self.training
-                and self.gradient_checkpointing
-                and not run_gap_eagerly
-                and (self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0)
-            ):
+            if checkpoint_this_block:
                 checkpoint_ffn = self.gradient_checkpointing_backend.endswith("-ffn")
 
                 def create_custom_forward(module):
@@ -1365,8 +1370,18 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                     capture_idx += len(segment_blocks)
                     continue
 
+            checkpoint_this_block = (
+                self.training
+                and self.gradient_checkpointing
+                and not run_gap_eagerly
+                and (self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0)
+            )
             if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
-                musubi_manager.stream_in(block, hidden_states.device)
+                musubi_manager.stream_in(
+                    block,
+                    hidden_states.device,
+                    checkpointed=checkpoint_this_block and not self.gradient_checkpointing_backend.endswith("-ffn"),
+                )
             # TREAD: START? (operate on *image* tokens only)
             if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
@@ -1402,12 +1417,7 @@ class FluxTransformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapt
                 )
                 current_rope = tuple(torch.cat([tr, ir], dim=1) for tr, ir in zip(text_rope_b, img_rope_r))
 
-            if (
-                self.training
-                and self.gradient_checkpointing
-                and not run_gap_eagerly
-                and (self.gradient_checkpointing_interval is None or index_block % self.gradient_checkpointing_interval == 0)
-            ):
+            if checkpoint_this_block:
                 checkpoint_ffn = self.gradient_checkpointing_backend.endswith("-ffn")
 
                 def create_custom_forward(module):

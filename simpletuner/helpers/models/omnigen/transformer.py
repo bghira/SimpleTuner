@@ -591,10 +591,11 @@ class OmniGenTransformer2DModel(ModelMixin, ConfigMixin):
 
         capture_idx = 0
         for idx, block in enumerate(self.layers):
+            checkpoint_this_block = torch.is_grad_enabled() and self.gradient_checkpointing
             if musubi_offload_active and musubi_manager.is_managed_block(idx):
-                musubi_manager.stream_in(block, hidden_states.device)
+                musubi_manager.stream_in(block, hidden_states.device, checkpointed=checkpoint_this_block)
 
-            if torch.is_grad_enabled() and self.gradient_checkpointing:
+            if checkpoint_this_block:
                 hidden_states = self._gradient_checkpointing_func(block, hidden_states, attention_mask, image_rotary_emb)
             else:
                 hidden_states = block(hidden_states, attention_mask=attention_mask, image_rotary_emb=image_rotary_emb)

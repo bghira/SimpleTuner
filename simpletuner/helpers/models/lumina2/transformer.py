@@ -769,15 +769,20 @@ class Lumina2Transformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromO
                 )
                 continue
 
-            if musubi_offload_active and musubi_manager.is_managed_block(idx):
-                musubi_manager.stream_in(layer, hidden_states.device)
-
-            if torch.is_grad_enabled() and should_checkpoint_block(
+            checkpoint_this_block = torch.is_grad_enabled() and should_checkpoint_block(
                 idx,
                 self.gradient_checkpointing,
                 self.gradient_checkpointing_interval,
                 self.gradient_checkpointing_segment_stride,
-            ):
+            )
+            if musubi_offload_active and musubi_manager.is_managed_block(idx):
+                musubi_manager.stream_in(
+                    layer,
+                    hidden_states.device,
+                    checkpointed=checkpoint_this_block and not self.gradient_checkpointing_backend.endswith("-ffn"),
+                )
+
+            if checkpoint_this_block:
                 if self.gradient_checkpointing_backend.startswith("unsloth"):
                     from simpletuner.helpers.training.offloaded_gradient_checkpointer import offloaded_checkpoint
 

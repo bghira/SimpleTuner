@@ -473,10 +473,8 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
 
         capture_idx = 0
         for index_block, block in enumerate(self.transformer_blocks):
-            if musubi_offload_active and musubi_manager.is_managed_block(capture_idx):
-                musubi_manager.stream_in(block, hidden_states.device)
-            if (
-                torch.is_grad_enabled()
+            checkpoint_this_block = (
+                grad_enabled
                 and self.use_checkpoint[index_block]
                 and should_checkpoint_block(
                     capture_idx,
@@ -484,7 +482,10 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     self.gradient_checkpointing_interval,
                     self.gradient_checkpointing_segment_stride,
                 )
-            ):
+            )
+            if musubi_offload_active and musubi_manager.is_managed_block(capture_idx):
+                musubi_manager.stream_in(block, hidden_states.device, checkpointed=checkpoint_this_block)
+            if checkpoint_this_block:
                 encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
                     _run_longcat_transformer_block,
                     block,
@@ -511,10 +512,8 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
             capture_idx += 1
 
         for index_block, block in enumerate(self.single_transformer_blocks):
-            if musubi_offload_active and musubi_manager.is_managed_block(capture_idx):
-                musubi_manager.stream_in(block, hidden_states.device)
-            if (
-                torch.is_grad_enabled()
+            checkpoint_this_block = (
+                grad_enabled
                 and self.use_single_checkpoint[index_block]
                 and should_checkpoint_block(
                     capture_idx,
@@ -522,7 +521,10 @@ class LongCatImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin):
                     self.gradient_checkpointing_interval,
                     self.gradient_checkpointing_segment_stride,
                 )
-            ):
+            )
+            if musubi_offload_active and musubi_manager.is_managed_block(capture_idx):
+                musubi_manager.stream_in(block, hidden_states.device, checkpointed=checkpoint_this_block)
+            if checkpoint_this_block:
                 encoder_hidden_states, hidden_states = self._gradient_checkpointing_func(
                     _run_longcat_single_transformer_block,
                     block,

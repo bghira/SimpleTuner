@@ -744,8 +744,8 @@ class FakeMusubiManager:
     def is_managed_block(self, block_idx):
         return block_idx == self.managed_block_idx
 
-    def stream_in(self, block, compute_device):
-        self.calls.append(("stream_in", id(block), str(compute_device)))
+    def stream_in(self, block, compute_device, checkpointed=None):
+        self.calls.append(("stream_in", id(block), str(compute_device), checkpointed))
 
     def stream_out(self, block):
         self.calls.append(("stream_out", id(block)))
@@ -1327,7 +1327,7 @@ class MiniMaxH3Tests(unittest.TestCase):
             fake_manager.calls,
             [
                 ("activate", 3, "cpu", True),
-                ("stream_in", id(model.transformer_blocks[1]), "cpu"),
+                ("stream_in", id(model.transformer_blocks[1]), "cpu", False),
                 ("stream_out", id(model.transformer_blocks[1])),
             ],
         )
