@@ -29,6 +29,8 @@ This setup is VRAM-intensive, and the VAE pre-caching step can spike memory usag
   - ~16 sec/step on 7900XTX (local run).
   - ~30 min for 200 steps on A100-80G SXM4.
 
+> ⚠️ **Test regional compilation before keeping it enabled.** `dynamo_use_regional_compilation` is not a universal speedup for LTX Video 2 and can reduce steady-state throughput even after compilation has warmed up. Compare eager and compiled runs with the same fixed batch, frame count, and resolution, and judge them by several post-warmup training steps rather than the initial compilation steps.
+
 ## Prerequisites
 
 Ensure Python 3.12 is installed.

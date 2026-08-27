@@ -29,6 +29,8 @@ LTX Video 2 是重量级 **19B** 模型，由以下组件组成：
   - 7900XTX 约 16 秒/step（本地运行）。
   - A100-80G SXM4 跑 200 steps 约 30 分钟。
 
+> ⚠️ **请先测试 regional compilation，再决定是否保留。** `dynamo_use_regional_compilation` 并不一定能加速 LTX Video 2，即使编译预热完成后也可能降低稳定吞吐。请在相同的固定 batch、帧数和分辨率下比较 eager 与 compiled 运行，并根据预热后的多个训练 step 判断，而不是依据最初的编译 step。
+
 ## 前提条件
 
 确保已安装 Python 3.12。
