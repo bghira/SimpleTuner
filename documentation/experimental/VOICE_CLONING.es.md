@@ -104,6 +104,7 @@ Los defaults son conservadores. En este workflow, el backend de audio es la musi
 | `build_index` | `true` | Retrieval suele mejorar estabilidad de identidad y reducir leakage. |
 | `identity_data_dir` | obligatorio en entrenamiento bajo demanda | Apunta a ejemplos vocales limpios de la voz que se transferira a las canciones de expansion. |
 | `identity_audio_mode` | `separate` | Ejecuta Demucs en los clips de identidad antes del entrenamiento. Usa `vocal_only` si el dataset de identidad ya contiene vocal stems. |
+| `identity_stem_debug_dir` | sin definir | Directorio opcional para guardar previews `vocals.wav` y `no_vocals.wav` de la identidad. Usalo para confirmar que RVC entrena con voces aisladas, no con leakage de instrumentos. |
 | `asset_hub_model_id` | `lj1995/VoiceConversionWebUI` | Default RVC asset repository for HuBERT, RMVPE, and v2 48k pretrained generator/discriminator checkpoints. |
 | `model_name` | transform or Hub repo name | Human-readable name saved into the RVC artifact so downloaded caches are identifiable outside their folder name. |
 | `sample_rate` | `48000` | Current implementation targets RVC v2 48k assets. Other rates need matching pretrained assets and configs. |
@@ -361,6 +362,7 @@ El proyecto standalone [`huggingface-hub-rvc`](https://github.com/SimpleTuner-io
 | La LoRA solo funciona en un genero | La identidad vocal sigue entrelazada con captions de arreglo o datos fuente. |
 | El split generado suena hueco o con fase rara | Artifacts de separacion/remix en procesamiento de canciones completas. |
 | Los instrumentos suenan convertidos como voz | Se uso `full_mix_convert` cuando hacia falta separacion. |
+| El modelo vocal parece aprender instrumentos | La separacion de identidad produjo vocal stems con demasiado leakage de acompanamiento. Define `model.identity_stem_debug_dir`, inspecciona los stems guardados, o preprocesa stems vocales mas limpios y usa `identity_audio_mode=vocal_only`. |
 | La identidad vocal es debil | Faltan datos objetivo mas limpios, mas datos o mejor indice. |
 | Las captions no controlan la voz | Las captions aun mencionan la voz fuente u omiten la identidad objetivo. |
 | El modelo principal aprende artifacts | El audio generado tiene baja calidad o demasiado peso en el mix de entrenamiento. |

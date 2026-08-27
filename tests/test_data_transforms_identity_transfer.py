@@ -127,6 +127,7 @@ class TestIdentityTransferTransform(unittest.TestCase):
 
         self.assertFalse(normalised["model"]["push_to_hub"])
         self.assertFalse(normalised["model"]["public"])
+        self.assertEqual(normalised["model"]["separation_method"], "demucs")
 
         fingerprint = transform._voice_model_fingerprint(normalised)
         cache_dir = Path(normalised["model"]["cache_dir"])
@@ -153,6 +154,17 @@ class TestIdentityTransferTransform(unittest.TestCase):
         )
 
         self.assertEqual(artifact.model_path, cache_dir / "model.safetensors")
+
+    def test_identity_stem_debug_dir_does_not_change_voice_model_fingerprint(self):
+        transform = self._transform({"task": "identity_transfer", "id": "voice-transfer"})
+        base = transform._normalise_transform_config(existing_backend_ids={"artist-source"})
+        with_debug = json.loads(json.dumps(base))
+        with_debug["model"]["identity_stem_debug_dir"] = "debug-stems"
+
+        self.assertEqual(
+            transform._voice_model_fingerprint(base),
+            transform._voice_model_fingerprint(with_debug),
+        )
 
     def test_local_voice_model_artifact_loads_legacy_pth_manifest(self):
         transform = self._transform({"task": "identity_transfer", "id": "voice-transfer"})
@@ -317,6 +329,7 @@ class TestIdentityTransferTransform(unittest.TestCase):
         (source_dir / "source.txt").write_text("rock vocal test", encoding="utf-8")
 
         def fake_train(_self, source_backend_config, transform_config, cache_dir, fingerprint, manifest_base, **_kwargs):
+            self.assertEqual(transform_config["model"]["separation_method"], "demucs")
             cache_dir.mkdir(parents=True)
             model_path = cache_dir / "model.pth"
             manifest_path = cache_dir / "manifest.json"

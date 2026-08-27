@@ -59,6 +59,8 @@ class TestRunRVCModelScript(unittest.TestCase):
         self.assertEqual(transform["task"], "identity_transfer")
         self.assertEqual(transform["method"], "rvc")
         self.assertEqual(transform["model"]["identity_audio_mode"], "separate")
+        self.assertEqual(transform["model"]["separation_method"], "demucs")
+        self.assertNotIn("identity_stem_debug_dir", transform["model"])
         self.assertEqual(transform["model"]["model_name"], "Test Voice")
         self.assertTrue(transform["model"]["public"])
         self.assertEqual(transform["conversion"]["audio_mode"], "separate_convert_remix")
@@ -66,6 +68,27 @@ class TestRunRVCModelScript(unittest.TestCase):
         self.assertEqual(transform["model"]["batch_size"], 1)
         self.assertEqual(transform["model"]["device"], "cpu")
         self.assertEqual(transform["target"]["instance_data_dir"], str(generated_dir))
+
+    def test_build_config_accepts_identity_stem_debug_dir(self):
+        args = self.script.build_parser().parse_args(
+            [
+                "--source-dir",
+                "source",
+                "--identity-dir",
+                "identity",
+                "--generated-dir",
+                "generated",
+                "--output-dir",
+                "output",
+                "--identity-stem-debug-dir",
+                "debug-stems",
+            ]
+        )
+
+        config = self.script.build_data_backend_config(args)
+
+        transform = config[0]["data_transforms"][0]
+        self.assertEqual(transform["model"]["identity_stem_debug_dir"], "debug-stems")
 
 
 if __name__ == "__main__":

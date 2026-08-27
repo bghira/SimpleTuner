@@ -104,6 +104,7 @@ The defaults are conservative. In this workflow, the audio backend is the expans
 | `build_index` | `true` | Retrieval usually improves identity stability and reduces leakage. |
 | `identity_data_dir` | required when training on demand | Points to clean vocal examples of the voice to transfer into the expansion songs. |
 | `identity_audio_mode` | `separate` | Runs Demucs on identity clips before training. Use `vocal_only` when the identity dataset already contains vocal stems. |
+| `identity_stem_debug_dir` | unset | Optional directory for saved identity `vocals.wav` and `no_vocals.wav` previews. Use it to verify that RVC is training from isolated vocals rather than instrument bleed. |
 | `asset_hub_model_id` | `lj1995/VoiceConversionWebUI` | Provides the default MIT-licensed RVC assets: HuBERT, RMVPE, and v2 48k pretrained generator/discriminator checkpoints. |
 | `model_name` | transform or Hub repo name | Human-readable name saved into the RVC artifact so downloaded caches are identifiable outside their folder name. |
 | `sample_rate` | `48000` | The current implementation targets RVC v2 48k assets. Other rates need matching pretrained assets and configs. |
@@ -372,6 +373,7 @@ The standalone [`huggingface-hub-rvc`](https://github.com/SimpleTuner-io/hugging
 | The LoRA only works in one genre | Voice identity is still entangled with arrangement captions or source data. |
 | The generated split sounds phasey or hollow | Separation/remix artifacts from full-song processing. |
 | Instruments sound like they were voice-converted | `full_mix_convert` was used where separation was needed. |
+| The voice model seems to learn instruments | Identity separation produced vocal stems with too much accompaniment bleed. Set `model.identity_stem_debug_dir`, inspect the saved stems, or preprocess cleaner vocal stems and use `identity_audio_mode=vocal_only`. |
 | Vocal identity is weak | Voice-conversion model needs cleaner target data, more target data, or a stronger retrieval index. |
 | Captions do not control the voice | Captions still mention source-vocal identity or omit the target identity. |
 | The main model learns artifacts | Generated audio quality is too low or too dominant in the train mix. |

@@ -2337,6 +2337,7 @@ function trainerComponent() {
                         normalized.conversion.audio_mode = 'separate_convert_remix';
                     }
                     normalized.conversion.separation_method = this._coerceString(conversion.separation_method) || 'demucs';
+                    normalized.model.separation_method = this._coerceString(model.separation_method) || normalized.conversion.separation_method;
                     const timbreStrength = parseFloat(conversion.timbre_strength);
                     if (Number.isFinite(timbreStrength)) {
                         normalized.conversion.timbre_strength = Math.max(0, Math.min(1, timbreStrength));

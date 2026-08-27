@@ -104,6 +104,7 @@ default は保守的です。この workflow では、audio backend は変換し
 | `build_index` | `true` | retrieval は identity の安定性を上げ、漏れを減らしやすいです。 |
 | `identity_data_dir` | on-demand training では必須 | 拡張楽曲へ移したい対象 voice の clean vocal examples を指します。 |
 | `identity_audio_mode` | `separate` | training 前に identity clips へ Demucs を実行します。identity dataset が既に vocal stems の場合は `vocal_only` を使います。 |
+| `identity_stem_debug_dir` | unset | identity の `vocals.wav` と `no_vocals.wav` preview を保存する任意の directory です。RVC が楽器 bleed ではなく分離済み vocal から training しているか確認できます。 |
 | `asset_hub_model_id` | `lj1995/VoiceConversionWebUI` | Default RVC asset repository for HuBERT, RMVPE, and v2 48k pretrained generator/discriminator checkpoints. |
 | `model_name` | transform or Hub repo name | Human-readable name saved into the RVC artifact so downloaded caches are identifiable outside their folder name. |
 | `sample_rate` | `48000` | Current implementation targets RVC v2 48k assets. Other rates need matching pretrained assets and configs. |
@@ -361,6 +362,7 @@ standalone の [`huggingface-hub-rvc`](https://github.com/SimpleTuner-io/hugging
 | LoRA が 1 ジャンルでしか効かない | 声 identity が arrangement caption や source data とまだ絡んでいます。 |
 | generated split が phasey または hollow に聞こえる | full-song 処理の separation/remix artifact。 |
 | 楽器まで変声されたように聞こえる | 分離が必要なのに `full_mix_convert` を使っています。 |
+| voice model が楽器まで学習したように聞こえる | identity separation の vocal stem に accompaniment bleed が多すぎます。`model.identity_stem_debug_dir` で保存された stems を確認するか、より clean な vocal stems を前処理して `identity_audio_mode=vocal_only` を使ってください。 |
 | vocal identity が弱い | target data の品質、量、または retrieval index が不足しています。 |
 | caption が声を制御しない | source vocal identity が caption に残っている、または target identity がありません。 |
 | main model が artifact を学ぶ | generated audio の品質が低い、または train mix 内で強すぎます。 |

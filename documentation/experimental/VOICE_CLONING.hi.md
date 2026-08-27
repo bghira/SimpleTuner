@@ -104,6 +104,7 @@ Defaults conservative हैं। इस workflow में audio backend व�
 | `build_index` | `true` | Retrieval identity stability improve कर सकता है और leakage घटा सकता है। |
 | `identity_data_dir` | on-demand training में required | उस clean target voice के vocal examples की ओर point करता है जिसे expansion songs में transfer करना है। |
 | `identity_audio_mode` | `separate` | Training से पहले identity clips पर Demucs चलाता है। अगर identity dataset में पहले से vocal stems हैं तो `vocal_only` use करें। |
+| `identity_stem_debug_dir` | unset | Identity `vocals.wav` और `no_vocals.wav` previews save करने की optional directory। इससे verify करें कि RVC isolated vocals से train कर रहा है, instrument bleed से नहीं। |
 | `asset_hub_model_id` | `lj1995/VoiceConversionWebUI` | Default RVC asset repository for HuBERT, RMVPE, and v2 48k pretrained generator/discriminator checkpoints. |
 | `model_name` | transform or Hub repo name | Human-readable name saved into the RVC artifact so downloaded caches are identifiable outside their folder name. |
 | `sample_rate` | `48000` | Current implementation targets RVC v2 48k assets. Other rates need matching pretrained assets and configs. |
@@ -361,6 +362,7 @@ Standalone [`huggingface-hub-rvc`](https://github.com/SimpleTuner-io/huggingface
 | LoRA सिर्फ एक genre में काम करती है | Voice identity अभी भी arrangement captions या source data से entangled है। |
 | Generated split hollow या phasey सुनाई देता है | Full-song processing में separation/remix artifacts। |
 | Instruments voice-converted जैसे सुनते हैं | Separation चाहिए थी लेकिन `full_mix_convert` use हुआ। |
+| Voice model instruments सीखता हुआ लगता है | Identity separation के vocal stems में accompaniment bleed बहुत ज्यादा है। `model.identity_stem_debug_dir` set करके saved stems inspect करें, या cleaner vocal stems preprocess करके `identity_audio_mode=vocal_only` use करें। |
 | Vocal identity weak है | Voice-conversion model को cleaner target data, more data, या stronger retrieval index चाहिए। |
 | Captions voice control नहीं करतीं | Captions में source-vocal identity बची है या target identity missing है। |
 | Main model artifacts सीखता है | Generated audio low quality है या train mix में बहुत dominant है। |

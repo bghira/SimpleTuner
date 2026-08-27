@@ -73,6 +73,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=4, help="RVC training batch size.")
     parser.add_argument("--learning-rate", type=float, default=1e-4, help="RVC AdamW learning rate.")
     parser.add_argument("--max-seconds-per-file", type=float, default=180.0, help="Maximum identity audio seconds per file.")
+    parser.add_argument(
+        "--identity-stem-debug-dir",
+        type=Path,
+        default=None,
+        help="Optional directory for identity vocal/accompaniment stem previews.",
+    )
     parser.add_argument("--pretrained-generator-path", type=Path, default=None)
     parser.add_argument("--pretrained-discriminator-path", type=Path, default=None)
     parser.add_argument("--rmvpe-model-path", type=Path, default=None)
@@ -120,6 +126,7 @@ def build_data_backend_config(args: argparse.Namespace) -> list[dict[str, Any]]:
         or (args.hub_model_id.rstrip("/").rsplit("/", 1)[-1] if args.hub_model_id else args.transform_id),
         "sample_rate": args.sample_rate,
         "identity_audio_mode": args.identity_audio_mode,
+        "separation_method": args.separation_method,
         "training_steps": args.training_steps,
         "batch_size": args.batch_size,
         "learning_rate": args.learning_rate,
@@ -133,6 +140,7 @@ def build_data_backend_config(args: argparse.Namespace) -> list[dict[str, Any]]:
     _set_if_present(model, "device", args.device)
     _set_if_present(model, "demucs_device", args.demucs_device)
     _set_if_present(model, "demucs_model", args.demucs_model)
+    _set_if_present(model, "identity_stem_debug_dir", args.identity_stem_debug_dir)
     _set_if_present(model, "pretrained_generator_path", args.pretrained_generator_path)
     _set_if_present(model, "pretrained_discriminator_path", args.pretrained_discriminator_path)
     _set_if_present(model, "rmvpe_model_path", args.rmvpe_model_path)

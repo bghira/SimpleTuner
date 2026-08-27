@@ -635,6 +635,7 @@ function dataloaderSectionComponent() {
                     model_name: `${dataset.id || 'audio'} RVC voice`,
                     sample_rate: 48000,
                     identity_audio_mode: 'separate',
+                    separation_method: 'demucs',
                     training_steps: 1000,
                     batch_size: 4,
                     learning_rate: 0.0001
@@ -668,6 +669,7 @@ function dataloaderSectionComponent() {
         if (transform.model.learning_rate === undefined) transform.model.learning_rate = 0.0001;
         transform.conversion.audio_mode = transform.conversion.audio_mode || 'separate_convert_remix';
         transform.conversion.separation_method = transform.conversion.separation_method || 'demucs';
+        transform.model.separation_method = transform.model.separation_method || transform.conversion.separation_method;
         if (transform.conversion.timbre_strength === undefined) transform.conversion.timbre_strength = 1.0;
         if (transform.conversion.retrieval_strength === undefined) transform.conversion.retrieval_strength = 0.75;
         return transform;

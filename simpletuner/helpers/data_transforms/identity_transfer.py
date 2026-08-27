@@ -344,6 +344,7 @@ class IdentityTransferTransform(DataTransformTask):
         conversion.setdefault("timbre_strength", 1.0)
         conversion.setdefault("retrieval_strength", 0.75)
         transform["conversion"] = conversion
+        model.setdefault("separation_method", conversion["separation_method"])
 
         target = deepcopy(transform.get("target") or {})
         target.setdefault("id", transform_id)
@@ -513,6 +514,7 @@ class IdentityTransferTransform(DataTransformTask):
             "force_retrain",
             "hub_model_id",
             "hub_token",
+            "identity_stem_debug_dir",
             "model_name",
             "push_to_hub",
             "public",
@@ -540,6 +542,7 @@ class IdentityTransferTransform(DataTransformTask):
             "force_retrain",
             "hub_model_id",
             "hub_token",
+            "identity_stem_debug_dir",
             "model_name",
             "push_to_hub",
             "public",

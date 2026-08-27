@@ -252,6 +252,7 @@ describe('Dataloader Section Audio Capabilities', () => {
             expect(dataset.data_transforms[0].model.model_name).toBe('voice-source RVC voice');
             expect(dataset.data_transforms[0].model.sample_rate).toBe(48000);
             expect(dataset.data_transforms[0].model.identity_audio_mode).toBe('separate');
+            expect(dataset.data_transforms[0].model.separation_method).toBe('demucs');
             expect(dataset.data_transforms[0].model.training_steps).toBe(1000);
             expect(dataset.data_transforms[0].model.batch_size).toBe(4);
             expect(dataset.data_transforms[0].model.learning_rate).toBe(0.0001);

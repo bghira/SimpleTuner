@@ -104,6 +104,7 @@ SimpleTuner 应该能够：
 | `build_index` | `true` | 检索通常能提高身份稳定性并减少泄漏。 |
 | `identity_data_dir` | 按需训练时必填 | 指向要迁移到扩展歌曲中的干净目标声音示例。 |
 | `identity_audio_mode` | `separate` | 训练前对身份音频运行 Demucs。若身份数据集已是人声 stems，请用 `vocal_only`。 |
+| `identity_stem_debug_dir` | 未设置 | 可选目录，用来保存 identity `vocals.wav` 和 `no_vocals.wav` 预览。用它确认 RVC 是否从隔离人声训练，而不是从乐器泄漏训练。 |
 | `asset_hub_model_id` | `lj1995/VoiceConversionWebUI` | Default RVC asset repository for HuBERT, RMVPE, and v2 48k pretrained generator/discriminator checkpoints. |
 | `model_name` | transform or Hub repo name | Human-readable name saved into the RVC artifact so downloaded caches are identifiable outside their folder name. |
 | `sample_rate` | `48000` | Current implementation targets RVC v2 48k assets. Other rates need matching pretrained assets and configs. |
@@ -361,6 +362,7 @@ Manifest 应记录身份数据集指纹、变换设置、扩展源数据指纹�
 | LoRA 只在一种流派里有效 | 声音身份仍与编曲 caption 或源数据纠缠。 |
 | 生成 split 听起来空、相位怪 | 完整歌曲处理中的分离或 remix 伪影。 |
 | 乐器像被变声了一样 | 需要分离时使用了 `full_mix_convert`。 |
+| 声音模型像学进了乐器 | Identity separation 的人声 stem 混入太多伴奏。设置 `model.identity_stem_debug_dir` 检查保存的 stems，或先预处理更干净的人声 stems 并使用 `identity_audio_mode=vocal_only`。 |
 | 人声身份很弱 | 目标数据需要更干净、更多样，或检索索引更强。 |
 | Caption 控制不了声音 | Caption 仍含源声音身份，或没有目标身份。 |
 | 主模型学到伪影 | 生成音频质量太低或在训练 mix 中占比太高。 |

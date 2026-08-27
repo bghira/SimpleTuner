@@ -104,6 +104,7 @@ Os defaults sao conservadores. Neste workflow, o backend de audio e a musica de 
 | `build_index` | `true` | Retrieval costuma melhorar estabilidade de identidade e reduzir vazamento. |
 | `identity_data_dir` | obrigatorio no treino sob demanda | Aponta para exemplos vocais limpos da voz que sera transferida para as musicas de expansao. |
 | `identity_audio_mode` | `separate` | Executa Demucs nos clips de identidade antes do treino. Use `vocal_only` se o dataset de identidade ja contem vocal stems. |
+| `identity_stem_debug_dir` | nao definido | Diretorio opcional para salvar previews `vocals.wav` e `no_vocals.wav` da identidade. Use para confirmar que o RVC esta treinando com vocais isolados, nao com vazamento de instrumentos. |
 | `asset_hub_model_id` | `lj1995/VoiceConversionWebUI` | Default RVC asset repository for HuBERT, RMVPE, and v2 48k pretrained generator/discriminator checkpoints. |
 | `model_name` | transform or Hub repo name | Human-readable name saved into the RVC artifact so downloaded caches are identifiable outside their folder name. |
 | `sample_rate` | `48000` | Current implementation targets RVC v2 48k assets. Other rates need matching pretrained assets and configs. |
@@ -361,6 +362,7 @@ O projeto standalone [`huggingface-hub-rvc`](https://github.com/SimpleTuner-io/h
 | A LoRA so funciona em um genero | A identidade vocal ainda esta entrelacada com captions de arranjo ou dados fonte. |
 | O split gerado soa oco ou com fase estranha | Artifacts de separacao/remix em processamento de musica completa. |
 | Instrumentos parecem convertidos como voz | `full_mix_convert` foi usado quando separacao era necessaria. |
+| O modelo vocal parece aprender instrumentos | A separacao de identidade gerou vocal stems com vazamento demais de acompanhamento. Defina `model.identity_stem_debug_dir`, inspecione os stems salvos, ou preprocesse stems vocais mais limpos e use `identity_audio_mode=vocal_only`. |
 | Identidade vocal fraca | O modelo precisa de dados alvo mais limpos, mais dados ou indice melhor. |
 | Captions nao controlam a voz | Captions ainda mencionam a voz fonte ou omitem a identidade alvo. |
 | O modelo principal aprende artifacts | Audio gerado tem baixa qualidade ou peso demais no mix de treino. |
