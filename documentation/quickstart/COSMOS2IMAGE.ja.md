@@ -10,23 +10,6 @@ Cosmos2 Predict (Image) はフローマッチングを使用する Vision Transf
 
 大きな最適化なしで快適に学習するには 24GB GPU を最低ラインとして推奨します。
 
-### メモリオフロード（オプション）
-
-Cosmos2 を小さな GPU に収めるには、グループオフロードを有効にします:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- ストリームは CUDA のみで有効です。他のデバイスは自動的にフォールバックします。
-- `--enable_model_cpu_offload` とは併用しないでください。
-- ディスクステージングは任意で、システム RAM がボトルネックの場合に有効です。
-
 ### 前提条件
 
 Python がインストールされていることを確認してください。SimpleTuner は 3.10 から 3.12 でうまく動作します。

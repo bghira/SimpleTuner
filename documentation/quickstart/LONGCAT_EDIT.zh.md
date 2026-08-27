@@ -119,4 +119,3 @@ simpletuner train --config config/config.json
 - **缺失条件 latent**：确保通过 `conditioning_data` 连接参考数据集且文件名匹配。
 - **MPS dtype 错误**：管线会在 MPS 上自动将 pos‑ids 降为 float32；其余保持 float32/bf16。
 - **预览通道不匹配**：解码前会 un‑patchify latent（请保持此 SimpleTuner 版本）。
-- **edit OOM**：降低验证分辨率/步数，降低 `lora_rank`，启用 group offload，优先 `int8-quanto`/`fp8-torchao`。

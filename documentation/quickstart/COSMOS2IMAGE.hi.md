@@ -10,23 +10,6 @@ Cosmos2 Predict (Image) एक vision transformer‑आधारित मॉड
 
 बिना अत्यधिक optimizations के आरामदायक प्रशिक्षण के लिए 24GB GPU न्यूनतम के रूप में अनुशंसित है।
 
-### मेमोरी ऑफ़लोडिंग (वैकल्पिक)
-
-Cosmos2 को छोटे GPUs में फिट करने के लिए grouped offloading सक्षम करें:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- Streams केवल CUDA पर लागू होते हैं; अन्य डिवाइस स्वतः fallback करते हैं।
-- इसे `--enable_model_cpu_offload` के साथ न मिलाएँ।
-- Disk staging वैकल्पिक है और तब मदद करता है जब bottleneck सिस्टम RAM हो।
-
 ### पूर्वापेक्षाएँ
 
 सुनिश्चित करें कि Python इंस्टॉल है; SimpleTuner 3.10 से 3.12 के साथ अच्छा काम करता है।

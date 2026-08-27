@@ -11,10 +11,8 @@ LTX Video 2 是重量级 **19B** 模型，由以下组件组成：
 
 该组合非常耗 VRAM，VAE 预缓存步骤可能会显著抬高内存峰值。
 
-- **单 GPU 训练**：从 `train_batch_size: 1` 开始，并启用 group offload。
   - **注意**：初始 **VAE 预缓存步骤** 可能需要更多 VRAM。可能需要 CPU offload 或更大 GPU 仅用于缓存阶段。
   - **提示**：在 `config.json` 中设置 `"offload_during_startup": true`，确保 VAE 与文本编码器不会同时加载到 GPU，可显著降低预缓存压力。
-- **多 GPU 训练**：若需要更大余量，推荐 **FSDP2** 或强力 **Group Offload**。
 - **系统内存**：大规模训练建议 64GB+，更多内存有助于缓存。
 
 ### 实测性能与内存（实测报告）
@@ -30,25 +28,6 @@ LTX Video 2 是重量级 **19B** 模型，由以下组件组成：
   - A100-80G SXM4 约 8 秒/step（未启用编译）。
   - 7900XTX 约 16 秒/step（本地运行）。
   - A100-80G SXM4 跑 200 steps 约 30 分钟。
-
-### 内存卸载（关键）
-
-多数单 GPU 训练 LTX Video 2 的场景都推荐启用分组卸载，以便为更大 batch/分辨率留出 VRAM 余量。
-
-在 `config.json` 中添加：
-
-<details>
-<summary>查看示例配置</summary>
-
-```json
-{
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
-  "group_offload_blocks_per_group": 1,
-  "group_offload_use_stream": true
-}
-```
-</details>
 
 ## 前提条件
 
@@ -239,7 +218,6 @@ simpletuner train
 
 1.  **降低分辨率**：尝试 480p（`480x854` 等）。
 2.  **减少帧数**：将 `validation_num_video_frames` 与数据集 `num_frames` 降为 `33` 或 `49`。
-3.  **检查卸载**：确保启用 `--enable_group_offload`。
 
 ### 验证视频质量
 

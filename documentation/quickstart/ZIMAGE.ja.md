@@ -10,7 +10,6 @@ Z-Image は Flux よりメモリが少ないものの、強力な GPU が有利�
 - int8 + bf16 で量子化: ~16–24G VRAM
 - NF4 + bf16 で量子化: ~10–12G VRAM
 
-さらに Ramtorch と group offload を使えば VRAM 使用をさらに下げられます。マルチ GPU ユーザーは FSDP2 で小さな GPU を多数使うことも可能です。
 
 必要なもの:
 
@@ -31,24 +30,6 @@ Apple GPU は学習に推奨されません。
 | L40S | baseline SDNQ Hadamard path | 1.131 | 1.072 | 1.055 | 1.102 | 9.66 GiB |
 
 warm cache の L40S 比較では、現行 path は baseline SDNQ Hadamard path より train-loop wall time で 10.3%、測定 train-step 平均で 5.2% 高速でした。
-
-### メモリオフロード（オプション）
-
-Transformer 重みがボトルネックの場合、グループオフロードで VRAM を大幅に削減できます。`TRAINER_EXTRA_ARGS`（または WebUI の Hardware ページ）に以下を追加します:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- ストリームは CUDA のみ有効で、ROCm/MPS/CPU では自動的に無効になります。
-- 他の CPU オフロード戦略と **併用しない** でください。
-- Group offload は Quanto 量子化と互換性がありません。
-- ディスクへオフロードする場合は高速なローカル SSD/NVMe を推奨します。
 
 ## 前提条件
 
@@ -453,7 +434,6 @@ Z-Image はフローマッチングです。低いガイダンス値（0〜1）�
 - DeepSpeed: 無効 / 未設定
 - `--quantize_via=cpu` を使用して <=16G 起動 OOM を回避
 - `--gradient_checkpointing` を有効化
-- Ramtorch または group offload を有効化
 
 プリキャッシュ段階で OOM になる場合は、`--text_encoder_precision=int8-torchao` と `--vae_enable_tiling=true` によりテキストエンコーダ量子化と VAE タイリングを有効化できます。起動時のメモリをさらに下げるには `--offload_during_startup=true` を使用し、テキストエンコーダまたは VAE のどちらかだけをロードします。
 
@@ -507,7 +487,6 @@ Z-Image は悪いアーティファクトを早期に吸収します。最終的
 
 ## トラブルシューティング
 
-- 起動時 OOM: group offload（Quanto とは併用不可）、LoRA rank を下げる、または量子化（`--base_model_precision int8`/`nf4`）。
 - ぼやけた出力: `validation_num_inference_steps` を増やす（例: 24–28）かガイダンスを 1.0 付近まで上げる。
 - アーティファクト/過学習: rank や学習率を下げ、プロンプトの多様性を増やすか学習を短くする。
 - アシスタントアダプタの問題: turbo はアダプタが必須。品質低下を許容する場合のみ無効化。

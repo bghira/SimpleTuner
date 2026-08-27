@@ -18,27 +18,7 @@ Kandinsky 5.0 除了标准 CLIP 编码器与 Flux VAE，还使用**巨大的 7B 
 
 ### 内存卸载（推荐）
 
-考虑到文本编码器体积巨大，在消费级硬件上几乎必须使用分组卸载。该功能会在不计算时将 transformer block 卸载到 CPU 内存。
-
-在 `config.json` 中添加：
-
-<details>
-<summary>查看示例配置</summary>
-
-```json
-{
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
-  "group_offload_blocks_per_group": 1,
-  "group_offload_use_stream": true
-}
-```
-</details>
-
-- `--group_offload_use_stream`：仅在 CUDA 设备上生效。
-- **不要**与 `--enable_model_cpu_offload` 同时使用。
-
-另外，在 `config.json` 中设置 `"offload_during_startup": true`，以减少初始化和缓存阶段的 VRAM 占用。这会避免文本编码器与 VAE 同时加载。
+在 `config.json` 中设置 `"offload_during_startup": true`，以减少初始化和缓存阶段的 VRAM 占用。这会避免文本编码器与 VAE 同时加载。
 
 ## 前提条件
 
@@ -251,7 +231,6 @@ simpletuner train
 
 在 16GB 或受限 24GB 环境下运行：
 
-1.  **启用 Group Offload**：`--enable_group_offload`。
 2.  **量化基础模型**：设为 `"base_model_precision": "int8-quanto"`。
 3.  **批大小**：保持为 `1`。
 

@@ -10,23 +10,6 @@ Auraflow v0.3 एक 6B पैरामीटर MMDiT के रूप मे�
 
 यह मॉडल inference में कुछ धीमा है, लेकिन training अच्छी गति से करता है।
 
-### मेमोरी ऑफ़लोडिंग (वैकल्पिक)
-
-Auraflow को नया grouped offloading path काफी फायदा देता है। यदि आपके पास एक ही 24G (या उससे छोटा) GPU है, तो training flags में यह जोड़ें:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- Streams गैर‑CUDA backends पर अपने‑आप बंद हो जाते हैं, इसलिए यह कमांड ROCm और MPS पर भी सुरक्षित है।
-- इसे `--enable_model_cpu_offload` के साथ न मिलाएँ।
-- Disk offloading throughput घटाकर host RAM दबाव कम करता है; बेहतर परिणाम के लिए लोकल SSD रखें।
-
 ### पूर्वापेक्षाएँ
 
 सुनिश्चित करें कि Python इंस्टॉल है; SimpleTuner 3.10 से 3.12 के साथ अच्छा काम करता है।

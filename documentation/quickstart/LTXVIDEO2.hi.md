@@ -11,10 +11,8 @@ LTX Video 2 एक भारी **19B** मॉडल है। यह निम�
 
 यह सेटअप VRAM‑intensive है, और VAE pre‑caching मेमोरी usage को spike कर सकता है।
 
-- **Single‑GPU प्रशिक्षण**: `train_batch_size: 1` से शुरू करें और group offload सक्षम करें।
   - **नोट**: शुरुआती **VAE pre‑caching चरण** में अधिक VRAM लग सकती है। caching चरण के लिए CPU offloading या बड़ा GPU चाहिए हो सकता है।
   - **टिप**: `config.json` में `"offload_during_startup": true` सेट करें ताकि VAE और text encoder एक साथ GPU पर लोड न हों, जिससे pre‑caching मेमोरी दबाव काफी कम हो जाता है।
-- **Multi‑GPU प्रशिक्षण**: यदि अधिक headroom चाहिए तो **FSDP2** या आक्रामक **Group Offload** अनुशंसित है।
 - **सिस्टम RAM**: बड़े रन के लिए 64GB+ अनुशंसित है; अधिक RAM caching में मदद करती है।
 
 ### देखी गई परफॉर्मेंस और मेमोरी (फील्ड रिपोर्ट)
@@ -30,25 +28,6 @@ LTX Video 2 एक भारी **19B** मॉडल है। यह निम�
   - A100-80G SXM4 पर ~8 sec/step (कम्पाइल बंद)।
   - 7900XTX पर ~16 sec/step (लोकल रन)।
   - A100-80G SXM4 पर 200 steps ~30 मिनट।
-
-### मेमोरी ऑफ़लोडिंग (महत्वपूर्ण)
-
-अधिकांश single‑GPU सेटअप पर LTX Video 2 प्रशिक्षण के लिए grouped offloading सक्षम करना चाहिए। बड़े batch/resolution के लिए VRAM headroom रखने हेतु यह वैकल्पिक लेकिन अनुशंसित है।
-
-इसे अपने `config.json` में जोड़ें:
-
-<details>
-<summary>उदाहरण कॉन्फ़िग देखें</summary>
-
-```json
-{
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
-  "group_offload_blocks_per_group": 1,
-  "group_offload_use_stream": true
-}
-```
-</details>
 
 ## पूर्वापेक्षाएँ
 
@@ -239,7 +218,6 @@ simpletuner train
 
 1. **Resolution घटाएँ**: 480p (जैसे `480x854`) आज़माएँ।
 2. **Frames घटाएँ**: `validation_num_video_frames` और dataset `num_frames` को `33` या `49` तक घटाएँ।
-3. **Offload जांचें**: सुनिश्चित करें कि `--enable_group_offload` सक्रिय है।
 
 ### Validation Video Quality
 

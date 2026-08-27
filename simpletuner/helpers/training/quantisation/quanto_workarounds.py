@@ -376,8 +376,8 @@ if _TinyGemmPackedTensor is not None:
 def _sync_tinygemm_internal_devices(tensor) -> None:
     """Ensure TinyGemmWeightQBitsTensor internal components are on the same device.
 
-    When diffusers group_offloading moves internal tensors independently, they can
-    end up on different devices. This breaks __tensor_unflatten__ which asserts
+    When an offload path moves internal tensors independently, they can end up on
+    different devices. This breaks __tensor_unflatten__ which asserts
     that _data and _scale_shift are on the same device. We sync them to _data's device.
     """
     if _TinyGemmWeightQBitsTensor is None:

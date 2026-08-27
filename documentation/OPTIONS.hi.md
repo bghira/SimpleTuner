@@ -198,7 +198,6 @@ simpletuner configure config/foo/config.json
 
 - **What**: VAE caching चलने के दौरान text encoder weights को CPU पर offload करता है।
 - **Why**: HiDream और Wan 2.1 जैसे बड़े मॉडल्स में VAE cache लोड करते समय OOM हो सकता है। यह विकल्प training quality को प्रभावित नहीं करता, लेकिन बहुत बड़े text encoders या धीमे CPUs के साथ, कई datasets पर startup time काफ़ी बढ़ सकता है। इसी कारण यह डिफ़ॉल्ट रूप से disabled है।
-- **Tip**: विशेष रूप से memory‑constrained systems के लिए नीचे दिए group offloading फीचर के साथ पूरक है।
 
 ### `--offload_during_save`
 
@@ -269,39 +268,6 @@ simpletuner configure config/foo/config.json
 - **Behavior**: हर batch में एक noise block sample करता है, केवल उसका layer group चलाता है, और DDP unused-parameter detection अपने आप enable करता है।
 - **Limits**: केवल Transformer denoisers। [DiffusionBlocks](experimental/DIFFUSION_BLOCKS.hi.md) देखें।
 
-### `--enable_group_offload`
-
-- **What**: diffusers की grouped module offloading सक्षम करता है ताकि forward passes के बीच model blocks को CPU (या disk) पर stage किया जा सके।
-- **Why**: बड़े transformers (Flux, Wan, Auraflow, LTXVideo, Cosmos2Image) पर peak VRAM usage को बहुत कम करता है, खासकर CUDA streams के साथ, और performance पर न्यूनतम प्रभाव पड़ता है।
-- **Notes**:
-  - `--enable_model_cpu_offload` के साथ mutually exclusive — प्रति run एक ही strategy चुनें।
-  - diffusers **v0.33.0** या नया required है।
-
-### `--group_offload_type`
-
-- **Choices**: `block_level` (डिफ़ॉल्ट), `leaf_level`
-- **What**: layers को कैसे group किया जाए नियंत्रित करता है। `block_level` VRAM बचत और throughput के बीच संतुलन रखता है, जबकि `leaf_level` अधिक CPU transfers की कीमत पर अधिक बचत देता है।
-
-### `--group_offload_blocks_per_group`
-
-- **What**: `block_level` उपयोग करते समय, एक offload group में कितने transformer blocks bundle किए जाएँ।
-- **Default**: `1`
-- **Why**: इस संख्या को बढ़ाने से transfer frequency कम होती है (तेज़), लेकिन अधिक parameters accelerator पर resident रहते हैं (अधिक VRAM)।
-
-### `--group_offload_use_stream`
-
-- **What**: host/device transfers को compute के साथ overlap करने के लिए dedicated CUDA stream उपयोग करता है।
-- **Default**: `False`
-- **Notes**:
-  - non‑CUDA backends (Apple MPS, ROCm, CPU) पर स्वतः CPU‑style transfers पर fallback करता है।
-  - NVIDIA GPUs पर training करते समय, और copy engine capacity spare हो, तो अनुशंसित।
-
-### `--group_offload_to_disk_path`
-
-- **What**: directory path जहाँ grouped parameters को RAM की बजाय disk पर spill किया जाएगा।
-- **Why**: अत्यंत tight CPU RAM बजट के लिए उपयोगी (जैसे बड़े NVMe drive वाला workstation)।
-- **Tip**: तेज़ local SSD उपयोग करें; network filesystems training को काफी धीमा कर देंगे।
-
 ### `--musubi_blocks_to_swap`
 
 - **What**: LongCat‑Video, Wan, LTXVideo, Kandinsky5‑Video, Qwen‑Image, Flux, Flux.2, zlab i1, Cosmos2Image, HunyuanVideo, और Krea 2 के लिए Musubi block swap — आख़िरी N transformer blocks को CPU पर रखें और forward के दौरान प्रति block weights stream करें।
@@ -320,7 +286,6 @@ simpletuner configure config/foo/config.json
 - **Why**: Linear weights को CPU memory में साझा करता है और उन्हें accelerator पर stream करता है ताकि VRAM pressure कम हो।
 - **Notes**:
   - CUDA या ROCm आवश्यक है (Apple/MPS पर समर्थित नहीं)।
-  - `--enable_group_offload` के साथ mutually exclusive।
   - `--set_grads_to_none` स्वतः सक्षम करता है।
 
 ### `--ramtorch_target_modules`

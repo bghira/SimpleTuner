@@ -10,23 +10,6 @@ Auraflow v0.3 是一个 6B 参数的 MMDiT，使用 Pile T5 进行编码文本�
 
 该模型推理速度较慢，但训练速度尚可。
 
-### 内存卸载（可选）
-
-Auraflow 可以从新的分组卸载路径中获得显著收益。如果您仅有单张 24G（或更小）GPU，请在训练参数中添加以下内容：
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# 可选：将卸载的权重溢出到磁盘而不是 RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- 在非 CUDA 后端上，流会自动禁用，因此该命令在 ROCm 和 MPS 上可以安全重用。
-- 不要将此与 `--enable_model_cpu_offload` 结合使用。
-- 磁盘卸载以吞吐量换取较低的主机 RAM 压力；请将其放在本地 SSD 上以获得最佳效果。
-
 ### 前提条件
 
 确保您已安装 Python；SimpleTuner 在 3.10 到 3.12 版本上运行良好。

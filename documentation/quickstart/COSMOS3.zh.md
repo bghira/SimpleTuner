@@ -51,19 +51,6 @@ SimpleTuner 默认使用拆分的 Cosmos3 transformer components:
 - 启用 `gradient_checkpointing`。
 - 使用拆分的 generator components 来降低 transformer 加载时内存。
 
-可选 group offload:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream
-```
-
-- Streams 仅适用于 CUDA。
-- 不要与 `--enable_model_cpu_offload` 一起使用。
-- 系统 RAM 不足时添加 `--group_offload_to_disk_path /fast-ssd/simpletuner-offload`。
-
 ## Installation
 
 ```bash

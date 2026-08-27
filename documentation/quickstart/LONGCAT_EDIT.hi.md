@@ -119,4 +119,3 @@ simpletuner train --config config/config.json
 - **Missing conditioning latents**: `conditioning_data` से reference dataset जोड़ें और फ़ाइलनाम मैच कराएँ।
 - **MPS dtype errors**: पाइपलाइन MPS पर pos‑ids को float32 में auto‑downgrade करती है; बाकी को float32/bf16 रखें।
 - **Previews में चैनल mismatch**: previews डिकोड से पहले latents को un‑patchify करते हैं (यह SimpleTuner संस्करण रखें)।
-- **Edit में OOM**: validation resolution/steps घटाएँ, `lora_rank` कम करें, group offload सक्षम करें, और `int8-quanto`/`fp8-torchao` प्राथमिकता दें।

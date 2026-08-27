@@ -32,24 +32,6 @@ Z-Image 比 Flux 省显存，但仍受益于高性能 GPU。训练 rank-16 LoRA 
 
 在 warm cache 的 L40S 对比中，当前路径按 train-loop wall time 比 baseline SDNQ Hadamard 路径快 10.3%，按实测 train-step 平均快 5.2%。
 
-### 内存卸载（可选）
-
-组模块卸载能显著降低 transformer 权重带来的 VRAM 压力。可在 `TRAINER_EXTRA_ARGS`（或 WebUI 硬件页面）中添加：
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# 可选：将卸载权重写入磁盘而非 RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- Streams 仅在 CUDA 生效；SimpleTuner 会在 ROCm、MPS 和 CPU 后端自动禁用。
-- **不要**与其他 CPU offload 策略同时使用。
-- 组卸载与 Quanto 量化不兼容。
-- 若需写入磁盘，请优先使用本地高速 SSD/NVMe。
-
 ## 前提条件
 
 确保已安装 Python；SimpleTuner 在 3.10 到 3.12 版本上运行良好。

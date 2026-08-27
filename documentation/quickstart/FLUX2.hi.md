@@ -364,20 +364,6 @@ simpletuner train
 ./train.sh
 ```
 
-### Memory Offloading
-
-Memory-constrained सेटअप्स के लिए, FLUX.2 transformer और वैकल्पिक रूप से Mistral-3 text encoder दोनों के लिए group offloading सपोर्ट करता है:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
---group_offload_text_encoder
-```
-
-`--group_offload_text_encoder` फ्लैग FLUX.2 के लिए अनुशंसित है क्योंकि 24B Mistral text encoder को text embedding caching के दौरान offloading से काफी लाभ मिलता है। आप `--group_offload_vae` भी जोड़ सकते हैं ताकि latent caching के दौरान VAE भी offload हो।
-
 ## Validation Prompts
 
 `config/user_prompt_library.json` बनाएं:
@@ -443,7 +429,6 @@ Mistral-3 बड़ा है; विचार करें:
 - quantization सक्षम करें (`int8-quanto` या `int4-quanto`)
 - gradient checkpointing सक्षम करें
 - batch size घटाएँ
-- group offloading सक्षम करें
 - token routing efficiency के लिए TREAD उपयोग करें
 
 ## Advanced: TREAD कॉन्फ़िगरेशन

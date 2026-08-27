@@ -6,23 +6,6 @@
 
 Sana VideoはWanオートエンコーダを使用し、デフォルトで480pの81フレームシーケンスを処理します。メモリ使用量は他のビデオモデルと同等であることを予想してください。Gradient Checkpointingを早めに有効にし、VRAMの余裕を確認した後にのみ`train_batch_size`を増やしてください。
 
-### メモリオフロード（オプション）
-
-VRAM制限に近い場合は、設定でグループオフロードを有効にしてください:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# オプション: オフロードされたウェイトをRAMの代わりにディスクに書き出す
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- CUDAユーザーは`--group_offload_use_stream`の恩恵を受けます。他のバックエンドは自動的に無視します。
-- システムRAMが限られている場合を除き、`--group_offload_to_disk_path`はスキップしてください。ディスクステージングは遅くなりますが、実行を安定させます。
-- グループオフロードを使用する場合は`--enable_model_cpu_offload`を無効にしてください。
-
 ### 前提条件
 
 Pythonがインストールされていることを確認してください。SimpleTunerは3.10から3.12で正常に動作します。

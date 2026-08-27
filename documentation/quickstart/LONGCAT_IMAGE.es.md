@@ -67,7 +67,6 @@ Visita http://localhost:8001 y elige la familia de modelo `longcat_image`.
 - Longitud máxima de tokens 512 (Qwen‑2.5‑VL).
 
 Ahorros de memoria opcionales (elige lo que se ajuste a tu hardware):
-- `--enable_group_offload --group_offload_type block_level --group_offload_blocks_per_group 1`
 - Baja `lora_rank` (4–8) y/o usa precisión base `int8-quanto`.
 - Si la validación hace OOM, reduce primero `validation_resolution` o los pasos.
 
@@ -115,7 +114,6 @@ simpletuner validate \
 
 - **Errores float64 en MPS**: manejados internamente; mantén tu config en float32/bf16.
 - **Desajuste de canales en previews**: solucionado al desempacar latentes antes de decodificar (incluido en el código de esta guía).
-- **OOM**: baja `validation_resolution`, reduce `lora_rank`, habilita group offload o cambia a `int8-quanto` / `fp8-torchao`.
 - **Tokenización lenta**: Qwen‑2.5‑VL se limita a 512 tokens; evita prompts muy largos.
 
 ---

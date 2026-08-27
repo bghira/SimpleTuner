@@ -136,7 +136,6 @@ SimpleTuner supports the following model families. Detailed training feature sup
 - **Gradient checkpointing** - Configurable intervals for memory/speed optimization
 - **Loss functions** - L2, Huber, Smooth L1 with scheduling support
 - **SNR weighting** - Min-SNR gamma weighting for improved training dynamics
-- **Group offloading** - Diffusers v0.33+ module-group CPU/disk staging with optional CUDA streams
 - **Validation adapter sweeps** - Temporarily attach LoRA adapters (single or JSON presets) during validation to measure adapter-only or comparison renders without touching the training loop
 - **External validation hooks** - Swap the built-in validation pipeline or post-upload steps for your own scripts, so you can run checks on another GPU or forward artifacts to any cloud provider of your choice ([details](/documentation/OPTIONS.md#validation_method))
 - **AnyFlow distillation** - FlowMap interval conditioning for flow-matching models with online teacher targets ([guide](/documentation/experimental/ANYFLOW.md))

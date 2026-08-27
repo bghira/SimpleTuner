@@ -505,7 +505,6 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
             (
                 is_model_cpu_offload,
                 is_sequential_cpu_offload,
-                is_group_offload,
             ) = unpack_offload_state(offload_state)
 
             peft_kwargs = {}
@@ -519,7 +518,7 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
                 logger.info(f"Loaded ControlNet LoRA with incompatible keys: {incompatible_keys}")
 
             # Offload back.
-            restore_offload_state(_pipeline, is_model_cpu_offload, is_sequential_cpu_offload, is_group_offload)
+            restore_offload_state(_pipeline, is_model_cpu_offload, is_sequential_cpu_offload)
 
     @classmethod
     def load_lora_into_transformer(
@@ -593,7 +592,6 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
             (
                 is_model_cpu_offload,
                 is_sequential_cpu_offload,
-                is_group_offload,
             ) = unpack_offload_state(offload_state)
 
             peft_kwargs = {}
@@ -629,7 +627,7 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
                 logger.warning(warn_msg)
 
             # Offload back.
-            restore_offload_state(_pipeline, is_model_cpu_offload, is_sequential_cpu_offload, is_group_offload)
+            restore_offload_state(_pipeline, is_model_cpu_offload, is_sequential_cpu_offload)
             # Unsafe code />
 
     @classmethod
@@ -747,7 +745,6 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
                 (
                     is_model_cpu_offload,
                     is_sequential_cpu_offload,
-                    is_group_offload,
                 ) = unpack_offload_state(offload_state)
 
                 # inject LoRA layers and load the state dict
@@ -765,7 +762,7 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
                 text_encoder.to(device=text_encoder.device, dtype=text_encoder.dtype)
 
                 # Offload back.
-                restore_offload_state(_pipeline, is_model_cpu_offload, is_sequential_cpu_offload, is_group_offload)
+                restore_offload_state(_pipeline, is_model_cpu_offload, is_sequential_cpu_offload)
                 # Unsafe code />
 
     @classmethod

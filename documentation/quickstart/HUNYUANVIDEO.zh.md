@@ -10,26 +10,6 @@ Hunyuan Video 1.5 是大型模型（8.3B 参数）。
 - **推荐**：A6000 / A100（48GB-80GB）以支持 720p 训练或更大批大小。
 - **系统内存**：建议 **64GB+** 以便顺利加载模型。
 
-### 内存卸载（可选）
-
-在 `config.json` 中添加以下内容：
-
-<details>
-<summary>查看示例配置</summary>
-
-```json
-{
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
-  "group_offload_blocks_per_group": 1,
-  "group_offload_use_stream": true
-}
-```
-</details>
-
-- `--group_offload_use_stream`：仅在 CUDA 设备上生效。
-- **不要**与 `--enable_model_cpu_offload` 同时使用。
-
 ## 前提条件
 
 确保已安装 Python；SimpleTuner 在 3.10 到 3.12 版本上运行良好。
@@ -147,8 +127,6 @@ HunyuanVideo 的关键配置覆盖项：
   "mixed_precision": "bf16",
   "optimizer": "adamw_bf16",
   "lora_rank": 16,
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
   "dataset_backend_config": "config/multidatabackend.json"
 }
 ```
@@ -239,7 +217,6 @@ simpletuner train
 
 ### VRAM 优化
 
-- **Group Offload**：消费级 GPU 必备。确保 `enable_group_offload` 为 true。
 - **分辨率**：显存有限时保持 480p（`854x480` 或类似）；720p（`1280x720`）会显著增加内存占用。
 - **量化**：使用 `base_model_precision`（默认 `bf16`）；`int8-torchao` 可以进一步节省但速度更慢。
 - **VAE patch convolution**：HunyuanVideo VAE OOM 时设置 `--vae_enable_patch_conv=true`（或在 UI 中开启）。这会切分 3D conv/attention 以降低峰值 VRAM，吞吐略降。

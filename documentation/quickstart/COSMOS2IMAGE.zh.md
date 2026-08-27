@@ -10,23 +10,6 @@ Cosmos2 Predict（Image）是基于视觉 Transformer 的流匹配模型。
 
 建议至少 24GB GPU 作为舒适训练的最低配置。
 
-### 内存卸载（可选）
-
-若需将 Cosmos2 挤入更小 GPU，可启用分组卸载：
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# 可选：将卸载权重写入磁盘而非 RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- Streams 仅在 CUDA 生效；其他设备会自动回退。
-- 不要与 `--enable_model_cpu_offload` 同用。
-- 磁盘暂存可选，当系统内存是瓶颈时有帮助。
-
 ### 前提条件
 
 确保已安装 Python；SimpleTuner 在 3.10 到 3.12 版本上运行良好。

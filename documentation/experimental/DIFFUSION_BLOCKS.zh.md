@@ -45,7 +45,6 @@ DDP 会自动启用 `find_unused_parameters`；显式设为 `false` 会报错。
 
 要使用独立块任务，请为每个任务设置不同的 `blocks_to_train`。未归属组会被冻结，不分配 optimizer state。推理前必须按参数归属合并这些 checkpoint。
 
-模型权重仍常驻，除非启用兼容的 offload。Group offload 兼容；Musubi block swap 不兼容。
 
 ## 推理
 

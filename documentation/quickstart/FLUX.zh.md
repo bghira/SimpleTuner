@@ -160,23 +160,6 @@ SimpleTuner 包含可以显著改善训练稳定性和性能的实验性功能�
 
 </details>
 
-### 内存卸载（可选）
-
-Flux 通过 diffusers v0.33+ 支持分组模块卸载。当您受到 transformer 权重的瓶颈时，这可以显著减少 VRAM 压力。您可以通过在 `TRAINER_EXTRA_ARGS`（或 WebUI 硬件页面）中添加以下标志来启用它：
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# 可选：将卸载的权重溢出到磁盘而不是 RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- `--group_offload_use_stream` 仅在 CUDA 设备上有效；SimpleTuner 在 ROCm、MPS 和 CPU 后端上自动禁用流。
-- **不要**将此与 `--enable_model_cpu_offload` 结合使用——这两种策略是互斥的。
-- 使用 `--group_offload_to_disk_path` 时，优先选择快速的本地 SSD/NVMe 目标。
-
 #### 验证提示词
 
 `config/config.json` 中包含"主验证提示词"，通常是您针对单个主题或风格训练的主 instance_prompt。此外，可以创建一个 JSON 文件，包含验证期间运行的额外提示词。

@@ -11,10 +11,8 @@ LTX Video 2 は重量級の **19B** モデルです。以下を組み合わせ�
 
 この構成は VRAM を大量に消費し、VAE の事前キャッシュでメモリ使用量が跳ね上がることがあります。
 
-- **単一 GPU 学習**: `train_batch_size: 1` から始め、group offload を有効にしてください。
   - **注意**: 初期の **VAE 事前キャッシュ**でより多くの VRAM が必要になる場合があります。キャッシュ時だけ CPU オフロードやより大きな GPU が必要になる可能性があります。
   - **ヒント**: `config.json` に `"offload_during_startup": true` を設定し、VAE とテキストエンコーダが同時に GPU に載らないようにすると、事前キャッシュ時のメモリ圧力を大きく下げられます。
-- **マルチ GPU 学習**: 余裕が必要なら **FSDP2** か強力な **Group Offload** を推奨します。
 - **システム RAM**: 大きめの実行では 64GB+ を推奨します。RAM が多いほどキャッシュが安定します。
 
 ### 実測パフォーマンスとメモリ（現場報告）
@@ -30,25 +28,6 @@ LTX Video 2 は重量級の **19B** モデルです。以下を組み合わせ�
   - A100-80G SXM4 で ~8 秒/step（コンパイルなし）。
   - 7900XTX で ~16 秒/step（ローカル実行）。
   - A100-80G SXM4 で 200 steps あたり ~30 分。
-
-### メモリオフロード（必須級）
-
-単一 GPU で LTX Video 2 を学習する場合、グループオフロードの有効化を推奨します。バッチや解像度の余裕を確保するためにも有効です。
-
-`config.json` に追加:
-
-<details>
-<summary>設定例を表示</summary>
-
-```json
-{
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
-  "group_offload_blocks_per_group": 1,
-  "group_offload_use_stream": true
-}
-```
-</details>
 
 ## 前提条件
 
@@ -241,7 +220,6 @@ simpletuner train
 
 1.  **解像度を下げる**: 480p (`480x854` など) を試す。
 2.  **フレーム数を減らす**: `validation_num_video_frames` とデータセットの `num_frames` を `33` または `49` に。
-3.  **オフロードを確認**: `--enable_group_offload` が有効か確認。
 
 ### 検証動画の品質
 

@@ -136,7 +136,6 @@ SimpleTuner 支持以下模型系列。详细的训练功能支持请参阅[快�
 - **梯度检查点** - 可配置间隔，优化内存/速度
 - **损失函数** - L2、Huber、Smooth L1，支持调度
 - **SNR 加权** - Min-SNR gamma 加权，改善训练动态
-- **分组卸载** - Diffusers v0.33+ 模块组 CPU/磁盘暂存，可选 CUDA 流
 - **验证适配器扫描** - 在验证期间临时附加 LoRA 适配器（单个或 JSON 预设），以测量仅适配器或对比渲染，而不影响训练循环
 - **外部验证钩子** - 将内置验证流程或上传后步骤替换为您自己的脚本，以便在另一个 GPU 上运行检查或将工件转发到您选择的任何云提供商（[详情](/documentation/OPTIONS.md#validation_method)）
 - **AnyFlow 蒸馏** - 为 flow-matching 模型提供带 online teacher target 的 FlowMap interval conditioning（[指南](/documentation/experimental/ANYFLOW.zh.md)）

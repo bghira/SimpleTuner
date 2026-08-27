@@ -22,28 +22,6 @@ Recommended starting points:
 
 Memory usage rank, optimizer, validation resolution, offload, compile settings, और FP8 weights पर निर्भर करती है। एक single H100 included PEFT LoRA example को 1024px पर 1000 steps तक benchmark और validation samples enabled के साथ train कर सकता है।
 
-छोटी GPUs पर FP8 weights, rank 8-16, `train_batch_size=1`, gradient checkpointing, और model/group offload से शुरू करें।
-
-### Memory offloading
-
-जब transformer weights VRAM bottleneck हों, group offload मदद कर सकता है:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream
-```
-
-Optional disk offload:
-
-```bash
---group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- Streams केवल CUDA पर effective हैं; SimpleTuner ROCm, MPS, और CPU पर इन्हें disable करता है।
-- Group offload को अन्य CPU offload strategies के साथ combine न करें।
-- Disk offload के लिए fast local NVMe prefer करें।
 
 ### Torch compile और attention
 

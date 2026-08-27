@@ -149,23 +149,6 @@ simpletuner configure
 
 > ⚠️ Hugging Face Hubに容易にアクセスできない国に居住しているユーザーは、使用している`$SHELL`に応じて、`~/.bashrc`または`~/.zshrc`に`HF_ENDPOINT=https://hf-mirror.com`を追加する必要があります。
 
-### メモリオフロード(オプション)
-
-WanはSimpleTunerがサポートする最も重いモデルの1つです。VRAM上限に近い場合は、グループオフロードを有効にしてください:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# オプション: オフロードされたウェイトをRAMの代わりにディスクに書き出す
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- CUDAデバイスのみが`--group_offload_use_stream`を尊重します。ROCm/MPSは自動的にフォールバックします。
-- CPUメモリがボトルネックでない限り、ディスクステージングはコメントアウトしたままにしてください。
-- `--enable_model_cpu_offload`はグループオフロードと相互排他的です。
-
 ### フィードフォワードチャンキング(オプション)
 
 勾配チェックポイント中に14BチェックポイントがまだOOMする場合は、Wanフィードフォワードレイヤーをチャンクしてください:

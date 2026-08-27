@@ -10,7 +10,6 @@ Z-Image necesita menos memoria que Flux pero aún se beneficia de GPUs potentes.
 - ~16-24G de VRAM al cuantizar a int8 + pesos base/LoRA en bf16
 - ~10–12G de VRAM al cuantizar a NF4 + pesos base/LoRA en bf16
 
-Además, Ramtorch y group offload pueden usarse para bajar aún más el uso de VRAM. Para usuarios multi-GPU, FSDP2 también permite correr en varias GPUs pequeñas.
 
 Necesitarás:
 
@@ -31,24 +30,6 @@ Estas mediciones usaron el ejemplo `z-image-turbo.peft-lora` de Domokun durante 
 | L40S | baseline SDNQ Hadamard | 1.131 | 1.072 | 1.055 | 1.102 | 9.66 GiB |
 
 En la comparacion con caches calientes en L40S, la ruta actual fue 10.3% mas rapida por tiempo de loop y 5.2% mas rapida por media de paso medida que el baseline SDNQ Hadamard.
-
-### Offloading de memoria (opcional)
-
-El offloading agrupado de módulos reduce drásticamente la presión de VRAM cuando el cuello de botella son los pesos del transformer. Puedes habilitarlo agregando los siguientes flags a `TRAINER_EXTRA_ARGS` (o en la página Hardware de la WebUI):
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- Los streams solo son efectivos en CUDA; SimpleTuner los desactiva automáticamente en ROCm, MPS y CPU.
-- No combines esto con otras estrategias de offload a CPU.
-- Group offload no es compatible con cuantización Quanto.
-- Prefiere un SSD/NVMe local rápido al hacer offload a disco.
 
 ## Requisitos previos
 
@@ -453,7 +434,6 @@ Z-Image es flow-matching; valores bajos de guidance (alrededor de 0–1) tienden
 - DeepSpeed: deshabilitado / sin configurar
 - Usa `--quantize_via=cpu` si el arranque hace OOM en tarjetas <=16G
 - Habilita `--gradient_checkpointing`
-- Habilita Ramtorch o group offload
 
 La etapa de pre-caché puede quedarse sin memoria; la cuantización del codificador de texto y el tiling del VAE pueden habilitarse vía `--text_encoder_precision=int8-torchao` y `--vae_enable_tiling=true`. Se puede ahorrar más memoria al inicio con `--offload_during_startup=true`, que mantendrá solo el codificador de texto o el VAE cargado, y no ambos.
 
@@ -507,7 +487,6 @@ Algunos checkpoints ajustados pueden carecer de estructura completa de directori
 
 ## Solución de problemas
 
-- OOM al inicio: habilita group offload (no con Quanto), baja el rango LoRA o cuantiza (`--base_model_precision int8`/`nf4`).
 - Salidas borrosas: aumenta `validation_num_inference_steps` (p. ej., 24–28) o sube guidance hacia 1.0.
 - Artefactos/sobreentrenamiento: reduce rango o tasa de aprendizaje, agrega prompts más diversos o acorta el entrenamiento.
 - Problemas con adaptador asistente: turbo espera la ruta/peso del adaptador; desactívalo solo si aceptas pérdida de calidad.

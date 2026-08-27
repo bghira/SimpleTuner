@@ -364,20 +364,6 @@ simpletuner train
 ./train.sh
 ```
 
-### 内存卸载
-
-对于内存受限的配置，FLUX.2 支持对 transformer 和（可选的）Mistral-3 文本编码器进行分组卸载：
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
---group_offload_text_encoder
-```
-
-推荐为 FLUX.2 使用 `--group_offload_text_encoder` 标志，因为 24B 的 Mistral 文本编码器在文本嵌入缓存期间可以显著受益于卸载。您还可以添加 `--group_offload_vae` 在潜在缓存期间包含 VAE 的卸载。
-
 ## 验证提示词
 
 创建 `config/user_prompt_library.json`：
@@ -443,7 +429,6 @@ Mistral-3 体积很大；可以考虑：
 - 启用量化（`int8-quanto` 或 `int4-quanto`）
 - 启用梯度检查点
 - 减少批次大小
-- 启用分组卸载
 - 使用 TREAD 进行令牌路由效率优化
 
 ## 高级：TREAD 配置

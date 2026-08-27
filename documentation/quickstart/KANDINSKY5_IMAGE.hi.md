@@ -18,27 +18,7 @@ Kandinsky 5.0 में एक **बहुत बड़ा 7B पैरामी
 
 ### मेमोरी ऑफ़लोडिंग (अनुशंसित)
 
-टेक्स्ट एन्कोडर के आकार को देखते हुए, यदि आप consumer hardware पर हैं तो आपको लगभग निश्चित रूप से grouped offloading का उपयोग करना चाहिए। यह transformer blocks को CPU मेमोरी में ऑफ़लोड करता है जब वे सक्रिय रूप से compute नहीं हो रहे होते।
-
-यह अपने `config.json` में जोड़ें:
-
-<details>
-<summary>उदाहरण कॉन्फ़िग देखें</summary>
-
-```json
-{
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
-  "group_offload_blocks_per_group": 1,
-  "group_offload_use_stream": true
-}
-```
-</details>
-
-- `--group_offload_use_stream`: केवल CUDA डिवाइसेस पर काम करता है।
-- इसे `--enable_model_cpu_offload` के साथ **न** मिलाएँ।
-
-इसके अलावा, initialization और caching फेज के दौरान VRAM उपयोग कम करने के लिए `config.json` में `"offload_during_startup": true` सेट करें। यह सुनिश्चित करता है कि text encoder और VAE एक साथ लोड न हों।
+Initialization और caching फेज के दौरान VRAM उपयोग कम करने के लिए `config.json` में `"offload_during_startup": true` सेट करें। यह सुनिश्चित करता है कि text encoder और VAE एक साथ लोड न हों।
 
 ## पूर्वापेक्षाएँ
 
@@ -251,7 +231,6 @@ simpletuner train
 
 16GB या सीमित 24GB सेटअप पर चलाने के लिए:
 
-1. **Group Offload सक्षम करें**: `--enable_group_offload`.
 2. **Base Model quantize करें**: `"base_model_precision": "int8-quanto"`.
 3. **Batch Size**: इसे `1` रखें।
 

@@ -6,23 +6,6 @@ Neste exemplo, vamos treinar o modelo Sana Video 2B 480p.
 
 Sana Video usa o autoencoder Wan e processa sequências de 81 frames em 480p por padrão. Espere uso de memória semelhante a outros modelos de vídeo; habilite gradient checkpointing cedo e aumente `train_batch_size` só depois de verificar folga de VRAM.
 
-### Offload de memória (opcional)
-
-Se você estiver perto do limite de VRAM, habilite o offload em grupo no seu config:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- Usuários CUDA se beneficiam de `--group_offload_use_stream`; outros backends o ignoram automaticamente.
-- Evite `--group_offload_to_disk_path` a menos que a RAM do sistema esteja limitada — staging em disco é mais lento, mas mantém a execução estável.
-- Desative `--enable_model_cpu_offload` ao usar group offloading.
-
 ### Pré-requisitos
 
 Certifique-se de que você tem Python instalado; o SimpleTuner funciona bem com 3.10 até 3.12.

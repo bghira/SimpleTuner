@@ -364,20 +364,6 @@ simpletuner train
 ./train.sh
 ```
 
-### メモリオフロード
-
-メモリ制約のあるセットアップの場合、FLUX.2はトランスフォーマーとオプションでMistral-3テキストエンコーダーの両方についてグループオフロードをサポートしています:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
---group_offload_text_encoder
-```
-
-`--group_offload_text_encoder`フラグは、24BのMistralテキストエンコーダーがテキストエンベッディングキャッシング中のオフロードから大きな恩恵を受けるため、FLUX.2に推奨されます。潜在キャッシング中にVAEをオフロードに含めるには`--group_offload_vae`も追加できます。
-
 ## 検証プロンプト
 
 `config/user_prompt_library.json`を作成:
@@ -443,7 +429,6 @@ Mistral-3は大きいため、以下を検討:
 - 量子化を有効化(`int8-quanto`または`int4-quanto`)
 - 勾配チェックポイントを有効化
 - バッチサイズを減らす
-- グループオフロードを有効化
 - トークンルーティング効率のためにTREADを使用
 
 ## 高度: TREAD設定

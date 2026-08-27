@@ -10,23 +10,6 @@ Auraflow v0.3 foi lançado como um MMDiT de 6B parâmetros que usa Pile T5 para 
 
 Este modelo é um pouco lento para inferência, mas treina em uma velocidade razoável.
 
-### Offload de memória (opcional)
-
-Auraflow se beneficia muito do novo caminho de offload em grupo. Adicione o seguinte aos seus flags de treino se você estiver limitado a uma única GPU de 24G (ou menor):
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- Streams são automaticamente desativados em backends não-CUDA, então o comando é seguro para reutilizar em ROCm e MPS.
-- Não combine isso com `--enable_model_cpu_offload`.
-- Offload para disco troca throughput por menor pressão de RAM no host; mantenha em um SSD local para melhores resultados.
-
 ### Pré-requisitos
 
 Garanta que você tenha Python instalado; o SimpleTuner vai bem com 3.10 até 3.12.

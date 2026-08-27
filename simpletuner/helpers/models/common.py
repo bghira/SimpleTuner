@@ -89,7 +89,6 @@ from simpletuner.helpers.training.timestep_distribution import CubicSplineDistri
 from simpletuner.helpers.training.wrappers import unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 from simpletuner.helpers.utils.hidden_state_buffer import HiddenStateBuffer
-from simpletuner.helpers.utils.offloading import enable_group_offload_on_components
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -2425,20 +2424,11 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         """
         Moves the model to the target device.
         """
-        target_device_obj = torch.device(target_device) if isinstance(target_device, str) else target_device
-        accelerator_device = torch.device(self.accelerator.device) if hasattr(self.accelerator, "device") else None
         base_precision = str(getattr(self.config, "base_model_precision", "") or "").lower()
         torchao_quantized = "torchao" in base_precision
         quanto_quantized = "quanto" in base_precision
-        should_configure_offload = (
-            self.group_offload_requested()
-            and accelerator_device is not None
-            and isinstance(target_device_obj, torch.device)
-            and target_device_obj == accelerator_device
-        )
         skip_moving_trained_component = any(
             [
-                (should_configure_offload and self.group_offload_configured),
                 self.config.musubi_blocks_to_swap or 0 > 0,
                 self.config.quantize_via == "pipeline",
                 self.config.ramtorch,
@@ -2471,9 +2461,6 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
                     continue
                 text_encoder.to(target_device)
         self.move_extra_models(target_device)
-
-        if should_configure_offload:
-            self.configure_group_offload()
 
     def get_validation_preview_spec(self):
         """
@@ -3217,8 +3204,6 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         This moves all models to the 'meta' device which releases GPU memory.
         """
         logger.info("Unloading all model components...")
-        self._group_offload_configured = False
-
         # Unload VAE
         self.unload_vae()
 
@@ -3398,7 +3383,6 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
             quant_mapping.setdefault(key, quantization_config)
 
     def load_model(self, move_to_device: bool = True):
-        self._group_offload_configured = False
         pretrained_load_args = {
             "revision": self.config.revision,
             "variant": self.config.variant,
@@ -4063,9 +4047,6 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         """Subclass hook for providing conditioning image embedder (default: unsupported)."""
         return None
 
-    def group_offload_requested(self) -> bool:
-        return bool(getattr(self.config, "enable_group_offload", False))
-
     def _ramtorch_enabled(self) -> bool:
         return bool(getattr(self.config, "ramtorch", False))
 
@@ -4299,103 +4280,6 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
             percent=transformer_percent,
             full_ramtorch=True,
         )
-
-    @property
-    def group_offload_configured(self) -> bool:
-        return getattr(self, "_group_offload_configured", False)
-
-    def get_group_offload_modules(self) -> Dict[str, torch.nn.Module]:
-        modules: Dict[str, torch.nn.Module] = {}
-        # Transformer (always included for transformer-based models)
-        if self.MODEL_TYPE is ModelTypes.TRANSFORMER and getattr(self, "model", None) is not None:
-            unwrapped_model = self.unwrap_model(self.model)
-            if isinstance(unwrapped_model, torch.nn.Module):
-                modules["transformer"] = unwrapped_model
-
-        # Text encoders (optional, controlled by --group_offload_text_encoder)
-        if getattr(self.config, "group_offload_text_encoder", False):
-            text_encoders = getattr(self, "text_encoders", None)
-            if text_encoders is not None:
-                for i, te in enumerate(text_encoders):
-                    if te is not None:
-                        unwrapped_te = self.unwrap_model(te)
-                        if isinstance(unwrapped_te, torch.nn.Module):
-                            modules[f"text_encoder_{i}"] = unwrapped_te
-
-        # VAE (optional, controlled by --group_offload_vae)
-        if getattr(self.config, "group_offload_vae", False):
-            vae = getattr(self, "vae", None)
-            if vae is not None:
-                unwrapped_vae = self.unwrap_model(vae)
-                if isinstance(unwrapped_vae, torch.nn.Module):
-                    modules["vae"] = unwrapped_vae
-
-        return modules
-
-    def _resolve_group_offload_device(self) -> torch.device:
-        if hasattr(self.accelerator, "device"):
-            return torch.device(self.accelerator.device)
-        return torch.device("cpu")
-
-    def _resolve_group_offload_disk_path(self):
-        raw_path = getattr(self.config, "group_offload_to_disk_path", None)
-        if not raw_path:
-            return None
-        expanded = os.path.expanduser(raw_path)
-        return expanded
-
-    def configure_group_offload(self) -> None:
-        if self.group_offload_configured or not self.group_offload_requested():
-            return
-
-        if self._ramtorch_enabled():
-            raise ValueError("Group offload cannot be used together with RamTorch (--ramtorch).")
-
-        if self.MODEL_TYPE is not ModelTypes.TRANSFORMER:
-            raise ValueError("Group offload is only supported for transformer-based models.")
-
-        modules = self.get_group_offload_modules()
-        if not modules:
-            raise ValueError(
-                "Group offload requested but no transformer module is available. Ensure the model has been loaded."
-            )
-
-        if not torch.cuda.is_available():
-            raise ValueError(
-                "Group offload requires a CUDA device. Disable --enable_group_offload or select a CUDA accelerator."
-            )
-
-        device = self._resolve_group_offload_device()
-        if device.type != "cuda":
-            device = torch.device(getattr(self.accelerator, "device", "cuda") if self.accelerator is not None else "cuda")
-
-        use_stream = bool(getattr(self.config, "group_offload_use_stream", False))
-        if use_stream and bool(getattr(self.config, "gradient_checkpointing", False)):
-            logger.warning(
-                "Disabling group offload streams because gradient checkpointing replays layers during backward, "
-                "which breaks diffusers' group offload prefetch order and leads to CPU/CUDA mismatches. "
-                "Re-run without --gradient_checkpointing if you need streamed group offload."
-            )
-            use_stream = False
-            setattr(self.config, "group_offload_use_stream", False)
-
-        offload_type = getattr(self.config, "group_offload_type", "block_level")
-        blocks_per_group = getattr(self.config, "group_offload_blocks_per_group", 1)
-
-        try:
-            enable_group_offload_on_components(
-                modules,
-                device=device,
-                offload_type=offload_type,
-                number_blocks_per_group=blocks_per_group,
-                use_stream=use_stream,
-                offload_to_disk_path=self._resolve_group_offload_disk_path(),
-            )
-        except Exception as error:
-            raise RuntimeError(f"Failed to configure group offloading: {error}") from error
-
-        logger.info("Group offloading enabled for %s.", ", ".join(modules.keys()))
-        self._group_offload_configured = True
 
     def chunked_feed_forward_requested(self) -> bool:
         return bool(getattr(self.config, "enable_chunked_feed_forward", False))
@@ -6697,7 +6581,6 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
         self.model = None
         self.text_encoders = None
         self.tokenizers = None
-        self._group_offload_configured = False
         self.crepa_regularizer: Optional[CrepaRegularizer] = None
         self.urepa_regularizer: Optional["UrepaRegularizer"] = None
 

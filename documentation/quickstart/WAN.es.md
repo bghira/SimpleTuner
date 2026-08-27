@@ -149,23 +149,6 @@ simpletuner configure
 
 > ⚠️ Para usuarios ubicados en países donde Hugging Face Hub no es fácilmente accesible, debes agregar `HF_ENDPOINT=https://hf-mirror.com` a tu `~/.bashrc` o `~/.zshrc` dependiendo de cuál `$SHELL` use tu sistema.
 
-### Offloading de memoria (opcional)
-
-Wan es uno de los modelos más pesados que soporta SimpleTuner. Habilita offloading agrupado si estás cerca del límite de VRAM:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- Solo dispositivos CUDA respetan `--group_offload_use_stream`; ROCm/MPS hacen fallback automáticamente.
-- Deja el staging a disco comentado a menos que la memoria CPU sea el cuello de botella.
-- `--enable_model_cpu_offload` es mutuamente excluyente con group offload.
-
 ### Chunking de feed-forward (opcional)
 
 Si los checkpoints 14B aún hacen OOM durante gradient checkpointing, divide las capas feed‑forward de Wan:

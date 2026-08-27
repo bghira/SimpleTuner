@@ -15,27 +15,7 @@ Kandinsky 5.0 Video は重量級モデルです。以下を組み合わせます
   - **注意**: 初期の **VAE 事前キャッシュ**では巨大な HunyuanVideo VAE のため VRAM が大きく必要になります。キャッシュ時だけ CPU オフロードやより大きな GPU が必要になる可能性があります。
   - **ヒント**: `config.json` に `"offload_during_startup": true` を設定し、VAE とテキストエンコーダが同時に GPU に載らないようにすると、事前キャッシュ時のメモリ圧力を大きく下げられます。
   - **VAE が OOM する場合**: `--vae_enable_patch_conv=true` を設定して HunyuanVideo VAE の 3D Conv を分割します。少し遅くなりますがピーク VRAM が下がります。
-- **Pro モデル学習**: **FSDP2** (マルチ GPU) か、LoRA と強力な **Group Offload** が必要です。具体的な VRAM/RAM 要件は未確定ですが、「多ければ多いほど良い」です。
 - **システム RAM**: Lite モデルで **45GB** RAM が快適でした。安全のため 64GB+ を推奨します。
-
-### メモリオフロード（必須級）
-
-単一 GPU で **Pro** を学習する場合、ほぼ必ずグループオフロードを有効にする必要があります。**Lite** でも VRAM を節約してバッチや解像度を上げたい場合に推奨です。
-
-`config.json` に追加:
-
-<details>
-<summary>設定例を表示</summary>
-
-```json
-{
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
-  "group_offload_blocks_per_group": 1,
-  "group_offload_use_stream": true
-}
-```
-</details>
 
 ## 前提条件
 
@@ -198,7 +178,6 @@ simpletuner train
 
 1.  **解像度を下げる**: 480p (`480x854` など) を試す。
 2.  **フレーム数を減らす**: `validation_num_video_frames` とデータセットの `num_frames` を `33` または `49` に。
-3.  **オフロードを確認**: `--enable_group_offload` が有効か確認。
 
 ### 検証動画の品質
 

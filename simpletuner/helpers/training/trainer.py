@@ -4525,11 +4525,10 @@ class Trainer:
 
         # Determine if we should skip automatic device placement for the model.
         # This is necessary when using memory optimization techniques that keep
-        # parts of the model on CPU (block swap, ramtorch, group offload).
+        # parts of the model on CPU (block swap and RamTorch).
         musubi_block_swap_active = (getattr(self.config, "musubi_blocks_to_swap", 0) or 0) > 0
         ramtorch_enabled = getattr(self.config, "ramtorch", False)
-        group_offload_requested = bool(getattr(self.config, "enable_group_offload", False))
-        skip_model_device_placement = musubi_block_swap_active or ramtorch_enabled or group_offload_requested
+        skip_model_device_placement = musubi_block_swap_active or ramtorch_enabled
         if musubi_block_swap_active and self.accelerator.distributed_type == DistributedType.MULTI_GPU:
             self._move_model_with_block_swap(primary_model)
             moved_trainable, ignored_frozen = prepare_musubi_model_for_ddp(primary_model, self.accelerator.device)
@@ -4543,10 +4542,9 @@ class Trainer:
         if skip_model_device_placement:
             logger.info(
                 "Skipping automatic device placement for primary model during accelerator.prepare() "
-                "(musubi_block_swap=%s, ramtorch=%s, group_offload=%s)",
+                "(musubi_block_swap=%s, ramtorch=%s)",
                 musubi_block_swap_active,
                 ramtorch_enabled,
-                group_offload_requested,
             )
         # DeepSpeed handles device placement internally
         standalone_cp_prepare_config = None
@@ -5487,8 +5485,6 @@ class Trainer:
         else:
             target_device = destination
 
-        group_offload_requested = bool(getattr(self.config, "enable_group_offload", False))
-        group_offload_configured = getattr(self.model, "group_offload_configured", False)
         musubi_block_swap_active = getattr(self.config, "musubi_blocks_to_swap", 0) or 0 > 0
         ramtorch_enabled = getattr(self.config, "ramtorch", False)
         if self.model.get_trained_component() is not None:
@@ -5496,8 +5492,6 @@ class Trainer:
                 not any(
                     [
                         fsdp_active,
-                        group_offload_requested,
-                        group_offload_configured,
                         musubi_block_swap_active,
                         ramtorch_enabled,
                     ]
@@ -5534,9 +5528,6 @@ class Trainer:
             self.accelerator._lycoris_wrapped_network = self.accelerator._lycoris_wrapped_network.to(
                 target_device, dtype=self.config.weight_dtype
             )
-
-        if group_offload_requested and is_accelerator_target:
-            self.model.configure_group_offload()
 
         AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
         if self.config.attention_mechanism == "xformers":

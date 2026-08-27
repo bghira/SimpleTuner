@@ -198,7 +198,6 @@ simpletuner configure config/foo/config.json
 
 - **内容**：在 VAE 缓存期间将文本编码器权重卸载到 CPU。
 - **原因**：对 HiDream、Wan 2.1 等大模型，加载 VAE 缓存时可能 OOM。该选项不影响训练质量，但在超大文本编码器或慢 CPU 下可能显著延长启动时间，故默认关闭。
-- **提示**：对内存极其紧张的系统，可配合下方分组卸载功能使用。
 
 ### `--offload_during_save`
 
@@ -269,39 +268,6 @@ simpletuner configure config/foo/config.json
 - **行为**：每个 batch 采样一个噪声块，只执行对应层组，并为 DDP 自动启用 unused-parameter 检测。
 - **限制**：仅支持 Transformer denoiser。详见 [DiffusionBlocks](experimental/DIFFUSION_BLOCKS.zh.md)。
 
-### `--enable_group_offload`
-
-- **内容**：启用 diffusers 的分组模块卸载，使模型块在前向之间驻留在 CPU（或磁盘）。
-- **原因**：在大 Transformer（Flux、Wan、Auraflow、LTXVideo、Cosmos2Image）上显著降低显存峰值；配合 CUDA streams 时性能影响较小。
-- **说明**：
-  - 与 `--enable_model_cpu_offload` 互斥，每次运行只能选择一种策略。
-  - 需要 diffusers **v0.33.0** 或更新版本。
-
-### `--group_offload_type`
-
-- **选项**：`block_level`（默认）、`leaf_level`
-- **内容**：控制层的分组方式。`block_level` 在显存与吞吐之间取得平衡；`leaf_level` 最大化节省，但 CPU 传输更多。
-
-### `--group_offload_blocks_per_group`
-
-- **内容**：使用 `block_level` 时，每组包含的 Transformer 块数量。
-- **默认**：`1`
-- **原因**：增加该值可减少传输频率（更快），但会在加速器上保留更多参数（占用更多显存）。
-
-### `--group_offload_use_stream`
-
-- **内容**：使用专用 CUDA 流将主机/设备传输与计算重叠。
-- **默认**：`False`
-- **说明**：
-  - 在非 CUDA 后端（Apple MPS、ROCm、CPU）自动回退为 CPU 风格传输。
-  - 在 NVIDIA GPU 上有空闲拷贝引擎时推荐开启。
-
-### `--group_offload_to_disk_path`
-
-- **内容**：将分组参数溢出到磁盘而非 RAM 的目录路径。
-- **原因**：适用于 CPU RAM 极为紧张的系统（例如带大容量 NVMe 的工作站）。
-- **提示**：请使用高速本地 SSD；网络文件系统会显著拖慢训练。
-
 ### `--musubi_blocks_to_swap`
 
 - **内容**：为 LongCat-Video、Wan、LTXVideo、Kandinsky5-Video、Qwen-Image、Flux、Flux.2、zlab i1、Cosmos2Image、HunyuanVideo、Krea 2 提供 Musubi 块交换。将最后 N 个 Transformer 块保留在 CPU，并在前向中按块流式加载权重。
@@ -321,7 +287,6 @@ simpletuner configure config/foo/config.json
 - **原因**：在 CPU 内存共享 Linear 权重并流式传到加速器，以降低显存压力。
 - **说明**：
   - 需要 CUDA 或 ROCm（不支持 Apple/MPS）。
-  - 与 `--enable_group_offload` 互斥。
   - 自动启用 `--set_grads_to_none`。
 
 ### `--ramtorch_target_modules`

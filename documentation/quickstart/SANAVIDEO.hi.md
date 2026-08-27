@@ -6,23 +6,6 @@
 
 Sana Video Wan autoencoder का उपयोग करता है और डिफ़ॉल्ट रूप से 480p पर 81‑frame sequences प्रोसेस करता है। मेमोरी उपयोग अन्य वीडियो मॉडलों के समान अपेक्षित है; gradient checkpointing पहले ही सक्षम करें और VRAM headroom सत्यापित करने के बाद ही `train_batch_size` बढ़ाएँ।
 
-### मेमोरी ऑफ़लोडिंग (वैकल्पिक)
-
-यदि आप VRAM सीमा के करीब हैं, तो config में grouped offloading सक्षम करें:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- CUDA उपयोगकर्ताओं को `--group_offload_use_stream` का लाभ मिलता है; अन्य backends इसे स्वतः अनदेखा करते हैं।
-- `--group_offload_to_disk_path` तभी उपयोग करें जब सिस्टम RAM सीमित हो — disk staging धीमा है लेकिन रन स्थिर रखता है।
-- group offloading उपयोग करते समय `--enable_model_cpu_offload` बंद रखें।
-
 ### पूर्वापेक्षाएँ
 
 सुनिश्चित करें कि Python इंस्टॉल है; SimpleTuner 3.10 से 3.12 के साथ अच्छा काम करता है।

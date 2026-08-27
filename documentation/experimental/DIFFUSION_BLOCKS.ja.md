@@ -45,7 +45,6 @@ Transformer activation を作るのは active group だけです。全 block を
 
 独立 block job では job ごとに `blocks_to_train` を指定します。担当外 group は freeze され、optimizer state を持ちません。推論前に parameter ownership に従って checkpoint を統合する必要があります。
 
-Group offload は併用できます。Musubi block swap は併用できません。
 
 ## 推論
 
