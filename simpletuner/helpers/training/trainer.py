@@ -4467,7 +4467,7 @@ class Trainer:
             if attach_shared_ramtorch_parameters is not None:
                 attached = attach_shared_ramtorch_parameters(primary_model)
                 if attached:
-                    logger.info("Attached %s shared RamTorch parameters across ranks.", attached)
+                    logger.info("Attached %s shared RamTorch tensor storages across ranks.", attached)
             else:
                 logger.warning(
                     "RamTorch shared parameters are disabled; each rank will retain its own CPU copy of streamed weights."
@@ -4610,7 +4610,9 @@ class Trainer:
                         logger.info("Marking %s RamTorch parameters to ignore for DDP on text_encoder_%s.", ignored, idx)
                     attached = attach_shared_ramtorch_parameters(encoder)
                     if attached:
-                        logger.info("Attached %s shared RamTorch parameters across ranks on text_encoder_%s.", attached, idx)
+                        logger.info(
+                            "Attached %s shared RamTorch tensor storages across ranks on text_encoder_%s.", attached, idx
+                        )
             self.text_encoder_1, self.text_encoder_2 = self.accelerator.prepare(self.text_encoder_1, self.text_encoder_2)
         self._recalculate_training_steps()
         self.accelerator.wait_for_everyone()
