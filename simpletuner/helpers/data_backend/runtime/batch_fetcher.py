@@ -52,7 +52,14 @@ def _resolve_random_iterator():
 class BatchFetcher:
     """Prefetch batches using the last consumed training step as the first schedule hint."""
 
-    def __init__(self, step: int, max_size: int = 10, datasets: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        step: int,
+        max_size: int = 10,
+        datasets: Optional[Dict[str, Any]] = None,
+        device=None,
+        device_prefetch_threshold_bytes: int = 0,
+    ) -> None:
         if DEFAULT_KEEP_RUNNING_PROPERTY is not None:
             type(self).keep_running = DEFAULT_KEEP_RUNNING_PROPERTY
         self.queue = queue.Queue(max_size)
@@ -60,6 +67,14 @@ class BatchFetcher:
         self._keep_running = True
         self.step = step
         self._next_fetch_step = step
+        self.device_prefetcher = None
+        if device_prefetch_threshold_bytes > 0:
+            from .device_prefetch import CudaBatchPrefetcher
+
+            self.device_prefetcher = CudaBatchPrefetcher(
+                device=device,
+                minimum_bytes=device_prefetch_threshold_bytes,
+            )
 
     def start_fetching(self) -> threading.Thread:
         thread = threading.Thread(target=self.fetch_responses)
@@ -93,6 +108,8 @@ class BatchFetcher:
                     except Exception as exc:
                         logger.debug(f"BatchFetcher encountered exception: {exc}")
                         break
+                    if self.device_prefetcher is not None:
+                        item = self.device_prefetcher.prefetch(item)
                     self.queue.put(item)
                     self._next_fetch_step += 1
                     if self.queue.qsize() >= self.queue.maxsize:
@@ -119,6 +136,8 @@ class BatchFetcher:
             continue
         prefetch_log_debug("Queue has data. Yielding next item.")
         item = self.queue.get()
+        if self.device_prefetcher is not None:
+            item = self.device_prefetcher.consume(item)
         _set_epoch_step_for_training_step(step)
         return item
 

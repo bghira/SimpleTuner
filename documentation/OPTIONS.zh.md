@@ -788,6 +788,13 @@ TRAINING_DYNAMO_BACKEND=inductor
 - **内容**：增减内存中缓存的批次数。
 - **原因**：启用预取后，默认每个 GPU/进程保留 10 个条目。该值可调以增加或减少预取批次数。
 
+### `--dataloader_prefetch_device_threshold_mb`
+
+- **内容**：指定 dataloader 预取进行页锁定并通过专用 CUDA 流传输的最小 CPU 唯一批次载荷（MiB）。`0` 表示禁用设备暂存。
+- **原因**：非常大的缓存嵌入可能会使主机到设备的传输与模型计算串行执行。此选项让传输与 GPU 计算重叠。
+- **内存**：每个暂存的队列条目都会同时消耗固定主机内存和加速器内存。请从 `dataloader_prefetch_qlen: 2` 开始，并在增大前进行性能分析。
+- **兼容性**：需要 `dataloader_prefetch: true` 和 CUDA。不支持与上下文并行同时使用。
+
 ### `--compress_disk_cache`
 
 - **内容**：压缩磁盘上的 VAE 与文本嵌入缓存。
@@ -2230,6 +2237,7 @@ usage: train.py [-h] --model_family
                 [--torch_num_threads TORCH_NUM_THREADS]
                 [--dataloader_prefetch [DATALOADER_PREFETCH]]
                 [--dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN]
+                [--dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB]
                 [--aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT]
                 [--aspect_bucket_alignment {8,16,24,32,64}]
                 [--minimum_image_size MINIMUM_IMAGE_SIZE]
@@ -2881,6 +2889,10 @@ options:
                         so that it can be immediately available
   --dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN
                         Set the number of prefetched batches
+  --dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB
+                        Minimum CPU batch payload in MiB to page-lock and
+                        transfer on a dedicated CUDA stream during dataloader
+                        prefetch; 0 disables device staging
   --aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT
                         The number of workers to use for aspect bucketing.
                         This is a CPU-bound task, so the number of workers

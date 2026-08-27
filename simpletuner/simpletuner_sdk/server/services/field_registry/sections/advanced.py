@@ -2246,6 +2246,26 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    # Dataloader Device Prefetch Threshold
+    registry._add_field(
+        ConfigField(
+            name="dataloader_prefetch_device_threshold_mb",
+            arg_name="--dataloader_prefetch_device_threshold_mb",
+            ui_label="Dataloader Device Prefetch Threshold",
+            field_type=FieldType.NUMBER,
+            tab="basic",
+            section="data_config",
+            subsection="advanced",
+            default_value=0,
+            validation_rules=[ValidationRule(ValidationRuleType.MIN, value=0, message="Must be at least 0")],
+            help_text="Minimum CPU batch payload in MiB to page-lock and transfer on a dedicated CUDA stream during dataloader prefetch; 0 disables device staging",
+            tooltip="When dataloader prefetch is enabled, batches at or above this CPU payload are page-locked and transferred on a dedicated CUDA stream. Each queued batch consumes additional pinned host memory and accelerator memory. Set to 0 to disable device staging.",
+            importance=ImportanceLevel.ADVANCED,
+            order=66,
+            documentation="OPTIONS.md#--dataloader_prefetch_device_threshold_mb",
+        )
+    )
+
     # Aspect Bucket Worker Count
     registry._add_field(
         ConfigField(

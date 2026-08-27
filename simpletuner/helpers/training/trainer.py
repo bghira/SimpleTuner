@@ -6930,6 +6930,12 @@ class Trainer:
             prefetch_on_rank = not cp_batch_synchronizer.is_cp_enabled or cp_batch_synchronizer.is_cp_leader
             should_prefetch = self.config.dataloader_prefetch and prefetch_on_rank
             if should_prefetch:
+                device_prefetch_threshold_mb = self.config.dataloader_prefetch_device_threshold_mb
+                if device_prefetch_threshold_mb > 0 and cp_batch_synchronizer.is_cp_enabled:
+                    raise ValueError(
+                        "Dataloader device prefetch is not compatible with context-parallel batch broadcasting. "
+                        "Set --dataloader_prefetch_device_threshold_mb=0 when context parallelism is enabled."
+                    )
                 iterator_args = []
                 if self.bf is not None:
                     self.bf.stop_fetching()
@@ -6937,6 +6943,8 @@ class Trainer:
                     datasets=train_backends,
                     max_size=self.config.dataloader_prefetch_qlen,
                     step=step,
+                    device=self.accelerator.device,
+                    device_prefetch_threshold_bytes=int(device_prefetch_threshold_mb * 1024 * 1024),
                 )
                 if fetch_thread is not None:
                     fetch_thread.join()
