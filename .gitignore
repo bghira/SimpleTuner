@@ -94,3 +94,4 @@ package-lock.json
 site/
 tunableop_results*.csv
 .cog/
+artifacts/
