@@ -15,7 +15,7 @@
 
 import inspect
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -219,6 +219,92 @@ def _ltx2_flash3_varlen_hub_attention(
 _ltx2_flash3_varlen_hub_attention_eager = torch.compiler.disable(_ltx2_flash3_varlen_hub_attention)
 
 
+class LTX2FlashAttentionMetadata(NamedTuple):
+    indices_k: Optional[torch.Tensor]
+    cu_seqlens_q: torch.Tensor
+    cu_seqlens_k: torch.Tensor
+    max_seqlen_q: int
+    max_seqlen_k: int
+
+
+class LTX2FlashAttentionMetadataSet(NamedTuple):
+    video_self: LTX2FlashAttentionMetadata
+    audio_self: LTX2FlashAttentionMetadata
+    video_text: LTX2FlashAttentionMetadata
+    audio_text: LTX2FlashAttentionMetadata
+    audio_to_video: LTX2FlashAttentionMetadata
+    video_to_audio: LTX2FlashAttentionMetadata
+
+
+def _ltx2_prepare_flash_attention_metadata(
+    attention_mask: Optional[torch.Tensor],
+    batch_size: int,
+    seq_len_q: int,
+    seq_len_kv: int,
+    device: torch.device,
+) -> LTX2FlashAttentionMetadata:
+    keep_mask = _ltx2_normalize_varlen_mask(attention_mask, batch_size, seq_len_kv)
+    seqlens_q = torch.full((batch_size,), seq_len_q, dtype=torch.int32, device=device)
+    if keep_mask is None:
+        seqlens_k = torch.full((batch_size,), seq_len_kv, dtype=torch.int32, device=device)
+        indices_k = None
+        max_seqlen_k = seq_len_kv
+    else:
+        seqlens_k = keep_mask.sum(dim=1, dtype=torch.int32)
+        if torch.any(seqlens_k == 0):
+            raise ValueError("LTX-2 varlen attention received a mask with no valid key/value tokens.")
+        indices_k = keep_mask.flatten().nonzero(as_tuple=False).flatten()
+        max_seqlen_k = int(seqlens_k.max().item())
+
+    cu_seqlens_q = torch.zeros(batch_size + 1, dtype=torch.int32, device=device)
+    cu_seqlens_k = torch.zeros(batch_size + 1, dtype=torch.int32, device=device)
+    cu_seqlens_q[1:] = torch.cumsum(seqlens_q, dim=0)
+    cu_seqlens_k[1:] = torch.cumsum(seqlens_k, dim=0)
+    return LTX2FlashAttentionMetadata(
+        indices_k=indices_k,
+        cu_seqlens_q=cu_seqlens_q,
+        cu_seqlens_k=cu_seqlens_k,
+        max_seqlen_q=seq_len_q,
+        max_seqlen_k=max_seqlen_k,
+    )
+
+
+def _ltx2_flash_varlen_hub_attention_prepared(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    metadata: LTX2FlashAttentionMetadata,
+) -> torch.Tensor:
+    batch_size, seq_len_q = query.shape[:2]
+    if metadata.indices_k is None:
+        key_packed = key.flatten(0, 1)
+        value_packed = value.flatten(0, 1)
+    else:
+        key_packed = key.flatten(0, 1)[metadata.indices_k]
+        value_packed = value.flatten(0, 1)[metadata.indices_k]
+
+    func = _HUB_KERNELS_REGISTRY[AttentionBackendName.FLASH_VARLEN_HUB].kernel_fn
+    if func is None:
+        raise RuntimeError("The Flash Attention 2 Hub kernel was not loaded before entering the compiled block loop.")
+    output = func(
+        q=query.flatten(0, 1),
+        k=key_packed,
+        v=value_packed,
+        cu_seqlens_q=metadata.cu_seqlens_q,
+        cu_seqlens_k=metadata.cu_seqlens_k,
+        max_seqlen_q=metadata.max_seqlen_q,
+        max_seqlen_k=metadata.max_seqlen_k,
+        dropout_p=0.0,
+        softmax_scale=None,
+        causal=False,
+        window_size=(-1, -1),
+        return_attn_probs=False,
+    )
+    if isinstance(output, tuple):
+        output = output[0]
+    return output.unflatten(0, (batch_size, seq_len_q))
+
+
 def _ltx2_dispatch_attention(
     query: torch.Tensor,
     key: torch.Tensor,
@@ -226,6 +312,7 @@ def _ltx2_dispatch_attention(
     attention_mask: Optional[torch.Tensor],
     backend: Optional[AttentionBackendName],
     parallel_config,
+    flash_attention_metadata: Optional[LTX2FlashAttentionMetadata] = None,
 ) -> torch.Tensor:
     backend_name = _ltx2_active_attention_backend(backend)
     if backend_name == AttentionBackendName._FLASH_3_VARLEN_HUB:
@@ -241,6 +328,10 @@ def _ltx2_dispatch_attention(
             is_causal=False,
         )
     if backend_name == AttentionBackendName.FLASH_VARLEN_HUB:
+        if flash_attention_metadata is not None:
+            if parallel_config is not None:
+                raise ValueError("Precomputed LTX-2 Flash Attention metadata does not support context parallelism.")
+            return _ltx2_flash_varlen_hub_attention_prepared(query, key, value, flash_attention_metadata)
         attention_mask = _ltx2_normalize_varlen_mask(attention_mask, key.shape[0], key.shape[1])
     return dispatch_attention_fn(
         query,
@@ -457,13 +548,15 @@ class LTX2AudioVideoAttnProcessor:
         attention_mask: Optional[torch.Tensor] = None,
         query_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         key_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        attention_mask_prepared: bool = False,
+        flash_attention_metadata: Optional[LTX2FlashAttentionMetadata] = None,
     ) -> torch.Tensor:
         batch_size, sequence_length, _ = (
             hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
         )
         is_self_attention = encoder_hidden_states is None
 
-        if attention_mask is not None:
+        if attention_mask is not None and not attention_mask_prepared:
             mask_parallel_config = self._parallel_config if is_self_attention else None
             attention_mask = _ltx2_prepare_attention_mask(
                 attn, attention_mask, sequence_length, batch_size, mask_parallel_config
@@ -509,6 +602,7 @@ class LTX2AudioVideoAttnProcessor:
                 attention_mask=attention_mask,
                 backend=self._attention_backend,
                 parallel_config=self._parallel_config if is_self_attention else None,
+                flash_attention_metadata=flash_attention_metadata,
             )
         hidden_states = self._flatten_attention_output(hidden_states, batch_size, attn)
         hidden_states = hidden_states.to(query.dtype)
@@ -545,13 +639,15 @@ class LTX2PerturbedAttnProcessor(LTX2AudioVideoAttnProcessor):
         key_rotary_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         perturbation_mask: Optional[torch.Tensor] = None,
         all_perturbed: Optional[bool] = None,
+        attention_mask_prepared: bool = False,
+        flash_attention_metadata: Optional[LTX2FlashAttentionMetadata] = None,
     ) -> torch.Tensor:
         batch_size, sequence_length, _ = (
             hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
         )
         is_self_attention = encoder_hidden_states is None
 
-        if attention_mask is not None:
+        if attention_mask is not None and not attention_mask_prepared:
             mask_parallel_config = self._parallel_config if is_self_attention else None
             attention_mask = _ltx2_prepare_attention_mask(
                 attn, attention_mask, sequence_length, batch_size, mask_parallel_config
@@ -604,6 +700,7 @@ class LTX2PerturbedAttnProcessor(LTX2AudioVideoAttnProcessor):
                     attention_mask=attention_mask,
                     backend=self._attention_backend,
                     parallel_config=self._parallel_config if is_self_attention else None,
+                    flash_attention_metadata=flash_attention_metadata,
                 )
             hidden_states = self._flatten_attention_output(hidden_states, batch_size, attn)
             hidden_states = hidden_states.to(query.dtype)
@@ -965,6 +1062,8 @@ class LTX2VideoTransformerBlock(nn.Module):
         checkpoint_fn: Any | None = None,
         offload_attention: bool = False,
         stg_skip_self_attn: bool = False,
+        attention_masks_prepared: bool = False,
+        flash_attention_metadata: Optional[LTX2FlashAttentionMetadataSet] = None,
     ) -> torch.Tensor:
         batch_size = audio_hidden_states.size(0)
         video_batch_size = hidden_states.size(0)
@@ -996,6 +1095,10 @@ class LTX2VideoTransformerBlock(nn.Module):
                 "encoder_hidden_states": None,
                 "query_rotary_emb": audio_rotary_emb,
                 "attention_mask": audio_self_attention_mask,
+                "attention_mask_prepared": attention_masks_prepared,
+                "flash_attention_metadata": (
+                    flash_attention_metadata.audio_self if flash_attention_metadata is not None else None
+                ),
             }
             if self.perturbed_attn:
                 audio_self_attn_args["perturbation_mask"] = perturbation_mask
@@ -1015,6 +1118,10 @@ class LTX2VideoTransformerBlock(nn.Module):
                     encoder_hidden_states=audio_encoder_hidden_states,
                     query_rotary_emb=None,
                     attention_mask=audio_encoder_attention_mask,
+                    attention_mask_prepared=attention_masks_prepared,
+                    flash_attention_metadata=(
+                        flash_attention_metadata.audio_text if flash_attention_metadata is not None else None
+                    ),
                 )
             if self.audio_cross_attn_adaln:
                 attn_audio_hidden_states = attn_audio_hidden_states * audio_gate_text_q
@@ -1045,6 +1152,10 @@ class LTX2VideoTransformerBlock(nn.Module):
             "encoder_hidden_states": None,
             "query_rotary_emb": video_rotary_emb,
             "attention_mask": self_attention_mask,
+            "attention_mask_prepared": attention_masks_prepared,
+            "flash_attention_metadata": (
+                flash_attention_metadata.video_self if flash_attention_metadata is not None else None
+            ),
         }
         if self.perturbed_attn:
             video_self_attn_args["perturbation_mask"] = perturbation_mask
@@ -1067,6 +1178,10 @@ class LTX2VideoTransformerBlock(nn.Module):
             "encoder_hidden_states": None,
             "query_rotary_emb": audio_rotary_emb,
             "attention_mask": audio_self_attention_mask,
+            "attention_mask_prepared": attention_masks_prepared,
+            "flash_attention_metadata": (
+                flash_attention_metadata.audio_self if flash_attention_metadata is not None else None
+            ),
         }
         if self.perturbed_attn:
             audio_self_attn_args["perturbation_mask"] = perturbation_mask
@@ -1093,6 +1208,10 @@ class LTX2VideoTransformerBlock(nn.Module):
                 encoder_hidden_states=encoder_hidden_states,
                 query_rotary_emb=None,
                 attention_mask=encoder_attention_mask,
+                attention_mask_prepared=attention_masks_prepared,
+                flash_attention_metadata=(
+                    flash_attention_metadata.video_text if flash_attention_metadata is not None else None
+                ),
             )
         if self.video_cross_attn_adaln:
             attn_hidden_states = attn_hidden_states * gate_text_q
@@ -1109,6 +1228,10 @@ class LTX2VideoTransformerBlock(nn.Module):
                 encoder_hidden_states=audio_encoder_hidden_states,
                 query_rotary_emb=None,
                 attention_mask=audio_encoder_attention_mask,
+                attention_mask_prepared=attention_masks_prepared,
+                flash_attention_metadata=(
+                    flash_attention_metadata.audio_text if flash_attention_metadata is not None else None
+                ),
             )
         if self.audio_cross_attn_adaln:
             attn_audio_hidden_states = attn_audio_hidden_states * audio_gate_text_q
@@ -1148,6 +1271,10 @@ class LTX2VideoTransformerBlock(nn.Module):
                         query_rotary_emb=ca_video_rotary_emb,
                         key_rotary_emb=ca_audio_rotary_emb,
                         attention_mask=a2v_cross_attention_mask,
+                        attention_mask_prepared=attention_masks_prepared,
+                        flash_attention_metadata=(
+                            flash_attention_metadata.audio_to_video if flash_attention_metadata is not None else None
+                        ),
                     )
                 hidden_states = hidden_states + a2v_gate * a2v_attn_hidden_states
 
@@ -1166,6 +1293,10 @@ class LTX2VideoTransformerBlock(nn.Module):
                         query_rotary_emb=ca_audio_rotary_emb,
                         key_rotary_emb=ca_video_rotary_emb,
                         attention_mask=v2a_cross_attention_mask,
+                        attention_mask_prepared=attention_masks_prepared,
+                        flash_attention_metadata=(
+                            flash_attention_metadata.video_to_audio if flash_attention_metadata is not None else None
+                        ),
                     )
                 audio_hidden_states = audio_hidden_states + v2a_gate * v2a_attn_hidden_states
 
@@ -2449,6 +2580,95 @@ class LTX2VideoTransformer3DModel(
                 )
             force_keep_mask = force_keep_mask.to(device=hidden_states.device, dtype=torch.bool)
 
+        attention_masks_prepared = not use_routing
+        flash_attention_metadata = None
+        if attention_masks_prepared:
+            first_block = self.transformer_blocks[0]
+
+            def prepare_mask(attn, mask, sequence_length, parallel_config=None):
+                if mask is None:
+                    return None
+                return _ltx2_prepare_attention_mask(attn, mask, sequence_length, batch_size, parallel_config)
+
+            self_attention_mask = prepare_mask(
+                first_block.attn1,
+                self_attention_mask,
+                hidden_states.shape[1],
+                getattr(first_block.attn1.processor, "_parallel_config", None),
+            )
+            audio_self_attention_mask = prepare_mask(
+                first_block.audio_attn1,
+                audio_self_attention_mask,
+                audio_hidden_states.shape[1],
+                getattr(first_block.audio_attn1.processor, "_parallel_config", None),
+            )
+            encoder_attention_mask = prepare_mask(
+                first_block.attn2,
+                encoder_attention_mask,
+                encoder_hidden_states.shape[1],
+            )
+            audio_encoder_attention_mask = prepare_mask(
+                first_block.audio_attn2,
+                audio_encoder_attention_mask,
+                audio_encoder_hidden_states.shape[1],
+            )
+            a2v_cross_attention_mask = prepare_mask(
+                first_block.audio_to_video_attn,
+                a2v_cross_attention_mask,
+                audio_hidden_states.shape[1],
+            )
+            v2a_cross_attention_mask = prepare_mask(
+                first_block.video_to_audio_attn,
+                v2a_cross_attention_mask,
+                hidden_states.shape[1],
+            )
+
+            attention_processors = (
+                first_block.attn1.processor,
+                first_block.audio_attn1.processor,
+                first_block.attn2.processor,
+                first_block.audio_attn2.processor,
+                first_block.audio_to_video_attn.processor,
+                first_block.video_to_audio_attn.processor,
+            )
+            use_prepared_flash_attention = all(
+                _ltx2_active_attention_backend(getattr(processor, "_attention_backend", None))
+                == AttentionBackendName.FLASH_VARLEN_HUB
+                for processor in attention_processors
+            ) and all(getattr(processor, "_parallel_config", None) is None for processor in attention_processors)
+            if use_prepared_flash_attention:
+                _maybe_download_kernel_for_backend(AttentionBackendName.FLASH_VARLEN_HUB)
+
+                def prepare_flash_metadata(mask, seq_len_q, seq_len_kv):
+                    return _ltx2_prepare_flash_attention_metadata(
+                        mask,
+                        batch_size,
+                        seq_len_q,
+                        seq_len_kv,
+                        hidden_states.device,
+                    )
+
+                video_sequence_length = hidden_states.shape[1]
+                audio_sequence_length = audio_hidden_states.shape[1]
+                flash_attention_metadata = LTX2FlashAttentionMetadataSet(
+                    video_self=prepare_flash_metadata(self_attention_mask, video_sequence_length, video_sequence_length),
+                    audio_self=prepare_flash_metadata(
+                        audio_self_attention_mask, audio_sequence_length, audio_sequence_length
+                    ),
+                    video_text=prepare_flash_metadata(
+                        encoder_attention_mask, video_sequence_length, encoder_hidden_states.shape[1]
+                    ),
+                    audio_text=prepare_flash_metadata(
+                        audio_encoder_attention_mask, audio_sequence_length, audio_encoder_hidden_states.shape[1]
+                    ),
+                    audio_to_video=prepare_flash_metadata(
+                        a2v_cross_attention_mask, video_sequence_length, audio_sequence_length
+                    ),
+                    video_to_audio=prepare_flash_metadata(
+                        v2a_cross_attention_mask, audio_sequence_length, video_sequence_length
+                    ),
+                )
+
         # GLIGEN grounding (allow tunneling through attention kwargs for pipeline inference)
         if grounding_kwargs is None:
             grounding_kwargs = (attention_kwargs or {}).get("_grounding_kwargs")
@@ -2486,7 +2706,8 @@ class LTX2VideoTransformer3DModel(
                 segmented_checkpoint_fn = simpletuner_checkpoint
 
         captured_frame_hidden: Optional[torch.Tensor] = None
-        for block_idx, block in enumerate(self.transformer_blocks):
+        block_loop = self.transformer_blocks
+        for block_idx, block in enumerate(block_loop):
             if use_segmented_checkpointing:
                 if block_idx != 0:
                     continue
@@ -2526,6 +2747,8 @@ class LTX2VideoTransformer3DModel(
                         None,
                         offload_attention=self.gradient_checkpointing_offload_attention,
                         stg_skip_self_attn=_idx in stg_self_attn_blocks,
+                        attention_masks_prepared=attention_masks_prepared,
+                        flash_attention_metadata=flash_attention_metadata,
                     )
 
                 hidden_states, audio_hidden_states = checkpoint_sequential_state(
@@ -2619,6 +2842,8 @@ class LTX2VideoTransformer3DModel(
                         None,
                         offload_attention=self.gradient_checkpointing_offload_attention,
                         stg_skip_self_attn=block_idx in stg_self_attn_blocks,
+                        attention_masks_prepared=attention_masks_prepared,
+                        flash_attention_metadata=flash_attention_metadata,
                     )
 
                 if self.gradient_checkpointing_backend.endswith("-ffn"):
@@ -2651,6 +2876,8 @@ class LTX2VideoTransformer3DModel(
                         checkpoint_fn=checkpoint_fn,
                         offload_attention=self.gradient_checkpointing_offload_attention,
                         stg_skip_self_attn=block_idx in stg_self_attn_blocks,
+                        attention_masks_prepared=attention_masks_prepared,
+                        flash_attention_metadata=flash_attention_metadata,
                     )
                 else:
                     checkpoint_kwargs = {"use_reentrant": False}
@@ -2705,6 +2932,8 @@ class LTX2VideoTransformer3DModel(
                     use_v2a_cross_attention=use_v2a_cross_attention,
                     offload_attention=self.gradient_checkpointing_offload_attention,
                     stg_skip_self_attn=block_idx in stg_self_attn_blocks,
+                    attention_masks_prepared=attention_masks_prepared,
+                    flash_attention_metadata=flash_attention_metadata,
                 )
 
             if grounding_objs is not None and hasattr(block, "fuser"):
