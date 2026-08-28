@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 _PEFT_LORA_CUDAGRAPH_PATCHED = False
 _PEFT_TE_LORA_CUDAGRAPH_PATCHED = False
+_CHECKPOINT_CUDAGRAPH_ISSUE = "https://github.com/pytorch/pytorch/issues/154306"
 
 
 @torch.compiler.disable
@@ -52,19 +53,43 @@ def run_with_dynamo_config(config: Any, fn: Callable[..., Any], *args: Any, **kw
 def _normalise_text(value: Any) -> str:
     if value is None:
         return ""
+    enum_value = getattr(value, "value", None)
+    if isinstance(enum_value, str):
+        value = enum_value
     return str(value).strip().lower().replace("_", "-")
+
+
+def apply_checkpointing_cudagraph_compatibility(config: Any) -> bool:
+    backend = _normalise_text(getattr(config, "dynamo_backend", None))
+    mode = _normalise_text(getattr(config, "dynamo_mode", None))
+    checkpointing = _coerce_flag(getattr(config, "gradient_checkpointing", False))
+    if backend != "inductor" or mode not in {"cudagraphs", "reduce-overhead"} or not checkpointing:
+        return False
+
+    config.dynamo_mode = "default"
+    os.environ["TRAINING_DYNAMO_MODE"] = "default"
+    os.environ["ACCELERATE_DYNAMO_MODE"] = "default"
+    logger.warning(
+        "Activation checkpointing is incompatible with Inductor CUDA Graph mode '%s' due to PyTorch issue %s; "
+        "using dynamo_mode='default' while preserving regional compilation.",
+        mode,
+        _CHECKPOINT_CUDAGRAPH_ISSUE,
+    )
+    return True
 
 
 def _inductor_cudagraphs_enabled(config: Any = None) -> bool:
     config_backend = _normalise_text(getattr(config, "dynamo_backend", None))
+    training_backend = _normalise_text(os.environ.get("TRAINING_DYNAMO_BACKEND"))
     accelerate_backend = _normalise_text(os.environ.get("ACCELERATE_DYNAMO_BACKEND"))
-    backend = accelerate_backend or config_backend
+    backend = config_backend or training_backend or accelerate_backend
     if backend != "inductor":
         return False
 
     config_mode = _normalise_text(getattr(config, "dynamo_mode", None))
+    training_mode = _normalise_text(os.environ.get("TRAINING_DYNAMO_MODE"))
     accelerate_mode = _normalise_text(os.environ.get("ACCELERATE_DYNAMO_MODE"))
-    mode = accelerate_mode or config_mode
+    mode = config_mode or training_mode or accelerate_mode
 
     try:
         import torch._inductor.config as inductor_config
