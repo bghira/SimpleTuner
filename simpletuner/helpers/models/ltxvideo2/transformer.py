@@ -251,10 +251,17 @@ def _ltx2_prepare_flash_attention_metadata(
         max_seqlen_k = seq_len_kv
     else:
         seqlens_k = keep_mask.sum(dim=1, dtype=torch.int32)
-        if torch.any(seqlens_k == 0):
+        if not torch.compiler.is_compiling() and torch.any(seqlens_k == 0):
             raise ValueError("LTX-2 varlen attention received a mask with no valid key/value tokens.")
-        indices_k = keep_mask.flatten().nonzero(as_tuple=False).flatten()
-        max_seqlen_k = int(seqlens_k.max().item())
+        flat_keep_mask = keep_mask.flatten()
+        valid_destinations = torch.cumsum(flat_keep_mask, dim=0, dtype=torch.int64) - 1
+        invalid_destinations = (
+            flat_keep_mask.sum(dtype=torch.int64) + torch.cumsum(~flat_keep_mask, dim=0, dtype=torch.int64) - 1
+        )
+        destinations = torch.where(flat_keep_mask, valid_destinations, invalid_destinations)
+        source_indices = torch.arange(flat_keep_mask.numel(), device=device)
+        indices_k = torch.empty_like(source_indices).scatter(0, destinations, source_indices)
+        max_seqlen_k = seq_len_kv
 
     cu_seqlens_q = torch.zeros(batch_size + 1, dtype=torch.int32, device=device)
     cu_seqlens_k = torch.zeros(batch_size + 1, dtype=torch.int32, device=device)
@@ -282,6 +289,10 @@ def _ltx2_flash_varlen_hub_attention_prepared(
     else:
         key_packed = key.flatten(0, 1)[metadata.indices_k]
         value_packed = value.flatten(0, 1)[metadata.indices_k]
+        valid_rows = torch.arange(key_packed.shape[0], device=key.device) < metadata.cu_seqlens_k[-1]
+        valid_rows = valid_rows[:, None, None]
+        key_packed = torch.where(valid_rows, key_packed, torch.zeros_like(key_packed))
+        value_packed = torch.where(valid_rows, value_packed, torch.zeros_like(value_packed))
 
     func = _HUB_KERNELS_REGISTRY[AttentionBackendName.FLASH_VARLEN_HUB].kernel_fn
     if func is None:
@@ -303,6 +314,38 @@ def _ltx2_flash_varlen_hub_attention_prepared(
     if isinstance(output, tuple):
         output = output[0]
     return output.unflatten(0, (batch_size, seq_len_q))
+
+
+def _ltx2_native_efficient_attention(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: Optional[torch.Tensor],
+) -> torch.Tensor:
+    query, key, value = (tensor.permute(0, 2, 1, 3) for tensor in (query, key, value))
+    if attention_mask is not None and attention_mask.dtype == torch.bool:
+        zero = torch.zeros((), dtype=query.dtype, device=query.device)
+        masked = torch.full((), torch.finfo(query.dtype).min, dtype=query.dtype, device=query.device)
+        attention_mask = torch.where(attention_mask, zero, masked)
+    elif attention_mask is not None and attention_mask.dtype != query.dtype:
+        attention_mask = attention_mask.to(query.dtype)
+    if attention_mask is not None and attention_mask.shape[-2] != query.shape[-2]:
+        attention_mask = attention_mask.expand(*attention_mask.shape[:-2], query.shape[-2], attention_mask.shape[-1])
+    if attention_mask is not None and attention_mask.shape[-1] % 8:
+        key_length = attention_mask.shape[-1]
+        padding = 8 - key_length % 8
+        attention_mask = torch.nn.functional.pad(attention_mask, (0, padding))[..., :key_length]
+    output, _, _, _ = torch.ops.aten._scaled_dot_product_efficient_attention(
+        query,
+        key,
+        value,
+        attention_mask,
+        True,
+        dropout_p=0.0,
+        is_causal=False,
+        scale=None,
+    )
+    return output.permute(0, 2, 1, 3)
 
 
 def _ltx2_dispatch_attention(
@@ -333,6 +376,8 @@ def _ltx2_dispatch_attention(
                 raise ValueError("Precomputed LTX-2 Flash Attention metadata does not support context parallelism.")
             return _ltx2_flash_varlen_hub_attention_prepared(query, key, value, flash_attention_metadata)
         attention_mask = _ltx2_normalize_varlen_mask(attention_mask, key.shape[0], key.shape[1])
+    if backend_name == AttentionBackendName._NATIVE_EFFICIENT and parallel_config is None:
+        return _ltx2_native_efficient_attention(query, key, value, attention_mask)
     return dispatch_attention_fn(
         query,
         key,
@@ -2637,7 +2682,8 @@ class LTX2VideoTransformer3DModel(
                 for processor in attention_processors
             ) and all(getattr(processor, "_parallel_config", None) is None for processor in attention_processors)
             if use_prepared_flash_attention:
-                _maybe_download_kernel_for_backend(AttentionBackendName.FLASH_VARLEN_HUB)
+                if not torch.compiler.is_compiling():
+                    _maybe_download_kernel_for_backend(AttentionBackendName.FLASH_VARLEN_HUB)
 
                 def prepare_flash_metadata(mask, seq_len_q, seq_len_kv):
                     return _ltx2_prepare_flash_attention_metadata(
