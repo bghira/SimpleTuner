@@ -1704,6 +1704,10 @@ class FieldService:
             "dynamo_fullgraph",
             "dynamo_dynamic",
             "dynamo_use_regional_compilation",
+            "dynamo_wrapper",
+            "dynamo_cache_export",
+            "dynamo_cache_export_after_first_step",
+            "dynamo_hub_repo_id",
         }:
             backend_value = self._get_config_value(config_values, "dynamo_backend")
             if backend_value is None and isinstance(raw_config, dict):

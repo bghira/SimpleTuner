@@ -71,9 +71,11 @@ from simpletuner.helpers.training.deepspeed_optimizers import sanitize_optimizer
 from simpletuner.helpers.training.default_settings.safety_check import safety_check
 from simpletuner.helpers.training.dynamo import (
     apply_checkpointing_cudagraph_compatibility,
+    configure_inductor_wrapper,
     install_cudagraph_workarounds,
     mark_cudagraph_step_begin,
 )
+from simpletuner.helpers.training.dynamo_cache import DynamoCacheManager
 from simpletuner.helpers.training.evaluation import ModelEvaluator
 from simpletuner.helpers.training.exceptions import GPUHealthError
 from simpletuner.helpers.training.gpu_circuit_breaker import get_current_gpu_index, get_gpu_circuit_breaker, is_cuda_error
@@ -270,6 +272,7 @@ class Trainer:
     sidecar_is_schedulefree = False
     sidecar_scheduler_disabled = False
     publishing_manager = None
+    dynamo_cache_manager = None
     _cleanup_invoked = False
 
     def __init__(
@@ -293,6 +296,7 @@ class Trainer:
         self.webhook_handler = None
         self.custom_tracker = None
         self.publishing_manager = None
+        self.dynamo_cache_manager = None
         self.should_abort = False
         self._external_abort_checker = None
         self._manual_validation_consumer: Optional[Callable[[], bool]] = None
@@ -322,6 +326,11 @@ class Trainer:
         except Exception as e:
             self._send_webhook_msg(f"Error: {e}", message_level="critical")
             raise e
+
+        if getattr(self, "config", None) is not None:
+            configure_inductor_wrapper(self.config)
+            self.dynamo_cache_manager = DynamoCacheManager(self.config)
+            self.dynamo_cache_manager.load()
 
         if getattr(self, "config", None) is not None:
             logger.info(
@@ -354,6 +363,33 @@ class Trainer:
         if not config:
             return None
         return type("Config", (object,), config)
+
+    def _export_dynamo_cache(self, reason: str) -> None:
+        manager = self.dynamo_cache_manager
+        if manager is None or not manager.enabled:
+            return
+        if self.accelerator is not None:
+            self.accelerator.wait_for_everyone()
+        try:
+            if self.accelerator is None or self.accelerator.is_main_process:
+                manager.export(reason=reason)
+        except Exception as exc:
+            logger.warning("Unexpected failure while exporting the Dynamo Mega-Cache: %s", exc)
+        finally:
+            if self.accelerator is not None:
+                self.accelerator.wait_for_everyone()
+
+    def _export_dynamo_cache_after_first_step(self) -> None:
+        manager = self.dynamo_cache_manager
+        if (
+            manager is None
+            or not manager.enabled
+            or manager.first_step_export_attempted
+            or not getattr(self.config, "dynamo_cache_export_after_first_step", True)
+        ):
+            return
+        manager.first_step_export_attempted = True
+        self._export_dynamo_cache(reason="first successful optimizer step")
 
     def register_manual_validation_trigger(self, consumer: Callable[[], bool]) -> None:
         """Register a callable that returns True once per manual validation request."""
@@ -5705,6 +5741,8 @@ class Trainer:
                 checkpoint_limit,
                 protected_checkpoint=save_path,
             )
+        checkpoint_step = getattr(self, "state", {}).get("global_step", "unknown")
+        self._export_dynamo_cache(reason=f"checkpoint {checkpoint_step}")
 
         hub_upload_planned = upload_to_hub and self.hub_manager is not None
         if hub_upload_planned and not defer_hub_upload:
@@ -5729,6 +5767,8 @@ class Trainer:
                 "rolling",
                 protected_checkpoint=save_path,
             )
+        checkpoint_step = getattr(self, "state", {}).get("global_step", "unknown")
+        self._export_dynamo_cache(reason=f"rolling checkpoint {checkpoint_step}")
         return save_path
 
     def _send_webhook_msg(
@@ -7353,6 +7393,7 @@ class Trainer:
                     current_epoch_step += 1
                     StateTracker.set_global_step(self.state["global_step"])
                     self.iteration_tracker.record_step(self.state["global_step"])
+                    self._export_dynamo_cache_after_first_step()
                     if ramtorch_profile.profile_enabled():
                         ramtorch_profile.record_train_step(
                             self.state["global_step"],
@@ -7814,6 +7855,7 @@ class Trainer:
                     job_id=self.job_id,
                 )
                 self._emit_event(event)
+        self._export_dynamo_cache(reason="training completion")
         self.accelerator.end_training()
         # Emit training_complete event after all model saving and validation is complete
         event = lifecycle_stage_event(

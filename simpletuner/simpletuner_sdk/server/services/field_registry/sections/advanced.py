@@ -2154,6 +2154,100 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="dynamo_wrapper",
+            arg_name="--dynamo_wrapper",
+            ui_label="TorchInductor Wrapper",
+            field_type=FieldType.SELECT,
+            tab="hardware",
+            section="accelerate",
+            subsection="advanced",
+            default_value="cpp",
+            choices=[
+                {"value": "cpp", "label": "C++ (recommended)"},
+                {"value": "python", "label": "Python (legacy)"},
+            ],
+            help_text="Selects the host-side wrapper used to dispatch TorchInductor kernels.",
+            tooltip="The C++ wrapper is the default because it substantially reduces launch pacing overhead for large compiled regions. Python preserves earlier SimpleTuner behavior.",
+            dependencies=[
+                FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show"),
+                FieldDependency(field="dynamo_backend", operator="equals", value="inductor", action="show"),
+            ],
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=55,
+            documentation="OPTIONS.md#--dynamo_wrapper",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="dynamo_cache_export",
+            arg_name="--dynamo_cache_export",
+            ui_label="Dynamo Mega-Cache Path",
+            field_type=FieldType.TEXT,
+            tab="hardware",
+            section="accelerate",
+            subsection="advanced",
+            default_value=None,
+            allow_empty=True,
+            help_text="Load and cumulatively export PyTorch compiler cache artifacts at this path.",
+            tooltip="The cache is loaded before compilation, exported after the first optimizer step, and checked for new artifacts at checkpoints and shutdown.",
+            dependencies=[
+                FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show"),
+                FieldDependency(field="dynamo_backend", operator="not_equals", value="no", action="show"),
+            ],
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=56,
+            documentation="OPTIONS.md#--dynamo_cache_export",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="dynamo_cache_export_after_first_step",
+            arg_name="--dynamo_cache_export_after_first_step",
+            ui_label="Export Dynamo Cache After First Step",
+            field_type=FieldType.CHECKBOX,
+            tab="hardware",
+            section="accelerate",
+            subsection="advanced",
+            default_value=True,
+            help_text="Persist compiler artifacts immediately after the first successful optimizer step.",
+            tooltip="Enabled by default so a later crash does not discard the initial cold compile. Checkpoint and final exports still occur when disabled.",
+            dependencies=[
+                FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show"),
+                FieldDependency(field="dynamo_backend", operator="not_equals", value="no", action="show"),
+            ],
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=57,
+            documentation="OPTIONS.md#--dynamo_cache_export_after_first_step",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
+            name="dynamo_hub_repo_id",
+            arg_name="--dynamo_hub_repo_id",
+            ui_label="Dynamo Cache Hub Repository",
+            field_type=FieldType.TEXT,
+            tab="hardware",
+            section="accelerate",
+            subsection="advanced",
+            default_value=None,
+            allow_empty=True,
+            help_text="Optional Hugging Face model repository used to retrieve and publish the Dynamo Mega-Cache.",
+            tooltip="SimpleTuner checks the configured cache path in this repository, loads it when compatible, and publishes cumulative updates in one commit.",
+            dependencies=[
+                FieldDependency(field="i_know_what_i_am_doing", operator="equals", value=True, action="show"),
+                FieldDependency(field="dynamo_backend", operator="not_equals", value="no", action="show"),
+            ],
+            importance=ImportanceLevel.EXPERIMENTAL,
+            order=58,
+            documentation="OPTIONS.md#--dynamo_hub_repo_id",
+        )
+    )
+
     # Max Workers
     registry._add_field(
         ConfigField(

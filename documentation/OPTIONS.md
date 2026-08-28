@@ -608,6 +608,41 @@ To persist the settings in `config.json`, add the equivalent keys:
 
 Omit any entries you want to inherit from Accelerate’s defaults (for example, leave out `dynamo_mode` to use automatic selection).
 
+### `--dynamo_wrapper`
+
+Select the host-side wrapper used by TorchInductor. `cpp` is the default and reduces Python dispatch overhead for large compiled regions. Set `python` to retain the wrapper behavior used by earlier SimpleTuner releases. SimpleTuner applies the selection before loading or compiling graphs and includes it in generated Mega-Cache names and manifests.
+
+### `--dynamo_cache_export`
+
+Optional path for a cumulative PyTorch `torch.compile` Mega-Cache blob. At startup, SimpleTuner loads a compatible blob from this path before any model compilation. After the first successful optimizer step it exports the compiled AOTAutograd, Inductor, Triton, autotuning, and PGO artifacts so a later training failure does not discard the cold compile. At normal shutdown it re-exports only when PyTorch reports additional artifact keys, such as those generated for a newly encountered latent shape.
+
+When the value ends in a path separator, identifies an existing directory, or has no filename suffix, SimpleTuner generates a stable filename in that directory. The generated name includes the model family and flavour, accelerator, PyTorch runtime digest, and a digest of graph-relevant configuration such as precision, attention, checkpointing, and LoRA layout. Supplying an explicit filename such as `ltx25-h100.ptcache` uses that name unchanged.
+
+SimpleTuner writes a compatibility manifest beside the blob as `<path>.manifest.json`. The manifest records the exact PyTorch, Triton, CUDA/ROCm, Python, platform, and accelerator identity plus advisory model and compilation configuration signatures. An obvious runtime mismatch is rejected before loading; PyTorch's own cache keys and guards remain authoritative for graph, dtype, stride, and shape compatibility. If no entry covers a batch, training continues with normal runtime compilation and the new artifacts are merged into the next export.
+
+Use runtime-specific paths to avoid replacing a useful cache when changing compiler or hardware versions, for example:
+
+```json
+{
+  "dynamo_backend": "inductor",
+  "dynamo_wrapper": "cpp",
+  "dynamo_use_regional_compilation": true,
+  "dynamo_cache_export": "compiler-caches/ltx25-h100-torch2.11-cu128.ptcache"
+}
+```
+
+Compiler cache blobs contain generated executable code. Load them only from paths and repositories you trust.
+
+### `--dynamo_cache_export_after_first_step`
+
+When `true` (the default), export the Dynamo Mega-Cache immediately after the first successful optimizer step. This protects the expensive initial compile if training later fails. SimpleTuner also checks for new compiler artifact keys after every successful scheduled, manual, rolling, or epoch checkpoint and at normal training completion. Set this option to `false` to skip only the first-step export.
+
+### `--dynamo_hub_repo_id`
+
+Optional Hugging Face model repository used with `--dynamo_cache_export`. SimpleTuner checks the configured relative blob path in this repository before falling back to the local path. If compilation adds artifacts, the blob and manifest are written locally and published together in one Hub commit. A missing repository is created as private. Existing repositories retain their current visibility.
+
+Absolute local export paths use only their filename on the Hub. Relative paths are preserved, so `compiler-caches/ltx25.ptcache` is stored under the same repository subdirectory. For a directory value, SimpleTuner looks for the same generated standard filename locally and on the Hub. Authentication uses `HF_TOKEN`, `HUGGING_FACE_HUB_TOKEN`, or the standard Hugging Face token cache. Hub failures never abort training; the local cache remains available for a later upload attempt.
+
 ### `--attention_mechanism`
 
 Alternative attention mechanisms are supported, with varying levels of compatibility or other trade-offs:

@@ -604,6 +604,23 @@ TRAINING_DYNAMO_BACKEND=inductor
 
 省略你希望继承 Accelerate 默认值的项（例如省略 `dynamo_mode` 以使用自动选择）。
 
+### `--dynamo_wrapper`
+
+选择 TorchInductor 的 host wrapper。`cpp` 为默认值并减少调度开销；`python` 保留旧版本行为。该选择会写入 Mega-Cache 文件名和 manifest。
+
+### `--dynamo_cache_export`
+
+累积 PyTorch Mega-Cache blob 的可选路径。SimpleTuner 会在编译前加载兼容 blob，在第一个成功的优化器步骤后导出，并在每次 checkpoint 和关闭时检查新的 artifact key。`<路径>.manifest.json` 会记录 PyTorch/Triton/GPU 运行时和 SHA256。未覆盖的 shape 会正常编译，其产物会加入下一次导出。只应加载可信的缓存 blob。
+当该值是目录、以路径分隔符结尾或没有扩展名时，SimpleTuner 会根据模型、运行时、加速器和影响计算图的配置生成稳定文件名，并在 Hub 上查找同名文件。
+
+### `--dynamo_cache_export_after_first_step`
+
+为 `true`（默认）时，在第一个成功的优化器步骤后导出 Mega-Cache。设为 `false` 只会跳过这次早期导出；checkpoint 和训练结束导出仍会执行。
+
+### `--dynamo_hub_repo_id`
+
+用于获取和发布 `--dynamo_cache_export` blob 的可选 Hugging Face 仓库。Blob 与 manifest 会在一次 commit 中上传；不存在的仓库会创建为 private。Hub 故障不会中止训练，本地导出仍会保留。
+
 ### `--attention_mechanism`
 
 支持多种注意力机制，兼容性与权衡不同：

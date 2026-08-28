@@ -602,6 +602,23 @@ Para persistir los ajustes en `config.json`, añade las claves equivalentes:
 
 Omite cualquier entrada que quieras heredar de los valores predeterminados de Accelerate (por ejemplo, deja fuera `dynamo_mode` para usar la selección automática).
 
+### `--dynamo_wrapper`
+
+Selecciona el wrapper de host de TorchInductor. `cpp` es el valor predeterminado y reduce el overhead de despacho; `python` conserva el comportamiento de versiones anteriores. La selección forma parte del nombre y manifiesto de Mega-Cache.
+
+### `--dynamo_cache_export`
+
+Ruta opcional para un blob acumulativo de PyTorch Mega-Cache. SimpleTuner carga un blob compatible antes de compilar, lo exporta tras el primer paso exitoso del optimizador y comprueba si hay nuevas claves de artefactos tras cada checkpoint y al finalizar. El manifiesto `<ruta>.manifest.json` registra el entorno PyTorch/Triton/GPU y una suma SHA256. Si una forma no está cubierta, PyTorch compila normalmente y el siguiente exportado incorpora esos artefactos. Usa únicamente cachés de confianza que coincidan con el runtime.
+Si el valor es un directorio, termina en un separador o no tiene extensión, SimpleTuner genera allí un nombre estable basado en el modelo, runtime, acelerador y configuración relevante para el grafo, y busca el mismo nombre en Hub.
+
+### `--dynamo_cache_export_after_first_step`
+
+Cuando es `true` (predeterminado), exporta la Mega-Cache tras el primer paso exitoso. Establece `false` para omitir solo esta exportación temprana; las exportaciones de checkpoints y finalización siguen activas.
+
+### `--dynamo_hub_repo_id`
+
+Repositorio opcional de Hugging Face para recuperar y publicar el blob indicado por `--dynamo_cache_export`. El blob y su manifiesto se publican juntos en un solo commit; un repositorio inexistente se crea como privado. Los fallos de Hub no interrumpen el entrenamiento y la copia local se conserva.
+
 ### `--attention_mechanism`
 
 Se soportan mecanismos de atención alternativos, con distintos niveles de compatibilidad u otros compromisos:
