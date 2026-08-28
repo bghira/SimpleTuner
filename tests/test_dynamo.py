@@ -56,6 +56,54 @@ class DynamoCudagraphWorkaroundTests(unittest.TestCase):
 
         self.assertEqual(config.dynamo_mode, "reduce-overhead")
 
+    def test_inductor_wrapper_defaults_to_cpp(self):
+        from simpletuner.helpers.training import dynamo
+
+        inductor_config = SimpleNamespace(cpp_wrapper=False)
+        with (
+            unittest.mock.patch.dict(os.environ, {}, clear=True),
+            unittest.mock.patch.object(dynamo.importlib, "import_module", return_value=inductor_config),
+        ):
+            wrapper = dynamo.configure_inductor_wrapper(SimpleNamespace(dynamo_backend="inductor"))
+
+            self.assertEqual(wrapper, "cpp")
+            self.assertEqual(os.environ["TORCHINDUCTOR_CPP_WRAPPER"], "1")
+            self.assertTrue(inductor_config.cpp_wrapper)
+
+    def test_inductor_wrapper_ignores_inactive_accelerate_backend(self):
+        from simpletuner.helpers.training import dynamo
+
+        inductor_config = SimpleNamespace(cpp_wrapper=False)
+        with (
+            unittest.mock.patch.dict(os.environ, {"ACCELERATE_DYNAMO_BACKEND": "NO"}, clear=True),
+            unittest.mock.patch.object(dynamo.importlib, "import_module", return_value=inductor_config),
+        ):
+            wrapper = dynamo.configure_inductor_wrapper(SimpleNamespace(dynamo_backend="inductor"))
+
+            self.assertEqual(wrapper, "cpp")
+            self.assertEqual(os.environ["TORCHINDUCTOR_CPP_WRAPPER"], "1")
+            self.assertTrue(inductor_config.cpp_wrapper)
+
+    def test_inductor_wrapper_supports_legacy_python_mode(self):
+        from simpletuner.helpers.training import dynamo
+
+        inductor_config = SimpleNamespace(cpp_wrapper=True)
+        with (
+            unittest.mock.patch.dict(os.environ, {}, clear=True),
+            unittest.mock.patch.object(dynamo.importlib, "import_module", return_value=inductor_config),
+        ):
+            wrapper = dynamo.configure_inductor_wrapper(SimpleNamespace(dynamo_backend="inductor", dynamo_wrapper="python"))
+
+            self.assertEqual(wrapper, "python")
+            self.assertEqual(os.environ["TORCHINDUCTOR_CPP_WRAPPER"], "0")
+            self.assertFalse(inductor_config.cpp_wrapper)
+
+    def test_inductor_wrapper_rejects_unknown_value(self):
+        from simpletuner.helpers.training import dynamo
+
+        with self.assertRaisesRegex(ValueError, "--dynamo_wrapper"):
+            dynamo.configure_inductor_wrapper(SimpleNamespace(dynamo_wrapper="unknown"))
+
     def test_peft_lora_cudagraph_patch_clones_base_result(self):
         from peft import LoraConfig
         from peft.tuners.lora.layer import Linear

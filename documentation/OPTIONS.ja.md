@@ -602,6 +602,23 @@ TRAINING_DYNAMO_BACKEND=inductor
 
 Accelerate の既定値を使いたい項目は省略してください（例: 自動選択の `dynamo_mode` を使うなら省略）。
 
+### `--dynamo_wrapper`
+
+TorchInductor の host wrapper を選択します。`cpp` が既定で dispatch overhead を削減し、`python` は以前の release の動作を維持します。この選択は Mega-Cache の filename と manifest に含まれます。
+
+### `--dynamo_cache_export`
+
+累積 PyTorch Mega-Cache blob の任意パスです。SimpleTuner はコンパイル前に互換 blob を読み込み、最初の成功した optimizer step 後に保存し、各 checkpoint と終了時に新しい artifact key を確認します。`<path>.manifest.json` に PyTorch/Triton/GPU runtime と SHA256 を記録します。未対応の shape は通常どおりコンパイルされ、次の export に追加されます。信頼できる cache blob のみ使用してください。
+値が directory、区切り文字で終わる path、または拡張子のない path の場合、model、runtime、accelerator、graph 関連設定から安定した filename を生成し、Hub でも同じ名前を検索します。
+
+### `--dynamo_cache_export_after_first_step`
+
+`true`（既定）の場合、最初の成功した optimizer step 後に Mega-Cache を export します。`false` はこの初回 export のみを無効にし、checkpoint と終了時の export は継続します。
+
+### `--dynamo_hub_repo_id`
+
+`--dynamo_cache_export` blob の取得と公開に使う任意の Hugging Face repository です。Blob と manifest は 1 commit でアップロードされ、存在しない repository は private で作成されます。Hub 障害で学習は中断されず、local export は保持されます。
+
 ### `--attention_mechanism`
 
 代替アテンション機構が利用可能で、互換性やトレードオフが異なります:

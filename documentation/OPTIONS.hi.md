@@ -601,6 +601,23 @@ Settings को `config.json` में persist करने के लिए �
 
 यदि आप Accelerate defaults inherit करना चाहते हैं तो संबंधित entries छोड़ दें (उदा., `dynamo_mode` न दें ताकि automatic selection उपयोग हो)।
 
+### `--dynamo_wrapper`
+
+TorchInductor का host wrapper चुनता है। `cpp` default है और dispatch overhead घटाता है; `python` पुराने releases का behavior बनाए रखता है। यह चयन Mega-Cache filename और manifest में शामिल होता है।
+
+### `--dynamo_cache_export`
+
+PyTorch Mega-Cache के cumulative blob की optional path। SimpleTuner compilation से पहले compatible blob load करता है, पहले सफल optimizer step के बाद export करता है, और हर checkpoint तथा shutdown पर नई artifact keys की जांच करता है। `<path>.manifest.json` में PyTorch/Triton/GPU runtime और SHA256 दर्ज होते हैं। किसी नई shape के लिए cache entry न मिलने पर PyTorch सामान्य compilation करता है और अगला export नए artifacts जोड़ देता है। केवल trusted cache blobs load करें।
+यदि value directory है, separator पर समाप्त होती है, या उसकी extension नहीं है, तो SimpleTuner model, runtime, accelerator और graph-relevant config से stable filename बनाता है और Hub पर भी वही नाम खोजता है।
+
+### `--dynamo_cache_export_after_first_step`
+
+`true` (default) होने पर पहले सफल optimizer step के बाद Mega-Cache export होती है। केवल इस early export को छोड़ने के लिए `false` करें; checkpoint और final exports सक्रिय रहते हैं।
+
+### `--dynamo_hub_repo_id`
+
+`--dynamo_cache_export` blob को retrieve और publish करने के लिए optional Hugging Face repository। Blob और manifest एक ही commit में upload होते हैं; missing repository private रूप में बनाई जाती है। Hub failure training को abort नहीं करता और local export सुरक्षित रहता है।
+
 ### `--attention_mechanism`
 
 Alternative attention mechanisms समर्थित हैं, जिनके compatibility स्तर या trade‑offs अलग होते हैं:

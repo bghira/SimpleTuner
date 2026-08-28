@@ -600,6 +600,23 @@ Para persistir as configuracoes em `config.json`, adicione as chaves equivalente
 
 Omitir entradas que voce quer herdar dos defaults do Accelerate (por exemplo, deixe `dynamo_mode` ausente para selecao automatica).
 
+### `--dynamo_wrapper`
+
+Seleciona o wrapper host do TorchInductor. `cpp` e o padrao e reduz overhead de dispatch; `python` preserva o comportamento de releases anteriores. A escolha faz parte do filename e manifesto da Mega-Cache.
+
+### `--dynamo_cache_export`
+
+Caminho opcional para um blob cumulativo do PyTorch Mega-Cache. O SimpleTuner carrega um blob compativel antes da compilacao, exporta apos o primeiro passo bem-sucedido do otimizador e verifica novas chaves de artefatos apos cada checkpoint e no encerramento. O manifesto `<caminho>.manifest.json` registra o runtime PyTorch/Triton/GPU e o SHA256. Shapes sem entrada sao compilados normalmente e seus artefatos entram na proxima exportacao. Carregue apenas caches confiaveis.
+Quando o valor e um diretorio, termina em separador ou nao possui extensao, o SimpleTuner gera um filename estavel com base no modelo, runtime, acelerador e configuracao relevante ao grafo, procurando o mesmo nome no Hub.
+
+### `--dynamo_cache_export_after_first_step`
+
+Quando `true` (padrao), exporta a Mega-Cache apos o primeiro passo bem-sucedido. Use `false` para omitir apenas essa exportacao inicial; exportacoes em checkpoints e no final continuam ativas.
+
+### `--dynamo_hub_repo_id`
+
+Repositorio opcional do Hugging Face para recuperar e publicar o blob de `--dynamo_cache_export`. Blob e manifesto sao enviados juntos em um unico commit; um repositorio ausente e criado como privado. Falhas do Hub nao interrompem o treino e a exportacao local e preservada.
+
 ### `--attention_mechanism`
 
 Mecanismos de atencao alternativos sao suportados, com diferentes niveis de compatibilidade e trade-offs:

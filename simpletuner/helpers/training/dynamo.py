@@ -1,5 +1,6 @@
 import contextlib
 import contextvars
+import importlib
 import logging
 import os
 from collections.abc import Callable, Iterator
@@ -59,6 +60,17 @@ def _normalise_text(value: Any) -> str:
     return str(value).strip().lower().replace("_", "-")
 
 
+def _effective_dynamo_backend(config: Any) -> str:
+    config_backend = _normalise_text(getattr(config, "dynamo_backend", None))
+    training_backend = _normalise_text(os.environ.get("TRAINING_DYNAMO_BACKEND"))
+    accelerate_backend = _normalise_text(os.environ.get("ACCELERATE_DYNAMO_BACKEND"))
+    inactive = {"", "no", "none", "disabled"}
+    for backend in (config_backend, training_backend, accelerate_backend):
+        if backend not in inactive:
+            return backend
+    return "no"
+
+
 def apply_checkpointing_cudagraph_compatibility(config: Any) -> bool:
     backend = _normalise_text(getattr(config, "dynamo_backend", None))
     mode = _normalise_text(getattr(config, "dynamo_mode", None))
@@ -78,12 +90,35 @@ def apply_checkpointing_cudagraph_compatibility(config: Any) -> bool:
     return True
 
 
+def configure_inductor_wrapper(config: Any) -> str:
+    """Apply the selected Inductor runtime wrapper before any graphs compile."""
+    configured_wrapper = getattr(config, "dynamo_wrapper", None)
+    if not isinstance(configured_wrapper, str):
+        configured_wrapper = None
+    wrapper = _normalise_text(configured_wrapper) or "cpp"
+    if wrapper in {"cpp", "c++"}:
+        wrapper = "cpp"
+        enabled = True
+    elif wrapper == "python":
+        enabled = False
+    else:
+        raise ValueError("--dynamo_wrapper must be either 'cpp' or 'python'.")
+
+    if _effective_dynamo_backend(config) != "inductor":
+        return wrapper
+
+    os.environ["TORCHINDUCTOR_CPP_WRAPPER"] = "1" if enabled else "0"
+    try:
+        inductor_config = importlib.import_module("torch._inductor.config")
+        inductor_config.cpp_wrapper = enabled
+    except Exception as exc:
+        logger.warning("Unable to configure the TorchInductor %s wrapper: %s", wrapper, exc)
+    logger.info("TorchInductor wrapper: %s", wrapper)
+    return wrapper
+
+
 def _inductor_cudagraphs_enabled(config: Any = None) -> bool:
-    config_backend = _normalise_text(getattr(config, "dynamo_backend", None))
-    training_backend = _normalise_text(os.environ.get("TRAINING_DYNAMO_BACKEND"))
-    accelerate_backend = _normalise_text(os.environ.get("ACCELERATE_DYNAMO_BACKEND"))
-    backend = config_backend or training_backend or accelerate_backend
-    if backend != "inductor":
+    if _effective_dynamo_backend(config) != "inductor":
         return False
 
     config_mode = _normalise_text(getattr(config, "dynamo_mode", None))
