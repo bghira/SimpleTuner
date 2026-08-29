@@ -86,6 +86,8 @@ SimpleTuner में एक्सपेरिमेंटल फीचर्स
 
 HeartMuLa को प्रीकम्प्यूटेड टोकन वाला **ऑडियो‑स्पेसिफ़िक** डेटासेट चाहिए।
 
+RVC genre expansion के लिए पहले [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.hi.md) से generated audio split materialize करें, फिर उस expanded audio के लिए HeartMuLa token metadata export करें। Trainer को अभी भी precomputed `audio_tokens` या `audio_tokens_path` चाहिए।
+
 हर सैंपल में यह होना चाहिए:
 
 - `tags` (स्ट्रिंग)

@@ -131,6 +131,8 @@ O SimpleTuner inclui recursos experimentais que podem melhorar significativament
 
 O ACE-Step requer uma configuração de dataset **específica para áudio**.
 
+Se uma identidade vocal alvo estiver presa a um estilo ou genero estreito, use o workflow RVC `data_transforms` em [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.pt-BR.md) para materializar um split de audio expandido antes da configuracao normal do dataloader.
+
 ### Opção 1: Dataset de demonstração (Hugging Face)
 
 Para um início rápido, você pode usar o preset [ACEStep-Songs](../data_presets/preset_audio_dataset_with_lyrics.md).

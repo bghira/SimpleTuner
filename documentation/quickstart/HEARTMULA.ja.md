@@ -86,6 +86,8 @@ SimpleTuner には学習の安定性と性能を大きく改善できる実験�
 
 HeartMuLa は事前計算済みトークンを含む **音声専用** データセットが必要です。
 
+RVC で genre expansion する場合は、まず [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.ja.md) で生成 audio split を materialize し、その expanded audio に対して HeartMuLa token metadata を export してください。trainer には引き続き事前計算済みの `audio_tokens` または `audio_tokens_path` が必要です。
+
 各サンプルに必要な項目:
 
 - `tags`（文字列）

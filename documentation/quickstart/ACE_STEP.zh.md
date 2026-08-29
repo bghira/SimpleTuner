@@ -131,6 +131,8 @@ SimpleTuner 包含可显著提高训练稳定性和性能的实验功能。
 
 ACE-Step 需要**音频专用**的数据集配置。
 
+如果目标人声身份和某个狭窄风格或流派绑定太强，可使用 [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.zh.md) 中的 RVC `data_transforms` workflow，在普通 dataloader 设置前生成扩展 audio split。
+
 ### 选项 1：演示数据集（Hugging Face）
 
 快速上手可使用准备好的 [ACEStep-Songs 预设](../data_presets/preset_audio_dataset_with_lyrics.md)。
