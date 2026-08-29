@@ -100,7 +100,7 @@ Upstream `MiniMaxAI/MiniMax-Music3` repo में original `dav.pth` भी ह
 
 MiniMax Music 3 को एक **audio** dataset और एक **text embeds** cache backend चाहिए।
 
-यदि target vocal identity किसी एक narrow style या genre से बहुत जुड़ी हुई है, तो VAE और text caching से पहले expanded audio split materialize करने के लिए [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.hi.md) में बताया गया RVC `data_transforms` workflow उपयोग करें।
+किसी target vocal identity को styles या genres में expand करने के लिए [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.hi.md) में दिए RVC `data_transforms` workflow को configure करें।
 
 ```json
 [

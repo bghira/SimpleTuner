@@ -100,7 +100,7 @@ MiniMax Music 3 的原始音频缓存使用 DAV audio autoencoder。推荐使用
 
 MiniMax Music 3 需要一个 **audio** 数据集和一个 **text embeds** cache backend。
 
-如果目标人声身份和某个狭窄风格或流派绑定太强，可使用 [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.zh.md) 中的 RVC `data_transforms` workflow，在 VAE 和 text cache 前生成扩展 audio split。
+要将目标音色扩展到更多风格或流派，请配置 [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.zh.md) 中说明的 RVC `data_transforms` workflow。
 
 ```json
 [

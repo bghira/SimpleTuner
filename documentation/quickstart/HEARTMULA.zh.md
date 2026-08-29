@@ -86,7 +86,7 @@ SimpleTuner 包含一些实验特性，可显著提升训练稳定性和性能�
 
 HeartMuLa 需要包含预计算 token 的 **音频专用** 数据集。
 
-若要用 RVC 扩展跨流派数据，请先通过 [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.zh.md) 生成扩展 audio split，再为这些扩展音频导出 HeartMuLa token metadata。trainer 仍然需要预计算的 `audio_tokens` 或 `audio_tokens_path`。
+要将目标音色扩展到更多风格或流派，请配置 [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.zh.md) 中说明的 RVC `data_transforms` workflow。
 
 每条样本必须提供:
 

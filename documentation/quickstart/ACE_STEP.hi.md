@@ -131,7 +131,7 @@ SimpleTuner में प्रयोगात्मक फीचर्स श�
 
 ACE-Step के लिए **ऑडियो‑विशिष्ट** डेटासेट कॉन्फ़िगरेशन आवश्यक है।
 
-यदि target vocal identity किसी एक narrow style या genre से बहुत जुड़ी हुई है, तो normal dataloader setup से पहले expanded audio split materialize करने के लिए [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.hi.md) में बताया गया RVC `data_transforms` workflow उपयोग करें।
+किसी target vocal identity को styles या genres में expand करने के लिए [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.hi.md) में दिए RVC `data_transforms` workflow को configure करें।
 
 ### विकल्प 1: डेमो डेटासेट (Hugging Face)
 

@@ -131,7 +131,7 @@ SimpleTuner には、トレーニングの安定性とパフォーマンスを�
 
 ACE-Step では **音声専用** のデータセット設定が必要です。
 
-target vocal identity が 1 つの狭い style や genre に強く結び付いている場合は、通常の dataloader 設定の前に拡張 audio split を materialize するため、[Voice Cloning Data Transforms](../experimental/VOICE_CLONING.ja.md) の RVC `data_transforms` workflow を使います。
+target vocal identity を styles や genres に展開するには、[Voice Cloning Data Transforms](../experimental/VOICE_CLONING.ja.md) で説明されている RVC `data_transforms` workflow を設定してください。
 
 ### オプション 1: デモデータセット（Hugging Face）
 

@@ -86,7 +86,7 @@ SimpleTuner incluye funciones experimentales que pueden mejorar significativamen
 
 HeartMuLa requiere un dataset **especifico para audio** con tokens precomputados.
 
-Para expansion de generos con RVC, primero materializa el split de audio generado con [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.es.md) y despues exporta metadatos de tokens HeartMuLa para ese audio expandido. El trainer todavia requiere `audio_tokens` o `audio_tokens_path` precomputados.
+Para expandir una identidad vocal objetivo entre estilos o géneros, configura el workflow RVC `data_transforms` descrito en [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.es.md).
 
 Cada muestra debe proporcionar:
 

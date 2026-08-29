@@ -131,7 +131,7 @@ SimpleTuner includes experimental features that can significantly improve traini
 
 ACE-Step requires an **audio-specific** dataset configuration.
 
-If a target vocal identity is tied to one narrow style or genre, use the RVC `data_transforms` workflow in [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.md) to materialize an expanded audio split before normal dataloader setup.
+To expand a target vocal identity across styles or genres, configure the RVC `data_transforms` workflow described in [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.md).
 
 ### Option 1: Demo Dataset (Hugging Face)
 
