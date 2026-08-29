@@ -381,6 +381,9 @@ function dataloaderSectionComponent() {
         if (dataset && !this.supportsTrainBatchSize(dataset)) {
             delete dataset.train_batch_size;
         }
+        if (dataset && dataset.dataset_type !== 'audio') {
+            delete dataset.data_transforms;
+        }
         this.markAsUnsaved();
     },
 
@@ -460,6 +463,13 @@ function dataloaderSectionComponent() {
                 dataset.conditioning = [dataset.conditioning];
             } else {
                 dataset.conditioning = [];
+            }
+        }
+        if (dataset.dataset_type === 'audio' && !Array.isArray(dataset.data_transforms)) {
+            if (dataset.data_transforms && typeof dataset.data_transforms === 'object') {
+                dataset.data_transforms = [dataset.data_transforms];
+            } else {
+                dataset.data_transforms = [];
             }
         }
         if (!dataset.grounding || typeof dataset.grounding !== 'object') {
@@ -599,6 +609,87 @@ function dataloaderSectionComponent() {
         dataset._connectionStatus = null;
         dataset._connectionMessage = '';
         dataset._connectionDetails = null;
+        this.markAsUnsaved();
+    },
+    identityTransferTransform(dataset) {
+        if (!dataset || dataset.dataset_type !== 'audio') {
+            return null;
+        }
+        if (!Array.isArray(dataset.data_transforms)) {
+            dataset.data_transforms = [];
+        }
+        let transform = dataset.data_transforms.find((entry) => entry && entry.task === 'identity_transfer');
+        if (!transform) {
+            transform = {
+                task: 'identity_transfer',
+                method: 'rvc',
+                id: `${dataset.id || 'audio'}_identity_transfer`,
+                model: {
+                    train_if_missing: true,
+                    build_index: true,
+                    reuse_from_hub: true,
+                    push_to_hub: false,
+                    public: false,
+                    force_retrain: false,
+                    asset_hub_model_id: 'lj1995/VoiceConversionWebUI',
+                    model_name: `${dataset.id || 'audio'} RVC voice`,
+                    sample_rate: 48000,
+                    identity_audio_mode: 'separate',
+                    separation_method: 'demucs',
+                    training_steps: 1000,
+                    batch_size: 4,
+                    learning_rate: 0.0001
+                },
+                conversion: {
+                    audio_mode: 'separate_convert_remix',
+                    separation_method: 'demucs',
+                    timbre_strength: 1.0,
+                    retrieval_strength: 0.75
+                },
+                target: {}
+            };
+            dataset.data_transforms.push(transform);
+        }
+        transform.method = transform.method || 'rvc';
+        transform.model = transform.model && typeof transform.model === 'object' ? transform.model : {};
+        transform.conversion = transform.conversion && typeof transform.conversion === 'object' ? transform.conversion : {};
+        transform.target = transform.target && typeof transform.target === 'object' ? transform.target : {};
+        if (transform.model.train_if_missing === undefined) transform.model.train_if_missing = true;
+        if (transform.model.build_index === undefined) transform.model.build_index = true;
+        if (transform.model.reuse_from_hub === undefined) transform.model.reuse_from_hub = true;
+        if (transform.model.push_to_hub === undefined) transform.model.push_to_hub = false;
+        if (transform.model.public === undefined) transform.model.public = false;
+        if (transform.model.force_retrain === undefined) transform.model.force_retrain = false;
+        transform.model.asset_hub_model_id = transform.model.asset_hub_model_id || 'lj1995/VoiceConversionWebUI';
+        transform.model.model_name = transform.model.model_name || `${dataset.id || 'audio'} RVC voice`;
+        if (transform.model.sample_rate === undefined) transform.model.sample_rate = 48000;
+        transform.model.identity_audio_mode = transform.model.identity_audio_mode || 'separate';
+        if (transform.model.training_steps === undefined) transform.model.training_steps = 1000;
+        if (transform.model.batch_size === undefined) transform.model.batch_size = 4;
+        if (transform.model.learning_rate === undefined) transform.model.learning_rate = 0.0001;
+        transform.conversion.audio_mode = transform.conversion.audio_mode || 'separate_convert_remix';
+        transform.conversion.separation_method = transform.conversion.separation_method || 'demucs';
+        transform.model.separation_method = transform.model.separation_method || transform.conversion.separation_method;
+        if (transform.conversion.timbre_strength === undefined) transform.conversion.timbre_strength = 1.0;
+        if (transform.conversion.retrieval_strength === undefined) transform.conversion.retrieval_strength = 0.75;
+        return transform;
+    },
+    identityTransferEnabled(dataset) {
+        return !!(
+            dataset
+            && Array.isArray(dataset.data_transforms)
+            && dataset.data_transforms.some((entry) => entry && entry.task === 'identity_transfer')
+        );
+    },
+    setIdentityTransferEnabled(dataset, enabled) {
+        if (!dataset) {
+            return;
+        }
+        if (enabled) {
+            this.identityTransferTransform(dataset);
+        } else if (Array.isArray(dataset.data_transforms)) {
+            dataset.data_transforms = dataset.data_transforms.filter((entry) => !(entry && entry.task === 'identity_transfer'));
+        }
         this.markAsUnsaved();
     },
     async testDatasetConnection(dataset) {

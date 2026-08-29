@@ -118,6 +118,7 @@ from simpletuner.helpers.data_backend.runtime.schedule import (
     normalize_start_step,
 )
 from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
+from simpletuner.helpers.data_transforms import process_data_transforms
 from simpletuner.helpers.distillation.common import DistillationBase
 from simpletuner.helpers.distillation.composition import resolve_configured_distiller_requirement_profile
 from simpletuner.helpers.distillation.requirements import (
@@ -3198,8 +3199,10 @@ class FactoryRegistry:
         Args:
             skip_bucket_split: If True, skip split_buckets_between_processes (used for audio-only datasets).
         """
+        metadata_clone_source_id = backend.get("metadata_clone_source_id")
+        has_metadata_clone_source = metadata_clone_source_id is not None
         if (
-            not backend.get("auto_generated", False)  # auto-generated datasets have duplicate metadata.
+            not has_metadata_clone_source
             and "aspect" not in self.args.skip_file_discovery
             and "aspect" not in backend.get("skip_file_discovery", "")
             and conditioning_type
@@ -3238,7 +3241,7 @@ class FactoryRegistry:
         # serialized cache rather than mixing rank 0's in-memory order with reloaded order.
         if (
             self._is_multi_process()
-            and not backend.get("auto_generated", False)
+            and not has_metadata_clone_source
             and "aspect" not in self.args.skip_file_discovery
             and "aspect" not in backend.get("skip_file_discovery", "")
             and conditioning_type
@@ -3253,7 +3256,7 @@ class FactoryRegistry:
             init_backend["metadata_backend"].reload_cache()
 
         if (
-            not backend.get("auto_generated", False)
+            not has_metadata_clone_source
             and backend.get("conditioning_type", None) is not None
             and backend.get("conditioning_type")
             not in [
@@ -3278,13 +3281,11 @@ class FactoryRegistry:
 
         apply_padding = not self.args.max_train_steps or self.args.allow_dataset_oversubscription
 
-        if backend.get("auto_generated", False):
+        if has_metadata_clone_source:
             # when we're duplicating a metadata set, it's already split between processes.
-            info_log(
-                f"Duplicating metadata for auto-generated dataset from {backend.get('source_dataset_id', 'unknown_source_dataset_id')}"
-            )
+            info_log(f"Duplicating metadata for generated dataset from {metadata_clone_source_id}")
             DatasetDuplicator.copy_metadata(
-                source_backend=StateTracker.get_data_backend(backend.get("source_dataset_id", "unknown_source_dataset_id")),
+                source_backend=StateTracker.get_data_backend(metadata_clone_source_id),
                 target_backend=init_backend,
             )
         elif backend.get("conditioning_type", None) in ["reference_strict", "mask"]:
@@ -3373,6 +3374,7 @@ class FactoryRegistry:
             "video",
             "conditioning_data",
             "conditioning",
+            "data_transforms",
             "hash_filenames",  # always enabled, not user-configurable
             "_s2v_audio_autoinjected",  # runtime flag, not user-configurable
             *runtime_mutable_keys,
@@ -3421,6 +3423,7 @@ class FactoryRegistry:
         runtime_linkage_keys = (
             "conditioning_data",
             "conditioning",
+            "data_transforms",
             "video",
             "s2v_datasets",
             "_s2v_audio_autoinjected",
@@ -4710,6 +4713,11 @@ class FactoryRegistry:
         data_backend_config = self._inject_grounding_configs(data_backend_config)
         data_backend_config = self._inject_s2v_audio_configs(data_backend_config)
         data_backend_config = self.process_conditioning_datasets(data_backend_config)
+        data_backend_config = process_data_transforms(
+            global_config=self.args,
+            data_backend_config=data_backend_config,
+            accelerator=self.accelerator,
+        )
 
         self.configure_text_embed_backends(data_backend_config)
         self.configure_image_embed_backends(data_backend_config)

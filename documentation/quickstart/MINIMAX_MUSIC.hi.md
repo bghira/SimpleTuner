@@ -100,6 +100,8 @@ Upstream `MiniMaxAI/MiniMax-Music3` repo में original `dav.pth` भी ह
 
 MiniMax Music 3 को एक **audio** dataset और एक **text embeds** cache backend चाहिए।
 
+किसी target vocal identity को styles या genres में expand करने के लिए [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.hi.md) में दिए RVC `data_transforms` workflow को configure करें।
+
 ```json
 [
   {

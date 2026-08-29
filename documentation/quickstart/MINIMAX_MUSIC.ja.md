@@ -100,6 +100,8 @@ MiniMax Music 3 の raw audio cache は DAV audio autoencoder を使います。
 
 MiniMax Music 3 には **audio** dataset と **text embeds** cache backend が必要です。
 
+target vocal identity を styles や genres に展開するには、[Voice Cloning Data Transforms](../experimental/VOICE_CLONING.ja.md) で説明されている RVC `data_transforms` workflow を設定してください。
+
 ```json
 [
   {

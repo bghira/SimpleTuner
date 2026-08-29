@@ -258,6 +258,15 @@ Backends de memória exigem Linux ou macOS e RAM ou swap suficiente para o cache
 - **Nota:** Se você tiver múltiplos datasets de condicionamento, pode especificá-los como um array de valores `id`. Ao treinar Flux Kontext, isso permite alternar aleatoriamente entre condições ou juntar entradas para treinar tarefas mais avançadas de composição multi-imagem.
 - **Flow-DPO:** Pareie aqui um dataset `reference_strict` ao usar [`--distillation_method=flow_dpo`](experimental/FLOW_DPO.pt-BR.md).
 
+### `data_transforms`
+
+- **Valores:** um objeto de transform ou um array de objetos de transform
+- **Descrição:** Expande um dataset fonte em um ou mais datasets de treinamento gerados antes da configuração normal do dataloader. Datasets gerados são tratados como datasets primários normais, a menos que o transform peça explicitamente clonagem de metadados.
+- **Identity transfer de áudio:** `{"task": "identity_transfer", "method": "rvc"}` está disponível para backends com `dataset_type: "audio"`. Ele prepara um split de áudio gerado para transferência de identidade vocal e usa o diretório de saída para artefatos de voz em cache e arquivos gerados. Consulte [Voice Cloning Data Transforms](experimental/VOICE_CLONING.pt-BR.md).
+- **Identity data:** Coloque a musica a converter no `instance_data_dir` do backend de audio, os exemplos da voz alvo em `model.identity_data_dir`, e o caminho do split gerado em `target.instance_data_dir`.
+- **Debug de stems:** Defina `model.identity_stem_debug_dir` para preservar previews `vocals.wav` e `no_vocals.wav` da identidade separada que o treino RVC realmente usou. Isso ajuda quando a saída soa como se instrumentos tivessem sido aprendidos como parte da voz.
+- **Status:** A implementação experimental inclui verificações de manifest de cache, reutilização/envio de artefatos para o Hub pelo layout `huggingface-hub-rvc`, sharding de inicialização compatível com DDP, logs locais de RVC e um trainer/converter compacto de voice-transfer do SimpleTuner. O modo full-song remix usa Demucs para separar vocais; o modo vocal-stem não precisa de separação.
+
 ### `instance_data_dir` / `aws_data_prefix`
 
 - **Local:** Caminho para os dados no sistema de arquivos.

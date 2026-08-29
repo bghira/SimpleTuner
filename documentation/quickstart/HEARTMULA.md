@@ -86,6 +86,8 @@ SimpleTuner includes experimental features that can significantly improve traini
 
 HeartMuLa requires an **audio-specific** dataset with precomputed tokens.
 
+To expand a target vocal identity across styles or genres, configure the RVC `data_transforms` workflow described in [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.md).
+
 Each sample must provide:
 
 - `tags` (string)

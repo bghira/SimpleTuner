@@ -100,6 +100,8 @@ The upstream `MiniMaxAI/MiniMax-Music3` repository also includes the original `d
 
 MiniMax Music 3 requires an **audio** dataset plus a **text embeds** cache backend.
 
+To expand a target vocal identity across styles or genres, configure the RVC `data_transforms` workflow described in [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.md).
+
 ### Demo Dataset
 
 Create `config/minimaxmusic-training-demo/multidatabackend.json`:

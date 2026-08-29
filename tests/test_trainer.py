@@ -613,6 +613,27 @@ except ImportError:
 
 
 class TestTrainer(unittest.TestCase):
+    @patch("simpletuner.helpers.training.trainer.Trainer._misc_init")
+    @patch("simpletuner.helpers.training.trainer.Trainer.parse_arguments", autospec=True)
+    def test_constructor_initializes_lr_for_models_without_noise_schedule(self, mock_parse_arguments, _mock_misc_init):
+        def parse_arguments(trainer, *_, **__):
+            trainer.config = SimpleNamespace(
+                learning_rate=1e-4,
+                model_family="unknown",
+                model_type="lora",
+                lora_type="standard",
+            )
+
+        mock_parse_arguments.side_effect = parse_arguments
+        trainer = Trainer(disable_accelerator=True)
+        trainer.model = SimpleNamespace(uses_noise_schedule=lambda: False)
+
+        trainer.init_noise_schedule()
+
+        self.assertEqual(trainer.lr, 1e-4)
+        self.assertFalse(trainer.config.flow_matching)
+        self.assertIsNone(trainer.noise_scheduler)
+
     def test_musubi_placement_supports_wan_blocks_and_root_parameters(self):
         class ToyWan(torch.nn.Module):
             def __init__(self):

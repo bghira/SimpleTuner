@@ -86,6 +86,8 @@ SimpleTuner में एक्सपेरिमेंटल फीचर्स
 
 HeartMuLa को प्रीकम्प्यूटेड टोकन वाला **ऑडियो‑स्पेसिफ़िक** डेटासेट चाहिए।
 
+किसी target vocal identity को styles या genres में expand करने के लिए [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.hi.md) में दिए RVC `data_transforms` workflow को configure करें।
+
 हर सैंपल में यह होना चाहिए:
 
 - `tags` (स्ट्रिंग)

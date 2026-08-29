@@ -86,6 +86,8 @@ SimpleTuner には学習の安定性と性能を大きく改善できる実験�
 
 HeartMuLa は事前計算済みトークンを含む **音声専用** データセットが必要です。
 
+target vocal identity を styles や genres に展開するには、[Voice Cloning Data Transforms](../experimental/VOICE_CLONING.ja.md) で説明されている RVC `data_transforms` workflow を設定してください。
+
 各サンプルに必要な項目:
 
 - `tags`（文字列）

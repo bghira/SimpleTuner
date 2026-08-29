@@ -228,4 +228,56 @@ describe('Dataloader Section Audio Capabilities', () => {
             expect(component.normalizeBoolean(undefined)).toBe(false);
         });
     });
+
+    describe('identity transfer helpers', () => {
+        test('adds default identity transfer transform for audio datasets', () => {
+            const component = createComponentWithContext({});
+            component.markAsUnsaved = jest.fn();
+            const dataset = {
+                id: 'voice-source',
+                dataset_type: 'audio',
+                data_transforms: []
+            };
+
+            component.setIdentityTransferEnabled(dataset, true);
+
+            expect(dataset.data_transforms).toHaveLength(1);
+            expect(dataset.data_transforms[0].task).toBe('identity_transfer');
+            expect(dataset.data_transforms[0].method).toBe('rvc');
+            expect(dataset.data_transforms[0].model.train_if_missing).toBe(true);
+            expect(dataset.data_transforms[0].model.build_index).toBe(true);
+            expect(dataset.data_transforms[0].model.push_to_hub).toBe(false);
+            expect(dataset.data_transforms[0].model.public).toBe(false);
+            expect(dataset.data_transforms[0].model.asset_hub_model_id).toBe('lj1995/VoiceConversionWebUI');
+            expect(dataset.data_transforms[0].model.model_name).toBe('voice-source RVC voice');
+            expect(dataset.data_transforms[0].model.sample_rate).toBe(48000);
+            expect(dataset.data_transforms[0].model.identity_audio_mode).toBe('separate');
+            expect(dataset.data_transforms[0].model.separation_method).toBe('demucs');
+            expect(dataset.data_transforms[0].model.training_steps).toBe(1000);
+            expect(dataset.data_transforms[0].model.batch_size).toBe(4);
+            expect(dataset.data_transforms[0].model.learning_rate).toBe(0.0001);
+            expect(dataset.data_transforms[0].conversion.audio_mode).toBe('separate_convert_remix');
+            expect(dataset.data_transforms[0].conversion.timbre_strength).toBe(1.0);
+            expect(dataset.data_transforms[0].conversion.retrieval_strength).toBe(0.75);
+            expect(component.identityTransferEnabled(dataset)).toBe(true);
+        });
+
+        test('removes identity transfer transform without touching other transforms', () => {
+            const component = createComponentWithContext({});
+            component.markAsUnsaved = jest.fn();
+            const dataset = {
+                id: 'voice-source',
+                dataset_type: 'audio',
+                data_transforms: [
+                    { task: 'identity_transfer', method: 'rvc' },
+                    { task: 'other_transform' }
+                ]
+            };
+
+            component.setIdentityTransferEnabled(dataset, false);
+
+            expect(dataset.data_transforms).toEqual([{ task: 'other_transform' }]);
+            expect(component.identityTransferEnabled(dataset)).toBe(false);
+        });
+    });
 });
