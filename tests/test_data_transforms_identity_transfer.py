@@ -16,9 +16,11 @@ from simpletuner.helpers.data_transforms.identity_transfer import (
     VOICE_TRANSFORM_FORMAT,
     VOICE_TRANSFORM_FORMAT_VERSION,
     IdentityTransferTransform,
+    RVCTrainer,
     RVCTransformLogger,
     VoiceModelArtifact,
 )
+from simpletuner.helpers.rvc.runtime import configure_rvc_runtime
 
 
 class TestIdentityTransferTransform(unittest.TestCase):
@@ -38,6 +40,23 @@ class TestIdentityTransferTransform(unittest.TestCase):
             "caption_strategy": "textfile",
             "audio": {"sample_rate": 44100, "channels": 2},
         }
+
+    def test_rvc_runtime_defaults_to_generic_faiss_without_overriding_user_setting(self):
+        original = os.environ.pop("FAISS_OPT_LEVEL", None)
+        self.addCleanup(
+            lambda: (
+                os.environ.__setitem__("FAISS_OPT_LEVEL", original)
+                if original is not None
+                else os.environ.pop("FAISS_OPT_LEVEL", None)
+            )
+        )
+
+        configure_rvc_runtime()
+        self.assertEqual(os.environ["FAISS_OPT_LEVEL"], "generic")
+
+        os.environ["FAISS_OPT_LEVEL"] = "avx2"
+        configure_rvc_runtime()
+        self.assertEqual(os.environ["FAISS_OPT_LEVEL"], "avx2")
 
     def _write_wav(self, path: Path, frequency: float = 220.0, sample_rate: int = 16000, seconds: float = 0.25):
         sample_count = int(sample_rate * seconds)
@@ -455,11 +474,21 @@ class TestIdentityTransferTransform(unittest.TestCase):
         def fake_snapshot_download(repo_id, **kwargs):
             self.assertEqual(kwargs["repo_type"], "dataset")
             self.assertIn("**/*.txt", kwargs["allow_patterns"])
+            self.assertIn("*.txt", kwargs["allow_patterns"])
             self.assertIn("**/*.lyrics", kwargs["allow_patterns"])
+            self.assertIn("*.lyrics", kwargs["allow_patterns"])
+            local_dir = Path(kwargs["local_dir"])
+            local_dir.mkdir(parents=True)
             if repo_id == "RareConcepts/random-test-music-data":
-                return str(hf_source)
+                self.assertIn("*.wav", kwargs["allow_patterns"])
+                shutil.copy2(hf_source / "source.wav", local_dir / "source.wav")
+                shutil.copy2(hf_source / "source.txt", local_dir / "source.txt")
+                shutil.copy2(hf_source / "source.lyrics", local_dir / "source.lyrics")
+                return str(local_dir)
             if repo_id == "RareConcepts/music-test-data-serj-vocals":
-                return str(hf_identity)
+                self.assertIn("*.wav", kwargs["allow_patterns"])
+                shutil.copy2(hf_identity / "voice.wav", local_dir / "voice.wav")
+                return str(local_dir)
             raise AssertionError(f"unexpected repo_id={repo_id}")
 
         def fake_train(_self, source_backend_config, transform_config, cache_dir, fingerprint, manifest_base, **_kwargs):
@@ -552,6 +581,53 @@ class TestIdentityTransferTransform(unittest.TestCase):
             )
 
         self.assertIn("identity_data_dir is required", str(context.exception))
+
+    def test_rvc_trainer_removes_temporary_models_from_shared_accelerator(self):
+        class MainModel:
+            pass
+
+        RVCModel = type(
+            "SynthesizerTrnMs768NSFsid",
+            (),
+            {"__module__": "huggingface_hub_rvc.core.models"},
+        )
+
+        main_model = MainModel()
+        rvc_model = RVCModel()
+        accelerator = SimpleNamespace(
+            _models=[main_model],
+            unwrap_model=lambda model: model,
+        )
+        cache_dir = Path(self.temp_dir) / "rvc-cache"
+        cache_dir.mkdir()
+        manifest_path = cache_dir / "manifest.json"
+        model_path = cache_dir / "model.safetensors"
+        manifest_path.write_text("{}", encoding="utf-8")
+        model_path.write_bytes(b"model")
+
+        class FakeSimpleRVCTrainer:
+            def train(self, **_kwargs):
+                accelerator._models.append(rvc_model)
+                return SimpleNamespace(
+                    cache_dir=cache_dir,
+                    manifest_path=manifest_path,
+                    model_path=model_path,
+                    index_path=None,
+                    manifest={},
+                )
+
+        with patch("simpletuner.helpers.rvc.simple.SimpleRVCTrainer", FakeSimpleRVCTrainer):
+            artifact = RVCTrainer().train(
+                source_backend_config=self.source_backend,
+                transform_config={"id": "rvc"},
+                cache_dir=cache_dir,
+                fingerprint="fingerprint",
+                manifest_base={},
+                accelerator=accelerator,
+            )
+
+        self.assertEqual(artifact.model_path, model_path)
+        self.assertEqual(accelerator._models, [main_model])
 
     def test_logger_writes_local_json_files(self):
         run_logger = RVCTransformLogger(str(Path(self.temp_dir) / "output"))

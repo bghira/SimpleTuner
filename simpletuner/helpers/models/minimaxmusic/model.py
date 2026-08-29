@@ -1451,6 +1451,18 @@ class MiniMaxMusic(AudioModelFoundation):
                 boundary_source[key] = example[key]
         return codes, self._lm_audio_boundary_metadata(boundary_source)
 
+    @staticmethod
+    def _lm_caption_from_example(example: dict) -> str:
+        for key in ("prompt", "tags", "instance_prompt_text"):
+            if key in example:
+                caption = example[key]
+                if caption is None:
+                    continue
+                if isinstance(caption, str):
+                    return caption
+                break
+        raise ValueError("MiniMax Music 3 language model training requires 'prompt' (or 'tags') metadata.")
+
     def collate_audio_tokens(self, examples: list[dict]) -> dict:
         if not self._train_language_model:
             raise ValueError("collate_audio_tokens is only used when --minimax_music_train_component=language_model.")
@@ -1469,11 +1481,11 @@ class MiniMaxMusic(AudioModelFoundation):
         has_audio_end = []
         prompts = []
         for example in examples:
-            caption = example.get("prompt") or example.get("tags")
+            caption = self._lm_caption_from_example(example)
             lyrics = example.get("lyrics")
-            if not isinstance(caption, str) or not caption.strip():
-                raise ValueError("MiniMax Music 3 language model training requires 'prompt' (or 'tags') metadata.")
-            if not isinstance(lyrics, str):
+            if lyrics is None:
+                lyrics = ""
+            elif not isinstance(lyrics, str):
                 raise ValueError(
                     "MiniMax Music 3 language model training requires 'lyrics' metadata (an empty string is "
                     "allowed for instrumental or regularisation tracks)."

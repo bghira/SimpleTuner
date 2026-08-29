@@ -1219,6 +1219,48 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         self.assertEqual(payload["input_ids"].shape[0], 2)
         self.assertEqual(payload["prompt_lengths"].shape[0], 2)
 
+    def test_lm_collate_accepts_sampler_instance_prompt_text(self):
+        model = self._lm_model()
+        model.tokenizers = [self._FakeTokenizer()]
+        examples = [
+            {
+                "instance_prompt_text": "local textfile caption",
+                "lyrics": "local lyrics",
+                "audio_tokens": torch.randint(0, 8, (8, 4)).clamp(max=7),
+            }
+        ]
+        payload = model.collate_audio_tokens(examples)
+        self.assertEqual(payload["audio_codes"].shape, (1, 8, 4))
+        self.assertIn("local textfile caption", model.tokenizers[0].texts[0])
+
+    def test_lm_collate_allows_caption_dropout_empty_prompt(self):
+        model = self._lm_model()
+        model.tokenizers = [self._FakeTokenizer()]
+        examples = [
+            {
+                "instance_prompt_text": "",
+                "drop_conditioning": True,
+                "lyrics": "local lyrics",
+                "audio_tokens": torch.randint(0, 8, (8, 4)).clamp(max=7),
+            }
+        ]
+        payload = model.collate_audio_tokens(examples)
+        self.assertEqual(payload["audio_codes"].shape, (1, 8, 4))
+        self.assertIn("<|caption_start|><|caption_end|>", model.tokenizers[0].texts[0])
+
+    def test_lm_collate_allows_missing_lyrics(self):
+        model = self._lm_model()
+        model.tokenizers = [self._FakeTokenizer()]
+        payload = model.collate_audio_tokens(
+            [
+                {
+                    "prompt": "instrumental-compatible caption",
+                    "audio_tokens": torch.randint(0, 8, (8, 4)).clamp(max=7),
+                }
+            ]
+        )
+        self.assertEqual(payload["audio_codes"].shape, (1, 8, 4))
+
     def test_lm_collate_truncates_and_drops_end_target(self):
         model = self._lm_model(minimax_music_lm_max_frames=4)
         model.tokenizers = [self._FakeTokenizer()]

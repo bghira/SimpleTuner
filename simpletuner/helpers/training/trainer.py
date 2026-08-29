@@ -302,6 +302,7 @@ class Trainer:
         self._manual_validation_consumer: Optional[Callable[[], bool]] = None
         self._manual_checkpoint_consumer: Optional[Callable[[], bool]] = None
         self.ema_model = None
+        self.lr = 0.0
         self.job_id = job_id
         self._cleanup_invoked = False
         self.sidecar_optimizer = None
@@ -323,6 +324,7 @@ class Trainer:
                 disable_accelerator=disable_accelerator,
                 exit_on_error=exit_on_error,
             )
+            self.lr = float(self.config.learning_rate)
         except Exception as e:
             self._send_webhook_msg(f"Error: {e}", message_level="critical")
             raise e
@@ -2095,7 +2097,6 @@ class Trainer:
             return
         self.config.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
         self.noise_scheduler = self._get_noise_schedule()
-        self.lr = 0.0
 
     def configure_webhook(self, send_startup_message: bool = True, raw_config: str = None):
         if raw_config is not None:

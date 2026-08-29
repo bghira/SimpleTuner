@@ -99,6 +99,22 @@ class VoiceModelArtifact:
 
 
 class RVCTrainer:
+    @staticmethod
+    def _drop_rvc_models_from_accelerator(accelerator: Any) -> None:
+        if accelerator is None:
+            return
+        prepared_models = getattr(accelerator, "_models", None)
+        if not isinstance(prepared_models, list):
+            return
+
+        retained = []
+        for model in prepared_models:
+            unwrapped = accelerator.unwrap_model(model) if hasattr(accelerator, "unwrap_model") else model
+            if unwrapped.__class__.__module__.startswith("huggingface_hub_rvc."):
+                continue
+            retained.append(model)
+        prepared_models[:] = retained
+
     def train(
         self,
         source_backend_config: Dict[str, Any],
@@ -109,17 +125,24 @@ class RVCTrainer:
         accelerator: Any = None,
         logger: Optional[RVCTransformLogger] = None,
     ) -> VoiceModelArtifact:
+        from simpletuner.helpers.rvc.runtime import configure_rvc_runtime
+
+        configure_rvc_runtime()
+
         from simpletuner.helpers.rvc.simple import SimpleRVCTrainer
 
-        artifact = SimpleRVCTrainer().train(
-            source_backend_config=source_backend_config,
-            transform_config=transform_config,
-            cache_dir=cache_dir,
-            fingerprint=fingerprint,
-            manifest_base=manifest_base,
-            accelerator=accelerator,
-            run_logger=logger,
-        )
+        try:
+            artifact = SimpleRVCTrainer().train(
+                source_backend_config=source_backend_config,
+                transform_config=transform_config,
+                cache_dir=cache_dir,
+                fingerprint=fingerprint,
+                manifest_base=manifest_base,
+                accelerator=accelerator,
+                run_logger=logger,
+            )
+        finally:
+            self._drop_rvc_models_from_accelerator(accelerator)
         return VoiceModelArtifact(
             cache_dir=artifact.cache_dir,
             manifest_path=artifact.manifest_path,
@@ -140,6 +163,10 @@ class RVCConverter:
         accelerator: Any = None,
         logger: Optional[RVCTransformLogger] = None,
     ) -> None:
+        from simpletuner.helpers.rvc.runtime import configure_rvc_runtime
+
+        configure_rvc_runtime()
+
         from simpletuner.helpers.rvc.simple import SimpleRVCArtifact, SimpleRVCConverter
 
         simple_artifact = SimpleRVCArtifact(
@@ -167,6 +194,10 @@ class HubVoiceModelCache:
         self.public = public
 
     def download_if_compatible(self, cache_dir: Path, fingerprint: str) -> Optional[VoiceModelArtifact]:
+        from simpletuner.helpers.rvc.runtime import configure_rvc_runtime
+
+        configure_rvc_runtime()
+
         try:
             from huggingface_hub.errors import EntryNotFoundError, RepositoryNotFoundError
             from huggingface_hub_rvc import RVCPipeline
@@ -191,6 +222,10 @@ class HubVoiceModelCache:
         return _voice_model_artifact_from_hub_pipeline(RVCPipeline.from_pretrained(cache_dir, local_files_only=True))
 
     def upload(self, artifact: VoiceModelArtifact) -> None:
+        from simpletuner.helpers.rvc.runtime import configure_rvc_runtime
+
+        configure_rvc_runtime()
+
         try:
             from huggingface_hub_rvc import RVCConfig, RVCPipeline
             from huggingface_hub_rvc._runtime import SimpleRVCArtifact
@@ -277,6 +312,19 @@ def _parse_hf_dataset_uri(uri: str) -> tuple[str, str]:
     repo_id = f"{parts[0]}/{parts[1]}"
     pattern = parts[2] if len(parts) > 2 and parts[2] else "**/*"
     return repo_id, pattern
+
+
+def _expand_hf_allow_patterns(patterns: Iterable[str]) -> List[str]:
+    expanded = set(patterns)
+    expanded.update({"*.txt", "**/*.txt", "*.lyrics", "**/*.lyrics"})
+    for original_pattern in list(expanded):
+        pattern = original_pattern
+        if pattern.startswith("**/"):
+            expanded.add(pattern[3:])
+        while "/**/" in pattern:
+            pattern = pattern.replace("/**/", "/", 1)
+            expanded.add(pattern)
+    return sorted(expanded)
 
 
 @register_data_transform
@@ -700,7 +748,7 @@ class IdentityTransferTransform(DataTransformTask):
             )
 
         repo_id, patterns = next(iter(repo_patterns.items()))
-        allow_patterns = sorted(patterns | {"**/*.txt", "**/*.lyrics"})
+        allow_patterns = _expand_hf_allow_patterns(patterns)
         run_logger.event(
             transform_id,
             "huggingface_materialization_start",
@@ -710,22 +758,21 @@ class IdentityTransferTransform(DataTransformTask):
             allow_patterns=allow_patterns,
         )
         if self._is_main_process():
-            destination.mkdir(parents=True, exist_ok=True)
             try:
                 from huggingface_hub import snapshot_download
             except ImportError as exc:
                 raise ImportError("huggingface_hub is required for identity_transfer Hugging Face sources.") from exc
-            snapshot_path = Path(
-                snapshot_download(
-                    repo_id=repo_id,
-                    repo_type="dataset",
-                    allow_patterns=allow_patterns,
-                    token=hf_config.get("token") or backend_config.get("token"),
-                )
-            )
+
             if destination.exists():
                 shutil.rmtree(destination)
-            shutil.copytree(snapshot_path, destination)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            snapshot_download(
+                repo_id=repo_id,
+                repo_type="dataset",
+                allow_patterns=allow_patterns,
+                local_dir=destination,
+                token=hf_config.get("token") or backend_config.get("token"),
+            )
         self._wait_for_everyone()
         if not destination.exists():
             raise FileNotFoundError(f"identity_transfer failed to materialize Hugging Face {role} data at {destination}")

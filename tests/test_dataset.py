@@ -80,6 +80,26 @@ class TestMultiAspectDataset(unittest.TestCase):
             self.assertEqual(example["original_size"], first_size)
             self.assertEqual(example["image_path"], self.image_path)
 
+    def test_getitem_allows_audio_batch_with_different_lengths(self):
+        examples = self.dataset.__getitem__(
+            (
+                {
+                    "image_path": "first.flac",
+                    "instance_prompt_text": "first prompt",
+                    "dataset_type": "audio",
+                    "target_size": (1, 4436640),
+                },
+                {
+                    "image_path": "second.flac",
+                    "instance_prompt_text": "second prompt",
+                    "dataset_type": "audio",
+                    "target_size": (1, 4416480),
+                },
+            )
+        )
+
+        self.assertEqual(len(examples["training_samples"]), 2)
+
     def test_getitem_invalid_image(self):
         self.data_backend.read.side_effect = Exception("Some error")
 
