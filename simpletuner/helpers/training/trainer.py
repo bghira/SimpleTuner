@@ -324,7 +324,9 @@ class Trainer:
                 disable_accelerator=disable_accelerator,
                 exit_on_error=exit_on_error,
             )
-            self.lr = float(self.config.learning_rate)
+            parsed_config = getattr(self, "config", None)
+            if parsed_config is not None and "learning_rate" in vars(parsed_config):
+                self.lr = float(parsed_config.learning_rate)
         except Exception as e:
             self._send_webhook_msg(f"Error: {e}", message_level="critical")
             raise e
