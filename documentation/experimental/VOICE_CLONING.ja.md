@@ -195,7 +195,7 @@ Audio dataset
             Reuse from Hub: on when Hub model id is set
             Push RVC model to Hub: off by default
             Hub repo privacy: private by default
-            Caption rules: copy, append, remove
+            Caption と lyrics の sidecar: source audio からコピー
 ```
 
 WebUI はよくある 2 つの setup を分かりやすくするべきです。
@@ -354,6 +354,7 @@ standalone の [`huggingface-hub-rvc`](https://github.com/SimpleTuner-io/hugging
 - expansion songs は tempo、key、genre、dynamics、lyrical phrasing を広くします。
 - caption を十分に多様化し、identity token が 1 つの編曲に貼り付かないようにします。
 - 長い training run の前に生成音声を spot-check します。
+- すべてを組み合わせる前に、direct training data、generated data、mixed training run を別々に比較します。
 
 ## Common Failure Modes
 
@@ -366,6 +367,7 @@ standalone の [`huggingface-hub-rvc`](https://github.com/SimpleTuner-io/hugging
 | vocal identity が弱い | target data の品質、量、または retrieval index が不足しています。 |
 | caption が声を制御しない | source vocal identity が caption に残っている、または target identity がありません。 |
 | main model が artifact を学ぶ | generated audio の品質が低い、または train mix 内で強すぎます。 |
+| converted vocal が monotonic または robotic に聞こえる | RVC path に適切な F0 extraction、pretrained generator/discriminator initialization、adversarial training、または十分に clean な target vocal data が不足しています。 |
 
 ## Regularisation Data との関係
 

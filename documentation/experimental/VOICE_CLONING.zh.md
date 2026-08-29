@@ -195,7 +195,7 @@ Audio dataset
             Reuse from Hub: on when Hub model id is set
             Push RVC model to Hub: off by default
             Hub repo privacy: private by default
-            Caption rules: copy, append, remove
+            Caption 和歌词 sidecar：从源音频复制
 ```
 
 WebUI 应让两种常见设置一眼可见：
@@ -354,6 +354,7 @@ Manifest 应记录身份数据集指纹、变换设置、扩展源数据指纹�
 - 扩展歌曲应覆盖不同速度、调性、流派、动态和歌词 phrasing。
 - Caption 要足够多样，避免身份 token 和一种编曲永久绑定。
 - 长训练前先抽查生成音频。
+- 在合并所有内容之前，先分别比较直接训练数据、生成数据和混合训练运行。
 
 ## 常见失败模式
 
@@ -366,6 +367,7 @@ Manifest 应记录身份数据集指纹、变换设置、扩展源数据指纹�
 | 人声身份很弱 | 目标数据需要更干净、更多样，或检索索引更强。 |
 | Caption 控制不了声音 | Caption 仍含源声音身份，或没有目标身份。 |
 | 主模型学到伪影 | 生成音频质量太低或在训练 mix 中占比太高。 |
+| 转换后的人声单调或像机器人 | RVC 路径缺少合适的 F0 提取、预训练 generator/discriminator 初始化、对抗训练，或足够干净的目标人声数据。 |
 
 ## 与正则化数据的关系
 

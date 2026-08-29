@@ -199,7 +199,7 @@ Audio dataset
             Reuse from Hub: on when Hub model id is set
             Push RVC model to Hub: off by default
             Hub repo privacy: private by default
-            Caption rules: copy, append, remove
+            Caption and lyrics sidecars: copied from source audio
 ```
 
 The WebUI should make the two common setups obvious:

@@ -195,7 +195,7 @@ Audio dataset
             Reuse from Hub: on when Hub model id is set
             Push RVC model to Hub: off by default
             Hub repo privacy: private by default
-            Caption rules: copy, append, remove
+            Caption और lyrics sidecars: source audio से copy होते हैं
 ```
 
 WebUI को दो common setups साफ दिखाने चाहिए:
@@ -354,6 +354,7 @@ Standalone [`huggingface-hub-rvc`](https://github.com/SimpleTuner-io/huggingface
 - Expansion songs में tempo, key, genre, dynamics, और lyrical phrasing varied रखें।
 - Captions varied रखें ताकि identity tokens एक arrangement से चिपक न जाएं।
 - Long training runs से पहले generated audio spot-check करें।
+- सब कुछ combine करने से पहले direct training data, generated data, और mixed training runs को अलग-अलग compare करें।
 
 ## Common Failure Modes
 
@@ -366,6 +367,7 @@ Standalone [`huggingface-hub-rvc`](https://github.com/SimpleTuner-io/huggingface
 | Vocal identity weak है | Voice-conversion model को cleaner target data, more data, या stronger retrieval index चाहिए। |
 | Captions voice control नहीं करतीं | Captions में source-vocal identity बची है या target identity missing है। |
 | Main model artifacts सीखता है | Generated audio low quality है या train mix में बहुत dominant है। |
+| Converted vocals monotonic या robotic सुनाई देते हैं | RVC path में proper F0 extraction, pretrained generator/discriminator initialization, adversarial training, या enough clean target vocal data missing है। |
 
 ## Regularisation Data से संबंध
 

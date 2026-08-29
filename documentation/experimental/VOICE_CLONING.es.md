@@ -195,7 +195,7 @@ Audio dataset
             Reuse from Hub: on when Hub model id is set
             Push RVC model to Hub: off by default
             Hub repo privacy: private by default
-            Caption rules: copy, append, remove
+            Sidecars de captions y letras: se copian del audio fuente
 ```
 
 La WebUI debe hacer obvios los dos setups comunes:
@@ -354,6 +354,7 @@ El proyecto standalone [`huggingface-hub-rvc`](https://github.com/SimpleTuner-io
 - Usa canciones de expansion con variedad de tempo, tonalidad, genero, dinamica y fraseo.
 - Varia captions para que los tokens de identidad no queden pegados a un solo arreglo.
 - Revisa audio generado antes de entrenamientos largos.
+- Compara por separado los datos de entrenamiento directos, los datos generados y los entrenamientos mixtos antes de combinarlo todo.
 
 ## Fallos Comunes
 
@@ -366,6 +367,7 @@ El proyecto standalone [`huggingface-hub-rvc`](https://github.com/SimpleTuner-io
 | La identidad vocal es debil | Faltan datos objetivo mas limpios, mas datos o mejor indice. |
 | Las captions no controlan la voz | Las captions aun mencionan la voz fuente u omiten la identidad objetivo. |
 | El modelo principal aprende artifacts | El audio generado tiene baja calidad o demasiado peso en el mix de entrenamiento. |
+| Las voces convertidas suenan monotonas o roboticas | La ruta RVC no tiene extraccion F0 adecuada, inicializacion con generator/discriminator preentrenados, entrenamiento adversarial, o suficientes datos vocales objetivo limpios. |
 
 ## Relacion Con Datos de Regularizacion
 
