@@ -141,6 +141,62 @@ class TestIdentityTransferTransform(unittest.TestCase):
 
         self.assertEqual(transform._rank_shard(["a", "b", "c", "d", "e", "f", "g"]), ["b", "e"])
 
+    def test_distributed_prepare_converts_each_rank_shard_before_manifest(self):
+        for name in ("a.wav", "b.wav", "c.wav", "d.wav"):
+            self._write_wav(self.source_dir / name)
+        identity_dir = Path(self.temp_dir) / "identity"
+        self._write_wav(identity_dir / "voice.wav", frequency=320.0)
+        generated_dir = Path(self.temp_dir) / "generated"
+        converted_by_rank = {}
+
+        def fake_train(_self, source_backend_config, transform_config, cache_dir, fingerprint, manifest_base, **_kwargs):
+            cache_dir.mkdir(parents=True)
+            model_path = cache_dir / "model.pth"
+            manifest_path = cache_dir / "manifest.json"
+            model_path.write_bytes(b"rvc")
+            manifest = {**manifest_base, "fingerprint": fingerprint, "voice_model": {"kind": "simpletuner-rvc-v2-f0"}}
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            return VoiceModelArtifact(cache_dir, manifest_path, model_path, None, manifest)
+
+        def fake_convert(
+            _self, source_backend_config, target_backend_config, transform_config, artifact, input_paths, **kwargs
+        ):
+            accelerator = kwargs["accelerator"]
+            rank = accelerator.process_index
+            converted_by_rank[rank] = [Path(path).name for path in input_paths]
+            output_dir = Path(target_backend_config["instance_data_dir"])
+            output_dir.mkdir(parents=True, exist_ok=True)
+            for path in input_paths:
+                output_path = output_dir / Path(path).name
+                output_path.write_bytes(Path(path).read_bytes())
+
+        transform_config = {
+            "task": "identity_transfer",
+            "id": "voice-transfer",
+            "model": {
+                "identity_data_dir": str(identity_dir),
+                "identity_audio_mode": "vocal_only",
+            },
+            "conversion": {"audio_mode": "vocal_only"},
+            "target": {"instance_data_dir": str(generated_dir)},
+        }
+
+        with (
+            patch("simpletuner.helpers.data_transforms.identity_transfer.RVCTrainer.train", new=fake_train),
+            patch("simpletuner.helpers.data_transforms.identity_transfer.RVCConverter.convert", new=fake_convert),
+        ):
+            for rank, is_main_process in ((1, False), (0, True)):
+                accelerator = MagicMock()
+                accelerator.process_index = rank
+                accelerator.num_processes = 2
+                accelerator.is_main_process = is_main_process
+                transform = self._transform(transform_config, accelerator=accelerator)
+                transform.prepare(existing_backend_ids={"artist-source"})
+
+        self.assertEqual(converted_by_rank[1], ["b.wav", "d.wav"])
+        self.assertEqual(converted_by_rank[0], ["a.wav", "c.wav", "sample.flac"])
+        self.assertTrue((generated_dir / ".simpletuner_identity_transfer.json").exists())
+
     def test_local_voice_model_artifact_reuses_matching_manifest(self):
         transform = self._transform({"task": "identity_transfer", "id": "voice-transfer"})
         normalised = transform._normalise_transform_config(existing_backend_ids={"artist-source"})

@@ -358,13 +358,6 @@ class IdentityTransferTransform(DataTransformTask):
 
         transform = self._with_materialized_identity_backend(transform, run_logger)
         artifact = self._resolve_voice_model(transform, voice_model_fingerprint, model_cache_dir, run_logger)
-        if not self._is_main_process():
-            self._wait_for_everyone()
-            run_logger.summary(
-                transform_id, status="waiting_for_main_process", generated_backend_id=target_backend_config["id"]
-            )
-            return [target_backend_config]
-
         runtime_source_backend = self._materialized_source_backend(transform, run_logger)
         input_paths = self._rank_shard(self._discover_source_audio_paths(runtime_source_backend))
         run_logger.event(
@@ -383,7 +376,9 @@ class IdentityTransferTransform(DataTransformTask):
             accelerator=self.accelerator,
             logger=run_logger,
         )
-        self._write_generated_manifest(generated_dir, generated_fingerprint, transform)
+        self._wait_for_everyone()
+        if self._is_main_process():
+            self._write_generated_manifest(generated_dir, generated_fingerprint, transform)
         self._wait_for_everyone()
         run_logger.summary(transform_id, status="generated", generated_backend_id=target_backend_config["id"])
         return [target_backend_config]
@@ -526,12 +521,14 @@ class IdentityTransferTransform(DataTransformTask):
         if model_cfg.get("push_to_hub", False):
             if not hub_model_id:
                 raise ValueError("identity_transfer.model.push_to_hub requires identity_transfer.model.hub_model_id.")
-            HubVoiceModelCache(
-                hub_model_id,
-                token=model_cfg.get("hub_token"),
-                public=bool(model_cfg.get("public", False)),
-            ).upload(artifact)
-            run_logger.event(transform_id, "voice_model_pushed", hub_model_id=hub_model_id)
+            if self._is_main_process():
+                HubVoiceModelCache(
+                    hub_model_id,
+                    token=model_cfg.get("hub_token"),
+                    public=bool(model_cfg.get("public", False)),
+                ).upload(artifact)
+                run_logger.event(transform_id, "voice_model_pushed", hub_model_id=hub_model_id)
+            self._wait_for_everyone()
         return artifact
 
     def _local_artifact(self, cache_dir: Path, fingerprint: str) -> Optional[VoiceModelArtifact]:
