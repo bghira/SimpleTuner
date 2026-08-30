@@ -286,6 +286,21 @@ class TestImageBackendConfig(unittest.TestCase):
         self.assertEqual(config.resolution, 1.0)
         self.assertEqual(config.resolution_type, "area")
 
+    def test_aws_data_prefix_list_round_trips(self):
+        backend_dict = {
+            "id": "image_aws",
+            "type": "aws",
+            "aws_bucket_name": "bucket",
+            "aws_data_prefix": ["train/", "reg/"],
+        }
+
+        config = ImageBackendConfig.from_dict(backend_dict, self.args)
+        serialised = config.to_dict()["config"]
+
+        self.assertEqual(config.aws_data_prefix, ["train/", "reg/"])
+        self.assertEqual(config.instance_data_dir, ["train/", "reg/"])
+        self.assertEqual(serialised["aws_data_prefix"], ["train/", "reg/"])
+
     def test_from_dict_full_config(self):
         """Test creation with full configuration"""
         backend_dict = {

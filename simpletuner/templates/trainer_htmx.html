@@ -1917,7 +1917,7 @@ function trainerComponent() {
             }
 
             dataset.aws_bucket_name = this._coerceString(dataset.aws_bucket_name);
-            dataset.aws_data_prefix = this._coerceString(dataset.aws_data_prefix);
+            dataset.aws_data_prefix = this._coerceAwsPrefixForInput(dataset.aws_data_prefix);
             dataset.aws_region_name = this._coerceString(dataset.aws_region_name);
             dataset.aws_endpoint_url = this._coerceString(dataset.aws_endpoint_url);
             dataset.aws_access_key_id = this._coerceString(dataset.aws_access_key_id);
@@ -2063,6 +2063,21 @@ function trainerComponent() {
                 return '';
             }
             return String(value).trim();
+        },
+        _coerceAwsPrefixForInput(value) {
+            if (Array.isArray(value)) {
+                return value.map((entry) => this._coerceString(entry)).filter(Boolean).join(', ');
+            }
+            return this._coerceString(value);
+        },
+        _normaliseAwsDataPrefix(value) {
+            const entries = Array.isArray(value)
+                ? value.map((entry) => this._coerceString(entry)).filter(Boolean)
+                : this._coerceString(value).split(',').map((entry) => entry.trim()).filter(Boolean);
+            if (entries.length === 0) {
+                return '';
+            }
+            return entries.length === 1 ? entries[0] : entries;
         },
         isKnownConditioningGenerator(type) {
             if (!type) {
@@ -2893,8 +2908,8 @@ function trainerComponent() {
                     } else {
                         delete cleaned.aws_bucket_name;
                     }
-                    const dataPrefix = this._coerceString(dataset.aws_data_prefix);
-                    if (dataPrefix) {
+                    const dataPrefix = this._normaliseAwsDataPrefix(dataset.aws_data_prefix);
+                    if (Array.isArray(dataPrefix) || dataPrefix) {
                         cleaned.aws_data_prefix = dataPrefix;
                     } else {
                         delete cleaned.aws_data_prefix;
@@ -2968,7 +2983,12 @@ function trainerComponent() {
                         }
                     };
                     assignAws('aws_bucket_name');
-                    assignAws('aws_data_prefix');
+                    const dataPrefix = this._normaliseAwsDataPrefix(dataset.aws_data_prefix);
+                    if (Array.isArray(dataPrefix) || dataPrefix) {
+                        cleaned.aws_data_prefix = dataPrefix;
+                    } else {
+                        delete cleaned.aws_data_prefix;
+                    }
                     assignAws('aws_region_name');
                     assignAws('aws_endpoint_url');
                     assignAws('aws_access_key_id');

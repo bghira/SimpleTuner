@@ -89,20 +89,18 @@ Hugging Face バックエンドは柔軟なキャプション抽出をサポー�
 
 ## データセットのフィルタリング
 
-高品質サンプルのみを選択するためにフィルタを適用します:
+トップレベルの `filter_func` を使うと、メタデータと VAE キャッシュ作成前にサンプルを選択できます。従来の `huggingface.filter_func` も互換性のため使用できますが、トップレベルの値が優先されます。
 
 ### 品質ベースのフィルタ
 ```json
 {
-  "huggingface": {
-    "filter_func": {
-      "quality_thresholds": {
-        "clip_score": 0.3,
-        "aesthetic_score": 5.0,
-        "resolution": 0.8
-      },
-      "quality_column": "quality_assessment"
-    }
+  "filter_func": {
+    "quality_thresholds": {
+      "clip_score": 0.3,
+      "aesthetic_score": 5.0,
+      "resolution": 0.8
+    },
+    "quality_column": "quality_assessment"
   }
 }
 ```
@@ -110,15 +108,26 @@ Hugging Face バックエンドは柔軟なキャプション抽出をサポー�
 ### コレクション/サブセットのフィルタ
 ```json
 {
-  "huggingface": {
-    "filter_func": {
-      "collection": ["photo", "artwork"],
-      "min_width": 512,
-      "min_height": 512
-    }
+  "filter_func": {
+    "collection": ["photo", "artwork"],
+    "min_width": 512,
+    "min_height": 512
   }
 }
 ```
+
+### パスフィルタ
+```json
+{
+  "filter_func": {
+    "path_include": ["photo", "*/curated/*.jpg"],
+    "path_exclude": ["watermark"],
+    "path_match": "auto"
+  }
+}
+```
+
+`path_match: "auto"` は通常文字列に substring match、`*` と `?` に glob、`re:` prefix の pattern に regex を使います。従来のネスト形式 `filter_func.path.include` / `exclude` / `mode` も互換性のため引き続き受け付けます。
 
 ## 合成画像サポート
 
@@ -173,15 +182,15 @@ Hugging Face バックエンドは柔軟なキャプション抽出をサポー�
     "caption_column": ["title", "description", "tags"],
     "fallback_caption_column": "filename",
     "width_column": "original_width",
-    "height_column": "original_height",
-    "filter_func": {
-      "quality_thresholds": {
-        "aesthetic_score": 6.0,
-        "technical_quality": 0.8
-      },
-      "min_width": 768,
-      "min_height": 768
-    }
+    "height_column": "original_height"
+  },
+  "filter_func": {
+    "quality_thresholds": {
+      "aesthetic_score": 6.0,
+      "technical_quality": 0.8
+    },
+    "min_width": 768,
+    "min_height": 768
   },
   "resolution": 1024,
   "resolution_type": "pixel_area",

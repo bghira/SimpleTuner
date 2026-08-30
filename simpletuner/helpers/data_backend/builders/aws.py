@@ -2,7 +2,8 @@
 
 import logging
 import sys
-from typing import Any, Dict, Optional
+from collections.abc import Sequence
+from typing import Any, Dict, Optional, Union
 
 from simpletuner.helpers.data_backend.aws import S3DataBackend
 from simpletuner.helpers.data_backend.config.base import BaseBackendConfig
@@ -46,6 +47,7 @@ class AwsBackendBuilder(BaseBackendBuilder):
             aws_session_token=aws_session_token,
             compress_cache=compress_cache,
             max_pool_connections=max_pool_connections,
+            data_prefix=getattr(config, "aws_data_prefix", None),
         )
 
         return data_backend
@@ -96,7 +98,7 @@ class AwsBackendBuilder(BaseBackendBuilder):
         return StateTracker.get_args()
 
     def build_with_metadata(
-        self, config: BaseBackendConfig, args: Dict[str, Any], aws_data_prefix: str = None
+        self, config: BaseBackendConfig, args: Dict[str, Any], aws_data_prefix: Union[str, Sequence[str], None] = None
     ) -> Dict[str, Any]:
         logger.info(f"(id={config.id}) Loading AWS S3 dataset.")
 

@@ -272,7 +272,7 @@ Memory backends require Linux or macOS and enough RAM or swap for the existing c
 ### `instance_data_dir` / `aws_data_prefix`
 
 - **Local:** Path to the data on the filesystem.
-- **AWS:** S3 prefix for the data in the bucket.
+- **AWS:** S3 prefix for the data in the bucket. Set `aws_data_prefix` to a string for one prefix, or to a list of strings to scan multiple prefixes in the same bucket.
 
 ### `caption_strategy`
 
@@ -1045,6 +1045,41 @@ The column value is parsed using the same formats as `.bbox` files (JSON array o
 
 ---
 
+## Filtering samples
+
+### `filter_func`
+
+`filter_func` may be set at the top level of any dataset backend to skip samples before metadata buckets and VAE caches are built. Hugging Face backends still accept the older nested `huggingface.filter_func` location, but the top-level value takes precedence when both are present.
+
+Supported filters:
+
+- `collection`: exact-match whitelist for a row's `collection` field. This is available when the backend has row metadata, such as Hugging Face datasets.
+- `quality_thresholds`: minimum numeric values inside `quality_column` (default: `quality_assessment`). This is available when the backend has row metadata.
+- `min_width` / `min_height`: minimum row dimensions when width and height fields are available.
+- `path_include` / `path_exclude`: filename/path filtering for local, AWS, CSV, Hugging Face, parquet, and Webshart datasets. Includes are a whitelist and excludes are a blacklist. Excludes win if both match.
+- `path_match`: path match mode. `auto` (default for flat keys) uses fast substring matching for plain text, glob matching for `*` and `?`, and regex matching for patterns prefixed with `re:`. You can also set `contains`, `glob`, `regex`, or `exact`.
+
+Example:
+
+```json
+{
+  "id": "regularisation-512",
+  "type": "local",
+  "instance_data_dir": "/data/reg",
+  "caption_strategy": "textfile",
+  "metadata_backend": "discovery",
+  "filter_func": {
+    "path_include": ["clothing", "notable", "*/curated/*.jpg"],
+    "path_exclude": ["watermark", "bad"],
+    "path_match": "auto"
+  }
+}
+```
+
+The older nested `filter_func.path.include` / `exclude` / `mode` form is still accepted for existing configs, but new configs should use the flat keys above.
+
+---
+
 ## Filtering captions
 
 ### `caption_filter_list`
@@ -1414,8 +1449,6 @@ webshart optimize-captions \
 ```
 
 `--destination` writes a portable per-shard metadata tree, and `--push-to-hub` uploads it to a metadata repository; point the dataloader `metadata` option at that repository afterwards. `--shard-cache-dir` lets coalescing reuse fully cached shards instead of issuing one range read per sidecar.
-
-This backend requires a Webshart build with `TarDataLoader.list_shard_sample_aspect_buckets()`; `webshart_optimize_captions` additionally requires `probe_caption_layout()` and `coalesce_caption_metadata()`.
 
 ## Custom aspect ratio-to-resolution mapping
 

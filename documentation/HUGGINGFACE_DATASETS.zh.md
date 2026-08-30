@@ -89,20 +89,18 @@ Hugging Face 后端支持灵活的字幕提取：
 
 ## 数据集过滤
 
-应用过滤以仅选择高质量样本：
+使用顶层 `filter_func` 可在构建元数据和 VAE 缓存之前选择样本。旧的 `huggingface.filter_func` 位置仍兼容，但顶层值优先。
 
 ### 基于质量的过滤
 ```json
 {
-  "huggingface": {
-    "filter_func": {
-      "quality_thresholds": {
-        "clip_score": 0.3,
-        "aesthetic_score": 5.0,
-        "resolution": 0.8
-      },
-      "quality_column": "quality_assessment"
-    }
+  "filter_func": {
+    "quality_thresholds": {
+      "clip_score": 0.3,
+      "aesthetic_score": 5.0,
+      "resolution": 0.8
+    },
+    "quality_column": "quality_assessment"
   }
 }
 ```
@@ -110,15 +108,26 @@ Hugging Face 后端支持灵活的字幕提取：
 ### 集合/子集过滤
 ```json
 {
-  "huggingface": {
-    "filter_func": {
-      "collection": ["photo", "artwork"],
-      "min_width": 512,
-      "min_height": 512
-    }
+  "filter_func": {
+    "collection": ["photo", "artwork"],
+    "min_width": 512,
+    "min_height": 512
   }
 }
 ```
+
+### 路径过滤
+```json
+{
+  "filter_func": {
+    "path_include": ["photo", "*/curated/*.jpg"],
+    "path_exclude": ["watermark"],
+    "path_match": "auto"
+  }
+}
+```
+
+`path_match: "auto"` 对普通文本使用子串匹配，对 `*` 和 `?` 使用 glob，对带 `re:` 前缀的模式使用 regex。旧的嵌套形式 `filter_func.path.include` / `exclude` / `mode` 仍为兼容性而接受。
 
 ## 合成图像支持
 
@@ -173,15 +182,15 @@ Hugging Face 后端支持灵活的字幕提取：
     "caption_column": ["title", "description", "tags"],
     "fallback_caption_column": "filename",
     "width_column": "original_width",
-    "height_column": "original_height",
-    "filter_func": {
-      "quality_thresholds": {
-        "aesthetic_score": 6.0,
-        "technical_quality": 0.8
-      },
-      "min_width": 768,
-      "min_height": 768
-    }
+    "height_column": "original_height"
+  },
+  "filter_func": {
+    "quality_thresholds": {
+      "aesthetic_score": 6.0,
+      "technical_quality": 0.8
+    },
+    "min_width": 768,
+    "min_height": 768
   },
   "resolution": 1024,
   "resolution_type": "pixel_area",

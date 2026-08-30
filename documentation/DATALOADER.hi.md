@@ -270,7 +270,7 @@ Memory backends के लिए Linux या macOS और मौजूदा ca
 ### `instance_data_dir` / `aws_data_prefix`
 
 - **Local:** filesystem पर डेटा का path.
-- **AWS:** bucket में डेटा का S3 prefix.
+- **AWS:** bucket में डेटा का S3 prefix. `aws_data_prefix` एक prefix के लिए string हो सकता है, या उसी bucket में कई prefixes scan करने के लिए strings की list हो सकता है.
 
 ### `caption_strategy`
 
@@ -999,6 +999,32 @@ Bounding box coordinates XYXY format में [0, 1] पर normalised हो�
 
 Parquet या HuggingFace datasets के लिए, backend config में `bbox_column` specify करें।
 
+## Samples फ़िल्टर करना
+
+### `filter_func`
+
+`filter_func` किसी भी dataset backend के top level पर सेट किया जा सकता है ताकि metadata buckets और VAE caches बनने से पहले samples skip किए जा सकें। Hugging Face backends compatibility के लिए पुराने `huggingface.filter_func` स्थान को अभी भी स्वीकार करते हैं, लेकिन दोनों मौजूद होने पर top-level value प्राथमिकता लेती है।
+
+Supported filters:
+
+- `collection`: row के `collection` field के लिए exact-match whitelist।
+- `quality_thresholds`: `quality_column` (default: `quality_assessment`) में minimum numeric values।
+- `min_width` / `min_height`: width और height fields उपलब्ध होने पर minimum row dimensions।
+- `path_include` / `path_exclude`: local, AWS, CSV, Hugging Face, parquet, और Webshart datasets के लिए filename/path filtering। `path_include` whitelist है और `path_exclude` blacklist है। दोनों match होने पर exclude जीतेगा।
+- `path_match`: path matching mode. Flat keys के लिए default `auto` है: plain text के लिए substring match, `*` और `?` के लिए glob, और `re:` prefix वाले patterns के लिए regex। `contains`, `glob`, `regex`, या `exact` भी इस्तेमाल कर सकते हैं।
+
+```json
+{
+  "filter_func": {
+    "path_include": ["clothing", "notable", "*/curated/*.jpg"],
+    "path_exclude": ["watermark", "bad"],
+    "path_match": "auto"
+  }
+}
+```
+
+पुराना nested form `filter_func.path.include` / `exclude` / `mode` existing configs के लिए अब भी accepted है, लेकिन नए configs में ऊपर वाली flat keys इस्तेमाल करें।
+
 ## Captions फ़िल्टर करना
 
 ### `caption_filter_list`
@@ -1367,8 +1393,6 @@ webshart optimize-captions \
 ```
 
 `--destination` एक portable per-shard metadata tree लिखता है, और `--push-to-hub` उसे metadata repository पर upload करता है; बाद में dataloader के `metadata` option को उसी repository पर point करें। `--shard-cache-dir` से coalescing हर sidecar के लिए एक range read करने की बजाय पूरी तरह cached shards reuse कर पाती है।
-
-इस backend के लिए `TarDataLoader.list_shard_sample_aspect_buckets()` वाला Webshart build चाहिए; `webshart_optimize_captions` के लिए अतिरिक्त रूप से `probe_caption_layout()` और `coalesce_caption_metadata()` भी चाहिए।
 
 ## Custom aspect ratio‑to‑resolution mapping
 

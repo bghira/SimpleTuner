@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.data_backend.filters import filter_file_list
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
@@ -154,7 +155,14 @@ class ParquetMetadataBackend(MetadataBackend):
                 if not identifier_includes_extension:
                     filename = os.path.splitext(filename)[0]
                 if not identifier_includes_path:
-                    filename = filename.replace(self.instance_data_dir, "")
+                    instance_data_dirs = self.instance_data_dir
+                    if not isinstance(instance_data_dirs, (list, tuple)):
+                        instance_data_dirs = [instance_data_dirs]
+                    for instance_data_dir in instance_data_dirs:
+                        instance_data_dir = str(instance_data_dir or "")
+                        if instance_data_dir and instance_data_dir in filename:
+                            filename = filename.replace(instance_data_dir, "")
+                            break
                     if filename.startswith("/"):
                         filename = filename[1:]
                 if filename not in self.caption_cache:
@@ -244,11 +252,13 @@ class ParquetMetadataBackend(MetadataBackend):
             if any(isinstance(i, list) for i in all_image_files):
                 all_image_files = [item for sublist in all_image_files for item in sublist]
 
+        all_image_files = filter_file_list(list(all_image_files), self.dataset_filter)
+
         if ignore_existing_cache:
             self.aspect_ratio_bucket_indices = {}
             return self._apply_max_num_samples_limit(list(all_image_files))
 
-        # Apply max_num_samples limit deterministically before filtering
+        # Apply max_num_samples limit deterministically after explicit dataset filters.
         all_image_files = self._apply_max_num_samples_limit(list(all_image_files))
         all_image_files_set = set(all_image_files)
 
@@ -464,10 +474,16 @@ class ParquetMetadataBackend(MetadataBackend):
             image_path_filtered = image_path_str
             if not self.parquet_config.get("identifier_includes_extension", False):
                 image_path_filtered = os.path.splitext(os.path.split(image_path_str)[-1])[0]
-            if self.instance_data_dir in image_path_filtered:
-                image_path_filtered = image_path_filtered.replace(self.instance_data_dir, "")
-                if image_path_filtered.startswith("/"):
-                    image_path_filtered = image_path_filtered[1:]
+            instance_data_dirs = self.instance_data_dir
+            if not isinstance(instance_data_dirs, (list, tuple)):
+                instance_data_dirs = [instance_data_dirs]
+            for instance_data_dir in instance_data_dirs:
+                instance_data_dir = str(instance_data_dir or "")
+                if instance_data_dir and instance_data_dir in image_path_filtered:
+                    image_path_filtered = image_path_filtered.replace(instance_data_dir, "")
+                    if image_path_filtered.startswith("/"):
+                        image_path_filtered = image_path_filtered[1:]
+                    break
 
             try:
                 database_row = self.parquet_database.loc[image_path_filtered]

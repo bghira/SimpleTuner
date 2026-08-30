@@ -270,7 +270,7 @@ Los backends de memoria requieren Linux o macOS y suficiente RAM o swap para la 
 ### `instance_data_dir` / `aws_data_prefix`
 
 - **Local:** Ruta a los datos en el filesystem.
-- **AWS:** Prefijo S3 de los datos en el bucket.
+- **AWS:** Prefijo S3 de los datos en el bucket. `aws_data_prefix` puede ser una cadena para un prefijo o una lista de cadenas para escanear varios prefijos del mismo bucket.
 
 ### `caption_strategy`
 
@@ -999,6 +999,32 @@ Las coordenadas del bounding box estan normalizadas a [0, 1] en formato XYXY. El
 
 Para datasets parquet o HuggingFace, especifica un `bbox_column` en la configuracion del backend.
 
+## Filtrado de muestras
+
+### `filter_func`
+
+`filter_func` puede configurarse en el nivel superior de cualquier backend de dataset para omitir muestras antes de construir buckets de metadatos y cachés VAE. Los backends de Hugging Face siguen aceptando la ubicación antigua `huggingface.filter_func`, pero el valor superior tiene prioridad si ambos existen.
+
+Filtros admitidos:
+
+- `collection`: lista permitida de coincidencia exacta para el campo `collection` de una fila.
+- `quality_thresholds`: valores numéricos mínimos dentro de `quality_column` (por defecto, `quality_assessment`).
+- `min_width` / `min_height`: dimensiones mínimas de fila cuando existen campos de ancho y alto.
+- `path_include` / `path_exclude`: filtrado por nombre de archivo/ruta para datasets local, AWS, CSV, Hugging Face, parquet y Webshart. `path_include` es lista permitida y `path_exclude` lista bloqueada. Las exclusiones ganan si ambas coinciden.
+- `path_match`: modo de coincidencia de rutas. `auto` (predeterminado para claves planas) usa subcadenas para texto normal, glob para `*` y `?`, y regex para patrones con prefijo `re:`. También se puede usar `contains`, `glob`, `regex` o `exact`.
+
+```json
+{
+  "filter_func": {
+    "path_include": ["clothing", "notable", "*/curated/*.jpg"],
+    "path_exclude": ["watermark", "bad"],
+    "path_match": "auto"
+  }
+}
+```
+
+La forma antigua anidada `filter_func.path.include` / `exclude` / `mode` sigue aceptándose para configs existentes, pero las nuevas configs deben usar las claves planas anteriores.
+
 ## Filtrado de captions
 
 ### `caption_filter_list`
@@ -1367,8 +1393,6 @@ webshart optimize-captions \
 ```
 
 `--destination` escribe un árbol de metadata portátil por shard, y `--push-to-hub` lo sube a un repositorio de metadata; después apunta la opción `metadata` del dataloader a ese repositorio. `--shard-cache-dir` permite que la consolidación reutilice shards completamente cacheados en lugar de emitir una lectura por rango por cada sidecar.
-
-Este backend requiere un build de Webshart con `TarDataLoader.list_shard_sample_aspect_buckets()`; `webshart_optimize_captions` requiere además `probe_caption_layout()` y `coalesce_caption_metadata()`.
 
 ## Mapeo personalizado de relación de aspecto a resolución
 
