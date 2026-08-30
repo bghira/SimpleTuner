@@ -1552,7 +1552,7 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         self.assertTrue(torch.equal(payload["audio_codes"][0, :2], cached))
         self.assertEqual(payload["audio_lengths"].tolist(), [2])
 
-    def test_lm_collate_cached_nonterminal_crop_drops_audio_end(self):
+    def test_lm_collate_cached_nonterminal_crop_uses_absolute_position_and_drops_audio_end(self):
         model = self._lm_model()
         tokenizer = self._FakeTokenizer()
         model.tokenizers = [tokenizer]
@@ -1593,7 +1593,7 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         self.assertIn("<|track_duration|>60.00s", tokenizer.texts[0])
         self.assertNotIn("la la la", tokenizer.texts[0])
 
-    def test_lm_collate_random_cached_crop_uses_source_position_anchor(self):
+    def test_lm_collate_random_cached_crop_anchors_to_source_position(self):
         model = self._lm_model(minimax_music_lm_max_frames=4, minimax_music_lm_window_mode="random")
         tokenizer = self._FakeTokenizer()
         model.tokenizers = [tokenizer]

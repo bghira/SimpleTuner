@@ -3,8 +3,13 @@
 import json
 import os
 import pathlib
+import sys
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import unquote, urlparse
+
+_PINNED_SIMPLETUNER_ROOT = pathlib.Path(__file__).resolve().parent / "SimpleTuner"
+if _PINNED_SIMPLETUNER_ROOT.is_dir():
+    sys.path.insert(0, str(_PINNED_SIMPLETUNER_ROOT))
 
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("FAISS_OPT_LEVEL", "generic")
