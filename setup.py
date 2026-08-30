@@ -351,7 +351,7 @@ base_deps = [
     "aiosqlite>=0.19.0",
     "httpx>=0.28.0",
     "psutil>=5.9.0",
-    "webshart>=0.5.2",
+    "webshart>=0.5.3",
 ]
 
 # Nightly CUDA extras contain direct URLs that PyPI rejects, so only include them
