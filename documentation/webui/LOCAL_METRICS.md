@@ -8,7 +8,7 @@ SimpleTuner can record training metrics without an external tracking service. Se
 }
 ```
 
-`report_to=all` also enables the local tracker. The tracker is model-independent and receives the same scalar calls used by the other Accelerate trackers.
+Use comma-separated values such as `report_to=simpletuner,wandb` to enable the local tracker alongside an external tracker. The tracker is model-independent and receives the same scalar calls used by the other Accelerate trackers.
 
 ## Output contract
 

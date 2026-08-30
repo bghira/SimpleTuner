@@ -105,6 +105,7 @@ from simpletuner.helpers.training.quantisation import (
     mark_torchao_ddp_ignore_params,
     mark_transformerengine_ddp_ignore_params,
 )
+from simpletuner.helpers.training.reporting import normalize_report_to, report_to_contains
 from simpletuner.helpers.training.script_runner import run_hook_script
 from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -955,7 +956,11 @@ class Trainer:
             report_to_value = None
         if report_to_value is None or (isinstance(report_to_value, str) and not report_to_value.strip()):
             report_to_value = "none"
-            setattr(self.config, "report_to", report_to_value)
+        else:
+            report_to_value = normalize_report_to(report_to_value)
+            if report_to_value is None:
+                report_to_value = "none"
+        setattr(self.config, "report_to", report_to_value)
 
         custom_tracker_name = getattr(self.config, "custom_tracker", None)
         if isinstance(custom_tracker_name, unittest_mock.Mock):
@@ -1018,8 +1023,6 @@ class Trainer:
                 report_to = _ensure_custom_tracker()
             elif normalized_report == "simpletuner":
                 report_to = _ensure_local_metrics_tracker()
-            elif normalized_report == "all":
-                report_to = [_ensure_local_metrics_tracker(), "all"]
             else:
                 report_to = report_to_value.strip()
         elif isinstance(report_to_value, (list, tuple)):
@@ -1034,23 +1037,12 @@ class Trainer:
                     tracker = entry
                 if tracker not in resolved_trackers:
                     resolved_trackers.append(tracker)
-            if any(isinstance(entry, str) and entry.strip().lower() == "all" for entry in report_to_value):
-                tracker = _ensure_local_metrics_tracker()
-                if tracker not in resolved_trackers:
-                    resolved_trackers.insert(0, tracker)
             report_to = resolved_trackers
         else:
             report_to = report_to_value
 
         if custom_tracker_name is not None:
-            custom_tracker_requested = False
-            if isinstance(report_to_value, str):
-                custom_tracker_requested = report_to_value.strip().lower() == "custom-tracker"
-            elif isinstance(report_to_value, (list, tuple)):
-                custom_tracker_requested = any(
-                    isinstance(entry, str) and entry.strip().lower() == "custom-tracker" for entry in report_to_value
-                )
-            if not custom_tracker_requested:
+            if not report_to_contains(report_to_value, "custom-tracker"):
                 raise ValueError(
                     "--custom_tracker was provided but --report_to is not set to 'custom-tracker'. "
                     "Set --report_to=custom-tracker to enable your custom tracker."
@@ -7415,7 +7407,7 @@ class Trainer:
                         self.accelerator.wait_for_everyone()
 
                     # Log scatter plot to wandb
-                    if self.config.report_to == "wandb" and self.accelerator.is_main_process:
+                    if report_to_contains(self.config.report_to, "wandb") and self.accelerator.is_main_process:
                         # Prepare the data for the scatter plot
                         if self.timesteps_buffer:
                             if self._timesteps_scatter_table is None:

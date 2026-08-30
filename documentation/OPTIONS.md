@@ -2045,8 +2045,8 @@ Upstream option mapping (LayerSync → SimpleTuner):
 ### `--report_to`
 
 - **What**: Specifies the platform for reporting results and logs.
-- **Why**: Enables local or external monitoring. `simpletuner` writes raw JSONL, a manifest, validation media metadata, and a self-contained HTML report to `output_dir`. Use comma-separated values for multiple trackers. `all` includes the local tracker.
-- **Choices**: simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, all, none
+- **Why**: Enables local or external monitoring. `simpletuner` writes raw JSONL, a manifest, validation media metadata, and a self-contained HTML report to `output_dir`. Use comma-separated values for multiple trackers.
+- **Choices**: simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, none
 
 ### `--validation_image_format`
 
@@ -2321,7 +2321,7 @@ usage: train.py [-h] --model_family
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
                 [--modelspec_comment MODELSPEC_COMMENT]
-                [--report_to {tensorboard,wandb,comet_ml,all,none}]
+                [--report_to {simpletuner,tensorboard,wandb,swanlab,comet_ml,custom-tracker,none}]
                 [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
                 [--checkpoint_epoch_interval CHECKPOINT_EPOCH_INTERVAL]
                 [--checkpointing_rolling_steps CHECKPOINTING_ROLLING_STEPS]
@@ -3070,7 +3070,7 @@ options:
   --modelspec_comment MODELSPEC_COMMENT
                         Text embedded in safetensors file metadata as
                         modelspec.comment, visible in external model viewers.
-  --report_to {tensorboard,wandb,comet_ml,all,none}
+  --report_to {simpletuner,tensorboard,wandb,swanlab,comet_ml,custom-tracker,none}
                         Where to log training metrics
   --checkpoint_step_interval CHECKPOINT_STEP_INTERVAL
                         Save model checkpoint every N steps (deprecated alias: --checkpointing_steps)

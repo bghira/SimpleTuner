@@ -6,7 +6,7 @@ SimpleTuner 可以在不使用外部服务的情况下记录训练指标：
 {"report_to": "simpletuner"}
 ```
 
-`report_to=all` 也会启用本地 tracker。它适用于所有模型系列；在 DDP 下仅主进程写入文件。
+使用逗号分隔值（例如 `report_to=simpletuner,wandb`）可同时启用本地 tracker 和外部 tracker。它适用于所有模型系列；在 DDP 下仅主进程写入文件。
 
 ## 输出文件
 

@@ -87,10 +87,11 @@ class LocalMetricsTrackerTests(unittest.TestCase):
         self.assertEqual(sampled[0]["step"], 0)
         self.assertEqual(sampled[-1]["step"], 99)
 
-    def test_local_metrics_enablement_supports_explicit_and_all_modes(self):
+    def test_local_metrics_enablement_supports_explicit_modes(self):
         self.assertTrue(is_local_metrics_enabled("simpletuner"))
-        self.assertTrue(is_local_metrics_enabled("all"))
+        self.assertTrue(is_local_metrics_enabled("wandb,simpletuner"))
         self.assertTrue(is_local_metrics_enabled(["wandb", "simpletuner"]))
+        self.assertFalse(is_local_metrics_enabled("all"))
         self.assertFalse(is_local_metrics_enabled("wandb"))
 
 

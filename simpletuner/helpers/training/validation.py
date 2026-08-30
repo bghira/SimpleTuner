@@ -66,6 +66,7 @@ from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training.custom_schedule import PeRFlowScheduler, TwinFlowScheduler
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
+from simpletuner.helpers.training.reporting import report_to_contains
 from simpletuner.helpers.training.script_runner import build_script_command, run_hook_script
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation_adapters import (
@@ -5731,7 +5732,7 @@ class Evaluation:
             results_key = f"loss/val/{ds_name}"
             results[results_key] = mean_loss
 
-            if self.config.report_to == "wandb":
+            if report_to_contains(self.config.report_to, "wandb"):
                 # Create a small wandb table for these data
                 table = wandb.Table(data=data_rows, columns=["timestep", "eval_loss"])
                 chart = wandb.plot.line(

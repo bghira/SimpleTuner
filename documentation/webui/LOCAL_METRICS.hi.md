@@ -6,7 +6,7 @@ SimpleTuner बाहरी सेवा के बिना प्रशिक�
 {"report_to": "simpletuner"}
 ```
 
-`report_to=all` भी स्थानीय tracker को चालू करता है। यह सभी model families पर लागू है; DDP में केवल main process फाइलें लिखता है।
+`report_to=simpletuner,wandb` जैसे comma-separated values से local tracker और external tracker साथ में चालू करें। यह सभी model families पर लागू है; DDP में केवल main process फाइलें लिखता है।
 
 ## आउटपुट फाइलें
 
