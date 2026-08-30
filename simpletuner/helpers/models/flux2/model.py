@@ -87,6 +87,7 @@ class Flux2(ImageModelFoundation):
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
+    USES_DYNAMIC_SHIFT = True
     AUTO_LORA_FORMAT_DETECTION = True
     NATIVE_COMFYUI_LORA_SUPPORT = True  # Flux2 has native ComfyUI LoRA support, no conversion needed
     COMFYUI_LORA_PRESERVE_COMPONENT_PREFIXES = {"transformer"}

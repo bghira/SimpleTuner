@@ -81,6 +81,24 @@ class Krea2VendoredModelTests(unittest.TestCase):
         self.assertEqual(_krea2_rope_freqs_dtype(torch.device("cuda")), torch.float64)
         self.assertEqual(_krea2_rope_freqs_dtype(torch.device("mps")), torch.float32)
 
+    def test_dynamic_shift_mu_uses_krea2_patch_size_without_transformer_config_field(self):
+        model = Krea2.__new__(Krea2)
+        model.config = SimpleNamespace()
+        model.model = SimpleNamespace(config=SimpleNamespace())
+        model.unwrap_model = lambda model: model
+        scheduler = FlowMatchEulerDiscreteScheduler(
+            use_dynamic_shifting=True,
+            base_image_seq_len=256,
+            max_image_seq_len=512,
+            base_shift=0.5,
+            max_shift=1.0,
+        )
+
+        mu = model.calculate_dynamic_shift_mu(scheduler, torch.zeros(1, 16, 8, 8))
+
+        expected = 0.5 / (512 - 256) * 16  # (8 / 2) * (8 / 2)
+        self.assertAlmostEqual(mu, expected)
+
     def test_lora_loader_targets_transformer(self):
         self.assertEqual(Krea2LoraLoaderMixin._lora_loadable_modules, ["transformer"])
         self.assertEqual(Krea2LoraLoaderMixin.transformer_name, "transformer")
