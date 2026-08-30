@@ -1318,6 +1318,7 @@ def get_aws_backend(
     identifier: str,
     compress_cache: bool = False,
     max_pool_connections: int = 128,
+    data_prefix=None,
 ) -> S3DataBackend:
     return S3DataBackend(
         id=identifier,
@@ -1329,6 +1330,7 @@ def get_aws_backend(
         aws_secret_access_key=aws_secret_access_key,
         compress_cache=compress_cache,
         max_pool_connections=max_pool_connections,
+        data_prefix=data_prefix,
     )
 
 
@@ -3019,7 +3021,10 @@ class FactoryRegistry:
             init_backend["bucket_report"].set_instance_data_dir(instance_dir)
         elif backend["type"] == "aws":
             init_backend["instance_data_dir"] = backend.get("aws_data_prefix", "")
-            init_backend["bucket_report"].set_instance_data_dir(init_backend["instance_data_dir"])
+            report_prefix = init_backend["instance_data_dir"]
+            if isinstance(report_prefix, list):
+                report_prefix = ", ".join(str(prefix) for prefix in report_prefix)
+            init_backend["bucket_report"].set_instance_data_dir(report_prefix)
         elif backend["type"] == "csv":
             init_backend["instance_data_dir"] = None
             if init_backend["instance_data_dir"] is not None and init_backend["instance_data_dir"][-1] == "/":
@@ -3102,6 +3107,7 @@ class FactoryRegistry:
                     "Parquet metadata backend requires a 'parquet' field in the backend config containing required fields for configuration."
                 )
         elif metadata_backend == "huggingface":
+            from simpletuner.helpers.data_backend.filters import resolve_filter_config
             from simpletuner.helpers.metadata.backends.huggingface import HuggingfaceMetadataBackend
 
             MetadataBackendCls = HuggingfaceMetadataBackend
@@ -3111,8 +3117,9 @@ class FactoryRegistry:
             metadata_backend_args["dataset_type"] = backend.get("dataset_type", "image")
 
             quality_filter = None
-            if "filter_func" in hf_config and "quality_thresholds" in hf_config["filter_func"]:
-                quality_filter = hf_config["filter_func"]["quality_thresholds"]
+            filter_config = resolve_filter_config(backend)
+            if filter_config and "quality_thresholds" in filter_config:
+                quality_filter = filter_config["quality_thresholds"]
 
             metadata_backend_args["quality_filter"] = quality_filter
             metadata_backend_args["split_composite_images"] = backend.get("split_composite_images", False)
@@ -4959,31 +4966,14 @@ def get_huggingface_backend(
     """
     Get a Hugging Face datasets backend.
     """
+    from simpletuner.helpers.data_backend.filters import DatasetFilter
+
     filter_func = None
     if filter_config:
-        # Simple inline filter creation
+        dataset_filter = DatasetFilter(filter_config)
+
         def filter_func(item):
-            if "collection" in filter_config:
-                required_collections = filter_config["collection"]
-                if isinstance(required_collections, str):
-                    required_collections = [required_collections]
-                if item.get("collection") not in required_collections:
-                    return False
-
-            if "quality_thresholds" in filter_config:
-                quality = item.get(filter_config.get("quality_column", "quality_assessment"), {})
-                if not quality:
-                    return False
-                for metric, threshold in filter_config["quality_thresholds"].items():
-                    if quality.get(metric, 0) < threshold:
-                        return False
-
-            if "min_width" in filter_config and item.get("width", 0) < filter_config["min_width"]:
-                return False
-            if "min_height" in filter_config and item.get("height", 0) < filter_config["min_height"]:
-                return False
-
-            return True
+            return dataset_filter.matches_item(item)
 
     composite_config = None
     if filter_config and "composite_image_config" in backend.get("huggingface", {}):

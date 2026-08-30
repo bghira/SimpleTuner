@@ -13,6 +13,7 @@ import torch
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
+from simpletuner.helpers.data_backend.filters import DatasetFilter
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
 from simpletuner.helpers.training import video_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
@@ -549,7 +550,22 @@ class WebshartDataBackend(BaseDataBackend):
         target_pixel_area: Optional[int] = None,
         target_resolution_multiple: int = 64,
         round_to: Optional[int] = 2,
+        dataset_filter: Optional[DatasetFilter] = None,
     ) -> list[dict]:
+        if dataset_filter is not None and dataset_filter.path_active():
+            if not hasattr(self.loader, "list_shard_sample_aspect_buckets_filtered"):
+                raise ImportError(
+                    "Webshart path filtering requires a webshart build that provides "
+                    "TarDataLoader.list_shard_sample_aspect_buckets_filtered()."
+                )
+            return self.loader.list_shard_sample_aspect_buckets_filtered(
+                shard_indices,
+                key=key,
+                target_pixel_area=target_pixel_area,
+                target_resolution_multiple=target_resolution_multiple,
+                round_to=round_to,
+                **dataset_filter.path.to_webshart_kwargs(),
+            )
         return self.loader.list_shard_sample_aspect_buckets(
             shard_indices,
             key=key,
@@ -557,3 +573,20 @@ class WebshartDataBackend(BaseDataBackend):
             target_resolution_multiple=target_resolution_multiple,
             round_to=round_to,
         )
+
+    def list_samples_in_shard(
+        self,
+        shard_idx: int,
+        dataset_filter: Optional[DatasetFilter] = None,
+    ) -> list[dict]:
+        if dataset_filter is not None and dataset_filter.path_active():
+            if not hasattr(self.loader, "list_samples_in_shard_filtered"):
+                raise ImportError(
+                    "Webshart path filtering requires a webshart build that provides "
+                    "TarDataLoader.list_samples_in_shard_filtered()."
+                )
+            return self.loader.list_samples_in_shard_filtered(
+                shard_idx,
+                **dataset_filter.path.to_webshart_kwargs(),
+            )
+        return list(self.loader.list_samples_in_shard(shard_idx))

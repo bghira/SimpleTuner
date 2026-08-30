@@ -13,6 +13,7 @@ except ModuleNotFoundError:
 from PIL import Image
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.data_backend.filters import build_dataset_filter
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -157,6 +158,27 @@ class TestMetadataBackend(unittest.TestCase):
             # Assuming the method's logic excludes files known (["image1.jpg", "image2.png"])
             # The expectation is that only ["image3.jpg", "image4.png"] are returned as new
             self.assertEqual(sorted(new_files), sorted(["image3.jpg", "image4.png"]))
+
+    def test_discover_new_files_applies_path_filter(self):
+        self.metadata_backend.dataset_filter = build_dataset_filter(
+            {"filter_func": {"path": {"include": ["keep"], "exclude": ["blocked"]}}}
+        )
+        with (
+            patch(
+                "simpletuner.helpers.training.state_tracker.StateTracker.get_image_files",
+                return_value=["keep/image1.jpg", "drop/image2.png", "keep/blocked.png", "keep/image3.jpg"],
+            ),
+            patch.object(
+                self.data_backend,
+                "list_files",
+                return_value=["keep/image1.jpg", "drop/image2.png", "keep/blocked.png", "keep/image3.jpg"],
+            ),
+        ):
+            self.metadata_backend.aspect_ratio_bucket_indices = {}
+
+            new_files = self.metadata_backend._discover_new_files(for_metadata=False)
+
+        self.assertEqual(sorted(new_files), sorted(["keep/image1.jpg", "keep/image3.jpg"]))
 
     def test_load_cache_valid(self):
         valid_cache_data = {

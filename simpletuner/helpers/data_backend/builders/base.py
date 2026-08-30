@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.config.base import BaseBackendConfig
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type, resolve_dataset_train_batch_size
+from simpletuner.helpers.data_backend.filters import resolve_filter_config
 
 # Import metadata backends at module load so tests can patch these names.
 from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
@@ -90,8 +91,9 @@ class BaseBackendBuilder(ABC):
             metadata_backend_args["hf_config"] = hf_config
 
             quality_filter = None
-            if "filter_func" in hf_config and "quality_thresholds" in hf_config["filter_func"]:
-                quality_filter = hf_config["filter_func"]["quality_thresholds"]
+            filter_config = resolve_filter_config(backend_dict)
+            if filter_config and "quality_thresholds" in filter_config:
+                quality_filter = filter_config["quality_thresholds"]
 
             if caption_ingest_via_hf:
                 metadata_backend_args["caption_ingest_strategy"] = "huggingface"

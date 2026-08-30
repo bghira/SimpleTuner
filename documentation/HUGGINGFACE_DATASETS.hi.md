@@ -89,20 +89,18 @@ Hugging Face backend लचीला caption extraction सपोर्ट क�
 
 ## Dataset फ़िल्टरिंग
 
-केवल उच्च‑गुणवत्ता वाले samples चुनने के लिए filters लागू करें:
+Top-level `filter_func` का उपयोग metadata और VAE caches बनने से पहले samples चुनने के लिए करें। पुराना `huggingface.filter_func` location compatibility के लिए अभी भी स्वीकार होता है, लेकिन top-level value प्राथमिकता लेती है।
 
 ### गुणवत्ता‑आधारित फ़िल्टरिंग
 ```json
 {
-  "huggingface": {
-    "filter_func": {
-      "quality_thresholds": {
-        "clip_score": 0.3,
-        "aesthetic_score": 5.0,
-        "resolution": 0.8
-      },
-      "quality_column": "quality_assessment"
-    }
+  "filter_func": {
+    "quality_thresholds": {
+      "clip_score": 0.3,
+      "aesthetic_score": 5.0,
+      "resolution": 0.8
+    },
+    "quality_column": "quality_assessment"
   }
 }
 ```
@@ -110,15 +108,26 @@ Hugging Face backend लचीला caption extraction सपोर्ट क�
 ### Collection/Subset फ़िल्टरिंग
 ```json
 {
-  "huggingface": {
-    "filter_func": {
-      "collection": ["photo", "artwork"],
-      "min_width": 512,
-      "min_height": 512
-    }
+  "filter_func": {
+    "collection": ["photo", "artwork"],
+    "min_width": 512,
+    "min_height": 512
   }
 }
 ```
+
+### Path फ़िल्टरिंग
+```json
+{
+  "filter_func": {
+    "path_include": ["photo", "*/curated/*.jpg"],
+    "path_exclude": ["watermark"],
+    "path_match": "auto"
+  }
+}
+```
+
+`path_match: "auto"` plain strings के लिए substring match, `*` और `?` के लिए glob, और `re:` prefix वाले patterns के लिए regex इस्तेमाल करता है। पुराना nested form `filter_func.path.include` / `exclude` / `mode` compatibility के लिए अब भी accepted है।
 
 ## Composite Image समर्थन
 
@@ -173,15 +182,15 @@ grid में कई इमेजेस वाले datasets संभाल�
     "caption_column": ["title", "description", "tags"],
     "fallback_caption_column": "filename",
     "width_column": "original_width",
-    "height_column": "original_height",
-    "filter_func": {
-      "quality_thresholds": {
-        "aesthetic_score": 6.0,
-        "technical_quality": 0.8
-      },
-      "min_width": 768,
-      "min_height": 768
-    }
+    "height_column": "original_height"
+  },
+  "filter_func": {
+    "quality_thresholds": {
+      "aesthetic_score": 6.0,
+      "technical_quality": 0.8
+    },
+    "min_width": 768,
+    "min_height": 768
   },
   "resolution": 1024,
   "resolution_type": "pixel_area",

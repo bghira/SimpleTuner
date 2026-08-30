@@ -483,7 +483,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             virtual_path = f"{idx}.{self.file_extension}"
             all_files.append(virtual_path)
 
-        # Apply max_num_samples limit deterministically before filtering
+        # Apply max_num_samples limit deterministically after explicit dataset filters.
         all_files = self._apply_max_num_samples_limit(all_files)
 
         if ignore_existing_cache:

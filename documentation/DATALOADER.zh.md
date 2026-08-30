@@ -269,7 +269,7 @@ LTX-2 使用原生纯音频分支；MiniMax-H3 在打包序列中为每个 laten
 ### `instance_data_dir` / `aws_data_prefix`
 
 - **Local:** 文件系统中的数据路径。
-- **AWS:** 存储桶中的 S3 前缀。
+- **AWS:** 存储桶中的 S3 前缀。`aws_data_prefix` 可以是单个前缀字符串，也可以是字符串列表，用于扫描同一 bucket 中的多个前缀。
 
 ### `caption_strategy`
 
@@ -998,6 +998,32 @@ Grounding 流水线支持为每个实体添加边界框和遮罩标注，用于�
 
 对于 parquet 或 HuggingFace 数据集，在后端配置中指定 `bbox_column`。
 
+## 过滤样本
+
+### `filter_func`
+
+`filter_func` 可配置在任意数据集后端的顶层，用于在构建元数据 buckets 和 VAE 缓存之前跳过样本。Hugging Face 后端仍兼容旧的 `huggingface.filter_func` 位置，但当两者同时存在时顶层值优先。
+
+支持的过滤器：
+
+- `collection`：对行的 `collection` 字段进行精确匹配白名单过滤。
+- `quality_thresholds`：`quality_column`（默认 `quality_assessment`）内数值的最低要求。
+- `min_width` / `min_height`：当存在宽高字段时要求的最小尺寸。
+- `path_include` / `path_exclude`：按文件名/路径过滤 local、AWS、CSV、Hugging Face、parquet 和 Webshart 数据集。`path_include` 是白名单，`path_exclude` 是黑名单；两者都匹配时排除优先。
+- `path_match`：路径匹配模式。`auto`（扁平键的默认值）对普通文本使用子串匹配，对 `*` 和 `?` 使用 glob，对带 `re:` 前缀的模式使用 regex。也可以设置为 `contains`、`glob`、`regex` 或 `exact`。
+
+```json
+{
+  "filter_func": {
+    "path_include": ["clothing", "notable", "*/curated/*.jpg"],
+    "path_exclude": ["watermark", "bad"],
+    "path_match": "auto"
+  }
+}
+```
+
+旧的嵌套形式 `filter_func.path.include` / `exclude` / `mode` 仍兼容已有配置，但新配置应使用上面的扁平键。
+
 ## 过滤字幕
 
 ### `caption_filter_list`
@@ -1367,8 +1393,6 @@ webshart optimize-captions \
 ```
 
 `--destination` 写出一棵可移植的按 shard 组织的 metadata 树，`--push-to-hub` 将其上传到 metadata 仓库；之后把 dataloader 的 `metadata` 选项指向该仓库即可。`--shard-cache-dir` 让合并过程复用已完整 cache 的 shards，而不是为每个 sidecar 发起一次 range read。
-
-该 backend 需要提供 `TarDataLoader.list_shard_sample_aspect_buckets()` 的 Webshart build；`webshart_optimize_captions` 还额外需要 `probe_caption_layout()` 和 `coalesce_caption_metadata()`。
 
 ## 自定义纵横比到分辨率映射
 

@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 import torch
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.data_backend.filters import DatasetFilter
 from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
 from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
 
@@ -151,6 +152,34 @@ class TestWebshartDataBackend(unittest.TestCase):
         caption = backend.get_caption("webshart://2/7/sample.mp4")
 
         self.assertEqual(caption, ["first caption", "second caption"])
+
+    def test_filtered_aspect_bucket_call_uses_webshart_api(self):
+        backend = WebshartDataBackend.__new__(WebshartDataBackend)
+        backend.loader = Mock()
+        backend.loader.list_shard_sample_aspect_buckets_filtered.return_value = [{"buckets": {}}]
+        dataset_filter = DatasetFilter({"path": {"include": ["keep"], "exclude": ["drop"], "mode": "glob"}})
+
+        result = backend.list_shard_sample_aspect_buckets([0], dataset_filter=dataset_filter)
+
+        self.assertEqual(result, [{"buckets": {}}])
+        backend.loader.list_shard_sample_aspect_buckets_filtered.assert_called_once_with(
+            [0],
+            key="aspect",
+            target_pixel_area=None,
+            target_resolution_multiple=64,
+            round_to=2,
+            path_include=["keep"],
+            path_exclude=["drop"],
+            path_filter_mode="glob",
+        )
+
+    def test_filtered_aspect_bucket_call_requires_webshart_api(self):
+        backend = WebshartDataBackend.__new__(WebshartDataBackend)
+        backend.loader = Mock(spec=[])
+        dataset_filter = DatasetFilter({"path": {"include": ["keep"]}})
+
+        with self.assertRaisesRegex(ImportError, "list_shard_sample_aspect_buckets_filtered"):
+            backend.list_shard_sample_aspect_buckets([0], dataset_filter=dataset_filter)
 
     def test_video_metadata_uses_indexed_frame_fields_and_probe_geometry(self):
         backend = WebshartMetadataBackend.__new__(WebshartMetadataBackend)

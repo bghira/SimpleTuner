@@ -10,6 +10,7 @@ from PIL import Image
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.data_backend.filters import filter_file_list
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
@@ -301,8 +302,9 @@ class DiscoveryMetadataBackend(MetadataBackend):
             all_image_files = [item for sublist in all_image_files for item in sublist]
 
         # logger.debug(f"All image files: {json.dumps(all_image_files, indent=4)}")
+        all_image_files = filter_file_list(list(all_image_files), self.dataset_filter)
 
-        # Apply max_num_samples limit deterministically before filtering
+        # Apply max_num_samples limit deterministically after explicit dataset filters.
         all_image_files = self._apply_max_num_samples_limit(list(all_image_files))
 
         if ignore_existing_cache:

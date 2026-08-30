@@ -286,6 +286,43 @@
                                 </div>
                             </div>
 
+                            <div class="mb-4">
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-secondary"
+                                        @click="currentDataset.show_path_filter = !currentDataset.show_path_filter">
+                                    <i class="fas" :class="currentDataset.show_path_filter ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+                                    Sample Path Filters
+                                </button>
+                                <div x-show="currentDataset.show_path_filter" class="mt-3" x-transition>
+                                    <div class="row g-3">
+                                        <div class="col-md-6">
+                                            <label class="form-label">Include Patterns</label>
+                                            <input type="text"
+                                                   class="form-control"
+                                                   x-model="currentDataset.filter_path_include"
+                                                   placeholder="train, regularisation, keep/*.jpg">
+                                        </div>
+                                        <div class="col-md-6">
+                                            <label class="form-label">Exclude Patterns</label>
+                                            <input type="text"
+                                                   class="form-control"
+                                                   x-model="currentDataset.filter_path_exclude"
+                                                   placeholder="watermark, bad, */tmp/*">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label">Match Mode</label>
+                                            <select class="form-select" x-model="currentDataset.filter_path_mode">
+                                                <option value="auto">auto</option>
+                                                <option value="contains">contains</option>
+                                                <option value="glob">glob</option>
+                                                <option value="regex">regex</option>
+                                                <option value="exact">exact</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
                             <!-- Text Embed Cache Directory (conditional) -->
                             <div class="mb-3" x-show="(createNewConfig || !existingTextEmbeds) && !separateTextEmbeds" x-init="if (currentDataset.id && currentDataset.cache_dir_text === 'cache/text') { currentDataset.cache_dir_text = `cache/text/${currentDataset.id}` }">
                                 <label class="form-label">

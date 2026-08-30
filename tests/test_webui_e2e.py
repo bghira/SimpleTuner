@@ -2517,6 +2517,95 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
 
         self.for_each_browser("test_dataset_wizard_name_step_enables_next_after_typing", scenario)
 
+    def test_dataset_wizard_path_filter_controls_queue_filter_func(self) -> None:
+        """Path filter controls should serialize to flat filter_func path keys."""
+        datasets_root = self.home_path / "datasets"
+        datasets_root.mkdir(parents=True, exist_ok=True)
+        self.seed_defaults(datasets_dir=datasets_root)
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+            trainer_page.dismiss_toast()
+
+            trainer_page.wait.until(lambda d: d.execute_script("return !!window.datasetWizardComponentInstance"))
+            opened = driver.execute_async_script(
+                """
+                const done = arguments[0];
+                const root = document.querySelector('#datasets-tab-content');
+                const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : null;
+                if (!comp) {
+                    done(false);
+                    return;
+                }
+                Promise.resolve(comp.openWizard())
+                    .then(() => done(true))
+                    .catch((err) => done(String(err)));
+                """
+            )
+            self.assertTrue(opened)
+
+            ready = driver.execute_script(
+                """
+                const root = document.querySelector('#datasets-tab-content');
+                const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : window.datasetWizardComponentInstance;
+                if (!comp) { return false; }
+                comp.currentDataset.id = 'filtered-images';
+                comp.selectDatasetType('image');
+                comp.selectBackend('local');
+                comp.currentDataset.show_path_filter = true;
+                comp.wizardStep = comp.getStepNumber('config');
+                comp.updateWizardTitle();
+                return true;
+                """
+            )
+            self.assertTrue(ready)
+
+            trainer_page.wait.until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, ".dataset-wizard-modal input[x-model='currentDataset.filter_path_include']")
+                )
+            )
+            driver.execute_script(
+                """
+                const includeInput = document.querySelector(".dataset-wizard-modal input[x-model='currentDataset.filter_path_include']");
+                const excludeInput = document.querySelector(".dataset-wizard-modal input[x-model='currentDataset.filter_path_exclude']");
+                const modeSelect = document.querySelector(".dataset-wizard-modal select[x-model='currentDataset.filter_path_mode']");
+                includeInput.value = 'keep, regularisation';
+                includeInput.dispatchEvent(new Event('input', { bubbles: true }));
+                excludeInput.value = 'watermark';
+                excludeInput.dispatchEvent(new Event('input', { bubbles: true }));
+                modeSelect.value = 'glob';
+                modeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                """
+            )
+
+            queued = driver.execute_script(
+                """
+                const root = document.querySelector('#datasets-tab-content');
+                const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : window.datasetWizardComponentInstance;
+                comp.addDatasetToQueue();
+                return comp.datasetQueue[0];
+                """
+            )
+            self.assertEqual(
+                queued.get("filter_func"),
+                {
+                    "path_include": ["keep", "regularisation"],
+                    "path_exclude": ["watermark"],
+                    "path_match": "glob",
+                },
+            )
+            self.assertNotIn("filter_path_include", queued)
+            self.assertNotIn("filter_path_exclude", queued)
+            self.assertNotIn("filter_path_mode", queued)
+            self.assertNotIn("show_path_filter", queued)
+
+        self.for_each_browser("test_dataset_wizard_path_filter_controls_queue_filter_func", scenario)
+
 
 class CloudTabVisibilityTestCase(_TrainerPageMixin, WebUITestCase):
     """Ensure the Cloud tab default matches UI Settings."""

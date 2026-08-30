@@ -1,8 +1,8 @@
 import concurrent.futures
-import fnmatch
 import logging
 import os
 import time
+from collections.abc import Sequence
 from io import BytesIO
 from os.path import splitext
 from typing import Any, Dict, Optional, Union
@@ -50,6 +50,17 @@ else:
     logger.setLevel("ERROR")
 
 
+def normalise_s3_prefixes(prefix: Union[str, Sequence[str], None]) -> tuple[str, ...]:
+    if prefix is None:
+        return ("",)
+    if isinstance(prefix, str):
+        return (prefix,)
+    if isinstance(prefix, Sequence):
+        prefixes = tuple(str(item) for item in prefix if str(item))
+        return prefixes or ("",)
+    raise ValueError("aws_data_prefix must be a string or a list of strings.")
+
+
 class S3DataBackend(BaseDataBackend):
     # Storing the list_files output in a local dict.
     _list_cache: dict = {}
@@ -70,6 +81,7 @@ class S3DataBackend(BaseDataBackend):
         write_retry_interval: int = 5,
         compress_cache: bool = False,
         max_pool_connections: int = 128,
+        data_prefix: Union[str, Sequence[str], None] = None,
     ):
         self.id = id
         self.accelerator = accelerator
@@ -80,6 +92,7 @@ class S3DataBackend(BaseDataBackend):
         self.write_retry_interval = write_retry_interval
         self.compress_cache = compress_cache
         self.max_pool_connections = max_pool_connections
+        self.data_prefixes = normalise_s3_prefixes(data_prefix)
         self.aws_session_token = aws_session_token
         self.type = "aws"
 
@@ -112,6 +125,7 @@ class S3DataBackend(BaseDataBackend):
             "write_retry_interval": self.write_retry_interval,
             "compress_cache": self.compress_cache,
             "max_pool_connections": self.max_pool_connections,
+            "data_prefixes": list(self.data_prefixes),
             # Note: accelerator and credentials are not serializable
         }
 
@@ -136,6 +150,7 @@ class S3DataBackend(BaseDataBackend):
             write_retry_interval=representation.get("write_retry_interval", 5),
             compress_cache=representation.get("compress_cache", False),
             max_pool_connections=representation.get("max_pool_connections", 128),
+            data_prefix=representation.get("data_prefixes"),
         )
 
     def get_abs_path(self, sample_path: str) -> tuple:
@@ -226,15 +241,22 @@ class S3DataBackend(BaseDataBackend):
 
     def list_by_prefix(self, prefix=""):
         """List all files under a specific path (prefix) in the S3 bucket."""
-        response = self.client.list_objects_v2(Bucket=self.bucket_name, Prefix=prefix)
+        prefixes = normalise_s3_prefixes(prefix)
         bucket_prefix = f"{self.bucket_name}/"
+        keys = []
+        seen_keys = set()
 
-        return [
-            (item["Key"][len(bucket_prefix) :] if item["Key"].startswith(bucket_prefix) else item["Key"])
-            for item in response.get("Contents", [])
-        ]
+        for prefix_value in prefixes:
+            response = self.client.list_objects_v2(Bucket=self.bucket_name, Prefix=prefix_value)
+            for item in response.get("Contents", []):
+                key = item["Key"][len(bucket_prefix) :] if item["Key"].startswith(bucket_prefix) else item["Key"]
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                keys.append(key)
+        return keys
 
-    def list_files(self, file_extensions: list, instance_data_dir: str = None):
+    def list_files(self, file_extensions: list, instance_data_dir: Union[str, Sequence[str], None] = None):
         results = []
         if not file_extensions:
             file_extensions = self._default_file_extensions()
@@ -246,23 +268,32 @@ class S3DataBackend(BaseDataBackend):
         start_time = time.time()
         paginator = self.client.get_paginator("list_objects_v2")
         prefix_dict = {}
+        prefixes = normalise_s3_prefixes(instance_data_dir if instance_data_dir not in (None, "") else self.data_prefixes)
+        seen_keys = set()
 
         logger.debug(
-            f"Listing files in S3 bucket {self.bucket_name} in prefix {instance_data_dir} with extensions: {file_extensions}"
+            f"Listing files in S3 bucket {self.bucket_name} in prefixes {prefixes} with extensions: {file_extensions}"
         )
 
-        for page in paginator.paginate(Bucket=self.bucket_name, MaxKeys=1000):
-            for obj in page.get("Contents", []):
-                ext = splitext_(obj["Key"])
-                if file_extensions and ext not in file_extensions:
-                    continue
-                parts = obj["Key"].split("/")
-                subdir = "/".join(parts[:-1])
-                filename = parts[-1]
+        for prefix in prefixes:
+            for page in paginator.paginate(Bucket=self.bucket_name, Prefix=prefix, MaxKeys=1000):
+                for obj in page.get("Contents", []):
+                    key = obj.get("Key")
+                    if not key or key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+                    ext = splitext_(key)
+                    if file_extensions and ext not in file_extensions:
+                        continue
+                    parts = key.split("/")
+                    subdir = "/".join(parts[:-1])
+                    filename = parts[-1]
+                    if not filename:
+                        continue
 
-                if subdir not in prefix_dict:
-                    prefix_dict[subdir] = []
-                prefix_dict[subdir].append(obj["Key"])
+                    if subdir not in prefix_dict:
+                        prefix_dict[subdir] = []
+                    prefix_dict[subdir].append(key)
 
         for subdir, files in prefix_dict.items():
             results.append((subdir, [], files))
@@ -379,65 +410,6 @@ class S3DataBackend(BaseDataBackend):
         """
         pass
 
-
-def test_s3_connection(
-    bucket_name: str,
-    prefix: Optional[str] = None,
-    region_name: Optional[str] = None,
-    endpoint_url: Optional[str] = None,
-    aws_access_key_id: Optional[str] = None,
-    aws_secret_access_key: Optional[str] = None,
-    aws_session_token: Optional[str] = None,
-    max_keys: int = 5,
-) -> Dict[str, Any]:
-    """Run a minimal connectivity check against an S3 bucket."""
-
-    if not bucket_name:
-        raise ValueError("aws_bucket_name is required")
-
-    extra_args = {"region_name": region_name or "us-east-1"}
-    if endpoint_url:
-        extra_args = {"endpoint_url": endpoint_url}
-
-    s3_config = Config(max_pool_connections=32)
-
-    try:
-        client = boto3.client(
-            "s3",
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key,
-            aws_session_token=aws_session_token,
-            config=s3_config,
-            **extra_args,
-        )
-    except Exception as exc:  # pragma: no cover - boto3 raises varied subclasses
-        raise ValueError(f"Failed to create S3 client: {exc}") from exc
-
-    try:
-        client.head_bucket(Bucket=bucket_name)
-    except Exception as exc:
-        raise ValueError(f"Unable to access bucket '{bucket_name}': {exc}") from exc
-
-    prefix = prefix or ""
-    try:
-        response = client.list_objects_v2(Bucket=bucket_name, Prefix=prefix, MaxKeys=max(1, max_keys))
-    except Exception as exc:
-        raise ValueError(f"Failed to list objects in bucket '{bucket_name}': {exc}") from exc
-
-    contents = response.get("Contents", []) or []
-    sample_keys = [entry.get("Key") for entry in contents if entry.get("Key")]
-
-    return {
-        "bucket": bucket_name,
-        "prefix": prefix,
-        "sample_keys": sample_keys,
-        "truncated": bool(response.get("IsTruncated")),
-        "max_keys": max_keys,
-        "key_count": len(sample_keys),
-        "region": client.meta.region_name,
-        "endpoint": getattr(client.meta, "endpoint_url", None),
-    }
-
     def _detect_file_format(self, fileobj):
         fileobj.seek(0)
         magic_number = fileobj.read(4)
@@ -539,3 +511,76 @@ def test_s3_connection(
         existing_keys = set(obj["Key"] for obj in objects.get("Contents", []))
 
         return [key in existing_keys for key in s3_keys]
+
+
+def test_s3_connection(
+    bucket_name: str,
+    prefix: Union[str, Sequence[str], None] = None,
+    region_name: Optional[str] = None,
+    endpoint_url: Optional[str] = None,
+    aws_access_key_id: Optional[str] = None,
+    aws_secret_access_key: Optional[str] = None,
+    aws_session_token: Optional[str] = None,
+    max_keys: int = 5,
+) -> Dict[str, Any]:
+    """Run a minimal connectivity check against an S3 bucket."""
+
+    if not bucket_name:
+        raise ValueError("aws_bucket_name is required")
+
+    extra_args = {"region_name": region_name or "us-east-1"}
+    if endpoint_url:
+        extra_args = {"endpoint_url": endpoint_url}
+
+    s3_config = Config(max_pool_connections=32)
+
+    try:
+        client = boto3.client(
+            "s3",
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token,
+            config=s3_config,
+            **extra_args,
+        )
+    except Exception as exc:  # pragma: no cover - boto3 raises varied subclasses
+        raise ValueError(f"Failed to create S3 client: {exc}") from exc
+
+    try:
+        client.head_bucket(Bucket=bucket_name)
+    except Exception as exc:
+        raise ValueError(f"Unable to access bucket '{bucket_name}': {exc}") from exc
+
+    prefixes = normalise_s3_prefixes(prefix)
+    sample_keys = []
+    seen_keys = set()
+    truncated = False
+    try:
+        remaining_keys = max(1, max_keys)
+        for prefix_value in prefixes:
+            response = client.list_objects_v2(Bucket=bucket_name, Prefix=prefix_value, MaxKeys=remaining_keys)
+            contents = response.get("Contents", []) or []
+            for entry in contents:
+                key = entry.get("Key")
+                if not key or key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                sample_keys.append(key)
+            truncated = truncated or bool(response.get("IsTruncated"))
+            remaining_keys = max(1, max_keys - len(sample_keys))
+            if len(sample_keys) >= max_keys:
+                sample_keys = sample_keys[:max_keys]
+                break
+    except Exception as exc:
+        raise ValueError(f"Failed to list objects in bucket '{bucket_name}': {exc}") from exc
+
+    return {
+        "bucket": bucket_name,
+        "prefix": list(prefixes) if len(prefixes) > 1 else prefixes[0],
+        "sample_keys": sample_keys,
+        "truncated": truncated,
+        "max_keys": max_keys,
+        "key_count": len(sample_keys),
+        "region": client.meta.region_name,
+        "endpoint": getattr(client.meta, "endpoint_url", None),
+    }

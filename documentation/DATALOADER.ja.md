@@ -270,7 +270,7 @@ Hugging Face の音声データセットでは、キャプション（プロン�
 ### `instance_data_dir` / `aws_data_prefix`
 
 - **Local:** ファイルシステム上のデータパス。
-- **AWS:** バケット内のデータに対する S3 プレフィックス。
+- **AWS:** バケット内のデータに対する S3 プレフィックス。`aws_data_prefix` は単一プレフィックスの文字列、または同じ bucket 内の複数プレフィックスを走査する文字列リストにできます。
 
 ### `caption_strategy`
 
@@ -999,6 +999,32 @@ Grounding パイプラインは、エンティティごとのバウンディン�
 
 parquet または HuggingFace データセットの場合、バックエンド設定で `bbox_column` を指定します。
 
+## サンプルのフィルタリング
+
+### `filter_func`
+
+`filter_func` は任意のデータセットバックエンドのトップレベルに設定でき、メタデータバケットと VAE キャッシュを作成する前にサンプルを除外します。Hugging Face バックエンドでは従来の `huggingface.filter_func` も互換性のため引き続き使用できますが、両方がある場合はトップレベルの値が優先されます。
+
+対応フィルタ:
+
+- `collection`: 行の `collection` フィールドに対する完全一致の許可リスト。
+- `quality_thresholds`: `quality_column`（既定は `quality_assessment`）内の数値の最小値。
+- `min_width` / `min_height`: 幅と高さのフィールドがある場合の最小寸法。
+- `path_include` / `path_exclude`: local、AWS、CSV、Hugging Face、parquet、Webshart データセットのファイル名/パスフィルタ。`path_include` は許可リスト、`path_exclude` はブロックリストです。両方に一致する場合は除外が優先されます。
+- `path_match`: パス一致モード。`auto`（フラットキーの既定）は通常文字列に substring match、`*` と `?` に glob、`re:` prefix の pattern に regex を使います。`contains`、`glob`、`regex`、`exact` も指定できます。
+
+```json
+{
+  "filter_func": {
+    "path_include": ["clothing", "notable", "*/curated/*.jpg"],
+    "path_exclude": ["watermark", "bad"],
+    "path_match": "auto"
+  }
+}
+```
+
+従来のネスト形式 `filter_func.path.include` / `exclude` / `mode` は既存 config の互換性のため引き続き使用できますが、新しい config では上記のフラットキーを使ってください。
+
 ## キャプションのフィルタリング
 
 ### `caption_filter_list`
@@ -1368,8 +1394,6 @@ webshart optimize-captions \
 ```
 
 `--destination` はポータブルな shard ごとの metadata ツリーを書き出し、`--push-to-hub` はそれを metadata repository にアップロードします。その後、dataloader の `metadata` オプションをその repository に向けてください。`--shard-cache-dir` を指定すると、統合処理は sidecar ごとに 1 回の range read を発行する代わりに、完全に cache された shard を再利用できます。
-
-この backend には `TarDataLoader.list_shard_sample_aspect_buckets()` を提供する Webshart build が必要です。`webshart_optimize_captions` にはさらに `probe_caption_layout()` と `coalesce_caption_metadata()` が必要です。
 
 ## アスペクト比と解像度のカスタムマッピング
 
