@@ -164,6 +164,49 @@ class Krea2VendoredModelTests(unittest.TestCase):
         )
         self.assertEqual(_infer_krea2_lora_target_modules(normalized), ["transformer_blocks.1.attn.to_v"])
 
+    def test_lora_loader_normalizes_krea2_turbo_distill_targets(self):
+        state_dict = {
+            "diffusion_model.first.lora_A.weight": torch.ones(2, 4),
+            "diffusion_model.first.lora_B.weight": torch.ones(6, 2),
+            "diffusion_model.tmlp.0.lora_A.weight": torch.ones(2, 8),
+            "diffusion_model.tmlp.0.lora_B.weight": torch.ones(6, 2),
+            "diffusion_model.tmlp.2.lora_A.weight": torch.ones(2, 6),
+            "diffusion_model.tmlp.2.lora_B.weight": torch.ones(6, 2),
+            "diffusion_model.tproj.1.lora_A.weight": torch.ones(2, 6),
+            "diffusion_model.tproj.1.lora_B.weight": torch.ones(36, 2),
+            "diffusion_model.txtfusion.layerwise_blocks.0.attn.to_q.lora_A.weight": torch.ones(2, 6),
+            "diffusion_model.txtfusion.layerwise_blocks.0.attn.to_q.lora_B.weight": torch.ones(6, 2),
+            "diffusion_model.txtfusion.projector.lora_A.weight": torch.ones(1, 2),
+            "diffusion_model.txtfusion.projector.lora_B.weight": torch.ones(1, 1),
+            "diffusion_model.txtmlp.1.lora_A.weight": torch.ones(2, 6),
+            "diffusion_model.txtmlp.1.lora_B.weight": torch.ones(6, 2),
+            "diffusion_model.txtmlp.3.lora_A.weight": torch.ones(2, 6),
+            "diffusion_model.txtmlp.3.lora_B.weight": torch.ones(6, 2),
+            "diffusion_model.last.linear.lora_A.weight": torch.ones(2, 6),
+            "diffusion_model.last.linear.lora_B.weight": torch.ones(4, 2),
+            "diffusion_model.last.modulation.lin.lora_A.weight": torch.ones(2, 6),
+            "diffusion_model.last.modulation.lin.lora_B.weight": torch.ones(2, 2),
+        }
+
+        normalized, prefix = _normalize_krea2_lora_state_dict(state_dict)
+
+        self.assertEqual(prefix, "diffusion_model")
+        self.assertEqual(
+            _infer_krea2_lora_target_modules(normalized),
+            [
+                "img_in",
+                "time_embed.linear_1",
+                "time_embed.linear_2",
+                "time_mod_proj",
+                "text_fusion.layerwise_blocks.0.attn.to_q",
+                "text_fusion.projector",
+                "txt_in.linear_1",
+                "txt_in.linear_2",
+                "final_layer.linear",
+                "final_layer.scale_shift_table",
+            ],
+        )
+
     def test_lora_loader_injects_external_krea2_adapter_with_requested_name(self):
         transformer = Krea2Transformer2DModel(
             in_channels=4,
@@ -195,6 +238,91 @@ class Krea2VendoredModelTests(unittest.TestCase):
 
         self.assertIn("krea2_turbo", transformer.peft_config)
         self.assertIn("transformer_blocks.0.attn.to_q", transformer.peft_config["krea2_turbo"].target_modules)
+
+    def test_lora_loader_applies_krea2_turbo_distill_parameter_target(self):
+        transformer = Krea2Transformer2DModel(
+            in_channels=4,
+            num_layers=1,
+            attention_head_dim=6,
+            num_attention_heads=1,
+            num_key_value_heads=1,
+            intermediate_size=8,
+            timestep_embed_dim=8,
+            text_hidden_dim=6,
+            num_text_layers=2,
+            text_num_attention_heads=1,
+            text_num_key_value_heads=1,
+            text_intermediate_size=8,
+            num_layerwise_text_blocks=1,
+            num_refiner_text_blocks=0,
+            axes_dims_rope=(2, 2, 2),
+        )
+        state_dict = {
+            "diffusion_model.first.lora_A.weight": torch.ones(2, 4),
+            "diffusion_model.first.lora_B.weight": torch.ones(6, 2),
+            "diffusion_model.tmlp.0.lora_A.weight": torch.ones(2, 8),
+            "diffusion_model.tmlp.0.lora_B.weight": torch.ones(6, 2),
+            "diffusion_model.tmlp.2.lora_A.weight": torch.ones(2, 6),
+            "diffusion_model.tmlp.2.lora_B.weight": torch.ones(6, 2),
+            "diffusion_model.tproj.1.lora_A.weight": torch.ones(2, 6),
+            "diffusion_model.tproj.1.lora_B.weight": torch.ones(36, 2),
+            "diffusion_model.txtfusion.layerwise_blocks.0.attn.to_q.lora_A.weight": torch.ones(2, 6),
+            "diffusion_model.txtfusion.layerwise_blocks.0.attn.to_q.lora_B.weight": torch.ones(6, 2),
+            "diffusion_model.txtfusion.projector.lora_A.weight": torch.ones(1, 2),
+            "diffusion_model.txtfusion.projector.lora_B.weight": torch.ones(1, 1),
+            "diffusion_model.txtmlp.1.lora_A.weight": torch.ones(2, 6),
+            "diffusion_model.txtmlp.1.lora_B.weight": torch.ones(6, 2),
+            "diffusion_model.txtmlp.3.lora_A.weight": torch.ones(2, 6),
+            "diffusion_model.txtmlp.3.lora_B.weight": torch.ones(6, 2),
+            "diffusion_model.last.linear.lora_A.weight": torch.ones(2, 6),
+            "diffusion_model.last.linear.lora_B.weight": torch.ones(4, 2),
+            "diffusion_model.last.modulation.lin.lora_A.weight": torch.ones(2, 6),
+            "diffusion_model.last.modulation.lin.lora_B.weight": torch.ones(2, 2),
+        }
+
+        Krea2LoraLoaderMixin.load_lora_into_transformer(
+            state_dict,
+            transformer=transformer,
+            adapter_name="krea2_turbo_distill",
+            metadata={"ss_network_alpha": "2"},
+        )
+
+        targets = transformer.peft_config["krea2_turbo_distill"].target_modules
+        self.assertIn("img_in", targets)
+        self.assertIn("time_embed.linear_1", targets)
+        self.assertIn("time_embed.linear_2", targets)
+        self.assertIn("time_mod_proj", targets)
+        self.assertIn("text_fusion.layerwise_blocks.0.attn.to_q", targets)
+        self.assertIn("text_fusion.projector", targets)
+        self.assertIn("txt_in.linear_1", targets)
+        self.assertIn("txt_in.linear_2", targets)
+        self.assertIn("final_layer.linear", targets)
+        self.assertNotIn("final_layer.scale_shift_table", targets)
+        self.assertTrue(
+            torch.equal(
+                transformer.final_layer._scale_shift_table_with_parameter_lora(),
+                torch.full_like(transformer.final_layer.scale_shift_table, 2.0),
+            )
+        )
+
+        transformer.set_adapters("krea2_turbo_distill", 0.5)
+
+        self.assertTrue(
+            torch.equal(
+                transformer.final_layer._scale_shift_table_with_parameter_lora(),
+                torch.full_like(transformer.final_layer.scale_shift_table, 1.0),
+            )
+        )
+
+        transformer.delete_adapters("krea2_turbo_distill")
+
+        self.assertEqual(transformer.final_layer._parameter_lora_deltas, {})
+        self.assertTrue(
+            torch.equal(
+                transformer.final_layer._scale_shift_table_with_parameter_lora(),
+                transformer.final_layer.scale_shift_table,
+            )
+        )
 
     def test_lora_loader_injects_without_state_dict_argument(self):
         transformer = Krea2Transformer2DModel(

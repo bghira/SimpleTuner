@@ -34,6 +34,15 @@ if is_torch_version(">=", "1.9.0"):
 TRANSFORMER_NAME = "transformer"
 KREA2_LORA_TRANSFORMER_PREFIXES = ("transformer", "diffusion_model")
 KREA2_EXTERNAL_LORA_MODULE_MAP = (
+    ("first.", "img_in."),
+    ("tmlp.0.", "time_embed.linear_1."),
+    ("tmlp.2.", "time_embed.linear_2."),
+    ("tproj.1.", "time_mod_proj."),
+    ("txtmlp.1.", "txt_in.linear_1."),
+    ("txtmlp.3.", "txt_in.linear_2."),
+    ("last.linear.", "final_layer.linear."),
+    ("last.modulation.lin.", "final_layer.scale_shift_table."),
+    ("txtfusion.", "text_fusion."),
     ("blocks.", "transformer_blocks."),
     (".attn.wq.", ".attn.to_q."),
     (".attn.wk.", ".attn.to_k."),
@@ -88,6 +97,98 @@ def _infer_krea2_lora_target_modules(state_dict: dict[str, torch.Tensor]) -> lis
     return list(target_modules)
 
 
+def _krea2_lora_alpha_for_target(
+    target: str,
+    rank: int,
+    state_dict: dict[str, torch.Tensor],
+    metadata: dict | None,
+) -> float:
+    alpha = state_dict.get(f"{target}.alpha")
+    if alpha is not None:
+        return float(alpha.detach().float().cpu().item() if torch.is_tensor(alpha) else alpha)
+    if metadata and metadata.get("ss_network_alpha") is not None:
+        return float(metadata["ss_network_alpha"])
+    return float(rank)
+
+
+def _resolve_krea2_lora_live_names(targets: list[str], live_names: list[str]) -> tuple[dict[str, str], dict[str, list[str]]]:
+    live_name_set = set(live_names)
+    remap: dict[str, str] = {}
+    ambiguous: dict[str, list[str]] = {}
+    for target in targets:
+        if target in live_name_set:
+            remap[target] = target
+            continue
+        suffix = f".{target}"
+        matches = [name for name in live_names if name.endswith(suffix)]
+        if len(matches) == 1:
+            remap[target] = matches[0]
+        elif len(matches) > 1:
+            ambiguous[target] = matches[:5]
+    return remap, ambiguous
+
+
+def _split_krea2_parameter_lora_state_dict(
+    state_dict: dict[str, torch.Tensor],
+    target_modules: list[str],
+    transformer,
+    metadata: dict | None,
+) -> tuple[dict[str, torch.Tensor], list[str], dict[str, torch.Tensor]]:
+    """Extract LoRA deltas for KREA tensors represented as parameters rather than modules."""
+    try:
+        named_parameters = [(name, parameter) for name, parameter in transformer.named_parameters() if name]
+    except Exception:
+        return state_dict, target_modules, {}
+
+    parameter_names = [name for name, _ in named_parameters]
+    parameter_map = dict(named_parameters)
+    parameter_remap, ambiguous = _resolve_krea2_lora_live_names(target_modules, parameter_names)
+    if ambiguous:
+        preview = ", ".join(f"{target}: {matches}" for target, matches in list(ambiguous.items())[:3])
+        raise ValueError(f"Ambiguous KREA2 LoRA parameter targets in wrapped transformer: {preview}")
+
+    parameter_targets = [target for target in target_modules if target in parameter_remap]
+    if not parameter_targets:
+        return state_dict, target_modules, {}
+
+    parameter_lora_deltas: dict[str, torch.Tensor] = {}
+    module_state_dict = dict(state_dict)
+    module_targets = [target for target in target_modules if target not in parameter_remap]
+    for target in parameter_targets:
+        lora_a_key = f"{target}.lora_A.weight"
+        lora_b_key = f"{target}.lora_B.weight"
+        if lora_a_key not in state_dict or lora_b_key not in state_dict:
+            raise ValueError(f"KREA2 parameter LoRA target `{target}` is missing lora_A or lora_B weights.")
+        lora_a = state_dict[lora_a_key]
+        lora_b = state_dict[lora_b_key]
+        if getattr(lora_a, "ndim", 0) != 2 or getattr(lora_b, "ndim", 0) != 2:
+            raise ValueError(f"KREA2 parameter LoRA target `{target}` must contain rank-2 lora_A and lora_B tensors.")
+        rank = int(lora_a.shape[0])
+        if rank <= 0 or int(lora_b.shape[1]) != rank:
+            raise ValueError(f"KREA2 parameter LoRA target `{target}` has incompatible LoRA rank shapes.")
+        alpha = _krea2_lora_alpha_for_target(target, rank, state_dict, metadata)
+        delta = torch.matmul(lora_b.detach().float(), lora_a.detach().float()) * (alpha / rank)
+        live_parameter_name = parameter_remap[target]
+        live_parameter = parameter_map[live_parameter_name]
+        if tuple(delta.shape) != tuple(live_parameter.shape):
+            raise ValueError(
+                f"KREA2 parameter LoRA target `{target}` produces delta shape {tuple(delta.shape)}, "
+                f"expected {tuple(live_parameter.shape)}."
+            )
+        parent_name, _ = live_parameter_name.rsplit(".", 1)
+        parent_module = transformer.get_submodule(parent_name)
+        if not hasattr(parent_module, "register_parameter_lora_delta"):
+            raise ValueError(
+                f"KREA2 parameter LoRA target `{live_parameter_name}` cannot be applied to "
+                f"{parent_module.__class__.__name__}."
+            )
+        parameter_lora_deltas[live_parameter_name] = delta
+        for key in (lora_a_key, lora_b_key, f"{target}.alpha", f"{target}.lora_alpha"):
+            module_state_dict.pop(key, None)
+
+    return module_state_dict, module_targets, parameter_lora_deltas
+
+
 def _unwrap_krea2_lora_transformer(transformer):
     """Return the real KREA2 module when validation hands us a compiled wrapper."""
     return getattr(transformer, "_orig_mod", transformer)
@@ -115,18 +216,7 @@ def _align_krea2_lora_state_dict_to_transformer(
     if target_modules and all(target in live_module_set for target in target_modules):
         return state_dict, target_modules
 
-    remap: dict[str, str] = {}
-    ambiguous: dict[str, list[str]] = {}
-    for target in target_modules:
-        if target in live_module_set:
-            remap[target] = target
-            continue
-        suffix = f".{target}"
-        matches = [name for name in live_module_names if name.endswith(suffix)]
-        if len(matches) == 1:
-            remap[target] = matches[0]
-        elif len(matches) > 1:
-            ambiguous[target] = matches[:5]
+    remap, ambiguous = _resolve_krea2_lora_live_names(target_modules, live_module_names)
 
     if ambiguous:
         preview = ", ".join(f"{target}: {matches}" for target, matches in list(ambiguous.items())[:3])
@@ -155,6 +245,23 @@ def _align_krea2_lora_state_dict_to_transformer(
         aligned_state_dict[rewritten] = value
 
     return aligned_state_dict, list(dict.fromkeys(remap[target] for target in target_modules))
+
+
+def _register_krea2_parameter_lora_deltas(
+    transformer,
+    adapter_name: str,
+    parameter_lora_deltas: dict[str, torch.Tensor],
+) -> None:
+    for parameter_name, delta in parameter_lora_deltas.items():
+        parent_name, child_name = parameter_name.rsplit(".", 1)
+        parent_module = transformer.get_submodule(parent_name)
+        register_lora_delta = getattr(parent_module, "register_parameter_lora_delta", None)
+        if register_lora_delta is None:
+            raise ValueError(
+                f"KREA2 parameter LoRA target `{parameter_name}` cannot be applied to "
+                f"{parent_module.__class__.__name__}."
+            )
+        register_lora_delta(child_name, adapter_name, delta)
 
 
 class Krea2LoraLoaderMixin(LoraBaseMixin):
@@ -314,6 +421,8 @@ class Krea2LoraLoaderMixin(LoraBaseMixin):
             raise ValueError(
                 f"Adapter name {adapter_name} already in use in the transformer - please select a new adapter name."
             )
+        if adapter_name is None:
+            adapter_name = get_adapter_name(transformer)
 
         target_modules = _infer_krea2_lora_target_modules(state_dict)
         if not target_modules:
@@ -321,6 +430,12 @@ class Krea2LoraLoaderMixin(LoraBaseMixin):
                 "Could not infer KREA2 LoRA target modules from the adapter state dict. "
                 "Expected keys ending in .lora_A.weight and .lora_B.weight."
             )
+        state_dict, target_modules, parameter_lora_deltas = _split_krea2_parameter_lora_state_dict(
+            state_dict,
+            target_modules,
+            transformer,
+            metadata,
+        )
         state_dict, target_modules = _align_krea2_lora_state_dict_to_transformer(
             state_dict,
             target_modules,
@@ -344,9 +459,6 @@ class Krea2LoraLoaderMixin(LoraBaseMixin):
                 lora_config_kwargs.pop("use_dora")
         lora_config = LoraConfig(**lora_config_kwargs)
 
-        if adapter_name is None:
-            adapter_name = get_adapter_name(transformer)
-
         logger.info(
             f"Loading {cls.transformer_name} LoRA adapter '{adapter_name}' "
             f"from {source_prefix or 'unprefixed'} keys with {len(target_modules)} target module(s)."
@@ -367,6 +479,7 @@ class Krea2LoraLoaderMixin(LoraBaseMixin):
             incompatible_keys = set_peft_model_state_dict(transformer, state_dict, adapter_name, **peft_kwargs)
             if incompatible_keys is not None:
                 logger.info(f"Loaded KREA2 LoRA with incompatible keys: {incompatible_keys}")
+            _register_krea2_parameter_lora_deltas(transformer, adapter_name, parameter_lora_deltas)
         finally:
             restore_offload_state(_pipeline, is_model_cpu_offload, is_sequential_cpu_offload)
 
