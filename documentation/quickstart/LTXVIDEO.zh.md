@@ -14,23 +14,6 @@ LTX 对系统内存和 GPU 显存要求都不高。
 
 Apple Silicon 目前对 LTX 运行良好，但由于 PyTorch MPS 后端限制，分辨率会偏低。
 
-### 内存卸载（可选）
-
-如果接近 VRAM 上限，可在配置中启用组卸载:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# 可选：将卸载权重写入磁盘而非 RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- CUDA 用户可受益于 `--group_offload_use_stream`；其他后端会自动忽略。
-- 除非系统内存 <64GB，否则不建议使用 `--group_offload_to_disk_path` — 磁盘暂存更慢但更稳定。
-- 使用组卸载时请关闭 `--enable_model_cpu_offload`。
-
 ### 前提条件
 
 确保已安装 Python；SimpleTuner 在 3.10 到 3.12 版本上运行良好。

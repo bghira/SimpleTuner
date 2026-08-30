@@ -22,28 +22,6 @@ Recommended starting points:
 
 Observed memory depends on rank, optimiser, validation resolution, offload, compile settings, and whether FP8 weights are used. A single H100 can train the provided PEFT LoRA example for 1000 steps at 1024px with validation and benchmark samples enabled.
 
-For smaller cards, start with FP8 weights, rank 8-16, `train_batch_size=1`, gradient checkpointing, and model or group offload.
-
-### Memory offloading
-
-Grouped module offloading can reduce VRAM pressure when the transformer weights are the bottleneck:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream
-```
-
-Optional disk offload:
-
-```bash
---group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- Streams are only effective on CUDA; SimpleTuner disables them on ROCm, MPS, and CPU backends.
-- Do not combine group offload with other CPU offload strategies.
-- Prefer fast local NVMe when offloading to disk.
 
 ### Torch compile and attention
 

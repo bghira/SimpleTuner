@@ -67,7 +67,6 @@ http://localhost:8001 を開き、モデルファミリ `longcat_image` を選�
 - 最大トークン長は 512（Qwen‑2.5‑VL）。
 
 メモリ節約オプション（環境に合わせて選択）:
-- `--enable_group_offload --group_offload_type block_level --group_offload_blocks_per_group 1`
 - `lora_rank` を下げる（4〜8）/ `int8-quanto` ベース精度を使う
 - 検証で OOM する場合は、まず `validation_resolution` やステップ数を下げる
 
@@ -115,7 +114,6 @@ simpletuner validate \
 
 - **MPS float64 エラー**: 内部で処理済み。設定は float32/bf16 のままにしてください。
 - **プレビューのチャネル不一致**: デコード前に latent を unpack することで修正済み（本ガイドのコードに含まれます）。
-- **OOM**: `validation_resolution` を下げる、`lora_rank` を減らす、group offload を有効にする、`int8-quanto` / `fp8-torchao` に切り替える。
 - **トークナイズが遅い**: Qwen‑2.5‑VL は 512 トークン上限。極端に長いプロンプトは避ける。
 
 ---

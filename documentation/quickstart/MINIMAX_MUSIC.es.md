@@ -100,6 +100,8 @@ El repositorio upstream `MiniMaxAI/MiniMax-Music3` también incluye el `dav.pth`
 
 MiniMax Music 3 requiere un dataset **audio** y un backend de cache **text embeds**.
 
+Para expandir una identidad vocal objetivo entre estilos o géneros, configura el workflow RVC `data_transforms` descrito en [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.es.md).
+
 ```json
 [
   {

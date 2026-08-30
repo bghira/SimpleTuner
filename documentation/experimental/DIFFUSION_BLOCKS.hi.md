@@ -45,7 +45,6 @@ Skip-dependent encoder-decoder Transformer stacks, जैसे i1 के `in_bl
 
 Independent jobs के लिए हर job में अलग `blocks_to_train` दें। Unowned groups freeze होते हैं और optimizer state नहीं लेते। Inference से पहले parameter ownership के अनुसार checkpoints combine करें।
 
-Group offload compatible है। Musubi block swap compatible नहीं है।
 
 ## Inference
 

@@ -272,7 +272,7 @@ class Krea2VendoredModelTests(unittest.TestCase):
                     _pipeline=pipeline,
                 )
 
-        mock_restore.assert_called_once_with(pipeline, True, False, True)
+        mock_restore.assert_called_once_with(pipeline, True, False)
 
     def test_lora_loader_aligns_external_krea2_adapter_for_wrapped_transformer(self):
         class WrappedTransformer(torch.nn.Module):

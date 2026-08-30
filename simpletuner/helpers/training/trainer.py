@@ -69,7 +69,13 @@ from simpletuner.helpers.training.deepspeed import prepare_model_for_deepspeed
 from simpletuner.helpers.training.deepspeed_optimizers import DEFAULT_OPTIMIZER as DS_DEFAULT_OPTIMIZER
 from simpletuner.helpers.training.deepspeed_optimizers import sanitize_optimizer_block
 from simpletuner.helpers.training.default_settings.safety_check import safety_check
-from simpletuner.helpers.training.dynamo import install_cudagraph_workarounds, mark_cudagraph_step_begin
+from simpletuner.helpers.training.dynamo import (
+    apply_checkpointing_cudagraph_compatibility,
+    configure_inductor_wrapper,
+    install_cudagraph_workarounds,
+    mark_cudagraph_step_begin,
+)
+from simpletuner.helpers.training.dynamo_cache import DynamoCacheManager
 from simpletuner.helpers.training.evaluation import ModelEvaluator
 from simpletuner.helpers.training.exceptions import GPUHealthError
 from simpletuner.helpers.training.gpu_circuit_breaker import get_current_gpu_index, get_gpu_circuit_breaker, is_cuda_error
@@ -103,7 +109,7 @@ from simpletuner.helpers.training.script_runner import run_hook_script
 from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
-from simpletuner.helpers.training.wrappers import unwrap_model
+from simpletuner.helpers.training.wrappers import rebind_prepared_forward, unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 from simpletuner.helpers.utils.checkpoint_manager import (
     CHECKPOINT_GUARD_FILENAME,
@@ -266,6 +272,7 @@ class Trainer:
     sidecar_is_schedulefree = False
     sidecar_scheduler_disabled = False
     publishing_manager = None
+    dynamo_cache_manager = None
     _cleanup_invoked = False
 
     def __init__(
@@ -289,11 +296,13 @@ class Trainer:
         self.webhook_handler = None
         self.custom_tracker = None
         self.publishing_manager = None
+        self.dynamo_cache_manager = None
         self.should_abort = False
         self._external_abort_checker = None
         self._manual_validation_consumer: Optional[Callable[[], bool]] = None
         self._manual_checkpoint_consumer: Optional[Callable[[], bool]] = None
         self.ema_model = None
+        self.lr = 0.0
         self.job_id = job_id
         self._cleanup_invoked = False
         self.sidecar_optimizer = None
@@ -315,9 +324,17 @@ class Trainer:
                 disable_accelerator=disable_accelerator,
                 exit_on_error=exit_on_error,
             )
+            parsed_config = getattr(self, "config", None)
+            if parsed_config is not None and "learning_rate" in vars(parsed_config):
+                self.lr = float(parsed_config.learning_rate)
         except Exception as e:
             self._send_webhook_msg(f"Error: {e}", message_level="critical")
             raise e
+
+        if getattr(self, "config", None) is not None:
+            configure_inductor_wrapper(self.config)
+            self.dynamo_cache_manager = DynamoCacheManager(self.config)
+            self.dynamo_cache_manager.load()
 
         if getattr(self, "config", None) is not None:
             logger.info(
@@ -350,6 +367,33 @@ class Trainer:
         if not config:
             return None
         return type("Config", (object,), config)
+
+    def _export_dynamo_cache(self, reason: str) -> None:
+        manager = self.dynamo_cache_manager
+        if manager is None or not manager.enabled:
+            return
+        if self.accelerator is not None:
+            self.accelerator.wait_for_everyone()
+        try:
+            if self.accelerator is None or self.accelerator.is_main_process:
+                manager.export(reason=reason)
+        except Exception as exc:
+            logger.warning("Unexpected failure while exporting the Dynamo Mega-Cache: %s", exc)
+        finally:
+            if self.accelerator is not None:
+                self.accelerator.wait_for_everyone()
+
+    def _export_dynamo_cache_after_first_step(self) -> None:
+        manager = self.dynamo_cache_manager
+        if (
+            manager is None
+            or not manager.enabled
+            or manager.first_step_export_attempted
+            or not getattr(self.config, "dynamo_cache_export_after_first_step", True)
+        ):
+            return
+        manager.first_step_export_attempted = True
+        self._export_dynamo_cache(reason="first successful optimizer step")
 
     def register_manual_validation_trigger(self, consumer: Callable[[], bool]) -> None:
         """Register a callable that returns True once per manual validation request."""
@@ -893,12 +937,16 @@ class Trainer:
         except ValueError:
             raise
 
+        apply_checkpointing_cudagraph_compatibility(self.config)
+
         dynamo_backend_env = "no"
         if resolved_dynamo_backend and resolved_dynamo_backend != DynamoBackend.NO:
             dynamo_backend_env = resolved_dynamo_backend.value.lower()
         elif isinstance(dynamo_backend_value, str) and dynamo_backend_value.strip():
             dynamo_backend_env = dynamo_backend_value.strip().lower()
         os.environ["TRAINING_DYNAMO_BACKEND"] = dynamo_backend_env
+        dynamo_mode_env = str(getattr(self.config, "dynamo_mode", "") or "").strip().lower()
+        os.environ["TRAINING_DYNAMO_MODE"] = dynamo_mode_env
         self._configure_inductor_dynamic_training_passes(dynamo_backend_env)
         install_cudagraph_workarounds(self.config)
 
@@ -2051,7 +2099,6 @@ class Trainer:
             return
         self.config.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
         self.noise_scheduler = self._get_noise_schedule()
-        self.lr = 0.0
 
     def configure_webhook(self, send_startup_message: bool = True, raw_config: str = None):
         if raw_config is not None:
@@ -4467,7 +4514,7 @@ class Trainer:
             if attach_shared_ramtorch_parameters is not None:
                 attached = attach_shared_ramtorch_parameters(primary_model)
                 if attached:
-                    logger.info("Attached %s shared RamTorch parameters across ranks.", attached)
+                    logger.info("Attached %s shared RamTorch tensor storages across ranks.", attached)
             else:
                 logger.warning(
                     "RamTorch shared parameters are disabled; each rank will retain its own CPU copy of streamed weights."
@@ -4525,11 +4572,10 @@ class Trainer:
 
         # Determine if we should skip automatic device placement for the model.
         # This is necessary when using memory optimization techniques that keep
-        # parts of the model on CPU (block swap, ramtorch, group offload).
+        # parts of the model on CPU (block swap and RamTorch).
         musubi_block_swap_active = (getattr(self.config, "musubi_blocks_to_swap", 0) or 0) > 0
         ramtorch_enabled = getattr(self.config, "ramtorch", False)
-        group_offload_requested = bool(getattr(self.config, "enable_group_offload", False))
-        skip_model_device_placement = musubi_block_swap_active or ramtorch_enabled or group_offload_requested
+        skip_model_device_placement = musubi_block_swap_active or ramtorch_enabled
         if musubi_block_swap_active and self.accelerator.distributed_type == DistributedType.MULTI_GPU:
             self._move_model_with_block_swap(primary_model)
             moved_trainable, ignored_frozen = prepare_musubi_model_for_ddp(primary_model, self.accelerator.device)
@@ -4543,10 +4589,9 @@ class Trainer:
         if skip_model_device_placement:
             logger.info(
                 "Skipping automatic device placement for primary model during accelerator.prepare() "
-                "(musubi_block_swap=%s, ramtorch=%s, group_offload=%s)",
+                "(musubi_block_swap=%s, ramtorch=%s)",
                 musubi_block_swap_active,
                 ramtorch_enabled,
-                group_offload_requested,
             )
         # DeepSpeed handles device placement internally
         standalone_cp_prepare_config = None
@@ -4574,6 +4619,7 @@ class Trainer:
                 accelerator_state.parallelism_config = standalone_cp_prepare_config
         for label, prepared in zip(prepared_labels, results):
             if label == "primary_model":
+                prepared = rebind_prepared_forward(prepared, primary_model)
                 self.model.set_prepared_model(prepared)
                 # If we skipped device placement for block swap, move the model incrementally
                 if musubi_block_swap_active:
@@ -4610,7 +4656,9 @@ class Trainer:
                         logger.info("Marking %s RamTorch parameters to ignore for DDP on text_encoder_%s.", ignored, idx)
                     attached = attach_shared_ramtorch_parameters(encoder)
                     if attached:
-                        logger.info("Attached %s shared RamTorch parameters across ranks on text_encoder_%s.", attached, idx)
+                        logger.info(
+                            "Attached %s shared RamTorch tensor storages across ranks on text_encoder_%s.", attached, idx
+                        )
             self.text_encoder_1, self.text_encoder_2 = self.accelerator.prepare(self.text_encoder_1, self.text_encoder_2)
         self._recalculate_training_steps()
         self.accelerator.wait_for_everyone()
@@ -4636,6 +4684,7 @@ class Trainer:
             self.model.before_accelerator_prepare()
 
         prepared_model = self.accelerator.prepare_model(primary_model, evaluation_mode=True)
+        prepared_model = rebind_prepared_forward(prepared_model, primary_model)
         self.model.set_prepared_model(prepared_model)
         prepared_model.eval()
 
@@ -5487,8 +5536,6 @@ class Trainer:
         else:
             target_device = destination
 
-        group_offload_requested = bool(getattr(self.config, "enable_group_offload", False))
-        group_offload_configured = getattr(self.model, "group_offload_configured", False)
         musubi_block_swap_active = getattr(self.config, "musubi_blocks_to_swap", 0) or 0 > 0
         ramtorch_enabled = getattr(self.config, "ramtorch", False)
         if self.model.get_trained_component() is not None:
@@ -5496,8 +5543,6 @@ class Trainer:
                 not any(
                     [
                         fsdp_active,
-                        group_offload_requested,
-                        group_offload_configured,
                         musubi_block_swap_active,
                         ramtorch_enabled,
                     ]
@@ -5534,9 +5579,6 @@ class Trainer:
             self.accelerator._lycoris_wrapped_network = self.accelerator._lycoris_wrapped_network.to(
                 target_device, dtype=self.config.weight_dtype
             )
-
-        if group_offload_requested and is_accelerator_target:
-            self.model.configure_group_offload()
 
         AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
         if self.config.attention_mechanism == "xformers":
@@ -5702,6 +5744,8 @@ class Trainer:
                 checkpoint_limit,
                 protected_checkpoint=save_path,
             )
+        checkpoint_step = getattr(self, "state", {}).get("global_step", "unknown")
+        self._export_dynamo_cache(reason=f"checkpoint {checkpoint_step}")
 
         hub_upload_planned = upload_to_hub and self.hub_manager is not None
         if hub_upload_planned and not defer_hub_upload:
@@ -5726,6 +5770,8 @@ class Trainer:
                 "rolling",
                 protected_checkpoint=save_path,
             )
+        checkpoint_step = getattr(self, "state", {}).get("global_step", "unknown")
+        self._export_dynamo_cache(reason=f"rolling checkpoint {checkpoint_step}")
         return save_path
 
     def _send_webhook_msg(
@@ -6935,6 +6981,12 @@ class Trainer:
             prefetch_on_rank = not cp_batch_synchronizer.is_cp_enabled or cp_batch_synchronizer.is_cp_leader
             should_prefetch = self.config.dataloader_prefetch and prefetch_on_rank
             if should_prefetch:
+                device_prefetch_threshold_mb = self.config.dataloader_prefetch_device_threshold_mb
+                if device_prefetch_threshold_mb > 0 and cp_batch_synchronizer.is_cp_enabled:
+                    raise ValueError(
+                        "Dataloader device prefetch is not compatible with context-parallel batch broadcasting. "
+                        "Set --dataloader_prefetch_device_threshold_mb=0 when context parallelism is enabled."
+                    )
                 iterator_args = []
                 if self.bf is not None:
                     self.bf.stop_fetching()
@@ -6942,6 +6994,8 @@ class Trainer:
                     datasets=train_backends,
                     max_size=self.config.dataloader_prefetch_qlen,
                     step=step,
+                    device=self.accelerator.device,
+                    device_prefetch_threshold_bytes=int(device_prefetch_threshold_mb * 1024 * 1024),
                 )
                 if fetch_thread is not None:
                     fetch_thread.join()
@@ -7342,6 +7396,7 @@ class Trainer:
                     current_epoch_step += 1
                     StateTracker.set_global_step(self.state["global_step"])
                     self.iteration_tracker.record_step(self.state["global_step"])
+                    self._export_dynamo_cache_after_first_step()
                     if ramtorch_profile.profile_enabled():
                         ramtorch_profile.record_train_step(
                             self.state["global_step"],
@@ -7803,6 +7858,7 @@ class Trainer:
                     job_id=self.job_id,
                 )
                 self._emit_event(event)
+        self._export_dynamo_cache(reason="training completion")
         self.accelerator.end_training()
         # Emit training_complete event after all model saving and validation is complete
         event = lifecycle_stage_event(

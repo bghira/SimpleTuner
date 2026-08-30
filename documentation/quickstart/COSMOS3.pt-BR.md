@@ -51,19 +51,6 @@ O SimpleTuner usa componentes Cosmos3 separados por padrao:
 - Ative `gradient_checkpointing`.
 - Use os componentes generator separados para reduzir memoria ao carregar o transformer.
 
-Group offload opcional:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream
-```
-
-- Streams sao apenas CUDA.
-- Nao combine com `--enable_model_cpu_offload`.
-- Adicione `--group_offload_to_disk_path /fast-ssd/simpletuner-offload` quando faltar RAM do sistema.
-
 ## Instalacao
 
 ```bash

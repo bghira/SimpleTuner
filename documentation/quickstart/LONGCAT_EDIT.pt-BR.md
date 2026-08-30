@@ -119,4 +119,3 @@ Garanta que o dataset de referência esteja presente durante o treino para que l
 - **Latentes de condicionamento ausentes**: garanta que o dataset de referência esteja ligado via `conditioning_data` e que os nomes dos arquivos correspondam.
 - **Erros de dtype no MPS**: o pipeline faz downgrade automático de pos-ids para float32 no MPS; mantenha o restante em float32/bf16.
 - **Incompatibilidade de canais em prévias**: as prévias fazem un-patchify dos latentes antes da decodificação (mantenha esta versão do SimpleTuner).
-- **OOM durante edição**: diminua resolução/steps de validação, reduza `lora_rank`, ative group offload e prefira `int8-quanto`/`fp8-torchao`.

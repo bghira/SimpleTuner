@@ -136,7 +136,6 @@ SimpleTuner निम्नलिखित मॉडल families का सम�
 - **Gradient checkpointing** - मेमोरी/स्पीड ऑप्टिमाइज़ेशन के लिए कॉन्फ़िगरेबल intervals
 - **Loss functions** - scheduling सपोर्ट के साथ L2, Huber, Smooth L1
 - **SNR weighting** - बेहतर प्रशिक्षण डायनेमिक्स के लिए Min‑SNR gamma weighting
-- **Group offloading** - Diffusers v0.33+ module‑group CPU/disk staging, वैकल्पिक CUDA streams के साथ
 - **Validation adapter sweeps** - validation के दौरान अस्थायी रूप से LoRA adapters (single या JSON presets) जोड़ें ताकि training loop को छुए बिना adapter‑only या comparison renders मापे जा सकें
 - **External validation hooks** - built‑in validation pipeline या post‑upload steps को अपने स्क्रिप्ट्स से बदलें, ताकि आप किसी अन्य GPU पर checks चला सकें या artifacts को किसी भी cloud provider पर भेज सकें ([details](/documentation/OPTIONS.md#validation_method))
 - **AnyFlow distillation** - online teacher targets के साथ flow-matching models के लिए FlowMap interval conditioning ([guide](/documentation/experimental/ANYFLOW.hi.md))

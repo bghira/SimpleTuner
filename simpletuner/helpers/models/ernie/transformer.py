@@ -260,8 +260,19 @@ class ErnieImageTransformer2DModel(
             musubi_offload_active = musubi_manager.activate(combined_blocks, hidden_states.device, grad_enabled)
 
         for layer_idx, layer in enumerate(self.layers):
+            checkpoint_this_block = (
+                layer_idx not in skip_set
+                and grad_enabled
+                and self.gradient_checkpointing
+                and should_checkpoint_block(
+                    layer_idx,
+                    True,
+                    self.gradient_checkpointing_interval,
+                    getattr(self, "gradient_checkpointing_segment_stride", None),
+                )
+            )
             if musubi_offload_active and musubi_manager.is_managed_block(layer_idx):
-                musubi_manager.stream_in(layer, hidden_states.device)
+                musubi_manager.stream_in(layer, hidden_states.device, checkpointed=checkpoint_this_block)
             if use_routing and route_ptr < len(routes) and layer_idx == routes[route_ptr]["start_layer_idx"]:
                 keep_mask = torch.zeros(
                     (batch_size, hidden_states.shape[1]),

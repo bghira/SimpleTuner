@@ -44,5 +44,16 @@ class TestTrainBatchSizeBlueprints(unittest.TestCase):
         self.assertIn("train_batch_size", {field.id for field in blueprint.fields})
 
 
+class TestAudioDatasetBlueprints(unittest.TestCase):
+    def test_local_audio_blueprint_exposes_data_transforms(self):
+        blueprint = find_blueprint("local", "audio")
+
+        self.assertIsNotNone(blueprint)
+        fields = {field.id: field for field in blueprint.fields}
+        self.assertIn("data_transforms", fields)
+        self.assertEqual(fields["data_transforms"].type, "textarea")
+        self.assertIn("identity_transfer", fields["data_transforms"].placeholder)
+
+
 if __name__ == "__main__":
     unittest.main()

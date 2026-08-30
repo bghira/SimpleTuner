@@ -824,6 +824,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertEqual(generated.get("dataset_type"), "conditioning")
         self.assertTrue(generated.get("auto_generated"))
         self.assertEqual(generated.get("source_dataset_id"), "primary")
+        self.assertEqual(generated.get("metadata_clone_source_id"), "primary")
         conditioning_cfg = generated.get("conditioning_config") or {}
         self.assertEqual(conditioning_cfg.get("type"), "canny")
         self.assertEqual(conditioning_cfg.get("conditioning_type"), "controlnet")
@@ -865,6 +866,7 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertEqual(generated.get("type"), "local")
         self.assertEqual(generated.get("metadata_backend"), "discovery")
         self.assertEqual(generated.get("source_dataset_id"), "h3_video")
+        self.assertEqual(generated.get("metadata_clone_source_id"), "h3_video")
         self.assertNotIn("video", generated)
         conditioning_cfg = generated.get("conditioning_config") or {}
         self.assertEqual(conditioning_cfg.get("type"), "i2v_first_frame")
@@ -1745,6 +1747,53 @@ class TestFactoryEdgeCases(unittest.TestCase):
         )
 
         metadata_backend.reload_cache.assert_called_once_with()
+
+    @patch("simpletuner.helpers.data_backend.factory.DatasetDuplicator.copy_metadata")
+    @patch("simpletuner.helpers.data_backend.factory.StateTracker")
+    def test_metadata_clone_requires_explicit_source_marker(self, mock_state_tracker, mock_copy_metadata):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        self.args.skip_file_discovery = "aspect"
+        self.args.eval_dataset_id = None
+        self.args.max_train_steps = 100
+        self.args.allow_dataset_oversubscription = False
+        metadata_backend = MagicMock()
+        init_backend = {
+            "id": "generated-audio",
+            "config": {},
+            "dataset_type": "audio",
+            "metadata_backend": metadata_backend,
+        }
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        factory._handle_config_versioning = MagicMock()
+
+        factory._handle_bucket_operations(
+            backend={"id": "generated-audio", "auto_generated": True, "skip_file_discovery": "aspect"},
+            init_backend=init_backend,
+            conditioning_type=None,
+        )
+
+        mock_copy_metadata.assert_not_called()
+
+        factory._handle_bucket_operations(
+            backend={
+                "id": "generated-conditioning",
+                "auto_generated": True,
+                "metadata_clone_source_id": "primary",
+                "skip_file_discovery": "aspect",
+            },
+            init_backend=init_backend,
+            conditioning_type=None,
+        )
+
+        mock_state_tracker.get_data_backend.assert_called_once_with("primary")
+        mock_copy_metadata.assert_called_once()
 
     def test_image_embeds_backend_configuration(self):
         """Image embed configuration should not instantiate VAE cache directly."""

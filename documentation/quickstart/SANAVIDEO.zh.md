@@ -6,23 +6,6 @@
 
 Sana Video 使用 Wan 自动编码器，默认处理 480p 的 81 帧序列。内存开销与其他视频模型相当；建议尽早启用梯度检查点，并仅在确认 VRAM 余量后再提升 `train_batch_size`。
 
-### 内存卸载（可选）
-
-如果接近 VRAM 上限，请在配置中启用分组卸载：
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- CUDA 用户可从 `--group_offload_use_stream` 中获益；其他后端会自动忽略。
-- 除非系统内存受限，否则不要使用 `--group_offload_to_disk_path` — 磁盘分级更慢但更稳定。
-- 使用分组卸载时禁用 `--enable_model_cpu_offload`。
-
 ### 前提条件
 
 确保您已安装 Python；SimpleTuner 在 3.10 到 3.12 版本上运行良好。

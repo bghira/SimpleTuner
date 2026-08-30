@@ -1699,7 +1699,7 @@ class TabNavigationTestCase(_TrainerPageMixin, WebUITestCase):
                                 return el && el.offsetParent !== null && el.offsetHeight > 0;
                             """
                             )
-                        except:
+                        except Exception:
                             return False
 
                     self.assertTrue(wait.until(element_is_visible), f"Tab {tab_name} failed to load")
@@ -1786,7 +1786,7 @@ class OnboardingFlowTestCase(_TrainerPageMixin, WebUITestCase):
                 try:
                     overlay = driver.find_element(By.CSS_SELECTOR, ".onboarding-overlay")
                     print(f"DEBUG: Overlay found but not visible, style: {overlay.get_attribute('style')}")
-                except:
+                except Exception:
                     print("DEBUG: Overlay element not found at all")
                 self.fail("Onboarding overlay not visible after waiting")
 
@@ -2089,6 +2089,128 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertTrue(state["unsaved"])
 
         self.for_each_browser("test_dataset_vae_cache_options_mark_unsaved", scenario)
+
+    def test_audio_identity_transfer_controls_mark_unsaved(self) -> None:
+        """Audio identity-transfer controls should update Alpine state and enable saving."""
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            datasets_tab = DatasetsTab(driver, base_url=self.base_url)
+
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+
+            datasets_tab.add_dataset("audio")
+            dataset_index = datasets_tab.get_dataset_count() - 1
+            driver.execute_script(
+                "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "if (store) { store.hasUnsavedChanges = false; }"
+            )
+
+            dataset_id = driver.execute_script(
+                "const comp = window.dataloaderSectionComponentInstance;"
+                "const dataset = comp && comp.datasets ? comp.datasets[arguments[0]] : null;"
+                "if (!dataset) { return null; }"
+                "if (typeof comp.expandSectionIfCollapsed === 'function') { comp.expandSectionIfCollapsed(dataset, 'card'); }"
+                "if (typeof comp.setListTab === 'function') { comp.setListTab(dataset, 'audio'); }"
+                "comp.parameterFilterQuery = '';"
+                "return dataset.id;",
+                dataset_index,
+            )
+            self.assertIsInstance(dataset_id, str)
+
+            checkbox_id = f"audio-identity-transfer-{dataset_id}"
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script("return !!document.getElementById(arguments[0]);", checkbox_id)
+            )
+            self.assertTrue(
+                driver.execute_script(
+                    "const checkbox = document.getElementById(arguments[0]);"
+                    "checkbox.scrollIntoView({ block: 'center' });"
+                    "checkbox.click();"
+                    "return checkbox.checked;",
+                    checkbox_id,
+                )
+            )
+
+            enabled_state = WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    """
+                    const comp = window.dataloaderSectionComponentInstance;
+                    const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;
+                    const saveButton = document.querySelector('button[aria-label="Save dataset configuration"]');
+                    const dataset = comp && Array.isArray(comp.datasets)
+                        ? comp.datasets.find((candidate) => candidate && candidate.id === arguments[0])
+                        : null;
+                    const transform = dataset && Array.isArray(dataset.data_transforms)
+                        ? dataset.data_transforms.find((entry) => entry && entry.task === 'identity_transfer')
+                        : null;
+                    return transform && transform.method === 'rvc'
+                        && store && store.hasUnsavedChanges === true
+                        && saveButton && saveButton.offsetParent !== null
+                        && saveButton.classList.contains('btn-warning')
+                        ? { dirty: store.hasUnsavedChanges, transformId: transform.id }
+                        : null;
+                    """,
+                    dataset_id,
+                )
+            )
+            self.assertTrue(enabled_state["dirty"])
+            self.assertEqual(enabled_state["transformId"], f"{dataset_id}_identity_transfer")
+
+            driver.execute_script(
+                "const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;"
+                "if (store) { store.hasUnsavedChanges = false; }"
+            )
+
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script(
+                    """
+                    return Array.from(document.querySelectorAll('.dataset-list-item-expanded input'))
+                        .some((input) => input.placeholder === 'org/voice-artifact');
+                    """
+                )
+            )
+            driver.execute_script(
+                """
+                const input = Array.from(document.querySelectorAll('.dataset-list-item-expanded input'))
+                    .find((candidate) => candidate.placeholder === 'org/voice-artifact');
+                input.scrollIntoView({ block: 'center' });
+                input.value = 'RareConcepts/test-voice';
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+                """
+            )
+
+            edited_state = WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script(
+                    """
+                    const comp = window.dataloaderSectionComponentInstance;
+                    const store = window.Alpine && Alpine.store ? Alpine.store('trainer') : null;
+                    const saveButton = document.querySelector('button[aria-label="Save dataset configuration"]');
+                    const dataset = comp && Array.isArray(comp.datasets)
+                        ? comp.datasets.find((candidate) => candidate && candidate.id === arguments[0])
+                        : null;
+                    const transform = dataset && Array.isArray(dataset.data_transforms)
+                        ? dataset.data_transforms.find((entry) => entry && entry.task === 'identity_transfer')
+                        : null;
+                    return transform && transform.model && transform.model.hub_model_id === 'RareConcepts/test-voice'
+                        && store && store.hasUnsavedChanges === true
+                        && saveButton && saveButton.offsetParent !== null
+                        && saveButton.classList.contains('btn-warning')
+                        ? { hubModelId: transform.model.hub_model_id, dirty: store.hasUnsavedChanges }
+                        : null;
+                    """,
+                    dataset_id,
+                )
+            )
+            self.assertTrue(edited_state["dirty"])
+            self.assertEqual(edited_state["hubModelId"], "RareConcepts/test-voice")
+
+        self.for_each_browser("test_audio_identity_transfer_controls_mark_unsaved", scenario)
 
     def test_text_embed_cache_options_mark_unsaved(self) -> None:
         """Text cache mode controls should update the text_embeds entry and mark datasets dirty."""

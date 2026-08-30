@@ -964,8 +964,6 @@ class ChromaTransformer2DModel(
             grounding_objs = self.position_net(**grounding_kwargs)
 
         for index_block, block in enumerate(self.transformer_blocks):
-            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
-                musubi_manager.stream_in(block, hidden_states.device)
             actual_index = global_idx
             img_offset = 3 * len(self.single_transformer_blocks)
             txt_offset = img_offset + 6 * len(self.transformer_blocks)
@@ -1034,6 +1032,13 @@ class ChromaTransformer2DModel(
                     self.gradient_checkpointing_segment_stride,
                 )
             )
+
+            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                musubi_manager.stream_in(
+                    block,
+                    hidden_states.device,
+                    checkpointed=use_checkpoint and not self.gradient_checkpointing_backend.endswith("-ffn"),
+                )
 
             if use_checkpoint:
                 if self.gradient_checkpointing_backend.startswith("unsloth"):
@@ -1130,8 +1135,6 @@ class ChromaTransformer2DModel(
         txt_len = encoder_hidden_states.shape[1]
 
         for index_block, block in enumerate(self.single_transformer_blocks):
-            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
-                musubi_manager.stream_in(block, hidden_states.device)
             actual_index = global_idx
             start_idx = 3 * index_block
             if pooled_temb.ndim == 4:
@@ -1236,6 +1239,13 @@ class ChromaTransformer2DModel(
                     self.gradient_checkpointing_segment_stride,
                 )
             )
+
+            if musubi_offload_active and musubi_manager.is_managed_block(global_idx):
+                musubi_manager.stream_in(
+                    block,
+                    hidden_states.device,
+                    checkpointed=use_checkpoint and not self.gradient_checkpointing_backend.endswith("-ffn"),
+                )
 
             if use_checkpoint:
                 if self.gradient_checkpointing_backend.startswith("unsloth"):

@@ -15,27 +15,7 @@ This setup is VRAM-intensive, though the "Lite" and "Pro" variants have differen
   - **Note**: The initial **VAE pre-caching step** requires significantly more VRAM due to the massive HunyuanVideo VAE. You may need to use CPU offloading or a larger GPU just for the caching phase.
   - **Tip**: Set `"offload_during_startup": true` in your `config.json` to ensure the VAE and text encoder are not loaded to the GPU at the same time, which significantly reduces pre-caching memory pressure.
   - **If VAE OOMs**: Set `--vae_enable_patch_conv=true` to slice HunyuanVideo VAE 3D convs; expect a small speed hit but lower peak VRAM.
-- **Pro Model Training**: Requires **FSDP2** (multi-gpu) or aggressive **Group Offload** with LoRA to fit on consumer hardware. Specific VRAM/RAM requirements have not been established, but "the more, the merrier" applies.
 - **System RAM**: Testing was comfortable on a system with **45GB** RAM for the Lite model. 64GB+ is recommended to be safe.
-
-### Memory offloading (Critical)
-
-For almost any single-GPU setup training the **Pro** model, you **must** enable grouped offloading. It is optional but recommended for **Lite** to save VRAM for larger batches/resolutions.
-
-Add this to your `config.json`:
-
-<details>
-<summary>View example config</summary>
-
-```json
-{
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
-  "group_offload_blocks_per_group": 1,
-  "group_offload_use_stream": true
-}
-```
-</details>
 
 ## Prerequisites
 
@@ -197,7 +177,6 @@ Video training is extremely demanding. If you OOM:
 
 1.  **Reduce Resolution**: Try 480p (`480x854` or similar).
 2.  **Reduce Frames**: Drop `validation_num_video_frames` and dataset `num_frames` to `33` or `49`.
-3.  **Check Offload**: Ensure `--enable_group_offload` is active.
 
 ### Validation Video Quality
 

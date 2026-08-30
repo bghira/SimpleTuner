@@ -120,4 +120,3 @@ simpletuner train --config config/config.json
 - **条件画像がない**: `conditioning_data` で条件データセットを指定し、ファイル名が一致していることを確認してください。検証では `eval_dataset_id` を検証スプリット ID に設定します。
 - **高さ/幅エラー**: 16 で割り切れ、64px グリッドに揃っていることを確認してください。
 - **最初のフレームがドリフト**: ガイダンスを下げる（3.5〜4.0）か、ステップ数を減らしてください。
-- **OOM**: 検証解像度/フレーム数を下げ、`lora_rank` を減らす、group offload を有効化する、`int8-quanto`/`fp8-torchao` を使う。

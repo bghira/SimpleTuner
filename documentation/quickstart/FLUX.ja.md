@@ -160,23 +160,6 @@ SimpleTunerには、トレーニングの安定性とパフォーマンスを大
 
 </details>
 
-### メモリオフロード(オプション)
-
-Fluxはdiffusers v0.33+を介してグループ化されたモジュールオフロードをサポートしています。これにより、トランスフォーマーの重みでボトルネックになっている場合、VRAMの圧力が劇的に軽減されます。`TRAINER_EXTRA_ARGS`(またはWebUIのハードウェアページ)に以下のフラグを追加することで有効にできます:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- `--group_offload_use_stream`はCUDAデバイスでのみ有効です。SimpleTunerはROCm、MPS、CPUバックエンドでストリームを自動的に無効にします。
-- `--enable_model_cpu_offload`と組み合わせ**ない**でください。2つの戦略は相互に排他的です。
-- `--group_offload_to_disk_path`を使用する場合は、高速なローカルSSD/NVMeターゲットを優先してください。
-
 #### 検証プロンプト
 
 `config/config.json`内には「プライマリ検証プロンプト」があり、これは通常、単一の被写体またはスタイルに対してトレーニングしているメインのinstance_promptです。さらに、検証中に実行する追加のプロンプトを含むJSONファイルを作成できます。

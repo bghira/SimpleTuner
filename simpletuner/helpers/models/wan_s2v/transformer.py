@@ -1329,16 +1329,17 @@ class WanS2VTransformer3DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
                 current_rope = router.route_rope(rotary_emb, tread_mask_info)
                 routing_now = True
 
-            # Musubi: stream in block if managed
-            if musubi_offload_active and musubi_manager.is_managed_block(block_idx):
-                musubi_manager.stream_in(block, hidden_states.device)
-
-            if self.training and should_checkpoint_block(
+            checkpoint_this_block = self.training and should_checkpoint_block(
                 block_idx,
                 self.gradient_checkpointing,
                 self.gradient_checkpointing_interval,
                 self.gradient_checkpointing_segment_stride,
-            ):
+            )
+            # Musubi: stream in block if managed
+            if musubi_offload_active and musubi_manager.is_managed_block(block_idx):
+                musubi_manager.stream_in(block, hidden_states.device, checkpointed=checkpoint_this_block)
+
+            if checkpoint_this_block:
                 hidden_states = self._gradient_checkpointing_func(
                     block, hidden_states, encoder_hidden_states, timestep_proj, current_rope
                 )

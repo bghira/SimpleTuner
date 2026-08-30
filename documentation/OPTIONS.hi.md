@@ -198,7 +198,6 @@ simpletuner configure config/foo/config.json
 
 - **What**: VAE caching चलने के दौरान text encoder weights को CPU पर offload करता है।
 - **Why**: HiDream और Wan 2.1 जैसे बड़े मॉडल्स में VAE cache लोड करते समय OOM हो सकता है। यह विकल्प training quality को प्रभावित नहीं करता, लेकिन बहुत बड़े text encoders या धीमे CPUs के साथ, कई datasets पर startup time काफ़ी बढ़ सकता है। इसी कारण यह डिफ़ॉल्ट रूप से disabled है।
-- **Tip**: विशेष रूप से memory‑constrained systems के लिए नीचे दिए group offloading फीचर के साथ पूरक है।
 
 ### `--offload_during_save`
 
@@ -269,39 +268,6 @@ simpletuner configure config/foo/config.json
 - **Behavior**: हर batch में एक noise block sample करता है, केवल उसका layer group चलाता है, और DDP unused-parameter detection अपने आप enable करता है।
 - **Limits**: केवल Transformer denoisers। [DiffusionBlocks](experimental/DIFFUSION_BLOCKS.hi.md) देखें।
 
-### `--enable_group_offload`
-
-- **What**: diffusers की grouped module offloading सक्षम करता है ताकि forward passes के बीच model blocks को CPU (या disk) पर stage किया जा सके।
-- **Why**: बड़े transformers (Flux, Wan, Auraflow, LTXVideo, Cosmos2Image) पर peak VRAM usage को बहुत कम करता है, खासकर CUDA streams के साथ, और performance पर न्यूनतम प्रभाव पड़ता है।
-- **Notes**:
-  - `--enable_model_cpu_offload` के साथ mutually exclusive — प्रति run एक ही strategy चुनें।
-  - diffusers **v0.33.0** या नया required है।
-
-### `--group_offload_type`
-
-- **Choices**: `block_level` (डिफ़ॉल्ट), `leaf_level`
-- **What**: layers को कैसे group किया जाए नियंत्रित करता है। `block_level` VRAM बचत और throughput के बीच संतुलन रखता है, जबकि `leaf_level` अधिक CPU transfers की कीमत पर अधिक बचत देता है।
-
-### `--group_offload_blocks_per_group`
-
-- **What**: `block_level` उपयोग करते समय, एक offload group में कितने transformer blocks bundle किए जाएँ।
-- **Default**: `1`
-- **Why**: इस संख्या को बढ़ाने से transfer frequency कम होती है (तेज़), लेकिन अधिक parameters accelerator पर resident रहते हैं (अधिक VRAM)।
-
-### `--group_offload_use_stream`
-
-- **What**: host/device transfers को compute के साथ overlap करने के लिए dedicated CUDA stream उपयोग करता है।
-- **Default**: `False`
-- **Notes**:
-  - non‑CUDA backends (Apple MPS, ROCm, CPU) पर स्वतः CPU‑style transfers पर fallback करता है।
-  - NVIDIA GPUs पर training करते समय, और copy engine capacity spare हो, तो अनुशंसित।
-
-### `--group_offload_to_disk_path`
-
-- **What**: directory path जहाँ grouped parameters को RAM की बजाय disk पर spill किया जाएगा।
-- **Why**: अत्यंत tight CPU RAM बजट के लिए उपयोगी (जैसे बड़े NVMe drive वाला workstation)।
-- **Tip**: तेज़ local SSD उपयोग करें; network filesystems training को काफी धीमा कर देंगे।
-
 ### `--musubi_blocks_to_swap`
 
 - **What**: LongCat‑Video, Wan, LTXVideo, Kandinsky5‑Video, Qwen‑Image, Flux, Flux.2, zlab i1, Cosmos2Image, HunyuanVideo, और Krea 2 के लिए Musubi block swap — आख़िरी N transformer blocks को CPU पर रखें और forward के दौरान प्रति block weights stream करें।
@@ -320,7 +286,6 @@ simpletuner configure config/foo/config.json
 - **Why**: Linear weights को CPU memory में साझा करता है और उन्हें accelerator पर stream करता है ताकि VRAM pressure कम हो।
 - **Notes**:
   - CUDA या ROCm आवश्यक है (Apple/MPS पर समर्थित नहीं)।
-  - `--enable_group_offload` के साथ mutually exclusive।
   - `--set_grads_to_none` स्वतः सक्षम करता है।
 
 ### `--ramtorch_target_modules`
@@ -636,6 +601,23 @@ Settings को `config.json` में persist करने के लिए �
 
 यदि आप Accelerate defaults inherit करना चाहते हैं तो संबंधित entries छोड़ दें (उदा., `dynamo_mode` न दें ताकि automatic selection उपयोग हो)।
 
+### `--dynamo_wrapper`
+
+TorchInductor का host wrapper चुनता है। `cpp` default है और dispatch overhead घटाता है; `python` पुराने releases का behavior बनाए रखता है। यह चयन Mega-Cache filename और manifest में शामिल होता है।
+
+### `--dynamo_cache_export`
+
+PyTorch Mega-Cache के cumulative blob की optional path। SimpleTuner compilation से पहले compatible blob load करता है, पहले सफल optimizer step के बाद export करता है, और हर checkpoint तथा shutdown पर नई artifact keys की जांच करता है। `<path>.manifest.json` में PyTorch/Triton/GPU runtime और SHA256 दर्ज होते हैं। किसी नई shape के लिए cache entry न मिलने पर PyTorch सामान्य compilation करता है और अगला export नए artifacts जोड़ देता है। केवल trusted cache blobs load करें।
+यदि value directory है, separator पर समाप्त होती है, या उसकी extension नहीं है, तो SimpleTuner model, runtime, accelerator और graph-relevant config से stable filename बनाता है और Hub पर भी वही नाम खोजता है।
+
+### `--dynamo_cache_export_after_first_step`
+
+`true` (default) होने पर पहले सफल optimizer step के बाद Mega-Cache export होती है। केवल इस early export को छोड़ने के लिए `false` करें; checkpoint और final exports सक्रिय रहते हैं।
+
+### `--dynamo_hub_repo_id`
+
+`--dynamo_cache_export` blob को retrieve और publish करने के लिए optional Hugging Face repository। Blob और manifest एक ही commit में upload होते हैं; missing repository private रूप में बनाई जाती है। Hub failure training को abort नहीं करता और local export सुरक्षित रहता है।
+
 ### `--attention_mechanism`
 
 Alternative attention mechanisms समर्थित हैं, जिनके compatibility स्तर या trade‑offs अलग होते हैं:
@@ -819,6 +801,13 @@ Alternative attention mechanisms समर्थित हैं, जिनक�
 
 - **What**: memory में रखे गए batches की संख्या बढ़ाता या घटाता है।
 - **Why**: dataloader prefetch के साथ, डिफ़ॉल्ट रूप से प्रति GPU/process 10 entries memory में रखी जाती हैं। यह बहुत अधिक या बहुत कम हो सकता है। इस मान को बदलकर batches की संख्या समायोजित की जा सकती है।
+
+### `--dataloader_prefetch_device_threshold_mb`
+
+- **What**: MiB में न्यूनतम unique CPU batch payload जिसे dataloader prefetch page-lock करके dedicated CUDA stream पर transfer करता है। `0` device staging बंद करता है।
+- **Why**: बहुत बड़े cached embeddings host-to-device transfer को model work के साथ serial कर सकते हैं। यह विकल्प transfer और GPU compute को overlap करता है।
+- **Memory**: हर staged queue entry pinned host memory और accelerator memory दोनों उपयोग करती है। `dataloader_prefetch_qlen: 2` से शुरू करें और बढ़ाने से पहले profile करें।
+- **Compatibility**: `dataloader_prefetch: true` और CUDA आवश्यक हैं। Context parallelism के साथ यह समर्थित नहीं है।
 
 ### `--compress_disk_cache`
 
@@ -2260,6 +2249,7 @@ usage: train.py [-h] --model_family
                 [--torch_num_threads TORCH_NUM_THREADS]
                 [--dataloader_prefetch [DATALOADER_PREFETCH]]
                 [--dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN]
+                [--dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB]
                 [--aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT]
                 [--aspect_bucket_alignment {8,16,24,32,64}]
                 [--minimum_image_size MINIMUM_IMAGE_SIZE]
@@ -2913,6 +2903,10 @@ options:
                         so that it can be immediately available
   --dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN
                         Set the number of prefetched batches
+  --dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB
+                        Minimum CPU batch payload in MiB to page-lock and
+                        transfer on a dedicated CUDA stream during dataloader
+                        prefetch; 0 disables device staging
   --aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT
                         The number of workers to use for aspect bucketing.
                         This is a CPU-bound task, so the number of workers

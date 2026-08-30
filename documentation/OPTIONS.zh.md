@@ -198,7 +198,6 @@ simpletuner configure config/foo/config.json
 
 - **内容**：在 VAE 缓存期间将文本编码器权重卸载到 CPU。
 - **原因**：对 HiDream、Wan 2.1 等大模型，加载 VAE 缓存时可能 OOM。该选项不影响训练质量，但在超大文本编码器或慢 CPU 下可能显著延长启动时间，故默认关闭。
-- **提示**：对内存极其紧张的系统，可配合下方分组卸载功能使用。
 
 ### `--offload_during_save`
 
@@ -269,39 +268,6 @@ simpletuner configure config/foo/config.json
 - **行为**：每个 batch 采样一个噪声块，只执行对应层组，并为 DDP 自动启用 unused-parameter 检测。
 - **限制**：仅支持 Transformer denoiser。详见 [DiffusionBlocks](experimental/DIFFUSION_BLOCKS.zh.md)。
 
-### `--enable_group_offload`
-
-- **内容**：启用 diffusers 的分组模块卸载，使模型块在前向之间驻留在 CPU（或磁盘）。
-- **原因**：在大 Transformer（Flux、Wan、Auraflow、LTXVideo、Cosmos2Image）上显著降低显存峰值；配合 CUDA streams 时性能影响较小。
-- **说明**：
-  - 与 `--enable_model_cpu_offload` 互斥，每次运行只能选择一种策略。
-  - 需要 diffusers **v0.33.0** 或更新版本。
-
-### `--group_offload_type`
-
-- **选项**：`block_level`（默认）、`leaf_level`
-- **内容**：控制层的分组方式。`block_level` 在显存与吞吐之间取得平衡；`leaf_level` 最大化节省，但 CPU 传输更多。
-
-### `--group_offload_blocks_per_group`
-
-- **内容**：使用 `block_level` 时，每组包含的 Transformer 块数量。
-- **默认**：`1`
-- **原因**：增加该值可减少传输频率（更快），但会在加速器上保留更多参数（占用更多显存）。
-
-### `--group_offload_use_stream`
-
-- **内容**：使用专用 CUDA 流将主机/设备传输与计算重叠。
-- **默认**：`False`
-- **说明**：
-  - 在非 CUDA 后端（Apple MPS、ROCm、CPU）自动回退为 CPU 风格传输。
-  - 在 NVIDIA GPU 上有空闲拷贝引擎时推荐开启。
-
-### `--group_offload_to_disk_path`
-
-- **内容**：将分组参数溢出到磁盘而非 RAM 的目录路径。
-- **原因**：适用于 CPU RAM 极为紧张的系统（例如带大容量 NVMe 的工作站）。
-- **提示**：请使用高速本地 SSD；网络文件系统会显著拖慢训练。
-
 ### `--musubi_blocks_to_swap`
 
 - **内容**：为 LongCat-Video、Wan、LTXVideo、Kandinsky5-Video、Qwen-Image、Flux、Flux.2、zlab i1、Cosmos2Image、HunyuanVideo、Krea 2 提供 Musubi 块交换。将最后 N 个 Transformer 块保留在 CPU，并在前向中按块流式加载权重。
@@ -321,7 +287,6 @@ simpletuner configure config/foo/config.json
 - **原因**：在 CPU 内存共享 Linear 权重并流式传到加速器，以降低显存压力。
 - **说明**：
   - 需要 CUDA 或 ROCm（不支持 Apple/MPS）。
-  - 与 `--enable_group_offload` 互斥。
   - 自动启用 `--set_grads_to_none`。
 
 ### `--ramtorch_target_modules`
@@ -639,6 +604,23 @@ TRAINING_DYNAMO_BACKEND=inductor
 
 省略你希望继承 Accelerate 默认值的项（例如省略 `dynamo_mode` 以使用自动选择）。
 
+### `--dynamo_wrapper`
+
+选择 TorchInductor 的 host wrapper。`cpp` 为默认值并减少调度开销；`python` 保留旧版本行为。该选择会写入 Mega-Cache 文件名和 manifest。
+
+### `--dynamo_cache_export`
+
+累积 PyTorch Mega-Cache blob 的可选路径。SimpleTuner 会在编译前加载兼容 blob，在第一个成功的优化器步骤后导出，并在每次 checkpoint 和关闭时检查新的 artifact key。`<路径>.manifest.json` 会记录 PyTorch/Triton/GPU 运行时和 SHA256。未覆盖的 shape 会正常编译，其产物会加入下一次导出。只应加载可信的缓存 blob。
+当该值是目录、以路径分隔符结尾或没有扩展名时，SimpleTuner 会根据模型、运行时、加速器和影响计算图的配置生成稳定文件名，并在 Hub 上查找同名文件。
+
+### `--dynamo_cache_export_after_first_step`
+
+为 `true`（默认）时，在第一个成功的优化器步骤后导出 Mega-Cache。设为 `false` 只会跳过这次早期导出；checkpoint 和训练结束导出仍会执行。
+
+### `--dynamo_hub_repo_id`
+
+用于获取和发布 `--dynamo_cache_export` blob 的可选 Hugging Face 仓库。Blob 与 manifest 会在一次 commit 中上传；不存在的仓库会创建为 private。Hub 故障不会中止训练，本地导出仍会保留。
+
 ### `--attention_mechanism`
 
 支持多种注意力机制，兼容性与权衡不同：
@@ -822,6 +804,13 @@ TRAINING_DYNAMO_BACKEND=inductor
 
 - **内容**：增减内存中缓存的批次数。
 - **原因**：启用预取后，默认每个 GPU/进程保留 10 个条目。该值可调以增加或减少预取批次数。
+
+### `--dataloader_prefetch_device_threshold_mb`
+
+- **内容**：指定 dataloader 预取进行页锁定并通过专用 CUDA 流传输的最小 CPU 唯一批次载荷（MiB）。`0` 表示禁用设备暂存。
+- **原因**：非常大的缓存嵌入可能会使主机到设备的传输与模型计算串行执行。此选项让传输与 GPU 计算重叠。
+- **内存**：每个暂存的队列条目都会同时消耗固定主机内存和加速器内存。请从 `dataloader_prefetch_qlen: 2` 开始，并在增大前进行性能分析。
+- **兼容性**：需要 `dataloader_prefetch: true` 和 CUDA。不支持与上下文并行同时使用。
 
 ### `--compress_disk_cache`
 
@@ -2265,6 +2254,7 @@ usage: train.py [-h] --model_family
                 [--torch_num_threads TORCH_NUM_THREADS]
                 [--dataloader_prefetch [DATALOADER_PREFETCH]]
                 [--dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN]
+                [--dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB]
                 [--aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT]
                 [--aspect_bucket_alignment {8,16,24,32,64}]
                 [--minimum_image_size MINIMUM_IMAGE_SIZE]
@@ -2916,6 +2906,10 @@ options:
                         so that it can be immediately available
   --dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN
                         Set the number of prefetched batches
+  --dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB
+                        Minimum CPU batch payload in MiB to page-lock and
+                        transfer on a dedicated CUDA stream during dataloader
+                        prefetch; 0 disables device staging
   --aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT
                         The number of workers to use for aspect bucketing.
                         This is a CPU-bound task, so the number of workers

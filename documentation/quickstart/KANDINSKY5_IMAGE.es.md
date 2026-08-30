@@ -18,27 +18,7 @@ Necesitarás:
 
 ### Offloading de memoria (recomendado)
 
-Dado el tamaño del codificador de texto, casi seguro deberías usar offloading agrupado si estás en hardware de consumo. Esto descarga los bloques del transformer a memoria CPU cuando no se están computando activamente.
-
-Agrega lo siguiente a tu `config.json`:
-
-<details>
-<summary>Ver ejemplo de config</summary>
-
-```json
-{
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
-  "group_offload_blocks_per_group": 1,
-  "group_offload_use_stream": true
-}
-```
-</details>
-
-- `--group_offload_use_stream`: Solo funciona en dispositivos CUDA.
-- **No** combines esto con `--enable_model_cpu_offload`.
-
-Además, configura `"offload_during_startup": true` en tu `config.json` para reducir el uso de VRAM durante la fase de inicialización y caché. Esto asegura que el codificador de texto y el VAE no se carguen simultáneamente.
+Configura `"offload_during_startup": true` en tu `config.json` para reducir el uso de VRAM durante la fase de inicialización y caché. Esto asegura que el codificador de texto y el VAE no se carguen simultáneamente.
 
 ## Requisitos previos
 
@@ -251,7 +231,6 @@ simpletuner train
 
 Para ejecutar en setups de 16GB o 24GB limitados:
 
-1.  **Habilita Group Offload**: `--enable_group_offload`.
 2.  **Cuantiza el modelo base**: Configura `"base_model_precision": "int8-quanto"`.
 3.  **Tamaño de lote**: Mantenlo en `1`.
 

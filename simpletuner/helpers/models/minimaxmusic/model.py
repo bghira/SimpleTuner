@@ -331,6 +331,10 @@ class MiniMaxMusic(AudioModelFoundation):
         lm_max_frames = getattr(args, "minimax_music_lm_max_frames", None)
         if lm_max_frames:
             lines.append(f"- MiniMax Music LM max frames: `{lm_max_frames}`")
+        if train_component == "language_model":
+            lines.append(
+                "- MiniMax Music LM window mode: " f"`{getattr(args, 'minimax_music_lm_window_mode', 'prefix') or 'prefix'}`"
+            )
         return "\n".join(lines)
 
     @classmethod
@@ -1093,7 +1097,7 @@ class MiniMaxMusic(AudioModelFoundation):
         cache_encoder,
         samples: torch.Tensor,
         metadata_entries: Optional[list] = None,
-    ) -> torch.Tensor | dict:
+    ) -> dict:
         if not isinstance(cache_encoder, MiniMaxMusicRVQCacheEncoder):
             raise TypeError(
                 "MiniMax Music LM VAE cache expects MiniMaxMusicRVQCacheEncoder; " f"received {type(cache_encoder)}."
@@ -1451,6 +1455,18 @@ class MiniMaxMusic(AudioModelFoundation):
                 boundary_source[key] = example[key]
         return codes, self._lm_audio_boundary_metadata(boundary_source)
 
+    @staticmethod
+    def _lm_caption_from_example(example: dict) -> str:
+        for key in ("prompt", "tags", "instance_prompt_text"):
+            if key in example:
+                caption = example[key]
+                if caption is None:
+                    continue
+                if isinstance(caption, str):
+                    return caption
+                break
+        raise ValueError("MiniMax Music 3 language model training requires 'prompt' (or 'tags') metadata.")
+
     def collate_audio_tokens(self, examples: list[dict]) -> dict:
         if not self._train_language_model:
             raise ValueError("collate_audio_tokens is only used when --minimax_music_train_component=language_model.")
@@ -1469,11 +1485,11 @@ class MiniMaxMusic(AudioModelFoundation):
         has_audio_end = []
         prompts = []
         for example in examples:
-            caption = example.get("prompt") or example.get("tags")
+            caption = self._lm_caption_from_example(example)
             lyrics = example.get("lyrics")
-            if not isinstance(caption, str) or not caption.strip():
-                raise ValueError("MiniMax Music 3 language model training requires 'prompt' (or 'tags') metadata.")
-            if not isinstance(lyrics, str):
+            if lyrics is None:
+                lyrics = ""
+            elif not isinstance(lyrics, str):
                 raise ValueError(
                     "MiniMax Music 3 language model training requires 'lyrics' metadata (an empty string is "
                     "allowed for instrumental or regularisation tracks)."
@@ -1485,14 +1501,20 @@ class MiniMaxMusic(AudioModelFoundation):
             )
             codes, start_frame, loss_start_frame, truncated = self._lm_slice_audio_codes(codes, max_frames, window_mode)
             absolute_start_frame = source_start_frame + start_frame
+            sequence_end_frame = absolute_start_frame + int(codes.shape[0])
             continuation_random = (
                 window_mode == "continuation" and self._lm_continuation_crop_mode() == "random" and start_frame > 0
             )
-            positioned_window = window_mode == "random" or continuation_random
             cached_source_excerpt = source_start_frame > 0 or not source_crop_is_terminal
-            include_window_context = cached_source_excerpt or positioned_window
+            prefix_truncated_excerpt = window_mode == "prefix" and (truncated or sequence_end_frame < total_frames)
+            random_excerpt = window_mode == "random" and (
+                truncated or sequence_end_frame < total_frames or cached_source_excerpt
+            )
+            include_window_context = (
+                cached_source_excerpt or prefix_truncated_excerpt or random_excerpt or continuation_random
+            )
             prompt_lyrics = lyrics
-            if include_window_context and (absolute_start_frame > 0 or truncated or not source_crop_is_terminal):
+            if include_window_context:
                 prompt_lyrics = example.get("lyrics_window") if isinstance(example.get("lyrics_window"), str) else ""
             prompt_text = self._lm_prompt_text(
                 caption,

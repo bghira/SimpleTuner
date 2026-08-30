@@ -194,7 +194,6 @@
                 const labels = {
                     'RAMTORCH': 'RamTorch Streaming',
                     'MUSUBI_BLOCK_SWAP': 'Block Swap',
-                    'GROUP_OFFLOAD': 'Group Offload',
                     'deepspeed': 'DeepSpeed ZeRO',
                     'DEEPSPEED_ZERO_1': 'DeepSpeed ZeRO',
                     'DEEPSPEED_ZERO_2': 'DeepSpeed ZeRO',
@@ -212,7 +211,7 @@
             },
 
             togglePreset(preset) {
-                const exclusiveBackends = ['RAMTORCH', 'GROUP_OFFLOAD', 'MUSUBI_BLOCK_SWAP'];
+                const exclusiveBackends = ['RAMTORCH', 'MUSUBI_BLOCK_SWAP'];
 
                 if (this.isPresetSelected(preset)) {
                     // Deselect
@@ -225,8 +224,8 @@
                                 delete this.selectedPresets[backend];
                             }
                         }
-                        // Clear custom block swap when selecting RamTorch or Group Offload
-                        if (preset.backend === 'RAMTORCH' || preset.backend === 'GROUP_OFFLOAD') {
+                        // RamTorch and block swapping use competing residency managers.
+                        if (preset.backend === 'RAMTORCH') {
                             this.customBlockSwapCount = 0;
                         }
                     }
@@ -287,8 +286,6 @@
                     'ramtorch',
                     'ramtorch_target_modules',
                     'musubi_blocks_to_swap',
-                    'enable_group_offload',
-                    'group_offload_type',
                     'deepspeed_config',
                 ];
 
@@ -297,8 +294,6 @@
                     'ramtorch': false,
                     'ramtorch_target_modules': '',
                     'musubi_blocks_to_swap': 0,
-                    'enable_group_offload': false,
-                    'group_offload_type': '',
                     'deepspeed_config': '',
                 };
 
@@ -394,10 +389,9 @@
             },
 
             onBlockSwapSliderChange() {
-                // Clear RamTorch and Group Offload if custom block swap is set
+                // Clear RamTorch if custom block swap is set.
                 if (this.customBlockSwapCount > 0) {
                     delete this.selectedPresets['RAMTORCH'];
-                    delete this.selectedPresets['GROUP_OFFLOAD'];
                     this.selectedPresets = { ...this.selectedPresets };
                 }
             }

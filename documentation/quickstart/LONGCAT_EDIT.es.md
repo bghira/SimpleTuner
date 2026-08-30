@@ -119,4 +119,3 @@ Asegúrate de que el dataset de referencia esté presente durante el entrenamien
 - **Latentes de condicionamiento faltantes**: asegúrate de que el dataset de referencia esté conectado vía `conditioning_data` y que los nombres de archivo coincidan.
 - **Errores de dtype en MPS**: el pipeline baja automáticamente pos‑ids a float32 en MPS; mantén el resto en float32/bf16.
 - **Desajuste de canales en previews**: los previews des‑patchify los latentes antes de decodificar (mantén esta versión de SimpleTuner).
-- **OOM durante edición**: baja la resolución/pasos de validación, reduce `lora_rank`, habilita group offload y prefiere `int8-quanto`/`fp8-torchao`.

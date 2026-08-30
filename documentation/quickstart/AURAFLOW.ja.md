@@ -10,23 +10,6 @@ Auraflow v0.3 は 6B パラメータの MMDiT としてリリースされ、エ�
 
 推論はやや遅めですが、学習は十分な速度で動作します。
 
-### メモリオフロード（オプション）
-
-Auraflow は新しいグループオフロード経路の恩恵が大きいです。単一 24G（またはそれ以下）GPU に制約される場合は、以下を学習フラグに追加してください:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- ストリームは非 CUDA バックエンドでは自動的に無効になるため、ROCm と MPS でも安全に再利用できます。
-- `--enable_model_cpu_offload` とは併用しないでください。
-- ディスクオフロードはスループットと引き換えにホスト RAM 圧を下げます。最良の結果のためローカル SSD を使ってください。
-
 ### 前提条件
 
 Python がインストールされていることを確認してください。SimpleTuner は 3.10 から 3.12 でうまく動作します。

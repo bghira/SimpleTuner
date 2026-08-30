@@ -126,11 +126,6 @@ function trainingWizardComponent() {
             ramtorch_text_encoder: false,
             ramtorch_vae: false,
             ramtorch_controlnet: false,
-            enable_group_offload: false,
-            group_offload_type: 'block_level',
-            group_offload_blocks_per_group: 1,
-            group_offload_use_stream: false,
-            group_offload_to_disk_path: '',
             fsdp_enable: false,
             fsdp_version: 2,
             fsdp_reshard_after_forward: true,
@@ -845,7 +840,6 @@ function trainingWizardComponent() {
             const labels = {
                 'RAMTORCH': 'RamTorch',
                 'MUSUBI_BLOCK_SWAP': 'Block Swap',
-                'GROUP_OFFLOAD': 'Group Offload',
                 'DEEPSPEED_ZERO_1': 'DeepSpeed ZeRO 1',
                 'DEEPSPEED_ZERO_2': 'DeepSpeed ZeRO 2',
                 'FSDP2': 'FSDP2'
@@ -859,7 +853,7 @@ function trainingWizardComponent() {
 
         togglePreset(preset) {
             // Mutually exclusive backends - can only have one of these active
-            const exclusiveBackends = ['RAMTORCH', 'MUSUBI_BLOCK_SWAP', 'GROUP_OFFLOAD'];
+            const exclusiveBackends = ['RAMTORCH', 'MUSUBI_BLOCK_SWAP'];
 
             if (this.isPresetSelected(preset)) {
                 // Deselect
@@ -872,8 +866,8 @@ function trainingWizardComponent() {
                             delete this.selectedPresets[backend];
                         }
                     }
-                    // Clear custom block swap when selecting RamTorch or Group Offload
-                    if (preset.backend === 'RAMTORCH' || preset.backend === 'GROUP_OFFLOAD') {
+                    // RamTorch and block swapping use competing residency managers.
+                    if (preset.backend === 'RAMTORCH') {
                         this.customBlockSwapCount = 0;
                     }
                 }
@@ -1134,7 +1128,6 @@ function trainingWizardComponent() {
                     this.answers.offload_param_path = null;
                     this.deepspeedBaseConfig = null;
                     this.resetDeepSpeedState();
-                    this.clearGroupOffloadState();
                     this.clearFsdpState();
                 } else {
                     this.answers.base_model_precision = 'no_change';
@@ -1726,13 +1719,11 @@ function trainingWizardComponent() {
         },
 
         selectFullTrainingStrategy(strategy) {
-            const validStrategies = ['none', 'group_offload', 'deepspeed', 'fsdp2'];
+            const validStrategies = ['none', 'deepspeed', 'fsdp2'];
             const nextStrategy = validStrategies.includes(strategy) ? strategy : 'none';
 
             if (this.answers.full_training_strategy === nextStrategy) {
-                if (nextStrategy === 'group_offload') {
-                    this.ensureGroupOffloadDefaults();
-                } else if (nextStrategy === 'deepspeed') {
+                if (nextStrategy === 'deepspeed') {
                     this.ensureDeepSpeedDefaults();
                 } else if (nextStrategy === 'fsdp2') {
                     this.ensureFsdpDefaults();
@@ -1744,24 +1735,16 @@ function trainingWizardComponent() {
             this.answers.full_training_strategy = nextStrategy;
 
             switch (nextStrategy) {
-                case 'group_offload':
-                    this.resetDeepSpeedState();
-                    this.ensureGroupOffloadDefaults();
-                    this.clearFsdpState();
-                    break;
                 case 'deepspeed':
-                    this.clearGroupOffloadState();
                     this.ensureDeepSpeedDefaults();
                     this.clearFsdpState();
                     break;
                 case 'fsdp2':
                     this.resetDeepSpeedState();
-                    this.clearGroupOffloadState();
                     this.ensureFsdpDefaults();
                     break;
                 default:
                     this.resetDeepSpeedState();
-                    this.clearGroupOffloadState();
                     this.clearFsdpState();
                     break;
             }
@@ -1797,30 +1780,6 @@ function trainingWizardComponent() {
             this.answers.offload_param_path = null;
             this.deepspeedBaseConfig = null;
             this.syncDeepSpeedBuilderField();
-        },
-
-        ensureGroupOffloadDefaults() {
-            this.answers.enable_group_offload = true;
-            if (!this.answers.group_offload_type) {
-                this.answers.group_offload_type = 'block_level';
-            }
-            if (!Number.isFinite(this.answers.group_offload_blocks_per_group) || this.answers.group_offload_blocks_per_group <= 0) {
-                this.answers.group_offload_blocks_per_group = 1;
-            }
-            if (typeof this.answers.group_offload_use_stream !== 'boolean') {
-                this.answers.group_offload_use_stream = false;
-            }
-            if (typeof this.answers.group_offload_to_disk_path !== 'string') {
-                this.answers.group_offload_to_disk_path = '';
-            }
-        },
-
-        clearGroupOffloadState() {
-            this.answers.enable_group_offload = false;
-            this.answers.group_offload_type = null;
-            this.answers.group_offload_blocks_per_group = null;
-            this.answers.group_offload_use_stream = false;
-            this.answers.group_offload_to_disk_path = '';
         },
 
         ensureFsdpDefaults() {
@@ -1879,9 +1838,6 @@ function trainingWizardComponent() {
                     (typeof rawDeepSpeedConfig === 'string' && rawDeepSpeedConfig.trim().length > 0));
 
             const ramtorchEnabled = this.coerceBoolean(config.ramtorch ?? config['--ramtorch']) === true;
-            const groupOffloadEnabled = this.coerceBoolean(
-                config.enable_group_offload ?? config['--enable_group_offload']
-            ) === true;
             const fsdpEnabled = this.coerceBoolean(config.fsdp_enable ?? config['--fsdp_enable']) === true;
 
             this.answers.ramtorch = ramtorchEnabled;
@@ -1924,7 +1880,6 @@ function trainingWizardComponent() {
 
             if (this.answers.model_type !== 'full') {
                 this.resetDeepSpeedState();
-                this.clearGroupOffloadState();
                 this.clearFsdpState();
                 this.answers.context_parallel_size = null;
                 this.answers.full_training_strategy = 'none';
@@ -1999,41 +1954,6 @@ function trainingWizardComponent() {
                 );
                 if (layerClasses !== null) {
                     this.answers.fsdp_transformer_layer_cls_to_wrap = layerClasses;
-                }
-
-                return;
-            }
-
-            if (groupOffloadEnabled) {
-                this.selectFullTrainingStrategy('group_offload');
-                this.answers.enable_group_offload = true;
-
-                const offloadType = this.coerceString(
-                    config.group_offload_type ?? config['--group_offload_type']
-                );
-                if (offloadType) {
-                    this.answers.group_offload_type = offloadType;
-                }
-
-                const blocksPerGroup = this.coerceNumber(
-                    config.group_offload_blocks_per_group ?? config['--group_offload_blocks_per_group']
-                );
-                if (blocksPerGroup) {
-                    this.answers.group_offload_blocks_per_group = blocksPerGroup;
-                }
-
-                const useStream = this.coerceBoolean(
-                    config.group_offload_use_stream ?? config['--group_offload_use_stream']
-                );
-                if (useStream !== null) {
-                    this.answers.group_offload_use_stream = useStream;
-                }
-
-                const diskPath = this.coerceString(
-                    config.group_offload_to_disk_path ?? config['--group_offload_to_disk_path']
-                );
-                if (diskPath !== null) {
-                    this.answers.group_offload_to_disk_path = diskPath;
                 }
 
                 return;

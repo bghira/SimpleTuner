@@ -779,8 +779,6 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
         else:
             capture_idx = 0
             for index_block, block in enumerate(self.transformer_blocks):
-                if musubi_offload_active and musubi_manager.is_managed_block(index_block):
-                    musubi_manager.stream_in(block, hidden_states.device)
                 # TREAD: START a route?
                 if use_routing and route_ptr < len(routes) and global_idx == routes[route_ptr]["start_layer_idx"]:
                     mask_ratio = routes[route_ptr]["selection_ratio"]
@@ -800,7 +798,7 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
                         hidden_states = hidden_states + block_controlnet_hidden_states[index_block // interval_control]
                     continue
 
-                if (
+                checkpoint_this_block = (
                     self.training
                     and self.gradient_checkpointing
                     and should_checkpoint_block(
@@ -809,7 +807,11 @@ class SD3Transformer2DModel(PatchableModule, ModelMixin, ConfigMixin, PeftAdapte
                         self.gradient_checkpointing_interval,
                         self.gradient_checkpointing_segment_stride,
                     )
-                ):
+                )
+                if musubi_offload_active and musubi_manager.is_managed_block(index_block):
+                    musubi_manager.stream_in(block, hidden_states.device, checkpointed=checkpoint_this_block)
+
+                if checkpoint_this_block:
 
                     def custom_forward(*inputs, checkpoint_block=block, attention_kwargs=joint_attention_kwargs):
                         return _sd3_apply_joint_transformer_block(

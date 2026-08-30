@@ -206,23 +206,6 @@ class Flux(ImageModelFoundation):
             ),
             # DeepSpeed presets (multi-GPU only)
             *get_deepspeed_presets(_base_memory_config),
-            # Advanced tab - Group Offload
-            AccelerationPreset(
-                backend=AccelerationBackend.GROUP_OFFLOAD,
-                level="block",
-                name="Group Offload - Block Level",
-                description="Offloads module groups to CPU using diffusers hooks.",
-                tab="advanced",
-                tradeoff_vram="Substantial VRAM savings",
-                tradeoff_speed="Significant overhead from CPU-GPU transfers",
-                tradeoff_notes="Known stability issues. Mutually exclusive with RamTorch.",
-                requires_min_system_ram_gb=64,
-                config={
-                    **_base_memory_config,
-                    "enable_group_offload": True,
-                    "group_offload_type": "block_level",
-                },
-            ),
             # SDNQ presets (works on AMD, Apple, NVIDIA)
             *get_sdnq_presets(_base_memory_config),
             # TorchAO presets (NVIDIA only)

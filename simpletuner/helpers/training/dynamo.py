@@ -1,5 +1,6 @@
 import contextlib
 import contextvars
+import importlib
 import logging
 import os
 from collections.abc import Callable, Iterator
@@ -11,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 _PEFT_LORA_CUDAGRAPH_PATCHED = False
 _PEFT_TE_LORA_CUDAGRAPH_PATCHED = False
+_CHECKPOINT_CUDAGRAPH_ISSUE = "https://github.com/pytorch/pytorch/issues/154306"
 
 
 @torch.compiler.disable
@@ -52,19 +54,77 @@ def run_with_dynamo_config(config: Any, fn: Callable[..., Any], *args: Any, **kw
 def _normalise_text(value: Any) -> str:
     if value is None:
         return ""
+    enum_value = getattr(value, "value", None)
+    if isinstance(enum_value, str):
+        value = enum_value
     return str(value).strip().lower().replace("_", "-")
 
 
-def _inductor_cudagraphs_enabled(config: Any = None) -> bool:
+def _effective_dynamo_backend(config: Any) -> str:
     config_backend = _normalise_text(getattr(config, "dynamo_backend", None))
+    training_backend = _normalise_text(os.environ.get("TRAINING_DYNAMO_BACKEND"))
     accelerate_backend = _normalise_text(os.environ.get("ACCELERATE_DYNAMO_BACKEND"))
-    backend = accelerate_backend or config_backend
-    if backend != "inductor":
+    inactive = {"", "no", "none", "disabled"}
+    for backend in (config_backend, training_backend, accelerate_backend):
+        if backend not in inactive:
+            return backend
+    return "no"
+
+
+def apply_checkpointing_cudagraph_compatibility(config: Any) -> bool:
+    backend = _normalise_text(getattr(config, "dynamo_backend", None))
+    mode = _normalise_text(getattr(config, "dynamo_mode", None))
+    checkpointing = _coerce_flag(getattr(config, "gradient_checkpointing", False))
+    if backend != "inductor" or mode not in {"cudagraphs", "reduce-overhead"} or not checkpointing:
+        return False
+
+    config.dynamo_mode = "default"
+    os.environ["TRAINING_DYNAMO_MODE"] = "default"
+    os.environ["ACCELERATE_DYNAMO_MODE"] = "default"
+    logger.warning(
+        "Activation checkpointing is incompatible with Inductor CUDA Graph mode '%s' due to PyTorch issue %s; "
+        "using dynamo_mode='default' while preserving regional compilation.",
+        mode,
+        _CHECKPOINT_CUDAGRAPH_ISSUE,
+    )
+    return True
+
+
+def configure_inductor_wrapper(config: Any) -> str:
+    """Apply the selected Inductor runtime wrapper before any graphs compile."""
+    configured_wrapper = getattr(config, "dynamo_wrapper", None)
+    if not isinstance(configured_wrapper, str):
+        configured_wrapper = None
+    wrapper = _normalise_text(configured_wrapper) or "cpp"
+    if wrapper in {"cpp", "c++"}:
+        wrapper = "cpp"
+        enabled = True
+    elif wrapper == "python":
+        enabled = False
+    else:
+        raise ValueError("--dynamo_wrapper must be either 'cpp' or 'python'.")
+
+    if _effective_dynamo_backend(config) != "inductor":
+        return wrapper
+
+    os.environ["TORCHINDUCTOR_CPP_WRAPPER"] = "1" if enabled else "0"
+    try:
+        inductor_config = importlib.import_module("torch._inductor.config")
+        inductor_config.cpp_wrapper = enabled
+    except Exception as exc:
+        logger.warning("Unable to configure the TorchInductor %s wrapper: %s", wrapper, exc)
+    logger.info("TorchInductor wrapper: %s", wrapper)
+    return wrapper
+
+
+def _inductor_cudagraphs_enabled(config: Any = None) -> bool:
+    if _effective_dynamo_backend(config) != "inductor":
         return False
 
     config_mode = _normalise_text(getattr(config, "dynamo_mode", None))
+    training_mode = _normalise_text(os.environ.get("TRAINING_DYNAMO_MODE"))
     accelerate_mode = _normalise_text(os.environ.get("ACCELERATE_DYNAMO_MODE"))
-    mode = accelerate_mode or config_mode
+    mode = config_mode or training_mode or accelerate_mode
 
     try:
         import torch._inductor.config as inductor_config

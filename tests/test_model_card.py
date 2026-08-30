@@ -11,6 +11,7 @@ import torch
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.publishing.metadata import *
 from simpletuner.helpers.publishing.metadata import (
+    _audio_dataset_overview,
     _guidance_rescale,
     _license_metadata,
     _model_imports,
@@ -87,6 +88,7 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.attention_mechanism = "diffusers"
         self.args.minimax_music_train_component = None
         self.args.minimax_music_lm_max_frames = None
+        self.args.minimax_music_lm_window_mode = "prefix"
         self.args.nextlat_enabled = False
         self.args.nextlat_block_index = -1
         self.args.nextlat_weight = 0.0
@@ -113,6 +115,26 @@ class TestMetadataFunctions(unittest.TestCase):
             self.args.lora_type = "lycoris"
             output = _model_imports(self.args)
             self.assertIn("from lycoris import create_lycoris_from_weights", output)
+
+    def test_audio_dataset_overview_does_not_reload_live_metadata(self):
+        metadata_backend = MagicMock()
+        metadata_backend.image_metadata = {"0.wav": {"sample_rate": 44100, "num_channels": 2, "dataset_type": "audio"}}
+        metadata_backend.aspect_ratio_bucket_indices = {"180s": ["0.wav"]}
+        sampler = SimpleNamespace(is_regularisation_data=True, conditioning_type=None)
+
+        with patch(
+            "simpletuner.helpers.publishing.metadata.StateTracker.get_data_backend_config",
+            return_value={"repeats": 0},
+        ):
+            overview = _audio_dataset_overview(
+                "audio",
+                {"metadata_backend": metadata_backend, "sampler": sampler},
+            )
+
+        metadata_backend.load_image_metadata.assert_not_called()
+        self.assertIn("Total number of audio files: 1", overview)
+        self.assertIn("Sample rate: 44.1 kHz", overview)
+        self.assertIn("Channels: 2", overview)
 
     def test_hub_manager_loads_standard_environment_token(self):
         manager = object.__new__(HubManager)
@@ -317,6 +339,7 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.model_card_note = ""
         self.args.minimax_music_train_component = "language_model"
         self.args.minimax_music_lm_max_frames = 128
+        self.args.minimax_music_lm_window_mode = "random"
         self.args.nextlat_enabled = True
         self.args.nextlat_block_index = -1
         self.args.nextlat_weight = 0.1
@@ -337,7 +360,8 @@ class TestMetadataFunctions(unittest.TestCase):
         model.custom_model_card_code_example.return_value = "```python\npass\n```"
         model.custom_model_card_training_mode_info.return_value = (
             "- MiniMax Music train component: `language_model (global LM / RVQ planner)`\n"
-            "- MiniMax Music LM max frames: `128`"
+            "- MiniMax Music LM max frames: `128`\n"
+            "- MiniMax Music LM window mode: `random`"
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -374,6 +398,7 @@ class TestMetadataFunctions(unittest.TestCase):
             self.assertIn("## Training modes", readme)
             self.assertIn("- MiniMax Music train component: `language_model (global LM / RVQ planner)`", readme)
             self.assertIn("- MiniMax Music LM max frames: `128`", readme)
+            self.assertIn("- MiniMax Music LM window mode: `random`", readme)
             self.assertIn("- NextLat: Enabled", readme)
             self.assertIn("  - Weight: `0.1`", readme)
             self.assertIn("- XM: Enabled", readme)
@@ -386,12 +411,14 @@ class TestMetadataFunctions(unittest.TestCase):
 
         self.args.minimax_music_train_component = "language_model"
         self.args.minimax_music_lm_max_frames = 128
+        self.args.minimax_music_lm_window_mode = "random"
         model = MiniMaxMusic.__new__(MiniMaxMusic)
 
         details = model.custom_model_card_training_mode_info(self.args)
 
         self.assertIn("- MiniMax Music train component: `language_model (global LM / RVQ planner)`", details)
         self.assertIn("- MiniMax Music LM max frames: `128`", details)
+        self.assertIn("- MiniMax Music LM window mode: `random`", details)
 
     def test_hub_commit_message_omits_diffusion_schedule_fields_for_flow_matching(self):
         hub_manager = object.__new__(HubManager)

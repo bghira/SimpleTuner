@@ -10,7 +10,6 @@ Z‑Image को Flux से कम मेमोरी चाहिए, ले�
 - int8 + bf16 base/LoRA weights पर quantise करने पर ~16‑24G VRAM
 - NF4 + bf16 base/LoRA weights पर quantise करने पर ~10–12G VRAM
 
-इसके अलावा, Ramtorch और group offload से VRAM उपयोग और कम किया जा सकता है। Multi‑GPU उपयोगकर्ताओं के लिए, FSDP2 कई छोटे GPUs पर चलाने देगा।
 
 आपको चाहिए:
 
@@ -31,24 +30,6 @@ Apple GPUs पर प्रशिक्षण अनुशंसित नही
 | L40S | baseline SDNQ Hadamard path | 1.131 | 1.072 | 1.055 | 1.102 | 9.66 GiB |
 
 Warm-cache L40S comparison में current path train-loop wall time से 10.3% और measured train-step mean से 5.2% baseline SDNQ Hadamard path से तेज था।
-
-### मेमोरी ऑफ़लोडिंग (वैकल्पिक)
-
-Grouped module offloading transformer weights bottleneck होने पर VRAM दबाव काफी कम करता है। इसे `TRAINER_EXTRA_ARGS` (या WebUI Hardware page) में निम्न flags जोड़कर सक्षम करें:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- Streams केवल CUDA पर प्रभावी हैं; SimpleTuner ROCm, MPS और CPU पर इन्हें स्वतः बंद कर देता है।
-- इसे अन्य CPU offload रणनीतियों के साथ **न** मिलाएँ।
-- Group offload Quanto quantisation के साथ संगत नहीं है।
-- Disk offload के लिए तेज़ लोकल SSD/NVMe लक्ष्य चुनें।
 
 ## पूर्वापेक्षाएँ
 
@@ -453,7 +434,6 @@ Z‑Image flow‑matching है; कम guidance मान (0–1 के आस
 - DeepSpeed: बंद/कॉन्फ़िगर नहीं
 - यदि startup पर <=16G कार्ड्स में OOM हो, तो `--quantize_via=cpu` उपयोग करें
 - `--gradient_checkpointing` सक्षम करें
-- Ramtorch या group offload सक्षम करें
 
 Pre‑caching चरण में मेमोरी खत्म हो सकती है; text encoder quantisation और VAE tiling को `--text_encoder_precision=int8-torchao` और `--vae_enable_tiling=true` से सक्षम किया जा सकता है। startup पर `--offload_during_startup=true` से और मेमोरी बचाई जा सकती है, जिससे text encoder या VAE में से केवल एक लोड रहता है, दोनों नहीं।
 
@@ -507,7 +487,6 @@ Z‑Image खराब image artifacts को जल्दी absorb कर ल�
 
 ## Troubleshooting
 
-- Startup पर OOM: group offload सक्षम करें (Quanto के साथ नहीं), LoRA rank घटाएँ, या quantize करें (`--base_model_precision int8`/`nf4`).
 - Blurry outputs: `validation_num_inference_steps` बढ़ाएँ (जैसे 24–28) या guidance को 1.0 की ओर बढ़ाएँ।
 - Artifacts/overfitting: rank या learning rate घटाएँ, अधिक विविध prompts जोड़ें, या प्रशिक्षण छोटा करें।
 - Assistant adapter समस्याएँ: turbo को adapter path/weight चाहिए; गुणवत्ता हानि स्वीकार्य हो तभी disable करें।

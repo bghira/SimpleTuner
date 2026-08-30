@@ -12,6 +12,7 @@ if _PINNED_SIMPLETUNER_ROOT.is_dir():
     sys.path.insert(0, str(_PINNED_SIMPLETUNER_ROOT))
 
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+os.environ.setdefault("FAISS_OPT_LEVEL", "generic")
 
 from cog import BasePredictor, Input, Path, Secret
 
@@ -94,19 +95,19 @@ class Predictor(BasePredictor):
 
     def predict(
         self,
-        images: Path = Input(
+        images: Optional[Path] = Input(
             description="Zip or tar archive of training images. Not required if dataloader_json points to external data.",
             default=None,
         ),
-        config_json: str = Input(
+        config_json: Optional[str] = Input(
             description="Training config: either a JSON string or path to config.json. Defaults to config/config.json if present.",
             default=None,
         ),
-        dataloader_json: str = Input(
+        dataloader_json: Optional[str] = Input(
             description="Multidatabackend config: either a JSON string or path to file. If not provided, auto-generated from images.",
             default=None,
         ),
-        max_train_steps: int = Input(
+        max_train_steps: Optional[int] = Input(
             description="Override --max_train_steps for quicker Cog runs.",
             default=None,
         ),
@@ -144,11 +145,11 @@ class Predictor(BasePredictor):
             description="HuggingFace Hub repo ID (e.g., 'username/my-lora') - overrides config.",
             default=None,
         ),
-        hf_token: Secret = Input(
+        hf_token: Optional[Secret] = Input(
             description="Hugging Face token for model downloads and Hub publishing.",
             default=None,
         ),
-        lycoris_config: str = Input(
+        lycoris_config: Optional[str] = Input(
             description="LyCORIS config: either a JSON string or path to lycoris_config.json. Required when lora_type is 'lycoris'.",
             default=None,
         ),

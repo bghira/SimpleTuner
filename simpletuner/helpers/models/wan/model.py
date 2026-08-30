@@ -1596,7 +1596,7 @@ ModelRegistry.register("wan", Wan)
 def _patch_wan_pipeline_execution_device():
     """
     Monkeypatch the WanPipeline to fix the _execution_device property when text encoder is on meta device.
-    This prevents the "device meta is invalid" error when using group offloading.
+    This prevents a "device meta is invalid" error after model CPU offload moves the text encoder to meta.
     """
     from diffusers import WanPipeline
 

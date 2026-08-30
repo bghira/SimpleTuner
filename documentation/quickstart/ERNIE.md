@@ -12,21 +12,6 @@ ERNIE is not a small model. Plan around the same general class of hardware you w
 
 Apple GPUs are not recommended for training.
 
-### Memory offloading (optional)
-
-RamTorch is already a good default for ERNIE because its text encoder is large. If you still need more VRAM headroom, grouped module offloading is also available:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream
-```
-
-- Streams are only effective on CUDA.
-- Do not combine multiple unrelated CPU offload systems unless you know why.
-- Group offload is not compatible with Quanto quantisation.
-
 ## Prerequisites
 
 SimpleTuner works well with Python 3.10 through 3.13.

@@ -136,7 +136,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
 
     It also owns the runtime orchestration around prompt rewriting, classifier
     guidance variants, boosted orthogonal guidance, LoRA loading, device
-    placement, and optional CPU/group offload strategies.
+    placement and optional CPU offload strategies.
 
     Args:
         transformer (BooguImageTransformer2DModel): Boogu transformer
@@ -237,7 +237,6 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
 
         self.enable_model_cpu_offload_flag = False
         self.enable_sequential_cpu_offload_flag = False
-        self.enable_group_offload_flag = False
 
         self.enable_inner_devices_manager = False
 
@@ -261,7 +260,6 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         self,
         enable_model_cpu_offload_flag: bool = None,
         enable_sequential_cpu_offload_flag: bool = None,
-        enable_group_offload_flag: bool = None,
         rewriter_device: Literal[None, "cpu", "cuda", "cuda:x", "auto"] = None,
         device: Literal[None, "cpu", "cuda", "cuda:x"] = None,
         use_rewrite_text_instruction: bool = False,
@@ -272,19 +270,16 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
 
         enable_model_cpu_offload_flag = bool(enable_model_cpu_offload_flag)
         enable_sequential_cpu_offload_flag = bool(enable_sequential_cpu_offload_flag)
-        enable_group_offload_flag = bool(enable_group_offload_flag)
 
         enabled_offload_flags = [
             enable_model_cpu_offload_flag,
             enable_sequential_cpu_offload_flag,
-            enable_group_offload_flag,
         ]
         num_enabled_offload_flags = sum(int(x) for x in enabled_offload_flags)
         assert num_enabled_offload_flags <= 1, (
             "At most one pipeline offload strategy can be enabled at a time. "
             f"Got enable_model_cpu_offload_flag={enable_model_cpu_offload_flag}, "
-            f"enable_sequential_cpu_offload_flag={enable_sequential_cpu_offload_flag}, "
-            f"enable_group_offload_flag={enable_group_offload_flag}."
+            f"enable_sequential_cpu_offload_flag={enable_sequential_cpu_offload_flag}."
         )
 
         if use_dashscope_remote_rewriting:
@@ -307,7 +302,6 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                 f"use_dashscope_remote_rewriting={use_dashscope_remote_rewriting}, "
                 f"enable_model_cpu_offload_flag={enable_model_cpu_offload_flag}, "
                 f"enable_sequential_cpu_offload_flag={enable_sequential_cpu_offload_flag}, "
-                f"enable_group_offload_flag={enable_group_offload_flag}, "
                 f"device={device!r}, rewriter_device={rewriter_device!r}."
             )
 
@@ -350,7 +344,6 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         unload_rewriter_level: Literal["keep", "cpu", "destroy"] = "destroy",
         enable_model_cpu_offload_flag: bool = None,
         enable_sequential_cpu_offload_flag: bool = None,
-        enable_group_offload_flag: bool = None,
     ):
 
         self._validate_device_format(instant_device_2_use, instant_rewriter_device)
@@ -369,21 +362,13 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             self.enable_model_cpu_offload_flag = enable_model_cpu_offload_flag
         if enable_sequential_cpu_offload_flag is not None:
             self.enable_sequential_cpu_offload_flag = enable_sequential_cpu_offload_flag
-        if enable_group_offload_flag is not None:
-            self.enable_group_offload_flag = enable_group_offload_flag
-
-        auto_offload_strategy_num = (
-            int(self.enable_model_cpu_offload_flag)
-            + int(self.enable_sequential_cpu_offload_flag)
-            + int(self.enable_group_offload_flag)
-        )
+        auto_offload_strategy_num = int(self.enable_model_cpu_offload_flag) + int(self.enable_sequential_cpu_offload_flag)
 
         assert auto_offload_strategy_num <= 1, (
             f"At most one offload strategy can be enabled at a time. "
             f"Current values: "
             f"enable_model_cpu_offload_flag={self.enable_model_cpu_offload_flag}, "
-            f"enable_sequential_cpu_offload_flag={self.enable_sequential_cpu_offload_flag}, "
-            f"enable_group_offload_flag={self.enable_group_offload_flag}."
+            f"enable_sequential_cpu_offload_flag={self.enable_sequential_cpu_offload_flag}."
         )
 
         if instant_device_2_use is not None:
@@ -491,7 +476,6 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         if (
             self.enable_model_cpu_offload_flag
             or self.enable_sequential_cpu_offload_flag
-            or self.enable_group_offload_flag
             or getattr(self, "_all_hooks", None)
         ):
             warnings.warn(
@@ -499,11 +483,10 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
                 "device/offload hooks. Re-registering `mllm` at this point can leave old Accelerate/Diffusers hooks, "
                 "CPU/GPU offload state, or shared rewriter references attached to the previous module. Prefer calling "
                 "`set_mllm(...)` immediately after `from_pretrained(...)` and before enabling model CPU offload, "
-                "sequential CPU offload, group offload, or running inference. If replacing `mllm` after hooks were "
+                "sequential CPU offload, or running inference. If replacing `mllm` after hooks were "
                 "installed, remove/recreate the hooks or rebuild the pipeline to avoid stale device state. "
                 f"enable_model_cpu_offload_flag={self.enable_model_cpu_offload_flag}, "
                 f"enable_sequential_cpu_offload_flag={self.enable_sequential_cpu_offload_flag}, "
-                f"enable_group_offload_flag={self.enable_group_offload_flag}, "
                 f"share_rewriter_and_mllm={share_rewriter_and_mllm}.",
                 UserWarning,
             )
@@ -571,13 +554,12 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         if (
             self.enable_model_cpu_offload_flag
             or self.enable_sequential_cpu_offload_flag
-            or self.enable_group_offload_flag
             or getattr(self, "_all_hooks", None)
         ):
             warnings.warn(
                 "[Setter Warning]: `set_transformer(...)` is being called after this pipeline may have enabled "
                 "device/offload hooks. Re-registering `transformer` at this point can leave stale Accelerate/"
-                "Diffusers hook state. Prefer setting the transformer before enabling CPU/group offload or "
+                "Diffusers hook state. Prefer setting the transformer before enabling CPU offload or "
                 "running inference.",
                 UserWarning,
             )
@@ -637,13 +619,12 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         if (
             self.enable_model_cpu_offload_flag
             or self.enable_sequential_cpu_offload_flag
-            or self.enable_group_offload_flag
             or getattr(self, "_all_hooks", None)
         ):
             warnings.warn(
                 "[Setter Warning]: `set_prompt_embedding(...)` is being called after this pipeline may have enabled "
                 "device/offload hooks. Re-registering or moving `prompt_embedding` at this point can leave stale "
-                "hook state. Prefer setting prompt embedding before enabling CPU/group offload or running inference.",
+                "hook state. Prefer setting prompt embedding before enabling CPU offload or running inference.",
                 UserWarning,
             )
 
@@ -1114,10 +1095,8 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         device = device or self._execution_device
         instruction = [instruction] if isinstance(instruction, str) else instruction
         batch_size = len(instruction)
-        has_offload_strategy = (
-            bool(getattr(self, "enable_model_cpu_offload_flag", False))
-            or bool(getattr(self, "enable_sequential_cpu_offload_flag", False))
-            or bool(getattr(self, "enable_group_offload_flag", False))
+        has_offload_strategy = bool(getattr(self, "enable_model_cpu_offload_flag", False)) or bool(
+            getattr(self, "enable_sequential_cpu_offload_flag", False)
         )
 
         def _module_execution_device(module, fallback_device):
@@ -1220,7 +1199,7 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
             print("Using prompt tuning enhanced text feature extraction")
 
             # Step 1: Get input embeddings from the text encoder.
-            # In CPU/group offload mode, calling the embedding layer directly can
+            # In CPU offload mode, calling the embedding layer directly can
             # bypass the parent MLLM offload hook. Keep token ids on the embedding
             # layer's real device, then let the full MLLM forward own later moves.
             input_embedding_layer = self.mllm.get_input_embeddings()
@@ -2469,7 +2448,6 @@ class BooguImagePipeline(DiffusionPipeline, BooguImageLoraLoaderMixin):
         self._check_device_strategy_validity(
             enable_model_cpu_offload_flag=self.enable_model_cpu_offload_flag,
             enable_sequential_cpu_offload_flag=self.enable_sequential_cpu_offload_flag,
-            enable_group_offload_flag=self.enable_group_offload_flag,
             rewriter_device=rewriter_device,
             device=device,
             use_rewrite_text_instruction=use_rewrite_text_instruction,
@@ -3426,10 +3404,8 @@ class BooguImagePromptTuningPipeline(BooguImagePipeline):
         device = device or self._execution_device
         instruction = [instruction] if isinstance(instruction, str) else instruction
         batch_size = len(instruction)
-        has_offload_strategy = (
-            bool(getattr(self, "enable_model_cpu_offload_flag", False))
-            or bool(getattr(self, "enable_sequential_cpu_offload_flag", False))
-            or bool(getattr(self, "enable_group_offload_flag", False))
+        has_offload_strategy = bool(getattr(self, "enable_model_cpu_offload_flag", False)) or bool(
+            getattr(self, "enable_sequential_cpu_offload_flag", False)
         )
 
         def _module_execution_device(module, fallback_device):
@@ -3532,7 +3508,7 @@ class BooguImagePromptTuningPipeline(BooguImagePipeline):
             print("Using prompt tuning enhanced text feature extraction")
 
             # Step 1: Get input embeddings from the text encoder.
-            # In CPU/group offload mode, calling the embedding layer directly can
+            # In CPU offload mode, calling the embedding layer directly can
             # bypass the parent MLLM offload hook. Keep token ids on the embedding
             # layer's real device, then let the full MLLM forward own later moves.
             input_embedding_layer = self.mllm.get_input_embeddings()

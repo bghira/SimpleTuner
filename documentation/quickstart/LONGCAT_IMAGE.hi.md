@@ -67,7 +67,6 @@ http://localhost:8001 खोलें और मॉडल फैमिली `lo
 - अधिकतम टोकन लंबाई 512 (Qwen‑2.5‑VL)।
 
 वैकल्पिक मेमोरी बचत विकल्प (अपने हार्डवेयर के अनुसार चुनें):
-- `--enable_group_offload --group_offload_type block_level --group_offload_blocks_per_group 1`
 - `lora_rank` कम करें (4–8) और/या `int8-quanto` बेस प्रिसिजन इस्तेमाल करें।
 - यदि वैलिडेशन OOM करे, पहले `validation_resolution` या स्टेप्स घटाएँ।
 
@@ -115,7 +114,6 @@ simpletuner validate \
 
 - **MPS float64 errors**: आंतरिक रूप से संभाले जाते हैं; कॉन्फ़िग को float32/bf16 पर रखें।
 - **Previews में चैनल mismatch**: decode से पहले latents unpack किए जाते हैं (इस गाइड वाले SimpleTuner संस्करण में शामिल)।
-- **OOM**: `validation_resolution` घटाएँ, `lora_rank` कम करें, group offload सक्षम करें, या `int8-quanto` / `fp8-torchao` पर जाएँ।
 - **धीमा टोकनाइज़ेशन**: Qwen‑2.5‑VL 512 टोकन तक सीमित है; बहुत लंबे प्रॉम्प्ट से बचें।
 
 ---
