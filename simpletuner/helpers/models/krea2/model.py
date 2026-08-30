@@ -403,6 +403,13 @@ class Krea2(ImageModelFoundation):
         config = getattr(transformer, "config", None)
         return int(max(getattr(config, "patch_size", 2), 1))
 
+    def _latent_sequence_length(self, latent_tensor: torch.Tensor) -> int:
+        if latent_tensor.dim() != 4:
+            raise ValueError(f"Krea 2 expected image latents with shape (B, C, H, W), got {tuple(latent_tensor.shape)}.")
+        _, _, height, width = latent_tensor.shape
+        patch_size = self._patch_size()
+        return max((height // patch_size) * (width // patch_size), 1)
+
     def _pack_latents(self, latents: torch.Tensor) -> tuple[torch.Tensor, int, int]:
         patch_size = self._patch_size()
         batch_size, channels, height, width = latents.shape

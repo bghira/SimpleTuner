@@ -33,6 +33,28 @@ class _DummyModel(ModelFoundation):
         return getattr(self, "_test_patch_size", None)
 
 
+class _DefaultPatchModel(ModelFoundation):
+    # Bypass abstract __init__ by using __new__ in tests.
+    PREDICTION_TYPE = None
+    MODEL_TYPE = None
+    NAME = "DefaultPatch"
+    DEFAULT_PIPELINE_TYPE = None
+    PIPELINE_CLASSES = {}
+    VALIDATION_USES_NEGATIVE_PROMPT = False
+
+    def model_predict(self, prepared_batch, custom_timesteps: list = None):
+        raise NotImplementedError
+
+    def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
+        raise NotImplementedError
+
+    def convert_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
+        raise NotImplementedError
+
+    def convert_negative_text_embed_for_pipeline(self, text_embedding: torch.Tensor) -> dict:
+        raise NotImplementedError
+
+
 class DynamicShiftTests(unittest.TestCase):
     def setUp(self):
         self.scheduler = MagicMock()
@@ -52,6 +74,29 @@ class DynamicShiftTests(unittest.TestCase):
         mu = model.calculate_dynamic_shift_mu(self.scheduler, latents)
 
         expected = 0.5 / (512 - 256) * 4  # linear shift per seq len
+        self.assertAlmostEqual(mu, expected)
+
+    def test_calculate_dynamic_shift_mu_uses_temporal_patch_size_for_video_latents(self):
+        model = _DummyModel.__new__(_DummyModel)
+        model._test_patch_size = (4, 2, 2)
+        model.config = types.SimpleNamespace()
+
+        latents = torch.zeros(1, 4, 8, 4, 4)
+        mu = model.calculate_dynamic_shift_mu(self.scheduler, latents)
+
+        expected = 0.5 / (512 - 256) * 8  # (8 / 4) * (4 / 2) * (4 / 2)
+        self.assertAlmostEqual(mu, expected)
+
+    def test_calculate_dynamic_shift_mu_uses_component_patch_size_t(self):
+        model = _DefaultPatchModel.__new__(_DefaultPatchModel)
+        model.config = types.SimpleNamespace(controlnet=False)
+        model.accelerator = None
+        model.model = types.SimpleNamespace(config=types.SimpleNamespace(patch_size=2, patch_size_t=4))
+
+        latents = torch.zeros(1, 4, 8, 4, 4)
+        mu = model.calculate_dynamic_shift_mu(self.scheduler, latents)
+
+        expected = 0.5 / (512 - 256) * 8  # (8 / 4) * (4 / 2) * (4 / 2)
         self.assertAlmostEqual(mu, expected)
 
     def test_calculate_dynamic_shift_mu_errors_when_config_missing(self):
