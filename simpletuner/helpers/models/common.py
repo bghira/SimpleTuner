@@ -41,6 +41,7 @@ from simpletuner.helpers.models.foundation_mixins import (
     VideoTransformMixin,
 )
 from simpletuner.helpers.models.tae import load_tae_decoder
+from simpletuner.helpers.models.xm_mixin import ExplorativeModelingMixin
 from simpletuner.helpers.scheduled_sampling import build_rollout_schedule
 from simpletuner.helpers.training.adapter import load_lora_weights
 from simpletuner.helpers.training.crepa import CrepaFeatureSource, CrepaMode, CrepaRegularizer, UrepaRegularizer
@@ -50,6 +51,7 @@ from simpletuner.helpers.training.custom_schedule import (
     segmented_timestep_selection,
 )
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
+from simpletuner.helpers.training.explorative_modeling import ExplorativeModelingConfig
 from simpletuner.helpers.training.flow_match import fix_flow_match_euler_schedule_bounds
 from simpletuner.helpers.training.internal_guidance import (
     InternalGuidanceRegularizer,
@@ -69,6 +71,12 @@ from simpletuner.helpers.training.lora_format import (
 )
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank
+from simpletuner.helpers.training.nextlat import (
+    NextLatRegularizer,
+    infer_nextlat_block_count,
+    infer_nextlat_hidden_size,
+    nextlat_enabled_from_config,
+)
 from simpletuner.helpers.training.quantisation import (
     MANUAL_QUANTIZATION_PRESETS,
     PIPELINE_ONLY_PRESETS,
@@ -81,7 +89,6 @@ from simpletuner.helpers.training.timestep_distribution import CubicSplineDistri
 from simpletuner.helpers.training.wrappers import unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 from simpletuner.helpers.utils.hidden_state_buffer import HiddenStateBuffer
-from simpletuner.helpers.utils.offloading import enable_group_offload_on_components
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -432,7 +439,7 @@ class PipelineConditioningImageEmbedder:
         return embeddings
 
 
-class ModelFoundation(ABC):
+class ModelFoundation(ExplorativeModelingMixin, ABC):
     """
     Base class that contains all the universal logic:
       - Noise schedule, prediction target (epsilon, sample, v_prediction, flow-matching)
@@ -566,6 +573,8 @@ class ModelFoundation(ABC):
         self.diffusion_blocks_controller = None
         self.layersync_regularizer: Optional[LayerSyncRegularizer] = None
         self.internal_guidance_regularizer: Optional[InternalGuidanceRegularizer] = None
+        self.nextlat_regularizer: Optional[NextLatRegularizer] = None
+        self.xm_config = ExplorativeModelingConfig.from_config(config)
         self._validate_twinflow_config()
 
     def pack_text_embeddings_for_cache(self, embeddings):
@@ -915,6 +924,8 @@ class ModelFoundation(ABC):
         modules = []
         if getattr(getattr(self, "config", None), "internal_guidance_enabled", False):
             modules.append(InternalGuidanceRegularizer.MODULE_NAME)
+        if nextlat_enabled_from_config(getattr(self, "config", None)):
+            modules.append(NextLatRegularizer.MODULE_NAME)
         model = self.get_trained_component(unwrap_model=False)
         if model is not None:
             modules.extend(
@@ -2413,20 +2424,11 @@ class ModelFoundation(ABC):
         """
         Moves the model to the target device.
         """
-        target_device_obj = torch.device(target_device) if isinstance(target_device, str) else target_device
-        accelerator_device = torch.device(self.accelerator.device) if hasattr(self.accelerator, "device") else None
         base_precision = str(getattr(self.config, "base_model_precision", "") or "").lower()
         torchao_quantized = "torchao" in base_precision
         quanto_quantized = "quanto" in base_precision
-        should_configure_offload = (
-            self.group_offload_requested()
-            and accelerator_device is not None
-            and isinstance(target_device_obj, torch.device)
-            and target_device_obj == accelerator_device
-        )
         skip_moving_trained_component = any(
             [
-                (should_configure_offload and self.group_offload_configured),
                 self.config.musubi_blocks_to_swap or 0 > 0,
                 self.config.quantize_via == "pipeline",
                 self.config.ramtorch,
@@ -2459,9 +2461,6 @@ class ModelFoundation(ABC):
                     continue
                 text_encoder.to(target_device)
         self.move_extra_models(target_device)
-
-        if should_configure_offload:
-            self.configure_group_offload()
 
     def get_validation_preview_spec(self):
         """
@@ -3205,8 +3204,6 @@ class ModelFoundation(ABC):
         This moves all models to the 'meta' device which releases GPU memory.
         """
         logger.info("Unloading all model components...")
-        self._group_offload_configured = False
-
         # Unload VAE
         self.unload_vae()
 
@@ -3386,7 +3383,6 @@ class ModelFoundation(ABC):
             quant_mapping.setdefault(key, quantization_config)
 
     def load_model(self, move_to_device: bool = True):
-        self._group_offload_configured = False
         pretrained_load_args = {
             "revision": self.config.revision,
             "variant": self.config.variant,
@@ -3633,6 +3629,7 @@ class ModelFoundation(ABC):
         """
         self._init_layersync_regularizer()
         self._init_internal_guidance_regularizer()
+        self._init_nextlat_regularizer()
 
     def post_quantization_setup(self):
         """
@@ -4050,9 +4047,6 @@ class ModelFoundation(ABC):
         """Subclass hook for providing conditioning image embedder (default: unsupported)."""
         return None
 
-    def group_offload_requested(self) -> bool:
-        return bool(getattr(self.config, "enable_group_offload", False))
-
     def _ramtorch_enabled(self) -> bool:
         return bool(getattr(self.config, "ramtorch", False))
 
@@ -4286,103 +4280,6 @@ class ModelFoundation(ABC):
             percent=transformer_percent,
             full_ramtorch=True,
         )
-
-    @property
-    def group_offload_configured(self) -> bool:
-        return getattr(self, "_group_offload_configured", False)
-
-    def get_group_offload_modules(self) -> Dict[str, torch.nn.Module]:
-        modules: Dict[str, torch.nn.Module] = {}
-        # Transformer (always included for transformer-based models)
-        if self.MODEL_TYPE is ModelTypes.TRANSFORMER and getattr(self, "model", None) is not None:
-            unwrapped_model = self.unwrap_model(self.model)
-            if isinstance(unwrapped_model, torch.nn.Module):
-                modules["transformer"] = unwrapped_model
-
-        # Text encoders (optional, controlled by --group_offload_text_encoder)
-        if getattr(self.config, "group_offload_text_encoder", False):
-            text_encoders = getattr(self, "text_encoders", None)
-            if text_encoders is not None:
-                for i, te in enumerate(text_encoders):
-                    if te is not None:
-                        unwrapped_te = self.unwrap_model(te)
-                        if isinstance(unwrapped_te, torch.nn.Module):
-                            modules[f"text_encoder_{i}"] = unwrapped_te
-
-        # VAE (optional, controlled by --group_offload_vae)
-        if getattr(self.config, "group_offload_vae", False):
-            vae = getattr(self, "vae", None)
-            if vae is not None:
-                unwrapped_vae = self.unwrap_model(vae)
-                if isinstance(unwrapped_vae, torch.nn.Module):
-                    modules["vae"] = unwrapped_vae
-
-        return modules
-
-    def _resolve_group_offload_device(self) -> torch.device:
-        if hasattr(self.accelerator, "device"):
-            return torch.device(self.accelerator.device)
-        return torch.device("cpu")
-
-    def _resolve_group_offload_disk_path(self):
-        raw_path = getattr(self.config, "group_offload_to_disk_path", None)
-        if not raw_path:
-            return None
-        expanded = os.path.expanduser(raw_path)
-        return expanded
-
-    def configure_group_offload(self) -> None:
-        if self.group_offload_configured or not self.group_offload_requested():
-            return
-
-        if self._ramtorch_enabled():
-            raise ValueError("Group offload cannot be used together with RamTorch (--ramtorch).")
-
-        if self.MODEL_TYPE is not ModelTypes.TRANSFORMER:
-            raise ValueError("Group offload is only supported for transformer-based models.")
-
-        modules = self.get_group_offload_modules()
-        if not modules:
-            raise ValueError(
-                "Group offload requested but no transformer module is available. Ensure the model has been loaded."
-            )
-
-        if not torch.cuda.is_available():
-            raise ValueError(
-                "Group offload requires a CUDA device. Disable --enable_group_offload or select a CUDA accelerator."
-            )
-
-        device = self._resolve_group_offload_device()
-        if device.type != "cuda":
-            device = torch.device(getattr(self.accelerator, "device", "cuda") if self.accelerator is not None else "cuda")
-
-        use_stream = bool(getattr(self.config, "group_offload_use_stream", False))
-        if use_stream and bool(getattr(self.config, "gradient_checkpointing", False)):
-            logger.warning(
-                "Disabling group offload streams because gradient checkpointing replays layers during backward, "
-                "which breaks diffusers' group offload prefetch order and leads to CPU/CUDA mismatches. "
-                "Re-run without --gradient_checkpointing if you need streamed group offload."
-            )
-            use_stream = False
-            setattr(self.config, "group_offload_use_stream", False)
-
-        offload_type = getattr(self.config, "group_offload_type", "block_level")
-        blocks_per_group = getattr(self.config, "group_offload_blocks_per_group", 1)
-
-        try:
-            enable_group_offload_on_components(
-                modules,
-                device=device,
-                offload_type=offload_type,
-                number_blocks_per_group=blocks_per_group,
-                use_stream=use_stream,
-                offload_to_disk_path=self._resolve_group_offload_disk_path(),
-            )
-        except Exception as error:
-            raise RuntimeError(f"Failed to configure group offloading: {error}") from error
-
-        logger.info("Group offloading enabled for %s.", ", ".join(modules.keys()))
-        self._group_offload_configured = True
 
     def chunked_feed_forward_requested(self) -> bool:
         return bool(getattr(self.config, "enable_chunked_feed_forward", False))
@@ -5181,11 +5078,39 @@ class ModelFoundation(ABC):
         )
         self.internal_guidance_regularizer.attach_to_model(unwrapped, dtype=self.config.weight_dtype)
 
+    def _init_nextlat_regularizer(self):
+        if not nextlat_enabled_from_config(self.config):
+            self.nextlat_regularizer = None
+            return
+        if self.MODEL_TYPE is not ModelTypes.TRANSFORMER:
+            raise ValueError("NextLat is only supported for transformer model families.")
+        if str(getattr(self.config, "lora_type", "standard") or "standard").lower() == "lycoris":
+            raise ValueError(
+                "NextLat requires standard PEFT LoRA or full-model training so its predictor is optimized and saved."
+            )
+
+        model_component = self.get_trained_component(unwrap_model=False)
+        if model_component is None:
+            raise ValueError("NextLat requires an attached transformer component.")
+        unwrapped = self.unwrap_model(model=model_component)
+        hidden_size = infer_nextlat_hidden_size(unwrapped)
+        block_count = infer_nextlat_block_count(unwrapped)
+        self.nextlat_regularizer = NextLatRegularizer(
+            self.config,
+            self.accelerator,
+            hidden_size=hidden_size,
+            block_count=block_count,
+        )
+        self.nextlat_regularizer.attach_to_model(unwrapped, dtype=self.config.weight_dtype)
+
     def _hidden_state_capture_layers(self) -> Optional[set[int]]:
         capture_layers = set()
         internal_guidance = getattr(self, "internal_guidance_regularizer", None)
         if internal_guidance and internal_guidance.wants_hidden_states():
             capture_layers.add(internal_guidance.block_index)
+        nextlat = getattr(self, "nextlat_regularizer", None)
+        if nextlat and nextlat.wants_hidden_states():
+            capture_layers.add(nextlat.block_index)
 
         layersync = getattr(self, "layersync_regularizer", None)
         if layersync and layersync.wants_hidden_states():
@@ -5214,10 +5139,12 @@ class ModelFoundation(ABC):
         crepa_buffer = bool(crepa and crepa.wants_hidden_states())
         internal_guidance = getattr(self, "internal_guidance_regularizer", None)
         internal_guidance_buffer = bool(internal_guidance and internal_guidance.wants_hidden_states())
+        nextlat = getattr(self, "nextlat_regularizer", None)
+        nextlat_buffer = bool(nextlat and nextlat.wants_hidden_states())
         distillation_method = getattr(self.config, "distillation_method", None)
         method_value = getattr(distillation_method, "value", distillation_method)
         self_transcendence = str(method_value).lower() == "self_transcendence"
-        return ls_needed or crepa_buffer or internal_guidance_buffer or self_transcendence
+        return ls_needed or crepa_buffer or internal_guidance_buffer or nextlat_buffer or self_transcendence
 
     def _validate_crepa_configuration(self) -> CrepaFeatureSource:
         feature_source = CrepaFeatureSource.from_config(self.config)
@@ -6386,12 +6313,6 @@ class ModelFoundation(ABC):
         loss = loss.mean()
         return loss
 
-    def loss_with_logs(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
-        """
-        Computes loss and optional per-batch metrics for logging.
-        """
-        return self.loss(prepared_batch, model_output, apply_conditioning_mask=apply_conditioning_mask), None
-
     def auxiliary_loss(
         self,
         model_output,
@@ -6430,6 +6351,12 @@ class ModelFoundation(ABC):
                 )
                 loss = loss + internal_guidance_loss
                 aux_logs = (aux_logs or {}) | internal_guidance_logs
+
+            nextlat = getattr(self, "nextlat_regularizer", None)
+            if nextlat and nextlat.enabled:
+                nextlat_loss, nextlat_logs = nextlat.compute_loss(hidden_states_buffer, model_output)
+                loss = loss + nextlat_loss
+                aux_logs = (aux_logs or {}) | nextlat_logs
 
             if apply_layersync:
                 loss, aux_logs = self._apply_layersync_regularizer(loss, aux_logs, hidden_states_buffer)
@@ -6654,7 +6581,6 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
         self.model = None
         self.text_encoders = None
         self.tokenizers = None
-        self._group_offload_configured = False
         self.crepa_regularizer: Optional[CrepaRegularizer] = None
         self.urepa_regularizer: Optional["UrepaRegularizer"] = None
 
@@ -6869,6 +6795,12 @@ class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFou
         See SD3 or Flux classes for an example.
         """
         return []
+
+    def custom_model_card_training_mode_info(self, args) -> str:
+        """
+        Override this in a subclass to add model-specific training mode details to model cards.
+        """
+        return ""
 
     def custom_model_card_code_example(self, repo_id: str = None) -> str:
         """

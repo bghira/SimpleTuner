@@ -67,7 +67,6 @@ simpletuner server
 - 最大 token 长度 512（Qwen‑2.5‑VL）。
 
 可选内存节省项（按硬件选择）：
-- `--enable_group_offload --group_offload_type block_level --group_offload_blocks_per_group 1`
 - 降低 `lora_rank`（4–8）并/或使用 `int8-quanto` 作为基础精度
 - 如验证 OOM，先降低 `validation_resolution` 或步数
 
@@ -115,7 +114,6 @@ simpletuner validate \
 
 - **MPS float64 报错**：已在内部处理；配置保持 float32/bf16。
 - **预览通道不匹配**：通过解码前 unpack latent 修复（本指南代码已包含）。
-- **OOM**：降低 `validation_resolution`，减小 `lora_rank`，启用 group offload，或切换到 `int8-quanto`/`fp8-torchao`。
 - **分词变慢**：Qwen‑2.5‑VL 上限 512 token，避免过长提示词。
 
 ---

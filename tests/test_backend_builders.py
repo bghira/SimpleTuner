@@ -4,8 +4,10 @@ Component tests for data backend builder classes.
 Validates builder classes for creating backend instances and handling configurations.
 """
 
+import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict
 from unittest.mock import MagicMock, Mock, patch
 
@@ -21,6 +23,8 @@ from simpletuner.helpers.data_backend.builders import (
     create_backend_builder,
 )
 from simpletuner.helpers.data_backend.config import ImageBackendConfig, ImageEmbedBackendConfig, TextEmbedBackendConfig
+from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 
 
 class TestBaseBackendBuilder(unittest.TestCase):
@@ -588,10 +592,13 @@ class TestHuggingfaceBackendBuilder(unittest.TestCase):
                 "metadata_backend": "huggingface",
                 "huggingface": {
                     "cache_dir": "/tmp/hf_cache",
+                    "dataset_config": "default",
+                    "data_files": {"train": "hf://datasets/test/dataset/**/*.flac"},
                     "split": "validation",
                     "revision": "v1.1",
                     "image_column": "image",
                     "video_column": "video",
+                    "audio_column": "audio",
                     "streaming": False,
                     "num_proc": 4,
                     "auto_load": True,
@@ -603,13 +610,74 @@ class TestHuggingfaceBackendBuilder(unittest.TestCase):
         result = self.builder.build(config)
 
         call_kwargs = mock_hf_backend_class.call_args[1]
+        self.assertEqual(call_kwargs["dataset_config"], "default")
+        self.assertEqual(call_kwargs["data_files"], {"train": "hf://datasets/test/dataset/**/*.flac"})
         self.assertEqual(call_kwargs["split"], "validation")
         self.assertEqual(call_kwargs["revision"], "v1.1")
         self.assertEqual(call_kwargs["image_column"], "image")
         self.assertEqual(call_kwargs["video_column"], "video")
+        self.assertEqual(call_kwargs["audio_column"], "audio")
         self.assertFalse(call_kwargs["streaming"])
         self.assertEqual(call_kwargs["num_proc"], 4)
         self.assertTrue(call_kwargs["auto_load"])
+
+    @patch("datasets.load_dataset")
+    @patch("datasets.load_dataset_builder")
+    def test_audiofolder_loads_audio_without_decode(self, mock_load_dataset_builder, mock_load_dataset):
+        mock_load_dataset_builder.return_value = SimpleNamespace(info=SimpleNamespace(splits={"train": None}))
+        mock_load_dataset.return_value = []
+
+        HuggingfaceDatasetsBackend(
+            accelerator=self.accelerator,
+            id="test_audiofolder",
+            dataset_name="audiofolder",
+            data_files={"train": "hf://datasets/example/audio/**/*.flac"},
+            dataset_type=DatasetType.AUDIO,
+            auto_load=True,
+        )
+
+        features = mock_load_dataset.call_args.kwargs["features"]
+        self.assertIn("audio", features)
+        self.assertEqual(features["audio"].dtype, "string")
+        self.assertEqual(mock_load_dataset.call_args.kwargs["download_mode"], "force_redownload")
+        self.assertIs(mock_load_dataset_builder.call_args.kwargs["features"], features)
+
+    def test_audiofolder_read_accepts_path_string_sample(self):
+        backend = HuggingfaceDatasetsBackend(
+            accelerator=self.accelerator,
+            id="test_audiofolder",
+            dataset_name="audiofolder",
+            dataset_type=DatasetType.AUDIO,
+            auto_load=False,
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            audio_path = Path(temp_dir) / "sample.flac"
+            audio_path.write_bytes(b"audio bytes")
+            backend.dataset = [{"audio": str(audio_path)}]
+            backend._build_path_mapping()
+
+            self.assertEqual(backend.read("0.wav"), b"audio bytes")
+
+    @patch("datasets.Audio")
+    def test_huggingface_audio_column_disables_decode(self, mock_audio):
+        backend = HuggingfaceDatasetsBackend(
+            accelerator=self.accelerator,
+            id="test_audio",
+            dataset_name="example/audio-dataset",
+            dataset_type=DatasetType.AUDIO,
+            auto_load=False,
+        )
+        dataset = MagicMock()
+        decoded_dataset = MagicMock()
+        dataset.cast_column.return_value = decoded_dataset
+        backend.dataset = dataset
+
+        backend._configure_audio_column()
+
+        mock_audio.assert_called_once_with(decode=False)
+        dataset.cast_column.assert_called_once_with("audio", mock_audio.return_value)
+        self.assertIs(backend.dataset, decoded_dataset)
 
     @patch("simpletuner.helpers.data_backend.builders.huggingface.HuggingfaceDatasetsBackend")
     def test_build_assigns_default_cache_dir_when_missing(self, mock_hf_backend_class):

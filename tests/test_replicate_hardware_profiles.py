@@ -79,6 +79,42 @@ class ReplicateHardwareProfileTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(job.metadata["model"], "simpletuner/advanced-trainer-l40s-x2")
         client.get_effective_version.assert_awaited_once_with("simpletuner/advanced-trainer-l40s-x2")
 
+    async def test_replicate_client_omits_optional_archive_and_uses_cog_lycoris_key(self):
+        from simpletuner.simpletuner_sdk.server.services.cloud.replicate_client import ReplicateCogClient
+
+        class _Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "id": "pred-123",
+                    "status": "starting",
+                    "created_at": "2026-06-27T00:00:00Z",
+                }
+
+        class _HTTPClient:
+            def __init__(self):
+                self.payload = None
+
+            async def post(self, *args, **kwargs):
+                self.payload = kwargs["json"]
+                return _Response()
+
+        http_client = _HTTPClient()
+        client = ReplicateCogClient()
+        client.get_token_for_user = AsyncMock(return_value="r8-token")
+        client.get_effective_version = AsyncMock(return_value="simpletuner/advanced-trainer-h100:version123")
+        client._get_http_client = AsyncMock(return_value=http_client)
+
+        with patch.object(client, "_get_headers", return_value={"Authorization": "Bearer r8-token"}):
+            await client.run_job(config={}, dataloader=[], lycoris_config={"algo": "lokr"})
+
+        prediction_input = http_client.payload["input"]
+        self.assertNotIn("images", prediction_input)
+        self.assertIn("lycoris_config", prediction_input)
+        self.assertNotIn("lycoris_json", prediction_input)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -64,7 +64,6 @@ http://localhost:8001 を開き、モデルファミリ `longcat_video` を選�
 
 VRAM 節約オプション:
 - `lora_rank` を下げる（4〜8）+ `int8-quanto` のベース精度を使う
-- group offload を有効化: `--enable_group_offload --group_offload_type block_level --group_offload_blocks_per_group 1`
 - プレビューが OOM する場合は、`validation_resolution` / フレーム数 / ステップ数を先に下げる
 - Attention 既定: CUDA では、LongCat‑Video は利用可能な場合にバンドルされた block‑sparse Triton カーネルを自動使用し、なければ標準ディスパッチャへフォールバックします。切り替えは不要です。xFormers を使いたい場合は、設定/CLI に `attention_implementation: "xformers"` を指定してください。
 
@@ -108,7 +107,6 @@ simpletuner train --config config/config.json
 
 - **高さ/幅エラー**: 両方が 16 で割り切れ、64px グリッドに揃っていることを確認してください。
 - **MPS float64 警告**: 内部処理済み。精度は bf16/float32 のままにしてください。
-- **OOM**: まず検証解像度/フレーム数を下げ、LoRA rank を減らす、group offload を有効化する、`int8-quanto`/`fp8-torchao` に切り替える。
 - **CFG で負のプロンプトが空**: 未指定ならパイプラインが自動で空を挿入します。
 
 ---

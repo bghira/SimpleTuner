@@ -80,6 +80,10 @@ class Cosmos2Image(VideoModelFoundation):
     final_sigmas_type = "sigma_min"
     sigma_schedule_order = 7.0
 
+    def __init__(self, config, accelerator):
+        super().__init__(config, accelerator)
+        self._validate_xm_support()
+
     @property
     def crepa_mode(self) -> CrepaMode:
         return CrepaMode.IMAGE
@@ -197,6 +201,61 @@ class Cosmos2Image(VideoModelFoundation):
             )
 
         return sigmas / (sigmas + 1.0)
+
+    def _cosmos2_sigma_grid(self, sigmas: torch.Tensor, latents: torch.Tensor) -> torch.Tensor:
+        if sigmas.shape[0] != latents.shape[0]:
+            raise ValueError(
+                f"{self.NAME} XM sigma batch size {sigmas.shape[0]} does not match latent batch size {latents.shape[0]}."
+            )
+        sigma_grid = sigmas.to(device=latents.device, dtype=latents.dtype)
+        while sigma_grid.ndim < latents.ndim:
+            sigma_grid = sigma_grid.unsqueeze(-1)
+        try:
+            torch.broadcast_shapes(tuple(sigma_grid.shape), tuple(latents.shape))
+        except RuntimeError as exc:
+            raise ValueError(
+                f"{self.NAME} XM noise-candidate training requires sigmas broadcastable to latents; "
+                f"got sigmas {tuple(sigmas.shape)} and latents {tuple(latents.shape)}."
+            ) from exc
+        return sigma_grid
+
+    def _prepare_xm_noise_candidates(self, prepared_batch: dict, *, family_name: str | None = None) -> dict:
+        label = family_name or self.NAME
+        self._validate_xm_support()
+        candidate_count = int(self.xm_config.candidate_count)
+        latents = prepared_batch.get("latents")
+        timesteps = prepared_batch.get("timesteps")
+        sigmas = prepared_batch.get("sigmas")
+        if not torch.is_tensor(latents) or not torch.is_tensor(timesteps):
+            raise ValueError(f"{label} XM noise-candidate training requires latents and timesteps tensors.")
+        if not torch.is_tensor(sigmas):
+            raise ValueError(f"{label} XM noise-candidate training requires tensor sigmas.")
+        if "noisy_latents" not in prepared_batch:
+            raise ValueError(f"{label} XM noise-candidate training requires prepared noisy_latents.")
+        if prepared_batch.get("target") is not None:
+            raise ValueError(f"{label} XM noise-candidate training cannot be used with an explicit prepared target.")
+
+        batch_size = latents.shape[0]
+        expanded_batch = {
+            key: self._repeat_xm_candidate_value(value, candidate_count, batch_size) for key, value in prepared_batch.items()
+        }
+        expanded_latents = expanded_batch["latents"]
+        candidate_noise = torch.randn_like(expanded_latents)
+        expanded_batch["noise"] = candidate_noise
+        expanded_batch["input_noise"] = candidate_noise
+        expanded_batch["noisy_latents"] = (
+            expanded_latents
+            + self._cosmos2_sigma_grid(
+                expanded_batch["sigmas"],
+                expanded_latents,
+            )
+            * candidate_noise
+        )
+        expanded_batch["xm_candidate_count"] = candidate_count
+        expanded_batch["xm_original_batch_size"] = batch_size
+        prepared_batch.clear()
+        prepared_batch.update(expanded_batch)
+        return prepared_batch
 
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
@@ -460,6 +519,14 @@ class Cosmos2Image(VideoModelFoundation):
         return batch
 
     def model_predict(self, prepared_batch):
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch, family_name=self.NAME)
+            model_output = self._model_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch)
+
+    def _model_predict_single(self, prepared_batch):
         xt = prepared_batch["noisy_latents"]
         sigmas = prepared_batch["sigmas"].view(-1, 1, 1, 1, 1)  # B×1×1×1×1
         B, _, _, H, W = xt.shape
@@ -523,6 +590,38 @@ class Cosmos2Image(VideoModelFoundation):
                 loss *= ((m / 2 + 0.5) > 0).to(loss.dtype)
 
         return loss.mean()
+
+    def _xm_diffusion_loss_tensor(
+        self,
+        prepared_batch: dict,
+        model_output: dict,
+        apply_conditioning_mask: bool,
+        *,
+        family_name: str | None = None,
+    ) -> torch.Tensor:
+        x0 = prepared_batch["latents"].float()
+        x0_pred = model_output["model_prediction"].float()
+        sigmas = prepared_batch["sigmas"]
+
+        w = (sigmas**2 + self.sigma_data**2) / (sigmas * self.sigma_data) ** 2
+        while w.ndim < x0.ndim:
+            w = w.unsqueeze(-1)
+
+        loss = F.mse_loss(x0_pred, x0, reduction="none") * w
+
+        if apply_conditioning_mask:
+            ctype = prepared_batch.get("loss_mask_type")
+            if ctype == "mask":
+                m = prepared_batch["conditioning_pixel_values"][:, :1]
+                m = torch.nn.functional.interpolate(m, size=loss.shape[2:], mode="area")
+                loss *= m / 2 + 0.5
+            elif ctype == "segmentation":
+                m = prepared_batch["conditioning_pixel_values"]
+                m = torch.sum(m, dim=1, keepdim=True) / 3
+                m = torch.nn.functional.interpolate(m, size=loss.shape[2:], mode="area")
+                loss *= ((m / 2 + 0.5) > 0).to(loss.dtype)
+
+        return loss
 
     def prepare_edm_sigmas(self, bsz: int, device: torch.device):
         u = torch.rand(bsz, device=device, dtype=torch.float32)

@@ -49,7 +49,6 @@ def validate_device_and_offload_strategy_compatibility(
     device: str,
     enable_sequential_cpu_offload_flag: bool,
     enable_model_cpu_offload_flag: bool,
-    enable_group_offload_flag: bool,
 ) -> bool:
     """
     Validate whether the device and offload strategy are compatible.
@@ -73,7 +72,6 @@ def validate_device_and_offload_strategy_compatibility(
     offload_flags = [
         _normalize_bool_flag(enable_sequential_cpu_offload_flag),
         _normalize_bool_flag(enable_model_cpu_offload_flag),
-        _normalize_bool_flag(enable_group_offload_flag),
     ]
 
     # All offload flags must be explicitly set to valid boolean values.

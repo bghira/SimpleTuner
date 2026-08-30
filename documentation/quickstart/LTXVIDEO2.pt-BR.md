@@ -11,10 +11,8 @@ LTX Video 2 é um modelo pesado de **19B**. Ele combina:
 
 Este setup é intensivo em VRAM, e o pré-cache do VAE pode aumentar o uso de memória.
 
-- **Treino em uma GPU**: Comece com `train_batch_size: 1` e habilite group offload.
   - **Nota**: O **passo inicial de pré-cache do VAE** pode exigir mais VRAM. Talvez seja necessário offload para CPU ou uma GPU maior apenas na fase de cache.
   - **Dica**: Defina `"offload_during_startup": true` no seu `config.json` para garantir que o VAE e o encoder de texto não sejam carregados na GPU ao mesmo tempo, reduzindo bastante a pressão de memória do pré-cache.
-- **Treino multi-GPU**: **FSDP2** ou **Group Offload** agressivo é recomendado se você precisa de mais folga.
 - **RAM do sistema**: 64GB+ é recomendado para execuções maiores; mais RAM ajuda no cache.
 
 ### Desempenho e memória observados (relatos de campo)
@@ -31,24 +29,7 @@ Este setup é intensivo em VRAM, e o pré-cache do VAE pode aumentar o uso de me
   - ~16 s/step em 7900XTX (execução local).
   - ~30 min para 200 steps em A100-80G SXM4.
 
-### Offload de memória (Crítico)
-
-Para a maioria dos setups de GPU única treinando o LTX Video 2, é recomendável habilitar offload em grupo. É opcional, mas ajuda a manter folga de VRAM em batches/resoluções maiores.
-
-Adicione isto ao seu `config.json`:
-
-<details>
-<summary>Ver exemplo de config</summary>
-
-```json
-{
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
-  "group_offload_blocks_per_group": 1,
-  "group_offload_use_stream": true
-}
-```
-</details>
+> ⚠️ **Teste a compilação regional antes de mantê-la ativada.** `dynamo_use_regional_compilation` não acelera universalmente o LTX Video 2 e pode reduzir o throughput estável mesmo após o aquecimento da compilação. Compare execuções eager e compiladas com o mesmo batch, número de frames e resolução fixos, e avalie vários steps de treinamento após o warmup em vez dos steps iniciais de compilação.
 
 ## Pré-requisitos
 
@@ -237,7 +218,6 @@ Treino de vídeo é extremamente exigente. Se der OOM:
 
 1.  **Reduza a resolução**: Tente 480p (`480x854` ou similar).
 2.  **Reduza frames**: Baixe `validation_num_video_frames` e `num_frames` do dataset para `33` ou `49`.
-3.  **Cheque o offload**: Garanta que `--enable_group_offload` está ativo.
 
 ### Qualidade do vídeo de validação
 

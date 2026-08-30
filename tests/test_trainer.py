@@ -613,6 +613,27 @@ except ImportError:
 
 
 class TestTrainer(unittest.TestCase):
+    @patch("simpletuner.helpers.training.trainer.Trainer._misc_init")
+    @patch("simpletuner.helpers.training.trainer.Trainer.parse_arguments", autospec=True)
+    def test_constructor_initializes_lr_for_models_without_noise_schedule(self, mock_parse_arguments, _mock_misc_init):
+        def parse_arguments(trainer, *_, **__):
+            trainer.config = SimpleNamespace(
+                learning_rate=1e-4,
+                model_family="unknown",
+                model_type="lora",
+                lora_type="standard",
+            )
+
+        mock_parse_arguments.side_effect = parse_arguments
+        trainer = Trainer(disable_accelerator=True)
+        trainer.model = SimpleNamespace(uses_noise_schedule=lambda: False)
+
+        trainer.init_noise_schedule()
+
+        self.assertEqual(trainer.lr, 1e-4)
+        self.assertFalse(trainer.config.flow_matching)
+        self.assertIsNone(trainer.noise_scheduler)
+
     def test_musubi_placement_supports_wan_blocks_and_root_parameters(self):
         class ToyWan(torch.nn.Module):
             def __init__(self):
@@ -3631,6 +3652,22 @@ class TestTrainer(unittest.TestCase):
             else:
                 os.environ["TORCHINDUCTOR_DISABLED_PASSES"] = original_env
             inductor_config.disabled_passes = original_config
+
+    @patch("simpletuner.helpers.training.trainer.importlib.import_module")
+    def test_configure_inductor_dynamic_training_passes_allows_missing_config_option(self, import_module):
+        trainer = object.__new__(Trainer)
+        original_env = os.environ.get("TORCHINDUCTOR_DISABLED_PASSES")
+        import_module.return_value = object()
+
+        try:
+            os.environ.pop("TORCHINDUCTOR_DISABLED_PASSES", None)
+            trainer._configure_inductor_dynamic_training_passes("inductor")
+            self.assertEqual(os.environ["TORCHINDUCTOR_DISABLED_PASSES"], "PASS_PATTERN_1")
+        finally:
+            if original_env is None:
+                os.environ.pop("TORCHINDUCTOR_DISABLED_PASSES", None)
+            else:
+                os.environ["TORCHINDUCTOR_DISABLED_PASSES"] = original_env
 
     @patch("simpletuner.helpers.training.trainer.TorchDynamoPlugin")
     @patch("simpletuner.helpers.training.trainer.Accelerator")

@@ -228,8 +228,6 @@ def maybe_fallback_attn_mode(attn_mode, infer_state=None, block_idx=None):
 
 @contextmanager
 def auto_offload_model(models, device, enabled=True):
-    from diffusers.hooks.group_offloading import _is_group_offload_enabled
-
     if enabled:
         if isinstance(models, nn.Module):
             models = [models]

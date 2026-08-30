@@ -696,6 +696,97 @@ class Cosmos3Image(Cosmos2Image):
         t_view = t.view(view_shape).to(device=latents.device, dtype=latents.dtype)
         return (1.0 - t_view) * noise + t_view * latents
 
+    @staticmethod
+    def _repeat_xm_sample_list(value: list, candidate_count: int, batch_size: int) -> list:
+        if len(value) != batch_size:
+            raise ValueError(f"Cosmos3 XM expected a per-sample list with length {batch_size}, got {len(value)}.")
+        return list(value) * candidate_count
+
+    def _repeat_xm_cosmos3_text_output(self, value, candidate_count: int, batch_size: int):
+        if not isinstance(value, dict):
+            return value
+        expanded = {key: self._repeat_xm_candidate_value(item, candidate_count, batch_size) for key, item in value.items()}
+        reasoner_cache = value.get("cosmos3_reasoner_cache")
+        if isinstance(reasoner_cache, list):
+            expanded["cosmos3_reasoner_cache"] = self._repeat_xm_sample_list(
+                reasoner_cache,
+                candidate_count,
+                batch_size,
+            )
+        return expanded
+
+    def _prepare_xm_noise_candidates(self, prepared_batch: dict, *, family_name: str | None = None) -> dict:
+        label = family_name or self.NAME
+        self._validate_xm_support()
+        candidate_count = int(self.xm_config.candidate_count)
+        latents = prepared_batch.get("latents")
+        timesteps = prepared_batch.get("timesteps")
+        sigmas = prepared_batch.get("sigmas")
+        if not torch.is_tensor(latents) or not torch.is_tensor(timesteps):
+            raise ValueError(f"{label} XM noise-candidate training requires latents and timesteps tensors.")
+        if not torch.is_tensor(sigmas):
+            raise ValueError(f"{label} XM noise-candidate training requires tensor sigmas.")
+        if "noisy_latents" not in prepared_batch:
+            raise ValueError(f"{label} XM noise-candidate training requires prepared noisy_latents.")
+        if prepared_batch.get("target") is not None:
+            raise ValueError(f"{label} XM noise-candidate training cannot be used with an explicit prepared target.")
+
+        batch_size = latents.shape[0]
+        expanded_batch = {}
+        for key, value in prepared_batch.items():
+            if key in {"prompts", "latent_metadata"} and isinstance(value, list):
+                expanded_batch[key] = self._repeat_xm_sample_list(value, candidate_count, batch_size)
+            elif key == "text_encoder_output":
+                expanded_batch[key] = self._repeat_xm_cosmos3_text_output(value, candidate_count, batch_size)
+            else:
+                expanded_batch[key] = self._repeat_xm_candidate_value(value, candidate_count, batch_size)
+
+        expanded_latents = expanded_batch["latents"]
+        candidate_noise = torch.randn_like(expanded_latents)
+        expanded_batch["noise"] = candidate_noise
+        expanded_batch["input_noise"] = candidate_noise
+        interpolation_sigmas = expanded_batch.get("mixflow_interpolation_sigmas")
+        if torch.is_tensor(interpolation_sigmas):
+            interpolation_grid = self._expand_sigma_values(interpolation_sigmas, expanded_latents)
+            expanded_batch["noisy_latents"] = (
+                1.0 - interpolation_grid
+            ) * expanded_latents + interpolation_grid * candidate_noise
+        else:
+            timestep_values = expanded_batch["sigmas"].reshape(expanded_batch["sigmas"].shape[0], -1)[:, 0]
+            expanded_batch["noisy_latents"] = self._interpolate_flow_latents(
+                expanded_latents,
+                candidate_noise,
+                timestep_values,
+            )
+        expanded_batch["flow_target"] = candidate_noise - expanded_latents
+        if self._is_i2v_flavour():
+            conditioning_latents = expanded_batch.get("conditioning_latents")
+            if not torch.is_tensor(conditioning_latents):
+                raise ValueError(f"{label} XM noise-candidate training requires conditioning_latents for super-i2v.")
+            expanded_batch["noisy_latents"][:, :, 0] = conditioning_latents[:, :, 0]
+
+        audio_latents = expanded_batch.get("audio_latents")
+        if torch.is_tensor(audio_latents):
+            audio_noise = torch.randn_like(audio_latents)
+            expanded_batch["audio_noise"] = audio_noise
+            if torch.is_tensor(interpolation_sigmas):
+                audio_grid = self._expand_sigma_values(interpolation_sigmas, audio_latents)
+                expanded_batch["audio_noisy_latents"] = (1.0 - audio_grid) * audio_latents + audio_grid * audio_noise
+            else:
+                timestep_values = expanded_batch["sigmas"].reshape(expanded_batch["sigmas"].shape[0], -1)[:, 0]
+                expanded_batch["audio_noisy_latents"] = self._interpolate_flow_latents(
+                    audio_latents,
+                    audio_noise,
+                    timestep_values,
+                )
+            expanded_batch["audio_timesteps"] = expanded_batch["timesteps"]
+
+        expanded_batch["xm_candidate_count"] = candidate_count
+        expanded_batch["xm_original_batch_size"] = batch_size
+        prepared_batch.clear()
+        prepared_batch.update(expanded_batch)
+        return prepared_batch
+
     def _get_training_pipeline_adapter(self):
         self._load_text_tokenizer()
         if self._training_pipeline_adapter is None:
@@ -749,6 +840,14 @@ class Cosmos3Image(Cosmos2Image):
         return pipeline
 
     def model_predict(self, prepared_batch):
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch, family_name=self.NAME)
+            model_output = self._model_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch)
+
+    def _model_predict_single(self, prepared_batch):
         hidden_states_buffer = self._new_hidden_state_buffer()
         per_sample_hidden_states = []
         adapter = self._get_training_pipeline_adapter()
@@ -1000,6 +1099,75 @@ class Cosmos3Image(Cosmos2Image):
         else:
             audio_loss = audio_loss.mean()
         return video_loss + audio_loss
+
+    def _cosmos3_video_sample_losses(self, prepared_batch: dict, model_output: dict) -> torch.Tensor:
+        video_target = (prepared_batch["noise"] - prepared_batch["latents"]).float()
+        video_prediction = model_output["model_prediction"].float()
+        video_loss = F.mse_loss(video_prediction, video_target, reduction="none")
+        vision_loss_mask = prepared_batch.get("vision_loss_mask")
+        if vision_loss_mask is None:
+            return video_loss.mean(dim=tuple(range(1, video_loss.ndim)))
+
+        vision_loss_mask = vision_loss_mask.to(device=video_loss.device, dtype=video_loss.dtype)
+        masked_loss = video_loss * vision_loss_mask
+        numerator = masked_loss.sum(dim=tuple(range(1, masked_loss.ndim)))
+        denominator = vision_loss_mask.reshape(vision_loss_mask.shape[0], -1).sum(dim=1).clamp_min(1.0)
+        denominator = denominator * video_prediction.shape[1]
+        return numerator / denominator
+
+    def _cosmos3_audio_sample_losses(self, prepared_batch: dict, model_output: dict) -> torch.Tensor | None:
+        if "audio_model_prediction" not in model_output:
+            return None
+
+        audio_target = (prepared_batch["audio_noise"] - prepared_batch["audio_latents"]).float()
+        audio_loss = F.mse_loss(
+            model_output["audio_model_prediction"].float(),
+            audio_target,
+            reduction="none",
+        )
+        audio_mask = prepared_batch.get("audio_latent_mask")
+        if audio_mask is None:
+            return audio_loss.mean(dim=tuple(range(1, audio_loss.ndim)))
+
+        audio_mask = audio_mask.to(device=audio_loss.device, dtype=audio_loss.dtype)
+        if audio_mask.ndim != 1 or audio_mask.shape[0] != audio_loss.shape[0]:
+            raise ValueError(
+                f"{self.NAME} XM audio masked loss requires audio_latent_mask shape [{audio_loss.shape[0]}], "
+                f"got {tuple(audio_mask.shape)}."
+            )
+        masked_loss = audio_loss * audio_mask.view(-1, *([1] * (audio_loss.ndim - 1)))
+        numerator = masked_loss.sum(dim=tuple(range(1, masked_loss.ndim)))
+        denominator = audio_mask.clamp_min(1.0) * audio_loss[0].numel()
+        return numerator / denominator
+
+    def _xm_noise_loss_with_logs(
+        self,
+        prepared_batch: dict,
+        model_output: dict,
+        *,
+        candidate_count: int,
+        apply_conditioning_mask: bool,
+        family_name: str | None = None,
+    ):
+        del apply_conditioning_mask
+        sample_losses = self._cosmos3_video_sample_losses(prepared_batch, model_output)
+        audio_losses = self._cosmos3_audio_sample_losses(prepared_batch, model_output)
+        if audio_losses is not None:
+            sample_losses = sample_losses + audio_losses
+
+        selected_loss, winner_indices, candidate_losses = self._select_xm_winning_sample_losses(
+            sample_losses,
+            prepared_batch,
+            model_output,
+            candidate_count=candidate_count,
+            family_name=family_name,
+        )
+        return selected_loss, self._xm_candidate_logs(
+            selected_loss,
+            candidate_losses,
+            winner_indices,
+            candidate_count,
+        )
 
     def check_user_config(self):
         if self.config.base_model_precision == "fp8-quanto":

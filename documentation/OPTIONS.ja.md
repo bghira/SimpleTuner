@@ -73,15 +73,82 @@ simpletuner configure config/foo/config.json
 - **選択肢**: `transformer`（デフォルト）、`language_model`
 - **メモ**:
   - `transformer` はキャッシュされた Flow-VAE latent 上でフローマッチング音楽 DiT をトレーニングします（標準パス）。
-  - `language_model` は RVQ セマンティックコードの次トークン交差エントロピーで Qwen3 自己回帰ステージをトレーニングします。データセットは、`prompt`（または `tags`）と `lyrics` に加えて、事前計算された生のコードブック別オーディオトークン（`audio_tokens_path` メタデータ、形状 `[frames, codebooks]`）を提供する必要があります。標準 PEFT LoRA のみ対応、`--lora_format comfyui` は拒否され、トレーナー内の検証オーディオは無効になります——保存されたチェックポイントからレンダリングしてください。
+  - `language_model` は RVQ セマンティックコードの次トークン交差エントロピーで Qwen3 自己回帰ステージをトレーニングします。`dataset_type=audio` では、SimpleTuner が VAE キャッシュ時に MiniMax Music DAV とデフォルトの v4 RVQ エンコーダーで raw waveform をコード化します。データセットは引き続き、`prompt`（または `tags`）と `lyrics` に加えて、事前計算された生のコードブック別オーディオトークン（`audio_tokens` または `audio_tokens_path`、形状 `[frames, codebooks]`）を提供できます。標準 PEFT LoRA のみ対応、`--lora_format comfyui` は拒否され、トレーナー内の検証オーディオは無効になります——保存されたチェックポイントからレンダリングしてください。
 
 ### `--minimax_music_lm_max_frames`
 
-- **内容**: `--minimax_music_train_component=language_model` の場合、各トラックのオーディオトークン列をこのフレーム数（25Hz）に切り詰めます（歌詞との整合を保つため先頭から取得）。
+- **内容**: `--minimax_music_train_component=language_model` で、`prefix` と独立した `random` 窓を 25Hz オーディオフレーム単位で制限します。
 - **デフォルト**: `0`（フルトラックでトレーニング）
 - **メモ**:
-  - 1 フレームは 40ms、7500 フレームは 5 分です。長いトラックで VRAM が不足する場合は下げてください。
+  - 1 フレームは 40ms、7500 フレームは 5 分です。
+  - `continuation` は下記の専用ターゲットフレームおよび時間設定を使います。
   - 切り詰められたサンプルにはオーディオ終端ターゲットが与えられないため、モデルが早期停止を学習することはありません。
+
+### `--minimax_music_lm_window_mode`
+
+- **内容**: 言語モデルのトレーニングシーケンスの構築方法を選びます。
+- **選択肢**: `prefix`（デフォルト）、`random`、`continuation`
+- **メモ**:
+  - `prefix` はトラックの先頭を使います。フルトラック歌詞との対応は最も自然ですが、短い上限では主にイントロを学習します。
+  - `random` は collate 時に連続した RVQ 窓をサンプリングし、開始/終了/長さのテキストをプロンプトに追加します。切り詰めた窓では、サンプルが `lyrics_window` を持つ場合を除いてフルトラック歌詞を省きます。
+  - `continuation` は上限付き可視区間をサンプリングし、最後のターゲットフレームだけに損失を適用します。
+  - 独立した `random` には正の `--minimax_music_lm_max_frames` が必要ですが、`continuation` はこの設定を使いません。
+
+### `--minimax_music_lm_target_frames`
+
+- **内容**: `continuation` で、可視区間末尾の何個の 25Hz フレームに次トークン損失を適用するかを設定します。
+- **デフォルト**: `128`（ネイティブ RVQ セグメント 1 個、5.12 秒）
+- **メモ**: それ以前の可視フレームは因果コンテキストとして残り、交差エントロピーからマスクされます。
+
+### `--minimax_music_lm_continuation_crop_mode`
+
+- **内容**: `continuation` の可視区間の開始位置を選びます。
+- **選択肢**: `full`（デフォルト）、`random`
+- **メモ**:
+  - `full` は常に曲のフレーム 0 から始まり、時間範囲内の終点をサンプリングします。
+  - `random` は曲頭を省略できますが、ターゲット前に最低 1 個のネイティブ 128 フレームコンテキストを保持し、位置をプロンプトへ追加します。
+  - 位置付き区間では `lyrics_window` がない限りフルトラック歌詞を省きます。短すぎる曲はフル prefix にフォールバックします。
+
+### `--minimax_music_lm_min_duration_seconds`
+
+- **内容**: `continuation` でモデルから見える区間の最小時間です。
+- **デフォルト**: `5.12`
+- **メモ**: ネイティブ 128 フレーム（5.12 秒）間隔へ切り上げます。`random` はコンテキスト確保のため、これより長くなる場合があります。
+
+### `--minimax_music_lm_max_duration_seconds`
+
+- **内容**: キャッシュ済み RVQ トラックを変更せず、`continuation` の可視時間に上限を付けます。
+- **デフォルト**: `0`（利用可能なトラック長）
+- **メモ**:
+  - 正の上限はネイティブ 128 フレーム間隔へ切り下げます。
+  - `random` ではターゲットと最低 1 個のコンテキストセグメントが上限内に収まる必要があります。
+  - オーディオ終端ターゲットは、サンプリング区間が実際の曲末へ達した場合だけ追加されます。
+  - 終端区間と非終端区間の両方が可能な場合、continuation サンプルの 25% は実際の曲末を明示的に選択します。残りの 75% は有効な非終端の終点またはオフセットから一様に選ばれるため、長い曲でも EOS 教師信号が薄くなりません。
+
+### `--minimax_music_rvq_encoder_model_name_or_path`
+
+- **内容**: MiniMax Music の `language_model` トレーニング専用です。キャッシュ済み DAV オーディオ latent をコードブック別オーディオコードへ変換する RVQ エンコーダーを含む Hub リポジトリまたはローカルディレクトリです。
+- **デフォルト**: `SimpleTuner/open-rvq-encoder-minimax-music3-169m-v4`
+- **関連**: `--minimax_music_rvq_encoder_subfolder` はデフォルトで `final`、`--minimax_music_rvq_encoder_revision` は Hub revision の固定に使えます。
+- **メモ**: デフォルトパッケージには `rvq_encoder_config.json`、`rvq_encoder.safetensors`、muP base-shape メタデータが含まれます。MiniMax Music 3 の codebook 用にトレーニングされた互換 RVQ エンコーダーを使う場合だけ変更してください。
+
+### `--minimax_music_rvq_encoder_subfolder`
+
+- **内容**: RVQ エンコーダーのリポジトリまたはローカルディレクトリ内のサブフォルダです。
+- **デフォルト**: `final`
+- **メモ**: 選択したフォルダには `rvq_encoder_config.json`、`rvq_encoder.safetensors`、必要な muP base-shape メタデータが含まれている必要があります。
+
+### `--minimax_music_rvq_encoder_revision`
+
+- **内容**: `--minimax_music_rvq_encoder_model_name_or_path` 用の任意の Hub revision です。
+- **デフォルト**: 未設定。主な `--revision` が指定されている場合はそれを使用します。
+- **メモ**: RVQ エンコーダーを MiniMax Music 3 ベースチェックポイントとは別に固定したい場合に使用します。
+
+### `--minimax_music_rvq_vae_model_name_or_path`
+
+- **内容**: MiniMax Music の `language_model` トレーニング専用です。VAE キャッシュ中、RVQ エンコーダーの前に使う DAV/audio VAE のリポジトリ、ローカルディレクトリ、または `dav.pth` ファイルです。
+- **デフォルト**: 未設定。まず `--pretrained_vae_model_name_or_path` を使用し、その後 `SimpleTuner/MiniMax-Music-3-Encoder` を使用します。
+- **メモ**: これは waveform を DAV latent にするエンコード段階です。その後、RVQ エンコーダーが DAV latent をグローバル LM の予測対象コードテンソルへ変換します。
 
 ### `--minimax_music_lm_adapter`
 
@@ -131,7 +198,6 @@ simpletuner configure config/foo/config.json
 
 - **内容**: VAE キャッシュ処理中にテキストエンコーダの重みを CPU にオフロードします。
 - **理由**: HiDream や Wan 2.1 のような大型モデルでは、VAE キャッシュ読み込み時に OOM になることがあります。このオプションは学習品質に影響しませんが、非常に大きなテキストエンコーダや低速 CPU の場合、複数データセットで起動時間が大きく伸びることがあります。そのため既定では無効です。
-- **ヒント**: 特にメモリが厳しい環境では、後述のグループオフロードと併用すると効果的です。
 
 ### `--offload_during_save`
 
@@ -202,39 +268,6 @@ simpletuner configure config/foo/config.json
 - **動作**: batch ごとに 1 noise block を選び、その layer group だけを実行し、DDP の unused-parameter 検出を自動有効化します。
 - **制限**: Transformer denoiser のみ。[DiffusionBlocks](experimental/DIFFUSION_BLOCKS.ja.md) を参照してください。
 
-### `--enable_group_offload`
-
-- **内容**: diffusers の grouped module offloading を有効化し、forward 間でモデルブロックを CPU（またはディスク）に退避します。
-- **理由**: 大規模 Transformer（Flux、Wan、Auraflow、LTXVideo、Cosmos2Image）で VRAM ピーク使用量を大幅に削減し、CUDA ストリームと併用すれば性能影響は最小です。
-- **注記**:
-  - `--enable_model_cpu_offload` と排他です。実行ごとにどちらか一方を選択してください。
-  - diffusers **v0.33.0** 以上が必要です。
-
-### `--group_offload_type`
-
-- **選択肢**: `block_level`（既定）, `leaf_level`
-- **内容**: レイヤーのグルーピング方法を制御します。`block_level` は VRAM 削減とスループットのバランス、`leaf_level` は最大の削減と引き換えに CPU 転送が増えます。
-
-### `--group_offload_blocks_per_group`
-
-- **内容**: `block_level` 使用時、1 グループに束ねる Transformer ブロック数。
-- **既定**: `1`
-- **理由**: 値を増やすと転送頻度が減り高速化しますが、アクセラレータ上に保持するパラメータが増えます。
-
-### `--group_offload_use_stream`
-
-- **内容**: 専用 CUDA ストリームでホスト/デバイス転送と計算を重ね合わせます。
-- **既定**: `False`
-- **注記**:
-  - 非 CUDA バックエンド（Apple MPS、ROCm、CPU）では自動的に CPU 風の転送にフォールバックします。
-  - NVIDIA GPU でコピーエンジンに余力がある場合に推奨します。
-
-### `--group_offload_to_disk_path`
-
-- **内容**: グループ化されたパラメータを RAM ではなくディスクにスピルするためのディレクトリパス。
-- **理由**: CPU RAM が極端に厳しい環境（例: 大容量 NVMe を持つワークステーション）で有効です。
-- **ヒント**: 高速なローカル SSD を使ってください。ネットワークファイルシステムでは学習が大幅に遅くなります。
-
 ### `--musubi_blocks_to_swap`
 
 - **内容**: LongCat-Video、Wan、LTXVideo、Kandinsky5-Video、Qwen-Image、Flux、Flux.2、zlab i1、Cosmos2Image、HunyuanVideo、Krea 2 の Musubi ブロックスワップ。最後の N 個の Transformer ブロックを CPU に置き、forward 中にブロック単位で重みをストリーミングします。
@@ -254,7 +287,6 @@ simpletuner configure config/foo/config.json
 - **理由**: Linear 重みを CPU メモリで共有し、アクセラレータへストリーミングすることで VRAM 圧力を下げます。
 - **注記**:
   - CUDA または ROCm が必要（Apple/MPS では非対応）。
-  - `--enable_group_offload` と排他。
   - `--set_grads_to_none` を自動的に有効化します。
 
 ### `--ramtorch_target_modules`
@@ -570,6 +602,23 @@ TRAINING_DYNAMO_BACKEND=inductor
 
 Accelerate の既定値を使いたい項目は省略してください（例: 自動選択の `dynamo_mode` を使うなら省略）。
 
+### `--dynamo_wrapper`
+
+TorchInductor の host wrapper を選択します。`cpp` が既定で dispatch overhead を削減し、`python` は以前の release の動作を維持します。この選択は Mega-Cache の filename と manifest に含まれます。
+
+### `--dynamo_cache_export`
+
+累積 PyTorch Mega-Cache blob の任意パスです。SimpleTuner はコンパイル前に互換 blob を読み込み、最初の成功した optimizer step 後に保存し、各 checkpoint と終了時に新しい artifact key を確認します。`<path>.manifest.json` に PyTorch/Triton/GPU runtime と SHA256 を記録します。未対応の shape は通常どおりコンパイルされ、次の export に追加されます。信頼できる cache blob のみ使用してください。
+値が directory、区切り文字で終わる path、または拡張子のない path の場合、model、runtime、accelerator、graph 関連設定から安定した filename を生成し、Hub でも同じ名前を検索します。
+
+### `--dynamo_cache_export_after_first_step`
+
+`true`（既定）の場合、最初の成功した optimizer step 後に Mega-Cache を export します。`false` はこの初回 export のみを無効にし、checkpoint と終了時の export は継続します。
+
+### `--dynamo_hub_repo_id`
+
+`--dynamo_cache_export` blob の取得と公開に使う任意の Hugging Face repository です。Blob と manifest は 1 commit でアップロードされ、存在しない repository は private で作成されます。Hub 障害で学習は中断されず、local export は保持されます。
+
 ### `--attention_mechanism`
 
 代替アテンション機構が利用可能で、互換性やトレードオフが異なります:
@@ -753,6 +802,13 @@ Accelerate の既定値を使いたい項目は省略してください（例: �
 
 - **内容**: メモリに保持するバッチ数を増減します。
 - **理由**: dataloader prefetch の既定では GPU/プロセスあたり 10 エントリを保持します。多すぎる/少なすぎる場合に調整できます。
+
+### `--dataloader_prefetch_device_threshold_mb`
+
+- **内容**: dataloader prefetch がページロックし、専用 CUDA ストリームで転送する CPU バッチの最小ユニークペイロードを MiB 単位で指定します。`0` でデバイスへのステージングを無効にします。
+- **理由**: 非常に大きなキャッシュ済み埋め込みでは、ホストからデバイスへの転送とモデル処理が直列化される場合があります。この設定により転送と GPU 計算を重ねます。
+- **メモリ**: ステージングされた各キューエントリは、固定ホストメモリとアクセラレータメモリの両方を消費します。`dataloader_prefetch_qlen: 2` から始め、増やす前にプロファイルしてください。
+- **互換性**: `dataloader_prefetch: true` と CUDA が必要です。context parallelism とは併用できません。
 
 ### `--compress_disk_cache`
 
@@ -1794,6 +1850,70 @@ Internal Guidance は前段の diffusion-transformer block を final output head
 
 ---
 
+## Explorative Modeling (XM)
+
+XM は複数の学習候補を評価し、各 supervised sample または token block を最もよく説明する候補だけを backprop します。選択した target は各 model family 側の対応実装が必要です。User guide は [Explorative Modeling](experimental/EXPLORATION_MODELING.ja.md) を参照してください。
+
+### `--xm_enabled`
+
+- **内容**: XM candidate selection を有効化。
+- **既定**: `false`
+
+### `--xm_candidate_count`
+
+- **内容**: 各 sample に対して評価する noise または route latent の候補数。
+- **既定**: `1`。XM 有効時は `2` 以上が必要です。
+
+### `--xm_training_target`
+
+- **内容**: 候補タイプ。Diffusion/flow では `noise`、AR/RVQ planner では `route` を使います。
+- **選択肢**: `noise`, `route`
+- **既定**: `noise`
+
+### `--xm_selection_scope`
+
+- **内容**: 勝者を `sample` 単位または token/frame `block` 単位で選びます。
+- **既定**: `sample`
+
+### `--xm_block_size`
+
+- **内容**: block-level XM の token/frame span。`0` は supervised sequence 全体を使います。
+- **既定**: `0`
+
+---
+
+## NextLat
+
+NextLat は、capture した各 hidden token から次の hidden token を予測する小さな補助 predictor を追加します。SimpleTuner の hidden-state buffer へ hidden state を出せる transformer family が必要です。User guide は [NextLat](experimental/NEXTLAT.ja.md) を参照してください。
+
+### `--nextlat_enabled`
+
+- **内容**: NextLat hidden-state prediction を有効化。
+- **既定**: `false`
+
+### `--nextlat_block_index`
+
+- **内容**: Capture する 0-based transformer block。
+- **既定**: `-1`。対応する最後の block を使います。
+
+### `--nextlat_weight`
+
+- **内容**: NextLat auxiliary loss の倍率。
+- **既定**: `0.0`。NextLat 有効時は 0 より大きい値が必要です。
+
+### `--nextlat_state_loss`
+
+- **内容**: 次の hidden state 予測に使う距離関数。
+- **選択肢**: `smooth_l1`, `mse`
+- **既定**: `smooth_l1`
+
+### `--nextlat_kl_weight`
+
+- **内容**: Model family が predicted hidden state 用 logits head を提供する場合の optional KL agreement weight。
+- **既定**: `0.0`
+
+---
+
 ## 🔁 LayerSync（隠れ状態の自己整合）
 
 LayerSync は同一 Transformer 内の「学生」レイヤーを、より強い「教師」レイヤーに合わせることで、隠れトークンのコサイン類似度を用いて整合させます。
@@ -2132,6 +2252,7 @@ usage: train.py [-h] --model_family
                 [--torch_num_threads TORCH_NUM_THREADS]
                 [--dataloader_prefetch [DATALOADER_PREFETCH]]
                 [--dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN]
+                [--dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB]
                 [--aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT]
                 [--aspect_bucket_alignment {8,16,24,32,64}]
                 [--minimum_image_size MINIMUM_IMAGE_SIZE]
@@ -2784,6 +2905,10 @@ options:
                         so that it can be immediately available
   --dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN
                         Set the number of prefetched batches
+  --dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB
+                        Minimum CPU batch payload in MiB to page-lock and
+                        transfer on a dedicated CUDA stream during dataloader
+                        prefetch; 0 disables device staging
   --aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT
                         The number of workers to use for aspect bucketing.
                         This is a CPU-bound task, so the number of workers

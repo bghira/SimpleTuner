@@ -821,8 +821,14 @@ class Krea2Transformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftAdapt
             return Transformer2DModelOutput(sample=output)
 
         for idx, block in enumerate(self.transformer_blocks):
+            checkpoint_this_block = (
+                idx not in skip_set
+                and torch.is_grad_enabled()
+                and self.gradient_checkpointing
+                and not self.gradient_checkpointing_backend.endswith("-ffn")
+            )
             if musubi_offload_active and musubi_manager.is_managed_block(idx):
-                musubi_manager.stream_in(block, hidden_states.device)
+                musubi_manager.stream_in(block, hidden_states.device, checkpointed=checkpoint_this_block)
 
             if use_routing and route_ptr < len(routes) and idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]

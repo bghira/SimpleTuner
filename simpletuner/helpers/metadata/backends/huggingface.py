@@ -6,10 +6,13 @@ import traceback
 from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
+from huggingface_hub import hf_hub_download
+from huggingface_hub.utils import EntryNotFoundError, HfHubHTTPError, HFValidationError, LocalEntryNotFoundError
 from PIL import Image
 from tqdm import tqdm
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.dataset_types import ensure_dataset_type
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
@@ -28,6 +31,10 @@ def _coerce_bucket_keys_to_float(indices: dict) -> dict:
             coerced_key = key
         coerced[coerced_key] = list(values) if not isinstance(values, list) else values
     return coerced
+
+
+def _dataset_type_value(dataset_type: Any) -> str:
+    return str(getattr(dataset_type, "value", dataset_type)).lower()
 
 
 logger = logging.getLogger("HuggingfaceMetadataBackend")
@@ -140,6 +147,8 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             repeats=repeats,
             max_num_samples=max_num_samples,
         )
+        if not (StateTracker.get_data_backend_config(id) or {}).get("dataset_type"):
+            self.dataset_type = ensure_dataset_type(dataset_type)
 
         if not hasattr(data_backend, "dataset"):
             raise ValueError("HuggingfaceMetadataBackend requires HuggingfaceDatasetsBackend")
@@ -242,7 +251,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                 caption = str(fallback)
 
         # Audio models often store prompts/lyrics in multiple fields; combine them if no caption yet.
-        if not caption and self.dataset_type == "audio":
+        if not caption and _dataset_type_value(self.dataset_type) == "audio":
             parts = []
             for field in self.audio_caption_fields or []:
                 value = self._get_nested_value(item, field)
@@ -250,6 +259,11 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     parts.append(str(value).strip())
             if parts:
                 caption = " ".join([p for p in parts if p])
+            else:
+                audio_value = item.get("audio")
+                sibling_caption = self._read_audio_text_sibling(self._source_path_from_hf_media(audio_value), ".txt")
+                if sibling_caption:
+                    caption = sibling_caption
 
         # handle description column if specified
         if not caption and self.description_column in item:
@@ -286,6 +300,81 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             return current_value
         else:
             return item.get(key_path)
+
+    @staticmethod
+    def _source_path_from_hf_media(media_value: Any) -> Optional[str]:
+        encoded = getattr(media_value, "_hf_encoded", None)
+        if isinstance(encoded, dict):
+            path = encoded.get("path")
+            if isinstance(path, str) and path:
+                return path
+        if isinstance(media_value, dict):
+            path = media_value.get("path")
+            if isinstance(path, str) and path:
+                return path
+        if isinstance(media_value, str) and media_value:
+            return media_value
+        return None
+
+    @staticmethod
+    def _read_text_sibling(source_path: Optional[str], extension: str) -> Optional[str]:
+        if not source_path:
+            return None
+        sibling_path = os.path.splitext(source_path)[0] + extension
+        if not os.path.isfile(sibling_path):
+            return None
+        try:
+            with open(sibling_path, "r", encoding="utf-8") as sibling_file:
+                value = sibling_file.read().strip()
+        except OSError:
+            return None
+        return value or None
+
+    def _source_dataset_repo_id(self) -> Optional[str]:
+        data_files = getattr(self.data_backend, "data_files", None)
+        stack = [data_files]
+        while stack:
+            value = stack.pop()
+            if isinstance(value, dict):
+                stack.extend(value.values())
+                continue
+            if isinstance(value, (list, tuple, set)):
+                stack.extend(value)
+                continue
+            if not isinstance(value, str):
+                continue
+            marker = "hf://datasets/"
+            if marker not in value:
+                continue
+            path = value.split(marker, 1)[1]
+            parts = [part for part in path.split("/") if part and "*" not in part]
+            if len(parts) >= 2:
+                return "/".join(parts[:2])
+        dataset_name = getattr(self.data_backend, "dataset_name", None)
+        if isinstance(dataset_name, str) and "/" in dataset_name and dataset_name != "audiofolder":
+            return dataset_name
+        return None
+
+    def _read_audio_text_sibling(self, source_path: Optional[str], extension: str) -> Optional[str]:
+        local_value = self._read_text_sibling(source_path, extension)
+        if local_value is not None:
+            return local_value
+        if not source_path:
+            return None
+        repo_id = self._source_dataset_repo_id()
+        if repo_id is None:
+            return None
+        filename = os.path.basename(os.path.splitext(source_path)[0] + extension)
+        try:
+            sibling_path = hf_hub_download(repo_id, filename, repo_type="dataset")
+        except (EntryNotFoundError, HFValidationError, HfHubHTTPError, LocalEntryNotFoundError):
+            return None
+        try:
+            with open(sibling_path, "r", encoding="utf-8") as sibling_file:
+                value = sibling_file.read().strip()
+        except OSError:
+            return None
+        return value or None
 
     def reload_cache(self, set_config: bool = True):
         if self.data_backend.exists(self.cache_file):
@@ -349,21 +438,23 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         if not str(self.metadata_file).endswith(".json"):
             full_metadata_path = f"{self.metadata_file}_{self.id}.json"
         logger.debug(f"Loading metadata from {full_metadata_path}")
-        self.image_metadata = {}
-        self.image_metadata_loaded = False
-
         if self.data_backend.exists(full_metadata_path):
             try:
                 raw = self.data_backend.read(full_metadata_path)
                 if raw:
-                    self.image_metadata = json.loads(raw)
-                    self.image_metadata_loaded = True
-                    logger.info(f"Loaded {len(self.image_metadata)} metadata entries from {full_metadata_path}")
+                    loaded_metadata = json.loads(raw)
+                    with self.metadata_semaphor:
+                        self.image_metadata = loaded_metadata
+                        self.image_metadata_loaded = True
+                    logger.info(f"Loaded {len(loaded_metadata)} metadata entries from {full_metadata_path}")
                 else:
                     logger.warning(f"Metadata file exists but is empty: {full_metadata_path}")
             except Exception as e:
                 logger.error(f"Error loading metadata: {e}")
         else:
+            with self.metadata_semaphor:
+                self.image_metadata = {}
+                self.image_metadata_loaded = False
             logger.debug(f"Metadata file does not exist: {full_metadata_path}")
 
     def _passes_quality_filter(self, quality_assessment: Dict) -> bool:
@@ -568,14 +659,21 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     statistics.setdefault("skipped", {}).setdefault("quality", 0)
                     statistics["skipped"]["quality"] += 1
                     return aspect_ratio_bucket_indices
-            if self.dataset_type == "audio":
+            dataset_type_value = _dataset_type_value(self.dataset_type)
+            if dataset_type_value == "audio":
                 sample_metadata = dict(self.image_metadata.get(image_path_str, {}))
+                audio_value = item.get("audio")
+                source_path = self._source_path_from_hf_media(audio_value)
                 # Ensure audio fields are present in metadata
                 if self.audio_caption_fields:
                     for field in self.audio_caption_fields:
                         val = self._get_nested_value(item, field)
                         if val:
                             sample_metadata[field] = str(val)
+                    if not any(sample_metadata.get(field) for field in self.audio_caption_fields):
+                        sibling_caption = self._read_audio_text_sibling(source_path, ".txt")
+                        if sibling_caption:
+                            sample_metadata[self.audio_caption_fields[0]] = sibling_caption
 
                 # Specific handling for lyrics column. Empty strings are preserved: instrumental and
                 # regularisation tracks legitimately carry no lyrics.
@@ -583,6 +681,8 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     lyrics_val = self._get_nested_value(item, self.lyrics_column)
                     if lyrics_val is not None:
                         sample_metadata["lyrics"] = str(lyrics_val)
+                    elif (sibling_lyrics := self._read_audio_text_sibling(source_path, ".lyrics")) is not None:
+                        sample_metadata["lyrics"] = sibling_lyrics
                     # Fallback for norm_lyrics if not found via lyrics_column
                     elif self.lyrics_column != "norm_lyrics":
                         norm_lyrics = self._get_nested_value(item, "norm_lyrics")
@@ -600,7 +700,6 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     # Prefer explicit duration columns if provided by the dataset.
                     duration_seconds = item.get("audio_duration") or item.get("duration") or item.get("duration_seconds")
                 if duration_seconds is None:
-                    audio_value = item.get("audio")
                     try:
                         if isinstance(audio_value, dict):
                             array = audio_value.get("array")
@@ -626,7 +725,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     metadata_updates[image_path_str] = sample_metadata
                 statistics["total_processed"] += 1
                 return aspect_ratio_bucket_indices
-            if self.dataset_type == "image":
+            if dataset_type_value == "image":
                 sample_metadata = self._get_image_metadata_from_item(item)
 
                 if "original_size" not in sample_metadata:
@@ -646,7 +745,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
                     image_metadata=sample_metadata,
                     image_path=image_path_str,
                 )
-            elif self.dataset_type == "video":
+            elif dataset_type_value == "video":
                 if self.video_column not in item:
                     logger.warning(f"Video column '{self.video_column}' not found in item {image_path_str}")
                     statistics.setdefault("skipped", {}).setdefault("metadata_missing", 0)

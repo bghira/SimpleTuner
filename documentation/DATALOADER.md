@@ -260,6 +260,15 @@ Memory backends require Linux or macOS and enough RAM or swap for the existing c
 - **Note:** If you have multiple conditioning datasets, you can specify them as an array of `id` values. When training Flux Kontext, this allows switching between conditions randomly or stitching inputs together to train in more advanced multi-image compositing tasks.
 - **Flow-DPO:** Pair a `reference_strict` conditioning dataset here when using [`--distillation_method=flow_dpo`](experimental/FLOW_DPO.md).
 
+### `data_transforms`
+
+- **Values:** a transform object or an array of transform objects
+- **Description:** Expands a source dataset into one or more generated training datasets before normal dataloader setup begins. Generated datasets are treated as regular primary datasets unless the transform explicitly asks to clone metadata.
+- **Audio identity transfer:** `{"task": "identity_transfer", "method": "rvc"}` is available for `dataset_type: "audio"` backends. It prepares a generated audio split for voice identity transfer and uses the output directory for cached voice artifacts and generated files. See [Voice Cloning Data Transforms](experimental/VOICE_CLONING.md).
+- **Identity data:** Put the music to be converted in the audio backend's `instance_data_dir`, put the target voice examples in `model.identity_data_dir`, and put the generated split path in `target.instance_data_dir`.
+- **Stem debugging:** Set `model.identity_stem_debug_dir` to preserve the separated identity `vocals.wav` and `no_vocals.wav` previews used by RVC training. This is useful when outputs sound like instruments were learned as part of the voice.
+- **Status:** The experimental implementation includes cache manifest checks, Hub artifact reuse/push through the `huggingface-hub-rvc` artifact layout, DDP-aware startup sharding, local RVC logs, and a compact SimpleTuner voice-transfer trainer/converter. Full-song remix mode uses Demucs for vocal separation; vocal-stem mode does not need separation.
+
 ### `instance_data_dir` / `aws_data_prefix`
 
 - **Local:** Path to the data on the filesystem.
@@ -777,8 +786,9 @@ In this example, the 512px dataset is used for steps 1-300, then the 1024px data
 ### `is_regularisation_data`
 
 - Also may be spelt `is_regularization_data`
-- Enables parent-teacher training for LyCORIS adapters so that the prediction target prefers the base model's result for a given dataset.
-  - Standard LoRA are not currently supported.
+- Enables parent-teacher training so that the prediction target prefers the frozen base model's result for a given dataset.
+  - Most diffusion families currently require LyCORIS adapters.
+  - MiniMax Music 3 `language_model` training supports standard PEFT LoRA regularisation batches, including XM route selection. Its target is the frozen base planner's next-token distribution.
 
 ### `delete_unwanted_images`
 

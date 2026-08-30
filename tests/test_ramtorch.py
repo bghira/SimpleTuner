@@ -360,14 +360,12 @@ class RamTorchUtilsTests(unittest.TestCase):
         component[1].bias.is_ramtorch = True
         model = SimpleNamespace(
             get_trained_component=lambda unwrap_model=False: component,
-            group_offload_configured=False,
         )
         trainer = Trainer.__new__(Trainer)
         trainer.model = model
         trainer.config = SimpleNamespace(
             attention_mechanism="diffusers",
             controlnet=False,
-            enable_group_offload=False,
             is_quantized=True,
             musubi_blocks_to_swap=0,
             pipeline_quantization_base=False,
@@ -1322,16 +1320,6 @@ class RamTorchConfigTests(unittest.TestCase):
             "--model_family=sdxl",
             "--pretrained_model_name_or_path=stub-model",
         ]
-
-    def test_group_offload_mutually_exclusive(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            base_args = self._base_args(tmp_dir)
-            with (
-                patch("torch.cuda.is_available", return_value=True),
-                patch("torch.backends.mps.is_available", return_value=False),
-            ):
-                with self.assertRaises(ValueError):
-                    cmd_args.parse_cmdline_args(["--ramtorch", "--enable_group_offload", *base_args], exit_on_error=True)
 
     def test_set_grads_to_none_forced_for_ramtorch(self):
         with tempfile.TemporaryDirectory() as tmp_dir:

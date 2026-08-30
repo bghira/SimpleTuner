@@ -10,7 +10,6 @@ Z-Image needs less memory than Flux but still benefits from strong GPUs. When yo
 - ~16-24G VRAM when quantising to int8 + bf16 base/LoRA weights
 - ~10–12G VRAM when quantising to NF4 + bf16 base/LoRA weights
 
-Additionally, Ramtorch and group offload can be used in attempts to lower VRAM use further. For Multi-GPU users, FSDP2 will allow you to run across many smaller GPUs as well.
 
 You'll need:
 
@@ -31,24 +30,6 @@ These measurements used the `z-image-turbo.peft-lora` Domokun example for 1000 s
 | L40S | baseline SDNQ Hadamard path | 1.131 | 1.072 | 1.055 | 1.102 | 9.66 GiB |
 
 On the warmed L40S comparison, the current path was 10.3% faster by train-loop wall time and 5.2% faster by measured train-step mean than the baseline SDNQ Hadamard path.
-
-### Memory offloading (optional)
-
-Grouped module offloading dramatically reduces VRAM pressure when you are bottlenecked by the transformer weights. You can enable it by adding the following flags to `TRAINER_EXTRA_ARGS` (or the WebUI Hardware page):
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- Streams are only effective on CUDA; SimpleTuner automatically disables them on ROCm, MPS and CPU backends.
-- Do **not** combine this with other CPU offload strategies.
-- Group offload is not compatible with Quanto quantisation.
-- Prefer a fast local SSD/NVMe target when offloading to disk.
 
 ## Prerequisites
 
@@ -454,7 +435,6 @@ Z-Image is flow-matching; lower guidance values (around 0–1) tend to preserve 
 - DeepSpeed: disabled / unconfigured
 - Use `--quantize_via=cpu` if startup OOMs on <=16G cards
 - Enable `--gradient_checkpointing`
-- Enable Ramtorch or group offload
 
 The pre-caching stage can run out of memory; Text encoder quantisation and VAE tiling can be enabled via `--text_encoder_precision=int8-torchao` and `--vae_enable_tiling=true`. Further memory can be saved on startup with `--offload_during_startup=true`, which will keep only the text encoder or VAE loaded, and not both.
 
@@ -508,7 +488,6 @@ Some fine-tuned checkpoints may lack full directory structure. Set these fields 
 
 ## Troubleshooting
 
-- OOM at startup: enable group offload (not with Quanto), lower LoRA rank, or quantise (`--base_model_precision int8`/`nf4`).
 - Blurry outputs: increase `validation_num_inference_steps` (e.g., 24–28) or raise guidance toward 1.0.
 - Artifacts/overfitting: reduce rank or learning rate, add more diverse prompts, or shorten training.
 - Assistant adapter issues: turbo expects the adapter path/weight; only disable if you accept quality loss.

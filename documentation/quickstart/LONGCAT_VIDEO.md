@@ -64,7 +64,6 @@ Open http://localhost:8001 and pick model family `longcat_video`.
 
 Optional VRAM savers:
 - Reduce `lora_rank` (4–8) and use `int8-quanto` base precision.
-- Enable group offload: `--enable_group_offload --group_offload_type block_level --group_offload_blocks_per_group 1`.
 - Lower `validation_resolution`, frames, or steps first if previews OOM.
 - Attention defaults: on CUDA, LongCat‑Video will automatically use the bundled block‑sparse Triton kernel when it’s available and fall back to the standard dispatcher otherwise. No toggle needed. If you specifically want xFormers, set `attention_implementation: "xformers"` in your config/CLI.
 
@@ -108,7 +107,6 @@ In your dataset's `video` section, you can configure how videos are grouped:
 
 - **Height/width errors**: ensure both are divisible by 16 and stay on the 64px grid.
 - **MPS float64 warnings**: handled internally; keep precision at bf16/float32.
-- **OOM**: drop validation resolution or frames first, lower LoRA rank, enable group offload, or switch to `int8-quanto`/`fp8-torchao`.
 - **Blank negatives with CFG**: if you omit a negative prompt, the pipeline inserts an empty one automatically.
 
 ---

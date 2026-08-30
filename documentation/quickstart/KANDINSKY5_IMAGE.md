@@ -18,27 +18,7 @@ You'll need:
 
 ### Memory offloading (recommended)
 
-Given the size of the text encoder, you should almost certainly use grouped offloading if you are on consumer hardware. This offloads the transformer blocks to CPU memory when they are not actively being computed.
-
-Add the following to your `config.json`:
-
-<details>
-<summary>View example config</summary>
-
-```json
-{
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
-  "group_offload_blocks_per_group": 1,
-  "group_offload_use_stream": true
-}
-```
-</details>
-
-- `--group_offload_use_stream`: Only works on CUDA devices.
-- **Do not** combine this with `--enable_model_cpu_offload`.
-
-Additionally, set `"offload_during_startup": true` in your `config.json` to reduce VRAM usage during the initialization and caching phase. This ensures the text encoder and VAE are not loaded simultaneously.
+Set `"offload_during_startup": true` in your `config.json` to reduce VRAM usage during the initialization and caching phase. This ensures the text encoder and VAE are not loaded simultaneously.
 
 ## Prerequisites
 
@@ -251,7 +231,6 @@ simpletuner train
 
 To run on 16GB or constrained 24GB setups:
 
-1.  **Enable Group Offload**: `--enable_group_offload`.
 2.  **Quantize Base Model**: Set `"base_model_precision": "int8-quanto"`.
 3.  **Batch Size**: Keep it at `1`.
 

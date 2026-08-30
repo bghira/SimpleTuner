@@ -11,7 +11,7 @@ from safetensors.torch import load_file
 
 from simpletuner.helpers.models.common import PipelineTypes, TextEmbedCacheKey
 from simpletuner.helpers.models.minimaxmusic.condition_encoder import MiniMaxMusic3ConditionEncoder
-from simpletuner.helpers.models.minimaxmusic.model import MiniMaxMusic
+from simpletuner.helpers.models.minimaxmusic.model import MiniMaxMusic, MiniMaxMusicRVQCacheEncoder
 from simpletuner.helpers.models.minimaxmusic.modular_pipeline import (
     MINIMAX_MUSIC_SWIGLU_GATE_FIRST_METADATA_KEY,
     MiniMaxMusic3ModularPipeline,
@@ -21,6 +21,7 @@ from simpletuner.helpers.models.minimaxmusic.modular_pipeline import (
 from simpletuner.helpers.models.minimaxmusic.transformer import MiniMaxMusic3AttnProcessor, MiniMaxMusic3Transformer1DModel
 from simpletuner.helpers.models.minimaxmusic.vocoder import MiniMaxMusic3DAV
 from simpletuner.helpers.models.registry import ModelRegistry
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 
 def _tiny_transformer(enable_time_sign_embed: bool = False, **kwargs) -> MiniMaxMusic3Transformer1DModel:
@@ -583,7 +584,11 @@ class MiniMaxMusicModelTests(unittest.TestCase):
         )
 
         manager.activate.assert_called_once()
-        manager.stream_in.assert_called_once_with(transformer.transformer_blocks[1], torch.device("cpu"))
+        manager.stream_in.assert_called_once_with(
+            transformer.transformer_blocks[1],
+            torch.device("cpu"),
+            checkpointed=False,
+        )
         manager.stream_out.assert_called_once_with(transformer.transformer_blocks[1])
 
     def test_transformer_accepts_tokenwise_timesteps_for_self_flow(self):
@@ -1032,33 +1037,151 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
             vae_path=None,
             minimax_music_train_component="language_model",
             minimax_music_lm_max_frames=0,
+            minimax_music_lm_window_mode="prefix",
+            minimax_music_lm_target_frames=128,
+            minimax_music_lm_continuation_crop_mode="full",
+            minimax_music_lm_min_duration_seconds=5.12,
+            minimax_music_lm_max_duration_seconds=0.0,
+            weight_dtype=torch.float32,
         )
         for key, value in overrides.items():
             setattr(config, key, value)
         return config
 
     def _lm_model(self, **config_overrides):
+        native_segment_frames = config_overrides.pop("_native_segment_frames", None)
         model = MiniMaxMusic(
             config=self._lm_config(**config_overrides), accelerator=SimpleNamespace(device=torch.device("cpu"))
         )
+        if native_segment_frames is not None:
+            model.LM_NATIVE_SEGMENT_FRAMES = native_segment_frames
         model.rvq_depth_decoder = SimpleNamespace(config=SimpleNamespace(num_codebooks=4, audio_vocab_size=8))
         return model
 
     class _FakeTokenizer:
+        def __init__(self):
+            self.texts = []
+
         def __call__(self, text, return_tensors=None):
+            self.texts.append(text)
             token_count = max(2, min(len(text) // 16, 12))
             return {"input_ids": torch.arange(token_count, dtype=torch.long).unsqueeze(0)}
 
+    class _FakeDepthDecoder(torch.nn.Module):
+        def __init__(self, hidden_size=6, codebooks=4, audio_vocab=8):
+            super().__init__()
+            self.config = SimpleNamespace(num_codebooks=codebooks, audio_vocab_size=audio_vocab)
+            self.audio_embeddings = torch.nn.Embedding((codebooks - 1) * audio_vocab, hidden_size)
+
+    class _FakeLanguageModel(torch.nn.Module):
+        def __init__(self, vocab_size, hidden_size=6, layer_count=2):
+            super().__init__()
+            self.config = SimpleNamespace(vocab_size=vocab_size, hidden_size=hidden_size, initializer_range=0.02)
+            self.embed_tokens = torch.nn.Embedding(vocab_size, hidden_size)
+            self.lm_head = torch.nn.Linear(hidden_size, vocab_size, bias=False)
+            self.layer_count = layer_count
+            self.last_inputs_embeds = None
+            self.last_attention_mask = None
+
+        def get_input_embeddings(self):
+            return self.embed_tokens
+
+        def forward(self, *, inputs_embeds, attention_mask, output_hidden_states=False, **_kwargs):
+            self.last_inputs_embeds = inputs_embeds.detach().clone()
+            self.last_attention_mask = attention_mask.detach().clone()
+            hidden_states = None
+            if output_hidden_states:
+                hidden_states = tuple(inputs_embeds + float(index) for index in range(self.layer_count + 1))
+            return SimpleNamespace(logits=self.lm_head(inputs_embeds), hidden_states=hidden_states)
+
+    class _FakeAudioVAE(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.config = SimpleNamespace(sampling_rate=44100)
+
+        def encode(self, waveform):
+            latent_frames = max(4, waveform.shape[-1] // 512)
+            return torch.ones(waveform.shape[0], 128, latent_frames, device=waveform.device, dtype=torch.float32)
+
+    class _FakeRVQEncoder(torch.nn.Module):
+        def __init__(self, codebooks=4, vocab=8, max_position_embeddings=128):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.zeros(1))
+            self.codebooks = codebooks
+            self.vocab = vocab
+            self.config = SimpleNamespace(max_position_embeddings=max_position_embeddings)
+            self.pool_shapes = []
+
+        def forward(self, latents, pool, teacher_forcing_targets=None):
+            del latents, teacher_forcing_targets
+            batch, frames, _ = pool.shape
+            self.pool_shapes.append(tuple(pool.shape))
+            logits = []
+            for book in range(self.codebooks):
+                values = torch.zeros(batch, frames, self.vocab, device=pool.device)
+                values[..., book % self.vocab] = 1.0
+                logits.append(values)
+            return logits
+
     def test_lm_mode_switches_component_contracts(self):
         model = self._lm_model()
+        cache_encoder = MiniMaxMusicRVQCacheEncoder(
+            audio_vae=self._FakeAudioVAE(),
+            rvq_encoder=self._FakeRVQEncoder(codebooks=4, vocab=8),
+        )
+        model.load_lm_rvq_cache_encoder = MagicMock(return_value=cache_encoder)
+
         self.assertTrue(model._train_language_model)
         self.assertTrue(model.uses_audio_tokens())
         self.assertFalse(model.uses_audio_latents())
         self.assertFalse(model.uses_text_embeddings_cache())
+        self.assertIs(model.AUTOENCODER_CLASS, MiniMaxMusicRVQCacheEncoder)
         self.assertEqual(model.MODEL_SUBFOLDER, "language_model")
         self.assertEqual(model._music_lora_component_name(), "language_model")
         self.assertIn("q_proj", model.DEFAULT_LORA_TARGET)
-        self.assertIsNone(model.load_vae())
+        self.assertIs(model.load_vae(), cache_encoder)
+        self.assertIs(model.vae, cache_encoder)
+        self.assertEqual(model.vae.dtype, torch.float32)
+        model.load_lm_rvq_cache_encoder.assert_called_once_with(move_to_device=True)
+
+    def test_lm_vae_cache_text_offload_moves_all_lm_components(self):
+        model = self._lm_model(weight_dtype=torch.bfloat16)
+        language_model = MagicMock()
+        depth_decoder = MagicMock()
+        condition_encoder = MagicMock()
+        model.language_model = language_model
+        model.rvq_depth_decoder = depth_decoder
+        model.condition_encoder = condition_encoder
+
+        model.move_text_encoders_for_vae_cache("cpu")
+
+        language_model.to.assert_called_once_with(torch.device("cpu"))
+        depth_decoder.to.assert_called_once_with(torch.device("cpu"))
+        condition_encoder.to.assert_called_once_with(torch.device("cpu"))
+        self.assertEqual(model.text_encoders, [language_model])
+        self.assertIs(model.text_encoder_1, language_model)
+
+        for component in (language_model, depth_decoder, condition_encoder):
+            component.to.reset_mock()
+
+        model.move_text_encoders_for_vae_cache(torch.device("cuda"))
+
+        language_model.to.assert_called_once_with(torch.device("cuda"), dtype=torch.bfloat16)
+        depth_decoder.to.assert_called_once_with(torch.device("cuda"), dtype=torch.bfloat16)
+        condition_encoder.to.assert_called_once_with(torch.device("cuda"), dtype=torch.bfloat16)
+
+    def test_lm_rvq_audio_vae_path_prefers_explicit_override_then_shared_vae(self):
+        model = self._lm_model()
+        self.assertEqual(model._lm_audio_vae_path(), "SimpleTuner/MiniMax-Music-3-Encoder")
+
+        model = self._lm_model(pretrained_vae_model_name_or_path="shared/dav")
+        self.assertEqual(model._lm_audio_vae_path(), "shared/dav")
+
+        model = self._lm_model(
+            pretrained_vae_model_name_or_path="shared/dav",
+            minimax_music_rvq_vae_model_name_or_path="rvq/specific-dav",
+        )
+        self.assertEqual(model._lm_audio_vae_path(), "rvq/specific-dav")
 
     def test_lm_mode_defaults_off(self):
         config = SimpleNamespace(
@@ -1096,6 +1219,48 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         self.assertEqual(payload["input_ids"].shape[0], 2)
         self.assertEqual(payload["prompt_lengths"].shape[0], 2)
 
+    def test_lm_collate_accepts_sampler_instance_prompt_text(self):
+        model = self._lm_model()
+        model.tokenizers = [self._FakeTokenizer()]
+        examples = [
+            {
+                "instance_prompt_text": "local textfile caption",
+                "lyrics": "local lyrics",
+                "audio_tokens": torch.randint(0, 8, (8, 4)).clamp(max=7),
+            }
+        ]
+        payload = model.collate_audio_tokens(examples)
+        self.assertEqual(payload["audio_codes"].shape, (1, 8, 4))
+        self.assertIn("local textfile caption", model.tokenizers[0].texts[0])
+
+    def test_lm_collate_allows_caption_dropout_empty_prompt(self):
+        model = self._lm_model()
+        model.tokenizers = [self._FakeTokenizer()]
+        examples = [
+            {
+                "instance_prompt_text": "",
+                "drop_conditioning": True,
+                "lyrics": "local lyrics",
+                "audio_tokens": torch.randint(0, 8, (8, 4)).clamp(max=7),
+            }
+        ]
+        payload = model.collate_audio_tokens(examples)
+        self.assertEqual(payload["audio_codes"].shape, (1, 8, 4))
+        self.assertIn("<|caption_start|><|caption_end|>", model.tokenizers[0].texts[0])
+
+    def test_lm_collate_allows_missing_lyrics(self):
+        model = self._lm_model()
+        model.tokenizers = [self._FakeTokenizer()]
+        payload = model.collate_audio_tokens(
+            [
+                {
+                    "prompt": "instrumental-compatible caption",
+                    "audio_tokens": torch.randint(0, 8, (8, 4)).clamp(max=7),
+                }
+            ]
+        )
+        self.assertEqual(payload["audio_codes"].shape, (1, 8, 4))
+
     def test_lm_collate_truncates_and_drops_end_target(self):
         model = self._lm_model(minimax_music_lm_max_frames=4)
         model.tokenizers = [self._FakeTokenizer()]
@@ -1108,7 +1273,254 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         ]
         payload = model.collate_audio_tokens(examples)
         self.assertEqual(payload["audio_lengths"].tolist(), [4])
+        self.assertEqual(payload["audio_window_start_frames"].tolist(), [0])
+        self.assertEqual(payload["audio_loss_start_frames"].tolist(), [0])
+        self.assertEqual(payload["audio_total_frames"].tolist(), [9])
         self.assertFalse(bool(payload["has_audio_end"].any()))
+
+    def test_lm_collate_random_window_adds_position_and_omits_full_lyrics(self):
+        model = self._lm_model(minimax_music_lm_max_frames=4, minimax_music_lm_window_mode="random")
+        tokenizer = self._FakeTokenizer()
+        model.tokenizers = [tokenizer]
+        codes = torch.arange(36, dtype=torch.long).reshape(9, 4) % 8
+
+        with patch("torch.randint", return_value=torch.tensor([2])):
+            payload = model.collate_audio_tokens(
+                [
+                    {
+                        "prompt": "example style",
+                        "lyrics": "full track lyrics should not describe a random crop",
+                        "audio_tokens": codes,
+                    }
+                ]
+            )
+
+        torch.testing.assert_close(payload["audio_codes"][0], codes[2:6])
+        self.assertEqual(payload["audio_lengths"].tolist(), [4])
+        self.assertEqual(payload["audio_window_start_frames"].tolist(), [2])
+        self.assertEqual(payload["audio_loss_start_frames"].tolist(), [0])
+        self.assertEqual(payload["audio_total_frames"].tolist(), [9])
+        self.assertFalse(bool(payload["has_audio_end"].any()))
+        self.assertIn("<|window_start|>0.08s", tokenizer.texts[0])
+        self.assertIn("<|window_end|>0.24s", tokenizer.texts[0])
+        self.assertIn("<|track_duration|>0.36s", tokenizer.texts[0])
+        self.assertIn("<|lyrics_start|>[start]\n<|lyrics_end|>", tokenizer.texts[0])
+        self.assertNotIn("full track lyrics", tokenizer.texts[0])
+
+    def test_lm_collate_continuation_full_caps_visible_prefix_and_masks_context(self):
+        model = self._lm_model(
+            _native_segment_frames=2,
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_target_frames=4,
+            minimax_music_lm_min_duration_seconds=0.08,
+            minimax_music_lm_max_duration_seconds=0.24,
+        )
+        tokenizer = self._FakeTokenizer()
+        model.tokenizers = [tokenizer]
+        codes = torch.arange(48, dtype=torch.long).reshape(12, 4) % 8
+
+        with patch.object(model, "_lm_choose_frame_value", return_value=6):
+            payload = model.collate_audio_tokens(
+                [{"prompt": "example style", "lyrics": "full track lyrics", "audio_tokens": codes}]
+            )
+
+        torch.testing.assert_close(payload["audio_codes"][0], codes[:6])
+        self.assertEqual(payload["audio_lengths"].tolist(), [6])
+        self.assertEqual(payload["audio_window_start_frames"].tolist(), [0])
+        self.assertEqual(payload["audio_loss_start_frames"].tolist(), [2])
+        self.assertEqual(payload["audio_total_frames"].tolist(), [12])
+        self.assertFalse(bool(payload["has_audio_end"].any()))
+        self.assertIn("full track lyrics", tokenizer.texts[0])
+        self.assertNotIn("<|window_start|>", tokenizer.texts[0])
+
+        targets = model._lm_supervised_targets(
+            payload,
+            seq_len=int(payload["prompt_lengths"][0] + payload["audio_lengths"][0]),
+            device=torch.device("cpu"),
+        )
+        prompt_len = int(payload["prompt_lengths"][0])
+        self.assertTrue(bool((targets[0, : prompt_len - 1 + 2] == -100).all()))
+        self.assertEqual(int(targets[0].ne(-100).sum()), 4)
+
+    def test_lm_collate_continuation_includes_unaligned_track_end_for_stop_target(self):
+        model = self._lm_model(
+            _native_segment_frames=2,
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_target_frames=4,
+            minimax_music_lm_min_duration_seconds=0.08,
+        )
+        model.tokenizers = [self._FakeTokenizer()]
+        codes = torch.arange(36, dtype=torch.long).reshape(9, 4) % 8
+
+        with patch.object(model, "_lm_should_sample_terminal_endpoint", return_value=True):
+            payload = model.collate_audio_tokens(
+                [{"prompt": "example style", "lyrics": "full track lyrics", "audio_tokens": codes}]
+            )
+
+        self.assertEqual(payload["audio_lengths"].tolist(), [9])
+        self.assertEqual(payload["audio_loss_start_frames"].tolist(), [5])
+        self.assertTrue(bool(payload["has_audio_end"].all()))
+        targets = model._lm_supervised_targets(
+            payload,
+            seq_len=int(payload["prompt_lengths"][0] + payload["audio_lengths"][0]),
+            device=torch.device("cpu"),
+        )
+        self.assertEqual(int(targets[0].ne(-100).sum()), 5)
+
+    def test_lm_collate_continuation_random_positions_bounded_span_with_context(self):
+        model = self._lm_model(
+            _native_segment_frames=2,
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_target_frames=4,
+            minimax_music_lm_continuation_crop_mode="random",
+            minimax_music_lm_min_duration_seconds=0.08,
+            minimax_music_lm_max_duration_seconds=0.32,
+        )
+        tokenizer = self._FakeTokenizer()
+        model.tokenizers = [tokenizer]
+        codes = torch.arange(48, dtype=torch.long).reshape(12, 4) % 8
+
+        with (
+            patch.object(model, "_lm_should_sample_terminal_endpoint", return_value=True),
+            patch.object(model, "_lm_choose_frame_value", return_value=8),
+        ):
+            payload = model.collate_audio_tokens(
+                [{"prompt": "example style", "lyrics": "full track lyrics", "audio_tokens": codes}]
+            )
+
+        torch.testing.assert_close(payload["audio_codes"][0], codes[4:12])
+        self.assertEqual(payload["audio_lengths"].tolist(), [8])
+        self.assertEqual(payload["audio_window_start_frames"].tolist(), [4])
+        self.assertEqual(payload["audio_loss_start_frames"].tolist(), [4])
+        self.assertTrue(bool(payload["has_audio_end"].all()))
+        self.assertIn("<|window_start|>0.16s", tokenizer.texts[0])
+        self.assertIn("<|window_end|>0.48s", tokenizer.texts[0])
+        self.assertNotIn("full track lyrics", tokenizer.texts[0])
+
+    def test_lm_continuation_nonterminal_draws_stay_uniform_over_other_endpoints(self):
+        model = self._lm_model(
+            _native_segment_frames=2,
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_target_frames=4,
+            minimax_music_lm_min_duration_seconds=0.08,
+        )
+
+        with (
+            patch.object(model, "_lm_should_sample_terminal_endpoint", return_value=False),
+            patch.object(model, "_lm_choose_frame_value", return_value=6) as choose,
+        ):
+            span = model._lm_continuation_span(9)
+
+        self.assertEqual(span, (0, 6, 2))
+        choose.assert_called_once_with([4, 6, 8])
+
+    def test_lm_continuation_terminal_probability_has_an_exact_boundary(self):
+        model = self._lm_model()
+
+        with patch("torch.rand", return_value=torch.tensor(0.249)):
+            self.assertTrue(model._lm_should_sample_terminal_endpoint())
+        with patch("torch.rand", return_value=torch.tensor(0.25)):
+            self.assertFalse(model._lm_should_sample_terminal_endpoint())
+
+    def test_lm_continuation_random_nonterminal_draw_excludes_tail_offset(self):
+        model = self._lm_model(
+            _native_segment_frames=2,
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_target_frames=4,
+            minimax_music_lm_continuation_crop_mode="random",
+            minimax_music_lm_min_duration_seconds=0.08,
+            minimax_music_lm_max_duration_seconds=0.32,
+        )
+
+        with (
+            patch.object(model, "_lm_should_sample_terminal_endpoint", return_value=False),
+            patch.object(model, "_lm_choose_frame_value", side_effect=[8, 2]) as choose,
+        ):
+            span = model._lm_continuation_span(14)
+
+        self.assertEqual(span, (2, 10, 4))
+        self.assertEqual(choose.call_args_list[0].args[0], [6, 8])
+        self.assertEqual(choose.call_args_list[1].args[0], [0, 2, 4])
+
+    def test_lm_collate_continuation_random_falls_back_to_full_for_short_track(self):
+        model = self._lm_model(
+            _native_segment_frames=2,
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_target_frames=4,
+            minimax_music_lm_continuation_crop_mode="random",
+            minimax_music_lm_min_duration_seconds=0.08,
+        )
+        tokenizer = self._FakeTokenizer()
+        model.tokenizers = [tokenizer]
+        codes = torch.arange(20, dtype=torch.long).reshape(5, 4) % 8
+
+        payload = model.collate_audio_tokens(
+            [{"prompt": "example style", "lyrics": "full track lyrics", "audio_tokens": codes}]
+        )
+
+        torch.testing.assert_close(payload["audio_codes"][0], codes)
+        self.assertEqual(payload["audio_window_start_frames"].tolist(), [0])
+        self.assertEqual(payload["audio_loss_start_frames"].tolist(), [1])
+        self.assertTrue(bool(payload["has_audio_end"].all()))
+        self.assertIn("full track lyrics", tokenizer.texts[0])
+        self.assertNotIn("<|window_start|>", tokenizer.texts[0])
+
+    def test_lm_collate_random_window_uses_window_lyrics_when_provided(self):
+        model = self._lm_model(minimax_music_lm_max_frames=4, minimax_music_lm_window_mode="random")
+        tokenizer = self._FakeTokenizer()
+        model.tokenizers = [tokenizer]
+        codes = torch.arange(36, dtype=torch.long).reshape(9, 4) % 8
+
+        with patch("torch.randint", return_value=torch.tensor([3])):
+            model.collate_audio_tokens(
+                [
+                    {
+                        "prompt": "example style",
+                        "lyrics": "full track lyrics",
+                        "lyrics_window": "aligned line",
+                        "audio_tokens": codes,
+                    }
+                ]
+            )
+
+        self.assertIn("aligned line", tokenizer.texts[0])
+        self.assertNotIn("full track lyrics", tokenizer.texts[0])
+
+    def test_lm_window_mode_rejects_unknown_values(self):
+        model = self._lm_model(minimax_music_lm_window_mode="middle")
+        with self.assertRaisesRegex(ValueError, "prefix, random, continuation"):
+            model._lm_window_mode()
+
+    def test_lm_continuation_requires_a_positive_target_length(self):
+        model = self._lm_model(
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_target_frames=0,
+        )
+        with patch("simpletuner.helpers.models.common.AudioModelFoundation.check_user_config"):
+            with self.assertRaisesRegex(ValueError, "minimax_music_lm_target_frames"):
+                model.check_user_config()
+
+    def test_lm_continuation_rejects_max_duration_below_random_context_and_target(self):
+        model = self._lm_model(
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_continuation_crop_mode="random",
+            minimax_music_lm_target_frames=128,
+            minimax_music_lm_min_duration_seconds=5.12,
+            minimax_music_lm_max_duration_seconds=5.12,
+        )
+        with patch("simpletuner.helpers.models.common.AudioModelFoundation.check_user_config"):
+            with self.assertRaisesRegex(ValueError, "at least 256 frames"):
+                model.check_user_config()
+
+    def test_lm_continuation_rejects_max_duration_below_aligned_minimum(self):
+        model = self._lm_model(
+            minimax_music_lm_window_mode="continuation",
+            minimax_music_lm_min_duration_seconds=5.13,
+            minimax_music_lm_max_duration_seconds=7.0,
+        )
+        with patch("simpletuner.helpers.models.common.AudioModelFoundation.check_user_config"):
+            with self.assertRaisesRegex(ValueError, "at least 256 frames"):
+                model.check_user_config()
 
     def test_lm_collate_rejects_offset_baked_codes(self):
         model = self._lm_model()
@@ -1118,6 +1530,180 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         examples = [{"prompt": "x", "lyrics": "y", "audio_tokens": baked}]
         with self.assertRaises(ValueError):
             model.collate_audio_tokens(examples)
+
+    def test_lm_collate_uses_rvq_vae_cache_when_tokens_are_absent(self):
+        model = self._lm_model()
+        model.tokenizers = [self._FakeTokenizer()]
+        cached = torch.tensor([[1, 0, 0, 0], [2, 1, 0, 0]], dtype=torch.long)
+        vae_cache = SimpleNamespace(retrieve_from_cache=MagicMock(return_value=cached))
+        with patch.object(StateTracker, "get_vaecache", return_value=vae_cache):
+            payload = model.collate_audio_tokens(
+                [
+                    {
+                        "prompt": "fiona crapple style",
+                        "lyrics": "la la la",
+                        "data_backend_id": "songs",
+                        "image_path": "song.flac",
+                    }
+                ]
+            )
+
+        vae_cache.retrieve_from_cache.assert_called_once_with("song.flac")
+        self.assertTrue(torch.equal(payload["audio_codes"][0, :2], cached))
+        self.assertEqual(payload["audio_lengths"].tolist(), [2])
+
+    def test_lm_collate_cached_nonterminal_crop_uses_absolute_position_and_drops_audio_end(self):
+        model = self._lm_model()
+        tokenizer = self._FakeTokenizer()
+        model.tokenizers = [tokenizer]
+        cached = torch.tensor([[1, 0, 0, 0], [2, 1, 0, 0]], dtype=torch.long)
+        vae_cache = SimpleNamespace(
+            retrieve_from_cache=MagicMock(
+                return_value={
+                    "latents": cached,
+                    "metadata": {
+                        "audio_crop_start_seconds": 30.0,
+                        "audio_crop_end_seconds": 30.08,
+                        "audio_crop_is_terminal": False,
+                        "original_duration_seconds": 60.0,
+                    },
+                }
+            )
+        )
+
+        with patch.object(StateTracker, "get_vaecache", return_value=vae_cache):
+            payload = model.collate_audio_tokens(
+                [
+                    {
+                        "prompt": "example style",
+                        "lyrics": "la la la",
+                        "data_backend_id": "songs",
+                        "image_path": "song.flac",
+                    }
+                ]
+            )
+
+        self.assertTrue(torch.equal(payload["audio_codes"][0, :2], cached))
+        self.assertEqual(payload["audio_lengths"].tolist(), [2])
+        self.assertEqual(payload["audio_window_start_frames"].tolist(), [750])
+        self.assertEqual(payload["audio_total_frames"].tolist(), [1500])
+        self.assertFalse(bool(payload["has_audio_end"].any()))
+        self.assertIn("<|window_start|>30.00s", tokenizer.texts[0])
+        self.assertIn("<|window_end|>30.08s", tokenizer.texts[0])
+        self.assertIn("<|track_duration|>60.00s", tokenizer.texts[0])
+        self.assertNotIn("la la la", tokenizer.texts[0])
+
+    def test_lm_collate_random_cached_crop_anchors_to_source_position(self):
+        model = self._lm_model(minimax_music_lm_max_frames=4, minimax_music_lm_window_mode="random")
+        tokenizer = self._FakeTokenizer()
+        model.tokenizers = [tokenizer]
+        cached = torch.arange(36, dtype=torch.long).reshape(9, 4) % 8
+        vae_cache = SimpleNamespace(
+            retrieve_from_cache=MagicMock(
+                return_value={
+                    "latents": cached,
+                    "metadata": {
+                        "audio_crop_start_seconds": 30.0,
+                        "audio_crop_end_seconds": 30.36,
+                        "audio_crop_is_terminal": False,
+                        "original_duration_seconds": 60.0,
+                    },
+                }
+            )
+        )
+
+        with (
+            patch.object(StateTracker, "get_vaecache", return_value=vae_cache),
+            patch("torch.randint", return_value=torch.tensor([2])),
+        ):
+            payload = model.collate_audio_tokens(
+                [
+                    {
+                        "prompt": "example style",
+                        "lyrics": "full track lyrics",
+                        "data_backend_id": "songs",
+                        "image_path": "song.flac",
+                    }
+                ]
+            )
+
+        torch.testing.assert_close(payload["audio_codes"][0], cached[2:6])
+        self.assertEqual(payload["audio_window_start_frames"].tolist(), [752])
+        self.assertEqual(payload["audio_total_frames"].tolist(), [1500])
+        self.assertFalse(bool(payload["has_audio_end"].any()))
+        self.assertIn("<|window_start|>30.08s", tokenizer.texts[0])
+        self.assertIn("<|window_end|>30.24s", tokenizer.texts[0])
+        self.assertIn("<|track_duration|>60.00s", tokenizer.texts[0])
+
+    def test_lm_encode_cache_batch_uses_rvq_encoder(self):
+        model = self._lm_model()
+        cache_encoder = MiniMaxMusicRVQCacheEncoder(
+            audio_vae=self._FakeAudioVAE(),
+            rvq_encoder=self._FakeRVQEncoder(codebooks=4, vocab=8),
+        )
+        samples = torch.zeros(1, 2, 4410)
+        payload = model.encode_cache_batch(
+            cache_encoder,
+            samples,
+            metadata_entries=[{"metadata": {"sample_rate": 44100}, "data_backend_id": "songs"}],
+        )
+        codes = payload["latents"]
+
+        self.assertEqual(codes.ndim, 3)
+        self.assertEqual(codes.shape[0], 1)
+        self.assertEqual(codes.shape[2], 4)
+        self.assertTrue(torch.equal(codes[0, 0], torch.tensor([0, 1, 2, 3])))
+        self.assertEqual(payload["metadata"][0]["audio_crop_start_seconds"], 0.0)
+        self.assertEqual(payload["metadata"][0]["original_duration_seconds"], 0.1)
+        self.assertTrue(payload["metadata"][0]["audio_crop_is_terminal"])
+
+    def test_lm_encode_cache_batch_chunks_to_rvq_position_limit(self):
+        model = self._lm_model()
+        rvq_encoder = self._FakeRVQEncoder(codebooks=4, vocab=8, max_position_embeddings=3)
+        cache_encoder = MiniMaxMusicRVQCacheEncoder(
+            audio_vae=self._FakeAudioVAE(),
+            rvq_encoder=rvq_encoder,
+        )
+        samples = torch.zeros(1, 2, 44100)
+        payload = model.encode_cache_batch(
+            cache_encoder,
+            samples,
+            metadata_entries=[{"metadata": {"sample_rate": 44100}, "data_backend_id": "songs"}],
+        )
+        codes = payload["latents"]
+
+        self.assertGreater(codes.shape[1], 3)
+        self.assertGreater(len(rvq_encoder.pool_shapes), 1)
+        self.assertTrue(all(shape[1] <= 3 for shape in rvq_encoder.pool_shapes))
+
+    def test_lm_encode_cache_batch_preserves_audio_crop_metadata(self):
+        model = self._lm_model()
+        cache_encoder = MiniMaxMusicRVQCacheEncoder(
+            audio_vae=self._FakeAudioVAE(),
+            rvq_encoder=self._FakeRVQEncoder(codebooks=4, vocab=8),
+        )
+
+        payload = model.encode_cache_batch(
+            cache_encoder,
+            torch.zeros(1, 2, 4410),
+            metadata_entries=[
+                {
+                    "metadata": {
+                        "sample_rate": 44100,
+                        "audio_crop_start_seconds": 30.0,
+                        "audio_crop_end_seconds": 30.1,
+                        "audio_crop_is_terminal": False,
+                        "original_duration_seconds": 60.0,
+                    },
+                    "data_backend_id": "songs",
+                }
+            ],
+        )
+
+        self.assertEqual(payload["metadata"][0]["audio_crop_start_seconds"], 30.0)
+        self.assertEqual(payload["metadata"][0]["audio_crop_end_seconds"], 30.1)
+        self.assertEqual(payload["metadata"][0]["original_duration_seconds"], 60.0)
+        self.assertFalse(payload["metadata"][0]["audio_crop_is_terminal"])
 
     def test_lm_loss_targets_audio_positions_only(self):
         from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET, _AUDIO_END_TOKEN_ID
@@ -1157,7 +1743,7 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
         codes = torch.tensor([[5, 0, 0, 0], [9, 0, 0, 0]], dtype=torch.long).unsqueeze(0)
         teacher = torch.randn(1, prompt_len + audio_len, vocab)
         model._lm_adapters_disabled = lambda: nullcontext()
-        model._lm_predict = lambda batch: {"logits": teacher}
+        model._lm_predict = lambda batch, **kwargs: {"logits": teacher}
         prepared = {
             "audio_codes": codes,
             "prompt_lengths": torch.tensor([prompt_len]),
@@ -1267,6 +1853,190 @@ class MiniMaxMusicLanguageModelTrainingTests(unittest.TestCase):
             4**-0.5
         )
         self.assertTrue(torch.allclose(result, expected, atol=1e-6))
+
+    def test_lm_xm_route_prediction_expands_candidates_over_supervised_span(self):
+        from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET
+
+        model = self._lm_model(
+            xm_enabled=True,
+            xm_candidate_count=2,
+            xm_training_target="route",
+            xm_selection_scope="sample",
+        )
+        model.model = self._FakeLanguageModel(vocab_size=_AUDIO_CODE_OFFSET + 32)
+        model.rvq_depth_decoder = self._FakeDepthDecoder()
+        model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
+        model._new_hidden_state_buffer = lambda: None
+        prepared = {
+            "input_ids": torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]], dtype=torch.long),
+            "audio_codes": torch.tensor(
+                [
+                    [[1, 0, 0, 0], [2, 1, 0, 0]],
+                    [[3, 0, 1, 0], [4, 0, 0, 1]],
+                ],
+                dtype=torch.long,
+            ),
+            "prompt_lengths": torch.tensor([3, 2]),
+            "audio_lengths": torch.tensor([2, 2]),
+            "has_audio_end": torch.tensor([True, False]),
+        }
+
+        output = model._lm_predict(prepared)
+
+        self.assertEqual(output["logits"].shape[0], 4)
+        inputs = model.model.last_inputs_embeds
+        route_delta = model.model.xm_route_embeddings.weight[1] - model.model.xm_route_embeddings.weight[0]
+        self.assertTrue(torch.allclose(inputs[2, 2] - inputs[0, 2], route_delta, atol=1e-6))
+        self.assertTrue(torch.allclose(inputs[2, 3] - inputs[0, 3], route_delta, atol=1e-6))
+        self.assertTrue(torch.allclose(inputs[2, 4] - inputs[0, 4], route_delta, atol=1e-6))
+        self.assertTrue(torch.allclose(inputs[3, 1] - inputs[1, 1], route_delta, atol=1e-6))
+        self.assertTrue(torch.allclose(inputs[3, 2] - inputs[1, 2], route_delta, atol=1e-6))
+        self.assertTrue(torch.allclose(inputs[3, 0] - inputs[1, 0], torch.zeros_like(route_delta), atol=1e-6))
+
+    def test_lm_xm_route_loss_selects_candidate_per_sample(self):
+        from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET
+
+        model = self._lm_model(
+            xm_enabled=True,
+            xm_candidate_count=2,
+            xm_training_target="route",
+            xm_selection_scope="block",
+            xm_block_size=2,
+        )
+        vocab = _AUDIO_CODE_OFFSET + 32
+        prompt_len, audio_len = 3, 2
+        prepared = {
+            "audio_codes": torch.tensor(
+                [
+                    [[5, 0, 0, 0], [6, 0, 0, 0]],
+                    [[7, 0, 0, 0], [8, 0, 0, 0]],
+                ],
+                dtype=torch.long,
+            ),
+            "prompt_lengths": torch.tensor([prompt_len, prompt_len]),
+            "audio_lengths": torch.tensor([audio_len, audio_len]),
+            "has_audio_end": torch.tensor([False, False]),
+        }
+        logits = torch.zeros((4, prompt_len + audio_len, vocab))
+        logits[0, prompt_len - 1, _AUDIO_CODE_OFFSET + 5] = 20.0
+        logits[0, prompt_len, _AUDIO_CODE_OFFSET + 6] = 20.0
+        logits[3, prompt_len - 1, _AUDIO_CODE_OFFSET + 7] = 20.0
+        logits[3, prompt_len, _AUDIO_CODE_OFFSET + 8] = 20.0
+        hidden = torch.arange(4 * 3 * 2, dtype=torch.float32).reshape(4, 3, 2)
+        model_output = {"logits": logits, "hidden_states_buffer": {"layer_0": hidden}}
+
+        loss = model.loss(prepared, model_output)
+
+        self.assertLess(float(loss), 0.01)
+        self.assertEqual(model_output["xm_winner_indices"].tolist(), [0, 1])
+        self.assertEqual(model_output["xm_route_usage"].tolist(), [1.0, 1.0])
+        self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"][0], hidden[0]))
+        self.assertTrue(torch.equal(model_output["hidden_states_buffer"]["layer_0"][1], hidden[3]))
+
+    def test_lm_xm_route_regularisation_selects_candidate_against_frozen_teacher(self):
+        from contextlib import nullcontext
+
+        from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET
+
+        model = self._lm_model(
+            xm_enabled=True,
+            xm_candidate_count=2,
+            xm_training_target="route",
+            xm_selection_scope="block",
+            xm_block_size=2,
+        )
+        model.config.model_type = "lora"
+        vocab = _AUDIO_CODE_OFFSET + 16
+        prompt_len, audio_len = 3, 2
+        prepared = {
+            "audio_codes": torch.tensor(
+                [
+                    [[5, 0, 0, 0], [6, 0, 0, 0]],
+                    [[7, 0, 0, 0], [8, 0, 0, 0]],
+                ],
+                dtype=torch.long,
+            ),
+            "prompt_lengths": torch.tensor([prompt_len, prompt_len]),
+            "audio_lengths": torch.tensor([audio_len, audio_len]),
+            "has_audio_end": torch.tensor([False, False]),
+            "is_regularisation_data": True,
+        }
+        teacher = torch.randn(2, prompt_len + audio_len, vocab)
+        candidates = teacher.repeat((2, 1, 1))
+        candidates[1] = candidates[1].roll(1, dims=-1)
+        candidates[2] = candidates[2].roll(1, dims=-1)
+        model._lm_adapters_disabled = lambda: nullcontext()
+        route_flags = []
+
+        def teacher_predict(batch, *, apply_xm_routes=True):
+            route_flags.append(apply_xm_routes)
+            return {"logits": teacher}
+
+        model._lm_predict = teacher_predict
+        model_output = {"logits": candidates}
+
+        loss = model.loss(prepared, model_output)
+
+        self.assertTrue(torch.isfinite(loss))
+        self.assertEqual(route_flags, [False])
+        self.assertEqual(model_output["xm_winner_indices"].tolist(), [0, 1])
+        self.assertEqual(model_output["xm_route_usage"].tolist(), [1.0, 1.0])
+
+    def test_lm_xm_route_module_is_saved_with_lora_adapter(self):
+        model = self._lm_model(
+            xm_enabled=True,
+            xm_candidate_count=2,
+            xm_training_target="route",
+            xm_selection_scope="sample",
+        )
+        model.model = SimpleNamespace(
+            get_adapter_state_dict=lambda: {
+                "model.layers.0.self_attn.q_proj.lora_A.weight": torch.ones(1, 1),
+                "xm_route_embeddings.weight": torch.ones(2, 3),
+                "unrelated.weight": torch.ones(1),
+            }
+        )
+        model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model.save_lora_weights(tmpdir)
+            state = load_file(str(Path(tmpdir) / "pytorch_lora_weights.safetensors"))
+
+        self.assertIn("language_model.model.layers.0.self_attn.q_proj.lora_A.weight", state)
+        self.assertIn("language_model.xm_route_embeddings.weight", state)
+        self.assertNotIn("language_model.unrelated.weight", state)
+
+    def test_lm_nextlat_captures_supervised_qwen_hidden_states(self):
+        from simpletuner.helpers.models.minimaxmusic.encoders import _AUDIO_CODE_OFFSET
+        from simpletuner.helpers.utils.hidden_state_buffer import HiddenStateBuffer
+
+        model = self._lm_model(nextlat_enabled=True, nextlat_weight=0.1)
+        model.model = self._FakeLanguageModel(vocab_size=_AUDIO_CODE_OFFSET + 32, layer_count=2)
+        model.rvq_depth_decoder = self._FakeDepthDecoder()
+        model.unwrap_model = lambda model=None, wrapped=None: model if model is not None else wrapped
+        model._new_hidden_state_buffer = lambda: HiddenStateBuffer(capture_layers={1})
+        prepared = {
+            "input_ids": torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]], dtype=torch.long),
+            "audio_codes": torch.tensor(
+                [
+                    [[1, 0, 0, 0], [2, 1, 0, 0], [3, 0, 1, 0]],
+                    [[4, 0, 0, 1], [5, 0, 0, 2], [6, 0, 1, 0]],
+                ],
+                dtype=torch.long,
+            ),
+            "prompt_lengths": torch.tensor([3, 2]),
+            "audio_lengths": torch.tensor([3, 3]),
+            "has_audio_end": torch.tensor([False, False]),
+        }
+
+        output = model._lm_predict(prepared)
+
+        self.assertIn("layer_1", output["hidden_states_buffer"])
+        captured = output["hidden_states_buffer"]["layer_1"]
+        self.assertEqual(captured.shape, (2, 3, 6))
+        full_hidden = model.model.last_inputs_embeds + 2.0
+        self.assertTrue(torch.allclose(captured[0], full_hidden[0, 2:5]))
+        self.assertTrue(torch.allclose(captured[1], full_hidden[1, 1:4]))
 
 
 if __name__ == "__main__":

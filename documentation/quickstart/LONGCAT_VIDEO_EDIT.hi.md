@@ -120,4 +120,3 @@ simpletuner train --config config/config.json
 - **Missing conditioning image**: `conditioning_data` से conditioning dataset जोड़ें और फ़ाइलनाम मैच कराएँ; `eval_dataset_id` को validation split ID पर सेट करें।
 - **Height/width errors**: आयाम 16 से विभाज्य रखें और 64px ग्रिड पर रखें।
 - **First frame drifts**: guidance 3.5–4.0 करें या steps घटाएँ।
-- **OOM**: validation resolution/frames घटाएँ, `lora_rank` कम करें, group offload सक्षम करें, या `int8-quanto`/`fp8-torchao` उपयोग करें।

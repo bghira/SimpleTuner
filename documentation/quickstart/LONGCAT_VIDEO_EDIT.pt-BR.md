@@ -120,4 +120,3 @@ Garanta que os frames de condicionamento estejam presentes nos dados de treino p
 - **Imagem de condicionamento ausente**: forneça um dataset de condicionamento via `conditioning_data` com nomes de arquivo correspondentes; defina `eval_dataset_id` para o ID da sua divisão de validação.
 - **Erros de altura/largura**: mantenha as dimensões divisíveis por 16 e na grade de 64px.
 - **Primeiro frame deriva**: reduza o guidance (3.5–4.0) ou diminua steps.
-- **OOM**: diminua resolução/frames de validação, reduza `lora_rank`, ative group offload, ou use `int8-quanto`/`fp8-torchao`.

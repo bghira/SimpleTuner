@@ -100,6 +100,8 @@ O repositório upstream `MiniMaxAI/MiniMax-Music3` também inclui o `dav.pth` or
 
 MiniMax Music 3 exige um dataset **audio** e um backend de cache **text embeds**.
 
+Para expandir uma identidade vocal alvo entre estilos ou generos, configure o workflow RVC `data_transforms` descrito em [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.pt-BR.md).
+
 ```json
 [
   {
@@ -173,7 +175,8 @@ Veja [fiona crapple](https://huggingface.co/terminusresearch/minimax-music3-lm-l
 ```json
 {
   "minimax_music_train_component": "language_model",
-  "minimax_music_lm_max_frames": 0
+  "minimax_music_lm_max_frames": 0,
+  "minimax_music_lm_window_mode": "prefix"
 }
 ```
 
@@ -185,6 +188,22 @@ Requisitos e diferenças em relação ao treinamento do DiT:
 - O áudio de validação no treinador fica desabilitado neste modo; renderize a partir dos checkpoints salvos com a pilha de geração padrão.
 - Não há cache de VAE nem de text embeds neste modo — o treinamento lê os tokens diretamente, então `cache_dir_vae` e backends de text embeds não são usados.
 - Coloque sua palavra-gatilho (por exemplo `"fiona crapple"`) no campo caption/`prompt` de cada amostra; mantenha as letras inalteradas.
+- Para execuções curtas com limite de frames, use `minimax_music_lm_window_mode: "random"` para amostrar janelas RVQ posicionadas em vez de treinar sempre introduções. Janelas aleatórias adicionam início/fim/duração ao prompt e omitem letras completas, a menos que a amostra forneça `lyrics_window`.
+- Para treinar a estrutura da música, use `minimax_music_lm_window_mode: "continuation"`. Os últimos `minimax_music_lm_target_frames` recebem perda e os frames visíveis anteriores ficam como contexto causal mascarado. Recortes `full` começam no início da música; recortes `random` podem avançar pela faixa mantendo pelo menos um segmento nativo de 128 frames. As durações se alinham ao intervalo nativo de 128 frames/5,12 segundos; máximo `0` usa o tamanho disponível.
+
+Exemplo de continuation full-prefix com limite de memória:
+
+```json
+{
+  "minimax_music_lm_window_mode": "continuation",
+  "minimax_music_lm_target_frames": 128,
+  "minimax_music_lm_continuation_crop_mode": "full",
+  "minimax_music_lm_min_duration_seconds": 5.12,
+  "minimax_music_lm_max_duration_seconds": 30.72
+}
+```
+
+Mude o crop mode para `random` para treinar continuations posicionadas com o mesmo limite. Esses recortes adicionam o intervalo temporal ao prompt e omitem letras completas sem `lyrics_window`. Quando trechos terminais e não terminais são possíveis, 25% fixos das amostras chegam ao fim real para que a supervisão EOS não dependa do tamanho da faixa. A amostragem ocorre no collate LM sobre a sequência RVQ completa em cache; não altera o áudio nem o cache do dataset.
 - **Preservação de prior**: adicione um segundo backend de áudio com `is_regularisation_data: true` contendo músicas não relacionadas (letras vazias são permitidas). Nesses lotes a perda mira a distribuição de próximo token do modelo base congelado em vez dos códigos reais, mantendo o LoRA cirúrgico: captions não relacionados continuam prevendo exatamente como o modelo base faria, reduzindo bastante o vazamento de estilo.
 
 ## Solução de problemas

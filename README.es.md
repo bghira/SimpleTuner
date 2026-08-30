@@ -136,7 +136,6 @@ SimpleTuner es compatible con las siguientes familias de modelos. El soporte det
 - **Gradient checkpointing** - Intervalos configurables para optimización de memoria/velocidad
 - **Funciones de pérdida** - L2, Huber, Smooth L1 con soporte de scheduling
 - **Ponderación SNR** - Ponderación Min-SNR gamma para mejorar la dinámica de entrenamiento
-- **Group offloading** - Staging de módulos por grupo a CPU/disco en Diffusers v0.33+ con streams CUDA opcionales
 - **Barridos de adaptadores de validación** - Adjunta temporalmente adaptadores LoRA (individuales o presets JSON) durante la validación para medir renders solo de adaptador o comparativos sin tocar el training loop
 - **Hooks de validación externos** - Sustituye el pipeline de validación integrado o los pasos post-upload por tus scripts, para ejecutar checks en otra GPU o reenviar artefactos a cualquier proveedor cloud que elijas ([detalles](/documentation/OPTIONS.md#validation_method))
 - **Destilación AnyFlow** - Conditioning de intervalos FlowMap para modelos de flow matching con targets online del teacher ([guía](/documentation/experimental/ANYFLOW.es.md))

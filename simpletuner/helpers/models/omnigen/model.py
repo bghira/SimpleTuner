@@ -157,6 +157,7 @@ class OmniGen(ImageModelFoundation):
     def __init__(self, config, accelerator):
         super().__init__(config, accelerator)
         self.processor = None
+        self._validate_xm_support()
 
     def supports_crepa_self_flow(self) -> bool:
         return True
@@ -351,7 +352,62 @@ class OmniGen(ImageModelFoundation):
 
         return loss
 
+    def _prepare_xm_noise_candidates(self, prepared_batch: dict, *, family_name: str | None = None) -> dict:
+        self._validate_xm_support()
+        candidate_count = self.xm_config.candidate_count
+        latents = prepared_batch.get("latents")
+        timesteps = prepared_batch.get("timesteps")
+        if not torch.is_tensor(latents) or not torch.is_tensor(timesteps):
+            raise ValueError("OmniGen XM noise-candidate training requires latents and timesteps tensors.")
+        if "noisy_latents" not in prepared_batch:
+            raise ValueError("OmniGen XM noise-candidate training requires prepared noisy_latents.")
+        if prepared_batch.get("target") is not None:
+            raise ValueError("OmniGen XM noise-candidate training cannot be used with an explicit prepared target.")
+
+        batch_size = latents.shape[0]
+        expanded_batch = {}
+        for key, value in prepared_batch.items():
+            if key == "prompts" and isinstance(value, list) and len(value) == batch_size:
+                expanded_batch[key] = value * candidate_count
+            else:
+                expanded_batch[key] = self._repeat_xm_candidate_value(value, candidate_count, batch_size)
+        expanded_latents = expanded_batch["latents"]
+        candidate_noise = torch.randn_like(expanded_latents)
+        expanded_t = expanded_batch["timesteps"].to(device=expanded_latents.device, dtype=expanded_latents.dtype)
+        t_view = expanded_t.view(-1, *([1] * (expanded_latents.ndim - 1)))
+        expanded_batch["noise"] = candidate_noise
+        expanded_batch["input_noise"] = candidate_noise
+        expanded_batch["sigmas"] = expanded_t
+        expanded_batch["t"] = expanded_t
+        expanded_batch["noisy_latents"] = t_view * expanded_latents.float() + (1.0 - t_view) * candidate_noise.float()
+        expanded_batch["flow_target"] = self.get_flow_matching_target(
+            expanded_batch,
+            latents=expanded_latents,
+            noise=candidate_noise,
+            prefer_explicit_target=False,
+        ).to(device=expanded_latents.device, dtype=expanded_latents.dtype)
+        expanded_batch["xm_candidate_count"] = candidate_count
+        expanded_batch["xm_original_batch_size"] = batch_size
+        prepared_batch.clear()
+        prepared_batch.update(expanded_batch)
+        return prepared_batch
+
+    def _xm_diffusion_loss_tensor(
+        self, prepared_batch: dict, model_output: dict, apply_conditioning_mask: bool, *, family_name: str | None = None
+    ) -> torch.Tensor:
+        del apply_conditioning_mask, family_name
+        target = self.get_flow_matching_target(prepared_batch)
+        return torch.nn.functional.mse_loss(model_output["model_prediction"].float(), target.float(), reduction="none")
+
     def model_predict(self, prepared_batch):
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch)
+            model_output = self._model_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch)
+
+    def _model_predict_single(self, prepared_batch):
         self._load_preprocessor()
         hidden_states_buffer = self._new_hidden_state_buffer()
         batch_latents = prepared_batch["noisy_latents"]  # shape [B, 4, H, W]

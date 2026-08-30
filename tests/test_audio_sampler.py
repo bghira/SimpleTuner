@@ -133,6 +133,27 @@ class TestAudioSampler(unittest.TestCase):
             next(iterator)
             next(iterator)  # Should raise here or before
 
+    def test_missing_reloaded_metadata_does_not_require_image_crop_coordinates(self):
+        self.mock_tracker.get_args.return_value.model_family = "minimaxmusic"
+        self.mock_metadata.get_metadata_by_filepath.side_effect = lambda _: None
+        sampler = MultiAspectSampler(
+            id="test_backend",
+            metadata_backend=self.mock_metadata,
+            data_backend=self.mock_data,
+            model=self.mock_model,
+            accelerator=self.mock_accelerator,
+            batch_size=1,
+            dataset_type="audio",
+        )
+
+        samples = sampler._validate_and_yield_images_from_samples(["1.wav"], "10s")
+
+        self.assertEqual(sampler.sample_type_str, "audio")
+        self.assertEqual(sampler.sample_type_strs, "audio")
+        self.assertEqual(samples[0]["image_path"], "1.wav")
+        self.assertEqual(samples[0]["dataset_type"], "audio")
+        self.assertEqual(samples[0]["instance_prompt_text"], "test caption")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -118,6 +118,7 @@ from simpletuner.helpers.data_backend.runtime.schedule import (
     normalize_start_step,
 )
 from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
+from simpletuner.helpers.data_transforms import process_data_transforms
 from simpletuner.helpers.distillation.common import DistillationBase
 from simpletuner.helpers.distillation.composition import resolve_configured_distiller_requirement_profile
 from simpletuner.helpers.distillation.requirements import (
@@ -1419,6 +1420,12 @@ class FactoryRegistry:
             self.metrics["memory_usage"]["start"] = self._get_memory_usage()
         except RuntimeError:
             self.metrics["memory_usage"]["start"] = self._get_memory_usage()
+
+    def _move_text_encoders_for_vae_cache(self, target_device: str):
+        model_hook = getattr(self.model, "move_text_encoders_for_vae_cache", None)
+        if callable(model_hook):
+            return model_hook(target_device=target_device)
+        return move_text_encoders(self.args, self.text_encoders, target_device)
 
     def _get_memory_usage(self) -> float:
         """Get current memory usage in MB."""
@@ -3192,8 +3199,10 @@ class FactoryRegistry:
         Args:
             skip_bucket_split: If True, skip split_buckets_between_processes (used for audio-only datasets).
         """
+        metadata_clone_source_id = backend.get("metadata_clone_source_id")
+        has_metadata_clone_source = metadata_clone_source_id is not None
         if (
-            not backend.get("auto_generated", False)  # auto-generated datasets have duplicate metadata.
+            not has_metadata_clone_source
             and "aspect" not in self.args.skip_file_discovery
             and "aspect" not in backend.get("skip_file_discovery", "")
             and conditioning_type
@@ -3232,7 +3241,7 @@ class FactoryRegistry:
         # serialized cache rather than mixing rank 0's in-memory order with reloaded order.
         if (
             self._is_multi_process()
-            and not backend.get("auto_generated", False)
+            and not has_metadata_clone_source
             and "aspect" not in self.args.skip_file_discovery
             and "aspect" not in backend.get("skip_file_discovery", "")
             and conditioning_type
@@ -3247,7 +3256,7 @@ class FactoryRegistry:
             init_backend["metadata_backend"].reload_cache()
 
         if (
-            not backend.get("auto_generated", False)
+            not has_metadata_clone_source
             and backend.get("conditioning_type", None) is not None
             and backend.get("conditioning_type")
             not in [
@@ -3272,13 +3281,11 @@ class FactoryRegistry:
 
         apply_padding = not self.args.max_train_steps or self.args.allow_dataset_oversubscription
 
-        if backend.get("auto_generated", False):
+        if has_metadata_clone_source:
             # when we're duplicating a metadata set, it's already split between processes.
-            info_log(
-                f"Duplicating metadata for auto-generated dataset from {backend.get('source_dataset_id', 'unknown_source_dataset_id')}"
-            )
+            info_log(f"Duplicating metadata for generated dataset from {metadata_clone_source_id}")
             DatasetDuplicator.copy_metadata(
-                source_backend=StateTracker.get_data_backend(backend.get("source_dataset_id", "unknown_source_dataset_id")),
+                source_backend=StateTracker.get_data_backend(metadata_clone_source_id),
                 target_backend=init_backend,
             )
         elif backend.get("conditioning_type", None) in ["reference_strict", "mask"]:
@@ -3367,6 +3374,7 @@ class FactoryRegistry:
             "video",
             "conditioning_data",
             "conditioning",
+            "data_transforms",
             "hash_filenames",  # always enabled, not user-configurable
             "_s2v_audio_autoinjected",  # runtime flag, not user-configurable
             *runtime_mutable_keys,
@@ -3415,6 +3423,7 @@ class FactoryRegistry:
         runtime_linkage_keys = (
             "conditioning_data",
             "conditioning",
+            "data_transforms",
             "video",
             "s2v_datasets",
             "_s2v_audio_autoinjected",
@@ -4109,13 +4118,18 @@ class FactoryRegistry:
             return
         if dataset_type_enum is DatasetType.AUDIO:
             uses_audio_latents = False
+            uses_audio_tokens = False
             try:
                 uses_audio_latents = bool(self.model.uses_audio_latents_for_data_backend(init_backend.get("id")))
             except AttributeError:
                 uses_audio_latents = False
-            if not uses_audio_latents:
+            try:
+                uses_audio_tokens = bool(self.model.uses_audio_tokens())
+            except AttributeError:
+                uses_audio_tokens = False
+            if not uses_audio_latents and not uses_audio_tokens:
                 info_log(
-                    f"(id={init_backend['id']}) Skipping VAE cache for audio dataset; model does not use audio latents."
+                    f"(id={init_backend['id']}) Skipping VAE cache for audio dataset; model does not use audio latents or tokens."
                 )
                 return
         vae_cache_dir = backend.get("cache_dir_vae", None)
@@ -4144,7 +4158,7 @@ class FactoryRegistry:
                 raise ValueError(
                     f"VAE image embed cache directory {vae_cache_dir} is not set. This is required for the VAE image embed cache."
                 )
-        move_text_encoders(self.args, self.text_encoders, "cpu")
+        self._move_text_encoders_for_vae_cache("cpu")
 
         video_config = init_backend["config"].get("video", {})
         vae = StateTracker.get_vae()
@@ -4656,7 +4670,7 @@ class FactoryRegistry:
             logger.debug(f"Encoding images during training: {init_backend['vaecache'].vae_cache_ondemand}")
             if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
-        move_text_encoders(self.args, self.text_encoders, self.accelerator.device)
+        self._move_text_encoders_for_vae_cache(self.accelerator.device)
         init_backend_debug_info = {
             k: v for k, v in init_backend.items() if isinstance(v, Union[list, int, float, str, dict, tuple])
         }
@@ -4699,6 +4713,11 @@ class FactoryRegistry:
         data_backend_config = self._inject_grounding_configs(data_backend_config)
         data_backend_config = self._inject_s2v_audio_configs(data_backend_config)
         data_backend_config = self.process_conditioning_datasets(data_backend_config)
+        data_backend_config = process_data_transforms(
+            global_config=self.args,
+            data_backend_config=data_backend_config,
+            accelerator=self.accelerator,
+        )
 
         self.configure_text_embed_backends(data_backend_config)
         self.configure_image_embed_backends(data_backend_config)
@@ -4923,6 +4942,8 @@ def get_huggingface_backend(
     identifier: str,
     dataset_name: str,
     dataset_type: str,
+    dataset_config: str = None,
+    data_files=None,
     split: str = "train",
     revision: str = None,
     image_column: str = "image",
@@ -4976,6 +4997,8 @@ def get_huggingface_backend(
         accelerator=accelerator,
         id=identifier,
         dataset_name=dataset_name,
+        dataset_config=dataset_config,
+        data_files=data_files,
         dataset_type=dataset_type,
         split=split,
         revision=revision,

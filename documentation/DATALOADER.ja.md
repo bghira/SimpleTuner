@@ -258,6 +258,15 @@ Hugging Face の音声データセットでは、キャプション（プロン�
 - **注記:** 複数の条件データセットがある場合は `id` の配列を指定できます。Flux Kontext の学習時には、条件をランダムに切り替えたり入力を結合したりして、より高度な複数画像合成タスクの学習が可能です。
 - **Flow-DPO:** [`--distillation_method=flow_dpo`](experimental/FLOW_DPO.ja.md) を使う場合は、ここで `reference_strict` conditioning データセットをペアにします。
 
+### `data_transforms`
+
+- **Values:** transform オブジェクト、または transform オブジェクトの配列
+- **Description:** 通常の dataloader 設定が始まる前に、ソース dataset から 1 つ以上の生成済み training dataset を展開します。transform が明示的に metadata clone を要求しない限り、生成 dataset は通常の primary dataset として扱われます。
+- **Audio identity transfer:** `{"task": "identity_transfer", "method": "rvc"}` は `dataset_type: "audio"` の backend で利用できます。音声 identity transfer 用の生成 audio split を準備し、output directory に voice artifact と生成ファイルをキャッシュします。詳しくは [Voice Cloning Data Transforms](experimental/VOICE_CLONING.ja.md) を参照してください。
+- **Identity data:** 変換したい音楽は audio backend の `instance_data_dir`、対象 voice examples は `model.identity_data_dir`、生成 split path は `target.instance_data_dir` に置きます。
+- **Stem debugging:** `model.identity_stem_debug_dir` を設定すると、RVC training が実際に使う分離後の identity `vocals.wav` と `no_vocals.wav` preview を保存できます。出力で楽器まで声として学習されたように聞こえる場合の確認に使います。
+- **Status:** 実験的な実装は、cache manifest の確認、`huggingface-hub-rvc` artifact layout による Hub artifact の reuse/push、DDP 対応の startup sharding、ローカル RVC log、そして小さな SimpleTuner voice-transfer trainer/converter を提供します。Full-song remix mode は Demucs で vocal separation を行い、vocal-stem mode では separation は不要です。
+
 ### `instance_data_dir` / `aws_data_prefix`
 
 - **Local:** ファイルシステム上のデータパス。
@@ -775,8 +784,9 @@ effective_batch_size = データセットの train_batch_size × num_gpus × gra
 ### `is_regularisation_data`
 
 - `is_regularization_data` と綴ることもできます。
-- LyCORIS アダプタ向けに親教師学習を有効化し、指定データセットに対してベースモデルの結果を優先する予測ターゲットにします。
-  - 標準 LoRA は現在サポートされていません。
+- 親教師学習を有効化し、指定データセットに対して凍結ベースモデルの結果を優先する予測ターゲットにします。
+  - ほとんどの diffusion family では現在 LyCORIS アダプタが必要です。
+  - MiniMax Music 3 の `language_model` トレーニングでは、XM route selection を含む標準 PEFT LoRA の regularisation batch がサポートされます。ターゲットは凍結されたベース planner の次トークン分布です。
 
 ### `delete_unwanted_images`
 

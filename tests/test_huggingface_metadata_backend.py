@@ -1,4 +1,8 @@
+import json
+import tempfile
+import threading
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -39,6 +43,57 @@ class _MinimalHuggingfaceMetadataBackend(HuggingfaceMetadataBackend):
 
 
 class HuggingfaceMetadataBackendTests(unittest.TestCase):
+    def test_metadata_reload_keeps_existing_entries_visible_until_read_completes(self):
+        read_started = threading.Event()
+        allow_read = threading.Event()
+
+        class BlockingDataBackend:
+            def exists(self, _path):
+                return True
+
+            def get_abs_path(self, path):
+                return path
+
+            def read(self, _path):
+                read_started.set()
+                if not allow_read.wait(timeout=5):
+                    raise TimeoutError("metadata read was not released")
+                return json.dumps({"1.wav": {"prompt": "new", "lyrics": "lyrics"}})
+
+        backend = HuggingfaceMetadataBackend.__new__(HuggingfaceMetadataBackend)
+        backend.id = "audio-test"
+        backend.metadata_file = Path("metadata.json")
+        backend.data_backend = BlockingDataBackend()
+        backend.metadata_semaphor = threading.Semaphore()
+        backend.image_metadata = {"1.wav": {"prompt": "old", "lyrics": "lyrics"}}
+        backend.image_metadata_loaded = True
+
+        reload_thread = threading.Thread(target=backend.load_image_metadata)
+        reload_thread.start()
+        self.assertTrue(read_started.wait(timeout=5))
+        self.assertEqual(backend.get_metadata_by_filepath("1.wav")["prompt"], "old")
+
+        allow_read.set()
+        reload_thread.join(timeout=5)
+        self.assertFalse(reload_thread.is_alive())
+        self.assertEqual(backend.get_metadata_by_filepath("1.wav")["prompt"], "new")
+
+    def test_audio_caption_falls_back_to_text_sibling(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            audio_path = Path(tmpdir) / "song.flac"
+            audio_path.touch()
+            audio_path.with_suffix(".txt").write_text("riff-heavy caption", encoding="utf-8")
+            media = SimpleNamespace(_hf_encoded={"path": str(audio_path)})
+
+            backend = HuggingfaceMetadataBackend.__new__(HuggingfaceMetadataBackend)
+            backend.dataset_type = "audio"
+            backend.caption_column = "caption"
+            backend.fallback_caption_column = None
+            backend.audio_caption_fields = ["prompt", "tags"]
+            backend.description_column = "description"
+
+            self.assertEqual(backend._extract_caption_from_item({"audio": media}), "riff-heavy caption")
+
     @patch("simpletuner.helpers.metadata.backends.huggingface.TrainingSample")
     def test_video_without_maximum_num_frames_is_not_flagged_as_too_many(self, mock_training_sample):
         prepared = SimpleNamespace(

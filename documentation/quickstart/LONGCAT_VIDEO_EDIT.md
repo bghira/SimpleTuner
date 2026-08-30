@@ -120,4 +120,3 @@ Ensure conditioning frames are present in the training data so the pipeline can 
 - **Missing conditioning image**: provide a conditioning dataset via `conditioning_data` with matching filenames; set `eval_dataset_id` to your validation split ID.
 - **Height/width errors**: keep dimensions divisible by 16 and on the 64px grid.
 - **First frame drifts**: lower guidance (3.5–4.0) or reduce steps.
-- **OOM**: lower validation resolution/frames, reduce `lora_rank`, enable group offload, or use `int8-quanto`/`fp8-torchao`.

@@ -18,27 +18,7 @@ Qwen エンコーダを読み込むだけで単体で約 **14GB** のメモリ�
 
 ### メモリオフロード（推奨）
 
-テキストエンコーダが巨大なので、コンシューマー向けハードウェアではほぼ確実にグループオフロードを使うべきです。計算されていないトランスフォーマーブロックを CPU メモリへオフロードします。
-
-`config.json` に以下を追加してください:
-
-<details>
-<summary>設定例を表示</summary>
-
-```json
-{
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
-  "group_offload_blocks_per_group": 1,
-  "group_offload_use_stream": true
-}
-```
-</details>
-
-- `--group_offload_use_stream`: CUDA デバイスでのみ動作します。
-- **`--enable_model_cpu_offload` とは併用しないでください。**
-
-さらに、初期化とキャッシュ作成フェーズの VRAM 使用量を減らすために `config.json` で `"offload_during_startup": true` を設定してください。これによりテキストエンコーダと VAE が同時に読み込まれません。
+初期化とキャッシュ作成フェーズの VRAM 使用量を減らすために `config.json` で `"offload_during_startup": true` を設定してください。これによりテキストエンコーダと VAE が同時に読み込まれません。
 
 ## 前提条件
 
@@ -251,7 +231,6 @@ simpletuner train
 
 16GB または制約のある 24GB 環境で動かす場合:
 
-1.  **Group Offload を有効化**: `--enable_group_offload`。
 2.  **ベースモデルを量子化**: `"base_model_precision": "int8-quanto"` を設定。
 3.  **バッチサイズ**: `1` を維持。
 

@@ -51,19 +51,6 @@ SimpleTuner default रूप से split Cosmos3 transformer components उप
 - `gradient_checkpointing` enable करें।
 - Transformer load-time memory घटाने के लिए split generator components उपयोग करें।
 
-Optional group offload:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream
-```
-
-- Streams केवल CUDA हैं।
-- `--enable_model_cpu_offload` के साथ न मिलाएं।
-- System RAM कम हो तो `--group_offload_to_disk_path /fast-ssd/simpletuner-offload` जोड़ें।
-
 ## Installation
 
 ```bash

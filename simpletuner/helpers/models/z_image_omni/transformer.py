@@ -1348,8 +1348,9 @@ class ZImageOmniTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fr
             musubi_offload_active = musubi_manager.activate(combined_blocks, unified.device, grad_enabled)
 
         for idx, layer in enumerate(self.layers):
+            checkpoint_this_block = idx not in skip_set and grad_enabled and self.gradient_checkpointing
             if musubi_offload_active and musubi_manager.is_managed_block(idx):
-                musubi_manager.stream_in(layer, unified.device)
+                musubi_manager.stream_in(layer, unified.device, checkpointed=checkpoint_this_block)
             if use_routing and route_ptr < len(routes) and idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
                 force_keep = torch.zeros_like(unified_attn_mask)

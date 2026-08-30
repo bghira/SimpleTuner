@@ -68,6 +68,10 @@ class Sana(ImageModelFoundation):
     }
     MODEL_LICENSE = "other"
 
+    def __init__(self, config, accelerator):
+        super().__init__(config, accelerator)
+        self._validate_xm_support()
+
     TEXT_ENCODER_CONFIGURATION = {
         "text_encoder": {
             "name": "Gemma2 2B-IT",
@@ -166,6 +170,14 @@ class Sana(ImageModelFoundation):
         return self._prepare_image_crepa_self_flow_batch(batch, state, patch_size=patch_size)
 
     def model_predict(self, prepared_batch):
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch, family_name="Sana")
+            model_output = self._model_predict_single(prepared_batch)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch)
+
+    def _model_predict_single(self, prepared_batch):
         hidden_states_buffer = self._new_hidden_state_buffer()
         timesteps = self._prepare_model_predict_timesteps(
             prepared_batch["timesteps"],
@@ -360,6 +372,37 @@ class Sana(ImageModelFoundation):
 
         loss = loss.mean(dim=list(range(1, len(loss.shape)))).mean()
         return loss
+
+    def _xm_diffusion_loss_tensor(
+        self, prepared_batch: dict, model_output: dict, apply_conditioning_mask: bool, *, family_name: str | None = None
+    ) -> torch.Tensor:
+        if self.PREDICTION_TYPE is not PredictionTypes.FLOW_MATCHING:
+            return super()._xm_diffusion_loss_tensor(
+                prepared_batch,
+                model_output,
+                apply_conditioning_mask,
+                family_name=family_name,
+            )
+
+        target = self.get_prediction_target(prepared_batch)
+        model_pred = model_output["model_prediction"]
+        if target is None:
+            raise ValueError("Target is None. Cannot compute Sana XM loss.")
+
+        sigmas = prepared_batch.get("sigmas")
+        weighting_scheme = getattr(self.config, "weighting_scheme", "none") or "none"
+        if sigmas is None:
+            weighting = torch.ones((model_pred.shape[0],), device=model_pred.device, dtype=model_pred.dtype)
+        else:
+            weighting = compute_loss_weighting_for_sd3(weighting_scheme, sigmas=sigmas.to(model_pred.device))
+        weighting = weighting.view(weighting.shape[0], *([1] * (model_pred.dim() - 1)))
+        loss = weighting * (model_pred.float() - target.float()) ** 2
+        return self._apply_xm_conditioning_mask(
+            prepared_batch,
+            loss,
+            apply_conditioning_mask=apply_conditioning_mask,
+            family_name=family_name or "Sana",
+        )
 
     def custom_model_card_schedule_info(self):
         output_args = []

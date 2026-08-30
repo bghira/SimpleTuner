@@ -119,4 +119,3 @@ Ensure the reference dataset is present during training so conditioning latents 
 - **Missing conditioning latents**: ensure the reference dataset is wired via `conditioning_data` and filenames match.
 - **MPS dtype errors**: the pipeline auto‑downgrades pos‑ids to float32 on MPS; keep the rest at float32/bf16.
 - **Channel mismatch in previews**: previews un‑patchify latents before decoding (keep this SimpleTuner version).
-- **OOM during edit**: lower validation resolution/steps, reduce `lora_rank`, enable group offload, and prefer `int8-quanto`/`fp8-torchao`.

@@ -67,7 +67,11 @@ class MultiAspectDataset(Dataset):
                 continue
 
             image_metadata = sample
-            if model_family != "ace_step" and "target_size" in image_metadata:
+            if (
+                model_family != "ace_step"
+                and image_metadata.get("dataset_type") != "audio"
+                and "target_size" in image_metadata
+            ):
                 calculated_aspect_ratio = MultiaspectImage.calculate_image_aspect_ratio(image_metadata["target_size"])
                 if first_aspect_ratio is None:
                     first_aspect_ratio = calculated_aspect_ratio

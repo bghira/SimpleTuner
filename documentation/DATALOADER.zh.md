@@ -257,6 +257,15 @@ LTX-2 使用原生纯音频分支；MiniMax-H3 在打包序列中为每个 laten
 - **注记:** 如果有多个条件数据集，可指定 `id` 数组。训练 Flux Kontext 时，可在条件之间随机切换或拼接输入，用于更高级的多图像合成任务。
 - **Flow-DPO:** 使用 [`--distillation_method=flow_dpo`](experimental/FLOW_DPO.zh.md) 时，在这里配对一个 `reference_strict` conditioning 数据集。
 
+### `data_transforms`
+
+- **取值:** 一个 transform 对象，或 transform 对象数组
+- **说明:** 在常规 dataloader 设置开始前，把源数据集展开为一个或多个生成的训练数据集。除非 transform 明确要求克隆元数据，生成的数据集会被当作普通主训练数据集处理。
+- **音频 identity transfer:** `{"task": "identity_transfer", "method": "rvc"}` 可用于 `dataset_type: "audio"` 后端。它会为声音身份迁移准备生成音频 split，并在输出目录中缓存 voice artifacts 和生成文件。参见 [Voice Cloning Data Transforms](experimental/VOICE_CLONING.zh.md)。
+- **Identity data:** 要转换的音乐放在音频 backend 的 `instance_data_dir`，目标声音示例放在 `model.identity_data_dir`，生成 split 路径放在 `target.instance_data_dir`。
+- **Stem 调试:** 设置 `model.identity_stem_debug_dir` 可以保留 RVC 训练实际使用的分离后 identity `vocals.wav` 和 `no_vocals.wav` 预览。当输出听起来像把乐器也学进声音时，用它检查分离结果。
+- **状态:** 实验性实现包含缓存 manifest 检查、通过 `huggingface-hub-rvc` artifact layout 进行 Hub artifact 复用/上传、DDP 感知的启动 sharding、本地 RVC 日志，以及一个紧凑的 SimpleTuner voice-transfer 训练/转换器。Full-song remix 模式使用 Demucs 分离人声；vocal-stem 模式不需要分离。
+
 ### `instance_data_dir` / `aws_data_prefix`
 
 - **Local:** 文件系统中的数据路径。
@@ -774,8 +783,9 @@ effective_batch_size = 数据集 train_batch_size × num_gpus × gradient_accumu
 ### `is_regularisation_data`
 
 - 也可写作 `is_regularization_data`
-- 为 LyCORIS 适配器启用父教师训练，使该数据集的预测目标更倾向于基础模型的结果。
-  - 目前不支持标准 LoRA。
+- 启用父教师训练，使该数据集的预测目标更倾向于冻结基础模型的结果。
+  - 大多数 diffusion family 目前需要 LyCORIS 适配器。
+  - MiniMax Music 3 的 `language_model` 训练支持标准 PEFT LoRA regularisation batch，包括 XM route selection。其目标是冻结基础 planner 的下一 token 分布。
 
 ### `delete_unwanted_images`
 

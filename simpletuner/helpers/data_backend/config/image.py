@@ -38,10 +38,13 @@ class ImageBackendConfig(BaseBackendConfig):
     aws_max_pool_connections: Optional[int] = None
 
     dataset_name: Optional[str] = None
+    dataset_config: Optional[str] = None
+    data_files: Optional[Any] = None
     split: Optional[str] = "train"
     revision: Optional[str] = None
     image_column: Optional[str] = "image"
     video_column: Optional[str] = "video"
+    audio_column: Optional[str] = "audio"
     huggingface_cache_dir: Optional[str] = None
     huggingface_streaming: Optional[bool] = None
     huggingface_num_proc: Optional[int] = None
@@ -168,10 +171,13 @@ class ImageBackendConfig(BaseBackendConfig):
             config.has_huggingface_block = "huggingface" in backend_dict
             hf_block = backend_dict.get("huggingface", {})
             config.dataset_name = backend_dict.get("dataset_name", hf_block.get("dataset_name"))
+            config.dataset_config = backend_dict.get("dataset_config", hf_block.get("dataset_config"))
+            config.data_files = backend_dict.get("data_files", hf_block.get("data_files"))
             config.split = backend_dict.get("split", hf_block.get("split", "train"))
             config.revision = backend_dict.get("revision", hf_block.get("revision"))
             config.image_column = backend_dict.get("image_column", hf_block.get("image_column", "image"))
             config.video_column = backend_dict.get("video_column", hf_block.get("video_column", "video"))
+            config.audio_column = backend_dict.get("audio_column", hf_block.get("audio_column", "audio"))
             config.huggingface_cache_dir = hf_block.get("cache_dir", backend_dict.get("cache_dir"))
             config.huggingface_streaming = hf_block.get("streaming", backend_dict.get("streaming"))
             config.huggingface_num_proc = hf_block.get("num_proc", backend_dict.get("num_proc"))
@@ -523,10 +529,13 @@ class ImageBackendConfig(BaseBackendConfig):
 
         if self.backend_type == "huggingface":
             config["dataset_name"] = self.dataset_name
+            config["dataset_config"] = self.dataset_config
+            config["data_files"] = self.data_files
             config["split"] = self.split
             config["revision"] = self.revision
             config["image_column"] = self.image_column
             config["video_column"] = self.video_column
+            config["audio_column"] = self.audio_column
             hf_config = config.setdefault("huggingface", {})
             if self.huggingface_cache_dir is not None:
                 hf_config["cache_dir"] = self.huggingface_cache_dir

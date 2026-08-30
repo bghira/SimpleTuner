@@ -3,7 +3,16 @@
 import json
 import os
 import pathlib
+import sys
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import unquote, urlparse
+
+_PINNED_SIMPLETUNER_ROOT = pathlib.Path(__file__).resolve().parent / "SimpleTuner"
+if _PINNED_SIMPLETUNER_ROOT.is_dir():
+    sys.path.insert(0, str(_PINNED_SIMPLETUNER_ROOT))
+
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+os.environ.setdefault("FAISS_OPT_LEVEL", "generic")
 
 from cog import BasePredictor, Input, Path, Secret
 
@@ -42,8 +51,6 @@ class Predictor(BasePredictor):
         return path, None
 
     def _normalize_hub_model_id(self, hub_model_id: str) -> str:
-        from urllib.parse import urlparse
-
         cleaned = hub_model_id.strip()
         if not cleaned:
             return cleaned
@@ -59,21 +66,48 @@ class Predictor(BasePredictor):
             cleaned = cleaned[len("huggingface.co") :].lstrip("/")
         return cleaned
 
+    def _materialize_remote_init_lora(self, config: Dict[str, Any], token: Optional[str]) -> None:
+        key = next((candidate for candidate in ("--init_lora", "init_lora") if config.get(candidate)), None)
+        if key is None:
+            return
+
+        value = str(config[key])
+        parsed = urlparse(value)
+        if parsed.scheme not in ("http", "https"):
+            return
+        if parsed.netloc not in ("huggingface.co", "www.huggingface.co"):
+            raise ValueError("Remote init_lora URLs must use huggingface.co.")
+        if not token:
+            raise ValueError("hf_token is required when init_lora is a Hugging Face URL.")
+
+        parts = [unquote(part) for part in parsed.path.strip("/").split("/")]
+        if len(parts) < 5 or parts[2] != "resolve":
+            raise ValueError("Hugging Face init_lora URLs must use /<owner>/<repo>/resolve/<revision>/<filename>.")
+
+        from huggingface_hub import hf_hub_download
+
+        config[key] = hf_hub_download(
+            repo_id="/".join(parts[:2]),
+            revision=parts[3],
+            filename="/".join(parts[4:]),
+            token=token,
+        )
+
     def predict(
         self,
-        images: Path = Input(
+        images: Optional[Path] = Input(
             description="Zip or tar archive of training images. Not required if dataloader_json points to external data.",
             default=None,
         ),
-        config_json: str = Input(
+        config_json: Optional[str] = Input(
             description="Training config: either a JSON string or path to config.json. Defaults to config/config.json if present.",
             default=None,
         ),
-        dataloader_json: str = Input(
+        dataloader_json: Optional[str] = Input(
             description="Multidatabackend config: either a JSON string or path to file. If not provided, auto-generated from images.",
             default=None,
         ),
-        max_train_steps: int = Input(
+        max_train_steps: Optional[int] = Input(
             description="Override --max_train_steps for quicker Cog runs.",
             default=None,
         ),
@@ -111,11 +145,11 @@ class Predictor(BasePredictor):
             description="HuggingFace Hub repo ID (e.g., 'username/my-lora') - overrides config.",
             default=None,
         ),
-        hf_token: Secret = Input(
+        hf_token: Optional[Secret] = Input(
             description="Hugging Face token for model downloads and Hub publishing.",
             default=None,
         ),
-        lycoris_config: str = Input(
+        lycoris_config: Optional[str] = Input(
             description="LyCORIS config: either a JSON string or path to lycoris_config.json. Required when lora_type is 'lycoris'.",
             default=None,
         ),
@@ -134,6 +168,8 @@ class Predictor(BasePredictor):
         config_dict = None
         if config_json:
             config_path, config_dict = self._parse_json_or_path(config_json, "config_json")
+            if config_dict is not None:
+                self._materialize_remote_init_lora(config_dict, token_value)
 
         # Parse dataloader_json - can be JSON string or file path
         dataloader_path = None

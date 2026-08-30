@@ -15,27 +15,7 @@ Kandinsky 5.0 Video एक भारी मॉडल है। यह निम�
   - **नोट**: शुरुआती **VAE pre‑caching चरण** में भारी HunyuanVideo VAE के कारण काफी अधिक VRAM लगती है। caching चरण के लिए आपको CPU offloading या बड़ा GPU चाहिए हो सकता है।
   - **टिप**: `config.json` में `"offload_during_startup": true` सेट करें ताकि VAE और text encoder एक साथ GPU पर लोड न हों, जिससे pre‑caching मेमोरी दबाव काफी कम हो जाता है।
   - **यदि VAE OOM करे**: HunyuanVideo VAE 3D convs को slice करने के लिए `--vae_enable_patch_conv=true` सेट करें; थोड़ी गति कम होगी लेकिन peak VRAM घटेगा।
-- **Pro मॉडल प्रशिक्षण**: consumer hardware पर फिट कराने के लिए **FSDP2** (multi‑gpu) या LoRA के साथ आक्रामक **Group Offload** चाहिए। विशिष्ट VRAM/RAM आवश्यकताएँ तय नहीं हैं, लेकिन "the more, the merrier" लागू होता है।
 - **सिस्टम RAM**: Lite मॉडल के लिए **45GB** RAM पर परीक्षण आरामदायक था। सुरक्षित रहने के लिए 64GB+ अनुशंसित है।
-
-### मेमोरी ऑफ़लोडिंग (महत्वपूर्ण)
-
-लगभग हर single‑GPU सेटअप पर **Pro** मॉडल प्रशिक्षण के लिए grouped offloading **आवश्यक** है। **Lite** के लिए यह वैकल्पिक है लेकिन बड़े batch/resolution के लिए VRAM बचाने हेतु अनुशंसित है।
-
-इसे अपने `config.json` में जोड़ें:
-
-<details>
-<summary>उदाहरण कॉन्फ़िग देखें</summary>
-
-```json
-{
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
-  "group_offload_blocks_per_group": 1,
-  "group_offload_use_stream": true
-}
-```
-</details>
 
 ## पूर्वापेक्षाएँ
 
@@ -197,7 +177,6 @@ simpletuner train
 
 1. **Resolution घटाएँ**: 480p (जैसे `480x854`) आज़माएँ।
 2. **Frames घटाएँ**: `validation_num_video_frames` और dataset `num_frames` को `33` या `49` तक घटाएँ।
-3. **Offload जांचें**: सुनिश्चित करें कि `--enable_group_offload` सक्रिय है।
 
 ### Validation Video Quality
 

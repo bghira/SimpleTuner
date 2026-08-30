@@ -86,6 +86,8 @@ SimpleTuner 包含一些实验特性，可显著提升训练稳定性和性能�
 
 HeartMuLa 需要包含预计算 token 的 **音频专用** 数据集。
 
+要将目标音色扩展到更多风格或流派，请配置 [Voice Cloning Data Transforms](../experimental/VOICE_CLONING.zh.md) 中说明的 RVC `data_transforms` workflow。
+
 每条样本必须提供:
 
 - `tags`（字符串）

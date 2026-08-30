@@ -291,48 +291,119 @@ def _ramtorch_named_parameters(module: nn.Module) -> List[Tuple[str, nn.Paramete
     ]
 
 
+def _tensor_subclass_leaves(tensor: torch.Tensor, path: Tuple[str, ...] = ()) -> List[Tuple[Tuple[str, ...], torch.Tensor]]:
+    if type(tensor) is torch.Tensor:
+        return [(path, tensor)]
+
+    flatten = getattr(tensor, "__tensor_flatten__", None)
+    if flatten is None:
+        raise TypeError(
+            f"RamTorch buffer type {type(tensor).__module__}.{type(tensor).__name__} does not expose "
+            "__tensor_flatten__; its CPU storage cannot be shared across ranks."
+        )
+
+    names, _metadata = flatten()
+    leaves = []
+    for name in names:
+        child = getattr(tensor, name)
+        if not isinstance(child, torch.Tensor):
+            raise TypeError(f"RamTorch tensor subclass field {'.'.join(path + (name,))} is not a tensor.")
+        leaves.extend(_tensor_subclass_leaves(child, path + (name,)))
+    return leaves
+
+
+def _resolve_buffer_owner(module: nn.Module, full_name: str) -> Tuple[nn.Module, str]:
+    owner = module
+    *parents, attr_name = full_name.split(".")
+    for parent in parents:
+        owner = getattr(owner, parent)
+    return owner, attr_name
+
+
+def _assign_buffer_leaf(owner: nn.Module, attr_name: str, path: Tuple[str, ...], shared_tensor: torch.Tensor) -> None:
+    if not path:
+        shared_tensor.is_ramtorch = True
+        owner._buffers[attr_name] = shared_tensor
+        return
+
+    tensor = owner._buffers[attr_name]
+    for field_name in path[:-1]:
+        tensor = getattr(tensor, field_name)
+    setattr(tensor, path[-1], shared_tensor)
+
+
+def _ramtorch_shared_targets(
+    module: nn.Module,
+) -> List[Tuple[str, torch.Tensor, Callable[[torch.Tensor], None]]]:
+    targets = []
+    for name, param in _ramtorch_named_parameters(module):
+        targets.append((name, param, lambda shared, target=param: setattr(target, "data", shared)))
+
+    for name, buffer in module.named_buffers():
+        if not getattr(buffer, "is_ramtorch", False):
+            continue
+        owner, attr_name = _resolve_buffer_owner(module, name)
+        for path, leaf in _tensor_subclass_leaves(buffer):
+            target_name = ".".join((name, *path))
+            targets.append(
+                (
+                    target_name,
+                    leaf,
+                    lambda shared, target_owner=owner, target_attr=attr_name, target_path=path: _assign_buffer_leaf(
+                        target_owner, target_attr, target_path, shared
+                    ),
+                )
+            )
+    return targets
+
+
 def _ramtorch_shared_metadata(
-    param: nn.Parameter,
-) -> Tuple[Tuple[bytes, bytes, int], Tuple[int, ...], Tuple[int, ...], torch.dtype]:
-    if param.device.type != "cpu":
-        raise ValueError(f"RamTorch parameter must live on CPU for sharing, got {param.device}")
-    storage = param.detach().untyped_storage()
+    tensor: torch.Tensor,
+) -> Tuple[Tuple[bytes, bytes, int], int, Tuple[int, ...], Tuple[int, ...], torch.dtype]:
+    if tensor.device.type != "cpu":
+        raise ValueError(f"RamTorch tensor must live on CPU for sharing, got {tensor.device}")
+    storage = tensor.detach().untyped_storage()
     handle = storage._share_filename_cpu_()
-    return handle, tuple(param.size()), tuple(param.stride()), param.dtype
+    return (
+        handle,
+        tensor.storage_offset(),
+        tuple(tensor.size()),
+        tuple(tensor.stride()),
+        tensor.dtype,
+    )
 
 
 def _attach_shared_tensor(
-    param: nn.Parameter,
     handle: Tuple[bytes, bytes, int],
+    storage_offset: int,
     shape: Tuple[int, ...],
     stride: Tuple[int, ...],
     dtype: torch.dtype,
-) -> None:
+) -> torch.Tensor:
     manager, name, size = handle
     shared_storage = torch.UntypedStorage._new_shared_filename_cpu(manager, name, size)
     shared_tensor = torch.empty(0, dtype=dtype)
-    shared_tensor.set_(shared_storage, 0, shape, stride)
-    param.data = shared_tensor
-    param.is_ramtorch = True
+    shared_tensor.set_(shared_storage, storage_offset, shape, stride)
+    return shared_tensor
 
 
 def attach_shared_ramtorch_parameters(module: nn.Module, process_group: Optional[dist.ProcessGroup] = None) -> int:
     """
-    Rebind RamTorch parameters to shared CPU storage across independently launched processes.
+    Rebind RamTorch parameters and tensor-subclass buffer payloads to shared CPU storage across ranks.
 
     Call this after torch.distributed has been initialized (e.g., in torchrun/Accelerate
     entrypoints) so ramtorch parameters no longer rely on fork-based sharing.
 
     Returns:
-        Number of RamTorch parameters that were attached to shared storage.
+        Number of RamTorch tensor storages that were attached to shared storage.
     """
     if not dist.is_available() or not dist.is_initialized():
         return 0
 
     group = process_group if process_group is not None else dist.group.WORLD
     rank = dist.get_rank(group)
-    ramtorch_params = _ramtorch_named_parameters(module)
-    if not ramtorch_params:
+    ramtorch_targets = _ramtorch_shared_targets(module)
+    if not ramtorch_targets:
         return 0
 
     metadata: List[
@@ -340,34 +411,38 @@ def attach_shared_ramtorch_parameters(module: nn.Module, process_group: Optional
             Tuple[
                 str,
                 Tuple[bytes, bytes, int],
+                int,
                 Tuple[int, ...],
                 Tuple[int, ...],
                 torch.dtype,
             ]
         ]
-    ] = [None for _ in ramtorch_params]
+    ] = [None for _ in ramtorch_targets]
 
     if rank == 0:
-        for idx, (name, param) in enumerate(ramtorch_params):
-            handle, shape, stride, dtype = _ramtorch_shared_metadata(param)
-            metadata[idx] = (name, handle, shape, stride, dtype)
+        for idx, (name, tensor, _assign) in enumerate(ramtorch_targets):
+            handle, storage_offset, shape, stride, dtype = _ramtorch_shared_metadata(tensor)
+            metadata[idx] = (name, handle, storage_offset, shape, stride, dtype)
 
     dist.broadcast_object_list(metadata, src=0, group=group)
 
     attached = 0
-    for (name, param), entry in zip(ramtorch_params, metadata):
+    for (target_name, tensor, assign), entry in zip(ramtorch_targets, metadata):
         if entry is None:
             continue
-        _, handle, shape, stride, dtype = entry
+        source_name, handle, storage_offset, shape, stride, dtype = entry
+        if source_name != target_name:
+            raise RuntimeError(f"RamTorch shared tensor topology differs across ranks: {source_name} != {target_name}")
 
         if rank != 0:
-            _attach_shared_tensor(param, handle, shape, stride, dtype)
+            shared_tensor = _attach_shared_tensor(handle, storage_offset, shape, stride, dtype)
+            assign(shared_tensor)
         else:
-            storage = param.detach().untyped_storage()
+            storage = tensor.detach().untyped_storage()
             if not storage.is_shared():
-                param.data.share_memory_()
+                tensor.share_memory_()
 
-        param.is_ramtorch = True
+        tensor.is_ramtorch = True
         attached += 1
 
     dist.barrier(group)

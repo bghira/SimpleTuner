@@ -433,6 +433,57 @@ def model_card_note(args):
     return f"\n**Note:** {note_contents}\n"
 
 
+def _model_card_bool(args, name: str) -> bool:
+    value = getattr(args, name, False)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
+
+
+def _model_card_optional_value(args, name: str):
+    value = getattr(args, name, None)
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return None
+
+
+def _model_card_training_modes(args, model: Optional[ModelFoundation] = None) -> str:
+    lines = []
+    model_specific_info = ""
+    if model and hasattr(model, "custom_model_card_training_mode_info"):
+        model_specific_info = model.custom_model_card_training_mode_info(args) or ""
+        if not isinstance(model_specific_info, str):
+            model_specific_info = ""
+        model_specific_info = model_specific_info.strip()
+
+    if _model_card_bool(args, "nextlat_enabled"):
+        lines.append("- NextLat: Enabled")
+        lines.append(f"  - Block index: `{_model_card_optional_value(args, 'nextlat_block_index')}`")
+        lines.append(f"  - Weight: `{_model_card_optional_value(args, 'nextlat_weight')}`")
+        lines.append(f"  - State loss: `{_model_card_optional_value(args, 'nextlat_state_loss')}`")
+        lines.append(f"  - KL weight: `{_model_card_optional_value(args, 'nextlat_kl_weight')}`")
+
+    if _model_card_bool(args, "xm_enabled"):
+        lines.append("- XM: Enabled")
+        lines.append(f"  - Candidate count: `{_model_card_optional_value(args, 'xm_candidate_count')}`")
+        lines.append(f"  - Selection scope: `{_model_card_optional_value(args, 'xm_selection_scope')}`")
+        lines.append(f"  - Training target: `{_model_card_optional_value(args, 'xm_training_target')}`")
+        lines.append(f"  - Block size: `{_model_card_optional_value(args, 'xm_block_size')}`")
+
+    if not lines and not model_specific_info:
+        return ""
+    blocks = []
+    if model_specific_info:
+        blocks.append(model_specific_info)
+    if lines:
+        blocks.append("\n".join(lines))
+    return "## Training modes\n\n" + "\n".join(blocks) + "\n\n"
+
+
 def save_metadata_sample(
     image_path: str,
     image: Union[Image.Image, np.ndarray, list, str, torch.Tensor],
@@ -576,11 +627,6 @@ def _extract_audio_format_hints(metadata_backend, config: dict) -> tuple[Optiona
     num_channels = config.get("num_channels") or config.get("audio_num_channels")
     if metadata_backend is None:
         return sample_rate, num_channels
-    try:
-        metadata_backend.load_image_metadata()
-    except Exception:
-        # If metadata isn't available, fallback to config-only hints.
-        return sample_rate, num_channels
     entries = getattr(metadata_backend, "image_metadata", {}) or {}
     if not entries and hasattr(metadata_backend, "get_metadata"):
         try:
@@ -604,7 +650,6 @@ def _audio_dataset_overview(dataset_id: str, dataset_backend: dict) -> str:
     sample_count = None
     if metadata_backend is not None:
         try:
-            metadata_backend.load_image_metadata()
             sample_count = len(getattr(metadata_backend, "image_metadata", {}) or {})
         except Exception:
             sample_count = None
@@ -772,6 +817,36 @@ def save_model_card(
             gallery_intro = "You can find some example audio samples in the following gallery:"
         else:
             gallery_intro = "You can find some example images in the following gallery:"
+    gallery_section = f"{gallery_intro}\n\n<Gallery />\n" if has_media else ""
+    validation_disabled = _model_card_bool(args, "validation_disable")
+    validation_intro = (
+        "Validation was disabled during training."
+        if validation_disabled
+        else (
+            "The main validation prompt used during training was:"
+            if prompt
+            else (
+                "Validation used ground-truth images as an input for partial denoising (img2img)."
+                if args.validation_using_datasets
+                else "No validation prompt was used during training."
+            )
+        )
+    )
+    validation_prompt_block = f"```\n{prompt}\n```\n" if prompt and not validation_disabled else ""
+    validation_settings = ""
+    if not validation_disabled:
+        validation_settings = f"""## Validation settings
+- CFG: `{StateTracker.get_args().validation_guidance}`
+- CFG Rescale: `{StateTracker.get_args().validation_guidance_rescale}`
+- Steps: `{StateTracker.get_args().validation_num_inference_steps}`
+- Sampler: `{_validation_scheduler_label(model, StateTracker.get_args())}`
+- Seed: `{StateTracker.get_args().validation_seed}`
+- Resolution{'s' if ',' in str(StateTracker.get_args().validation_resolution) else ''}: `{str(StateTracker.get_args().validation_resolution)}`
+{f"- Skip-layer guidance: {_skip_layers(args)}" if args.model_family in ['sd3', 'flux'] else ''}
+
+Note: The validation settings are not necessarily the same as the [training settings](#training-settings).
+
+"""
     sage_usage = getattr(args.sageattention_usage, "value", args.sageattention_usage)
     license_metadata = _license_metadata(model)
     yaml_content = f"""---
@@ -800,26 +875,11 @@ inference: true
 
 This is a {model_type(args)} derived from [{base_model}](https://huggingface.co/{base_model}).
 
-{'The main validation prompt used during training was:' if prompt else 'Validation used ground-truth images as an input for partial denoising (img2img).' if args.validation_using_datasets else 'No validation prompt was used during training.'}
-{'```' if prompt else ''}
-{prompt}
-{'```' if prompt else ''}
+{validation_intro}
+{validation_prompt_block}
 
 {model_card_note(args)}
-## Validation settings
-- CFG: `{StateTracker.get_args().validation_guidance}`
-- CFG Rescale: `{StateTracker.get_args().validation_guidance_rescale}`
-- Steps: `{StateTracker.get_args().validation_num_inference_steps}`
-- Sampler: `{_validation_scheduler_label(model, StateTracker.get_args())}`
-- Seed: `{StateTracker.get_args().validation_seed}`
-- Resolution{'s' if ',' in str(StateTracker.get_args().validation_resolution) else ''}: `{str(StateTracker.get_args().validation_resolution)}`
-{f"- Skip-layer guidance: {_skip_layers(args)}" if args.model_family in ['sd3', 'flux'] else ''}
-
-Note: The validation settings are not necessarily the same as the [training settings](#training-settings).
-
-{gallery_intro}\n
-
-<Gallery />
+{validation_settings}{gallery_section}
 
 The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 {'You may reuse the base model text encoder for inference.' if not train_text_encoder else 'If the text encoder from this repository is not used at inference time, unexpected or bad results could occur.'}
@@ -843,12 +903,13 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 - Optimizer: {StateTracker.get_args().optimizer}{f' (config={optimizer_config})' if optimizer_config not in [None, ''] else ''}
 - Trainable parameter precision: {'Pure BF16' if torch.backends.mps.is_available() or StateTracker.get_args().mixed_precision == "bf16" else StateTracker.get_args().mixed_precision}
 - Base model precision: `{args.base_model_precision}`
-- Caption dropout probability: {StateTracker.get_args().caption_dropout_probability or 0.0 * 100}%
+- Caption dropout probability: {(StateTracker.get_args().caption_dropout_probability or 0.0) * 100}%
 {'- Xformers: Enabled' if StateTracker.get_args().attention_mechanism == 'xformers' else ''}
 {f'- SageAttention: Enabled {sage_usage}' if StateTracker.get_args().attention_mechanism == 'sageattention' else ''}
 {('- SLA: Enabled (you MUST use SLA for inference; sla_attention.pt contains attention weights)') if StateTracker.get_args().attention_mechanism == 'sla' else ''}
 {lora_info(args=StateTracker.get_args())}
 
+{_model_card_training_modes(args, model=model)}
 ## Datasets
 
 {datasets_str}

@@ -51,6 +51,7 @@ class BaseBackendConfig(ABC):
             DatasetType.CONDITIONING,
             DatasetType.EVAL,
             DatasetType.VIDEO,
+            DatasetType.AUDIO,
             DatasetType.TEXT_EMBEDS,
             DatasetType.IMAGE_EMBEDS,
             DatasetType.CONDITIONING_IMAGE_EMBEDS,

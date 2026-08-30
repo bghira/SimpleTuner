@@ -363,12 +363,14 @@ nav:
       - ConvRot / Hadamard SDNQ: experimental/CONVROT.md
       - DiffusionBlocks: experimental/DIFFUSION_BLOCKS.md
       - Diff2Flow: experimental/DIFF2FLOW.md
+      - Explorative Modeling (XM): experimental/EXPLORATION_MODELING.md
       - Flow-DPO: experimental/FLOW_DPO.md
       - Internal Guidance: experimental/INTERNAL_GUIDANCE.md
       - iREPA: experimental/IREPA.md
       - LayerSync: experimental/LAYERSYNC.md
       - Metal Flash Attention: experimental/METAL_FLASH_ATTENTION.md
       - MixFlow: experimental/MIXFLOW.md
+      - NextLat: experimental/NEXTLAT.md
       - Prompt2Effect: experimental/PROMPT2EFFECT.md
       - Self-Flow: experimental/SELF_FLOW.md
       - Self-Transcendence: experimental/SELF_TRANSCENDENCE.md
@@ -377,6 +379,7 @@ nav:
       - T-LoRA: experimental/T_LORA.md
       - Unsloth-Style Checkpointing: experimental/UNSLOTH_CHECKPOINTING.md
       - Video CREPA: experimental/VIDEO_CREPA.md
+      - Voice Cloning Data Transforms: experimental/VOICE_CLONING.md
     - Development:
       - Factory Architecture: development/FACTORY_ARCHITECTURE.md
       - Web UI Implementation: webui/IMPLEMENTATION.md

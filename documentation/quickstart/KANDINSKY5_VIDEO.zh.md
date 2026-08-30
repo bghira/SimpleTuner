@@ -15,27 +15,7 @@ Kandinsky 5.0 Video 是重量级模型，由以下组件组成：
   - **注意**：初始 **VAE 预缓存步骤** 需要显著更多 VRAM，因为 HunyuanVideo VAE 非常大。可能需要 CPU offload 或更大 GPU 才能完成缓存阶段。
   - **提示**：在 `config.json` 中设置 `"offload_during_startup": true`，确保 VAE 与文本编码器不会同时加载到 GPU，可显著降低预缓存压力。
   - **若 VAE OOM**：设置 `--vae_enable_patch_conv=true` 以切分 HunyuanVideo VAE 3D 卷积；速度略慢但峰值 VRAM 更低。
-- **Pro 模型训练**：需要 **FSDP2**（多 GPU）或配合 LoRA 的强力 **Group Offload** 才能在消费级硬件上运行。具体 VRAM/RAM 要求尚未确定，但越多越好。
 - **系统内存**：Lite 模型在 **45GB** RAM 下较为舒适。建议 64GB+ 以更稳妥。
-
-### 内存卸载（关键）
-
-对于几乎所有单 GPU 训练 **Pro** 模型的场景，必须启用分组卸载。Lite 模型虽非强制，但推荐以节省 VRAM 给更大 batch/分辨率。
-
-在 `config.json` 中添加：
-
-<details>
-<summary>查看示例配置</summary>
-
-```json
-{
-  "enable_group_offload": true,
-  "group_offload_type": "block_level",
-  "group_offload_blocks_per_group": 1,
-  "group_offload_use_stream": true
-}
-```
-</details>
 
 ## 前提条件
 
@@ -198,7 +178,6 @@ simpletuner train
 
 1.  **降低分辨率**：尝试 480p（`480x854` 等）。
 2.  **减少帧数**：将 `validation_num_video_frames` 与数据集 `num_frames` 降为 `33` 或 `49`。
-3.  **检查卸载**：确保启用 `--enable_group_offload`。
 
 ### 验证视频质量
 

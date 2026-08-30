@@ -160,23 +160,6 @@ SimpleTuner incluye funciones experimentales que pueden mejorar significativamen
 
 </details>
 
-### Offloading de memoria (opcional)
-
-Flux admite offloading de módulos agrupados mediante diffusers v0.33+. Esto reduce drásticamente la presión de VRAM cuando el cuello de botella son los pesos del transformer. Puedes habilitarlo agregando los siguientes flags a `TRAINER_EXTRA_ARGS` (o en la página Hardware de la WebUI):
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream \
-# optional: spill offloaded weights to disk instead of RAM
-# --group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- `--group_offload_use_stream` solo es efectivo en dispositivos CUDA; SimpleTuner desactiva automáticamente los streams en ROCm, MPS y backends CPU.
-- No combines esto con `--enable_model_cpu_offload` — las dos estrategias son mutuamente excluyentes.
-- Cuando uses `--group_offload_to_disk_path`, prefiere un SSD/NVMe local rápido.
-
 #### Prompts de validación
 
 Dentro de `config/config.json` está el "prompt de validación principal", que suele ser el instance_prompt principal en el que estás entrenando para tu único sujeto o estilo. Además, se puede crear un archivo JSON que contiene prompts adicionales para ejecutar durante las validaciones.

@@ -30,11 +30,14 @@ class HuggingfaceBackendBuilder(BaseBackendBuilder):
         is_mock_backend = hasattr(backend_cls, "_mock_children")
 
         dataset_name = getattr(config, "dataset_name", None)
+        dataset_config = getattr(config, "dataset_config", None)
+        data_files = getattr(config, "data_files", None)
         dataset_type = getattr(config, "dataset_type", "image")
         split = getattr(config, "split", "train")
         revision = getattr(config, "revision", None)
         image_column = getattr(config, "image_column", "image")
         video_column = getattr(config, "video_column", "video")
+        audio_column = getattr(config, "audio_column", "audio")
         cache_dir = getattr(config, "huggingface_cache_dir", None)
         if not cache_dir:
             cache_dir = self._default_cache_dir(config)
@@ -56,11 +59,14 @@ class HuggingfaceBackendBuilder(BaseBackendBuilder):
             "accelerator": self.accelerator,
             "id": config.id,
             "dataset_name": dataset_name,
+            "dataset_config": dataset_config,
+            "data_files": data_files,
             "dataset_type": dataset_type,
             "split": split,
             "revision": revision,
             "image_column": image_column,
             "video_column": video_column,
+            "audio_column": audio_column,
             "cache_dir": cache_dir,
             "compress_cache": compress_cache,
             "streaming": streaming,

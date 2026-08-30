@@ -105,6 +105,104 @@ class TestQuantizationConfigParsing(unittest.TestCase):
         with patch.dict(sys.modules, {"torch._guards": guards}):
             self.assertIsNone(_detect_fake_mode(object()))
 
+    def test_sdnq_hadamard_cache_does_not_leak_real_tensor_into_fake_mode(self):
+        import sdnq.dequantizer as sdnq_dequantizer
+        import sdnq.quant_utils as sdnq_quant_utils
+        import torch
+        from sdnq.training.tensor import SDNQTensor
+        from torch._subclasses.fake_tensor import FakeTensor, FakeTensorMode
+
+        from simpletuner.helpers.training.sdnq_workarounds import _PATCHED_FROM_FLOAT_ATTR, apply_sdnq_workarounds
+
+        original_get_hadamard = sdnq_quant_utils.get_hadamard
+        original_dequantizer_get_hadamard = sdnq_dequantizer.get_hadamard
+        original_from_float = SDNQTensor.from_float
+        original_from_float_patched = getattr(SDNQTensor, _PATCHED_FROM_FLOAT_ATTR, False)
+        cache_key = (4, torch.device("cpu"), torch.float32)
+        original_cached = sdnq_quant_utils.HADAMARD_MATRIX_CACHE.get(cache_key)
+        try:
+            sdnq_quant_utils.HADAMARD_MATRIX_CACHE[cache_key] = torch.eye(4)
+            apply_sdnq_workarounds()
+            with FakeTensorMode():
+                result = sdnq_quant_utils.get_hadamard(4, dtype=torch.float32, device=torch.device("cpu"))
+            self.assertIsInstance(result, FakeTensor)
+
+            sentinel = object()
+            with (
+                patch.object(torch.compiler, "is_compiling", return_value=True),
+                patch.object(sdnq_quant_utils, "build_hadamard", return_value=sentinel) as build,
+            ):
+                self.assertIs(sdnq_quant_utils.get_hadamard(4, dtype=torch.float32, device=torch.device("cpu")), sentinel)
+            build.assert_called_once_with(4, dtype=torch.float32, device=torch.device("cpu"))
+        finally:
+            sdnq_quant_utils.get_hadamard = original_get_hadamard
+            sdnq_dequantizer.get_hadamard = original_dequantizer_get_hadamard
+            SDNQTensor.from_float = staticmethod(original_from_float)
+            setattr(SDNQTensor, _PATCHED_FROM_FLOAT_ATTR, original_from_float_patched)
+            if original_cached is None:
+                sdnq_quant_utils.HADAMARD_MATRIX_CACHE.pop(cache_key, None)
+            else:
+                sdnq_quant_utils.HADAMARD_MATRIX_CACHE[cache_key] = original_cached
+
+    def test_sdnq_installs_triton_allocator_only_for_null_default(self):
+        from simpletuner.helpers.training.sdnq_workarounds import _TRITON_ALLOCATOR_ATTR, _install_triton_allocator
+
+        class NullAllocator:
+            pass
+
+        state = SimpleNamespace(current=NullAllocator(), installed=None)
+        allocation_module = ModuleType("triton.runtime._allocation")
+        allocation_module.NullAllocator = NullAllocator
+        allocation_module._allocator = SimpleNamespace(get=lambda: state.current)
+        runtime_module = ModuleType("triton.runtime")
+        runtime_module._allocation = allocation_module
+        triton_module = ModuleType("triton")
+        triton_module.runtime = runtime_module
+        triton_module.set_allocator = lambda allocator: setattr(state, "installed", allocator)
+
+        with patch.dict(
+            sys.modules,
+            {
+                "triton": triton_module,
+                "triton.runtime": runtime_module,
+                "triton.runtime._allocation": allocation_module,
+            },
+        ):
+            self.assertTrue(_install_triton_allocator())
+            self.assertTrue(getattr(state.installed, _TRITON_ALLOCATOR_ATTR))
+            state.current = object()
+            self.assertFalse(_install_triton_allocator())
+
+    def test_sdnq_scaled_mm_installs_allocator_in_execution_context(self):
+        from simpletuner.helpers.training.sdnq_workarounds import (
+            _PATCHED_SCALED_MM_ATTR,
+            _patch_sdnq_scaled_mm_allocator_context,
+        )
+
+        calls = []
+        custom_op = SimpleNamespace(_backend_fns={None: lambda value: calls.append(("backend", value)) or value})
+        kernels_module = ModuleType("sdnq.kernels")
+        scaled_mm_module = ModuleType("sdnq.kernels.triton_scaled_mm")
+        scaled_mm_module.sdnq_scaled_mm = custom_op
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "sdnq.kernels": kernels_module,
+                    "sdnq.kernels.triton_scaled_mm": scaled_mm_module,
+                },
+            ),
+            patch("simpletuner.helpers.training.sdnq_workarounds._install_triton_allocator") as install,
+        ):
+            self.assertTrue(_patch_sdnq_scaled_mm_allocator_context())
+            self.assertFalse(_patch_sdnq_scaled_mm_allocator_context())
+            self.assertEqual(custom_op._backend_fns[None](17), 17)
+
+        install.assert_called_once_with()
+        self.assertEqual(calls, [("backend", 17)])
+        self.assertTrue(getattr(custom_op._backend_fns[None], _PATCHED_SCALED_MM_ATTR))
+
     def test_sdnq_compile_mode_sets_env_before_import(self):
         from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
 

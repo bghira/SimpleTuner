@@ -139,7 +139,7 @@ class MageFlow(ImageModelFoundation):
                 tab="basic",
                 tradeoff_vram="Reduces transformer residency in VRAM.",
                 tradeoff_speed="Adds CPU/GPU transfer overhead.",
-                tradeoff_notes="Mutually exclusive with RamTorch and group offload.",
+                tradeoff_notes="Mutually exclusive with RamTorch.",
                 requires_min_system_ram_gb=64,
                 config={**base_config, "musubi_blocks_to_swap": 3},
             ),
@@ -151,7 +151,7 @@ class MageFlow(ImageModelFoundation):
                 tab="basic",
                 tradeoff_vram="Reduces transformer residency in VRAM more aggressively.",
                 tradeoff_speed="Adds more CPU/GPU transfer overhead.",
-                tradeoff_notes="Mutually exclusive with RamTorch and group offload.",
+                tradeoff_notes="Mutually exclusive with RamTorch.",
                 requires_min_system_ram_gb=96,
                 config={**base_config, "musubi_blocks_to_swap": 6},
             ),
@@ -178,6 +178,7 @@ class MageFlow(ImageModelFoundation):
         super().__init__(config, accelerator)
         self.vae_scale_factor = 16
         self.processor = None
+        self._validate_xm_support()
         if self._is_edit_flavour():
             self.PIPELINE_CLASSES = {
                 PipelineTypes.TEXT2IMG: MageFlowEditPipeline,
@@ -610,6 +611,14 @@ class MageFlow(ImageModelFoundation):
         )
 
     def model_predict(self, prepared_batch, custom_timesteps: list = None):
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch, family_name=self.NAME)
+            model_output = self._model_predict_single(prepared_batch, custom_timesteps=custom_timesteps)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch, custom_timesteps=custom_timesteps)
+
+    def _model_predict_single(self, prepared_batch, custom_timesteps: list = None):
         del custom_timesteps
         hidden_states_buffer = self._new_hidden_state_buffer()
         latents = prepared_batch["noisy_latents"].to(device=self.accelerator.device, dtype=self.config.weight_dtype)

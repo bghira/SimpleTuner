@@ -22,28 +22,6 @@ Puntos de partida recomendados:
 
 El uso de memoria depende del rank, optimizador, resolución de validación, offload, compile y si se usan pesos FP8. Un solo H100 puede entrenar el ejemplo PEFT LoRA incluido durante 1000 pasos a 1024px con muestras de benchmark y validación activadas.
 
-En GPUs más pequeñas, empieza con pesos FP8, rank 8-16, `train_batch_size=1`, gradient checkpointing y model/group offload.
-
-### Offload de memoria
-
-El offload agrupado de módulos puede reducir la presión de VRAM cuando los pesos del transformer son el cuello de botella:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream
-```
-
-Offload opcional a disco:
-
-```bash
---group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- Los streams solo son efectivos en CUDA; SimpleTuner los desactiva en ROCm, MPS y CPU.
-- No combines group offload con otras estrategias de CPU offload.
-- Prefiere NVMe local rápido al usar offload a disco.
 
 ### Torch compile y atención
 

@@ -64,7 +64,6 @@ simpletuner server
 
 可选 VRAM 节省项：
 - 降低 `lora_rank`（4–8）并使用 `int8-quanto` 基础精度。
-- 启用 group offload：`--enable_group_offload --group_offload_type block_level --group_offload_blocks_per_group 1`。
 - 预览 OOM 时优先降低验证分辨率/帧数/步数。
 - 注意力默认行为：CUDA 上 LongCat‑Video 会在可用时自动使用随附的 block‑sparse Triton kernel，缺失则回退标准调度器。无需手动切换。若想强制 xFormers，在配置/CLI 中设置 `attention_implementation: "xformers"`。
 
@@ -108,7 +107,6 @@ simpletuner train --config config/config.json
 
 - **高/宽错误**：确保均可被 16 整除且在 64px 网格上。
 - **MPS float64 警告**：已在内部处理；精度保持 bf16/float32。
-- **OOM**：优先降低验证分辨率/帧数，降低 LoRA rank，启用 group offload，或切换到 `int8-quanto`/`fp8-torchao`。
 - **CFG 空负向**：未提供负向提示词时，管线会自动插入空值。
 
 ---

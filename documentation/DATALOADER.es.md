@@ -258,6 +258,15 @@ Los backends de memoria requieren Linux o macOS y suficiente RAM o swap para la 
 - **Nota:** Si tienes varios datasets de condicionamiento, puedes especificarlos como un arreglo de valores `id`. Al entrenar Flux Kontext, esto permite cambiar aleatoriamente entre condiciones o unir entradas para entrenar tareas avanzadas de composición multi-imagen.
 - **Flow-DPO:** Empareja aquí un dataset `reference_strict` cuando uses [`--distillation_method=flow_dpo`](experimental/FLOW_DPO.es.md).
 
+### `data_transforms`
+
+- **Valores:** un objeto de transform o un arreglo de objetos de transform
+- **Descripción:** Expande un dataset fuente en uno o más datasets de entrenamiento generados antes de que empiece la configuración normal del dataloader. Los datasets generados se tratan como datasets primarios normales salvo que el transform pida explícitamente clonar metadatos.
+- **Identity transfer de audio:** `{"task": "identity_transfer", "method": "rvc"}` está disponible para backends con `dataset_type: "audio"`. Prepara un split de audio generado para transferencia de identidad vocal y usa el directorio de salida para artefactos de voz cacheados y archivos generados. Consulta [Voice Cloning Data Transforms](experimental/VOICE_CLONING.es.md).
+- **Identity data:** Pon la musica a convertir en el `instance_data_dir` del backend de audio, los ejemplos de la voz objetivo en `model.identity_data_dir`, y la ruta del split generado en `target.instance_data_dir`.
+- **Debug de stems:** Define `model.identity_stem_debug_dir` para conservar previews `vocals.wav` y `no_vocals.wav` de la identidad separada que realmente usa el entrenamiento RVC. Sirve para revisar casos donde la salida suena como si los instrumentos se hubieran aprendido como parte de la voz.
+- **Estado:** La implementación experimental incluye comprobaciones de manifiestos de caché, reutilización/subida de artefactos a Hub mediante el layout `huggingface-hub-rvc`, sharding de inicio compatible con DDP, logs locales de RVC y un trainer/converter compacto de voice-transfer de SimpleTuner. El modo full-song remix usa Demucs para separar voces; el modo vocal-stem no necesita separación.
+
 ### `instance_data_dir` / `aws_data_prefix`
 
 - **Local:** Ruta a los datos en el filesystem.
@@ -775,8 +784,9 @@ En este ejemplo, el dataset de 512px se usa para los pasos 1-300, luego el datas
 ### `is_regularisation_data`
 
 - También puede escribirse `is_regularization_data`
-- Habilita entrenamiento parent-teacher para adaptadores LyCORIS de modo que el objetivo de predicción prefiera el resultado del modelo base para un dataset dado.
-  - LoRA estándar no está soportado actualmente.
+- Habilita entrenamiento parent-teacher para que el objetivo de predicción prefiera el resultado del modelo base congelado para un dataset dado.
+  - La mayoría de familias de difusión requieren actualmente adaptadores LyCORIS.
+  - El entrenamiento `language_model` de MiniMax Music 3 admite lotes de regularización con LoRA PEFT estándar, incluida la selección de rutas XM. Su objetivo es la distribución de siguiente token del planner base congelado.
 
 ### `delete_unwanted_images`
 

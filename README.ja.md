@@ -136,7 +136,6 @@ SimpleTunerは以下のモデルファミリーをサポートしています。
 - **勾配チェックポイント** - メモリ/速度最適化のための設定可能な間隔
 - **損失関数** - スケジューリングサポート付きのL2、Huber、Smooth L1
 - **SNR重み付け** - トレーニングダイナミクスを改善するためのMin-SNRガンマ重み付け
-- **グループオフロード** - Diffusers v0.33+モジュールグループCPU/ディスクステージング（オプションのCUDAストリーム付き）
 - **検証アダプタースイープ** - 検証中に一時的にLoRAアダプター（単一またはJSONプリセット）を接続して、トレーニングループに触れることなくアダプターのみまたは比較レンダリングを測定
 - **外部検証フック** - 組み込みの検証パイプラインまたはアップロード後のステップを独自のスクリプトに交換して、別のGPUでチェックを実行したり、任意のクラウドプロバイダーにアーティファクトを転送したりできます（[詳細](/documentation/OPTIONS.md#validation_method)）
 - **AnyFlow distillation** - online teacher target を使う flow-matching モデル向けの FlowMap interval conditioning（[ガイド](/documentation/experimental/ANYFLOW.ja.md)）

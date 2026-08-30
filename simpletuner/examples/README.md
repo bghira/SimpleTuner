@@ -54,6 +54,9 @@ MiniMax Music examples:
 - `minimaxmusic-music3-24g.peft-lora` uses CPU-side INT8-SDNQ Hadamard quantization, segmented checkpointing, and maximum Musubi block swapping for audio up to 30 seconds.
 - `minimaxmusic-music3-32g.peft-lora` uses CPU-side quantization and swaps half of the transformer blocks for audio up to 40 seconds.
 - `minimaxmusic-music3-48g.peft-lora` uses accelerator-side quantization and sparse segmented checkpointing while keeping the quantized transformer resident for audio up to 60 seconds.
+- `minimaxmusic-music3-lm.peft-lora` trains the autoregressive language-model planner on full songs.
+- `minimaxmusic-music3-lm-xm-nextlat.peft-lora` adds two-candidate, block-scoped XM route selection and NextLat while retaining full-song training.
+- `minimaxmusic-music3-lm-xm-nextlat-regularisation.peft-lora` applies the same XM and NextLat objective to 128-frame causal continuation targets and samples an unrelated 128-song regularisation backend at probability 0.5. Every continuation keeps the song prefix as context while masking its loss; regularisation batches learn the frozen base planner's distribution instead of their ground-truth RVQ tokens.
 
 LTX-2 conditioning examples are split by conditioning style:
 

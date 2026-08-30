@@ -20,6 +20,90 @@ def _autograd_graph_contains(fn, needle: str) -> bool:
 
 
 class DynamoCudagraphWorkaroundTests(unittest.TestCase):
+    def test_activation_checkpointing_downgrades_reduce_overhead_to_default(self):
+        from simpletuner.helpers.training import dynamo
+
+        config = SimpleNamespace(
+            dynamo_backend="inductor",
+            dynamo_mode="reduce-overhead",
+            dynamo_use_regional_compilation=True,
+            gradient_checkpointing=True,
+        )
+        with (
+            unittest.mock.patch.object(dynamo.logger, "warning") as warning,
+            unittest.mock.patch.dict(os.environ, {}, clear=True),
+        ):
+            self.assertTrue(dynamo.apply_checkpointing_cudagraph_compatibility(config))
+            self.assertEqual(os.environ["TRAINING_DYNAMO_MODE"], "default")
+            self.assertEqual(os.environ["ACCELERATE_DYNAMO_MODE"], "default")
+
+        self.assertEqual(config.dynamo_mode, "default")
+        self.assertTrue(config.dynamo_use_regional_compilation)
+        warning.assert_called_once()
+        self.assertEqual(warning.call_args.args[2], "https://github.com/pytorch/pytorch/issues/154306")
+
+    def test_reduce_overhead_is_preserved_without_activation_checkpointing(self):
+        from simpletuner.helpers.training import dynamo
+
+        config = SimpleNamespace(
+            dynamo_backend="inductor",
+            dynamo_mode="reduce-overhead",
+            gradient_checkpointing=False,
+        )
+        with unittest.mock.patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(dynamo.apply_checkpointing_cudagraph_compatibility(config))
+            self.assertNotIn("TRAINING_DYNAMO_MODE", os.environ)
+
+        self.assertEqual(config.dynamo_mode, "reduce-overhead")
+
+    def test_inductor_wrapper_defaults_to_cpp(self):
+        from simpletuner.helpers.training import dynamo
+
+        inductor_config = SimpleNamespace(cpp_wrapper=False)
+        with (
+            unittest.mock.patch.dict(os.environ, {}, clear=True),
+            unittest.mock.patch.object(dynamo.importlib, "import_module", return_value=inductor_config),
+        ):
+            wrapper = dynamo.configure_inductor_wrapper(SimpleNamespace(dynamo_backend="inductor"))
+
+            self.assertEqual(wrapper, "cpp")
+            self.assertEqual(os.environ["TORCHINDUCTOR_CPP_WRAPPER"], "1")
+            self.assertTrue(inductor_config.cpp_wrapper)
+
+    def test_inductor_wrapper_ignores_inactive_accelerate_backend(self):
+        from simpletuner.helpers.training import dynamo
+
+        inductor_config = SimpleNamespace(cpp_wrapper=False)
+        with (
+            unittest.mock.patch.dict(os.environ, {"ACCELERATE_DYNAMO_BACKEND": "NO"}, clear=True),
+            unittest.mock.patch.object(dynamo.importlib, "import_module", return_value=inductor_config),
+        ):
+            wrapper = dynamo.configure_inductor_wrapper(SimpleNamespace(dynamo_backend="inductor"))
+
+            self.assertEqual(wrapper, "cpp")
+            self.assertEqual(os.environ["TORCHINDUCTOR_CPP_WRAPPER"], "1")
+            self.assertTrue(inductor_config.cpp_wrapper)
+
+    def test_inductor_wrapper_supports_legacy_python_mode(self):
+        from simpletuner.helpers.training import dynamo
+
+        inductor_config = SimpleNamespace(cpp_wrapper=True)
+        with (
+            unittest.mock.patch.dict(os.environ, {}, clear=True),
+            unittest.mock.patch.object(dynamo.importlib, "import_module", return_value=inductor_config),
+        ):
+            wrapper = dynamo.configure_inductor_wrapper(SimpleNamespace(dynamo_backend="inductor", dynamo_wrapper="python"))
+
+            self.assertEqual(wrapper, "python")
+            self.assertEqual(os.environ["TORCHINDUCTOR_CPP_WRAPPER"], "0")
+            self.assertFalse(inductor_config.cpp_wrapper)
+
+    def test_inductor_wrapper_rejects_unknown_value(self):
+        from simpletuner.helpers.training import dynamo
+
+        with self.assertRaisesRegex(ValueError, "--dynamo_wrapper"):
+            dynamo.configure_inductor_wrapper(SimpleNamespace(dynamo_wrapper="unknown"))
+
     def test_peft_lora_cudagraph_patch_clones_base_result(self):
         from peft import LoraConfig
         from peft.tuners.lora.layer import Linear
@@ -122,6 +206,25 @@ class DynamoCudagraphWorkaroundTests(unittest.TestCase):
             unittest.mock.patch.object(inductor_config.triton, "cudagraph_trees", True),
         ):
             self.assertTrue(dynamo._inductor_cudagraphs_enabled(SimpleNamespace(dynamo_backend=None)))
+
+    def test_configured_inductor_overrides_outer_accelerate_no_backend(self):
+        import torch._inductor.config as inductor_config
+
+        from simpletuner.helpers.training import dynamo
+
+        config = SimpleNamespace(dynamo_backend="inductor", dynamo_mode="reduce-overhead")
+        with (
+            unittest.mock.patch.dict(
+                os.environ,
+                {
+                    "ACCELERATE_DYNAMO_BACKEND": "NO",
+                    "ACCELERATE_DYNAMO_MODE": "default",
+                },
+            ),
+            unittest.mock.patch.object(inductor_config.triton, "cudagraphs", False),
+            unittest.mock.patch.object(inductor_config.triton, "cudagraph_trees", True),
+        ):
+            self.assertTrue(dynamo._inductor_cudagraphs_enabled(config))
 
 
 if __name__ == "__main__":

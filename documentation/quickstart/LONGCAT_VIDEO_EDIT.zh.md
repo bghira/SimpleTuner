@@ -120,4 +120,3 @@ simpletuner train --config config/config.json
 - **缺少条件图**：通过 `conditioning_data` 提供条件数据集并保持文件名一致；验证时把 `eval_dataset_id` 指向验证集 ID。
 - **高/宽错误**：保持可被 16 整除并对齐 64px 网格。
 - **首帧漂移**：降低 guidance（3.5–4.0）或减少步数。
-- **OOM**：降低验证分辨率/帧数，减少 `lora_rank`，启用 group offload，或使用 `int8-quanto`/`fp8-torchao`。

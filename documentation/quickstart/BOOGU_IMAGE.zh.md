@@ -22,28 +22,6 @@ simpletuner/examples/boogu-image-v0.1.lycoris-lokr/config.json
 
 内存使用会随 rank、优化器、验证分辨率、offload、compile 设置以及是否使用 FP8 权重而变化。单张 H100 可以在 1024px 下运行内置 PEFT LoRA 示例 1000 steps，并启用 benchmark 与 validation samples。
 
-较小显卡建议从 FP8 weights、rank 8-16、`train_batch_size=1`、gradient checkpointing 和 model/group offload 开始。
-
-### 内存 offload
-
-当 transformer 权重成为 VRAM 瓶颈时，可以使用 group offload:
-
-```bash
---enable_group_offload \
---group_offload_type block_level \
---group_offload_blocks_per_group 1 \
---group_offload_use_stream
-```
-
-可选磁盘 offload:
-
-```bash
---group_offload_to_disk_path /fast-ssd/simpletuner-offload
-```
-
-- stream 只在 CUDA 上有效；SimpleTuner 会在 ROCm、MPS 和 CPU 上禁用。
-- 不要把 group offload 与其他 CPU offload 策略混用。
-- 磁盘 offload 推荐使用高速本地 NVMe。
 
 ### Torch compile 与 attention
 

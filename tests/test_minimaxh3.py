@@ -142,6 +142,32 @@ class H3ContextParallelOutputGatherTests(unittest.TestCase):
         self.assertTrue(torch.equal(tensor.grad, torch.ones_like(tensor)))
 
 
+class H3AudioOnlyLatentLimitTests(unittest.TestCase):
+    def _model(self):
+        model = MiniMaxH3.__new__(MiniMaxH3)
+        model.model = SimpleNamespace(config=SimpleNamespace(patch_size=(1, 2, 2)))
+        model.unwrap_model = lambda transformer: transformer
+        return model
+
+    def test_audio_only_latents_are_trimmed_to_h3_duration_limit(self):
+        model = self._model()
+        batch = {"audio_latent_batch": torch.zeros(1, 2, 3, 1602)}
+
+        model._trim_audio_only_latents_for_supported_duration(batch)
+
+        self.assertEqual(batch["audio_latent_batch"].shape[-1], 575)
+
+    def test_audio_only_dict_latents_are_trimmed_before_fake_video_build(self):
+        model = self._model()
+        batch = {"audio_latent_batch": {"latents": torch.zeros(1, 2, 3, 1602)}}
+
+        model._trim_audio_only_latents_for_supported_duration(batch)
+        fake_video = model._build_fake_video_latents(batch, torch.device("cpu"), torch.float32)
+
+        self.assertEqual(batch["audio_latent_batch"]["latents"].shape[-1], 575)
+        self.assertEqual(tuple(fake_video.shape), (1, 24, 102, 2, 2))
+
+
 def tiny_inputs(batch_size: int = 1):
     text_tags = torch.full((5,), MINIMAX_H3_TEXT_TAG, dtype=torch.long)
     layout = build_packed_sequence(
@@ -718,8 +744,8 @@ class FakeMusubiManager:
     def is_managed_block(self, block_idx):
         return block_idx == self.managed_block_idx
 
-    def stream_in(self, block, compute_device):
-        self.calls.append(("stream_in", id(block), str(compute_device)))
+    def stream_in(self, block, compute_device, checkpointed=None):
+        self.calls.append(("stream_in", id(block), str(compute_device), checkpointed))
 
     def stream_out(self, block):
         self.calls.append(("stream_out", id(block)))
@@ -748,6 +774,16 @@ class MiniMaxH3Tests(unittest.TestCase):
         self.assertIn("convrot-int8", model_cls.get_flavour_choices())
         resolved = model_cls.get_real_class() if hasattr(model_cls, "get_real_class") else model_cls
         self.assertIs(resolved, MiniMaxH3)
+
+    def test_model_config_path_keeps_local_components_with_single_file_transformer(self):
+        model = MiniMaxH3.__new__(MiniMaxH3)
+        model.config = SimpleNamespace(
+            model_family="minimaxh3",
+            pretrained_model_name_or_path="/src/model",
+            pretrained_transformer_model_name_or_path="/src/weights/transformer.safetensors",
+        )
+
+        self.assertEqual(model._model_config_path(), "/src/model")
 
     def test_image_mode_keeps_single_frame_geometry(self):
         self.assertEqual(MiniMaxH3.adjust_video_frames(1), 1)
@@ -1291,7 +1327,7 @@ class MiniMaxH3Tests(unittest.TestCase):
             fake_manager.calls,
             [
                 ("activate", 3, "cpu", True),
-                ("stream_in", id(model.transformer_blocks[1]), "cpu"),
+                ("stream_in", id(model.transformer_blocks[1]), "cpu", False),
                 ("stream_out", id(model.transformer_blocks[1])),
             ],
         )

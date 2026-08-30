@@ -386,7 +386,7 @@ class ReplicateCogClient(CloudTrainerService):
 
             # Serialize lycoris config if provided
             if lycoris_config:
-                prediction_input["lycoris_json"] = json.dumps(lycoris_config)
+                prediction_input["lycoris_config"] = json.dumps(lycoris_config)
 
             # Add data archive if provided
             if data_archive_url:

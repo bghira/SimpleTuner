@@ -73,15 +73,82 @@ simpletuner configure config/foo/config.json
 - **选项**：`transformer`（默认）、`language_model`
 - **说明**：
   - `transformer` 在缓存的 Flow-VAE latent 上训练流匹配音乐 DiT（标准路径）。
-  - `language_model` 使用 RVQ 语义码的下一 token 交叉熵训练 Qwen3 自回归阶段。数据集必须提供预计算的原始逐码本音频 token（`audio_tokens_path` 元数据，形状为 `[frames, codebooks]`），以及 `prompt`（或 `tags`）和 `lyrics`。仅支持标准 PEFT LoRA，`--lora_format comfyui` 会被拒绝，且训练器内验证音频被禁用——请从保存的检查点渲染。
+  - `language_model` 使用 RVQ 语义码的下一 token 交叉熵训练 Qwen3 自回归阶段。对于 `dataset_type=audio`，SimpleTuner 会在 VAE 缓存阶段用 MiniMax Music DAV 和默认 v4 RVQ 编码器把原始 waveform 编成代码。数据集仍可提供预计算的原始逐码本音频 token（`audio_tokens` 或 `audio_tokens_path`，形状为 `[frames, codebooks]`），以及 `prompt`（或 `tags`）和 `lyrics`。仅支持标准 PEFT LoRA，`--lora_format comfyui` 会被拒绝，且训练器内验证音频被禁用——请从保存的检查点渲染。
 
 ### `--minimax_music_lm_max_frames`
 
-- **内容**：在 `--minimax_music_train_component=language_model` 时，将每首曲目的音频 token 序列截断为该数量的 25Hz 帧（从开头截取以保持歌词对齐）。
+- **内容**：在 `--minimax_music_train_component=language_model` 时，以 25Hz 音频帧为单位限制 `prefix` 和独立 `random` 窗口。
 - **默认**：`0`（训练完整曲目）
 - **说明**：
-  - 一帧为 40 毫秒；7500 帧即五分钟。如果长曲目耗尽显存，请降低该值。
+  - 一帧为 40 毫秒；7500 帧即五分钟。
+  - `continuation` 使用下方独立的目标帧数和时长设置。
   - 被截断的样本不会获得音频结束目标，因此模型不会被教导提前停止。
+
+### `--minimax_music_lm_window_mode`
+
+- **内容**：选择语言模型训练序列的构造方式。
+- **选项**：`prefix`（默认）、`random`、`continuation`
+- **说明**：
+  - `prefix` 使用曲目开头。它最能保持完整歌词的合理性，但较短上限主要会教模型学习前奏。
+  - `random` 在 collate 时采样一个连续 RVQ 窗口，把开始/结束/总时长文本加入 prompt；对被截取的窗口会省略完整歌词，除非样本提供 `lyrics_window`。
+  - `continuation` 采样有界的可见片段，仅对末尾目标帧计算损失。
+  - 独立 `random` 需要正数 `--minimax_music_lm_max_frames`；`continuation` 不使用该选项。
+
+### `--minimax_music_lm_target_frames`
+
+- **内容**：在 `continuation` 中，设置可见片段末尾有多少个 25Hz 帧接受下一 token 损失。
+- **默认**：`128`（一个原生 RVQ 分段，即 5.12 秒）
+- **说明**：更早的可见帧保留为因果上下文，并从交叉熵中屏蔽。
+
+### `--minimax_music_lm_continuation_crop_mode`
+
+- **内容**：选择 `continuation` 可见片段的起点。
+- **选项**：`full`（默认）、`random`
+- **说明**：
+  - `full` 总是从歌曲第 0 帧开始，并在配置的时长范围内采样终点。
+  - `random` 可以省略曲目开头，但会在监督目标前保留至少一个原生 128 帧上下文分段，并把位置加入 prompt。
+  - 定位随机片段会省略完整歌词，除非样本提供 `lyrics_window`。过短曲目会回退到完整前缀。
+
+### `--minimax_music_lm_min_duration_seconds`
+
+- **内容**：设置 `continuation` 中模型可见片段的最短时长。
+- **默认**：`5.12`
+- **说明**：按原生 128 帧（5.12 秒）间隔向上取整。随机片段为了保留上下文可能更长。
+
+### `--minimax_music_lm_max_duration_seconds`
+
+- **内容**：在不更改缓存 RVQ 曲目的情况下，限制 `continuation` 的模型可见时长。
+- **默认**：`0`（使用可用曲目长度）
+- **说明**：
+  - 正数上限按原生 128 帧间隔向下取整。
+  - 对 `random`，上限必须容纳监督目标和至少一个上下文分段。
+  - 只有采样片段到达真实曲目末尾时，才添加音频结束目标。
+  - 当终止和非终止片段都可用时，25% 的 continuation 样本会显式选择真实曲目末尾；其余 75% 在有效的非终止终点或偏移中均匀采样，因此 EOS 监督不会随曲目变长而变稀。
+
+### `--minimax_music_rvq_encoder_model_name_or_path`
+
+- **内容**：仅用于 MiniMax Music `language_model` 训练：包含 RVQ 编码器的 Hub 仓库或本地目录，用于将缓存的 DAV 音频 latent 转成逐码本音频代码。
+- **默认**：`SimpleTuner/open-rvq-encoder-minimax-music3-169m-v4`
+- **相关**：`--minimax_music_rvq_encoder_subfolder` 默认是 `final`；`--minimax_music_rvq_encoder_revision` 可固定 Hub revision。
+- **说明**：默认包包含 `rvq_encoder_config.json`、`rvq_encoder.safetensors` 和 muP base-shape 元数据。只有在使用为 MiniMax Music 3 codebook 训练的兼容 RVQ 编码器时才更改。
+
+### `--minimax_music_rvq_encoder_subfolder`
+
+- **内容**：RVQ 编码器仓库或本地目录中的子文件夹。
+- **默认**：`final`
+- **说明**：所选文件夹必须包含 `rvq_encoder_config.json`、`rvq_encoder.safetensors` 以及所需的 muP base-shape 元数据。
+
+### `--minimax_music_rvq_encoder_revision`
+
+- **内容**：`--minimax_music_rvq_encoder_model_name_or_path` 的可选 Hub revision。
+- **默认**：未设置；如果提供了主 `--revision`，则使用它。
+- **说明**：当 RVQ 编码器需要与 MiniMax Music 3 基础 checkpoint 分开固定版本时使用。
+
+### `--minimax_music_rvq_vae_model_name_or_path`
+
+- **内容**：仅用于 MiniMax Music `language_model` 训练：VAE 缓存时在 RVQ 编码器之前使用的 DAV/audio VAE 仓库、本地目录或 `dav.pth` 文件。
+- **默认**：未设置；先使用 `--pretrained_vae_model_name_or_path`，然后使用 `SimpleTuner/MiniMax-Music-3-Encoder`。
+- **说明**：这是 waveform 到 DAV latent 的编码阶段。随后 RVQ 编码器会把这些 DAV latent 转成全局 LM 学习预测的代码张量。
 
 ### `--minimax_music_lm_adapter`
 
@@ -131,7 +198,6 @@ simpletuner configure config/foo/config.json
 
 - **内容**：在 VAE 缓存期间将文本编码器权重卸载到 CPU。
 - **原因**：对 HiDream、Wan 2.1 等大模型，加载 VAE 缓存时可能 OOM。该选项不影响训练质量，但在超大文本编码器或慢 CPU 下可能显著延长启动时间，故默认关闭。
-- **提示**：对内存极其紧张的系统，可配合下方分组卸载功能使用。
 
 ### `--offload_during_save`
 
@@ -202,39 +268,6 @@ simpletuner configure config/foo/config.json
 - **行为**：每个 batch 采样一个噪声块，只执行对应层组，并为 DDP 自动启用 unused-parameter 检测。
 - **限制**：仅支持 Transformer denoiser。详见 [DiffusionBlocks](experimental/DIFFUSION_BLOCKS.zh.md)。
 
-### `--enable_group_offload`
-
-- **内容**：启用 diffusers 的分组模块卸载，使模型块在前向之间驻留在 CPU（或磁盘）。
-- **原因**：在大 Transformer（Flux、Wan、Auraflow、LTXVideo、Cosmos2Image）上显著降低显存峰值；配合 CUDA streams 时性能影响较小。
-- **说明**：
-  - 与 `--enable_model_cpu_offload` 互斥，每次运行只能选择一种策略。
-  - 需要 diffusers **v0.33.0** 或更新版本。
-
-### `--group_offload_type`
-
-- **选项**：`block_level`（默认）、`leaf_level`
-- **内容**：控制层的分组方式。`block_level` 在显存与吞吐之间取得平衡；`leaf_level` 最大化节省，但 CPU 传输更多。
-
-### `--group_offload_blocks_per_group`
-
-- **内容**：使用 `block_level` 时，每组包含的 Transformer 块数量。
-- **默认**：`1`
-- **原因**：增加该值可减少传输频率（更快），但会在加速器上保留更多参数（占用更多显存）。
-
-### `--group_offload_use_stream`
-
-- **内容**：使用专用 CUDA 流将主机/设备传输与计算重叠。
-- **默认**：`False`
-- **说明**：
-  - 在非 CUDA 后端（Apple MPS、ROCm、CPU）自动回退为 CPU 风格传输。
-  - 在 NVIDIA GPU 上有空闲拷贝引擎时推荐开启。
-
-### `--group_offload_to_disk_path`
-
-- **内容**：将分组参数溢出到磁盘而非 RAM 的目录路径。
-- **原因**：适用于 CPU RAM 极为紧张的系统（例如带大容量 NVMe 的工作站）。
-- **提示**：请使用高速本地 SSD；网络文件系统会显著拖慢训练。
-
 ### `--musubi_blocks_to_swap`
 
 - **内容**：为 LongCat-Video、Wan、LTXVideo、Kandinsky5-Video、Qwen-Image、Flux、Flux.2、zlab i1、Cosmos2Image、HunyuanVideo、Krea 2 提供 Musubi 块交换。将最后 N 个 Transformer 块保留在 CPU，并在前向中按块流式加载权重。
@@ -254,7 +287,6 @@ simpletuner configure config/foo/config.json
 - **原因**：在 CPU 内存共享 Linear 权重并流式传到加速器，以降低显存压力。
 - **说明**：
   - 需要 CUDA 或 ROCm（不支持 Apple/MPS）。
-  - 与 `--enable_group_offload` 互斥。
   - 自动启用 `--set_grads_to_none`。
 
 ### `--ramtorch_target_modules`
@@ -572,6 +604,23 @@ TRAINING_DYNAMO_BACKEND=inductor
 
 省略你希望继承 Accelerate 默认值的项（例如省略 `dynamo_mode` 以使用自动选择）。
 
+### `--dynamo_wrapper`
+
+选择 TorchInductor 的 host wrapper。`cpp` 为默认值并减少调度开销；`python` 保留旧版本行为。该选择会写入 Mega-Cache 文件名和 manifest。
+
+### `--dynamo_cache_export`
+
+累积 PyTorch Mega-Cache blob 的可选路径。SimpleTuner 会在编译前加载兼容 blob，在第一个成功的优化器步骤后导出，并在每次 checkpoint 和关闭时检查新的 artifact key。`<路径>.manifest.json` 会记录 PyTorch/Triton/GPU 运行时和 SHA256。未覆盖的 shape 会正常编译，其产物会加入下一次导出。只应加载可信的缓存 blob。
+当该值是目录、以路径分隔符结尾或没有扩展名时，SimpleTuner 会根据模型、运行时、加速器和影响计算图的配置生成稳定文件名，并在 Hub 上查找同名文件。
+
+### `--dynamo_cache_export_after_first_step`
+
+为 `true`（默认）时，在第一个成功的优化器步骤后导出 Mega-Cache。设为 `false` 只会跳过这次早期导出；checkpoint 和训练结束导出仍会执行。
+
+### `--dynamo_hub_repo_id`
+
+用于获取和发布 `--dynamo_cache_export` blob 的可选 Hugging Face 仓库。Blob 与 manifest 会在一次 commit 中上传；不存在的仓库会创建为 private。Hub 故障不会中止训练，本地导出仍会保留。
+
 ### `--attention_mechanism`
 
 支持多种注意力机制，兼容性与权衡不同：
@@ -755,6 +804,13 @@ TRAINING_DYNAMO_BACKEND=inductor
 
 - **内容**：增减内存中缓存的批次数。
 - **原因**：启用预取后，默认每个 GPU/进程保留 10 个条目。该值可调以增加或减少预取批次数。
+
+### `--dataloader_prefetch_device_threshold_mb`
+
+- **内容**：指定 dataloader 预取进行页锁定并通过专用 CUDA 流传输的最小 CPU 唯一批次载荷（MiB）。`0` 表示禁用设备暂存。
+- **原因**：非常大的缓存嵌入可能会使主机到设备的传输与模型计算串行执行。此选项让传输与 GPU 计算重叠。
+- **内存**：每个暂存的队列条目都会同时消耗固定主机内存和加速器内存。请从 `dataloader_prefetch_qlen: 2` 开始，并在增大前进行性能分析。
+- **兼容性**：需要 `dataloader_prefetch: true` 和 CUDA。不支持与上下文并行同时使用。
 
 ### `--compress_disk_cache`
 
@@ -1796,6 +1852,70 @@ Internal Guidance 使用与最终 output head 相同的 denoising target 监督�
 
 ---
 
+## Explorative Modeling (XM)
+
+XM 会评估多个训练候选，并只对最能解释每个监督样本或 token block 的候选进行反向传播。所选 target 需要对应模型家族实现支持。用户指南见 [Explorative Modeling](experimental/EXPLORATION_MODELING.zh.md)。
+
+### `--xm_enabled`
+
+- **作用**：启用 XM 候选选择。
+- **默认**：`false`
+
+### `--xm_candidate_count`
+
+- **作用**：每个样本要评分的 noise 或 route latent 候选数量。
+- **默认**：`1`；启用 XM 时必须至少为 `2`。
+
+### `--xm_training_target`
+
+- **作用**：候选类型。Diffusion/flow 模型使用 `noise`，AR/RVQ planner 使用 `route`。
+- **选项**：`noise`、`route`
+- **默认**：`noise`
+
+### `--xm_selection_scope`
+
+- **作用**：按 `sample` 或 token/frame `block` 选择获胜候选。
+- **默认**：`sample`
+
+### `--xm_block_size`
+
+- **作用**：Block-level XM 使用的 token 或 frame span。`0` 表示使用完整监督序列。
+- **默认**：`0`
+
+---
+
+## NextLat
+
+NextLat 添加一个小型辅助 predictor，把每个捕获的 hidden token 映射到下一个 hidden token。它要求 transformer 模型家族能通过 SimpleTuner hidden-state buffer 暴露 hidden states。用户指南见 [NextLat](experimental/NEXTLAT.zh.md)。
+
+### `--nextlat_enabled`
+
+- **作用**：启用 NextLat hidden-state prediction。
+- **默认**：`false`
+
+### `--nextlat_block_index`
+
+- **作用**：要捕获的 0-based transformer block。
+- **默认**：`-1`，表示使用最后一个支持的 block。
+
+### `--nextlat_weight`
+
+- **作用**：NextLat 辅助 loss 的权重。
+- **默认**：`0.0`；启用 NextLat 时必须大于 0。
+
+### `--nextlat_state_loss`
+
+- **作用**：预测下一个 hidden state 的距离函数。
+- **选项**：`smooth_l1`、`mse`
+- **默认**：`smooth_l1`
+
+### `--nextlat_kl_weight`
+
+- **作用**：当模型家族为预测 hidden state 提供 logits head 时使用的可选 KL 一致性权重。
+- **默认**：`0.0`
+
+---
+
 ## 🔁 LayerSync（隐藏状态自对齐）
 
 LayerSync 通过在同一 Transformer 内让“学生”层对齐更强的“教师”层，使用隐藏 token 的余弦相似度进行对齐。
@@ -2134,6 +2254,7 @@ usage: train.py [-h] --model_family
                 [--torch_num_threads TORCH_NUM_THREADS]
                 [--dataloader_prefetch [DATALOADER_PREFETCH]]
                 [--dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN]
+                [--dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB]
                 [--aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT]
                 [--aspect_bucket_alignment {8,16,24,32,64}]
                 [--minimum_image_size MINIMUM_IMAGE_SIZE]
@@ -2785,6 +2906,10 @@ options:
                         so that it can be immediately available
   --dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN
                         Set the number of prefetched batches
+  --dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB
+                        Minimum CPU batch payload in MiB to page-lock and
+                        transfer on a dedicated CUDA stream during dataloader
+                        prefetch; 0 disables device staging
   --aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT
                         The number of workers to use for aspect bucketing.
                         This is a CPU-bound task, so the number of workers

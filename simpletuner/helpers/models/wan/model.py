@@ -287,6 +287,7 @@ class Wan(VideoModelFoundation):
     SLIDER_LORA_TARGET = ["to_k", "to_q", "to_v", "to_out.0"]
     # Only training the Attention blocks by default.
     DEFAULT_LYCORIS_TARGET = ["Attention"]
+    XM_SEQUENCE_LIST_KEYS = frozenset({"conditioning_pixel_values_multi"})
 
     MODEL_CLASS = WanTransformer3DModel
     MODEL_SUBFOLDER = "transformer"
@@ -632,6 +633,26 @@ class Wan(VideoModelFoundation):
         if not hasattr(self.config, "wan_force_2_1_time_embedding"):
             self.config.wan_force_2_1_time_embedding = False
         self._wan_expand_timesteps = False
+        self._validate_xm_support()
+
+    def _wan_xm_batch_major_lists(self, values: dict, batch_size: int) -> dict:
+        return {
+            key: list(value)
+            for key, value in values.items()
+            if isinstance(value, list) and key not in self.XM_SEQUENCE_LIST_KEYS and len(value) == batch_size
+        }
+
+    def _prepare_xm_noise_candidates(self, prepared_batch: dict) -> dict:
+        latents = prepared_batch.get("latents")
+        batch_size = latents.shape[0] if torch.is_tensor(latents) and latents.ndim > 0 else None
+        batch_major_lists = self._wan_xm_batch_major_lists(prepared_batch, batch_size) if batch_size is not None else {}
+
+        result = super()._prepare_xm_noise_candidates(prepared_batch)
+
+        candidate_count = int(prepared_batch.get("xm_candidate_count", self.xm_config.candidate_count))
+        for key, value in batch_major_lists.items():
+            prepared_batch[key] = value * candidate_count
+        return result
 
     def requires_conditioning_image_embeds(self) -> bool:
         if not self._is_i2v_like_flavour():
@@ -1380,6 +1401,9 @@ class Wan(VideoModelFoundation):
         """
         Modify the existing model_predict to support TREAD with masked training.
         """
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch)
+
         hidden_states_buffer = self._new_hidden_state_buffer()
         crepa = getattr(self, "crepa_regularizer", None)
         capture_block_index = prepared_batch.get(
@@ -1469,11 +1493,14 @@ class Wan(VideoModelFoundation):
             model_pred = model_output[0] if isinstance(model_output, tuple) else model_output
             crepa_hidden = None
 
-        return {
+        result = {
             "model_prediction": model_pred,
             "crepa_hidden_states": crepa_hidden,
             "hidden_states_buffer": hidden_states_buffer,
         }
+        if prepared_batch.get("xm_candidate_count"):
+            result["xm_candidate_count"] = prepared_batch["xm_candidate_count"]
+        return result
 
     def update_model_predict_kwargs(self, prepared_batch: dict, transformer_kwargs: dict) -> dict:
         return transformer_kwargs
@@ -1569,7 +1596,7 @@ ModelRegistry.register("wan", Wan)
 def _patch_wan_pipeline_execution_device():
     """
     Monkeypatch the WanPipeline to fix the _execution_device property when text encoder is on meta device.
-    This prevents the "device meta is invalid" error when using group offloading.
+    This prevents a "device meta is invalid" error after model CPU offload moves the text encoder to meta.
     """
     from diffusers import WanPipeline
 

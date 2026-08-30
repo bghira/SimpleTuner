@@ -1142,8 +1142,14 @@ class ZImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOr
         for idx, layer in enumerate(self.layers):
             if use_segmented_checkpointing:
                 break
+            checkpoint_this_block = (
+                idx not in skip_set
+                and grad_enabled
+                and self.gradient_checkpointing
+                and not self.gradient_checkpointing_backend.endswith("-ffn")
+            )
             if musubi_offload_active and musubi_manager.is_managed_block(idx):
-                musubi_manager.stream_in(layer, unified.device)
+                musubi_manager.stream_in(layer, unified.device, checkpointed=checkpoint_this_block)
             if use_routing and route_ptr < len(routes) and idx == routes[route_ptr]["start_layer_idx"]:
                 mask_ratio = routes[route_ptr]["selection_ratio"]
                 force_keep = torch.zeros_like(unified_attn_mask)

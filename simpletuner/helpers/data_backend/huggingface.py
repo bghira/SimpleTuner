@@ -36,6 +36,8 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         accelerator,
         id: str,
         dataset_name: str,
+        dataset_config: Optional[str] = None,
+        data_files: Optional[Any] = None,
         split: str = "train",
         revision: str = None,
         image_column: str = "image",
@@ -54,6 +56,8 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         self.type = "huggingface"
         self.accelerator = accelerator
         self.dataset_name = dataset_name
+        self.dataset_config = dataset_config
+        self.data_files = data_files
         self.dataset_type = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
         if self.dataset_type is DatasetType.VIDEO:
             default_extension = "mp4"
@@ -95,14 +99,26 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             return
         self._loading_dataset = True
         try:
-            from datasets import load_dataset, load_dataset_builder
+            from datasets import Features, Value, load_dataset, load_dataset_builder
         except ImportError:
             self._loading_dataset = False
             raise ImportError("Please install datasets: pip install datasets")
 
+        dataset_features = None
+        download_mode = "reuse_dataset_if_exists"
+        if self.dataset_type is DatasetType.AUDIO and self.dataset_name == "audiofolder":
+            dataset_features = Features({self.audio_column: Value("string")})
+            download_mode = "force_redownload"
+
         # First, inspect the dataset structure
         logger.info(f"Inspecting dataset {self.dataset_name}")
-        builder = load_dataset_builder(self.dataset_name, cache_dir=self.cache_dir)
+        builder = load_dataset_builder(
+            self.dataset_name,
+            name=self.dataset_config,
+            data_files=self.data_files,
+            features=dataset_features,
+            cache_dir=self.cache_dir,
+        )
         logger.info(f"Dataset info: {builder.info}")
         try:
             available_splits = list(builder.info.splits.keys()) if builder.info.splits else []
@@ -116,11 +132,14 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
         try:
             self.dataset = load_dataset(
                 self.dataset_name,
+                name=self.dataset_config,
+                data_files=self.data_files,
                 split=self.split,
                 revision=self.revision,
                 cache_dir=self.cache_dir,
+                features=dataset_features,
                 streaming=self.streaming,
-                download_mode="reuse_dataset_if_exists",  # or "force_redownload" if needed
+                download_mode=download_mode,
             )
 
             # Log the initial size
@@ -132,6 +151,7 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
                     logger.warning("Dataset has exactly 8200 items - this might be a single shard!")
 
             self._configure_video_column()
+            self._configure_audio_column()
 
             # Apply filter if provided
             if self.filter_func and not self.streaming:
@@ -165,6 +185,21 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             self.dataset = self.dataset.cast_column(self.video_column, Video(decode=False))
         except Exception as exc:
             logger.warning("Failed to cast video column '%s' to decode=False: %s", self.video_column, exc)
+
+    def _configure_audio_column(self) -> None:
+        if self.dataset_type is not DatasetType.AUDIO or self.streaming or self.dataset_name == "audiofolder":
+            return
+
+        try:
+            from datasets import Audio
+        except ImportError:
+            logger.warning("datasets.Audio not available; cannot disable audio decoding.")
+            return
+
+        try:
+            self.dataset = self.dataset.cast_column(self.audio_column, Audio(decode=False))
+        except Exception as exc:
+            logger.warning("Failed to cast audio column '%s' to decode=False: %s", self.audio_column, exc)
 
     @staticmethod
     def _coerce_to_bytes(payload: Any) -> Optional[bytes]:
@@ -419,9 +454,14 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             "backend_type": "huggingface",
             "id": self.id,
             "dataset_name": self.dataset_name,
+            "dataset_config": self.dataset_config,
+            "data_files": self.data_files,
+            "dataset_type": self.dataset_type.value,
             "split": self.split,
             "revision": self.revision,
             "image_column": self.image_column,
+            "video_column": self.video_column,
+            "audio_column": self.audio_column,
             "cache_dir": self.cache_dir,
             "compress_cache": self.compress_cache,
             "streaming": self.streaming,
@@ -452,15 +492,20 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             accelerator=None,  # Will be set by subprocess if needed
             id=representation["id"],
             dataset_name=representation["dataset_name"],
+            dataset_config=representation.get("dataset_config"),
+            data_files=representation.get("data_files"),
             split=representation.get("split", "train"),
             revision=representation.get("revision"),
             image_column=representation.get("image_column", "image"),
+            video_column=representation.get("video_column", "video"),
+            audio_column=representation.get("audio_column", "audio"),
             cache_dir=representation.get("cache_dir"),
             compress_cache=representation.get("compress_cache", False),
             streaming=representation.get("streaming", False),
             filter_func=filter_func,  # Would need special handling
             num_proc=representation.get("num_proc", 16),
             composite_config=representation.get("composite_config", {}),
+            dataset_type=representation.get("dataset_type", DatasetType.IMAGE),
             auto_load=False,
         )
 
@@ -618,6 +663,22 @@ class HuggingfaceDatasetsBackend(BaseDataBackend):
             elif isinstance(sample, bytes):
                 # Already bytes
                 data = sample
+            elif isinstance(sample, (str, Path)):
+                try:
+                    path = str(sample)
+                    if os.path.isfile(path):
+                        with open(path, "rb") as f:
+                            data = f.read()
+                    else:
+                        from datasets.utils.file_utils import xopen
+
+                        with xopen(path, "rb") as f:
+                            data = f.read()
+                except Exception as exc:
+                    logger.error("Failed to read %s sample from path '%s': %s", self.dataset_type, sample, exc)
+                    data = None
+                if data is None:
+                    return None
             elif VideoReader is not None and isinstance(sample, VideoReader):
                 # VideoReader - encode all frames into a video file in memory
                 import trainingsample as tsr

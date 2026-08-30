@@ -240,6 +240,7 @@ class DatasetDuplicator:
         # Set core fields
         target_cfg["auto_generated"] = True
         target_cfg["source_dataset_id"] = source_id
+        target_cfg["metadata_clone_source_id"] = source_id
         target_cfg["dataset_type"] = "conditioning"
         target_cfg["conditioning_config"] = cond_cfg
         target_cfg["conditioning_type"] = cond_cfg.get("conditioning_type", "reference_strict")

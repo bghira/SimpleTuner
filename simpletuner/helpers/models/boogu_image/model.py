@@ -3,6 +3,7 @@ from typing import List, Optional
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from diffusers import AutoencoderKL
 from PIL import Image
 from transformers import Qwen3VLForConditionalGeneration, Qwen3VLProcessor
@@ -120,6 +121,7 @@ class BooguImage(ImageModelFoundation):
         super().__init__(config, accelerator)
         self.vae_scale_factor = 8
         self.processor = None
+        self._validate_xm_support()
         if self._is_turbo_flavour():
             self.PIPELINE_CLASSES = {
                 PipelineTypes.TEXT2IMG: BooguImageTurboPipeline,
@@ -430,6 +432,82 @@ class BooguImage(ImageModelFoundation):
         return BooguImageRotaryPosEmbed.get_freqs_cis(config.axes_dim_rope, config.axes_lens, theta=10000)
 
     def model_predict(self, prepared_batch, custom_timesteps: list = None):
+        if self._xm_noise_candidates_enabled():
+            self._prepare_xm_noise_candidates(prepared_batch)
+            model_output = self._model_predict_single(prepared_batch, custom_timesteps=custom_timesteps)
+            model_output["xm_candidate_count"] = self.xm_config.candidate_count
+            return model_output
+        return self._model_predict_single(prepared_batch, custom_timesteps=custom_timesteps)
+
+    def _repeat_xm_candidate_value(self, value, candidate_count: int):
+        if torch.is_tensor(value):
+            if value.ndim == 0:
+                return value
+            return self._repeat_xm_candidate_tensor(value, candidate_count)
+        if isinstance(value, list):
+            return [self._repeat_xm_candidate_value(item, candidate_count) for item in value]
+        if isinstance(value, tuple):
+            return tuple(self._repeat_xm_candidate_value(item, candidate_count) for item in value)
+        return value
+
+    @staticmethod
+    def _repeat_xm_candidate_sequence(value, candidate_count: int):
+        if isinstance(value, tuple):
+            return tuple(item for _ in range(candidate_count) for item in value)
+        return [item for _ in range(candidate_count) for item in value]
+
+    def _prepare_xm_noise_candidates(self, prepared_batch: dict) -> dict:
+        xm_config = self.xm_config
+        candidate_count = xm_config.candidate_count
+        latents = prepared_batch.get("latents")
+        timesteps = prepared_batch.get("timesteps")
+        sigmas = prepared_batch.get("sigmas")
+        if not torch.is_tensor(latents) or not torch.is_tensor(timesteps) or not torch.is_tensor(sigmas):
+            raise ValueError("Boogu-Image XM noise-candidate training requires latents, timesteps, and sigmas tensors.")
+        if "noisy_latents" not in prepared_batch:
+            raise ValueError("Boogu-Image XM noise-candidate training requires prepared noisy_latents.")
+        if prepared_batch.get("target") is not None:
+            raise ValueError("Boogu-Image XM noise-candidate training cannot be used with an explicit prepared target.")
+
+        expanded_batch = dict(prepared_batch)
+        batch_size = latents.shape[0]
+        for key, value in list(expanded_batch.items()):
+            if torch.is_tensor(value) and value.ndim > 0 and value.shape[0] == batch_size:
+                expanded_batch[key] = self._repeat_xm_candidate_tensor(value, candidate_count)
+            elif key == "conditioning_latents" and isinstance(value, (list, tuple)):
+                expanded_batch[key] = self._repeat_xm_candidate_value(value, candidate_count)
+            elif key == "ref_image_hidden_states" and isinstance(value, (list, tuple)) and len(value) == batch_size:
+                expanded_batch[key] = self._repeat_xm_candidate_sequence(value, candidate_count)
+            elif key == "metadata" and isinstance(value, (list, tuple)) and len(value) == batch_size:
+                expanded_batch[key] = self._repeat_xm_candidate_sequence(value, candidate_count)
+
+        expanded_latents = expanded_batch["latents"]
+        candidate_noise = torch.randn_like(expanded_latents)
+        sigma_source = expanded_batch.get("mixflow_interpolation_sigmas")
+        if sigma_source is None:
+            sigma_source = expanded_batch["sigmas"]
+        if not torch.is_tensor(sigma_source):
+            raise ValueError("Boogu-Image XM noise-candidate training requires tensor sigmas for interpolation.")
+        interpolation_grid = self._expand_sigma_values(sigma_source, expanded_latents)
+        expanded_batch["noise"] = candidate_noise
+        expanded_batch["input_noise"] = candidate_noise
+        expanded_batch["noisy_latents"] = (
+            1.0 - interpolation_grid
+        ) * expanded_latents + interpolation_grid * candidate_noise
+        expanded_batch["flow_target"] = self.get_flow_matching_target(
+            expanded_batch,
+            latents=expanded_latents,
+            noise=candidate_noise,
+            prefer_explicit_target=False,
+        ).to(device=expanded_latents.device, dtype=expanded_latents.dtype)
+        expanded_batch["xm_candidate_count"] = candidate_count
+        expanded_batch["xm_original_batch_size"] = batch_size
+
+        prepared_batch.clear()
+        prepared_batch.update(expanded_batch)
+        return prepared_batch
+
+    def _model_predict_single(self, prepared_batch, custom_timesteps: list = None):
         hidden_states_buffer = self._new_hidden_state_buffer()
         latents = prepared_batch["noisy_latents"].to(device=self.accelerator.device, dtype=self.config.weight_dtype)
         timestep = prepared_batch["timesteps"].to(device=self.accelerator.device, dtype=self.config.weight_dtype)
@@ -461,8 +539,77 @@ class BooguImage(ImageModelFoundation):
             output["hidden_states_buffer"] = hidden_states_buffer
         return output
 
+    def loss_with_logs(self, prepared_batch: dict, model_output, apply_conditioning_mask: bool = True):
+        candidate_count = model_output.get("xm_candidate_count") if isinstance(model_output, dict) else None
+        if not candidate_count:
+            return super().loss_with_logs(
+                prepared_batch,
+                model_output,
+                apply_conditioning_mask=apply_conditioning_mask,
+            )
+        return self._xm_noise_loss_with_logs(
+            prepared_batch,
+            model_output,
+            candidate_count=int(candidate_count),
+            apply_conditioning_mask=apply_conditioning_mask,
+        )
+
+    def _xm_diffusion_loss_tensor(
+        self, prepared_batch: dict, model_output: dict, apply_conditioning_mask: bool
+    ) -> torch.Tensor:
+        target = self.get_prediction_target(prepared_batch)
+        if target is None:
+            raise ValueError("Target is None. Cannot compute Boogu-Image XM loss.")
+        model_pred = model_output["model_prediction"]
+        loss_type = getattr(self.config, "loss_type", "l2")
+        if loss_type in ["huber", "smooth_l1"]:
+            timesteps = prepared_batch["timesteps"]
+            if getattr(self.config, "huber_schedule", "constant") != "constant":
+                losses = []
+                for idx in range(model_pred.shape[0]):
+                    huber_c = self.compute_scheduled_huber_c(timesteps[idx : idx + 1]).item()
+                    losses.append(
+                        self.conditional_loss(
+                            model_pred[idx : idx + 1].float(),
+                            target[idx : idx + 1].float(),
+                            reduction="none",
+                            loss_type=loss_type,
+                            huber_c=huber_c,
+                        )
+                    )
+                loss = torch.cat(losses, dim=0)
+            else:
+                loss = self.conditional_loss(
+                    model_pred.float(),
+                    target.float(),
+                    reduction="none",
+                    loss_type=loss_type,
+                    huber_c=getattr(self.config, "huber_c", 0.1),
+                )
+        elif loss_type == "l2":
+            loss = F.mse_loss(model_pred.float(), target.float(), reduction="none")
+        else:
+            raise ValueError(f"Boogu-Image XM noise-candidate training does not support loss_type={loss_type!r}.")
+
+        loss_mask_type = prepared_batch.get("loss_mask_type")
+        if not loss_mask_type:
+            legacy_type = prepared_batch.get("conditioning_type")
+            if legacy_type in ("mask", "segmentation"):
+                loss_mask_type = legacy_type
+        if loss_mask_type == "mask" and apply_conditioning_mask:
+            mask_image = (
+                prepared_batch["conditioning_pixel_values"].to(dtype=loss.dtype, device=loss.device)[:, 0].unsqueeze(1)
+            )
+            mask_image = torch.nn.functional.interpolate(mask_image, size=loss.shape[2:], mode="area")
+            mask_image = mask_image / 2 + 0.5
+            loss = loss * mask_image
+        elif loss_mask_type == "segmentation" and apply_conditioning_mask:
+            raise ValueError("Boogu-Image XM noise-candidate training does not support stochastic segmentation masked loss.")
+        return loss
+
     def post_model_load_setup(self):
         super().post_model_load_setup()
+        self._validate_xm_support()
         self._maybe_load_assistant_lora()
 
     def _maybe_load_assistant_lora(self):

@@ -19,8 +19,9 @@ def register_fields(registry) -> None:
             help_text=(
                 "Which MiniMax Music 3 component receives training. transformer trains the flow-matching music "
                 "DiT on cached Flow-VAE latents. language_model trains the Qwen3 autoregressive stage with "
-                "next-token cross-entropy on RVQ semantic codes; datasets must provide precomputed audio tokens "
-                "(audio_tokens_path metadata) alongside caption and lyrics."
+                "next-token cross-entropy on RVQ semantic codes; raw audio datasets are encoded through the "
+                "MiniMax Music RVQ cache encoder unless the dataset provides audio_tokens or audio_tokens_path "
+                "metadata alongside caption and lyrics."
             ),
             tooltip=(
                 "language_model mode is for style/keyword adaptation of the AR planner (dreambooth-style trigger "
@@ -29,6 +30,87 @@ def register_fields(registry) -> None:
             importance=ImportanceLevel.ADVANCED,
             order=39,
             documentation="OPTIONS.md#--minimax_music_train_component",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="minimax_music_rvq_encoder_model_name_or_path",
+            arg_name="--minimax_music_rvq_encoder_model_name_or_path",
+            ui_label="MiniMax Music RVQ Encoder",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="model_specific",
+            model_specific=["minimaxmusic"],
+            default_value="SimpleTuner/open-rvq-encoder-minimax-music3-169m-v4",
+            help_text=(
+                "MiniMax Music language_model training only: model repository or local directory containing the "
+                "RVQ encoder config and weights used to convert cached DAV audio latents into per-codebook codes."
+            ),
+            tooltip="The default is SimpleTuner's v4 open RVQ encoder for MiniMax Music 3.",
+            importance=ImportanceLevel.ADVANCED,
+            order=49,
+            documentation="OPTIONS.md#--minimax_music_rvq_encoder_model_name_or_path",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="minimax_music_rvq_encoder_subfolder",
+            arg_name="--minimax_music_rvq_encoder_subfolder",
+            ui_label="MiniMax Music RVQ Encoder Subfolder",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="model_specific",
+            model_specific=["minimaxmusic"],
+            default_value="final",
+            help_text=(
+                "Subfolder within the RVQ encoder repository or local directory that contains "
+                "rvq_encoder_config.json, rvq_encoder.safetensors, and any muP base-shape metadata."
+            ),
+            tooltip="Leave at final for the default SimpleTuner v4 RVQ encoder package.",
+            importance=ImportanceLevel.ADVANCED,
+            order=50,
+            documentation="OPTIONS.md#--minimax_music_rvq_encoder_subfolder",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="minimax_music_rvq_encoder_revision",
+            arg_name="--minimax_music_rvq_encoder_revision",
+            ui_label="MiniMax Music RVQ Encoder Revision",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="model_specific",
+            model_specific=["minimaxmusic"],
+            default_value="",
+            help_text=(
+                "Optional Hub revision for the RVQ encoder. If unset, SimpleTuner uses the main training revision "
+                "setting when one is provided."
+            ),
+            tooltip="Use this only when pinning a specific RVQ encoder checkpoint revision.",
+            importance=ImportanceLevel.ADVANCED,
+            order=51,
+            documentation="OPTIONS.md#--minimax_music_rvq_encoder_revision",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="minimax_music_rvq_vae_model_name_or_path",
+            arg_name="--minimax_music_rvq_vae_model_name_or_path",
+            ui_label="MiniMax Music RVQ Audio VAE",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="model_specific",
+            model_specific=["minimaxmusic"],
+            default_value="",
+            help_text=(
+                "MiniMax Music language_model training only: DAV/audio VAE repository, local directory, or dav.pth "
+                "file used before the RVQ encoder. If unset in config, the standard pretrained VAE path is used "
+                "before this default."
+            ),
+            tooltip="This is the audio encoder stage, not the RVQ code predictor.",
+            importance=ImportanceLevel.ADVANCED,
+            order=52,
+            documentation="OPTIONS.md#--minimax_music_rvq_vae_model_name_or_path",
         )
     )
     registry._add_field(
@@ -48,7 +130,7 @@ def register_fields(registry) -> None:
             ),
             tooltip="Produced by --minimax_music_train_component=language_model runs.",
             importance=ImportanceLevel.ADVANCED,
-            order=41,
+            order=46,
             documentation="OPTIONS.md#--minimax_music_lm_adapter",
         )
     )
@@ -65,7 +147,7 @@ def register_fields(registry) -> None:
             help_text="Scale applied to the LM adapter's delta while pre-caching (lora_B weights are scaled).",
             tooltip="1.0 is full strength.",
             importance=ImportanceLevel.ADVANCED,
-            order=42,
+            order=47,
             documentation="OPTIONS.md#--minimax_music_lm_adapter",
         )
     )
@@ -95,7 +177,7 @@ def register_fields(registry) -> None:
                 "them to the same audio window the VAE cache covers."
             ),
             importance=ImportanceLevel.ADVANCED,
-            order=43,
+            order=48,
             documentation="OPTIONS.md#--minimax_music_lm_precache_mode",
         )
     )
@@ -110,13 +192,123 @@ def register_fields(registry) -> None:
             model_specific=["minimaxmusic"],
             default_value=0,
             help_text=(
-                "language_model training only: truncate each track's audio token sequence to this many 25Hz frames, "
-                "taken from the start so lyrics stay aligned. 0 trains on full tracks. Truncated samples do not "
-                "receive an end-of-audio target."
+                "language_model training only: cap prefix and isolated random windows to this many 25Hz frames. "
+                "0 trains on full tracks. Continuation mode uses its target-frame and duration settings instead."
             ),
             tooltip="One frame is 40ms. 7500 frames = 5 minutes. Lower this if long tracks exhaust VRAM.",
             importance=ImportanceLevel.ADVANCED,
             order=40,
             documentation="OPTIONS.md#--minimax_music_lm_max_frames",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="minimax_music_lm_window_mode",
+            arg_name="--minimax_music_lm_window_mode",
+            ui_label="MiniMax Music LM Window Mode",
+            field_type=FieldType.SELECT,
+            tab="model",
+            section="model_specific",
+            model_specific=["minimaxmusic"],
+            default_value="prefix",
+            choices=[
+                {"value": "prefix", "label": "Prefix window"},
+                {"value": "random", "label": "Random positioned window"},
+                {"value": "continuation", "label": "Causal continuation window"},
+            ],
+            help_text=(
+                "language_model training only: when max audio frames truncates a track, prefix takes the start of "
+                "the track. random samples a different contiguous RVQ window at collate time, adds its start/end "
+                "time to the prompt, and omits full-track lyrics unless a sample provides lyrics_window metadata. "
+                "continuation samples a bounded visible span and applies loss only to its final target frames."
+            ),
+            tooltip="Use continuation to teach later song structure without treating each crop as a new song.",
+            importance=ImportanceLevel.ADVANCED,
+            order=41,
+            documentation="OPTIONS.md#--minimax_music_lm_window_mode",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="minimax_music_lm_target_frames",
+            arg_name="--minimax_music_lm_target_frames",
+            ui_label="MiniMax Music LM Continuation Target Frames",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="model_specific",
+            model_specific=["minimaxmusic"],
+            default_value=128,
+            help_text=(
+                "Continuation mode only: number of final 25Hz audio frames supervised in each visible span. "
+                "The default is one native MiniMax Music RVQ encoder segment (5.12 seconds)."
+            ),
+            tooltip="Earlier visible frames remain causal context and are masked from cross-entropy.",
+            importance=ImportanceLevel.ADVANCED,
+            order=42,
+            documentation="OPTIONS.md#--minimax_music_lm_target_frames",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="minimax_music_lm_continuation_crop_mode",
+            arg_name="--minimax_music_lm_continuation_crop_mode",
+            ui_label="MiniMax Music LM Continuation Crop Mode",
+            field_type=FieldType.SELECT,
+            tab="model",
+            section="model_specific",
+            model_specific=["minimaxmusic"],
+            default_value="full",
+            choices=[
+                {"value": "full", "label": "Full prefix"},
+                {"value": "random", "label": "Random positioned span"},
+            ],
+            help_text=(
+                "Continuation mode only: full always starts the visible span at the beginning of the song. random "
+                "may omit earlier song frames but keeps at least one native 128-frame segment before the target."
+            ),
+            tooltip="Random spans cap memory while training continuations from positions throughout a track.",
+            importance=ImportanceLevel.ADVANCED,
+            order=43,
+            documentation="OPTIONS.md#--minimax_music_lm_continuation_crop_mode",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="minimax_music_lm_min_duration_seconds",
+            arg_name="--minimax_music_lm_min_duration_seconds",
+            ui_label="MiniMax Music LM Minimum Visible Duration",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="model_specific",
+            model_specific=["minimaxmusic"],
+            default_value=5.12,
+            help_text=(
+                "Continuation mode only: minimum model-visible span duration. Durations are rounded up to the "
+                "model-owned 128-frame (5.12 second) sampling interval."
+            ),
+            tooltip="Random crops also reserve at least one native segment of context before the target.",
+            importance=ImportanceLevel.ADVANCED,
+            order=44,
+            documentation="OPTIONS.md#--minimax_music_lm_min_duration_seconds",
+        )
+    )
+    registry._add_field(
+        ConfigField(
+            name="minimax_music_lm_max_duration_seconds",
+            arg_name="--minimax_music_lm_max_duration_seconds",
+            ui_label="MiniMax Music LM Maximum Visible Duration",
+            field_type=FieldType.NUMBER,
+            tab="model",
+            section="model_specific",
+            model_specific=["minimaxmusic"],
+            default_value=0.0,
+            help_text=(
+                "Continuation mode only: maximum model-visible span duration. 0 uses the available track length. "
+                "Positive values are rounded down to the model-owned 128-frame (5.12 second) sampling interval."
+            ),
+            tooltip="This is the continuation attention-memory cap; it does not alter the cached RVQ track.",
+            importance=ImportanceLevel.ADVANCED,
+            order=45,
+            documentation="OPTIONS.md#--minimax_music_lm_max_duration_seconds",
         )
     )

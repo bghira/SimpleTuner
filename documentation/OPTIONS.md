@@ -73,15 +73,82 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Choices**: `transformer` (default), `language_model`
 - **Notes**:
   - `transformer` trains the flow-matching music DiT on cached Flow-VAE latents (the standard path).
-  - `language_model` trains the Qwen3 autoregressive stage with next-token cross-entropy on RVQ semantic codes. Datasets must provide precomputed raw per-codebook audio tokens (`audio_tokens_path` metadata, shaped `[frames, codebooks]`) alongside `prompt` (or `tags`) and `lyrics`. Only standard PEFT LoRA is supported, `--lora_format comfyui` is rejected, and in-trainer validation audio is disabled — render from saved checkpoints instead.
+  - `language_model` trains the Qwen3 autoregressive stage with next-token cross-entropy on RVQ semantic codes. For `dataset_type=audio`, SimpleTuner encodes raw waveforms through the MiniMax Music DAV and the default v4 RVQ encoder at VAE-cache time. Datasets may still provide precomputed raw per-codebook audio tokens (`audio_tokens` or `audio_tokens_path`, shaped `[frames, codebooks]`) alongside `prompt` (or `tags`) and `lyrics`. Only standard PEFT LoRA is supported, `--lora_format comfyui` is rejected, and in-trainer validation audio is disabled — render from saved checkpoints instead.
 
 ### `--minimax_music_lm_max_frames`
 
-- **What**: For `--minimax_music_train_component=language_model`, truncates each track's audio token sequence to this many 25Hz frames (taken from the start so lyrics stay aligned).
+- **What**: For `--minimax_music_train_component=language_model`, caps `prefix` and isolated `random` windows in 25Hz audio frames.
 - **Default**: `0` (train on full tracks)
 - **Notes**:
-  - One frame is 40ms; 7500 frames is five minutes. Lower this if long tracks exhaust VRAM.
+  - One frame is 40ms; 7500 frames is five minutes.
+  - `continuation` mode uses its separate target-frame and duration settings below.
   - Truncated samples do not receive an end-of-audio target, so the model is not taught to stop early.
+
+### `--minimax_music_lm_window_mode`
+
+- **What**: Chooses how the language-model training sequence is constructed.
+- **Choices**: `prefix` (default), `random`, `continuation`
+- **Notes**:
+  - `prefix` takes the start of the track. This keeps full-track lyrics most plausible, but short caps mostly teach intros.
+  - `random` samples a contiguous RVQ window during collate, adds start/end/duration text to the prompt, and omits full-track lyrics for cropped windows unless the sample provides `lyrics_window`.
+  - `continuation` samples a bounded visible span and applies loss only to its final target frames. Use the continuation options below to control its context geometry.
+  - Isolated `random` requires a positive `--minimax_music_lm_max_frames`; `continuation` does not use that option.
+
+### `--minimax_music_lm_target_frames`
+
+- **What**: In `continuation` mode, sets how many final 25Hz frames in each visible span receive next-token loss.
+- **Default**: `128` (one native RVQ segment, or 5.12 seconds)
+- **Notes**: Earlier visible frames remain causal context and are masked from cross-entropy.
+
+### `--minimax_music_lm_continuation_crop_mode`
+
+- **What**: Chooses where a `continuation` visible span starts.
+- **Choices**: `full` (default), `random`
+- **Notes**:
+  - `full` always starts at song frame zero. It preserves the opening and samples an endpoint between the configured duration bounds.
+  - `random` may omit the beginning of the song. It retains at least one native 128-frame segment of context before the supervised target and adds the span position to the prompt.
+  - Positioned random spans omit full-track lyrics unless the sample provides `lyrics_window`. Tracks too short for both one context segment and the target fall back to a full prefix.
+
+### `--minimax_music_lm_min_duration_seconds`
+
+- **What**: Sets the minimum model-visible span duration in `continuation` mode.
+- **Default**: `5.12`
+- **Notes**: The minimum rounds up in native 128-frame (5.12-second) intervals. Random continuation spans may be longer because they must also contain one native context segment before the target.
+
+### `--minimax_music_lm_max_duration_seconds`
+
+- **What**: Caps the model-visible span duration in `continuation` mode without changing the cached RVQ track.
+- **Default**: `0` (use the available track length)
+- **Notes**:
+  - Positive limits round down in native 128-frame (5.12-second) intervals.
+  - For `random`, the cap must fit the supervised target plus at least one native context segment.
+  - A sample receives an end-of-audio target only when its sampled span reaches the real track end.
+  - When both terminal and non-terminal spans are available, 25% of continuation samples explicitly select the real track end. The other 75% remain uniform over valid non-terminal endpoints or offsets, so EOS supervision does not become rarer on longer tracks.
+
+### `--minimax_music_rvq_encoder_model_name_or_path`
+
+- **What**: MiniMax Music `language_model` training only: Hub repository or local directory containing the RVQ encoder used to turn cached DAV audio latents into per-codebook audio codes.
+- **Default**: `SimpleTuner/open-rvq-encoder-minimax-music3-169m-v4`
+- **Related**: `--minimax_music_rvq_encoder_subfolder` defaults to `final`; `--minimax_music_rvq_encoder_revision` optionally pins a Hub revision.
+- **Notes**: The default package includes `rvq_encoder_config.json`, `rvq_encoder.safetensors`, and muP base-shape metadata. Change this only when using a compatible RVQ encoder trained for MiniMax Music 3 codebooks.
+
+### `--minimax_music_rvq_encoder_subfolder`
+
+- **What**: Subfolder inside the RVQ encoder repository or local directory.
+- **Default**: `final`
+- **Notes**: The selected folder must contain `rvq_encoder_config.json`, `rvq_encoder.safetensors`, and any required muP base-shape metadata.
+
+### `--minimax_music_rvq_encoder_revision`
+
+- **What**: Optional Hub revision for `--minimax_music_rvq_encoder_model_name_or_path`.
+- **Default**: unset; the main `--revision` value is used when provided.
+- **Notes**: Use this when the RVQ encoder should be pinned separately from the MiniMax Music 3 base checkpoint.
+
+### `--minimax_music_rvq_vae_model_name_or_path`
+
+- **What**: MiniMax Music `language_model` training only: DAV/audio VAE repository, local directory, or `dav.pth` file used before the RVQ encoder during VAE caching.
+- **Default**: unset; `--pretrained_vae_model_name_or_path` is used first, then `SimpleTuner/MiniMax-Music-3-Encoder`.
+- **Notes**: This is the waveform-to-DAV-latent encoder stage. The RVQ encoder then converts those DAV latents into the code tensor the global LM learns to predict.
 
 ### `--minimax_music_lm_adapter`
 
@@ -131,7 +198,6 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 - **What**: Offloads text encoder weights to CPU when VAE caching is going.
 - **Why**: This is useful for large models like HiDream and Wan 2.1, which can OOM when loading the VAE cache. This option does not impact quality of training, but for very large text encoders or slow CPUs, it can extend startup time substantially with many datasets. This is disabled by default due to this reason.
-- **Tip**: Complements the group offloading feature below for especially memory-constrained systems.
 
 ### `--offload_during_save`
 
@@ -202,39 +268,6 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Behavior**: Samples one noise-range block per batch, executes only its layer group, and automatically enables unused-parameter detection for DDP.
 - **Limits**: Transformer denoisers only. See [DiffusionBlocks](experimental/DIFFUSION_BLOCKS.md) for compatibility and inference requirements.
 
-### `--enable_group_offload`
-
-- **What**: Enables diffusers' grouped module offloading so model blocks can be staged on CPU (or disk) between forward passes.
-- **Why**: Dramatically reduces peak VRAM usage on large transformers (Flux, Wan, Auraflow, LTXVideo, Cosmos2Image) with minimal performance impact when used with CUDA streams.
-- **Notes**:
-  - Mutually exclusive with `--enable_model_cpu_offload` — pick one strategy per run.
-  - Requires diffusers **v0.33.0** or newer.
-
-### `--group_offload_type`
-
-- **Choices**: `block_level` (default), `leaf_level`
-- **What**: Controls how layers are grouped. `block_level` balances VRAM savings with throughput, while `leaf_level` maximises savings at the cost of more CPU transfers.
-
-### `--group_offload_blocks_per_group`
-
-- **What**: When using `block_level`, the number of transformer blocks to bundle into a single offload group.
-- **Default**: `1`
-- **Why**: Increasing this number reduces transfer frequency (faster) but keeps more parameters resident on the accelerator (uses more VRAM).
-
-### `--group_offload_use_stream`
-
-- **What**: Uses a dedicated CUDA stream to overlap host/device transfers with compute.
-- **Default**: `False`
-- **Notes**:
-  - Automatically falls back to CPU-style transfers on non-CUDA backends (Apple MPS, ROCm, CPU).
-  - Recommended when training on NVIDIA GPUs with spare copy engine capacity.
-
-### `--group_offload_to_disk_path`
-
-- **What**: Directory path used to spill grouped parameters to disk instead of RAM.
-- **Why**: Useful for extremely tight CPU RAM budgets (e.g., workstation with large NVMe drive).
-- **Tip**: Use a fast local SSD; network filesystems will significantly slow training.
-
 ### `--musubi_blocks_to_swap`
 
 - **What**: Musubi block swap for LongCat-Video, Wan, LTXVideo, Kandinsky5-Video, Qwen-Image, Flux, Flux.2, zlab i1, Cosmos2Image, HunyuanVideo, and Krea 2 — keep the last N transformer blocks on CPU and stream weights per block during forward.
@@ -253,7 +286,6 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **Why**: Shares Linear weights in CPU memory and streams them to the accelerator to reduce VRAM pressure.
 - **Notes**:
   - Requires CUDA or ROCm (not supported on Apple/MPS).
-  - Mutually exclusive with `--enable_group_offload`.
   - Automatically enables `--set_grads_to_none`.
 
 ### `--ramtorch_target_modules`
@@ -576,6 +608,41 @@ To persist the settings in `config.json`, add the equivalent keys:
 
 Omit any entries you want to inherit from Accelerate’s defaults (for example, leave out `dynamo_mode` to use automatic selection).
 
+### `--dynamo_wrapper`
+
+Select the host-side wrapper used by TorchInductor. `cpp` is the default and reduces Python dispatch overhead for large compiled regions. Set `python` to retain the wrapper behavior used by earlier SimpleTuner releases. SimpleTuner applies the selection before loading or compiling graphs and includes it in generated Mega-Cache names and manifests.
+
+### `--dynamo_cache_export`
+
+Optional path for a cumulative PyTorch `torch.compile` Mega-Cache blob. At startup, SimpleTuner loads a compatible blob from this path before any model compilation. After the first successful optimizer step it exports the compiled AOTAutograd, Inductor, Triton, autotuning, and PGO artifacts so a later training failure does not discard the cold compile. At normal shutdown it re-exports only when PyTorch reports additional artifact keys, such as those generated for a newly encountered latent shape.
+
+When the value ends in a path separator, identifies an existing directory, or has no filename suffix, SimpleTuner generates a stable filename in that directory. The generated name includes the model family and flavour, accelerator, PyTorch runtime digest, and a digest of graph-relevant configuration such as precision, attention, checkpointing, and LoRA layout. Supplying an explicit filename such as `ltx25-h100.ptcache` uses that name unchanged.
+
+SimpleTuner writes a compatibility manifest beside the blob as `<path>.manifest.json`. The manifest records the exact PyTorch, Triton, CUDA/ROCm, Python, platform, and accelerator identity plus advisory model and compilation configuration signatures. An obvious runtime mismatch is rejected before loading; PyTorch's own cache keys and guards remain authoritative for graph, dtype, stride, and shape compatibility. If no entry covers a batch, training continues with normal runtime compilation and the new artifacts are merged into the next export.
+
+Use runtime-specific paths to avoid replacing a useful cache when changing compiler or hardware versions, for example:
+
+```json
+{
+  "dynamo_backend": "inductor",
+  "dynamo_wrapper": "cpp",
+  "dynamo_use_regional_compilation": true,
+  "dynamo_cache_export": "compiler-caches/ltx25-h100-torch2.11-cu128.ptcache"
+}
+```
+
+Compiler cache blobs contain generated executable code. Load them only from paths and repositories you trust.
+
+### `--dynamo_cache_export_after_first_step`
+
+When `true` (the default), export the Dynamo Mega-Cache immediately after the first successful optimizer step. This protects the expensive initial compile if training later fails. SimpleTuner also checks for new compiler artifact keys after every successful scheduled, manual, rolling, or epoch checkpoint and at normal training completion. Set this option to `false` to skip only the first-step export.
+
+### `--dynamo_hub_repo_id`
+
+Optional Hugging Face model repository used with `--dynamo_cache_export`. SimpleTuner checks the configured relative blob path in this repository before falling back to the local path. If compilation adds artifacts, the blob and manifest are written locally and published together in one Hub commit. A missing repository is created as private. Existing repositories retain their current visibility.
+
+Absolute local export paths use only their filename on the Hub. Relative paths are preserved, so `compiler-caches/ltx25.ptcache` is stored under the same repository subdirectory. For a directory value, SimpleTuner looks for the same generated standard filename locally and on the Hub. Authentication uses `HF_TOKEN`, `HUGGING_FACE_HUB_TOKEN`, or the standard Hugging Face token cache. Hub failures never abort training; the local cache remains available for a later upload attempt.
+
 ### `--attention_mechanism`
 
 Alternative attention mechanisms are supported, with varying levels of compatibility or other trade-offs:
@@ -759,6 +826,13 @@ This is useful for monitoring tools receiving webhooks from multiple training ru
 
 - **What**: Increase or reduce the number of batches held in memory.
 - **Why**: When using dataloader prefetch, a default of 10 entries are kept in memory per GPU/process. This may be too much or too little. This value can be adjusted to increase the number of batches prepared in advance.
+
+### `--dataloader_prefetch_device_threshold_mb`
+
+- **What**: Minimum unique CPU batch payload, in MiB, that is page-locked and transferred on a dedicated CUDA stream by dataloader prefetch. `0` disables device staging.
+- **Why**: Very large cached embeddings can otherwise serialize host-to-device transfer with model work. This option overlaps the transfer with GPU compute.
+- **Memory**: Every staged queue entry consumes both pinned host memory and accelerator memory. Start with `dataloader_prefetch_qlen: 2` and profile before increasing it.
+- **Compatibility**: Requires `dataloader_prefetch: true` and CUDA. It is not supported with context parallelism.
 
 ### `--compress_disk_cache`
 
@@ -1798,6 +1872,70 @@ Internal Guidance supervises an early diffusion-transformer block with the same 
 
 ---
 
+## Explorative Modeling (XM)
+
+XM scores multiple training candidates and backpropagates only the candidate that best explains each supervised sample or token block. Model families must implement support for the selected target before this option has any effect. See [Explorative Modeling](experimental/EXPLORATION_MODELING.md) for the user guide.
+
+### `--xm_enabled`
+
+- **What**: Enable XM candidate selection.
+- **Default**: `false`
+
+### `--xm_candidate_count`
+
+- **What**: Number of candidate noises or route latents to score for each sample.
+- **Default**: `1`; must be at least `2` when XM is enabled.
+
+### `--xm_training_target`
+
+- **What**: Candidate type. Use `noise` for diffusion/flow models and `route` for AR/RVQ planners.
+- **Choices**: `noise`, `route`
+- **Default**: `noise`
+
+### `--xm_selection_scope`
+
+- **What**: Select winners over each `sample` or over token/frame `block`s.
+- **Default**: `sample`
+
+### `--xm_block_size`
+
+- **What**: Token or frame span used by block-level XM. `0` means the full supervised sequence.
+- **Default**: `0`
+
+---
+
+## NextLat
+
+NextLat adds a small auxiliary predictor that maps each captured hidden token to the next hidden token. It requires a transformer family that exposes hidden states through SimpleTuner's hidden-state buffer. See [NextLat](experimental/NEXTLAT.md) for the user guide.
+
+### `--nextlat_enabled`
+
+- **What**: Enable NextLat hidden-state prediction.
+- **Default**: `false`
+
+### `--nextlat_block_index`
+
+- **What**: Zero-based transformer block to capture.
+- **Default**: `-1`, meaning the final supported block.
+
+### `--nextlat_weight`
+
+- **What**: Multiplier for the NextLat auxiliary loss.
+- **Default**: `0.0`; must be greater than zero when NextLat is enabled.
+
+### `--nextlat_state_loss`
+
+- **What**: Distance function for next hidden-state prediction.
+- **Choices**: `smooth_l1`, `mse`
+- **Default**: `smooth_l1`
+
+### `--nextlat_kl_weight`
+
+- **What**: Optional KL agreement weight when a model family provides a logits head for predicted hidden states.
+- **Default**: `0.0`
+
+---
+
 ## 🔁 LayerSync (Hidden State Self-Alignment)
 
 LayerSync encourages a "student" layer to match a stronger "teacher" layer inside the same transformer, using cosine similarity over hidden tokens.
@@ -2137,6 +2275,7 @@ usage: train.py [-h] --model_family
                 [--torch_num_threads TORCH_NUM_THREADS]
                 [--dataloader_prefetch [DATALOADER_PREFETCH]]
                 [--dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN]
+                [--dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB]
                 [--aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT]
                 [--aspect_bucket_alignment {8,16,24,32,64}]
                 [--minimum_image_size MINIMUM_IMAGE_SIZE]
@@ -2791,6 +2930,10 @@ options:
                         so that it can be immediately available
   --dataloader_prefetch_qlen DATALOADER_PREFETCH_QLEN
                         Set the number of prefetched batches
+  --dataloader_prefetch_device_threshold_mb DATALOADER_PREFETCH_DEVICE_THRESHOLD_MB
+                        Minimum CPU batch payload in MiB to page-lock and
+                        transfer on a dedicated CUDA stream during dataloader
+                        prefetch; 0 disables device staging
   --aspect_bucket_worker_count ASPECT_BUCKET_WORKER_COUNT
                         The number of workers to use for aspect bucketing.
                         This is a CPU-bound task, so the number of workers

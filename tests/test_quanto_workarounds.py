@@ -1,8 +1,6 @@
-import tempfile
 import unittest
 
 import torch
-from diffusers.hooks import apply_group_offloading
 from optimum.quanto import freeze, qint4, qint8, quantize
 
 import simpletuner.helpers.training.quantisation.quanto_workarounds as quanto_workarounds  # noqa: F401
@@ -51,36 +49,6 @@ class QuantoWorkaroundsTests(unittest.TestCase):
     def test_qbits_tensor_exposes_backing_storage(self):
         model = self._quantized_linear(qint4)
         self._assert_storage_matches_backing_tensor(model.linear.weight.data)
-
-    def test_quantized_module_can_be_group_offloaded(self):
-        model = self._quantized_linear(qint8)
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            apply_group_offloading(
-                module=model,
-                onload_device=torch.device("cpu"),
-                offload_device=torch.device("cpu"),
-                offload_type="block_level",
-                num_blocks_per_group=1,
-                offload_to_disk_path=tmp_dir,
-            )
-
-    def test_quantized_module_can_be_group_offloaded_on_accelerator(self):
-        device = self._accelerator_device()
-        model = self._quantized_linear(qint8)
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            apply_group_offloading(
-                module=model,
-                onload_device=device,
-                offload_device=torch.device("cpu"),
-                offload_type="block_level",
-                num_blocks_per_group=1,
-                offload_to_disk_path=tmp_dir,
-            )
-            input_tensor = torch.randn(2, 4, device=device)
-            output = model(input_tensor)
-            self.assertEqual(output.device.type, device.type)
-            if device.index is not None:
-                self.assertEqual(output.device.index, device.index)
 
     def test_param_data_move_keeps_backing_tensors_in_sync(self):
         device = self._accelerator_device()
@@ -151,7 +119,7 @@ class QuantoWorkaroundsTests(unittest.TestCase):
 
         This tests the fix for the error:
         AssertionError: assert data.device == scale_shift.device
-        which occurs when diffusers group_offloading moves internal tensors independently.
+        which occurs when an offload path moves internal tensors independently.
         """
         if not torch.cuda.is_available():
             self.skipTest("CUDA not available")
@@ -172,8 +140,8 @@ class QuantoWorkaroundsTests(unittest.TestCase):
         if not isinstance(weight, TinyGemmWeightQBitsTensor):
             self.skipTest("Weight is not TinyGemmWeightQBitsTensor (size requirements not met)")
 
-        # Simulate what group_offloading does: move internal tensors to different devices
-        # This would normally cause __tensor_unflatten__ to fail with device mismatch
+        # Simulate an offload path moving internal tensors to different devices. This
+        # would normally cause __tensor_unflatten__ to fail with a device mismatch.
         weight._scale_shift = weight._scale_shift.to("cpu")
 
         # Verify tensors are now on different devices
