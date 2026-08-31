@@ -186,7 +186,7 @@
                 return;
             }
 
-            const padding = { left: 64, right: 20, top: 20, bottom: 42 };
+            const padding = { left: 56, right: 20, top: 20, bottom: 42 };
             const plotWidth = width - padding.left - padding.right;
             const plotHeight = height - padding.top - padding.bottom;
             const xValues = points.map((point) => point.xValue);
@@ -295,13 +295,6 @@
                 context.fillText(formatXAxisValue(value, xAxisMode), x, height - padding.bottom + 12);
             }
             context.fillText(xAxisMode === 'minutes' ? 'Elapsed minutes' : 'Global step', padding.left + plotWidth / 2, height - 14);
-
-            context.save();
-            context.translate(16, padding.top + plotHeight / 2);
-            context.rotate(-Math.PI / 2);
-            context.textBaseline = 'top';
-            context.fillText('Metric value', 0, 0);
-            context.restore();
         }
 
         _handlePointer(event) {
