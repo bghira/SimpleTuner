@@ -279,6 +279,8 @@ def mapping_to_cli_args(
 
         value_str = str(value).strip()
         if not value_str:
+            if canonical_key in {"webhook_config", "publishing_config", "peft_lora_target_modules"}:
+                continue
             if isinstance(value, str) and field is not None and getattr(field, "allow_empty", False):
                 cli_args.append(_format_key_value(key, ""))
             continue

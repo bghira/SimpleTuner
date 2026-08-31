@@ -30,6 +30,12 @@ class TestAllowEmptyFields(unittest.TestCase):
 
         self.assertIn("--validation_negative_prompt=", result)
 
+    def test_blank_optional_structured_config_skipped_when_mapping_to_cli_args(self):
+        result = mapping_to_cli_args({"publishing_config": "", "validation_negative_prompt": ""})
+
+        self.assertNotIn("--publishing_config=", result)
+        self.assertIn("--validation_negative_prompt=", result)
+
     def test_empty_string_preserved_in_form_submission(self):
         """Test that empty strings are preserved during form normalization."""
         # Simulate form data with empty negative prompt
