@@ -778,11 +778,29 @@ class TrainingMetricsDashboardTestCase(_TrainerPageMixin, WebUITestCase):
             "".join(f"{json.dumps(record)}\n" for record in records),
             encoding="utf-8",
         )
+        timestep_records = [
+            {"step": 10, "timesteps": [100.0, 300.0, 700.0]},
+            {"step": 20, "timesteps": [120.0, 340.0, 760.0]},
+        ]
+        (output_dir / "timestep_distribution.jsonl").write_text(
+            "".join(f"{json.dumps(record)}\n" for record in timestep_records),
+            encoding="utf-8",
+        )
+        first_step_image_path = validation_dir / "step_10_prompt_0_64x64.png"
         image_path = validation_dir / "step_20_prompt_0_64x64.png"
         second_image_path = validation_dir / "step_20_second_0_64x64.png"
+        Image.new("RGB", (64, 64), color=(16, 96, 180)).save(first_step_image_path, format="PNG")
         Image.new("RGB", (64, 64), color=(32, 160, 120)).save(image_path, format="PNG")
         Image.new("RGB", (64, 64), color=(120, 80, 220)).save(second_image_path, format="PNG")
         media_records = [
+            {
+                "step": 10,
+                "type": "image",
+                "label": "A green square",
+                "index": 0,
+                "resolution": "64x64",
+                "path": first_step_image_path.relative_to(output_dir).as_posix(),
+            },
             {
                 "step": 20,
                 "type": "image",
@@ -824,11 +842,84 @@ class TrainingMetricsDashboardTestCase(_TrainerPageMixin, WebUITestCase):
             )
             self.assertGreater(canvas.size["width"], 300)
             self.assertGreater(canvas.size["height"], 200)
+            legend_text = driver.find_element(By.CSS_SELECTOR, ".training-chart-legend").text
+            self.assertIn("train_loss", legend_text)
+            before_hover_top = driver.execute_script(
+                "return arguments[0].getBoundingClientRect().top;",
+                canvas,
+            )
+            driver.execute_script(
+                """
+                const canvas = arguments[0];
+                const rect = canvas.getBoundingClientRect();
+                const EventClass = window.PointerEvent || window.MouseEvent;
+                canvas.dispatchEvent(new EventClass('pointermove', {
+                    bubbles: true,
+                    clientX: rect.left + rect.width / 2,
+                    clientY: rect.top + rect.height / 2
+                }));
+                """,
+                canvas,
+            )
+            hover_result = WebDriverWait(driver, 5).until(
+                lambda _driver: driver.execute_script(
+                    """
+                    const canvas = arguments[0];
+                    const wrapper = canvas.closest('.training-chart-canvas-wrap');
+                    const tooltip = wrapper.querySelector('.training-chart-tooltip');
+                    const hoverRows = Array.from(wrapper.querySelectorAll('.training-chart-tooltip-row'));
+                    const labels = hoverRows.map((row) => row.textContent.trim()).filter(Boolean);
+                    if (!labels.length || !tooltip) return null;
+                    const tooltipRect = tooltip.getBoundingClientRect();
+                    const wrapperRect = wrapper.getBoundingClientRect();
+                    return {
+                        top: canvas.getBoundingClientRect().top,
+                        labels,
+                        tooltipInsideChart:
+                            tooltipRect.left >= wrapperRect.left
+                            && tooltipRect.right <= wrapperRect.right
+                            && tooltipRect.top >= wrapperRect.top
+                            && tooltipRect.bottom <= wrapperRect.bottom
+                    };
+                    """,
+                    canvas,
+                )
+            )
+            self.assertAlmostEqual(before_hover_top, hover_result["top"], delta=1)
+            self.assertTrue(any("train_loss" in label for label in hover_result["labels"]), hover_result)
+            self.assertTrue(hover_result["tooltipInsideChart"], hover_result)
 
             images = WebDriverWait(driver, 10).until(
                 lambda _driver: driver.find_elements(By.CSS_SELECTOR, ".training-media-grid figure img")
             )
             self.assertEqual(len(images), 2)
+            media_step_slider = driver.find_element(By.CSS_SELECTOR, "input[aria-label='Validation checkpoint step']")
+            self.assertEqual(media_step_slider.get_attribute("max"), "1")
+            self.assertEqual(media_step_slider.get_attribute("value"), "1")
+            driver.execute_script(
+                """
+                arguments[0].value = '0';
+                arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                """,
+                media_step_slider,
+            )
+            WebDriverWait(driver, 5).until(
+                lambda _driver: len(driver.find_elements(By.CSS_SELECTOR, ".training-media-grid figure img")) == 1
+            )
+            driver.execute_script(
+                """
+                arguments[0].value = '1';
+                arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                """,
+                media_step_slider,
+            )
+            images = WebDriverWait(driver, 5).until(
+                lambda _driver: (
+                    driver.find_elements(By.CSS_SELECTOR, ".training-media-grid figure img")
+                    if len(driver.find_elements(By.CSS_SELECTOR, ".training-media-grid figure img")) == 2
+                    else False
+                )
+            )
             image = images[0]
             media_response = requests.get(image.get_attribute("src"), timeout=5)
             self.assertEqual(media_response.status_code, 200, media_response.text)
@@ -845,15 +936,102 @@ class TrainingMetricsDashboardTestCase(_TrainerPageMixin, WebUITestCase):
             actual_size_button.click()
             lightbox_image = driver.find_element(By.CSS_SELECTOR, ".training-media-lightbox-body img")
             self.assertIn("actual-size", lightbox_image.get_attribute("class"))
+            lightbox_step_slider = lightbox.find_element(
+                By.CSS_SELECTOR, "input[aria-label='Validation lightbox checkpoint step']"
+            )
+            self.assertEqual(lightbox_step_slider.get_attribute("max"), "1")
+            driver.execute_script(
+                """
+                arguments[0].value = '0';
+                arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                """,
+                lightbox_step_slider,
+            )
+            WebDriverWait(driver, 5).until(lambda _driver: "step 10" in lightbox.text)
             lightbox.find_element(By.CSS_SELECTOR, ".training-media-lightbox-toolbar button[title='Close image']").click()
             WebDriverWait(driver, 5).until(EC.invisibility_of_element_located((By.CSS_SELECTOR, ".training-media-lightbox")))
 
+            driver.find_element(By.CSS_SELECTOR, ".training-chart-actions button[title='Select metrics']").click()
+            smoothing_slider = WebDriverWait(driver, 5).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "input[aria-label='Chart smoothing']"))
+            )
+            driver.execute_script(
+                """
+                arguments[0].value = '0.5';
+                arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                """,
+                smoothing_slider,
+            )
+            WebDriverWait(driver, 5).until(
+                lambda _driver: driver.execute_script(
+                    "return Alpine.$data(document.getElementById('metrics-tab-content')).trainingCharts[0].smoothing;"
+                )
+                == 0.5
+            )
             loss_toggle = driver.find_element(
                 By.XPATH,
                 "//div[contains(@class, 'training-metric-picker')]//label[span[text()='train_loss']]/input",
             )
             loss_toggle.click()
             WebDriverWait(driver, 5).until(lambda _driver: not loss_toggle.is_selected())
+
+            timestep_toggle = driver.find_element(
+                By.XPATH,
+                "//section[contains(@class, 'training-timestep-panel')]//button[.//span[text()='Show']]",
+            )
+            driver.execute_script("arguments[0].click();", timestep_toggle)
+            WebDriverWait(driver, 5).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, "[data-testid='training-timestep-distribution-canvas']"))
+            )
+            WebDriverWait(driver, 5).until(
+                lambda _driver: requests.get(
+                    f"{self.base_url}/api/webui/ui-state/training-metrics",
+                    timeout=5,
+                ).json()[
+                    "environments"
+                ]["test-config"]["showTimestepChart"]
+            )
+            trainer_page.switch_to_basic_tab()
+            trainer_page.switch_to_metrics_tab()
+            WebDriverWait(driver, 10).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, "[data-testid='training-timestep-distribution-canvas']"))
+            )
+
+            driver.set_window_size(1280, 900)
+            canvas = WebDriverWait(driver, 10).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, "[data-testid='training-metrics-canvas']"))
+            )
+            chart_width_before_collapse = driver.execute_script(
+                "return arguments[0].getBoundingClientRect().width;",
+                canvas,
+            )
+            collapse_button = driver.find_element(By.CSS_SELECTOR, "button[title='Collapse validation media']")
+            driver.execute_script("arguments[0].click();", collapse_button)
+            WebDriverWait(driver, 5).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".training-metrics-layout.validation-collapsed"))
+            )
+            WebDriverWait(driver, 5).until(
+                lambda _driver: driver.execute_script(
+                    "return arguments[0].getBoundingClientRect().width;",
+                    driver.find_element(By.CSS_SELECTOR, "[data-testid='training-metrics-canvas']"),
+                )
+                > chart_width_before_collapse
+            )
+            self.assertFalse(driver.find_element(By.CSS_SELECTOR, ".training-media-panel-body").is_displayed())
+            WebDriverWait(driver, 5).until(
+                lambda _driver: requests.get(
+                    f"{self.base_url}/api/webui/ui-state/training-metrics",
+                    timeout=5,
+                ).json()[
+                    "environments"
+                ]["test-config"]["mediaPanelCollapsed"]
+            )
+            trainer_page.switch_to_basic_tab()
+            trainer_page.switch_to_metrics_tab()
+            layout = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".training-metrics-layout.validation-collapsed"))
+            )
+            self.assertIn("validation-collapsed", layout.get_attribute("class"))
 
             driver.set_window_size(430, 900)
             workspace = driver.find_element(By.CSS_SELECTOR, ".training-metrics-workspace")

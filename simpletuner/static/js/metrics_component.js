@@ -67,6 +67,8 @@ function metricsComponent(initialSettings = {}) {
             // Check if hero should be shown
             this.heroDismissed = this.dismissedHints.includes('hero');
 
+            await this.loadTrainingMetricLayouts();
+
             // Load categories, templates, circuit breaker status, and GPU health
             await Promise.all([
                 this.loadTrainingRuns(),

@@ -907,7 +907,10 @@
 .training-tool-header,
 .training-run-actions,
 .training-latest-values,
-.training-media-steps {
+.training-chart-legend,
+.training-chart-layout-toolbar,
+.training-chart-layout-controls,
+.training-chart-actions {
     display: flex;
     align-items: center;
 }
@@ -1012,13 +1015,83 @@
     gap: 1rem;
 }
 
-.training-chart-tool,
+.training-metrics-layout.validation-collapsed {
+    grid-template-columns: minmax(0, 1fr) 2.75rem;
+}
+
+.training-chart-workspace,
 .training-media-tool {
     min-width: 0;
     padding: 1rem;
     border: 1px solid rgba(148, 163, 184, 0.2);
     border-radius: 0.5rem;
     background: rgba(15, 23, 42, 0.38);
+}
+
+.training-chart-workspace {
+    display: grid;
+    gap: 0.8rem;
+}
+
+.training-media-tool.collapsed {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 0.45rem;
+}
+
+.training-media-tool.collapsed .training-tool-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+}
+
+.training-media-tool.collapsed .training-tool-header > div,
+.training-media-tool.collapsed .training-media-panel-body {
+    display: none !important;
+}
+
+.training-media-collapse-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    min-width: 2rem;
+    height: 2rem;
+    padding: 0;
+}
+
+.training-chart-layout-toolbar {
+    justify-content: space-between;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.training-chart-layout-controls {
+    gap: 0.45rem;
+    min-width: min(100%, 30rem);
+}
+
+.training-chart-layout-controls .form-select {
+    width: 9rem;
+}
+
+.training-chart-layout-controls .form-control {
+    width: 12rem;
+}
+
+.training-chart-stack {
+    display: grid;
+    gap: 0.8rem;
+}
+
+.training-chart-tool {
+    min-width: 0;
+    padding: 0.8rem;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 0.4rem;
+    background: rgba(2, 6, 23, 0.18);
 }
 
 .training-tool-header {
@@ -1033,6 +1106,44 @@
 
 .training-tool-header .form-select {
     max-width: 13rem;
+}
+
+.training-chart-title {
+    display: grid;
+    gap: 0.25rem;
+    min-width: min(100%, 16rem);
+}
+
+.training-chart-title > span {
+    display: block;
+    height: 1rem;
+    overflow: hidden;
+    line-height: 1rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.training-chart-title .form-control {
+    min-height: 1.9rem;
+    border-color: rgba(148, 163, 184, 0.22);
+    color: #f8fafc;
+    background: rgba(15, 23, 42, 0.5);
+    font-size: 0.85rem;
+    font-weight: 650;
+}
+
+.training-chart-actions {
+    gap: 0.35rem;
+}
+
+.training-chart-actions .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    min-width: 2rem;
+    height: 2rem;
+    padding: 0;
 }
 
 .training-axis-toggle {
@@ -1063,19 +1174,57 @@
     background: rgba(14, 165, 233, 0.18);
 }
 
-.training-metric-picker {
+.training-chart-selector {
+    display: grid;
+    gap: 0.55rem;
+    margin-top: 0.75rem;
+    padding: 0.65rem;
+    border: 1px solid rgba(148, 163, 184, 0.16);
+    border-radius: 0.35rem;
+    background: rgba(15, 23, 42, 0.68);
+}
+
+.training-chart-smoothing {
+    display: grid;
+    grid-template-columns: minmax(8rem, 1fr) minmax(10rem, 2fr);
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.training-chart-smoothing label {
     display: flex;
-    justify-content: flex-end;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin: 0;
+    color: #cbd5e1;
+    font-size: 0.75rem;
+}
+
+.training-chart-smoothing strong {
+    color: #f8fafc;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-weight: 650;
+}
+
+.training-chart-smoothing input[type="range"] {
+    width: 100%;
+    accent-color: #38bdf8;
+}
+
+.training-metric-picker {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
     gap: 0.35rem;
-    max-width: 70%;
-    flex-wrap: wrap;
+    max-height: 13rem;
+    overflow: auto;
 }
 
 .training-metric-picker label {
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
-    max-width: 14rem;
+    min-width: 0;
     padding: 0.25rem 0.45rem;
     border: 1px solid rgba(148, 163, 184, 0.2);
     border-radius: 0.25rem;
@@ -1110,6 +1259,32 @@
     overflow-x: auto;
 }
 
+.training-chart-legend {
+    gap: 0.6rem;
+    min-height: 1.55rem;
+    margin-top: 0.6rem;
+    overflow-x: auto;
+    flex-wrap: wrap;
+}
+
+.training-chart-legend > div {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-width: 0;
+    color: #cbd5e1;
+    font-size: 0.75rem;
+    white-space: nowrap;
+}
+
+.training-chart-swatch {
+    flex: 0 0 auto;
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 999px;
+}
+
 .training-latest-values > div {
     min-width: 7rem;
 }
@@ -1138,9 +1313,54 @@
     height: 24rem;
 }
 
+.training-chart-tooltip {
+    position: absolute;
+    z-index: 2;
+    display: grid;
+    gap: 0.25rem;
+    width: min(15rem, calc(100% - 1rem));
+    padding: 0.5rem 0.6rem;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 0.35rem;
+    color: #e2e8f0;
+    background: rgba(2, 6, 23, 0.9);
+    box-shadow: 0 0.6rem 1.5rem rgba(2, 6, 23, 0.35);
+    pointer-events: none;
+}
+
+.training-chart-tooltip-title {
+    color: #94a3b8;
+    font-size: 0.7rem;
+}
+
+.training-chart-tooltip-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.35rem;
+    min-width: 0;
+    font-size: 0.72rem;
+}
+
+.training-chart-tooltip-row span:not(.training-chart-swatch) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.training-chart-tooltip-row strong {
+    color: #f8fafc;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-weight: 650;
+}
+
 .training-timestep-canvas-wrap {
     height: 16rem;
     margin-top: 1rem;
+}
+
+.training-timestep-panel {
+    margin-top: 0.25rem;
 }
 
 .training-chart-canvas-wrap canvas {
@@ -1149,26 +1369,34 @@
     height: 100%;
 }
 
-.training-media-steps {
-    gap: 0.25rem;
+.training-media-step-slider {
+    display: grid;
+    gap: 0.45rem;
     margin: 0.8rem 0;
-    overflow-x: auto;
 }
 
-.training-media-steps button {
-    min-width: 2.5rem;
-    padding: 0.25rem 0.45rem;
-    border: 1px solid rgba(148, 163, 184, 0.2);
-    border-radius: 0.25rem;
+.training-media-step-slider label,
+.training-media-lightbox-step-slider label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin: 0;
     color: #94a3b8;
-    background: transparent;
-    font-size: 0.7rem;
+    font-size: 0.75rem;
 }
 
-.training-media-steps button.active {
-    border-color: #38bdf8;
-    color: #e0f2fe;
-    background: rgba(14, 165, 233, 0.14);
+.training-media-step-slider strong,
+.training-media-lightbox-step-slider strong {
+    color: #f8fafc;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-weight: 650;
+}
+
+.training-media-step-slider input[type="range"],
+.training-media-lightbox-step-slider input[type="range"] {
+    width: 100%;
+    accent-color: #38bdf8;
 }
 
 .training-media-grid {
@@ -1246,7 +1474,7 @@
     inset: 0;
     z-index: 1090;
     display: grid;
-    grid-template-rows: minmax(0, 1fr) auto auto;
+    grid-template-rows: minmax(0, 1fr) auto auto auto;
     gap: 0.75rem;
     padding: 1rem;
     background: rgba(2, 6, 23, 0.94);
@@ -1302,6 +1530,13 @@
     text-align: center;
 }
 
+.training-media-lightbox-step-slider {
+    width: min(34rem, 100%);
+    justify-self: center;
+    display: grid;
+    gap: 0.45rem;
+}
+
 .training-media-lightbox-caption {
     overflow: hidden;
     color: #cbd5e1;
@@ -1315,6 +1550,14 @@
 @media (max-width: 1100px) {
     .training-metrics-layout {
         grid-template-columns: 1fr;
+    }
+
+    .training-metrics-layout.validation-collapsed {
+        grid-template-columns: 1fr;
+    }
+
+    .training-media-tool.collapsed {
+        min-height: 2.9rem;
     }
 }
 
@@ -1332,10 +1575,26 @@
 
     .training-run-actions .form-select,
     .training-tool-header .form-select,
-    .training-metric-picker,
+    .training-chart-layout-controls,
+    .training-chart-layout-controls .form-select,
+    .training-chart-layout-controls .form-control,
     .training-axis-toggle {
         width: 100%;
         max-width: none;
+    }
+
+    .training-chart-layout-controls {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .training-chart-layout-controls .btn {
+        justify-content: center;
+    }
+
+    .training-chart-smoothing {
+        grid-template-columns: 1fr;
+        gap: 0.4rem;
     }
 
     .training-axis-toggle button {
