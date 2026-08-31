@@ -17,6 +17,8 @@ SimpleTuner 可以在不使用外部服务的情况下记录训练指标：
 
 恢复训练时会追加记录。HTML 使用相对媒体路径，因此应与输出目录一起归档。
 
+当 tracker 本身不收集系统遥测时，SimpleTuner 会为该 tracker 记录 CPU、内存、磁盘、网络和 GPU 的数值指标。WandB 会被跳过，因为它的客户端已经报告主机指标。
+
 ## WebUI 与 API
 
 打开 **Metrics** 和 **Training Runs**，可选择标量、按 prompt/step 比较验证结果并打开离线报告。**System** 保留 GPU 健康和 Prometheus 设置。

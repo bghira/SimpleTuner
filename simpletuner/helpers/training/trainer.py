@@ -109,6 +109,11 @@ from simpletuner.helpers.training.reporting import normalize_report_to, report_t
 from simpletuner.helpers.training.script_runner import run_hook_script
 from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.training.system_metrics import (
+    SystemMetricsSampler,
+    log_system_metrics_to_trackers,
+    should_collect_manual_system_metrics,
+)
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
 from simpletuner.helpers.training.wrappers import rebind_prepared_forward, unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
@@ -2485,6 +2490,7 @@ class Trainer:
         self.grad_norm = None
         self.extra_lr_scheduler_kwargs = {}
         self.iteration_tracker = IterationTracker()
+        self.system_metrics_sampler = None
         StateTracker.set_global_step(self.state["global_step"])
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
         self._init_publishing_manager()
@@ -5848,6 +5854,21 @@ class Trainer:
                 metrics[key] = value
         return metrics
 
+    def _log_manual_system_metrics(self) -> None:
+        if not self.accelerator.is_main_process:
+            return
+        trackers = list(getattr(self.accelerator, "trackers", []) or [])
+        if not trackers:
+            return
+        tracker_names = [str(getattr(tracker, "name", "") or "").strip().lower() for tracker in trackers]
+        if not should_collect_manual_system_metrics(tracker_names):
+            return
+        if self.system_metrics_sampler is None:
+            self.system_metrics_sampler = SystemMetricsSampler(output_dir=self.config.output_dir)
+        metrics = self.system_metrics_sampler.sample()
+        if metrics:
+            log_system_metrics_to_trackers(trackers, metrics, step=int(self.state["global_step"]))
+
     def _prepare_training_progress_payload(
         self,
         *,
@@ -7549,6 +7570,7 @@ class Trainer:
                         )
                     except Exception as e:
                         logger.error(f"Failed to log to accelerator; ignoring error: {e}")
+                    self._log_manual_system_metrics()
 
                     # Reset some values for the next go.
                     self.train_loss = 0.0

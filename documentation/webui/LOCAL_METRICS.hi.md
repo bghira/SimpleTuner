@@ -17,6 +17,8 @@ SimpleTuner बाहरी सेवा के बिना प्रशिक�
 
 Resume पर records जोड़े जाते हैं। HTML relative media paths उपयोग करता है, इसलिए इसे output directory के साथ archive करें।
 
+जब कोई tracker system telemetry native रूप से collect नहीं करता, SimpleTuner उस tracker के लिए CPU, memory, disk, network और GPU की numeric metrics लिखता है। WandB को छोड़ा जाता है क्योंकि उसका client host metrics पहले से report करता है।
+
 ## WebUI और API
 
 **Metrics** में **Training Runs** खोलें। यहाँ scalar चुन सकते हैं, prompt/step के अनुसार validation तुलना कर सकते हैं और offline report खोल सकते हैं। **System** में GPU health और Prometheus configuration रहती है।
