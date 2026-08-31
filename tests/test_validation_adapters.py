@@ -129,6 +129,30 @@ class _AdapterTarget:
         self.delete_calls.append(names)
 
 
+class _TrackingAdapterTarget:
+    def __init__(self):
+        self.peft_config = {}
+        self.active_adapters = []
+        self.set_calls = []
+        self.delete_calls = []
+
+    def set_adapters(self, names, scales):
+        names = [names] if isinstance(names, str) else list(names)
+        missing = set(names) - set(self.peft_config)
+        if missing:
+            present = set(self.peft_config)
+            raise ValueError(f"Adapter name(s) {missing} not in the list of present adapters: {present}.")
+        self.active_adapters = names
+        self.set_calls.append((names, scales))
+
+    def delete_adapters(self, names):
+        names = [names] if isinstance(names, str) else list(names)
+        for name in names:
+            self.peft_config.pop(name, None)
+        self.active_adapters = [name for name in self.active_adapters if name not in names]
+        self.delete_calls.append(names)
+
+
 class _Pipeline:
     def __init__(self):
         self.load_calls = []
@@ -149,6 +173,28 @@ class _Pipeline:
 
     def delete_adapters(self, names):
         self.delete_calls.append(names)
+
+
+class _ChildActivePipeline:
+    def __init__(self):
+        self.load_calls = []
+        self.transformer = _TrackingAdapterTarget()
+        self.components = {"transformer": self.transformer}
+
+    def load_lora_weights(self, location, **kwargs):
+        adapter_name = kwargs["adapter_name"]
+        self.load_calls.append((location, kwargs))
+        self.transformer.peft_config[adapter_name] = object()
+        self.transformer.active_adapters = [adapter_name]
+
+    def get_active_adapters(self):
+        return list(self.transformer.active_adapters)
+
+    def set_adapters(self, names, scales):
+        self.transformer.set_adapters(names, scales)
+
+    def delete_adapters(self, names):
+        self.transformer.delete_adapters(names)
 
 
 class _StageModel:
@@ -261,6 +307,44 @@ class ValidationAdapterStageLoadingTests(unittest.TestCase):
 
         self.assertEqual("combo", pipeline.delete_calls[0])
         self.assertEqual(["combo_low"], pipeline.transformer_2.delete_calls)
+
+    def test_validation_adapter_restore_ignores_loaded_temporary_adapter(self):
+        pipeline = _ChildActivePipeline()
+        validator = self._validator(_StageModel(pipeline))
+        run = build_validation_adapter_runs(
+            None,
+            [{"label": "Krea2 Turbo adapter", "path": "repo/krea2", "adapter_name": "krea2_turbo_adapter"}],
+        )[1]
+
+        with validator._temporary_validation_adapters(run):
+            self.assertEqual("repo/krea2", pipeline.load_calls[0][0])
+            self.assertEqual("krea2_turbo_adapter", pipeline.load_calls[0][1]["adapter_name"])
+            self.assertEqual([(["krea2_turbo_adapter"], 1.0)], pipeline.transformer.set_calls)
+
+        self.assertEqual([["krea2_turbo_adapter"]], pipeline.transformer.delete_calls)
+        self.assertEqual([], pipeline.transformer.active_adapters)
+
+    def test_validation_adapter_restore_preserves_existing_active_adapter(self):
+        pipeline = _ChildActivePipeline()
+        pipeline.transformer.peft_config["base"] = object()
+        pipeline.transformer.active_adapters = ["base"]
+        validator = self._validator(_StageModel(pipeline))
+        run = build_validation_adapter_runs(
+            None,
+            [{"label": "Krea2 Turbo adapter", "path": "repo/krea2", "adapter_name": "krea2_turbo_adapter"}],
+        )[1]
+
+        with validator._temporary_validation_adapters(run):
+            self.assertEqual(
+                [(["base", "krea2_turbo_adapter"], [1.0, 1.0])],
+                pipeline.transformer.set_calls,
+            )
+
+        self.assertEqual(
+            [(["base", "krea2_turbo_adapter"], [1.0, 1.0]), (["base"], 1.0)],
+            pipeline.transformer.set_calls,
+        )
+        self.assertEqual(["base"], pipeline.transformer.active_adapters)
 
 
 if __name__ == "__main__":
