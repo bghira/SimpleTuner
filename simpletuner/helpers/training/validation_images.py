@@ -2,13 +2,41 @@ import logging
 import os
 
 import numpy as np
-import wandb
 from PIL import Image
 
+import wandb
 from simpletuner.helpers.training.local_metrics import record_validation_media
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 logger = logging.getLogger(__name__)
+
+VALIDATION_IMAGE_FORMATS = {"png", "webp", "jpeg"}
+
+
+def validation_image_file_extension(config) -> str:
+    image_format = str(getattr(config, "validation_image_format", "png") or "png").lower()
+    if image_format not in VALIDATION_IMAGE_FORMATS:
+        raise ValueError("validation_image_format must be one of: png, webp, jpeg.")
+    return "jpg" if image_format == "jpeg" else image_format
+
+
+def save_image_with_validation_format(image, image_path_stem, config):
+    image_format = str(getattr(config, "validation_image_format", "png") or "png").lower()
+    if image_format not in VALIDATION_IMAGE_FORMATS:
+        raise ValueError("validation_image_format must be one of: png, webp, jpeg.")
+    configured_quality = getattr(config, "validation_image_quality", 90)
+    quality = 90 if configured_quality is None else int(configured_quality)
+    if not 1 <= quality <= 100:
+        raise ValueError("validation_image_quality must be within [1, 100].")
+
+    extension = validation_image_file_extension(config)
+    save_path = f"{image_path_stem}.{extension}"
+    save_image = image.convert("RGB") if image_format == "jpeg" and getattr(image, "mode", None) != "RGB" else image
+    save_kwargs = {"format": image_format.upper()}
+    if image_format in {"webp", "jpeg"}:
+        save_kwargs["quality"] = quality
+    save_image.save(save_path, **save_kwargs)
+    return save_path, extension
 
 
 def save_validation_image(
@@ -21,21 +49,7 @@ def save_validation_image(
     index,
     resolution,
 ):
-    image_format = str(getattr(config, "validation_image_format", "png") or "png").lower()
-    if image_format not in {"png", "webp", "jpeg"}:
-        raise ValueError("validation_image_format must be one of: png, webp, jpeg.")
-    configured_quality = getattr(config, "validation_image_quality", 90)
-    quality = 90 if configured_quality is None else int(configured_quality)
-    if not 1 <= quality <= 100:
-        raise ValueError("validation_image_quality must be within [1, 100].")
-
-    extension = "jpg" if image_format == "jpeg" else image_format
-    save_path = os.path.join(save_dir, f"{filename_stem}.{extension}")
-    save_image = image.convert("RGB") if image_format == "jpeg" and getattr(image, "mode", None) != "RGB" else image
-    save_kwargs = {"format": image_format.upper()}
-    if image_format in {"webp", "jpeg"}:
-        save_kwargs["quality"] = quality
-    save_image.save(save_path, **save_kwargs)
+    save_path, _extension = save_image_with_validation_format(image, os.path.join(save_dir, filename_stem), config)
     record_validation_media(
         config,
         save_path,

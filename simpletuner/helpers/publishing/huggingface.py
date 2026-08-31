@@ -8,6 +8,7 @@ from huggingface_hub import HfApi
 
 from simpletuner.helpers.publishing.metadata import save_model_card, save_training_config
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.training.validation_images import save_image_with_validation_format
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -21,6 +22,10 @@ else:
 LORA_SAFETENSORS_FILENAME = "pytorch_lora_weights.safetensors"
 EMA_SAFETENSORS_FILENAME = "ema_model.safetensors"
 SLA_ATTENTION_FILENAME = "sla_attention.pt"
+VALIDATION_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+VALIDATION_VIDEO_SUFFIXES = {".mp4", ".avi", ".mov", ".webm"}
+VALIDATION_AUDIO_SUFFIXES = {".wav", ".flac", ".mp3", ".ogg", ".m4a"}
+VALIDATION_MEDIA_SUFFIXES = VALIDATION_IMAGE_SUFFIXES | VALIDATION_VIDEO_SUFFIXES | VALIDATION_AUDIO_SUFFIXES
 
 
 class HubManager:
@@ -409,6 +414,59 @@ class HubManager:
 
         return highest_checkpoint
 
+    @staticmethod
+    def _validation_media_shortname(filename: str, checkpoint_step: int) -> str | None:
+        stem = Path(filename).stem
+        prefix = f"step_{checkpoint_step}_"
+        if not stem.startswith(prefix):
+            return None
+
+        remainder = stem[len(prefix) :]
+        image_or_video_parts = remainder.rsplit("_", 2)
+        if len(image_or_video_parts) == 3 and image_or_video_parts[1].isdigit():
+            return image_or_video_parts[0]
+
+        audio_parts = remainder.rsplit("_", 1)
+        if len(audio_parts) == 2 and audio_parts[1].isdigit():
+            return audio_parts[0]
+
+        return None
+
+    def _filter_checkpoint_validation_media(
+        self,
+        checkpoint_step: int,
+        validation_images: dict | None,
+        validation_audios: dict | None,
+    ) -> tuple[dict, dict]:
+        filtered_images = {}
+        filtered_audios = {}
+        validation_dir = Path(self.config.output_dir) / "validation_images"
+        if not validation_dir.exists():
+            return filtered_images, filtered_audios
+
+        image_shortnames = set(validation_images.keys()) if validation_images else set()
+        audio_shortnames = set(validation_audios.keys()) if validation_audios else set()
+        shortnames = image_shortnames | audio_shortnames
+        if not shortnames:
+            return filtered_images, filtered_audios
+
+        for media_path in sorted(validation_dir.iterdir(), key=lambda path: path.name):
+            if not media_path.is_file() or media_path.suffix.lower() not in VALIDATION_MEDIA_SUFFIXES:
+                continue
+            shortname = self._validation_media_shortname(media_path.name, checkpoint_step)
+            if shortname not in shortnames:
+                continue
+
+            suffix = media_path.suffix.lower()
+            if suffix in VALIDATION_AUDIO_SUFFIXES:
+                if shortname in audio_shortnames:
+                    filtered_audios.setdefault(shortname, []).append(str(media_path))
+                continue
+            if shortname in image_shortnames:
+                filtered_images.setdefault(shortname, []).append(str(media_path))
+
+        return filtered_images, filtered_audios
+
     def upload_latest_checkpoint(
         self,
         validation_images: dict,
@@ -435,30 +493,11 @@ class HubManager:
                 filtered_images = {}
                 filtered_audios = {}
                 if (validation_images or validation_audios) and checkpoint_step is not None:
-                    validation_dir = os.path.join(self.config.output_dir, "validation_images")
-                    if os.path.exists(validation_dir):
-                        shortnames = set()
-                        if validation_images:
-                            shortnames.update(validation_images.keys())
-                        if validation_audios:
-                            shortnames.update(validation_audios.keys())
-                        for shortname in shortnames:
-                            step_pattern = f"step_{checkpoint_step}_"
-                            for img_file in os.listdir(validation_dir):
-                                if step_pattern in img_file and shortname in img_file:
-                                    img_path = os.path.join(validation_dir, img_file)
-                                    try:
-                                        if img_path.endswith((".mp4", ".avi", ".mov", ".webm")):
-                                            filtered_images.setdefault(shortname, []).append(img_path)
-                                        elif img_path.endswith((".wav", ".flac", ".mp3", ".ogg", ".m4a")):
-                                            filtered_audios.setdefault(shortname, []).append(img_path)
-                                        else:
-                                            from PIL import Image
-
-                                            img = Image.open(img_path)
-                                            filtered_images.setdefault(shortname, []).append(img)
-                                    except Exception as e:
-                                        logger.warning(f"Could not load validation asset {img_path}: {e}")
+                    filtered_images, filtered_audios = self._filter_checkpoint_validation_media(
+                        checkpoint_step,
+                        validation_images,
+                        validation_audios,
+                    )
 
                 # Only use media generated at this checkpoint step. Previous-step benchmark samples
                 # should not be associated with the checkpoint model card.
@@ -503,12 +542,13 @@ class HubManager:
                     images = [images]
                 sub_idx = 0
                 for image in images:
-                    image_path = os.path.join(
-                        override_path or self.config.output_dir,
-                        "assets",
-                        f"image_{idx}_{sub_idx}.png",
+                    assets_dir = os.path.join(override_path or self.config.output_dir, "assets")
+                    os.makedirs(assets_dir, exist_ok=True)
+                    image_path, image_extension = save_image_with_validation_format(
+                        image,
+                        os.path.join(assets_dir, f"image_{idx}_{sub_idx}"),
+                        self.config,
                     )
-                    image.save(image_path, format="PNG")
                     if not self.config.push_to_hub:
                         continue
                     attempt = 0
@@ -517,7 +557,7 @@ class HubManager:
                         try:
                             self._hub_api.upload_file(
                                 repo_id=self._repo_id,
-                                path_in_repo=f"/assets/image_{idx}_{sub_idx}.png",
+                                path_in_repo=f"/assets/image_{idx}_{sub_idx}.{image_extension}",
                                 path_or_fileobj=image_path,
                                 commit_message="Validation image auto-generated by SimpleTuner",
                                 token=self.hub_token,
