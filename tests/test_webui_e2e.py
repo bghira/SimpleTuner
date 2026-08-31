@@ -787,11 +787,13 @@ class TrainingMetricsDashboardTestCase(_TrainerPageMixin, WebUITestCase):
             encoding="utf-8",
         )
         first_step_image_path = validation_dir / "step_10_prompt_0_64x64.png"
-        image_path = validation_dir / "step_20_prompt_0_64x64.png"
-        second_image_path = validation_dir / "step_20_second_0_64x64.png"
         Image.new("RGB", (64, 64), color=(16, 96, 180)).save(first_step_image_path, format="PNG")
-        Image.new("RGB", (64, 64), color=(32, 160, 120)).save(image_path, format="PNG")
-        Image.new("RGB", (64, 64), color=(120, 80, 220)).save(second_image_path, format="PNG")
+        latest_step_image_paths = []
+        for index in range(10):
+            image_path = validation_dir / f"step_20_prompt_{index}_64x64.png"
+            color = ((32 + index * 17) % 255, (160 + index * 11) % 255, (120 + index * 23) % 255)
+            Image.new("RGB", (64, 64), color=color).save(image_path, format="PNG")
+            latest_step_image_paths.append(image_path)
         media_records = [
             {
                 "step": 10,
@@ -801,23 +803,18 @@ class TrainingMetricsDashboardTestCase(_TrainerPageMixin, WebUITestCase):
                 "resolution": "64x64",
                 "path": first_step_image_path.relative_to(output_dir).as_posix(),
             },
-            {
-                "step": 20,
-                "type": "image",
-                "label": "A green square",
-                "index": 0,
-                "resolution": "64x64",
-                "path": image_path.relative_to(output_dir).as_posix(),
-            },
-            {
-                "step": 20,
-                "type": "image",
-                "label": "A violet square",
-                "index": 0,
-                "resolution": "64x64",
-                "path": second_image_path.relative_to(output_dir).as_posix(),
-            },
         ]
+        for index, image_path in enumerate(latest_step_image_paths):
+            media_records.append(
+                {
+                    "step": 20,
+                    "type": "image",
+                    "label": "A green square" if index == 0 else f"Validation prompt {index + 1:02d}",
+                    "index": 0,
+                    "resolution": "64x64",
+                    "path": image_path.relative_to(output_dir).as_posix(),
+                }
+            )
         (output_dir / "validation_media.jsonl").write_text(
             "".join(f"{json.dumps(media)}\n" for media in media_records),
             encoding="utf-8",
@@ -889,10 +886,25 @@ class TrainingMetricsDashboardTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertTrue(any("train_loss" in label for label in hover_result["labels"]), hover_result)
             self.assertTrue(hover_result["tooltipInsideChart"], hover_result)
 
+            driver.set_window_size(1280, 900)
             images = WebDriverWait(driver, 10).until(
-                lambda _driver: driver.find_elements(By.CSS_SELECTOR, ".training-media-grid figure img")
+                lambda _driver: (
+                    driver.find_elements(By.CSS_SELECTOR, ".training-media-grid figure img")
+                    if len(driver.find_elements(By.CSS_SELECTOR, ".training-media-grid figure img")) == 10
+                    else False
+                )
             )
-            self.assertEqual(len(images), 2)
+            layout_sizing = driver.execute_script(
+                """
+                const chartWorkspace = document.querySelector('.training-chart-workspace').getBoundingClientRect();
+                const mediaPanel = document.querySelector('.training-media-tool').getBoundingClientRect();
+                return {
+                    chartHeight: chartWorkspace.height,
+                    mediaHeight: mediaPanel.height,
+                };
+                """
+            )
+            self.assertLess(layout_sizing["chartHeight"], layout_sizing["mediaHeight"] - 100, layout_sizing)
             media_step_slider = driver.find_element(By.CSS_SELECTOR, "input[aria-label='Validation checkpoint step']")
             self.assertEqual(media_step_slider.get_attribute("max"), "1")
             self.assertEqual(media_step_slider.get_attribute("value"), "1")
@@ -916,7 +928,7 @@ class TrainingMetricsDashboardTestCase(_TrainerPageMixin, WebUITestCase):
             images = WebDriverWait(driver, 5).until(
                 lambda _driver: (
                     driver.find_elements(By.CSS_SELECTOR, ".training-media-grid figure img")
-                    if len(driver.find_elements(By.CSS_SELECTOR, ".training-media-grid figure img")) == 2
+                    if len(driver.find_elements(By.CSS_SELECTOR, ".training-media-grid figure img")) == 10
                     else False
                 )
             )
@@ -925,7 +937,7 @@ class TrainingMetricsDashboardTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertEqual(media_response.status_code, 200, media_response.text)
             self.assertEqual(media_response.headers["content-type"], "image/png")
             self.assertEqual(Image.open(BytesIO(media_response.content)).size, (64, 64))
-            image.click()
+            driver.execute_script("arguments[0].closest('.training-media-image-button').click();", image)
             lightbox = WebDriverWait(driver, 10).until(
                 EC.visibility_of_element_located((By.CSS_SELECTOR, ".training-media-lightbox"))
             )
@@ -951,7 +963,11 @@ class TrainingMetricsDashboardTestCase(_TrainerPageMixin, WebUITestCase):
             lightbox.find_element(By.CSS_SELECTOR, ".training-media-lightbox-toolbar button[title='Close image']").click()
             WebDriverWait(driver, 5).until(EC.invisibility_of_element_located((By.CSS_SELECTOR, ".training-media-lightbox")))
 
-            driver.find_element(By.CSS_SELECTOR, ".training-chart-actions button[title='Select metrics']").click()
+            metric_selector_button = driver.find_element(
+                By.CSS_SELECTOR,
+                ".training-chart-actions button[title='Select metrics']",
+            )
+            driver.execute_script("arguments[0].click();", metric_selector_button)
             smoothing_slider = WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "input[aria-label='Chart smoothing']"))
             )
@@ -972,7 +988,7 @@ class TrainingMetricsDashboardTestCase(_TrainerPageMixin, WebUITestCase):
                 By.XPATH,
                 "//div[contains(@class, 'training-metric-picker')]//label[span[text()='train_loss']]/input",
             )
-            loss_toggle.click()
+            driver.execute_script("arguments[0].click();", loss_toggle)
             WebDriverWait(driver, 5).until(lambda _driver: not loss_toggle.is_selected())
 
             timestep_toggle = driver.find_element(

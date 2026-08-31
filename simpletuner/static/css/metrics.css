@@ -1012,6 +1012,7 @@
 .training-metrics-layout {
     display: grid;
     grid-template-columns: minmax(0, 3fr) minmax(18rem, 2fr);
+    align-items: start;
     gap: 1rem;
 }
 
