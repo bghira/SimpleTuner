@@ -235,20 +235,19 @@ def build_validation_adapter_runs(
             is_base=False,
         )
 
-    if adapter_path and mode != "none":
+    if mode != "none" and adapter_path:
         specs = [_build_adapter_spec(adapter_path, adapter_strength, adapter_name)]
         preferred_label = adapter_name or _stem_from_path(adapter_path)
         runs.append(_make_run(preferred_label, specs))
 
-    for entry in _iter_config_entries(adapter_config):
-        label, specs = _normalize_run_entry(entry)
-        if not specs:
-            continue
-        runs.append(_make_run(label, specs))
+    if mode != "none":
+        for entry in _iter_config_entries(adapter_config):
+            label, specs = _normalize_run_entry(entry)
+            if not specs:
+                continue
+            runs.append(_make_run(label, specs))
 
-    include_base = True
-    if adapter_path and mode == "adapter_only" and adapter_config in (None, [], {}):
-        include_base = False
+    include_base = mode == "comparison" or not runs
 
     ordered_runs: List[ValidationAdapterRun] = []
     if include_base:
