@@ -227,6 +227,7 @@ describe('training metrics component', () => {
                 { type: 'image', label: 'portrait', step: 20, index: 0, path: 'step-20-a.webp', url: '/c.webp' },
             ],
         };
+        state.selectedTrainingMediaStep = 10;
         state.openTrainingMediaLightbox(state.trainingRunData.media[0]);
 
         state.setTrainingLightboxImageOffset(1);
@@ -235,10 +236,11 @@ describe('training metrics component', () => {
         state.setTrainingLightboxImageOffset(-1);
         state.setTrainingLightboxStepOffset(1);
         expect(state.currentTrainingLightboxImage().item.path).toBe('step-20-a.webp');
-        expect(state.selectedTrainingMediaStep).toBe(20);
+        expect(state.selectedTrainingMediaStep).toBe(10);
 
         state.setTrainingLightboxStepIndex(0);
         expect(state.currentTrainingLightboxImage().item.path).toBe('step-10-a.webp');
+        expect(state.selectedTrainingMediaStep).toBe(10);
         expect(state.trainingLightboxStepLabel()).toBe('Step 10');
     });
 

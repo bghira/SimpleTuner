@@ -960,6 +960,17 @@ class TrainingMetricsDashboardTestCase(_TrainerPageMixin, WebUITestCase):
                 lightbox_step_slider,
             )
             WebDriverWait(driver, 5).until(lambda _driver: "step 10" in lightbox.text)
+            background_media_state = driver.execute_script(
+                """
+                const stepSlider = document.querySelector("input[aria-label='Validation checkpoint step']");
+                return {
+                    imageCount: document.querySelectorAll(".training-media-grid figure img").length,
+                    stepSliderValue: stepSlider ? stepSlider.value : null,
+                };
+                """
+            )
+            self.assertEqual(background_media_state["imageCount"], 10, background_media_state)
+            self.assertEqual(background_media_state["stepSliderValue"], "1", background_media_state)
             lightbox.find_element(By.CSS_SELECTOR, ".training-media-lightbox-toolbar button[title='Close image']").click()
             WebDriverWait(driver, 5).until(EC.invisibility_of_element_located((By.CSS_SELECTOR, ".training-media-lightbox")))
 
