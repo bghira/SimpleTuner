@@ -3564,17 +3564,50 @@ class TestTrainer(unittest.TestCase):
         mock_trained_model.set_requires_gradient_sync.assert_any_call(False)
 
     def test_build_init_tracker_kwargs_filters_to_active_trackers(self):
-        trainer = object.__new__(Trainer)
-        trainer.accelerator = SimpleNamespace(log_with=["tensorboard", "wandb"])
+        with tempfile.TemporaryDirectory() as tmpdir:
+            trainer = object.__new__(Trainer)
+            trainer.accelerator = SimpleNamespace(log_with=["tensorboard", "wandb"])
+            trainer.config = SimpleNamespace(output_dir=tmpdir, resume_from_checkpoint=None)
 
-        init_kwargs = trainer._build_init_tracker_kwargs("run-name", "abc123")
+            with patch(
+                "simpletuner.helpers.training.trainer.uuid.uuid4",
+                return_value=SimpleNamespace(hex="generated-id"),
+            ):
+                init_kwargs = trainer._build_init_tracker_kwargs("run-name", "abc123")
 
-        self.assertIn("wandb", init_kwargs)
-        self.assertEqual(init_kwargs["wandb"]["name"], "run-name")
-        self.assertEqual(init_kwargs["wandb"]["id"], "abc123")
-        self.assertEqual(init_kwargs["wandb"]["resume"], "allow")
-        self.assertTrue(init_kwargs["wandb"]["allow_val_change"])
-        self.assertNotIn("tensorboard", init_kwargs)
+            self.assertIn("wandb", init_kwargs)
+            self.assertEqual(init_kwargs["wandb"]["name"], "run-name")
+            self.assertEqual(init_kwargs["wandb"]["id"], "generated-id")
+            self.assertEqual(init_kwargs["wandb"]["resume"], "allow")
+            self.assertTrue(init_kwargs["wandb"]["allow_val_change"])
+            self.assertNotIn("tensorboard", init_kwargs)
+            self.assertEqual(Path(tmpdir, ".wandb_run_id").read_text(encoding="utf-8").strip(), "generated-id")
+
+    def test_build_init_tracker_kwargs_reuses_persisted_wandb_id_on_resume(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            Path(tmpdir, ".wandb_run_id").write_text("existing-id\n", encoding="utf-8")
+            trainer = object.__new__(Trainer)
+            trainer.accelerator = SimpleNamespace(log_with=["wandb"])
+            trainer.config = SimpleNamespace(output_dir=tmpdir, resume_from_checkpoint="checkpoint-100")
+
+            with patch("simpletuner.helpers.training.trainer.uuid.uuid4") as generate_id:
+                init_kwargs = trainer._build_init_tracker_kwargs("run-name", "abc123")
+
+            self.assertEqual(init_kwargs["wandb"]["id"], "existing-id")
+            generate_id.assert_not_called()
+
+    def test_build_init_tracker_kwargs_uses_legacy_hash_for_resume_without_persisted_wandb_id(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            trainer = object.__new__(Trainer)
+            trainer.accelerator = SimpleNamespace(log_with=["wandb"])
+            trainer.config = SimpleNamespace(output_dir=tmpdir, resume_from_checkpoint="checkpoint-100")
+
+            with patch("simpletuner.helpers.training.trainer.uuid.uuid4") as generate_id:
+                init_kwargs = trainer._build_init_tracker_kwargs("run-name", "abc123")
+
+            self.assertEqual(init_kwargs["wandb"]["id"], "abc123")
+            self.assertFalse(Path(tmpdir, ".wandb_run_id").exists())
+            generate_id.assert_not_called()
 
     def test_build_init_tracker_kwargs_supports_swanlab(self):
         tracker_enum_like = SimpleNamespace(value="swanlab")
@@ -3592,6 +3625,52 @@ class TestTrainer(unittest.TestCase):
                 "resume": "allow",
             },
         )
+
+    def test_init_trackers_is_idempotent(self):
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = Mock(is_main_process=True)
+        trainer.config = SimpleNamespace(
+            accelerator_project_config=object(),
+            process_group_kwargs=object(),
+            webhook_config={},
+            weight_dtype=torch.float32,
+            base_weight_dtype=torch.float32,
+            tracker_project_name="project",
+            tracker_run_name="run",
+            report_to=["simpletuner", "wandb"],
+        )
+        trainer.job_id = "job-123"
+        trainer._emit_event = Mock()
+        trainer._build_init_tracker_kwargs = Mock(return_value={})
+
+        trainer.init_trackers()
+        trainer.init_trackers()
+
+        trainer.accelerator.init_trackers.assert_called_once()
+        trainer._build_init_tracker_kwargs.assert_called_once()
+
+    def test_init_trackers_raises_when_requested_tracker_fails_to_initialize(self):
+        trainer = object.__new__(Trainer)
+        trainer.accelerator = Mock(is_main_process=True)
+        trainer.accelerator.init_trackers.side_effect = ValueError("wandb auth failed")
+        trainer.config = SimpleNamespace(
+            accelerator_project_config=object(),
+            process_group_kwargs=object(),
+            webhook_config={},
+            weight_dtype=torch.float32,
+            base_weight_dtype=torch.float32,
+            tracker_project_name="project",
+            tracker_run_name="run",
+            report_to=["simpletuner", "wandb"],
+        )
+        trainer.job_id = "job-123"
+        trainer._emit_event = Mock()
+        trainer._build_init_tracker_kwargs = Mock(return_value={})
+
+        with self.assertRaisesRegex(RuntimeError, "Could not initialize trackers"):
+            trainer.init_trackers()
+
+        self.assertFalse(getattr(trainer, "_trackers_initialized", False))
 
     def test_disable_dynamo_lru_cache_for_checkpointing_calls_private_api(self):
         from simpletuner.helpers.training import trainer as trainer_module

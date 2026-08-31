@@ -22,6 +22,7 @@ except Exception:
 import sys
 import threading
 import time
+import uuid
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
@@ -31,11 +32,11 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 from unittest import mock as unittest_mock
 
 import huggingface_hub
-import wandb
 from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 from torch.distributed.tensor import DTensor
 
+import wandb
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
@@ -178,6 +179,8 @@ filelock_logger = _setup_logger("filelock", default_level="WARNING")
 connection_logger = _setup_logger("urllib3.connectionpool", default_level="WARNING")
 training_logger = _setup_logger("training-loop", env_var="SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL")
 
+WANDB_RUN_ID_FILENAME = ".wandb_run_id"
+
 
 import accelerate
 import diffusers
@@ -280,6 +283,7 @@ class Trainer:
     publishing_manager = None
     dynamo_cache_manager = None
     _cleanup_invoked = False
+    _trackers_initialized = False
 
     def __init__(
         self,
@@ -311,6 +315,7 @@ class Trainer:
         self.lr = 0.0
         self.job_id = job_id
         self._cleanup_invoked = False
+        self._trackers_initialized = False
         self.sidecar_optimizer = None
         self.sidecar_lr_scheduler = None
         self.sidecar_lr = None
@@ -5241,6 +5246,23 @@ class Trainer:
 
         return lr_scheduler
 
+    def _resolve_wandb_run_id(self, public_args_hash: str) -> str:
+        resume_from_checkpoint = getattr(self.config, "resume_from_checkpoint", None)
+        output_dir = Path(getattr(self.config, "output_dir")).expanduser()
+        run_id_path = output_dir / WANDB_RUN_ID_FILENAME
+        if resume_from_checkpoint:
+            if run_id_path.is_file():
+                run_id = run_id_path.read_text(encoding="utf-8").strip()
+                if not run_id:
+                    raise ValueError(f"{WANDB_RUN_ID_FILENAME} is empty.")
+                return run_id
+            return public_args_hash
+
+        run_id = uuid.uuid4().hex
+        output_dir.mkdir(parents=True, exist_ok=True)
+        run_id_path.write_text(f"{run_id}\n", encoding="utf-8")
+        return run_id
+
     def _build_init_tracker_kwargs(self, tracker_run_name: str, public_args_hash: str) -> Dict[str, Dict[str, object]]:
         """Prepare tracker-specific init kwargs for the active logging backends."""
         loggers = getattr(self.accelerator, "log_with", None)
@@ -5270,7 +5292,7 @@ class Trainer:
         if "wandb" in tracker_names:
             init_kwargs["wandb"] = {
                 "name": tracker_run_name,
-                "id": f"{public_args_hash}",
+                "id": self._resolve_wandb_run_id(public_args_hash),
                 "resume": "allow",
                 "allow_val_change": True,
             }
@@ -5338,6 +5360,9 @@ class Trainer:
         raise TypeError(f"Object of type {payload.__class__.__name__} is not JSON serializable")
 
     def init_trackers(self):
+        if getattr(self, "_trackers_initialized", False):
+            return
+
         # We need to initialize the trackers we use, and also store our configuration.
         # The trackers initializes automatically on the main process.
         self.guidance_values_table = None
@@ -5368,16 +5393,13 @@ class Trainer:
                     init_kwargs=init_kwargs,
                 )
             except Exception as e:
-                if "Object has no attribute 'disabled'" in repr(e):
-                    logger.warning("WandB is disabled, and Accelerate was not quite happy about it.")
-                    self.accelerator.trackers = []
-                else:
-                    logger.error(f"Could not initialize trackers: {e}")
-                    event = error_event(
-                        message=f"Could not initialize trackers. Continuing without. {e}",
-                        job_id=self.job_id,
-                    )
-                    self._emit_event(event)
+                logger.error(f"Could not initialize trackers: {e}")
+                event = error_event(
+                    message=f"Could not initialize trackers: {e}",
+                    job_id=self.job_id,
+                )
+                self._emit_event(event)
+                raise RuntimeError(f"Could not initialize trackers: {e}") from e
             event = notification_event(
                 message="Training configuration initialized",
                 title="Training Config",
@@ -5385,6 +5407,7 @@ class Trainer:
                 data=public_args_payload,
             )
             self._emit_event(event)
+        self._trackers_initialized = True
 
     def resume_and_prepare(self):
         self.init_optimizer()
