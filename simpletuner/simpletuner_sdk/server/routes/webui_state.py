@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.middleware import get_current_user
 from simpletuner.simpletuner_sdk.server.services.cloud.auth.models import User
@@ -574,6 +574,39 @@ class CheckpointInferenceSettingsPayload(BaseModel):
     streaming_preview: bool = False
 
 
+class TrainingMetricChartPayload(BaseModel):
+    """One scalar chart in the training metrics workspace."""
+
+    kind: Literal["scalar"] = "scalar"
+    name: str = "Training metrics"
+    metrics: List[str] = Field(default_factory=list)
+    smoothing: float = Field(default=0, ge=0, le=0.99)
+
+
+class TrainingMetricTemplatePayload(BaseModel):
+    """A named training metrics chart layout."""
+
+    name: str
+    charts: List[TrainingMetricChartPayload] = Field(default_factory=list)
+
+
+class TrainingMetricEnvironmentPayload(BaseModel):
+    """Per-environment active training metrics layout."""
+
+    template: str = "Default"
+    xAxis: Literal["step", "minutes"] = "step"
+    showTimestepChart: bool = False
+    mediaPanelCollapsed: bool = False
+    charts: List[TrainingMetricChartPayload] = Field(default_factory=list)
+
+
+class TrainingMetricLayoutsPayload(BaseModel):
+    """Persisted training metrics layout state."""
+
+    templates: List[TrainingMetricTemplatePayload] = Field(default_factory=list)
+    environments: Dict[str, TrainingMetricEnvironmentPayload] = Field(default_factory=dict)
+
+
 @router.get("/ui-state/checkpoint-inference")
 async def get_checkpoint_inference_settings(
     _user: User = Depends(get_current_user),
@@ -597,6 +630,34 @@ async def save_checkpoint_inference_settings(
     try:
         settings = payload.model_dump()
         store.save_checkpoint_inference_settings(settings)
+        return payload
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
+
+
+@router.get("/ui-state/training-metrics")
+async def get_training_metrics_layouts(
+    _user: User = Depends(get_current_user),
+) -> TrainingMetricLayoutsPayload:
+    """Get training metrics chart layouts."""
+    store = WebUIStateStore()
+    try:
+        settings = store.get_training_metrics_layouts()
+        return TrainingMetricLayoutsPayload.model_validate(settings)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error
+
+
+@router.post("/ui-state/training-metrics")
+async def save_training_metrics_layouts(
+    payload: TrainingMetricLayoutsPayload,
+    _user: User = Depends(get_current_user),
+) -> TrainingMetricLayoutsPayload:
+    """Save training metrics chart layouts."""
+    store = WebUIStateStore()
+    try:
+        settings = payload.model_dump()
+        store.save_training_metrics_layouts(settings)
         return payload
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(error)) from error

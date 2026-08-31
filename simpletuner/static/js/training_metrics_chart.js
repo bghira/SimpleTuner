@@ -12,6 +12,12 @@
         'seconds_per_step',
         'learning_rate',
     ];
+    const LOSS_METRIC_PATTERNS = [
+        /^train_loss$/,
+        /^loss$/,
+        /^loss\//,
+        /(^|[/_.-])loss([/_.-]|$)/,
+    ];
 
     function metricNames(records) {
         const names = new Set();
@@ -21,15 +27,24 @@
         return Array.from(names).sort((left, right) => left.localeCompare(right));
     }
 
-    function defaultMetricNames(names, limit = 4) {
+    function isLossMetric(name) {
+        return LOSS_METRIC_PATTERNS.some((pattern) => pattern.test(name));
+    }
+
+    function defaultMetricNames(names, limit = 1) {
         const selected = [];
         PREFERRED_METRICS.forEach((preferred) => {
             names.forEach((name) => {
                 if (selected.length >= limit) return;
                 if (selected.includes(name)) return;
+                if (!isLossMetric(name)) return;
                 if (name === preferred || name.startsWith(`${preferred}/`)) selected.push(name);
             });
         });
+        for (const name of names) {
+            if (selected.length >= limit) break;
+            if (!selected.includes(name) && isLossMetric(name)) selected.push(name);
+        }
         for (const name of names) {
             if (selected.length >= limit) break;
             if (!selected.includes(name) && !name.includes('learning_rate')) selected.push(name);
@@ -71,12 +86,30 @@
         return Math.round(value).toLocaleString();
     }
 
+    function normalizeSmoothing(value) {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) return 0;
+        return Math.max(0, Math.min(0.99, parsed));
+    }
+
+    function smoothSeries(points, smoothing) {
+        const factor = normalizeSmoothing(smoothing);
+        if (!factor || !Array.isArray(points) || points.length < 2) return points;
+        let smoothedValue = points[0].value;
+        return points.map((point, index) => {
+            if (index === 0) return { ...point, rawValue: point.value };
+            smoothedValue = smoothedValue * factor + point.value * (1 - factor);
+            return { ...point, rawValue: point.value, value: smoothedValue };
+        });
+    }
+
     class TrainingMetricsChart {
         constructor(canvas, options = {}) {
             this.canvas = canvas;
             this.records = [];
             this.metrics = [];
             this.xAxisMode = options.xAxisMode === 'minutes' ? 'minutes' : 'step';
+            this.smoothing = normalizeSmoothing(options.smoothing);
             this.options = options;
             this.geometry = null;
             this.hoverIndex = null;
@@ -96,6 +129,7 @@
             this.records = Array.isArray(records) ? records : [];
             this.metrics = Array.isArray(metrics) ? metrics.slice(0, COLORS.length) : [];
             if (options.xAxisMode) this.xAxisMode = options.xAxisMode === 'minutes' ? 'minutes' : 'step';
+            this.smoothing = normalizeSmoothing(options.smoothing);
             this.hoverIndex = null;
             this.draw();
         }
@@ -132,13 +166,20 @@
                         : Number(record.step),
                 }))
                 .filter((point) => Number.isFinite(point.xValue));
-            const values = [];
-            points.forEach((point) => {
-                this.metrics.forEach((name) => {
+            const series = this.metrics.map((name, metricIndex) => ({
+                name,
+                color: COLORS[metricIndex % COLORS.length],
+                points: smoothSeries(points.filter((point) => {
                     const value = point.record.metrics && point.record.metrics[name];
-                    if (typeof value === 'number' && Number.isFinite(value)) values.push(value);
-                });
-            });
+                    return typeof value === 'number' && Number.isFinite(value);
+                }).map((point) => ({
+                    ...point,
+                    value: point.record.metrics[name],
+                    rawValue: point.record.metrics[name],
+                })), this.smoothing),
+            }));
+            const drawableSeries = series.filter((entry) => entry.points.length);
+            const values = drawableSeries.flatMap((entry) => entry.points.map((point) => point.value));
             if (!points.length || !values.length || !this.metrics.length) {
                 this._drawEmpty(context, width, height);
                 this.geometry = null;
@@ -165,26 +206,33 @@
 
             const xForValue = (xValue) => padding.left + ((xValue - minX) / (maxX - minX)) * plotWidth;
             const yForValue = (value) => padding.top + (1 - (value - minValue) / (maxValue - minValue)) * plotHeight;
-            this.geometry = { points, padding, plotWidth, plotHeight, minX, maxX, minValue, maxValue, xForValue, yForValue, xAxisMode: activeXAxisMode };
+            this.geometry = {
+                points,
+                series,
+                padding,
+                plotWidth,
+                plotHeight,
+                minX,
+                maxX,
+                minValue,
+                maxValue,
+                xForValue,
+                yForValue,
+                xAxisMode: activeXAxisMode,
+            };
 
             this._drawGrid(context, width, height, this.geometry);
-            this.metrics.forEach((name, metricIndex) => {
-                context.strokeStyle = COLORS[metricIndex % COLORS.length];
+            drawableSeries.forEach((entry) => {
+                context.strokeStyle = entry.color;
                 context.lineWidth = 2;
+                context.lineCap = 'round';
                 context.lineJoin = 'round';
                 context.beginPath();
-                let started = false;
-                points.forEach((point) => {
-                    const value = point.record.metrics && point.record.metrics[name];
-                    if (typeof value !== 'number' || !Number.isFinite(value)) {
-                        started = false;
-                        return;
-                    }
+                entry.points.forEach((point, index) => {
                     const x = xForValue(point.xValue);
-                    const y = yForValue(value);
-                    if (!started) {
+                    const y = yForValue(point.value);
+                    if (index === 0) {
                         context.moveTo(x, y);
-                        started = true;
                     } else {
                         context.lineTo(x, y);
                     }
@@ -201,12 +249,12 @@
                 context.moveTo(x, padding.top);
                 context.lineTo(x, padding.top + plotHeight);
                 context.stroke();
-                this.metrics.forEach((name, metricIndex) => {
-                    const value = point.record.metrics && point.record.metrics[name];
-                    if (typeof value !== 'number' || !Number.isFinite(value)) return;
-                    context.fillStyle = COLORS[metricIndex % COLORS.length];
+                series.forEach((entry) => {
+                    const nearest = this._nearestSeriesPoint(entry.points, point.xValue);
+                    if (!nearest) return;
+                    context.fillStyle = entry.color;
                     context.beginPath();
-                    context.arc(x, yForValue(value), 4, 0, Math.PI * 2);
+                    context.arc(xForValue(nearest.xValue), yForValue(nearest.value), 4, 0, Math.PI * 2);
                     context.fill();
                 });
             }
@@ -246,13 +294,21 @@
                 const value = minX + ratio * (maxX - minX);
                 context.fillText(formatXAxisValue(value, xAxisMode), x, height - padding.bottom + 12);
             }
+            context.fillText(xAxisMode === 'minutes' ? 'Elapsed minutes' : 'Global step', padding.left + plotWidth / 2, height - 14);
+
+            context.save();
+            context.translate(16, padding.top + plotHeight / 2);
+            context.rotate(-Math.PI / 2);
+            context.textBaseline = 'top';
+            context.fillText('Metric value', 0, 0);
+            context.restore();
         }
 
         _handlePointer(event) {
             if (!this.geometry) return;
             const rect = this.canvas.getBoundingClientRect();
             const x = event.clientX - rect.left;
-            const { points, xForValue } = this.geometry;
+            const { points, series, xForValue } = this.geometry;
             let nearestIndex = 0;
             let nearestDistance = Number.POSITIVE_INFINITY;
             points.forEach((record, index) => {
@@ -268,18 +324,40 @@
             }
             if (this.options.onHover) {
                 const record = points[nearestIndex];
+                const metrics = series.map((entry) => {
+                    const nearest = this._nearestSeriesPoint(entry.points, record.xValue);
+                    return {
+                        name: entry.name,
+                        value: nearest?.value,
+                        rawValue: nearest?.rawValue,
+                        y: nearest ? this.geometry.yForValue(nearest.value) : undefined,
+                        color: entry.color,
+                    };
+                });
                 this.options.onHover({
                     record: record.record,
                     x: xForValue(record.xValue),
                     xValue: record.xValue,
                     xAxisMode: this.geometry.xAxisMode,
-                    metrics: this.metrics.map((name, index) => ({
-                        name,
-                        value: record.record.metrics ? record.record.metrics[name] : undefined,
-                        color: COLORS[index % COLORS.length],
-                    })),
+                    width: rect.width || this.canvas.clientWidth || 0,
+                    height: rect.height || this.canvas.clientHeight || 0,
+                    metrics,
                 });
             }
+        }
+
+        _nearestSeriesPoint(points, xValue) {
+            if (!Array.isArray(points) || !points.length) return null;
+            let nearest = points[0];
+            let nearestDistance = Math.abs(nearest.xValue - xValue);
+            points.slice(1).forEach((point) => {
+                const distance = Math.abs(point.xValue - xValue);
+                if (distance < nearestDistance) {
+                    nearest = point;
+                    nearestDistance = distance;
+                }
+            });
+            return nearest;
         }
     }
 
@@ -365,6 +443,13 @@
                 const step = Math.round(minStep + ratio * (maxStep - minStep));
                 context.fillText(step.toLocaleString(), x, height - padding.bottom + 12);
             }
+            context.fillText('Global step', padding.left + plotWidth / 2, height - 14);
+            context.save();
+            context.translate(16, padding.top + plotHeight / 2);
+            context.rotate(-Math.PI / 2);
+            context.textBaseline = 'top';
+            context.fillText('Timestep', 0, 0);
+            context.restore();
 
             context.fillStyle = 'rgba(56, 189, 248, 0.45)';
             points.forEach((point) => {
@@ -384,5 +469,6 @@
         formatMetricValue,
         latestMetricValues,
         metricNames,
+        normalizeSmoothing,
     };
 })(typeof window !== 'undefined' ? window : globalThis);

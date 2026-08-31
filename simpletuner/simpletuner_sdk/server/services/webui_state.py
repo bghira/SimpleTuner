@@ -785,6 +785,18 @@ class WebUIStateStore:
         ui_state["checkpoint_inference"] = settings
         self.save_ui_state(ui_state)
 
+    def get_training_metrics_layouts(self) -> Dict[str, Any]:
+        """Get persisted training metrics chart layouts."""
+        ui_state = self.load_ui_state()
+        settings = ui_state.get("training_metrics")
+        return settings if isinstance(settings, dict) else {}
+
+    def save_training_metrics_layouts(self, settings: Dict[str, Any]) -> None:
+        """Save training metrics chart layouts without replacing unrelated UI state."""
+        ui_state = self.load_ui_state()
+        ui_state["training_metrics"] = settings
+        self.save_ui_state(ui_state)
+
     def get_collapsed_sections(self, tab_name: str) -> Dict[str, bool]:
         """Get collapsed state for sections in a specific tab."""
         ui_state = self.load_ui_state()
