@@ -344,6 +344,35 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
             self.fail("Expected payload from log extraction")
         self.assertIn("CUDA out of memory", payload.get("message", ""))
 
+    def test_log_extraction_prefers_allocator_oom_over_aoti_error(self):
+        """Allocator OOM warnings should beat generic compiled-kernel RuntimeErrors."""
+        job_id = "test_log_allocator_oom"
+        process = TrainerProcess(job_id)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = os.path.join(tmpdir, "stdout.log")
+            with open(log_path, "w", encoding="utf-8") as handle:
+                handle.write("starting epoch 5\n")
+                handle.write(
+                    "[W831 10:32:25.255074645 CUDACachingAllocator.cpp:508] "
+                    "expandable_segments: memory mapping failed with OOM on device 0 while trying to map 20971520 bytes.\n"
+                )
+                handle.write("Traceback (most recent call last):\n")
+                handle.write(
+                    "RuntimeError: aoti_torch_empty_strided(3, int_array_74, int_array_75, "
+                    "cached_torch_dtype_bfloat16, cached_torch_device_type_cuda, 0, &buf80_handle) API call failed\n"
+                )
+
+            process.log_file = log_path
+            payload = process._extract_error_from_logs(exit_code=1)
+
+        self.assertIsNotNone(payload)
+        if payload is None:
+            self.fail("Expected payload from log extraction")
+        message = payload.get("message", "")
+        self.assertIn("memory mapping failed with OOM", message)
+        self.assertNotIn("aoti_torch_empty_strided", message)
+
     def test_log_extraction_prefers_signal_exit(self):
         """Synthetic log extraction should highlight signal-based exits."""
         job_id = "test_log_signal_exit"
