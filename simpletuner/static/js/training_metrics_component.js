@@ -761,7 +761,6 @@
                     : images.length - 1;
                 const next = images[clamped];
                 this.trainingMediaLightbox.path = next.item.path;
-                this.selectedTrainingMediaStep = next.item.step;
             },
 
             setTrainingLightboxStepOffset(offset) {
@@ -771,7 +770,6 @@
                 const next = images[currentIndex + offset];
                 if (next) {
                     this.trainingMediaLightbox.path = next.item.path;
-                    this.selectedTrainingMediaStep = next.item.step;
                 }
             },
 
