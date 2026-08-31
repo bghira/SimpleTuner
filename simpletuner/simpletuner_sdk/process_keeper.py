@@ -35,6 +35,14 @@ process_registry: Dict[str, Dict[str, Any]] = {}
 lock = threading.Lock()
 
 
+def _is_cuda_oom_log_line(lowered: str) -> bool:
+    return (
+        "torch.cuda.outofmemoryerror" in lowered
+        or "cuda out of memory" in lowered
+        or "memory mapping failed with oom" in lowered
+    )
+
+
 class TrainerProcess:
     """Wrapper for a training subprocess with IPC communication."""
 
@@ -744,7 +752,7 @@ logger.info("Subprocess exiting")
         preferred_message: Optional[str] = None
         for line in reversed(tail_lines):
             lowered = line.lower().strip()
-            if "cuda out of memory" in lowered:
+            if _is_cuda_oom_log_line(lowered):
                 preferred_message = line.strip()
                 break
             if "childfailederror" in lowered:
