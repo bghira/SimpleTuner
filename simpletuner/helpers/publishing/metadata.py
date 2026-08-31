@@ -13,6 +13,7 @@ from simpletuner.helpers.configuration.sanitization import make_public_config_se
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.models.common import AudioModelFoundation, ModelFoundation
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.training.validation_images import save_image_with_validation_format
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -488,6 +489,7 @@ def save_metadata_sample(
     image_path: str,
     image: Union[Image.Image, np.ndarray, list, str, torch.Tensor],
     sample_rate: int = 44100,
+    config: Any = None,
 ):
     if isinstance(image, str):
         import shutil
@@ -519,9 +521,7 @@ def save_metadata_sample(
             fps=StateTracker.get_args().framerate,
         )
     elif isinstance(image, Image.Image):
-        file_extension = "png"
-        output_path = f"{image_path}.{file_extension}"
-        image.save(output_path, format="PNG")
+        output_path, file_extension = save_image_with_validation_format(image, image_path, config)
     else:
         raise ValueError(f"Cannot export sample type {type(image)} yet.")
 
@@ -772,6 +772,7 @@ def save_model_card(
                     image_path=os.path.join(assets_folder, f"{asset_prefix}_{idx}_{sub_idx}"),
                     image=media_sample,
                     sample_rate=audio_sample_rate,
+                    config=args,
                 )
                 asset_filename = os.path.basename(output_path)
                 if media_extension in {"mp4", "avi", "mov", "webm"}:
