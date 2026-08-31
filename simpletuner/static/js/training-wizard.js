@@ -1160,8 +1160,7 @@ function trainingWizardComponent() {
                         { value: 'wandb', label: 'Weights & Biases' },
                         { value: 'tensorboard', label: 'TensorBoard' },
                         { value: 'comet_ml', label: 'Comet ML' },
-                        { value: 'custom-tracker', label: 'Custom Tracker' },
-                        { value: 'all', label: 'All Platforms' }
+                        { value: 'custom-tracker', label: 'Custom Tracker' }
                     ];
                     return;
                 }
@@ -1184,8 +1183,7 @@ function trainingWizardComponent() {
                         { value: 'wandb', label: 'Weights & Biases' },
                         { value: 'tensorboard', label: 'TensorBoard' },
                         { value: 'comet_ml', label: 'Comet ML' },
-                        { value: 'custom-tracker', label: 'Custom Tracker' },
-                        { value: 'all', label: 'All Platforms' }
+                        { value: 'custom-tracker', label: 'Custom Tracker' }
                     ];
                 }
             } catch (error) {
@@ -1196,8 +1194,7 @@ function trainingWizardComponent() {
                     { value: 'wandb', label: 'Weights & Biases' },
                     { value: 'tensorboard', label: 'TensorBoard' },
                     { value: 'comet_ml', label: 'Comet ML' },
-                    { value: 'custom-tracker', label: 'Custom Tracker' },
-                    { value: 'all', label: 'All Platforms' }
+                    { value: 'custom-tracker', label: 'Custom Tracker' }
                 ];
             }
         },

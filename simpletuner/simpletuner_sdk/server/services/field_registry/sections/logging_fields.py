@@ -29,11 +29,10 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
                 {"value": "swanlab", "label": "SwanLab"},
                 {"value": "comet_ml", "label": "Comet ML"},
                 {"value": "custom-tracker", "label": "Custom Tracker"},
-                {"value": "all", "label": "All Platforms"},
                 {"value": "none", "label": "None"},
             ],
             help_text="Where to log training metrics",
-            tooltip="SimpleTuner writes local charts and an offline report. 'All' includes the local report and available external platforms.",
+            tooltip="SimpleTuner writes local charts and an offline report. Use comma-separated values for multiple trackers.",
             importance=ImportanceLevel.IMPORTANT,
             order=1,
             documentation="OPTIONS.md#--report_to",
@@ -275,9 +274,7 @@ def register_logging_fields(registry: "FieldRegistry") -> None:
             importance=ImportanceLevel.ADVANCED,
             order=5,
             dependencies=[
-                FieldDependency(
-                    field="report_to", operator="in", values=["tensorboard", "all", "custom-tracker"], action="show"
-                )
+                FieldDependency(field="report_to", operator="in", values=["tensorboard", "custom-tracker"], action="show")
             ],
             documentation="OPTIONS.md#--logging_dir",
         )

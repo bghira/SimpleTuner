@@ -6,7 +6,7 @@ SimpleTuner puede registrar métricas sin un servicio externo. Configura:
 {"report_to": "simpletuner"}
 ```
 
-`report_to=all` también activa el tracker local. Funciona con todas las familias de modelos y, con DDP, solo escribe el proceso principal.
+Usa valores separados por comas, como `report_to=simpletuner,wandb`, para activar el tracker local junto con uno externo. Funciona con todas las familias de modelos y, con DDP, solo escribe el proceso principal.
 
 ## Archivos de salida
 

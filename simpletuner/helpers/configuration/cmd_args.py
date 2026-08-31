@@ -30,6 +30,7 @@ from simpletuner.helpers.training.attention_backend import (
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.optimizer_param import is_optimizer_deprecated, is_optimizer_grad_fp32
 from simpletuner.helpers.training.quantisation import MANUAL_QUANTIZATION_PRESETS, PIPELINE_QUANTIZATION_PRESETS
+from simpletuner.helpers.training.reporting import REPORT_TO_CHOICES, normalize_report_to
 from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.timestep_distribution import parse_cubic_spline_weights
@@ -413,6 +414,16 @@ def _parse_validation_prompt_library_flag(value):
         return text_value
 
 
+def _parse_report_to_arg(value):
+    try:
+        parsed = normalize_report_to(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    if parsed is None:
+        raise argparse.ArgumentTypeError("--report_to requires at least one tracker.")
+    return parsed
+
+
 def _extract_choice_values(field: ConfigField) -> List[Any]:
     if not field.choices or field.dynamic_choices:
         return []
@@ -515,6 +526,15 @@ def _add_argument_from_field(parser: argparse.ArgumentParser, field: ConfigField
         return
     if field.field_type == FieldType.SELECT:
         cli_choices = [str(value) for value in cli_choices]
+
+    if field.name == "report_to":
+        kwargs["metavar"] = "{" + ",".join(REPORT_TO_CHOICES) + "}"
+        default = field.default_value
+        if default is not None:
+            kwargs["default"] = str(default)
+        kwargs["type"] = _parse_report_to_arg
+        parser.add_argument(*option_strings, **kwargs)
+        return
 
     if cli_choices and not field.dynamic_choices:
         kwargs["choices"] = cli_choices

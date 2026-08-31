@@ -9,6 +9,8 @@ from typing import Any, Optional
 
 from accelerate.tracking import GeneralTracker
 
+from simpletuner.helpers.training.reporting import report_to_contains
+
 SCHEMA_VERSION = 1
 METRICS_FILENAME = "training_metrics.jsonl"
 MANIFEST_FILENAME = "training_metrics.json"
@@ -106,13 +108,7 @@ def downsample_records(records: list[dict[str, Any]], max_points: int) -> list[d
 
 
 def is_local_metrics_enabled(report_to: Any) -> bool:
-    if isinstance(report_to, str):
-        values = [part.strip().lower() for part in report_to.split(",")]
-    elif isinstance(report_to, (list, tuple, set)):
-        values = [str(part).strip().lower() for part in report_to]
-    else:
-        return False
-    return "simpletuner" in values or "all" in values
+    return report_to_contains(report_to, "simpletuner")
 
 
 def _coerce_scalar(value: Any) -> Optional[float]:
