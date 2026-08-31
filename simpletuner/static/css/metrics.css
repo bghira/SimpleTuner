@@ -1035,6 +1035,34 @@
     max-width: 13rem;
 }
 
+.training-axis-toggle {
+    display: inline-flex;
+    flex: 0 0 auto;
+    gap: 0.25rem;
+    padding: 0.2rem;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 0.3rem;
+    background: rgba(2, 6, 23, 0.32);
+}
+
+.training-axis-toggle button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-height: 1.8rem;
+    padding: 0.25rem 0.45rem;
+    border: 0;
+    border-radius: 0.2rem;
+    color: #94a3b8;
+    background: transparent;
+    font-size: 0.7rem;
+}
+
+.training-axis-toggle button.active {
+    color: #e0f2fe;
+    background: rgba(14, 165, 233, 0.18);
+}
+
 .training-metric-picker {
     display: flex;
     justify-content: flex-end;
@@ -1110,6 +1138,11 @@
     height: 24rem;
 }
 
+.training-timestep-canvas-wrap {
+    height: 16rem;
+    margin-top: 1rem;
+}
+
 .training-chart-canvas-wrap canvas {
     display: block;
     width: 100%;
@@ -1144,9 +1177,37 @@
     gap: 0.6rem;
 }
 
+.training-media-gallery {
+    display: grid;
+    gap: 0.85rem;
+}
+
+.training-media-group {
+    min-width: 0;
+}
+
+.training-media-group h4 {
+    overflow: hidden;
+    margin: 0 0 0.45rem;
+    color: #e2e8f0;
+    font-size: 0.78rem;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .training-media-grid figure {
     min-width: 0;
     margin: 0;
+}
+
+.training-media-image-button {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: zoom-in;
 }
 
 .training-media-grid img,
@@ -1180,6 +1241,77 @@
     text-align: center;
 }
 
+.training-media-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 1090;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    gap: 0.75rem;
+    padding: 1rem;
+    background: rgba(2, 6, 23, 0.94);
+}
+
+.training-media-lightbox-body {
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.training-media-lightbox-body img {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+.training-media-lightbox-body img.actual-size {
+    max-width: none;
+    max-height: none;
+}
+
+.training-media-lightbox-toolbar {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+}
+
+.training-media-lightbox-toolbar button {
+    width: 2.25rem;
+    height: 2.25rem;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 0.25rem;
+    color: #e2e8f0;
+    background: rgba(15, 23, 42, 0.85);
+}
+
+.training-media-lightbox-toolbar button:disabled {
+    opacity: 0.45;
+}
+
+.training-media-lightbox-toolbar span {
+    min-width: 4rem;
+    color: #cbd5e1;
+    font-size: 0.8rem;
+    text-align: center;
+}
+
+.training-media-lightbox-caption {
+    overflow: hidden;
+    color: #cbd5e1;
+    font-size: 0.82rem;
+    pointer-events: none;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 @media (max-width: 1100px) {
     .training-metrics-layout {
         grid-template-columns: 1fr;
@@ -1200,9 +1332,15 @@
 
     .training-run-actions .form-select,
     .training-tool-header .form-select,
-    .training-metric-picker {
+    .training-metric-picker,
+    .training-axis-toggle {
         width: 100%;
         max-width: none;
+    }
+
+    .training-axis-toggle button {
+        flex: 1 1 0;
+        justify-content: center;
     }
 
     .training-run-summary {
@@ -1219,6 +1357,10 @@
 
     .training-chart-canvas-wrap {
         height: 18rem;
+    }
+
+    .training-media-grid {
+        grid-template-columns: 1fr;
     }
 
     .gpu-stats-grid {

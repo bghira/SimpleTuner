@@ -81,6 +81,7 @@ function metricsComponent(initialSettings = {}) {
             }
 
             this.startGpuHealthPolling();
+            this.startTrainingMetricsPolling();
         },
 
         destroy() {

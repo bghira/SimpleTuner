@@ -80,7 +80,7 @@ from simpletuner.helpers.training.evaluation import ModelEvaluator
 from simpletuner.helpers.training.exceptions import GPUHealthError
 from simpletuner.helpers.training.gpu_circuit_breaker import get_current_gpu_index, get_gpu_circuit_breaker, is_cuda_error
 from simpletuner.helpers.training.iteration_tracker import IterationTracker
-from simpletuner.helpers.training.local_metrics import LocalMetricsTracker
+from simpletuner.helpers.training.local_metrics import LocalMetricsTracker, record_timestep_distribution
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.multi_process import broadcast_object_from_main, should_log
@@ -7409,6 +7409,7 @@ class Trainer:
                     current_epoch_step += 1
                     StateTracker.set_global_step(self.state["global_step"])
                     self.iteration_tracker.record_step(self.state["global_step"])
+                    wandb_logs.update(self.iteration_tracker.iteration_metrics())
                     self._export_dynamo_cache_after_first_step()
                     if ramtorch_profile.profile_enabled():
                         ramtorch_profile.record_train_step(
@@ -7461,6 +7462,9 @@ class Trainer:
                                 self._twinflow_traj_logged = True
                             else:
                                 wandb_logs["twinflow_traj_table"] = self._twinflow_traj_table
+
+                    if report_to_contains(self.config.report_to, "simpletuner") and self.accelerator.is_main_process:
+                        record_timestep_distribution(self.config, self.timesteps_buffer)
 
                     # Clear buffers
                     self.timesteps_buffer = []

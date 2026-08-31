@@ -19,6 +19,7 @@ The training output directory contains:
 | `training_metrics.jsonl` | Append-only scalar records with step and UTC timestamp |
 | `training_metrics.json` | Atomic run manifest, metric names, status, and selected configuration values |
 | `validation_media.jsonl` | Indexed validation image, video, and audio paths |
+| `timestep_distribution.jsonl` | Timestep samples grouped by global step |
 | `training_report.html` | Self-contained report that opens without a server |
 
 The JSONL files are the raw interface for analysis tools. A resumed run appends records instead of replacing them. Under DDP, only the main process writes these files.
@@ -32,8 +33,9 @@ When a tracker does not collect system telemetry natively, SimpleTuner records n
 Open **Metrics**, then **Training Runs**. Runs are discovered from saved WebUI environments. The page provides:
 
 - dynamic scalar selection, up to eight series
-- latest values and step history
-- validation comparison by prompt and training step
+- latest values over step or elapsed minutes
+- timestep distribution over global step
+- validation galleries grouped by prompt for each training step
 - a link to the offline report
 
 The **System** section retains GPU health and Prometheus configuration.

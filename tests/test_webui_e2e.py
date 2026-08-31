@@ -779,16 +779,31 @@ class TrainingMetricsDashboardTestCase(_TrainerPageMixin, WebUITestCase):
             encoding="utf-8",
         )
         image_path = validation_dir / "step_20_prompt_0_64x64.png"
+        second_image_path = validation_dir / "step_20_second_0_64x64.png"
         Image.new("RGB", (64, 64), color=(32, 160, 120)).save(image_path, format="PNG")
-        media = {
-            "step": 20,
-            "type": "image",
-            "label": "A green square",
-            "index": 0,
-            "resolution": "64x64",
-            "path": image_path.relative_to(output_dir).as_posix(),
-        }
-        (output_dir / "validation_media.jsonl").write_text(f"{json.dumps(media)}\n", encoding="utf-8")
+        Image.new("RGB", (64, 64), color=(120, 80, 220)).save(second_image_path, format="PNG")
+        media_records = [
+            {
+                "step": 20,
+                "type": "image",
+                "label": "A green square",
+                "index": 0,
+                "resolution": "64x64",
+                "path": image_path.relative_to(output_dir).as_posix(),
+            },
+            {
+                "step": 20,
+                "type": "image",
+                "label": "A violet square",
+                "index": 0,
+                "resolution": "64x64",
+                "path": second_image_path.relative_to(output_dir).as_posix(),
+            },
+        ]
+        (output_dir / "validation_media.jsonl").write_text(
+            "".join(f"{json.dumps(media)}\n" for media in media_records),
+            encoding="utf-8",
+        )
         (output_dir / "training_report.html").write_text("<html>report</html>", encoding="utf-8")
 
         def scenario(driver, _browser):
@@ -810,13 +825,28 @@ class TrainingMetricsDashboardTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertGreater(canvas.size["width"], 300)
             self.assertGreater(canvas.size["height"], 200)
 
-            image = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, ".training-media-grid > figure img"))
+            images = WebDriverWait(driver, 10).until(
+                lambda _driver: driver.find_elements(By.CSS_SELECTOR, ".training-media-grid figure img")
             )
+            self.assertEqual(len(images), 2)
+            image = images[0]
             media_response = requests.get(image.get_attribute("src"), timeout=5)
             self.assertEqual(media_response.status_code, 200, media_response.text)
             self.assertEqual(media_response.headers["content-type"], "image/png")
             self.assertEqual(Image.open(BytesIO(media_response.content)).size, (64, 64))
+            image.click()
+            lightbox = WebDriverWait(driver, 10).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, ".training-media-lightbox"))
+            )
+            self.assertTrue(lightbox.is_displayed())
+            actual_size_button = lightbox.find_element(
+                By.CSS_SELECTOR, ".training-media-lightbox-toolbar button[title='Show at 1:1 size']"
+            )
+            actual_size_button.click()
+            lightbox_image = driver.find_element(By.CSS_SELECTOR, ".training-media-lightbox-body img")
+            self.assertIn("actual-size", lightbox_image.get_attribute("class"))
+            lightbox.find_element(By.CSS_SELECTOR, ".training-media-lightbox-toolbar button[title='Close image']").click()
+            WebDriverWait(driver, 5).until(EC.invisibility_of_element_located((By.CSS_SELECTOR, ".training-media-lightbox")))
 
             loss_toggle = driver.find_element(
                 By.XPATH,

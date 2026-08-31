@@ -13,6 +13,7 @@ SimpleTuner बाहरी सेवा के बिना प्रशिक�
 - `training_metrics.jsonl`: हर step के append-only scalar records।
 - `training_metrics.json`: atomic run manifest, status और metric names।
 - `validation_media.jsonl`: validation image, video और audio index।
+- `timestep_distribution.jsonl`: global step के अनुसार grouped timestep samples।
 - `training_report.html`: बिना server के खुलने वाली self-contained report।
 
 Resume पर records जोड़े जाते हैं। HTML relative media paths उपयोग करता है, इसलिए इसे output directory के साथ archive करें।
@@ -21,7 +22,7 @@ Resume पर records जोड़े जाते हैं। HTML relative me
 
 ## WebUI और API
 
-**Metrics** में **Training Runs** खोलें। यहाँ scalar चुन सकते हैं, prompt/step के अनुसार validation तुलना कर सकते हैं और offline report खोल सकते हैं। **System** में GPU health और Prometheus configuration रहती है।
+**Metrics** में **Training Runs** खोलें। यहाँ step या minutes पर scalar, timestep distribution, हर step की validation gallery और offline report देख सकते हैं। **System** में GPU health और Prometheus configuration रहती है।
 
 ```text
 GET /api/metrics/training/runs

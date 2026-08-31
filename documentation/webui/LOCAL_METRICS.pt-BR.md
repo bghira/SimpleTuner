@@ -13,6 +13,7 @@ Use valores separados por virgula, como `report_to=simpletuner,wandb`, para ativ
 - `training_metrics.jsonl`: escalares por etapa, somente anexados.
 - `training_metrics.json`: manifesto atômico, status e nomes das métricas.
 - `validation_media.jsonl`: índice de imagens, vídeos e áudios de validação.
+- `timestep_distribution.jsonl`: amostras de timestep agrupadas por etapa global.
 - `training_report.html`: relatório autônomo que abre sem servidor.
 
 Ao retomar, novos registros são anexados. Arquive o HTML com o diretório de saída, pois os caminhos de mídia são relativos.
@@ -21,7 +22,7 @@ Quando um tracker não coleta telemetria do sistema nativamente, o SimpleTuner r
 
 ## WebUI e API
 
-Abra **Metrics** e **Training Runs** para selecionar escalares, comparar validações por prompt/etapa e abrir o relatório. **System** mantém a saúde das GPUs e a configuração do Prometheus.
+Abra **Metrics** e **Training Runs** para selecionar escalares por etapa ou minutos, ver a distribuição de timesteps, revisar galerias de validação por etapa e abrir o relatório. **System** mantém a saúde das GPUs e a configuração do Prometheus.
 
 ```text
 GET /api/metrics/training/runs

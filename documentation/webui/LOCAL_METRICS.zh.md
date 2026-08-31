@@ -13,6 +13,7 @@ SimpleTuner 可以在不使用外部服务的情况下记录训练指标：
 - `training_metrics.jsonl`：按 step 追加的标量记录。
 - `training_metrics.json`：原子写入的运行清单、状态和指标名称。
 - `validation_media.jsonl`：验证图像、视频和音频索引。
+- `timestep_distribution.jsonl`：按 global step 分组的 timestep 样本。
 - `training_report.html`：无需服务器即可打开的独立报告。
 
 恢复训练时会追加记录。HTML 使用相对媒体路径，因此应与输出目录一起归档。
@@ -21,7 +22,7 @@ SimpleTuner 可以在不使用外部服务的情况下记录训练指标：
 
 ## WebUI 与 API
 
-打开 **Metrics** 和 **Training Runs**，可选择标量、按 prompt/step 比较验证结果并打开离线报告。**System** 保留 GPU 健康和 Prometheus 设置。
+打开 **Metrics** 和 **Training Runs**，可按 step 或分钟查看标量、查看 timestep 分布、按 step 浏览验证图库并打开离线报告。**System** 保留 GPU 健康和 Prometheus 设置。
 
 ```text
 GET /api/metrics/training/runs

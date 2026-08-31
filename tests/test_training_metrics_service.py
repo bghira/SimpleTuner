@@ -3,7 +3,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from simpletuner.helpers.training.local_metrics import MANIFEST_FILENAME, MEDIA_FILENAME, METRICS_FILENAME, REPORT_FILENAME
+from simpletuner.helpers.training.local_metrics import (
+    MANIFEST_FILENAME,
+    MEDIA_FILENAME,
+    METRICS_FILENAME,
+    REPORT_FILENAME,
+    TIMESTEP_DISTRIBUTION_FILENAME,
+)
 from simpletuner.simpletuner_sdk.server.services.training_metrics_service import (
     TrainingMetricsService,
     TrainingMetricsServiceError,
@@ -57,6 +63,7 @@ class TrainingMetricsServiceTests(unittest.TestCase):
             METRICS_FILENAME,
             [{"step": step, "metrics": {"loss": 10.0 - step, "lr": step / 1000, "epoch": step / 10}} for step in range(10)],
         )
+        self._write_jsonl(TIMESTEP_DISTRIBUTION_FILENAME, [{"step": 9, "timesteps": [10.0, 20.0]}])
         validation_dir = self.output_dir / "validation_images"
         validation_dir.mkdir()
         (validation_dir / "step_9_prompt_0.webp").write_bytes(b"RIFF")
@@ -104,6 +111,8 @@ class TrainingMetricsServiceTests(unittest.TestCase):
         self.assertEqual([record["step"] for record in result["records"]], [2, 5, 8])
         self.assertEqual([set(record["metrics"]) for record in result["records"]], [{"loss"}] * 3)
         self.assertEqual(result["available_metrics"], ["loss", "lr"])
+        self.assertEqual(result["timesteps"], [{"step": 9, "timesteps": [10.0, 20.0]}])
+        self.assertEqual(result["raw_files"]["timesteps"], TIMESTEP_DISTRIBUTION_FILENAME)
         self.assertEqual(len(result["media"]), 1)
         self.assertIn("/api/metrics/training/runs/anima/media/validation_images/", result["media"][0]["url"])
 

@@ -6,7 +6,10 @@
         'train_loss',
         'optimization_loss',
         'diffusion_loss',
-        'eval_loss',
+        'loss/val/pooled',
+        'loss/val',
+        'iteration_step_time_seconds',
+        'seconds_per_step',
         'learning_rate',
     ];
 
@@ -19,7 +22,14 @@
     }
 
     function defaultMetricNames(names, limit = 4) {
-        const selected = PREFERRED_METRICS.filter((name) => names.includes(name));
+        const selected = [];
+        PREFERRED_METRICS.forEach((preferred) => {
+            names.forEach((name) => {
+                if (selected.length >= limit) return;
+                if (selected.includes(name)) return;
+                if (name === preferred || name.startsWith(`${preferred}/`)) selected.push(name);
+            });
+        });
         for (const name of names) {
             if (selected.length >= limit) break;
             if (!selected.includes(name) && !name.includes('learning_rate')) selected.push(name);
@@ -44,11 +54,29 @@
         return value.toLocaleString(undefined, { maximumFractionDigits: 6 });
     }
 
+    function timestampMs(record) {
+        if (!record || typeof record.timestamp !== 'string') return null;
+        const timestamp = Date.parse(record.timestamp);
+        return Number.isFinite(timestamp) ? timestamp : null;
+    }
+
+    function elapsedMinutes(record, startTimestamp) {
+        const timestamp = timestampMs(record);
+        if (timestamp === null || startTimestamp === null) return null;
+        return (timestamp - startTimestamp) / 60000;
+    }
+
+    function formatXAxisValue(value, mode) {
+        if (mode === 'minutes') return `${formatMetricValue(value)} min`;
+        return Math.round(value).toLocaleString();
+    }
+
     class TrainingMetricsChart {
         constructor(canvas, options = {}) {
             this.canvas = canvas;
             this.records = [];
             this.metrics = [];
+            this.xAxisMode = options.xAxisMode === 'minutes' ? 'minutes' : 'step';
             this.options = options;
             this.geometry = null;
             this.hoverIndex = null;
@@ -64,9 +92,10 @@
             canvas.addEventListener('pointerleave', this._leaveHandler);
         }
 
-        setData(records, metrics) {
+        setData(records, metrics, options = {}) {
             this.records = Array.isArray(records) ? records : [];
             this.metrics = Array.isArray(metrics) ? metrics.slice(0, COLORS.length) : [];
+            if (options.xAxisMode) this.xAxisMode = options.xAxisMode === 'minutes' ? 'minutes' : 'step';
             this.hoverIndex = null;
             this.draw();
         }
@@ -92,11 +121,21 @@
             context.setTransform(dpr, 0, 0, dpr, 0, 0);
             context.clearRect(0, 0, width, height);
 
-            const points = this.records.filter((record) => Number.isFinite(Number(record.step)));
+            const timestampValues = this.records.map(timestampMs).filter((value) => value !== null);
+            const startTimestamp = timestampValues.length ? Math.min(...timestampValues) : null;
+            const activeXAxisMode = this.xAxisMode === 'minutes' && startTimestamp !== null ? 'minutes' : 'step';
+            const points = this.records
+                .map((record) => ({
+                    record,
+                    xValue: activeXAxisMode === 'minutes'
+                        ? elapsedMinutes(record, startTimestamp)
+                        : Number(record.step),
+                }))
+                .filter((point) => Number.isFinite(point.xValue));
             const values = [];
-            points.forEach((record) => {
+            points.forEach((point) => {
                 this.metrics.forEach((name) => {
-                    const value = record.metrics && record.metrics[name];
+                    const value = point.record.metrics && point.record.metrics[name];
                     if (typeof value === 'number' && Number.isFinite(value)) values.push(value);
                 });
             });
@@ -109,12 +148,12 @@
             const padding = { left: 64, right: 20, top: 20, bottom: 42 };
             const plotWidth = width - padding.left - padding.right;
             const plotHeight = height - padding.top - padding.bottom;
-            const steps = points.map((record) => Number(record.step));
-            let minStep = Math.min(...steps);
-            let maxStep = Math.max(...steps);
+            const xValues = points.map((point) => point.xValue);
+            let minX = Math.min(...xValues);
+            let maxX = Math.max(...xValues);
             let minValue = Math.min(...values);
             let maxValue = Math.max(...values);
-            if (minStep === maxStep) maxStep = minStep + 1;
+            if (minX === maxX) maxX = minX + 1;
             if (minValue === maxValue) {
                 const offset = Math.abs(minValue) * 0.05 || 1;
                 minValue -= offset;
@@ -124,9 +163,9 @@
             minValue -= valuePadding;
             maxValue += valuePadding;
 
-            const xForStep = (step) => padding.left + ((step - minStep) / (maxStep - minStep)) * plotWidth;
+            const xForValue = (xValue) => padding.left + ((xValue - minX) / (maxX - minX)) * plotWidth;
             const yForValue = (value) => padding.top + (1 - (value - minValue) / (maxValue - minValue)) * plotHeight;
-            this.geometry = { points, padding, plotWidth, plotHeight, minStep, maxStep, minValue, maxValue, xForStep, yForValue };
+            this.geometry = { points, padding, plotWidth, plotHeight, minX, maxX, minValue, maxValue, xForValue, yForValue, xAxisMode: activeXAxisMode };
 
             this._drawGrid(context, width, height, this.geometry);
             this.metrics.forEach((name, metricIndex) => {
@@ -135,13 +174,13 @@
                 context.lineJoin = 'round';
                 context.beginPath();
                 let started = false;
-                points.forEach((record) => {
-                    const value = record.metrics && record.metrics[name];
+                points.forEach((point) => {
+                    const value = point.record.metrics && point.record.metrics[name];
                     if (typeof value !== 'number' || !Number.isFinite(value)) {
                         started = false;
                         return;
                     }
-                    const x = xForStep(Number(record.step));
+                    const x = xForValue(point.xValue);
                     const y = yForValue(value);
                     if (!started) {
                         context.moveTo(x, y);
@@ -154,8 +193,8 @@
             });
 
             if (this.hoverIndex !== null && points[this.hoverIndex]) {
-                const record = points[this.hoverIndex];
-                const x = xForStep(Number(record.step));
+                const point = points[this.hoverIndex];
+                const x = xForValue(point.xValue);
                 context.strokeStyle = 'rgba(148, 163, 184, 0.65)';
                 context.lineWidth = 1;
                 context.beginPath();
@@ -163,7 +202,7 @@
                 context.lineTo(x, padding.top + plotHeight);
                 context.stroke();
                 this.metrics.forEach((name, metricIndex) => {
-                    const value = record.metrics && record.metrics[name];
+                    const value = point.record.metrics && point.record.metrics[name];
                     if (typeof value !== 'number' || !Number.isFinite(value)) return;
                     context.fillStyle = COLORS[metricIndex % COLORS.length];
                     context.beginPath();
@@ -181,7 +220,7 @@
         }
 
         _drawGrid(context, width, height, geometry) {
-            const { padding, plotWidth, plotHeight, minStep, maxStep, minValue, maxValue } = geometry;
+            const { padding, plotWidth, plotHeight, minX, maxX, minValue, maxValue, xAxisMode } = geometry;
             context.font = '12px system-ui, sans-serif';
             context.fillStyle = '#94a3b8';
             context.strokeStyle = 'rgba(148, 163, 184, 0.18)';
@@ -204,8 +243,8 @@
             for (let index = 0; index <= 4; index += 1) {
                 const ratio = index / 4;
                 const x = padding.left + ratio * plotWidth;
-                const step = Math.round(minStep + ratio * (maxStep - minStep));
-                context.fillText(step.toLocaleString(), x, height - padding.bottom + 12);
+                const value = minX + ratio * (maxX - minX);
+                context.fillText(formatXAxisValue(value, xAxisMode), x, height - padding.bottom + 12);
             }
         }
 
@@ -213,11 +252,11 @@
             if (!this.geometry) return;
             const rect = this.canvas.getBoundingClientRect();
             const x = event.clientX - rect.left;
-            const { points, xForStep } = this.geometry;
+            const { points, xForValue } = this.geometry;
             let nearestIndex = 0;
             let nearestDistance = Number.POSITIVE_INFINITY;
             points.forEach((record, index) => {
-                const distance = Math.abs(xForStep(Number(record.step)) - x);
+                const distance = Math.abs(xForValue(record.xValue) - x);
                 if (distance < nearestDistance) {
                     nearestDistance = distance;
                     nearestIndex = index;
@@ -230,11 +269,13 @@
             if (this.options.onHover) {
                 const record = points[nearestIndex];
                 this.options.onHover({
-                    record,
-                    x: xForStep(Number(record.step)),
+                    record: record.record,
+                    x: xForValue(record.xValue),
+                    xValue: record.xValue,
+                    xAxisMode: this.geometry.xAxisMode,
                     metrics: this.metrics.map((name, index) => ({
                         name,
-                        value: record.metrics ? record.metrics[name] : undefined,
+                        value: record.record.metrics ? record.record.metrics[name] : undefined,
                         color: COLORS[index % COLORS.length],
                     })),
                 });
@@ -242,10 +283,104 @@
         }
     }
 
+    class TimestepDistributionChart {
+        constructor(canvas) {
+            this.canvas = canvas;
+            this.records = [];
+            this._resizeHandler = () => this.draw();
+            global.addEventListener('resize', this._resizeHandler);
+        }
+
+        setData(records) {
+            this.records = Array.isArray(records) ? records : [];
+            this.draw();
+        }
+
+        destroy() {
+            global.removeEventListener('resize', this._resizeHandler);
+        }
+
+        draw() {
+            const context = this.canvas.getContext('2d');
+            if (!context) return;
+            const width = Math.max(320, this.canvas.clientWidth || 800);
+            const height = Math.max(220, this.canvas.clientHeight || 320);
+            const dpr = global.devicePixelRatio || 1;
+            this.canvas.width = Math.round(width * dpr);
+            this.canvas.height = Math.round(height * dpr);
+            context.setTransform(dpr, 0, 0, dpr, 0, 0);
+            context.clearRect(0, 0, width, height);
+
+            const points = [];
+            this.records.forEach((record) => {
+                const step = Number(record.step);
+                if (!Number.isFinite(step) || !Array.isArray(record.timesteps)) return;
+                record.timesteps.forEach((timestep) => {
+                    const value = Number(timestep);
+                    if (Number.isFinite(value)) points.push({ step, timestep: value });
+                });
+            });
+            if (!points.length) {
+                context.fillStyle = '#94a3b8';
+                context.font = '14px system-ui, sans-serif';
+                context.textAlign = 'center';
+                context.fillText('No timestep samples recorded', width / 2, height / 2);
+                return;
+            }
+
+            const padding = { left: 64, right: 20, top: 20, bottom: 42 };
+            const plotWidth = width - padding.left - padding.right;
+            const plotHeight = height - padding.top - padding.bottom;
+            let minStep = Math.min(...points.map((point) => point.step));
+            let maxStep = Math.max(...points.map((point) => point.step));
+            let minTimestep = Math.min(...points.map((point) => point.timestep));
+            let maxTimestep = Math.max(...points.map((point) => point.timestep));
+            if (minStep === maxStep) maxStep = minStep + 1;
+            if (minTimestep === maxTimestep) maxTimestep = minTimestep + 1;
+            const xForStep = (step) => padding.left + ((step - minStep) / (maxStep - minStep)) * plotWidth;
+            const yForTimestep = (timestep) =>
+                padding.top + (1 - (timestep - minTimestep) / (maxTimestep - minTimestep)) * plotHeight;
+
+            context.strokeStyle = 'rgba(148, 163, 184, 0.18)';
+            context.lineWidth = 1;
+            context.font = '12px system-ui, sans-serif';
+            context.fillStyle = '#94a3b8';
+            context.textAlign = 'right';
+            context.textBaseline = 'middle';
+            for (let index = 0; index <= 4; index += 1) {
+                const ratio = index / 4;
+                const y = padding.top + ratio * plotHeight;
+                const value = maxTimestep - ratio * (maxTimestep - minTimestep);
+                context.beginPath();
+                context.moveTo(padding.left, y);
+                context.lineTo(padding.left + plotWidth, y);
+                context.stroke();
+                context.fillText(formatMetricValue(value), padding.left - 10, y);
+            }
+            context.textAlign = 'center';
+            context.textBaseline = 'top';
+            for (let index = 0; index <= 4; index += 1) {
+                const ratio = index / 4;
+                const x = padding.left + ratio * plotWidth;
+                const step = Math.round(minStep + ratio * (maxStep - minStep));
+                context.fillText(step.toLocaleString(), x, height - padding.bottom + 12);
+            }
+
+            context.fillStyle = 'rgba(56, 189, 248, 0.45)';
+            points.forEach((point) => {
+                context.beginPath();
+                context.arc(xForStep(point.step), yForTimestep(point.timestep), 2, 0, Math.PI * 2);
+                context.fill();
+            });
+        }
+    }
+
     global.TrainingMetricsCharts = {
         COLORS,
+        TimestepDistributionChart,
         TrainingMetricsChart,
         defaultMetricNames,
+        formatXAxisValue,
         formatMetricValue,
         latestMetricValues,
         metricNames,
