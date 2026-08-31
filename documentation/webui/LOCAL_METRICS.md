@@ -25,6 +25,8 @@ The JSONL files are the raw interface for analysis tools. A resumed run appends 
 
 The HTML report embeds a bounded copy of the scalar history and uses relative paths for validation media. Archive it with the output directory.
 
+When a tracker does not collect system telemetry natively, SimpleTuner records numeric CPU, memory, disk, network, and GPU telemetry for that tracker. WandB is skipped for manual system telemetry because its client already reports host metrics.
+
 ## WebUI
 
 Open **Metrics**, then **Training Runs**. Runs are discovered from saved WebUI environments. The page provides:

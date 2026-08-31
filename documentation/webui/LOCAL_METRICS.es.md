@@ -19,6 +19,8 @@ El directorio de salida contiene:
 
 Una reanudación añade registros. Archiva el informe HTML junto con el directorio de salida porque usa rutas relativas para los medios.
 
+Cuando un tracker no recopila telemetría del sistema de forma nativa, SimpleTuner registra métricas numéricas de CPU, memoria, disco, red y GPU para ese tracker. WandB se omite porque su cliente ya informa métricas del host.
+
 ## WebUI y API
 
 Abre **Metrics** y **Training Runs** para elegir escalares, comparar validaciones por prompt/paso y abrir el informe. **System** conserva salud de GPU y Prometheus.

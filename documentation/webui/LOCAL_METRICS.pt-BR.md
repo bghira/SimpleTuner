@@ -17,6 +17,8 @@ Use valores separados por virgula, como `report_to=simpletuner,wandb`, para ativ
 
 Ao retomar, novos registros são anexados. Arquive o HTML com o diretório de saída, pois os caminhos de mídia são relativos.
 
+Quando um tracker não coleta telemetria do sistema nativamente, o SimpleTuner registra métricas numéricas de CPU, memória, disco, rede e GPU para esse tracker. O WandB é ignorado porque seu cliente já relata métricas do host.
+
 ## WebUI e API
 
 Abra **Metrics** e **Training Runs** para selecionar escalares, comparar validações por prompt/etapa e abrir o relatório. **System** mantém a saúde das GPUs e a configuração do Prometheus.

@@ -17,6 +17,8 @@
 
 再開時は既存履歴へ追記します。HTML は相対メディアパスを使うため、出力ディレクトリと一緒に保存してください。
 
+tracker が system telemetry を標準で収集しない場合、SimpleTuner は CPU、メモリ、ディスク、ネットワーク、GPU の数値メトリクスをその tracker に記録します。WandB はクライアント側で host metrics を収集するため、手動記録の対象外です。
+
 ## WebUI と API
 
 **Metrics** の **Training Runs** でスカラーを選択し、prompt と step ごとに検証結果を比較できます。**System** には GPU health と Prometheus 設定があります。
