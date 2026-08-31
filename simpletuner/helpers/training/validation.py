@@ -3488,6 +3488,16 @@ class Validation:
         adapter_components: list[str | None] = []
         for idx, adapter in enumerate(adapters):
             adapter_name = self._next_adapter_name(adapter_run, adapter, idx, adapter_names)
+            adapter_names.append(adapter_name)
+            adapter_scales.append(adapter.strength)
+            adapter_components.append(self._validation_adapter_component(adapter))
+        target_states = self._snapshot_validation_adapter_target_states(
+            pipeline,
+            adapter_names,
+            adapter_scales,
+            adapter_components,
+        )
+        for adapter, adapter_name in zip(adapters, adapter_names):
             load_kwargs = {"adapter_name": adapter_name}
             if adapter.weight_name:
                 load_kwargs["weight_name"] = adapter.weight_name
@@ -3500,15 +3510,6 @@ class Validation:
             except Exception as exc:  # pragma: no cover - defensive log
                 logger.error("Failed to load validation adapter '%s': %s", adapter.location, exc)
                 raise
-            adapter_names.append(adapter_name)
-            adapter_scales.append(adapter.strength)
-            adapter_components.append(self._validation_adapter_component(adapter))
-        target_states = self._snapshot_validation_adapter_target_states(
-            pipeline,
-            adapter_names,
-            adapter_scales,
-            adapter_components,
-        )
         self._set_validation_adapter_weights(pipeline, adapter_names, adapter_scales, adapter_components, target_states)
         try:
             yield
