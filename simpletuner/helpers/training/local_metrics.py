@@ -15,6 +15,7 @@ SCHEMA_VERSION = 1
 METRICS_FILENAME = "training_metrics.jsonl"
 MANIFEST_FILENAME = "training_metrics.json"
 MEDIA_FILENAME = "validation_media.jsonl"
+TIMESTEP_DISTRIBUTION_FILENAME = "timestep_distribution.jsonl"
 REPORT_FILENAME = "training_report.html"
 REPORT_REFRESH_INTERVAL = 100
 
@@ -96,6 +97,10 @@ def read_media_records(output_dir: str | os.PathLike[str]) -> list[dict[str, Any
     return read_jsonl(Path(output_dir) / MEDIA_FILENAME)
 
 
+def read_timestep_distribution_records(output_dir: str | os.PathLike[str]) -> list[dict[str, Any]]:
+    return read_jsonl(Path(output_dir) / TIMESTEP_DISTRIBUTION_FILENAME)
+
+
 def downsample_records(records: list[dict[str, Any]], max_points: int) -> list[dict[str, Any]]:
     if max_points < 2:
         raise ValueError("max_points must be at least 2.")
@@ -165,6 +170,7 @@ def render_static_report(output_dir: str | os.PathLike[str], max_points: int = 5
         "run": read_manifest(output_path),
         "records": records,
         "media": _media_for_report(output_path),
+        "timesteps": read_timestep_distribution_records(output_path),
     }
     html = template_path.read_text(encoding="utf-8")
     html = html.replace("__SIMPLETUNER_REPORT_CSS__", chart_style_path.read_text(encoding="utf-8"))
@@ -206,6 +212,35 @@ def record_validation_media(
             "path": path.relative_to(output_dir).as_posix(),
         },
     )
+
+
+def record_timestep_distribution(config: Any, samples: list[tuple[int | float, int | float]]) -> None:
+    if config is None or not is_local_metrics_enabled(getattr(config, "report_to", None)) or not samples:
+        return
+
+    grouped: dict[int, list[float]] = {}
+    for step, timestep in samples:
+        try:
+            step_value = int(step)
+            timestep_value = float(timestep)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(timestep_value):
+            grouped.setdefault(step_value, []).append(timestep_value)
+    if not grouped:
+        return
+
+    output_dir = Path(getattr(config, "output_dir")).expanduser().resolve()
+    for step, timesteps in sorted(grouped.items()):
+        _append_json_line(
+            output_dir / TIMESTEP_DISTRIBUTION_FILENAME,
+            {
+                "schema_version": SCHEMA_VERSION,
+                "timestamp": _utc_now(),
+                "step": step,
+                "timesteps": timesteps,
+            },
+        )
 
 
 def _state_tracker_step() -> int:

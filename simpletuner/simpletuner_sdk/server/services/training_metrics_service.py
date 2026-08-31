@@ -12,10 +12,12 @@ from simpletuner.helpers.training.local_metrics import (
     MEDIA_FILENAME,
     METRICS_FILENAME,
     REPORT_FILENAME,
+    TIMESTEP_DISTRIBUTION_FILENAME,
     downsample_records,
     read_manifest,
     read_media_records,
     read_metric_records,
+    read_timestep_distribution_records,
 )
 from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
 from simpletuner.simpletuner_sdk.server.services.webui_state import WebUIStateStore
@@ -139,11 +141,13 @@ class TrainingMetricsService:
             },
             "records": records,
             "media": media,
+            "timesteps": read_timestep_distribution_records(output_dir),
             "available_metrics": sorted(manifest.get("metric_names", [])),
             "raw_files": {
                 "metrics": METRICS_FILENAME,
                 "manifest": MANIFEST_FILENAME,
                 "media": MEDIA_FILENAME,
+                "timesteps": TIMESTEP_DISTRIBUTION_FILENAME,
                 "report": REPORT_FILENAME,
             },
         }

@@ -14,11 +14,14 @@ from simpletuner.helpers.training.local_metrics import (
     MEDIA_FILENAME,
     METRICS_FILENAME,
     REPORT_FILENAME,
+    TIMESTEP_DISTRIBUTION_FILENAME,
     LocalMetricsTracker,
     downsample_records,
     is_local_metrics_enabled,
     read_media_records,
     read_metric_records,
+    read_timestep_distribution_records,
+    record_timestep_distribution,
 )
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation_images import save_validation_image
@@ -93,6 +96,18 @@ class LocalMetricsTrackerTests(unittest.TestCase):
         self.assertTrue(is_local_metrics_enabled(["wandb", "simpletuner"]))
         self.assertFalse(is_local_metrics_enabled("all"))
         self.assertFalse(is_local_metrics_enabled("wandb"))
+
+    def test_timestep_distribution_records_grouped_samples(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = SimpleNamespace(output_dir=directory, report_to="simpletuner")
+
+            record_timestep_distribution(config, [(4, 10), (4, 12.5), (5, 22), (5, float("nan"))])
+
+            records = read_timestep_distribution_records(directory)
+            self.assertEqual([record["step"] for record in records], [4, 5])
+            self.assertEqual(records[0]["timesteps"], [10.0, 12.5])
+            self.assertEqual(records[1]["timesteps"], [22.0])
+            self.assertTrue((Path(directory) / TIMESTEP_DISTRIBUTION_FILENAME).is_file())
 
 
 class ValidationMediaManifestTests(unittest.TestCase):

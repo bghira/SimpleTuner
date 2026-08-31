@@ -18,30 +18,49 @@
 
         <section class="report-summary" id="run-summary"></section>
 
-        <section class="report-section">
-            <div class="report-section-header">
-                <h2>Scalar metrics</h2>
-                <div class="report-meta" id="chart-step"></div>
-            </div>
+	        <section class="report-section">
+	            <div class="report-section-header">
+	                <h2>Scalar metrics</h2>
+	                <div class="axis-toggle" role="group" aria-label="Chart x-axis">
+	                    <button type="button" class="active" data-axis-mode="step">Step</button>
+	                    <button type="button" data-axis-mode="minutes">Minutes</button>
+	                </div>
+	            </div>
             <div class="metric-picker" id="metric-picker"></div>
             <div class="chart-frame">
                 <canvas id="metrics-chart"></canvas>
-                <div class="chart-tooltip" id="chart-tooltip" hidden></div>
-            </div>
-        </section>
+	                <div class="chart-tooltip" id="chart-tooltip" hidden></div>
+	            </div>
+	        </section>
 
-        <section class="report-section">
-            <div class="report-section-header">
-                <h2>Validation media</h2>
-                <div class="media-controls">
-                    <label class="report-meta" for="media-label">Prompt</label>
-                    <select id="media-label"></select>
-                </div>
-            </div>
-            <div class="media-timeline" id="media-timeline"></div>
-            <div class="media-grid" id="media-grid"></div>
-        </section>
-    </main>
+	        <section class="report-section" id="timestep-section" hidden>
+	            <div class="report-section-header">
+	                <h2>Timestep distribution</h2>
+	            </div>
+	            <div class="chart-frame timestep-chart-frame">
+	                <canvas id="timestep-chart"></canvas>
+	            </div>
+	        </section>
+
+	        <section class="report-section">
+	            <div class="report-section-header">
+	                <h2>Validation media</h2>
+	            </div>
+	            <div class="media-timeline" id="media-timeline"></div>
+	            <div class="media-grid" id="media-grid"></div>
+	        </section>
+	    </main>
+	    <div class="media-lightbox" id="media-lightbox" hidden>
+	        <div class="media-lightbox-body" id="media-lightbox-body"></div>
+	        <div class="media-lightbox-toolbar">
+	            <button type="button" id="media-lightbox-prev" title="Previous image">‹</button>
+	            <span id="media-lightbox-count"></span>
+	            <button type="button" id="media-lightbox-next" title="Next image">›</button>
+	            <button type="button" id="media-lightbox-size" title="Show at 1:1 size">1:1</button>
+	            <button type="button" id="media-lightbox-close" title="Close image">×</button>
+	        </div>
+	        <div class="media-lightbox-caption" id="media-lightbox-caption"></div>
+	    </div>
 
     <script id="training-metrics-data" type="application/json">__SIMPLETUNER_REPORT_DATA__</script>
     <script>__SIMPLETUNER_CHART_JS__</script>
@@ -50,12 +69,16 @@
             const payload = JSON.parse(document.getElementById('training-metrics-data').textContent);
             const charts = window.TrainingMetricsCharts;
             const run = payload.run || {};
-            const records = payload.records || [];
-            const media = payload.media || [];
-            const names = charts.metricNames(records);
-            let selectedMetrics = charts.defaultMetricNames(names);
-            let selectedLabel = null;
-            let selectedStep = null;
+	            const records = payload.records || [];
+	            const media = payload.media || [];
+	            const timesteps = payload.timesteps || [];
+	            const names = charts.metricNames(records);
+	            let selectedMetrics = charts.defaultMetricNames(names);
+	            let selectedStep = null;
+	            let selectedAxisMode = 'step';
+	            let lightboxImages = [];
+	            let lightboxIndex = 0;
+	            let lightboxActualSize = false;
 
             function escapeHtml(value) {
                 return String(value)
@@ -89,7 +112,10 @@
                     const rows = info.metrics.filter((metric) => typeof metric.value === 'number').map((metric) =>
                         `<div class="chart-tooltip-row"><span style="color:${metric.color}">${escapeHtml(metric.name)}</span><strong>${escapeHtml(charts.formatMetricValue(metric.value))}</strong></div>`
                     ).join('');
-                    tooltip.innerHTML = `<strong>Step ${escapeHtml(info.record.step)}</strong>${rows}`;
+	                    const xLabel = info.xAxisMode === 'minutes'
+	                        ? charts.formatXAxisValue(info.xValue, 'minutes')
+	                        : `Step ${Number(info.record.step).toLocaleString()}`;
+	                    tooltip.innerHTML = `<strong>${escapeHtml(xLabel)}</strong>${rows}`;
                     tooltip.style.left = `${Math.min(info.x + 12, tooltip.parentElement.clientWidth - 200)}px`;
                     tooltip.style.top = '12px';
                     tooltip.hidden = false;
@@ -107,43 +133,94 @@
                     const input = document.createElement('input');
                     input.type = 'checkbox';
                     input.checked = index >= 0;
-                    input.addEventListener('change', () => {
-                        if (input.checked && !selectedMetrics.includes(name)) selectedMetrics.push(name);
-                        if (!input.checked) selectedMetrics = selectedMetrics.filter((entry) => entry !== name);
-                        selectedMetrics = selectedMetrics.slice(-charts.COLORS.length);
-                        renderMetricPicker();
-                        chart.setData(records, selectedMetrics);
-                    });
+	                    input.addEventListener('change', () => {
+	                        if (input.checked && !selectedMetrics.includes(name)) selectedMetrics.push(name);
+	                        if (!input.checked) selectedMetrics = selectedMetrics.filter((entry) => entry !== name);
+	                        selectedMetrics = selectedMetrics.slice(-charts.COLORS.length);
+	                        renderMetricPicker();
+	                        chart.setData(records, selectedMetrics, { xAxisMode: selectedAxisMode });
+	                    });
                     label.append(input, document.createTextNode(name));
                     picker.appendChild(label);
                 });
             }
 
-            function mediaForSelection() {
-                return media.filter((item) => item.label === selectedLabel && Number(item.step) === Number(selectedStep));
-            }
+	            function mediaForSelectedStep() {
+	                return media
+	                    .filter((item) => Number(item.step) === Number(selectedStep))
+	                    .sort((left, right) => {
+	                        const labelOrder = String(left.label || '').localeCompare(String(right.label || ''));
+	                        return labelOrder || Number(left.index || 0) - Number(right.index || 0);
+	                    });
+	            }
 
-            function renderMedia() {
-                const labels = Array.from(new Set(media.map((item) => item.label))).sort();
-                const select = document.getElementById('media-label');
-                select.innerHTML = '';
-                labels.forEach((label) => {
-                    const option = document.createElement('option');
-                    option.value = label;
-                    option.textContent = label;
-                    select.appendChild(option);
-                });
-                if (!selectedLabel || !labels.includes(selectedLabel)) selectedLabel = labels[0] || null;
-                select.value = selectedLabel || '';
-                select.onchange = () => {
-                    selectedLabel = select.value;
-                    selectedStep = null;
-                    renderMedia();
-                };
+	            function mediaGroupsForSelectedStep() {
+	                const groups = new Map();
+	                mediaForSelectedStep().forEach((item) => {
+	                    const label = item.label || 'Validation';
+	                    if (!groups.has(label)) groups.set(label, []);
+	                    groups.get(label).push(item);
+	                });
+	                return Array.from(groups, ([label, items]) => ({ label, items }));
+	            }
 
-                const steps = Array.from(new Set(media.filter((item) => item.label === selectedLabel).map((item) => Number(item.step)))).sort((a, b) => a - b);
-                if (selectedStep === null || !steps.includes(selectedStep)) selectedStep = steps[steps.length - 1] ?? null;
-                const timeline = document.getElementById('media-timeline');
+	            function selectedImages() {
+	                return mediaForSelectedStep()
+	                    .filter((item) => item.type === 'image')
+	                    .map((item) => ({
+	                        item,
+	                        src: item.path,
+	                        caption: [
+	                            item.label,
+	                            `step ${Number(item.step).toLocaleString()}`,
+	                            item.resolution,
+	                            `sample ${Number(item.index) + 1}`,
+	                        ].filter(Boolean).join(' · '),
+	                    }));
+	            }
+
+	            function closeLightbox() {
+	                document.getElementById('media-lightbox').hidden = true;
+	            }
+
+	            function renderLightbox() {
+	                const lightbox = document.getElementById('media-lightbox');
+	                const body = document.getElementById('media-lightbox-body');
+	                const caption = document.getElementById('media-lightbox-caption');
+	                const count = document.getElementById('media-lightbox-count');
+	                const previous = document.getElementById('media-lightbox-prev');
+	                const next = document.getElementById('media-lightbox-next');
+	                const size = document.getElementById('media-lightbox-size');
+	                const image = lightboxImages[lightboxIndex];
+	                if (!image) {
+	                    closeLightbox();
+	                    return;
+	                }
+	                body.innerHTML = '';
+	                const element = document.createElement('img');
+	                element.src = image.src;
+	                element.alt = image.caption;
+	                if (lightboxActualSize) element.className = 'actual-size';
+	                body.appendChild(element);
+	                caption.textContent = image.caption;
+	                count.textContent = `${lightboxIndex + 1} / ${lightboxImages.length}`;
+	                previous.disabled = lightboxIndex === 0;
+	                next.disabled = lightboxIndex >= lightboxImages.length - 1;
+	                size.textContent = lightboxActualSize ? 'Fit' : '1:1';
+	                lightbox.hidden = false;
+	            }
+
+	            function openLightbox(item) {
+	                lightboxImages = selectedImages();
+	                lightboxIndex = Math.max(0, lightboxImages.findIndex((image) => image.item.path === item.path));
+	                lightboxActualSize = false;
+	                renderLightbox();
+	            }
+
+	            function renderMedia() {
+	                const steps = Array.from(new Set(media.map((item) => Number(item.step)))).sort((a, b) => a - b);
+	                if (selectedStep === null || !steps.includes(selectedStep)) selectedStep = steps[steps.length - 1] ?? null;
+	                const timeline = document.getElementById('media-timeline');
                 timeline.innerHTML = '';
                 steps.forEach((step) => {
                     const button = document.createElement('button');
@@ -157,41 +234,103 @@
                     timeline.appendChild(button);
                 });
 
-                const grid = document.getElementById('media-grid');
-                grid.innerHTML = '';
-                const selected = mediaForSelection();
-                if (!selected.length) {
-                    grid.innerHTML = '<div class="report-empty">No validation media</div>';
-                    return;
-                }
-                selected.forEach((item) => {
-                    const wrapper = document.createElement('article');
-                    wrapper.className = 'media-item';
-                    let element;
-                    if (item.type === 'video') {
-                        element = document.createElement('video');
-                        element.controls = true;
-                    } else if (item.type === 'audio') {
-                        element = document.createElement('audio');
-                        element.controls = true;
-                    } else {
-                        element = document.createElement('img');
-                        element.loading = 'lazy';
-                        element.alt = `${item.label} at step ${item.step}`;
-                    }
-                    element.src = item.path;
-                    const caption = document.createElement('div');
-                    caption.className = 'media-caption';
-                    caption.textContent = [item.resolution, `sample ${Number(item.index) + 1}`].filter(Boolean).join(' · ');
-                    wrapper.append(element, caption);
-                    grid.appendChild(wrapper);
-                });
-            }
+	                const grid = document.getElementById('media-grid');
+	                grid.innerHTML = '';
+	                const groups = mediaGroupsForSelectedStep();
+	                if (!groups.length) {
+	                    grid.innerHTML = '<div class="report-empty">No validation media</div>';
+	                    return;
+	                }
+	                groups.forEach((group) => {
+	                    const section = document.createElement('section');
+	                    section.className = 'media-group';
+	                    const heading = document.createElement('h3');
+	                    heading.textContent = group.label;
+	                    const groupGrid = document.createElement('div');
+	                    groupGrid.className = 'media-group-grid';
+	                    group.items.forEach((item) => {
+	                        const wrapper = document.createElement('article');
+	                        wrapper.className = 'media-item';
+	                        let element;
+	                        if (item.type === 'video') {
+	                            element = document.createElement('video');
+	                            element.controls = true;
+	                            element.src = item.path;
+	                        } else if (item.type === 'audio') {
+	                            element = document.createElement('audio');
+	                            element.controls = true;
+	                            element.src = item.path;
+	                        } else {
+	                            const button = document.createElement('button');
+	                            button.type = 'button';
+	                            button.className = 'media-image-button';
+	                            button.onclick = () => openLightbox(item);
+	                            element = document.createElement('img');
+	                            element.loading = 'lazy';
+	                            element.alt = `${item.label} at step ${item.step}`;
+	                            element.src = item.path;
+	                            button.appendChild(element);
+	                            element = button;
+	                        }
+	                        const caption = document.createElement('div');
+	                        caption.className = 'media-caption';
+	                        caption.textContent = [item.resolution, `sample ${Number(item.index) + 1}`].filter(Boolean).join(' · ');
+	                        wrapper.append(element, caption);
+	                        groupGrid.appendChild(wrapper);
+	                    });
+	                    section.append(heading, groupGrid);
+	                    grid.appendChild(section);
+	                });
+	            }
 
-            renderMetricPicker();
-            chart.setData(records, selectedMetrics);
-            renderMedia();
-        })();
+	            document.querySelectorAll('[data-axis-mode]').forEach((button) => {
+	                button.addEventListener('click', () => {
+	                    selectedAxisMode = button.dataset.axisMode === 'minutes' ? 'minutes' : 'step';
+	                    document.querySelectorAll('[data-axis-mode]').forEach((entry) =>
+	                        entry.classList.toggle('active', entry === button)
+	                    );
+	                    chart.setData(records, selectedMetrics, { xAxisMode: selectedAxisMode });
+	                });
+	            });
+
+	            document.getElementById('media-lightbox').addEventListener('click', (event) => {
+	                if (event.target.id === 'media-lightbox') closeLightbox();
+	            });
+	            document.getElementById('media-lightbox-close').onclick = closeLightbox;
+	            document.getElementById('media-lightbox-prev').onclick = () => {
+	                lightboxIndex = Math.max(0, lightboxIndex - 1);
+	                renderLightbox();
+	            };
+	            document.getElementById('media-lightbox-next').onclick = () => {
+	                lightboxIndex = Math.min(lightboxImages.length - 1, lightboxIndex + 1);
+	                renderLightbox();
+	            };
+	            document.getElementById('media-lightbox-size').onclick = () => {
+	                lightboxActualSize = !lightboxActualSize;
+	                renderLightbox();
+	            };
+	            document.addEventListener('keydown', (event) => {
+	                if (document.getElementById('media-lightbox').hidden) return;
+	                if (event.key === 'Escape') closeLightbox();
+	                if (event.key === 'ArrowLeft') {
+	                    lightboxIndex = Math.max(0, lightboxIndex - 1);
+	                    renderLightbox();
+	                }
+	                if (event.key === 'ArrowRight') {
+	                    lightboxIndex = Math.min(lightboxImages.length - 1, lightboxIndex + 1);
+	                    renderLightbox();
+	                }
+	            });
+
+	            renderMetricPicker();
+	            chart.setData(records, selectedMetrics, { xAxisMode: selectedAxisMode });
+	            if (timesteps.length) {
+	                document.getElementById('timestep-section').hidden = false;
+	                const timestepChart = new charts.TimestepDistributionChart(document.getElementById('timestep-chart'));
+	                timestepChart.setData(timesteps);
+	            }
+	            renderMedia();
+	        })();
     </script>
 </body>
 </html>

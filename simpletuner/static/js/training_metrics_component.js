@@ -10,14 +10,23 @@
             trainingMetricsLoading: false,
             trainingMetricsError: null,
             selectedTrainingMetrics: [],
-            selectedTrainingMediaLabel: '',
             selectedTrainingMediaStep: null,
+            selectedTrainingXAxis: 'step',
+            trainingMediaLightbox: null,
             trainingChartHover: null,
             _trainingMetricsChart: null,
+            _trainingTimestepChart: null,
+            _trainingMetricsTimer: null,
+            trainingMetricsPollMs: 5000,
 
-            async loadTrainingRuns() {
-                this.trainingMetricsLoading = true;
-                this.trainingMetricsError = null;
+            async loadTrainingRuns(options = {}) {
+                const { silent = false } = options;
+                if (!silent) {
+                    this.trainingMetricsLoading = true;
+                    this.trainingMetricsError = null;
+                } else if (this.trainingMetricsLoading) {
+                    return;
+                }
                 try {
                     const response = await fetch('/api/metrics/training/runs');
                     if (!response.ok) throw new Error(`Unable to load training runs (HTTP ${response.status})`);
@@ -32,11 +41,11 @@
                         (run) => run.environment === this.selectedTrainingEnvironment,
                     );
                     if (!selectedStillExists) this.selectedTrainingEnvironment = this.trainingRuns[0].environment;
-                    await this.loadTrainingRun();
+                    await this.loadTrainingRun({ silent, preserveSelections: silent });
                 } catch (error) {
                     this.trainingMetricsError = error.message || 'Unable to load training runs';
                 } finally {
-                    this.trainingMetricsLoading = false;
+                    if (!silent) this.trainingMetricsLoading = false;
                 }
             },
 
@@ -46,31 +55,63 @@
                 await this.loadTrainingRun();
             },
 
-            async loadTrainingRun() {
+            async loadTrainingRun(options = {}) {
                 if (!this.selectedTrainingEnvironment) return;
-                this.trainingMetricsLoading = true;
-                this.trainingMetricsError = null;
+                const { silent = false, preserveSelections = false } = options;
+                if (!silent) {
+                    this.trainingMetricsLoading = true;
+                    this.trainingMetricsError = null;
+                } else if (this.trainingMetricsLoading) {
+                    return;
+                }
                 try {
                     const environment = encodeURIComponent(this.selectedTrainingEnvironment);
                     const response = await fetch(`/api/metrics/training/runs/${environment}?max_points=4000`);
                     if (!response.ok) throw new Error(`Unable to load run metrics (HTTP ${response.status})`);
                     this.trainingRunData = await response.json();
                     const available = this.trainingRunData.available_metrics || [];
-                    this.selectedTrainingMetrics = global.TrainingMetricsCharts.defaultMetricNames(available);
-                    this.selectDefaultTrainingMedia();
-                    this.$nextTick(() => this.renderTrainingMetricsChart());
+                    this.syncSelectedTrainingMetrics(available, preserveSelections);
+                    this.selectDefaultTrainingMedia({ preserveSelection: preserveSelections });
+                    this.$nextTick(() => {
+                        this.renderTrainingMetricsChart();
+                        this.renderTimestepDistributionChart();
+                    });
                 } catch (error) {
                     this.trainingMetricsError = error.message || 'Unable to load run metrics';
                     this.trainingRunData = null;
                 } finally {
-                    this.trainingMetricsLoading = false;
+                    if (!silent) this.trainingMetricsLoading = false;
                 }
             },
 
             setMetricsSection(section) {
                 this.activeMetricsSection = section;
-                if (section === 'training') this.$nextTick(() => this.renderTrainingMetricsChart());
+                if (section === 'training') {
+                    this.startTrainingMetricsPolling();
+                    this.$nextTick(() => {
+                        this.renderTrainingMetricsChart();
+                        this.renderTimestepDistributionChart();
+                    });
+                } else {
+                    this.stopTrainingMetricsPolling();
+                }
                 if (section === 'system') this.$nextTick(() => this.renderActiveGpuCharts());
+            },
+
+            syncSelectedTrainingMetrics(available, preserveSelections = false) {
+                if (preserveSelections) {
+                    const retained = this.selectedTrainingMetrics.filter((metric) => available.includes(metric));
+                    if (retained.length) {
+                        this.selectedTrainingMetrics = retained.slice(0, 8);
+                        return;
+                    }
+                }
+                this.selectedTrainingMetrics = global.TrainingMetricsCharts.defaultMetricNames(available);
+            },
+
+            setTrainingXAxis(mode) {
+                this.selectedTrainingXAxis = mode === 'minutes' ? 'minutes' : 'step';
+                this.renderTrainingMetricsChart();
             },
 
             toggleTrainingMetric(metric) {
@@ -96,7 +137,17 @@
                 this._trainingMetricsChart.setData(
                     this.trainingRunData.records || [],
                     this.selectedTrainingMetrics,
+                    { xAxisMode: this.selectedTrainingXAxis },
                 );
+            },
+
+            renderTimestepDistributionChart() {
+                const canvas = this.$refs.timestepDistributionCanvas;
+                if (!canvas || !this.trainingRunData || !global.TrainingMetricsCharts) return;
+                if (!this._trainingTimestepChart) {
+                    this._trainingTimestepChart = new global.TrainingMetricsCharts.TimestepDistributionChart(canvas);
+                }
+                this._trainingTimestepChart.setData(this.trainingRunData.timesteps || []);
             },
 
             latestTrainingMetrics() {
@@ -109,43 +160,75 @@
                 return global.TrainingMetricsCharts.formatMetricValue(value);
             },
 
-            trainingMediaLabels() {
-                if (!this.trainingRunData) return [];
-                return Array.from(new Set((this.trainingRunData.media || []).map((item) => item.label))).sort();
-            },
-
             trainingMediaSteps() {
-                if (!this.trainingRunData || !this.selectedTrainingMediaLabel) return [];
+                if (!this.trainingRunData) return [];
                 return Array.from(
-                    new Set(
-                        (this.trainingRunData.media || [])
-                            .filter((item) => item.label === this.selectedTrainingMediaLabel)
-                            .map((item) => item.step),
-                    ),
+                    new Set((this.trainingRunData.media || []).map((item) => item.step)),
                 ).sort((left, right) => left - right);
             },
 
-            selectDefaultTrainingMedia() {
-                const labels = this.trainingMediaLabels();
-                this.selectedTrainingMediaLabel = labels[0] || '';
+            selectDefaultTrainingMedia(options = {}) {
+                const { preserveSelection = false } = options;
                 const steps = this.trainingMediaSteps();
-                this.selectedTrainingMediaStep = steps.length ? steps[steps.length - 1] : null;
-            },
-
-            selectTrainingMediaLabel(label) {
-                this.selectedTrainingMediaLabel = label;
-                const steps = this.trainingMediaSteps();
+                if (preserveSelection && steps.includes(this.selectedTrainingMediaStep)) return;
                 this.selectedTrainingMediaStep = steps.length ? steps[steps.length - 1] : null;
             },
 
             selectedTrainingMedia() {
                 if (!this.trainingRunData) return [];
                 return (this.trainingRunData.media || [])
-                    .filter(
-                        (item) =>
-                            item.label === this.selectedTrainingMediaLabel && item.step === this.selectedTrainingMediaStep,
-                    )
-                    .sort((left, right) => left.index - right.index);
+                    .filter((item) => item.step === this.selectedTrainingMediaStep)
+                    .sort((left, right) => {
+                        const labelOrder = String(left.label || '').localeCompare(String(right.label || ''));
+                        return labelOrder || Number(left.index || 0) - Number(right.index || 0);
+                    });
+            },
+
+            selectedTrainingMediaGroups() {
+                const groups = new Map();
+                this.selectedTrainingMedia().forEach((item) => {
+                    const label = item.label || 'Validation';
+                    if (!groups.has(label)) groups.set(label, []);
+                    groups.get(label).push(item);
+                });
+                return Array.from(groups, ([label, items]) => ({ label, items }));
+            },
+
+            selectedTrainingImages() {
+                return this.selectedTrainingMedia()
+                    .filter((item) => item.type === 'image' && item.url)
+                    .map((item) => ({
+                        item,
+                        src: item.url,
+                        caption: [
+                            item.label,
+                            `step ${Number(item.step).toLocaleString()}`,
+                            item.resolution,
+                            `output ${Number(item.index || 0) + 1}`,
+                        ].filter(Boolean).join(' · '),
+                    }));
+            },
+
+            openTrainingMediaLightbox(item) {
+                if (!item || item.type !== 'image') return;
+                const images = this.selectedTrainingImages();
+                const index = Math.max(0, images.findIndex((image) => image.item.path === item.path));
+                this.trainingMediaLightbox = { images, index, actualSize: false };
+            },
+
+            closeTrainingMediaLightbox() {
+                this.trainingMediaLightbox = null;
+            },
+
+            setTrainingLightboxIndex(index) {
+                if (!this.trainingMediaLightbox) return;
+                const maxIndex = this.trainingMediaLightbox.images.length - 1;
+                this.trainingMediaLightbox.index = Math.max(0, Math.min(maxIndex, index));
+            },
+
+            toggleTrainingLightboxSize() {
+                if (!this.trainingMediaLightbox) return;
+                this.trainingMediaLightbox.actualSize = !this.trainingMediaLightbox.actualSize;
             },
 
             trainingReportUrl() {
@@ -154,10 +237,32 @@
             },
 
             destroyTrainingMetrics() {
+                this.stopTrainingMetricsPolling();
                 if (this._trainingMetricsChart) {
                     this._trainingMetricsChart.destroy();
                     this._trainingMetricsChart = null;
                 }
+                if (this._trainingTimestepChart) {
+                    this._trainingTimestepChart.destroy();
+                    this._trainingTimestepChart = null;
+                }
+            },
+
+            startTrainingMetricsPolling() {
+                if (this._trainingMetricsTimer) return;
+                this._trainingMetricsTimer = window.setInterval(() => {
+                    if (this.activeMetricsSection !== 'training') return;
+                    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+                    const status = this.trainingRunData && this.trainingRunData.run && this.trainingRunData.run.status;
+                    if (status !== 'running') return;
+                    this.loadTrainingRuns({ silent: true });
+                }, this.trainingMetricsPollMs);
+            },
+
+            stopTrainingMetricsPolling() {
+                if (!this._trainingMetricsTimer) return;
+                window.clearInterval(this._trainingMetricsTimer);
+                this._trainingMetricsTimer = null;
             },
         };
     }

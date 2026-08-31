@@ -109,12 +109,28 @@
                 <div class="training-metrics-layout">
                     <section class="training-chart-tool" aria-label="Scalar chart">
                         <div class="training-tool-header">
-                            <div>
-                                <h3>Scalars</h3>
-                                <span x-show="trainingChartHover"
-                                      x-text="trainingChartHover ? 'Step ' + trainingChartHover.record.step.toLocaleString() : ''"></span>
-                            </div>
-                            <div class="training-metric-picker" aria-label="Chart metrics">
+	                            <div>
+	                                <h3>Scalars</h3>
+	                                <span x-show="trainingChartHover"
+	                                      x-text="trainingChartHover ? (trainingChartHover.xAxisMode === 'minutes' ? TrainingMetricsCharts.formatXAxisValue(trainingChartHover.xValue, 'minutes') : 'Step ' + trainingChartHover.record.step.toLocaleString()) : ''"></span>
+	                            </div>
+	                            <div class="training-axis-toggle" role="group" aria-label="Chart x-axis">
+	                                <button type="button"
+	                                        :class="{ 'active': selectedTrainingXAxis === 'step' }"
+	                                        @click="setTrainingXAxis('step')"
+	                                        title="Show values by global step">
+	                                    <i class="fas fa-shoe-prints"></i>
+	                                    <span>Step</span>
+	                                </button>
+	                                <button type="button"
+	                                        :class="{ 'active': selectedTrainingXAxis === 'minutes' }"
+	                                        @click="setTrainingXAxis('minutes')"
+	                                        title="Show values by elapsed minutes">
+	                                    <i class="fas fa-clock"></i>
+	                                    <span>Minutes</span>
+	                                </button>
+	                            </div>
+	                            <div class="training-metric-picker" aria-label="Chart metrics">
                                 <template x-for="metric in trainingRunData.available_metrics" :key="metric">
                                     <label :class="{ 'selected': selectedTrainingMetrics.includes(metric) }">
                                         <input type="checkbox"
@@ -134,27 +150,25 @@
                                 </div>
                             </template>
                         </div>
-                        <div class="training-chart-canvas-wrap">
-                            <canvas x-ref="trainingMetricsCanvas" data-testid="training-metrics-canvas"></canvas>
-                        </div>
-                    </section>
+	                        <div class="training-chart-canvas-wrap">
+	                            <canvas x-ref="trainingMetricsCanvas" data-testid="training-metrics-canvas"></canvas>
+	                        </div>
+	                        <template x-if="(trainingRunData.timesteps || []).length">
+	                            <div class="training-chart-canvas-wrap training-timestep-canvas-wrap">
+	                                <canvas x-ref="timestepDistributionCanvas"
+	                                        data-testid="training-timestep-distribution-canvas"
+	                                        aria-label="Timestep distribution"></canvas>
+	                            </div>
+	                        </template>
+	                    </section>
 
                     <section class="training-media-tool" aria-label="Validation media">
-                        <div class="training-tool-header">
-                            <div>
-                                <h3>Validation</h3>
-                                <span>Compare saved outputs by prompt and step.</span>
-                            </div>
-                            <select class="form-select form-select-sm"
-                                    :value="selectedTrainingMediaLabel"
-                                    @change="selectTrainingMediaLabel($event.target.value)"
-                                    :disabled="!trainingMediaLabels().length"
-                                    aria-label="Validation prompt">
-                                <template x-for="label in trainingMediaLabels()" :key="label">
-                                    <option :value="label" x-text="label"></option>
-                                </template>
-                            </select>
-                        </div>
+	                        <div class="training-tool-header">
+	                            <div>
+	                                <h3>Validation</h3>
+	                                <span>Saved outputs grouped by prompt and step.</span>
+	                            </div>
+	                        </div>
                         <div class="training-media-steps" role="group" aria-label="Validation steps">
                             <template x-for="step in trainingMediaSteps()" :key="step">
                                 <button type="button"
@@ -166,32 +180,89 @@
                         <template x-if="!selectedTrainingMedia().length">
                             <div class="training-media-empty">No validation media was recorded for this run.</div>
                         </template>
-                        <div class="training-media-grid">
-                            <template x-for="item in selectedTrainingMedia()" :key="item.path">
-                                <figure>
-                                    <img x-show="item.type === 'image'"
-                                         :src="item.type === 'image' ? item.url : null"
-                                         :alt="item.label + ' at step ' + item.step">
-                                    <video x-show="item.type === 'video'"
-                                           :src="item.type === 'video' ? item.url : null"
-                                           controls
-                                           preload="metadata"></video>
-                                    <audio x-show="item.type === 'audio'"
-                                           :src="item.type === 'audio' ? item.url : null"
-                                           controls
-                                           preload="metadata"></audio>
-                                    <figcaption>
-                                        <span x-text="'Output ' + (item.index + 1)"></span>
-                                        <span x-text="item.resolution || item.type"></span>
-                                    </figcaption>
-                                </figure>
-                            </template>
-                        </div>
-                    </section>
-                </div>
-            </div>
-        </template>
-    </section>
+	                        <div class="training-media-gallery">
+	                            <template x-for="group in selectedTrainingMediaGroups()" :key="group.label">
+	                                <section class="training-media-group">
+	                                    <h4 x-text="group.label"></h4>
+	                                    <div class="training-media-grid">
+	                                        <template x-for="item in group.items" :key="item.path">
+	                                            <figure>
+	                                                <button type="button"
+	                                                        class="training-media-image-button"
+	                                                        x-show="item.type === 'image'"
+	                                                        @click="openTrainingMediaLightbox(item)"
+	                                                        title="Open validation image">
+	                                                    <img :src="item.type === 'image' ? item.url : null"
+	                                                         :alt="item.label + ' at step ' + item.step">
+	                                                </button>
+	                                                <video x-show="item.type === 'video'"
+	                                                       :src="item.type === 'video' ? item.url : null"
+	                                                       controls
+	                                                       preload="metadata"></video>
+	                                                <audio x-show="item.type === 'audio'"
+	                                                       :src="item.type === 'audio' ? item.url : null"
+	                                                       controls
+	                                                       preload="metadata"></audio>
+	                                                <figcaption>
+	                                                    <span x-text="'Output ' + (item.index + 1)"></span>
+	                                                    <span x-text="item.resolution || item.type"></span>
+	                                                </figcaption>
+	                                            </figure>
+	                                        </template>
+	                                    </div>
+	                                </section>
+	                            </template>
+	                        </div>
+	                    </section>
+	                </div>
+	            </div>
+	        </template>
+	        <template x-teleport="body">
+	            <template x-if="trainingMediaLightbox">
+	                <div class="training-media-lightbox"
+	                     role="dialog"
+	                     aria-modal="true"
+	                     tabindex="-1"
+	                     @click.self="closeTrainingMediaLightbox()"
+	                     @keydown.escape.window="closeTrainingMediaLightbox()"
+	                     @keydown.arrow-left.window="setTrainingLightboxIndex(trainingMediaLightbox.index - 1)"
+	                     @keydown.arrow-right.window="setTrainingLightboxIndex(trainingMediaLightbox.index + 1)">
+	                    <div class="training-media-lightbox-body">
+	                        <img :class="{ 'actual-size': trainingMediaLightbox.actualSize }"
+	                             :src="trainingMediaLightbox.images[trainingMediaLightbox.index]?.src"
+	                             :alt="trainingMediaLightbox.images[trainingMediaLightbox.index]?.caption">
+	                    </div>
+	                    <div class="training-media-lightbox-toolbar">
+	                        <button type="button"
+	                                @click="setTrainingLightboxIndex(trainingMediaLightbox.index - 1)"
+	                                :disabled="trainingMediaLightbox.index === 0"
+	                                title="Previous image">
+	                            <i class="fas fa-chevron-left"></i>
+	                        </button>
+	                        <span x-text="`${trainingMediaLightbox.index + 1} / ${trainingMediaLightbox.images.length}`"></span>
+	                        <button type="button"
+	                                @click="setTrainingLightboxIndex(trainingMediaLightbox.index + 1)"
+	                                :disabled="trainingMediaLightbox.index >= trainingMediaLightbox.images.length - 1"
+	                                title="Next image">
+	                            <i class="fas fa-chevron-right"></i>
+	                        </button>
+	                        <button type="button"
+	                                @click="toggleTrainingLightboxSize()"
+	                                :title="trainingMediaLightbox.actualSize ? 'Fit to screen' : 'Show at 1:1 size'">
+	                            <i class="fas" :class="trainingMediaLightbox.actualSize ? 'fa-compress' : 'fa-expand'"></i>
+	                        </button>
+	                        <button type="button"
+	                                @click="closeTrainingMediaLightbox()"
+	                                title="Close image">
+	                            <i class="fas fa-times"></i>
+	                        </button>
+	                    </div>
+	                    <div class="training-media-lightbox-caption"
+	                         x-text="trainingMediaLightbox.images[trainingMediaLightbox.index]?.caption"></div>
+	                </div>
+	            </template>
+	        </template>
+	    </section>
 
     <div x-show="activeMetricsSection === 'system'" x-cloak>
 
