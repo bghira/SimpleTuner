@@ -2767,35 +2767,46 @@ class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cloud-tab-content")))
         trainer_page.wait_for_htmx()
         WebDriverWait(driver, 10).until(
-            lambda d: d.execute_script("return !!(window.Alpine && document.querySelector('#cloud-tab-content'));")
+            lambda d: d.execute_script(
+                "const el = document.querySelector('#cloud-tab-content');"
+                "const comp = el?._x_dataStack?.[0];"
+                "return !!(window.Alpine && comp && comp.preSubmitModal && typeof comp.openPreSubmitModal === 'function');"
+            )
         )
 
     def _install_cloud_modal_harness(self, driver) -> bool:
         return driver.execute_script(
             """
             const el = document.querySelector('#cloud-tab-content');
-            const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null;
+            const comp = el?._x_dataStack?.[0] || (window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null);
             if (!comp) { return false; }
 
-            comp.activeProvider = 'replicate';
-            comp.providers = [{
-                id: 'replicate',
-                name: 'Replicate',
-                hardware_profile: 'l40s-x4',
-                hardware_profiles: [
-                    { id: 'h100', label: 'H100', hardware_type: 'H100', cost_per_hour: 5.49, cost_per_second: 0.001525 },
-                    { id: 'h100-x8', label: '8x H100', hardware_type: '8x H100', cost_per_hour: 43.92, cost_per_second: 0.0122 },
-                    { id: 'l40s', label: 'L40S', hardware_type: 'L40S', cost_per_hour: 3.50, cost_per_second: 0.000972222 },
-                    { id: 'l40s-x4', label: '4x L40S', hardware_type: '4x L40S', cost_per_hour: 14.00, cost_per_second: 0.003888888 },
-                    { id: 'l40s-x8', label: '8x L40S', hardware_type: '8x L40S', cost_per_hour: 28.00, cost_per_second: 0.007777776 }
-                ]
-            }];
-            comp.providerConfig = { config: { hardware_profile: 'l40s-x4' }, cost_limit_enabled: false };
-            comp.selectedConfigName = 'default';
-            comp.webhookUrl = '';
-            comp.quickSubmitMode = false;
-            comp.isActiveProviderConfigured = () => true;
-            comp.getActiveProvider = () => ({ id: 'replicate', name: 'Replicate' });
+            const hardwareProfiles = [
+                { id: 'h100', label: 'H100', hardware_type: 'H100', cost_per_hour: 5.49, cost_per_second: 0.001525 },
+                { id: 'h100-x8', label: '8x H100', hardware_type: '8x H100', cost_per_hour: 43.92, cost_per_second: 0.0122 },
+                { id: 'l40s', label: 'L40S', hardware_type: 'L40S', cost_per_hour: 3.50, cost_per_second: 0.000972222 },
+                { id: 'l40s-x4', label: '4x L40S', hardware_type: '4x L40S', cost_per_hour: 14.00, cost_per_second: 0.003888888 },
+                { id: 'l40s-x8', label: '8x L40S', hardware_type: '8x L40S', cost_per_hour: 28.00, cost_per_second: 0.007777776 }
+            ];
+            window.__applyCloudHardwareHarness = () => {
+                comp.activeProvider = 'replicate';
+                comp.providers = [{
+                    id: 'replicate',
+                    name: 'Replicate',
+                    hardware_profile: 'l40s-x4',
+                    hardware_profiles: hardwareProfiles
+                }];
+                comp.providerConfig = { config: { hardware_profile: 'l40s-x4' }, cost_limit_enabled: false };
+                comp.selectedConfigName = 'default';
+                comp.webhookUrl = '';
+                comp.quickSubmitMode = false;
+                comp.isActiveProviderConfigured = () => true;
+                comp.getActiveProvider = () => ({ id: 'replicate', name: 'Replicate' });
+                comp.getReplicateHardwareProfiles = () => hardwareProfiles;
+                comp.getDefaultReplicateHardwareProfile = () => localStorage.getItem('cloud_replicate_hardware_profile') || 'l40s-x4';
+            };
+            window.__applyCloudHardwareHarness();
+            comp.preSubmitModal.hardwareProfile = '';
             comp.loadDataUploadPreview = async () => {
                 comp.preSubmitModal.dataUploadPreview = {
                     requires_upload: false,
@@ -2841,8 +2852,11 @@ class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
             """
             const done = arguments[0];
             const el = document.querySelector('#cloud-tab-content');
-            const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null;
+            const comp = el?._x_dataStack?.[0] || (window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null);
             if (!comp || typeof comp.openPreSubmitModal !== 'function') { done(false); return; }
+            if (typeof window.__applyCloudHardwareHarness === 'function') {
+                window.__applyCloudHardwareHarness();
+            }
             comp.openPreSubmitModal().then(() => done(true)).catch((err) => {
                 console.error('openPreSubmitModal failed', err);
                 done(false);
@@ -2859,8 +2873,9 @@ class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
         self.with_sample_environment()
 
         def scenario(driver, _browser):
-            self._open_cloud_tab(driver)
+            driver.get(self.base_url)
             driver.execute_script("localStorage.removeItem('cloud_replicate_hardware_profile');")
+            self._open_cloud_tab(driver)
             self.assertTrue(self._install_cloud_modal_harness(driver))
 
             self._open_modal(driver)
@@ -2873,7 +2888,9 @@ class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
             )
 
             driver.execute_script(
-                "const comp = Alpine.$data(document.querySelector('#cloud-tab-content')); comp.closePreSubmitModal();"
+                "const el = document.querySelector('#cloud-tab-content');"
+                "const comp = el?._x_dataStack?.[0] || Alpine.$data(el);"
+                "comp.closePreSubmitModal();"
             )
             self._open_modal(driver)
             select_el = driver.find_element(By.CSS_SELECTOR, "[data-testid='replicate-hardware-profile-select']")
