@@ -1298,7 +1298,17 @@ window.handleFieldValidation = window.handleFieldValidation || function(event, e
             const relatedEl = document.getElementById(relatedId);
             if (relatedEl && window.htmx && typeof window.htmx.trigger === 'function') {
                 relatedState[relatedId] = true;
-                window.htmx.trigger(relatedEl, 'change');
+                const wasSuppressed = trainerStore ? trainerStore._suppressDirtyTracking : false;
+                if (trainerStore) {
+                    trainerStore._suppressDirtyTracking = true;
+                }
+                try {
+                    window.htmx.trigger(relatedEl, 'change');
+                } finally {
+                    if (trainerStore) {
+                        trainerStore._suppressDirtyTracking = wasSuppressed;
+                    }
+                }
             }
         }
     }
