@@ -124,7 +124,8 @@ class CredentialResolver:
                         from .audit import AuditEventType, audit_log
 
                         await audit_log(
-                            event_type=AuditEventType.CREDENTIAL_USED,
+                            AuditEventType.CREDENTIAL_USED,
+                            f"Credential '{provider}/{credential_name}' used",
                             actor_id=user_id,
                             target_type="credential",
                             target_id=f"{provider}/{credential_name}",
