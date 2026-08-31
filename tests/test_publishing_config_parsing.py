@@ -36,6 +36,14 @@ class _StubProvider(PublishingProvider):
 
 
 class TestPublishingConfigParsing(unittest.TestCase):
+    def test_blank_publishing_config_is_disabled(self):
+        args_list = _base_args() + ["--publishing_config="]
+
+        args = parse_cmdline_args(input_args=args_list, exit_on_error=False)
+
+        self.assertIsNotNone(args)
+        self.assertIsNone(args.publishing_config)
+
     def test_inline_publishing_config_json(self):
         config_json = json.dumps([{"provider": "s3", "bucket": "demo"}])
         args_list = _base_args() + [f"--publishing_config={config_json}"]
