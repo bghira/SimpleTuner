@@ -65,8 +65,8 @@
     function formatMetricValue(value) {
         if (typeof value !== 'number' || !Number.isFinite(value)) return '—';
         const absolute = Math.abs(value);
-        if (absolute !== 0 && (absolute >= 10000 || absolute < 0.001)) return value.toExponential(3);
-        return value.toLocaleString(undefined, { maximumFractionDigits: 6 });
+        if (absolute !== 0 && (absolute >= 10000 || absolute < 0.001)) return value.toExponential(2);
+        return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
     }
 
     function timestampMs(record) {
