@@ -1098,7 +1098,7 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "id": "aws_data_prefix",
                     "label": "bucket prefix",
                     "type": "text",
-                    "placeholder": "train/images",
+                    "placeholder": "train/images, regularisation/images",
                 },
                 {
                     "id": "aws_region_name",

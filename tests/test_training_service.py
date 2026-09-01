@@ -65,6 +65,15 @@ class DummyConfigStore:
         return dict(self._config), {}
 
 
+class DummyJobRepository:
+    def __init__(self):
+        self.jobs = []
+
+    async def add(self, job):
+        self.jobs.append(job)
+        return job
+
+
 def _mock_is_truthy(value: Any) -> bool:
     if value is None:
         return False
@@ -79,8 +88,14 @@ def _mock_is_truthy(value: Any) -> bool:
 class TrainingServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self._saved_state = copy.deepcopy(training_service.APIState.state)
+        self.job_repo = DummyJobRepository()
         self._save_state_patch = patch.object(training_service.APIState, "save_state", return_value=None)
         self._save_state_patch.start()
+        self._job_repo_patch = patch(
+            "simpletuner.simpletuner_sdk.server.services.cloud.storage.job_repository.get_job_repository",
+            return_value=self.job_repo,
+        )
+        self._job_repo_patch.start()
         # Mock cache/scan service checks so stale singleton state doesn't block training
         mock_cache_svc = MagicMock()
         mock_cache_svc.get_active_status.return_value = None
@@ -99,6 +114,7 @@ class TrainingServiceTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         training_service.APIState.state = self._saved_state
+        self._job_repo_patch.stop()
         self._save_state_patch.stop()
         self._cache_svc_patch.stop()
         self._scan_svc_patch.stop()

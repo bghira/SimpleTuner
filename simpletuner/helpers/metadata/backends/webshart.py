@@ -397,14 +397,19 @@ class WebshartMetadataBackend(MetadataBackend):
 
     def _entries_for_shard(self, shard_idx: int) -> list[dict]:
         if self.dataset_type is not DatasetType.VIDEO:
-            shard_bucket_results = self.data_backend.list_shard_sample_aspect_buckets([shard_idx])
+            shard_bucket_results = self.data_backend.list_shard_sample_aspect_buckets(
+                [shard_idx],
+                dataset_filter=self.dataset_filter,
+            )
             if not shard_bucket_results:
                 return []
             shard_bucket_data = shard_bucket_results[0]
             return [entry for entries in shard_bucket_data.get("buckets", {}).values() for entry in entries]
 
         entries = []
-        for sample_idx, filename in enumerate(self.data_backend.dataset.list_samples_in_shard(shard_idx)):
+        for sample in self.data_backend.list_samples_in_shard(shard_idx, dataset_filter=self.dataset_filter):
+            sample_idx = int(sample["sample_idx"])
+            filename = str(sample["filename"])
             if Path(filename).suffix.lower().strip(".") not in video_file_extensions:
                 continue
             entries.append({"sample_idx": sample_idx, "filename": filename})

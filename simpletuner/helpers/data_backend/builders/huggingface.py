@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from simpletuner.helpers.data_backend.config.base import BaseBackendConfig
+from simpletuner.helpers.data_backend.filters import build_dataset_filter
 from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -133,34 +134,12 @@ class HuggingfaceBackendBuilder(BaseBackendBuilder):
             raise ValueError("caption_strategy must be 'huggingface' or 'instanceprompt' for HuggingFace backends.")
 
     def _create_filter_function(self, backend_config: Dict[str, Any]) -> Optional[Callable]:
-        hf_config = backend_config.get("huggingface", {})
-        filter_config = hf_config.get("filter_func", backend_config.get("filter_func"))
-
-        if not filter_config:
+        dataset_filter = build_dataset_filter(backend_config)
+        if dataset_filter is None:
             return None
 
         def filter_func(item):
-            if "collection" in filter_config:
-                required_collections = filter_config["collection"]
-                if isinstance(required_collections, str):
-                    required_collections = [required_collections]
-                if item.get("collection") not in required_collections:
-                    return False
-
-            if "quality_thresholds" in filter_config:
-                quality = item.get(filter_config.get("quality_column", "quality_assessment"), {})
-                if not quality:
-                    return False
-                for metric, threshold in filter_config["quality_thresholds"].items():
-                    if quality.get(metric, 0) < threshold:
-                        return False
-
-            if "min_width" in filter_config and item.get("width", 0) < filter_config["min_width"]:
-                return False
-            if "min_height" in filter_config and item.get("height", 0) < filter_config["min_height"]:
-                return False
-
-            return True
+            return dataset_filter.matches_item(item)
 
         return filter_func
 

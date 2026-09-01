@@ -32,6 +32,15 @@ if hasattr(multiprocessing, "set_start_method"):
 TEST_HOST = "127.0.0.1"
 
 
+def _server_process_context() -> multiprocessing.context.BaseContext:
+    if sys.platform == "darwin":
+        methods = multiprocessing.get_all_start_methods()
+        if "forkserver" in methods:
+            return multiprocessing.get_context("forkserver")
+        return multiprocessing.get_context("spawn")
+    return multiprocessing.get_context()
+
+
 def _run_test_server(port: int, home_path: str, webui_config_path: str) -> None:
     import logging
 
@@ -87,7 +96,8 @@ class _TestServerManager:
         self.home_path = home_path
         webui_config_path = str(Path(home_path) / ".simpletuner" / "webui")
         self.port = self._find_free_port()
-        self._process = multiprocessing.Process(target=_run_test_server, args=(self.port, home_path, webui_config_path))
+        process_context = _server_process_context()
+        self._process = process_context.Process(target=_run_test_server, args=(self.port, home_path, webui_config_path))
         self._process.daemon = True
         self._process.start()
         timeout = os.environ.get("SELENIUM_SERVER_START_TIMEOUT")

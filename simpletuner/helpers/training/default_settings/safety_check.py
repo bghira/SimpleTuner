@@ -9,6 +9,7 @@ from torch.version import cuda as cuda_version
 from simpletuner.helpers.training.attention_backend import AttentionBackendMode
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.offloaded_gradient_checkpointer import normalize_activation_offload_pin_memory_max_buckets
+from simpletuner.helpers.training.reporting import report_to_contains, report_to_is_disabled
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -59,7 +60,7 @@ def safety_check(args, accelerator):
                 )
                 args.base_model_precision = "int8-quanto"
 
-    if args.report_to == "wandb":
+    if report_to_contains(args.report_to, "wandb"):
         if not is_wandb_available():
             raise ImportError("Make sure to install wandb if you want to use it for logging during training.")
         import wandb
@@ -318,5 +319,5 @@ def safety_check(args, accelerator):
 
     eval_step_interval = _normalize_interval(getattr(args, "eval_steps_interval", None), int)
     eval_epoch_interval = _normalize_interval(getattr(args, "eval_epoch_interval", None), float)
-    if args.report_to == "none" and (eval_step_interval or eval_epoch_interval):
+    if report_to_is_disabled(args.report_to) and (eval_step_interval or eval_epoch_interval):
         logger.warning("Evaluation scheduling is set, but no reporting is enabled. Evaluation will not be logged.")

@@ -19,6 +19,7 @@ from tqdm import tqdm
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
+from simpletuner.helpers.data_backend.filters import build_dataset_filter
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training.multi_process import broadcast_object_from_main, should_log
@@ -136,6 +137,7 @@ class MetadataBackend:
         self.seen_images = {}
         self.config = {}
         self.dataset_config = StateTracker.get_data_backend_config(self.id) or {}
+        self.dataset_filter = build_dataset_filter(self.dataset_config)
         dataset_type_value = self.dataset_config.get("dataset_type")
         try:
             self.dataset_type = ensure_dataset_type(dataset_type_value, default=DatasetType.IMAGE)
@@ -1510,9 +1512,10 @@ class MetadataBackend:
         expected_bucket = str(recalculated_aspect_ratio)
         logger.debug(f"Expected bucket for {cache_file}: {expected_bucket} vs actual {actual_aspect_ratio}")
 
+        instance_data_dir = self._primary_instance_data_dir()
         base_filename = os.path.splitext(os.path.basename(cache_file))[0]
-        base_filename_png = os.path.join(self.instance_data_dir, f"{base_filename}.png")
-        base_filename_jpg = os.path.join(self.instance_data_dir, f"{base_filename}.jpg")
+        base_filename_png = os.path.join(instance_data_dir, f"{base_filename}.png")
+        base_filename_jpg = os.path.join(instance_data_dir, f"{base_filename}.jpg")
         if any(
             base_filename_png in self.aspect_ratio_bucket_indices.get(bucket, set())
             for bucket in [expected_bucket, str(expected_bucket)]
@@ -1527,6 +1530,11 @@ class MetadataBackend:
             return False
         logger.debug(f"File {base_filename} was not found in the correct place.")
         return True
+
+    def _primary_instance_data_dir(self) -> str:
+        if isinstance(self.instance_data_dir, (list, tuple)):
+            return str(self.instance_data_dir[0]) if self.instance_data_dir else ""
+        return str(self.instance_data_dir or "")
 
     def _get_aspect_ratio_from_tensor(self, tensor):
         """calculate aspect ratio from tensor dimensions"""

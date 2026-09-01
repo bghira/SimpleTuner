@@ -270,7 +270,7 @@ Backends de memória exigem Linux ou macOS e RAM ou swap suficiente para o cache
 ### `instance_data_dir` / `aws_data_prefix`
 
 - **Local:** Caminho para os dados no sistema de arquivos.
-- **AWS:** Prefixo S3 para os dados no bucket.
+- **AWS:** Prefixo S3 para os dados no bucket. `aws_data_prefix` pode ser uma string para um prefixo ou uma lista de strings para varrer vários prefixos no mesmo bucket.
 
 ### `caption_strategy`
 
@@ -999,6 +999,32 @@ As coordenadas do bounding box sao normalizadas para [0, 1] no formato XYXY. O f
 
 Para datasets parquet ou HuggingFace, especifique um `bbox_column` na configuracao do backend.
 
+## Filtragem de amostras
+
+### `filter_func`
+
+`filter_func` pode ser configurado no nível superior de qualquer backend de dataset para pular amostras antes da criação dos buckets de metadados e caches VAE. Backends Hugging Face ainda aceitam o local antigo `huggingface.filter_func`, mas o valor de nível superior tem prioridade quando ambos existem.
+
+Filtros suportados:
+
+- `collection`: lista permitida com correspondência exata para o campo `collection` de uma linha.
+- `quality_thresholds`: valores numéricos mínimos dentro de `quality_column` (padrão: `quality_assessment`).
+- `min_width` / `min_height`: dimensões mínimas da linha quando campos de largura e altura existem.
+- `path_include` / `path_exclude`: filtragem por nome de arquivo/caminho para datasets local, AWS, CSV, Hugging Face, parquet e Webshart. `path_include` é uma lista permitida e `path_exclude` uma lista bloqueada. Exclusões vencem se ambas coincidirem.
+- `path_match`: modo de correspondência de caminhos. `auto` (padrão para chaves planas) usa substring para texto simples, glob para `*` e `?`, e regex para padrões com prefixo `re:`. Também é possível usar `contains`, `glob`, `regex` ou `exact`.
+
+```json
+{
+  "filter_func": {
+    "path_include": ["clothing", "notable", "*/curated/*.jpg"],
+    "path_exclude": ["watermark", "bad"],
+    "path_match": "auto"
+  }
+}
+```
+
+A forma antiga aninhada `filter_func.path.include` / `exclude` / `mode` continua aceita para configs existentes, mas novas configs devem usar as chaves planas acima.
+
 ## Filtragem de captions
 
 ### `caption_filter_list`
@@ -1367,8 +1393,6 @@ webshart optimize-captions \
 ```
 
 `--destination` grava uma árvore de metadados portátil por shard, e `--push-to-hub` a envia para um repositório de metadata; depois aponte a opção `metadata` do dataloader para esse repositório. `--shard-cache-dir` permite que a consolidação reutilize shards totalmente em cache em vez de emitir uma leitura por intervalo para cada sidecar.
-
-Esse backend exige um build do Webshart com `TarDataLoader.list_shard_sample_aspect_buckets()`; `webshart_optimize_captions` exige adicionalmente `probe_caption_layout()` e `coalesce_caption_metadata()`.
 
 ## Mapeamento personalizado de proporção para resolução
 

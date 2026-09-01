@@ -2025,8 +2025,8 @@ LayerSync 通过在同一 Transformer 内让“学生”层对齐更强的“教
 ### `--report_to`
 
 - **内容**：指定结果与日志的上报平台。
-- **原因**：启用本地或外部监控。`simpletuner` 会在 `output_dir` 中写入 JSONL、运行清单、验证媒体元数据和独立 HTML 报告。`all` 包含本地 tracker。
-- **选项**：simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, all, none
+- **原因**：启用本地或外部监控。`simpletuner` 会在 `output_dir` 中写入 JSONL、运行清单、验证媒体元数据和独立 HTML 报告。多个 tracker 使用逗号分隔。
+- **选项**：simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, none
 
 ### `--validation_image_format`
 
@@ -2300,7 +2300,7 @@ usage: train.py [-h] --model_family
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
                 [--modelspec_comment MODELSPEC_COMMENT]
-                [--report_to {tensorboard,wandb,comet_ml,all,none}]
+                [--report_to {simpletuner,tensorboard,wandb,swanlab,comet_ml,custom-tracker,none}]
                 [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
                 [--checkpoint_epoch_interval CHECKPOINT_EPOCH_INTERVAL]
                 [--checkpointing_rolling_steps CHECKPOINTING_ROLLING_STEPS]
@@ -3046,7 +3046,7 @@ options:
   --modelspec_comment MODELSPEC_COMMENT
                         Text embedded in safetensors file metadata as
                         modelspec.comment, visible in external model viewers.
-  --report_to {tensorboard,wandb,comet_ml,all,none}
+  --report_to {simpletuner,tensorboard,wandb,swanlab,comet_ml,custom-tracker,none}
                         Where to log training metrics
   --checkpoint_step_interval CHECKPOINT_STEP_INTERVAL
                         Save model checkpoint every N steps (deprecated alias: --checkpointing_steps)

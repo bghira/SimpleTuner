@@ -204,6 +204,27 @@ class TestLocalGPUAllocatorReconcile(unittest.TestCase):
         self.assertEqual(repo.failed, [("job-preboot", "Process ended after system reboot")])
         self.assertEqual(repo.released, ["job-preboot"])
 
+    def test_reconcile_processes_all_running_jobs_by_default(self):
+        allocator = LocalGPUAllocator()
+        jobs = [
+            _StubJob(
+                f"job-{index}",
+                started_at="2026-01-27T00:00:00+00:00",
+            )
+            for index in range(35)
+        ]
+        repo = _StubJobRepo(jobs)
+        allocator._job_repo = repo
+
+        with patch.object(allocator, "_get_boot_time_utc", return_value=None):
+            stats = asyncio.run(allocator.reconcile_on_startup())
+
+        self.assertEqual(stats["orphaned"], 0)
+        self.assertEqual(stats["adopted"], 0)
+        self.assertEqual(stats["no_pid"], 35)
+        self.assertEqual(len(repo.failed), 35)
+        self.assertEqual(len(repo.released), 35)
+
 
 class TestLocalGPUAllocatorAvailability(unittest.TestCase):
     """Tests for GPU availability checking."""

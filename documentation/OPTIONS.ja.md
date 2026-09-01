@@ -2023,8 +2023,8 @@ LayerSync は同一 Transformer 内の「学生」レイヤーを、より強い
 ### `--report_to`
 
 - **内容**: 結果とログの報告先プラットフォーム。
-- **理由**: ローカルまたは外部監視を有効にします。`simpletuner` は JSONL、マニフェスト、検証メディア情報、自己完結 HTML を `output_dir` に保存します。`all` にはローカルトラッカーも含まれます。
-- **選択肢**: simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, all, none
+- **理由**: ローカルまたは外部監視を有効にします。`simpletuner` は JSONL、マニフェスト、検証メディア情報、自己完結 HTML を `output_dir` に保存します。複数の tracker はカンマ区切りで指定します。
+- **選択肢**: simpletuner, wandb, tensorboard, swanlab, comet_ml, custom-tracker, none
 
 ### `--validation_image_format`
 
@@ -2298,7 +2298,7 @@ usage: train.py [-h] --model_family
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
                 [--modelspec_comment MODELSPEC_COMMENT]
-                [--report_to {tensorboard,wandb,comet_ml,all,none}]
+                [--report_to {simpletuner,tensorboard,wandb,swanlab,comet_ml,custom-tracker,none}]
                 [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
                 [--checkpoint_epoch_interval CHECKPOINT_EPOCH_INTERVAL]
                 [--checkpointing_rolling_steps CHECKPOINTING_ROLLING_STEPS]
@@ -3045,7 +3045,7 @@ options:
   --modelspec_comment MODELSPEC_COMMENT
                         Text embedded in safetensors file metadata as
                         modelspec.comment, visible in external model viewers.
-  --report_to {tensorboard,wandb,comet_ml,all,none}
+  --report_to {simpletuner,tensorboard,wandb,swanlab,comet_ml,custom-tracker,none}
                         Where to log training metrics
   --checkpoint_step_interval CHECKPOINT_STEP_INTERVAL
                         Save model checkpoint every N steps (deprecated alias: --checkpointing_steps)

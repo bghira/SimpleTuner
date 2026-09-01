@@ -778,17 +778,47 @@ class TrainingMetricsDashboardTestCase(_TrainerPageMixin, WebUITestCase):
             "".join(f"{json.dumps(record)}\n" for record in records),
             encoding="utf-8",
         )
-        image_path = validation_dir / "step_20_prompt_0_64x64.png"
-        Image.new("RGB", (64, 64), color=(32, 160, 120)).save(image_path, format="PNG")
-        media = {
-            "step": 20,
-            "type": "image",
-            "label": "A green square",
-            "index": 0,
-            "resolution": "64x64",
-            "path": image_path.relative_to(output_dir).as_posix(),
-        }
-        (output_dir / "validation_media.jsonl").write_text(f"{json.dumps(media)}\n", encoding="utf-8")
+        timestep_records = [
+            {"step": 10, "timesteps": [100.0, 300.0, 700.0]},
+            {"step": 20, "timesteps": [120.0, 340.0, 760.0]},
+        ]
+        (output_dir / "timestep_distribution.jsonl").write_text(
+            "".join(f"{json.dumps(record)}\n" for record in timestep_records),
+            encoding="utf-8",
+        )
+        first_step_image_path = validation_dir / "step_10_prompt_0_64x64.png"
+        Image.new("RGB", (64, 64), color=(16, 96, 180)).save(first_step_image_path, format="PNG")
+        latest_step_image_paths = []
+        for index in range(10):
+            image_path = validation_dir / f"step_20_prompt_{index}_64x64.png"
+            color = ((32 + index * 17) % 255, (160 + index * 11) % 255, (120 + index * 23) % 255)
+            Image.new("RGB", (64, 64), color=color).save(image_path, format="PNG")
+            latest_step_image_paths.append(image_path)
+        media_records = [
+            {
+                "step": 10,
+                "type": "image",
+                "label": "A green square",
+                "index": 0,
+                "resolution": "64x64",
+                "path": first_step_image_path.relative_to(output_dir).as_posix(),
+            },
+        ]
+        for index, image_path in enumerate(latest_step_image_paths):
+            media_records.append(
+                {
+                    "step": 20,
+                    "type": "image",
+                    "label": "A green square" if index == 0 else f"Validation prompt {index + 1:02d}",
+                    "index": 0,
+                    "resolution": "64x64",
+                    "path": image_path.relative_to(output_dir).as_posix(),
+                }
+            )
+        (output_dir / "validation_media.jsonl").write_text(
+            "".join(f"{json.dumps(media)}\n" for media in media_records),
+            encoding="utf-8",
+        )
         (output_dir / "training_report.html").write_text("<html>report</html>", encoding="utf-8")
 
         def scenario(driver, _browser):
@@ -809,21 +839,226 @@ class TrainingMetricsDashboardTestCase(_TrainerPageMixin, WebUITestCase):
             )
             self.assertGreater(canvas.size["width"], 300)
             self.assertGreater(canvas.size["height"], 200)
-
-            image = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, ".training-media-grid > figure img"))
+            legend_text = driver.find_element(By.CSS_SELECTOR, ".training-chart-legend").text
+            self.assertIn("train_loss", legend_text)
+            before_hover_top = driver.execute_script(
+                "return arguments[0].getBoundingClientRect().top;",
+                canvas,
             )
+            driver.execute_script(
+                """
+                const canvas = arguments[0];
+                const rect = canvas.getBoundingClientRect();
+                const EventClass = window.PointerEvent || window.MouseEvent;
+                canvas.dispatchEvent(new EventClass('pointermove', {
+                    bubbles: true,
+                    clientX: rect.left + rect.width / 2,
+                    clientY: rect.top + rect.height / 2
+                }));
+                """,
+                canvas,
+            )
+            hover_result = WebDriverWait(driver, 5).until(
+                lambda _driver: driver.execute_script(
+                    """
+                    const canvas = arguments[0];
+                    const wrapper = canvas.closest('.training-chart-canvas-wrap');
+                    const tooltip = wrapper.querySelector('.training-chart-tooltip');
+                    const hoverRows = Array.from(wrapper.querySelectorAll('.training-chart-tooltip-row'));
+                    const labels = hoverRows.map((row) => row.textContent.trim()).filter(Boolean);
+                    if (!labels.length || !tooltip) return null;
+                    const tooltipRect = tooltip.getBoundingClientRect();
+                    const wrapperRect = wrapper.getBoundingClientRect();
+                    return {
+                        top: canvas.getBoundingClientRect().top,
+                        labels,
+                        tooltipInsideChart:
+                            tooltipRect.left >= wrapperRect.left
+                            && tooltipRect.right <= wrapperRect.right
+                            && tooltipRect.top >= wrapperRect.top
+                            && tooltipRect.bottom <= wrapperRect.bottom
+                    };
+                    """,
+                    canvas,
+                )
+            )
+            self.assertAlmostEqual(before_hover_top, hover_result["top"], delta=1)
+            self.assertTrue(any("train_loss" in label for label in hover_result["labels"]), hover_result)
+            self.assertTrue(hover_result["tooltipInsideChart"], hover_result)
+
+            driver.set_window_size(1280, 900)
+            images = WebDriverWait(driver, 10).until(
+                lambda _driver: (
+                    driver.find_elements(By.CSS_SELECTOR, ".training-media-grid figure img")
+                    if len(driver.find_elements(By.CSS_SELECTOR, ".training-media-grid figure img")) == 10
+                    else False
+                )
+            )
+            layout_sizing = driver.execute_script(
+                """
+                const chartWorkspace = document.querySelector('.training-chart-workspace').getBoundingClientRect();
+                const mediaPanel = document.querySelector('.training-media-tool').getBoundingClientRect();
+                return {
+                    chartHeight: chartWorkspace.height,
+                    mediaHeight: mediaPanel.height,
+                };
+                """
+            )
+            self.assertLess(layout_sizing["chartHeight"], layout_sizing["mediaHeight"] - 100, layout_sizing)
+            media_step_slider = driver.find_element(By.CSS_SELECTOR, "input[aria-label='Validation checkpoint step']")
+            self.assertEqual(media_step_slider.get_attribute("max"), "1")
+            self.assertEqual(media_step_slider.get_attribute("value"), "1")
+            driver.execute_script(
+                """
+                arguments[0].value = '0';
+                arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                """,
+                media_step_slider,
+            )
+            WebDriverWait(driver, 5).until(
+                lambda _driver: len(driver.find_elements(By.CSS_SELECTOR, ".training-media-grid figure img")) == 1
+            )
+            driver.execute_script(
+                """
+                arguments[0].value = '1';
+                arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                """,
+                media_step_slider,
+            )
+            images = WebDriverWait(driver, 5).until(
+                lambda _driver: (
+                    driver.find_elements(By.CSS_SELECTOR, ".training-media-grid figure img")
+                    if len(driver.find_elements(By.CSS_SELECTOR, ".training-media-grid figure img")) == 10
+                    else False
+                )
+            )
+            image = images[0]
             media_response = requests.get(image.get_attribute("src"), timeout=5)
             self.assertEqual(media_response.status_code, 200, media_response.text)
             self.assertEqual(media_response.headers["content-type"], "image/png")
             self.assertEqual(Image.open(BytesIO(media_response.content)).size, (64, 64))
+            driver.execute_script("arguments[0].closest('.training-media-image-button').click();", image)
+            lightbox = WebDriverWait(driver, 10).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, ".training-media-lightbox"))
+            )
+            self.assertTrue(lightbox.is_displayed())
+            actual_size_button = lightbox.find_element(
+                By.CSS_SELECTOR, ".training-media-lightbox-toolbar button[title='Show at 1:1 size']"
+            )
+            actual_size_button.click()
+            lightbox_image = driver.find_element(By.CSS_SELECTOR, ".training-media-lightbox-body img")
+            self.assertIn("actual-size", lightbox_image.get_attribute("class"))
+            lightbox_step_slider = lightbox.find_element(
+                By.CSS_SELECTOR, "input[aria-label='Validation lightbox checkpoint step']"
+            )
+            self.assertEqual(lightbox_step_slider.get_attribute("max"), "1")
+            driver.execute_script(
+                """
+                arguments[0].value = '0';
+                arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                """,
+                lightbox_step_slider,
+            )
+            WebDriverWait(driver, 5).until(lambda _driver: "step 10" in lightbox.text)
+            background_media_state = driver.execute_script(
+                """
+                const stepSlider = document.querySelector("input[aria-label='Validation checkpoint step']");
+                return {
+                    imageCount: document.querySelectorAll(".training-media-grid figure img").length,
+                    stepSliderValue: stepSlider ? stepSlider.value : null,
+                };
+                """
+            )
+            self.assertEqual(background_media_state["imageCount"], 10, background_media_state)
+            self.assertEqual(background_media_state["stepSliderValue"], "1", background_media_state)
+            lightbox.find_element(By.CSS_SELECTOR, ".training-media-lightbox-toolbar button[title='Close image']").click()
+            WebDriverWait(driver, 5).until(EC.invisibility_of_element_located((By.CSS_SELECTOR, ".training-media-lightbox")))
 
+            metric_selector_button = driver.find_element(
+                By.CSS_SELECTOR,
+                ".training-chart-actions button[title='Select metrics']",
+            )
+            driver.execute_script("arguments[0].click();", metric_selector_button)
+            smoothing_slider = WebDriverWait(driver, 5).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "input[aria-label='Chart smoothing']"))
+            )
+            driver.execute_script(
+                """
+                arguments[0].value = '0.5';
+                arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+                """,
+                smoothing_slider,
+            )
+            WebDriverWait(driver, 5).until(
+                lambda _driver: driver.execute_script(
+                    "return Alpine.$data(document.getElementById('metrics-tab-content')).trainingCharts[0].smoothing;"
+                )
+                == 0.5
+            )
             loss_toggle = driver.find_element(
                 By.XPATH,
                 "//div[contains(@class, 'training-metric-picker')]//label[span[text()='train_loss']]/input",
             )
-            loss_toggle.click()
+            driver.execute_script("arguments[0].click();", loss_toggle)
             WebDriverWait(driver, 5).until(lambda _driver: not loss_toggle.is_selected())
+
+            timestep_toggle = driver.find_element(
+                By.XPATH,
+                "//section[contains(@class, 'training-timestep-panel')]//button[.//span[text()='Show']]",
+            )
+            driver.execute_script("arguments[0].click();", timestep_toggle)
+            WebDriverWait(driver, 5).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, "[data-testid='training-timestep-distribution-canvas']"))
+            )
+            WebDriverWait(driver, 5).until(
+                lambda _driver: requests.get(
+                    f"{self.base_url}/api/webui/ui-state/training-metrics",
+                    timeout=5,
+                ).json()[
+                    "environments"
+                ]["test-config"]["showTimestepChart"]
+            )
+            trainer_page.switch_to_basic_tab()
+            trainer_page.switch_to_metrics_tab()
+            WebDriverWait(driver, 10).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, "[data-testid='training-timestep-distribution-canvas']"))
+            )
+
+            driver.set_window_size(1280, 900)
+            canvas = WebDriverWait(driver, 10).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, "[data-testid='training-metrics-canvas']"))
+            )
+            chart_width_before_collapse = driver.execute_script(
+                "return arguments[0].getBoundingClientRect().width;",
+                canvas,
+            )
+            collapse_button = driver.find_element(By.CSS_SELECTOR, "button[title='Collapse validation media']")
+            driver.execute_script("arguments[0].click();", collapse_button)
+            WebDriverWait(driver, 5).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".training-metrics-layout.validation-collapsed"))
+            )
+            WebDriverWait(driver, 5).until(
+                lambda _driver: driver.execute_script(
+                    "return arguments[0].getBoundingClientRect().width;",
+                    driver.find_element(By.CSS_SELECTOR, "[data-testid='training-metrics-canvas']"),
+                )
+                > chart_width_before_collapse
+            )
+            self.assertFalse(driver.find_element(By.CSS_SELECTOR, ".training-media-panel-body").is_displayed())
+            WebDriverWait(driver, 5).until(
+                lambda _driver: requests.get(
+                    f"{self.base_url}/api/webui/ui-state/training-metrics",
+                    timeout=5,
+                ).json()[
+                    "environments"
+                ]["test-config"]["mediaPanelCollapsed"]
+            )
+            trainer_page.switch_to_basic_tab()
+            trainer_page.switch_to_metrics_tab()
+            layout = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".training-metrics-layout.validation-collapsed"))
+            )
+            self.assertIn("validation-collapsed", layout.get_attribute("class"))
 
             driver.set_window_size(430, 900)
             workspace = driver.find_element(By.CSS_SELECTOR, ".training-metrics-workspace")
@@ -2517,6 +2752,95 @@ class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
 
         self.for_each_browser("test_dataset_wizard_name_step_enables_next_after_typing", scenario)
 
+    def test_dataset_wizard_path_filter_controls_queue_filter_func(self) -> None:
+        """Path filter controls should serialize to flat filter_func path keys."""
+        datasets_root = self.home_path / "datasets"
+        datasets_root.mkdir(parents=True, exist_ok=True)
+        self.seed_defaults(datasets_dir=datasets_root)
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+            trainer_page.dismiss_toast()
+
+            trainer_page.wait.until(lambda d: d.execute_script("return !!window.datasetWizardComponentInstance"))
+            opened = driver.execute_async_script(
+                """
+                const done = arguments[0];
+                const root = document.querySelector('#datasets-tab-content');
+                const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : null;
+                if (!comp) {
+                    done(false);
+                    return;
+                }
+                Promise.resolve(comp.openWizard())
+                    .then(() => done(true))
+                    .catch((err) => done(String(err)));
+                """
+            )
+            self.assertTrue(opened)
+
+            ready = driver.execute_script(
+                """
+                const root = document.querySelector('#datasets-tab-content');
+                const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : window.datasetWizardComponentInstance;
+                if (!comp) { return false; }
+                comp.currentDataset.id = 'filtered-images';
+                comp.selectDatasetType('image');
+                comp.selectBackend('local');
+                comp.currentDataset.show_path_filter = true;
+                comp.wizardStep = comp.getStepNumber('config');
+                comp.updateWizardTitle();
+                return true;
+                """
+            )
+            self.assertTrue(ready)
+
+            trainer_page.wait.until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, ".dataset-wizard-modal input[x-model='currentDataset.filter_path_include']")
+                )
+            )
+            driver.execute_script(
+                """
+                const includeInput = document.querySelector(".dataset-wizard-modal input[x-model='currentDataset.filter_path_include']");
+                const excludeInput = document.querySelector(".dataset-wizard-modal input[x-model='currentDataset.filter_path_exclude']");
+                const modeSelect = document.querySelector(".dataset-wizard-modal select[x-model='currentDataset.filter_path_mode']");
+                includeInput.value = 'keep, regularisation';
+                includeInput.dispatchEvent(new Event('input', { bubbles: true }));
+                excludeInput.value = 'watermark';
+                excludeInput.dispatchEvent(new Event('input', { bubbles: true }));
+                modeSelect.value = 'glob';
+                modeSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                """
+            )
+
+            queued = driver.execute_script(
+                """
+                const root = document.querySelector('#datasets-tab-content');
+                const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(root) : window.datasetWizardComponentInstance;
+                comp.addDatasetToQueue();
+                return comp.datasetQueue[0];
+                """
+            )
+            self.assertEqual(
+                queued.get("filter_func"),
+                {
+                    "path_include": ["keep", "regularisation"],
+                    "path_exclude": ["watermark"],
+                    "path_match": "glob",
+                },
+            )
+            self.assertNotIn("filter_path_include", queued)
+            self.assertNotIn("filter_path_exclude", queued)
+            self.assertNotIn("filter_path_mode", queued)
+            self.assertNotIn("show_path_filter", queued)
+
+        self.for_each_browser("test_dataset_wizard_path_filter_controls_queue_filter_func", scenario)
+
 
 class CloudTabVisibilityTestCase(_TrainerPageMixin, WebUITestCase):
     """Ensure the Cloud tab default matches UI Settings."""
@@ -2648,35 +2972,46 @@ class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.ID, "cloud-tab-content")))
         trainer_page.wait_for_htmx()
         WebDriverWait(driver, 10).until(
-            lambda d: d.execute_script("return !!(window.Alpine && document.querySelector('#cloud-tab-content'));")
+            lambda d: d.execute_script(
+                "const el = document.querySelector('#cloud-tab-content');"
+                "const comp = el?._x_dataStack?.[0];"
+                "return !!(window.Alpine && comp && comp.preSubmitModal && typeof comp.openPreSubmitModal === 'function');"
+            )
         )
 
     def _install_cloud_modal_harness(self, driver) -> bool:
         return driver.execute_script(
             """
             const el = document.querySelector('#cloud-tab-content');
-            const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null;
+            const comp = el?._x_dataStack?.[0] || (window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null);
             if (!comp) { return false; }
 
-            comp.activeProvider = 'replicate';
-            comp.providers = [{
-                id: 'replicate',
-                name: 'Replicate',
-                hardware_profile: 'l40s-x4',
-                hardware_profiles: [
-                    { id: 'h100', label: 'H100', hardware_type: 'H100', cost_per_hour: 5.49, cost_per_second: 0.001525 },
-                    { id: 'h100-x8', label: '8x H100', hardware_type: '8x H100', cost_per_hour: 43.92, cost_per_second: 0.0122 },
-                    { id: 'l40s', label: 'L40S', hardware_type: 'L40S', cost_per_hour: 3.50, cost_per_second: 0.000972222 },
-                    { id: 'l40s-x4', label: '4x L40S', hardware_type: '4x L40S', cost_per_hour: 14.00, cost_per_second: 0.003888888 },
-                    { id: 'l40s-x8', label: '8x L40S', hardware_type: '8x L40S', cost_per_hour: 28.00, cost_per_second: 0.007777776 }
-                ]
-            }];
-            comp.providerConfig = { config: { hardware_profile: 'l40s-x4' }, cost_limit_enabled: false };
-            comp.selectedConfigName = 'default';
-            comp.webhookUrl = '';
-            comp.quickSubmitMode = false;
-            comp.isActiveProviderConfigured = () => true;
-            comp.getActiveProvider = () => ({ id: 'replicate', name: 'Replicate' });
+            const hardwareProfiles = [
+                { id: 'h100', label: 'H100', hardware_type: 'H100', cost_per_hour: 5.49, cost_per_second: 0.001525 },
+                { id: 'h100-x8', label: '8x H100', hardware_type: '8x H100', cost_per_hour: 43.92, cost_per_second: 0.0122 },
+                { id: 'l40s', label: 'L40S', hardware_type: 'L40S', cost_per_hour: 3.50, cost_per_second: 0.000972222 },
+                { id: 'l40s-x4', label: '4x L40S', hardware_type: '4x L40S', cost_per_hour: 14.00, cost_per_second: 0.003888888 },
+                { id: 'l40s-x8', label: '8x L40S', hardware_type: '8x L40S', cost_per_hour: 28.00, cost_per_second: 0.007777776 }
+            ];
+            window.__applyCloudHardwareHarness = () => {
+                comp.activeProvider = 'replicate';
+                comp.providers = [{
+                    id: 'replicate',
+                    name: 'Replicate',
+                    hardware_profile: 'l40s-x4',
+                    hardware_profiles: hardwareProfiles
+                }];
+                comp.providerConfig = { config: { hardware_profile: 'l40s-x4' }, cost_limit_enabled: false };
+                comp.selectedConfigName = 'default';
+                comp.webhookUrl = '';
+                comp.quickSubmitMode = false;
+                comp.isActiveProviderConfigured = () => true;
+                comp.getActiveProvider = () => ({ id: 'replicate', name: 'Replicate' });
+                comp.getReplicateHardwareProfiles = () => hardwareProfiles;
+                comp.getDefaultReplicateHardwareProfile = () => localStorage.getItem('cloud_replicate_hardware_profile') || 'l40s-x4';
+            };
+            window.__applyCloudHardwareHarness();
+            comp.preSubmitModal.hardwareProfile = '';
             comp.loadDataUploadPreview = async () => {
                 comp.preSubmitModal.dataUploadPreview = {
                     requires_upload: false,
@@ -2722,8 +3057,11 @@ class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
             """
             const done = arguments[0];
             const el = document.querySelector('#cloud-tab-content');
-            const comp = window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null;
+            const comp = el?._x_dataStack?.[0] || (window.Alpine && window.Alpine.$data ? window.Alpine.$data(el) : null);
             if (!comp || typeof comp.openPreSubmitModal !== 'function') { done(false); return; }
+            if (typeof window.__applyCloudHardwareHarness === 'function') {
+                window.__applyCloudHardwareHarness();
+            }
             comp.openPreSubmitModal().then(() => done(true)).catch((err) => {
                 console.error('openPreSubmitModal failed', err);
                 done(false);
@@ -2740,8 +3078,9 @@ class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
         self.with_sample_environment()
 
         def scenario(driver, _browser):
-            self._open_cloud_tab(driver)
+            driver.get(self.base_url)
             driver.execute_script("localStorage.removeItem('cloud_replicate_hardware_profile');")
+            self._open_cloud_tab(driver)
             self.assertTrue(self._install_cloud_modal_harness(driver))
 
             self._open_modal(driver)
@@ -2754,7 +3093,9 @@ class CloudHardwareProfileSubmitTestCase(_TrainerPageMixin, WebUITestCase):
             )
 
             driver.execute_script(
-                "const comp = Alpine.$data(document.querySelector('#cloud-tab-content')); comp.closePreSubmitModal();"
+                "const el = document.querySelector('#cloud-tab-content');"
+                "const comp = el?._x_dataStack?.[0] || Alpine.$data(el);"
+                "comp.closePreSubmitModal();"
             )
             self._open_modal(driver)
             select_el = driver.find_element(By.CSS_SELECTOR, "[data-testid='replicate-hardware-profile-select']")

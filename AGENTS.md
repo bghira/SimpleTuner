@@ -116,3 +116,4 @@ The `formDirty` → save button flow has multiple failure modes. E2E tests must 
 - Create translations for zh, ja, pt-BR, es, and hindi when creating *new* documentation.
 - If there's a new option being added, we should add it to the OPTIONS.md and all of its translations.
 - If a new dataloader setting is being added, it should be in DATALOADER.md and all of its translations.
+- Dataloader dataset keys are not necessarily CLI options. Discover dataset config fields from `simpletuner/helpers/data_backend/config/`, `simpletuner/simpletuner_sdk/server/data/dataset_blueprints.py`, and `simpletuner/templates/components/dataloader/` before deciding whether `OPTIONS.md` is relevant. For dataclass fields, use `.venv/bin/python -c "from dataclasses import fields; from simpletuner.helpers.data_backend.config import ImageBackendConfig; print([f.name for f in fields(ImageBackendConfig)])"`.

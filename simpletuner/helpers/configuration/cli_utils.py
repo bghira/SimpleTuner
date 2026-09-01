@@ -260,6 +260,12 @@ def mapping_to_cli_args(
             extras_dict[key] = value
             continue
 
+        if canonical_key == "report_to" and isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
+            values = [str(item).strip() for item in value if str(item).strip()]
+            if values:
+                cli_args.append(_format_key_value(key, ",".join(values)))
+            continue
+
         if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
             for item in value:
                 item_str = str(item).strip()
@@ -273,6 +279,8 @@ def mapping_to_cli_args(
 
         value_str = str(value).strip()
         if not value_str:
+            if canonical_key in {"webhook_config", "publishing_config", "peft_lora_target_modules"}:
+                continue
             if isinstance(value, str) and field is not None and getattr(field, "allow_empty", False):
                 cli_args.append(_format_key_value(key, ""))
             continue

@@ -435,6 +435,51 @@ class WebUICollapsedSectionsAPITestCase(_WebUIBaseTestCase):
 
         self.assertEqual(response.status_code, 422)
 
+    def test_training_metrics_layout_settings_persist(self) -> None:
+        response = self.client.get("/api/webui/ui-state/training-metrics")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"templates": [], "environments": {}})
+
+        payload = {
+            "templates": [
+                {
+                    "name": "Loss",
+                    "charts": [
+                        {
+                            "kind": "scalar",
+                            "name": "Training metrics",
+                            "metrics": ["train_loss"],
+                            "smoothing": 0.25,
+                        }
+                    ],
+                }
+            ],
+            "environments": {
+                "sdxl-test": {
+                    "template": "Loss",
+                    "xAxis": "minutes",
+                    "showTimestepChart": True,
+                    "mediaPanelCollapsed": True,
+                    "charts": [
+                        {
+                            "kind": "scalar",
+                            "name": "Training metrics",
+                            "metrics": ["train_loss", "loss/val"],
+                            "smoothing": 0.5,
+                        }
+                    ],
+                }
+            },
+        }
+
+        response = self.client.post("/api/webui/ui-state/training-metrics", json=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), payload)
+
+        response = self.client.get("/api/webui/ui-state/training-metrics")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), payload)
+
     def test_save_and_get_collapsed_sections(self) -> None:
         """Test POST saves sections and GET retrieves them."""
         sections = {"section1": True, "section2": False, "section3": True}

@@ -6,20 +6,23 @@ O SimpleTuner pode registrar métricas sem um serviço externo. Configure:
 {"report_to": "simpletuner"}
 ```
 
-`report_to=all` também ativa o tracker local. Ele funciona com todas as famílias de modelos e, em DDP, somente o processo principal grava os arquivos.
+Use valores separados por virgula, como `report_to=simpletuner,wandb`, para ativar o tracker local junto com um externo. Ele funciona com todas as famílias de modelos e, em DDP, somente o processo principal grava os arquivos.
 
 ## Arquivos de saída
 
 - `training_metrics.jsonl`: escalares por etapa, somente anexados.
 - `training_metrics.json`: manifesto atômico, status e nomes das métricas.
 - `validation_media.jsonl`: índice de imagens, vídeos e áudios de validação.
+- `timestep_distribution.jsonl`: amostras de timestep agrupadas por etapa global.
 - `training_report.html`: relatório autônomo que abre sem servidor.
 
 Ao retomar, novos registros são anexados. Arquive o HTML com o diretório de saída, pois os caminhos de mídia são relativos.
 
+Quando um tracker não coleta telemetria do sistema nativamente, o SimpleTuner registra métricas numéricas de CPU, memória, disco, rede e GPU para esse tracker. O WandB é ignorado porque seu cliente já relata métricas do host.
+
 ## WebUI e API
 
-Abra **Metrics** e **Training Runs** para selecionar escalares, comparar validações por prompt/etapa e abrir o relatório. **System** mantém a saúde das GPUs e a configuração do Prometheus.
+Abra **Metrics** e **Training Runs** para selecionar escalares por etapa ou minutos, ver a distribuição de timesteps, revisar galerias de validação por etapa e abrir o relatório. **System** mantém a saúde das GPUs e a configuração do Prometheus.
 
 ```text
 GET /api/metrics/training/runs

@@ -335,8 +335,33 @@ class TestAwsBackendBuilder(unittest.TestCase):
         self.assertEqual(call_kwargs["accelerator"], self.accelerator)
         self.assertFalse(call_kwargs["compress_cache"])
         self.assertEqual(call_kwargs["max_pool_connections"], 128)
+        self.assertEqual(call_kwargs["data_prefix"], "")
 
         self.assertEqual(result, mock_backend)
+
+    @patch("simpletuner.helpers.data_backend.builders.aws.S3DataBackend")
+    def test_build_passes_aws_data_prefix_list(self, mock_s3_backend_class):
+        mock_backend = Mock()
+        mock_s3_backend_class.return_value = mock_backend
+
+        config = ImageBackendConfig.from_dict(
+            {
+                "id": "test_aws",
+                "type": "aws",
+                "cache_dir": "/tmp/cache",
+                "aws_bucket_name": "test-bucket",
+                "aws_region_name": "us-east-1",
+                "aws_endpoint_url": "http://localhost:9000",
+                "aws_access_key_id": "test_key",
+                "aws_secret_access_key": "test_secret",
+                "aws_data_prefix": ["train/", "reg/"],
+            },
+            self.args,
+        )
+
+        self.builder.build(config)
+
+        self.assertEqual(mock_s3_backend_class.call_args.kwargs["data_prefix"], ["train/", "reg/"])
 
     @patch("simpletuner.helpers.data_backend.builders.aws.S3DataBackend")
     def test_build_with_custom_max_connections(self, mock_s3_backend_class):

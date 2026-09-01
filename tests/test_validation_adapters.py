@@ -48,22 +48,20 @@ class ValidationAdapterBuilderTests(unittest.TestCase):
             },
         ]
         runs = build_validation_adapter_runs(None, config)
-        self.assertEqual(3, len(runs))
+        self.assertEqual(2, len(runs))
 
         first = runs[0]
-        self.assertTrue(first.is_base)
+        self.assertFalse(first.is_base)
+        self.assertEqual("base_adapter", first.slug)
+        self.assertEqual("org/base_adapter", first.adapters[0].repo_id)
 
         second = runs[1]
-        self.assertEqual("base_adapter", second.slug)
-        self.assertEqual("org/base_adapter", second.adapters[0].repo_id)
-
-        third = runs[2]
-        self.assertEqual("combo", third.label)
-        self.assertEqual(2, len(third.adapters))
-        strengths = [adapter.strength for adapter in third.adapters]
+        self.assertEqual("combo", second.label)
+        self.assertEqual(2, len(second.adapters))
+        strengths = [adapter.strength for adapter in second.adapters]
         self.assertEqual([0.5, 1.0], strengths)
-        self.assertEqual("repo/style", third.adapters[1].repo_id)
-        self.assertEqual("style.safetensors", third.adapters[1].weight_name)
+        self.assertEqual("repo/style", second.adapters[1].repo_id)
+        self.assertEqual("style.safetensors", second.adapters[1].weight_name)
 
     def test_adapter_mode_comparison_includes_base(self):
         runs = build_validation_adapter_runs(
@@ -76,8 +74,37 @@ class ValidationAdapterBuilderTests(unittest.TestCase):
         self.assertEqual("sample", second.adapters[0].adapter_name)
         self.assertEqual(0.8, second.adapters[0].strength)
 
+    def test_adapter_mode_comparison_with_config_includes_base(self):
+        runs = build_validation_adapter_runs(
+            None,
+            [{"label": "custom", "path": "repo/hero"}],
+            adapter_mode="comparison",
+        )
+        self.assertEqual(2, len(runs))
+        self.assertTrue(runs[0].is_base)
+        self.assertEqual("custom", runs[1].slug)
+
+    def test_adapter_mode_adapter_only_with_config_excludes_base(self):
+        runs = build_validation_adapter_runs(
+            None,
+            [{"label": "custom", "path": "repo/hero"}],
+            adapter_mode="adapter_only",
+        )
+        self.assertEqual(1, len(runs))
+        self.assertFalse(runs[0].is_base)
+        self.assertEqual("custom", runs[0].slug)
+
     def test_adapter_mode_none_skips_loading(self):
         runs = build_validation_adapter_runs("foo/bar", None, adapter_mode="none")
+        self.assertEqual(1, len(runs))
+        self.assertTrue(runs[0].is_base)
+
+    def test_adapter_mode_none_skips_config_loading(self):
+        runs = build_validation_adapter_runs(
+            None,
+            [{"label": "custom", "path": "repo/hero"}],
+            adapter_mode="none",
+        )
         self.assertEqual(1, len(runs))
         self.assertTrue(runs[0].is_base)
 
@@ -91,8 +118,8 @@ class ValidationAdapterBuilderTests(unittest.TestCase):
             }
         ]
         runs = build_validation_adapter_runs(None, config)
-        self.assertEqual(2, len(runs))
-        run = runs[1]
+        self.assertEqual(1, len(runs))
+        run = runs[0]
         self.assertEqual("custom", run.label)
         adapter = run.adapters[0]
         self.assertEqual("hero_adapter", adapter.adapter_name)
@@ -111,7 +138,7 @@ class ValidationAdapterBuilderTests(unittest.TestCase):
         ]
         runs = build_validation_adapter_runs(None, config)
 
-        run = runs[1]
+        run = runs[0]
         self.assertEqual("repo/detail", run.adapters[0].repo_id)
         self.assertEqual("two", run.adapters[0].target_stage)
         self.assertEqual("one", run.adapters[1].target_stage)
@@ -126,6 +153,30 @@ class _AdapterTarget:
         self.set_calls.append((names, scales))
 
     def delete_adapters(self, names):
+        self.delete_calls.append(names)
+
+
+class _TrackingAdapterTarget:
+    def __init__(self):
+        self.peft_config = {}
+        self.active_adapters = []
+        self.set_calls = []
+        self.delete_calls = []
+
+    def set_adapters(self, names, scales):
+        names = [names] if isinstance(names, str) else list(names)
+        missing = set(names) - set(self.peft_config)
+        if missing:
+            present = set(self.peft_config)
+            raise ValueError(f"Adapter name(s) {missing} not in the list of present adapters: {present}.")
+        self.active_adapters = names
+        self.set_calls.append((names, scales))
+
+    def delete_adapters(self, names):
+        names = [names] if isinstance(names, str) else list(names)
+        for name in names:
+            self.peft_config.pop(name, None)
+        self.active_adapters = [name for name in self.active_adapters if name not in names]
         self.delete_calls.append(names)
 
 
@@ -149,6 +200,28 @@ class _Pipeline:
 
     def delete_adapters(self, names):
         self.delete_calls.append(names)
+
+
+class _ChildActivePipeline:
+    def __init__(self):
+        self.load_calls = []
+        self.transformer = _TrackingAdapterTarget()
+        self.components = {"transformer": self.transformer}
+
+    def load_lora_weights(self, location, **kwargs):
+        adapter_name = kwargs["adapter_name"]
+        self.load_calls.append((location, kwargs))
+        self.transformer.peft_config[adapter_name] = object()
+        self.transformer.active_adapters = [adapter_name]
+
+    def get_active_adapters(self):
+        return list(self.transformer.active_adapters)
+
+    def set_adapters(self, names, scales):
+        self.transformer.set_adapters(names, scales)
+
+    def delete_adapters(self, names):
+        self.transformer.delete_adapters(names)
 
 
 class _StageModel:
@@ -200,7 +273,7 @@ class ValidationAdapterStageLoadingTests(unittest.TestCase):
         run = build_validation_adapter_runs(
             None,
             [{"label": "refiner", "path": "repo/refiner", "target_stage": "two", "strength": 0.4}],
-        )[1]
+        )[0]
 
         with validator._temporary_validation_adapters(run):
             self.assertEqual([], base_pipeline.load_calls)
@@ -220,7 +293,7 @@ class ValidationAdapterStageLoadingTests(unittest.TestCase):
         run = build_validation_adapter_runs(
             None,
             [{"label": "low-noise", "path": "repo/low", "target_stage": "low", "strength": 0.6}],
-        )[1]
+        )[0]
 
         with validator._temporary_validation_adapters(run):
             with validator._temporary_validation_stage_adapters(pipeline, ("high", "low")):
@@ -245,7 +318,7 @@ class ValidationAdapterStageLoadingTests(unittest.TestCase):
                     ],
                 }
             ],
-        )[1]
+        )[0]
 
         with validator._temporary_validation_adapters(run):
             self.assertEqual(("combo", 0.25), pipeline.set_calls[0])
@@ -261,6 +334,44 @@ class ValidationAdapterStageLoadingTests(unittest.TestCase):
 
         self.assertEqual("combo", pipeline.delete_calls[0])
         self.assertEqual(["combo_low"], pipeline.transformer_2.delete_calls)
+
+    def test_validation_adapter_restore_ignores_loaded_temporary_adapter(self):
+        pipeline = _ChildActivePipeline()
+        validator = self._validator(_StageModel(pipeline))
+        run = build_validation_adapter_runs(
+            None,
+            [{"label": "Krea2 Turbo adapter", "path": "repo/krea2", "adapter_name": "krea2_turbo_adapter"}],
+        )[0]
+
+        with validator._temporary_validation_adapters(run):
+            self.assertEqual("repo/krea2", pipeline.load_calls[0][0])
+            self.assertEqual("krea2_turbo_adapter", pipeline.load_calls[0][1]["adapter_name"])
+            self.assertEqual([(["krea2_turbo_adapter"], 1.0)], pipeline.transformer.set_calls)
+
+        self.assertEqual([["krea2_turbo_adapter"]], pipeline.transformer.delete_calls)
+        self.assertEqual([], pipeline.transformer.active_adapters)
+
+    def test_validation_adapter_restore_preserves_existing_active_adapter(self):
+        pipeline = _ChildActivePipeline()
+        pipeline.transformer.peft_config["base"] = object()
+        pipeline.transformer.active_adapters = ["base"]
+        validator = self._validator(_StageModel(pipeline))
+        run = build_validation_adapter_runs(
+            None,
+            [{"label": "Krea2 Turbo adapter", "path": "repo/krea2", "adapter_name": "krea2_turbo_adapter"}],
+        )[0]
+
+        with validator._temporary_validation_adapters(run):
+            self.assertEqual(
+                [(["base", "krea2_turbo_adapter"], [1.0, 1.0])],
+                pipeline.transformer.set_calls,
+            )
+
+        self.assertEqual(
+            [(["base", "krea2_turbo_adapter"], [1.0, 1.0]), (["base"], 1.0)],
+            pipeline.transformer.set_calls,
+        )
+        self.assertEqual(["base"], pipeline.transformer.active_adapters)
 
 
 if __name__ == "__main__":

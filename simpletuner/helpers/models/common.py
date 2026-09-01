@@ -9,6 +9,7 @@ import random
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from enum import Enum
+from numbers import Integral
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Protocol, Sequence
 
 if TYPE_CHECKING:
@@ -4612,24 +4613,55 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         return batch
 
     def _get_patch_size_for_dynamic_shift(self, noise_scheduler):
-        component = None
-        try:
-            component = self.get_trained_component()
-        except Exception:
-            component = None
-
+        component = self.get_trained_component()
         if component is not None:
-            patch_size = getattr(getattr(component, "config", None), "patch_size", None)
+            component_config = getattr(component, "config", None)
+            patch_size = getattr(component_config, "patch_size", None)
             if patch_size is not None:
+                patch_size_t = getattr(component_config, "patch_size_t", None)
+                if patch_size_t is not None and isinstance(patch_size, Integral):
+                    return (patch_size_t, patch_size, patch_size)
                 return patch_size
 
         scheduler_config = getattr(noise_scheduler, "config", None)
         if scheduler_config is not None:
             patch_size = getattr(scheduler_config, "patch_size", None)
             if patch_size is not None:
+                patch_size_t = getattr(scheduler_config, "patch_size_t", None)
+                if patch_size_t is not None and isinstance(patch_size, Integral):
+                    return (patch_size_t, patch_size, patch_size)
                 return patch_size
 
-        return getattr(self.config, "patch_size", None)
+        config = getattr(self, "config", None)
+        patch_size = getattr(config, "patch_size", None)
+        if patch_size is not None:
+            patch_size_t = getattr(config, "patch_size_t", None)
+            if patch_size_t is not None and isinstance(patch_size, Integral):
+                return (patch_size_t, patch_size, patch_size)
+        return patch_size
+
+    @staticmethod
+    def _coerce_dynamic_shift_patch_dimension(value) -> int:
+        if isinstance(value, bool) or not isinstance(value, Integral):
+            raise ValueError(f"Dynamic timestep shift patch dimensions must be positive integers, got {value!r}.")
+        dimension = int(value)
+        if dimension <= 0:
+            raise ValueError(f"Dynamic timestep shift patch dimensions must be positive integers, got {value!r}.")
+        return dimension
+
+    def _dynamic_shift_patch_dimensions(self, patch_size) -> tuple[int, int, int]:
+        if isinstance(patch_size, Integral) and not isinstance(patch_size, bool):
+            spatial_patch_size = self._coerce_dynamic_shift_patch_dimension(patch_size)
+            return (1, spatial_patch_size, spatial_patch_size)
+        if isinstance(patch_size, Sequence) and not isinstance(patch_size, (str, bytes)):
+            if len(patch_size) == 2:
+                patch_dimensions = (1, patch_size[0], patch_size[1])
+            elif len(patch_size) == 3:
+                patch_dimensions = tuple(patch_size)
+            else:
+                raise ValueError("Dynamic timestep shift patch size must be an integer or a 2D/3D patch-size sequence.")
+            return tuple(self._coerce_dynamic_shift_patch_dimension(value) for value in patch_dimensions)
+        raise ValueError("Cannot compute dynamic timestep shift because no valid `patch_size` was found.")
 
     def calculate_dynamic_shift_mu(self, noise_scheduler, latents: torch.Tensor | None):
         """
@@ -4657,19 +4689,30 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
                 f"Cannot compute dynamic timestep shift; scheduler is missing config values: {', '.join(missing_fields)}"
             )
 
-        patch_size = self._get_patch_size_for_dynamic_shift(noise_scheduler)
-        if patch_size is None or patch_size <= 0:
-            raise ValueError("Cannot compute dynamic timestep shift because no valid `patch_size` was found.")
-
-        # Handle video latents [B, C, F, H, W] vs image latents [B, C, H, W]
-        if latents.ndim == 5:
-            num_frames, height, width = latents.shape[-3:]
+        latent_sequence_length = getattr(self, "_latent_sequence_length", None)
+        if callable(latent_sequence_length):
+            seq_len = int(latent_sequence_length(latents))
         else:
-            num_frames = 1
-            height, width = latents.shape[-2:]
+            patch_size = self._get_patch_size_for_dynamic_shift(noise_scheduler)
+            if patch_size is None:
+                raise ValueError("Cannot compute dynamic timestep shift because no valid `patch_size` was found.")
+            temporal_patch_size, height_patch_size, width_patch_size = self._dynamic_shift_patch_dimensions(patch_size)
 
-        # Compute sequence length (spatiotemporal for video, spatial for images)
-        seq_len = num_frames * (int(height) // int(patch_size)) * (int(width) // int(patch_size))
+            # Handle video latents [B, C, F, H, W] vs image latents [B, C, H, W]
+            if latents.ndim == 5:
+                num_frames, height, width = latents.shape[-3:]
+            else:
+                num_frames = 1
+                height, width = latents.shape[-2:]
+
+            seq_len = (
+                (int(num_frames) // temporal_patch_size)
+                * (int(height) // height_patch_size)
+                * (int(width) // width_patch_size)
+            )
+        if seq_len <= 0:
+            raise ValueError(f"Cannot compute dynamic timestep shift from non-positive sequence length {seq_len}.")
+
         from simpletuner.helpers.models.sd3.pipeline import calculate_shift
 
         return calculate_shift(

@@ -66,6 +66,7 @@ from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.training.custom_schedule import PeRFlowScheduler, TwinFlowScheduler
 from simpletuner.helpers.training.deepspeed import deepspeed_zero_init_disabled_context_manager, prepare_model_for_deepspeed
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
+from simpletuner.helpers.training.reporting import report_to_contains
 from simpletuner.helpers.training.script_runner import build_script_command, run_hook_script
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation_adapters import (
@@ -3487,6 +3488,16 @@ class Validation:
         adapter_components: list[str | None] = []
         for idx, adapter in enumerate(adapters):
             adapter_name = self._next_adapter_name(adapter_run, adapter, idx, adapter_names)
+            adapter_names.append(adapter_name)
+            adapter_scales.append(adapter.strength)
+            adapter_components.append(self._validation_adapter_component(adapter))
+        target_states = self._snapshot_validation_adapter_target_states(
+            pipeline,
+            adapter_names,
+            adapter_scales,
+            adapter_components,
+        )
+        for adapter, adapter_name in zip(adapters, adapter_names):
             load_kwargs = {"adapter_name": adapter_name}
             if adapter.weight_name:
                 load_kwargs["weight_name"] = adapter.weight_name
@@ -3499,15 +3510,6 @@ class Validation:
             except Exception as exc:  # pragma: no cover - defensive log
                 logger.error("Failed to load validation adapter '%s': %s", adapter.location, exc)
                 raise
-            adapter_names.append(adapter_name)
-            adapter_scales.append(adapter.strength)
-            adapter_components.append(self._validation_adapter_component(adapter))
-        target_states = self._snapshot_validation_adapter_target_states(
-            pipeline,
-            adapter_names,
-            adapter_scales,
-            adapter_components,
-        )
         self._set_validation_adapter_weights(pipeline, adapter_names, adapter_scales, adapter_components, target_states)
         try:
             yield
@@ -5731,7 +5733,7 @@ class Evaluation:
             results_key = f"loss/val/{ds_name}"
             results[results_key] = mean_loss
 
-            if self.config.report_to == "wandb":
+            if report_to_contains(self.config.report_to, "wandb"):
                 # Create a small wandb table for these data
                 table = wandb.Table(data=data_rows, columns=["timestep", "eval_loss"])
                 chart = wandb.plot.line(

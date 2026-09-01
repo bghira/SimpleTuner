@@ -16,8 +16,8 @@ logger = logging.getLogger("ImageBackendConfig")
 @dataclass
 class ImageBackendConfig(BaseBackendConfig):
 
-    instance_data_dir: str = ""
-    aws_data_prefix: str = ""
+    instance_data_dir: Union[str, List[str]] = ""
+    aws_data_prefix: Union[str, List[str]] = ""
 
     crop: bool = False
     crop_aspect: str = "square"
@@ -518,6 +518,7 @@ class ImageBackendConfig(BaseBackendConfig):
 
         if self.backend_type == "aws":
             config["aws_bucket_name"] = self.aws_bucket_name
+            config["aws_data_prefix"] = self.aws_data_prefix
             config["aws_region_name"] = self.aws_region_name
             config["aws_endpoint_url"] = self.aws_endpoint_url
             config["aws_access_key_id"] = self.aws_access_key_id

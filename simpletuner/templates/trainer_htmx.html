@@ -36,20 +36,26 @@
 
 {% block body %}
 <script>
+function trainerNextTick(callback) {
+    if (window.Alpine && typeof window.Alpine.nextTick === 'function') {
+        return window.Alpine.nextTick(callback);
+    }
+    return Promise.resolve().then(callback);
+}
+
+function trainerNextFrame() {
+    return new Promise(resolve => {
+        trainerNextTick(() => {
+            trainerNextTick(() => {
+                requestAnimationFrame(resolve);
+            });
+        });
+    });
+}
+
 // Initialize Alpine store early to prevent race conditions
 document.addEventListener('alpine:init', () => {
-    Alpine.store('trainer', {
-        formDirty: false,
-        showConfigSaveDialog: false,
-        createConfigBackupOption: false,
-        preserveDefaultsOption: false,
-        saveConfig: () => {
-            console.warn('Trainer component not fully initialized yet');
-            window.showToast('Please wait for the page to fully load', 'warning');
-        },
-        cancelSaveConfig: () => {},
-        confirmSaveConfig: () => {}
-    });
+    Alpine.store('trainer', trainerComponent());
 
     // Shared dataloader configs store
     Alpine.store('dataloaderConfigs', {
@@ -606,7 +612,7 @@ function trainerComponent() {
             }
 
             // Ensure tab button gets active class
-            this.$nextTick(() => {
+            trainerNextTick(() => {
                 const allTabButtons = document.querySelectorAll('.tab-btn');
                 allTabButtons.forEach(button => {
                     button.classList.remove('active');
@@ -1089,7 +1095,7 @@ function trainerComponent() {
             this.formValueStore = {};
             this.configValues = { ...normalized };
             this.seedFormValueStoreFromConfig(normalized);
-            await this.$nextTick();
+            await trainerNextTick();
             this.applyStoredValues();
             this.captureFormValues();
             this.markFormDirty();
@@ -1917,7 +1923,7 @@ function trainerComponent() {
             }
 
             dataset.aws_bucket_name = this._coerceString(dataset.aws_bucket_name);
-            dataset.aws_data_prefix = this._coerceString(dataset.aws_data_prefix);
+            dataset.aws_data_prefix = this._coerceAwsPrefixForInput(dataset.aws_data_prefix);
             dataset.aws_region_name = this._coerceString(dataset.aws_region_name);
             dataset.aws_endpoint_url = this._coerceString(dataset.aws_endpoint_url);
             dataset.aws_access_key_id = this._coerceString(dataset.aws_access_key_id);
@@ -2063,6 +2069,21 @@ function trainerComponent() {
                 return '';
             }
             return String(value).trim();
+        },
+        _coerceAwsPrefixForInput(value) {
+            if (Array.isArray(value)) {
+                return value.map((entry) => this._coerceString(entry)).filter(Boolean).join(', ');
+            }
+            return this._coerceString(value);
+        },
+        _normaliseAwsDataPrefix(value) {
+            const entries = Array.isArray(value)
+                ? value.map((entry) => this._coerceString(entry)).filter(Boolean)
+                : this._coerceString(value).split(',').map((entry) => entry.trim()).filter(Boolean);
+            if (entries.length === 0) {
+                return '';
+            }
+            return entries.length === 1 ? entries[0] : entries;
         },
         isKnownConditioningGenerator(type) {
             if (!type) {
@@ -2893,8 +2914,8 @@ function trainerComponent() {
                     } else {
                         delete cleaned.aws_bucket_name;
                     }
-                    const dataPrefix = this._coerceString(dataset.aws_data_prefix);
-                    if (dataPrefix) {
+                    const dataPrefix = this._normaliseAwsDataPrefix(dataset.aws_data_prefix);
+                    if (Array.isArray(dataPrefix) || dataPrefix) {
                         cleaned.aws_data_prefix = dataPrefix;
                     } else {
                         delete cleaned.aws_data_prefix;
@@ -2968,7 +2989,12 @@ function trainerComponent() {
                         }
                     };
                     assignAws('aws_bucket_name');
-                    assignAws('aws_data_prefix');
+                    const dataPrefix = this._normaliseAwsDataPrefix(dataset.aws_data_prefix);
+                    if (Array.isArray(dataPrefix) || dataPrefix) {
+                        cleaned.aws_data_prefix = dataPrefix;
+                    } else {
+                        delete cleaned.aws_data_prefix;
+                    }
                     assignAws('aws_region_name');
                     assignAws('aws_endpoint_url');
                     assignAws('aws_access_key_id');
@@ -4353,7 +4379,7 @@ function trainerComponent() {
                 }
                 this.overlayVisible = true;
                 this.overlayError = '';
-                this.$nextTick(async () => {
+                trainerNextTick(async () => {
                     if (this.$refs.onboardingInput && nextStep.input_type === 'directory') {
                         this.$refs.onboardingInput.focus();
                         this.$refs.onboardingInput.select();
@@ -5652,16 +5678,7 @@ function trainerComponent() {
                             // updating baseline and clearing suppression. Without this, Alpine may
                             // update form inputs AFTER we clear _suppressDirtyTracking, causing
                             // input/change events to flip formDirty back to true.
-                            await new Promise(resolve => {
-                                this.$nextTick(() => {
-                                    // Double nextTick to ensure all reactive effects have settled
-                                    this.$nextTick(() => {
-                                        requestAnimationFrame(() => {
-                                            resolve();
-                                        });
-                                    });
-                                });
-                            });
+                            await trainerNextFrame();
                             // Update baseline to match refreshed values so checkFormDirty() sees no changes
                             this.updateBaselineFormData();
                             // Ensure form is still clean after refresh
@@ -5805,13 +5822,10 @@ function trainerComponent() {
 
 <!-- Main App - shown when auth check complete and login not required -->
 <div class="dashboard-wrapper"
-     x-data="trainerComponent()"
+     x-data="$store.trainer"
      x-show="$store.cloudAuth.shouldShowApp"
      x-cloak
      x-init="(async () => {
-         // Store reference to Alpine component for external access
-         Alpine.store('trainer', $data);
-
          // Wait for auth before loading tab content
          const canProceed = await window.waitForAuthReady();
          if (!canProceed) {

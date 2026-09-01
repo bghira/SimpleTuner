@@ -419,7 +419,8 @@ async def approve_request(
     # Audit log
     if request:
         await audit_log(
-            event_type=AuditEventType.JOB_APPROVED,
+            AuditEventType.JOB_APPROVED,
+            f"Job {request.job_id} approved by '{user.username}'",
             actor_id=user.id,
             target_type="approval_request",
             target_id=str(request_id),
@@ -484,7 +485,8 @@ async def reject_request(
     # Audit log
     if request:
         await audit_log(
-            event_type=AuditEventType.JOB_REJECTED,
+            AuditEventType.JOB_REJECTED,
+            f"Job {request.job_id} rejected by '{user.username}'",
             actor_id=user.id,
             target_type="approval_request",
             target_id=str(request_id),
@@ -570,7 +572,8 @@ async def bulk_approve_requests(
 
                     # Audit log
                     await audit_log(
-                        event_type=AuditEventType.JOB_APPROVED,
+                        AuditEventType.JOB_APPROVED,
+                        f"Job {request.job_id} approved by '{user.username}' (bulk)",
                         actor_id=user.id,
                         target_type="approval_request",
                         target_id=str(request_id),
@@ -634,7 +637,8 @@ async def bulk_reject_requests(
 
                     # Audit log
                     await audit_log(
-                        event_type=AuditEventType.JOB_REJECTED,
+                        AuditEventType.JOB_REJECTED,
+                        f"Job {request.job_id} rejected by '{user.username}' (bulk)",
                         actor_id=user.id,
                         target_type="approval_request",
                         target_id=str(request_id),

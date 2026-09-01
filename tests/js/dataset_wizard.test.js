@@ -250,6 +250,89 @@ describe('datasetWizardComponent', () => {
         });
     });
 
+    describe('sample path filters', () => {
+        test('serializes path filter controls when adding a dataset', () => {
+            component.currentDataset = {
+                ...component.getDefaultDataset(),
+                id: 'filtered-dataset',
+                filter_path_include: 'keep, regularisation',
+                filter_path_exclude: 'watermark',
+                filter_path_mode: 'glob',
+            };
+
+            component.addDatasetToQueue();
+
+            expect(component.datasetQueue).toHaveLength(1);
+            expect(component.datasetQueue[0].filter_func).toEqual({
+                path_include: ['keep', 'regularisation'],
+                path_exclude: ['watermark'],
+                path_match: 'glob',
+            });
+            expect(component.datasetQueue[0]).not.toHaveProperty('filter_path_include');
+            expect(component.datasetQueue[0]).not.toHaveProperty('filter_path_exclude');
+            expect(component.datasetQueue[0]).not.toHaveProperty('filter_path_mode');
+            expect(component.datasetQueue[0]).not.toHaveProperty('show_path_filter');
+        });
+
+        test('hydrates path filter controls when editing a queued dataset', () => {
+            component.datasetQueue = [
+                {
+                    ...component.getDefaultDataset(),
+                    id: 'filtered-dataset',
+                    filter_func: {
+                        path_include: ['keep'],
+                        path_exclude: ['watermark', 'bad'],
+                        path_match: 'regex',
+                    },
+                },
+            ];
+            component.blueprints = [
+                {
+                    backendType: 'local',
+                    datasetTypes: ['image'],
+                    defaults: { type: 'local', metadata_backend: 'discovery' },
+                },
+            ];
+
+            component.editQueuedDataset(0);
+
+            expect(component.currentDataset.filter_path_include).toBe('keep');
+            expect(component.currentDataset.filter_path_exclude).toBe('watermark, bad');
+            expect(component.currentDataset.filter_path_mode).toBe('regex');
+            expect(component.currentDataset.show_path_filter).toBe(true);
+        });
+
+        test('hydrates path filter controls from legacy nested path filter', () => {
+            component.datasetQueue = [
+                {
+                    ...component.getDefaultDataset(),
+                    id: 'filtered-dataset',
+                    filter_func: {
+                        path: {
+                            include: ['keep'],
+                            exclude: ['watermark'],
+                            mode: 'contains',
+                        },
+                    },
+                },
+            ];
+            component.blueprints = [
+                {
+                    backendType: 'local',
+                    datasetTypes: ['image'],
+                    defaults: { type: 'local', metadata_backend: 'discovery' },
+                },
+            ];
+
+            component.editQueuedDataset(0);
+
+            expect(component.currentDataset.filter_path_include).toBe('keep');
+            expect(component.currentDataset.filter_path_exclude).toBe('watermark');
+            expect(component.currentDataset.filter_path_mode).toBe('contains');
+            expect(component.currentDataset.show_path_filter).toBe(true);
+        });
+    });
+
     describe('conditioning configuration', () => {
         test('has conditioning state initialized', () => {
             expect(component.conditioningConfigured).toBe(false);

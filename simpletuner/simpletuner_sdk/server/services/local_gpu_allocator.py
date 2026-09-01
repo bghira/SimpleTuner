@@ -53,7 +53,7 @@ class LocalGPUAllocator:
         self._job_repo = None
         self._reconciled = False
 
-    async def reconcile_on_startup(self, max_entries: int = 20) -> Dict[str, int]:
+    async def reconcile_on_startup(self, max_entries: Optional[int] = None) -> Dict[str, int]:
         """Reconcile LOCAL jobs with actual process status.
 
         Called on startup to check running LOCAL jobs and handle orphaned ones:
@@ -62,7 +62,8 @@ class LocalGPUAllocator:
         - Jobs without PIDs (legacy) are marked as failed
 
         Args:
-            max_entries: Maximum number of running entries to check (default 20).
+            max_entries: Optional maximum number of running entries to check.
+                When omitted, all running local jobs are reconciled.
 
         Returns:
             Dictionary with stats: {"orphaned": N, "adopted": N, "no_pid": N}
@@ -73,17 +74,14 @@ class LocalGPUAllocator:
             return stats
 
         job_repo = self._get_job_repo()
-        # Only get LOCAL running jobs - this is bounded by the number of
-        # GPUs on this machine, so should be small (typically 0-8)
         running_jobs = await job_repo.get_running_local_jobs()
 
         if not running_jobs:
             self._reconciled = True
             return stats
 
-        # Limit entries to check
-        jobs_to_check = running_jobs[:max_entries]
-        if len(running_jobs) > max_entries:
+        jobs_to_check = running_jobs if max_entries is None else running_jobs[:max_entries]
+        if max_entries is not None and len(running_jobs) > max_entries:
             logger.warning(
                 "Found %d running local jobs, only checking first %d",
                 len(running_jobs),

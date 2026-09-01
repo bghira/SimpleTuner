@@ -88,11 +88,11 @@
                             </div>
                             <div class="col-md-4">
                                 <label class="form-label">Object Prefix</label>
-                                <input type="text" class="form-control form-control-sm"
-                                       x-model="dataset.aws_data_prefix"
-                                       @input="touchConnectionField(dataset)"
-                                       placeholder="datasets/run-name">
-                                <div class="form-text">Optional object prefix within the bucket (acts like a folder).</div>
+                               <input type="text" class="form-control form-control-sm"
+                                      x-model="dataset.aws_data_prefix"
+                                      @input="touchConnectionField(dataset)"
+                                      placeholder="datasets/train/, datasets/reg/">
+                                <div class="form-text">Optional object prefix, or comma-separated prefixes, within the bucket.</div>
                             </div>
                             <div class="col-md-4">
                                 <label class="form-label">Region</label>

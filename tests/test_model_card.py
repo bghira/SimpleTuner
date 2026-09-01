@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import torch
+from PIL import Image
 
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.publishing.metadata import *
@@ -72,6 +73,8 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.validation_guidance_skip_layers = None
         self.args.validation_seed = 1234
         self.args.validation_noise_scheduler = "ddim"
+        self.args.validation_image_format = "png"
+        self.args.validation_image_quality = 90
         self.args.model_card_safe_for_work = True
         self.args.learning_rate = 1e-4
         self.args.max_grad_norm = 1.0
@@ -83,6 +86,7 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.base_model_precision = "no_change"
         self.args.flux_guidance_mode = "constant"
         self.args.flux_guidance_value = 1.0
+        self.args.peft_lora_mode = "standard"
         self.args.t5_padding = "unmodified"
         self.args.enable_xformers_memory_efficient_attention = False
         self.args.attention_mechanism = "diffusers"
@@ -560,6 +564,85 @@ class TestMetadataFunctions(unittest.TestCase):
 
         hub_manager._hub_api.upload_folder.assert_called_once()
         self.assertEqual(hub_manager._hub_api.upload_folder.call_args.kwargs["path_in_repo"], "")
+
+    def test_save_model_card_honors_validation_image_format_for_assets(self):
+        self.args.model_family = "sdxl"
+        self.args.model_type = "lora"
+        self.args.lora_type = "standard"
+        self.args.validation_image_format = "jpeg"
+        self.args.validation_image_quality = 81
+        self.args.controlnet = False
+        self.args.control = False
+        model = MagicMock(
+            MODEL_LICENSE="other",
+            PREDICTION_TYPE=SimpleNamespace(value="epsilon"),
+            MODEL_TYPE=SimpleNamespace(value="unet"),
+            gligen=False,
+        )
+        model.validation_audio_sample_rate.return_value = 44100
+        model.custom_model_card_schedule_info.return_value = ""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_model_family", return_value="sdxl"),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_data_backends", return_value={}),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_weight_dtype", return_value=torch.bfloat16),
+                patch(
+                    "simpletuner.helpers.publishing.metadata.StateTracker.get_accelerator",
+                    return_value=MagicMock(num_processes=1),
+                ),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_args", return_value=self.args),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_model", return_value=model),
+            ):
+                save_model_card(
+                    repo_id="test-repo",
+                    images={"prompt": [Image.new("RGBA", (8, 8), color=(255, 0, 0, 128))]},
+                    base_model="test-base-model",
+                    train_text_encoder=False,
+                    prompt="Test prompt",
+                    validation_prompts=["Test prompt"],
+                    validation_shortnames=["prompt"],
+                    repo_folder=tmpdir,
+                    model=model,
+                    global_step=1000,
+                    epoch=1,
+                )
+
+            readme = Path(tmpdir, "README.md").read_text(encoding="utf-8")
+            self.assertIn("url: ./assets/image_0_0.jpg", readme)
+            self.assertTrue(Path(tmpdir, "assets", "image_0_0.jpg").exists())
+            self.assertFalse(Path(tmpdir, "assets", "image_0_0.png").exists())
+
+    def test_checkpoint_validation_media_filter_matches_shortnames_exactly(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            validation_dir = output_dir / "validation_images"
+            validation_dir.mkdir()
+            (validation_dir / "step_50_prompt_0_64x64.jpg").write_bytes(b"jpg")
+            (validation_dir / "step_50_prompt_adapter_0_64x64.jpg").write_bytes(b"adapter")
+            (validation_dir / "step_49_prompt_0_64x64.jpg").write_bytes(b"old")
+            (validation_dir / "step_50_prompt_0.wav").write_bytes(b"wav")
+
+            hub_manager = object.__new__(HubManager)
+            hub_manager.config = SimpleNamespace(output_dir=str(output_dir))
+
+            images, audios = hub_manager._filter_checkpoint_validation_media(
+                50,
+                {"prompt": [], "prompt_adapter": []},
+                {"prompt": []},
+            )
+
+            self.assertEqual(
+                {key: [Path(path).name for path in paths] for key, paths in images.items()},
+                {
+                    "prompt": ["step_50_prompt_0_64x64.jpg"],
+                    "prompt_adapter": ["step_50_prompt_adapter_0_64x64.jpg"],
+                },
+            )
+            self.assertEqual(
+                {key: [Path(path).name for path in paths] for key, paths in audios.items()},
+                {"prompt": ["step_50_prompt_0.wav"]},
+            )
 
     def test_save_training_config_sanitizes_public_export(self):
         config = SimpleNamespace(

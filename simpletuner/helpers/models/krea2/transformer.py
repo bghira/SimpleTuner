@@ -441,9 +441,66 @@ class Krea2FinalLayer(nn.Module):
         self.scale_shift_table = nn.Parameter(torch.zeros(2, hidden_size))
         self.norm = Krea2RMSNorm(hidden_size, eps=eps)
         self.linear = nn.Linear(hidden_size, out_channels, bias=True)
+        self._parameter_lora_deltas: dict[str, torch.Tensor] = {}
+        self._parameter_lora_active_adapters: list[str] = []
+        self._parameter_lora_adapter_weights: dict[str, float] = {}
+        self._parameter_lora_enabled = True
+
+    def register_parameter_lora_delta(self, parameter_name: str, adapter_name: str, delta: torch.Tensor) -> None:
+        if parameter_name != "scale_shift_table":
+            raise ValueError(f"Krea2FinalLayer does not support parameter LoRA target `{parameter_name}`.")
+        if tuple(delta.shape) != tuple(self.scale_shift_table.shape):
+            raise ValueError(
+                f"Krea2FinalLayer LoRA delta for `{parameter_name}` has shape {tuple(delta.shape)}, "
+                f"expected {tuple(self.scale_shift_table.shape)}."
+            )
+        self._parameter_lora_deltas[adapter_name] = delta.detach().cpu()
+        if adapter_name not in self._parameter_lora_active_adapters:
+            self._parameter_lora_active_adapters.append(adapter_name)
+        self._parameter_lora_adapter_weights.setdefault(adapter_name, 1.0)
+
+    def set_parameter_lora_adapters(self, adapter_names: list[str], adapter_weights: list[float]) -> None:
+        self._parameter_lora_active_adapters = [
+            adapter_name for adapter_name in adapter_names if adapter_name in self._parameter_lora_deltas
+        ]
+        self._parameter_lora_adapter_weights = {
+            adapter_name: float(weight)
+            for adapter_name, weight in zip(adapter_names, adapter_weights)
+            if adapter_name in self._parameter_lora_deltas
+        }
+
+    def delete_parameter_lora_adapters(self, adapter_names: list[str]) -> None:
+        for adapter_name in adapter_names:
+            self._parameter_lora_deltas.pop(adapter_name, None)
+            self._parameter_lora_adapter_weights.pop(adapter_name, None)
+        self._parameter_lora_active_adapters = [
+            adapter_name for adapter_name in self._parameter_lora_active_adapters if adapter_name not in adapter_names
+        ]
+
+    def enable_parameter_lora(self, enabled: bool) -> None:
+        self._parameter_lora_enabled = enabled
+
+    def _scale_shift_table_with_parameter_lora(self) -> torch.Tensor:
+        scale_shift_table = self.scale_shift_table
+        if not self._parameter_lora_enabled:
+            return scale_shift_table
+        for adapter_name in self._parameter_lora_active_adapters:
+            delta = self._parameter_lora_deltas.get(adapter_name)
+            if delta is None:
+                continue
+            weight = self._parameter_lora_adapter_weights.get(adapter_name, 1.0)
+            scale_shift_table = (
+                scale_shift_table
+                + delta.to(
+                    device=scale_shift_table.device,
+                    dtype=scale_shift_table.dtype,
+                )
+                * weight
+            )
+        return scale_shift_table
 
     def forward(self, hidden_states: torch.Tensor, temb: torch.Tensor) -> torch.Tensor:
-        modulation = temb + self.scale_shift_table
+        modulation = temb + self._scale_shift_table_with_parameter_lora()
         scale, shift = modulation.chunk(2, dim=1)
         hidden_states = (1.0 + scale) * self.norm(hidden_states) + shift
         return self.linear(hidden_states)
@@ -635,6 +692,66 @@ class Krea2Transformer2DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftAdapt
     def set_router(self, router: TREADRouter, routes: list[dict[str, Any]] | None = None) -> None:
         self._tread_router = router
         self._tread_routes = routes
+
+    @staticmethod
+    def _parameter_lora_weight_value(weight: Any) -> float:
+        if weight is None:
+            return 1.0
+        if isinstance(weight, dict):
+            for key in ("final_layer.scale_shift_table", "scale_shift_table", "final_layer"):
+                if key in weight:
+                    return float(weight[key])
+            return 1.0
+        return float(weight)
+
+    @classmethod
+    def _normalize_parameter_lora_adapter_weights(
+        cls,
+        adapter_names: list[str] | str,
+        weights: float | dict | list[float] | list[dict] | list[None] | None = None,
+    ) -> tuple[list[str], list[float]]:
+        adapter_names = [adapter_names] if isinstance(adapter_names, str) else list(adapter_names)
+        if not isinstance(weights, list):
+            weights = [weights] * len(adapter_names)
+        if len(adapter_names) != len(weights):
+            raise ValueError(
+                f"Length of adapter names {len(adapter_names)} is not equal to the length of their weights {len(weights)}."
+            )
+        return adapter_names, [cls._parameter_lora_weight_value(weight) for weight in weights]
+
+    def set_adapters(
+        self,
+        adapter_names: list[str] | str,
+        weights: float | dict | list[float] | list[dict] | list[None] | None = None,
+    ):
+        super().set_adapters(adapter_names, weights)
+        adapter_names, weights = self._normalize_parameter_lora_adapter_weights(adapter_names, weights)
+        for module in self.modules():
+            set_parameter_lora_adapters = getattr(module, "set_parameter_lora_adapters", None)
+            if set_parameter_lora_adapters is not None:
+                set_parameter_lora_adapters(adapter_names, weights)
+
+    def delete_adapters(self, adapter_names: list[str] | str):
+        super().delete_adapters(adapter_names)
+        adapter_names = [adapter_names] if isinstance(adapter_names, str) else list(adapter_names)
+        for module in self.modules():
+            delete_parameter_lora_adapters = getattr(module, "delete_parameter_lora_adapters", None)
+            if delete_parameter_lora_adapters is not None:
+                delete_parameter_lora_adapters(adapter_names)
+
+    def enable_lora(self):
+        super().enable_lora()
+        for module in self.modules():
+            enable_parameter_lora = getattr(module, "enable_parameter_lora", None)
+            if enable_parameter_lora is not None:
+                enable_parameter_lora(True)
+
+    def disable_lora(self):
+        super().disable_lora()
+        for module in self.modules():
+            enable_parameter_lora = getattr(module, "enable_parameter_lora", None)
+            if enable_parameter_lora is not None:
+                enable_parameter_lora(False)
 
     def enable_flowmap_time_conditioning(self, gate_value: float = 0.25, deltatime_type: str = "r") -> None:
         self.time_embed.enable_flowmap_time_conditioning(gate_value=gate_value, deltatime_type=deltatime_type)

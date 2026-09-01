@@ -6,8 +6,11 @@ import traceback
 from io import BytesIO
 from typing import Optional
 
+from PIL import Image
+
 from simpletuner.helpers.data_backend.base import BaseDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.data_backend.filters import filter_file_list
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
@@ -94,16 +97,58 @@ class DiscoveryMetadataBackend(MetadataBackend):
             max_num_samples=max_num_samples,
         )
 
-    def _should_use_metadata_only_for_video(self) -> bool:
-        if not _is_ffprobe_available():
-            return False
-        if self.dataset_type is not DatasetType.VIDEO:
-            return False
+    def _should_use_metadata_only(self, is_video_file: bool) -> bool:
+        """Whether this sample can be bucketed from dimensions alone.
+
+        Bucketing needs only the sample dimensions: calculate_target_size() and
+        the crop coordinate maths derive everything from original_size, and no
+        pixel-derived metadata is stored. Videos already take this path via
+        ffprobe; still images can do the same from the file header.
+
+        Face cropping is the one crop style whose coordinates depend on pixel
+        content, so it always requires a full decode.
+        """
         crop_enabled = bool(self.dataset_config.get("crop", False))
         crop_style = str(self.dataset_config.get("crop_style") or "random").lower()
         if crop_enabled and crop_style == "face":
             return False
-        return True
+
+        if is_video_file:
+            return self.dataset_type is DatasetType.VIDEO and _is_ffprobe_available()
+        if self.dataset_type in (DatasetType.IMAGE, DatasetType.CONDITIONING):
+            # Header reads need a real path; remote backends stay on full reads.
+            return getattr(self.data_backend, "type", None) == "local"
+        return False
+
+    def _probe_image_dimensions(self, image_path_str: str) -> Optional[dict]:
+        """Read image dimensions from the file header, without decoding pixels.
+
+        PIL parses only the header on Image.open(); pixel data is loaded lazily
+        and never requested here. Returns None to signal that the caller should
+        fall back to a full decode.
+
+        EXIF orientations 5-8 transpose the image, so the stored dimensions are
+        swapped relative to what exif_transpose() produces on the full-decode
+        path. The orientation tag lives in the header too, so it is applied here
+        to keep both paths in agreement.
+        """
+        try:
+            with Image.open(image_path_str) as image:
+                width, height = image.size
+                orientation = image.getexif().get(0x0112)
+            if orientation in (5, 6, 7, 8):
+                width, height = height, width
+        except Exception as e:
+            logger.debug(
+                "(id=%s) Could not read image header for %s (%s); falling back to full decode.",
+                self.id,
+                image_path_str,
+                e,
+            )
+            return None
+        if not width or not height:
+            return None
+        return {"original_size": (width, height)}
 
     def _needs_video_frame_count(self) -> bool:
         if self.bucket_strategy == "resolution_frames":
@@ -257,8 +302,9 @@ class DiscoveryMetadataBackend(MetadataBackend):
             all_image_files = [item for sublist in all_image_files for item in sublist]
 
         # logger.debug(f"All image files: {json.dumps(all_image_files, indent=4)}")
+        all_image_files = filter_file_list(list(all_image_files), self.dataset_filter)
 
-        # Apply max_num_samples limit deterministically before filtering
+        # Apply max_num_samples limit deterministically after explicit dataset filters.
         all_image_files = self._apply_max_num_samples_limit(list(all_image_files))
 
         if ignore_existing_cache:
@@ -382,7 +428,7 @@ class DiscoveryMetadataBackend(MetadataBackend):
             is_video_file = file_extension.strip(".") in video_file_extensions
 
             use_metadata_only = False
-            if is_video_file and self._should_use_metadata_only_for_video():
+            if is_video_file and self._should_use_metadata_only(is_video_file):
                 if getattr(self.data_backend, "type", None) == "local":
                     video_metadata = self._probe_video_metadata(image_path_str, None)
                 else:
@@ -428,6 +474,13 @@ class DiscoveryMetadataBackend(MetadataBackend):
                                 image_metadata["original_num_frames"] = original_frames
 
                     logger.debug("(id=%s) Using ffprobe metadata-only scan for %s", self.id, image_path_str)
+
+            elif not is_video_file and self._should_use_metadata_only(is_video_file):
+                image_dimensions = self._probe_image_dimensions(image_path_str)
+                if image_dimensions:
+                    use_metadata_only = True
+                    image_metadata.update(image_dimensions)
+                    logger.debug("(id=%s) Using header-only metadata scan for %s", self.id, image_path_str)
 
             if use_metadata_only:
                 if not self.meets_resolution_requirements(image_metadata=image_metadata):

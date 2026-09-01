@@ -22,6 +22,7 @@ except Exception:
 import sys
 import threading
 import time
+import uuid
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
@@ -31,11 +32,11 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 from unittest import mock as unittest_mock
 
 import huggingface_hub
-import wandb
 from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 from torch.distributed.tensor import DTensor
 
+import wandb
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
@@ -80,7 +81,7 @@ from simpletuner.helpers.training.evaluation import ModelEvaluator
 from simpletuner.helpers.training.exceptions import GPUHealthError
 from simpletuner.helpers.training.gpu_circuit_breaker import get_current_gpu_index, get_gpu_circuit_breaker, is_cuda_error
 from simpletuner.helpers.training.iteration_tracker import IterationTracker
-from simpletuner.helpers.training.local_metrics import LocalMetricsTracker
+from simpletuner.helpers.training.local_metrics import LocalMetricsTracker, record_timestep_distribution
 from simpletuner.helpers.training.min_snr_gamma import compute_snr
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.multi_process import broadcast_object_from_main, should_log
@@ -105,9 +106,15 @@ from simpletuner.helpers.training.quantisation import (
     mark_torchao_ddp_ignore_params,
     mark_transformerengine_ddp_ignore_params,
 )
+from simpletuner.helpers.training.reporting import normalize_report_to, report_to_contains
 from simpletuner.helpers.training.script_runner import run_hook_script
 from simpletuner.helpers.training.sdnq_compile import configure_sdnq_compile_mode
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.training.system_metrics import (
+    SystemMetricsSampler,
+    log_system_metrics_to_trackers,
+    should_collect_manual_system_metrics,
+)
 from simpletuner.helpers.training.validation import Validation, prepare_validation_prompt_list
 from simpletuner.helpers.training.wrappers import rebind_prepared_forward, unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
@@ -171,6 +178,8 @@ logger = _setup_logger("SimpleTuner")
 filelock_logger = _setup_logger("filelock", default_level="WARNING")
 connection_logger = _setup_logger("urllib3.connectionpool", default_level="WARNING")
 training_logger = _setup_logger("training-loop", env_var="SIMPLETUNER_TRAINING_LOOP_LOG_LEVEL")
+
+WANDB_RUN_ID_FILENAME = ".wandb_run_id"
 
 
 import accelerate
@@ -274,6 +283,7 @@ class Trainer:
     publishing_manager = None
     dynamo_cache_manager = None
     _cleanup_invoked = False
+    _trackers_initialized = False
 
     def __init__(
         self,
@@ -305,6 +315,7 @@ class Trainer:
         self.lr = 0.0
         self.job_id = job_id
         self._cleanup_invoked = False
+        self._trackers_initialized = False
         self.sidecar_optimizer = None
         self.sidecar_lr_scheduler = None
         self.sidecar_lr = None
@@ -955,7 +966,11 @@ class Trainer:
             report_to_value = None
         if report_to_value is None or (isinstance(report_to_value, str) and not report_to_value.strip()):
             report_to_value = "none"
-            setattr(self.config, "report_to", report_to_value)
+        else:
+            report_to_value = normalize_report_to(report_to_value)
+            if report_to_value is None:
+                report_to_value = "none"
+        setattr(self.config, "report_to", report_to_value)
 
         custom_tracker_name = getattr(self.config, "custom_tracker", None)
         if isinstance(custom_tracker_name, unittest_mock.Mock):
@@ -1018,8 +1033,6 @@ class Trainer:
                 report_to = _ensure_custom_tracker()
             elif normalized_report == "simpletuner":
                 report_to = _ensure_local_metrics_tracker()
-            elif normalized_report == "all":
-                report_to = [_ensure_local_metrics_tracker(), "all"]
             else:
                 report_to = report_to_value.strip()
         elif isinstance(report_to_value, (list, tuple)):
@@ -1034,23 +1047,12 @@ class Trainer:
                     tracker = entry
                 if tracker not in resolved_trackers:
                     resolved_trackers.append(tracker)
-            if any(isinstance(entry, str) and entry.strip().lower() == "all" for entry in report_to_value):
-                tracker = _ensure_local_metrics_tracker()
-                if tracker not in resolved_trackers:
-                    resolved_trackers.insert(0, tracker)
             report_to = resolved_trackers
         else:
             report_to = report_to_value
 
         if custom_tracker_name is not None:
-            custom_tracker_requested = False
-            if isinstance(report_to_value, str):
-                custom_tracker_requested = report_to_value.strip().lower() == "custom-tracker"
-            elif isinstance(report_to_value, (list, tuple)):
-                custom_tracker_requested = any(
-                    isinstance(entry, str) and entry.strip().lower() == "custom-tracker" for entry in report_to_value
-                )
-            if not custom_tracker_requested:
+            if not report_to_contains(report_to_value, "custom-tracker"):
                 raise ValueError(
                     "--custom_tracker was provided but --report_to is not set to 'custom-tracker'. "
                     "Set --report_to=custom-tracker to enable your custom tracker."
@@ -2493,6 +2495,7 @@ class Trainer:
         self.grad_norm = None
         self.extra_lr_scheduler_kwargs = {}
         self.iteration_tracker = IterationTracker()
+        self.system_metrics_sampler = None
         StateTracker.set_global_step(self.state["global_step"])
         StateTracker.set_global_resume_step(self.state["global_resume_step"])
         self._init_publishing_manager()
@@ -5243,6 +5246,23 @@ class Trainer:
 
         return lr_scheduler
 
+    def _resolve_wandb_run_id(self, public_args_hash: str) -> str:
+        resume_from_checkpoint = getattr(self.config, "resume_from_checkpoint", None)
+        output_dir = Path(getattr(self.config, "output_dir")).expanduser()
+        run_id_path = output_dir / WANDB_RUN_ID_FILENAME
+        if resume_from_checkpoint:
+            if run_id_path.is_file():
+                run_id = run_id_path.read_text(encoding="utf-8").strip()
+                if not run_id:
+                    raise ValueError(f"{WANDB_RUN_ID_FILENAME} is empty.")
+                return run_id
+            return public_args_hash
+
+        run_id = uuid.uuid4().hex
+        output_dir.mkdir(parents=True, exist_ok=True)
+        run_id_path.write_text(f"{run_id}\n", encoding="utf-8")
+        return run_id
+
     def _build_init_tracker_kwargs(self, tracker_run_name: str, public_args_hash: str) -> Dict[str, Dict[str, object]]:
         """Prepare tracker-specific init kwargs for the active logging backends."""
         loggers = getattr(self.accelerator, "log_with", None)
@@ -5272,7 +5292,7 @@ class Trainer:
         if "wandb" in tracker_names:
             init_kwargs["wandb"] = {
                 "name": tracker_run_name,
-                "id": f"{public_args_hash}",
+                "id": self._resolve_wandb_run_id(public_args_hash),
                 "resume": "allow",
                 "allow_val_change": True,
             }
@@ -5340,6 +5360,9 @@ class Trainer:
         raise TypeError(f"Object of type {payload.__class__.__name__} is not JSON serializable")
 
     def init_trackers(self):
+        if getattr(self, "_trackers_initialized", False):
+            return
+
         # We need to initialize the trackers we use, and also store our configuration.
         # The trackers initializes automatically on the main process.
         self.guidance_values_table = None
@@ -5370,16 +5393,13 @@ class Trainer:
                     init_kwargs=init_kwargs,
                 )
             except Exception as e:
-                if "Object has no attribute 'disabled'" in repr(e):
-                    logger.warning("WandB is disabled, and Accelerate was not quite happy about it.")
-                    self.accelerator.trackers = []
-                else:
-                    logger.error(f"Could not initialize trackers: {e}")
-                    event = error_event(
-                        message=f"Could not initialize trackers. Continuing without. {e}",
-                        job_id=self.job_id,
-                    )
-                    self._emit_event(event)
+                logger.error(f"Could not initialize trackers: {e}")
+                event = error_event(
+                    message=f"Could not initialize trackers: {e}",
+                    job_id=self.job_id,
+                )
+                self._emit_event(event)
+                raise RuntimeError(f"Could not initialize trackers: {e}") from e
             event = notification_event(
                 message="Training configuration initialized",
                 title="Training Config",
@@ -5387,6 +5407,7 @@ class Trainer:
                 data=public_args_payload,
             )
             self._emit_event(event)
+        self._trackers_initialized = True
 
     def resume_and_prepare(self):
         self.init_optimizer()
@@ -5855,6 +5876,21 @@ class Trainer:
                     continue
                 metrics[key] = value
         return metrics
+
+    def _log_manual_system_metrics(self) -> None:
+        if not self.accelerator.is_main_process:
+            return
+        trackers = list(getattr(self.accelerator, "trackers", []) or [])
+        if not trackers:
+            return
+        tracker_names = [str(getattr(tracker, "name", "") or "").strip().lower() for tracker in trackers]
+        if not should_collect_manual_system_metrics(tracker_names):
+            return
+        if self.system_metrics_sampler is None:
+            self.system_metrics_sampler = SystemMetricsSampler(output_dir=self.config.output_dir)
+        metrics = self.system_metrics_sampler.sample()
+        if metrics:
+            log_system_metrics_to_trackers(trackers, metrics, step=int(self.state["global_step"]))
 
     def _prepare_training_progress_payload(
         self,
@@ -7396,6 +7432,7 @@ class Trainer:
                     current_epoch_step += 1
                     StateTracker.set_global_step(self.state["global_step"])
                     self.iteration_tracker.record_step(self.state["global_step"])
+                    wandb_logs.update(self.iteration_tracker.iteration_metrics())
                     self._export_dynamo_cache_after_first_step()
                     if ramtorch_profile.profile_enabled():
                         ramtorch_profile.record_train_step(
@@ -7415,7 +7452,7 @@ class Trainer:
                         self.accelerator.wait_for_everyone()
 
                     # Log scatter plot to wandb
-                    if self.config.report_to == "wandb" and self.accelerator.is_main_process:
+                    if report_to_contains(self.config.report_to, "wandb") and self.accelerator.is_main_process:
                         # Prepare the data for the scatter plot
                         if self.timesteps_buffer:
                             if self._timesteps_scatter_table is None:
@@ -7448,6 +7485,9 @@ class Trainer:
                                 self._twinflow_traj_logged = True
                             else:
                                 wandb_logs["twinflow_traj_table"] = self._twinflow_traj_table
+
+                    if report_to_contains(self.config.report_to, "simpletuner") and self.accelerator.is_main_process:
+                        record_timestep_distribution(self.config, self.timesteps_buffer)
 
                     # Clear buffers
                     self.timesteps_buffer = []
@@ -7557,6 +7597,7 @@ class Trainer:
                         )
                     except Exception as e:
                         logger.error(f"Failed to log to accelerator; ignoring error: {e}")
+                    self._log_manual_system_metrics()
 
                     # Reset some values for the next go.
                     self.train_loss = 0.0

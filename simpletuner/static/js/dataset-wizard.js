@@ -38,6 +38,10 @@
         cache_dir_text: '{output_dir}/cache/text/{model_family}/{id}',
         probability: 1,
         repeats: 0,
+        filter_path_include: '',
+        filter_path_exclude: '',
+        filter_path_mode: 'auto',
+        show_path_filter: false,
         vae_cache_ondemand: false,
         vae_cache_disable: false,
         parquet: {
@@ -492,6 +496,66 @@
                 return true;
             },
 
+            parsePathFilterPatterns(value) {
+                if (Array.isArray(value)) {
+                    return value.map(item => String(item).trim()).filter(Boolean);
+                }
+                if (typeof value !== 'string') {
+                    return [];
+                }
+                return value.split(',').map(item => item.trim()).filter(Boolean);
+            },
+
+            hydratePathFilterControls(dataset) {
+                const filterFunc = dataset?.filter_func || {};
+                const pathFilter = filterFunc.path || {};
+                dataset.filter_path_include = this.parsePathFilterPatterns(
+                    filterFunc.path_include ?? pathFilter.include
+                ).join(', ');
+                dataset.filter_path_exclude = this.parsePathFilterPatterns(
+                    filterFunc.path_exclude ?? pathFilter.exclude
+                ).join(', ');
+                dataset.filter_path_mode = filterFunc.path_match || pathFilter.mode || 'auto';
+                dataset.show_path_filter = Boolean(dataset.filter_path_include || dataset.filter_path_exclude);
+            },
+
+            applyPathFilterToDataset(dataset) {
+                const include = this.parsePathFilterPatterns(dataset.filter_path_include);
+                const exclude = this.parsePathFilterPatterns(dataset.filter_path_exclude);
+                const mode = dataset.filter_path_mode || 'auto';
+
+                if (include.length > 0 || exclude.length > 0) {
+                    dataset.filter_func = {
+                        ...(dataset.filter_func || {}),
+                        path_match: mode,
+                    };
+                    if (include.length > 0) {
+                        dataset.filter_func.path_include = include;
+                    } else {
+                        delete dataset.filter_func.path_include;
+                    }
+                    if (exclude.length > 0) {
+                        dataset.filter_func.path_exclude = exclude;
+                    } else {
+                        delete dataset.filter_func.path_exclude;
+                    }
+                    delete dataset.filter_func.path;
+                } else if (dataset.filter_func) {
+                    delete dataset.filter_func.path_include;
+                    delete dataset.filter_func.path_exclude;
+                    delete dataset.filter_func.path_match;
+                    delete dataset.filter_func.path;
+                    if (Object.keys(dataset.filter_func).length === 0) {
+                        delete dataset.filter_func;
+                    }
+                }
+
+                delete dataset.filter_path_include;
+                delete dataset.filter_path_exclude;
+                delete dataset.filter_path_mode;
+                delete dataset.show_path_filter;
+            },
+
             validateDatasetId() {
                 const id = this.currentDataset.id.trim();
                 if (!id) {
@@ -647,6 +711,7 @@
 
                 // Prepare the dataset with deep clone to avoid shared references
                 const datasetToAdd = this.deepClone(this.currentDataset);
+                this.applyPathFilterToDataset(datasetToAdd);
 
                 datasetToAdd.is_regularisation_data =
                     datasetToAdd.is_regularisation_data === true ||
@@ -762,6 +827,7 @@
 
                 // Set appropriate backend
                 this.selectBackend(dataset.type);
+                this.hydratePathFilterControls(this.currentDataset);
 
                 // Restore conditioning state if present
                 if (dataset.conditioning_data && dataset.conditioning && dataset.conditioning.length > 0) {
