@@ -117,6 +117,15 @@ describe('training metrics component', () => {
         expect(selected).toEqual(['train_loss']);
     });
 
+    test('formats scalar metric values with two decimal places at most', () => {
+        const charts = window.TrainingMetricsCharts;
+
+        expect(charts.formatMetricValue(1.23456)).toBe('1.23');
+        expect(charts.formatMetricValue(1.2)).toBe('1.2');
+        expect(charts.formatMetricValue(0.0001234)).toBe('1.23e-4');
+        expect(charts.formatMetricValue(Number.NaN)).toBe('—');
+    });
+
     test('limits the chart to eight selected metrics', () => {
         state.trainingCharts = [{ id: 'chart-a', kind: 'scalar', name: 'Loss', metrics: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'], metricSearch: '' }];
         state.selectedTrainingMetrics = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
