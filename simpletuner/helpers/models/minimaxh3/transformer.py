@@ -1857,21 +1857,20 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                     result_dtype=torch_dtype or torch.bfloat16,
                     hadamard_group_size=hadamard_group_size,
                 )
-            if len(hadamard_group_sizes) != 1:
-                raise RuntimeError(
-                    f"MiniMax-H3 ConvRot checkpoint uses multiple Hadamard group sizes: {sorted(hadamard_group_sizes)}"
-                )
-            group_size = hadamard_group_sizes.pop()
             model.quantization_method = "minimax_h3_comfy_convrot_sdnq"
             model.quantization_config = {
                 "quant_method": "sdnq_training",
                 "weights_dtype": "int8",
                 "quantized_matmul_dtype": "int8",
                 "use_hadamard": True,
-                "hadamard_group_size": group_size,
                 "group_size": -1,
                 "source_format": "comfy_minimax_h3_convrot",
             }
+            sorted_group_sizes = sorted(hadamard_group_sizes)
+            if len(sorted_group_sizes) == 1:
+                model.quantization_config["hadamard_group_size"] = sorted_group_sizes[0]
+            else:
+                model.quantization_config["hadamard_group_sizes"] = sorted_group_sizes
         elif fp8_state_dict:
             model.quantization_method = "minimax_h3_comfy_fp8"
             model.quantization_config = {
