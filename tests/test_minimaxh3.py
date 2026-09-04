@@ -64,6 +64,7 @@ from simpletuner.helpers.models.minimaxh3.transformer import (
     _convert_minimax_h3_native_swiglu_scale_to_diffusers,
     _convert_minimax_h3_native_swiglu_to_diffusers,
     _gather_h3_context_parallel_output,
+    _linear_compute_dtype,
     _pad_h3_context_parallel_layout,
     resolve_h3_reference_mode,
 )
@@ -768,6 +769,17 @@ class FakeKeyframePosterior:
 
 
 class MiniMaxH3Tests(unittest.TestCase):
+    def test_linear_compute_dtype_uses_quantized_result_dtype(self):
+        weight = SimpleNamespace(
+            dtype=torch.int8,
+            sdnq_dequantizer=SimpleNamespace(result_dtype=torch.bfloat16),
+        )
+        self.assertEqual(_linear_compute_dtype(SimpleNamespace(weight=weight)), torch.bfloat16)
+
+    def test_linear_compute_dtype_prefers_module_contract(self):
+        linear = SimpleNamespace(weight=SimpleNamespace(dtype=torch.int8), compute_dtype=torch.float16)
+        self.assertEqual(_linear_compute_dtype(linear), torch.float16)
+
     def test_registry_metadata_resolves(self):
         model_cls = ModelRegistry.get("minimaxh3")
         self.assertEqual(model_cls.NAME, "MiniMax H3")
