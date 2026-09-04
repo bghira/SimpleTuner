@@ -450,7 +450,13 @@ def _infer_minimax_h3_config_from_checkpoint(checkpoint) -> dict[str, Any]:
         audio_weight = _get_checkpoint_tensor(checkpoint, "audio_proj_in.weight")
         context_weight = _get_checkpoint_tensor(checkpoint, "context_embedder.weight")
         q_norm_weight = _get_checkpoint_tensor(checkpoint, "transformer_blocks.0.attn.norm_q.weight")
-        q_weight = _get_checkpoint_tensor(checkpoint, "transformer_blocks.0.attn.to_q.weight")
+        if "transformer_blocks.0.attn.to_q.weight" in raw_keys:
+            q_output_dim = _get_checkpoint_tensor(checkpoint, "transformer_blocks.0.attn.to_q.weight").shape[0]
+        else:
+            qkv_weight = _get_checkpoint_tensor(checkpoint, "blocks.0.attn.qkv_proj.weight")
+            if qkv_weight.shape[0] % 3 != 0:
+                raise RuntimeError("MiniMax-H3 fused QKV tensor blocks.0.attn.qkv_proj.weight cannot be split into q/k/v")
+            q_output_dim = qkv_weight.shape[0] // 3
         ffn_weight = _get_checkpoint_tensor(checkpoint, "transformer_blocks.0.ff.net.0.proj.weight")
         has_adaln_curve = "adaln_t_table" in raw_keys
         adaln_curve_table = _get_checkpoint_tensor(checkpoint, "adaln_t_table") if has_adaln_curve else None
@@ -466,7 +472,7 @@ def _infer_minimax_h3_config_from_checkpoint(checkpoint) -> dict[str, Any]:
             "audio_in_channels": audio_weight.shape[1],
             "text_dim": context_weight.shape[1],
             "attention_head_dim": q_norm_weight.shape[0],
-            "num_attention_heads": q_weight.shape[0] // q_norm_weight.shape[0],
+            "num_attention_heads": q_output_dim // q_norm_weight.shape[0],
             "freq_dim": time_in.shape[1] if time_in is not None else 256,
             "time_embed_hidden_dim": time_in.shape[0] if time_in is not None else 5376,
             "time_embed_dim": adaln_curve_table.shape[1] if has_adaln_curve else time_out.shape[0],
