@@ -64,6 +64,7 @@ from simpletuner.helpers.models.minimaxh3.transformer import (
     _convert_minimax_h3_native_swiglu_scale_to_diffusers,
     _convert_minimax_h3_native_swiglu_to_diffusers,
     _gather_h3_context_parallel_output,
+    _linear_compute_dtype,
     _pad_h3_context_parallel_layout,
     resolve_h3_reference_mode,
 )
@@ -768,6 +769,17 @@ class FakeKeyframePosterior:
 
 
 class MiniMaxH3Tests(unittest.TestCase):
+    def test_linear_compute_dtype_uses_quantized_result_dtype(self):
+        weight = SimpleNamespace(
+            dtype=torch.int8,
+            sdnq_dequantizer=SimpleNamespace(result_dtype=torch.bfloat16),
+        )
+        self.assertEqual(_linear_compute_dtype(SimpleNamespace(weight=weight)), torch.bfloat16)
+
+    def test_linear_compute_dtype_prefers_module_contract(self):
+        linear = SimpleNamespace(weight=SimpleNamespace(dtype=torch.int8), compute_dtype=torch.float16)
+        self.assertEqual(_linear_compute_dtype(linear), torch.float16)
+
     def test_registry_metadata_resolves(self):
         model_cls = ModelRegistry.get("minimaxh3")
         self.assertEqual(model_cls.NAME, "MiniMax H3")
@@ -3654,6 +3666,47 @@ class MiniMaxH3Tests(unittest.TestCase):
         wrap_convrot.assert_called_once()
         self.assertEqual(wrap_convrot.call_args.args[1], "transformer_blocks.0.attn.to_out.0")
         self.assertEqual(wrap_convrot.call_args.kwargs["hadamard_group_size"], 256)
+
+    def test_single_file_loader_accepts_mixed_convrot_group_sizes(self):
+        model = tiny_h3_transformer(num_layers=1)
+        state_dict = dict(model.state_dict())
+
+        qkv_weights = [state_dict.pop(f"transformer_blocks.0.attn.to_{branch}.weight") for branch in ("q", "k", "v")]
+        qkv_source = "blocks.0.attn.qkv_proj"
+        qkv_weight = torch.cat(qkv_weights, dim=0)
+        state_dict[f"{qkv_source}.weight"] = torch.zeros(qkv_weight.shape, dtype=torch.int8)
+        state_dict[f"{qkv_source}.weight_scale"] = torch.ones(qkv_weight.shape[0], 1, dtype=torch.float32)
+        state_dict[f"{qkv_source}.comfy_quant"] = comfy_quant_metadata_tensor(
+            {"format": "int8_tensorwise", "convrot": True, "convrot_groupsize": 64}
+        )
+
+        out_target = "transformer_blocks.0.attn.to_out.0.weight"
+        out_weight = state_dict.pop(out_target)
+        out_source = "blocks.0.attn.out_proj"
+        state_dict[f"{out_source}.weight"] = torch.zeros(out_weight.shape, dtype=torch.int8)
+        state_dict[f"{out_source}.weight_scale"] = torch.ones(out_weight.shape[0], 1, dtype=torch.float32)
+        state_dict[f"{out_source}.comfy_quant"] = comfy_quant_metadata_tensor(
+            {"format": "int8_tensorwise", "convrot": True, "convrot_groupsize": 256}
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = f"{tmpdir}/tiny-h3-mixed-convrot.safetensors"
+            save_file(state_dict, path)
+            with patch("simpletuner.helpers.models.z_image.quantized_loading._wrap_convrot_linear") as wrap_convrot:
+                loaded = MiniMaxH3Transformer3DModel.from_single_file(path, torch_dtype=torch.float32)
+
+        group_sizes_by_module = {call.args[1]: call.kwargs["hadamard_group_size"] for call in wrap_convrot.call_args_list}
+        self.assertEqual(
+            group_sizes_by_module,
+            {
+                "transformer_blocks.0.attn.to_q": 64,
+                "transformer_blocks.0.attn.to_k": 64,
+                "transformer_blocks.0.attn.to_v": 64,
+                "transformer_blocks.0.attn.to_out.0": 256,
+            },
+        )
+        self.assertEqual(loaded.quantization_config["hadamard_group_sizes"], [64, 256])
+        self.assertNotIn("hadamard_group_size", loaded.quantization_config)
 
     def test_single_file_loader_accepts_comfy_fp8_scale_metadata(self):
         model = tiny_h3_transformer(num_layers=1)
