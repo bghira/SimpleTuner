@@ -49,6 +49,16 @@ class SubmissionContext:
     reservation_id: Optional[str] = None
     quota_warnings: List[str] = field(default_factory=list)
 
+    @property
+    def tracker_metadata(self) -> Dict[str, str]:
+        metadata = {}
+        project = self.config.get("--tracker_project_name") or self.config.get("tracker_project_name")
+        if project:
+            metadata["tracker_project_name"] = project
+        if self.tracker_run_name:
+            metadata["tracker_run_name"] = self.tracker_run_name
+        return metadata
+
 
 @dataclass
 class SubmissionResult:
@@ -206,8 +216,7 @@ class JobSubmissionService:
                 unified_job.output_url = f"https://huggingface.co/{hub_model_id}"
             if snapshot_metadata:
                 unified_job.metadata["snapshot"] = snapshot_metadata
-            if ctx.tracker_run_name:
-                unified_job.metadata["tracker_run_name"] = ctx.tracker_run_name
+            unified_job.metadata.update(ctx.tracker_metadata)
             if ctx.hardware_profile:
                 unified_job.metadata["hardware_profile"] = ctx.hardware_profile
 
@@ -296,8 +305,7 @@ class JobSubmissionService:
         metadata: Dict[str, Any] = {"upload_id": job_id}
         if snapshot_metadata:
             metadata["snapshot"] = snapshot_metadata
-        if ctx.tracker_run_name:
-            metadata["tracker_run_name"] = ctx.tracker_run_name
+        metadata.update(ctx.tracker_metadata)
         if ctx.hardware_profile:
             metadata["hardware_profile"] = ctx.hardware_profile
 
@@ -327,8 +335,7 @@ class JobSubmissionService:
         metadata.setdefault("prediction_id", cloud_job.job_id)
         if snapshot_metadata:
             metadata["snapshot"] = snapshot_metadata
-        if ctx.tracker_run_name:
-            metadata["tracker_run_name"] = ctx.tracker_run_name
+        metadata.update(ctx.tracker_metadata)
         if ctx.upload_id:
             metadata["upload_id"] = ctx.upload_id
         if ctx.hardware_profile:

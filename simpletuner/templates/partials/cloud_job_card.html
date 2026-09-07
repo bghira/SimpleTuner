@@ -20,7 +20,7 @@
                     <i class="fas" :class="jobTypeIcon(job.job_type)" style="font-size: 0.7rem;"></i>
                 </span>
                 <span class="text-truncate fw-medium job-name" style="max-width: 140px;"
-                      x-text="jobDisplayName(job)"></span>
+                      :title="jobDisplayName(job)" x-text="jobDisplayName(job)"></span>
             </div>
             <!-- Timestamp -->
             <div class="small text-muted" style="font-size: 0.7rem;" x-text="formatDate(job.created_at)"></div>
@@ -74,6 +74,14 @@
                 <i class="fas me-1" :class="statusIcon(job.status)" style="font-size: 0.55rem;"></i>
                 <span x-text="job.status"></span>
             </span>
+            <template x-if="jobIsFailed(job) && job.job_type === 'local' && (job.metadata?.env_name || job.config_name)">
+                <button type="button" class="btn btn-sm btn-outline-success job-continue-btn"
+                        :disabled="$store.trainer.continuingJob"
+                        @click.stop="continueJob(job)"
+                        @keydown.enter.stop @keydown.space.stop>
+                    <i class="fas fa-play me-1"></i>Continue
+                </button>
+            </template>
             <!-- Cost (if available) -->
             <template x-if="job.cost_usd">
                 <span class="text-muted" style="font-size: 0.6rem;">
