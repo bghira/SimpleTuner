@@ -79,7 +79,7 @@ def register_publishing_fields(registry: "FieldRegistry") -> None:
             section="publishing_controls",
             default_value=None,
             placeholder="/path/to/hook.sh {remote_checkpoint_path}",
-            help_text="Optional executable to run after each publishing provider and Hugging Face Hub upload finishes.",
+            help_text="Optional executable run after each publishing provider or Hugging Face Hub upload, and after completed built-in validation when no publishing provider is configured.",
             tooltip="Supports placeholders like {remote_checkpoint_path}, {local_checkpoint_path}, {global_step}, {tracker_run_name}, {tracker_project_name}, {model_family}, {huggingface_path}. Runs asynchronously.",
             importance=ImportanceLevel.ADVANCED,
             order=6,

@@ -875,6 +875,7 @@ Muchas configuraciones se establecen a través del [dataloader config](DATALOADE
 
 ### `--post_upload_script`
 
+- Tras cada validación integrada completada (manual desde la WebUI, programada o de referencia del modelo base), el script también se ejecuta si no hay un proveedor de publicación configurado. En este caso, `{local_checkpoint_path}` es `output_dir` (no se requiere un checkpoint) y `{remote_checkpoint_path}` está vacío. Los proveedores configurados mantienen un hook por subida exitosa, con las rutas devueltas; las subidas fallidas no activan un hook local. Las validaciones omitidas, fallidas o canceladas y los lanzamientos de scripts externos no activan este hook de finalización.
 - **Qué**: Ejecutable opcional que se ejecuta después de que cada proveedor de publicación y la subida a Hugging Face Hub termina (subidas finales del modelo y de checkpoints). Se ejecuta de forma asíncrona para que el entrenamiento no se bloquee.
 - **Marcadores**: Mismas sustituciones que `--validation_external_script`, además de `{remote_checkpoint_path}` (URI devuelta por el proveedor) para que puedas reenviar la URL publicada a sistemas downstream.
 - **Notas**:

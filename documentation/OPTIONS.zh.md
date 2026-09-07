@@ -878,6 +878,7 @@ TRAINING_DYNAMO_BACKEND=inductor
 
 ### `--post_upload_script`
 
+- 每次内置验证完成后（WebUI 手动验证、定时验证或基础模型基准测试），如果未配置发布提供者，也会运行此脚本。此时，`{local_checkpoint_path}` 为 `output_dir`（无需检查点），`{remote_checkpoint_path}` 为空。已配置的提供者仍在每次成功上传后运行一次钩子，并使用其返回的路径；上传失败不会触发本地钩子。跳过、失败或中止的验证，以及外部脚本的启动，都不会触发此完成钩子。
 - **内容**：每个发布目标与 Hugging Face Hub 上传完成后运行的可执行脚本（最终模型与检查点上传）。异步运行，不阻塞训练。
 - **占位符**：与 `--validation_external_script` 相同的替换，加上 `{remote_checkpoint_path}`（提供者返回的 URI），可用于将发布 URL 传递给下游系统。
 - **说明**：
