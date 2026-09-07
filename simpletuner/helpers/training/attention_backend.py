@@ -5,6 +5,7 @@ import inspect
 import os
 import subprocess
 import sys
+from contextlib import ExitStack
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
@@ -190,6 +191,13 @@ if AttentionBackendName is not None:
             _DIFFUSERS_BACKEND_ALIASES[alias] = AttentionBackendName(target)
         except Exception:
             continue
+
+_TORCH_SDPA_BACKENDS = {
+    "_native_math": torch.nn.attention.SDPBackend.MATH,
+    "_native_flash": torch.nn.attention.SDPBackend.FLASH_ATTENTION,
+    "_native_efficient": torch.nn.attention.SDPBackend.EFFICIENT_ATTENTION,
+    "_native_cudnn": torch.nn.attention.SDPBackend.CUDNN_ATTENTION,
+}
 
 
 class AttentionBackendMode(str, Enum):
@@ -1460,8 +1468,13 @@ class AttentionBackendController:
 
             cls._disable_diffusers_backend()
             try:
-                context = diffusers_attention_backend(backend_enum)
-                context.__enter__()
+                with ExitStack() as contexts:
+                    contexts.enter_context(diffusers_attention_backend(backend_enum))
+                    sdpa_backend = _TORCH_SDPA_BACKENDS.get(_DIFFUSERS_BACKEND_TARGETS.get(backend_key))
+                    if sdpa_backend is not None:
+                        # Legacy UNet processors call PyTorch SDPA directly, bypassing Diffusers dispatch.
+                        contexts.enter_context(torch.nn.attention.sdpa_kernel(sdpa_backend))
+                    context = contexts.pop_all()
             except Exception as exc:
                 message = f"Failed to enable attention backend '{backend_key}': {exc}"
                 logger.error(message)
