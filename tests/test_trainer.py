@@ -613,6 +613,38 @@ except ImportError:
 
 
 class TestTrainer(unittest.TestCase):
+    def test_run_checks_compile_disk_before_initialization_and_cleans_up(self):
+        trainer = MagicMock()
+        trainer.config = SimpleNamespace(dynamo_backend="inductor", disk_low_threshold="160M", disk_low_action="stop")
+        trainer.job_id = "disk-check-test"
+        callbacks = list(torch._dynamo.callback_handler.start_callbacks)
+        with (
+            patch("simpletuner.helpers.training.disk_space.get_available_disk_space", return_value=0),
+            self.assertRaisesRegex(RuntimeError, "Disk space critically low"),
+        ):
+            Trainer.run(trainer)
+        trainer.init_noise_schedule.assert_not_called()
+        trainer.cleanup.assert_called_once()
+        self.assertEqual(torch._dynamo.callback_handler.start_callbacks, callbacks)
+
+    def test_checkpoint_disk_policy_only_checks_main_process(self):
+        trainer = SimpleNamespace(
+            config=SimpleNamespace(output_dir="checkpoints", disk_low_threshold="160M", disk_low_action="wait"),
+            accelerator=SimpleNamespace(is_main_process=False),
+        )
+        with (
+            patch(
+                "simpletuner.helpers.training.disk_space.get_available_disk_space", side_effect=[0, 160 * 1024**2]
+            ) as free,
+            patch("simpletuner.helpers.training.disk_space.time") as clock,
+        ):
+            Trainer._check_disk_space_before_checkpoint(trainer)
+            free.assert_not_called()
+            trainer.accelerator.is_main_process = True
+            Trainer._check_disk_space_before_checkpoint(trainer)
+            self.assertEqual([call.args[0] for call in free.call_args_list], ["checkpoints"] * 2)
+            clock.sleep.assert_called_once_with(30)
+
     @patch("simpletuner.helpers.training.trainer.Trainer._misc_init")
     @patch("simpletuner.helpers.training.trainer.Trainer.parse_arguments", autospec=True)
     def test_constructor_initializes_lr_for_models_without_noise_schedule(self, mock_parse_arguments, _mock_misc_init):

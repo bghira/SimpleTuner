@@ -2011,10 +2011,11 @@ Upstream option mapping (LayerSync → SimpleTuner):
 
 ### `--disk_low_threshold`
 
-- **What**: Minimum free disk space required before checkpoint saves.
-- **Why**: Prevents training from crashing due to disk full errors during checkpoint saves by detecting low space early and taking a configured action.
+- **What**: Minimum free disk space required before checkpoint saves and TorchInductor graph compilation (including recompilation).
+- **Why**: Detects low space early and applies the configured action to the checkpoint or compiler cache filesystem.
 - **Format**: Size string like `100G`, `50M`, `1T`, `500K`, or plain bytes.
 - **Default**: None (feature disabled)
+- **Scope**: Compilation checks use `TORCHINDUCTOR_CACHE_DIR` (or PyTorch’s default) and a separate `TRITON_CACHE_DIR` when configured, on every compiling process. This is a preflight check, not a space reservation: compilation can still exhaust disk space after it starts, and backend initialization may write before the check. Choose a threshold large enough for compilation. Disk checks do not recover CUDA out-of-memory errors or retry failed compilation.
 
 ### `--disk_low_action`
 
