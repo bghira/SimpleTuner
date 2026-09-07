@@ -466,3 +466,23 @@ describe('cloudComputedProperties', () => {
         });
     });
 });
+
+describe('job project identity', () => {
+    test.each([
+        [{ tracker_project_name: 'portraits', tracker_run_name: 'run' }, 'portraits / run'],
+        [{ runtime_config: { '--tracker_project_name': 'portraits', '--tracker_run_name': 'run' } }, 'portraits / run'],
+        [{ runtime_config: { tracker_project_name: 'portraits', tracker_run_name: 'run' } }, 'portraits / run'],
+        [{ run_name: 'legacy-run' }, 'legacy-run'],
+    ])('uses persisted tracker identity %j', (metadata, expected) => {
+        expect(window.cloudUtilityMethods.jobDisplayName({ job_id: '123456789', config_name: 'config', metadata })).toBe(expected);
+    });
+});
+
+test('project name search distinguishes jobs with the same run name', () => {
+    const jobs = ['portraits', 'landscapes'].map(project => ({
+        job_id: project, config_name: 'config', status: 'failed',
+        metadata: { runtime_config: { tracker_project_name: project, tracker_run_name: 'run' } },
+    }));
+    const getter = Object.getOwnPropertyDescriptor(window.cloudComputedProperties, 'filteredJobs').get;
+    expect(getter.call({ jobs, jobSearchQuery: 'LANDSCAPES' }).map(job => job.job_id)).toEqual(['landscapes']);
+});

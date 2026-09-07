@@ -5,6 +5,25 @@
  */
 
 window.cloudJobMethods = {
+    async continueJob(job) {
+        const trainer = Alpine.store('trainer');
+        if (trainer.continuingJob || job.job_type !== 'local' || job.status !== 'failed') return;
+        trainer.continuingJob = job.job_id;
+        try {
+            const switched = await trainer.switchEnvironment(job.metadata?.env_name || job.config_name);
+            if (!switched) return;
+            trainer.switchTab('basic');
+            await htmx.ajax('GET', '/web/trainer/tabs/basic', { target: '#tab-content', swap: 'innerHTML' });
+            await Alpine.nextTick();
+            document.getElementById('runBtn').click();
+        } catch (error) {
+            console.error('Failed to continue job:', error);
+            window.showToast('Failed to continue job', 'error');
+        } finally {
+            trainer.continuingJob = null;
+        }
+    },
+
     async loadJobs(syncActive = false) {
         if (!syncActive) {
             this.jobsLoading = true;

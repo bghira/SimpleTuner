@@ -780,6 +780,8 @@ function trainerComponent() {
                  this.environmentsLoading = false;
              }
          },
+        continuingJob: null,
+
         async switchEnvironment(configName) {
             try {
                 const sanitizedName = sanitizeConfigName(configName);
@@ -819,15 +821,19 @@ function trainerComponent() {
                      }
                  }));
 
-                await this.fetchActiveEnvironmentConfig();
+                if (!await this.fetchActiveEnvironmentConfig()) {
+                    throw new Error('Failed to load activated configuration');
+                }
                 await this.loadDatasetsAfterEnvironmentChange();
 
                  window.showToast(`Switched to ${configName} configuration`, 'success');
                  // Refresh current tab content instead of reloading
                  await this.refreshAfterEnvironmentSwitch();
+                 return true;
              } catch (error) {
                  console.error('Error switching config:', error);
                  window.showToast('Failed to switch configuration', 'error');
+                 return false;
              }
          },
         async refreshAfterEnvironmentSwitch() {
