@@ -874,6 +874,7 @@ Alternative attention mechanisms समर्थित हैं, जिनक�
 
 ### `--post_upload_script`
 
+- हर पूर्ण अंतर्निहित सत्यापन (WebUI से मैन्युअल, निर्धारित या बेस मॉडल बेंचमार्क) के बाद, कोई प्रकाशन प्रदाता कॉन्फ़िगर न होने पर भी स्क्रिप्ट चलती है। इस स्थिति में `{local_checkpoint_path}` का मान `output_dir` होता है (चेकपॉइंट आवश्यक नहीं है), और `{remote_checkpoint_path}` खाली होता है। कॉन्फ़िगर किए गए प्रदाताओं के लिए हर सफल अपलोड पर लौटाए गए पथों के साथ एक हुक चलता है; असफल अपलोड स्थानीय हुक नहीं चलाते। छोड़े गए, असफल या रद्द किए गए सत्यापन और बाहरी स्क्रिप्ट का लॉन्च इस पूर्णता हुक को नहीं चलाते।
 - **What**: हर publishing provider और Hugging Face Hub upload (final model और checkpoint uploads) के बाद optional executable चलता है। यह asynchronous चलता है ताकि training block न हो।
 - **Placeholders**: `--validation_external_script` जैसे replacements, साथ ही `{remote_checkpoint_path}` (provider द्वारा लौटाया गया URI) ताकि आप published URL downstream systems को भेज सकें।
 - **Notes**:

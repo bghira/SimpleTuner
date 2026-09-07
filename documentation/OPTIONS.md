@@ -899,6 +899,7 @@ A lot of settings are instead set through the [dataloader config](DATALOADER.md)
 
 ### `--post_upload_script`
 
+- After each completed built-in validation (manual WebUI, scheduled, or base-model benchmark), the script also runs when no publishing provider is configured. In this case, `{local_checkpoint_path}` is `output_dir` (no checkpoint is required), and `{remote_checkpoint_path}` is empty. Configured providers retain one hook per successful upload, with their returned paths; failed uploads do not trigger a local hook. Skipped, failed, or aborted validation and external-script launches do not trigger this completion hook.
 - **What**: Optional executable run after each publishing provider and Hugging Face Hub upload finishes (final model and checkpoint uploads). Runs asynchronously so training doesn't block.
 - **Placeholders**: Same replacements as `--validation_external_script`, plus `{remote_checkpoint_path}` (URI returned by the provider) so you can forward the published URL to downstream systems.
 - **Notes**:
