@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import torch
+import yaml
 from PIL import Image
 
 from simpletuner.helpers.publishing.huggingface import HubManager
@@ -643,6 +644,68 @@ class TestMetadataFunctions(unittest.TestCase):
                 {key: [Path(path).name for path in paths] for key, paths in audios.items()},
                 {"prompt": ["step_50_prompt_0.wav"]},
             )
+
+    def test_model_card_matches_checkpoint_media_to_prompt_shortnames(self):
+        self.args.controlnet = False
+        self.args.control = False
+        model = MagicMock(
+            MODEL_LICENSE="other",
+            PREDICTION_TYPE=SimpleNamespace(value="epsilon"),
+            MODEL_TYPE=SimpleNamespace(value="unet"),
+            gligen=False,
+        )
+        model.validation_audio_sample_rate.return_value = 44100
+        model.custom_model_card_schedule_info.return_value = ""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            validation_dir = Path(tmpdir, "validation_images")
+            validation_dir.mkdir()
+            for name, color in [("unconditional", "black"), ("portrait", "red"), ("landscape", "blue")]:
+                Image.new("RGB", (8, 8), color=color).save(validation_dir / f"step_50_{name}_0_8x8.png")
+            manager = object.__new__(HubManager)
+            manager.config = SimpleNamespace(output_dir=tmpdir)
+            images, _ = manager._filter_checkpoint_validation_media(
+                50,
+                {"unconditional": [], "portrait": [], "landscape": []},
+                None,
+            )
+            images["portrait"] *= 2
+            with (
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_model_family", return_value="sdxl"),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_data_backends", return_value={}),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_weight_dtype", return_value=torch.bfloat16),
+                patch(
+                    "simpletuner.helpers.publishing.metadata.StateTracker.get_accelerator",
+                    return_value=MagicMock(num_processes=1),
+                ),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_args", return_value=self.args),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_model", return_value=model),
+            ):
+                save_model_card(
+                    model=model,
+                    repo_id="test-repo",
+                    images=images,
+                    audios={"portrait": [torch.zeros(1, 160)]},
+                    base_model="test-base-model",
+                    validation_prompts=["", "A person's portrait", "A landscape"],
+                    validation_shortnames=["unconditional", "portrait", "landscape"],
+                    repo_folder=tmpdir,
+                    global_step=50,
+                    epoch=1,
+                )
+            readme = Path(tmpdir, "README.md").read_text(encoding="utf-8")
+            widgets = yaml.safe_load(readme.split("---", 2)[1])["widget"]
+            self.assertEqual(len(widgets), 5)
+            expected = {
+                (0, 0, 0): "unconditional (blank prompt)",
+                (255, 0, 0): "A person's portrait",
+                (0, 0, 255): "A landscape",
+            }
+            for widget in widgets:
+                if widget["output"]["url"].endswith(".wav"):
+                    self.assertEqual(widget["text"], "A person's portrait")
+                    continue
+                with Image.open(Path(tmpdir, widget["output"]["url"])) as asset:
+                    self.assertEqual(widget["text"], expected[asset.getpixel((0, 0))])
 
     def test_save_training_config_sanitizes_public_export(self):
         config = SimpleNamespace(

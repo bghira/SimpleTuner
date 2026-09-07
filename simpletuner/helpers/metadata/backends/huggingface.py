@@ -21,18 +21,6 @@ from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
-def _coerce_bucket_keys_to_float(indices: dict) -> dict:
-    """Coerce bucket keys from strings to floats (fixes JSON serialization issue)."""
-    coerced = {}
-    for key, values in (indices or {}).items():
-        try:
-            coerced_key = float(key)
-        except (TypeError, ValueError):
-            coerced_key = key
-        coerced[coerced_key] = list(values) if not isinstance(values, list) else values
-    return coerced
-
-
 def _dataset_type_value(dataset_type: Any) -> str:
     return str(getattr(dataset_type, "value", dataset_type)).lower()
 
@@ -385,9 +373,7 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             except Exception as e:
                 logger.warning(f"Error loading aspect ratio bucket cache, creating new one: {e}")
                 cache_data = {}
-            # Coerce bucket keys from strings to floats (JSON serialization converts float keys to strings)
-            loaded_indices = cache_data.get("aspect_ratio_bucket_indices", {})
-            self.aspect_ratio_bucket_indices = _coerce_bucket_keys_to_float(loaded_indices)
+            self.aspect_ratio_bucket_indices = cache_data.get("aspect_ratio_bucket_indices", {})
             if set_config:
                 self.config = cache_data.get("config", {})
                 if self.config != {}:

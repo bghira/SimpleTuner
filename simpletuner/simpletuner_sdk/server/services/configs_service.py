@@ -1461,6 +1461,7 @@ class ConfigsService:
             "--publishing_config",
             "--lycoris_config",
             "--user_prompt_library",
+            "--validation_adapter_config",
             "--peft_lora_target_modules",
         }
 

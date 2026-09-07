@@ -153,7 +153,7 @@ class TestAudioValidation(unittest.TestCase):
         del mock_pipeline_result.images
         mock_model.pipeline.return_value = mock_pipeline_result
 
-        mock_config = MagicMock()
+        mock_config = MagicMock(post_upload_script=None)
         mock_config.validation_num_inference_steps = 1
         mock_config.num_validation_images = 1
         mock_config.validation_guidance = 1.0
@@ -291,7 +291,7 @@ class TestAudioValidation(unittest.TestCase):
         mock_model.pipeline.return_value = mock_pipeline_result
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            mock_config = MagicMock()
+            mock_config = MagicMock(post_upload_script=None)
             mock_config.output_dir = tmpdir
             mock_config.validation_num_inference_steps = 1
             mock_config.num_validation_images = 1

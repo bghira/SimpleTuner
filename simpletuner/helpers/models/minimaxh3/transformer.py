@@ -69,6 +69,16 @@ MINIMAX_H3_MODALITY_NUM = 3
 _H3_MASKED_CONTEXT_PARALLEL_BACKENDS = frozenset({AttentionBackendName.NATIVE, AttentionBackendName._NATIVE_CUDNN})
 
 
+def _linear_compute_dtype(linear: nn.Module) -> torch.dtype:
+    compute_dtype = getattr(linear, "compute_dtype", None)
+    if isinstance(compute_dtype, torch.dtype):
+        return compute_dtype
+    weight = linear.weight
+    dequantizer = getattr(weight, "sdnq_dequantizer", None)
+    result_dtype = getattr(dequantizer, "result_dtype", None)
+    return result_dtype if isinstance(result_dtype, torch.dtype) else weight.dtype
+
+
 class _MiniMaxH3AllGather(torch.autograd.Function):
     """Gather sequence shards without PyTorch's unsupported NCCL coalesced path."""
 
@@ -440,7 +450,13 @@ def _infer_minimax_h3_config_from_checkpoint(checkpoint) -> dict[str, Any]:
         audio_weight = _get_checkpoint_tensor(checkpoint, "audio_proj_in.weight")
         context_weight = _get_checkpoint_tensor(checkpoint, "context_embedder.weight")
         q_norm_weight = _get_checkpoint_tensor(checkpoint, "transformer_blocks.0.attn.norm_q.weight")
-        q_weight = _get_checkpoint_tensor(checkpoint, "transformer_blocks.0.attn.to_q.weight")
+        if "transformer_blocks.0.attn.to_q.weight" in raw_keys:
+            q_output_dim = _get_checkpoint_tensor(checkpoint, "transformer_blocks.0.attn.to_q.weight").shape[0]
+        else:
+            qkv_weight = _get_checkpoint_tensor(checkpoint, "blocks.0.attn.qkv_proj.weight")
+            if qkv_weight.shape[0] % 3 != 0:
+                raise RuntimeError("MiniMax-H3 fused QKV tensor blocks.0.attn.qkv_proj.weight cannot be split into q/k/v")
+            q_output_dim = qkv_weight.shape[0] // 3
         ffn_weight = _get_checkpoint_tensor(checkpoint, "transformer_blocks.0.ff.net.0.proj.weight")
         has_adaln_curve = "adaln_t_table" in raw_keys
         adaln_curve_table = _get_checkpoint_tensor(checkpoint, "adaln_t_table") if has_adaln_curve else None
@@ -456,7 +472,7 @@ def _infer_minimax_h3_config_from_checkpoint(checkpoint) -> dict[str, Any]:
             "audio_in_channels": audio_weight.shape[1],
             "text_dim": context_weight.shape[1],
             "attention_head_dim": q_norm_weight.shape[0],
-            "num_attention_heads": q_weight.shape[0] // q_norm_weight.shape[0],
+            "num_attention_heads": q_output_dim // q_norm_weight.shape[0],
             "freq_dim": time_in.shape[1] if time_in is not None else 256,
             "time_embed_hidden_dim": time_in.shape[0] if time_in is not None else 5376,
             "time_embed_dim": adaln_curve_table.shape[1] if has_adaln_curve else time_out.shape[0],
@@ -631,7 +647,7 @@ class MiniMaxH3AdaLayerNormModulation(nn.Module):
         # The activation runs at `temb`'s own precision and only the projection input is aligned to the projection
         # weight. Every block reads the same `temb`, so early rounding biases every block's modulation coherently.
         temb = nn.functional.silu(temb) if self.apply_silu else temb
-        temb = self.linear(temb.to(self.linear.weight.dtype))
+        temb = self.linear(temb.to(_linear_compute_dtype(self.linear)))
         temb = temb.view(-1, 6 * self.hidden_size)
         return temb.chunk(6, dim=-1)
 
@@ -661,7 +677,7 @@ class MiniMaxH3AdaLayerNormOut(nn.Module):
     ) -> torch.Tensor:
         # As in `MiniMaxH3AdaLayerNormModulation`: activate at `temb`'s precision, cast to the projection's dtype after.
         temb = nn.functional.silu(temb) if self.apply_silu else temb
-        shift, scale = self.linear(temb.to(self.linear.weight.dtype)).chunk(2, dim=-1)
+        shift, scale = self.linear(temb.to(_linear_compute_dtype(self.linear))).chunk(2, dim=-1)
         activation_dtype = hidden_states.dtype
         hidden_states = self.norm(hidden_states)
         shift = _select_modulation(shift, timestep_indices).to(dtype=activation_dtype)
@@ -1522,7 +1538,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                 temb = blend_flowmap_embeddings(temb, delta_temb, self.flowmap_delta_emb_gate)
             return temb
 
-        dtype = self.time_embedder.linear_1.weight.dtype
+        dtype = _linear_compute_dtype(self.time_embedder.linear_1)
         temb = flowmap_timestep_embedding(
             time_proj=self.time_proj,
             timestep_embedder=self.time_embedder,
@@ -1857,21 +1873,20 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                     result_dtype=torch_dtype or torch.bfloat16,
                     hadamard_group_size=hadamard_group_size,
                 )
-            if len(hadamard_group_sizes) != 1:
-                raise RuntimeError(
-                    f"MiniMax-H3 ConvRot checkpoint uses multiple Hadamard group sizes: {sorted(hadamard_group_sizes)}"
-                )
-            group_size = hadamard_group_sizes.pop()
             model.quantization_method = "minimax_h3_comfy_convrot_sdnq"
             model.quantization_config = {
                 "quant_method": "sdnq_training",
                 "weights_dtype": "int8",
                 "quantized_matmul_dtype": "int8",
                 "use_hadamard": True,
-                "hadamard_group_size": group_size,
                 "group_size": -1,
                 "source_format": "comfy_minimax_h3_convrot",
             }
+            sorted_group_sizes = sorted(hadamard_group_sizes)
+            if len(sorted_group_sizes) == 1:
+                model.quantization_config["hadamard_group_size"] = sorted_group_sizes[0]
+            else:
+                model.quantization_config["hadamard_group_sizes"] = sorted_group_sizes
         elif fp8_state_dict:
             model.quantization_method = "minimax_h3_comfy_fp8"
             model.quantization_config = {
@@ -2022,9 +2037,9 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         # mixed-precision (the two patch projections are float32 while `context_embedder` and the block stack are
         # bfloat16 — see `_keep_in_fp32_modules`), so every input is aligned with its projection's parameter dtype,
         # mirroring the reference's explicit casts. The text stream sets the dtype of the packed sequence.
-        video_embeds = self.proj_in(hidden_states.to(self.proj_in.weight.dtype))
-        audio_embeds = self.audio_proj_in(audio_hidden_states.to(self.audio_proj_in.weight.dtype))
-        text_embeds = self.context_embedder(encoder_hidden_states.to(self.context_embedder.weight.dtype))
+        video_embeds = self.proj_in(hidden_states.to(_linear_compute_dtype(self.proj_in)))
+        audio_embeds = self.audio_proj_in(audio_hidden_states.to(_linear_compute_dtype(self.audio_proj_in)))
+        text_embeds = self.context_embedder(encoder_hidden_states.to(_linear_compute_dtype(self.context_embedder)))
         self.token_refiner.gradient_checkpointing = self.gradient_checkpointing
         text_attention_mask = None
         if packed_valid_mask is not None:
@@ -2375,7 +2390,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         # 5. Both heads run over every row, then the rows of each modality are selected. The heads are listed in
         # `_keep_in_fp32_modules`, so they stay float32 while the block stack runs in the requested `torch_dtype`;
         # align the activation with their parameter dtype.
-        hidden_states = self.norm_out(hidden_states, temb, timestep_indices).to(self.proj_out.weight.dtype)
+        hidden_states = self.norm_out(hidden_states, temb, timestep_indices).to(_linear_compute_dtype(self.proj_out))
         video_output = _gather_h3_context_parallel_output(self.proj_out(hidden_states), cp_config, dim=1).index_select(
             1, video_indices.to(hidden_states.device)
         )

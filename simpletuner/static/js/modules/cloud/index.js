@@ -612,7 +612,7 @@ if (!window.cloudDashboardComponent) {
                     filtered = filtered.filter(j => {
                         const jobId = (j.job_id || '').toLowerCase();
                         const configName = (j.config_name || '').toLowerCase();
-                        const trackerName = (j.metadata?.tracker_run_name || '').toLowerCase();
+                        const trackerName = this.jobDisplayName(j).toLowerCase();
                         const status = (j.status || '').toLowerCase();
                         const provider = (j.provider || '').toLowerCase();
                         return jobId.includes(query) || configName.includes(query) ||

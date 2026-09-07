@@ -16,6 +16,9 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.filters import build_dataset_filter
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
+from simpletuner.helpers.metadata.backends.huggingface import HuggingfaceMetadataBackend
+from simpletuner.helpers.metadata.backends.parquet import ParquetMetadataBackend
+from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
@@ -186,11 +189,84 @@ class TestMetadataBackend(unittest.TestCase):
         }
         with patch.object(self.data_backend, "read", return_value=json.dumps(valid_cache_data)):
             self.metadata_backend.reload_cache()
-        # JSON string keys are coerced back to floats when loading
         self.assertEqual(
             self.metadata_backend.aspect_ratio_bucket_indices,
-            {1.0: ["image1", "image2"]},
+            {"1.0": ["image1", "image2"]},
         )
+
+    def test_cache_loaders_preserve_string_bucket_keys(self):
+        indices = {
+            "1.0": ["square.jpg", "square.jpg"],
+            "1.5": ["wide.jpg"],
+            "1920x1080@125": ["video.mp4"],
+            "3s": ["audio.wav"],
+            "captions": ["caption.txt"],
+        }
+        for backend_class in (
+            DiscoveryMetadataBackend,
+            HuggingfaceMetadataBackend,
+            ParquetMetadataBackend,
+            WebshartMetadataBackend,
+        ):
+            with self.subTest(backend=backend_class.__name__):
+                backend = backend_class.__new__(backend_class)
+                backend.id = "cache-keys"
+                backend.cache_file = "buckets.json"
+                backend.data_backend = self.data_backend
+                backend.load_image_metadata = Mock()
+                backend._sync_image_files_with_buckets = Mock()
+                with patch.object(
+                    self.data_backend, "read", return_value=json.dumps({"aspect_ratio_bucket_indices": indices})
+                ):
+                    backend.reload_cache(set_config=False)
+                self.assertEqual(backend.aspect_ratio_bucket_indices, indices)
+
+    def test_discovery_after_cache_reload_keeps_one_bucket(self):
+        cache = {"aspect_ratio_bucket_indices": {"1.0": ["cached.jpg", "cached.jpg"]}}
+        with patch.object(self.data_backend, "read", return_value=json.dumps(cache)):
+            self.metadata_backend.reload_cache()
+
+        self.data_backend.type = "local"
+        self.metadata_backend.dataset_type = DatasetType.IMAGE
+        self.metadata_backend.dataset_config = {"dataset_type": "image", "crop": False}
+        prepared = SimpleNamespace(
+            crop_coordinates=(0, 0),
+            target_size=(512, 512),
+            intermediary_size=(512, 512),
+            aspect_ratio=1.0,
+        )
+        with (
+            patch.object(self.metadata_backend, "_probe_image_dimensions", return_value={"original_size": (1024, 1024)}),
+            patch("simpletuner.helpers.metadata.backends.discovery.TrainingSample") as training_sample,
+        ):
+            training_sample.return_value.prepare.return_value = prepared
+            self.metadata_backend._process_for_bucket("new.jpg", self.metadata_backend.aspect_ratio_bucket_indices)
+
+        self.assertEqual(
+            self.metadata_backend.aspect_ratio_bucket_indices,
+            {"1.0": ["cached.jpg", "cached.jpg", "new.jpg"]},
+        )
+
+    def test_bucket_assignment_merges_key_types_without_changing_occurrences(self):
+        indices = {
+            1.0: ["first.jpg", "repeat.jpg"],
+            "1.0": ["repeat.jpg", "last.jpg"],
+            "1920x1080@125": ["video.mp4"],
+            "3s": ["audio.wav"],
+            "captions": ["caption.txt"],
+        }
+        self.metadata_backend.aspect_ratio_bucket_indices = indices
+
+        expected = {
+            "1.0": ["first.jpg", "repeat.jpg", "repeat.jpg", "last.jpg"],
+            "1920x1080@125": ["video.mp4"],
+            "3s": ["audio.wav"],
+            "captions": ["caption.txt"],
+        }
+        self.assertEqual(self.metadata_backend.aspect_ratio_bucket_indices, expected)
+        self.metadata_backend.aspect_ratio_bucket_indices = self.metadata_backend.aspect_ratio_bucket_indices
+        self.assertEqual(self.metadata_backend.aspect_ratio_bucket_indices, expected)
+        self.assertEqual(indices[1.0], ["first.jpg", "repeat.jpg"])
 
     def test_load_cache_invalid(self):
         invalid_cache_data = "this is not valid json"

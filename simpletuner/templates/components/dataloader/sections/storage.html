@@ -259,6 +259,9 @@
                     <template x-if="dataset.type === 'webshart'">
                     <div class="dataset-subgroup">
                         <div class="dataset-subgroup-title">Webshart Settings</div>
+                        {% with caption_dataset='dataset' %}
+                        {% include 'components/dataloader/webshart_caption_key.html' %}
+                        {% endwith %}
                         <div class="row g-3">
                             <div class="col-md-6">
                                 <label class="form-label">Dataset Source</label>

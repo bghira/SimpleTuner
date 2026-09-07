@@ -235,7 +235,10 @@ class MetadataBackend:
 
     @aspect_ratio_bucket_indices.setter
     def aspect_ratio_bucket_indices(self, value):
-        """Set aspect ratio bucket indices with debug tracking."""
+        """Keep bucket keys identical during discovery, cache loading, and resume."""
+        normalized = {}
+        for key, samples in value.items():
+            normalized.setdefault(str(key), []).extend(samples)
         if hasattr(self, "_aspect_ratio_bucket_indices"):
             old_count = sum(len(v) for v in self._aspect_ratio_bucket_indices.values())
             new_count = sum(len(v) for v in value.values()) if value else 0
@@ -246,7 +249,7 @@ class MetadataBackend:
                     f"Old buckets: {list(self._aspect_ratio_bucket_indices.keys())}, "
                     f"New buckets: {list(value.keys()) if value else []}"
                 )
-        self._aspect_ratio_bucket_indices = value
+        self._aspect_ratio_bucket_indices = normalized
 
     def _extract_audio_config(self) -> Dict[str, Any]:
         if self.dataset_config is None:

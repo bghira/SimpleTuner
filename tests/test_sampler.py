@@ -23,6 +23,7 @@ from accelerate import PartialState
 from PIL import Image
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
+from simpletuner.helpers.data_backend.local import LocalDataBackend
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
 from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
@@ -269,6 +270,79 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.assertIsNotNone(conditioning_sample)
         self.assertEqual(conditioning_sample.image_path(), "/conditioning/11.png")
         self.assertEqual(conditioning_sample.caption, "caption")
+
+    def test_connect_conditioning_samples_preserves_nested_mask_paths(self):
+        relative_paths = ["white.deriv/shared.png", "c2s_over/shared.png"]
+        metadata = {
+            "original_size": (8, 8),
+            "target_size": (8, 8),
+            "intermediary_size": (8, 8),
+            "crop_coordinates": (0, 0),
+            "aspect_ratio": 1.0,
+        }
+        backend_config = {"crop": False, "resolution": 8, "resolution_type": "pixel"}
+
+        with tempfile.TemporaryDirectory() as dataset_dir:
+            source_dir = os.path.join(dataset_dir, "images")
+            samples = tuple({"image_path": os.path.join(source_dir, path)} for path in relative_paths)
+            self.metadata_backend.instance_data_dir = source_dir
+            self.sampler.logger = MagicMock()
+            conditioning_datasets = []
+            for dataset_idx in range(2):
+                conditioning_id = f"masks-{dataset_idx}"
+                conditioning_dir = os.path.join(dataset_dir, conditioning_id)
+                for image_idx, relative_path in enumerate(relative_paths):
+                    mask_path = os.path.join(conditioning_dir, relative_path)
+                    os.makedirs(os.path.dirname(mask_path), exist_ok=True)
+                    Image.new("RGB", (8, 8), color=(image_idx * 255,) * 3).save(mask_path)
+
+                conditioning_metadata = Mock(spec=DiscoveryMetadataBackend)
+                conditioning_metadata.id = conditioning_id
+                conditioning_metadata.instance_data_dir = conditioning_dir
+                conditioning_metadata.aspect_ratio_bucket_indices = {}
+                conditioning_metadata.get_metadata_by_filepath.return_value = metadata
+                conditioning_sampler = MultiAspectSampler(
+                    id=conditioning_id,
+                    metadata_backend=conditioning_metadata,
+                    data_backend=LocalDataBackend(self.accelerator, conditioning_id),
+                    accelerator=self.accelerator,
+                    batch_size=2,
+                    model=None,
+                    conditioning_type="mask",
+                )
+                conditioning_datasets.append({"id": conditioning_id, "sampler": conditioning_sampler})
+
+            for sampling_mode in ("random", "combined"):
+                for dataset_count in (1, 2):
+                    with (
+                        self.subTest(sampling_mode=sampling_mode, dataset_count=dataset_count),
+                        patch.object(
+                            StateTracker, "get_conditioning_datasets", return_value=conditioning_datasets[:dataset_count]
+                        ),
+                        patch.object(
+                            StateTracker,
+                            "get_args",
+                            return_value=SimpleNamespace(conditioning_multidataset_sampling=sampling_mode),
+                        ),
+                        patch.object(StateTracker, "get_data_backend_config", return_value=backend_config),
+                        patch.object(StateTracker, "get_model", return_value=None),
+                        patch("simpletuner.helpers.multiaspect.sampler.PromptHandler.magic_prompt", return_value="caption"),
+                    ):
+                        self.sampler.logger.reset_mock()
+                        output = self.sampler.connect_conditioning_samples(samples)
+
+                        expected_count = len(samples) * (1 if sampling_mode == "random" else dataset_count)
+                        self.assertEqual(output[: len(samples)], samples)
+                        masks = output[len(samples) :]
+                        self.assertEqual(len(masks), expected_count)
+                        for mask_idx, mask in enumerate(masks):
+                            relative_path = relative_paths[mask_idx % len(samples)]
+                            self.assertEqual(
+                                mask.image_path(), os.path.join(dataset_dir, mask.data_backend_id, relative_path)
+                            )
+                            self.assertEqual(mask.image.getpixel((0, 0)), (mask_idx % len(samples) * 255,) * 3)
+                            self.assertEqual(mask.conditioning_type, "mask")
+                        self.sampler.logger.warning.assert_not_called()
 
     def test_load_states_with_matching_batch_size_restores_schedule_before_normalizing_legacy_seen_flags(self):
         self.sampler.state_manager.load_state.return_value = {
@@ -548,6 +622,51 @@ class TestSamplerResumeSchedule(unittest.TestCase):
     def _state_path(directory, rank):
         filename = "training_state.json" if rank == 0 else f"training_state-rank{rank}.json"
         return os.path.join(directory, filename)
+
+    def test_resume_normalizes_numeric_bucket_names_and_preserves_remaining_occurrences(self):
+        backend = DiscoveryMetadataBackend.__new__(DiscoveryMetadataBackend)
+        backend.id = "resume"
+        backend.instance_data_dir = ""
+        backend.accelerator = SimpleNamespace(num_processes=1, process_index=0)
+        backend.aspect_ratio_bucket_indices = {"1.0": ["fresh.jpg"]}
+        backend.seen_images = {}
+        sampler = self._sampler(backend)
+        sampler.rank_info = "[RANK 0]"
+        saved_schedule = {
+            "1.0": ["repeat.jpg", "repeat.jpg", "other.jpg"],
+            "1.5": ["wide.jpg"],
+            "1920x1080@125": ["video.mp4"],
+        }
+        with tempfile.TemporaryDirectory() as checkpoint_dir:
+            state_path = self._state_path(checkpoint_dir, 0)
+            sampler.state_manager.save_state(
+                {
+                    "aspect_ratio_bucket_indices": saved_schedule,
+                    "buckets": [1.0, "1920x1080@125"],
+                    "exhausted_buckets": [1.5],
+                    "current_bucket": 0,
+                    "batch_size": 1,
+                    "seen_images": {"repeat.jpg": 1, "wide.jpg": 1},
+                    "dp_size": 1,
+                    "dp_rank": 0,
+                },
+                state_path,
+            )
+            sampler.load_states(state_path)
+            self.assertEqual(sampler.buckets, ["1.0", "1920x1080@125"])
+            self.assertEqual(sampler.exhausted_buckets, ["1.5"])
+            self.assertEqual(sampler.current_bucket, 0)
+            self.assertEqual(backend.aspect_ratio_bucket_indices, saved_schedule)
+            self.assertEqual(sampler._get_unseen_images("1.0"), ["repeat.jpg", "other.jpg"])
+            backend.mark_batch_as_seen(["repeat.jpg", "other.jpg"])
+            self.assertEqual(sampler._get_unseen_images("1.0"), [])
+
+            sampler.save_state(state_path)
+            sampler.load_states(state_path)
+            self.assertEqual(backend.aspect_ratio_bucket_indices, saved_schedule)
+            self.assertEqual(sampler._get_unseen_images("1.0"), [])
+            self.assertEqual(sampler._get_unseen_images("1920x1080@125"), ["video.mp4"])
+        sampler.logger.warning.assert_not_called()
 
     def _resume_shards(self, *, images, save_world_size, saving_ranks, resume_world_size):
         with tempfile.TemporaryDirectory() as checkpoint_dir:

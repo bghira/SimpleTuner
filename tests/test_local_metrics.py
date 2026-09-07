@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import torch
 from PIL import Image
@@ -22,12 +25,53 @@ from simpletuner.helpers.training.local_metrics import (
     read_metric_records,
     read_timestep_distribution_records,
     record_timestep_distribution,
+    render_static_report,
 )
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.validation_images import save_validation_image
 
 
 class LocalMetricsTrackerTests(unittest.TestCase):
+    def test_concurrent_report_refresh_preserves_latest_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tracker = LocalMetricsTracker("concurrent-report", directory, "tests")
+            tracker.store_init_configuration({"model_family": "flux"})
+            tracker.log({"train_loss": 1.0}, step=1)
+            first_snapshot_read = threading.Event()
+            release_first_render = threading.Event()
+
+            def read_snapshot(output_dir):
+                records = read_metric_records(output_dir)
+                if not first_snapshot_read.is_set():
+                    first_snapshot_read.set()
+                    if not release_first_render.wait(timeout=10):
+                        raise TimeoutError("The first report render was not released.")
+                return records
+
+            with (
+                patch("simpletuner.helpers.training.local_metrics.read_metric_records", side_effect=read_snapshot),
+                ThreadPoolExecutor(max_workers=2) as executor,
+            ):
+                first_render = executor.submit(render_static_report, directory)
+                try:
+                    self.assertTrue(first_snapshot_read.wait(timeout=5))
+                    tracker.log({"train_loss": 0.5}, step=2)
+                    second_render = executor.submit(render_static_report, directory)
+                    try:
+                        second_render.result(timeout=1)
+                    except TimeoutError:
+                        pass
+                finally:
+                    release_first_render.set()
+                first_render.result(timeout=5)
+                second_render.result(timeout=5)
+
+            html = (Path(directory) / REPORT_FILENAME).read_text(encoding="utf-8")
+            payload = json.loads(
+                html.split('<script id="training-metrics-data" type="application/json">')[1].split("</script>")[0]
+            )
+            self.assertEqual([record["step"] for record in payload["records"]], [1, 2])
+
     def test_tracker_writes_scalars_manifest_and_self_contained_report(self):
         with tempfile.TemporaryDirectory() as directory:
             tracker = LocalMetricsTracker("anima-smoke", directory, "local-tests")

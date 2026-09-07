@@ -875,6 +875,7 @@ Muchas configuraciones se establecen a través del [dataloader config](DATALOADE
 
 ### `--post_upload_script`
 
+- Tras cada validación integrada completada (manual desde la WebUI, programada o de referencia del modelo base), el script también se ejecuta si no hay un proveedor de publicación configurado. En este caso, `{local_checkpoint_path}` es `output_dir` (no se requiere un checkpoint) y `{remote_checkpoint_path}` está vacío. Los proveedores configurados mantienen un hook por subida exitosa, con las rutas devueltas; las subidas fallidas no activan un hook local. Las validaciones omitidas, fallidas o canceladas y los lanzamientos de scripts externos no activan este hook de finalización.
 - **Qué**: Ejecutable opcional que se ejecuta después de que cada proveedor de publicación y la subida a Hugging Face Hub termina (subidas finales del modelo y de checkpoints). Se ejecuta de forma asíncrona para que el entrenamiento no se bloquee.
 - **Marcadores**: Mismas sustituciones que `--validation_external_script`, además de `{remote_checkpoint_path}` (URI devuelta por el proveedor) para que puedas reenviar la URL publicada a sistemas downstream.
 - **Notas**:
@@ -1989,10 +1990,11 @@ Mapeo de opciones upstream (LayerSync → SimpleTuner):
 
 ### `--disk_low_threshold`
 
-- **Qué**: Espacio mínimo libre en disco requerido antes de guardar checkpoints.
-- **Por qué**: Previene que el entrenamiento falle por errores de disco lleno al detectar espacio bajo tempranamente y tomar una acción configurada.
+- **Qué**: Espacio mínimo libre en disco requerido antes de guardar checkpoints y compilar grafos con TorchInductor (incluida la recompilación).
+- **Por qué**: Detecta poco espacio anticipadamente y aplica la acción configurada al sistema de archivos de los checkpoints o de la caché del compilador.
 - **Formato**: Cadena de tamaño como `100G`, `50M`, `1T`, `500K`, o bytes simples.
 - **Por defecto**: Ninguno (función desactivada)
+- **Alcance**: Cada proceso que compila comprueba `TORCHINDUCTOR_CACHE_DIR` (o el valor predeterminado de PyTorch) y un `TRITON_CACHE_DIR` separado si está configurado. Es una comprobación previa, no una reserva: la compilación puede agotar el disco tras iniciarse y la inicialización del backend puede escribir antes de la comprobación. Elija un umbral suficiente para compilar. Estas comprobaciones no recuperan errores de memoria CUDA ni reintentan compilaciones fallidas.
 
 ### `--disk_low_action`
 

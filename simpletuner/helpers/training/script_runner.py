@@ -6,6 +6,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
+from simpletuner.helpers.training.local_metrics import is_local_metrics_enabled, render_static_report
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.utils.checkpoint_manager import CheckpointManager
 
@@ -123,4 +124,6 @@ def run_hook_script(
     except ValueError as exc:
         logger.error("Failed to format external script command: %s", exc)
         return
+    if is_local_metrics_enabled(getattr(config, "report_to", None)):
+        render_static_report(output_dir)
     submit_script(command)

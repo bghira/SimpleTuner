@@ -145,6 +145,14 @@ def validate_huggingface_backend_settings(
     return {"metadata_backend": metadata_backend or "huggingface", "caption_strategy": caption_strategy or "huggingface"}
 
 
+def validate_webshart_caption_key(caption_key) -> None:
+    if caption_key is None:
+        return
+    keys = [caption_key] if isinstance(caption_key, str) else caption_key
+    if not isinstance(keys, list) or not keys or any(not isinstance(key, str) or not key.strip() for key in keys):
+        raise ValueError("webshart.caption_key must be a non-empty string or a non-empty list of non-empty strings.")
+
+
 def validate_webshart_backend_settings(
     backend_type: str, metadata_backend: Optional[str], caption_strategy: Optional[str], backend_id: str
 ) -> Dict[str, str]:

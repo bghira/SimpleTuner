@@ -630,6 +630,52 @@ class TestAttentionBackendPersistence(unittest.TestCase):
         AttentionBackendController.restore_default()
         self.assertIsNone(AttentionBackendController._diffusers_backend_name)
 
+    def test_native_math_controls_legacy_diffusers_processor(self):
+        from diffusers.models.attention_processor import Attention, AttnProcessor2_0
+
+        attention = Attention(query_dim=32, heads=4, dim_head=8, processor=AttnProcessor2_0())
+        hidden_states = torch.randn(1, 8, 32, requires_grad=True)
+        config = SimpleNamespace(attention_mechanism="native-math")
+        AttentionBackendController.apply(config, AttentionPhase.TRAIN)
+
+        with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU]) as profile:
+            attention(hidden_states).sum().backward()
+
+        operators = {event.key for event in profile.key_averages()}
+        self.assertIn("aten::_scaled_dot_product_attention_math", operators)
+        self.assertFalse(any("flash_attention" in operator for operator in operators))
+        self.assertTrue(torch.isfinite(hidden_states.grad).all())
+
+    def test_native_math_restores_sdpa_selection_on_backend_switch(self):
+        with torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.FLASH_ATTENTION):
+            AttentionBackendController.apply(SimpleNamespace(attention_mechanism="native-math"), AttentionPhase.TRAIN)
+            self.assertTrue(torch.backends.cuda.math_sdp_enabled())
+            self.assertFalse(torch.backends.cuda.flash_sdp_enabled())
+            AttentionBackendController.apply(SimpleNamespace(attention_mechanism="native"), AttentionPhase.TRAIN)
+            self.assertFalse(torch.backends.cuda.math_sdp_enabled())
+            self.assertTrue(torch.backends.cuda.flash_sdp_enabled())
+            AttentionBackendController.restore_default()
+
+    def test_native_sdpa_variants_restore_selection_across_phases(self):
+        enabled = {
+            "native-math": torch.backends.cuda.math_sdp_enabled,
+            "native-flash": torch.backends.cuda.flash_sdp_enabled,
+            "native-efficient": torch.backends.cuda.mem_efficient_sdp_enabled,
+            "native-cudnn": torch.backends.cuda.cudnn_sdp_enabled,
+        }
+        original = {name: check() for name, check in enabled.items()}
+        for backend in (*enabled, "cudnn"):
+            with self.subTest(backend=backend):
+                config = SimpleNamespace(attention_mechanism=backend)
+                for phase in (AttentionPhase.TRAIN, AttentionPhase.EVAL, AttentionPhase.TRAIN):
+                    AttentionBackendController.apply(config, phase)
+                    expected = "native-cudnn" if backend == "cudnn" else backend
+                    self.assertEqual(
+                        {name: check() for name, check in enabled.items()}, {name: name == expected for name in enabled}
+                    )
+                AttentionBackendController.restore_default()
+                self.assertEqual({name: check() for name, check in enabled.items()}, original)
+
     def test_hub_backend_omits_empty_kernel_user_agent(self):
         if not attention_backend_module._DIFFUSERS_BACKEND_ALIASES:
             self.skipTest("Diffusers attention backend helpers unavailable in this environment.")

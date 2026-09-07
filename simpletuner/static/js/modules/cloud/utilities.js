@@ -46,7 +46,12 @@ window.cloudUtilityMethods = {
     },
 
     jobDisplayName(job) {
-        return job.metadata?.tracker_run_name || job.config_name || job.job_id.substring(0, 8);
+        const metadata = job.metadata || {};
+        const config = metadata.runtime_config || {};
+        const project = metadata.tracker_project_name || config['--tracker_project_name'] || config.tracker_project_name;
+        const run = metadata.tracker_run_name || config['--tracker_run_name'] || config.tracker_run_name ||
+            metadata.run_name || job.config_name || job.job_id.substring(0, 8);
+        return project ? `${project} / ${run}` : run;
     },
 
     formatDuration(seconds) {
@@ -204,7 +209,7 @@ window.cloudComputedProperties = {
             filtered = filtered.filter(j => {
                 const jobId = (j.job_id || '').toLowerCase();
                 const configName = (j.config_name || '').toLowerCase();
-                const trackerName = (j.metadata?.tracker_run_name || '').toLowerCase();
+                const trackerName = window.cloudUtilityMethods.jobDisplayName(j).toLowerCase();
                 const status = (j.status || '').toLowerCase();
                 const provider = (j.provider || '').toLowerCase();
 

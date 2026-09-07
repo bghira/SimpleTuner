@@ -5260,9 +5260,16 @@ class Validation:
             logger.debug("Skipping EMA model restoration for validation, as we are not using EMA.")
 
     def _publish_validation_artifacts(self, validation_type: str | None):
-        if self.publishing_manager is None or not getattr(self.publishing_manager, "configured", False):
-            return
         if hasattr(self.accelerator, "is_main_process") and not self.accelerator.is_main_process:
+            return
+        if self.publishing_manager is None or not getattr(self.publishing_manager, "configured", False):
+            run_hook_script(
+                getattr(self.config, "post_upload_script", None),
+                config=self.config,
+                local_path=getattr(self.config, "output_dir", None),
+                remote_path=None,
+                global_step=self.global_step,
+            )
             return
 
         artifact_root = getattr(self.config, "output_dir", None)

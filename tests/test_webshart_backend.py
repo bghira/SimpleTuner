@@ -1,4 +1,7 @@
+import json
+import tarfile
 import unittest
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
@@ -139,6 +142,7 @@ class TestWebshartDataBackend(unittest.TestCase):
 
     def test_get_caption_uses_indexed_sample_metadata(self):
         backend = WebshartDataBackend.__new__(WebshartDataBackend)
+        backend.caption_key = None
         backend.get_shard_metadata = Mock(return_value={"sample.mp4": {"captions": "A moving subject."}})
 
         caption = backend.get_caption("webshart://2/7/sample.mp4")
@@ -147,6 +151,7 @@ class TestWebshartDataBackend(unittest.TestCase):
 
     def test_get_caption_preserves_indexed_caption_variants(self):
         backend = WebshartDataBackend.__new__(WebshartDataBackend)
+        backend.caption_key = None
         backend.get_shard_metadata = Mock(return_value={"sample.mp4": {"captions": ["first caption", "second caption"]}})
 
         caption = backend.get_caption("webshart://2/7/sample.mp4")
@@ -181,8 +186,29 @@ class TestWebshartDataBackend(unittest.TestCase):
         with self.assertRaisesRegex(ImportError, "list_shard_sample_aspect_buckets_filtered"):
             backend.list_shard_sample_aspect_buckets([0], dataset_filter=dataset_filter)
 
+    @patch("simpletuner.helpers.metadata.backends.webshart.TrainingSample")
+    def test_prepared_image_bucket_matches_cached_string_key(self, training_sample):
+        backend = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
+        backend.id = "test-backend"
+        backend.dataset_type = DatasetType.IMAGE
+        backend.meets_resolution_requirements = Mock(return_value=True)
+        backend.aspect_ratio_bucket_indices = {"1.0": ["cached.webp"]}
+        training_sample.return_value.prepare.return_value = SimpleNamespace(
+            aspect_ratio=1.0,
+            intermediary_size=(512, 512),
+            crop_coordinates=(0, 0),
+            target_size=(512, 512),
+        )
+
+        key, metadata = backend._prepare_metadata("new.webp", {"original_size": (1024, 1024)})
+        backend.aspect_ratio_bucket_indices.setdefault(key, []).append("new.webp")
+
+        self.assertEqual(backend.aspect_ratio_bucket_indices, {"1.0": ["cached.webp", "new.webp"]})
+        self.assertEqual(metadata["aspect_ratio"], 1.0)
+
     def test_video_metadata_uses_indexed_frame_fields_and_probe_geometry(self):
         backend = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
+        backend.data_backend = Mock(caption_key=None)
         backend.dataset_type = DatasetType.VIDEO
         backend._probe_video_metadata = Mock(return_value={"original_size": (1280, 720)})
         shard_metadata = {
@@ -232,7 +258,7 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
         backend.aspect_ratio_bucket_indices = {}
         backend.caption_cache = {}
         backend.bucket_report = None
-        backend.data_backend = Mock(parallel_downloads=1)
+        backend.data_backend = Mock(parallel_downloads=1, caption_key=None)
         backend.data_backend.get_shard_metadata = Mock(return_value={})
         backend.reload_cache = Mock()
         backend.load_image_metadata = Mock()
@@ -347,7 +373,7 @@ class TestWebshartCaptionOptimization(unittest.TestCase):
             backend._optimize_caption_metadata()
 
 
-class TestWebshartOptimizeCaptionsConfig(unittest.TestCase):
+class TestWebshartConfig(unittest.TestCase):
     def _config_from(self, backend_dict):
         from simpletuner.helpers.data_backend.config.image import ImageBackendConfig
 
@@ -374,6 +400,190 @@ class TestWebshartOptimizeCaptionsConfig(unittest.TestCase):
             with self.subTest(backend_dict=backend_dict):
                 config = self._config_from(backend_dict)
                 self.assertEqual(config.webshart_optimize_captions, expected)
+
+    def test_caption_key_round_trip(self):
+        for key in ("long_caption", ["long_caption", "short_caption"]):
+            with self.subTest(key=key):
+                config = self._config_from({"webshart": {"caption_key": key}})
+                self.assertEqual(config.webshart_caption_key, key)
+                self.assertEqual(config.to_dict()["config"]["webshart"]["caption_key"], key)
+
+    def test_invalid_caption_keys_are_rejected(self):
+        for key in ("", "  ", [], ["caption", ""], ["caption", None], 1, True, {"caption": "text"}):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "webshart.caption_key"):
+                self._config_from({"webshart": {"caption_key": key}})
+
+    def test_builder_passes_caption_keys(self):
+        from simpletuner.helpers.data_backend.builders.webshart import WebshartBackendBuilder
+
+        config = self._config_from({"webshart": {"caption_key": ["short", "long"], "cache_dir": "cache/ws"}})
+        with patch("simpletuner.helpers.data_backend.builders.webshart.WebshartDataBackend") as backend:
+            WebshartBackendBuilder(accelerator=None)._create_backend(config)
+        self.assertEqual(backend.call_args.kwargs["caption_key"], ["short", "long"])
+
+
+class TestWebshartCaptionKeyIntegration(unittest.TestCase):
+    def setUp(self):
+        self.temp = TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.source = self.root / "source"
+        self.source.mkdir()
+        self.json_metadata = {
+            "long": [" detailed caption ", "alternative caption"],
+            "short": " brief caption ",
+            "empty": " ",
+            "captions": {"named": "named caption", "short": "shadowed caption"},
+        }
+        self.files = {}
+        archive_path = self.source / "shard.tar"
+        with tarfile.open(archive_path, "w") as archive:
+            for name, payload in {
+                "sample.jpg": b"image payload",
+                "sample.json": json.dumps(self.json_metadata).encode(),
+                "missing.jpg": b"image payload",
+                "missing.txt": b"unselected text caption",
+            }.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(payload)
+                archive.addfile(info, BytesIO(payload))
+        with tarfile.open(archive_path) as archive:
+            for info in archive.getmembers():
+                self.files[info.name] = {"offset": info.offset_data, "length": info.size}
+                if info.name.endswith(".jpg"):
+                    self.files[info.name].update(width=512, height=512, aspect=1.0, captions="default caption")
+        self._write_index(embedded=True)
+
+    def _write_index(self, embedded):
+        sample = self.files["sample.jpg"]
+        if embedded:
+            sample["json_metadata"] = self.json_metadata
+        else:
+            sample.pop("json_metadata", None)
+        (self.source / "shard.json").write_text(
+            json.dumps(
+                {
+                    "path": "shard.tar",
+                    "filesize": (self.source / "shard.tar").stat().st_size,
+                    "files": self.files,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _backend(self, key=None, optimize=False):
+        return WebshartDataBackend(
+            accelerator=None,
+            id="captions",
+            source=str(self.source),
+            cache_dir=str(self.root / "cache"),
+            shard_cache_gb=0,
+            caption_key=key,
+            optimize_captions=optimize,
+        )
+
+    def _sample_id(self, backend, filename="sample.jpg"):
+        index = backend.dataset.list_samples_in_shard(0).index(filename)
+        return backend.sample_id(0, index, filename)
+
+    def _metadata_backend(self, backend):
+        return WebshartMetadataBackend(
+            id=backend.id,
+            instance_data_dir=backend.cache_dir,
+            cache_file=str(self.root / "buckets"),
+            metadata_file=str(self.root / "metadata"),
+            data_backend=backend,
+            accelerator=None,
+            batch_size=1,
+            resolution=512,
+            resolution_type="pixel",
+        )
+
+    def test_selects_fields_and_named_captions_in_requested_order(self):
+        for key, expected in [
+            (None, "default caption"),
+            ("short", "brief caption"),
+            (["named", "long", "short"], ["named caption", "detailed caption", "alternative caption", "brief caption"]),
+            (["absent", "empty", "short"], ["brief caption"]),
+            ("absent", None),
+            ("empty", None),
+        ]:
+            with self.subTest(key=key):
+                backend = self._backend(key)
+                self.assertEqual(backend.get_caption(self._sample_id(backend)), expected)
+
+    def test_selects_indexed_fields_and_literal_key_names(self):
+        self.files["sample.jpg"].update({"custom.key": "literal key caption", "short": "indexed caption"})
+        self._write_index(embedded=True)
+        for key, expected in [
+            (["custom.key", "short"], ["literal key caption", "brief caption"]),
+            ("custom.key", "literal key caption"),
+        ]:
+            with self.subTest(key=key):
+                backend = self._backend(key)
+                self.assertEqual(backend.get_caption(self._sample_id(backend)), expected)
+
+    def test_selects_json_literal_keys_and_indexed_captions(self):
+        self.json_metadata.pop("captions")
+        self.json_metadata.update({"custom.key": "literal key caption", "custom": {"key": "nested caption"}})
+        self.files["sample.jpg"]["captions"] = "indexed caption"
+        self._write_index(embedded=True)
+        backend = self._backend(["custom.key", "captions", "short"])
+        self.assertEqual(
+            backend.get_caption(self._sample_id(backend)), ["literal key caption", "indexed caption", "brief caption"]
+        )
+
+    def test_selects_literal_keys_in_json_caption_dictionary(self):
+        self.json_metadata["captions"] = {"custom.key": "literal key caption", "short": "shadowed caption"}
+        self._write_index(embedded=True)
+        backend = self._backend(["custom.key", "short"])
+        self.assertEqual(backend.get_caption(self._sample_id(backend)), ["literal key caption", "brief caption"])
+
+    def test_reads_json_sidecar_without_loading_image_bytes(self):
+        self._write_index(embedded=False)
+        backend = self._backend("short")
+        with patch.object(backend, "_read_sample_bytes", side_effect=AssertionError("Image bytes requested")):
+            self.assertEqual(backend.get_caption(self._sample_id(backend)), "brief caption")
+        self.assertEqual(backend.get_shard_metadata(0)["sample.jpg"]["json_metadata"], self.json_metadata)
+
+    def test_optimization_preserves_custom_selection(self):
+        backend = self._backend("short", optimize=True)
+        self.assertEqual(backend.get_caption(self._sample_id(backend)), "brief caption")
+
+    def test_worker_representation_preserves_selection(self):
+        backend = self._backend(["named", "short"])
+        restored = WebshartDataBackend.from_instance_representation(backend.get_instance_representation())
+        self.assertEqual(restored.get_caption(self._sample_id(restored)), ["named caption", "brief caption"])
+
+    def test_bucketing_and_cache_reload_use_selected_captions(self):
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        with (
+            patch.object(StateTracker, "get_data_backend_config", return_value={"caption_strategy": "webshart"}),
+            patch.object(StateTracker, "set_image_files"),
+            patch.object(StateTracker, "set_data_backend_config"),
+        ):
+            backend = self._backend("short")
+            metadata = self._metadata_backend(backend)
+            with (
+                patch.object(metadata, "_prepare_metadata", side_effect=lambda path, data: (1.0, data)),
+                patch.object(metadata, "_enforce_min_bucket_size"),
+            ):
+                metadata.compute_aspect_ratio_bucket_indices()
+            sample_id = self._sample_id(backend)
+            self.assertEqual(metadata.aspect_ratio_bucket_indices, {1.0: [sample_id]})
+            self.assertEqual(metadata.filtering_statistics["skipped"]["caption_missing"], 1)
+            self.assertEqual(metadata.caption_cache_entry(sample_id), "brief caption")
+            reloaded = self._metadata_backend(self._backend("short"))
+            self.assertEqual(reloaded.caption_cache_entry(sample_id), "brief caption")
+            changed = self._metadata_backend(self._backend("named"))
+            self.assertNotEqual(changed.cache_file, metadata.cache_file)
+            self.assertNotEqual(changed.metadata_file, metadata.metadata_file)
+            self.assertEqual(changed.aspect_ratio_bucket_indices, {})
+            self.assertEqual(changed.caption_cache_entry(sample_id), "named caption")
+            default = self._metadata_backend(self._backend())
+            self.assertNotEqual(default.cache_file, metadata.cache_file)
+            self.assertEqual(default.caption_cache_entry(sample_id), "default caption")
 
 
 class TestWebshartShardMetadataMemoization(unittest.TestCase):

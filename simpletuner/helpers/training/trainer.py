@@ -32,11 +32,11 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 from unittest import mock as unittest_mock
 
 import huggingface_hub
+import wandb
 from torch.distributed.fsdp.api import ShardedOptimStateDictConfig, ShardedStateDictConfig
 from torch.distributed.fsdp.fully_sharded_data_parallel import StateDictType
 from torch.distributed.tensor import DTensor
 
-import wandb
 from simpletuner.helpers import log_format  # noqa
 from simpletuner.helpers.caching.memory import reclaim_memory
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
@@ -73,6 +73,7 @@ from simpletuner.helpers.training.default_settings.safety_check import safety_ch
 from simpletuner.helpers.training.dynamo import (
     apply_checkpointing_cudagraph_compatibility,
     configure_inductor_wrapper,
+    dynamo_config_context,
     install_cudagraph_workarounds,
     mark_cudagraph_step_begin,
 )
@@ -1981,58 +1982,59 @@ class Trainer:
 
     def run(self):
         try:
-            self._exit_on_signal()
-            # Initialize essential configurations and schedules
-            self.init_noise_schedule()
-            self._exit_on_signal()
-            self.init_seed()
-            self._exit_on_signal()
-            self.init_huggingface_hub()
-            self._exit_on_signal()
-            self.init_preprocessing_models()
-            self._exit_on_signal()
-            self.init_precision(preprocessing_models_only=True)
+            with dynamo_config_context(self.config):
+                self._exit_on_signal()
+                # Initialize essential configurations and schedules
+                self.init_noise_schedule()
+                self._exit_on_signal()
+                self.init_seed()
+                self._exit_on_signal()
+                self.init_huggingface_hub()
+                self._exit_on_signal()
+                self.init_preprocessing_models()
+                self._exit_on_signal()
+                self.init_precision(preprocessing_models_only=True)
 
-            # Core initialization steps with signal checks after each step
-            self._initialize_components_with_signal_check(
-                [
-                    self.init_data_backend,
-                    self.init_validation_prompts,
-                    self.init_unload_text_encoder,
-                    self.init_unload_vae,
-                    self.init_load_base_model,
-                    self.init_delete_model_caches,
-                    self.init_precision,
-                    self.init_controlnet_model,
-                    self.init_tread_model,
-                    self.init_diffusion_blocks_model,
-                    self.init_gligen_layers,
-                    self.init_freeze_models,
-                    self.init_distillation_adapter_modules,
-                    self.init_trainable_peft_adapter,
-                    self.init_diffusion_blocks_trainable_filter,
-                    self.init_lyrics_embedder_training,
-                ]
-            )
+                # Core initialization steps with signal checks after each step
+                self._initialize_components_with_signal_check(
+                    [
+                        self.init_data_backend,
+                        self.init_validation_prompts,
+                        self.init_unload_text_encoder,
+                        self.init_unload_vae,
+                        self.init_load_base_model,
+                        self.init_delete_model_caches,
+                        self.init_precision,
+                        self.init_controlnet_model,
+                        self.init_tread_model,
+                        self.init_diffusion_blocks_model,
+                        self.init_gligen_layers,
+                        self.init_freeze_models,
+                        self.init_distillation_adapter_modules,
+                        self.init_trainable_peft_adapter,
+                        self.init_diffusion_blocks_trainable_filter,
+                        self.init_lyrics_embedder_training,
+                    ]
+                )
 
-            # Model movement and validation setup
-            self.move_models(destination="accelerator")
-            self._exit_on_signal()
-            self.init_distillation()
-            self._exit_on_signal()
-            self.init_validations()
-            self._exit_on_signal()
-            AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
-            self.init_benchmark_base_model()
-            AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
-            self._exit_on_signal()
-            self.resume_and_prepare()
-            self._exit_on_signal()
-            self.init_trackers()
-            self.run_startup_validation()
+                # Model movement and validation setup
+                self.move_models(destination="accelerator")
+                self._exit_on_signal()
+                self.init_distillation()
+                self._exit_on_signal()
+                self.init_validations()
+                self._exit_on_signal()
+                AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
+                self.init_benchmark_base_model()
+                AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
+                self._exit_on_signal()
+                self.resume_and_prepare()
+                self._exit_on_signal()
+                self.init_trackers()
+                self.run_startup_validation()
 
-            # Start the training process
-            self.train()
+                # Start the training process
+                self.train()
 
         except Exception as e:
             import traceback
@@ -6630,32 +6632,12 @@ class Trainer:
 
     def _check_disk_space_before_checkpoint(self) -> None:
         """Check disk space before saving a checkpoint."""
-        threshold_str = getattr(self.config, "disk_low_threshold", None)
-        if threshold_str in (None, "", "None"):
-            return
-
         if not self.accelerator.is_main_process:
             return
 
-        from simpletuner.helpers.training.disk_space import DiskLowAction, check_disk_space, parse_size_threshold
+        from simpletuner.helpers.training.disk_space import check_disk_space_for_config
 
-        threshold_bytes = parse_size_threshold(threshold_str)
-        if threshold_bytes is None:
-            return
-
-        action = getattr(self.config, "disk_low_action", DiskLowAction.STOP)
-        if isinstance(action, str):
-            action = DiskLowAction.from_raw(action)
-
-        script_path = getattr(self.config, "disk_low_script", None)
-        output_dir = self.config.output_dir
-
-        check_disk_space(
-            output_dir=output_dir,
-            threshold_bytes=threshold_bytes,
-            action=action,
-            script_path=script_path,
-        )
+        check_disk_space_for_config(self.config, self.config.output_dir)
 
     def checkpoint_state_save(self, output_dir, suffix=None):
         self._check_disk_space_before_checkpoint()

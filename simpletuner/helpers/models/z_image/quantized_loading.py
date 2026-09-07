@@ -200,7 +200,9 @@ def _wrap_convrot_linear(
         True,
         -1,
     )
-    _set_module(model, module_name, get_sdnq_wrapper_class(module, forward))
+    wrapped_module = get_sdnq_wrapper_class(module, forward)
+    wrapped_module.compute_dtype = result_dtype
+    _set_module(model, module_name, wrapped_module)
 
 
 def _validate_quant_metadata(checkpoint, key: str) -> int:

@@ -1348,6 +1348,16 @@ function dataloaderSectionComponent() {
             trainer.markDatasetsDirty();
         }
     },
+    setWebshartCaptionKeys(dataset, value) {
+        const keys = value.split('\n').map(key => key.trim()).filter(Boolean);
+        if (keys.length) {
+            dataset.webshart = dataset.webshart || {};
+            dataset.webshart.caption_key = keys.length === 1 ? keys[0] : keys;
+        } else if (dataset.webshart) {
+            delete dataset.webshart.caption_key;
+        }
+        this.markAsUnsaved();
+    },
     onStorageBackendChange(dataset) {
         if (!dataset) {
             return;

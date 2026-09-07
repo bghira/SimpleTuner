@@ -7,6 +7,7 @@ import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -25,17 +26,6 @@ if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
     logger.setLevel("ERROR")
-
-
-def _coerce_bucket_keys_to_float(indices: dict) -> dict:
-    coerced = {}
-    for key, values in (indices or {}).items():
-        try:
-            coerced_key = float(key)
-        except (TypeError, ValueError):
-            coerced_key = key
-        coerced[coerced_key] = list(values) if not isinstance(values, list) else values
-    return coerced
 
 
 class WebshartMetadataBackend(MetadataBackend):
@@ -63,6 +53,12 @@ class WebshartMetadataBackend(MetadataBackend):
         repeats: int = 0,
         max_num_samples: int = None,
     ):
+        if not isinstance(data_backend, WebshartDataBackend):
+            raise ValueError("WebshartMetadataBackend requires WebshartDataBackend")
+        if data_backend.caption_key is not None:
+            caption_digest = sha256(json.dumps(data_backend.caption_key).encode("utf-8")).hexdigest()[:16]
+            cache_file = f"{cache_file}_captions_{caption_digest}"
+            metadata_file = f"{metadata_file}_captions_{caption_digest}"
         super().__init__(
             id=id,
             instance_data_dir=instance_data_dir,
@@ -86,8 +82,6 @@ class WebshartMetadataBackend(MetadataBackend):
             repeats=repeats,
             max_num_samples=max_num_samples,
         )
-        if not isinstance(data_backend, WebshartDataBackend):
-            raise ValueError("WebshartMetadataBackend requires WebshartDataBackend")
         if self.dataset_type not in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CONDITIONING, DatasetType.EVAL}:
             raise ValueError("WebshartMetadataBackend supports image, video, conditioning, and eval datasets only.")
 
@@ -162,9 +156,7 @@ class WebshartMetadataBackend(MetadataBackend):
             except Exception as exc:
                 logger.warning("Error loading webshart aspect bucket cache, creating new one: %s", exc)
                 cache_data = {}
-            self.aspect_ratio_bucket_indices = _coerce_bucket_keys_to_float(
-                cache_data.get("aspect_ratio_bucket_indices", {})
-            )
+            self.aspect_ratio_bucket_indices = cache_data.get("aspect_ratio_bucket_indices", {})
             self._sync_image_files_with_buckets()
             if set_config:
                 self.config = cache_data.get("config", {})
@@ -321,6 +313,8 @@ class WebshartMetadataBackend(MetadataBackend):
             metadata["original_size"] = (int(width), int(height))
         if "captions" in file_metadata:
             metadata["captions"] = file_metadata["captions"]
+        if self.data_backend.caption_key is not None:
+            metadata["captions"] = self.data_backend.get_caption(sample_path)
         json_metadata = file_metadata.get("json_metadata") or {}
         if json_metadata:
             metadata["json_metadata"] = json_metadata
@@ -354,7 +348,7 @@ class WebshartMetadataBackend(MetadataBackend):
         shard_metadata: dict,
         entry: dict,
         sample_path: str,
-    ) -> tuple[dict, Optional[tuple[float, dict]], Optional[Exception]]:
+    ) -> tuple[dict, Optional[tuple[str, dict]], Optional[Exception]]:
         try:
             filename = str(entry["filename"])
             sample_metadata = self._metadata_for_entry(shard_metadata, filename, entry, sample_path)
@@ -362,7 +356,7 @@ class WebshartMetadataBackend(MetadataBackend):
         except Exception as exc:
             return {}, None, exc
 
-    def _prepare_metadata(self, sample_path: str, sample_metadata: dict) -> Optional[tuple[float, dict]]:
+    def _prepare_metadata(self, sample_path: str, sample_metadata: dict) -> Optional[tuple[str, dict]]:
         if not sample_metadata or "original_size" not in sample_metadata:
             return None
         if not self.meets_resolution_requirements(image_metadata=sample_metadata):
@@ -392,7 +386,7 @@ class WebshartMetadataBackend(MetadataBackend):
             )
             sample_metadata["bucket_frames"] = rounded_frames
         else:
-            bucket_key = round(aspect_ratio, 2)
+            bucket_key = str(round(aspect_ratio, 2))
         return bucket_key, sample_metadata
 
     def _entries_for_shard(self, shard_idx: int) -> list[dict]:
@@ -526,7 +520,7 @@ class WebshartMetadataBackend(MetadataBackend):
                             # metadata (e.g. cc12m); get_caption() range-reads those at runtime.
                             # get_shard_metadata returns a flat mapping keyed by member filename.
                             caption_member = Path(str(entry["filename"])).with_suffix(".txt").name
-                            if caption_member not in shard_metadata:
+                            if self.data_backend.caption_key is not None or caption_member not in shard_metadata:
                                 statistics["skipped"]["caption_missing"] += 1
                                 continue
                         aspect_ratio_bucket_updates.setdefault(bucket_key, []).append(sample_path)

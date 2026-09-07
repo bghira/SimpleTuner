@@ -736,6 +736,7 @@ def save_model_card(
     if base_model.count("/") > 1:
         base_model = f"{model_family}/unknown-model"
     validation_prompts = _normalize_validation_prompts(validation_prompts)
+    prompts_by_shortname = dict(zip(validation_shortnames or [], validation_prompts or []))
     logger.debug(f"Validating from prompts: {validation_prompts}")
     assets_folder = os.path.join(repo_folder, "assets")
     optimizer_config = StateTracker.get_args().optimizer_config
@@ -751,7 +752,6 @@ def save_model_card(
             datasets_str += _dataset_overview_for_model(model, dataset_id, dataset_backend)
     widget_str = ""
     idx = 0
-    shortname_idx = 0
     args = StateTracker.get_args()
     negative_prompt_text = str(args.validation_negative_prompt)
     if negative_prompt_text == "":
@@ -762,10 +762,23 @@ def save_model_card(
     audio_sample_rate = model.validation_audio_sample_rate() or 44100
 
     def _add_widget_entries(media, asset_prefix: str):
-        nonlocal widget_str, idx, shortname_idx, has_video, has_audio
-        for media_list in media.values() if isinstance(media, dict) else media:
+        nonlocal widget_str, idx, has_video, has_audio
+        media_items = media.items() if isinstance(media, dict) else enumerate(media)
+        for shortname_idx, (shortname, media_list) in enumerate(media_items):
             if not isinstance(media_list, list):
                 media_list = [media_list]
+            validation_prompt = "no prompt available"
+            if validation_prompts is not None:
+                if isinstance(media, dict) and validation_shortnames is not None:
+                    validation_prompt = prompts_by_shortname.get(shortname, f"prompt not found ({shortname})")
+                elif shortname_idx < len(validation_prompts):
+                    validation_prompt = validation_prompts[shortname_idx]
+                else:
+                    validation_prompt = f"prompt not found ({shortname_idx})"
+            if validation_prompt == "":
+                validation_prompt = "unconditional (blank prompt)"
+            else:
+                validation_prompt = validation_prompt.replace("'", "''")
             sub_idx = 0
             for media_sample in media_list:
                 output_path, media_extension = save_metadata_sample(
@@ -779,16 +792,6 @@ def save_model_card(
                     has_video = True
                 if media_extension in {"wav", "flac", "mp3", "ogg", "m4a"}:
                     has_audio = True
-                validation_prompt = "no prompt available"
-                if validation_prompts is not None:
-                    try:
-                        validation_prompt = validation_prompts[shortname_idx]
-                    except IndexError:
-                        validation_prompt = f"prompt not found ({validation_shortnames[shortname_idx] if validation_shortnames is not None and shortname_idx in validation_shortnames else shortname_idx})"
-                if validation_prompt == "":
-                    validation_prompt = "unconditional (blank prompt)"
-                else:
-                    validation_prompt = validation_prompt.replace("'", "''")
                 widget_str += f"\n- text: '{validation_prompt}'"
                 widget_str += "\n  parameters:"
                 widget_str += f"\n    negative_prompt: '{negative_prompt_text}'"
@@ -797,8 +800,6 @@ def save_model_card(
                 widget_str += f"\n    url: {widget_url}"
                 idx += 1
                 sub_idx += 1
-
-            shortname_idx += 1
 
     if has_media:
         widget_str = "widget:"

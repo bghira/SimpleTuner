@@ -63,6 +63,7 @@ class ImageBackendConfig(BaseBackendConfig):
     webshart_buffer_size: Optional[int] = None
     webshart_max_file_size: Optional[int] = None
     webshart_optimize_captions: Optional[bool] = None
+    webshart_caption_key: Optional[Union[str, List[str]]] = None
 
     vae_cache_clear_each_epoch: Optional[bool] = None
     probability: float = 1.0
@@ -187,6 +188,8 @@ class ImageBackendConfig(BaseBackendConfig):
         if config.backend_type == "webshart":
             webshart_block = backend_dict.get("webshart", {}) or {}
             config.webshart = webshart_block
+            config.webshart_caption_key = webshart_block.get("caption_key")
+            validators.validate_webshart_caption_key(config.webshart_caption_key)
             config.webshart_source = backend_dict.get("source", webshart_block.get("source"))
             config.webshart_metadata = backend_dict.get("metadata", webshart_block.get("metadata"))
             config.webshart_hf_token = backend_dict.get("hf_token", webshart_block.get("hf_token"))
@@ -570,6 +573,8 @@ class ImageBackendConfig(BaseBackendConfig):
                 webshart_config["max_file_size"] = self.webshart_max_file_size
             if self.webshart_optimize_captions is not None:
                 webshart_config["optimize_captions"] = self.webshart_optimize_captions
+            if self.webshart_caption_key is not None:
+                webshart_config["caption_key"] = self.webshart_caption_key
 
         if self.video is not None:
             config["video"] = self.video

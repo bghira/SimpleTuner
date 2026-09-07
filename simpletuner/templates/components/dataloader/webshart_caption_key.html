@@ -1,0 +1,10 @@
+<div class="mt-2">
+    <label class="form-label small">Caption Keys</label>
+    <textarea class="form-control form-control-sm webshart-caption-keys"
+              rows="2"
+              :value="Array.isArray({{ caption_dataset }}.webshart?.caption_key) ? {{ caption_dataset }}.webshart.caption_key.join('\n') : ({{ caption_dataset }}.webshart?.caption_key || '')"
+              @input="markAsUnsaved()"
+              @change="setWebshartCaptionKeys({{ caption_dataset }}, $event.target.value)"
+              placeholder="long_caption&#10;short_caption"></textarea>
+    <div class="form-text small">One key per line. Leave blank to use the default captions.</div>
+</div>

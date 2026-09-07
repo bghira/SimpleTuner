@@ -52,6 +52,7 @@
 	    </main>
 	    <div class="media-lightbox" id="media-lightbox" hidden>
 	        <div class="media-lightbox-body" id="media-lightbox-body"></div>
+	        <div class="media-timeline" id="media-lightbox-steps" aria-label="Validation checkpoint step"></div>
 	        <div class="media-lightbox-toolbar">
 	            <button type="button" id="media-lightbox-prev" title="Previous image">‹</button>
 	            <span id="media-lightbox-count"></span>
@@ -208,6 +209,7 @@
 	                next.disabled = lightboxIndex >= lightboxImages.length - 1;
 	                size.textContent = lightboxActualSize ? 'Fit' : '1:1';
 	                lightbox.hidden = false;
+	                renderStepTimeline(document.getElementById('media-lightbox-steps'), lightboxSteps());
 	            }
 
 	            function openLightbox(item) {
@@ -217,22 +219,58 @@
 	                renderLightbox();
 	            }
 
-	            function renderMedia() {
-	                const steps = Array.from(new Set(media.map((item) => Number(item.step)))).sort((a, b) => a - b);
-	                if (selectedStep === null || !steps.includes(selectedStep)) selectedStep = steps[steps.length - 1] ?? null;
-	                const timeline = document.getElementById('media-timeline');
+            function sameOutput(left, right) {
+                return String(left.label || '') === String(right.label || '')
+                    && Number(left.index || 0) === Number(right.index || 0);
+            }
+
+            function lightboxSteps() {
+                const current = lightboxImages[lightboxIndex].item;
+                return Array.from(new Set(media
+                    .filter((item) => item.type === 'image' && sameOutput(item, current))
+                    .map((item) => Number(item.step)))).sort((a, b) => a - b);
+            }
+
+            function selectStep(step) {
+                const lightboxOpen = !document.getElementById('media-lightbox').hidden;
+                const current = lightboxOpen ? lightboxImages[lightboxIndex].item : null;
+                selectedStep = step;
+                renderMedia();
+                if (lightboxOpen) {
+                    lightboxImages = selectedImages();
+                    lightboxIndex = lightboxImages.findIndex((image) => sameOutput(image.item, current));
+                    renderLightbox();
+                }
+            }
+
+            function changeLightboxStep(offset) {
+                const steps = lightboxSteps();
+                const next = steps[steps.indexOf(selectedStep) + offset];
+                if (next !== undefined) selectStep(next);
+            }
+
+            function renderStepTimeline(timeline, steps) {
                 timeline.innerHTML = '';
                 steps.forEach((step) => {
                     const button = document.createElement('button');
                     button.type = 'button';
                     button.className = `media-step${step === selectedStep ? ' active' : ''}`;
                     button.textContent = `Step ${step}`;
-                    button.onclick = () => {
-                        selectedStep = step;
-                        renderMedia();
-                    };
+                    button.setAttribute('aria-pressed', String(step === selectedStep));
+                    button.onclick = () => selectStep(step);
                     timeline.appendChild(button);
                 });
+                const active = timeline.querySelector('.active');
+                if (active) {
+                    timeline.scrollLeft += active.getBoundingClientRect().left - timeline.getBoundingClientRect().left
+                        - (timeline.clientWidth - active.offsetWidth) / 2;
+                }
+            }
+
+            function renderMedia() {
+                const steps = Array.from(new Set(media.map((item) => Number(item.step)))).sort((a, b) => a - b);
+                if (selectedStep === null || !steps.includes(selectedStep)) selectedStep = steps[steps.length - 1] ?? null;
+                renderStepTimeline(document.getElementById('media-timeline'), steps);
 
 	                const grid = document.getElementById('media-grid');
 	                grid.innerHTML = '';
@@ -311,6 +349,9 @@
 	            };
 	            document.addEventListener('keydown', (event) => {
 	                if (document.getElementById('media-lightbox').hidden) return;
+                if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) event.preventDefault();
+                if (event.key === 'ArrowUp') changeLightboxStep(-1);
+                if (event.key === 'ArrowDown') changeLightboxStep(1);
 	                if (event.key === 'Escape') closeLightbox();
 	                if (event.key === 'ArrowLeft') {
 	                    lightboxIndex = Math.max(0, lightboxIndex - 1);

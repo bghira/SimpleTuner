@@ -292,8 +292,11 @@
     </div>
 
     <!-- Webshart -->
-    <div class="section-group" x-show="editingDataset.type === 'webshart' && matchesParamFilter('webshart', 'webdataset', 'source', 'metadata', 'shard', 'cache')" x-cloak>
+    <div class="section-group" x-show="editingDataset.type === 'webshart' && matchesParamFilter('webshart', 'webdataset', 'source', 'metadata', 'shard', 'cache', 'caption', 'key')" x-cloak>
         <h6 class="modal-section-title">Webshart Dataset</h6>
+        {% with caption_dataset='editingDataset' %}
+        {% include 'components/dataloader/webshart_caption_key.html' %}
+        {% endwith %}
         <div class="row g-2">
             <div class="col-md-6">
                 <label class="form-label small">Dataset Source <a x-show="showDocLinks" href="{{ docs_url('DATALOADER.md#webshart-datasets') }}" target="_blank" class="text-muted" title="Documentation"><sup><i class="fas fa-external-link-alt fa-xs"></i></sup></a></label>

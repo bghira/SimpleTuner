@@ -5,6 +5,7 @@ import math
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Any, Optional
 
 from accelerate.tracking import GeneralTracker
@@ -18,6 +19,7 @@ MEDIA_FILENAME = "validation_media.jsonl"
 TIMESTEP_DISTRIBUTION_FILENAME = "timestep_distribution.jsonl"
 REPORT_FILENAME = "training_report.html"
 REPORT_REFRESH_INTERVAL = 100
+_REPORT_LOCK = Lock()
 
 _CONFIG_KEYS = (
     "model_family",
@@ -159,28 +161,29 @@ def _json_for_html(payload: Any) -> str:
 
 
 def render_static_report(output_dir: str | os.PathLike[str], max_points: int = 5000) -> Path:
-    output_path = Path(output_dir).resolve()
-    package_root = Path(__file__).resolve().parents[2]
-    template_path = package_root / "templates" / "training_metrics_report.html"
-    chart_script_path = package_root / "static" / "js" / "training_metrics_chart.js"
-    chart_style_path = package_root / "static" / "css" / "training_metrics_report.css"
+    with _REPORT_LOCK:
+        output_path = Path(output_dir).resolve()
+        package_root = Path(__file__).resolve().parents[2]
+        template_path = package_root / "templates" / "training_metrics_report.html"
+        chart_script_path = package_root / "static" / "js" / "training_metrics_chart.js"
+        chart_style_path = package_root / "static" / "css" / "training_metrics_report.css"
 
-    records = downsample_records(read_metric_records(output_path), max_points=max_points)
-    payload = {
-        "run": read_manifest(output_path),
-        "records": records,
-        "media": _media_for_report(output_path),
-        "timesteps": read_timestep_distribution_records(output_path),
-    }
-    html = template_path.read_text(encoding="utf-8")
-    html = html.replace("__SIMPLETUNER_REPORT_CSS__", chart_style_path.read_text(encoding="utf-8"))
-    html = html.replace("__SIMPLETUNER_REPORT_DATA__", _json_for_html(payload))
-    html = html.replace("__SIMPLETUNER_CHART_JS__", chart_script_path.read_text(encoding="utf-8"))
-    report_path = output_path / REPORT_FILENAME
-    temporary = report_path.with_suffix(".html.tmp")
-    temporary.write_text(html, encoding="utf-8")
-    os.replace(temporary, report_path)
-    return report_path
+        records = downsample_records(read_metric_records(output_path), max_points=max_points)
+        payload = {
+            "run": read_manifest(output_path),
+            "records": records,
+            "media": _media_for_report(output_path),
+            "timesteps": read_timestep_distribution_records(output_path),
+        }
+        html = template_path.read_text(encoding="utf-8")
+        html = html.replace("__SIMPLETUNER_REPORT_CSS__", chart_style_path.read_text(encoding="utf-8"))
+        html = html.replace("__SIMPLETUNER_REPORT_DATA__", _json_for_html(payload))
+        html = html.replace("__SIMPLETUNER_CHART_JS__", chart_script_path.read_text(encoding="utf-8"))
+        report_path = output_path / REPORT_FILENAME
+        temporary = report_path.with_suffix(".html.tmp")
+        temporary.write_text(html, encoding="utf-8")
+        os.replace(temporary, report_path)
+        return report_path
 
 
 def record_validation_media(

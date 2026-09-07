@@ -203,14 +203,14 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         if isinstance(saved_schedule, dict) and self._saved_schedule_is_restorable(previous_state, state_path):
             self.metadata_backend.aspect_ratio_bucket_indices = saved_schedule
             self._val_master_list = sorted(sum(saved_schedule.values(), []))
-        self.buckets = previous_state.get("buckets", self.load_buckets())
+        self.buckets = [str(bucket) for bucket in previous_state.get("buckets", self.load_buckets())]
         if "current_bucket" in previous_state:
             self.current_bucket = previous_state["current_bucket"]
 
         self.exhausted_buckets = []
         if "exhausted_buckets" in previous_state:
             self.logger.info(f"Previous checkpoint had {len(previous_state['exhausted_buckets'])} exhausted buckets.")
-            self.exhausted_buckets = previous_state["exhausted_buckets"]
+            self.exhausted_buckets = [str(bucket) for bucket in previous_state["exhausted_buckets"]]
         self.current_epoch = 1
         if "current_epoch" in previous_state:
             self.logger.info(f"Previous checkpoint was on epoch {previous_state['current_epoch']}.")
@@ -230,7 +230,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.metadata_backend.seen_images.update(normalized_seen)
 
     def load_buckets(self):
-        return list(self.metadata_backend.aspect_ratio_bucket_indices.keys())  # These keys are a float value, eg. 1.78.
+        return list(self.metadata_backend.aspect_ratio_bucket_indices.keys())
 
     def retrieve_validation_set(self, batch_size: int):
         """
@@ -436,36 +436,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             raise MultiDatasetExhausted()
 
     def _get_bucket_images(self, bucket):
-        """
-        Safely retrieve bucket images, trying both original type and type conversion.
-
-        Args:
-            bucket: The bucket key (could be float or str)
-
-        Returns:
-            list: List of images in the bucket, or empty list if bucket not found
-        """
-        # Try the original bucket key first
-        if bucket in self.metadata_backend.aspect_ratio_bucket_indices:
-            return self.metadata_backend.aspect_ratio_bucket_indices[bucket]
-
-        # Try converting between str and float
-        try:
-            if isinstance(bucket, str):
-                # Try converting str to float
-                bucket_as_float = float(bucket)
-                if bucket_as_float in self.metadata_backend.aspect_ratio_bucket_indices:
-                    return self.metadata_backend.aspect_ratio_bucket_indices[bucket_as_float]
-            elif isinstance(bucket, (float, int)):
-                # Try converting float/int to str
-                bucket_as_str = str(bucket)
-                if bucket_as_str in self.metadata_backend.aspect_ratio_bucket_indices:
-                    return self.metadata_backend.aspect_ratio_bucket_indices[bucket_as_str]
-        except (ValueError, TypeError):
-            pass
-
-        # Bucket not found with either type
-        return []
+        return self.metadata_backend.aspect_ratio_bucket_indices.get(str(bucket), [])
 
     def _filter_unseen_occurrences(self, images):
         """Filter consumed positions without collapsing duplicate filepaths."""
@@ -860,7 +831,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             for sample in samples:
                 sample_path: str = sample["image_path"]
                 if self.metadata_backend.instance_data_dir is not None and self.metadata_backend.instance_data_dir != "":
-                    sample_path = sample_path.split(self.metadata_backend.instance_data_dir)[-1]
+                    sample_path = sample_path.split(self.metadata_backend.instance_data_dir)[-1].lstrip("/")
 
                 # Deterministic selection based on hash of image path and current epoch
                 # This ensures the same image gets the same conditioning dataset within an epoch
@@ -916,7 +887,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 for sample in samples:
                     sample_path: str = sample["image_path"]
                     if self.metadata_backend.instance_data_dir is not None and self.metadata_backend.instance_data_dir != "":
-                        sample_path = sample_path.split(self.metadata_backend.instance_data_dir)[-1]
+                        sample_path = sample_path.split(self.metadata_backend.instance_data_dir)[-1].lstrip("/")
 
                     conditioning_sample = sampler.get_conditioning_sample(sample_path)
                     if conditioning_sample is not None:

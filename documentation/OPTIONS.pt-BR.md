@@ -873,6 +873,7 @@ Muitas configuracoes sao definidas no [dataloader config](DATALOADER.md), mas es
 
 ### `--post_upload_script`
 
+- Após cada validação integrada concluída (manual pela WebUI, agendada ou benchmark do modelo base), o script também é executado quando nenhum provedor de publicação está configurado. Nesse caso, `{local_checkpoint_path}` é `output_dir` (não é necessário um checkpoint), e `{remote_checkpoint_path}` fica vazio. Os provedores configurados mantêm um hook por upload bem-sucedido, com os caminhos retornados; uploads com falha não acionam um hook local. Validações ignoradas, com falha ou canceladas e a inicialização de scripts externos não acionam esse hook de conclusão.
 - **O que**: Executavel opcional rodado apos cada provedor de publicacao e upload no Hugging Face Hub terminar (modelo final e uploads de checkpoints). Roda de forma assincrona para nao bloquear o treinamento.
 - **Placeholders**: Mesmas substituicoes de `--validation_external_script`, mais `{remote_checkpoint_path}` (URI retornada pelo provedor) para que voce encaminhe a URL publicada para sistemas downstream.
 - **Notas**:
@@ -1984,10 +1985,11 @@ Mapeamento de opcoes upstream (LayerSync → SimpleTuner):
 
 ### `--disk_low_threshold`
 
-- **O que**: Espaco minimo livre em disco necessario antes de salvar checkpoints.
-- **Por que**: Previne falhas no treinamento por erros de disco cheio detectando espaco baixo antecipadamente e tomando uma acao configurada.
+- **O que**: Espaço mínimo livre em disco necessário antes de salvar checkpoints e compilar grafos com TorchInductor (incluindo recompilação).
+- **Por que**: Detecta pouco espaço antecipadamente e aplica a ação configurada ao sistema de arquivos dos checkpoints ou do cache do compilador.
 - **Formato**: String de tamanho como `100G`, `50M`, `1T`, `500K`, ou bytes simples.
 - **Padrao**: Nenhum (funcionalidade desativada)
+- **Escopo**: Cada processo que compila verifica `TORCHINDUCTOR_CACHE_DIR` (ou o padrão do PyTorch) e um `TRITON_CACHE_DIR` separado, quando configurado. É uma verificação prévia, não uma reserva: a compilação ainda pode esgotar o disco após iniciar, e a inicialização do backend pode escrever antes da verificação. Escolha um limite suficiente para compilar. As verificações não recuperam erros de falta de memória CUDA nem repetem compilações que falharam.
 
 ### `--disk_low_action`
 

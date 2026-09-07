@@ -37,11 +37,30 @@ def dynamo_config_patches(config: Any) -> dict[str, Any]:
 @contextlib.contextmanager
 def dynamo_config_context(config: Any) -> Iterator[None]:
     patches = dynamo_config_patches(config)
-    if not patches:
-        yield
-        return
+    with contextlib.ExitStack() as stack:
+        if patches:
+            stack.enter_context(torch._dynamo.config.patch(patches))
+        if _effective_dynamo_backend(config) == "inductor" and getattr(config, "disk_low_threshold", None) not in (
+            None,
+            "",
+            "None",
+        ):
+            from torch._inductor.runtime.runtime_utils import default_cache_dir
 
-    with torch._dynamo.config.patch(patches):
+            from simpletuner.helpers.training.disk_space import check_disk_space_for_config
+
+            def check_compile_disk_space(*_args: Any) -> None:
+                cache = os.environ.get("TORCHINDUCTOR_CACHE_DIR")
+                if cache is None:
+                    cache = default_cache_dir()
+                check_disk_space_for_config(config, cache)
+                triton_cache = os.environ.get("TRITON_CACHE_DIR")
+                if triton_cache is not None:
+                    check_disk_space_for_config(config, triton_cache)
+
+            check_compile_disk_space()
+            torch._dynamo.on_compile_start(check_compile_disk_space)
+            stack.callback(torch._dynamo.callback_handler.remove_start_callback, check_compile_disk_space)
         yield
 
 

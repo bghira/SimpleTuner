@@ -55,6 +55,7 @@ class WebshartBackendBuilder(BaseBackendBuilder):
             "compress_cache": self._get_compression_setting(config),
             "dataset_type": getattr(config, "dataset_type", "image"),
             "optimize_captions": bool(getattr(config, "webshart_optimize_captions", None) or False),
+            "caption_key": config.webshart_caption_key,
         }
         if is_mock_backend:
             backend_kwargs["identifier"] = config.id

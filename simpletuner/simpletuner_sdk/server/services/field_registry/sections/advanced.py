@@ -2724,7 +2724,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             section="checkpointing",
             subsection="advanced",
             default_value=None,
-            help_text="Minimum free disk space required before checkpoint saves (e.g., '100G', '50M'). Leave empty to disable.",
+            help_text="Minimum free disk space required before checkpoint saves and TorchInductor compilation (e.g., '100G', '50M'). Leave empty to disable.",
             tooltip="Training will pause or stop if available space drops below this threshold.",
             importance=ImportanceLevel.ADVANCED,
             group="disk_low_space",

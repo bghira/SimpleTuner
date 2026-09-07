@@ -11,6 +11,7 @@ import requests
 from PIL import Image
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
@@ -2033,6 +2034,90 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
 
     MAX_BROWSERS = 1
 
+    def test_webshart_caption_keys_edit_and_save(self) -> None:
+        self.seed_defaults()
+        config_path = self.config_dir / "default" / "multidatabackend.json"
+        config_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "webshart-captions",
+                        "type": "webshart",
+                        "dataset_type": "image",
+                        "source": "org/dataset",
+                        "caption_strategy": "webshart",
+                        "metadata_backend": "webshart",
+                        "webshart": {"caption_key": "original"},
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            datasets_tab = DatasetsTab(driver, base_url=self.base_url)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+            driver.execute_script(
+                """
+                document.querySelector('#datasets-tab-content .hero-dismiss-btn').click();
+                const toggle = document.querySelector('[data-dataset-id="webshart-captions"] .list-item-toggle');
+                if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+            """
+            )
+
+            def select_tab(name):
+                driver.execute_script(
+                    """
+                    const item = document.querySelector('[data-dataset-id="webshart-captions"]').closest('.dataset-list-item-wrapper');
+                    [...item.querySelectorAll('button')].find(button => button.textContent.trim() === arguments[0]).click();
+                """,
+                    name,
+                )
+
+            select_tab("Storage")
+            selector = (By.CSS_SELECTOR, ".dataset-list-item-expanded .webshart-caption-keys")
+
+            def visible_field(d):
+                return next((element for element in d.find_elements(*selector) if element.is_displayed()), False)
+
+            field = WebDriverWait(driver, 10).until(visible_field)
+            self.assertEqual(field.get_attribute("value"), "original")
+            driver.execute_script("Alpine.store('trainer').hasUnsavedChanges = false;")
+
+            for value, expected in [
+                ("long_caption", "long_caption"),
+                ("long_caption\nshort_caption", ["long_caption", "short_caption"]),
+                ("", None),
+            ]:
+                with self.subTest(value=value):
+                    field.clear()
+                    field.send_keys(value, Keys.TAB)
+                    WebDriverWait(driver, 5).until(
+                        lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === true;")
+                    )
+                    saved = driver.execute_script(
+                        "return Alpine.store('trainer').prepareDatasetsForSave().find(d => d.id === 'webshart-captions');"
+                    )
+                    self.assertEqual(saved.get("webshart", {}).get("caption_key"), expected, saved)
+                    datasets_tab.save_datasets()
+                    persisted = next(
+                        d for d in json.loads(config_path.read_text(encoding="utf-8")) if d["id"] == "webshart-captions"
+                    )
+                    self.assertEqual(persisted.get("webshart", {}).get("caption_key"), expected)
+                    WebDriverWait(driver, 5).until(
+                        lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === false;")
+                    )
+                    select_tab("Basic")
+                    select_tab("Storage")
+                    field = WebDriverWait(driver, 10).until(visible_field)
+                    self.assertEqual(field.get_attribute("value"), value)
+
+        self.for_each_browser("test_webshart_caption_keys_edit_and_save", scenario)
+
     def test_view_mode_toggle(self) -> None:
         """Test switching between list and grid view modes."""
         self.seed_defaults()
@@ -3828,6 +3913,110 @@ class SaveAsNewConfigurationTestCase(_TrainerPageMixin, WebUITestCase):
             self.assertEqual(source_body.get("--output_dir"), "output/rank32-src")
 
         self.for_each_browser("test_save_as_preserves_config_and_repoints_identity", scenario)
+
+
+class FailedLocalJobContinueTestCase(_TrainerPageMixin, WebUITestCase):
+    MAX_BROWSERS = 1
+
+    def _continue_scenario(self, driver, *, missing_config=False, config_load_failure=False):
+        driver.get(f"{self.base_url}/web/trainer#cloud")
+        self.dismiss_onboarding(driver)
+        self._show_configured_cloud_dashboard(driver)
+        driver.execute_script(
+            """
+            window.__continueRequests = [];
+            window.__configLoadFailures = 0;
+            if (arguments[1]) {
+                const originalFetch = window.fetch;
+                window.fetch = (url, options) => {
+                    if (new URL(url, window.location.origin).pathname === '/api/configs/test-config') {
+                        window.__configLoadFailures++;
+                        return Promise.resolve(new Response('{}', {status: 500}));
+                    }
+                    return originalFetch(url, options);
+                };
+            }
+            document.body.addEventListener('htmx:beforeRequest', event => {
+                if (event.detail.requestConfig.path === '/api/training/start') {
+                    window.__continueRequests.push({
+                        environment: Alpine.store('trainer').activeEnvironment,
+                        parameters: {...event.detail.requestConfig.parameters},
+                    });
+                    event.preventDefault();
+                }
+            });
+            const comp = Alpine.$data(document.querySelector('#cloud-tab-content'));
+            comp.stopPolling();
+            comp.jobs = [{job_id: 'failed-job', job_type: 'local', provider: 'local',
+                status: 'failed', config_name: arguments[0], created_at: new Date().toISOString(),
+                metadata: {env_name: arguments[0], runtime_config: {
+                    '--tracker_project_name': 'portraits', '--tracker_run_name': 'shared-run'
+                }}}];
+            comp.selectedJob = null;
+            window.__selectedJobs = 0;
+            comp.selectJob = () => { window.__selectedJobs++; };
+            """,
+            "missing-config" if missing_config else "test-config",
+            config_load_failure,
+        )
+        button = WebDriverWait(driver, 15).until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".job-continue-btn")))
+        name = driver.find_element(By.CSS_SELECTOR, ".job-name")
+        self.assertEqual(name.text, "portraits / shared-run")
+        self.assertEqual(name.get_attribute("title"), "portraits / shared-run")
+        driver.execute_script("Alpine.$data(document.querySelector('#cloud-tab-content')).jobSearchQuery = 'PORTRAITS';")
+        self.assertEqual(len(driver.find_elements(By.CSS_SELECTOR, ".job-continue-btn")), 1)
+        self.dismiss_onboarding(driver)
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
+        if missing_config:
+            button.send_keys(Keys.ENTER)
+        else:
+            button.click()
+        if config_load_failure:
+            WebDriverWait(driver, 15).until(
+                lambda d: d.execute_script(
+                    "return window.__configLoadFailures > 0 && Alpine.store('trainer').continuingJob === null;"
+                )
+            )
+            self.assertEqual(driver.execute_script("return window.__continueRequests"), [])
+            self.assertEqual(driver.execute_script("return Alpine.store('trainer').activeEnvironment"), "test-config")
+            self.assertIsNone(driver.execute_script("return Alpine.store('trainer').activeEnvironmentConfig"))
+            self.assertFalse(driver.find_element(By.CSS_SELECTOR, ".job-continue-btn").get_property("disabled"))
+        elif missing_config:
+            WebDriverWait(driver, 15).until(
+                lambda d: not d.find_element(By.CSS_SELECTOR, ".job-continue-btn").get_property("disabled")
+            )
+            self.assertEqual(driver.execute_script("return window.__continueRequests"), [])
+            self.assertEqual(driver.execute_script("return Alpine.store('trainer').activeEnvironment"), "default")
+        else:
+            WebDriverWait(driver, 20).until(lambda d: d.execute_script("return window.__continueRequests.length === 1"))
+            request = driver.execute_script("return window.__continueRequests[0]")
+            self.assertEqual(request["environment"], "test-config")
+            self.assertEqual(request["parameters"]["--resume_from_checkpoint"], "checkpoint-100")
+            self.assertEqual(driver.execute_script("return Alpine.store('trainer').activeTab"), "basic")
+        self.assertEqual(driver.execute_script("return window.__selectedJobs"), 0)
+
+    def test_continue_selects_failed_job_config_and_uses_run_flow(self):
+        self.with_sample_environment()
+        config_path = self.config_dir / "test-config" / "config.json"
+        config = json.loads(config_path.read_text())
+        config["--resume_from_checkpoint"] = "checkpoint-100"
+        config_path.write_text(json.dumps(config))
+        self.seed_defaults(active_config="default")
+        self.for_each_browser("continue_failed_local_job", lambda driver, _: self._continue_scenario(driver))
+
+    def test_continue_does_not_run_when_config_activation_fails(self):
+        self.seed_defaults(active_config="default")
+        self.for_each_browser(
+            "continue_missing_config", lambda driver, _: self._continue_scenario(driver, missing_config=True)
+        )
+
+    def test_continue_does_not_run_when_activated_config_cannot_be_loaded(self):
+        self.with_sample_environment()
+        self.seed_defaults(active_config="default")
+        self.for_each_browser(
+            "continue_config_load_failure",
+            lambda driver, _: self._continue_scenario(driver, config_load_failure=True),
+        )
 
 
 if __name__ == "__main__":

@@ -12,9 +12,11 @@ import requests
 import torch
 
 from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.config.validators import validate_webshart_caption_key
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.filters import DatasetFilter
 from simpletuner.helpers.image_manipulation.load import load_image, load_video
+from simpletuner.helpers.prompts import PromptHandler
 from simpletuner.helpers.training import video_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
 
@@ -55,9 +57,12 @@ class WebshartDataBackend(BaseDataBackend):
         compress_cache: bool = False,
         dataset_type: Union[str, DatasetType] = DatasetType.IMAGE,
         optimize_captions: bool = False,
+        caption_key: Optional[Union[str, List[str]]] = None,
     ):
         if not source:
             raise ValueError("source is required for Webshart data backends.")
+        validate_webshart_caption_key(caption_key)
+        self.caption_key = caption_key
 
         try:
             import webshart
@@ -345,6 +350,14 @@ class WebshartDataBackend(BaseDataBackend):
 
         sample_ref = self.parse_sample_id(image_path)
         sample_metadata = self.get_shard_metadata(sample_ref.shard_idx).get(sample_ref.filename, {}) or {}
+        if self.caption_key is not None:
+            if sample_metadata.get("json_metadata") is None and sample_metadata.get("json_path"):
+                reader = self.dataset.open_shard(sample_ref.shard_idx)
+                payload = reader.read_sample_json(sample_ref.sample_idx)
+                if payload is not None:
+                    sample_metadata["json_metadata"] = json.loads(payload)
+            return self._select_caption_keys(sample_metadata)
+
         caption = sample_metadata.get("captions")
         if caption:
             if isinstance(caption, dict):
@@ -363,6 +376,23 @@ class WebshartDataBackend(BaseDataBackend):
         if isinstance(caption, bytes):
             caption = caption.decode("utf-8")
         return str(caption).strip()
+
+    def _select_caption_keys(self, sample_metadata: dict) -> Optional[Union[str, List[str]]]:
+        json_metadata = sample_metadata.get("json_metadata") or {}
+        sources = [json_metadata, sample_metadata]
+        sources.extend(source.get("captions") for source in list(sources) if isinstance(source, dict))
+        keys = [self.caption_key] if isinstance(self.caption_key, str) else self.caption_key
+        captions = []
+        for key in keys:
+            for source in sources:
+                if isinstance(source, dict) and key in source:
+                    captions.extend(PromptHandler._normalize_caption_payload(source[key]))
+                    break
+        if not captions:
+            return None
+        if isinstance(self.caption_key, str) and len(captions) == 1:
+            return captions[0]
+        return captions
 
     def read(self, identifier: Union[str, Path], as_byteIO: bool = False) -> Any:
         if self.is_sample_id(identifier):
@@ -501,6 +531,7 @@ class WebshartDataBackend(BaseDataBackend):
             "max_file_size": self.max_file_size,
             "compress_cache": self.compress_cache,
             "dataset_type": self.dataset_type.value,
+            "caption_key": self.caption_key,
         }
 
     @staticmethod
@@ -523,6 +554,7 @@ class WebshartDataBackend(BaseDataBackend):
             max_file_size=representation.get("max_file_size", 500 * 1024 * 1024),
             compress_cache=representation.get("compress_cache", False),
             dataset_type=representation.get("dataset_type", DatasetType.IMAGE),
+            caption_key=representation.get("caption_key"),
         )
 
     def num_shards(self) -> int:
