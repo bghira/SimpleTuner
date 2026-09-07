@@ -201,6 +201,7 @@ input {
 }
 
 .media-timeline {
+    min-width: 0;
     display: flex;
     gap: 6px;
     margin-bottom: 12px;
@@ -208,7 +209,16 @@ input {
     padding-bottom: 4px;
 }
 
+#media-timeline {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    padding: 8px 0;
+    background: var(--report-bg);
+}
+
 .media-step {
+    min-height: 44px;
     flex: 0 0 auto;
     padding: 6px 9px;
     border: 1px solid var(--report-border);
@@ -288,7 +298,7 @@ input {
     inset: 0;
     z-index: 10;
     display: grid;
-    grid-template-rows: minmax(0, 1fr) auto auto;
+    grid-template-rows: minmax(0, 1fr) auto auto auto;
     gap: 12px;
     padding: 16px;
     background: rgba(5, 7, 11, 0.95);
@@ -319,6 +329,13 @@ input {
     max-height: none;
 }
 
+#media-lightbox-steps {
+    width: 100%;
+    max-width: 600px;
+    justify-self: center;
+    margin-bottom: 0;
+}
+
 .media-lightbox-toolbar {
     display: flex;
     justify-content: center;
@@ -326,8 +343,8 @@ input {
 }
 
 .media-lightbox-toolbar button {
-    min-width: 36px;
-    min-height: 36px;
+    min-width: 44px;
+    min-height: 44px;
     border: 1px solid var(--report-border);
     background: var(--report-panel);
     color: var(--report-text);
