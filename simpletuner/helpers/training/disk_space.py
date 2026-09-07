@@ -1,4 +1,4 @@
-"""Disk space monitoring utilities for checkpoint saves."""
+"""Disk space monitoring utilities for checkpoint saves and compilation."""
 
 import logging
 import re
@@ -169,3 +169,16 @@ def check_disk_space(
                 f"{_format_bytes(available)} available, threshold is {threshold_human}."
             )
         logger.info("Disk cleanup script completed. %s now available.", _format_bytes(available))
+
+
+def check_disk_space_for_config(config: Any, path: str) -> None:
+    """Apply the configured disk policy to the filesystem containing path."""
+    threshold_bytes = parse_size_threshold(getattr(config, "disk_low_threshold", None))
+    if threshold_bytes is None:
+        return
+    check_disk_space(
+        output_dir=path,
+        threshold_bytes=threshold_bytes,
+        action=DiskLowAction.from_raw(getattr(config, "disk_low_action", None)),
+        script_path=getattr(config, "disk_low_script", None),
+    )

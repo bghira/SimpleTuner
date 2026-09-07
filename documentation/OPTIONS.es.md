@@ -1989,10 +1989,11 @@ Mapeo de opciones upstream (LayerSync → SimpleTuner):
 
 ### `--disk_low_threshold`
 
-- **Qué**: Espacio mínimo libre en disco requerido antes de guardar checkpoints.
-- **Por qué**: Previene que el entrenamiento falle por errores de disco lleno al detectar espacio bajo tempranamente y tomar una acción configurada.
+- **Qué**: Espacio mínimo libre en disco requerido antes de guardar checkpoints y compilar grafos con TorchInductor (incluida la recompilación).
+- **Por qué**: Detecta poco espacio anticipadamente y aplica la acción configurada al sistema de archivos de los checkpoints o de la caché del compilador.
 - **Formato**: Cadena de tamaño como `100G`, `50M`, `1T`, `500K`, o bytes simples.
 - **Por defecto**: Ninguno (función desactivada)
+- **Alcance**: Cada proceso que compila comprueba `TORCHINDUCTOR_CACHE_DIR` (o el valor predeterminado de PyTorch) y un `TRITON_CACHE_DIR` separado si está configurado. Es una comprobación previa, no una reserva: la compilación puede agotar el disco tras iniciarse y la inicialización del backend puede escribir antes de la comprobación. Elija un umbral suficiente para compilar. Estas comprobaciones no recuperan errores de memoria CUDA ni reintentan compilaciones fallidas.
 
 ### `--disk_low_action`
 
