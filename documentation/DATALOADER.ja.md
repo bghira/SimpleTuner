@@ -1355,6 +1355,12 @@ Hugging Face データセットの基本的な使用例としては、データ�
 
 ### Webshart Datasets
 
+キャプションには文字列、ネイティブ JSON オブジェクト、または両者を混在させたリストを使用できます。
+オブジェクトはメタデータとキャプションキャッシュで保持され、テキストエンコーダーへの入力を準備する際に、
+1つの JSON テキストプロンプトへ変換されます。各フィールドが別々のキャプション候補になることはありません。
+複数の候補にはリストを、フィールドの選択には `webshart.caption_key` を使用してください。
+ネイティブ JSON キャプションに対応した webshart が必要で、Ideogram の構造化キャプション正規化にも対応します。
+
 Webshart データセットは `webshart` パッケージで WebDataset 形式の tar shard を読み込みます。この backend は論理サンプル metadata を aspect bucketing に使うため、ペアになった JSON sidecar は学習サンプルとして扱われません。
 
 ```json

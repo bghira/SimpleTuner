@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import patch
 
@@ -46,10 +47,10 @@ class PromptHandlerTests(unittest.TestCase):
         metadata_backend = _DummyMetadataBackend(
             {
                 "webshart://0/1/first.jpg": ["first primary", "first alternate"],
-                "webshart://0/2/second.jpg": {
-                    "primary": "second primary",
-                    "alternates": ["second alternate"],
-                },
+                "webshart://0/2/second.jpg": [
+                    {"description": "a café", "elements": [{"bbox": [1, 2, 30, 40]}]},
+                    "second alternate",
+                ],
             }
         )
 
@@ -71,10 +72,9 @@ class PromptHandlerTests(unittest.TestCase):
             )
 
         self.assertEqual(missing, [])
-        self.assertEqual(
-            captions,
-            ["first primary", "first alternate", "second primary", "second alternate"],
-        )
+        self.assertEqual(captions[:2], ["first primary", "first alternate"])
+        self.assertEqual(json.loads(captions[2]), {"description": "a café", "elements": [{"bbox": [1, 2, 30, 40]}]})
+        self.assertEqual(captions[3], "second alternate")
         self.assertEqual(
             paths,
             [
@@ -84,6 +84,14 @@ class PromptHandlerTests(unittest.TestCase):
                 "webshart://0/2/second.jpg",
             ],
         )
+
+    def test_native_caption_object_is_one_json_prompt(self):
+        caption = {"high_level_description": "a café", "style_description": {"medium": "photo"}}
+        values = PromptHandler._normalize_caption_payload(caption)
+        self.assertEqual(len(values), 1)
+        self.assertEqual(json.loads(values[0]), caption)
+        self.assertEqual(PromptHandler._restore_caption_payload_shape(caption, values), values[0])
+        self.assertEqual(PromptHandler._caption_payload_values(caption), [caption])
 
 
 if __name__ == "__main__":

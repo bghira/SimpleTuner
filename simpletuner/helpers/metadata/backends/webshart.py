@@ -9,12 +9,12 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from tqdm import tqdm
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
-from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
+from simpletuner.helpers.data_backend.webshart import CaptionValue, WebshartDataBackend
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.training import video_file_extensions
@@ -85,7 +85,7 @@ class WebshartMetadataBackend(MetadataBackend):
         if self.dataset_type not in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CONDITIONING, DatasetType.EVAL}:
             raise ValueError("WebshartMetadataBackend supports image, video, conditioning, and eval datasets only.")
 
-        self.caption_cache: Dict[str, Union[str, List[str], dict]] = {}
+        self.caption_cache: Dict[str, CaptionValue] = {}
 
         context = accelerator.main_process_first() if hasattr(accelerator, "main_process_first") else nullcontext()
         with context:
@@ -113,7 +113,7 @@ class WebshartMetadataBackend(MetadataBackend):
             return
         StateTracker.set_image_files([("", [], sample_ids)], data_backend_id=self.data_backend.id)
 
-    def caption_cache_entry(self, index: str) -> Optional[Union[str, List[str], dict]]:
+    def caption_cache_entry(self, index: str) -> Optional[CaptionValue]:
         index = self.data_backend.normalize_sample_id(index)
         caption = self.caption_cache.get(index, None)
         if caption is not None:

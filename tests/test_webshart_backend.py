@@ -555,6 +555,32 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
         restored = WebshartDataBackend.from_instance_representation(backend.get_instance_representation())
         self.assertEqual(restored.get_caption(self._sample_id(restored)), ["named caption", "brief caption"])
 
+    def test_native_caption_objects_survive_index_selection_and_cache(self):
+        caption = {"high_level_description": "a café", "elements": [{"bbox": [1, 2, 30, 40]}]}
+        for index, value in enumerate([caption, [caption], [caption, "alternate"]]):
+            with self.subTest(value=value):
+                self.files["sample.jpg"]["captions"] = value
+                self.files["sample.jpg"][f"version_{index}"] = value
+                self._write_index(embedded=True)
+                backend = WebshartDataBackend(
+                    accelerator=None,
+                    id=f"native-{index}",
+                    source=str(self.source),
+                    cache_dir=str(self.root / f"native-cache-{index}"),
+                    shard_cache_gb=0,
+                )
+                sample_id = self._sample_id(backend)
+                self.assertEqual(backend.get_caption(sample_id), value)
+                backend.caption_key = f"version_{index}"
+                selected = backend.get_caption(sample_id)
+                self.assertEqual(selected, caption if value == [caption] else value)
+                metadata = self._metadata_backend(backend)
+                self.assertEqual(metadata.caption_cache_entry(sample_id), selected)
+                metadata._save_caption_cache()
+                metadata.caption_cache.clear()
+                metadata._load_caption_cache()
+                self.assertEqual(metadata.caption_cache_entry(sample_id), selected)
+
     def test_bucketing_and_cache_reload_use_selected_captions(self):
         from simpletuner.helpers.training.state_tracker import StateTracker
 

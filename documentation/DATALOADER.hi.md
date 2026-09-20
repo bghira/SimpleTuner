@@ -1354,6 +1354,13 @@ Hugging Face dataset का उपयोग करने का एक बेस
 
 ### Webshart Datasets
 
+कैप्शन स्ट्रिंग, मूल JSON ऑब्जेक्ट या दोनों की मिश्रित सूची हो सकते हैं। ऑब्जेक्ट मेटाडेटा और
+कैप्शन कैश में पूरे बने रहते हैं; टेक्स्ट एन्कोडर का इनपुट तैयार करते समय हर ऑब्जेक्ट को एक
+JSON टेक्स्ट प्रॉम्प्ट में बदला जाता है। उसके फ़ील्ड अलग-अलग कैप्शन विकल्प नहीं बनते।
+विकल्पों के लिए सूची और किसी फ़ील्ड को चुनने के लिए `webshart.caption_key` इस्तेमाल करें।
+इसके लिए मूल JSON कैप्शन समर्थित webshart बिल्ड चाहिए; यह Ideogram के संरचित कैप्शन
+कैनोनिकलाइज़र के साथ भी काम करता है।
+
 Webshart datasets `webshart` package के जरिए WebDataset-style tar shards लोड करते हैं। यह backend aspect bucketing के लिए logical sample metadata उपयोग करता है, इसलिए paired JSON sidecars trainable samples नहीं माने जाते।
 
 ```json

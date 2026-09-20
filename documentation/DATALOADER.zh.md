@@ -1354,6 +1354,11 @@ SimpleTuner 现在支持直接从 Hugging Face Hub 加载数据集，无需完�
 
 ### Webshart 数据集
 
+字幕可以是字符串、原生 JSON 对象或两者混合的列表。对象在元数据和字幕缓存中保持完整，
+仅在准备文本编码器输入时转换为一条 JSON 文本提示词。对象字段不会被拆分为多个字幕变体。
+如需多个候选字幕，请使用列表；如需选择指定字段，请使用 `webshart.caption_key`。
+此功能需要支持原生 JSON 字幕的 webshart 版本，也兼容 Ideogram 的结构化字幕规范化功能。
+
 Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。该 backend 使用逻辑样本 metadata 进行 aspect bucketing，因此配对的 JSON sidecar 不会被当作可训练样本。
 
 ```json

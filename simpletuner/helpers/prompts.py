@@ -268,10 +268,10 @@ class PromptHandler:
 
     @staticmethod
     def _caption_payload_is_multi_value(caption) -> bool:
-        return isinstance(caption, (list, tuple, dict, numpy.ndarray, pd.Series))
+        return isinstance(caption, (list, tuple, numpy.ndarray, pd.Series))
 
     @staticmethod
-    def _normalize_caption_payload(caption) -> list[str]:
+    def _caption_payload_values(caption) -> list[str | dict]:
         if caption is None:
             return []
         if isinstance(caption, bytes):
@@ -280,17 +280,21 @@ class PromptHandler:
             caption = caption.strip()
             return [caption] if caption else []
         if isinstance(caption, dict):
-            captions = []
-            for value in caption.values():
-                captions.extend(PromptHandler._normalize_caption_payload(value))
-            return captions
+            return [caption]
         if isinstance(caption, (list, tuple, numpy.ndarray, pd.Series)):
             captions = []
             for value in caption:
-                captions.extend(PromptHandler._normalize_caption_payload(value))
+                captions.extend(PromptHandler._caption_payload_values(value))
             return captions
         caption = str(caption).strip()
         return [caption] if caption else []
+
+    @staticmethod
+    def _normalize_caption_payload(caption) -> list[str]:
+        return [
+            json.dumps(value, ensure_ascii=False, separators=(",", ":")) if isinstance(value, dict) else value
+            for value in PromptHandler._caption_payload_values(caption)
+        ]
 
     @staticmethod
     def _restore_caption_payload_shape(caption, caption_values: list[str]):
