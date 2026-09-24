@@ -55,10 +55,44 @@
 
 ### `dataset_type`
 
-- **取值:** `image` | `video` | `audio` | `text_embeds` | `image_embeds` | `conditioning_image_embeds` | `conditioning`
+- **取值:** `image` | `video` | `audio` | `caption` | `text_embeds` | `image_embeds` | `conditioning_image_embeds` | `conditioning`
 - **说明:** `image`、`video`、`audio` 数据集包含主要训练样本。`text_embeds` 存放文本编码器缓存输出，`image_embeds` 存放 VAE 潜变量（当模型使用时），`conditioning_image_embeds` 存放条件图像嵌入缓存（例如 Wan 2.2 I2V 的 CLIP 视觉特征）。当数据集标记为 `conditioning` 时，可通过 [conditioning_data 选项](#conditioning_data) 与 `image` 数据集配对。
 - **注记:** 文本/图像嵌入数据集的定义不同于图像数据集。文本嵌入数据集只存储文本嵌入对象；图像数据集存储训练数据。
 - **注记:** 不要在**同一个**数据集中混合图片和视频。请分开配置。
+
+### `caption_file_extensions`
+
+描述发现支持此可选的非空文件扩展名列表，例如 `["jsonl"]`。默认值为 `["txt", "json", "jsonl"]`。后端自身生成的元数据和分桶缓存 JSON 始终被排除，包括使用已有文件列表重新启动时。
+
+### `data_generator`
+
+仅适用于 `dataset_type: "caption"`（单数）。此可选对象在图像、文本嵌入和 VAE 缓存之前，为每条描述在**每个**指定分辨率生成一张 PNG 及配套文本。生成的数据集使用普通图像训练，无需蒸馏器。未配置此对象的描述数据集仍需要能够处理描述的蒸馏器。
+
+- `resolutions`（必填）：非空 `WIDTHxHEIGHT` 字符串列表，宽高均为 32 的倍数。每个分辨率生成 `<id>-generated-<resolution>` 数据集，以原生短边像素尺寸训练并关闭裁剪。原数据集的 `probability` 平分至各分辨率。
+- `batch_size`（默认 `1`）：生成批量大小，与训练批量无关。加速器显存不足时，将该分辨率失败批量减半，并使用相同种子重试同一批样本。成功的批量上限记录在生成清单中。批量为一时仍显存不足，或出现其他错误，将停止生成。
+- `num_inference_steps`（默认 `40`）、`guidance_scale`（默认 `1.0`）、`seed`（默认 `0`）：推理设置。Qwen Image 将引导映射至 `true_cfg_scale`；大于一时使用空负面提示词，验证引导设置不会覆盖此值。
+- `output_dir`（可选）：默认 `cache_dir/generated-captions/<id>`。输出按配置指纹存储，重启时复用。指纹包含描述、推理设置、解析后的 Hub 修订版本及本地权重文件大小和修改时间。生成期间不要修改模型文件。描述、模型或推理设置变化会创建独立缓存，批量大小变化不会。
+
+生成时禁用适配器并使用基础模型，仅释放为预处理加载的变换器，不修改原始描述。生成需要单进程准备运行；多进程运行中的 `data_generator` 会在读取描述前被拒绝。分布式训练时，请将生成目录配置为普通 `image` 数据集，每个分辨率一个数据集，设置 `caption_strategy: "textfile"`、`crop: false`、`resolution_type: "pixel"`，并将 `resolution` 设为该桶的短边像素数。未使用生成器的描述数据集必须设置 `dataloader_prefetch=false`，以保存检查点中的采样器位置。修改描述列表、分辨率或数据集拓扑需要开始新的训练；复用生成缓存并不意味着此类检查点恢复兼容。
+
+本地描述发现要求生成输出目录位于源 `instance_data_dir` 之外；目录重叠会在扫描前被拒绝。
+
+```json
+{
+  "id": "assistant-images",
+  "type": "local",
+  "dataset_type": "caption",
+  "instance_data_dir": "data/prompts",
+  "caption_strategy": "textfile",
+  "data_generator": {
+    "batch_size": 2,
+    "resolutions": ["512x512", "768x1024"],
+    "num_inference_steps": 40,
+    "guidance_scale": 1.0,
+    "seed": 42
+  }
+}
+```
 
 ### `default`
 

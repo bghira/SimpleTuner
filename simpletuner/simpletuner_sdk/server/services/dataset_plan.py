@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel
 
 import simpletuner.helpers.distillation.factory  # noqa: F401
+from simpletuner.helpers.data_backend.config.validators import validate_caption_data_generator
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.distillation.registry import DistillationRegistry
 from simpletuner.helpers.distillation.requirements import (
@@ -117,8 +118,16 @@ def compute_validations(
         )
         return validations
 
+    effective_datasets = [
+        (
+            {**dataset, "dataset_type": "image"}
+            if _dataset_type(dataset) is DatasetType.CAPTION and dataset.get("data_generator") is not None
+            else dataset
+        )
+        for dataset in datasets
+    ]
     if distiller_profile:
-        requirement_eval = evaluate_requirement_profile(distiller_profile, datasets)
+        requirement_eval = evaluate_requirement_profile(distiller_profile, effective_datasets)
         if not requirement_eval.fulfilled:
             method_label = (distillation_method or "distiller").replace("_", " ")
             validations.append(
@@ -164,6 +173,17 @@ def compute_validations(
                 )
             )
         normalized_type = _dataset_type(dataset)
+        if dataset.get("data_generator") is not None:
+            try:
+                if normalized_type is not DatasetType.CAPTION:
+                    raise ValueError("data_generator is only valid for dataset_type=caption.")
+                validate_caption_data_generator(dataset["data_generator"])
+            except ValueError as error:
+                validations.append(
+                    ValidationMessage(
+                        field=f"{_normalise_identifier(dataset)}.data_generator", message=str(error), level="error"
+                    )
+                )
         if normalized_type is DatasetType.CAPTION and backend_type.lower() == "csv":
             validations.append(
                 ValidationMessage(
@@ -221,7 +241,7 @@ def compute_validations(
 
     # For video models, require at least one video dataset
     # For image models, require at least one image dataset
-    image_count = sum(1 for dataset in datasets if _dataset_type(dataset) is DatasetType.IMAGE)
+    image_count = sum(1 for dataset in effective_datasets if _dataset_type(dataset) is DatasetType.IMAGE)
     video_count = sum(1 for dataset in datasets if _dataset_type(dataset) is DatasetType.VIDEO)
     audio_count = sum(1 for dataset in datasets if _dataset_type(dataset) is DatasetType.AUDIO)
 

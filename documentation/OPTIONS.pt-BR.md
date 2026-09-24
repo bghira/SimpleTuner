@@ -2316,7 +2316,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,assistant_lora,h3_drift,self_transcendence}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -3084,7 +3084,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,assistant_lora,h3_drift,self_transcendence}
                         Method for model distillation
                         Distillation methods cannot be combined with
                         --train_text_encoder.
@@ -3120,3 +3120,11 @@ options:
   --sana_complex_human_instruction SANA_COMPLEX_HUMAN_INSTRUCTION
                         Complex human instruction for Sana model training
 ```
+
+### `--distillation_method=assistant_lora`
+
+`--distillation_method=assistant_lora` treina um adaptador auxiliar positivo com novas gerações do modelo base, desativando o adaptador e usando datasets de legendas. O suporte inicial é Qwen Image 2.1. `distillation_config.assistant_lora` aceita `num_inference_steps` (40), `resolutions` (`[[1024, 1024]]`, largura e altura, múltiplos de 32) e `seed` (42). Exige embeddings de texto pré-calculados; não armazena latentes finais. Consulte o [guia do Qwen](quickstart/QWEN_IMAGE.md).
+
+Datasets de legendas exigem `dataloader_prefetch: false` para que o cursor do checkpoint corresponda às legendas consumidas. A retomada rejeita mudanças nos identificadores/textos, lote, repetições, embaralhamento, semente, acumulação ou configuração distribuída. Os checkpoints do auxiliar também rejeitam mudanças na semente de geração, na lista de resoluções ou no número de passos de inferência do professor.
+
+Assistant LoRA e AnyFlow elevam temporariamente o limite do cache de compilação Dynamo por código para pelo menos 32, acomodando variantes do professor, treino e validação. Um limite maior do usuário é preservado; o original é restaurado ao sair, inclusive após erros.

@@ -2344,7 +2344,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,assistant_lora,h3_drift,self_transcendence}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -3114,7 +3114,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,assistant_lora,h3_drift,self_transcendence}
                         Method for model distillation
                         Distillation methods cannot be combined with
                         --train_text_encoder.
@@ -3150,3 +3150,11 @@ options:
   --sana_complex_human_instruction SANA_COMPLEX_HUMAN_INSTRUCTION
                         Complex human instruction for Sana model training
 ```
+
+### `--distillation_method=assistant_lora`
+
+Select `--distillation_method=assistant_lora` to train a positive assistant adapter on fresh, adapter-disabled base-model generations from caption datasets. Initial support is Qwen Image 2.1. `distillation_config.assistant_lora` accepts `num_inference_steps` (40), `resolutions` (`[[1024, 1024]]`, width then height; multiples of 32) and `seed` (42). Cached text embeddings are required; terminal latents are not cached. See the [Qwen guide](quickstart/QWEN_IMAGE.md).
+
+Caption datasets require `dataloader_prefetch: false` so checkpoint cursors represent consumed captions. Resume rejects changes to caption identities/text, batch size, repeats, shuffle, seed, accumulation or distributed layout. Assistant checkpoints also reject changes to the generation seed, resolution list or teacher inference-step count.
+
+Assistant LoRA and AnyFlow temporarily raise Dynamo’s per-code compile-cache limit to at least 32 for teacher, training and validation variants. A higher user limit is preserved; the original limit is restored on exit, including errors.

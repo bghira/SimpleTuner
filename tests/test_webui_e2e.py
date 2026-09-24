@@ -2635,6 +2635,111 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
 
         self.for_each_browser("test_dataset_search", scenario)
 
+    def test_caption_generator_edit_save_and_reload(self) -> None:
+        self.seed_defaults()
+        config_path = self.config_dir / "default" / "multidatabackend.json"
+        config_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "generated-captions",
+                        "type": "local",
+                        "dataset_type": "caption",
+                        "instance_data_dir": "data/prompts",
+                        "caption_strategy": "textfile",
+                        "metadata_backend": "discovery",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            datasets_tab = DatasetsTab(driver, base_url=self.base_url)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+            driver.execute_script(
+                """
+                document.querySelector('#datasets-tab-content .hero-dismiss-btn').click();
+                const toggle = document.querySelector('[data-dataset-id="generated-captions"] .list-item-toggle');
+                if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+                const item = toggle.closest('.dataset-list-item-wrapper');
+                [...item.querySelectorAll('button')].find(button => button.textContent.trim() === 'Captions & Metadata').click();
+            """
+            )
+
+            def visible_field(selector):
+                self.dismiss_onboarding(driver)
+                element = WebDriverWait(driver, 10).until(
+                    lambda d: next(
+                        (element for element in d.find_elements(By.CSS_SELECTOR, selector) if element.is_displayed()), False
+                    )
+                )
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+                return element
+
+            extensions = visible_field(".caption-file-extensions")
+            extensions.send_keys("jsonl", Keys.TAB)
+            visible_field(".caption-generator-enabled").click()
+            resolutions = visible_field(".caption-generator-resolutions")
+            resolutions.clear()
+            resolutions.send_keys("512x512\n768x1024", Keys.TAB)
+            batch = visible_field(".caption-generator-batch-size")
+            batch.clear()
+            batch.send_keys("3", Keys.TAB)
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === true;")
+            )
+            prepared = driver.execute_script(
+                "return Alpine.store('trainer').prepareDatasetsForSave().find(entry => entry.id === 'generated-captions');"
+            )
+            self.assertIn("data_generator", prepared, prepared)
+            datasets_tab.save_datasets()
+            saved = next(entry for entry in json.loads(config_path.read_text()) if entry["id"] == "generated-captions")
+            errors = driver.execute_script("return Alpine.store('trainer').datasetValidationErrors;")
+            self.assertIn("data_generator", saved, {"prepared": prepared, "errors": errors, "saved": saved})
+            self.assertEqual(saved["data_generator"]["resolutions"], ["512x512", "768x1024"])
+            self.assertEqual(saved["data_generator"]["batch_size"], 3)
+            self.assertEqual(saved["caption_file_extensions"], ["jsonl"])
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === false;")
+            )
+            # A second edit after save must enable saving again.
+            batch = visible_field(".caption-generator-batch-size")
+            batch.clear()
+            batch.send_keys("2", Keys.TAB)
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === true;")
+            )
+            datasets_tab.save_datasets()
+            driver.refresh()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+            driver.execute_script(
+                """
+                const toggle = document.querySelector('[data-dataset-id="generated-captions"] .list-item-toggle');
+                if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+                const item = toggle.closest('.dataset-list-item-wrapper');
+                [...item.querySelectorAll('button')].find(button => button.textContent.trim() === 'Captions & Metadata').click();
+            """
+            )
+            self.assertEqual(visible_field(".caption-generator-batch-size").get_attribute("value"), "2")
+            self.assertEqual(visible_field(".caption-file-extensions").get_attribute("value"), "jsonl")
+            self.assertEqual(visible_field(".caption-generator-resolutions").get_attribute("value"), "512x512\n768x1024")
+            visible_field(".caption-generator-enabled").click()
+            datasets_tab.save_datasets()
+            saved = next(entry for entry in json.loads(config_path.read_text()) if entry["id"] == "generated-captions")
+            # Plain captions still require a consuming distiller, so removing the only image source is rejected.
+            self.assertIn("data_generator", saved)
+            errors = driver.execute_script("return Alpine.store('trainer').datasetValidationErrors;")
+            self.assertIn("datasets", errors)
+
+        self.for_each_browser("test_caption_generator_edit_save_and_reload", scenario)
+
 
 class DatasetWizardUiSmokeTestCase(_TrainerPageMixin, WebUITestCase):
     """Lightweight UI check for dataset wizard Alpine state."""

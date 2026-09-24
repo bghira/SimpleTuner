@@ -46,6 +46,8 @@ __all__ = [
 
 def create_backend_config(backend_dict: dict, args: dict) -> BaseBackendConfig:
     dataset_type = ensure_dataset_type(backend_dict.get("dataset_type"), default=DatasetType.IMAGE)
+    if backend_dict.get("data_generator") is not None and dataset_type is not DatasetType.CAPTION:
+        raise ValueError("data_generator is only valid for dataset_type=caption.")
 
     if dataset_type is DatasetType.TEXT_EMBEDS:
         return TextEmbedBackendConfig.from_dict(backend_dict, args)

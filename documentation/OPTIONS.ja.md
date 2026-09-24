@@ -2321,7 +2321,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,assistant_lora,h3_drift,self_transcendence}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -3089,7 +3089,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,assistant_lora,h3_drift,self_transcendence}
                         Method for model distillation
                         Distillation methods cannot be combined with
                         --train_text_encoder.
@@ -3125,3 +3125,11 @@ options:
   --sana_complex_human_instruction SANA_COMPLEX_HUMAN_INSTRUCTION
                         Complex human instruction for Sana model training
 ```
+
+### `--distillation_method=assistant_lora`
+
+`--distillation_method=assistant_lora` は、キャプションからアダプター無効状態で毎回生成したベースモデル出力で正方向の補助アダプターを学習します。初期対応は Qwen Image 2.1 です。`distillation_config.assistant_lora` は `num_inference_steps`（40）、`resolutions`（`[[1024, 1024]]`、幅・高さの順で 32 の倍数）、`seed`（42）を指定できます。テキスト埋め込みの事前キャッシュが必要で、最終潜在変数はキャッシュしません。[Qwen ガイド](quickstart/QWEN_IMAGE.md)を参照してください。
+
+キャプションデータセットでは `dataloader_prefetch: false` が必要です。チェックポイントの位置を消費済みキャプションと一致させるためです。再開時にキャプション ID・本文、バッチサイズ、繰り返し、シャッフル、シード、勾配累積、分散構成が変わるとエラーになります。 補助 LoRA のチェックポイントでは、生成シード、解像度リスト、教師の推論ステップ数の変更も拒否します。
+
+Assistant LoRA と AnyFlow は、教師・学習・検証のバリアント用に、コードごとの Dynamo コンパイルキャッシュ上限を一時的に最低 32 にします。ユーザーが指定したより大きな上限は維持され、エラー時も含め終了時に元の上限を復元します。

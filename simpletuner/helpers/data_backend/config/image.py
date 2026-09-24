@@ -85,6 +85,8 @@ class ImageBackendConfig(BaseBackendConfig):
     conditioning_type: Optional[str] = None
 
     parquet: Optional[Dict[str, Any]] = None
+    data_generator: Optional[Dict[str, Any]] = None
+    caption_file_extensions: Optional[List[str]] = None
 
     video: Optional[Dict[str, Any]] = None
 
@@ -233,6 +235,8 @@ class ImageBackendConfig(BaseBackendConfig):
         config.conditioning_type = backend_dict.get("conditioning_type")
 
         config.parquet = backend_dict.get("parquet")
+        config.data_generator = backend_dict.get("data_generator")
+        config.caption_file_extensions = backend_dict.get("caption_file_extensions")
         config.video = backend_dict.get("video")
 
         config.vae_cache_ondemand = bool(backend_dict.get("vae_cache_ondemand", False)) or config.vae_cache_disable
@@ -339,6 +343,20 @@ class ImageBackendConfig(BaseBackendConfig):
 
     def validate(self, args: Dict[str, Any]) -> None:
         validators.validate_backend_id(self.id)
+        if self.caption_file_extensions is not None:
+            if (
+                not isinstance(self.caption_file_extensions, list)
+                or not self.caption_file_extensions
+                or any(
+                    not isinstance(extension, str) or not extension.lstrip(".").strip()
+                    for extension in self.caption_file_extensions
+                )
+            ):
+                raise ValueError("caption_file_extensions must be a non-empty list of file extensions.")
+        if self.data_generator is not None:
+            if self.dataset_type is not DatasetType.CAPTION:
+                raise ValueError("data_generator is only valid for dataset_type=caption.")
+            self.data_generator = validators.validate_caption_data_generator(self.data_generator)
 
         valid_types = [
             DatasetType.IMAGE,
@@ -477,6 +495,10 @@ class ImageBackendConfig(BaseBackendConfig):
         config["probability"] = self.probability
         config["timestep_sampling_offset"] = self.timestep_sampling_offset
         config["repeats"] = self.repeats
+        if self.data_generator is not None:
+            config["data_generator"] = self.data_generator
+        if self.caption_file_extensions is not None:
+            config["caption_file_extensions"] = self.caption_file_extensions
         config["instance_data_dir"] = self.instance_data_dir
         if self.train_batch_size is not None:
             config["train_batch_size"] = self.train_batch_size

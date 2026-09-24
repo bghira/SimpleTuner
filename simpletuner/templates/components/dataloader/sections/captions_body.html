@@ -1,5 +1,8 @@
 <!-- Captions & Metadata Body (for modal) -->
 <div class="modal-section-body" x-init="editingDataset.parquet = editingDataset.parquet || {}">
+    {% set generator_dataset = 'editingDataset' %}
+    {% include 'components/dataloader/caption_data_generator.html' %}
+
     <!-- Caption Strategy -->
     <div class="section-group" x-show="matchesParamFilter('caption', 'strategy', 'metadata', 'backend', 'filename', 'text', 'csv', 'parquet', 'jsonl', 'instance')">
         <h6 class="modal-section-title">Caption Strategy</h6>

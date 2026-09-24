@@ -375,6 +375,24 @@ class QwenImage(ImageModelFoundation):
 
         return pipeline
 
+    def get_latent_generation_pipeline(self):
+        if self._get_model_flavour() != "v2.1":
+            return super().get_latent_generation_pipeline()
+        from diffusers import FlowMatchEulerDiscreteScheduler
+
+        return QwenImage21Pipeline(
+            scheduler=FlowMatchEulerDiscreteScheduler.from_config(self.noise_schedule.config),
+            vae=None,
+            text_encoder=None,
+            processor=None,
+            transformer=self.get_trained_component(),
+        )
+
+    def unpack_generated_latents(self, latents: torch.Tensor, *, height: int, width: int) -> torch.Tensor:
+        if self._get_model_flavour() != "v2.1":
+            return super().unpack_generated_latents(latents, height=height, width=width)
+        return QwenImage21Pipeline._unpack_latents(latents, height, width, self.vae_scale_factor).squeeze(2)
+
     def setup_training_noise_schedule(self):
         """
         Loads the noise schedule for Qwen Image (flow matching).

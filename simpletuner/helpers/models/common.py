@@ -4370,6 +4370,14 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
 
         return possibly_cached_pipeline
 
+    def get_latent_generation_pipeline(self):
+        """Create an inference pipeline using cached text, without loading a VAE or text encoder."""
+        raise NotImplementedError(f"{self.NAME} does not support on-demand latent generation.")
+
+    def unpack_generated_latents(self, latents: torch.Tensor, *, height: int, width: int) -> torch.Tensor:
+        """Convert native pipeline latents to this model's training layout."""
+        raise NotImplementedError(f"{self.NAME} does not define its generated latent layout.")
+
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         """
         When we're running the pipeline, we'll update the kwargs specifically for this model here.

@@ -593,3 +593,51 @@ Start training at lower resolutions (512px or 768px) to speed up initial learnin
 4. Sequence length handling issues ([upstream issue](https://github.com/huggingface/diffusers/issues/12075))
 
 For additional help and troubleshooting, consult the [SimpleTuner documentation](/documentation) or join the community Discord.
+
+<a id="assistant-lora"></a>
+
+### Training an assistant LoRA from captions
+
+`qwen_image-2.1-assistant-lora.peft-lora` is an experimental L40S starting point: BF16, batch 1, interval-2 checkpointing, rank 32 and AdamW BF16 at `1e-4`. It budgets 1,000 updates with validation/checkpoints every 50. Replace the twelve smoke captions with diverse captions before a substantive run; the example is not a validated convergence recipe.
+
+`grad_clip_method: "norm"`, `max_grad_norm: 1.0`.
+
+Set `distillation_method: assistant_lora`. The caption backend precomputes text embeddings, then each batch generates fresh base-model latents with the adapter disabled, 40 native inference steps and CFG 1. The private generation pipeline reuses the transformer without loading a VAE, processor or text encoder. The adapter is restored before ordinary denoising training. Terminal latents are never cached. This currently supports Qwen Image 2.1 text-to-image only.
+
+`distillation_config.assistant_lora` accepts `num_inference_steps` (default 40), `resolutions` (a nonempty list of `[width, height]`, default `[[1024, 1024]]`) and `seed` (default 42). Qwen dimensions must be multiples of 32. Resolutions cycle per batch; noise seeds advance per sample, including short batches. Checkpoints preserve these counters. Resume with unchanged dataset, batch size, accumulation and distributed topology. Text-cache on-demand mode is not supported.
+
+For a plumbing test, use 8 updates and 2 teacher steps. Restore 40 teacher steps before judging samples. Review a larger run at 100, 250, 500 and 1,000 updates; compare adapter-enabled images against the same base-model prompts/seeds. A useful assistant must still be tested in a separate concept-training run.
+
+[Ostris describes training on the model's own generated images at a low learning rate](https://huggingface.co/ostris/zimage_turbo_training_adapter). This trains the positive adapter. In a subsequent concept run, set `assistant_lora_path` to the saved adapter and enable assistant loading; SimpleTuner keeps it frozen during training and removes it during sampling. No default Qwen 2.1 assistant is downloaded. Its benefit for Qwen 2.1 remains an experiment.
+
+Use this as the sole distillation method; composition with other distillers is not supported.
+
+Caption datasets require `dataloader_prefetch: false` so checkpoint cursors represent consumed captions. Resume rejects changes to caption identities/text, batch size, repeats, shuffle, seed, accumulation or distributed layout. Assistant checkpoints also reject changes to the generation seed, resolution list or teacher inference-step count.
+
+<a id="assistant-lora-multires"></a>
+
+#### Assistant experiment with four base resolutions and aspect ratio buckets
+
+`qwen_image-2.1-assistant-lora-multires.peft-lora` cycles through 12 aspect ratio buckets across the 512, 1024, 1536 and 2048 base resolutions. Each base has square, 4:7 portrait and 7:4 landscape buckets; each batch uses one bucket, with equal exposure per base and aspect over a complete cycle. It keeps the base example’s 40 teacher steps, BF16 batch 1, interval-2 checkpointing, rank 32, AdamW BF16 and 1,000-update budget, and shares its caption backend and validation prompts. Replace the smoke captions with the same diverse caption set used for the baseline. Start with a fresh adapter and optimizer in the new output directory; `resume_from_checkpoint: ""` disables resume. Preserve the first run’s weights for comparison.
+
+This tests whether exposure to multiple image sizes improves the assistant; it does not establish a native-resolution requirement or a quality benefit. The 1,000-update L40S run completed across all 12 buckets, with validation at 1024×1024 and 2048×2048. Final fox and portrait images remained coherent, with the known colour seams from tiled VAE decoding. Teacher generation uses latent targets without VAE decoding. Downstream concept-training benefit remains unverified.
+
+Assistant LoRA uses the same scoped minimum of 32 Dynamo cache entries as AnyFlow, accommodating teacher, student and validation variants. Larger user limits are preserved, and the original limit is restored when the run exits. Monitor recompilations when adding resolutions or longer captions.
+
+A subsequent matched Domokun screen trained two fresh adapters for 250 updates each at 2048px, batch 1, LR `1e-5` and value clipping at 1.0. Assistant training strength was 0 for the control and 1 for the assisted run; inference disabled the assistant in both. Initial adapter weights and validation images matched exactly. At 40 inference steps and 1024px, both final runs still produced people for the character prompts and coherent fox/portrait priors; no assistant benefit was demonstrated. Both runs and the assistant preparation used the uncorrected optimizer described [above](#qwen21-optimizer-correction).
+
+<a id="assistant-lora-offline"></a>
+
+#### Assistant LoRA from reusable generated images
+
+`qwen_image-2.1-assistant-lora-offline.peft-lora` trains on [10,000 generated images](https://huggingface.co/datasets/webshart/qwen-image-2.1-generated-images) through Webshart. The dataset uses CC12M `long_caption` prompts, 40 native teacher steps, CFG 1 and full-frame VAE decoding. Twelve image backends cover square, portrait and landscape buckets at 512, 1024, 1536 and 2048 base resolutions, with equal sampling weights and no repeats.
+
+This fresh-run recipe uses the corrected `adamw_bf16`, LR `1e-4`, `grad_clip_method: "norm"`, `max_grad_norm: 1.0`, BF16 batch 1, rank 32 and interval-2 checkpointing. It budgets 1,000 updates, saves every 50 and validates every 100 at 1024. Render separate 2048px previews before publishing. VAE tiling is disabled and VAE encoding uses batch 1. `vae_cache_ondemand: true` encodes and caches images as they are sampled, avoiding a full 10,000-image encoding pass before 1,000 updates. Ordinary image training replaces online teacher generation; omit `distillation_method` and keep `disable_assistant_lora: true` while creating the new assistant.
+
+The dataset can be reused across experiments. PNG targets require VAE re-encoding, so this is not identical to training on the teacher's terminal latents. Inspect validation images before publishing an adapter and test its benefit in a separate concept run. Start fresh when switching from the caption-only recipe; do not resume its optimizer or dataset state.
+
+The [replacement v1 assistant](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v1) completed this 1,000-update recipe on L40S, with final images reviewed at 1024 and 2048. A matched 1,000-update Domokun comparison at 2048, LR `1e-4` and norm clipping 1.0 kept the assistant frozen during training and disabled it for validation. Both control and assisted runs still produced people for the two character prompts. The control leaked strong Domokun features into an unrelated fox prompt; the assisted run retained a recognizable fox. Both retained a coherent portrait. This is limited evidence of reduced spillover, not successful concept learning or a general quality benefit; the evaluation uses one training seed and four prompts.
+
+```bash
+simpletuner train example=qwen_image-2.1-assistant-lora-offline.peft-lora
+```

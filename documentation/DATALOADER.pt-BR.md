@@ -55,10 +55,44 @@ Aqui está o exemplo mais básico de um arquivo de configuração do dataloader,
 
 ### `dataset_type`
 
-- **Valores:** `image` | `video` | `audio` | `text_embeds` | `image_embeds` | `conditioning_image_embeds` | `conditioning`
+- **Valores:** `image` | `video` | `audio` | `caption` | `text_embeds` | `image_embeds` | `conditioning_image_embeds` | `conditioning`
 - **Descrição:** Datasets `image`, `video` e `audio` contêm as amostras principais de treinamento. `text_embeds` contém as saídas do cache do text encoder, `image_embeds` contém os latentes do VAE (quando um modelo usa um), e `conditioning_image_embeds` armazenam embeddings de imagens de condicionamento em cache (como recursos de visão do CLIP). Quando um dataset é marcado como `conditioning`, é possível pareá-lo ao seu dataset `image` via [a opção conditioning_data](#conditioning_data)
 - **Nota:** Datasets de text embed e image embed são definidos de forma diferente de datasets de imagem. Um dataset de text embed armazena APENAS os objetos de text embed. Um dataset de imagem armazena os dados de treinamento.
 - **Nota:** Não combine imagens e vídeo em um **único** dataset. Separe-os.
+
+### `caption_file_extensions`
+
+A descoberta de legendas aceita esta lista opcional e não vazia de extensões, por exemplo `["jsonl"]`. O padrão é `["txt", "json", "jsonl"]`. Os arquivos JSON de metadados e cache de buckets do próprio backend são sempre excluídos, inclusive ao reiniciar com uma lista de arquivos existente.
+
+### `data_generator`
+
+Válido apenas para `dataset_type: "caption"` (singular). Este objeto opcional gera um PNG e sua legenda para cada texto em **cada** resolução listada, antes dos caches de imagens, embeddings de texto e VAE. Os resultados seguem o treinamento normal de imagens, sem exigir um destilador. Sem este objeto, datasets de legendas continuam exigindo um destilador que aceite legendas.
+
+- `resolutions` (obrigatório): lista não vazia de strings `WIDTHxHEIGHT`, com dimensões múltiplas de 32. Cada resolução cria `<id>-generated-<resolution>`, usa a dimensão nativa da menor borda e desativa recortes. A `probability` original é dividida entre os buckets.
+- `batch_size` (padrão `1`): lote de geração, independente do lote de treinamento. Falta de memória do acelerador reduz pela metade o lote que falhou nessa resolução e repete as mesmas amostras com as mesmas sementes. Os limites bem-sucedidos ficam no manifesto de geração. Falta de memória com lote um, ou qualquer outro erro, interrompe a geração.
+- `num_inference_steps` (padrão `40`), `guidance_scale` (`1.0`) e `seed` (`0`): parâmetros de inferência. Qwen Image usa `true_cfg_scale`; valores acima de um usam prompt negativo vazio. A configuração de orientação da validação não substitui esse valor.
+- `output_dir` (opcional): padrão `cache_dir/generated-captions/<id>`. Os resultados ficam em um diretório identificado pela receita e são reutilizados ao reiniciar. A identificação inclui legendas, parâmetros de inferência, revisões resolvidas do Hub e tamanhos/datas de modificação dos pesos locais. Não altere os arquivos do modelo durante a geração. Alterar legendas, modelo ou inferência cria outro cache; alterar o lote não.
+
+A geração usa o modelo base com adaptadores desativados e libera somente o transformador carregado para o pré-processamento. As legendas originais não mudam. A geração exige uma execução de preparação com um único processo; execuções com vários processos e `data_generator` são rejeitadas antes da ingestão das legendas. Para treinamento distribuído, use os diretórios gerados como datasets `image` comuns, um por resolução, com `caption_strategy: "textfile"`, `crop: false`, `resolution_type: "pixel"` e `resolution` igual ao lado menor do bucket. Datasets de legendas sem gerador exigem `dataloader_prefetch=false` para preservar a posição do amostrador nos checkpoints. Alterações nas legendas, resoluções ou topologia do dataset exigem um novo treinamento; reutilizar o cache gerado não torna essas retomadas de checkpoint compatíveis.
+
+Na descoberta local de legendas, a saída gerada deve ficar fora do `instance_data_dir` de origem; diretórios sobrepostos são rejeitados antes da varredura.
+
+```json
+{
+  "id": "assistant-images",
+  "type": "local",
+  "dataset_type": "caption",
+  "instance_data_dir": "data/prompts",
+  "caption_strategy": "textfile",
+  "data_generator": {
+    "batch_size": 2,
+    "resolutions": ["512x512", "768x1024"],
+    "num_inference_steps": 40,
+    "guidance_scale": 1.0,
+    "seed": 42
+  }
+}
+```
 
 ### `default`
 
