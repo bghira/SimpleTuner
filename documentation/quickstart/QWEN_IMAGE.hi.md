@@ -1,4 +1,49 @@
-## Qwen Image क्विकस्टार्ट
+## Qwen Image 2.1
+
+Qwen Image 2.1 अब डिफ़ॉल्ट है (`model_flavour: "v2.1"`) और `Qwen/Qwen-Image-2.1` का उपयोग करता है। इसमें 32 ब्लॉक वाला transformer, Qwen3-VL टेक्स्ट एन्कोडर और 16× स्थानिक संपीड़न वाला 64-चैनल VAE है।
+
+`qwen_image.peft-lora` उदाहरण `RareConcepts/Domokun` पर 512px में प्रशिक्षण देता है और ट्रिगर `🟫` का उपयोग करता है। BF16 (`base_model_precision: "no_change"`) से शुरू करें और मेमोरी कम होने पर gradient checkpointing का उपयोग करें। उदाहरण में 2.1 के लिए अलग latent और टेक्स्ट कैश हैं; पुराने संस्करणों के कैश दोबारा उपयोग न करें।
+
+```bash
+simpletuner train example=qwen_image.peft-lora
+```
+
+सत्यापन के लिए `validation_guidance: 1.0`, `validation_guidance_real: 1.0` और `validation_num_inference_steps: 40` रखें। यह जाँचने के लिए कि मॉडल ने विषय सीखा है या नहीं, सत्यापन प्रॉम्प्ट में ट्रिगर शामिल करें।
+
+Qwen Image 2.1 एकल छवियों को डिकोड करते समय अनुपयोगी कालिक फीचर कैश नहीं रखता। H200 पर BF16 में एक 2048×2048 छवि को अलग से डिकोड करने पर, इससे आवंटित मेमोरी का पीक 26.87 से घटकर 15.28 GiB हुआ और आउटपुट बिल्कुल समान रहा। टाइल आधारित डिकोडिंग अधिक मेमोरी बचाती है, लेकिन स्थानिक संदर्भ सीमित होने से रंगीन जोड़ दिख सकते हैं; अनुपयोगी कैश हटाने से ये जोड़ ठीक नहीं होते।
+
+पुराने संस्करण उपलब्ध हैं: `v1.0` से Qwen-Image, `v2.0` से Qwen-Image-2512 चुना जाता है और `edit-*` संस्करण अपने मौजूदा checkpoints रखते हैं। इनके adapters और latent कैश 2.1 के साथ अदला-बदली नहीं किए जा सकते।
+
+250-step Domokun recipe throughput मापने का उदाहरण है, भरोसेमंद convergence recipe नहीं। पहले के एक checkpoint ने दोबारा लोड करने पर पहचानने योग्य Domokun बनाया, लेकिन नए 250-step runs वह परिणाम दोहरा नहीं पाए। Padding masks बनाए रखने, compilation बंद करने और पुराने RoPE expression का उपयोग करने वाले controls भी विफल रहे। Cached latents सही विषय में decode होते हैं। Training deterioration का कारण अभी स्पष्ट नहीं है; timing tables अलग attention backends की समान image quality साबित नहीं करतीं।
+
+### VRAM प्रीसेट
+
+इन उदाहरणों में 512px पर BF16, rank-32 LoRA, Optimi Lion और regional compilation उपयोग होते हैं; gradient checkpointing बंद है। पहली बार compilation में समय लगता है, इसलिए warm-up के बाद के training steps की तुलना करें। 24 GB और 32 GB मेमोरी बजट L40S पर जाँचे गए हैं, उन क्षमताओं वाले अलग GPU पर नहीं।
+
+| VRAM बजट | उदाहरण | डेटासेट बैच आकार | पीक VRAM (GiB) | warm-up के बाद step (सेकंड) |
+| --- | --- | --- | --- | --- |
+| 24 GB | `qwen_image-2.1-24g.peft-lora` | 1 | 20.6 | 0.238 |
+| 32 GB | `qwen_image-2.1-32g.peft-lora` | 2 | 26.5 | 0.390 |
+| 48 GB | `qwen_image-2.1-48g.peft-lora` | 2 | 26.5 | 0.390 |
+| 80 GB | `qwen_image-2.1-80g.peft-lora` | 10 | 71.8 | 0.639 |
+| 144 GB | `qwen_image-2.1-144g.peft-lora` | 20 | 128.4 | 1.223 |
+
+L40S (24/32/48 GB प्रीसेट), H100 (80 GB) और H200 (144 GB) पर 20 steps मापे गए; timing से पहले पाँच steps हटाए गए। peak VRAM में तैयारी शामिल है। ये 512px और संबंधित बैच आकार के परिणाम हैं, बड़े चित्रों या लंबे prompts के लिए गारंटी नहीं।
+
+48 GB प्रीसेट भी बैच 2 उपयोग करता है: L40S पर प्रति-चित्र throughput बैच 3, 4 और 5 से बेहतर था। बैच 5, 43.3 GiB में फिट हुआ लेकिन 0.991 सेकंड/step लगा; बैच 2 में 0.390 सेकंड/step लगा।
+
+```bash
+simpletuner train example=qwen_image-2.1-48g.peft-lora
+```
+
+हर उदाहरण के साथ दिया गया डेटासेट फ़ाइल उपयोग करें: उसमें बैच आकार स्पष्ट है। बैच आकार या डेटासेट सेटिंग बदलने पर नया प्रशिक्षण शुरू करें; असंगत training-state checkpoint का पुनः उपयोग न करें।
+
+कम VRAM के लिए `gradient_checkpointing: true` और `gradient_checkpointing_interval: 2` सक्षम करें। अब यह लगातार दो blocks के समूह पर checkpoint लागू करता है। मापी गई तुलना के लिए [Qwen Image 2.1 checkpoint और attention परिणाम](../experimental/SEGMENTED_CHECKPOINTING.hi.md#qwen-image-21) देखें; हर दूसरे block पर checkpoint करने वाला पुराना परिणाम अब लागू नहीं है। इन presets में BF16 फिट होता है और int8 checkpoint आवश्यक नहीं है।
+
+टेक्स्ट-टू-इमेज पथ tensor के मान पर निर्भर sequence assembly से बचता है, जिससे graph break के बिना capture होता है। वास्तविक संख्या वाले RoPE से Inductor normalization और rotation को fuse कर सकता है; modulation, residual और MLP epilogues भी compile होते हैं। इन प्रशिक्षण उदाहरणों में मौजूदा Hopper CuTe ConvRot GEMM और केवल inference के लिए बने LTX RoPE kernels उपयोग नहीं होते।
+
+
+### पुराने Qwen Image की सेटिंग (v1.0 / v2.0)
 
 > 🆕 Edit checkpoints चाहिए? paired‑reference training निर्देशों के लिए [Qwen Image Edit quickstart](./QWEN_EDIT.md) देखें।
 

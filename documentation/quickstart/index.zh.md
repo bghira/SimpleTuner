@@ -33,7 +33,7 @@
 | **Cosmos2** | 2-14B | [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) | 是<sup>9</sup> | [Cosmos2 指南](COSMOS2IMAGE.md) |
 | **Cosmos3** | 4-65B | [OpenMDW 1.1](https://github.com/OpenMDW/openmdw/blob/main/1.1/LICENSE.OpenMDW-1.1) | 是 | [Cosmos3 指南](COSMOS3.zh.md) |
 | **OmniGen** | 3.8B | [MIT](https://opensource.org/license/mit) | 是 | [OmniGen 指南](OMNIGEN.md) |
-| **Qwen Image** | 20B | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 是 | [Qwen 指南](QWEN_IMAGE.md) |
+| **Qwen Image 2.1 / Qwen Image** | 7B / 20B | [Qwen Research](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE) (2.1) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) (旧版) | 2.1：非商业；旧版：是 | [Qwen 指南](QWEN_IMAGE.md) |
 | **LongCat Image** | 6B | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 是 | [LongCat 指南](LONGCAT_IMAGE.md) |
 | **Kandinsky 5** | - | [MIT](https://opensource.org/license/mit) | 是 | [Kandinsky 指南](KANDINSKY5_IMAGE.md) |
 
@@ -125,3 +125,9 @@
 - 图像编辑/条件控制可选 **Flux Kontext**
 - 文生音乐 LoRA 训练可选 **ACE-Step**（v1 与 v1.5）
 - 自回归文本到音频可选 **HeartMuLa**
+
+Qwen Image 2.1 还提供实验性的[纯字幕辅助 LoRA 配方](QWEN_IMAGE.md#assistant-lora)。
+
+[四种基础分辨率的辅助 LoRA 实验](QWEN_IMAGE.md#assistant-lora-multires)在每种基础分辨率上进行宽高比分桶，并使用新的适配器运行；L40S 高分辨率显存验证尚未完成。
+
+如需复用训练目标，可使用[预生成图像辅助 LoRA 配方](QWEN_IMAGE.md#assistant-lora-offline)。

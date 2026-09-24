@@ -1,4 +1,49 @@
-## Qwen Image クイックスタート
+## Qwen Image 2.1
+
+Qwen Image 2.1 がデフォルトです（`model_flavour: "v2.1"`）。`Qwen/Qwen-Image-2.1` を使用し、32 ブロックの Transformer、Qwen3-VL テキストエンコーダー、空間圧縮率 16 倍の 64 チャンネル VAE を備えています。
+
+`qwen_image.peft-lora` の例は `RareConcepts/Domokun` を 512px で学習し、トリガーに `🟫` を使います。まず BF16（`base_model_precision: "no_change"`）を使用し、メモリが不足する場合は勾配チェックポイントを有効にしてください。2.1 専用の潜在表現とテキストのキャッシュを使用するため、旧バージョンのキャッシュを再利用しないでください。
+
+```bash
+simpletuner train example=qwen_image.peft-lora
+```
+
+検証には `validation_guidance: 1.0`、`validation_guidance_real: 1.0`、`validation_num_inference_steps: 40` を使用します。検証プロンプトにもトリガーを含め、対象を学習できたか確認してください。
+
+Qwen Image 2.1 は、使われない時間方向の特徴キャッシュを保持せずに単一画像をデコードします。H200 上で BF16 を用いて 2048×2048 の画像を 1 枚単独でデコードした測定では、出力を完全に維持しながら、割り当てメモリのピークが 26.87 GiB から 15.28 GiB に減りました。タイルデコードはさらにメモリを節約しますが、空間的な文脈が制限されるため色の継ぎ目が生じる場合があります。未使用キャッシュの削除では、この継ぎ目は解消しません。
+
+旧バージョンも引き続き利用できます。`v1.0` は Qwen-Image、`v2.0` は Qwen-Image-2512 を選択し、`edit-*` は従来のチェックポイントを使用します。これらのアダプターと潜在表現キャッシュは 2.1 と互換性がありません。
+
+250 step の Domokun 設定はスループット測定用であり、安定した収束を保証するレシピではありません。以前の checkpoint は再ロード後に認識可能な Domokun を生成しましたが、新規の 250 step 学習では再現できませんでした。padding mask の保持、コンパイルの無効化、以前の RoPE 式への復元でも改善しませんでした。キャッシュ latent のデコードでは正しい被写体を確認しています。学習品質低下の原因は未解決で、時間の表は attention backend 間の画質の同等性を示すものではありません。
+
+### VRAM プリセット
+
+これらの例は 512px、BF16、rank-32 LoRA、Optimi Lion、リージョナルコンパイルを使用し、勾配チェックポイントは無効です。初回はコンパイル時間が必要なので、ウォームアップ後の学習ステップを比較してください。24 GB と 32 GB のメモリ予算は L40S で確認しており、各容量の別 GPU での測定ではありません。
+
+| VRAM 予算 | 例 | データセットのバッチサイズ | ピーク VRAM (GiB) | ウォーム後のステップ (秒) |
+| --- | --- | --- | --- | --- |
+| 24 GB | `qwen_image-2.1-24g.peft-lora` | 1 | 20.6 | 0.238 |
+| 32 GB | `qwen_image-2.1-32g.peft-lora` | 2 | 26.5 | 0.390 |
+| 48 GB | `qwen_image-2.1-48g.peft-lora` | 2 | 26.5 | 0.390 |
+| 80 GB | `qwen_image-2.1-80g.peft-lora` | 10 | 71.8 | 0.639 |
+| 144 GB | `qwen_image-2.1-144g.peft-lora` | 20 | 128.4 | 1.223 |
+
+L40S（24/32/48 GB プリセット）、H100（80 GB）、H200（144 GB）で 20 ステップ測定し、最初の 5 ステップを計時から除外しました。ピーク VRAM は初期化を含みます。512px と各バッチサイズでの結果であり、大きな画像や長いプロンプトで同じ使用量を保証するものではありません。
+
+48 GB プリセットもバッチサイズ 2 を使用します。L40S では画像あたりのスループットがバッチ 3、4、5 より良好でした。バッチ 5 は 43.3 GiB に収まり 0.991 秒/ステップ、バッチ 2 は 0.390 秒/ステップでした。
+
+```bash
+simpletuner train example=qwen_image-2.1-48g.peft-lora
+```
+
+各例に付属する、バッチサイズが明示されたデータセットファイルを使用してください。バッチサイズやデータセット設定を変更する場合は新しい学習を開始し、互換性のない学習状態チェックポイントを再利用しないでください。
+
+VRAM を減らすには `gradient_checkpointing: true` と `gradient_checkpointing_interval: 2` を設定します。現在は連続する2つの block を1組として checkpoint します。実測の比較は [Qwen Image 2.1 の checkpoint と attention 測定](../experimental/SEGMENTED_CHECKPOINTING.ja.md#qwen-image-21)を参照してください。以前の1つおきの block を対象にした測定は旧方式の結果です。これらのプリセットは int8 checkpoint を使わず BF16 で収まります。
+
+文から画像への経路では、テンソルの値に依存するシーケンス構築を避け、グラフブレークなしでキャプチャできます。実数 RoPE により Inductor が正規化と回転を融合し、変調・残差・MLP の後処理もコンパイルします。既存の Hopper CuTe ConvRot GEMM と推論専用 LTX RoPE カーネルは、これらの学習例では使用しません。
+
+
+### 旧版 Qwen Image の設定（v1.0 / v2.0）
 
 > 🆕 edit チェックポイントを探していますか？ 参照ペア学習の手順は [Qwen Image Edit quickstart](./QWEN_EDIT.md) を参照してください。
 

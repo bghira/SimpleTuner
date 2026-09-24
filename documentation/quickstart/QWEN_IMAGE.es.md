@@ -1,4 +1,49 @@
-## Guía rápida de Qwen Image
+## Qwen Image 2.1
+
+Qwen Image 2.1 es la variante predeterminada (`model_flavour: "v2.1"`) y utiliza `Qwen/Qwen-Image-2.1`. Tiene un transformer de 32 bloques, un codificador de texto Qwen3-VL y un VAE de 64 canales con compresión espacial de 16×.
+
+El ejemplo `qwen_image.peft-lora` entrena con `RareConcepts/Domokun` a 512px y usa el activador `🟫`. Empieza con BF16 (`base_model_precision: "no_change"`) y activa los checkpoints de gradientes cuando falte memoria. El ejemplo utiliza cachés de latentes y texto exclusivos de 2.1; no reutilices cachés de variantes anteriores.
+
+```bash
+simpletuner train example=qwen_image.peft-lora
+```
+
+Para la validación, usa `validation_guidance: 1.0`, `validation_guidance_real: 1.0` y `validation_num_inference_steps: 40`. Mantén el activador en los prompts de validación para comprobar si se ha aprendido el concepto.
+
+Qwen Image 2.1 decodifica imágenes individuales sin conservar cachés temporales de características que no se utilizan. Al decodificar una imagen de 2048×2048 de forma aislada en H200 con BF16, esto redujo el pico de memoria asignada de 26.87 a 15.28 GiB con una salida idéntica. La decodificación por bloques ahorra más memoria, pero puede introducir líneas de color al limitar el contexto espacial; eliminar los cachés sin uso no corrige esas líneas.
+
+Las variantes anteriores siguen disponibles: `v1.0` selecciona Qwen-Image, `v2.0` selecciona Qwen-Image-2512 y las variantes `edit-*` conservan sus checkpoints. Sus adaptadores y cachés de latentes no son intercambiables con los de 2.1.
+
+La receta Domokun de 250 steps sirve para medir throughput, no como receta de convergencia fiable. Un checkpoint anterior generó Domokun reconocible tras recargarlo, pero nuevas ejecuciones de 250 steps no reprodujeron el resultado. Los controles conservando máscaras de padding, desactivando compilación y restaurando la expresión RoPE anterior también fallaron. Los latentes en caché decodifican el personaje correcto. La causa del deterioro sigue sin resolverse; las tablas de tiempos no demuestran calidad equivalente entre backends de atención.
+
+### Configuraciones por VRAM
+
+Los ejemplos usan BF16, LoRA de rango 32, Optimi Lion y compilación regional a 512px, sin checkpoint de gradientes. La primera ejecución incluye compilación; compare los pasos tras el calentamiento. Los límites de 24 GB y 32 GB se verificaron en L40S, no en tarjetas separadas de esas capacidades.
+
+| VRAM | Ejemplo | Lote del dataset | Pico de VRAM (GiB) | Paso tras calentamiento (s) |
+| --- | --- | --- | --- | --- |
+| 24 GB | `qwen_image-2.1-24g.peft-lora` | 1 | 20.6 | 0.238 |
+| 32 GB | `qwen_image-2.1-32g.peft-lora` | 2 | 26.5 | 0.390 |
+| 48 GB | `qwen_image-2.1-48g.peft-lora` | 2 | 26.5 | 0.390 |
+| 80 GB | `qwen_image-2.1-80g.peft-lora` | 10 | 71.8 | 0.639 |
+| 144 GB | `qwen_image-2.1-144g.peft-lora` | 20 | 128.4 | 1.223 |
+
+Medido en L40S (configuraciones de 24/32/48 GB), H100 (80 GB) y H200 (144 GB), con 20 pasos y los cinco primeros excluidos del tiempo. El pico de VRAM incluye la preparación. Son resultados a 512px para cada lote, no garantías para imágenes mayores o prompts más largos.
+
+La configuración de 48 GB también usa lote 2: en L40S logró mejor rendimiento por imagen que los lotes 3, 4 y 5. El lote 5 cabía en 43.3 GiB pero tardó 0.991 s/paso, frente a 0.390 s/paso con lote 2.
+
+```bash
+simpletuner train example=qwen_image-2.1-48g.peft-lora
+```
+
+Use el archivo de dataset incluido con cada ejemplo: su tamaño de lote es explícito. Inicie un entrenamiento nuevo al cambiar el lote o la configuración del dataset; no reutilice un checkpoint de estado incompatible.
+
+Para reducir la VRAM, activa `gradient_checkpointing: true` y `gradient_checkpointing_interval: 2`. Ahora esto aplica checkpoint a grupos de dos bloques contiguos. Consulta las [mediciones de checkpoint y atención de Qwen Image 2.1](../experimental/SEGMENTED_CHECKPOINTING.es.md#qwen-image-21); el resultado anterior con bloques alternos ha quedado sustituido. BF16 cabe en estos presets sin un checkpoint int8.
+
+La ruta de texto a imagen evita construir secuencias con control dependiente de valores de tensores, permitiendo captura sin cortes de grafo. RoPE con aritmética real permite que Inductor fusione normalización y rotación; también se compilan los epílogos de modulación, residual y MLP. Estos ejemplos de entrenamiento no usan los kernels existentes de GEMM CuTe ConvRot para Hopper ni de RoPE de LTX solo para inferencia.
+
+
+### Configuración de Qwen Image anterior (v1.0 / v2.0)
 
 > 🆕 ¿Buscas los checkpoints de edición? Consulta la [guía rápida de Qwen Image Edit](./QWEN_EDIT.md) para instrucciones de entrenamiento con referencia emparejada.
 

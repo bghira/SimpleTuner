@@ -59,6 +59,10 @@ simpletuner configure config/foo/config.json
 - **内容**: どのモデルアーキテクチャを学習するかを指定します。
 - **選択肢**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
 
+### `--model_flavour`
+
+`--model_family` 内のチェックポイントの種類を選択します。`qwen_image` の既定値は `v2.1`（`Qwen/Qwen-Image-2.1`）です。旧アーキテクチャを学習する場合は `v1.0`、`v2.0`、または既存の `edit-*` を明示してください。アダプター、埋め込みキャッシュ、潜在キャッシュは 2.1 と互換性がありません。[Qwen Image クイックスタート](quickstart/QWEN_IMAGE.ja.md) を参照してください。
+
 ### `--lora_format`
 
 - **内容**: LoRA チェックポイントの load/save 形式を選択します。
@@ -394,7 +398,7 @@ simpletuner configure config/foo/config.json
 ### `--gradient_checkpointing_interval`
 
 - **内容**: transformer block checkpointing のモデル依存 interval です。1 は `--gradient_checkpointing` を有効にした状態とほぼ同じです。
-- **注記**: Flux、Flux.2、Krea 2、LTXVideo2、MageFlow、Z-Image、Wan は whole-block path で連続した *n* block chunk を使います。このオプションを持つ他の family は、従来の「*n* block ごとに checkpoint」挙動のままの場合があります。値を大きくすると再計算 overhead は減ることがありますが、通常は VRAM に残る activation が増えます。
+- **注記**: Flux、Flux.2、Krea 2、LTXVideo2、MageFlow、Qwen Image 2.1、Z-Image、Wan は whole-block path で連続した *n* block chunk を使います。このオプションを持つ他の family は、従来の「*n* block ごとに checkpoint」挙動のままの場合があります。連続グループを大きくすると保存する境界状態は減りますが、checkpoint 内の block は再計算します。速度とピークメモリのトレードオフを測定してください。[Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.ja.md#qwen-image-21) を参照。
 
 ### `--gradient_checkpointing_segment_stride`
 

@@ -59,6 +59,10 @@ simpletuner configure config/foo/config.json
 - **What**: यह निर्धारित करता है कि कौन‑सा model architecture train किया जा रहा है।
 - **Choices**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
 
+### `--model_flavour`
+
+`--model_family` के भीतर checkpoint का प्रकार चुनता है। `qwen_image` के लिए डिफ़ॉल्ट `v2.1` (`Qwen/Qwen-Image-2.1`) है। पुराने आर्किटेक्चर को प्रशिक्षित करने के लिए `v1.0`, `v2.0` या मौजूदा `edit-*` प्रकार स्पष्ट रूप से सेट करें; adapters और embedding/latent कैश 2.1 के साथ अदला-बदली नहीं किए जा सकते। [Qwen Image quickstart](quickstart/QWEN_IMAGE.hi.md) देखें।
+
 ### `--lora_format`
 
 - **What**: load/save के लिए LoRA checkpoint key format चुनता है।
@@ -393,7 +397,7 @@ simpletuner configure config/foo/config.json
 ### `--gradient_checkpointing_interval`
 
 - **What**: Transformer block checkpointing के लिए model-dependent interval। 1 का मान लगभग `--gradient_checkpointing` enabled जैसा है।
-- **Note**: Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Z-Image, और Wan whole-block paths पर *n* contiguous block chunks use करते हैं। इस option को expose करने वाली दूसरी families अभी भी पुराने "हर *n*-th block checkpoint" behavior का उपयोग कर सकती हैं। Higher values recompute overhead घटा सकती हैं, लेकिन आम तौर पर VRAM में ज्यादा activations रखती हैं।
+- **Note**: Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Qwen Image 2.1, Z-Image, और Wan whole-block paths पर *n* contiguous block chunks use करते हैं। इस option को expose करने वाली दूसरी families अभी भी पुराने "हर *n*-th block checkpoint" behavior का उपयोग कर सकती हैं। बड़े contiguous groups कम boundary states सहेजते हैं, लेकिन checkpoint किए गए blocks फिर भी recompute होते हैं। गति और peak memory का संतुलन मापें; [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.hi.md#qwen-image-21) देखें।
 
 ### `--gradient_checkpointing_segment_stride`
 

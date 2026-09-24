@@ -13,7 +13,13 @@ import torch.nn.functional as F
 from diffusers import AutoencoderKLQwenImage
 from diffusers.models.attention_processor import Attention
 from PIL import Image
-from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2Tokenizer, Qwen2VLProcessor
+from transformers import (
+    Qwen2_5_VLForConditionalGeneration,
+    Qwen2Tokenizer,
+    Qwen2VLProcessor,
+    Qwen3VLForConditionalGeneration,
+    Qwen3VLProcessor,
+)
 
 from simpletuner.helpers.acceleration import (
     AccelerationBackend,
@@ -31,13 +37,16 @@ from simpletuner.helpers.models.common import (
     PredictionTypes,
     TextEmbedCacheKey,
 )
+from simpletuner.helpers.models.qwen_image.autoencoder_21 import AutoencoderKLQwenImage21
 from simpletuner.helpers.models.qwen_image.pipeline import QwenImageEditPipeline, QwenImagePipeline
+from simpletuner.helpers.models.qwen_image.pipeline_21 import QwenImage21Pipeline
 from simpletuner.helpers.models.qwen_image.pipeline_edit_plus import (
     CONDITION_IMAGE_SIZE,
     VAE_IMAGE_SIZE,
     QwenImageEditPlusPipeline,
 )
 from simpletuner.helpers.models.qwen_image.transformer import QwenImageTransformer2DModel
+from simpletuner.helpers.models.qwen_image.transformer_21 import QwenImage21FlexAttnProcessor, QwenImage21Transformer2DModel
 from simpletuner.helpers.models.tae.types import VideoTAESpec
 from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaults
 from simpletuner.helpers.training.multi_process import _get_rank
@@ -79,10 +88,11 @@ class QwenImage(ImageModelFoundation):
     ZERO_COND_T_FLAVOURS = frozenset({"edit-v2+", "edit-v3"})
 
     # Default model flavor
-    DEFAULT_MODEL_FLAVOUR = "v2.0"
+    DEFAULT_MODEL_FLAVOUR = "v2.1"
     HUGGINGFACE_PATHS = {
         "v1.0": "Qwen/Qwen-Image",
         "v2.0": "Qwen/Qwen-Image-2512",
+        "v2.1": "Qwen/Qwen-Image-2.1",
         "edit-v1": "Qwen/Qwen-Image-Edit",
         "edit-v2": "Qwen/Qwen-Image-Edit-2509",
         "edit-v2+": "Qwen/Qwen-Image-Edit-2509",
@@ -90,7 +100,7 @@ class QwenImage(ImageModelFoundation):
     }
     MODEL_LICENSE = "other"
 
-    ASSISTANT_LORA_FLAVOURS = ["v2.0"]
+    ASSISTANT_LORA_FLAVOURS = ["v2.0", "v2.1"]
     ASSISTANT_LORA_PATH = ""
     ASSISTANT_LORA_WEIGHT_NAME = "pytorch_lora_weights.safetensors"
 
@@ -112,6 +122,8 @@ class QwenImage(ImageModelFoundation):
 
     @classmethod
     def max_swappable_blocks(cls, config=None) -> Optional[int]:
+        if (cls._resolve_flavour_from_source(config) or cls.DEFAULT_MODEL_FLAVOUR) == "v2.1":
+            return 31
         # Qwen-Image has 60 transformer blocks
         # Leave at least 1 block on GPU
         return 59
@@ -130,7 +142,7 @@ class QwenImage(ImageModelFoundation):
                 backend=AccelerationBackend.RAMTORCH,
                 level="light",
                 name="RamTorch - Light",
-                description="Streams 15 of 60 transformer blocks (~25%).",
+                description="Streams 8 transformer blocks.",
                 tab="basic",
                 tradeoff_vram="Reduces VRAM by ~22%",
                 tradeoff_speed="Increases training time by ~15%",
@@ -139,14 +151,14 @@ class QwenImage(ImageModelFoundation):
                 config={
                     **_base_memory_config,
                     "ramtorch": True,
-                    "ramtorch_target_modules": "transformer_blocks.0.*,transformer_blocks.1.*,transformer_blocks.2.*,transformer_blocks.3.*,transformer_blocks.4.*,transformer_blocks.5.*,transformer_blocks.6.*,transformer_blocks.7.*,transformer_blocks.8.*,transformer_blocks.9.*,transformer_blocks.10.*,transformer_blocks.11.*,transformer_blocks.12.*,transformer_blocks.13.*,transformer_blocks.14.*",
+                    "ramtorch_target_modules": ",".join(f"transformer_blocks.{index}.*" for index in range(8)),
                 },
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.RAMTORCH,
                 level="balanced",
                 name="RamTorch - Balanced",
-                description="Streams 30 of 60 transformer blocks (~50%).",
+                description="Streams 16 transformer blocks.",
                 tab="basic",
                 tradeoff_vram="Reduces VRAM by ~45%",
                 tradeoff_speed="Increases training time by ~30%",
@@ -155,14 +167,14 @@ class QwenImage(ImageModelFoundation):
                 config={
                     **_base_memory_config,
                     "ramtorch": True,
-                    "ramtorch_target_modules": "transformer_blocks.0.*,transformer_blocks.1.*,transformer_blocks.2.*,transformer_blocks.3.*,transformer_blocks.4.*,transformer_blocks.5.*,transformer_blocks.6.*,transformer_blocks.7.*,transformer_blocks.8.*,transformer_blocks.9.*,transformer_blocks.10.*,transformer_blocks.11.*,transformer_blocks.12.*,transformer_blocks.13.*,transformer_blocks.14.*,transformer_blocks.15.*,transformer_blocks.16.*,transformer_blocks.17.*,transformer_blocks.18.*,transformer_blocks.19.*,transformer_blocks.20.*,transformer_blocks.21.*,transformer_blocks.22.*,transformer_blocks.23.*,transformer_blocks.24.*,transformer_blocks.25.*,transformer_blocks.26.*,transformer_blocks.27.*,transformer_blocks.28.*,transformer_blocks.29.*",
+                    "ramtorch_target_modules": ",".join(f"transformer_blocks.{index}.*" for index in range(16)),
                 },
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.RAMTORCH,
                 level="aggressive",
                 name="RamTorch - Aggressive",
-                description="Streams all transformer blocks (60 of 60).",
+                description="Streams all transformer blocks.",
                 tab="basic",
                 tradeoff_vram="Reduces VRAM by ~85%",
                 tradeoff_speed="Increases training time by ~75%",
@@ -179,37 +191,37 @@ class QwenImage(ImageModelFoundation):
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
                 level="light",
                 name="Block Swap - Light",
-                description="Swaps 15 of 60 blocks (~25%).",
+                description="Swaps 8 transformer blocks.",
                 tab="basic",
                 tradeoff_vram="Reduces VRAM by ~22%",
                 tradeoff_speed="Increases training time by ~15%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={**_base_memory_config, "musubi_blocks_to_swap": 15},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 8},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
                 level="balanced",
                 name="Block Swap - Balanced",
-                description="Swaps 30 of 60 blocks (~50%).",
+                description="Swaps 16 transformer blocks.",
                 tab="basic",
                 tradeoff_vram="Reduces VRAM by ~45%",
                 tradeoff_speed="Increases training time by ~35%",
                 tradeoff_notes="Requires 64GB+ system RAM.",
                 requires_min_system_ram_gb=64,
-                config={**_base_memory_config, "musubi_blocks_to_swap": 30},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 16},
             ),
             AccelerationPreset(
                 backend=AccelerationBackend.MUSUBI_BLOCK_SWAP,
                 level="aggressive",
                 name="Block Swap - Aggressive",
-                description="Swaps 50 of 60 blocks (~83%).",
+                description="Swaps 28 transformer blocks.",
                 tab="basic",
                 tradeoff_vram="Reduces VRAM by ~75%",
                 tradeoff_speed="Increases training time by ~65%",
                 tradeoff_notes="Requires 128GB+ system RAM.",
                 requires_min_system_ram_gb=128,
-                config={**_base_memory_config, "musubi_blocks_to_swap": 50},
+                config={**_base_memory_config, "musubi_blocks_to_swap": 28},
             ),
             # DeepSpeed presets (multi-GPU only)
             *get_deepspeed_presets(_base_memory_config),
@@ -227,7 +239,25 @@ class QwenImage(ImageModelFoundation):
         super().__init__(config, accelerator)
         self.vae_scale_factor = 8
         pipeline_classes = dict(self.PIPELINE_CLASSES)
-        if self._is_edit_v1_flavour():
+        if self._get_model_flavour() == "v2.1":
+            self.SUPPORTS_MUON_CLIP = False
+            self.MODEL_CLASS = QwenImage21Transformer2DModel
+            self.AUTOENCODER_CLASS = AutoencoderKLQwenImage21
+            self.LATENT_CHANNEL_COUNT = 64
+            self.VALIDATION_PREVIEW_SPEC = None
+            self.vae_scale_factor = 16
+            self.TEXT_ENCODER_CONFIGURATION = {
+                "text_encoder": {
+                    "name": "Qwen3-VL",
+                    "tokenizer": Qwen2Tokenizer,
+                    "tokenizer_subfolder": "processor",
+                    "model": Qwen3VLForConditionalGeneration,
+                    "subfolder": "text_encoder",
+                }
+            }
+            self.PROCESSOR_CLASS = Qwen3VLProcessor
+            pipeline_classes[PipelineTypes.TEXT2IMG] = QwenImage21Pipeline
+        elif self._is_edit_v1_flavour():
             pipeline_classes[PipelineTypes.TEXT2IMG] = self.EDIT_PIPELINE_CLASS
         elif self._is_edit_v2_plus_flavour() or self._is_edit_v2_flavour():
             # edit-v2+, edit-v3, and edit-v2 use the same pipeline
@@ -401,7 +431,20 @@ class QwenImage(ImageModelFoundation):
 
     def post_model_load_setup(self):
         super().post_model_load_setup()
+        if self._get_model_flavour() == "v2.1" and getattr(self.config, "attention_mechanism", None) in {
+            "flex",
+            "flex-attn",
+        }:
+            self.unwrap_model(model=self.model).set_attn_processor(QwenImage21FlexAttnProcessor())
         self._maybe_load_assistant_lora()
+
+    def get_lora_save_layers(self):
+        layers = list(super().get_lora_save_layers() or [])
+        if self._get_model_flavour() == "v2.1":
+            component = self.get_trained_component(unwrap_model=True)
+            if component.time_text_embed.delta_timestep_embedder is not None:
+                layers.append("time_text_embed.delta_timestep_embedder")
+        return layers or None
 
     def _assistant_lora_weight_for_flavour(self):
         weight_map = getattr(self, "ASSISTANT_LORA_WEIGHT_NAMES", None) or {}
@@ -427,7 +470,7 @@ class QwenImage(ImageModelFoundation):
         weight_name = getattr(self.config, "assistant_lora_weight_name", None) or self._assistant_lora_weight_for_flavour()
         loaded = load_assistant_adapter(
             transformer=self.unwrap_model(model=self.model),
-            pipeline_cls=QwenImagePipeline,
+            pipeline_cls=self.PIPELINE_CLASSES[PipelineTypes.TEXT2IMG],
             lora_path=assistant_path,
             adapter_name=self.assistant_adapter_name,
             low_cpu_mem_usage=getattr(self.config, "low_cpu_mem_usage", False),
@@ -544,7 +587,12 @@ class QwenImage(ImageModelFoundation):
         if prompt_image_tensor is not None:
             encode_kwargs["image"] = prompt_image_tensor
 
-        prompt_embeds, prompt_embeds_mask = pipeline.encode_prompt(prompts, **encode_kwargs)
+        if self._get_model_flavour() == "v2.1":
+            prompt_embeds, prompt_embeds_mask, _ = pipeline.encode_prompt(prompts, **encode_kwargs)
+            if prompt_embeds_mask is None:
+                prompt_embeds_mask = torch.ones(prompt_embeds.shape[:2], device=prompt_embeds.device, dtype=torch.long)
+        else:
+            prompt_embeds, prompt_embeds_mask = pipeline.encode_prompt(prompts, **encode_kwargs)
 
         return prompt_embeds, prompt_embeds_mask
 
@@ -784,6 +832,13 @@ class QwenImage(ImageModelFoundation):
         }
 
     def collate_prompt_embeds(self, text_encoder_output: list) -> dict:
+        collated = self._collate_qwen_prompt_embeds(text_encoder_output)
+        mask = collated.get("attention_masks")
+        if self._get_model_flavour() == "v2.1" and mask is not None and bool(mask.all()):
+            collated["attention_masks"] = None
+        return collated
+
+    def _collate_qwen_prompt_embeds(self, text_encoder_output: list) -> dict:
         """
         Collate prompt embeddings for Qwen models.
 
@@ -1225,6 +1280,8 @@ class QwenImage(ImageModelFoundation):
         return hidden_states_buffer.get(f"layer_{int(capture_layer)}")
 
     def _model_predict_standard(self, prepared_batch):
+        if self._get_model_flavour() == "v2.1":
+            return self._model_predict_21(prepared_batch)
         latent_model_input = prepared_batch["noisy_latents"]
         target_latents = prepared_batch["latents"]
         hidden_states_buffer = self._new_hidden_state_buffer()
@@ -1341,6 +1398,45 @@ class QwenImage(ImageModelFoundation):
         return {
             "model_prediction": noise_pred,
             "crepa_hidden_states": crepa_hidden,
+            "hidden_states_buffer": hidden_states_buffer,
+        }
+
+    def _model_predict_21(self, prepared_batch):
+        latents = prepared_batch["noisy_latents"]
+        hidden_states_buffer = self._new_hidden_state_buffer()
+        batch_size, channels, height, width = latents.shape
+        prompt_embeds = prepared_batch["prompt_embeds"].to(self.accelerator.device, self.config.weight_dtype)
+        prompt_mask = prepared_batch.get("encoder_attention_mask")
+        if prompt_mask is not None:
+            prompt_mask = prompt_mask.to(device=self.accelerator.device, dtype=torch.bool)
+            if prompt_mask.ndim == 3:
+                prompt_mask = prompt_mask.squeeze(1)
+        packed = latents.flatten(2).transpose(1, 2).to(self.accelerator.device, self.config.weight_dtype)
+        image_mask = torch.cat(
+            [
+                torch.zeros(batch_size, prompt_embeds.shape[1], dtype=torch.bool, device=packed.device),
+                torch.ones(batch_size, height * width // 4, dtype=torch.bool, device=packed.device),
+            ],
+            dim=1,
+        )
+        flowmap_kwargs = self._get_flowmap_r_timestep_forward_kwargs(prepared_batch)
+        if "r_timestep" in flowmap_kwargs:
+            flowmap_kwargs["r_timestep"] = self._prepare_model_predict_timesteps(flowmap_kwargs["r_timestep"], batch_size)
+        prediction = self.model(
+            hidden_states=packed,
+            encoder_hidden_states=prompt_embeds,
+            encoder_hidden_states_mask=prompt_mask,
+            timestep=self._prepare_model_predict_timesteps(prepared_batch["timesteps"], batch_size),
+            img_shapes=[[(1, height, width)]] * batch_size,
+            img_mask=image_mask,
+            return_dict=False,
+            hidden_states_buffer=hidden_states_buffer,
+            **flowmap_kwargs,
+        )[0][:, -height * width :]
+        prediction = prediction.transpose(1, 2).reshape(batch_size, channels, height, width)
+        return {
+            "model_prediction": prediction,
+            "crepa_hidden_states": self._select_crepa_hidden_states(prepared_batch, hidden_states_buffer),
             "hidden_states_buffer": hidden_states_buffer,
         }
 
@@ -1736,6 +1832,8 @@ class QwenImage(ImageModelFoundation):
         Pre-encode transform for the sample before passing it to the VAE.
         Qwen Image VAE expects 5D input (adds frame dimension).
         """
+        if self._get_model_flavour() == "v2.1" and sample.shape[1] == 3:
+            sample = torch.cat([sample, torch.ones_like(sample[:, :1])], dim=1)
         # Add frame dimension for Qwen VAE if needed
         if sample.dim() == 4:
             sample = sample.unsqueeze(2)  # (B, C, H, W) -> (B, C, 1, H, W)
@@ -1802,7 +1900,8 @@ class QwenImage(ImageModelFoundation):
 
             # Estimate spatial size: assume square aspect ratio for validation
             # num_tokens = (H/2) * (W/2), so H = W = sqrt(num_tokens) * 2
-            estimated_side = int(math.sqrt(num_tokens)) * 2
+            patch_size = 1 if self._get_model_flavour() == "v2.1" else 2
+            estimated_side = int(math.sqrt(num_tokens)) * patch_size
             pixel_height = estimated_side * self.vae_scale_factor
             pixel_width = estimated_side * self.vae_scale_factor
 

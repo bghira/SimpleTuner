@@ -2,7 +2,7 @@
 
 Segmented checkpointing is the middle gear between checkpointing every block and checkpointing nothing.
 
-It uses PyTorch's activation checkpointing backend. SimpleTuner runs a contiguous group of transformer blocks under one checkpoint call, then carries the returned hidden state into the next group. Wider groups recompute less in backward, but keep more activations alive.
+It uses PyTorch's activation checkpointing backend. SimpleTuner runs a contiguous group of transformer blocks under one checkpoint call, then carries the returned hidden state into the next group. Wider groups save fewer boundary states but still recompute the checkpointed blocks during backward; measure the resulting speed and peak-memory tradeoff.
 
 For CPU offload and FFN-only checkpointing, use [Unsloth-style checkpointing](UNSLOTH_CHECKPOINTING.md#controls). The short rule of thumb still lives in [Decision Rule](UNSLOTH_CHECKPOINTING.md#decision-rule).
 
@@ -31,7 +31,7 @@ For finer VRAM control, add a stride:
 
 That checkpoints blocks `0-1`, runs `2-3` normally, checkpoints `4-5`, runs `6-7` normally, and repeats. The stride must be at least the interval; overlapping schedules are not valid.
 
-Supported segmented whole-block paths: Flux.1, Flux.2, HunyuanVideo, Krea 2, LongCat Image, LongCat Video, LTXVideo 0.9, LTXVideo2, Lumina2, MageFlow, MiniMax H3, PixArt, SD3, SanaVideo, Z-Image, ZLab I1, and Wan.
+Supported segmented whole-block paths: Flux.1, Flux.2, HunyuanVideo, Krea 2, LongCat Image, LongCat Video, LTXVideo 0.9, LTXVideo2, Lumina2, MageFlow, MiniMax H3, PixArt, Qwen Image 2.1, SD3, SanaVideo, Z-Image, ZLab I1, and Wan.
 
 Stable Cascade stage C also supports interval and stride control, but it applies the schedule to the UNet Res/Timestep/Attention micro-block sequence instead of transformer whole-block groups.
 
@@ -55,7 +55,7 @@ Do not expect it to help when the peak is mostly trainable weights, optimizer st
 
 ## Benchmarks
 
-Measured with real SimpleTuner examples on single-GPU H100 and L40S pods. Validation and checkpoint saves were disabled, cache preparation was excluded, and first-step compile/setup inside the train loop is excluded when post-warmup timing is available.
+Measured with real SimpleTuner examples on single-GPU H100, H200 and L40S pods. Validation and checkpoint saves were disabled, cache preparation was excluded, and first-step compile/setup inside the train loop is excluded when post-warmup timing is available.
 
 Each measured cell is `post-warmup sec/step / peak VRAM GiB`. Status-only cells mean: `OOM` ran out of GPU memory, `failed` did not reach measured training steps, `unsupported` means that option was not wired for that family, and `not run` means the sweep did not include that combination.
 
@@ -684,9 +684,67 @@ Example: `pixart.lycoris-lokr`. Resolution: 1024x1024.
 | fp8-torchao | seg2-stride4 | 2.827 / 63.27 | OOM |
 | fp8-torchao | seg2-stride4-offload | unsupported | unsupported |
 
+### Qwen Image 2.1
+
+Measured on verified H200 and L40S GPUs with `qwen_image.peft-lora`, Qwen-Image 2.1, Domokun at 512x512, BF16, rank-32 LoRA, Optimi Lion and regional Inductor compilation (`default` mode). Each run has 20 steps; timings exclude the first five. Cells are **seconds/step / peak VRAM GiB**; peaks include component setup.
+
+Runtime: `torch==2.11.0+cu128`, `diffusers==0.40.0`; 10 text tokens and 1024 image tokens. Component setup dominates some batch-1 memory peaks.
+
+#### BF16 checkpoint schedules
+
+`none` disables checkpointing. `layer` checkpoints each block. `interval2` checkpoints contiguous pairs `0–1, 2–3, …`; `seg2-stride4` checkpoints `0–1`, retains activations for `2–3`, and repeats. Grouped execution requires no block swapping, hidden-state capture or KV cache; those paths retain per-block interval/stride scheduling. Attention activation offload (`activation-offload`, `seg2-stride4-offload`) is unsupported. BF16 fits, so quantization was not included in this 2.1 sweep.
+
+| Mode | H200, batch 1 | H200, batch 20 | L40S, batch 1 |
+| --- | ---: | ---: | ---: |
+| `none` | 0.081 / 20.99 | 1.223 / 128.42 | 0.238 / 20.64 |
+| `layer` | 0.206 / 17.69 | 1.773 / 24.19 | 0.368 / 17.60 |
+| `interval2` | 0.190 / 17.69 | 1.761 / 25.14 | 0.371 / 17.60 |
+| `seg2-stride4` | 0.116 / 17.77 | 1.490 / 73.26 | 0.290 / 17.60 |
+
+#### Attention backends
+
+Attention comparisons disable checkpointing. The default native SDPA selected cuDNN on H200 and PyTorch Flash SDPA on L40S. Qwen 2.1 uses causal text attention and noncausal target-image attention over all valid keys. Equal, unpadded prompt lengths do **not** require varlen. FlashAttention paths currently require unpadded text-to-image prompts; use native SDPA or FlexAttention for padded prompts or interleaved conditioning. A padding-only varlen mask cannot preserve the latter causal structure.
+
+| `attention_mechanism` | H200, batch 1 | H200, batch 20 | L40S, batch 1 |
+| --- | ---: | ---: | ---: |
+| `native` | 0.081 / 20.99 | 1.223 / 128.42 | 0.238 / 20.64 |
+| `native-flash` | 0.080 / 20.98 | 1.278 / 128.40 | 0.238 / 20.63 |
+| `native-efficient` | not run | not run | 0.259 / 20.75 |
+| `flash-attn-hub` | not run | not run | 0.238 / 20.75 |
+| `flash-attn-3-hub` | 0.094 / 20.98 | 1.215 / 128.40 | not run |
+| `flash-attn-3-varlen-hub` | 0.096 / 20.97 | 1.216 / 128.44 | not run |
+| `flex` | 0.100 / 20.92 | 1.314 / 134.45 | 0.271 / 20.70 |
+| `flash-attn-4-hub` | failed | failed | not run |
+| `cudnn` | failed | not run | not run |
+
+The uniform-length varlen metadata helper is vendored from upstream Diffusers: lengths come from shapes and cumulative offsets use `arange`, removing the released helper’s GPU `.item()` synchronizations and graph breaks. Redundant all-valid masks are removed during collation. Forward/gradient equivalence and graph capture are checked separately from timing.
+
+Forcing `attention_mechanism: "cudnn"` failed in PyTorch 2.11 Inductor with `CantSplit`; automatic native SDPA still used cuDNN successfully. FA4 Hub failed to load with `nvidia-cutlass-dsl==4.7.1`: `cutlass.cute.core.ThrMma` is missing, so no timing is available. Hub backends use `trust_remote_code: true`. FA3 is a Hopper backend; it is not an L40S option ([upstream support](https://github.com/Dao-AILab/flash-attention#flashattention-3-beta-release)).
+
+#### H200 batch scaling
+
+On the same H200, native SDPA took **0.612 s at batch 10** and **1.223 s at batch 20**, or about **16.35 images/s** in both cases. Doubling the batch doubled the work after throughput had plateaued. The 144 GB preset keeps checkpointing disabled; its larger batch uses the extra capacity without promising higher images/s.
+
+| Batch | Seconds/step | Images/s | Peak GiB |
+| ---: | ---: | ---: | ---: |
+| 1 | 0.081 | 12.38 | 20.99 |
+| 10 | 0.612 | 16.35 | 71.85 |
+| 20 | 1.223 | 16.35 | 128.42 |
+H100 with the same updated native attention path took **0.639 s/step at batch 10**, with **71.83 GiB** peak VRAM and checkpointing disabled.
+
+<!-- qwen21-verification -->
+
+A full-transformer check on cached Domokun inputs found identical FP32 outputs with and without the redundant mask; relative gradient L2 error was `1.97e-6`. BF16 backends are not numerically interchangeable: on this single batch, aggregate LoRA-gradient cosine against FP32 was about 0.92–0.93 for native SDPA and 0.80 for FA3. These are numerical diagnostics, not convergence comparisons.
+
+The H200 batch-20 trace had kernels active for 93.1% of the captured interval. GEMMs accounted for 70.5% of kernel time and attention for 9.7%; Inductor already fused normalization/RoPE and pointwise epilogues. The largest idle gaps were around batch preparation. Kernel active time is not SM occupancy, and profiler timings are excluded from the throughput tables.
+
+Prefetching was slower for this 27-image dataset at batch 20: with queue length 2, host prefetch averaged 2.030 s/step and device prefetch (1 MiB threshold) 2.036 s/step, versus 1.223 s without prefetch. Both had periodic roughly 3-second steps despite medians near 1.17 s; the presets leave prefetch disabled.
+
+The 250-step Domokun recipe is a throughput example, not a reliable convergence recipe. An earlier checkpoint produced recognizable Domokun images after reloading, but fresh 250-step runs did not reproduce that result. Controls retaining padding masks, disabling compilation, and restoring the earlier RoPE expression also failed. Cached latents decode to the correct subject. The cause of the training deterioration remains unresolved; the timing tables do not establish comparable image quality across attention backends.
+
 ### Qwen Image
 
-Example: `qwen_image.peft-lora`. Resolution: 1024x1024.
+Historical Qwen-Image 1.0 measurements (`model_flavour: "v1.0"`), using the earlier `qwen_image.peft-lora` example at 1024x1024. The example now selects 2.1. The nearly identical interval/stride rows below do not establish that distinct checkpoint schedules were active and should not guide 2.1 configuration.
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |

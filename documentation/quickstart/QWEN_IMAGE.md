@@ -1,4 +1,49 @@
-## Qwen Image Quickstart
+## Qwen Image 2.1
+
+Qwen Image 2.1 is the default (`model_flavour: "v2.1"`), using `Qwen/Qwen-Image-2.1`. It has a 32-block transformer, a Qwen3-VL text encoder, and a 64-channel VAE with 16× spatial compression.
+
+The `qwen_image.peft-lora` example trains on `RareConcepts/Domokun` at 512px with the trigger `🟫`. Start with BF16 (`base_model_precision: "no_change"`) and use gradient checkpointing when memory is limited. The example uses separate 2.1 latent and text caches; do not reuse caches from older flavours.
+
+```bash
+simpletuner train example=qwen_image.peft-lora
+```
+
+For validation, use `validation_guidance: 1.0`, `validation_guidance_real: 1.0`, and `validation_num_inference_steps: 40`. Keep the trigger in validation prompts to check whether the subject was learned.
+
+Qwen Image 2.1 decodes single images without retaining unused temporal feature caches. In an isolated BF16 H200 decode of one 2048×2048 image, this reduced peak allocated memory from 26.87 to 15.28 GiB with identical output. Tiled decoding saves more memory but can introduce colour seams by limiting spatial context; removing the unused caches does not fix those seams.
+
+Earlier flavours remain available: `v1.0` selects Qwen-Image, `v2.0` selects Qwen-Image-2512, and the `edit-*` flavours keep their existing checkpoints. Their adapters and latent caches are not interchangeable with 2.1.
+
+The 250-step Domokun recipe is a throughput example, not a reliable convergence recipe. An earlier checkpoint produced recognizable Domokun images after reloading, but fresh 250-step runs did not reproduce that result. Controls retaining padding masks, disabling compilation, and restoring the earlier RoPE expression also failed. Cached latents decode to the correct subject. The cause of the training deterioration remains unresolved; the timing tables do not establish comparable image quality across attention backends.
+
+### VRAM presets
+
+These examples use BF16, rank-32 LoRA, Optimi Lion and regional compilation at 512px, without gradient checkpointing. Compilation has a first-run cost; compare warm training steps. The 24 GB and 32 GB budgets were checked on L40S, not on separate 24 GB or 32 GB cards.
+
+| VRAM budget | Example | Dataset batch size | Peak VRAM (GiB) | Warm step (s) |
+| --- | --- | --- | --- | --- |
+| 24 GB | `qwen_image-2.1-24g.peft-lora` | 1 | 20.6 | 0.238 |
+| 32 GB | `qwen_image-2.1-32g.peft-lora` | 2 | 26.5 | 0.390 |
+| 48 GB | `qwen_image-2.1-48g.peft-lora` | 2 | 26.5 | 0.390 |
+| 80 GB | `qwen_image-2.1-80g.peft-lora` | 10 | 71.8 | 0.639 |
+| 144 GB | `qwen_image-2.1-144g.peft-lora` | 20 | 128.4 | 1.223 |
+
+Measured on L40S (24/32/48 GB presets), H100 (80 GB) and H200 (144 GB), using 20 steps with the first five excluded from timing. Peak VRAM includes setup. These are 512px, batch-specific measurements, not guarantees for larger images or longer prompts.
+
+The 48 GB preset also uses batch 2: on L40S it delivered better throughput per image than batches 3, 4 and 5. Batch 5 fitted in 43.3 GiB but took 0.991 s/step, compared with 0.390 s/step at batch 2.
+
+```bash
+simpletuner train example=qwen_image-2.1-48g.peft-lora
+```
+
+Use the matching dataset file bundled with each example: its batch size is explicit. Start a fresh run when changing batch size or dataset settings; do not reuse an incompatible training-state checkpoint.
+
+For lower memory use, enable `gradient_checkpointing: true` and `gradient_checkpointing_interval: 2`. This now checkpoints contiguous two-block groups. See the [Qwen Image 2.1 checkpoint and attention measurements](../experimental/SEGMENTED_CHECKPOINTING.md#qwen-image-21) for the measured tradeoffs; the earlier every-other-block result is superseded. BF16 fits these presets without an int8 checkpoint.
+
+The text-to-image path avoids tensor-dependent sequence assembly so it can be captured without graph breaks. Real-valued RoPE allows Inductor to fuse normalization and rotation; the modulation, residual and MLP epilogues are also compiled. The existing Hopper CuTe ConvRot GEMM and inference-only LTX RoPE kernels are not used by these training examples.
+
+
+### Legacy Qwen Image setup (v1.0 / v2.0)
 
 > 🆕 Looking for the edit checkpoints? See the [Qwen Image Edit quickstart](./QWEN_EDIT.md) for paired-reference training instructions.
 

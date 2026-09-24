@@ -59,6 +59,10 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 - **What**: Determines which model architecture is being trained.
 - **Choices**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
 
+### `--model_flavour`
+
+Select a checkpoint variant within `--model_family`. For `qwen_image`, the default is `v2.1` (`Qwen/Qwen-Image-2.1`). Set `v1.0`, `v2.0`, or an existing `edit-*` flavour explicitly to train an earlier architecture; adapters and embedding/latent caches are not interchangeable with 2.1. See the [Qwen Image quickstart](quickstart/QWEN_IMAGE.md).
+
 ### `--lora_format`
 
 - **What**: Select the LoRA checkpoint key format for load/save.
@@ -400,7 +404,7 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 ### `--gradient_checkpointing_interval`
 
 - **What**: Model-dependent interval for transformer block checkpointing. A value of 1 is effectively the same as leaving `--gradient_checkpointing` enabled.
-- **Note**: Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Z-Image, and Wan use contiguous chunks of *n* blocks on whole-block paths. Other families that expose this option may use the older "checkpoint every *n*-th block" behavior. Higher values can reduce recompute overhead, but usually keep more activations in VRAM.
+- **Note**: Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Qwen Image 2.1, Z-Image, and Wan use contiguous chunks of *n* blocks on whole-block paths. Other families that expose this option may use the older "checkpoint every *n*-th block" behavior. Larger contiguous groups save fewer boundary states but still recompute the checkpointed blocks. Measure the speed and peak-memory tradeoff; see [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.md#qwen-image-21).
 
 ### `--gradient_checkpointing_segment_stride`
 

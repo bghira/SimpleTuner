@@ -87,7 +87,7 @@ from simpletuner.helpers.training.quantisation import (
 )
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.timestep_distribution import CubicSplineDistribution, parse_cubic_spline_weights
-from simpletuner.helpers.training.wrappers import unwrap_model
+from simpletuner.helpers.training.wrappers import strip_compile_wrapper, unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 from simpletuner.helpers.utils.hidden_state_buffer import HiddenStateBuffer
 
@@ -1029,6 +1029,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
 
         try:
             state_dict = safetensors.torch.load_file(init_lora_path)
+            state_dict = {strip_compile_wrapper(key): value for key, value in state_dict.items()}
             with safe_open(init_lora_path, framework="pt", device="cpu") as handle:
                 file_metadata = handle.metadata() or {}
             raw_adapter_metadata = file_metadata.get(LORA_ADAPTER_METADATA_KEY)

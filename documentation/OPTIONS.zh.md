@@ -59,6 +59,10 @@ simpletuner configure config/foo/config.json
 - **内容**：指定训练的模型架构。
 - **选项**：pixart_sigma, flux, sd3, sdxl, kolors, legacy
 
+### `--model_flavour`
+
+选择 `--model_family` 中的检查点变体。`qwen_image` 的默认值是 `v2.1`（`Qwen/Qwen-Image-2.1`）。若要训练旧架构，请明确设置 `v1.0`、`v2.0` 或现有的 `edit-*` 版本；适配器、嵌入缓存和潜变量缓存不能与 2.1 互换。参阅 [Qwen Image 快速入门](quickstart/QWEN_IMAGE.zh.md)。
+
 ### `--lora_format`
 
 - **内容**：选择 LoRA 检查点的加载/保存键格式。
@@ -394,7 +398,7 @@ simpletuner configure config/foo/config.json
 ### `--gradient_checkpointing_interval`
 
 - **内容**：transformer block checkpointing 的模型相关 interval。1 基本等同于启用 `--gradient_checkpointing`。
-- **说明**：Flux、Flux.2、Krea 2、LTXVideo2、MageFlow、Z-Image 和 Wan 在 whole-block 路径上使用连续的 *n* 个 block chunk。其他支持此选项的模型族可能仍使用旧的“每第 *n* 个 block checkpoint”行为。值越大可能降低重算开销，但通常会在 VRAM 中保留更多 activation。
+- **说明**：Flux、Flux.2、Krea 2、LTXVideo2、MageFlow、Qwen Image 2.1、Z-Image 和 Wan 在 whole-block 路径上使用连续的 *n* 个 block chunk。其他支持此选项的模型族可能仍使用旧的“每第 *n* 个 block checkpoint”行为。更大的连续分组保存更少的边界状态，但仍需重算 checkpoint 内的 block。请测量速度与峰值显存的取舍，参见 [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.zh.md#qwen-image-21)。
 
 ### `--gradient_checkpointing_segment_stride`
 

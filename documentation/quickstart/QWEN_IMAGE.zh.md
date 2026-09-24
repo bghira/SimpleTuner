@@ -1,4 +1,49 @@
-## Qwen Image 快速入门
+## Qwen Image 2.1
+
+Qwen Image 2.1 是默认版本（`model_flavour: "v2.1"`），使用 `Qwen/Qwen-Image-2.1`。它包含 32 层 Transformer、Qwen3-VL 文本编码器和具有 16 倍空间压缩率的 64 通道 VAE。
+
+`qwen_image.peft-lora` 示例使用 `RareConcepts/Domokun` 数据集，以 512px 分辨率训练，触发词为 `🟫`。首先使用 BF16（`base_model_precision: "no_change"`），显存不足时启用梯度检查点。示例为 2.1 使用独立的潜变量和文本缓存；请勿复用旧版本缓存。
+
+```bash
+simpletuner train example=qwen_image.peft-lora
+```
+
+验证时使用 `validation_guidance: 1.0`、`validation_guidance_real: 1.0` 和 `validation_num_inference_steps: 40`。在验证提示词中保留触发词，以检查模型是否学会了该主体。
+
+Qwen Image 2.1 解码单张图像时不再保留未使用的时序特征缓存。在 H200 上以 BF16 单独解码一张 2048×2048 图像时，峰值已分配显存从 26.87 GiB 降至 15.28 GiB，输出完全一致。分块解码可进一步节省显存，但限制空间上下文可能产生彩色接缝；移除未使用的缓存并不能修复这些接缝。
+
+旧版本仍然可用：`v1.0` 对应 Qwen-Image，`v2.0` 对应 Qwen-Image-2512，`edit-*` 保留原有检查点。这些版本的适配器和潜变量缓存不能与 2.1 互换。
+
+250 步 Domokun 配置用于吞吐量测试，并非可靠的收敛配方。较早的 checkpoint 在重新加载后生成了可辨认的 Domokun，但新启动的 250 步训练未能复现。保留 padding mask、关闭编译以及恢复较早 RoPE 表达式的对照实验也失败了。缓存 latent 解码后确实是正确主体。训练质量下降的原因尚未确定；计时表不能证明不同注意力后端的图像质量相当。
+
+### 显存预设
+
+这些示例在 512px 下使用 BF16、rank-32 LoRA、Optimi Lion 和区域编译，不启用梯度检查点。首次运行需要编译时间；比较速度时应使用预热后的训练步。24 GB 和 32 GB 显存预算在 L40S 上验证，并非在对应容量的独立显卡上测试。
+
+| 显存预算 | 示例 | 数据集批大小 | 峰值显存 (GiB) | 预热后单步 (秒) |
+| --- | --- | --- | --- | --- |
+| 24 GB | `qwen_image-2.1-24g.peft-lora` | 1 | 20.6 | 0.238 |
+| 32 GB | `qwen_image-2.1-32g.peft-lora` | 2 | 26.5 | 0.390 |
+| 48 GB | `qwen_image-2.1-48g.peft-lora` | 2 | 26.5 | 0.390 |
+| 80 GB | `qwen_image-2.1-80g.peft-lora` | 10 | 71.8 | 0.639 |
+| 144 GB | `qwen_image-2.1-144g.peft-lora` | 20 | 128.4 | 1.223 |
+
+测量使用 L40S（24/32/48 GB 预设）、H100（80 GB）和 H200（144 GB），共运行 20 步，计时排除前五步。峰值显存包括初始化。这些是 512px 下对应批大小的结果，不能保证更大图像或更长提示词使用相同资源。
+
+48 GB 预设也使用批大小 2：在 L40S 上，其每张图像的吞吐量优于批大小 3、4、5。批大小 5 占用 43.3 GiB、每步 0.991 秒；批大小 2 每步为 0.390 秒。
+
+```bash
+simpletuner train example=qwen_image-2.1-48g.peft-lora
+```
+
+请使用各示例自带的数据集文件，其中明确设置了批大小。更改批大小或数据集设置后应开始新训练，不要复用不兼容的训练状态检查点。
+
+若要降低显存占用，请启用 `gradient_checkpointing: true` 和 `gradient_checkpointing_interval: 2`。现在这会对连续的两个 block 进行分组 checkpoint。实际取舍请参阅 [Qwen Image 2.1 checkpoint 与注意力测量](../experimental/SEGMENTED_CHECKPOINTING.zh.md#qwen-image-21)；此前每隔一个 block 进行 checkpoint 的结果已被替代。这些预设使用 BF16 即可，无需 int8 checkpoint。
+
+文生图路径避免依赖张量数据的序列组装，实现无图中断捕获。实数 RoPE 允许 Inductor 融合归一化与旋转；调制、残差和 MLP 的后处理也参与编译。这些训练示例不使用现有的 Hopper CuTe ConvRot GEMM 或仅支持推理的 LTX RoPE 内核。
+
+
+### 旧版 Qwen Image 配置（v1.0 / v2.0）
 
 > 🆕 想要编辑检查点？请参阅 [Qwen Image Edit 快速入门](./QWEN_EDIT.md) 获取成对参考训练说明。
 

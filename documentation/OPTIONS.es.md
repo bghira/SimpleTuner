@@ -59,6 +59,10 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 - **Qué**: Determina qué arquitectura de modelo se está entrenando.
 - **Opciones**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
 
+### `--model_flavour`
+
+Selecciona una variante de checkpoint dentro de `--model_family`. Para `qwen_image`, el valor predeterminado es `v2.1` (`Qwen/Qwen-Image-2.1`). Indique explícitamente `v1.0`, `v2.0` o una variante `edit-*` existente para entrenar una arquitectura anterior; los adaptadores y las cachés de embeddings/latentes no son intercambiables con 2.1. Consulte la [guía de Qwen Image](quickstart/QWEN_IMAGE.es.md).
+
 ### `--lora_format`
 
 - **Qué**: Selecciona el formato de claves del checkpoint LoRA para cargar/guardar.
@@ -394,7 +398,7 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 ### `--gradient_checkpointing_interval`
 
 - **Qué**: Intervalo dependiente del modelo para checkpointing de bloques transformer. Un valor de 1 equivale básicamente a dejar `--gradient_checkpointing` habilitado.
-- **Nota**: Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Z-Image y Wan usan chunks contiguos de *n* bloques en rutas whole-block. Otras familias que exponen esta opción pueden seguir usando el comportamiento anterior de "checkpoint cada *n* bloques". Valores más altos pueden reducir recompute, pero normalmente dejan más activaciones en VRAM.
+- **Nota**: Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Qwen Image 2.1, Z-Image y Wan usan chunks contiguos de *n* bloques en rutas whole-block. Otras familias que exponen esta opción pueden seguir usando el comportamiento anterior de "checkpoint cada *n* bloques". Los grupos contiguos mayores guardan menos estados de frontera, pero siguen recalculando los bloques con checkpoint. Mide el equilibrio entre velocidad y pico de memoria; consulta [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.es.md#qwen-image-21).
 
 ### `--gradient_checkpointing_segment_stride`
 
