@@ -20,6 +20,26 @@ def _autograd_graph_contains(fn, needle: str) -> bool:
 
 
 class DynamoCudagraphWorkaroundTests(unittest.TestCase):
+    def test_distillation_compile_cache_budget_is_scoped_and_preserves_larger_limits(self):
+        from simpletuner.helpers.training.dynamo import dynamo_config_context
+
+        for method in ("anyflow", "assistant_lora"):
+            for initial_limit in (8, 64):
+                with (
+                    self.subTest(method=method, initial_limit=initial_limit),
+                    torch._dynamo.config.patch(cache_size_limit=initial_limit),
+                ):
+                    with dynamo_config_context(SimpleNamespace(distillation_method=method)):
+                        self.assertEqual(torch._dynamo.config.cache_size_limit, max(initial_limit, 32))
+                    self.assertEqual(torch._dynamo.config.cache_size_limit, initial_limit)
+                    with self.assertRaisesRegex(RuntimeError, "training failed"):
+                        with dynamo_config_context(SimpleNamespace(distillation_method=method)):
+                            self.assertEqual(torch._dynamo.config.cache_size_limit, max(initial_limit, 32))
+                            raise RuntimeError("training failed")
+                    self.assertEqual(torch._dynamo.config.cache_size_limit, initial_limit)
+                    with dynamo_config_context(SimpleNamespace(distillation_method=None)):
+                        self.assertEqual(torch._dynamo.config.cache_size_limit, initial_limit)
+
     def test_activation_checkpointing_downgrades_reduce_overhead_to_default(self):
         from simpletuner.helpers.training import dynamo
 

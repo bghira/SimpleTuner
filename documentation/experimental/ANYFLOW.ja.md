@@ -11,6 +11,17 @@ stage でも、現在の flow time `t` と interval endpoint `r` を受け取る
 NVIDIA が公開した checkpoint を使った Wan continuation の例は
 [AnyFlow Continuation Quickstart](/documentation/quickstart/ANYFLOW.ja.md) を参照してください。
 
+
+Qwen Image 2.1 は FlowMap 区間条件付けに対応しています。[3 段階の Qwen パイロット](../quickstart/QWEN_IMAGE.ja.md) は CC12M の長いキャプション、e621、少量の Domokun を混合し、その後に正則化を伴う短い微調整を行います。ベース予測へのアンカーは保持を検証するもので、Qwen に guidance distillation が施されたことを示すものではありません。
+
+コンパイルした AnyFlow 学習では、teacher、generator、discriminator と勾配モード、padding、batch size の違いに対応するため、Dynamo frame ごとの variant 上限を一時的に最低 32 にします。ユーザーが設定したより大きな上限は維持し、実行後は元の上限に戻します。Torch 2.11 では既定の 8 variant を使い切ると checkpoint の再計算が eager 実行に切り替わり、保存テンソルのメタデータ検証が失敗する場合があります。可変のキャプション長には `dynamo_dynamic: true` を使用してください。Qwen パイロットでは有効です。
+
+AnyFlow のチェックポイントには、各プロセスの `anyflow_rng_state_<rank>.pt` が含まれます。区間サンプリングと on-policy rollout に使う独立した乱数生成器の状態を保存します。再開時は stage、seed、dataset 設定、分散 topology を変更しないでください。この状態を含まない古いチェックポイントは正確に継続できないため、読み込みを拒否します。その adapter を使う場合は、`init_lora` と新しい optimizer で別の学習を開始してください。
+
+`init_lora` はデフォルトで adapter に保存された step を読み込みます。新しい stage を開始する場合は `init_lora_step: 0` を指定し、学習ステップ数と scheduler をゼロから開始してください。
+
+アダプターの書き出しではテンソル名から領域コンパイルのラッパー名を除去し、区間埋め込みのテンソルを保持します。通常モデルとコンパイル済みモデルの両方で再読み込みできます。`diffusion_ratio: 1.0` ではすべての区間が `r=t` となるため、寄与がゼロになる 2 回の有限差分予測を省略します。
+
 ## Forward Stage
 
 ```json
@@ -44,17 +55,18 @@ NVIDIA が公開した checkpoint を使った Wan continuation の例は
 
 ## On-Policy Stage
 
-`init_lora` を設定するか checkpoint から resume して、forward-stage AnyFlow adapter からこの stage を開始します。
+`init_lora` で forward-stage AnyFlow adapter を読み込み、新しい optimizer state でこの stage を開始します。training-state checkpoint の resume は stage、dataset 設定、分散 topology が同一の場合に限ります。
 
 ```json
 {
   "model_type": "lora",
   "lora_type": "standard",
   "init_lora": "path-or-repo-to-forward-anyflow-adapter",
+  "init_lora_step": 0,
   "learning_rate": 0.000002,
   "optimizer_beta1": 0.0,
   "optimizer_beta2": 0.999,
-  "optimizer_weight_decay": 0.0,
+  "optimizer_config": "weight_decay=0.0",
   "distillation_method": "anyflow",
   "distillation_config": {
     "anyflow": {

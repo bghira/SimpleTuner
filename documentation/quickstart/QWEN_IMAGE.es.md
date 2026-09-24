@@ -43,6 +43,42 @@ Para reducir la VRAM, activa `gradient_checkpointing: true` y `gradient_checkpoi
 La ruta de texto a imagen evita construir secuencias con control dependiente de valores de tensores, permitiendo captura sin cortes de grafo. RoPE con aritmética real permite que Inductor fusione normalización y rotación; también se compilan los epílogos de modulación, residual y MLP. Estos ejemplos de entrenamiento no usan los kernels existentes de GEMM CuTe ConvRot para Hopper ni de RoPE de LTX solo para inferencia.
 
 
+### Piloto experimental de AnyFlow
+
+Los tres ejemplos `qwen_image-2.1-anyflow-stage*.peft-lora` prueban si la destilación de intervalos puede conservar el comportamiento de la base al introducir `🟫`. Son experimentales; la ficha de Qwen no confirma que la destilación de guidance causara el deterioro anterior.
+
+Todas las etapas usan 1024px, BF16, AdamW, rank 32 y batch 4. La etapa 1 desactiva el checkpointing de gradientes en H200; las etapas 2 y 3 usan grupos contiguos de dos bloques. La carga difiere de los presets de rendimiento a 512px anteriores. Instala `webshart` antes de ejecutarlos.
+
+Estos ejemplos de AnyFlow usan explícitamente `grad_clip_method: "value"` con `max_grad_norm: 0.01`: cada elemento del gradiente se limita a ±0.01. No es un límite de la norma global. Para probar el recorte por norma a 1.0, configura tanto `grad_clip_method: "norm"` como `max_grad_norm: 1.0`.
+
+1. **Etapa 1:** 10.000 actualizaciones forward de AnyFlow a `1e-5`. CC12M usa `webshart/cc12m-structured-captions` con `caption_key: "long_caption"`; e621 usa `webshart/e621-2024-webp-4Mpixel-webshart-indices`. Cada conjunto de conocimientos previos se limita a 4.096 imágenes aceptadas, con peso 0.49 cada uno. `RareConcepts/Domokun` usa el activador `🟫`, peso 0.02 y `repeats: 0`.
+2. **Etapa 2:** 2.000 actualizaciones DMD on-policy a `2e-6`, coentrenando el objetivo forward con la misma mezcla. Es DMD de AnyFlow, no DPO con pares de preferencias. Incluir el personaje en ambas etapas aporta ejemplos reales; el profesor congelado por sí solo no puede enseñarlo.
+3. **Etapa 3:** 100 actualizaciones a `5e-7`, con peso 0.5 para Domokun y 0.25 para cada conjunto de regularización, limitado a 64 imágenes cada uno. Todos los intervalos usan `r=t` y el objetivo flow bruto, conservando el embedder de intervalos durante un ajuste supervisado breve. Los batches de regularización usan la predicción de la base con el adapter desactivado.
+
+Revisa los checkpoints de 2.000, 5.000 y 10.000 actualizaciones antes de ampliar la etapa 1 hasta 20.000. La etapa 2 tiene un presupuesto de 2.000 actualizaciones; detenla antes si las imágenes de validación comparables empeoran. El número de pasos por sí solo no determina un modelo final.
+
+La compilación dinámica está habilitada para captions de longitud variable. `schedule_shift: 2.000802574061872` corresponde al scheduler publicado a 1024px (4.096 tokens latentes); vuelve a calcularlo al cambiar la resolución.
+
+```bash
+simpletuner train example=qwen_image-2.1-anyflow-stage1.peft-lora
+simpletuner train example=qwen_image-2.1-anyflow-stage2.peft-lora
+simpletuner train example=qwen_image-2.1-anyflow-stage3.peft-lora
+```
+
+Las etapas 2 y 3 cargan el adapter final anterior mediante `init_lora` e inician estados nuevos del optimizador y dataloader. Los pesos controlan la selección entre conjuntos todavía disponibles, sin garantizar porcentajes finales. El piloto limitado no cubre los corpus completos. El campo textual `long_caption` funciona con el selector Webshart existente y no requiere captions como objetos JSON nativos.
+
+Las etapas 1 y 2 usan `diffusion_target: "base_prediction"` y `fuse_guidance_scale: 1.0`: la rama diffusion conserva el campo condicional congelado mientras las otras ramas aprenden de los datos. Es una hipótesis de conservación, no una garantía de aprender el personaje. Compara los prompts de personaje y de conocimientos previos a 4, 16 y 40 pasos de inferencia con una referencia de la base a 40 pasos; la validación automática usa 4. Consulta [AnyFlow](../experimental/ANYFLOW.es.md) para los objetivos y requisitos de checkpoints.
+
+Piloto completado: la etapa 1 llegó a 10.000 actualizaciones y la etapa 2 a 2.000. Tras recargar los adaptadores, las imágenes de 40 pasos del zorro y de los prompts del personaje conservaron coherencia, pero estos últimos produjeron personas en vez de Domokun. Las imágenes de cuatro pasos siguieron borrosas o ruidosas. Otra comparación en L40S probó ambos checkpoints a 1024px, semilla 42 y CFG 1/2/4/6, con prompt negativo vacío. Las aserciones de llamadas verificaron dos pasadas por paso para CFG mayor que 1. Las muestras revisadas del zorro y la playa no mejoraron: aumentar CFG añadió saturación y artefactos. Estos resultados no identifican la causa; la etapa 3 sigue sin validarse.
+
+Dos continuaciones de la etapa 1 desde el mismo checkpoint añadieron 1.000 actualizaciones cada una, comparando umbrales de clipping por valor de 0.01 y 1.0. Tras recargar, las imágenes del zorro a cuatro pasos siguieron ruidosas en ambas; las imágenes de playa a 40 pasos siguieron mostrando personas. El clipping se activó en 65/1.000 actualizaciones con 0.01 y en 0/1.000 con 1.0. Ambas ramas usaron el optimizador sin corregir, y sus gradientes iniciales diferían antes de activarse el clipping; las diferencias pequeñas no pueden atribuirse únicamente al umbral.
+
+<a id="qwen21-optimizer-correction"></a>
+
+Los pilotos de la etapa 1 y del asistente descritos aquí se ejecutaron antes de corregir el helper de suma estocástica de AdamW BF16: calculaba `other + alpha * input` en lugar de `input + alpha * other`. Con β₁ = 0,9, el primer momento seguía `m = 0.09 * m + g` en vez de `m = 0.9 * m + 0.1 * g`. Las pruebas de regresión con aritmética exacta cubren CPU, MPS y CUDA. Las observaciones de las imágenes siguen siendo válidas para esos checkpoints, pero no constituyen una prueba limpia de la arquitectura ni del objetivo de destilación; hay que repetir la comprobación con el optimizador corregido.
+
+Repetir la continuación de 1.000 actualizaciones con el optimizador corregido, el mismo checkpoint inicial y clipping por valor de 1.0 no recuperó las imágenes revisadas del zorro ni de la playa a cuatro pasos. A 40 pasos el zorro conservó coherencia, mientras que el prompt de playa siguió produciendo una persona. Esto evalúa la recuperación del checkpoint existente, no el entrenamiento desde cero con el optimizador corregido; la causa del fallo general sigue sin resolverse.
+
 ### Configuración de Qwen Image anterior (v1.0 / v2.0)
 
 > 🆕 ¿Buscas los checkpoints de edición? Consulta la [guía rápida de Qwen Image Edit](./QWEN_EDIT.md) para instrucciones de entrenamiento con referencia emparejada.

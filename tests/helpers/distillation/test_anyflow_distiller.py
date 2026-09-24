@@ -213,6 +213,63 @@ def _prepared_batch():
 
 
 class AnyFlowDistillerTests(unittest.TestCase):
+    def test_checkpoint_restores_isolated_random_stream(self):
+        model = _FlowModel()
+        config = {"model_type": "lora", "seed": 987}
+        distiller = AnyFlowDistiller(teacher_model=model, noise_scheduler=None, config=config)
+        distiller._prepare_meanflow_pair(_prepared_batch(), model)
+        with tempfile.TemporaryDirectory() as directory:
+            distiller.on_save_checkpoint(1, directory)
+            expected = distiller._prepare_meanflow_pair(_prepared_batch(), model)
+            torch.rand(19)
+            restored = AnyFlowDistiller(teacher_model=model, noise_scheduler=None, config=config)
+            restored.on_load_checkpoint(directory)
+            actual = restored._prepare_meanflow_pair(_prepared_batch(), model)
+        for expected_value, actual_value in zip(expected, actual):
+            torch.testing.assert_close(actual_value, expected_value, rtol=0, atol=0)
+
+    def test_checkpoint_rejects_missing_random_stream_state(self):
+        distiller = AnyFlowDistiller(
+            teacher_model=_FlowModel(), noise_scheduler=None, config={"model_type": "lora", "seed": 987}
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "missing its per-rank random-generator state"):
+                distiller.on_load_checkpoint(directory)
+
+    def test_checkpoint_rejects_changed_rng_seed_or_world_size(self):
+        config = {"model_type": "lora", "seed": 987}
+        distiller = AnyFlowDistiller(teacher_model=_FlowModel(), noise_scheduler=None, config=config)
+        with tempfile.TemporaryDirectory() as directory:
+            distiller.on_save_checkpoint(1, directory)
+            for changed_seed, world_size in ((988, 1), (987, 2)):
+                with self.subTest(seed=changed_seed, world_size=world_size):
+                    model = _FlowModel()
+                    model.accelerator.num_processes = world_size
+                    restored = AnyFlowDistiller(
+                        teacher_model=model, noise_scheduler=None, config={**config, "seed": changed_seed}
+                    )
+                    with self.assertRaisesRegex(ValueError, "same stage, seed, rank and world size"):
+                        restored.on_load_checkpoint(directory)
+
+    def test_rng_checkpoint_preserves_non_main_rank_stream(self):
+        config = {"model_type": "lora", "seed": 987, "seed_for_each_device": True}
+        models = [_FlowModel(), _FlowModel()]
+        for rank, model in enumerate(models):
+            model.accelerator.process_index = rank
+            model.accelerator.num_processes = 2
+            model.accelerator.is_main_process = rank == 0
+        distillers = [AnyFlowDistiller(teacher_model=model, noise_scheduler=None, config=config) for model in models]
+        with tempfile.TemporaryDirectory() as directory:
+            expected = []
+            for distiller in distillers:
+                distiller._rand((7,), device="cpu")
+                distiller.on_save_checkpoint(1, directory)
+                expected.append(distiller._rand((7,), device="cpu"))
+            for model, expected_value in zip(models, expected):
+                restored = AnyFlowDistiller(teacher_model=model, noise_scheduler=None, config=config)
+                restored.on_load_checkpoint(directory)
+                torch.testing.assert_close(restored._rand((7,), device="cpu"), expected_value, rtol=0, atol=0)
+
     def test_init_enables_flowmap_conditioning(self):
         model = _FlowModel()
         distiller = AnyFlowDistiller(
@@ -349,6 +406,32 @@ class AnyFlowDistillerTests(unittest.TestCase):
                     noise_scheduler=None,
                     config={"model_type": "lora", "meanflow_non_diffusion_max_sigma": value},
                 )
+
+    def test_diffusion_only_skips_zero_interval_derivative_predictions(self):
+        for target_mode, prediction_count in (("flow", 0), ("base_prediction", 1)):
+            with self.subTest(target_mode=target_mode):
+                model = _FlowModel()
+                distiller = AnyFlowDistiller(
+                    teacher_model=model,
+                    noise_scheduler=None,
+                    config={
+                        "model_type": "lora",
+                        "diffusion_ratio": 1.0,
+                        "consistency_ratio": 0.0,
+                        "diffusion_target": target_mode,
+                        "fuse_guidance_scale": 1.0,
+                    },
+                )
+                batch = _prepared_batch()
+                expected = batch["noise"] - batch["latents"]
+                if target_mode == "base_prediction":
+                    expected = torch.full_like(expected, 2.0)
+
+                prepared = distiller.prepare_batch(batch, model=model, state={})
+
+                torch.testing.assert_close(prepared["target"], expected)
+                torch.testing.assert_close(prepared["anyflow_t_sigmas"], prepared["anyflow_r_sigmas"])
+                self.assertEqual(model.teacher_adapter_states, [False] * prediction_count)
 
     def test_meanflow_central_difference_can_clamp_to_physical_sigma_bounds(self):
         model = _FlowModel()

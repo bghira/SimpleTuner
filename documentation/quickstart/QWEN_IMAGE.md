@@ -43,6 +43,42 @@ For lower memory use, enable `gradient_checkpointing: true` and `gradient_checkp
 The text-to-image path avoids tensor-dependent sequence assembly so it can be captured without graph breaks. Real-valued RoPE allows Inductor to fuse normalization and rotation; the modulation, residual and MLP epilogues are also compiled. The existing Hopper CuTe ConvRot GEMM and inference-only LTX RoPE kernels are not used by these training examples.
 
 
+### Experimental AnyFlow pilot
+
+The three `qwen_image-2.1-anyflow-stage*.peft-lora` examples test whether interval distillation can retain the base model's behavior while introducing `🟫`. They are experimental; Qwen's model card does not establish that guidance distillation caused the earlier deterioration.
+
+All stages use 1024px, BF16, AdamW, rank 32 and batch 4. Stage 1 disables gradient checkpointing on H200; stages 2 and 3 checkpoint contiguous two-block groups. This is a different workload from the 512px throughput presets above. Install the `webshart` dependency before running them.
+
+These AnyFlow examples explicitly use `grad_clip_method: "value"` with `max_grad_norm: 0.01`: each gradient element is clamped to ±0.01. This is not a global-norm cap. To test norm clipping at 1.0, set both `grad_clip_method: "norm"` and `max_grad_norm: 1.0`.
+
+1. **Stage 1:** 10,000 forward AnyFlow updates at `1e-5`. CC12M uses `webshart/cc12m-structured-captions` with `caption_key: "long_caption"`; e621 uses `webshart/e621-2024-webp-4Mpixel-webshart-indices`. Each prior dataset is capped at 4,096 accepted images. Their sampling weights are 0.49 each; `RareConcepts/Domokun` uses the `🟫` trigger, weight 0.02, and `repeats: 0`.
+2. **Stage 2:** 2,000 on-policy DMD updates at `2e-6`, co-training the forward objective on the same mixture. This is AnyFlow DMD, not preference-pair DPO. Including the character in both stages provides real examples; the frozen teacher alone cannot teach it.
+3. **Stage 3:** 100 updates at `5e-7`, with Domokun weight 0.5 and two regularisation datasets at 0.25 each, capped at 64 images each. All intervals use `r=t` and the raw flow target, retaining the interval embedder while performing a short supervised refinement. Regularisation batches use the adapter-disabled base prediction.
+
+Review the 2,000-, 5,000- and 10,000-update checkpoints before extending stage 1 toward 20,000 updates. Stage 2 has a 2,000-update budget; stop earlier if matched validation images deteriorate. Step count alone does not establish a final model.
+
+Dynamic compilation is enabled for variable caption lengths. `schedule_shift: 2.000802574061872` matches the released scheduler at 1024px (4,096 latent tokens); recalculate it when changing resolution.
+
+```bash
+simpletuner train example=qwen_image-2.1-anyflow-stage1.peft-lora
+simpletuner train example=qwen_image-2.1-anyflow-stage2.peft-lora
+simpletuner train example=qwen_image-2.1-anyflow-stage3.peft-lora
+```
+
+Stages 2 and 3 load the preceding stage's final adapter with `init_lora` and start fresh optimizer and dataloader state. Sampling weights control interleaving while datasets remain available; they are not guaranteed final sample percentages. The capped pilot does not cover either full prior corpus. The string `long_caption` field works with the existing Webshart caption selector and does not require native JSON-object caption support.
+
+Stages 1 and 2 use `diffusion_target: "base_prediction"` and `fuse_guidance_scale: 1.0`: the diffusion branch preserves the frozen conditional field, while the other branches learn from the data. This is a preservation hypothesis, not a guarantee of character learning. Compare the supplied character and prior prompts at 4, 16 and 40 inference steps against a 40-step base-model reference; automatic validation uses 4 steps. See [AnyFlow](../experimental/ANYFLOW.md) for the objective and checkpoint requirements.
+
+Completed pilot: stage 1 reached 10,000 updates and stage 2 reached 2,000. Freshly reloaded 40-step fox and character-prompt images remained coherent, but character prompts produced people rather than Domokun. Four-step images stayed blurred or noisy. A separate L40S comparison used both checkpoints at 1024px, seed 42 and CFG 1/2/4/6 with an empty negative prompt. Forward-call assertions verified two passes per step above CFG 1. Reviewed fox and beach samples were not rescued: higher CFG increased saturation and artifacts. These results do not identify the cause; stage 3 has not been validated.
+
+Two stage-1 continuations from the same checkpoint each added 1,000 updates, comparing value-clipping thresholds of 0.01 and 1.0. Fresh four-step fox images remained noisy in both; 40-step beach images still depicted people. Clipping activated in 65/1,000 updates at 0.01 and 0/1,000 at 1.0. Both branches used the uncorrected optimizer, and their early gradients differed before clipping activated, so small differences cannot be attributed solely to the threshold.
+
+<a id="qwen21-optimizer-correction"></a>
+
+The initial stage-1 and assistant pilots predate a correction to AdamW BF16’s stochastic-add helper: it computed `other + alpha * input` instead of `input + alpha * other`. At β₁ = 0.9, the first moment therefore followed `m = 0.09 * m + g` rather than `m = 0.9 * m + 0.1 * g`. Exact-arithmetic regressions cover CPU, MPS and CUDA. The image observations remain valid for those checkpoints, but they are not a clean test of the architecture or distillation objective; training must be rechecked with the corrected optimizer.
+
+Repeating the 1,000-update continuation with the corrected optimizer, the same starting checkpoint and value clipping at 1.0 did not rescue the reviewed four-step fox or beach images. At 40 steps the fox remained coherent, while the beach prompt still produced a person. This tests recovery of the existing checkpoint, not training from scratch with the corrected optimizer; the cause of the overall failure remains unresolved.
+
 ### Legacy Qwen Image setup (v1.0 / v2.0)
 
 > 🆕 Looking for the edit checkpoints? See the [Qwen Image Edit quickstart](./QWEN_EDIT.md) for paired-reference training instructions.

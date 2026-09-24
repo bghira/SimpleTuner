@@ -43,6 +43,42 @@ simpletuner train example=qwen_image-2.1-48g.peft-lora
 टेक्स्ट-टू-इमेज पथ tensor के मान पर निर्भर sequence assembly से बचता है, जिससे graph break के बिना capture होता है। वास्तविक संख्या वाले RoPE से Inductor normalization और rotation को fuse कर सकता है; modulation, residual और MLP epilogues भी compile होते हैं। इन प्रशिक्षण उदाहरणों में मौजूदा Hopper CuTe ConvRot GEMM और केवल inference के लिए बने LTX RoPE kernels उपयोग नहीं होते।
 
 
+### प्रयोगात्मक AnyFlow पायलट
+
+तीन `qwen_image-2.1-anyflow-stage*.peft-lora` उदाहरण जाँचते हैं कि interval distillation से `🟫` जोड़ते हुए base model का व्यवहार बचाया जा सकता है या नहीं। ये प्रयोगात्मक हैं; Qwen का model card यह सिद्ध नहीं करता कि पहले की गिरावट guidance distillation के कारण हुई थी।
+
+सभी stages में 1024px, BF16, AdamW, rank 32 और batch 4 हैं। Stage 1 में H200 पर gradient checkpointing बंद है; stages 2 और 3 लगातार दो blocks पर checkpointing इस्तेमाल करते हैं। यह ऊपर दिए 512px throughput presets से अलग workload है। चलाने से पहले `webshart` इंस्टॉल करें।
+
+इन AnyFlow उदाहरणों में स्पष्ट रूप से `grad_clip_method: "value"` और `max_grad_norm: 0.01` उपयोग होते हैं: हर gradient element को ±0.01 तक सीमित किया जाता है। यह global norm की सीमा नहीं है। 1.0 पर norm clipping का परीक्षण करने के लिए `grad_clip_method: "norm"` और `max_grad_norm: 1.0` दोनों सेट करें।
+
+1. **Stage 1:** `1e-5` पर 10,000 forward AnyFlow updates। CC12M के लिए `webshart/cc12m-structured-captions` और `caption_key: "long_caption"`; e621 के लिए `webshart/e621-2024-webp-4Mpixel-webshart-indices` है। दोनों prior datasets में अधिकतम 4,096 स्वीकृत images और प्रत्येक का sampling weight 0.49 है। `RareConcepts/Domokun` का trigger `🟫`, weight 0.02 और `repeats: 0` है।
+2. **Stage 2:** `2e-6` पर 2,000 on-policy DMD updates, उसी मिश्रण पर forward objective का co-training। यह AnyFlow DMD है, preference-pair DPO नहीं। दोनों stages में character की वास्तविक images शामिल हैं; frozen teacher अकेले नया character नहीं सिखा सकता।
+3. **Stage 3:** `5e-7` पर 100 updates, Domokun का weight 0.5 और दो regularisation datasets का प्रत्येक weight 0.25 तथा अधिकतम 64 images है। सभी intervals `r=t` और raw flow target इस्तेमाल करते हैं, जिससे छोटे supervised refinement में interval embedder बना रहता है। Regularisation batches adapter बंद करके base prediction इस्तेमाल करते हैं।
+
+Stage 1 को 20,000 updates तक बढ़ाने से पहले 2,000, 5,000 और 10,000-update checkpoints की तुलना करें। Stage 2 का budget 2,000 updates है; समान validation settings पर images बिगड़ें तो पहले रोकें। केवल step count से मॉडल को final नहीं माना जा सकता।
+
+अलग-अलग caption lengths के लिए dynamic compilation चालू है। `schedule_shift: 2.000802574061872` जारी scheduler की 1024px (4,096 latent tokens) सेटिंग से मेल खाता है; resolution बदलने पर इसे दोबारा गणना करें।
+
+```bash
+simpletuner train example=qwen_image-2.1-anyflow-stage1.peft-lora
+simpletuner train example=qwen_image-2.1-anyflow-stage2.peft-lora
+simpletuner train example=qwen_image-2.1-anyflow-stage3.peft-lora
+```
+
+Stages 2 और 3 पिछले stage का अंतिम adapter `init_lora` से लोड करते हैं और optimizer तथा dataloader की नई state शुरू करते हैं। Sampling weights उपलब्ध datasets के बीच चयन नियंत्रित करते हैं; अंतिम sample प्रतिशत की गारंटी नहीं देते। यह सीमित पायलट पूरे prior corpora को कवर नहीं करता। String वाला `long_caption` मौजूदा Webshart caption selector के साथ काम करता है; native JSON-object caption support आवश्यक नहीं है।
+
+Stages 1 और 2 में `diffusion_target: "base_prediction"` तथा `fuse_guidance_scale: 1.0` हैं: diffusion branch frozen conditional field बचाती है और अन्य branches data से सीखती हैं। यह preservation की परिकल्पना है, character सीखने की गारंटी नहीं। दिए गए character और prior prompts को 4, 16 और 40 inference steps पर जाँचें, और base model के 40-step output से तुलना करें; automatic validation 4 steps इस्तेमाल करता है। Objective और checkpoint आवश्यकताओं के लिए [AnyFlow](../experimental/ANYFLOW.hi.md) देखें।
+
+पूरा हुए पायलट में चरण 1 ने 10,000 और चरण 2 ने 2,000 अपडेट पूरे किए। एडेप्टर दोबारा लोड करने पर 40-step लोमड़ी और चरित्र-प्रॉम्प्ट की तस्वीरें सुसंगत रहीं, लेकिन चरित्र वाले प्रॉम्प्ट ने Domokun के बजाय लोगों को बनाया। चार-step तस्वीरें धुंधली या शोरयुक्त रहीं। अलग L40S तुलना में दोनों checkpoints को 1024px, seed 42, CFG 1/2/4/6 और खाली negative prompt के साथ जाँचा गया। Forward-call assertions ने CFG 1 से ऊपर हर step पर दो passes की पुष्टि की। देखी गई लोमड़ी और समुद्र तट की तस्वीरें ठीक नहीं हुईं; ऊँचे CFG ने saturation और artifacts बढ़ाए। इन परिणामों से कारण तय नहीं होता; चरण 3 अभी सत्यापित नहीं है।
+
+एक ही checkpoint से स्टेज 1 की दो शाखाओं को 1,000-1,000 अतिरिक्त updates तक चलाकर value-clipping सीमा 0.01 और 1.0 की तुलना की गई। दोबारा लोड करने पर दोनों की चार-step fox images में शोर रहा और 40-step समुद्र तट के चित्रों में अब भी लोग दिखे। 0.01 पर 65/1,000 updates में clipping हुई, जबकि 1.0 पर 0/1,000 में। दोनों शाखाओं ने बिना सुधार वाला optimizer इस्तेमाल किया और clipping शुरू होने से पहले ही शुरुआती gradients में अंतर था, इसलिए छोटे बदलावों को केवल सीमा का प्रभाव नहीं माना जा सकता।
+
+<a id="qwen21-optimizer-correction"></a>
+
+यहाँ दिए गए स्टेज 1 और असिस्टेंट के पायलट AdamW BF16 के stochastic-add helper को ठीक करने से पहले चलाए गए थे: वह `input + alpha * other` के बजाय `other + alpha * input` गणना करता था। β₁ = 0.9 पर पहला मोमेंट `m = 0.9 * m + 0.1 * g` के बजाय `m = 0.09 * m + g` के अनुसार अपडेट होता था। सटीक अंकगणित वाले regression tests CPU, MPS और CUDA पर पास हुए हैं। चित्रों के अवलोकन उन checkpoints के लिए सही हैं, लेकिन उनसे केवल आर्किटेक्चर या distillation objective का निष्कर्ष नहीं निकाला जा सकता; सुधारे गए optimizer के साथ प्रशिक्षण की दोबारा जाँच आवश्यक है।
+
+सुधारे गए optimizer, उसी शुरुआती checkpoint और value clipping 1.0 के साथ 1,000 अतिरिक्त updates दोहराने पर भी जाँचे गए चार-step fox और समुद्र तट के चित्र ठीक नहीं हुए। 40 steps पर fox सुसंगत रहा, जबकि समुद्र तट के prompt ने अब भी एक व्यक्ति बनाया। यह मौजूदा checkpoint की रिकवरी का परीक्षण है, सुधारे गए optimizer से शुरुआत से प्रशिक्षण का नहीं; समग्र विफलता का कारण अभी स्पष्ट नहीं है।
+
 ### पुराने Qwen Image की सेटिंग (v1.0 / v2.0)
 
 > 🆕 Edit checkpoints चाहिए? paired‑reference training निर्देशों के लिए [Qwen Image Edit quickstart](./QWEN_EDIT.md) देखें।

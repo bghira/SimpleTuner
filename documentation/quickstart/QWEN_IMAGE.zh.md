@@ -43,6 +43,42 @@ simpletuner train example=qwen_image-2.1-48g.peft-lora
 文生图路径避免依赖张量数据的序列组装，实现无图中断捕获。实数 RoPE 允许 Inductor 融合归一化与旋转；调制、残差和 MLP 的后处理也参与编译。这些训练示例不使用现有的 Hopper CuTe ConvRot GEMM 或仅支持推理的 LTX RoPE 内核。
 
 
+### 实验性 AnyFlow 试验
+
+三个 `qwen_image-2.1-anyflow-stage*.peft-lora` 示例测试区间蒸馏能否在引入 `🟫` 的同时保留基础模型的行为。这些配置仍属实验性质；Qwen 模型卡并未证实之前的退化由引导蒸馏导致。
+
+所有阶段使用 1024px、BF16、AdamW、rank 32 和 batch 4。阶段 1 在 H200 上关闭梯度检查点；阶段 2 和 3 对连续两个块进行梯度检查点计算。此负载与上面的 512px 吞吐量预设不同。运行前请安装 `webshart`。
+
+这些 AnyFlow 示例明确使用 `grad_clip_method: "value"` 和 `max_grad_norm: 0.01`，将每个梯度元素限制在 ±0.01 范围内，而不是限制全局梯度范数。若要测试阈值为 1.0 的范数裁剪，须同时设置 `grad_clip_method: "norm"` 和 `max_grad_norm: 1.0`。
+
+1. **阶段 1：** 以 `1e-5` 进行 10,000 次 forward AnyFlow 更新。CC12M 使用 `webshart/cc12m-structured-captions` 和 `caption_key: "long_caption"`；e621 使用 `webshart/e621-2024-webp-4Mpixel-webshart-indices`。两个先验数据集各限制为 4,096 张合格图片，采样权重各为 0.49；`RareConcepts/Domokun` 使用触发词 `🟫`、权重 0.02 和 `repeats: 0`。
+2. **阶段 2：** 以 `2e-6` 进行 2,000 次 on-policy DMD 更新，同时在相同数据混合上训练 forward 目标。这是 AnyFlow DMD，并非偏好对 DPO。两个阶段均包含角色样本；仅靠冻结教师无法教授新角色。
+3. **阶段 3：** 以 `5e-7` 更新 100 次。Domokun 权重为 0.5，两个正则化数据集权重各为 0.25、各限制为 64 张图片。所有区间使用 `r=t` 和原始 flow 目标，保留区间嵌入器并进行简短监督微调。正则化批次使用禁用 adapter 的基础模型预测。
+
+先检查第 2,000、5,000 和 10,000 次更新的检查点，再决定是否将阶段 1 延长至 20,000 次。阶段 2 的预算为 2,000 次更新；若相同条件下的验证图片退化，应提前停止。更新次数本身并不能证明模型已完成训练。
+
+配置启用了动态编译以处理可变描述长度。`schedule_shift: 2.000802574061872` 对应已发布调度器在 1024px（4,096 个潜变量 token）下的设置；更改分辨率时需重新计算。
+
+```bash
+simpletuner train example=qwen_image-2.1-anyflow-stage1.peft-lora
+simpletuner train example=qwen_image-2.1-anyflow-stage2.peft-lora
+simpletuner train example=qwen_image-2.1-anyflow-stage3.peft-lora
+```
+
+阶段 2、3 通过 `init_lora` 加载上一阶段的最终 adapter，重新初始化优化器和数据加载器状态。采样权重控制尚未耗尽的数据集之间的交替，并不保证最终样本比例。此受限试验不覆盖完整先验语料库。字符串字段 `long_caption` 可使用现有 Webshart caption selector，无需原生 JSON 对象 caption 支持。
+
+阶段 1、2 使用 `diffusion_target: "base_prediction"` 和 `fuse_guidance_scale: 1.0`：diffusion 分支保留冻结的条件预测场，其余分支从数据学习。这是保留能力的假设，并不保证学会角色。请在 4、16、40 个推理步下比较所附角色和先验提示词，并以基础模型的 40 步结果为参考；自动验证使用 4 步。目标函数和检查点要求见 [AnyFlow](../experimental/ANYFLOW.zh.md)。
+
+已完成的试验：阶段 1 达到 10,000 次更新，阶段 2 达到 2,000 次。重新加载适配器后的 40 步狐狸图像和角色提示词图像仍然连贯，但角色提示词生成的是人而非 Domokun。4 步图像仍然模糊或充满噪声。另一次 L40S 对比对两个检查点均使用 1024px、种子 42、CFG 1/2/4/6 和空负面提示词。前向调用断言确认 CFG 大于 1 时每步有两次前向。已检查的狐狸和海滩样本未得到修复：更高 CFG 增加了饱和度和伪影。这些结果尚不能确定原因；阶段 3 尚未验证。
+
+从同一检查点继续阶段 1 的两个分支各增加了 1,000 次更新，比较逐元素裁剪阈值 0.01 和 1.0。重新加载后的 4 步狐狸图像在两组中仍有明显噪声；40 步海滩图像仍然呈现人物。阈值 0.01 在 65/1,000 次更新中触发裁剪，阈值 1.0 为 0/1,000 次。两组均使用未修正的优化器，且在裁剪首次触发前梯度已存在差异，因此不能把细微变化完全归因于阈值。
+
+<a id="qwen21-optimizer-correction"></a>
+
+此处的阶段 1 和辅助 LoRA 试验均在修复 AdamW BF16 的随机舍入加法辅助函数之前运行：该函数计算的是 `other + alpha * input`，而非 `input + alpha * other`。当 β₁ = 0.9 时，一阶矩因此按 `m = 0.09 * m + g` 更新，而非 `m = 0.9 * m + 0.1 * g`。精确算术回归测试已覆盖 CPU、MPS 和 CUDA。图像观察结果对这些检查点仍然有效，但不能据此独立判断架构或蒸馏目标是否有效；必须使用修正后的优化器重新验证训练。
+
+使用修正后的优化器、相同起始检查点和逐元素裁剪阈值 1.0 再继续更新 1,000 次，仍未修复已检查的 4 步狐狸和海滩图像。40 步狐狸图像保持连贯，而海滩提示词仍生成人物。此试验检验的是现有检查点的恢复能力，而不是使用修正后的优化器从头训练；整体失败原因仍未确定。
+
 ### 旧版 Qwen Image 配置（v1.0 / v2.0）
 
 > 🆕 想要编辑检查点？请参阅 [Qwen Image Edit 快速入门](./QWEN_EDIT.md) 获取成对参考训练说明。

@@ -12,6 +12,17 @@ accepted.
 For a Wan continuation example using NVIDIA's released checkpoints, see
 [AnyFlow Continuation Quickstart](/documentation/quickstart/ANYFLOW.md).
 
+
+Qwen Image 2.1 supports FlowMap interval conditioning. The [three-stage Qwen pilot](../quickstart/QWEN_IMAGE.md#experimental-anyflow-pilot) combines CC12M long captions, e621 and sparse Domokun examples, then a short refinement with regularisation. Its base-prediction anchor tests preservation; it does not establish that Qwen was guidance-distilled.
+
+Compiled AnyFlow training temporarily allows at least 32 Dynamo variants per frame for the teacher, generator and discriminator, their gradient modes, padding and batch sizes. Larger user limits are preserved, and the previous limit is restored after the run. On Torch 2.11, exhausting the default eight variants can switch checkpoint recomputation to eager execution and fail its saved-tensor metadata check. Use `dynamo_dynamic: true` with variable caption lengths; the Qwen pilot enables it.
+
+AnyFlow checkpoints include `anyflow_rng_state_<rank>.pt` for each process. This preserves the private random streams used for interval sampling and on-policy rollouts. Resume requires the same stage, seed, dataset settings and distributed topology. Older checkpoints without this state cannot provide exact continuation and are rejected; use `init_lora` with a fresh optimizer to start a new run from their adapter.
+
+`init_lora` reads the adapter’s saved step by default. Set `init_lora_step: 0` when starting a new stage so its step budget and scheduler begin at zero.
+
+Adapter exports remove regional compiler wrappers from tensor names and preserve the interval-embedding tensors. Both plain and compiled models can reload them. When `diffusion_ratio: 1.0`, all intervals have `r=t`, so target preparation skips the two finite-difference predictions whose contribution is zero.
+
 ## Forward Stage
 
 ```json
@@ -75,17 +86,18 @@ transformer is allocated, but the frozen-base evaluation adds one no-grad forwar
 
 ## On-Policy Stage
 
-Start this stage from a forward-stage AnyFlow adapter by setting `init_lora` or resuming its checkpoint:
+Start this stage from a forward-stage AnyFlow adapter with `init_lora` and fresh optimizer state. Resume a training-state checkpoint only within the same stage, dataset configuration and distributed topology:
 
 ```json
 {
   "model_type": "lora",
   "lora_type": "standard",
   "init_lora": "path-or-repo-to-forward-anyflow-adapter",
+  "init_lora_step": 0,
   "learning_rate": 0.000002,
   "optimizer_beta1": 0.0,
   "optimizer_beta2": 0.999,
-  "optimizer_weight_decay": 0.0,
+  "optimizer_config": "weight_decay=0.0",
   "distillation_method": "anyflow",
   "distillation_config": {
     "anyflow": {

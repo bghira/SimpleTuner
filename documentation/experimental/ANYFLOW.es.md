@@ -11,6 +11,17 @@ Los modos eliminados `online_teacher` y `linear` eran objetivos específicos de 
 Para un ejemplo de continuación Wan usando los checkpoints publicados por NVIDIA, consulta
 [Guía rápida de continuación AnyFlow](/documentation/quickstart/ANYFLOW.es.md).
 
+
+Qwen Image 2.1 admite condicionamiento de intervalos FlowMap. El [piloto Qwen de tres etapas](../quickstart/QWEN_IMAGE.es.md) mezcla captions largas de CC12M, e621 y pocos ejemplos de Domokun, seguidos de un ajuste breve con regularización. El anclaje a la predicción de la base prueba la conservación; no demuestra que Qwen recibiera destilación de guidance.
+
+El entrenamiento AnyFlow compilado permite temporalmente al menos 32 variantes Dynamo por frame para profesor, generador, discriminador, modos de gradiente, padding y distintos batches. Se conservan los límites mayores del usuario y se restaura el límite anterior al terminar. En Torch 2.11, agotar las ocho variantes predeterminadas puede cambiar la recomputación del checkpoint a ejecución eager y fallar la comprobación de metadatos de los tensores guardados. Usa `dynamo_dynamic: true` para captions de longitud variable; el piloto Qwen ya lo habilita.
+
+Los checkpoints de AnyFlow incluyen `anyflow_rng_state_<rank>.pt` para cada proceso. Este archivo conserva los generadores aleatorios privados usados para muestrear intervalos y realizar rollouts on-policy. La reanudación requiere la misma etapa, semilla, configuración de datos y topología distribuida. Los checkpoints antiguos sin este estado no permiten una continuación exacta y se rechazan; usa `init_lora` con un optimizador nuevo para iniciar otra ejecución desde su adapter.
+
+`init_lora` usa por defecto el paso guardado en el adapter. Al iniciar una etapa nueva, establece `init_lora_step: 0` para que el límite de pasos y el planificador empiecen desde cero.
+
+La exportación de adaptadores elimina los wrappers regionales del compilador de los nombres de tensores y conserva los tensores del embedding de intervalo. Los modelos normales y compilados pueden recargarlos. Con `diffusion_ratio: 1.0`, todos los intervalos tienen `r=t`, por lo que se omiten las dos predicciones de diferencias finitas cuya contribución es cero.
+
 ## Etapa forward
 
 ```json
@@ -44,17 +55,18 @@ Para cada batch global, la etapa forward:
 
 ## Etapa on-policy
 
-Inicia esta etapa desde un adapter AnyFlow de etapa forward usando `init_lora` o reanudando su checkpoint:
+Inicia esta etapa desde un adapter AnyFlow forward mediante `init_lora` y un estado nuevo del optimizador. Reanuda checkpoints de estado de entrenamiento solo dentro de la misma etapa, configuración de datos y topología distribuida:
 
 ```json
 {
   "model_type": "lora",
   "lora_type": "standard",
   "init_lora": "path-or-repo-to-forward-anyflow-adapter",
+  "init_lora_step": 0,
   "learning_rate": 0.000002,
   "optimizer_beta1": 0.0,
   "optimizer_beta2": 0.999,
-  "optimizer_weight_decay": 0.0,
+  "optimizer_config": "weight_decay=0.0",
   "distillation_method": "anyflow",
   "distillation_config": {
     "anyflow": {
