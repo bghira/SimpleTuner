@@ -559,8 +559,9 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
         caption = {"high_level_description": "a café", "elements": [{"bbox": [1, 2, 30, 40]}]}
         for index, value in enumerate([caption, [caption], [caption, "alternate"]]):
             with self.subTest(value=value):
-                self.files["sample.jpg"]["captions"] = value
-                self.files["sample.jpg"][f"version_{index}"] = value
+                self.files["sample.jpg"]["captions"] = "indexed fallback caption"
+                self.json_metadata["captions"] = value
+                self.json_metadata[f"version_{index}"] = value
                 self._write_index(embedded=True)
                 backend = WebshartDataBackend(
                     accelerator=None,
@@ -568,12 +569,14 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
                     source=str(self.source),
                     cache_dir=str(self.root / f"native-cache-{index}"),
                     shard_cache_gb=0,
+                    caption_key="captions",
                 )
                 sample_id = self._sample_id(backend)
-                self.assertEqual(backend.get_caption(sample_id), value)
+                expected = caption if value == [caption] else value
+                self.assertEqual(backend.get_caption(sample_id), expected)
                 backend.caption_key = f"version_{index}"
                 selected = backend.get_caption(sample_id)
-                self.assertEqual(selected, caption if value == [caption] else value)
+                self.assertEqual(selected, expected)
                 metadata = self._metadata_backend(backend)
                 self.assertEqual(metadata.caption_cache_entry(sample_id), selected)
                 metadata._save_caption_cache()
