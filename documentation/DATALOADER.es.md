@@ -1354,6 +1354,14 @@ Para un ejemplo básico de cómo usar un dataset de Hugging Face, configura `"ty
 
 ### Datasets Webshart
 
+Los captions pueden ser cadenas, objetos JSON nativos o listas mixtas de ambos.
+Los objetos se conservan en los metadatos y la caché; cada objeto se convierte en
+un único prompt de texto JSON al preparar la entrada del codificador de texto.
+Sus campos no se tratan como variantes independientes. Usa una lista para las
+alternativas o `webshart.caption_key` para seleccionar un campo. Requiere una
+versión de webshart compatible con captions JSON nativos y funciona con el
+canonicalizador de captions estructurados de Ideogram.
+
 Los datasets Webshart cargan shards tar estilo WebDataset mediante el paquete `webshart`. Este backend usa metadatos de muestra lógica para los buckets de aspecto, por lo que los sidecars JSON emparejados no se tratan como muestras entrenables.
 
 ```json

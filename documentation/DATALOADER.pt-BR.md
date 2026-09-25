@@ -1354,6 +1354,14 @@ Para um exemplo básico de como usar um dataset do Hugging Face, defina `"type":
 
 ### Datasets Webshart
 
+As legendas podem ser strings, objetos JSON nativos ou listas mistas dos dois.
+Os objetos são preservados nos metadados e no cache; cada objeto vira um único
+prompt de texto JSON ao preparar a entrada do codificador de texto. Os campos
+não são tratados como variantes separadas. Use uma lista para alternativas ou
+`webshart.caption_key` para selecionar um campo. Isso exige uma versão do webshart
+com suporte a legendas JSON nativas e funciona com o canonicalizador de legendas
+estruturadas do Ideogram.
+
 Datasets Webshart carregam shards tar no estilo WebDataset pelo pacote `webshart`. Esse backend usa metadados de amostras lógicas para bucketing de aspecto, então sidecars JSON pareados não são tratados como amostras treináveis.
 
 ```json

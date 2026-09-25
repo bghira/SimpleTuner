@@ -1409,6 +1409,13 @@ For a basic example of how to use a Hugging Face dataset, set `"type": "huggingf
 
 ### Webshart Datasets
 
+Captions can be strings, native JSON objects, or mixed lists of both. Objects stay
+intact in metadata and caption caches; each object becomes one JSON text prompt
+when preparing inputs for the text encoder. Object fields are not treated as
+separate caption variants. Use a list for alternatives, or `webshart.caption_key`
+to select a named field. This requires a webshart build with native JSON caption
+support and works with Ideogram's structured caption canonicalizer.
+
 Webshart datasets load WebDataset-style tar shards through the `webshart` package. This backend uses Webshart's logical sample metadata for aspect bucketing, so paired JSON sidecars are not treated as trainable samples.
 
 ```json
