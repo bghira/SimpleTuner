@@ -831,7 +831,10 @@ class CrepaRegularizer:
         enc_dtype = next(self.encoder.parameters()).dtype
         images = images.to(dtype=enc_dtype)
         with torch.no_grad():
-            output = self.encoder(images)
+            if self._is_qwen_vl_encoder(self.encoder_name):
+                output = self.encoder(images)
+            else:
+                output = self.encoder.forward_features(images)
         if isinstance(output, dict):
             # Prefer patch tokens; fall back to class token if needed.
             if "x_norm_patchtokens" in output:

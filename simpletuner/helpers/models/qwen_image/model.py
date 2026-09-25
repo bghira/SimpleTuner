@@ -435,6 +435,8 @@ class QwenImage(ImageModelFoundation):
         }
 
         self.noise_schedule = FlowMatchEulerDiscreteScheduler(**scheduler_config)
+        if self._get_model_flavour() == "v2.1":
+            self.noise_schedule.register_to_config(patch_size=1)
         self.config.prediction_type = "flow_matching"
 
         return self.config, self.noise_schedule
