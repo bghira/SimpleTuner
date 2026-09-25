@@ -235,6 +235,24 @@ class QwenImage(ImageModelFoundation):
             *get_bitsandbytes_presets(_base_memory_config),
         ]
 
+    TEXTURE_FIX_VAE_REPO = "madebyollin/texture-fix-vae-for-qwen-image-2.1"
+    TEXTURE_FIX_VAE_REVISION = "e9f84623d22c47f8bc9fb799bc54201fa53cf80b"
+
+    def setup_model_flavour(self):
+        explicit_vae = self.config.pretrained_vae_model_name_or_path
+        vae_path = self.config.vae_path
+        model_path = self.config.pretrained_model_name_or_path
+        super().setup_model_flavour()
+        if self._get_model_flavour() == "v2.1" and explicit_vae is None and vae_path in (None, model_path):
+            self.config.pretrained_vae_model_name_or_path = self.TEXTURE_FIX_VAE_REPO
+            self.config.vae_path = self.TEXTURE_FIX_VAE_REPO
+
+    def _get_vae_load_kwargs(self):
+        kwargs = super()._get_vae_load_kwargs()
+        if self._get_model_flavour() == "v2.1" and self.config.vae_path == self.TEXTURE_FIX_VAE_REPO:
+            kwargs.update(subfolder=None, revision=self.TEXTURE_FIX_VAE_REVISION, variant=None)
+        return kwargs
+
     def __init__(self, config: dict, accelerator):
         super().__init__(config, accelerator)
         self.vae_scale_factor = 8

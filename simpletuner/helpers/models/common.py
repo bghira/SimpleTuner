@@ -2649,6 +2649,15 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
             self.load_vae()
         return self.vae
 
+    def _get_vae_load_kwargs(self):
+        return {
+            "pretrained_model_name_or_path": get_model_config_path(self.config.model_family, self.config.vae_path),
+            "subfolder": "vae",
+            "revision": self.config.revision,
+            "force_upcast": False,
+            "variant": self.config.variant,
+        }
+
     def load_vae(self, move_to_device: bool = True):
         from transformers.utils import ContextManagers
 
@@ -2676,13 +2685,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
             cached_components = self._load_single_file_pipeline_component_cache() or {}
             self.vae = cached_components.get("vae")
         else:
-            self.config.vae_kwargs = {
-                "pretrained_model_name_or_path": get_model_config_path(self.config.model_family, self.config.vae_path),
-                "subfolder": "vae",
-                "revision": self.config.revision,
-                "force_upcast": False,
-                "variant": self.config.variant,
-            }
+            self.config.vae_kwargs = self._get_vae_load_kwargs()
             with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
                 try:
                     self.vae = self.AUTOENCODER_CLASS.from_pretrained(**self.config.vae_kwargs)

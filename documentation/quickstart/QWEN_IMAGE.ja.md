@@ -2,6 +2,8 @@
 
 Qwen Image 2.1 がデフォルトです（`model_flavour: "v2.1"`）。`Qwen/Qwen-Image-2.1` を使用し、32 ブロックの Transformer、Qwen3-VL テキストエンコーダー、空間圧縮率 16 倍の 64 チャンネル VAE を備えています。
 
+Qwen Image 2.1 は、検証やその他の VAE デコードに [Ollin のテクスチャ修正版 VAE](https://huggingface.co/madebyollin/texture-fix-vae-for-qwen-image-2.1) をデフォルトで使用します。微調整されたのはデコーダーのみで、エンコーダーは変更されていないため、既存の 2.1 学習用潜在表現と互換性があります。VAE のリビジョンはベースモデルとは独立して固定されています。元の VAE で出力を再現するには、`pretrained_vae_model_name_or_path: "Qwen/Qwen-Image-2.1"` を設定してください。明示的な VAE 指定と旧フレーバーの動作は変わりません。
+
 `qwen_image.peft-lora` の例は `RareConcepts/Domokun` を 512px で学習し、トリガーに `🟫` を使います。まず BF16（`base_model_precision: "no_change"`）を使用し、メモリが不足する場合は勾配チェックポイントを有効にしてください。2.1 専用の潜在表現とテキストのキャッシュを使用するため、旧バージョンのキャッシュを再利用しないでください。
 
 ```bash

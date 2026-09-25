@@ -2,6 +2,8 @@
 
 Qwen Image 2.1 是默认版本（`model_flavour: "v2.1"`），使用 `Qwen/Qwen-Image-2.1`。它包含 32 层 Transformer、Qwen3-VL 文本编码器和具有 16 倍空间压缩率的 64 通道 VAE。
 
+Qwen Image 2.1 默认使用 [Ollin 修复纹理的 VAE](https://huggingface.co/madebyollin/texture-fix-vae-for-qwen-image-2.1) 进行验证及其他 VAE 解码。该模型仅微调了解码器，编码器未变，因此现有的 2.1 训练潜变量仍然兼容。VAE 的版本独立于基础模型固定。要使用原始 VAE 复现输出，请设置 `pretrained_vae_model_name_or_path: "Qwen/Qwen-Image-2.1"`。显式指定的 VAE 和旧版本模型保持原有行为。
+
 `qwen_image.peft-lora` 示例使用 `RareConcepts/Domokun` 数据集，以 512px 分辨率训练，触发词为 `🟫`。首先使用 BF16（`base_model_precision: "no_change"`），显存不足时启用梯度检查点。示例为 2.1 使用独立的潜变量和文本缓存；请勿复用旧版本缓存。
 
 ```bash
