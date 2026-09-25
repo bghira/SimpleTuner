@@ -176,6 +176,16 @@ class WebshartDataBackend(BaseDataBackend):
     def sample_id(cls, shard_idx: int, sample_idx: int, filename: str) -> str:
         return f"{cls.SAMPLE_PREFIX}{int(shard_idx)}/{int(sample_idx)}/{filename}"
 
+    def iter_cache_groups(self, bucket_files: dict):
+        """Finish each shard's aspect groups before loading another shard."""
+        shard_buckets = {}
+        for bucket, files in bucket_files.items():
+            for filepath in files:
+                shard = self.parse_sample_id(filepath).shard_idx
+                shard_buckets.setdefault(shard, {}).setdefault(bucket, []).append(filepath)
+        for shard in sorted(shard_buckets):
+            yield from shard_buckets[shard].items()
+
     @classmethod
     def normalize_sample_id(cls, identifier: Union[str, Path]) -> str:
         value = str(identifier)

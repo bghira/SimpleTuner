@@ -1443,6 +1443,8 @@ For a basic example of how to use a Hugging Face dataset, set `"type": "huggingf
 
 ### Webshart Datasets
 
+During VAE cache preparation, Webshart processes all aspect-bucket groups belonging to one shard before moving to the next shard. This reduces repeated shard downloads when the whole-shard cache cannot hold the dataset. Already-cached samples and samples assigned to other ranks are excluded before grouping; training sampler order is unchanged.
+
 Captions can be strings, native JSON objects, or mixed lists of both. Objects stay
 intact in metadata and caption caches; each object becomes one JSON text prompt
 when preparing inputs for the text encoder. Object fields are not treated as
