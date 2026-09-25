@@ -2,6 +2,8 @@
 
 Qwen Image 2.1 is the default (`model_flavour: "v2.1"`), using `Qwen/Qwen-Image-2.1`. It has a 32-block transformer, a Qwen3-VL text encoder, and a 64-channel VAE with 16× spatial compression.
 
+Qwen Image 2.1 uses [Ollin’s texture-fixed VAE](https://huggingface.co/madebyollin/texture-fix-vae-for-qwen-image-2.1) by default for validation and other VAE decoding. Only the decoder was fine-tuned; the encoder is unchanged, so existing 2.1 training latents remain compatible. The VAE revision is pinned independently of the base model. To reproduce outputs with the original VAE, set `pretrained_vae_model_name_or_path: "Qwen/Qwen-Image-2.1"`. Explicit VAE overrides and older flavours keep their existing behaviour.
+
 The `qwen_image.peft-lora` example trains on `RareConcepts/Domokun` at 512px with the trigger `🟫`. Start with BF16 (`base_model_precision: "no_change"`) and use gradient checkpointing when memory is limited. The example uses separate 2.1 latent and text caches; do not reuse caches from older flavours.
 
 ```bash

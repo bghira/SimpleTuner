@@ -2,6 +2,8 @@
 
 Qwen Image 2.1 es la variante predeterminada (`model_flavour: "v2.1"`) y utiliza `Qwen/Qwen-Image-2.1`. Tiene un transformer de 32 bloques, un codificador de texto Qwen3-VL y un VAE de 64 canales con compresión espacial de 16×.
 
+Qwen Image 2.1 usa el [VAE con corrección de textura de Ollin](https://huggingface.co/madebyollin/texture-fix-vae-for-qwen-image-2.1) de forma predeterminada para la validación y otras operaciones de decodificación VAE. Solo se ajustó el decodificador; el codificador no cambió, por lo que los latentes de entrenamiento existentes de la versión 2.1 siguen siendo compatibles. La revisión del VAE se fija independientemente del modelo base. Para reproducir resultados con el VAE original, configura `pretrained_vae_model_name_or_path: "Qwen/Qwen-Image-2.1"`. Las sustituciones explícitas del VAE y las variantes anteriores mantienen su comportamiento.
+
 El ejemplo `qwen_image.peft-lora` entrena con `RareConcepts/Domokun` a 512px y usa el activador `🟫`. Empieza con BF16 (`base_model_precision: "no_change"`) y activa los checkpoints de gradientes cuando falte memoria. El ejemplo utiliza cachés de latentes y texto exclusivos de 2.1; no reutilices cachés de variantes anteriores.
 
 ```bash
