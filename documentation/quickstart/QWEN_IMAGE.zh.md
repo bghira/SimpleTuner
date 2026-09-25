@@ -611,7 +611,7 @@ LoRA 训练：
 
 流程测试可用 8 次更新、2 个教师步；评估图像前恢复 40 步。在 100、250、500 和 1,000 次更新时评估，并以相同提示词和种子比较适配器与基础模型。辅助适配器的实际价值仍需另一次概念训练验证。
 
-[Ostris 描述了以低学习率训练模型自身生成图像的方法](https://huggingface.co/ostris/zimage_turbo_training_adapter)。此处训练正向适配器。后续概念训练将 `assistant_lora_path` 指向输出并启用辅助加载；SimpleTuner 在训练时冻结它，在采样时移除它。不会自动下载 Qwen 2.1 辅助适配器，其效果仍属实验。
+Qwen Image 2.1 LoRA 训练默认加载 [训练辅助适配器 v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2)，训练时冻结，验证时禁用。设置 `disable_assistant_lora: true` 可关闭；设置 `assistant_lora_path` 和可选的 `assistant_lora_weight_name` 可替换适配器。旧版本不使用此默认值。训练新的辅助适配器时，请像相关示例一样保留 `disable_assistant_lora: true`。
 
 请将此方法作为唯一蒸馏方法；不支持与其他蒸馏器组合。
 
