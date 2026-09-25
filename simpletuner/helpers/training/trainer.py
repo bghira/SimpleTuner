@@ -6233,6 +6233,10 @@ class Trainer:
             yield
         finally:
             trained_component.enable_lora()
+            if getattr(self.model, "assistant_lora_loaded", False):
+                from simpletuner.helpers.assistant_lora import freeze_adapter_parameters
+
+                freeze_adapter_parameters(trained_component, self.model.assistant_adapter_name)
 
     def _prepare_regularisation_parent_targets(self, prepared_batch: dict) -> None:
         training_logger.debug("Predicting parent model residual.")
