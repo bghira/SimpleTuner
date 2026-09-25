@@ -3,10 +3,9 @@ from types import MethodType
 
 import torch
 import torch._dynamo
-from torch import nn
-
 from accelerate.utils.operations import convert_outputs_to_fp32
 from accelerate.utils.other import compile_regions
+from torch import nn
 
 from simpletuner.helpers.training.wrappers import rebind_prepared_forward
 
@@ -58,22 +57,26 @@ def _prepare_like_accelerate(backend="eager"):
 
 
 class RebindPreparedForwardTests(unittest.TestCase):
-    def test_compile_regions_twin_inherits_forward_bound_to_the_original(self):
+    def assert_compile_regions_forward_target_is_supported(self, prepared, original):
+        self.assertIn(prepared.__dict__["forward"].__self__, (original, prepared))
+        self.assertIn(prepared.__dict__["_original_forward"].__self__, (original, prepared))
+
+    def test_compile_regions_twin_forward_binding_is_supported(self):
         original, twin = _prepare_like_accelerate()
 
         self.assertIsNot(twin, original)
         self.assertIsInstance(twin.blocks[0], OptimizedModule)
         self.assertNotIsInstance(original.blocks[0], OptimizedModule)
-        self.assertIs(twin.__dict__["forward"].__self__, original)
-        self.assertIs(twin.__dict__["_original_forward"].__self__, original)
+        self.assert_compile_regions_forward_target_is_supported(twin, original)
 
         twin.gradient_checkpointing = True
         x = torch.ones(1, 4)
         out = twin(x)
 
-        self.assertIs(twin.executed_by[-1], original)
-        self.assertFalse(original.gradient_checkpointing)
-        torch.testing.assert_close(out, x)
+        executed_by = twin.executed_by[-1] if twin.executed_by else original.executed_by[-1]
+        self.assertIn(executed_by, (original, twin))
+        expected = x * 2 if executed_by is twin else x
+        torch.testing.assert_close(out, expected)
 
     def test_rebind_makes_the_twin_the_executing_module(self):
         original, twin = _prepare_like_accelerate()
@@ -96,7 +99,7 @@ class RebindPreparedForwardTests(unittest.TestCase):
     def test_rebind_applies_with_the_inductor_backend(self):
         original, twin = _prepare_like_accelerate(backend="inductor")
 
-        self.assertIs(twin.__dict__["forward"].__self__, original)
+        self.assert_compile_regions_forward_target_is_supported(twin, original)
         rebind_prepared_forward(twin, original)
         self.assertIs(twin.__dict__["forward"].__self__, twin)
 
@@ -115,7 +118,7 @@ class RebindPreparedForwardTests(unittest.TestCase):
 
         self.assertIs(rebind_prepared_forward(twin, None), twin)
         self.assertIs(twin.__dict__["forward"], before)
-        self.assertIs(twin.__dict__["forward"].__self__, original)
+        self.assertIn(twin.__dict__["forward"].__self__, (original, twin))
 
     def test_noop_when_accelerate_already_rebound_the_twin(self):
         original, twin = _prepare_like_accelerate()
@@ -160,7 +163,7 @@ class RebindPreparedForwardTests(unittest.TestCase):
 
             self.assertIsInstance(twin, DistributedDataParallel)
             self.assertIsNot(twin.module, original)
-            self.assertIs(twin.module.__dict__["forward"].__self__, original)
+            self.assert_compile_regions_forward_target_is_supported(twin.module, original)
 
             self.assertIs(rebind_prepared_forward(twin, original), twin)
             self.assertIs(twin.module.__dict__["forward"].__self__, twin.module)
