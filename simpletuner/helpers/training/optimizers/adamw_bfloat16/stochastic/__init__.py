@@ -86,16 +86,17 @@ def add_stochastic_(_input: Tensor, other: Tensor, alpha: float = 1.0):
     _input_original = _input
     if _input.device.type == "mps":
         _input = _input.to(dtype=torch.float32)
+        other = other.to(dtype=torch.float32)
 
-    if other.dtype == torch.float32:
-        result = other.clone()
+    if _input.dtype == torch.float32:
+        result = _input.clone()
     else:
-        result = other.to(dtype=torch.float32)
+        result = _input.to(dtype=torch.float32)
 
     if _input.device.type == "mps":
-        result.add_(_input, alpha=torch.tensor(alpha, dtype=torch.float32))
+        result.add_(other, alpha=torch.tensor(alpha, dtype=torch.float32))
     else:
-        result.add_(_input, alpha=alpha)
+        result.add_(other, alpha=alpha)
 
     copy_stochastic_(_input, result)
 
