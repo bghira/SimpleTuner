@@ -368,6 +368,11 @@ class AssistantLoRADistillerTests(unittest.TestCase):
         model.config.assistant_lora_path = None
         with patch("simpletuner.helpers.assistant_lora.load_assistant_adapter") as loader:
             model._maybe_load_assistant_lora()
+        self.assertEqual(loader.call_args.kwargs["lora_path"], "SimpleTuner/Qwen-Image-2.1-training-assistant-v2")
+        self.assertIs(loader.call_args.kwargs["pipeline_cls"], QwenImage21Pipeline)
+        model.config.disable_assistant_lora = True
+        with patch("simpletuner.helpers.assistant_lora.load_assistant_adapter") as loader:
+            model._maybe_load_assistant_lora()
         loader.assert_not_called()
         self.assertFalse(QwenImage.supports_assistant_lora(SimpleNamespace(model_flavour="v1.0")))
 

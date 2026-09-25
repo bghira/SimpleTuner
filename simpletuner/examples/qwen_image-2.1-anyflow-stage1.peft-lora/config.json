@@ -77,5 +77,6 @@
       "schedule_shift": 2.000802574061872
     }
   },
-  "dynamo_dynamic": true
+  "dynamo_dynamic": true,
+  "disable_assistant_lora": true
 }
