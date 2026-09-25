@@ -6228,6 +6228,22 @@ class Trainer:
             return
 
         trained_component = self.model.get_trained_component()
+        if getattr(self.model, "assistant_lora_loaded", False):
+            from simpletuner.helpers.assistant_lora import set_adapter_stack
+
+            assistant_name = self.model.assistant_adapter_name
+            try:
+                set_adapter_stack(
+                    trained_component,
+                    [assistant_name],
+                    weights=[self.config.assistant_lora_strength],
+                    freeze_names=[assistant_name],
+                )
+                yield
+            finally:
+                self.model.configure_assistant_lora_for_training()
+            return
+
         trained_component.disable_lora()
         try:
             yield

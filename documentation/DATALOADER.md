@@ -820,8 +820,7 @@ In this example, the 512px dataset is used for steps 1-300, then the 1024px data
 ### `is_regularisation_data`
 
 - Also may be spelt `is_regularization_data`
-- Enables parent-teacher training so that the prediction target prefers the frozen base model's result for a given dataset.
-  - Most diffusion families currently require LyCORIS adapters.
+- For diffusion LoRA training, regularisation matches a detached parent prediction at the same noisy inputs. With a frozen assistant LoRA, the parent includes the assistant at its training strength: only the trainable concept adapter is disabled for target capture. The student uses both adapters, and the assistant remains frozen. Without an assistant, the parent is the bare base model. This applies to standard PEFT LoRA and LyCORIS.
   - MiniMax Music 3 `language_model` training supports standard PEFT LoRA regularisation batches, including XM route selection. Its target is the frozen base planner's next-token distribution.
 
 ### `delete_unwanted_images`

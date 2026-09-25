@@ -817,8 +817,7 @@ effective_batch_size = 数据集 train_batch_size × num_gpus × gradient_accumu
 ### `is_regularisation_data`
 
 - 也可写作 `is_regularization_data`
-- 启用父教师训练，使该数据集的预测目标更倾向于冻结基础模型的结果。
-  - 大多数 diffusion family 目前需要 LyCORIS 适配器。
+- 在扩散 LoRA 训练中，正则化使用相同的带噪输入，匹配不带梯度的父模型预测。加载冻结的辅助 LoRA 时，父模型包含训练强度下的辅助适配器：捕获目标时只禁用可训练的概念适配器。学生模型使用两个适配器，辅助适配器始终冻结。没有辅助适配器时，父模型就是不带适配器的基础模型。这适用于标准 PEFT LoRA 和 LyCORIS。
   - MiniMax Music 3 的 `language_model` 训练支持标准 PEFT LoRA regularisation batch，包括 XM route selection。其目标是冻结基础 planner 的下一 token 分布。
 
 ### `delete_unwanted_images`
