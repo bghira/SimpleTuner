@@ -1901,6 +1901,12 @@ class QwenImage(ImageModelFoundation):
 
         return sample_latents
 
+    def decode_latents_to_pixels(self, latents: torch.Tensor, *, use_tae: bool = False) -> torch.Tensor:
+        pixels = super().decode_latents_to_pixels(latents, use_tae=use_tae)
+        if self._get_model_flavour() == "v2.1":
+            pixels = pixels[:, :, :3]
+        return pixels
+
     def pre_latent_decode(self, latents: torch.Tensor) -> torch.Tensor:
         """
         Pre-process latents before passing to any decoder (VAE or TAE).
