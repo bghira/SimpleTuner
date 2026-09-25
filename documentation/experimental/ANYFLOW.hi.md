@@ -11,6 +11,17 @@ stages ऐसे model को train करते हैं जो current flow t
 NVIDIA के released checkpoints के साथ Wan continuation example के लिए
 [AnyFlow Continuation Quickstart](/documentation/quickstart/ANYFLOW.hi.md) देखें।
 
+
+Qwen Image 2.1 में FlowMap interval conditioning उपलब्ध है। [तीन-stage Qwen पायलट](../quickstart/QWEN_IMAGE.hi.md) में CC12M के लंबे captions, e621 और थोड़े Domokun examples मिलाए जाते हैं, फिर regularisation के साथ छोटा refinement होता है। Base-prediction anchor preservation जाँचता है; यह Qwen में guidance distillation होने का प्रमाण नहीं है।
+
+Compiled AnyFlow training में teacher, generator, discriminator और अलग gradient modes, padding तथा batch sizes के लिए हर Dynamo frame पर अस्थायी रूप से कम-से-कम 32 variants की अनुमति होती है। उपयोगकर्ता की बड़ी सीमा बनी रहती है और run के बाद पुरानी सीमा वापस आती है। Torch 2.11 में default आठ variants खत्म होने पर checkpoint recomputation eager execution में जा सकती है और saved-tensor metadata check विफल हो सकता है। बदलती caption lengths के लिए `dynamo_dynamic: true` इस्तेमाल करें; Qwen पायलट में यह चालू है।
+
+AnyFlow checkpoint में हर प्रक्रिया के लिए `anyflow_rng_state_<rank>.pt` शामिल होता है। यह interval sampling और on-policy rollout में इस्तेमाल होने वाले निजी random generator की स्थिति सुरक्षित रखता है। Resume करते समय stage, seed, dataset settings और distributed topology समान होनी चाहिए। इस स्थिति के बिना पुराने checkpoint से सटीक continuation संभव नहीं है, इसलिए उन्हें अस्वीकार किया जाता है; उनके adapter से नया run शुरू करने के लिए `init_lora` और नया optimizer इस्तेमाल करें।
+
+`init_lora` डिफ़ॉल्ट रूप से adapter में सहेजा गया step पढ़ता है। नया stage शुरू करते समय `init_lora_step: 0` सेट करें, ताकि step budget और scheduler शून्य से शुरू हों।
+
+Adapter export में tensor names से regional compiler wrappers हटते हैं और interval-embedding tensors सुरक्षित रहते हैं। सामान्य और compiled, दोनों models इन्हें दोबारा लोड कर सकते हैं। `diffusion_ratio: 1.0` पर सभी intervals में `r=t` होता है, इसलिए target preparation शून्य योगदान वाली दो finite-difference predictions छोड़ देता है।
+
 ## Forward Stage
 
 ```json
@@ -44,17 +55,18 @@ NVIDIA के released checkpoints के साथ Wan continuation example क
 
 ## On-Policy Stage
 
-इस stage को forward-stage AnyFlow adapter से `init_lora` सेट करके या उसका checkpoint resume करके शुरू करें:
+इस stage को forward-stage AnyFlow adapter से `init_lora` और नई optimizer state के साथ शुरू करें। Training-state checkpoint केवल उसी stage, dataset configuration और distributed topology के भीतर resume करें:
 
 ```json
 {
   "model_type": "lora",
   "lora_type": "standard",
   "init_lora": "path-or-repo-to-forward-anyflow-adapter",
+  "init_lora_step": 0,
   "learning_rate": 0.000002,
   "optimizer_beta1": 0.0,
   "optimizer_beta2": 0.999,
-  "optimizer_weight_decay": 0.0,
+  "optimizer_config": "weight_decay=0.0",
   "distillation_method": "anyflow",
   "distillation_config": {
     "anyflow": {

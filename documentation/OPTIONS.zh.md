@@ -59,6 +59,10 @@ simpletuner configure config/foo/config.json
 - **内容**：指定训练的模型架构。
 - **选项**：pixart_sigma, flux, sd3, sdxl, kolors, legacy
 
+### `--model_flavour`
+
+选择 `--model_family` 中的检查点变体。`qwen_image` 的默认值是 `v2.1`（`Qwen/Qwen-Image-2.1`）。若要训练旧架构，请明确设置 `v1.0`、`v2.0` 或现有的 `edit-*` 版本；适配器、嵌入缓存和潜变量缓存不能与 2.1 互换。参阅 [Qwen Image 快速入门](quickstart/QWEN_IMAGE.zh.md)。
+
 ### `--lora_format`
 
 - **内容**：选择 LoRA 检查点的加载/保存键格式。
@@ -394,7 +398,7 @@ simpletuner configure config/foo/config.json
 ### `--gradient_checkpointing_interval`
 
 - **内容**：transformer block checkpointing 的模型相关 interval。1 基本等同于启用 `--gradient_checkpointing`。
-- **说明**：Flux、Flux.2、Krea 2、LTXVideo2、MageFlow、Z-Image 和 Wan 在 whole-block 路径上使用连续的 *n* 个 block chunk。其他支持此选项的模型族可能仍使用旧的“每第 *n* 个 block checkpoint”行为。值越大可能降低重算开销，但通常会在 VRAM 中保留更多 activation。
+- **说明**：Flux、Flux.2、Krea 2、LTXVideo2、MageFlow、Qwen Image 2.1、Z-Image 和 Wan 在 whole-block 路径上使用连续的 *n* 个 block chunk。其他支持此选项的模型族可能仍使用旧的“每第 *n* 个 block checkpoint”行为。更大的连续分组保存更少的边界状态，但仍需重算 checkpoint 内的 block。请测量速度与峰值显存的取舍，参见 [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.zh.md#qwen-image-21)。
 
 ### `--gradient_checkpointing_segment_stride`
 
@@ -2319,7 +2323,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,assistant_lora,h3_drift,self_transcendence}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -3086,7 +3090,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,assistant_lora,h3_drift,self_transcendence}
                         Method for model distillation
                         Distillation methods cannot be combined with
                         --train_text_encoder.
@@ -3122,3 +3126,11 @@ options:
   --sana_complex_human_instruction SANA_COMPLEX_HUMAN_INSTRUCTION
                         Complex human instruction for Sana model training
 ```
+
+### `--distillation_method=assistant_lora`
+
+选择 `--distillation_method=assistant_lora`，使用字幕数据集和禁用适配器后新生成的基础模型输出训练正向辅助适配器。目前支持 Qwen Image 2.1。`distillation_config.assistant_lora` 接受 `num_inference_steps`（40）、`resolutions`（`[[1024, 1024]]`，宽在前、高在后，均为 32 的倍数）和 `seed`（42）。需要预缓存文本嵌入，不缓存终态潜变量。参见 [Qwen 指南](quickstart/QWEN_IMAGE.md)。
+
+字幕数据集要求 `dataloader_prefetch: false`，确保检查点游标对应已消费的字幕。恢复时若字幕标识或内容、批量、重复次数、打乱设置、种子、梯度累积或分布式布局发生变化，将报错。 辅助 LoRA 检查点同样拒绝更改生成种子、分辨率列表或教师推理步数。
+
+Assistant LoRA 和 AnyFlow 会临时将 Dynamo 每段代码的编译缓存上限提高到至少 32，以容纳教师、训练和验证变体。用户设置的更高上限会保留；退出时（包括发生错误时）恢复原来的上限。

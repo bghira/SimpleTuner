@@ -59,6 +59,10 @@ simpletuner configure config/foo/config.json
 - **What**: यह निर्धारित करता है कि कौन‑सा model architecture train किया जा रहा है।
 - **Choices**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
 
+### `--model_flavour`
+
+`--model_family` के भीतर checkpoint का प्रकार चुनता है। `qwen_image` के लिए डिफ़ॉल्ट `v2.1` (`Qwen/Qwen-Image-2.1`) है। पुराने आर्किटेक्चर को प्रशिक्षित करने के लिए `v1.0`, `v2.0` या मौजूदा `edit-*` प्रकार स्पष्ट रूप से सेट करें; adapters और embedding/latent कैश 2.1 के साथ अदला-बदली नहीं किए जा सकते। [Qwen Image quickstart](quickstart/QWEN_IMAGE.hi.md) देखें।
+
 ### `--lora_format`
 
 - **What**: load/save के लिए LoRA checkpoint key format चुनता है।
@@ -393,7 +397,7 @@ simpletuner configure config/foo/config.json
 ### `--gradient_checkpointing_interval`
 
 - **What**: Transformer block checkpointing के लिए model-dependent interval। 1 का मान लगभग `--gradient_checkpointing` enabled जैसा है।
-- **Note**: Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Z-Image, और Wan whole-block paths पर *n* contiguous block chunks use करते हैं। इस option को expose करने वाली दूसरी families अभी भी पुराने "हर *n*-th block checkpoint" behavior का उपयोग कर सकती हैं। Higher values recompute overhead घटा सकती हैं, लेकिन आम तौर पर VRAM में ज्यादा activations रखती हैं।
+- **Note**: Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Qwen Image 2.1, Z-Image, और Wan whole-block paths पर *n* contiguous block chunks use करते हैं। इस option को expose करने वाली दूसरी families अभी भी पुराने "हर *n*-th block checkpoint" behavior का उपयोग कर सकती हैं। बड़े contiguous groups कम boundary states सहेजते हैं, लेकिन checkpoint किए गए blocks फिर भी recompute होते हैं। गति और peak memory का संतुलन मापें; [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.hi.md#qwen-image-21) देखें।
 
 ### `--gradient_checkpointing_segment_stride`
 
@@ -2314,7 +2318,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,assistant_lora,h3_drift,self_transcendence}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -3083,7 +3087,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,assistant_lora,h3_drift,self_transcendence}
                         Method for model distillation
                         Distillation methods cannot be combined with
                         --train_text_encoder.
@@ -3119,3 +3123,11 @@ options:
   --sana_complex_human_instruction SANA_COMPLEX_HUMAN_INSTRUCTION
                         Complex human instruction for Sana model training
 ```
+
+### `--distillation_method=assistant_lora`
+
+`--distillation_method=assistant_lora` कैप्शन डेटासेट से, अडैप्टर बंद रखकर हर बार बनाए गए बेस मॉडल आउटपुट पर सकारात्मक सहायक अडैप्टर प्रशिक्षित करता है। प्रारंभिक समर्थन Qwen Image 2.1 के लिए है। `distillation_config.assistant_lora` में `num_inference_steps` (40), `resolutions` (`[[1024, 1024]]`, पहले चौड़ाई फिर ऊँचाई, 32 के गुणज) और `seed` (42) हैं। टेक्स्ट एम्बेडिंग पहले कैश होनी चाहिए; अंतिम लेटेंट कैश नहीं होते। [Qwen गाइड](quickstart/QWEN_IMAGE.md) देखें।
+
+कैप्शन डेटासेट के लिए `dataloader_prefetch: false` आवश्यक है, ताकि चेकपॉइंट कर्सर उपयोग किए गए कैप्शन को दर्शाए। पुनः शुरू करते समय कैप्शन पहचान या पाठ, बैच, दोहराव, शफ़ल, बीज, ग्रेडिएंट संचय या वितरित व्यवस्था में बदलाव स्वीकार नहीं होते। सहायक LoRA के चेकपॉइंट जनरेशन बीज, रिज़ॉल्यूशन सूची या शिक्षक के इन्फरेंस चरणों में बदलाव भी अस्वीकार करते हैं।
+
+Assistant LoRA और AnyFlow, teacher, training और validation variants के लिए Dynamo की प्रति-code compile-cache सीमा अस्थायी रूप से कम से कम 32 करते हैं। उपयोगकर्ता की अधिक सीमा बनी रहती है; बाहर निकलने पर, त्रुटि होने पर भी, मूल सीमा बहाल होती है।

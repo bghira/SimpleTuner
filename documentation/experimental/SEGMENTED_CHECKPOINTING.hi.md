@@ -2,7 +2,7 @@
 
 Segmented checkpointing हर block को checkpoint करने और कोई checkpointing न करने के बीच का mode है।
 
-यह PyTorch activation checkpointing backend इस्तेमाल करता है। SimpleTuner contiguous transformer blocks के group को एक checkpoint call में चलाता है, फिर returned hidden state अगले group को देता है। Wider groups backward में कम recompute करते हैं, लेकिन ज्यादा activations alive रखते हैं।
+यह PyTorch का activation checkpointing उपयोग करता है। SimpleTuner लगातार Transformer blocks के समूह को एक checkpoint कॉल में चलाता है और लौटे hidden state को अगले समूह तक पहुँचाता है। बड़े समूह कम boundary states सहेजते हैं, लेकिन backward में checkpoint किए गए blocks की गणना फिर भी दोहराते हैं; गति और अधिकतम मेमोरी पर प्रभाव मापें।
 
 CPU offload और FFN-only checkpointing के लिए [Unsloth-style checkpointing](UNSLOTH_CHECKPOINTING.hi.md#controls) देखें। छोटी rule of thumb [Decision Rule](UNSLOTH_CHECKPOINTING.hi.md#decision-rule) में है।
 
@@ -31,7 +31,7 @@ Supported whole-block paths पर `gradient_checkpointing_interval` segment wid
 
 यह blocks `0-1` checkpoint करता है, `2-3` normal चलाता है, `4-5` checkpoint करता है, `6-7` normal चलाता है, और repeat करता है। stride कम से कम interval जितना होना चाहिए; overlapping schedules valid नहीं हैं।
 
-Supported segmented whole-block paths: Flux.1, Flux.2, HunyuanVideo, Krea 2, LongCat Image, LongCat Video, LTXVideo 0.9, LTXVideo2, Lumina2, MageFlow, PixArt, SD3, SanaVideo, Z-Image, ZLab I1, और Wan।
+Supported segmented whole-block paths: Flux.1, Flux.2, HunyuanVideo, Krea 2, LongCat Image, LongCat Video, LTXVideo 0.9, LTXVideo2, Lumina2, MageFlow, MiniMax H3, PixArt, Qwen Image 2.1, SD3, SanaVideo, Z-Image, ZLab I1, और Wan।
 
 Stable Cascade stage C भी interval और stride support करता है, लेकिन schedule transformer whole-block groups की जगह UNet के Res/Timestep/Attention micro-block sequence पर apply होता है।
 
@@ -55,7 +55,7 @@ Stable Cascade stage C भी interval और stride support करता है
 
 ## Benchmarks
 
-Real SimpleTuner examples से single-GPU H100 और L40S pods पर measure किया गया। validation और checkpoint saves disabled थे, cache preparation exclude था, और post-warmup timing available होने पर train loop के first-step compile/setup को भी exclude किया गया।
+Real SimpleTuner examples से single-GPU H100, H200 और L40S pods पर measure किया गया। validation और checkpoint saves disabled थे, cache preparation exclude था, और post-warmup timing available होने पर train loop के first-step compile/setup को भी exclude किया गया।
 
 हर measured cell `post-warmup sec/step / peak VRAM GiB` है। status-only cells का मतलब है: `OOM` GPU memory खत्म होना, `failed` measured training steps तक न पहुंचना, `unsupported` उस family में option wired न होना, और `not run` उस combination का sweep में न होना।
 
@@ -684,9 +684,67 @@ Example: `pixart.lycoris-lokr`. Resolution: 1024x1024.
 | fp8-torchao | seg2-stride4 | 2.827 / 63.27 | OOM |
 | fp8-torchao | seg2-stride4-offload | unsupported | unsupported |
 
+### Qwen Image 2.1
+
+GPU मॉडल की पुष्टि के बाद H200 और L40S पर माप लिया गया: `qwen_image.peft-lora`, Qwen-Image 2.1, 512x512 Domokun, BF16, rank-32 LoRA, Optimi Lion और regional Inductor compilation (`default` मोड)। हर रन में 20 steps हैं; पहले पाँच timing से बाहर हैं। हर cell **सेकंड/step / अधिकतम VRAM GiB** दिखाता है; peak में components की तैयारी शामिल है।
+
+Runtime: `torch==2.11.0+cu128`, `diffusers==0.40.0`; 10 text tokens और 1024 image tokens। Batch 1 में कुछ memory peaks components की तैयारी से तय होते हैं।
+
+#### BF16 checkpoint schedules
+
+`none` checkpointing बंद करता है; `layer` हर block पर अलग checkpoint लगाता है। `interval2` लगातार `0–1, 2–3, …` blocks को समूह बनाता है; `seg2-stride4` में `0–1` checkpoint होते हैं, `2–3` की activations रखी जाती हैं और क्रम दोहरता है। समूह execution के लिए block swapping, hidden-state capture और KV cache बंद होने चाहिए; उन paths पर प्रति-block interval/stride schedule बना रहता है। Attention activation offload (`activation-offload`, `seg2-stride4-offload`) समर्थित नहीं है। BF16 फिट होता है, इसलिए इस 2.1 sweep में quantization शामिल नहीं है।
+
+| मोड | H200, batch 1 | H200, batch 20 | L40S, batch 1 |
+| --- | ---: | ---: | ---: |
+| `none` | 0.081 / 20.99 | 1.223 / 128.42 | 0.238 / 20.64 |
+| `layer` | 0.206 / 17.69 | 1.773 / 24.19 | 0.368 / 17.60 |
+| `interval2` | 0.190 / 17.69 | 1.761 / 25.14 | 0.371 / 17.60 |
+| `seg2-stride4` | 0.116 / 17.77 | 1.490 / 73.26 | 0.290 / 17.60 |
+
+#### Attention backends
+
+Attention तुलना में checkpointing बंद है। Default native SDPA ने H200 पर cuDNN और L40S पर PyTorch Flash SDPA चुना। Qwen 2.1 text के लिए causal attention और target image के लिए सभी valid keys पर noncausal attention उपयोग करता है। समान लंबाई वाले बिना padding के prompts को varlen की **ज़रूरत नहीं** है। वर्तमान FlashAttention paths को बिना padding के text-to-image prompts चाहिए; padded prompts या interleaved conditioning के लिए native SDPA या FlexAttention उपयोग करें। केवल padding बताने वाला varlen mask उस causal संरचना को सुरक्षित नहीं रख सकता।
+
+| `attention_mechanism` | H200, batch 1 | H200, batch 20 | L40S, batch 1 |
+| --- | ---: | ---: | ---: |
+| `native` | 0.081 / 20.99 | 1.223 / 128.42 | 0.238 / 20.64 |
+| `native-flash` | 0.080 / 20.98 | 1.278 / 128.40 | 0.238 / 20.63 |
+| `native-efficient` | नहीं मापा | नहीं मापा | 0.259 / 20.75 |
+| `flash-attn-hub` | नहीं मापा | नहीं मापा | 0.238 / 20.75 |
+| `flash-attn-3-hub` | 0.094 / 20.98 | 1.215 / 128.40 | नहीं मापा |
+| `flash-attn-3-varlen-hub` | 0.096 / 20.97 | 1.216 / 128.44 | नहीं मापा |
+| `flex` | 0.100 / 20.92 | 1.314 / 134.45 | 0.271 / 20.70 |
+| `flash-attn-4-hub` | विफल | विफल | नहीं मापा |
+| `cudnn` | विफल | नहीं मापा | नहीं मापा |
+
+समान लंबाई वाले varlen metadata का helper upstream Diffusers से लिया गया है: lengths shapes से मिलती हैं और cumulative offsets के लिए `arange` उपयोग होता है। इससे प्रकाशित helper के GPU `.item()` synchronization और graph breaks हटते हैं। सभी positions valid होने पर अनावश्यक mask collate में हटा दिया जाता है। Forward/gradient समानता और graph capture की जाँच timing से अलग होती है।
+
+`attention_mechanism: "cudnn"` को force करने पर PyTorch 2.11 Inductor में `CantSplit` त्रुटि आई; automatic native SDPA ने cuDNN सफलतापूर्वक उपयोग किया। FA4 Hub में `nvidia-cutlass-dsl==4.7.1` के साथ `cutlass.cute.core.ThrMma` उपलब्ध नहीं था, इसलिए load विफल हुआ और timing उपलब्ध नहीं है। Hub backends में `trust_remote_code: true` है। FA3 Hopper के लिए है, L40S के लिए नहीं ([upstream support](https://github.com/Dao-AILab/flash-attention#flashattention-3-beta-release))।
+
+#### H200 batch scaling
+
+उसी H200 पर native SDPA ने **batch 10 में 0.612 सेकंड** और **batch 20 में 1.223 सेकंड** लिए, यानी दोनों में लगभग **16.35 images/s**। Throughput के स्थिर हो जाने के बाद batch दोगुना करने से काम भी लगभग दोगुना हुआ। 144 GB preset में checkpointing बंद ही है; बड़ा batch अतिरिक्त क्षमता उपयोग करता है, लेकिन अधिक images/s की गारंटी नहीं देता।
+
+| Batch | सेकंड/step | Images/s | Peak GiB |
+| ---: | ---: | ---: | ---: |
+| 1 | 0.081 | 12.38 | 20.99 |
+| 10 | 0.612 | 16.35 | 71.85 |
+| 20 | 1.223 | 16.35 | 128.42 |
+उसी अपडेटेड native attention path पर H100 ने batch 10 और checkpointing बंद होने पर **0.639 सेकंड/step** लिया; peak VRAM **71.83 GiB** था।
+
+<!-- qwen21-verification -->
+
+Cached Domokun inputs पर पूरे transformer की जाँच में redundant mask के साथ और बिना FP32 outputs समान थे; gradient relative L2 error `1.97e-6` था। BF16 backends संख्यात्मक रूप से समान नहीं हैं: इस एक batch में FP32 के मुकाबले पूरे LoRA gradient की cosine similarity native SDPA के लिए लगभग 0.92–0.93 और FA3 के लिए 0.80 थी। ये numerical diagnostics हैं, convergence की तुलना नहीं।
+
+H200 batch-20 trace में captured interval के 93.1% समय kernels चल रहे थे। Kernel time का 70.5% GEMM और 9.7% attention में था; Inductor ने normalization/RoPE और pointwise epilogues पहले ही fuse कर दिए थे। सबसे बड़े खाली अंतराल batch की तैयारी के आसपास थे। Kernel active time, SM occupancy नहीं है और profiler timings throughput tables में शामिल नहीं हैं।
+
+27 images के इस dataset में batch 20 पर prefetch धीमा था: queue length 2 के साथ host prefetch का औसत 2.030 सेकंड/step और device prefetch (1 MiB threshold) का 2.036 सेकंड था, जबकि बिना prefetch 1.223 सेकंड लगा। Median लगभग 1.17 सेकंड होने पर भी दोनों में बीच-बीच में लगभग 3 सेकंड के steps आए; presets में prefetch बंद है।
+
+250-step Domokun recipe throughput मापने का उदाहरण है, भरोसेमंद convergence recipe नहीं। पहले के एक checkpoint ने दोबारा लोड करने पर पहचानने योग्य Domokun बनाया, लेकिन नए 250-step runs वह परिणाम दोहरा नहीं पाए। Padding masks बनाए रखने, compilation बंद करने और पुराने RoPE expression का उपयोग करने वाले controls भी विफल रहे। Cached latents सही विषय में decode होते हैं। Training deterioration का कारण अभी स्पष्ट नहीं है; timing tables अलग attention backends की समान image quality साबित नहीं करतीं।
+
 ### Qwen Image
 
-Example: `qwen_image.peft-lora`. Resolution: 1024x1024.
+ये Qwen-Image 1.0 (`model_flavour: "v1.0"`) के पुराने माप हैं, जो पुराने `qwen_image.peft-lora` उदाहरण पर 1024x1024 पर लिए गए थे। उदाहरण अब 2.1 चुनता है। नीचे interval/stride के लगभग समान परिणाम अलग-अलग schedules सक्रिय होने की पुष्टि नहीं करते और इन्हें 2.1 की सेटिंग का आधार नहीं बनाना चाहिए।
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |

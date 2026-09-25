@@ -4,8 +4,11 @@ import peft
 import safetensors.torch
 import torch
 
+from simpletuner.helpers.training.wrappers import strip_compile_wrapper
+
 ANYFLOW_SIDECAR_PREFIXES = (
     "condition_embedder.delta_embedder.",
+    "time_text_embed.delta_timestep_embedder.",
     "delta_adaln_embedder.",
     "delta_time_embedder.",
     "delta_timestep_embedder.",
@@ -35,13 +38,14 @@ def _sidecar_destination(model_state: dict, model_key: str, adapter_name: str):
     if destination is not None:
         return destination
 
-    module_name, separator, parameter_name = model_key.rpartition(".")
-    if not separator:
-        return None
-    destination = model_state.get(f"{module_name}.modules_to_save.{adapter_name}.{parameter_name}")
-    if destination is not None:
-        return destination
-    return model_state.get(f"{module_name}.base_layer.{parameter_name}")
+    parts = model_key.split(".")
+    for index in range(len(parts) - 1, 0, -1):
+        module_name, parameter_name = ".".join(parts[:index]), ".".join(parts[index:])
+        for wrapper in (f"modules_to_save.{adapter_name}", "base_layer"):
+            destination = model_state.get(f"{module_name}.{wrapper}.{parameter_name}")
+            if destination is not None:
+                return destination
+    return None
 
 
 def determine_adapter_target_modules(args, unet, transformer):
@@ -140,11 +144,14 @@ def load_lora_weights(dictionary, filename, loraKey="default", use_dora=False, s
     additional_keys = set()
     if state_dict is None:
         state_dict = safetensors.torch.load_file(filename)
+    state_dict = {strip_compile_wrapper(key): value for key, value in state_dict.items()}
     for prefix, model in dictionary.items():
         lora_layers = {
-            (prefix + "." + x): y for (x, y) in model.named_modules() if isinstance(y, peft.tuners.lora.layer.Linear)
+            (prefix + "." + strip_compile_wrapper(x)): y
+            for (x, y) in model.named_modules()
+            if isinstance(y, peft.tuners.lora.layer.Linear)
         }
-        model_state = model.state_dict()
+        model_state = {strip_compile_wrapper(key): value for key, value in model.state_dict().items()}
         sidecar_prefix = f"{prefix}."
         for key, tensor in state_dict.items():
             if not key.startswith(sidecar_prefix):

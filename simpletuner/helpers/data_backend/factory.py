@@ -2796,6 +2796,8 @@ class FactoryRegistry:
             DatasetType.CAPTION,
         }
         for backend in data_backend_config:
+            if backend.get("data_generator") is not None and _backend_dataset_type(backend) is not DatasetType.CAPTION:
+                raise ValueError("data_generator is only valid for dataset_type=caption.")
             raw_type = backend.get("dataset_type", None)
             normalized_type: Optional[DatasetType] = None
             if raw_type is not None:
@@ -2823,6 +2825,9 @@ class FactoryRegistry:
         """
         self._log_performance_metrics("data_backend_config_start")
         self._prevalidate_backend_ids(data_backend_config)
+        if any(backend.get("data_generator") is not None for backend in data_backend_config):
+            self._materialize_caption_generators(data_backend_config)
+            self._prevalidate_backend_ids(data_backend_config)
 
         if not self.text_embed_backends and self._uses_text_embeddings_cache():
             self.configure_text_embed_backends(data_backend_config)
@@ -3595,6 +3600,8 @@ class FactoryRegistry:
 
     def _create_caption_dataloader(self, backend: Dict[str, Any], init_backend: Dict[str, Any]) -> None:
         """Attach CaptionDataset + CaptionSampler + caption collate to the backend."""
+        if getattr(self.args, "dataloader_prefetch", False):
+            raise ValueError("Caption datasets require dataloader_prefetch=false to preserve sampler checkpoint position.")
         repeats = max(int(init_backend["config"].get("repeats", 0) or 0), 0)
         shuffle = backend.get("shuffle", True)
         seed = getattr(self.args, "seed", 0)
@@ -4418,8 +4425,8 @@ class FactoryRegistry:
                             main_config[setting],
                         )
 
-    def _configure_caption_backend(self, backend: Dict[str, Any]) -> None:
-        """Configure caption-only datasets."""
+    def _build_caption_backend(self, backend: Dict[str, Any]) -> Dict[str, Any]:
+        """Build and ingest captions without registering a training dataloader."""
         dataset_type = _backend_dataset_type(backend, default=DatasetType.CAPTION)
         if dataset_type is not DatasetType.CAPTION:
             raise ValueError(f"(id={backend.get('id')}) Expected caption dataset, received {dataset_type}.")
@@ -4470,10 +4477,61 @@ class FactoryRegistry:
         if isinstance(metadata_backend, CaptionMetadataBackend) and not built_on_rank:
             metadata_backend.load_image_metadata()
 
+        return init_backend
+
+    def _configure_caption_backend(self, backend: Dict[str, Any]) -> None:
+        """Configure caption-only datasets."""
+        init_backend = self._build_caption_backend(backend)
+        if getattr(self.args, "distillation_method", None) == "assistant_lora":
+            self._assign_text_embed_cache(backend, init_backend)
+            cache = init_backend["text_embed_cache"]
+            if cache.text_cache_ondemand:
+                raise ValueError("assistant_lora requires precomputed caption embeddings (text_cache_ondemand=false).")
+            cache.compute_embeddings_for_prompts(
+                [record.caption_text for record in init_backend["metadata_backend"].iter_records()],
+                return_concat=False,
+                load_from_cache=False,
+            )
         self._create_caption_dataloader(backend, init_backend)
         StateTracker.register_data_backend(init_backend)
         self.caption_backends[init_backend["id"]] = init_backend
         info_log(f"(id={init_backend['id']}) Caption dataset registered.")
+
+    def _materialize_caption_generators(self, data_backend_config: List[Dict[str, Any]]) -> None:
+        from simpletuner.helpers.data_backend.caption_generator import CaptionImageGenerator, generated_image_backend_configs
+
+        generated_configs = []
+        for backend in data_backend_config:
+            if backend.get("data_generator") is None or backend.get("disabled", False) or backend.get("disable", False):
+                generated_configs.append(backend)
+                continue
+            if self._is_multi_process():
+                raise ValueError(
+                    "data_generator requires a single-process preparation run. "
+                    "For distributed training, configure ordinary image datasets from the generated image directories."
+                )
+            config = create_backend_config(backend, vars(self.args))
+            config.validate(vars(self.args))
+            output_dir = config.data_generator.get("output_dir") or os.path.join(
+                self.args.cache_dir, "generated-captions", backend["id"]
+            )
+            if (
+                config.backend_type == "local"
+                and config.metadata_backend in (None, "json", "discovery")
+                and Path(output_dir).resolve().is_relative_to(Path(config.instance_data_dir).resolve())
+            ):
+                raise ValueError("data_generator.output_dir must be outside instance_data_dir for a local caption source.")
+            caption_backend = self._build_caption_backend(backend)
+            try:
+                generator = CaptionImageGenerator(
+                    self.model, config.data_generator, caption_backend["metadata_backend"].iter_records(), output_dir
+                )
+                generator.generate()
+                bucket_directories = generator.bucket_directories()
+                generated_configs.extend(generated_image_backend_configs(backend, bucket_directories))
+            finally:
+                StateTracker.data_backends.pop(backend["id"])
+        data_backend_config[:] = generated_configs
 
     def _should_skip_caption_discovery(self, backend: Dict[str, Any]) -> bool:
         global_skip = str(getattr(self.args, "skip_file_discovery", "") or "")
@@ -4486,7 +4544,8 @@ class FactoryRegistry:
         """Return cached caption files, discovering them if necessary."""
         existing = StateTracker.get_caption_files(init_backend["id"])
         if existing:
-            return existing
+            sources = [path for path in existing if metadata_backend.is_caption_source(path)]
+            return StateTracker.set_caption_files([("", [], sources)], init_backend["id"])
 
         instance_dir = init_backend.get("instance_data_dir")
         if not instance_dir:
@@ -4505,7 +4564,11 @@ class FactoryRegistry:
             )
             return {}
 
-        return StateTracker.set_caption_files(raw_listing, init_backend["id"])
+        sources = [
+            (directory, subdirs, [path for path in files if metadata_backend.is_caption_source(path)])
+            for directory, subdirs, files in raw_listing
+        ]
+        return StateTracker.set_caption_files(sources, init_backend["id"])
 
     def _configure_single_data_backend(
         self,

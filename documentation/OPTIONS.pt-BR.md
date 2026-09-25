@@ -59,6 +59,10 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 - **O que**: Determina qual arquitetura de modelo sera treinada.
 - **Opcoes**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
 
+### `--model_flavour`
+
+Seleciona uma variante de checkpoint dentro de `--model_family`. Para `qwen_image`, o padrão é `v2.1` (`Qwen/Qwen-Image-2.1`). Defina explicitamente `v1.0`, `v2.0` ou uma variante `edit-*` existente para treinar uma arquitetura anterior; adapters e caches de embeddings/latentes não são intercambiáveis com 2.1. Veja o [guia do Qwen Image](quickstart/QWEN_IMAGE.pt-BR.md).
+
 ### `--lora_format`
 
 - **O que**: Seleciona o formato de chaves do checkpoint LoRA para load/save.
@@ -393,7 +397,7 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 ### `--gradient_checkpointing_interval`
 
 - **O que**: Intervalo dependente do modelo para checkpointing de blocos transformer. Um valor 1 e basicamente o mesmo que deixar `--gradient_checkpointing` habilitado.
-- **Nota**: Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Z-Image e Wan usam chunks contiguos de *n* blocos nos caminhos whole-block. Outras familias que expoem esta opcao podem continuar usando o comportamento antigo de "checkpoint a cada *n* blocos". Valores maiores podem reduzir recompute, mas normalmente mantem mais activations na VRAM.
+- **Nota**: Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Qwen Image 2.1, Z-Image e Wan usam chunks contiguos de *n* blocos nos caminhos whole-block. Outras familias que expoem esta opcao podem continuar usando o comportamento antigo de "checkpoint a cada *n* blocos". Grupos contíguos maiores salvam menos estados de fronteira, mas ainda recalculam os blocos com checkpoint. Meça a relação entre velocidade e pico de memória; veja [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.pt-BR.md#qwen-image-21).
 
 ### `--gradient_checkpointing_segment_stride`
 
@@ -2312,7 +2316,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,assistant_lora,h3_drift,self_transcendence}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -3080,7 +3084,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,assistant_lora,h3_drift,self_transcendence}
                         Method for model distillation
                         Distillation methods cannot be combined with
                         --train_text_encoder.
@@ -3116,3 +3120,11 @@ options:
   --sana_complex_human_instruction SANA_COMPLEX_HUMAN_INSTRUCTION
                         Complex human instruction for Sana model training
 ```
+
+### `--distillation_method=assistant_lora`
+
+`--distillation_method=assistant_lora` treina um adaptador auxiliar positivo com novas gerações do modelo base, desativando o adaptador e usando datasets de legendas. O suporte inicial é Qwen Image 2.1. `distillation_config.assistant_lora` aceita `num_inference_steps` (40), `resolutions` (`[[1024, 1024]]`, largura e altura, múltiplos de 32) e `seed` (42). Exige embeddings de texto pré-calculados; não armazena latentes finais. Consulte o [guia do Qwen](quickstart/QWEN_IMAGE.md).
+
+Datasets de legendas exigem `dataloader_prefetch: false` para que o cursor do checkpoint corresponda às legendas consumidas. A retomada rejeita mudanças nos identificadores/textos, lote, repetições, embaralhamento, semente, acumulação ou configuração distribuída. Os checkpoints do auxiliar também rejeitam mudanças na semente de geração, na lista de resoluções ou no número de passos de inferência do professor.
+
+Assistant LoRA e AnyFlow elevam temporariamente o limite do cache de compilação Dynamo por código para pelo menos 32, acomodando variantes do professor, treino e validação. Um limite maior do usuário é preservado; o original é restaurado ao sair, inclusive após erros.

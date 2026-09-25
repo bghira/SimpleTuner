@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional, Union
 
 # Ensure registry-backed distillers (like self_forcing) register themselves on import.
 import simpletuner.helpers.distillation.anyflow  # noqa: F401
+import simpletuner.helpers.distillation.assistant_lora  # noqa: F401
 import simpletuner.helpers.distillation.flow_dpo  # noqa: F401
 import simpletuner.helpers.distillation.h3_drift  # noqa: F401
 import simpletuner.helpers.distillation.perflow.distiller  # noqa: F401
@@ -25,6 +26,7 @@ class DistillationMethod(Enum):
     PERFLOW = "perflow"
     FLOW_DPO = "flow_dpo"
     ANYFLOW = "anyflow"
+    ASSISTANT_LORA = "assistant_lora"
     H3_DRIFT = "h3_drift"
     SELF_FORCING = "self_forcing"
     SELF_TRANSCENDENCE = "self_transcendence"
@@ -188,7 +190,7 @@ class DistillerFactory:
                 },
                 student_model=student_model,
             )
-        elif method == DistillationMethod.ANYFLOW:
+        elif method in {DistillationMethod.ANYFLOW, DistillationMethod.ASSISTANT_LORA}:
             return DistillerFactory._create_registered_distiller(
                 registry_key=method.value,
                 teacher_model=teacher_model,

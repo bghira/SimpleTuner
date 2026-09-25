@@ -36,7 +36,7 @@
 | MiniMax Music 3 | 2.4B transformer + 8B AR | [MINIMAX_MUSIC.md](/documentation/quickstart/MINIMAX_MUSIC.md) |
 | OmniGen | 3.8B | [OMNIGEN.md](/documentation/quickstart/OMNIGEN.md) |
 | PixArt Sigma | 0.6B-0.9B | [SIGMA.md](/documentation/quickstart/SIGMA.md) |
-| Qwen Image | 20B | [QWEN_IMAGE.md](/documentation/quickstart/QWEN_IMAGE.md)<br>[QWEN_EDIT.md](/documentation/quickstart/QWEN_EDIT.md) |
+| Qwen Image 2.1 / Qwen Image | 7B / 20B | [QWEN_IMAGE.md](/documentation/quickstart/QWEN_IMAGE.md)<br>[QWEN_EDIT.md](/documentation/quickstart/QWEN_EDIT.md) |
 | Sana | 0.6B-4.8B | [SANA.md](/documentation/quickstart/SANA.md) |
 | Sana Video | 2B | [SANAVIDEO.md](/documentation/quickstart/SANAVIDEO.md) |
 | SD 1.x/2.x (Legacy) | 0.9B | No dedicated guide |
@@ -138,7 +138,7 @@ The complete compatibility matrix is split by feature area so each table stays r
 | MiniMax Music 3 | int8 optional | bf16 |
 | OmniGen | int8/fp8 optional | bf16 |
 | PixArt Sigma | int8 optional | bf16 |
-| Qwen Image | required (int8/nf4) | bf16 |
+| Qwen Image 2.1 / Qwen Image | 2.1: optional; v1.0/v2.0: int8/nf4 | bf16 |
 | Sana | int8 optional | bf16 |
 | Sana Video | not recommended for full | bf16 |
 | SD 1.x/2.x (Legacy) | int8/nf4 optional | bf16 |
@@ -290,7 +290,7 @@ MixFlow post-training is available for every `flow matching` row below. See the 
 | MiniMax Music 3 | Qwen3 AR | 8B | DAV audio autoencoder + vocoder decoder |
 | OmniGen | Integrated OmniGen encoder | not specified | AutoencoderKL |
 | PixArt Sigma | T5 XXL v1.1 | 11B | AutoencoderKL |
-| Qwen Image | Qwen2.5-VL | 7B | Qwen Image VAE |
+| Qwen Image 2.1 / Qwen Image | Qwen3-VL / Qwen2.5-VL | 8B / 7B | Qwen Image 2.1 VAE / Qwen Image VAE |
 | Sana | Gemma2 2B-IT | 2B | Sana AutoencoderDC |
 | Sana Video | Gemma 2 | 2B | Wan VAE |
 | SD 1.x/2.x (Legacy) | CLIP-L/14 | 123M | AutoencoderKL |

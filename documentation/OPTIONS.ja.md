@@ -59,6 +59,10 @@ simpletuner configure config/foo/config.json
 - **内容**: どのモデルアーキテクチャを学習するかを指定します。
 - **選択肢**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
 
+### `--model_flavour`
+
+`--model_family` 内のチェックポイントの種類を選択します。`qwen_image` の既定値は `v2.1`（`Qwen/Qwen-Image-2.1`）です。旧アーキテクチャを学習する場合は `v1.0`、`v2.0`、または既存の `edit-*` を明示してください。アダプター、埋め込みキャッシュ、潜在キャッシュは 2.1 と互換性がありません。[Qwen Image クイックスタート](quickstart/QWEN_IMAGE.ja.md) を参照してください。
+
 ### `--lora_format`
 
 - **内容**: LoRA チェックポイントの load/save 形式を選択します。
@@ -394,7 +398,7 @@ simpletuner configure config/foo/config.json
 ### `--gradient_checkpointing_interval`
 
 - **内容**: transformer block checkpointing のモデル依存 interval です。1 は `--gradient_checkpointing` を有効にした状態とほぼ同じです。
-- **注記**: Flux、Flux.2、Krea 2、LTXVideo2、MageFlow、Z-Image、Wan は whole-block path で連続した *n* block chunk を使います。このオプションを持つ他の family は、従来の「*n* block ごとに checkpoint」挙動のままの場合があります。値を大きくすると再計算 overhead は減ることがありますが、通常は VRAM に残る activation が増えます。
+- **注記**: Flux、Flux.2、Krea 2、LTXVideo2、MageFlow、Qwen Image 2.1、Z-Image、Wan は whole-block path で連続した *n* block chunk を使います。このオプションを持つ他の family は、従来の「*n* block ごとに checkpoint」挙動のままの場合があります。連続グループを大きくすると保存する境界状態は減りますが、checkpoint 内の block は再計算します。速度とピークメモリのトレードオフを測定してください。[Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.ja.md#qwen-image-21) を参照。
 
 ### `--gradient_checkpointing_segment_stride`
 
@@ -2317,7 +2321,7 @@ usage: train.py [-h] --model_family
                 [--rescale_betas_zero_snr [RESCALE_BETAS_ZERO_SNR]]
                 [--webhook_config WEBHOOK_CONFIG]
                 [--webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL]
-                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}]
+                [--distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,assistant_lora,h3_drift,self_transcendence}]
                 [--distillation_config DISTILLATION_CONFIG]
                 [--ema_validation {none,ema_only,comparison}]
                 [--local_rank LOCAL_RANK] [--ltx_train_mode {t2v,i2v}]
@@ -3085,7 +3089,7 @@ options:
                         Path to webhook configuration file
   --webhook_reporting_interval WEBHOOK_REPORTING_INTERVAL
                         Interval for webhook reports (seconds)
-  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,h3_drift,self_transcendence}
+  --distillation_method {lcm,dcm,dmd,perflow,flow_dpo,anyflow,assistant_lora,h3_drift,self_transcendence}
                         Method for model distillation
                         Distillation methods cannot be combined with
                         --train_text_encoder.
@@ -3121,3 +3125,11 @@ options:
   --sana_complex_human_instruction SANA_COMPLEX_HUMAN_INSTRUCTION
                         Complex human instruction for Sana model training
 ```
+
+### `--distillation_method=assistant_lora`
+
+`--distillation_method=assistant_lora` は、キャプションからアダプター無効状態で毎回生成したベースモデル出力で正方向の補助アダプターを学習します。初期対応は Qwen Image 2.1 です。`distillation_config.assistant_lora` は `num_inference_steps`（40）、`resolutions`（`[[1024, 1024]]`、幅・高さの順で 32 の倍数）、`seed`（42）を指定できます。テキスト埋め込みの事前キャッシュが必要で、最終潜在変数はキャッシュしません。[Qwen ガイド](quickstart/QWEN_IMAGE.md)を参照してください。
+
+キャプションデータセットでは `dataloader_prefetch: false` が必要です。チェックポイントの位置を消費済みキャプションと一致させるためです。再開時にキャプション ID・本文、バッチサイズ、繰り返し、シャッフル、シード、勾配累積、分散構成が変わるとエラーになります。 補助 LoRA のチェックポイントでは、生成シード、解像度リスト、教師の推論ステップ数の変更も拒否します。
+
+Assistant LoRA と AnyFlow は、教師・学習・検証のバリアント用に、コードごとの Dynamo コンパイルキャッシュ上限を一時的に最低 32 にします。ユーザーが指定したより大きな上限は維持され、エラー時も含め終了時に元の上限を復元します。

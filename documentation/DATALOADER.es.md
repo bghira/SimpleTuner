@@ -55,10 +55,44 @@ Aquí está el ejemplo más básico de un archivo de configuración del dataload
 
 ### `dataset_type`
 
-- **Valores:** `image` | `video` | `audio` | `text_embeds` | `image_embeds` | `conditioning_image_embeds` | `conditioning`
+- **Valores:** `image` | `video` | `audio` | `caption` | `text_embeds` | `image_embeds` | `conditioning_image_embeds` | `conditioning`
 - **Descripción:** Los datasets `image`, `video` y `audio` contienen muestras de entrenamiento primarias. `text_embeds` contiene las salidas de la caché del encoder de texto, `image_embeds` contiene los latentes del VAE (cuando un modelo usa uno), y `conditioning_image_embeds` almacena embeddings de imagen de condicionamiento cacheados (por ejemplo, features de visión de CLIP). Cuando un dataset está marcado como `conditioning`, se puede emparejar con tu dataset `image` mediante [la opción conditioning_data](#conditioning_data)
 - **Nota:** Los datasets de text y image embeds se definen de forma diferente a los datasets de imagen. Un dataset de text embeds almacena SOLO los objetos de text embed. Un dataset de imagen almacena los datos de entrenamiento.
 - **Nota:** No combines imágenes y video en un **único** dataset. Sepáralos.
+
+### `caption_file_extensions`
+
+El descubrimiento de descripciones acepta esta lista opcional no vacía de extensiones, por ejemplo `["jsonl"]`. El valor predeterminado es `["txt", "json", "jsonl"]`. Los JSON de metadatos y caché de grupos del propio backend siempre se excluyen, incluso al reiniciar con una lista de archivos existente.
+
+### `data_generator`
+
+Solo válido para `dataset_type: "caption"` (singular). Este objeto opcional genera un PNG y su texto para cada descripción en **cada** resolución indicada, antes de las cachés de imágenes, embeddings de texto y VAE. Los resultados usan el entrenamiento normal de imágenes, sin necesitar un destilador. Sin este objeto, los datasets de descripciones siguen requiriendo un destilador que las acepte.
+
+- `resolutions` (obligatorio): lista no vacía de cadenas `WIDTHxHEIGHT`, con dimensiones múltiplos de 32. Cada resolución crea `<id>-generated-<resolution>`, utiliza su lado corto nativo en píxeles y desactiva el recorte. La `probability` original se reparte entre los grupos.
+- `batch_size` (predeterminado `1`): lote de generación, independiente del lote de entrenamiento. Si se agota la memoria del acelerador, se reduce a la mitad el lote fallido de esa resolución y se repiten las mismas muestras con las mismas semillas. Los límites que funcionan se guardan en el manifiesto de generación. Un fallo de memoria con lote uno, o cualquier otro error, detiene la generación.
+- `num_inference_steps` (predeterminado `40`), `guidance_scale` (`1.0`) y `seed` (`0`): parámetros de inferencia. Qwen Image usa `true_cfg_scale`; los valores superiores a uno utilizan un prompt negativo vacío. La guía de validación no sustituye este valor.
+- `output_dir` (opcional): predeterminado `cache_dir/generated-captions/<id>`. Los resultados se guardan bajo una huella de la receta y se reutilizan al reiniciar. Incluye descripciones, ajustes de inferencia, revisiones resueltas del Hub y tamaños/fechas de modificación de los pesos locales. No modifique el modelo durante la generación. Cambiar descripciones, modelo o inferencia crea otra caché; cambiar el lote no.
+
+La generación usa el modelo base con adaptadores desactivados y libera únicamente el transformador cargado para el preprocesamiento. Los textos originales no cambian. La generación requiere una ejecución de preparación con un solo proceso; las ejecuciones con varios procesos y `data_generator` se rechazan antes de ingerir las descripciones. Para entrenamiento distribuido, use los directorios generados como datasets `image` normales con `caption_strategy: "textfile"`, uno por resolución, `crop: false`, `resolution_type: "pixel"` y `resolution` igual al lado corto del grupo. Los datasets de descripciones sin generador requieren `dataloader_prefetch=false` para conservar la posición del muestreador en los checkpoints. Cambiar las descripciones, resoluciones o topología del dataset requiere iniciar otro entrenamiento; reutilizar la caché generada no hace compatibles esas reanudaciones de checkpoint.
+
+Para descubrir descripciones locales, la salida generada debe quedar fuera del `instance_data_dir` de origen; los directorios superpuestos se rechazan antes del escaneo.
+
+```json
+{
+  "id": "assistant-images",
+  "type": "local",
+  "dataset_type": "caption",
+  "instance_data_dir": "data/prompts",
+  "caption_strategy": "textfile",
+  "data_generator": {
+    "batch_size": 2,
+    "resolutions": ["512x512", "768x1024"],
+    "num_inference_steps": 40,
+    "guidance_scale": 1.0,
+    "seed": 42
+  }
+}
+```
 
 ### `default`
 

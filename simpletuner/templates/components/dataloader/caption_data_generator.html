@@ -1,0 +1,57 @@
+<div class="section-group" x-show="{{ generator_dataset }}.dataset_type === 'caption'" x-cloak>
+    <div class="mb-3">
+        <label class="form-label small">Caption file extensions (comma separated)</label>
+        <input type="text" class="form-control form-control-sm caption-file-extensions" placeholder="txt, json, jsonl"
+               x-data="{ extensionsText: ({{ generator_dataset }}.caption_file_extensions || []).join(', ') }"
+               x-model="extensionsText"
+               @input="const extensions = $event.target.value.split(',').map(value => value.trim()).filter(Boolean); if (extensions.length) { {{ generator_dataset }}.caption_file_extensions = extensions; } else { delete {{ generator_dataset }}.caption_file_extensions; } markAsUnsaved()">
+        <div class="form-text small">Leave blank to use txt, json and jsonl. Generated metadata files are excluded.</div>
+    </div>
+    <h6 class="modal-section-title">Generate training images</h6>
+    <label class="form-check">
+        <input class="form-check-input caption-generator-enabled" type="checkbox"
+               :checked="!!{{ generator_dataset }}.data_generator"
+               @change="if ($event.target.checked) { {{ generator_dataset }}.data_generator = {batch_size: 1, resolutions: ['1024x1024'], num_inference_steps: 40, guidance_scale: 1, seed: 0}; } else { delete {{ generator_dataset }}.data_generator; } markAsUnsaved()">
+        <span class="form-check-label small">Generate one image per caption at each resolution before training</span>
+    </label>
+    <template x-if="{{ generator_dataset }}.dataset_type === 'caption' && {{ generator_dataset }}.data_generator">
+        <div class="row g-2 mt-1">
+            <div class="col-md-6">
+                <label class="form-label small">Resolutions (one WIDTHxHEIGHT per line)</label>
+                <textarea class="form-control form-control-sm caption-generator-resolutions" rows="3"
+                          x-data="{ resolutionsText: {{ generator_dataset }}.data_generator.resolutions.join('\n') }"
+                          x-model="resolutionsText"
+                          @input="{{ generator_dataset }}.data_generator.resolutions = $event.target.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean); markAsUnsaved()"></textarea>
+                <div class="form-text small">Use multiples of 32 supported by your model. Each bucket keeps its generated dimensions for training.</div>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small">Generation batch size</label>
+                <input type="number" min="1" step="1" class="form-control form-control-sm caption-generator-batch-size"
+                       x-model.number="{{ generator_dataset }}.data_generator.batch_size" @input="markAsUnsaved()">
+                <div class="form-text small">Memory exhaustion reduces the batch size for that resolution.</div>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small">Inference steps</label>
+                <input type="number" min="1" step="1" class="form-control form-control-sm"
+                       x-model.number="{{ generator_dataset }}.data_generator.num_inference_steps" @input="markAsUnsaved()">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small">Guidance scale</label>
+                <input type="number" min="0" step="0.1" class="form-control form-control-sm"
+                       x-model.number="{{ generator_dataset }}.data_generator.guidance_scale" @input="markAsUnsaved()">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small">Seed</label>
+                <input type="number" min="0" step="1" class="form-control form-control-sm"
+                       x-model.number="{{ generator_dataset }}.data_generator.seed" @input="markAsUnsaved()">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label small">Output directory (optional)</label>
+                <input type="text" class="form-control form-control-sm" placeholder="cache/generated-captions"
+                       :value="{{ generator_dataset }}.data_generator.output_dir || ''"
+                       @input="if ($event.target.value.trim()) { {{ generator_dataset }}.data_generator.output_dir = $event.target.value.trim(); } else { delete {{ generator_dataset }}.data_generator.output_dir; } markAsUnsaved()">
+            </div>
+            <div class="col-12 form-text small">Outputs are reused for the same model and recipe. Training uses the usual image loss and does not require a distiller. <a href="{{ docs_url('DATALOADER.md#data_generator') }}" target="_blank">Documentation</a></div>
+        </div>
+    </template>
+</div>

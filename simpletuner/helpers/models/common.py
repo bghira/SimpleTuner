@@ -87,7 +87,7 @@ from simpletuner.helpers.training.quantisation import (
 )
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.training.timestep_distribution import CubicSplineDistribution, parse_cubic_spline_weights
-from simpletuner.helpers.training.wrappers import unwrap_model
+from simpletuner.helpers.training.wrappers import strip_compile_wrapper, unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 from simpletuner.helpers.utils.hidden_state_buffer import HiddenStateBuffer
 
@@ -1029,6 +1029,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
 
         try:
             state_dict = safetensors.torch.load_file(init_lora_path)
+            state_dict = {strip_compile_wrapper(key): value for key, value in state_dict.items()}
             with safe_open(init_lora_path, framework="pt", device="cpu") as handle:
                 file_metadata = handle.metadata() or {}
             raw_adapter_metadata = file_metadata.get(LORA_ADAPTER_METADATA_KEY)
@@ -4368,6 +4369,14 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
                 setattr(possibly_cached_pipeline, "controlnet", self.controlnet)
 
         return possibly_cached_pipeline
+
+    def get_latent_generation_pipeline(self):
+        """Create an inference pipeline using cached text, without loading a VAE or text encoder."""
+        raise NotImplementedError(f"{self.NAME} does not support on-demand latent generation.")
+
+    def unpack_generated_latents(self, latents: torch.Tensor, *, height: int, width: int) -> torch.Tensor:
+        """Convert native pipeline latents to this model's training layout."""
+        raise NotImplementedError(f"{self.NAME} does not define its generated latent layout.")
 
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
         """

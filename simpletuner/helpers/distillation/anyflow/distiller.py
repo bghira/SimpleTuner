@@ -21,6 +21,7 @@ from simpletuner.helpers.models.flowmap import validate_flowmap_deltatime_type
 
 ANYFLOW_DISCRIMINATOR_FILENAME = "anyflow_discriminator.safetensors"
 ANYFLOW_DISCRIMINATOR_OPTIMIZER_FILENAME = "anyflow_discriminator_optim.pt"
+ANYFLOW_RNG_FILENAME = "anyflow_rng_state_{rank}.pt"
 
 
 class AnyFlowDistiller(DistillationBase):
@@ -222,13 +223,22 @@ class AnyFlowDistiller(DistillationBase):
         self.discriminator_optimizer.zero_grad(set_to_none=True)
 
     def on_save_checkpoint(self, step: int, ckpt_dir: str) -> None:
+        os.makedirs(ckpt_dir, exist_ok=True)
+        identity = self._rng_checkpoint_identity()
+        torch.save(
+            {
+                "identity": identity,
+                "step": int(step),
+                "generators": {device: generator.get_state() for device, generator in self._rng_generators.items()},
+            },
+            os.path.join(ckpt_dir, ANYFLOW_RNG_FILENAME.format(rank=identity["rank"])),
+        )
         if self.config["stage"] != "onpolicy" or self.discriminator_optimizer is None:
             return
         accelerator = getattr(self.teacher_model, "accelerator", None)
         if accelerator is not None and not bool(getattr(accelerator, "is_main_process", True)):
             return
 
-        os.makedirs(ckpt_dir, exist_ok=True)
         state = self._discriminator_state_dict()
         save_file(state, os.path.join(ckpt_dir, ANYFLOW_DISCRIMINATOR_FILENAME))
         torch.save(
@@ -237,6 +247,22 @@ class AnyFlowDistiller(DistillationBase):
         )
 
     def on_load_checkpoint(self, ckpt_dir: str) -> None:
+        identity = self._rng_checkpoint_identity()
+        rng_path = os.path.join(ckpt_dir, ANYFLOW_RNG_FILENAME.format(rank=identity["rank"]))
+        if not os.path.isfile(rng_path):
+            raise ValueError(
+                "AnyFlow checkpoint is missing its per-rank random-generator state; exact resume is unavailable. "
+                "Use init_lora to start a new run from the adapter instead."
+            )
+        rng_state = torch.load(rng_path, map_location="cpu", weights_only=True)
+        if rng_state["identity"] != identity:
+            raise ValueError("AnyFlow random-generator resume requires the same stage, seed, rank and world size.")
+        generators = {}
+        for device, state in rng_state["generators"].items():
+            generator = torch.Generator(device=torch.device(device))
+            generator.set_state(state)
+            generators[device] = generator
+        self._rng_generators = generators
         if self.config["stage"] != "onpolicy" or self.discriminator_optimizer is None:
             return
 
@@ -249,6 +275,15 @@ class AnyFlowDistiller(DistillationBase):
             payload = torch.load(optimizer_path, map_location="cpu", weights_only=True)
             self.discriminator_optimizer.load_state_dict(payload["state"])
             self._move_optimizer_state(self.discriminator_optimizer, self._device)
+
+    def _rng_checkpoint_identity(self) -> Dict[str, Any]:
+        accelerator = getattr(self.teacher_model, "accelerator", None)
+        return {
+            "stage": self.config["stage"],
+            "seed": self._rng_seed,
+            "rank": int(getattr(accelerator, "process_index", 0)),
+            "world_size": int(getattr(accelerator, "num_processes", 1)),
+        }
 
     def get_scheduler(self, scheduler=None):
         pipeline = getattr(self.teacher_model, "pipeline", None)
@@ -657,6 +692,9 @@ class AnyFlowDistiller(DistillationBase):
         r_sigmas: torch.Tensor,
         base_target: torch.Tensor,
     ) -> torch.Tensor:
+        if self.config["diffusion_ratio"] == 1.0:
+            return base_target
+
         epsilon = float(self.config["central_difference_epsilon"])
         plus_sigmas = t_sigmas + epsilon
         minus_sigmas = t_sigmas - epsilon

@@ -1,4 +1,85 @@
-## Qwen Image 快速入门
+## Qwen Image 2.1
+
+Qwen Image 2.1 是默认版本（`model_flavour: "v2.1"`），使用 `Qwen/Qwen-Image-2.1`。它包含 32 层 Transformer、Qwen3-VL 文本编码器和具有 16 倍空间压缩率的 64 通道 VAE。
+
+`qwen_image.peft-lora` 示例使用 `RareConcepts/Domokun` 数据集，以 512px 分辨率训练，触发词为 `🟫`。首先使用 BF16（`base_model_precision: "no_change"`），显存不足时启用梯度检查点。示例为 2.1 使用独立的潜变量和文本缓存；请勿复用旧版本缓存。
+
+```bash
+simpletuner train example=qwen_image.peft-lora
+```
+
+验证时使用 `validation_guidance: 1.0`、`validation_guidance_real: 1.0` 和 `validation_num_inference_steps: 40`。在验证提示词中保留触发词，以检查模型是否学会了该主体。
+
+Qwen Image 2.1 解码单张图像时不再保留未使用的时序特征缓存。在 H200 上以 BF16 单独解码一张 2048×2048 图像时，峰值已分配显存从 26.87 GiB 降至 15.28 GiB，输出完全一致。分块解码可进一步节省显存，但限制空间上下文可能产生彩色接缝；移除未使用的缓存并不能修复这些接缝。
+
+旧版本仍然可用：`v1.0` 对应 Qwen-Image，`v2.0` 对应 Qwen-Image-2512，`edit-*` 保留原有检查点。这些版本的适配器和潜变量缓存不能与 2.1 互换。
+
+250 步 Domokun 配置用于吞吐量测试，并非可靠的收敛配方。较早的 checkpoint 在重新加载后生成了可辨认的 Domokun，但新启动的 250 步训练未能复现。保留 padding mask、关闭编译以及恢复较早 RoPE 表达式的对照实验也失败了。缓存 latent 解码后确实是正确主体。训练质量下降的原因尚未确定；计时表不能证明不同注意力后端的图像质量相当。
+
+### 显存预设
+
+这些示例在 512px 下使用 BF16、rank-32 LoRA、Optimi Lion 和区域编译，不启用梯度检查点。首次运行需要编译时间；比较速度时应使用预热后的训练步。24 GB 和 32 GB 显存预算在 L40S 上验证，并非在对应容量的独立显卡上测试。
+
+| 显存预算 | 示例 | 数据集批大小 | 峰值显存 (GiB) | 预热后单步 (秒) |
+| --- | --- | --- | --- | --- |
+| 24 GB | `qwen_image-2.1-24g.peft-lora` | 1 | 20.6 | 0.238 |
+| 32 GB | `qwen_image-2.1-32g.peft-lora` | 2 | 26.5 | 0.390 |
+| 48 GB | `qwen_image-2.1-48g.peft-lora` | 2 | 26.5 | 0.390 |
+| 80 GB | `qwen_image-2.1-80g.peft-lora` | 10 | 71.8 | 0.639 |
+| 144 GB | `qwen_image-2.1-144g.peft-lora` | 20 | 128.4 | 1.223 |
+
+测量使用 L40S（24/32/48 GB 预设）、H100（80 GB）和 H200（144 GB），共运行 20 步，计时排除前五步。峰值显存包括初始化。这些是 512px 下对应批大小的结果，不能保证更大图像或更长提示词使用相同资源。
+
+48 GB 预设也使用批大小 2：在 L40S 上，其每张图像的吞吐量优于批大小 3、4、5。批大小 5 占用 43.3 GiB、每步 0.991 秒；批大小 2 每步为 0.390 秒。
+
+```bash
+simpletuner train example=qwen_image-2.1-48g.peft-lora
+```
+
+请使用各示例自带的数据集文件，其中明确设置了批大小。更改批大小或数据集设置后应开始新训练，不要复用不兼容的训练状态检查点。
+
+若要降低显存占用，请启用 `gradient_checkpointing: true` 和 `gradient_checkpointing_interval: 2`。现在这会对连续的两个 block 进行分组 checkpoint。实际取舍请参阅 [Qwen Image 2.1 checkpoint 与注意力测量](../experimental/SEGMENTED_CHECKPOINTING.zh.md#qwen-image-21)；此前每隔一个 block 进行 checkpoint 的结果已被替代。这些预设使用 BF16 即可，无需 int8 checkpoint。
+
+文生图路径避免依赖张量数据的序列组装，实现无图中断捕获。实数 RoPE 允许 Inductor 融合归一化与旋转；调制、残差和 MLP 的后处理也参与编译。这些训练示例不使用现有的 Hopper CuTe ConvRot GEMM 或仅支持推理的 LTX RoPE 内核。
+
+
+### 实验性 AnyFlow 试验
+
+三个 `qwen_image-2.1-anyflow-stage*.peft-lora` 示例测试区间蒸馏能否在引入 `🟫` 的同时保留基础模型的行为。这些配置仍属实验性质；Qwen 模型卡并未证实之前的退化由引导蒸馏导致。
+
+所有阶段使用 1024px、BF16、AdamW、rank 32 和 batch 4。阶段 1 在 H200 上关闭梯度检查点；阶段 2 和 3 对连续两个块进行梯度检查点计算。此负载与上面的 512px 吞吐量预设不同。运行前请安装 `webshart`。
+
+这些 AnyFlow 示例明确使用 `grad_clip_method: "value"` 和 `max_grad_norm: 0.01`，将每个梯度元素限制在 ±0.01 范围内，而不是限制全局梯度范数。若要测试阈值为 1.0 的范数裁剪，须同时设置 `grad_clip_method: "norm"` 和 `max_grad_norm: 1.0`。
+
+1. **阶段 1：** 以 `1e-5` 进行 10,000 次 forward AnyFlow 更新。CC12M 使用 `webshart/cc12m-structured-captions` 和 `caption_key: "long_caption"`；e621 使用 `webshart/e621-2024-webp-4Mpixel-webshart-indices`。两个先验数据集各限制为 4,096 张合格图片，采样权重各为 0.49；`RareConcepts/Domokun` 使用触发词 `🟫`、权重 0.02 和 `repeats: 0`。
+2. **阶段 2：** 以 `2e-6` 进行 2,000 次 on-policy DMD 更新，同时在相同数据混合上训练 forward 目标。这是 AnyFlow DMD，并非偏好对 DPO。两个阶段均包含角色样本；仅靠冻结教师无法教授新角色。
+3. **阶段 3：** 以 `5e-7` 更新 100 次。Domokun 权重为 0.5，两个正则化数据集权重各为 0.25、各限制为 64 张图片。所有区间使用 `r=t` 和原始 flow 目标，保留区间嵌入器并进行简短监督微调。正则化批次使用禁用 adapter 的基础模型预测。
+
+先检查第 2,000、5,000 和 10,000 次更新的检查点，再决定是否将阶段 1 延长至 20,000 次。阶段 2 的预算为 2,000 次更新；若相同条件下的验证图片退化，应提前停止。更新次数本身并不能证明模型已完成训练。
+
+配置启用了动态编译以处理可变描述长度。`schedule_shift: 2.000802574061872` 对应已发布调度器在 1024px（4,096 个潜变量 token）下的设置；更改分辨率时需重新计算。
+
+```bash
+simpletuner train example=qwen_image-2.1-anyflow-stage1.peft-lora
+simpletuner train example=qwen_image-2.1-anyflow-stage2.peft-lora
+simpletuner train example=qwen_image-2.1-anyflow-stage3.peft-lora
+```
+
+阶段 2、3 通过 `init_lora` 加载上一阶段的最终 adapter，重新初始化优化器和数据加载器状态。采样权重控制尚未耗尽的数据集之间的交替，并不保证最终样本比例。此受限试验不覆盖完整先验语料库。字符串字段 `long_caption` 可使用现有 Webshart caption selector，无需原生 JSON 对象 caption 支持。
+
+阶段 1、2 使用 `diffusion_target: "base_prediction"` 和 `fuse_guidance_scale: 1.0`：diffusion 分支保留冻结的条件预测场，其余分支从数据学习。这是保留能力的假设，并不保证学会角色。请在 4、16、40 个推理步下比较所附角色和先验提示词，并以基础模型的 40 步结果为参考；自动验证使用 4 步。目标函数和检查点要求见 [AnyFlow](../experimental/ANYFLOW.zh.md)。
+
+已完成的试验：阶段 1 达到 10,000 次更新，阶段 2 达到 2,000 次。重新加载适配器后的 40 步狐狸图像和角色提示词图像仍然连贯，但角色提示词生成的是人而非 Domokun。4 步图像仍然模糊或充满噪声。另一次 L40S 对比对两个检查点均使用 1024px、种子 42、CFG 1/2/4/6 和空负面提示词。前向调用断言确认 CFG 大于 1 时每步有两次前向。已检查的狐狸和海滩样本未得到修复：更高 CFG 增加了饱和度和伪影。这些结果尚不能确定原因；阶段 3 尚未验证。
+
+从同一检查点继续阶段 1 的两个分支各增加了 1,000 次更新，比较逐元素裁剪阈值 0.01 和 1.0。重新加载后的 4 步狐狸图像在两组中仍有明显噪声；40 步海滩图像仍然呈现人物。阈值 0.01 在 65/1,000 次更新中触发裁剪，阈值 1.0 为 0/1,000 次。两组均使用未修正的优化器，且在裁剪首次触发前梯度已存在差异，因此不能把细微变化完全归因于阈值。
+
+<a id="qwen21-optimizer-correction"></a>
+
+此处的阶段 1 和辅助 LoRA 试验均在修复 AdamW BF16 的随机舍入加法辅助函数之前运行：该函数计算的是 `other + alpha * input`，而非 `input + alpha * other`。当 β₁ = 0.9 时，一阶矩因此按 `m = 0.09 * m + g` 更新，而非 `m = 0.9 * m + 0.1 * g`。精确算术回归测试已覆盖 CPU、MPS 和 CUDA。图像观察结果对这些检查点仍然有效，但不能据此独立判断架构或蒸馏目标是否有效；必须使用修正后的优化器重新验证训练。
+
+使用修正后的优化器、相同起始检查点和逐元素裁剪阈值 1.0 再继续更新 1,000 次，仍未修复已检查的 4 步狐狸和海滩图像。40 步狐狸图像保持连贯，而海滩提示词仍生成人物。此试验检验的是现有检查点的恢复能力，而不是使用修正后的优化器从头训练；整体失败原因仍未确定。
+
+### 旧版 Qwen Image 配置（v1.0 / v2.0）
 
 > 🆕 想要编辑检查点？请参阅 [Qwen Image Edit 快速入门](./QWEN_EDIT.md) 获取成对参考训练说明。
 
@@ -513,3 +594,51 @@ LoRA 训练：
 4. 序列长度处理问题（[上游问题](https://github.com/huggingface/diffusers/issues/12075)）
 
 如需更多帮助与排查，请参阅 [SimpleTuner 文档](/documentation) 或加入社区 Discord。
+
+<a id="assistant-lora"></a>
+
+### 使用字幕训练辅助 LoRA
+
+`qwen_image-2.1-assistant-lora.peft-lora` 是面向 L40S 的实验起点：BF16、批量 1、间隔 2 的梯度检查点、rank 32，以及学习率 `1e-4` 的 AdamW BF16。预算为 1,000 次更新，每 50 次验证和保存。正式训练前，请用多样化字幕替换十二条冒烟测试字幕；此示例尚未验证收敛效果。
+
+`grad_clip_method: "norm"`, `max_grad_norm: 1.0`.
+
+设置 `distillation_method: assistant_lora`。字幕后端预计算文本嵌入；每批禁用适配器，以 40 个原生推理步、CFG 1 生成新的基础模型潜变量。独立生成管线复用 transformer，不加载 VAE、处理器或文本编码器。随后恢复适配器并执行普通去噪训练，不缓存终态潜变量。目前仅支持 Qwen Image 2.1 文生图。
+
+`distillation_config.assistant_lora` 接受 `num_inference_steps`（默认 40）、`resolutions`（非空 `[宽, 高]` 列表，默认 `[[1024, 1024]]`）和 `seed`（默认 42）。尺寸必须为 32 的倍数。分辨率按批轮换，噪声种子按样本递增，包括不足一批的样本；检查点保存计数器。恢复时保持数据集、批量、梯度累积和分布式拓扑不变。不支持按需文本缓存。
+
+流程测试可用 8 次更新、2 个教师步；评估图像前恢复 40 步。在 100、250、500 和 1,000 次更新时评估，并以相同提示词和种子比较适配器与基础模型。辅助适配器的实际价值仍需另一次概念训练验证。
+
+[Ostris 描述了以低学习率训练模型自身生成图像的方法](https://huggingface.co/ostris/zimage_turbo_training_adapter)。此处训练正向适配器。后续概念训练将 `assistant_lora_path` 指向输出并启用辅助加载；SimpleTuner 在训练时冻结它，在采样时移除它。不会自动下载 Qwen 2.1 辅助适配器，其效果仍属实验。
+
+请将此方法作为唯一蒸馏方法；不支持与其他蒸馏器组合。
+
+字幕数据集要求 `dataloader_prefetch: false`，确保检查点游标对应已消费的字幕。恢复时若字幕标识或内容、批量、重复次数、打乱设置、种子、梯度累积或分布式布局发生变化，将报错。 辅助 LoRA 检查点同样拒绝更改生成种子、分辨率列表或教师推理步数。
+
+<a id="assistant-lora-multires"></a>
+
+#### 四种基础分辨率与宽高比分桶的辅助 LoRA 实验
+
+`qwen_image-2.1-assistant-lora-multires.peft-lora` 循环使用基础分辨率 512、1024、1536 和 2048 对应的共 12 个宽高比桶。每种基础分辨率都有正方形、4:7 竖图和 7:4 横图三个桶；每个批次使用一个桶，在完整循环中各基础分辨率及宽高比的训练次数相同。它保留基础示例的教师 40 步、BF16 批量 1、每 2 个块进行检查点重计算、秩 32、AdamW BF16 和 1,000 次更新，并共用其描述文本后端及验证提示词。请将测试文本替换为基准实验中使用的同一组多样化描述。在新的输出目录中从全新的适配器和优化器开始；`resume_from_checkpoint: ""` 禁用恢复。保留第一次运行的权重以便比较。
+
+此实验检验多种图像尺寸是否能改善辅助适配器，并不证明原生分辨率要求或质量收益。L40S 的 1,000 次更新已完成全部 12 个桶，并在 1024×1024 和 2048×2048 下验证。最终狐狸和肖像图像仍然连贯，但存在分块 VAE 解码已知的颜色接缝。教师直接生成潜变量目标，不经过 VAE 解码。对后续概念训练的收益仍未验证。
+
+Assistant LoRA 与 AnyFlow 一样，仅在运行期间将 Dynamo 缓存下限设为 32 项，以容纳教师、学生和验证的不同变体。保留用户设置的更高上限，退出时恢复原值。增加分辨率或更长描述时，请监测重编译。
+
+后续 Domokun 对照试验以 2048px、batch 1、学习率 `1e-5` 和逐元素裁剪阈值 1.0 分别训练两个全新适配器，各更新 250 次。对照组的训练辅助强度为 0，辅助组为 1；两组推理时均禁用辅助适配器。初始适配器权重及验证图像完全一致。以 1024px、40 个推理步检查最终结果时，两组的角色提示词仍生成人物，狐狸和肖像先验仍然连贯，尚未证明辅助适配器有益。两组训练及辅助适配器的准备过程均使用了[上文](#qwen21-optimizer-correction)所述的未修正优化器。
+
+<a id="assistant-lora-offline"></a>
+
+#### 使用可复用生成图像训练辅助 LoRA
+
+`qwen_image-2.1-assistant-lora-offline.peft-lora` 通过 Webshart 使用 [10,000 张生成图像](https://huggingface.co/datasets/webshart/qwen-image-2.1-generated-images)训练。数据集使用 CC12M 的 `long_caption` 提示词、40 步原生教师推理、CFG 1 和完整图像 VAE 解码。12 个图像后端覆盖 512、1024、1536、2048 基础分辨率的正方形、竖幅和横幅桶，采样权重相等，不设置重复。
+
+此配方从头训练，使用已修正的 `adamw_bf16`、学习率 `1e-4`、`grad_clip_method: "norm"`、`max_grad_norm: 1.0`、BF16、批量 1、秩 32 和每两块一组的梯度检查点。计划训练 1,000 次更新，每 50 次保存，每 100 次以 1024 分辨率验证。发布前另行生成 2048px 预览。关闭 VAE 分块，编码批量为 1。`vae_cache_ondemand: true` 在采样时编码并缓存图像，避免在 1,000 次更新前先编码全部 10,000 张图像。普通图像训练取代在线教师生成；创建辅助适配器时省略 `distillation_method`，并保留 `disable_assistant_lora: true`。
+
+数据集可跨实验复用。PNG 需要再次经过 VAE 编码，因此目标不完全等同于教师的最终潜变量。发布前检查验证图像，并通过独立的概念训练评估辅助效果。从纯字幕配方切换时应重新开始，不要恢复原优化器或数据集状态。
+
+[替换后的 v1 助手](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v1) 已在 L40S 上完成此方案的 1,000 次更新，并检查了最终的 1024 和 2048 图像。随后进行的 Domokun 对照实验采用 2048 分辨率、LR `1e-4`、全局范数裁剪 1.0，各训练 1,000 次更新；助手在训练时冻结，在验证时禁用。对照组和助手组在两个角色提示词下仍生成人物。对照组将明显的 Domokun 特征带入了无关的狐狸提示词；助手组保留了可辨认的狐狸。两组的人像均保持连贯。这仅是概念外溢减少的有限证据，不代表成功学会角色或普遍提升质量；评估仅使用一个训练种子和四个提示词。
+
+```bash
+simpletuner train example=qwen_image-2.1-assistant-lora-offline.peft-lora
+```

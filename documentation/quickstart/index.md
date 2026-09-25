@@ -33,7 +33,7 @@ Step-by-step guides for training each supported model architecture.
 | **Cosmos2** | 2-14B | [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) | Yes<sup>9</sup> | [Cosmos2 Guide](COSMOS2IMAGE.md) |
 | **Cosmos3** | 4-65B | [OpenMDW 1.1](https://github.com/OpenMDW/openmdw/blob/main/1.1/LICENSE.OpenMDW-1.1) | Yes | [Cosmos3 Guide](COSMOS3.md) |
 | **OmniGen** | 3.8B | [MIT](https://opensource.org/license/mit) | Yes | [OmniGen Guide](OMNIGEN.md) |
-| **Qwen Image** | 20B | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Yes | [Qwen Guide](QWEN_IMAGE.md) |
+| **Qwen Image 2.1 / Qwen Image** | 7B / 20B | [Qwen Research](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE) (2.1) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) (earlier) | 2.1: non-commercial; earlier: yes | [Qwen Guide](QWEN_IMAGE.md) |
 | **LongCat Image** | 6B | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Yes | [LongCat Guide](LONGCAT_IMAGE.md) |
 | **Kandinsky 5** | - | [MIT](https://opensource.org/license/mit) | Yes | [Kandinsky Guide](KANDINSKY5_IMAGE.md) |
 
@@ -125,3 +125,9 @@ Step-by-step guides for training each supported model architecture.
 - **Flux Kontext** for image editing/conditioning
 - **ACE-Step** for text-to-music LoRA training (v1 and v1.5)
 - **HeartMuLa** for autoregressive text-to-audio
+
+Qwen Image 2.1 also has an experimental [caption-only assistant LoRA recipe](QWEN_IMAGE.md#assistant-lora).
+
+The [assistant experiment with four base resolutions](QWEN_IMAGE.md#assistant-lora-multires) starts a separate adapter run with aspect ratio bucketing at every base; high-resolution L40S memory validation is pending.
+
+For reusable targets, use the [offline assistant LoRA recipe](QWEN_IMAGE.md#assistant-lora-offline).

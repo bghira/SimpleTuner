@@ -10,6 +10,17 @@ SimpleTuner 将 NVIDIA AnyFlow 实现为面向 flow-matching 模型的两个显�
 使用 NVIDIA 已发布 checkpoint 继续训练 Wan 的示例，请参阅
 [AnyFlow Continuation Quickstart](/documentation/quickstart/ANYFLOW.zh.md)。
 
+
+Qwen Image 2.1 支持 FlowMap 区间条件。[三阶段 Qwen 试验](../quickstart/QWEN_IMAGE.zh.md) 混合 CC12M 长描述、e621 和少量 Domokun 样本，随后进行带正则化的简短微调。基础预测锚点用于测试能力保留，并不能证明 Qwen 经过了引导蒸馏。
+
+编译后的 AnyFlow 训练会临时为每个 Dynamo frame 允许至少 32 个变体，以涵盖教师、生成器、判别器以及不同梯度模式、padding 和 batch size。用户设置的更大限制会保留，运行结束后恢复原限制。在 Torch 2.11 中，用尽默认的 8 个变体可能使检查点重计算转为 eager 执行，并导致保存张量的元数据检查失败。描述长度可变时请使用 `dynamo_dynamic: true`；Qwen 试验已启用该设置。
+
+AnyFlow 检查点为每个进程保存 `anyflow_rng_state_<rank>.pt`，以保留区间采样和 on-policy rollout 使用的独立随机数生成器状态。恢复训练时，阶段、种子、数据集设置和分布式拓扑必须保持一致。缺少该状态的旧检查点无法精确续训，因此会被拒绝；可通过 `init_lora` 加载其适配器，并使用新的优化器开始新训练。
+
+`init_lora` 默认读取适配器保存的训练步数。开始新阶段时设置 `init_lora_step: 0`，使训练步数预算和学习率调度器从零开始。
+
+导出适配器时会从张量名称中移除区域编译包装层，并保留区间嵌入张量。普通模型和编译模型均可重新加载。当 `diffusion_ratio: 1.0` 时，所有区间都满足 `r=t`，目标准备会跳过贡献为零的两次有限差分预测。
+
 ## Forward 阶段
 
 ```json
@@ -43,17 +54,18 @@ SimpleTuner 将 NVIDIA AnyFlow 实现为面向 flow-matching 模型的两个显�
 
 ## On-Policy 阶段
 
-通过设置 `init_lora` 或从 checkpoint 恢复，从 forward 阶段 AnyFlow adapter 启动此阶段：
+通过 `init_lora` 加载 forward 阶段 AnyFlow adapter，并使用新的优化器状态开始此阶段。仅在阶段、数据集配置和分布式拓扑均不变时恢复训练状态 checkpoint：
 
 ```json
 {
   "model_type": "lora",
   "lora_type": "standard",
   "init_lora": "path-or-repo-to-forward-anyflow-adapter",
+  "init_lora_step": 0,
   "learning_rate": 0.000002,
   "optimizer_beta1": 0.0,
   "optimizer_beta2": 0.999,
-  "optimizer_weight_decay": 0.0,
+  "optimizer_config": "weight_decay=0.0",
   "distillation_method": "anyflow",
   "distillation_config": {
     "anyflow": {

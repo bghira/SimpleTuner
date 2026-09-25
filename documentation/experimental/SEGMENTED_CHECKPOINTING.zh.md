@@ -2,7 +2,7 @@
 
 分段 checkpointing 介于每个 block 都 checkpoint 和完全不 checkpoint 之间。
 
-它使用 PyTorch activation checkpointing backend。SimpleTuner 会把连续的 transformer blocks 放进一次 checkpoint 调用，然后把返回的 hidden state 传给下一组。组越宽，backward 里的重算越少，但保留的 activations 越多。
+它使用 PyTorch 的 activation checkpointing。SimpleTuner 在一次 checkpoint 调用中执行一组连续的 Transformer block，并将返回的隐藏状态传给下一组。更大的分组保存更少的边界状态，但反向传播仍需重新计算这些 block；速度和峰值显存的取舍需要实测。
 
 CPU offload 和 FFN-only checkpointing 请看 [Unsloth-style checkpointing](UNSLOTH_CHECKPOINTING.zh.md#controls)。简短判断规则仍在 [Decision Rule](UNSLOTH_CHECKPOINTING.zh.md#decision-rule)。
 
@@ -31,7 +31,7 @@ CPU offload 和 FFN-only checkpointing 请看 [Unsloth-style checkpointing](UNSL
 
 这会 checkpoint blocks `0-1`，正常运行 `2-3`，checkpoint `4-5`，正常运行 `6-7`，然后重复。stride 必须大于等于 interval；不支持重叠 schedule。
 
-支持 segmented whole-block 的路径：Flux.1、Flux.2、HunyuanVideo、Krea 2、LongCat Image、LongCat Video、LTXVideo 0.9、LTXVideo2、Lumina2、MageFlow、PixArt、SD3、SanaVideo、Z-Image、ZLab I1 和 Wan。
+支持 segmented whole-block 的路径：Flux.1、Flux.2、HunyuanVideo、Krea 2、LongCat Image、LongCat Video、LTXVideo 0.9、LTXVideo2、Lumina2、MageFlow、MiniMax H3、PixArt、Qwen Image 2.1、SD3、SanaVideo、Z-Image、ZLab I1 和 Wan。
 
 Stable Cascade stage C 也支持 interval 和 stride，但 schedule 作用在 UNet 的 Res/Timestep/Attention micro-block 序列上，而不是 transformer whole-block group。
 
@@ -55,7 +55,7 @@ Stable Cascade stage C 也支持 interval 和 stride，但 schedule 作用在 UN
 
 ## Benchmarks
 
-使用真实 SimpleTuner examples，在单卡 H100 和 L40S pods 上测量。validation 和 checkpoint saves 已关闭，cache preparation 不计入；存在 post-warmup timing 时，也会排除 train loop 内第一个 step 的 compile/setup 时间。
+使用真实 SimpleTuner examples，在单卡 H100、H200 和 L40S pods 上测量。validation 和 checkpoint saves 已关闭，cache preparation 不计入；存在 post-warmup timing 时，也会排除 train loop 内第一个 step 的 compile/setup 时间。
 
 每个实测单元格都是 `post-warmup sec/step / peak VRAM GiB`。只有状态的单元格含义是：`OOM` 表示 GPU 显存不足，`failed` 表示没有到达可统计的训练 step，`unsupported` 表示该 family 没有接入这个选项，`not run` 表示 sweep 没有覆盖这个组合。
 
@@ -684,9 +684,67 @@ Example: `pixart.lycoris-lokr`. Resolution: 1024x1024.
 | fp8-torchao | seg2-stride4 | 2.827 / 63.27 | OOM |
 | fp8-torchao | seg2-stride4-offload | unsupported | unsupported |
 
+### Qwen Image 2.1
+
+在确认型号的 H200 和 L40S 上测量：`qwen_image.peft-lora`、Qwen-Image 2.1、512x512 Domokun、BF16、rank-32 LoRA、Optimi Lion，以及区域 Inductor 编译（`default` 模式）。每次运行 20 步，计时排除前 5 步。表格单元格为 **秒/步 / 峰值显存 GiB**，峰值包含组件初始化。
+
+运行环境：`torch==2.11.0+cu128`、`diffusers==0.40.0`；10 个文本 token 和 1024 个图像 token。部分 batch-1 显存峰值由组件初始化决定。
+
+#### BF16 checkpoint 调度
+
+`none` 关闭 checkpoint；`layer` 对每个 block 单独 checkpoint；`interval2` 对连续的 `0–1, 2–3, …` 分组 checkpoint；`seg2-stride4` checkpoint `0–1`、保留 `2–3` 的激活，然后重复。分组执行要求不使用 block swapping、隐藏状态捕获或 KV cache；这些路径保留逐 block 的 interval/stride 调度。不支持注意力激活卸载（`activation-offload`、`seg2-stride4-offload`）。BF16 已能容纳，因此本次 2.1 测试不包含量化。
+
+| 模式 | H200, batch 1 | H200, batch 20 | L40S, batch 1 |
+| --- | ---: | ---: | ---: |
+| `none` | 0.081 / 20.99 | 1.223 / 128.42 | 0.238 / 20.64 |
+| `layer` | 0.206 / 17.69 | 1.773 / 24.19 | 0.368 / 17.60 |
+| `interval2` | 0.190 / 17.69 | 1.761 / 25.14 | 0.371 / 17.60 |
+| `seg2-stride4` | 0.116 / 17.77 | 1.490 / 73.26 | 0.290 / 17.60 |
+
+#### 注意力后端
+
+注意力比较关闭 checkpoint。默认 native SDPA 在 H200 上选择 cuDNN，在 L40S 上选择 PyTorch Flash SDPA。Qwen 2.1 对文本使用因果注意力，对目标图像使用可访问所有有效 key 的非因果注意力。长度相同且无 padding 的提示词**不需要** varlen。当前 FlashAttention 路径要求无 padding 的文生图提示词；有 padding 或交错条件时使用 native SDPA 或 FlexAttention。仅表示 padding 的 varlen mask 无法保留后者的因果结构。
+
+| `attention_mechanism` | H200, batch 1 | H200, batch 20 | L40S, batch 1 |
+| --- | ---: | ---: | ---: |
+| `native` | 0.081 / 20.99 | 1.223 / 128.42 | 0.238 / 20.64 |
+| `native-flash` | 0.080 / 20.98 | 1.278 / 128.40 | 0.238 / 20.63 |
+| `native-efficient` | 未运行 | 未运行 | 0.259 / 20.75 |
+| `flash-attn-hub` | 未运行 | 未运行 | 0.238 / 20.75 |
+| `flash-attn-3-hub` | 0.094 / 20.98 | 1.215 / 128.40 | 未运行 |
+| `flash-attn-3-varlen-hub` | 0.096 / 20.97 | 1.216 / 128.44 | 未运行 |
+| `flex` | 0.100 / 20.92 | 1.314 / 134.45 | 0.271 / 20.70 |
+| `flash-attn-4-hub` | 失败 | 失败 | 未运行 |
+| `cudnn` | 失败 | 未运行 | 未运行 |
+
+等长 varlen 元数据辅助函数来自上游 Diffusers：序列长度从形状获取，累积偏移使用 `arange`，消除了发布版辅助函数中的 GPU `.item()` 同步及 graph break。在 collate 阶段移除全有效的冗余 mask。前向、梯度等价性与图捕获测试独立于计时进行。
+
+强制 `attention_mechanism: "cudnn"` 在 PyTorch 2.11 Inductor 中触发 `CantSplit` 错误；自动 native SDPA 仍能正常使用 cuDNN。FA4 Hub 在 `nvidia-cutlass-dsl==4.7.1` 下因缺少 `cutlass.cute.core.ThrMma` 而加载失败，因此没有计时结果。Hub 后端使用 `trust_remote_code: true`。FA3 面向 Hopper，不适用于 L40S（[上游支持说明](https://github.com/Dao-AILab/flash-attention#flashattention-3-beta-release)）。
+
+#### H200 batch 扩展
+
+在同一张 H200 上，native SDPA 的 **batch 10 为 0.612 秒**，**batch 20 为 1.223 秒**，两者均约为 **16.35 张/秒**。吞吐量达到平台后，batch 翻倍会使计算量近似翻倍。144 GB 预设仍关闭 checkpoint；更大的 batch 利用额外容量，但不保证每秒生成更多训练样本。
+
+| Batch | 秒/步 | 张/秒 | 峰值 GiB |
+| ---: | ---: | ---: | ---: |
+| 1 | 0.081 | 12.38 | 20.99 |
+| 10 | 0.612 | 16.35 | 71.85 |
+| 20 | 1.223 | 16.35 | 128.42 |
+使用相同更新后的 native attention 路径，H100 在 batch 10、关闭 checkpoint 时为 **0.639 秒/步**，峰值显存 **71.83 GiB**。
+
+<!-- qwen21-verification -->
+
+使用缓存的 Domokun 输入检查完整 transformer：移除冗余 mask 前后，FP32 输出完全一致，梯度相对 L2 误差为 `1.97e-6`。BF16 后端在数值上不可互换：在这一批数据中，相对 FP32 的 LoRA 总梯度余弦相似度，native SDPA 约为 0.92–0.93，FA3 约为 0.80。这是数值诊断，不是收敛性比较。
+
+H200 batch-20 trace 中，kernel 执行占采集区间的 93.1%。GEMM 占 kernel 时间的 70.5%，注意力占 9.7%；Inductor 已融合 normalization/RoPE 和逐元素 epilogue。最大的空闲间隔出现在 batch 准备附近。kernel 活跃时间不等于 SM occupancy，吞吐量表不使用 profiler 计时。
+
+对于这个 27 张图像、batch 20 的数据集，prefetch 更慢：queue length 2 时，host prefetch 平均 2.030 秒/步，device prefetch（1 MiB 阈值）为 2.036 秒/步，而关闭时为 1.223 秒。两者中位数接近 1.17 秒，但周期性出现约 3 秒的步骤；预设保持 prefetch 关闭。
+
+250 步 Domokun 配置用于吞吐量测试，并非可靠的收敛配方。较早的 checkpoint 在重新加载后生成了可辨认的 Domokun，但新启动的 250 步训练未能复现。保留 padding mask、关闭编译以及恢复较早 RoPE 表达式的对照实验也失败了。缓存 latent 解码后确实是正确主体。训练质量下降的原因尚未确定；计时表不能证明不同注意力后端的图像质量相当。
+
 ### Qwen Image
 
-Example: `qwen_image.peft-lora`. Resolution: 1024x1024.
+以下是 Qwen-Image 1.0（`model_flavour: "v1.0"`）的历史测量，使用旧版 `qwen_image.peft-lora` 示例，分辨率为 1024x1024。该示例现在默认选择 2.1。下表中几乎相同的 interval/stride 结果无法证明不同调度实际生效，不应用于配置 2.1。
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |
