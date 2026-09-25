@@ -98,5 +98,6 @@
   },
   "dynamo_dynamic": true,
   "optimizer_config": "weight_decay=0.0",
-  "init_lora_step": 0
+  "init_lora_step": 0,
+  "disable_assistant_lora": true
 }
