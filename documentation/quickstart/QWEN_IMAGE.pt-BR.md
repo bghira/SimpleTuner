@@ -609,7 +609,7 @@ Defina `distillation_method: assistant_lora`. O backend pré-calcula os embeddin
 
 Para testar a execução, use 8 atualizações e 2 passos do professor; volte a 40 antes de avaliar imagens. Revise nas atualizações 100, 250, 500 e 1.000, comparando os mesmos prompts e sementes do modelo base. A utilidade da LoRA auxiliar precisa de outro teste de treino de conceitos.
 
-[Ostris descreve o treino com baixa taxa de aprendizado sobre imagens geradas pelo próprio modelo](https://huggingface.co/ostris/zimage_turbo_training_adapter). Treina-se o adaptador positivo. No treino posterior de conceitos, aponte `assistant_lora_path` para o adaptador salvo e habilite seu carregamento. O SimpleTuner o congela no treino e o remove na amostragem. Nenhum auxiliar padrão para Qwen 2.1 é baixado; o benefício continua experimental.
+O treino LoRA do Qwen Image 2.1 carrega por padrão o [assistente v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2), congelado durante o treino e desativado na validação. Use `disable_assistant_lora: true` para desativá-lo, ou `assistant_lora_path` e, opcionalmente, `assistant_lora_weight_name` para escolher outro adaptador. As versões anteriores mantêm seu comportamento. Ao treinar um novo assistente, mantenha `disable_assistant_lora: true`, como nos exemplos correspondentes.
 
 Use este como único método de destilação; não há suporte para combiná-lo com outros destiladores.
 

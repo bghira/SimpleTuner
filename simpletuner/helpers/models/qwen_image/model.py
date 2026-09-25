@@ -102,6 +102,7 @@ class QwenImage(ImageModelFoundation):
 
     ASSISTANT_LORA_FLAVOURS = ["v2.0", "v2.1"]
     ASSISTANT_LORA_PATH = ""
+    ASSISTANT_LORA_PATHS = {"v2.1": "SimpleTuner/Qwen-Image-2.1-training-assistant-v2"}
     ASSISTANT_LORA_WEIGHT_NAME = "pytorch_lora_weights.safetensors"
 
     # Qwen Image uses a different text encoder configuration
@@ -482,6 +483,9 @@ class QwenImage(ImageModelFoundation):
                 layers.append("time_text_embed.delta_timestep_embedder")
         return layers or None
 
+    def _assistant_lora_path_for_flavour(self):
+        return self.ASSISTANT_LORA_PATHS.get(self._get_model_flavour(), self.ASSISTANT_LORA_PATH)
+
     def _assistant_lora_weight_for_flavour(self):
         weight_map = getattr(self, "ASSISTANT_LORA_WEIGHT_NAMES", None) or {}
         flavour = getattr(self.config, "model_flavour", None)
@@ -497,7 +501,7 @@ class QwenImage(ImageModelFoundation):
         if getattr(self.config, "model_type", "").lower() != "lora":
             return
 
-        assistant_path = getattr(self.config, "assistant_lora_path", None) or self.ASSISTANT_LORA_PATH
+        assistant_path = getattr(self.config, "assistant_lora_path", None) or self._assistant_lora_path_for_flavour()
         if not assistant_path:
             return
 
@@ -1978,6 +1982,20 @@ class QwenImage(ImageModelFoundation):
         Check and validate user configuration for Qwen Image.
         """
         super().check_user_config()
+
+        if (
+            getattr(self.config, "model_type", "").lower() == "lora"
+            and not getattr(self.config, "disable_assistant_lora", False)
+            and self.supports_assistant_lora(self.config)
+        ):
+            if getattr(self.config, "assistant_lora_path", None) in (None, "", "None"):
+                self.config.assistant_lora_path = self._assistant_lora_path_for_flavour()
+            if self.config.assistant_lora_path and getattr(self.config, "assistant_lora_weight_name", None) in (
+                None,
+                "",
+                "None",
+            ):
+                self.config.assistant_lora_weight_name = self._assistant_lora_weight_for_flavour()
 
         # Qwen Image specific checks
         if self.config.aspect_bucket_alignment != 32:

@@ -609,7 +609,7 @@ LoRA トレーニングの場合:
 
 動作確認には 8 更新・教師 2 ステップを使い、画像評価前に教師 40 ステップへ戻します。100、250、500、1,000 更新で、同じプロンプトとシードのベース画像と比較してください。実用性は別の概念学習でも検証が必要です。
 
-[Ostris はモデル自身の生成画像を低い学習率で学習する手法を説明しています](https://huggingface.co/ostris/zimage_turbo_training_adapter)。ここでは正方向のアダプターを学習します。後続の概念学習では `assistant_lora_path` を出力に設定し補助ロードを有効化します。SimpleTuner は学習時に補助を固定し、サンプリング時に外します。Qwen 2.1 用補助を自動ダウンロードすることはなく、効果は未検証です。
+Qwen Image 2.1 の LoRA 学習では、[学習補助アダプター v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2) を既定で読み込みます。学習中は固定し、検証時は無効にします。無効化には `disable_assistant_lora: true`、別のアダプターには `assistant_lora_path` と必要に応じて `assistant_lora_weight_name` を指定します。旧フレーバーの既定値は変わりません。新しい補助アダプターを学習する際は、専用の例と同様に `disable_assistant_lora: true` を維持してください。
 
 蒸留方式はこの方法のみを指定してください。他の蒸留器との併用は対応しません。
 
