@@ -6,8 +6,10 @@ from peft import LoraConfig
 from peft.tuners.tuners_utils import BaseTunerLayer
 
 from simpletuner.helpers.assistant_lora import set_adapter_stack
+from simpletuner.helpers.models.common import ModelFoundation
 from simpletuner.helpers.models.qwen_image.transformer_21 import QwenImage21Transformer2DModel
 from simpletuner.helpers.training.trainer import Trainer
+from simpletuner.helpers.training.validation import Validation
 
 
 class AssistantRegularisationTests(unittest.TestCase):
@@ -105,3 +107,29 @@ class AssistantRegularisationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "parent failed"):
             self.trainer._prepare_regularisation_parent_targets({})
         self.assert_restored()
+
+    def test_validation_cleanup_restores_frozen_assistant(self):
+        foundation = SimpleNamespace(
+            config=self.trainer.config,
+            assistant_lora_loaded=True,
+            assistant_adapter_name="assistant",
+            get_trained_component=lambda **kwargs: self.component,
+            unwrap_model=lambda component: component,
+            MODEL_TYPE=SimpleNamespace(value="transformer"),
+            pipeline=None,
+        )
+        foundation.configure_assistant_lora_for_training = lambda: ModelFoundation.configure_assistant_lora_for_training(
+            foundation
+        )
+        validation = object.__new__(Validation)
+        validation.model = foundation
+        validation.accelerator = SimpleNamespace()
+        with torch.no_grad():
+            expected = self.component(**self.inputs)[0]
+        for _ in range(2):
+            ModelFoundation.configure_assistant_lora_for_inference(foundation)
+            self.assertEqual(self.component.active_adapters(), ["default"])
+            validation.clean_pipeline()
+            self.assert_restored()
+            with torch.no_grad():
+                torch.testing.assert_close(self.component(**self.inputs)[0], expected)
