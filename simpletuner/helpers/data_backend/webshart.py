@@ -120,6 +120,13 @@ class WebshartDataBackend(BaseDataBackend):
             max_file_size=self.max_file_size,
             load_file_data=True,
         )
+        if self.caption_key is not None:
+            self.caption_loader = self.webshart.TarDataLoader(
+                self.dataset,
+                buffer_size=self.buffer_size,
+                max_file_size=self.max_file_size,
+                load_file_data=False,
+            )
         if not hasattr(self.loader, "list_shard_sample_aspect_buckets"):
             raise ImportError(
                 "SimpleTuner's Webshart backend requires a webshart build that provides "
@@ -352,8 +359,7 @@ class WebshartDataBackend(BaseDataBackend):
         sample_metadata = self.get_shard_metadata(sample_ref.shard_idx).get(sample_ref.filename, {}) or {}
         if self.caption_key is not None:
             if sample_metadata.get("json_metadata") is None and sample_metadata.get("json_path"):
-                reader = self.dataset.open_shard(sample_ref.shard_idx)
-                payload = reader.read_sample_json(sample_ref.sample_idx)
+                payload = self.caption_loader.load_sample_json(sample_ref.shard_idx, sample_ref.sample_idx)
                 if payload is not None:
                     sample_metadata["json_metadata"] = json.loads(payload)
             return self._select_caption_keys(sample_metadata)

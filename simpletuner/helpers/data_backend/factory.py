@@ -503,6 +503,8 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
             "parallel_downloads",
             "buffer_size",
             "max_file_size",
+            "caption_key",
+            "optimize_captions",
         ):
             value = backend.get(field, webshart_config.get(field))
             if value is not None:

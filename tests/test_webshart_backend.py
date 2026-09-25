@@ -540,10 +540,17 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
         self.assertEqual(backend.get_caption(self._sample_id(backend)), ["literal key caption", "brief caption"])
 
     def test_reads_json_sidecar_without_loading_image_bytes(self):
+        import webshart
+
         self._write_index(embedded=False)
-        backend = self._backend("short")
+        with patch.object(webshart, "TarDataLoader", wraps=webshart.TarDataLoader) as loader_factory:
+            backend = self._backend("short")
+        self.assertTrue(loader_factory.call_args_list[0].kwargs["load_file_data"])
+        self.assertFalse(loader_factory.call_args_list[1].kwargs["load_file_data"])
+        sample_id = self._sample_id(backend)
+        backend.dataset = Mock(open_shard=Mock(side_effect=AssertionError("Uncached shard reader requested")))
         with patch.object(backend, "_read_sample_bytes", side_effect=AssertionError("Image bytes requested")):
-            self.assertEqual(backend.get_caption(self._sample_id(backend)), "brief caption")
+            self.assertEqual(backend.get_caption(sample_id), "brief caption")
         self.assertEqual(backend.get_shard_metadata(0)["sample.jpg"]["json_metadata"], self.json_metadata)
 
     def test_optimization_preserves_custom_selection(self):

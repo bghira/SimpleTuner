@@ -478,6 +478,28 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertFalse(self.args.text_cache_disable)
         self.assertFalse(self.args.text_cache_ondemand)
 
+    def test_webshart_caption_settings_survive_config_versioning(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
+
+        backend = {
+            "id": "webshart-long-captions",
+            "type": "webshart",
+            "source": "source",
+            "caption_strategy": "webshart",
+            "webshart": {"caption_key": "long_caption", "optimize_captions": False},
+        }
+        result = init_backend_config(backend, self.args, self.accelerator)
+        self.assertEqual(result["config"]["webshart"], backend["webshart"])
+        result["metadata_backend"] = MagicMock(config=deepcopy(result["config"]))
+        result["metadata_backend"].__len__.return_value = 1
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory.args = self.args
+        self.args.override_dataset_config = False
+        reloaded = deepcopy(backend)
+        factory._handle_config_versioning(reloaded, result)
+        self.assertEqual(reloaded["webshart"]["caption_key"], "long_caption")
+        self.assertFalse(reloaded["webshart"]["optimize_captions"])
+
     def test_init_backend_config_uses_dataset_train_batch_size(self):
         from simpletuner.helpers.data_backend.factory import init_backend_config
 
