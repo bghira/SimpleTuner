@@ -1388,6 +1388,8 @@ Para un ejemplo básico de cómo usar un dataset de Hugging Face, configura `"ty
 
 ### Datasets Webshart
 
+Durante la preparación de la caché VAE, Webshart procesa todos los grupos de relación de aspecto de un shard antes de pasar al siguiente. Esto reduce las descargas repetidas cuando la caché de shards completos no puede contener todo el conjunto de datos. Las muestras ya almacenadas y las asignadas a otros ranks se excluyen antes de agrupar; el orden del muestreador de entrenamiento no cambia.
+
 Los captions pueden ser cadenas, objetos JSON nativos o listas mixtas de ambos.
 Los objetos se conservan en los metadatos y la caché; cada objeto se convierte en
 un único prompt de texto JSON al preparar la entrada del codificador de texto.
