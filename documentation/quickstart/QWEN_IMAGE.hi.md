@@ -16,40 +16,35 @@ Qwen Image 2.1 एकल छवियों को डिकोड करते 
 
 पुराने संस्करण उपलब्ध हैं: `v1.0` से Qwen-Image, `v2.0` से Qwen-Image-2512 चुना जाता है और `edit-*` संस्करण अपने मौजूदा checkpoints रखते हैं। इनके adapters और latent कैश 2.1 के साथ अदला-बदली नहीं किए जा सकते।
 
-250-step Domokun recipe throughput मापने का उदाहरण है, भरोसेमंद convergence recipe नहीं। पहले के एक checkpoint ने दोबारा लोड करने पर पहचानने योग्य Domokun बनाया, लेकिन नए 250-step runs वह परिणाम दोहरा नहीं पाए। Padding masks बनाए रखने, compilation बंद करने और पुराने RoPE expression का उपयोग करने वाले controls भी विफल रहे। Cached latents सही विषय में decode होते हैं। Training deterioration का कारण अभी स्पष्ट नहीं है; timing tables अलग attention backends की समान image quality साबित नहीं करतीं।
+<a id="vram-presets"></a>
 
-### VRAM प्रीसेट
+### सहायक और REPA प्रीसेट
 
-इन उदाहरणों में 512px पर BF16, rank-32 LoRA, Optimi Lion और regional compilation उपयोग होते हैं; gradient checkpointing बंद है। पहली बार compilation में समय लगता है, इसलिए warm-up के बाद के training steps की तुलना करें। 24 GB और 32 GB मेमोरी बजट L40S पर जाँचे गए हैं, उन क्षमताओं वाले अलग GPU पर नहीं।
+मानक उदाहरण [सहायक v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2), सिंथेटिक नियमितीकरण, REPA और रिज़ॉल्यूशन-आधारित ऑटो फ्लो शिफ्ट को जोड़ते हैं। ये पुराने 250-स्टेप गति परीक्षण की जगह लेते हैं। छवि तुलना के लिए [प्रयोग संग्रह](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-LoRA-experiments) देखें; पुराने समय माप इस सेटअप पर लागू नहीं हैं।
 
-| VRAM बजट | उदाहरण | डेटासेट बैच आकार | पीक VRAM (GiB) | warm-up के बाद step (सेकंड) |
+सभी प्रीसेट BF16, rank/alpha 32, batch 1, `1e-4` पर AdamW BF16, 25 वार्मअप अपडेट और 1.0 नॉर्म क्लिपिंग इस्तेमाल करते हैं। REPA में `dinov2_vitg14`, ब्लॉक 8, वज़न 0.5, एन्कोडर आकार 518, स्थानिक संरेखण और समय दूरी 0 है। ऑटो शिफ्ट चालू और स्थिर शिफ्ट 0 है। सहायक प्रशिक्षण में स्थिर और वैलिडेशन में निष्क्रिय रहता है। नियमितीकरण का लक्ष्य दोनों अडैप्टर बंद करके बेस मॉडल की भविष्यवाणी से बनता है।
+
+| VRAM | उदाहरण | आधार रिज़ॉल्यूशन | अपडेट | ग्रेडिएंट चेकपॉइंट अंतराल |
 | --- | --- | --- | --- | --- |
-| 24 GB | `qwen_image-2.1-24g.peft-lora` | 1 | 20.6 | 0.238 |
-| 32 GB | `qwen_image-2.1-32g.peft-lora` | 2 | 26.5 | 0.390 |
-| 48 GB | `qwen_image-2.1-48g.peft-lora` | 2 | 26.5 | 0.390 |
-| 80 GB | `qwen_image-2.1-80g.peft-lora` | 10 | 71.8 | 0.639 |
-| 144 GB | `qwen_image-2.1-144g.peft-lora` | 20 | 128.4 | 1.223 |
+| 24 GB | `qwen_image-2.1-24g.peft-lora` | 512px | 2000 | 1 |
+| 32 GB | `qwen_image-2.1-32g.peft-lora` | 512px | 2000 | 2 |
+| 48 GB | `qwen_image-2.1-48g.peft-lora` | 512px + 1024px | 4000 | 2 |
+| 80 GB | `qwen_image-2.1-80g.peft-lora` | 512px + 1024px | 4000 | 2 |
+| 144 GB | `qwen_image-2.1-144g.peft-lora` | 512px + 1024px | 4000 | 2 |
 
-L40S (24/32/48 GB प्रीसेट), H100 (80 GB) और H200 (144 GB) पर 20 steps मापे गए; timing से पहले पाँच steps हटाए गए। peak VRAM में तैयारी शामिल है। ये 512px और संबंधित बैच आकार के परिणाम हैं, बड़े चित्रों या लंबे prompts के लिए गारंटी नहीं।
+L40S मेमोरी परीक्षण में हर बैकएंड से चार छवियाँ, 16 अपडेट, वैलिडेशन और सेव शामिल थे। 512px और अंतराल 1 वाला सेटअप 24 GiB सीमा में सफल रहा: PyTorch का अधिकतम आवंटन / आरक्षण 20.06 / 21.10 GiB था। मल्टी-स्केल और अंतराल 2 वाला सेटअप L40S पर 32.49 / 41.21 GiB में सफल रहा, लेकिन 32 GiB सीमा पर मेमोरी समाप्त हुई। ये छोटे उपसमूह के मेमोरी परीक्षण हैं, गति या अभिसरण के माप नहीं; छोटी सीमाएँ अलग कार्ड की जगह L40S पर लागू की गई थीं। अंतिम 32 GB प्रीसेट, 512px और अंतराल 2 के साथ, सफल रहा: 22.12 GiB आवंटित / 23.68 GiB आरक्षित।
 
-48 GB प्रीसेट भी बैच 2 उपयोग करता है: L40S पर प्रति-चित्र throughput बैच 3, 4 और 5 से बेहतर था। बैच 5, 43.3 GiB में फिट हुआ लेकिन 0.991 सेकंड/step लगा; बैच 2 में 0.390 सेकंड/step लगा।
+सामान्य संभाव्य सैम्पलर आधा वज़न `🟫` ट्रिगर वाले `RareConcepts/Domokun` को और आधा `is_regularisation_data: true` वाले `webshart/qwen-image-2.1-generated-images` को देता है। मल्टी-स्केल में प्रत्येक आधा 512px और 1024px में बराबर बँटता है। क्षेत्रफल-आधारित बकेट अनुपात बनाए रखते हैं: 0.262144 और 1.048576 मेगापिक्सेल। वर्गाकार, पोर्ट्रेट और लैंडस्केप सिंथेटिक उपसमूह अपने रिज़ॉल्यूशन का नियमितीकरण वज़न बराबर बाँटते हैं। यह निश्चित बारी-बारी चयन नहीं है। हर 250 अपडेट पर वैलिडेशन और चेकपॉइंट होता है।
 
-```bash
-simpletuner train example=qwen_image-2.1-48g.peft-lora
-```
+`webshart` स्थापित करें। हर सिंथेटिक अनुपात उपसमूह में अधिकतम 1,024 छवियाँ और अलग लैटेंट कैश है। VAE टाइलिंग बंद है; वैलिडेशन डिफ़ॉल्ट टेक्सचर-सुधारित VAE इस्तेमाल करता है। डेटा, रिज़ॉल्यूशन या बैच बदलने पर नया रन शुरू करें।
 
-हर उदाहरण के साथ दिया गया डेटासेट फ़ाइल उपयोग करें: उसमें बैच आकार स्पष्ट है। बैच आकार या डेटासेट सेटिंग बदलने पर नया प्रशिक्षण शुरू करें; असंगत training-state checkpoint का पुनः उपयोग न करें।
-
-कम VRAM के लिए `gradient_checkpointing: true` और `gradient_checkpointing_interval: 2` सक्षम करें। अब यह लगातार दो blocks के समूह पर checkpoint लागू करता है। मापी गई तुलना के लिए [Qwen Image 2.1 checkpoint और attention परिणाम](../experimental/SEGMENTED_CHECKPOINTING.hi.md#qwen-image-21) देखें; हर दूसरे block पर checkpoint करने वाला पुराना परिणाम अब लागू नहीं है। इन presets में BF16 फिट होता है और int8 checkpoint आवश्यक नहीं है।
-
-टेक्स्ट-टू-इमेज पथ tensor के मान पर निर्भर sequence assembly से बचता है, जिससे graph break के बिना capture होता है। वास्तविक संख्या वाले RoPE से Inductor normalization और rotation को fuse कर सकता है; modulation, residual और MLP epilogues भी compile होते हैं। इन प्रशिक्षण उदाहरणों में मौजूदा Hopper CuTe ConvRot GEMM और केवल inference के लिए बने LTX RoPE kernels उपयोग नहीं होते।
-
+24/32 GB प्रीसेट मेमोरी बचाने के लिए 1024px छोड़ते हैं। `qwen_image.peft-lora` मल्टी-स्केल है। पुराने माप इस संयुक्त सेटअप की मेमोरी प्रमाणित नहीं करते; कम्पाइलेशन और कैप्शन लंबाई भी असर डालते हैं। AnyFlow और सहायक बनाने वाले उदाहरण अलग प्रयोग हैं।
 
 ### प्रयोगात्मक AnyFlow पायलट
 
 तीन `qwen_image-2.1-anyflow-stage*.peft-lora` उदाहरण जाँचते हैं कि interval distillation से `🟫` जोड़ते हुए base model का व्यवहार बचाया जा सकता है या नहीं। ये प्रयोगात्मक हैं; Qwen का model card यह सिद्ध नहीं करता कि पहले की गिरावट guidance distillation के कारण हुई थी।
 
-सभी stages में 1024px, BF16, AdamW, rank 32 और batch 4 हैं। Stage 1 में H200 पर gradient checkpointing बंद है; stages 2 और 3 लगातार दो blocks पर checkpointing इस्तेमाल करते हैं। यह ऊपर दिए 512px throughput presets से अलग workload है। चलाने से पहले `webshart` इंस्टॉल करें।
+सभी stages में 1024px, BF16, AdamW, rank 32 और batch 4 हैं। Stage 1 में H200 पर gradient checkpointing बंद है; stages 2 और 3 लगातार दो blocks पर checkpointing इस्तेमाल करते हैं। यह ऊपर दिए सहायक REPA प्रीसेट से अलग डिस्टिलेशन प्रशिक्षण है। चलाने से पहले `webshart` इंस्टॉल करें।
 
 इन AnyFlow उदाहरणों में स्पष्ट रूप से `grad_clip_method: "value"` और `max_grad_norm: 0.01` उपयोग होते हैं: हर gradient element को ±0.01 तक सीमित किया जाता है। यह global norm की सीमा नहीं है। 1.0 पर norm clipping का परीक्षण करने के लिए `grad_clip_method: "norm"` और `max_grad_norm: 1.0` दोनों सेट करें।
 
