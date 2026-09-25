@@ -16,40 +16,39 @@ Qwen Image 2.1 decodes single images without retaining unused temporal feature c
 
 Earlier flavours remain available: `v1.0` selects Qwen-Image, `v2.0` selects Qwen-Image-2512, and the `edit-*` flavours keep their existing checkpoints. Their adapters and latent caches are not interchangeable with 2.1.
 
-The 250-step Domokun recipe is a throughput example, not a reliable convergence recipe. An earlier checkpoint produced recognizable Domokun images after reloading, but fresh 250-step runs did not reproduce that result. Controls retaining padding masks, disabling compilation, and restoring the earlier RoPE expression also failed. Cached latents decode to the correct subject. The cause of the training deterioration remains unresolved; the timing tables do not establish comparable image quality across attention backends.
+<a id="vram-presets"></a>
 
-### VRAM presets
+### Assisted REPA presets
 
-These examples use BF16, rank-32 LoRA, Optimi Lion and regional compilation at 512px, without gradient checkpointing. Compilation has a first-run cost; compare warm training steps. The 24 GB and 32 GB budgets were checked on L40S, not on separate 24 GB or 32 GB cards.
+The standard examples combine [assistant v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2), synthetic regularisation, REPA and resolution-dependent flow schedule shifting. They replace the earlier 250-step throughput recipe. See the [experiment collection](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-LoRA-experiments) for image comparisons; the old batch-specific timing measurements do not describe this recipe.
 
-| VRAM budget | Example | Dataset batch size | Peak VRAM (GiB) | Warm step (s) |
+All presets use BF16, rank/alpha 32, batch 1, AdamW BF16 at `1e-4`, 25 warmup updates and norm clipping at 1.0. REPA uses `dinov2_vitg14`, block 8, weight 0.5, encoder size 518 and spatial alignment; temporal distance is 0. Auto shift is enabled with static shift 0. The assistant is frozen during training and disabled for validation. Regularisation matches the bare base prediction, with both adapters disabled for the parent target.
+
+| VRAM budget | Example | Base resolutions | Updates | Checkpoint interval |
 | --- | --- | --- | --- | --- |
-| 24 GB | `qwen_image-2.1-24g.peft-lora` | 1 | 20.6 | 0.238 |
-| 32 GB | `qwen_image-2.1-32g.peft-lora` | 2 | 26.5 | 0.390 |
-| 48 GB | `qwen_image-2.1-48g.peft-lora` | 2 | 26.5 | 0.390 |
-| 80 GB | `qwen_image-2.1-80g.peft-lora` | 10 | 71.8 | 0.639 |
-| 144 GB | `qwen_image-2.1-144g.peft-lora` | 20 | 128.4 | 1.223 |
+| 24 GB | `qwen_image-2.1-24g.peft-lora` | 512px | 2000 | 1 |
+| 32 GB | `qwen_image-2.1-32g.peft-lora` | 512px | 2000 | 2 |
+| 48 GB | `qwen_image-2.1-48g.peft-lora` | 512px + 1024px | 4000 | 2 |
+| 80 GB | `qwen_image-2.1-80g.peft-lora` | 512px + 1024px | 4000 | 2 |
+| 144 GB | `qwen_image-2.1-144g.peft-lora` | 512px + 1024px | 4000 | 2 |
 
-Measured on L40S (24/32/48 GB presets), H100 (80 GB) and H200 (144 GB), using 20 steps with the first five excluded from timing. Peak VRAM includes setup. These are 512px, batch-specific measurements, not guarantees for larger images or longer prompts.
+L40S memory smoke tests used 16 updates, four images per backend, validation and checkpoint saving. The 512px interval-1 recipe passed a 24 GiB allocation limit, peaking at 20.06 GiB allocated / 21.10 GiB reserved by PyTorch. The multi-scale interval-2 recipe passed on L40S at 32.49 / 41.21 GiB, but ran out of memory under a 32 GiB limit. These are bounded-subset memory checks, not throughput or convergence measurements; the lower budgets were simulated on L40S rather than tested on separate cards. The final 32 GB preset, using 512px and interval 2, also passed: 22.12 GiB allocated / 23.68 GiB reserved.
 
-The 48 GB preset also uses batch 2: on L40S it delivered better throughput per image than batches 3, 4 and 5. Batch 5 fitted in 43.3 GiB but took 0.991 s/step, compared with 0.390 s/step at batch 2.
+The normal probabilistic sampler gives half the total weight to `RareConcepts/Domokun` with trigger `🟫`, and half to `webshart/qwen-image-2.1-generated-images` with `is_regularisation_data: true`. Multi-scale presets divide each half equally between 512px and 1024px. Area-based aspect buckets preserve image proportions: 0.262144 and 1.048576 megapixels. Synthetic square, portrait and landscape backends share their resolution's regularisation weight equally. Sampling is probabilistic, not strict alternation. Validation and checkpoints run every 250 updates.
+
+Install the `webshart` dependency. The bundled dataloaders cap each synthetic aspect subset at 1,024 images and use separate latent caches for each resolution and source. VAE tiling is disabled, and validation uses the default texture-fixed VAE. Start a fresh run when changing dataset, resolution or batch settings.
 
 ```bash
 simpletuner train example=qwen_image-2.1-48g.peft-lora
 ```
 
-Use the matching dataset file bundled with each example: its batch size is explicit. Start a fresh run when changing batch size or dataset settings; do not reuse an incompatible training-state checkpoint.
-
-For lower memory use, enable `gradient_checkpointing: true` and `gradient_checkpointing_interval: 2`. This now checkpoints contiguous two-block groups. See the [Qwen Image 2.1 checkpoint and attention measurements](../experimental/SEGMENTED_CHECKPOINTING.md#qwen-image-21) for the measured tradeoffs; the earlier every-other-block result is superseded. BF16 fits these presets without an int8 checkpoint.
-
-The text-to-image path avoids tensor-dependent sequence assembly so it can be captured without graph breaks. Real-valued RoPE allows Inductor to fuse normalization and rotation; the modulation, residual and MLP epilogues are also compiled. The existing Hopper CuTe ConvRot GEMM and inference-only LTX RoPE kernels are not used by these training examples.
-
+The 24/32 GB presets omit 1024px to leave room for REPA and regularisation; the default `qwen_image.peft-lora` uses the multi-scale recipe. The original throughput measurements cannot establish memory use for this combined recipe. Compilation and caption lengths also affect peak memory. The AnyFlow and assistant-creation examples are separate experiments.
 
 ### Experimental AnyFlow pilot
 
 The three `qwen_image-2.1-anyflow-stage*.peft-lora` examples test whether interval distillation can retain the base model's behavior while introducing `🟫`. They are experimental; Qwen's model card does not establish that guidance distillation caused the earlier deterioration.
 
-All stages use 1024px, BF16, AdamW, rank 32 and batch 4. Stage 1 disables gradient checkpointing on H200; stages 2 and 3 checkpoint contiguous two-block groups. This is a different workload from the 512px throughput presets above. Install the `webshart` dependency before running them.
+All stages use 1024px, BF16, AdamW, rank 32 and batch 4. Stage 1 disables gradient checkpointing on H200; stages 2 and 3 checkpoint contiguous two-block groups. This is a separate distillation workload from the assisted REPA presets above. Install the `webshart` dependency before running them.
 
 These AnyFlow examples explicitly use `grad_clip_method: "value"` with `max_grad_norm: 0.01`: each gradient element is clamped to ±0.01. This is not a global-norm cap. To test norm clipping at 1.0, set both `grad_clip_method: "norm"` and `max_grad_norm: 1.0`.
 

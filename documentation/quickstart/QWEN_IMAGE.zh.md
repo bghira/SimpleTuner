@@ -16,40 +16,35 @@ Qwen Image 2.1 解码单张图像时不再保留未使用的时序特征缓存�
 
 旧版本仍然可用：`v1.0` 对应 Qwen-Image，`v2.0` 对应 Qwen-Image-2512，`edit-*` 保留原有检查点。这些版本的适配器和潜变量缓存不能与 2.1 互换。
 
-250 步 Domokun 配置用于吞吐量测试，并非可靠的收敛配方。较早的 checkpoint 在重新加载后生成了可辨认的 Domokun，但新启动的 250 步训练未能复现。保留 padding mask、关闭编译以及恢复较早 RoPE 表达式的对照实验也失败了。缓存 latent 解码后确实是正确主体。训练质量下降的原因尚未确定；计时表不能证明不同注意力后端的图像质量相当。
+<a id="vram-presets"></a>
 
-### 显存预设
+### 辅助适配器与 REPA 预设
 
-这些示例在 512px 下使用 BF16、rank-32 LoRA、Optimi Lion 和区域编译，不启用梯度检查点。首次运行需要编译时间；比较速度时应使用预热后的训练步。24 GB 和 32 GB 显存预算在 L40S 上验证，并非在对应容量的独立显卡上测试。
+标准示例结合 [辅助适配器 v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2)、合成数据正则化、REPA 和随分辨率变化的自动时间步偏移，替代旧的 250 步吞吐量配置。图像对比见[实验合集](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-LoRA-experiments)；旧计时数据不代表新配置。
 
-| 显存预算 | 示例 | 数据集批大小 | 峰值显存 (GiB) | 预热后单步 (秒) |
+所有预设使用 BF16、rank/alpha 32、batch 1、学习率 `1e-4` 的 AdamW BF16、25 步预热和 1.0 范数裁剪。REPA 使用 `dinov2_vitg14`、第 8 层、权重 0.5、编码尺寸 518、空间对齐，时间距离为 0。启用自动偏移，静态偏移为 0。辅助适配器在训练中冻结、验证时禁用。正则化目标来自同时禁用两个适配器的原始基础模型预测。
+
+| 显存 | 示例 | 基础分辨率 | 更新次数 | 梯度检查点间隔 |
 | --- | --- | --- | --- | --- |
-| 24 GB | `qwen_image-2.1-24g.peft-lora` | 1 | 20.6 | 0.238 |
-| 32 GB | `qwen_image-2.1-32g.peft-lora` | 2 | 26.5 | 0.390 |
-| 48 GB | `qwen_image-2.1-48g.peft-lora` | 2 | 26.5 | 0.390 |
-| 80 GB | `qwen_image-2.1-80g.peft-lora` | 10 | 71.8 | 0.639 |
-| 144 GB | `qwen_image-2.1-144g.peft-lora` | 20 | 128.4 | 1.223 |
+| 24 GB | `qwen_image-2.1-24g.peft-lora` | 512px | 2000 | 1 |
+| 32 GB | `qwen_image-2.1-32g.peft-lora` | 512px | 2000 | 2 |
+| 48 GB | `qwen_image-2.1-48g.peft-lora` | 512px + 1024px | 4000 | 2 |
+| 80 GB | `qwen_image-2.1-80g.peft-lora` | 512px + 1024px | 4000 | 2 |
+| 144 GB | `qwen_image-2.1-144g.peft-lora` | 512px + 1024px | 4000 | 2 |
 
-测量使用 L40S（24/32/48 GB 预设）、H100（80 GB）和 H200（144 GB），共运行 20 步，计时排除前五步。峰值显存包括初始化。这些是 512px 下对应批大小的结果，不能保证更大图像或更长提示词使用相同资源。
+L40S 显存检查使用每个后端 4 张图像，运行 16 次更新并完成验证与保存。512px、检查点间隔 1 的配置在 24 GiB 分配限制下通过，PyTorch 峰值分配/保留显存为 20.06 / 21.10 GiB。多尺度、间隔 2 的配置在 L40S 上通过，峰值为 32.49 / 41.21 GiB，但在 32 GiB 限制下显存不足。这是小子集显存检查，不是吞吐量或收敛测量；较小显存预算是在 L40S 上模拟的，并非使用独立显卡测试。 最终的 32 GB 预设使用 512px、间隔 2，也通过了检查：峰值分配/保留显存为 22.12 / 23.68 GiB。
 
-48 GB 预设也使用批大小 2：在 L40S 上，其每张图像的吞吐量优于批大小 3、4、5。批大小 5 占用 43.3 GiB、每步 0.991 秒；批大小 2 每步为 0.390 秒。
+标准概率采样器将一半权重分配给触发词为 `🟫` 的 `RareConcepts/Domokun`，另一半分配给设置了 `is_regularisation_data: true` 的 `webshart/qwen-image-2.1-generated-images`。多尺度预设将每一半均分给 512px 和 1024px。面积分桶保持图像比例，分别使用 0.262144 和 1.048576 百万像素。合成数据的方形、竖图和横图后端均分对应分辨率的正则化权重。这是概率采样，不是严格交替。每 250 步验证并保存一次。
 
-```bash
-simpletuner train example=qwen_image-2.1-48g.peft-lora
-```
+请安装 `webshart`。每个合成宽高比子集最多取 1,024 张图像，并使用独立的潜变量缓存。关闭 VAE 分块，验证默认使用纹理修复版 VAE。改变数据、分辨率或 batch 设置时请开始新训练。
 
-请使用各示例自带的数据集文件，其中明确设置了批大小。更改批大小或数据集设置后应开始新训练，不要复用不兼容的训练状态检查点。
-
-若要降低显存占用，请启用 `gradient_checkpointing: true` 和 `gradient_checkpointing_interval: 2`。现在这会对连续的两个 block 进行分组 checkpoint。实际取舍请参阅 [Qwen Image 2.1 checkpoint 与注意力测量](../experimental/SEGMENTED_CHECKPOINTING.zh.md#qwen-image-21)；此前每隔一个 block 进行 checkpoint 的结果已被替代。这些预设使用 BF16 即可，无需 int8 checkpoint。
-
-文生图路径避免依赖张量数据的序列组装，实现无图中断捕获。实数 RoPE 允许 Inductor 融合归一化与旋转；调制、残差和 MLP 的后处理也参与编译。这些训练示例不使用现有的 Hopper CuTe ConvRot GEMM 或仅支持推理的 LTX RoPE 内核。
-
+24/32 GB 预设省略 1024px 以留出显存；`qwen_image.peft-lora` 使用多尺度配置。旧测量不能证明组合配置的显存占用；编译和文本长度也会影响峰值。AnyFlow 与辅助适配器创建示例仍是独立实验。
 
 ### 实验性 AnyFlow 试验
 
 三个 `qwen_image-2.1-anyflow-stage*.peft-lora` 示例测试区间蒸馏能否在引入 `🟫` 的同时保留基础模型的行为。这些配置仍属实验性质；Qwen 模型卡并未证实之前的退化由引导蒸馏导致。
 
-所有阶段使用 1024px、BF16、AdamW、rank 32 和 batch 4。阶段 1 在 H200 上关闭梯度检查点；阶段 2 和 3 对连续两个块进行梯度检查点计算。此负载与上面的 512px 吞吐量预设不同。运行前请安装 `webshart`。
+所有阶段使用 1024px、BF16、AdamW、rank 32 和 batch 4。阶段 1 在 H200 上关闭梯度检查点；阶段 2 和 3 对连续两个块进行梯度检查点计算。这是与上述辅助 REPA 预设不同的蒸馏训练。运行前请安装 `webshart`。
 
 这些 AnyFlow 示例明确使用 `grad_clip_method: "value"` 和 `max_grad_norm: 0.01`，将每个梯度元素限制在 ±0.01 范围内，而不是限制全局梯度范数。若要测试阈值为 1.0 的范数裁剪，须同时设置 `grad_clip_method: "norm"` 和 `max_grad_norm: 1.0`。
 
