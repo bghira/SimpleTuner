@@ -367,6 +367,9 @@ class DMDDistiller(DistillationBase):
             logger.exception("Failed to run DMD critic update.")
 
     def on_save_checkpoint(self, step: int, ckpt_dir: str) -> None:
+        accelerator = self.teacher_model.accelerator
+        if accelerator is not None and not accelerator.is_main_process:
+            return
         if self.fake_score_transformer is None:
             return
         os.makedirs(ckpt_dir, exist_ok=True)

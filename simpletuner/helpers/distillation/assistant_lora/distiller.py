@@ -121,6 +121,9 @@ class AssistantLoRADistiller(DistillationBase):
         }
 
     def on_save_checkpoint(self, step, ckpt_dir):
+        accelerator = self.teacher_model.accelerator
+        if accelerator is not None and not accelerator.is_main_process:
+            return
         Path(ckpt_dir, "assistant_lora_state.json").write_text(
             json.dumps(
                 {
