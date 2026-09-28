@@ -1,5 +1,8 @@
+import copy
+import json
 import logging
 import os
+import random
 import tempfile
 import unittest
 from math import ceil
@@ -22,14 +25,19 @@ from unittest.mock import MagicMock, Mock, patch
 from accelerate import PartialState
 from PIL import Image
 
+from simpletuner.helpers.caching.vae import VAECache
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.local import LocalDataBackend
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend
-from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
+from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler, _UnseenOccurrenceIndex
 from simpletuner.helpers.multiaspect.state import BucketStateManager
+from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.state_tracker import StateTracker
 from tests.helpers.data import MockDataBackend
+
+# Captured at import: a TestMultiAspectSampler case replaces MultiAspectSampler.__iter__ on the class.
+_SAMPLER_ITER = MultiAspectSampler.__iter__
 
 
 class TestMultiAspectSampler(unittest.TestCase):
@@ -726,6 +734,152 @@ class TestSamplerResumeSchedule(unittest.TestCase):
         images = [f"image-{index:02d}.jpg" for index in range(16)]
         shards = self._resume_shards(images=images, save_world_size=4, saving_ranks=set(range(4)), resume_world_size=8)
         self._assert_partitions(shards, images)
+
+
+class TestIterationUnseenIndex(unittest.TestCase):
+    """The iterator's unseen index must yield exactly what recomputing `_get_unseen_images` yields."""
+
+    # Bucket sizes are batch multiples, so every scheduled occurrence (including the padded
+    # duplicates in "1.0" and "2.0") is consumed within an epoch.
+    FULL_BUCKETS = {
+        "0.5": [f"/d/s{i}.jpg" for i in range(8)],
+        "1.0": [f"/d/a{i}.jpg" for i in range(45)] + ["/d/a3.jpg", "/d/a44.jpg", "/d/a44.jpg"],
+        "1.5": [f"/d/b{i}.jpg" for i in range(24)],
+        "2.0": [f"/d/c{i}.jpg" for i in range(7)] + ["/d/c6.jpg"],
+    }
+    # A bucket smaller than the batch drives the partial-fill path, which re-marks already consumed
+    # filepaths; legacy boolean flags exercise the filter's boolean semantics when an index is built.
+    PARTIAL_BUCKETS = {
+        "0.5": ["/d/s0.jpg", "/d/s1.jpg", "/d/s2.jpg"],
+        "1.0": [f"/d/a{i}.jpg" for i in range(47)] + ["/d/a3.jpg", "/d/a46.jpg", "/d/a46.jpg"],
+        "1.5": [f"/d/b{i}.jpg" for i in range(23)],
+        "2.0": [f"/d/c{i}.jpg" for i in range(8)] + ["/d/c7.jpg"],
+    }
+    PARTIAL_SEEN = {"/d/a5.jpg": 1, "/d/s1.jpg": True, "/d/c2.jpg": False, "/d/outside.jpg": True}
+
+    def setUp(self):
+        PartialState()
+        self.get_args = patch.object(StateTracker, "get_args", return_value=SimpleNamespace(print_sampler_statistics=False))
+        self.get_args.start()
+
+    def tearDown(self):
+        self.get_args.stop()
+
+    def _sampler(self, buckets, seen, use_index):
+        metadata_backend = object.__new__(DiscoveryMetadataBackend)
+        metadata_backend.id = "unseen"
+        metadata_backend.instance_data_dir = ""
+        metadata_backend.aspect_ratio_bucket_indices = copy.deepcopy(buckets)
+        metadata_backend.seen_images = dict(seen)
+        metadata_backend.read_only = True
+        metadata_backend.filtering_statistics = None
+        metadata_backend.bucket_report = None
+        data_backend = MockDataBackend()
+        data_backend.id = "unseen"
+        sampler = MultiAspectSampler(
+            id="unseen",
+            metadata_backend=metadata_backend,
+            data_backend=data_backend,
+            accelerator=MagicMock(num_processes=1, process_index=0),
+            batch_size=4,
+            minimum_image_size=0,
+            model=MagicMock(),
+        )
+        sampler._validate_and_yield_images_from_samples = lambda samples, bucket: [{"image_path": p} for p in samples]
+        sampler.connect_conditioning_samples = lambda samples: samples
+        sampler.connect_s2v_samples = lambda samples: samples
+        stored = {}
+        sampler.state_manager = SimpleNamespace(
+            save_state=lambda state, path: stored.update(state=json.loads(json.dumps(state))),
+            load_state=lambda path: copy.deepcopy(stored["state"]),
+        )
+        if not use_index:
+            sampler._iteration_unseen_images = sampler._get_unseen_images
+        return sampler
+
+    def _run(self, sampler, epochs, restore_schedule, per_step):
+        """Drain `epochs` epochs, disturbing the schedule and seen state the way training can.
+
+        `per_step` takes one batch from a fresh iterator each step, as `random_dataloader_iterator` does.
+        """
+        random.seed(1234)
+        yielded = []
+        epoch = 0
+        iterator = _SAMPLER_ITER(sampler)
+        while epoch < epochs:
+            if per_step:
+                iterator = _SAMPLER_ITER(sampler)
+            try:
+                batch = next(iterator)
+            except MultiDatasetExhausted:
+                epoch += 1
+                yielded.append("epoch")
+                iterator = _SAMPLER_ITER(sampler)
+                continue
+            yielded.append([item["image_path"] for item in batch])
+            step = len(yielded)
+            self.assertLess(step, 1000, "the schedule never reached the requested epoch count")
+            backend = sampler.metadata_backend
+            if step == 28:
+                # A problematic sample dropped from a split shard is refilled in place to the same length.
+                vae_cache = object.__new__(VAECache)
+                vae_cache.id = "unseen"
+                vae_cache.metadata_backend = backend
+                vae_cache._handle_metadata_filtered_sample(filepath="/d/a3.jpg", reason="problematic")
+            elif step == 30:
+                backend.remove_image("/d/b20.jpg", "1.5")
+            elif step == 45:
+                # A re-split hands the rank new bucket lists in a new order.
+                backend.aspect_ratio_bucket_indices = {
+                    key: list(reversed(images)) for key, images in backend.aspect_ratio_bucket_indices.items()
+                }
+            elif step == 50:
+                sampler.save_state("/unused/state.json")
+            elif step == 60:
+                # Resume from the step-50 checkpoint: seen counts rewind under an existing index.
+                if not restore_schedule:
+                    # An unrestorable schedule keeps the bucket lists and replaces only the seen counts.
+                    sampler.state_manager.load_state = lambda path, state=sampler.state_manager.load_state: {
+                        key: value for key, value in state(path).items() if key != "aspect_ratio_bucket_indices"
+                    }
+                sampler.load_states("/unused/state.json")
+                iterator = _SAMPLER_ITER(sampler)
+        return yielded
+
+    def _assert_same_schedule(self, buckets, seen, epochs, restore_schedule, per_step=False):
+        reference = self._run(self._sampler(buckets, seen, use_index=False), epochs, restore_schedule, per_step)
+        sampler = self._sampler(buckets, seen, use_index=True)
+        with patch.object(sampler, "_unseen_occurrence_positions", wraps=sampler._unseen_occurrence_positions) as scans:
+            indexed = self._run(sampler, epochs, restore_schedule, per_step)
+        self.assertEqual(indexed, reference)
+        return reference, scans.call_count
+
+    def test_iterator_yields_the_recomputed_schedule(self):
+        reference, scans = self._assert_same_schedule(self.FULL_BUCKETS, {}, epochs=4, restore_schedule=False)
+        # One scan per bucket per epoch plus the filter, removal, re-split and resume rebuilds, not one per batch.
+        batches = sum(1 for entry in reference if entry != "epoch")
+        self.assertLessEqual(scans, len(self.FULL_BUCKETS) * (4 + 3))
+        self.assertGreater(batches, 2 * len(self.FULL_BUCKETS) * (4 + 3))
+        first_epoch = [path for entry in reference[: reference.index("epoch")] for path in entry]
+        self.assertEqual(sorted(first_epoch), sorted(path for images in self.FULL_BUCKETS.values() for path in images))
+
+    def test_one_batch_per_iterator_yields_the_recomputed_schedule(self):
+        for buckets, seen in ((self.FULL_BUCKETS, {}), (self.PARTIAL_BUCKETS, self.PARTIAL_SEEN)):
+            with self.subTest(buckets=len(buckets[next(iter(buckets))])):
+                reference, _ = self._assert_same_schedule(buckets, seen, epochs=4, restore_schedule=False, per_step=True)
+                self.assertGreater(sum(1 for entry in reference if entry != "epoch"), 60)
+
+    def test_iterator_yields_the_recomputed_schedule_through_partial_batches(self):
+        self._assert_same_schedule(self.PARTIAL_BUCKETS, self.PARTIAL_SEEN, epochs=12, restore_schedule=True)
+
+    def test_marking_retires_the_earliest_unseen_duplicate(self):
+        source = ["a", "b", "a"]
+        index = _UnseenOccurrenceIndex(source, {}, [0, 1, 2], list(source))
+        index.consume("a")
+        self.assertEqual((index.positions, index.sample_paths), ([1, 2], ["b", "a"]))
+        index.consume("a")
+        index.consume("a")
+        self.assertEqual((index.positions, index.sample_paths), ([1], ["b"]))
 
 
 if __name__ == "__main__":
