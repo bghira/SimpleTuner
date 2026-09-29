@@ -86,7 +86,9 @@ class AssistantLoRADistillerTests(unittest.TestCase):
             input_perturbation=0,
             scheduled_sampling_max_step_offset=0,
         )
-        model.accelerator = SimpleNamespace(device=torch.device(device), process_index=0, num_processes=1)
+        model.accelerator = SimpleNamespace(
+            device=torch.device(device), process_index=0, num_processes=1, is_main_process=True
+        )
         model.vae_scale_factor = 16
         model.PIPELINE_CLASSES = {PipelineTypes.TEXT2IMG: QwenImage21Pipeline}
         model.diffusion_blocks_controller = None

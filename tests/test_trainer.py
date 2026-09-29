@@ -3074,10 +3074,10 @@ class TestTrainer(unittest.TestCase):
                     self.assertEqual(remaining, ["checkpoint-110-rolling"])
 
     def test_rolling_checkpoint_non_main_save_ownership(self):
-        for use_deepspeed, fsdp_enable, should_save in (
-            (False, False, False),
-            (True, False, True),
-            (False, True, True),
+        for use_deepspeed, fsdp_enable in (
+            (False, False),
+            (True, False),
+            (False, True),
         ):
             with self.subTest(use_deepspeed=use_deepspeed, fsdp_enable=fsdp_enable):
                 trainer = object.__new__(Trainer)
@@ -3094,12 +3094,8 @@ class TestTrainer(unittest.TestCase):
 
                 save_path = trainer._save_rolling_checkpoint()
 
-                if should_save:
-                    self.assertEqual("/tmp/output/checkpoint-110-rolling", save_path)
-                    trainer.checkpoint_state_save.assert_called_once_with("/tmp/output", "rolling")
-                else:
-                    self.assertIsNone(save_path)
-                    trainer.checkpoint_state_save.assert_not_called()
+                self.assertEqual("/tmp/output/checkpoint-110-rolling", save_path)
+                trainer.checkpoint_state_save.assert_called_once_with("/tmp/output", "rolling")
                 trainer.checkpoint_state_cleanup_temp.assert_not_called()
                 trainer.checkpoint_state_cleanup.assert_not_called()
 
@@ -3156,11 +3152,12 @@ class TestTrainer(unittest.TestCase):
             trainer.accelerator.wait_for_everyone.assert_not_called()
 
     @patch("simpletuner.helpers.training.trainer.AttentionBackendController.on_save_checkpoint")
-    def test_checkpoint_state_save_synchronizes_only_all_rank_temp_writes(self, mock_attention_backend):
+    def test_checkpoint_state_save_synchronizes_all_distributed_ranks(self, mock_attention_backend):
         distributed_configs = (
             (DistributedType.DEEPSPEED, True, False, (True, False), ["wait", "save", "wait", "wait", "wait"]),
             (DistributedType.FSDP, False, True, (True, False), ["wait", "save", "wait", "wait", "wait"]),
-            (DistributedType.MULTI_GPU, False, False, (True,), ["save"]),
+            (DistributedType.MULTI_GPU, False, False, (True, False), ["wait", "save", "wait", "wait", "wait"]),
+            (DistributedType.MULTI_CPU, False, False, (True, False), ["wait", "save", "wait", "wait", "wait"]),
         )
         for distributed_type, use_deepspeed, fsdp_enable, process_roles, expected_events in distributed_configs:
             for is_main_process in process_roles:
