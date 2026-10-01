@@ -102,7 +102,7 @@ class QwenImage(ImageModelFoundation):
 
     ASSISTANT_LORA_FLAVOURS = ["v2.0", "v2.1"]
     ASSISTANT_LORA_PATH = ""
-    ASSISTANT_LORA_PATHS = {"v2.1": "SimpleTuner/Qwen-Image-2.1-training-assistant-v2"}
+    ASSISTANT_LORA_PATHS = {"v2.1": "SimpleTuner/Qwen-Image-2.1-training-assistant-v3"}
     ASSISTANT_LORA_WEIGHT_NAME = "pytorch_lora_weights.safetensors"
 
     # Qwen Image uses a different text encoder configuration

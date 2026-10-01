@@ -25,7 +25,7 @@ class QwenAssistantDefaultTests(unittest.TestCase):
     def test_default_is_recorded_and_loaded(self):
         model = self.model()
         self.check(model)
-        self.assertEqual(model.config.assistant_lora_path, "SimpleTuner/Qwen-Image-2.1-training-assistant-v2")
+        self.assertEqual(model.config.assistant_lora_path, "SimpleTuner/Qwen-Image-2.1-training-assistant-v3")
         self.assertEqual(model.config.assistant_lora_weight_name, "pytorch_lora_weights.safetensors")
         with patch("simpletuner.helpers.assistant_lora.load_assistant_adapter", return_value=True) as load:
             model._maybe_load_assistant_lora()

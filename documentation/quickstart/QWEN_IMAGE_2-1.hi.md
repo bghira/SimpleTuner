@@ -18,7 +18,7 @@ pip install 'simpletuner[cuda]'
 
 ## VRAM के अनुसार preset चुनें
 
-मानक उदाहरण [assistant v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2), synthetic regularisation, REPA और automatic flow shift जोड़ते हैं। डिफ़ॉल्ट `qwen_image.peft-lora` में 48 GB preset वाली 512px + 1024px विधि है। 24/32 GB presets में validation सहित केवल 512px है।
+मानक उदाहरण [assistant v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3), synthetic regularisation, REPA और automatic flow shift जोड़ते हैं। डिफ़ॉल्ट `qwen_image.peft-lora` में 48 GB preset वाली 512px + 1024px विधि है। 24/32 GB presets में validation सहित केवल 512px है।
 
 | VRAM बजट | उदाहरण | आधार रिज़ॉल्यूशन | अपडेट | ग्रेडिएंट चेकपॉइंटिंग अंतराल |
 | --- | --- | --- | --- | --- |
@@ -55,13 +55,13 @@ Domokun backends को अपने concept या photo dataset से बद�
 
 ## प्रशिक्षण assistant चुनें
 
-Main और उदाहरण अभी **assistant v2** इस्तेमाल करते हैं। प्रशिक्षण में वह frozen रहता है, strength 1 होती है, और validation में बंद होता है। Regularisation batches का parent target **बिना adapters वाले base model की prediction** है; trainable LoRA और assistant दोनों बंद होते हैं।
+Main और उदाहरण अभी **assistant v3** इस्तेमाल करते हैं। प्रशिक्षण में वह frozen रहता है, strength 1 होती है, और validation में बंद होता है। Regularisation batches का parent target **बिना adapters वाले base model की prediction** है; trainable LoRA और assistant दोनों बंद होते हैं।
 
-[Assistant v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3) अलग प्रकाशित rank-64 adapter है, जिसे 512/1024/1536/2048 पर 30k updates दिए गए हैं। उसे चुनने के लिए नीचे अनुसार `assistant_lora_path` बदलें। Preset memory checks में v2 था; v3 पर जाने के बाद VRAM की उपलब्धता फिर जाँचें।
+[Assistant v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3) डिफ़ॉल्ट rank-64 adapter है, जिसे 512/1024/1536/2048 पर 30k updates तक प्रशिक्षित किया गया है। Presets की memory जाँच v2 के साथ हुई थी; v3 इस्तेमाल करते समय उपलब्ध VRAM जाँचें। पुराने runs दोहराने के लिए नीचे दिए override से [assistant v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2) स्पष्ट रूप से चुनें:
 
 ```json
 {
-  "assistant_lora_path": "SimpleTuner/Qwen-Image-2.1-training-assistant-v3",
+  "assistant_lora_path": "SimpleTuner/Qwen-Image-2.1-training-assistant-v2",
   "assistant_lora_strength": 1.0,
   "assistant_lora_inference_strength": 0.0
 }
@@ -217,7 +217,7 @@ Stages 1 और 2 में `diffusion_target: "base_prediction"` तथा `fus
 
 प्रवाह की जाँच के लिए 8 अपडेट और शिक्षक के 2 चरण रखें; छवियों का मूल्यांकन करने से पहले 40 चरण बहाल करें। 100, 250, 500 और 1,000 अपडेट पर समान प्रॉम्प्ट और बीज वाली बेस छवियों से तुलना करें। सहायक की उपयोगिता की जाँच अलग कॉन्सेप्ट प्रशिक्षण में भी आवश्यक है।
 
-Qwen Image 2.1 LoRA प्रशिक्षण अब डिफ़ॉल्ट रूप से [प्रशिक्षण सहायक v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2) लोड करता है। यह प्रशिक्षण के दौरान स्थिर रहता है और वैलिडेशन में निष्क्रिय रहता है। इसे बंद करने के लिए `disable_assistant_lora: true` सेट करें। दूसरा अडैप्टर चुनने के लिए `assistant_lora_path` दें। पुराने फ़्लेवर का व्यवहार नहीं बदलता। नया सहायक प्रशिक्षित करते समय संबंधित उदाहरणों की तरह `disable_assistant_lora: true` बनाए रखें।
+Qwen Image 2.1 LoRA प्रशिक्षण अब डिफ़ॉल्ट रूप से [प्रशिक्षण सहायक v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3) लोड करता है। यह प्रशिक्षण के दौरान स्थिर रहता है और वैलिडेशन में निष्क्रिय रहता है। इसे बंद करने के लिए `disable_assistant_lora: true` सेट करें। दूसरा अडैप्टर चुनने के लिए `assistant_lora_path` दें। पुराने फ़्लेवर का व्यवहार नहीं बदलता। नया सहायक प्रशिक्षित करते समय संबंधित उदाहरणों की तरह `disable_assistant_lora: true` बनाए रखें।
 
 इसे एकमात्र डिस्टिलेशन विधि के रूप में इस्तेमाल करें; अन्य डिस्टिलर के साथ संयोजन समर्थित नहीं है।
 
