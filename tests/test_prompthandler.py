@@ -138,6 +138,25 @@ class TestPromptHandler(unittest.TestCase):
         expected_caption = f"{instance_prompt} {image_filename}"
         self.assertEqual(result_caption, expected_caption)
 
+    def test_filename_caption_matches_precache_normalisation(self):
+        handler = PromptHandler(
+            args=self.args,
+            text_encoders=["LameTest"],
+            tokenizers=["LameTest"],
+            accelerator=MagicMock(),
+            model_type="sdxl",
+        )
+        result_caption = handler.magic_prompt(
+            "path/to/_a_photo_of_a_cat_.png",
+            use_captions=True,
+            caption_strategy="filename",
+            prepend_instance_prompt=False,
+            data_backend=MagicMock(),
+        )
+
+        self.assertEqual(result_caption, "a photo of a cat")
+        self.assertEqual([result_caption], PromptHandler._normalize_caption_payload(result_caption))
+
     @patch("simpletuner.helpers.prompts.StateTracker.get_data_backend")
     def test_webshart_caption_strategy_uses_metadata_caption_cache(self, mock_get_data_backend):
         metadata_backend = MagicMock()
