@@ -12,7 +12,7 @@ NVIDIA के released checkpoints के साथ Wan continuation example क
 [AnyFlow Continuation Quickstart](/documentation/quickstart/ANYFLOW.hi.md) देखें।
 
 
-Qwen Image 2.1 में FlowMap interval conditioning उपलब्ध है। [तीन-stage Qwen पायलट](../quickstart/QWEN_IMAGE.hi.md) में CC12M के लंबे captions, e621 और थोड़े Domokun examples मिलाए जाते हैं, फिर regularisation के साथ छोटा refinement होता है। Base-prediction anchor preservation जाँचता है; यह Qwen में guidance distillation होने का प्रमाण नहीं है।
+Qwen Image 2.1 में FlowMap interval conditioning उपलब्ध है। [तीन-stage Qwen पायलट](../quickstart/QWEN_IMAGE_2-1.hi.md) में CC12M के लंबे captions, e621 और थोड़े Domokun examples मिलाए जाते हैं, फिर regularisation के साथ छोटा refinement होता है। Base-prediction anchor preservation जाँचता है; यह Qwen में guidance distillation होने का प्रमाण नहीं है।
 
 Compiled AnyFlow training में teacher, generator, discriminator और अलग gradient modes, padding तथा batch sizes के लिए हर Dynamo frame पर अस्थायी रूप से कम-से-कम 32 variants की अनुमति होती है। उपयोगकर्ता की बड़ी सीमा बनी रहती है और run के बाद पुरानी सीमा वापस आती है। Torch 2.11 में default आठ variants खत्म होने पर checkpoint recomputation eager execution में जा सकती है और saved-tensor metadata check विफल हो सकता है। बदलती caption lengths के लिए `dynamo_dynamic: true` इस्तेमाल करें; Qwen पायलट में यह चालू है।
 

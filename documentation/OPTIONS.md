@@ -61,7 +61,7 @@ Where `foo` is your config environment - or just use `config/config.json` if you
 
 ### `--model_flavour`
 
-Select a checkpoint variant within `--model_family`. For `qwen_image`, the default is `v2.1` (`Qwen/Qwen-Image-2.1`). Set `v1.0`, `v2.0`, or an existing `edit-*` flavour explicitly to train an earlier architecture; adapters and embedding/latent caches are not interchangeable with 2.1. See the [Qwen Image quickstart](quickstart/QWEN_IMAGE.md).
+Select a checkpoint variant within `--model_family`. For `qwen_image`, the default is `v2.1` (`Qwen/Qwen-Image-2.1`). Set `v1.0`, `v2.0`, or an existing `edit-*` flavour explicitly to train an earlier architecture; adapters and embedding/latent caches are not interchangeable with 2.1. See the [Qwen Image quickstart](quickstart/QWEN_IMAGE_2-1.md).
 
 ### `--lora_format`
 
@@ -3153,7 +3153,7 @@ options:
 
 ### `--distillation_method=assistant_lora`
 
-Select `--distillation_method=assistant_lora` to train a positive assistant adapter on fresh, adapter-disabled base-model generations from caption datasets. Initial support is Qwen Image 2.1. `distillation_config.assistant_lora` accepts `num_inference_steps` (40), `resolutions` (`[[1024, 1024]]`, width then height; multiples of 32) and `seed` (42). Cached text embeddings are required; terminal latents are not cached. See the [Qwen guide](quickstart/QWEN_IMAGE.md).
+Select `--distillation_method=assistant_lora` to train a positive assistant adapter on fresh, adapter-disabled base-model generations from caption datasets. Initial support is Qwen Image 2.1. `distillation_config.assistant_lora` accepts `num_inference_steps` (40), `resolutions` (`[[1024, 1024]]`, width then height; multiples of 32) and `seed` (42). Cached text embeddings are required; terminal latents are not cached. See the [Qwen guide](quickstart/QWEN_IMAGE_2-1.md).
 
 Caption datasets require `dataloader_prefetch: false` so checkpoint cursors represent consumed captions. Resume rejects changes to caption identities/text, batch size, repeats, shuffle, seed, accumulation or distributed layout. Assistant checkpoints also reject changes to the generation seed, resolution list or teacher inference-step count.
 

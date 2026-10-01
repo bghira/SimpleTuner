@@ -61,7 +61,7 @@ simpletuner configure config/foo/config.json
 
 ### `--model_flavour`
 
-`--model_family` 内のチェックポイントの種類を選択します。`qwen_image` の既定値は `v2.1`（`Qwen/Qwen-Image-2.1`）です。旧アーキテクチャを学習する場合は `v1.0`、`v2.0`、または既存の `edit-*` を明示してください。アダプター、埋め込みキャッシュ、潜在キャッシュは 2.1 と互換性がありません。[Qwen Image クイックスタート](quickstart/QWEN_IMAGE.ja.md) を参照してください。
+`--model_family` 内のチェックポイントの種類を選択します。`qwen_image` の既定値は `v2.1`（`Qwen/Qwen-Image-2.1`）です。旧アーキテクチャを学習する場合は `v1.0`、`v2.0`、または既存の `edit-*` を明示してください。アダプター、埋め込みキャッシュ、潜在キャッシュは 2.1 と互換性がありません。[Qwen Image クイックスタート](quickstart/QWEN_IMAGE_2-1.ja.md) を参照してください。
 
 ### `--lora_format`
 
@@ -3128,7 +3128,7 @@ options:
 
 ### `--distillation_method=assistant_lora`
 
-`--distillation_method=assistant_lora` は、キャプションからアダプター無効状態で毎回生成したベースモデル出力で正方向の補助アダプターを学習します。初期対応は Qwen Image 2.1 です。`distillation_config.assistant_lora` は `num_inference_steps`（40）、`resolutions`（`[[1024, 1024]]`、幅・高さの順で 32 の倍数）、`seed`（42）を指定できます。テキスト埋め込みの事前キャッシュが必要で、最終潜在変数はキャッシュしません。[Qwen ガイド](quickstart/QWEN_IMAGE.md)を参照してください。
+`--distillation_method=assistant_lora` は、キャプションからアダプター無効状態で毎回生成したベースモデル出力で正方向の補助アダプターを学習します。初期対応は Qwen Image 2.1 です。`distillation_config.assistant_lora` は `num_inference_steps`（40）、`resolutions`（`[[1024, 1024]]`、幅・高さの順で 32 の倍数）、`seed`（42）を指定できます。テキスト埋め込みの事前キャッシュが必要で、最終潜在変数はキャッシュしません。[Qwen ガイド](quickstart/QWEN_IMAGE_2-1.ja.md)を参照してください。
 
 キャプションデータセットでは `dataloader_prefetch: false` が必要です。チェックポイントの位置を消費済みキャプションと一致させるためです。再開時にキャプション ID・本文、バッチサイズ、繰り返し、シャッフル、シード、勾配累積、分散構成が変わるとエラーになります。 補助 LoRA のチェックポイントでは、生成シード、解像度リスト、教師の推論ステップ数の変更も拒否します。
 

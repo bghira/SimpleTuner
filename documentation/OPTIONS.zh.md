@@ -61,7 +61,7 @@ simpletuner configure config/foo/config.json
 
 ### `--model_flavour`
 
-选择 `--model_family` 中的检查点变体。`qwen_image` 的默认值是 `v2.1`（`Qwen/Qwen-Image-2.1`）。若要训练旧架构，请明确设置 `v1.0`、`v2.0` 或现有的 `edit-*` 版本；适配器、嵌入缓存和潜变量缓存不能与 2.1 互换。参阅 [Qwen Image 快速入门](quickstart/QWEN_IMAGE.zh.md)。
+选择 `--model_family` 中的检查点变体。`qwen_image` 的默认值是 `v2.1`（`Qwen/Qwen-Image-2.1`）。若要训练旧架构，请明确设置 `v1.0`、`v2.0` 或现有的 `edit-*` 版本；适配器、嵌入缓存和潜变量缓存不能与 2.1 互换。参阅 [Qwen Image 快速入门](quickstart/QWEN_IMAGE_2-1.zh.md)。
 
 ### `--lora_format`
 
@@ -3129,7 +3129,7 @@ options:
 
 ### `--distillation_method=assistant_lora`
 
-选择 `--distillation_method=assistant_lora`，使用字幕数据集和禁用适配器后新生成的基础模型输出训练正向辅助适配器。目前支持 Qwen Image 2.1。`distillation_config.assistant_lora` 接受 `num_inference_steps`（40）、`resolutions`（`[[1024, 1024]]`，宽在前、高在后，均为 32 的倍数）和 `seed`（42）。需要预缓存文本嵌入，不缓存终态潜变量。参见 [Qwen 指南](quickstart/QWEN_IMAGE.md)。
+选择 `--distillation_method=assistant_lora`，使用字幕数据集和禁用适配器后新生成的基础模型输出训练正向辅助适配器。目前支持 Qwen Image 2.1。`distillation_config.assistant_lora` 接受 `num_inference_steps`（40）、`resolutions`（`[[1024, 1024]]`，宽在前、高在后，均为 32 的倍数）和 `seed`（42）。需要预缓存文本嵌入，不缓存终态潜变量。参见 [Qwen 指南](quickstart/QWEN_IMAGE_2-1.zh.md)。
 
 字幕数据集要求 `dataloader_prefetch: false`，确保检查点游标对应已消费的字幕。恢复时若字幕标识或内容、批量、重复次数、打乱设置、种子、梯度累积或分布式布局发生变化，将报错。 辅助 LoRA 检查点同样拒绝更改生成种子、分辨率列表或教师推理步数。
 

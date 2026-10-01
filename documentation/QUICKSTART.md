@@ -36,7 +36,7 @@
 | MiniMax Music 3 | 2.4B transformer + 8B AR | [MINIMAX_MUSIC.md](/documentation/quickstart/MINIMAX_MUSIC.md) |
 | OmniGen | 3.8B | [OMNIGEN.md](/documentation/quickstart/OMNIGEN.md) |
 | PixArt Sigma | 0.6B-0.9B | [SIGMA.md](/documentation/quickstart/SIGMA.md) |
-| Qwen Image 2.1 / Qwen Image | 7B / 20B | [QWEN_IMAGE.md](/documentation/quickstart/QWEN_IMAGE.md)<br>[QWEN_EDIT.md](/documentation/quickstart/QWEN_EDIT.md) |
+| Qwen Image 2.1 / Qwen Image | 7B / 20B | [QWEN_IMAGE_2-1.md](quickstart/QWEN_IMAGE_2-1.md)<br>[QWEN_IMAGE.md](quickstart/QWEN_IMAGE.md)<br>[QWEN_EDIT.md](quickstart/QWEN_EDIT.md) |
 | Sana | 0.6B-4.8B | [SANA.md](/documentation/quickstart/SANA.md) |
 | Sana Video | 2B | [SANAVIDEO.md](/documentation/quickstart/SANAVIDEO.md) |
 | SD 1.x/2.x (Legacy) | 0.9B | No dedicated guide |
