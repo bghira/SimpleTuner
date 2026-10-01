@@ -55,10 +55,44 @@ Here is the most basic example of a dataloader configuration file, as `multidata
 
 ### `dataset_type`
 
-- **Values:** `image` | `video` | `audio` | `text_embeds` | `image_embeds` | `conditioning_image_embeds` | `conditioning`
+- **Values:** `image` | `video` | `audio` | `caption` | `text_embeds` | `image_embeds` | `conditioning_image_embeds` | `conditioning`
 - **Description:** `image`, `video`, and `audio` datasets contain primary training samples. `text_embeds` contain the outputs of the text encoder cache, `image_embeds` contain the VAE latents (when a model uses one), and `conditioning_image_embeds` store cached conditioning image embeddings (such as CLIP vision features). When a dataset is marked as `conditioning`, it is possible to pair it to your `image` dataset via [the conditioning_data option](#conditioning_data)
 - **Note:** Text and image embed datasets are defined differently than image datasets are. A text embed dataset stores ONLY the text embed objects. An image dataset stores the training data.
 - **Note:** Don't combine images and video in a **single** dataset. Split them out.
+
+### `caption_file_extensions`
+
+Caption discovery accepts this optional non-empty list of filename extensions, for example `["jsonl"]`. The default is `["txt", "json", "jsonl"]`. The backend’s own metadata and bucket-cache JSON files are always excluded, including when restarting from an existing caption-file listing.
+
+### `data_generator`
+
+Only valid for `dataset_type: "caption"` (singular). This optional object generates one PNG and matching text caption for every caption at **each** listed resolution before image, text-embedding, and VAE caching. The resulting datasets use normal image training; no distiller is required. Without this object, caption datasets still require a distiller that consumes captions.
+
+- `resolutions` (required): a non-empty list of `WIDTHxHEIGHT` strings, with dimensions that are multiples of 32. Each bucket becomes `<id>-generated-<resolution>`, uses its native short-edge pixel resolution, and disables cropping. The source dataset's `probability` is divided across its buckets.
+- `batch_size` (default `1`): generation batch size, independent of training batch size. Accelerator OOMs halve the failed batch size for that resolution and retry the same samples with the same seeds. Successful limits are remembered in the generation manifest. An OOM at batch size one, or any unrelated error, stops generation.
+- `num_inference_steps` (default `40`), `guidance_scale` (default `1.0`), and `seed` (default `0`) configure inference. Qwen Image maps guidance to `true_cfg_scale`; values above one use an empty negative prompt. Validation guidance settings do not override this value.
+- `output_dir` (optional): defaults to `cache_dir/generated-captions/<id>`. Outputs are stored under a recipe fingerprint and reused on restart. The fingerprint includes captions, inference settings, resolved Hub revisions, and local weight file sizes/modification times. Keep local model files immutable while generating. Changing captions, model identity, or inference settings creates a separate cache; changing batch size does not.
+
+Generation uses the base model with adapters disabled and releases only a transformer it loaded for preprocessing. Source captions are not modified. Generation requires a single-process preparation run; multi-process runs with `data_generator` are rejected before caption ingestion. For distributed training, use the generated directories as ordinary `image` datasets with `caption_strategy: "textfile"`, one dataset per resolution, `crop: false`, `resolution_type: "pixel"`, and `resolution` set to that bucket's shorter edge. Plain caption datasets require `dataloader_prefetch=false` to preserve sampler checkpoint position. Changing caption lists, resolution buckets, or dataset topology requires a fresh training run; generation-cache reuse does not make such checkpoint resumes compatible.
+
+For local caption discovery, the generated output directory must be outside the source `instance_data_dir`; overlapping directories are rejected before scanning.
+
+```json
+{
+  "id": "assistant-images",
+  "type": "local",
+  "dataset_type": "caption",
+  "instance_data_dir": "data/prompts",
+  "caption_strategy": "textfile",
+  "data_generator": {
+    "batch_size": 2,
+    "resolutions": ["512x512", "768x1024"],
+    "num_inference_steps": 40,
+    "guidance_scale": 1.0,
+    "seed": 42
+  }
+}
+```
 
 ### `default`
 
@@ -1409,6 +1443,15 @@ For a basic example of how to use a Hugging Face dataset, set `"type": "huggingf
 
 ### Webshart Datasets
 
+During VAE cache preparation, Webshart processes all aspect-bucket groups belonging to one shard before moving to the next shard. This reduces repeated shard downloads when the whole-shard cache cannot hold the dataset. Already-cached samples and samples assigned to other ranks are excluded before grouping; training sampler order is unchanged.
+
+Captions can be strings, native JSON objects, or mixed lists of both. Objects stay
+intact in metadata and caption caches; each object becomes one JSON text prompt
+when preparing inputs for the text encoder. Object fields are not treated as
+separate caption variants. Use a list for alternatives, or `webshart.caption_key`
+to select a named field. This requires a webshart build with native JSON caption
+support and works with Ideogram's structured caption canonicalizer.
+
 Webshart datasets load WebDataset-style tar shards through the `webshart` package. This backend uses Webshart's logical sample metadata for aspect bucketing, so paired JSON sidecars are not treated as trainable samples.
 
 ```json
@@ -1433,7 +1476,7 @@ Webshart datasets load WebDataset-style tar shards through the `webshart` packag
 - `metadata_backend` must be `webshart`; it reads dimensions and captions from Webshart metadata.
 - `caption_strategy` should be `webshart` to train from metadata captions, or `instanceprompt` to ignore stored captions.
 - `webshart.cache_dir` stores SimpleTuner metadata plus Webshart metadata and shard caches. `shard_cache_gb` and `parallel_downloads` are passed to Webshart's shard cache; set `shard_cache_gb` to `0` to disable whole-shard caching and retain indexed range reads.
-- `webshart.caption_key` optionally selects caption fields: use `"long_caption"` for one key or `["long_caption", "short_caption"]` to collect multiple keys in order. Keys are literal names, checked in the sample’s JSON metadata, then its indexed metadata, then named entries inside their `captions` dictionaries; the first location containing a key wins. String and list values become caption variants, rather than being joined into one prompt. Missing or empty values are ignored; with `caption_strategy: "webshart"`, samples with no selected captions are skipped, even if they have default captions or a `.txt` sidecar. Omitting the option keeps the default caption lookup. JSON sidecars are read when their contents are absent from the index. Caption and bucket caches are separated by the configured selector. In the WebUI’s Webshart settings, enter one key per line.
+- `webshart.caption_key` optionally selects caption fields: use `"long_caption"` for one key or `["long_caption", "short_caption"]` to collect multiple keys in order. Keys are literal names, checked in the sample’s JSON metadata, then its indexed metadata, then named entries inside their `captions` dictionaries; the first location containing a key wins. String and list values become caption variants, rather than being joined into one prompt. Missing or empty values are ignored; with `caption_strategy: "webshart"`, samples with no selected captions are skipped, even if they have default captions or a `.txt` sidecar. Omitting the option keeps the default caption lookup. JSON sidecars are read when their contents are absent from the index. Caption and bucket caches are separated by the configured selector. In the WebUI’s Webshart settings, enter one key per line. JSON sidecar reads use the configured Webshart shard cache; caption lookup does not decode or materialize image payloads.
 - `webshart_optimize_captions` (alt spelling `webshart_optimise_captions`; also accepted as `optimize_captions`/`optimise_captions` inside the `webshart` block) probes the caption layout at startup and, when captions live in `.txt`/`.json` sidecar tar members rather than the metadata index, folds them into the local Webshart metadata cache once. Without it, sidecar-caption datasets (for example `laion/conceptual-captions-12m-webdataset`) pay one range read per sample every time captions are enumerated — startup, checkpointing, and model card generation. Datasets whose metadata already embeds captions skip the coalescing automatically.
 
 #### Optimizing captions ahead of time

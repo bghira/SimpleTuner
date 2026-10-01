@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import math
 import random
 from typing import Iterator, List, Sequence, Tuple
 
+from torch.utils.data import Sampler
+
 from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
+from simpletuner.helpers.multiaspect.state import BucketStateManager
+from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
+from simpletuner.helpers.training.state_tracker import StateTracker
 
-try:  # pragma: no cover - allow running without full torch install
-    from torch.utils.data import Sampler as TorchSampler
-except Exception:  # noqa: BLE001
-
-    class TorchSampler:  # type: ignore[misc]
-        pass
+logger = logging.getLogger(__name__)
 
 
-class CaptionSampler(TorchSampler):
+class CaptionSampler(Sampler):
     """Simple shuffle + repeat sampler that yields caption metadata ids in batches."""
 
     def __init__(
@@ -38,10 +41,75 @@ class CaptionSampler(TorchSampler):
         self.seed = int(seed or 0)
         self.repeats = max(int(repeats or 0), 0)
         self.epoch = 0
+        self._cursor = 0
+        self._epoch_entries = None
+        self.state_manager = BucketStateManager(self.id)
 
     def set_epoch(self, epoch: int) -> None:
         """Mirror DistributedSampler API so Accelerate can drive determinism."""
-        self.epoch = int(epoch)
+        if self.epoch != int(epoch):
+            self.epoch = int(epoch)
+            self._cursor = 0
+            self._epoch_entries = None
+
+    def _checkpoint_layout(self) -> dict:
+        records = [
+            [metadata_id, self.metadata_backend.get_record(metadata_id).caption_text]
+            for metadata_id in self.metadata_backend.list_metadata_ids()
+        ]
+        parallelism = getattr(self.accelerator, "parallelism_config", None)
+        return {
+            "batch_size": self.batch_size,
+            "repeats": self.repeats,
+            "shuffle": self.shuffle,
+            "seed": self.seed,
+            "num_processes": self._num_replicas(),
+            "rank": self._rank(),
+            "distributed_type": str(getattr(self.accelerator, "distributed_type", "NO")),
+            "gradient_accumulation_steps": getattr(self.accelerator, "gradient_accumulation_steps", 1),
+            "parallelism": {
+                key: getattr(parallelism, key, 1) for key in ("dp_replicate_size", "dp_shard_size", "cp_size", "tp_size")
+            },
+            "captions_sha256": hashlib.sha256(json.dumps(records, ensure_ascii=False).encode("utf-8")).hexdigest(),
+        }
+
+    def save_state(self, state_path: str) -> None:
+        self.state_manager.save_state(
+            {"epoch": self.epoch, "cursor": self._cursor, "layout": self._checkpoint_layout()}, state_path
+        )
+
+    def load_states(self, state_path: str) -> None:
+        state = self.state_manager.load_state(state_path)
+        if not state:
+            raise ValueError(f"Caption sampler '{self.id}' checkpoint state is missing.")
+        layout = self._checkpoint_layout()
+        if state["layout"] != layout:
+            changed = [key for key, value in layout.items() if state["layout"].get(key) != value]
+            raise ValueError(
+                f"Caption sampler resume requires unchanged dataset and topology; changed: {', '.join(changed)}."
+            )
+        epoch, cursor = state["epoch"], state["cursor"]
+        if (
+            not isinstance(epoch, int)
+            or epoch < 0
+            or not isinstance(cursor, int)
+            or cursor < 0
+            or cursor > len(self) * self.batch_size
+            or cursor % self.batch_size
+        ):
+            raise ValueError("Caption sampler checkpoint has an invalid epoch or cursor.")
+        self.epoch = epoch
+        self._cursor = cursor
+        self._epoch_entries = None
+
+    def log_state(self) -> None:
+        logger.info(
+            "Caption sampler %s: epoch=%s, consumed_batches=%s/%s",
+            self.id,
+            self.epoch,
+            self._cursor // self.batch_size,
+            len(self),
+        )
 
     # ------------------------------------------------------------------
     # Sampler protocol
@@ -49,9 +117,17 @@ class CaptionSampler(TorchSampler):
     def __iter__(self) -> Iterator[Tuple[str, ...]]:
         metadata_ids = self.metadata_backend.list_metadata_ids()
         if not metadata_ids:
-            return
-        epoch_entries = self._prepare_epoch_entries(metadata_ids)
-        for start in range(0, len(epoch_entries), self.batch_size):
+            raise MultiDatasetExhausted()
+        if self._epoch_entries is None:
+            self._epoch_entries = self._prepare_epoch_entries(metadata_ids)
+        epoch_entries = self._epoch_entries
+        if self._cursor >= len(epoch_entries):
+            self.set_epoch(self.epoch + 1)
+            StateTracker.set_repeats(data_backend_id=self.id, repeats=self.repeats)
+            raise MultiDatasetExhausted()
+        while self._cursor < len(epoch_entries):
+            start = self._cursor
+            self._cursor += self.batch_size
             yield tuple(epoch_entries[start : start + self.batch_size])
 
     def __len__(self) -> int:
@@ -77,8 +153,7 @@ class CaptionSampler(TorchSampler):
 
         total_size = self._total_size(len(entries))
         if total_size > len(entries):
-            pad = entries[: total_size - len(entries)]
-            entries.extend(pad)
+            entries = (entries * math.ceil(total_size / len(entries)))[:total_size]
 
         num_replicas = self._num_replicas()
         rank = self._rank()

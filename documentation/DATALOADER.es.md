@@ -55,10 +55,44 @@ Aquí está el ejemplo más básico de un archivo de configuración del dataload
 
 ### `dataset_type`
 
-- **Valores:** `image` | `video` | `audio` | `text_embeds` | `image_embeds` | `conditioning_image_embeds` | `conditioning`
+- **Valores:** `image` | `video` | `audio` | `caption` | `text_embeds` | `image_embeds` | `conditioning_image_embeds` | `conditioning`
 - **Descripción:** Los datasets `image`, `video` y `audio` contienen muestras de entrenamiento primarias. `text_embeds` contiene las salidas de la caché del encoder de texto, `image_embeds` contiene los latentes del VAE (cuando un modelo usa uno), y `conditioning_image_embeds` almacena embeddings de imagen de condicionamiento cacheados (por ejemplo, features de visión de CLIP). Cuando un dataset está marcado como `conditioning`, se puede emparejar con tu dataset `image` mediante [la opción conditioning_data](#conditioning_data)
 - **Nota:** Los datasets de text y image embeds se definen de forma diferente a los datasets de imagen. Un dataset de text embeds almacena SOLO los objetos de text embed. Un dataset de imagen almacena los datos de entrenamiento.
 - **Nota:** No combines imágenes y video en un **único** dataset. Sepáralos.
+
+### `caption_file_extensions`
+
+El descubrimiento de descripciones acepta esta lista opcional no vacía de extensiones, por ejemplo `["jsonl"]`. El valor predeterminado es `["txt", "json", "jsonl"]`. Los JSON de metadatos y caché de grupos del propio backend siempre se excluyen, incluso al reiniciar con una lista de archivos existente.
+
+### `data_generator`
+
+Solo válido para `dataset_type: "caption"` (singular). Este objeto opcional genera un PNG y su texto para cada descripción en **cada** resolución indicada, antes de las cachés de imágenes, embeddings de texto y VAE. Los resultados usan el entrenamiento normal de imágenes, sin necesitar un destilador. Sin este objeto, los datasets de descripciones siguen requiriendo un destilador que las acepte.
+
+- `resolutions` (obligatorio): lista no vacía de cadenas `WIDTHxHEIGHT`, con dimensiones múltiplos de 32. Cada resolución crea `<id>-generated-<resolution>`, utiliza su lado corto nativo en píxeles y desactiva el recorte. La `probability` original se reparte entre los grupos.
+- `batch_size` (predeterminado `1`): lote de generación, independiente del lote de entrenamiento. Si se agota la memoria del acelerador, se reduce a la mitad el lote fallido de esa resolución y se repiten las mismas muestras con las mismas semillas. Los límites que funcionan se guardan en el manifiesto de generación. Un fallo de memoria con lote uno, o cualquier otro error, detiene la generación.
+- `num_inference_steps` (predeterminado `40`), `guidance_scale` (`1.0`) y `seed` (`0`): parámetros de inferencia. Qwen Image usa `true_cfg_scale`; los valores superiores a uno utilizan un prompt negativo vacío. La guía de validación no sustituye este valor.
+- `output_dir` (opcional): predeterminado `cache_dir/generated-captions/<id>`. Los resultados se guardan bajo una huella de la receta y se reutilizan al reiniciar. Incluye descripciones, ajustes de inferencia, revisiones resueltas del Hub y tamaños/fechas de modificación de los pesos locales. No modifique el modelo durante la generación. Cambiar descripciones, modelo o inferencia crea otra caché; cambiar el lote no.
+
+La generación usa el modelo base con adaptadores desactivados y libera únicamente el transformador cargado para el preprocesamiento. Los textos originales no cambian. La generación requiere una ejecución de preparación con un solo proceso; las ejecuciones con varios procesos y `data_generator` se rechazan antes de ingerir las descripciones. Para entrenamiento distribuido, use los directorios generados como datasets `image` normales con `caption_strategy: "textfile"`, uno por resolución, `crop: false`, `resolution_type: "pixel"` y `resolution` igual al lado corto del grupo. Los datasets de descripciones sin generador requieren `dataloader_prefetch=false` para conservar la posición del muestreador en los checkpoints. Cambiar las descripciones, resoluciones o topología del dataset requiere iniciar otro entrenamiento; reutilizar la caché generada no hace compatibles esas reanudaciones de checkpoint.
+
+Para descubrir descripciones locales, la salida generada debe quedar fuera del `instance_data_dir` de origen; los directorios superpuestos se rechazan antes del escaneo.
+
+```json
+{
+  "id": "assistant-images",
+  "type": "local",
+  "dataset_type": "caption",
+  "instance_data_dir": "data/prompts",
+  "caption_strategy": "textfile",
+  "data_generator": {
+    "batch_size": 2,
+    "resolutions": ["512x512", "768x1024"],
+    "num_inference_steps": 40,
+    "guidance_scale": 1.0,
+    "seed": 42
+  }
+}
+```
 
 ### `default`
 
@@ -1354,6 +1388,16 @@ Para un ejemplo básico de cómo usar un dataset de Hugging Face, configura `"ty
 
 ### Datasets Webshart
 
+Durante la preparación de la caché VAE, Webshart procesa todos los grupos de relación de aspecto de un shard antes de pasar al siguiente. Esto reduce las descargas repetidas cuando la caché de shards completos no puede contener todo el conjunto de datos. Las muestras ya almacenadas y las asignadas a otros ranks se excluyen antes de agrupar; el orden del muestreador de entrenamiento no cambia.
+
+Los captions pueden ser cadenas, objetos JSON nativos o listas mixtas de ambos.
+Los objetos se conservan en los metadatos y la caché; cada objeto se convierte en
+un único prompt de texto JSON al preparar la entrada del codificador de texto.
+Sus campos no se tratan como variantes independientes. Usa una lista para las
+alternativas o `webshart.caption_key` para seleccionar un campo. Requiere una
+versión de webshart compatible con captions JSON nativos y funciona con el
+canonicalizador de captions estructurados de Ideogram.
+
 Los datasets Webshart cargan shards tar estilo WebDataset mediante el paquete `webshart`. Este backend usa metadatos de muestra lógica para los buckets de aspecto, por lo que los sidecars JSON emparejados no se tratan como muestras entrenables.
 
 ```json
@@ -1377,7 +1421,7 @@ Los datasets Webshart cargan shards tar estilo WebDataset mediante el paquete `w
 - `metadata` es opcional y puede apuntar a metadatos separados con captions. Para repositorios Hugging Face de metadata como `webshart/conceptual-captions-12m-webdataset-metadata`, pasa el repo id; Webshart sigue el layout de subcarpetas del source, como `data/`.
 - `metadata_backend` debe ser `webshart`; `caption_strategy` debe ser `webshart` o `instanceprompt`.
 - `webshart.cache_dir` almacena la metadata de SimpleTuner y las caches de Webshart. `shard_cache_gb` y `parallel_downloads` se pasan a la cache de shards de Webshart; define `shard_cache_gb` como `0` para desactivar la cache de shards completos y mantener lecturas por rango indexadas.
-- `webshart.caption_key` permite seleccionar campos de caption: usa `"long_caption"` para una clave o `["long_caption", "short_caption"]` para recopilar varias en el orden indicado. Las claves son nombres literales que se buscan en los metadatos JSON de la muestra, después en los metadatos del índice y, finalmente, en las entradas con nombre de sus respectivos diccionarios `captions`; se usa la primera ubicación que contiene la clave. Los valores de texto y listas se convierten en variantes de caption, sin concatenarse en un único prompt. Se ignoran los valores ausentes o vacíos; con `caption_strategy: "webshart"`, se omiten las muestras sin captions seleccionadas aunque tengan captions predeterminadas o un sidecar `.txt`. Omitir la opción conserva la búsqueda predeterminada. Se leen los sidecars JSON cuando su contenido no está en el índice. Las cachés de captions y buckets se separan según el selector configurado. En los ajustes Webshart de la WebUI, introduce una clave por línea.
+- `webshart.caption_key` permite seleccionar campos de caption: usa `"long_caption"` para una clave o `["long_caption", "short_caption"]` para recopilar varias en el orden indicado. Las claves son nombres literales que se buscan en los metadatos JSON de la muestra, después en los metadatos del índice y, finalmente, en las entradas con nombre de sus respectivos diccionarios `captions`; se usa la primera ubicación que contiene la clave. Los valores de texto y listas se convierten en variantes de caption, sin concatenarse en un único prompt. Se ignoran los valores ausentes o vacíos; con `caption_strategy: "webshart"`, se omiten las muestras sin captions seleccionadas aunque tengan captions predeterminadas o un sidecar `.txt`. Omitir la opción conserva la búsqueda predeterminada. Se leen los sidecars JSON cuando su contenido no está en el índice. Las cachés de captions y buckets se separan según el selector configurado. En los ajustes Webshart de la WebUI, introduce una clave por línea. Las lecturas de sidecars JSON usan la caché de shards configurada en Webshart; la consulta de captions no decodifica ni materializa los datos de imagen.
 - `webshart_optimize_captions` (grafía alternativa `webshart_optimise_captions`; también se acepta como `optimize_captions`/`optimise_captions` dentro del bloque `webshart`) sondea el layout de captions al arrancar y, cuando los captions residen en miembros tar sidecar `.txt`/`.json` en lugar del índice de metadata, los consolida una sola vez en la cache local de metadata de Webshart. Sin esta opción, los datasets con captions en sidecars (por ejemplo `laion/conceptual-captions-12m-webdataset`) pagan una lectura por rango por muestra cada vez que se enumeran los captions — al arrancar, al guardar checkpoints y al generar la model card. Los datasets cuya metadata ya incluye los captions omiten la consolidación automáticamente.
 
 #### Optimizar captions por adelantado

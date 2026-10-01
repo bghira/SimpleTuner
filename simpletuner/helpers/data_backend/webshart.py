@@ -21,6 +21,7 @@ from simpletuner.helpers.training import video_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
 
 logger = logging.getLogger("WebshartDataBackend")
+CaptionValue = Union[str, dict, List[Union[str, dict]]]
 if should_log():
     logger.setLevel(os.environ.get("SIMPLETUNER_LOG_LEVEL", "INFO"))
 else:
@@ -120,6 +121,13 @@ class WebshartDataBackend(BaseDataBackend):
             max_file_size=self.max_file_size,
             load_file_data=True,
         )
+        if self.caption_key is not None:
+            self.caption_loader = self.webshart.TarDataLoader(
+                self.dataset,
+                buffer_size=self.buffer_size,
+                max_file_size=self.max_file_size,
+                load_file_data=False,
+            )
         if not hasattr(self.loader, "list_shard_sample_aspect_buckets"):
             raise ImportError(
                 "SimpleTuner's Webshart backend requires a webshart build that provides "
@@ -167,6 +175,16 @@ class WebshartDataBackend(BaseDataBackend):
     @classmethod
     def sample_id(cls, shard_idx: int, sample_idx: int, filename: str) -> str:
         return f"{cls.SAMPLE_PREFIX}{int(shard_idx)}/{int(sample_idx)}/{filename}"
+
+    def iter_cache_groups(self, bucket_files: dict):
+        """Finish each shard's aspect groups before loading another shard."""
+        shard_buckets = {}
+        for bucket, files in bucket_files.items():
+            for filepath in files:
+                shard = self.parse_sample_id(filepath).shard_idx
+                shard_buckets.setdefault(shard, {}).setdefault(bucket, []).append(filepath)
+        for shard in sorted(shard_buckets):
+            yield from shard_buckets[shard].items()
 
     @classmethod
     def normalize_sample_id(cls, identifier: Union[str, Path]) -> str:
@@ -344,7 +362,7 @@ class WebshartDataBackend(BaseDataBackend):
             }
         return self._shard_sample_index_cache[shard_idx].get(str(filename))
 
-    def get_caption(self, image_path: str) -> Optional[Union[str, List[str], dict]]:
+    def get_caption(self, image_path: str) -> Optional[CaptionValue]:
         if not self.is_sample_id(image_path):
             return None
 
@@ -352,19 +370,15 @@ class WebshartDataBackend(BaseDataBackend):
         sample_metadata = self.get_shard_metadata(sample_ref.shard_idx).get(sample_ref.filename, {}) or {}
         if self.caption_key is not None:
             if sample_metadata.get("json_metadata") is None and sample_metadata.get("json_path"):
-                reader = self.dataset.open_shard(sample_ref.shard_idx)
-                payload = reader.read_sample_json(sample_ref.sample_idx)
+                payload = self.caption_loader.load_sample_json(sample_ref.shard_idx, sample_ref.sample_idx)
                 if payload is not None:
                     sample_metadata["json_metadata"] = json.loads(payload)
             return self._select_caption_keys(sample_metadata)
 
         caption = sample_metadata.get("captions")
         if caption:
-            if isinstance(caption, dict):
-                return caption
-            if isinstance(caption, list):
-                return [str(item).strip() for item in caption if item is not None and str(item).strip()]
-            return str(caption).strip()
+            values = PromptHandler._caption_payload_values(caption)
+            return values if isinstance(caption, list) else values[0] if values else None
 
         caption_filename = Path(sample_ref.filename).with_suffix(".txt").name
         caption_sample_idx = self._sample_index_for_filename(sample_ref.shard_idx, caption_filename)
@@ -377,7 +391,7 @@ class WebshartDataBackend(BaseDataBackend):
             caption = caption.decode("utf-8")
         return str(caption).strip()
 
-    def _select_caption_keys(self, sample_metadata: dict) -> Optional[Union[str, List[str]]]:
+    def _select_caption_keys(self, sample_metadata: dict) -> Optional[CaptionValue]:
         json_metadata = sample_metadata.get("json_metadata") or {}
         sources = [json_metadata, sample_metadata]
         sources.extend(source.get("captions") for source in list(sources) if isinstance(source, dict))
@@ -386,7 +400,7 @@ class WebshartDataBackend(BaseDataBackend):
         for key in keys:
             for source in sources:
                 if isinstance(source, dict) and key in source:
-                    captions.extend(PromptHandler._normalize_caption_payload(source[key]))
+                    captions.extend(PromptHandler._caption_payload_values(source[key]))
                     break
         if not captions:
             return None

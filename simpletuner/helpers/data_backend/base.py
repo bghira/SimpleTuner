@@ -6,6 +6,10 @@ import torch
 
 
 class BaseDataBackend(ABC):
+    def iter_cache_groups(self, bucket_files: dict):
+        """Yield (bucket, files) groups in input order; callers drain queues between groups."""
+        yield from bucket_files.items()
+
     @abstractmethod
     def read(self, identifier):
         """

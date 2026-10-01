@@ -2,7 +2,7 @@
 
 Segmented checkpointing は、全 block を checkpoint する設定と checkpoint なしの中間にある設定です。
 
-PyTorch の activation checkpointing backend を使います。SimpleTuner は連続した transformer blocks を 1 回の checkpoint 呼び出しで実行し、返された hidden state を次の group に渡します。group を広くすると backward の再計算は減りますが、保持する activations は増えます。
+PyTorch の activation checkpointing を使用します。SimpleTuner は連続する Transformer block のグループを1回の checkpoint 呼び出しで実行し、返された隠れ状態を次のグループに渡します。グループを大きくすると保存する境界状態は減りますが、逆伝播時には対象の block を再計算します。速度とピーク VRAM の関係は実測してください。
 
 CPU offload と FFN-only checkpointing は [Unsloth-style checkpointing](UNSLOTH_CHECKPOINTING.ja.md#controls) を参照してください。短い判断基準は [Decision Rule](UNSLOTH_CHECKPOINTING.ja.md#decision-rule) にあります。
 
@@ -31,7 +31,7 @@ CPU offload と FFN-only checkpointing は [Unsloth-style checkpointing](UNSLOTH
 
 これは blocks `0-1` を checkpoint し、`2-3` は通常実行、`4-5` を checkpoint、`6-7` は通常実行、という形で繰り返します。stride は interval 以上である必要があり、重複 schedule は無効です。
 
-Segmented whole-block path 対応: Flux.1、Flux.2、HunyuanVideo、Krea 2、LongCat Image、LongCat Video、LTXVideo 0.9、LTXVideo2、Lumina2、MageFlow、PixArt、SD3、SanaVideo、Z-Image、ZLab I1、Wan。
+Segmented whole-block path 対応: Flux.1、Flux.2、HunyuanVideo、Krea 2、LongCat Image、LongCat Video、LTXVideo 0.9、LTXVideo2、Lumina2、MageFlow、MiniMax H3、PixArt、Qwen Image 2.1、SD3、SanaVideo、Z-Image、ZLab I1、Wan。
 
 Stable Cascade stage C も interval と stride に対応していますが、schedule は transformer whole-block group ではなく UNet の Res/Timestep/Attention micro-block sequence に適用されます。
 
@@ -684,9 +684,67 @@ Example: `pixart.lycoris-lokr`. Resolution: 1024x1024.
 | fp8-torchao | seg2-stride4 | 2.827 / 63.27 | OOM |
 | fp8-torchao | seg2-stride4-offload | unsupported | unsupported |
 
+### Qwen Image 2.1
+
+GPU 型番を確認した H200 と L40S で測定しました。`qwen_image.peft-lora`、Qwen-Image 2.1、512x512 の Domokun、BF16、rank-32 LoRA、Optimi Lion、regional Inductor compilation（`default` モード）を使用しています。各実行は20ステップで、最初の5ステップを計時から除外します。各セルは **秒/ステップ / ピーク VRAM GiB** で、ピークにはコンポーネントの初期化も含まれます。
+
+実行環境: `torch==2.11.0+cu128`、`diffusers==0.40.0`。テキスト10 token、画像1024 token です。batch 1 の一部のメモリピークはコンポーネント初期化で決まります。
+
+#### BF16 checkpoint スケジュール
+
+`none` は checkpoint を無効化し、`layer` は各 block を個別に checkpoint します。`interval2` は連続する `0–1, 2–3, …` をグループ化します。`seg2-stride4` は `0–1` を checkpoint し、`2–3` の activation を保持して繰り返します。グループ実行では block swapping、隠れ状態の取得、KV cache を使用しません。これらの経路では block ごとの interval/stride 制御を維持します。attention activation offload（`activation-offload`、`seg2-stride4-offload`）は非対応です。BF16 で収まるため、この 2.1 測定には量子化を含めていません。
+
+| モード | H200, batch 1 | H200, batch 20 | L40S, batch 1 |
+| --- | ---: | ---: | ---: |
+| `none` | 0.081 / 20.99 | 1.223 / 128.42 | 0.238 / 20.64 |
+| `layer` | 0.206 / 17.69 | 1.773 / 24.19 | 0.368 / 17.60 |
+| `interval2` | 0.190 / 17.69 | 1.761 / 25.14 | 0.371 / 17.60 |
+| `seg2-stride4` | 0.116 / 17.77 | 1.490 / 73.26 | 0.290 / 17.60 |
+
+#### attention backend
+
+attention の比較では checkpoint を無効化します。native SDPA は H200 で cuDNN、L40S で PyTorch Flash SDPA を選択しました。Qwen 2.1 はテキストに因果 attention、対象画像に全有効 key への非因果 attention を使用します。同じ長さで padding のないプロンプトに varlen は**不要**です。現在の FlashAttention 経路は padding のない text-to-image プロンプトが必要です。padding や交互に配置する条件には native SDPA または FlexAttention を使ってください。padding だけを表す varlen mask では、その因果構造を保持できません。
+
+| `attention_mechanism` | H200, batch 1 | H200, batch 20 | L40S, batch 1 |
+| --- | ---: | ---: | ---: |
+| `native` | 0.081 / 20.99 | 1.223 / 128.42 | 0.238 / 20.64 |
+| `native-flash` | 0.080 / 20.98 | 1.278 / 128.40 | 0.238 / 20.63 |
+| `native-efficient` | 未測定 | 未測定 | 0.259 / 20.75 |
+| `flash-attn-hub` | 未測定 | 未測定 | 0.238 / 20.75 |
+| `flash-attn-3-hub` | 0.094 / 20.98 | 1.215 / 128.40 | 未測定 |
+| `flash-attn-3-varlen-hub` | 0.096 / 20.97 | 1.216 / 128.44 | 未測定 |
+| `flex` | 0.100 / 20.92 | 1.314 / 134.45 | 0.271 / 20.70 |
+| `flash-attn-4-hub` | 失敗 | 失敗 | 未測定 |
+| `cudnn` | 失敗 | 未測定 | 未測定 |
+
+等長 varlen のメタデータ補助関数を上流 Diffusers から導入しました。長さは形状から取得し、累積オフセットを `arange` で作ることで、リリース版の GPU `.item()` 同期と graph break を除去します。全要素が有効な冗長 mask は collate 時に除去します。前向き・勾配の同等性とグラフ取得は計時とは別に検証します。
+
+`attention_mechanism: "cudnn"` の強制指定は PyTorch 2.11 Inductor で `CantSplit` エラーになりましたが、native SDPA の自動選択では cuDNN が動作しました。FA4 Hub は `nvidia-cutlass-dsl==4.7.1` で `cutlass.cute.core.ThrMma` が見つからず、読み込みに失敗したため計時結果はありません。Hub backend は `trust_remote_code: true` を使用します。FA3 は Hopper 向けで、L40S では使えません（[上流の対応環境](https://github.com/Dao-AILab/flash-attention#flashattention-3-beta-release)）。
+
+#### H200 の batch 拡大
+
+同じ H200 で native SDPA は **batch 10 で 0.612 秒**、**batch 20 で 1.223 秒**となり、どちらも約 **16.35 画像/秒**です。スループットが頭打ちになった後は、batch を倍にすると計算量もほぼ倍になります。144 GB プリセットは checkpoint を無効にしたままです。大きい batch は追加容量を利用しますが、画像/秒の増加を保証しません。
+
+| Batch | 秒/ステップ | 画像/秒 | ピーク GiB |
+| ---: | ---: | ---: | ---: |
+| 1 | 0.081 | 12.38 | 20.99 |
+| 10 | 0.612 | 16.35 | 71.85 |
+| 20 | 1.223 | 16.35 | 128.42 |
+同じ更新後の native attention 経路を使った H100 は、batch 10、checkpoint 無効で **0.639 秒/step**、ピーク VRAM **71.83 GiB** でした。
+
+<!-- qwen21-verification -->
+
+キャッシュ済み Domokun 入力による全 transformer の検証では、冗長 mask の有無で FP32 出力が完全に一致し、勾配の相対 L2 誤差は `1.97e-6` でした。BF16 backend は数値的に同一ではありません。この1 batch では、FP32 に対する LoRA 勾配全体のコサイン類似度は native SDPA で約 0.92–0.93、FA3 で約 0.80 でした。これは数値診断であり、収束性の比較ではありません。
+
+H200 batch 20 の trace では、記録区間の 93.1% で kernel が実行されていました。kernel 時間の 70.5% が GEMM、9.7% が attention です。Inductor は normalization/RoPE と要素単位の epilogue を融合済みです。最大の空き時間は batch 準備付近にありました。kernel の実行時間比率は SM occupancy ではなく、profiler の時間はスループット表に使用していません。
+
+この27画像のデータセットでは batch 20 の prefetch は遅くなりました。queue length 2 で host prefetch は平均 2.030 秒/ステップ、device prefetch（閾値 1 MiB）は 2.036 秒で、無効時は 1.223 秒でした。中央値は約 1.17 秒でも周期的に約3秒のステップがあり、プリセットでは無効のままです。
+
+250 step の Domokun 設定はスループット測定用であり、安定した収束を保証するレシピではありません。以前の checkpoint は再ロード後に認識可能な Domokun を生成しましたが、新規の 250 step 学習では再現できませんでした。padding mask の保持、コンパイルの無効化、以前の RoPE 式への復元でも改善しませんでした。キャッシュ latent のデコードでは正しい被写体を確認しています。学習品質低下の原因は未解決で、時間の表は attention backend 間の画質の同等性を示すものではありません。
+
 ### Qwen Image
 
-Example: `qwen_image.peft-lora`. Resolution: 1024x1024.
+以下は旧版の `qwen_image.peft-lora` サンプルを使った Qwen-Image 1.0（`model_flavour: "v1.0"`）の過去の測定値です。解像度は 1024x1024 です。現在のサンプルは 2.1 を選択します。ほぼ同じ interval/stride の値だけでは異なるスケジュールが有効だったとは確認できず、2.1 の設定の根拠にはできません。
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |

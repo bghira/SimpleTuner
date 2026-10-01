@@ -2078,7 +2078,7 @@ class VAECache(WebhookMixin):
         self.debug_log("Listing cached images")
         processed_images = self._list_cached_images()
         self.debug_log("Reading the cache and copying")
-        aspect_bucket_cache = self.metadata_backend.read_cache().copy()
+        aspect_bucket_cache = {bucket: list(files) for bucket, files in self.metadata_backend.read_cache().items()}
         if self.local_unprocessed_files:
             bucket_files = {filepath for files in aspect_bucket_cache.values() for filepath in files}
             for filepath in self.local_unprocessed_files:
@@ -2113,9 +2113,11 @@ class VAECache(WebhookMixin):
             )
 
         try:
+            bucket_files = {
+                bucket: self._reduce_bucket(bucket, aspect_bucket_cache, processed_images) for bucket in shuffled_keys
+            }
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                for bucket in shuffled_keys:
-                    relevant_files = self._reduce_bucket(bucket, aspect_bucket_cache, processed_images)
+                for bucket, relevant_files in self.image_data_backend.iter_cache_groups(bucket_files):
                     if len(relevant_files) == 0:
                         continue
                     relevant_files = self._filter_nsfw_relevant_files(relevant_files, bucket)

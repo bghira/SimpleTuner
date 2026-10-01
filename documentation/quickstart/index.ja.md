@@ -33,7 +33,7 @@
 | **Cosmos2** | 2-14B | [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) | はい<sup>9</sup> | [Cosmos2 ガイド](COSMOS2IMAGE.md) |
 | **Cosmos3** | 4-65B | [OpenMDW 1.1](https://github.com/OpenMDW/openmdw/blob/main/1.1/LICENSE.OpenMDW-1.1) | はい | [Cosmos3 ガイド](COSMOS3.ja.md) |
 | **OmniGen** | 3.8B | [MIT](https://opensource.org/license/mit) | はい | [OmniGen ガイド](OMNIGEN.md) |
-| **Qwen Image** | 20B | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | はい | [Qwen ガイド](QWEN_IMAGE.md) |
+| **Qwen Image 2.1 / Qwen Image** | 7B / 20B | [Qwen Research](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE) (2.1) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) (旧版) | 2.1：非商用；旧版：可 | [2.1](QWEN_IMAGE_2-1.ja.md) · [v1.0 / v2.0](QWEN_IMAGE.ja.md) |
 | **LongCat Image** | 6B | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | はい | [LongCat ガイド](LONGCAT_IMAGE.md) |
 | **Kandinsky 5** | - | [MIT](https://opensource.org/license/mit) | はい | [Kandinsky ガイド](KANDINSKY5_IMAGE.md) |
 
@@ -125,3 +125,5 @@
 - 画像編集/コンディショニングには **Flux Kontext**
 - テキストから音楽の LoRA 学習には **ACE-Step**（v1 / v1.5）
 - 自己回帰のテキストから音声には **HeartMuLa**
+
+Qwen Image 2.1 の[専用ガイド](QWEN_IMAGE_2-1.ja.md)には補助 REPA プリセット、マルチスケール、自動シフト、修正 VAE の説明があります。[アシスタント作成](QWEN_IMAGE_2-1.ja.md#assistant-lora)は別の実験です。

@@ -1,0 +1,20 @@
+[
+  {
+    "id": "assistant-text-embeds",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "cache/assistant-lora/text"
+  },
+  {
+    "id": "assistant-captions",
+    "type": "local",
+    "dataset_type": "caption",
+    "instance_data_dir": "config/examples/qwen_image-2.1-assistant-lora.peft-lora/captions",
+    "caption_file_extensions": [
+      "jsonl"
+    ],
+    "text_embeds": "assistant-text-embeds",
+    "repeats": 0
+  }
+]

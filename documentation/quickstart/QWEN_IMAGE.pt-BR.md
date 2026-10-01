@@ -1,4 +1,6 @@
-## Guia de Início Rápido do Qwen Image
+# Guia rápido do Qwen Image (v1.0 / v2.0)
+
+Este guia cobre os modelos antigos de 20B. Defina explicitamente `model_flavour: "v1.0"` ou `"v2.0"`; o padrão atual é 2.1. Para exemplos e configurações atuais, use o [guia do Qwen Image 2.1](QWEN_IMAGE_2-1.pt-BR.md).
 
 > 🆕 Procurando os checkpoints de edição? Veja o [guia de Início Rápido do Qwen Image Edit](./QWEN_EDIT.md) para instruções de treino com referência pareada.
 
@@ -12,34 +14,9 @@ Ao treinar em 24G, as validações vão dar OOM a menos que você use resoluçã
 
 Qwen Image é um modelo de 20B parâmetros com um encoder de texto sofisticado que, sozinho, consome ~16GB de VRAM antes de quantização. O modelo usa um VAE customizado com 16 canais latentes.
 
-**Limitações importantes:**
-- **Não suportado em AMD ROCm ou MacOS** devido à falta de flash attention eficiente
-- Batch size > 1 não funciona corretamente no momento; use gradient accumulation em vez disso
-- TREAD (Text-Representation Enhanced Adversarial Diffusion) ainda não é suportado
-
 ### Pré-requisitos
 
-Certifique-se de que você tem Python instalado; o SimpleTuner funciona bem com 3.10 até 3.12.
-
-Você pode verificar executando:
-
-```bash
-python --version
-```
-
-Se você não tem o Python 3.12 instalado no Ubuntu, pode tentar o seguinte:
-
-```bash
-apt -y install python3.13 python3.13-venv
-```
-
-#### Dependências da imagem de contêiner
-
-Para Vast, RunPod e TensorDock (entre outros), o seguinte funciona em uma imagem CUDA 12.2-12.8 para habilitar a compilação de extensões CUDA:
-
-```bash
-apt -y install nvidia-cuda-toolkit
-```
+Use Python 3.12–3.14. Siga o [guia de instalação](../INSTALL.pt-BR.md) para configurar Python e CUDA.
 
 ### Instalação
 
@@ -96,7 +73,7 @@ Lá, você provavelmente precisará modificar as seguintes variáveis:
 - `validation_num_inference_steps` - Use algo em torno de 30.
 - `use_ema` - Definir como `true` ajuda a obter resultados mais suaves, mas usa mais memória.
 
-- `optimizer` - Use `optimi-lion` para bons resultados, ou `adamw-bf16` se tiver memória de sobra.
+- `optimizer` - Use `optimi-lion` para bons resultados, ou `adamw_bf16` se tiver memória de sobra.
 - `mixed_precision` - Deve ser definido como `bf16` para o Qwen Image.
 - `gradient_checkpointing` - **Obrigatório** habilitar (`true`) para uso de memória aceitável.
 - `base_model_precision` - **Fortemente recomendado** definir `int8-quanto` ou `nf4-bnb` para placas de 24GB.
@@ -124,7 +101,7 @@ Seu config.json vai ficar mais ou menos assim para um setup mínimo:
     "output_dir": "output/models-qwen_image",
     "train_batch_size": 1,
     "gradient_accumulation_steps": 4,
-    "validation_resolution": "1024x1024",
+    "validation_resolution": "512x512",
     "validation_guidance": 4.0,
     "validation_num_inference_steps": 30,
     "validation_seed": 42,
@@ -161,36 +138,16 @@ Seu config.json vai ficar mais ou menos assim para um setup mínimo:
 ```
 </details>
 
-> ℹ️ Usuários multi-GPU podem consultar [este documento](../OPTIONS.md#environment-configuration-variables) para informações sobre como configurar o número de GPUs a usar.
+> ℹ️ Usuários multi-GPU podem consultar [este documento](../OPTIONS.pt-BR.md) para informações sobre como configurar o número de GPUs a usar.
 
 > ⚠️ **Crítico para GPUs 24GB**: O encoder de texto sozinho usa ~16GB de VRAM. Com quantização `int2-quanto` ou `nf4-bnb`, isso pode ser reduzido significativamente.
 
-Para um sanity check rápido com uma configuração conhecida:
-
-**Opção 1 (Recomendado - pip install):**
-```bash
-pip install 'simpletuner[cuda]'
-
-# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
-simpletuner train example=qwen_image.peft-lora
-```
-
-**Opção 2 (Método Git clone):**
-```bash
-simpletuner train env=examples/qwen_image.peft-lora
-```
-
-**Opção 3 (Método legado - ainda funciona):**
-```bash
-ENV=examples/qwen_image.peft-lora ./train.sh
-```
+O exemplo `qwen_image.peft-lora` agora treina 2.1. Para as variantes anteriores, use sua configuração explícita com `simpletuner train` em vez desse exemplo.
 
 ### Recursos experimentais avançados
 
 <details>
 <summary>Mostrar detalhes experimentais avançados</summary>
-
 
 SimpleTuner inclui recursos experimentais que podem melhorar significativamente a estabilidade e o desempenho do treinamento.
 
@@ -215,7 +172,7 @@ Os nicknames são o nome do arquivo para a validação, então mantenha-os curto
 
 Para apontar o trainer para essa biblioteca de prompts, adicione ao seu config.json:
 ```json
-  "validation_prompt_library": "config/user_prompt_library.json",
+  "user_prompt_library": "config/user_prompt_library.json",
 ```
 
 Um conjunto de prompts diversos ajudará a determinar se o modelo está aprendendo corretamente:
@@ -282,7 +239,7 @@ Um valor de `--flow_schedule_shift` de 1.73 é recomendado como ponto de partida
 
 > ℹ️ Com poucas imagens, você pode ver a mensagem **no images detected in dataset** - aumentar o valor de `repeats` vai superar essa limitação.
 
-> ⚠️ **Importante**: Devido às limitações atuais, mantenha `train_batch_size` em 1 e use `gradient_accumulation_steps` para simular batch sizes maiores.
+> Comece com `train_batch_size: 1` e aumente apenas após verificar a VRAM disponível. Use `gradient_accumulation_steps` para um lote efetivo maior.
 
 Crie um documento `--data_backend_config` (`config/multidatabackend.json`) contendo isto:
 
@@ -403,7 +360,7 @@ A configuração de menor VRAM do Qwen Image exige cerca de 24GB:
   - `int4-quanto` pode funcionar, mas pode ter qualidade menor
 - Otimizador: `optimi-lion` ou `bnb-lion8bit-paged` para eficiência de memória
 - Resolução: comece com 512px ou 768px, suba para 1024px se a memória permitir
-- Batch size: 1 (obrigatório devido às limitações atuais)
+- Batch size: 1
 - Gradient accumulation steps: 2-8 para simular batches maiores
 - Habilite `--gradient_checkpointing` (obrigatório)
 - Use `--quantize_via=cpu` para evitar OOM na inicialização
@@ -498,16 +455,32 @@ Comece o treino em resoluções menores (512px ou 768px) para acelerar o aprendi
 
 ### Limitações de plataforma
 
-**Não suportado em:**
-- AMD ROCm (falta implementação eficiente de flash attention)
-- Apple Silicon/MacOS (limitações de memória e atenção)
-- GPUs de consumidor com menos de 24GB de VRAM
+Estas recomendações de memória se aplicam a GPUs NVIDIA. Consulte o [guia de instalação](../INSTALL.pt-BR.md) para dependências e backends de atenção em outras plataformas.
 
-### Problemas conhecidos atuais
+Para ajuda adicional e troubleshooting, consulte a [documentação do SimpleTuner](../index.pt-BR.md) ou entre no Discord da comunidade.
 
-1. Batch size > 1 não funciona corretamente (use gradient accumulation)
-2. TREAD ainda não é suportado
-3. Alto uso de memória do encoder de texto (~16GB antes da quantização)
-4. Problemas de manuseio de comprimento de sequência ([issue upstream](https://github.com/huggingface/diffusers/issues/12075))
+## As receitas do Qwen Image 2.1 foram movidas
 
-Para ajuda adicional e troubleshooting, consulte a [documentação do SimpleTuner](/documentation) ou entre no Discord da comunidade.
+<a id="vram-presets"></a>
+
+[Presets de VRAM](QWEN_IMAGE_2-1.pt-BR.md#vram-presets)
+
+<a id="experimental-anyflow-pilot"></a>
+
+[Piloto AnyFlow](QWEN_IMAGE_2-1.pt-BR.md#experimental-anyflow-pilot)
+
+<a id="qwen21-optimizer-correction"></a>
+
+[Correção do otimizador](QWEN_IMAGE_2-1.pt-BR.md#qwen21-optimizer-correction)
+
+<a id="assistant-lora"></a>
+
+[Criar um assistente](QWEN_IMAGE_2-1.pt-BR.md#assistant-lora)
+
+<a id="assistant-lora-multires"></a>
+
+[Assistente multirresolução](QWEN_IMAGE_2-1.pt-BR.md#assistant-lora-multires)
+
+<a id="assistant-lora-offline"></a>
+
+[Assistente offline](QWEN_IMAGE_2-1.pt-BR.md#assistant-lora-offline)

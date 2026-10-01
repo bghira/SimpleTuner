@@ -270,7 +270,8 @@ nav:
       - zlab i1: quickstart/ZLAB_i1.md
       - Ideogram 4: quickstart/IDEOGRAM4.md
       - ERNIE-Image: quickstart/ERNIE.md
-      - Qwen Image: quickstart/QWEN_IMAGE.md
+      - Qwen Image 2.1: quickstart/QWEN_IMAGE_2-1.md
+      - Qwen Image (v1.0 / v2.0): quickstart/QWEN_IMAGE.md
       - Qwen Edit: quickstart/QWEN_EDIT.md
       - Kandinsky 5 Image: quickstart/KANDINSKY5_IMAGE.md
       - LongCat Image: quickstart/LONGCAT_IMAGE.md

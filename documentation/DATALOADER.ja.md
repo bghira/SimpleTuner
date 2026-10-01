@@ -55,10 +55,44 @@
 
 ### `dataset_type`
 
-- **値:** `image` | `video` | `audio` | `text_embeds` | `image_embeds` | `conditioning_image_embeds` | `conditioning`
+- **値:** `image` | `video` | `audio` | `caption` | `text_embeds` | `image_embeds` | `conditioning_image_embeds` | `conditioning`
 - **説明:** `image`、`video`、`audio` は主要な学習サンプルを含むデータセットです。`text_embeds` はテキストエンコーダのキャッシュ出力、`image_embeds` は VAE 潜在（モデルが使用する場合）を保持し、`conditioning_image_embeds` は条件画像埋め込み（例: Wan 2.2 I2V の CLIP ビジョン特徴）をキャッシュします。データセットを `conditioning` に設定した場合、[conditioning_data オプション](#conditioning_data) を介して `image` データセットと関連付けられます。
 - **注記:** テキスト埋め込みと画像埋め込みのデータセットは、画像データセットとは異なる定義です。テキスト埋め込みデータセットはテキスト埋め込みオブジェクトのみを保存し、画像データセットは学習データを保存します。
 - **注記:** 画像と動画を**同一**データセットに混在させないでください。分けてください。
+
+### `caption_file_extensions`
+
+キャプション探索に使用する拡張子の空でないリストを指定できます（例：`["jsonl"]`）。既定値は `["txt", "json", "jsonl"]` です。バックエンド自身のメタデータとバケットキャッシュの JSON は、保存済みファイル一覧から再開するときも必ず除外します。
+
+### `data_generator`
+
+`dataset_type: "caption"`（単数形）でのみ利用できます。このオブジェクトを指定すると、画像・テキスト埋め込み・VAE のキャッシュ前に、各キャプションについて指定した**すべての**解像度の PNG とテキストを生成します。生成結果は通常の画像学習に使用され、蒸留器は不要です。指定しないキャプションデータセットには、引き続きキャプション対応の蒸留器が必要です。
+
+- `resolutions`（必須）：`WIDTHxHEIGHT` 文字列の空でないリスト。幅と高さは 32 の倍数です。解像度ごとに `<id>-generated-<resolution>` を作成し、元の短辺ピクセル数でクロップなしの学習を行います。元データセットの `probability` は各バケットへ均等に分配されます。
+- `batch_size`（既定値 `1`）：生成のバッチサイズで、学習バッチとは独立しています。アクセラレータのメモリ不足時は、その解像度の失敗バッチを半分にし、同じサンプルとシードで再試行します。成功した上限は生成マニフェストに保存されます。バッチ一でも不足する場合や、その他のエラーは生成を停止します。
+- `num_inference_steps`（既定値 `40`）、`guidance_scale`（`1.0`）、`seed`（`0`）：推論設定。Qwen Image ではガイダンスを `true_cfg_scale` に対応させ、一を超える場合は空のネガティブプロンプトを使います。検証用ガイダンス設定では上書きされません。
+- `output_dir`（省略可）：既定は `cache_dir/generated-captions/<id>`。出力は設定フィンガープリントごとに保存し、再起動時に再利用します。キャプション、推論設定、解決済み Hub リビジョン、ローカル重みのサイズと変更時刻を含みます。生成中はモデルファイルを変更しないでください。キャプション・モデル・推論設定を変更すると別のキャッシュになり、バッチサイズ変更では分離されません。
+
+生成はアダプターを無効にしたベースモデルで行い、前処理のためにロードした変換器だけを解放します。元のキャプションは変更しません。生成は単一プロセスの準備実行で行ってください。複数プロセスでの `data_generator` はキャプション読み込み前に拒否されます。分散学習では生成先を通常の `image` データセットとして使用し、解像度ごとに分けて `caption_strategy: "textfile"`、`crop: false`、`resolution_type: "pixel"` を設定し、`resolution` にそのバケットの短辺を指定してください。生成器なしのキャプションデータセットでは、チェックポイントのサンプラー位置を保持するため `dataloader_prefetch=false` が必要です。キャプション一覧、解像度、データセット構成の変更後は新しい学習を開始する必要があります。生成キャッシュの再利用は、そのようなチェックポイント再開の互換性を保証しません。
+
+ローカルキャプション探索では、生成先を入力の `instance_data_dir` の外に置いてください。重複するディレクトリは探索前に拒否されます。
+
+```json
+{
+  "id": "assistant-images",
+  "type": "local",
+  "dataset_type": "caption",
+  "instance_data_dir": "data/prompts",
+  "caption_strategy": "textfile",
+  "data_generator": {
+    "batch_size": 2,
+    "resolutions": ["512x512", "768x1024"],
+    "num_inference_steps": 40,
+    "guidance_scale": 1.0,
+    "seed": 42
+  }
+}
+```
 
 ### `default`
 
@@ -1355,6 +1389,14 @@ Hugging Face データセットの基本的な使用例としては、データ�
 
 ### Webshart Datasets
 
+VAE キャッシュの準備では、Webshart は同じシャード内のすべてのアスペクトバケット群を処理してから、次のシャードに進みます。シャード全体のキャッシュにデータセットが収まらない場合、シャードの再ダウンロードを減らせます。キャッシュ済みのサンプルと他のランクに割り当てられたサンプルはグループ化前に除外され、学習サンプラーの順序は変わりません。
+
+キャプションには文字列、ネイティブ JSON オブジェクト、または両者を混在させたリストを使用できます。
+オブジェクトはメタデータとキャプションキャッシュで保持され、テキストエンコーダーへの入力を準備する際に、
+1つの JSON テキストプロンプトへ変換されます。各フィールドが別々のキャプション候補になることはありません。
+複数の候補にはリストを、フィールドの選択には `webshart.caption_key` を使用してください。
+ネイティブ JSON キャプションに対応した webshart が必要で、Ideogram の構造化キャプション正規化にも対応します。
+
 Webshart データセットは `webshart` パッケージで WebDataset 形式の tar shard を読み込みます。この backend は論理サンプル metadata を aspect bucketing に使うため、ペアになった JSON sidecar は学習サンプルとして扱われません。
 
 ```json
@@ -1378,7 +1420,7 @@ Webshart データセットは `webshart` パッケージで WebDataset 形式�
 - `metadata` は任意で、captions を含む別 metadata location を指定できます。`webshart/conceptual-captions-12m-webdataset-metadata` のような Hugging Face metadata repo では repo id だけを渡します。Webshart は source shard の `data/` などのサブフォルダ構成に従います。
 - `metadata_backend` は `webshart`、`caption_strategy` は `webshart` または `instanceprompt` にします。
 - `webshart.cache_dir` は SimpleTuner metadata と Webshart caches を保存します。`shard_cache_gb` と `parallel_downloads` は Webshart の shard cache に渡されます。`shard_cache_gb` を `0` にすると、shard 全体の cache を無効にし、index 付き range read を維持します。
-- `webshart.caption_key` でキャプションのフィールドを選択できます。1つなら `"long_caption"`、複数なら `["long_caption", "short_caption"]` を指定すると、その順で収集します。キーはパスではなくそのままの名前として、サンプルの JSON メタデータ、インデックスのメタデータ、それぞれの `captions` 辞書内の名前付き項目の順に検索し、最初にキーが見つかった場所を使います。文字列やリストの値は1つのプロンプトに連結せず、キャプション候補になります。欠落した値や空の値は無視されます。`caption_strategy: "webshart"` では、選択したキャプションがないサンプルは、既定のキャプションや `.txt` サイドカーがあってもスキップされます。省略すると既定の取得方法を維持します。JSON の内容がインデックスにない場合はサイドカーを読み込みます。キャプションとバケットのキャッシュは設定したキーに応じて分離されます。WebUI の Webshart 設定では1行に1つのキーを入力します。
+- `webshart.caption_key` でキャプションのフィールドを選択できます。1つなら `"long_caption"`、複数なら `["long_caption", "short_caption"]` を指定すると、その順で収集します。キーはパスではなくそのままの名前として、サンプルの JSON メタデータ、インデックスのメタデータ、それぞれの `captions` 辞書内の名前付き項目の順に検索し、最初にキーが見つかった場所を使います。文字列やリストの値は1つのプロンプトに連結せず、キャプション候補になります。欠落した値や空の値は無視されます。`caption_strategy: "webshart"` では、選択したキャプションがないサンプルは、既定のキャプションや `.txt` サイドカーがあってもスキップされます。省略すると既定の取得方法を維持します。JSON の内容がインデックスにない場合はサイドカーを読み込みます。キャプションとバケットのキャッシュは設定したキーに応じて分離されます。WebUI の Webshart 設定では1行に1つのキーを入力します。 JSON サイドカーの読み取りは設定済みの Webshart シャードキャッシュを使用し、キャプションの取得時に画像データをデコードしたり展開したりしません。
 - `webshart_optimize_captions`（別綴り `webshart_optimise_captions`。`webshart` ブロック内では `optimize_captions`/`optimise_captions` も受け付けます）は起動時に caption layout を probe し、captions が metadata index ではなく `.txt`/`.json` の sidecar tar member にある場合、それらをローカルの Webshart metadata cache に一度だけ統合します。このオプションがないと、sidecar caption の dataset（たとえば `laion/conceptual-captions-12m-webdataset`）は captions を列挙するたび — 起動時、checkpoint 時、model card 生成時 — にサンプルごとに 1 回の range read が発生します。metadata に captions が既に埋め込まれている dataset では、統合は自動的にスキップされます。
 
 #### captions を事前に最適化する

@@ -34,6 +34,25 @@ def _fake_attention_ctx() -> types.SimpleNamespace:
 
 
 class DiffusersTemplatedAttentionBackwardOverrideTests(unittest.TestCase):
+    def test_uniform_varlen_metadata_compiles_with_dynamic_shapes(self):
+        def metadata(query, key):
+            return attention_dispatch._prepare_for_flash_attn_or_sage_varlen_without_mask(
+                query.shape[0], query.shape[1], key.shape[1], query.device
+            )
+
+        devices = ["cpu"] + (["cuda"] if torch.cuda.is_available() else [])
+        for device in devices:
+            compiled = torch.compile(metadata, backend="eager", fullgraph=True, dynamic=True)
+            for batch, queries, keys in [(2, 5, 9), (4, 7, 11)]:
+                with self.subTest(device=device, batch=batch):
+                    lengths, offsets, maxima = compiled(
+                        torch.empty(batch, queries, device=device), torch.empty(batch, keys, device=device)
+                    )
+                    self.assertEqual(maxima, (queries, keys))
+                    for length, offset, size in zip(lengths, offsets, (queries, keys)):
+                        torch.testing.assert_close(length, torch.full((batch,), size, dtype=torch.int32, device=device))
+                        torch.testing.assert_close(offset, torch.arange(batch + 1, dtype=torch.int32, device=device) * size)
+
     def _assert_backward_uses_saved_bhsd_layout(self, backward_op, aten_op_name: str):
         ctx = _fake_attention_ctx()
         grad_out = torch.randn(2, 5, 3, 7)

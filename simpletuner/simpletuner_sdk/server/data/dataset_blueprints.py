@@ -67,6 +67,22 @@ _BLUEPRINTS: List[BackendBlueprint] = [
             },
             "fields": [
                 {
+                    "id": "caption_file_extensions",
+                    "label": "caption file extensions",
+                    "type": "text",
+                    "description": "Caption datasets only: source file extensions. Defaults to txt, json, jsonl; generated metadata files are always excluded.",
+                    "placeholder": "txt, json, jsonl",
+                    "advanced": True,
+                },
+                {
+                    "id": "data_generator",
+                    "label": "caption image generator",
+                    "type": "textarea",
+                    "description": "Caption datasets only: generate one image per caption and resolution before normal image training. Configure batch_size, resolutions, num_inference_steps, guidance_scale, seed, and optional output_dir.",
+                    "placeholder": '{"batch_size": 1, "resolutions": ["1024x1024"], "num_inference_steps": 40, "guidance_scale": 1.0, "seed": 0}',
+                    "advanced": True,
+                },
+                {
                     "id": "id",
                     "label": "dataset id",
                     "description": "unique identifier for this dataset",

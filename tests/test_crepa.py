@@ -47,6 +47,8 @@ class _DummyEncoder(torch.nn.Module):
         tokens = torch.ones(bt, 2, 4, device=x.device, dtype=x.dtype)
         return {"x_norm_patchtokens": tokens}
 
+    forward_features = forward
+
 
 class _DummyQwenProcessor:
     image_token = "<image>"

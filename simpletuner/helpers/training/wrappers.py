@@ -3,6 +3,10 @@ from types import MethodType
 from diffusers.utils.torch_utils import is_compiled_module
 
 
+def strip_compile_wrapper(name: str) -> str:
+    return ".".join(part for part in name.split(".") if part != "_orig_mod")
+
+
 def _is_fsdp_module(model) -> bool:
     return model is not None and model.__class__.__name__ == "FullyShardedDataParallel"
 

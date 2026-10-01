@@ -205,3 +205,43 @@ def check_for_caption_filter_list_misuse(
         raise ValueError(
             f"caption_filter_list is only a valid setting for text datasets. It is currently set for the {normalized.value} dataset {backend_id}."
         )
+
+
+def validate_caption_data_generator(value: dict) -> dict:
+    """Validate the captions-only image generation recipe."""
+    import math
+
+    if not isinstance(value, dict):
+        raise ValueError("data_generator must be an object.")
+    allowed = {"batch_size", "resolutions", "num_inference_steps", "guidance_scale", "seed", "output_dir"}
+    unknown = set(value) - allowed
+    if unknown:
+        raise ValueError(f"Unknown data_generator fields: {', '.join(sorted(unknown))}")
+    result = {"batch_size": 1, "num_inference_steps": 40, "guidance_scale": 1.0, "seed": 0, **value}
+    for name in ("batch_size", "num_inference_steps"):
+        if type(result[name]) is not int or result[name] < 1:
+            raise ValueError(f"data_generator.{name} must be a positive integer.")
+    if type(result["seed"]) is not int or not 0 <= result["seed"] < 2**63:
+        raise ValueError("data_generator.seed must be an integer between 0 and 2**63 - 1.")
+    guidance = result["guidance_scale"]
+    if isinstance(guidance, bool) or not isinstance(guidance, (int, float)) or not math.isfinite(guidance) or guidance < 0:
+        raise ValueError("data_generator.guidance_scale must be a finite non-negative number.")
+    if "output_dir" in result and (not isinstance(result["output_dir"], str) or not result["output_dir"].strip()):
+        raise ValueError("data_generator.output_dir must be a non-empty path.")
+    resolutions = result.get("resolutions")
+    if not isinstance(resolutions, list) or not resolutions:
+        raise ValueError("data_generator.resolutions must be a non-empty list such as ['1024x1024', '768x1024'].")
+    normalized = []
+    for resolution in resolutions:
+        parts = resolution.split("x") if isinstance(resolution, str) else []
+        if len(parts) != 2 or any(not part.isascii() or not part.isdecimal() for part in parts):
+            raise ValueError("data_generator.resolutions entries must use WIDTHxHEIGHT pixel dimensions.")
+        width, height = map(int, parts)
+        if min(width, height) < 32 or width % 32 or height % 32:
+            raise ValueError("data_generator.resolutions dimensions must be positive multiples of 32.")
+        canonical = f"{width}x{height}"
+        if canonical in normalized:
+            raise ValueError("data_generator.resolutions must not contain duplicate buckets.")
+        normalized.append(canonical)
+    result["resolutions"] = normalized
+    return result

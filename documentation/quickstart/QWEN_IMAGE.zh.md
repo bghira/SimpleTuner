@@ -1,4 +1,6 @@
-## Qwen Image 快速入门
+# Qwen Image 快速入门（v1.0 / v2.0）
+
+本指南介绍旧版 20B 模型。请显式设置 `model_flavour: "v1.0"` 或 `"v2.0"`；当前默认是 2.1。最新示例与设置见 [Qwen Image 2.1 快速入门](QWEN_IMAGE_2-1.zh.md)。
 
 > 🆕 想要编辑检查点？请参阅 [Qwen Image Edit 快速入门](./QWEN_EDIT.md) 获取成对参考训练说明。
 
@@ -12,34 +14,9 @@
 
 Qwen Image 是一个 20B 参数模型，仅文本编码器在量化前就消耗 ~16GB VRAM。模型使用自定义 16 通道 VAE。
 
-**重要限制：**
-- **不支持 AMD ROCm 或 MacOS**（缺乏高效的 Flash Attention）
-- 批大小 > 1 目前无法正确运行；请使用梯度累积
-- TREAD（Text-Representation Enhanced Adversarial Diffusion）尚不支持
-
 ### 前提条件
 
-确保已安装 Python；SimpleTuner 在 3.10 到 3.12 版本上运行良好。
-
-您可以运行以下命令检查：
-
-```bash
-python --version
-```
-
-如果您的 Ubuntu 系统未安装 Python 3.12，可以尝试以下命令：
-
-```bash
-apt -y install python3.13 python3.13-venv
-```
-
-#### 容器镜像依赖
-
-对于 Vast、RunPod 和 TensorDock（以及其他平台），在 CUDA 12.2-12.8 镜像上可以使用以下命令启用 CUDA 扩展编译：
-
-```bash
-apt -y install nvidia-cuda-toolkit
-```
+使用 Python 3.12–3.14。Python 和 CUDA 的配置见[安装指南](../INSTALL.zh.md)。
 
 ### 安装
 
@@ -96,7 +73,7 @@ cp config/config.json.example config/config.json
 - `validation_num_inference_steps` - 约 30。
 - `use_ema` - 设为 `true` 可获得更平滑的结果，但会占用更多内存。
 
-- `optimizer` - 推荐 `optimi-lion`，如有余量可用 `adamw-bf16`。
+- `optimizer` - 推荐 `optimi-lion`，如有余量可用 `adamw_bf16`。
 - `mixed_precision` - Qwen Image 必须设为 `bf16`。
 - `gradient_checkpointing` - **必须**启用（`true`）以获得合理内存占用。
 - `base_model_precision` - **强烈推荐**设为 `int8-quanto` 或 `nf4-bnb`（24GB 显卡）。
@@ -124,7 +101,7 @@ cp config/config.json.example config/config.json
     "output_dir": "output/models-qwen_image",
     "train_batch_size": 1,
     "gradient_accumulation_steps": 4,
-    "validation_resolution": "1024x1024",
+    "validation_resolution": "512x512",
     "validation_guidance": 4.0,
     "validation_num_inference_steps": 30,
     "validation_seed": 42,
@@ -161,36 +138,16 @@ cp config/config.json.example config/config.json
 ```
 </details>
 
-> ℹ️ 多 GPU 用户可参考[此文档](../OPTIONS.md#environment-configuration-variables)了解 GPU 数量配置。
+> ℹ️ 多 GPU 用户可参考[此文档](../OPTIONS.zh.md)了解 GPU 数量配置。
 
 > ⚠️ **24GB GPU 关键点**：仅文本编码器就需 ~16GB VRAM。`int2-quanto` 或 `nf4-bnb` 可大幅降低。
 
-快速验证可用以下已知配置：
-
-**选项 1（推荐 - pip 安装）：**
-```bash
-pip install 'simpletuner[cuda]'
-
-# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
-simpletuner train example=qwen_image.peft-lora
-```
-
-**选项 2（Git clone 方式）：**
-```bash
-simpletuner train env=examples/qwen_image.peft-lora
-```
-
-**选项 3（Legacy 方式 - 仍可用）：**
-```bash
-ENV=examples/qwen_image.peft-lora ./train.sh
-```
+内置 `qwen_image.peft-lora` 示例现在训练 2.1。旧版应使用显式配置运行 `simpletuner train`，不要使用该示例。
 
 ### 高级实验功能
 
 <details>
 <summary>显示高级实验详情</summary>
-
 
 SimpleTuner 包含可显著提高训练稳定性和性能的实验功能。
 
@@ -215,7 +172,7 @@ SimpleTuner 包含可显著提高训练稳定性和性能的实验功能。
 
 要让训练器使用该提示词库，请在 config.json 中添加：
 ```json
-  "validation_prompt_library": "config/user_prompt_library.json",
+  "user_prompt_library": "config/user_prompt_library.json",
 ```
 
 多样化提示词有助于判断模型是否在正常学习：
@@ -284,7 +241,7 @@ Qwen Image 是流匹配模型，支持通过时间表偏移来控制训练覆盖
 
 > ℹ️ 若图像过少，可能出现 **no images detected in dataset** 提示——增加 `repeats` 值可解决。
 
-> ⚠️ **重要**：由于当前限制，请保持 `train_batch_size` 为 1，用 `gradient_accumulation_steps` 模拟更大 batch。
+> 先使用 `train_batch_size: 1`，确认显存余量后再增大。可通过 `gradient_accumulation_steps` 增大有效批量。
 
 创建 `--data_backend_config`（`config/multidatabackend.json`）文档如下：
 
@@ -405,7 +362,7 @@ Qwen Image 的最低 VRAM 配置约为 24GB：
   - `int4-quanto` 可用但质量可能更低
 - 优化器：`optimi-lion` 或 `bnb-lion8bit-paged` 更省内存
 - 分辨率：先用 512px 或 768px，内存允许再升到 1024px
-- 批大小：1（当前限制）
+- 批大小：1
 - 梯度累积：2-8 模拟更大 batch
 - 启用 `--gradient_checkpointing`（必需）
 - 使用 `--quantize_via=cpu` 避免启动 OOM
@@ -500,16 +457,32 @@ LoRA 训练：
 
 ### 平台限制
 
-**不支持：**
-- AMD ROCm（缺乏高效 Flash Attention 实现）
-- Apple Silicon/MacOS（内存与注意力限制）
-- VRAM < 24GB 的消费级 GPU
+这些显存建议针对 NVIDIA GPU。其他平台的依赖和注意力后端见[安装指南](../INSTALL.zh.md)。
 
-### 当前已知问题
+如需更多帮助与排查，请参阅 [SimpleTuner 文档](../index.zh.md) 或加入社区 Discord。
 
-1. 批大小 > 1 无法正常工作（请使用梯度累积）
-2. 尚不支持 TREAD
-3. 文本编码器内存占用高（量化前约 16GB）
-4. 序列长度处理问题（[上游问题](https://github.com/huggingface/diffusers/issues/12075)）
+## Qwen Image 2.1 配方已迁移
 
-如需更多帮助与排查，请参阅 [SimpleTuner 文档](/documentation) 或加入社区 Discord。
+<a id="vram-presets"></a>
+
+[显存预设](QWEN_IMAGE_2-1.zh.md#vram-presets)
+
+<a id="experimental-anyflow-pilot"></a>
+
+[AnyFlow 试验](QWEN_IMAGE_2-1.zh.md#experimental-anyflow-pilot)
+
+<a id="qwen21-optimizer-correction"></a>
+
+[优化器修正](QWEN_IMAGE_2-1.zh.md#qwen21-optimizer-correction)
+
+<a id="assistant-lora"></a>
+
+[训练辅助 LoRA](QWEN_IMAGE_2-1.zh.md#assistant-lora)
+
+<a id="assistant-lora-multires"></a>
+
+[多分辨率辅助 LoRA](QWEN_IMAGE_2-1.zh.md#assistant-lora-multires)
+
+<a id="assistant-lora-offline"></a>
+
+[离线辅助 LoRA](QWEN_IMAGE_2-1.zh.md#assistant-lora-offline)

@@ -2,9 +2,9 @@ import logging
 import os
 
 import numpy as np
+import wandb
 from PIL import Image
 
-import wandb
 from simpletuner.helpers.training.local_metrics import record_validation_media
 from simpletuner.helpers.training.state_tracker import StateTracker
 
@@ -66,7 +66,7 @@ def save_images(save_dir, validation_images, validation_shortname, validation_re
     Save validation images to disk.
     """
     validation_img_idx = 0
-    resolutions = [_res for res in validation_resolutions for _res in [res] * config.num_eval_images]
+    resolutions = [_res for res in validation_resolutions for _res in [res] * config.num_validation_images]
 
     for validation_image in validation_images.get(validation_shortname, []):
         if validation_img_idx >= len(resolutions):

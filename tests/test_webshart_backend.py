@@ -540,10 +540,17 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
         self.assertEqual(backend.get_caption(self._sample_id(backend)), ["literal key caption", "brief caption"])
 
     def test_reads_json_sidecar_without_loading_image_bytes(self):
+        import webshart
+
         self._write_index(embedded=False)
-        backend = self._backend("short")
+        with patch.object(webshart, "TarDataLoader", wraps=webshart.TarDataLoader) as loader_factory:
+            backend = self._backend("short")
+        self.assertTrue(loader_factory.call_args_list[0].kwargs["load_file_data"])
+        self.assertFalse(loader_factory.call_args_list[1].kwargs["load_file_data"])
+        sample_id = self._sample_id(backend)
+        backend.dataset = Mock(open_shard=Mock(side_effect=AssertionError("Uncached shard reader requested")))
         with patch.object(backend, "_read_sample_bytes", side_effect=AssertionError("Image bytes requested")):
-            self.assertEqual(backend.get_caption(self._sample_id(backend)), "brief caption")
+            self.assertEqual(backend.get_caption(sample_id), "brief caption")
         self.assertEqual(backend.get_shard_metadata(0)["sample.jpg"]["json_metadata"], self.json_metadata)
 
     def test_optimization_preserves_custom_selection(self):
@@ -554,6 +561,35 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
         backend = self._backend(["named", "short"])
         restored = WebshartDataBackend.from_instance_representation(backend.get_instance_representation())
         self.assertEqual(restored.get_caption(self._sample_id(restored)), ["named caption", "brief caption"])
+
+    def test_native_caption_objects_survive_index_selection_and_cache(self):
+        caption = {"high_level_description": "a café", "elements": [{"bbox": [1, 2, 30, 40]}]}
+        for index, value in enumerate([caption, [caption], [caption, "alternate"]]):
+            with self.subTest(value=value):
+                self.files["sample.jpg"]["captions"] = "indexed fallback caption"
+                self.json_metadata["captions"] = value
+                self.json_metadata[f"version_{index}"] = value
+                self._write_index(embedded=True)
+                backend = WebshartDataBackend(
+                    accelerator=None,
+                    id=f"native-{index}",
+                    source=str(self.source),
+                    cache_dir=str(self.root / f"native-cache-{index}"),
+                    shard_cache_gb=0,
+                    caption_key="captions",
+                )
+                sample_id = self._sample_id(backend)
+                expected = caption if value == [caption] else value
+                self.assertEqual(backend.get_caption(sample_id), expected)
+                backend.caption_key = f"version_{index}"
+                selected = backend.get_caption(sample_id)
+                self.assertEqual(selected, expected)
+                metadata = self._metadata_backend(backend)
+                self.assertEqual(metadata.caption_cache_entry(sample_id), selected)
+                metadata._save_caption_cache()
+                metadata.caption_cache.clear()
+                metadata._load_caption_cache()
+                self.assertEqual(metadata.caption_cache_entry(sample_id), selected)
 
     def test_bucketing_and_cache_reload_use_selected_captions(self):
         from simpletuner.helpers.training.state_tracker import StateTracker

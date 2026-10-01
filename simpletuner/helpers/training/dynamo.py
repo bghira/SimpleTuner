@@ -31,6 +31,9 @@ def dynamo_config_patches(config: Any) -> dict[str, Any]:
     if _coerce_flag(getattr(config, "dynamo_dynamic", None)):
         patches["capture_dynamic_output_shape_ops"] = True
         patches["force_parameter_static_shapes"] = False
+    if _normalise_text(getattr(config, "distillation_method", None)) in {"anyflow", "assistant-lora"}:
+        # Shared teacher, training and validation forwards need separate grad/mask/adapter variants.
+        patches["cache_size_limit"] = max(torch._dynamo.config.cache_size_limit, 32)
     return patches
 
 

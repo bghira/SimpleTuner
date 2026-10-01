@@ -5756,9 +5756,7 @@ class Trainer:
         if self.accelerator.is_main_process:
             self.checkpoint_state_cleanup_temp(self.config.output_dir)
 
-        save_path = None
-        if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer or self.config.fsdp_enable:
-            save_path = self.checkpoint_state_save(self.config.output_dir)
+        save_path = self.checkpoint_state_save(self.config.output_dir)
         if self.accelerator.is_main_process and checkpoint_limit is not None and checkpoint_limit > 0:
             if len(self.checkpoint_state_filter(self.config.output_dir)) > checkpoint_limit:
                 self._drain_hub_upload_futures(wait=True)
@@ -5783,9 +5781,7 @@ class Trainer:
         if self.accelerator.is_main_process:
             self.checkpoint_state_cleanup_temp(self.config.output_dir)
 
-        save_path = None
-        if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer or self.config.fsdp_enable:
-            save_path = self.checkpoint_state_save(self.config.output_dir, "rolling")
+        save_path = self.checkpoint_state_save(self.config.output_dir, "rolling")
         if self.accelerator.is_main_process and checkpoint_limit is not None and checkpoint_limit > 0:
             self.checkpoint_state_cleanup(
                 self.config.output_dir,
@@ -6233,6 +6229,10 @@ class Trainer:
             yield
         finally:
             trained_component.enable_lora()
+            if getattr(self.model, "assistant_lora_loaded", False):
+                from simpletuner.helpers.assistant_lora import freeze_adapter_parameters
+
+                freeze_adapter_parameters(trained_component, self.model.assistant_adapter_name)
 
     def _prepare_regularisation_parent_targets(self, prepared_batch: dict) -> None:
         training_logger.debug("Predicting parent model residual.")
@@ -6678,16 +6678,6 @@ class Trainer:
         distributed_type = getattr(self.accelerator, "distributed_type", DistributedType.NO)
         fsdp_v2_run = distributed_type == DistributedType.FSDP and getattr(plugin, "fsdp_version", 1) == 2
         is_main_process = getattr(self.accelerator, "is_main_process", True)
-        all_processes_saving = bool(
-            getattr(self.config, "use_deepspeed_optimizer", False) or getattr(self.config, "fsdp_enable", False)
-        )
-        if (
-            self.accelerator is not None
-            and distributed_type != DistributedType.NO
-            and all_processes_saving
-            and self.config.checkpointing_use_tempdir
-        ):
-            self.accelerator.wait_for_everyone()
         if fsdp_v2_run:
             logger.info("FSDP v2 detected; saving with sharded state dict (_use_dtensor disabled for NCCL compatibility).")
         if is_main_process:
@@ -6695,6 +6685,8 @@ class Trainer:
                 os.remove(os.path.join(save_path_tmp, CHECKPOINT_GUARD_FILENAME))
             except FileNotFoundError:
                 pass
+        if distributed_type != DistributedType.NO:
+            self.accelerator.wait_for_everyone()
         self.accelerator.save_state(save_path_tmp)
         if hasattr(self.model, "save_flow_custom_timestep_state"):
             self.model.save_flow_custom_timestep_state(save_path_tmp)
@@ -6738,7 +6730,7 @@ class Trainer:
                         self.model_hooks.training_state_path,
                     ),
                 )
-        if self.accelerator is not None and distributed_type != DistributedType.NO and all_processes_saving:
+        if distributed_type != DistributedType.NO:
             self.accelerator.wait_for_everyone()
         if is_main_process:
             checkpoint_manager = self.checkpoint_manager or CheckpointManager(output_dir)
@@ -6747,11 +6739,11 @@ class Trainer:
                 metadata=self._build_checkpoint_manifest_metadata(),
             )
             checkpoint_manager.write_guard(save_path_tmp)
-        if self.accelerator is not None and distributed_type != DistributedType.NO and all_processes_saving:
+        if distributed_type != DistributedType.NO:
             self.accelerator.wait_for_everyone()
         if save_path != save_path_tmp and is_main_process:
             os.rename(save_path_tmp, save_path)
-        if self.accelerator is not None and distributed_type != DistributedType.NO and all_processes_saving:
+        if distributed_type != DistributedType.NO:
             self.accelerator.wait_for_everyone()
         event = checkpoint_event(
             path=save_path,

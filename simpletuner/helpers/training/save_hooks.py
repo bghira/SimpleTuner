@@ -25,7 +25,7 @@ from simpletuner.helpers.models.common import PipelineTypes, PredictionTypes
 from simpletuner.helpers.training.ema import EMAModel
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.state_tracker import StateTracker
-from simpletuner.helpers.training.wrappers import unwrap_model
+from simpletuner.helpers.training.wrappers import strip_compile_wrapper, unwrap_model
 
 logger = logging.getLogger("SaveHookManager")
 from simpletuner.helpers.training.multi_process import should_log
@@ -108,6 +108,7 @@ def _collect_anyflow_sidecar_state(module) -> dict[str, torch.Tensor]:
 
     collected: dict[str, tuple[int, torch.Tensor]] = {}
     for name, tensor in state_dict().items():
+        name = strip_compile_wrapper(name)
         if not name.startswith(ANYFLOW_SIDECAR_PREFIXES):
             continue
         if ".lora_" in name or ".lora_magnitude_vector" in name or ".original_module." in name:
@@ -168,7 +169,7 @@ def _materialize_tensor_for_save(tensor: torch.Tensor) -> torch.Tensor:
 
 
 def _materialize_state_dict_for_save(state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-    return {name: _materialize_tensor_for_save(tensor) for name, tensor in state_dict.items()}
+    return {strip_compile_wrapper(name): _materialize_tensor_for_save(tensor) for name, tensor in state_dict.items()}
 
 
 def _get_fsdp2_pipeline_export_spec(model) -> _FSDP2PipelineExportSpec:

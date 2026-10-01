@@ -8,14 +8,65 @@ import torch
 import torch.nn as nn
 from accelerate import Accelerator
 from accelerate.utils import fsdp_utils as accelerate_fsdp_utils
+from diffusers.loaders.peft import PeftAdapterMixin
 from diffusers.models import attention_dispatch
 from diffusers.models.attention import Attention
 from diffusers.models.attention_dispatch import _HUB_KERNELS_REGISTRY, AttentionBackendName, dispatch_attention_fn
+from diffusers.utils.torch_utils import lru_cache_unless_export
+from peft.utils.other import AuxiliaryTrainingWrapper
+from peft.utils.other import _set_adapter as set_auxiliary_adapter
 
 logger = logging.getLogger(__name__)
 
 # SimpleTuner always fuses.
 PERMANENT_FUSION = True
+
+
+def patch_peft_auxiliary_adapter_switching():
+    """Keep modules_to_save on the same adapter role as Diffusers' LoRA layers."""
+    original_set_adapter = PeftAdapterMixin.set_adapter
+    original_enable_lora = PeftAdapterMixin.enable_lora
+    original_disable_lora = PeftAdapterMixin.disable_lora
+
+    @wraps(original_set_adapter)
+    def set_adapter(self, adapter_name):
+        original_set_adapter(self, adapter_name)
+        set_auxiliary_adapter(self, adapter_name)
+
+    @wraps(original_enable_lora)
+    def enable_lora(self):
+        original_enable_lora(self)
+        for module in self.modules():
+            if isinstance(module, AuxiliaryTrainingWrapper):
+                module.enable_adapters(True)
+
+    @wraps(original_disable_lora)
+    def disable_lora(self):
+        original_disable_lora(self)
+        for module in self.modules():
+            if isinstance(module, AuxiliaryTrainingWrapper):
+                module.enable_adapters(False)
+
+    PeftAdapterMixin.set_adapter = set_adapter
+    PeftAdapterMixin.enable_lora = enable_lora
+    PeftAdapterMixin.disable_lora = disable_lora
+
+
+@lru_cache_unless_export(maxsize=128)
+def _prepare_uniform_varlen_attention(batch_size, seq_len_q, seq_len_kv, device=None):
+    """Shape-static metadata from Diffusers e6ddb4676c32e3a59420a82e0da768b27289b0ab."""
+    seqlens_q = torch.full((batch_size,), seq_len_q, dtype=torch.int32, device=device)
+    seqlens_k = torch.full((batch_size,), seq_len_kv, dtype=torch.int32, device=device)
+    offsets = torch.arange(batch_size + 1, dtype=torch.int32, device=device)
+    return (
+        (seqlens_q, seqlens_k),
+        (offsets * seq_len_q, offsets * seq_len_kv),
+        (seq_len_q, seq_len_kv),
+    )
+
+
+def patch_uniform_varlen_attention_metadata():
+    attention_dispatch._prepare_for_flash_attn_or_sage_varlen_without_mask = _prepare_uniform_varlen_attention
 
 
 def patch_flash_attn2_hub_kernel_attrs():
@@ -609,6 +660,8 @@ def enable_reversible_fusion():
 
 
 patch_flash_attn2_hub_kernel_attrs()
+patch_uniform_varlen_attention_metadata()
+patch_peft_auxiliary_adapter_switching()
 patch_ring_anything_attention_lse_shape()
 patch_attention_flexible()
 patch_lora_unfuse_merged_adapters_tracking()

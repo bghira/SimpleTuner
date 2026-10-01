@@ -1,4 +1,6 @@
-## Qwen Image クイックスタート
+# Qwen Image クイックスタート（v1.0 / v2.0）
+
+旧 20B モデル用のガイドです。`model_flavour: "v1.0"` または `"v2.0"` を明示してください。現在のデフォルトは 2.1 です。最新の例と設定は [Qwen Image 2.1 クイックスタート](QWEN_IMAGE_2-1.ja.md)を参照します。
 
 > 🆕 edit チェックポイントを探していますか？ 参照ペア学習の手順は [Qwen Image Edit quickstart](./QWEN_EDIT.md) を参照してください。
 
@@ -12,34 +14,9 @@
 
 Qwen Image は 20B パラメータのモデルで、洗練されたテキストエンコーダだけでも量子化前で ~16GB VRAM を消費します。16 チャンネルの独自 VAE を使用します。
 
-**重要な制限:**
-- **AMD ROCm と MacOS は未対応**（効率的な Flash Attention がないため）
-- バッチサイズ > 1 は現在正しく動作しないため、gradient accumulation を使用してください
-- TREAD（Text-Representation Enhanced Adversarial Diffusion）は未対応
-
 ### 前提条件
 
-Python がインストールされていることを確認してください。SimpleTuner は 3.10 から 3.12 でうまく動作します。
-
-以下を実行して確認できます:
-
-```bash
-python --version
-```
-
-Ubuntu に Python 3.12 がインストールされていない場合は、以下を試してください:
-
-```bash
-apt -y install python3.13 python3.13-venv
-```
-
-#### コンテナイメージの依存関係
-
-Vast、RunPod、TensorDock（など）の場合、CUDA 12.2-12.8 イメージで CUDA 拡張のコンパイルを有効にするには以下が機能します:
-
-```bash
-apt -y install nvidia-cuda-toolkit
-```
+Python 3.12–3.14 を使用します。Python と CUDA の設定は[インストールガイド](../INSTALL.ja.md)を参照してください。
 
 ### インストール
 
@@ -96,7 +73,7 @@ cp config/config.json.example config/config.json
 - `validation_num_inference_steps` - 30 前後を使用します。
 - `use_ema` - `true` に設定すると滑らかな結果が得られますがメモリを追加で消費します。
 
-- `optimizer` - 良好な結果のため `optimi-lion` を使用するか、余裕があれば `adamw-bf16`。
+- `optimizer` - 良好な結果のため `optimi-lion` を使用するか、余裕があれば `adamw_bf16`。
 - `mixed_precision` - Qwen Image は `bf16` 必須です。
 - `gradient_checkpointing` - **必須**（`true`）。妥当なメモリ使用量のため必要です。
 - `base_model_precision` - **強く推奨** `int8-quanto` または `nf4-bnb`（24GB では必須）。
@@ -124,7 +101,7 @@ cp config/config.json.example config/config.json
     "output_dir": "output/models-qwen_image",
     "train_batch_size": 1,
     "gradient_accumulation_steps": 4,
-    "validation_resolution": "1024x1024",
+    "validation_resolution": "512x512",
     "validation_guidance": 4.0,
     "validation_num_inference_steps": 30,
     "validation_seed": 42,
@@ -161,36 +138,16 @@ cp config/config.json.example config/config.json
 ```
 </details>
 
-> ℹ️ マルチ GPU ユーザーは、使用する GPU 数の設定については [このドキュメント](../OPTIONS.md#environment-configuration-variables) を参照してください。
+> ℹ️ マルチ GPU ユーザーは、使用する GPU 数の設定については [このドキュメント](../OPTIONS.ja.md) を参照してください。
 
 > ⚠️ **24GB GPU で重要:** テキストエンコーダ単体で ~16GB VRAM を消費します。`int2-quanto` または `nf4-bnb` を使うことで大幅に削減できます。
 
-動作確認用の既知構成:
-
-**オプション 1（推奨 - pip install）:**
-```bash
-pip install 'simpletuner[cuda]'
-
-# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
-simpletuner train example=qwen_image.peft-lora
-```
-
-**オプション 2（Git clone 方法）:**
-```bash
-simpletuner train env=examples/qwen_image.peft-lora
-```
-
-**オプション 3（レガシー方法 - まだ動作します）:**
-```bash
-ENV=examples/qwen_image.peft-lora ./train.sh
-```
+標準の `qwen_image.peft-lora` は現在 2.1 を学習します。旧版ではこの例ではなく、明示した設定で `simpletuner train` を実行してください。
 
 ### 高度な実験的機能
 
 <details>
 <summary>高度な実験的詳細を表示</summary>
-
 
 SimpleTuner には、トレーニングの安定性とパフォーマンスを大幅に向上させる実験的機能が含まれています。
 
@@ -215,7 +172,7 @@ SimpleTuner には、トレーニングの安定性とパフォーマンスを�
 
 このプロンプトライブラリを使用するには、`config.json` に以下を追加します:
 ```json
-  "validation_prompt_library": "config/user_prompt_library.json",
+  "user_prompt_library": "config/user_prompt_library.json",
 ```
 
 多様なプロンプトのセットは、モデルが正しく学習しているかを判断する助けになります:
@@ -282,7 +239,7 @@ Qwen Image では `--flow_schedule_shift` を 1.73 にするのが出発点と�
 
 > ℹ️ 画像が少なすぎる場合、**no images detected in dataset** というメッセージが表示されることがあります。`repeats` 値を増やすことでこの制限を克服できます。
 
-> ⚠️ **重要**: 現在の制約により `train_batch_size` は 1 に固定し、代わりに `gradient_accumulation_steps` で実効バッチを増やしてください。
+> `train_batch_size: 1` から開始し、VRAM の余裕を確認してから増やします。実効バッチを増やすには `gradient_accumulation_steps` を使います。
 
 以下を含む `--data_backend_config`（`config/multidatabackend.json`）ドキュメントを作成します:
 
@@ -403,7 +360,7 @@ Qwen Image の最低 VRAM 構成は約 24GB 必要です:
   - `int4-quanto` でも動作するが品質低下の可能性
 - オプティマイザ: `optimi-lion` または `bnb-lion8bit-paged` でメモリ効率重視
 - 解像度: まず 512px または 768px、余裕があれば 1024px
-- バッチサイズ: 1（制約のため必須）
+- バッチサイズ: 1
 - 勾配蓄積: 2〜8 で実効バッチを稼ぐ
 - `--gradient_checkpointing` を有効化（必須）
 - `--quantize_via=cpu` を使用して起動時 OOM を回避
@@ -498,16 +455,32 @@ LoRA トレーニングの場合:
 
 ### プラットフォームの制限
 
-**未対応:**
-- AMD ROCm（効率的な Flash Attention がない）
-- Apple Silicon/MacOS（メモリと注意機構の制限）
-- 24GB 未満のコンシューマ GPU
+これらのメモリ推奨値は NVIDIA GPU 向けです。他の環境の依存関係と attention バックエンドは[インストールガイド](../INSTALL.ja.md)を参照します。
 
-### 既知の問題
+追加のヘルプとトラブルシューティングは [SimpleTuner documentation](../index.ja.md) を参照するか、コミュニティ Discord に参加してください。
 
-1. バッチサイズ > 1 は正しく動作しない（勾配蓄積を使用）
-2. TREAD は未対応
-3. テキストエンコーダのメモリ消費が大きい（量子化前 ~16GB）
-4. シーケンス長処理の問題（[上流 issue](https://github.com/huggingface/diffusers/issues/12075)）
+## Qwen Image 2.1 の設定は移動しました
 
-追加のヘルプとトラブルシューティングは [SimpleTuner documentation](/documentation) を参照するか、コミュニティ Discord に参加してください。
+<a id="vram-presets"></a>
+
+[VRAM プリセット](QWEN_IMAGE_2-1.ja.md#vram-presets)
+
+<a id="experimental-anyflow-pilot"></a>
+
+[AnyFlow パイロット](QWEN_IMAGE_2-1.ja.md#experimental-anyflow-pilot)
+
+<a id="qwen21-optimizer-correction"></a>
+
+[オプティマイザー修正](QWEN_IMAGE_2-1.ja.md#qwen21-optimizer-correction)
+
+<a id="assistant-lora"></a>
+
+[アシスタントの作成](QWEN_IMAGE_2-1.ja.md#assistant-lora)
+
+<a id="assistant-lora-multires"></a>
+
+[複数解像度アシスタント](QWEN_IMAGE_2-1.ja.md#assistant-lora-multires)
+
+<a id="assistant-lora-offline"></a>
+
+[オフラインアシスタント](QWEN_IMAGE_2-1.ja.md#assistant-lora-offline)
