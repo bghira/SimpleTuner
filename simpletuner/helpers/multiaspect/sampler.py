@@ -1,3 +1,4 @@
+import bisect
 import logging
 import os
 import random
@@ -23,6 +24,34 @@ pil_logger = logging.getLogger("PIL.PngImagePlugin")
 pil_logger.setLevel(logging.WARNING)
 pil_logger = logging.getLogger("PIL.TiffImagePlugin")
 pil_logger.setLevel(logging.WARNING)
+
+
+class _UnseenOccurrenceIndex:
+    """One bucket's unseen occurrences, kept equal to what `_filter_unseen_occurrences` would return.
+
+    Marking a filepath seen raises its occurrence count by one, which retires exactly its earliest
+    unseen occurrence, so the index is updated per consumed sample instead of rescanning the bucket.
+    """
+
+    def __init__(self, source: list, seen_images: dict, positions: list, sample_paths: list):
+        self.snapshot = list(source)
+        self.seen_images = seen_images
+        self.positions = positions
+        self.sample_paths = sample_paths
+        self.pending = {}
+        for position in positions:
+            self.pending.setdefault(source[position], []).append(position)
+
+    def is_current(self, source: list, seen_images: dict) -> bool:
+        return self.seen_images is seen_images and self.snapshot == source
+
+    def consume(self, image_path: str) -> None:
+        occurrences = self.pending.get(image_path)
+        if not occurrences:
+            return
+        index = bisect.bisect_left(self.positions, occurrences.pop(0))
+        del self.positions[index]
+        del self.sample_paths[index]
 
 
 class MultiAspectSampler(torch.utils.data.Sampler):
@@ -115,6 +144,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.instance_prompt = instance_prompt
         self.disable_multiline_split = disable_multiline_split
         self.exhausted_buckets = []
+        self._unseen_indices = {}
         self.buckets = self.load_buckets()
         self.state_manager = BucketStateManager(self.id)
         self._val_master_list = sorted(sum(self.metadata_backend.aspect_ratio_bucket_indices.values(), []))
@@ -228,6 +258,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             }
             self.metadata_backend.seen_images.clear()
             self.metadata_backend.seen_images.update(normalized_seen)
+            self._unseen_indices = {}
 
     def load_buckets(self):
         return list(self.metadata_backend.aspect_ratio_bucket_indices.keys())
@@ -431,6 +462,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.exhausted_buckets = []
         self.buckets = self.load_buckets()
         self.metadata_backend.reset_seen_images()
+        self._unseen_indices = {}
         self.change_bucket()
         if raise_exhaustion_signal:
             raise MultiDatasetExhausted()
@@ -438,16 +470,30 @@ class MultiAspectSampler(torch.utils.data.Sampler):
     def _get_bucket_images(self, bucket):
         return self.metadata_backend.aspect_ratio_bucket_indices.get(str(bucket), [])
 
-    def _filter_unseen_occurrences(self, images):
-        """Filter consumed positions without collapsing duplicate filepaths."""
+    def _unseen_occurrence_positions(self, images):
+        """Positions of unconsumed occurrences, without collapsing duplicate filepaths."""
         occurrence_indices = {}
-        unseen = []
-        for image in images:
+        positions = []
+        for position, image in enumerate(images):
             occurrence_index = occurrence_indices.get(image, 0)
             occurrence_indices[image] = occurrence_index + 1
             if not self.metadata_backend.is_seen(image, occurrence_index):
-                unseen.append(image)
-        return unseen
+                positions.append(position)
+        return positions
+
+    def _filter_unseen_occurrences(self, images):
+        """Filter consumed positions without collapsing duplicate filepaths."""
+        return [images[position] for position in self._unseen_occurrence_positions(images)]
+
+    def _sample_path(self, image):
+        return os.path.join(self.metadata_backend.instance_data_dir, image) if not image.startswith("http") else image
+
+    def _warn_if_bucket_empty(self, bucket, bucket_images):
+        if len(bucket_images) == 0:
+            self.logger.warning(
+                f"BUCKET {bucket} IS EMPTY! aspect_ratio_bucket_indices keys: "
+                f"{list(self.metadata_backend.aspect_ratio_bucket_indices.keys())}"
+            )
 
     def _get_unseen_images(self, bucket=None):
         """
@@ -462,32 +508,38 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 f"bucket has {len(bucket_images)} total images, "
                 f"seen_images has {len(self.metadata_backend.seen_images)} entries"
             )
-            if len(bucket_images) == 0:
-                self.logger.warning(
-                    f"BUCKET {bucket} IS EMPTY! aspect_ratio_bucket_indices keys: "
-                    f"{list(self.metadata_backend.aspect_ratio_bucket_indices.keys())}"
-                )
-
-            return [
-                (os.path.join(self.metadata_backend.instance_data_dir, image) if not image.startswith("http") else image)
-                for image in self._filter_unseen_occurrences(bucket_images)
-            ]
+            self._warn_if_bucket_empty(bucket, bucket_images)
+            return [self._sample_path(image) for image in self._filter_unseen_occurrences(bucket_images)]
         elif bucket is None:
             unseen_images = []
             for b, images in self.metadata_backend.aspect_ratio_bucket_indices.items():
-                unseen_images.extend(
-                    [
-                        (
-                            os.path.join(self.metadata_backend.instance_data_dir, image)
-                            if not image.startswith("http")
-                            else image
-                        )
-                        for image in self._filter_unseen_occurrences(images)
-                    ]
-                )
+                unseen_images.extend(self._sample_path(image) for image in self._filter_unseen_occurrences(images))
             return unseen_images
         else:
             return []
+
+    def _iteration_unseen_images(self, bucket):
+        """`_get_unseen_images(bucket)` for the iterator, served from an index that `__iter__` keeps current."""
+        bucket_images = self._get_bucket_images(bucket)
+        seen_images = self.metadata_backend.seen_images
+        index = self._unseen_indices.get(bucket)
+        if index is None or not index.is_current(bucket_images, seen_images):
+            self._warn_if_bucket_empty(bucket, bucket_images)
+            positions = self._unseen_occurrence_positions(bucket_images)
+            index = _UnseenOccurrenceIndex(
+                bucket_images,
+                seen_images,
+                positions,
+                [self._sample_path(bucket_images[position]) for position in positions],
+            )
+            self._unseen_indices[bucket] = index
+        return list(index.sample_paths)
+
+    def _consume_unseen_occurrences(self, image_paths):
+        """Retire the occurrences that marking `image_paths` seen consumes."""
+        for image_path in image_paths:
+            for index in self._unseen_indices.values():
+                index.consume(image_path)
 
     def _handle_bucket_with_insufficient_images(self, bucket):
         """
@@ -1046,7 +1098,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             # Loop through all buckets to find one with sufficient images
             for _ in range(len(self.buckets)):
                 self._clear_batch_accumulator()
-                available_images = self._get_unseen_images(self.buckets[self.current_bucket])
+                available_images = self._iteration_unseen_images(self.buckets[self.current_bucket])
                 self.debug_log(
                     f"From {len(self.buckets)} buckets, selected {self.buckets[self.current_bucket]} ({self.buckets[self.current_bucket]}) -> {len(available_images)} available images, and our accumulator has {len(self.batch_accumulator)} images ready for yielding."
                 )
@@ -1087,7 +1139,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     self.debug_log(
                         f"Yielding samples and marking {len(final_yield)} images as seen, we have {len(self.metadata_backend.seen_images.values())} seen {self.sample_type_strs} before adding."
                     )
-                    self.metadata_backend.mark_batch_as_seen([instance["image_path"] for instance in final_yield])
+                    yielded_paths = [instance["image_path"] for instance in final_yield]
+                    self.metadata_backend.mark_batch_as_seen(yielded_paths)
+                    self._consume_unseen_occurrences(yielded_paths)
                     # if applicable, we'll append TrainingSample(s) to the end for conditioning inputs.
                     final_yield = self.connect_conditioning_samples(final_yield)
                     # if applicable, connect S2V audio paths for speech-to-video models.
@@ -1099,7 +1153,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     break
 
                 # Update available images after yielding
-                available_images = self._get_unseen_images(self.buckets[self.current_bucket])
+                available_images = self._iteration_unseen_images(self.buckets[self.current_bucket])
                 self.debug_log(
                     f"Bucket {self.buckets[self.current_bucket]} now has {len(available_images)} available images after yielding."
                 )
