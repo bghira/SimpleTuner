@@ -12,7 +12,7 @@ Para un ejemplo de continuación Wan usando los checkpoints publicados por NVIDI
 [Guía rápida de continuación AnyFlow](/documentation/quickstart/ANYFLOW.es.md).
 
 
-Qwen Image 2.1 admite condicionamiento de intervalos FlowMap. El [piloto Qwen de tres etapas](../quickstart/QWEN_IMAGE.es.md) mezcla captions largas de CC12M, e621 y pocos ejemplos de Domokun, seguidos de un ajuste breve con regularización. El anclaje a la predicción de la base prueba la conservación; no demuestra que Qwen recibiera destilación de guidance.
+Qwen Image 2.1 admite condicionamiento de intervalos FlowMap. El [piloto Qwen de tres etapas](../quickstart/QWEN_IMAGE_2-1.es.md) mezcla captions largas de CC12M, e621 y pocos ejemplos de Domokun, seguidos de un ajuste breve con regularización. El anclaje a la predicción de la base prueba la conservación; no demuestra que Qwen recibiera destilación de guidance.
 
 El entrenamiento AnyFlow compilado permite temporalmente al menos 32 variantes Dynamo por frame para profesor, generador, discriminador, modos de gradiente, padding y distintos batches. Se conservan los límites mayores del usuario y se restaura el límite anterior al terminar. En Torch 2.11, agotar las ocho variantes predeterminadas puede cambiar la recomputación del checkpoint a ejecución eager y fallar la comprobación de metadatos de los tensores guardados. Usa `dynamo_dynamic: true` para captions de longitud variable; el piloto Qwen ya lo habilita.
 

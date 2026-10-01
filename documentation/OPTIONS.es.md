@@ -61,7 +61,7 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 
 ### `--model_flavour`
 
-Selecciona una variante de checkpoint dentro de `--model_family`. Para `qwen_image`, el valor predeterminado es `v2.1` (`Qwen/Qwen-Image-2.1`). Indique explícitamente `v1.0`, `v2.0` o una variante `edit-*` existente para entrenar una arquitectura anterior; los adaptadores y las cachés de embeddings/latentes no son intercambiables con 2.1. Consulte la [guía de Qwen Image](quickstart/QWEN_IMAGE.es.md).
+Selecciona una variante de checkpoint dentro de `--model_family`. Para `qwen_image`, el valor predeterminado es `v2.1` (`Qwen/Qwen-Image-2.1`). Indique explícitamente `v1.0`, `v2.0` o una variante `edit-*` existente para entrenar una arquitectura anterior; los adaptadores y las cachés de embeddings/latentes no son intercambiables con 2.1. Consulte la [guía de Qwen Image](quickstart/QWEN_IMAGE_2-1.es.md).
 
 ### `--lora_format`
 
@@ -3129,7 +3129,7 @@ options:
 
 ### `--distillation_method=assistant_lora`
 
-`--distillation_method=assistant_lora` entrena un adaptador auxiliar positivo con generaciones nuevas del modelo base, desactivando el adaptador y usando datasets de descripciones. El soporte inicial es Qwen Image 2.1. `distillation_config.assistant_lora` acepta `num_inference_steps` (40), `resolutions` (`[[1024, 1024]]`, ancho y alto, múltiplos de 32) y `seed` (42). Requiere embeddings de texto precalculados; no almacena latentes finales. Consulta la [guía de Qwen](quickstart/QWEN_IMAGE.md).
+`--distillation_method=assistant_lora` entrena un adaptador auxiliar positivo con generaciones nuevas del modelo base, desactivando el adaptador y usando datasets de descripciones. El soporte inicial es Qwen Image 2.1. `distillation_config.assistant_lora` acepta `num_inference_steps` (40), `resolutions` (`[[1024, 1024]]`, ancho y alto, múltiplos de 32) y `seed` (42). Requiere embeddings de texto precalculados; no almacena latentes finales. Consulta la [guía de Qwen](quickstart/QWEN_IMAGE_2-1.es.md).
 
 Los datasets de descripciones requieren `dataloader_prefetch: false` para que el cursor del checkpoint corresponda a las descripciones consumidas. La reanudación rechaza cambios en identidades/textos, lote, repeticiones, mezcla, semilla, acumulación o distribución. Los checkpoints del auxiliar también rechazan cambios en la semilla de generación, la lista de resoluciones o los pasos de inferencia del profesor.
 

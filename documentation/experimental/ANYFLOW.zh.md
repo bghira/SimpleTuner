@@ -11,7 +11,7 @@ SimpleTuner 将 NVIDIA AnyFlow 实现为面向 flow-matching 模型的两个显�
 [AnyFlow Continuation Quickstart](/documentation/quickstart/ANYFLOW.zh.md)。
 
 
-Qwen Image 2.1 支持 FlowMap 区间条件。[三阶段 Qwen 试验](../quickstart/QWEN_IMAGE.zh.md) 混合 CC12M 长描述、e621 和少量 Domokun 样本，随后进行带正则化的简短微调。基础预测锚点用于测试能力保留，并不能证明 Qwen 经过了引导蒸馏。
+Qwen Image 2.1 支持 FlowMap 区间条件。[三阶段 Qwen 试验](../quickstart/QWEN_IMAGE_2-1.zh.md) 混合 CC12M 长描述、e621 和少量 Domokun 样本，随后进行带正则化的简短微调。基础预测锚点用于测试能力保留，并不能证明 Qwen 经过了引导蒸馏。
 
 编译后的 AnyFlow 训练会临时为每个 Dynamo frame 允许至少 32 个变体，以涵盖教师、生成器、判别器以及不同梯度模式、padding 和 batch size。用户设置的更大限制会保留，运行结束后恢复原限制。在 Torch 2.11 中，用尽默认的 8 个变体可能使检查点重计算转为 eager 执行，并导致保存张量的元数据检查失败。描述长度可变时请使用 `dynamo_dynamic: true`；Qwen 试验已启用该设置。
 

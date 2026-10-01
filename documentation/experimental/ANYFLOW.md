@@ -13,7 +13,7 @@ For a Wan continuation example using NVIDIA's released checkpoints, see
 [AnyFlow Continuation Quickstart](/documentation/quickstart/ANYFLOW.md).
 
 
-Qwen Image 2.1 supports FlowMap interval conditioning. The [three-stage Qwen pilot](../quickstart/QWEN_IMAGE.md#experimental-anyflow-pilot) combines CC12M long captions, e621 and sparse Domokun examples, then a short refinement with regularisation. Its base-prediction anchor tests preservation; it does not establish that Qwen was guidance-distilled.
+Qwen Image 2.1 supports FlowMap interval conditioning. The [three-stage Qwen pilot](../quickstart/QWEN_IMAGE_2-1.md#experimental-anyflow-pilot) combines CC12M long captions, e621 and sparse Domokun examples, then a short refinement with regularisation. Its base-prediction anchor tests preservation; it does not establish that Qwen was guidance-distilled.
 
 Compiled AnyFlow training temporarily allows at least 32 Dynamo variants per frame for the teacher, generator and discriminator, their gradient modes, padding and batch sizes. Larger user limits are preserved, and the previous limit is restored after the run. On Torch 2.11, exhausting the default eight variants can switch checkpoint recomputation to eager execution and fail its saved-tensor metadata check. Use `dynamo_dynamic: true` with variable caption lengths; the Qwen pilot enables it.
 

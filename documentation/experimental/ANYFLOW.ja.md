@@ -12,7 +12,7 @@ NVIDIA が公開した checkpoint を使った Wan continuation の例は
 [AnyFlow Continuation Quickstart](/documentation/quickstart/ANYFLOW.ja.md) を参照してください。
 
 
-Qwen Image 2.1 は FlowMap 区間条件付けに対応しています。[3 段階の Qwen パイロット](../quickstart/QWEN_IMAGE.ja.md) は CC12M の長いキャプション、e621、少量の Domokun を混合し、その後に正則化を伴う短い微調整を行います。ベース予測へのアンカーは保持を検証するもので、Qwen に guidance distillation が施されたことを示すものではありません。
+Qwen Image 2.1 は FlowMap 区間条件付けに対応しています。[3 段階の Qwen パイロット](../quickstart/QWEN_IMAGE_2-1.ja.md) は CC12M の長いキャプション、e621、少量の Domokun を混合し、その後に正則化を伴う短い微調整を行います。ベース予測へのアンカーは保持を検証するもので、Qwen に guidance distillation が施されたことを示すものではありません。
 
 コンパイルした AnyFlow 学習では、teacher、generator、discriminator と勾配モード、padding、batch size の違いに対応するため、Dynamo frame ごとの variant 上限を一時的に最低 32 にします。ユーザーが設定したより大きな上限は維持し、実行後は元の上限に戻します。Torch 2.11 では既定の 8 variant を使い切ると checkpoint の再計算が eager 実行に切り替わり、保存テンソルのメタデータ検証が失敗する場合があります。可変のキャプション長には `dynamo_dynamic: true` を使用してください。Qwen パイロットでは有効です。
 

@@ -61,7 +61,7 @@ simpletuner configure config/foo/config.json
 
 ### `--model_flavour`
 
-`--model_family` के भीतर checkpoint का प्रकार चुनता है। `qwen_image` के लिए डिफ़ॉल्ट `v2.1` (`Qwen/Qwen-Image-2.1`) है। पुराने आर्किटेक्चर को प्रशिक्षित करने के लिए `v1.0`, `v2.0` या मौजूदा `edit-*` प्रकार स्पष्ट रूप से सेट करें; adapters और embedding/latent कैश 2.1 के साथ अदला-बदली नहीं किए जा सकते। [Qwen Image quickstart](quickstart/QWEN_IMAGE.hi.md) देखें।
+`--model_family` के भीतर checkpoint का प्रकार चुनता है। `qwen_image` के लिए डिफ़ॉल्ट `v2.1` (`Qwen/Qwen-Image-2.1`) है। पुराने आर्किटेक्चर को प्रशिक्षित करने के लिए `v1.0`, `v2.0` या मौजूदा `edit-*` प्रकार स्पष्ट रूप से सेट करें; adapters और embedding/latent कैश 2.1 के साथ अदला-बदली नहीं किए जा सकते। [Qwen Image quickstart](quickstart/QWEN_IMAGE_2-1.hi.md) देखें।
 
 ### `--lora_format`
 
@@ -3126,7 +3126,7 @@ options:
 
 ### `--distillation_method=assistant_lora`
 
-`--distillation_method=assistant_lora` कैप्शन डेटासेट से, अडैप्टर बंद रखकर हर बार बनाए गए बेस मॉडल आउटपुट पर सकारात्मक सहायक अडैप्टर प्रशिक्षित करता है। प्रारंभिक समर्थन Qwen Image 2.1 के लिए है। `distillation_config.assistant_lora` में `num_inference_steps` (40), `resolutions` (`[[1024, 1024]]`, पहले चौड़ाई फिर ऊँचाई, 32 के गुणज) और `seed` (42) हैं। टेक्स्ट एम्बेडिंग पहले कैश होनी चाहिए; अंतिम लेटेंट कैश नहीं होते। [Qwen गाइड](quickstart/QWEN_IMAGE.md) देखें।
+`--distillation_method=assistant_lora` कैप्शन डेटासेट से, अडैप्टर बंद रखकर हर बार बनाए गए बेस मॉडल आउटपुट पर सकारात्मक सहायक अडैप्टर प्रशिक्षित करता है। प्रारंभिक समर्थन Qwen Image 2.1 के लिए है। `distillation_config.assistant_lora` में `num_inference_steps` (40), `resolutions` (`[[1024, 1024]]`, पहले चौड़ाई फिर ऊँचाई, 32 के गुणज) और `seed` (42) हैं। टेक्स्ट एम्बेडिंग पहले कैश होनी चाहिए; अंतिम लेटेंट कैश नहीं होते। [Qwen गाइड](quickstart/QWEN_IMAGE_2-1.hi.md) देखें।
 
 कैप्शन डेटासेट के लिए `dataloader_prefetch: false` आवश्यक है, ताकि चेकपॉइंट कर्सर उपयोग किए गए कैप्शन को दर्शाए। पुनः शुरू करते समय कैप्शन पहचान या पाठ, बैच, दोहराव, शफ़ल, बीज, ग्रेडिएंट संचय या वितरित व्यवस्था में बदलाव स्वीकार नहीं होते। सहायक LoRA के चेकपॉइंट जनरेशन बीज, रिज़ॉल्यूशन सूची या शिक्षक के इन्फरेंस चरणों में बदलाव भी अस्वीकार करते हैं।
 
