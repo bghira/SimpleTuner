@@ -395,7 +395,8 @@ class PromptHandler:
         image_caption = image_caption.replace("_", " ")
         if prepend_instance_prompt:
             image_caption = instance_prompt + " " + image_caption
-        return image_caption
+        # get_all_captions strips captions before the text embed cache hashes them.
+        return image_caption.strip()
 
     @staticmethod
     def prepare_instance_prompt_from_textfile(
