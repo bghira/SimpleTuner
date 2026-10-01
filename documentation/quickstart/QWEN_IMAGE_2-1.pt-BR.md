@@ -18,7 +18,7 @@ pip install 'simpletuner[cuda]'
 
 ## Escolha um preset de VRAM
 
-Os exemplos combinam [assistente v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2), regularização sintética, REPA e deslocamento automático do fluxo. O padrão `qwen_image.peft-lora` usa a mesma receita de 512px + 1024px do preset de 48 GB. Os presets de 24/32 GB usam apenas 512px, inclusive na validação.
+Os exemplos combinam [assistente v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3), regularização sintética, REPA e deslocamento automático do fluxo. O padrão `qwen_image.peft-lora` usa a mesma receita de 512px + 1024px do preset de 48 GB. Os presets de 24/32 GB usam apenas 512px, inclusive na validação.
 
 | VRAM | Exemplo | Resoluções base | Atualizações | Intervalo de checkpointing de gradientes |
 | --- | --- | --- | --- | --- |
@@ -55,13 +55,13 @@ Na receita combinada, mantenha os backends sintéticos com `is_regularisation_da
 
 ## Escolha o assistente de treino
 
-Main e os exemplos usam atualmente **assistente v2**. Ele fica congelado com força 1 durante o treino e desativado na validação. Nos lotes de regularização, o alvo do modelo pai é a **previsão da base sem adaptadores**, com LoRA treinável e assistente desativados.
+Main e os exemplos usam atualmente **assistente v3**. Ele fica congelado com força 1 durante o treino e desativado na validação. Nos lotes de regularização, o alvo do modelo pai é a **previsão da base sem adaptadores**, com LoRA treinável e assistente desativados.
 
-O [assistente v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3) é um adaptador rank-64 publicado separadamente, treinado por 30k atualizações em 512/1024/1536/2048. Para selecioná-lo, altere `assistant_lora_path` como abaixo. As medições dos presets usaram v2; verifique novamente a VRAM disponível ao trocar para v3.
+O [assistente v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3) é o adaptador rank-64 padrão, treinado por 30k atualizações em 512/1024/1536/2048. As medições de memória dos presets usaram v2; confira a VRAM disponível ao usar v3. Para reproduzir treinos anteriores, selecione explicitamente o [assistente v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2) com a configuração abaixo:
 
 ```json
 {
-  "assistant_lora_path": "SimpleTuner/Qwen-Image-2.1-training-assistant-v3",
+  "assistant_lora_path": "SimpleTuner/Qwen-Image-2.1-training-assistant-v2",
   "assistant_lora_strength": 1.0,
   "assistant_lora_inference_strength": 0.0
 }
@@ -217,7 +217,7 @@ Defina `distillation_method: assistant_lora`. O backend pré-calcula os embeddin
 
 Para testar a execução, use 8 atualizações e 2 passos do professor; volte a 40 antes de avaliar imagens. Revise nas atualizações 100, 250, 500 e 1.000, comparando os mesmos prompts e sementes do modelo base. A utilidade da LoRA auxiliar precisa de outro teste de treino de conceitos.
 
-O treino LoRA do Qwen Image 2.1 carrega por padrão o [assistente v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2), congelado durante o treino e desativado na validação. Use `disable_assistant_lora: true` para desativá-lo, ou `assistant_lora_path` para escolher outro adaptador. As versões anteriores mantêm seu comportamento. Ao treinar um novo assistente, mantenha `disable_assistant_lora: true`, como nos exemplos correspondentes.
+O treino LoRA do Qwen Image 2.1 carrega por padrão o [assistente v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3), congelado durante o treino e desativado na validação. Use `disable_assistant_lora: true` para desativá-lo, ou `assistant_lora_path` para escolher outro adaptador. As versões anteriores mantêm seu comportamento. Ao treinar um novo assistente, mantenha `disable_assistant_lora: true`, como nos exemplos correspondentes.
 
 Use este como único método de destilação; não há suporte para combiná-lo com outros destiladores.
 

@@ -18,7 +18,7 @@ pip install 'simpletuner[cuda]'
 
 ## VRAM に合うプリセットを選ぶ
 
-標準例は[補助アダプター v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2)、合成データ正則化、REPA、自動フローシフトを組み合わせます。デフォルトの `qwen_image.peft-lora` は 48 GB と同じ 512px + 1024px の設定です。24/32 GB は検証も含めて 512px のみです。
+標準例は[補助アダプター v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3)、合成データ正則化、REPA、自動フローシフトを組み合わせます。デフォルトの `qwen_image.peft-lora` は 48 GB と同じ 512px + 1024px の設定です。24/32 GB は検証も含めて 512px のみです。
 
 | VRAM 予算 | 例 | 基準解像度 | 更新数 | 勾配チェックポイント間隔 |
 | --- | --- | --- | --- | --- |
@@ -55,13 +55,13 @@ Domokun バックエンドを対象の概念または写真データに置き換
 
 ## 学習用アシスタントを選ぶ
 
-main と標準例は現在 **v2** を使います。学習中は固定して強度 1、検証では無効です。正則化バッチの親モデル目標は、学習 LoRA とアシスタントを両方無効にした**素のベースモデル予測**です。
+main と標準例は現在 **v3** を使います。学習中は固定して強度 1、検証では無効です。正則化バッチの親モデル目標は、学習 LoRA とアシスタントを両方無効にした**素のベースモデル予測**です。
 
-[アシスタント v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3) は 512/1024/1536/2048 で 30k 更新した rank-64 の別公開アダプターです。明示的に使う場合は下記の `assistant_lora_path` を指定します。プリセットのメモリ確認は v2 で行ったため、v3 へ変更後は VRAM の余裕を再確認してください。
+[アシスタント v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3) が既定の rank-64 アダプターで、512/1024/1536/2048 で 30k 更新学習しています。プリセットのメモリ確認は v2 で行ったため、v3 使用時は VRAM の余裕を確認してください。以前の実行を再現するには、次の設定で[アシスタント v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2) を明示的に選択します。
 
 ```json
 {
-  "assistant_lora_path": "SimpleTuner/Qwen-Image-2.1-training-assistant-v3",
+  "assistant_lora_path": "SimpleTuner/Qwen-Image-2.1-training-assistant-v2",
   "assistant_lora_strength": 1.0,
   "assistant_lora_inference_strength": 0.0
 }
@@ -217,7 +217,7 @@ simpletuner train example=qwen_image-2.1-anyflow-stage3.peft-lora
 
 動作確認には 8 更新・教師 2 ステップを使い、画像評価前に教師 40 ステップへ戻します。100、250、500、1,000 更新で、同じプロンプトとシードのベース画像と比較してください。実用性は別の概念学習でも検証が必要です。
 
-Qwen Image 2.1 の LoRA 学習では、[学習補助アダプター v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2) を既定で読み込みます。学習中は固定し、検証時は無効にします。無効化には `disable_assistant_lora: true`、別のアダプターには `assistant_lora_path` を指定します。旧フレーバーの既定値は変わりません。新しい補助アダプターを学習する際は、専用の例と同様に `disable_assistant_lora: true` を維持してください。
+Qwen Image 2.1 の LoRA 学習では、[学習補助アダプター v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3) を既定で読み込みます。学習中は固定し、検証時は無効にします。無効化には `disable_assistant_lora: true`、別のアダプターには `assistant_lora_path` を指定します。旧フレーバーの既定値は変わりません。新しい補助アダプターを学習する際は、専用の例と同様に `disable_assistant_lora: true` を維持してください。
 
 蒸留方式はこの方法のみを指定してください。他の蒸留器との併用は対応しません。
 

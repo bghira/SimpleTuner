@@ -18,7 +18,7 @@ pip install 'simpletuner[cuda]'
 
 ## 选择显存预设
 
-标准示例结合[辅助适配器 v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2)、合成数据正则化、REPA 和自动流调度偏移。默认的 `qwen_image.peft-lora` 与 48 GB 预设一样使用 512px + 1024px。24/32 GB 预设仅使用 512px，验证也相同。
+标准示例结合[辅助适配器 v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3)、合成数据正则化、REPA 和自动流调度偏移。默认的 `qwen_image.peft-lora` 与 48 GB 预设一样使用 512px + 1024px。24/32 GB 预设仅使用 512px，验证也相同。
 
 | 显存预算 | 示例 | 基础分辨率 | 更新次数 | 梯度检查点间隔 |
 | --- | --- | --- | --- | --- |
@@ -55,13 +55,13 @@ L40S 显存检查使用每个后端 4 张图像，运行 16 次更新并完成�
 
 ## 选择训练辅助适配器
 
-main 和内置示例目前使用 **v2**。训练时将其冻结并使用强度 1，验证时禁用。正则化批次的父模型目标是**裸基础模型预测**，关闭训练 LoRA 和辅助适配器。
+main 和内置示例目前使用 **v3**。训练时将其冻结并使用强度 1，验证时禁用。正则化批次的父模型目标是**裸基础模型预测**，关闭训练 LoRA 和辅助适配器。
 
-[辅助适配器 v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3) 是独立发布的 rank-64 适配器，在 512/1024/1536/2048 分辨率上训练了 30k 更新。按下方配置修改 `assistant_lora_path` 可显式选择它。预设显存测试使用 v2；切换 v3 后应重新检查显存余量。
+[辅助适配器 v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3) 是默认的 rank-64 适配器，在 512/1024/1536/2048 分辨率上训练了 30k 更新。预设显存测试使用 v2；使用 v3 时请检查显存余量。要复现旧训练，可使用以下配置显式选择[辅助适配器 v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2)：
 
 ```json
 {
-  "assistant_lora_path": "SimpleTuner/Qwen-Image-2.1-training-assistant-v3",
+  "assistant_lora_path": "SimpleTuner/Qwen-Image-2.1-training-assistant-v2",
   "assistant_lora_strength": 1.0,
   "assistant_lora_inference_strength": 0.0
 }
@@ -217,7 +217,7 @@ simpletuner train example=qwen_image-2.1-anyflow-stage3.peft-lora
 
 流程测试可用 8 次更新、2 个教师步；评估图像前恢复 40 步。在 100、250、500 和 1,000 次更新时评估，并以相同提示词和种子比较适配器与基础模型。辅助适配器的实际价值仍需另一次概念训练验证。
 
-Qwen Image 2.1 LoRA 训练默认加载 [训练辅助适配器 v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2)，训练时冻结，验证时禁用。设置 `disable_assistant_lora: true` 可关闭；设置 `assistant_lora_path` 可替换适配器。旧版本不使用此默认值。训练新的辅助适配器时，请像相关示例一样保留 `disable_assistant_lora: true`。
+Qwen Image 2.1 LoRA 训练默认加载 [训练辅助适配器 v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3)，训练时冻结，验证时禁用。设置 `disable_assistant_lora: true` 可关闭；设置 `assistant_lora_path` 可替换适配器。旧版本不使用此默认值。训练新的辅助适配器时，请像相关示例一样保留 `disable_assistant_lora: true`。
 
 请将此方法作为唯一蒸馏方法；不支持与其他蒸馏器组合。
 

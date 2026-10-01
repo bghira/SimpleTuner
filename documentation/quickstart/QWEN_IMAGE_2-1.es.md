@@ -18,7 +18,7 @@ pip install 'simpletuner[cuda]'
 
 ## Elige un preset de VRAM
 
-Los ejemplos combinan [asistente v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2), regularización sintética, REPA y desplazamiento automático del flujo. El ejemplo predeterminado `qwen_image.peft-lora` usa la misma receta 512px + 1024px del preset de 48 GB. Los de 24/32 GB solo usan 512px, incluida la validación.
+Los ejemplos combinan [asistente v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3), regularización sintética, REPA y desplazamiento automático del flujo. El ejemplo predeterminado `qwen_image.peft-lora` usa la misma receta 512px + 1024px del preset de 48 GB. Los de 24/32 GB solo usan 512px, incluida la validación.
 
 | VRAM | Ejemplo | Resoluciones base | Actualizaciones | Intervalo de checkpointing de gradientes |
 | --- | --- | --- | --- | --- |
@@ -55,13 +55,13 @@ En la receta combinada, conserva los backends sintéticos con `is_regularisation
 
 ## Elige el asistente de entrenamiento
 
-Main y los ejemplos usan actualmente **asistente v2**. Permanece congelado con intensidad 1 durante el entrenamiento y desactivado en validación. El objetivo padre de los lotes de regularización es la **predicción de la base sin adaptadores**, con LoRA entrenable y asistente desactivados.
+Main y los ejemplos usan actualmente **asistente v3**. Permanece congelado con intensidad 1 durante el entrenamiento y desactivado en validación. El objetivo padre de los lotes de regularización es la **predicción de la base sin adaptadores**, con LoRA entrenable y asistente desactivados.
 
-El [asistente v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3) es un adaptador rank-64 publicado por separado, entrenado durante 30k actualizaciones a 512/1024/1536/2048. Para seleccionarlo, cambia `assistant_lora_path` como abajo. Las mediciones de los presets usaron v2; comprueba de nuevo el margen de VRAM al cambiar a v3.
+El [asistente v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3) es el adaptador rank-64 predeterminado, entrenado durante 30k actualizaciones a 512/1024/1536/2048. Las mediciones de memoria de los presets usaron v2; comprueba la VRAM disponible al usar v3. Para reproducir ejecuciones anteriores, selecciona explícitamente el [asistente v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2) con esta configuración:
 
 ```json
 {
-  "assistant_lora_path": "SimpleTuner/Qwen-Image-2.1-training-assistant-v3",
+  "assistant_lora_path": "SimpleTuner/Qwen-Image-2.1-training-assistant-v2",
   "assistant_lora_strength": 1.0,
   "assistant_lora_inference_strength": 0.0
 }
@@ -217,7 +217,7 @@ Selecciona `distillation_method: assistant_lora`. El backend precalcula los embe
 
 Para comprobar el funcionamiento, usa 8 actualizaciones y 2 pasos del profesor; vuelve a 40 antes de evaluar imágenes. Revisa a las 100, 250, 500 y 1.000 actualizaciones con los mismos prompts y semillas del modelo base. La utilidad del auxiliar requiere otra prueba de entrenamiento de conceptos.
 
-El entrenamiento LoRA de Qwen Image 2.1 carga por defecto el [asistente v2](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v2), congelado durante el entrenamiento y desactivado durante la validación. Usa `disable_assistant_lora: true` para desactivarlo, o `assistant_lora_path` para elegir otro adaptador. Las versiones anteriores conservan su comportamiento. Al entrenar un nuevo asistente, mantén `disable_assistant_lora: true`, como en los ejemplos correspondientes.
+El entrenamiento LoRA de Qwen Image 2.1 carga por defecto el [asistente v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3), congelado durante el entrenamiento y desactivado durante la validación. Usa `disable_assistant_lora: true` para desactivarlo, o `assistant_lora_path` para elegir otro adaptador. Las versiones anteriores conservan su comportamiento. Al entrenar un nuevo asistente, mantén `disable_assistant_lora: true`, como en los ejemplos correspondientes.
 
 Usa este como único método de destilación; no se admite combinarlo con otros destiladores.
 

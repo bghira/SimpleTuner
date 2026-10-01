@@ -73,7 +73,7 @@
     "disable_assistant_lora": false,
     "aspect_bucket_alignment": 32,
     "dataloader_prefetch": false,
-    "assistant_lora_path": "SimpleTuner/Qwen-Image-2.1-training-assistant-v2",
+    "assistant_lora_path": "SimpleTuner/Qwen-Image-2.1-training-assistant-v3",
     "flow_schedule_auto_shift": true,
     "flow_schedule_shift": 0,
     "validation_step_interval": 250,
