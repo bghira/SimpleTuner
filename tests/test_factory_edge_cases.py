@@ -17,6 +17,7 @@ import sys
 import tempfile
 import unittest
 from copy import deepcopy
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List
 from unittest.mock import MagicMock, patch
@@ -1735,24 +1736,21 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     apply_padding=expected,
                 )
 
-    def test_main_process_reloads_refreshed_bucket_cache_before_split(self):
+    def test_all_ranks_reload_bucket_geometry_before_split(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.multiaspect.image import MultiaspectImage
+        from simpletuner.helpers.training.state_tracker import StateTracker
 
-        self.accelerator.num_processes = 8
-        self.accelerator.is_main_process = True
-        self.accelerator.is_local_main_process = True
+        self.accelerator.num_processes = 2
         self.args.skip_file_discovery = ""
         self.args.eval_dataset_id = None
         self.args.max_train_steps = 100
         self.args.allow_dataset_oversubscription = False
-        metadata_backend = MagicMock()
-        metadata_backend.aspect_ratio_bucket_indices = {"1.0": [f"sample-{index}" for index in range(8)]}
-        init_backend = {
-            "id": "train",
-            "config": {},
-            "dataset_type": "image",
-            "metadata_backend": metadata_backend,
-        }
+        self.args.output_dir = self.temp_dir
+        self.args.aspect_bucket_alignment = 16
+        self.args.aspect_bucket_rounding = 2
+        resolution = 2.359296
+        expected_size = (1264, 1872)
         factory = FactoryRegistry(
             args=self.args,
             accelerator=self.accelerator,
@@ -1762,13 +1760,41 @@ class TestFactoryEdgeCases(unittest.TestCase):
         )
         factory._handle_config_versioning = MagicMock()
 
-        factory._handle_bucket_operations(
-            backend={"id": "train"},
-            init_backend=init_backend,
-            conditioning_type=None,
-        )
+        def finish_discovery():
+            Path(self.temp_dir, f"aspect_resolution_map-{resolution}.json").write_text(
+                json.dumps({"0.68": expected_size})
+            )
 
-        metadata_backend.reload_cache.assert_called_once_with()
+        def check_geometry(**kwargs):
+            target_size, _, aspect = MultiaspectImage.calculate_new_size_by_pixel_area(
+                0.68, resolution, (680, 1000)
+            )
+            self.assertEqual(aspect, 0.68)
+            self.assertEqual(target_size, expected_size)
+
+        self.accelerator.wait_for_everyone.side_effect = finish_discovery
+        for is_main_process in (True, False):
+            with self.subTest(is_main_process=is_main_process):
+                self.accelerator.is_main_process = is_main_process
+                self.accelerator.is_local_main_process = is_main_process
+                metadata_backend = MagicMock()
+                metadata_backend.split_buckets_between_processes.side_effect = check_geometry
+                init_backend = {
+                    "id": "train",
+                    "config": {"resolution": resolution},
+                    "dataset_type": "image",
+                    "metadata_backend": metadata_backend,
+                }
+                with patch.object(StateTracker, "args", self.args), patch.object(
+                    StateTracker, "aspect_resolution_map", {resolution: {"0.68": (1264, 1856)}}
+                ):
+                    factory._handle_bucket_operations(
+                        backend={"id": "train"},
+                        init_backend=init_backend,
+                        conditioning_type=None,
+                    )
+                metadata_backend.reload_cache.assert_called_once_with()
+                metadata_backend.split_buckets_between_processes.assert_called_once()
 
     @patch("simpletuner.helpers.data_backend.factory.DatasetDuplicator.copy_metadata")
     @patch("simpletuner.helpers.data_backend.factory.StateTracker")
