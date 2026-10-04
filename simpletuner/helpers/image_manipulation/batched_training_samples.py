@@ -175,9 +175,7 @@ class BatchedTrainingSamples:
                 if not batch_images:
                     continue
 
-                # check resize requirements
-                image_resize_indices: List[int] = []
-                image_resize_targets: List[Tuple[int, int]] = []
+                # TrainingSample applies image resize/crop geometry from the original pixels.
                 video_resize_indices: List[int] = []
                 video_resize_targets: List[Tuple[int, int]] = []
 
@@ -222,33 +220,12 @@ class BatchedTrainingSamples:
                             if current_size != target_size:
                                 video_resize_indices.append(i)
                                 video_resize_targets.append(target_size)
-                        elif arr.ndim == 3:  # (H, W, C)
-                            current_height, current_width = arr.shape[0], arr.shape[1]
-                            current_size = (current_width, current_height)
-                            if current_size != target_size:
-                                image_resize_indices.append(i)
-                                image_resize_targets.append(target_size)
-                        else:
+                        elif arr.ndim != 3:
                             logger.warning(f"Skipping resize for {filepath}: unexpected array shape {arr.shape}")
                     except Exception as e:
                         logger.error(f"Error checking resize for {filepath}: {e}", exc_info=True)
 
                         raise e
-
-                if len(image_resize_indices) > 1:
-                    try:
-                        resize_images = [batch_images[i] for i in image_resize_indices]
-
-                        resized_batch = self.batch_resize_images(resize_images, tuple(image_resize_targets))
-
-                        # replace with resized versions
-                        for idx, resized_img in zip(image_resize_indices, resized_batch):
-                            batch_images[idx] = resized_img
-
-                        if self.debug_enabled:
-                            logger.debug(f"Batch resized {len(resized_batch)} images for aspect bucket {aspect_bucket}")
-                    except Exception as e:
-                        logger.debug(f"Batch resize failed, falling back to individual processing: {e}")
 
                 if video_resize_indices:
                     try:

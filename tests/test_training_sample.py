@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 from PIL import Image
 
+from simpletuner.helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.utils.duplicator import DatasetDuplicator
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -67,6 +68,44 @@ class TestTrainingSample(unittest.TestCase):
         for name, value in self._state_tracker_original_attrs.items():
             setattr(StateTracker, name, value)
         StateTracker.set_args(self._state_tracker_original_args)
+
+    def test_batched_images_match_original_sample_preparation(self):
+        pixels = np.random.default_rng(42).integers(0, 256, (150, 100, 3), dtype=np.uint8)
+        metadata = {
+            "original_size": (100, 150),
+            "target_size": (64, 80),
+            "intermediary_size": (64, 96),
+            "crop_coordinates": (8, 0),
+            "aspect_ratio": 0.8,
+        }
+        backend = MagicMock()
+        backend.get_metadata_by_filepath.side_effect = lambda _: dict(metadata)
+        for crop_style in ("center", "random"):
+            self.default_config["crop_style"] = crop_style
+            for count in (1, 2):
+                for as_array in (False, True):
+                    with self.subTest(crop_style=crop_style, count=count, as_array=as_array):
+                        grouped = {
+                            "0.8": [
+                                (f"{i}.png", pixels.copy() if as_array else Image.fromarray(pixels), "0.8")
+                                for i in range(count)
+                            ]
+                        }
+                        results = BatchedTrainingSamples().process_aspect_grouped_images(grouped, backend)
+                        self.assertEqual(len(results), count)
+                        for filepath, array, result_metadata in results:
+                            # Fix the random offset so both paths select the same crop.
+                            with patch("random.randint", return_value=3):
+                                expected = TrainingSample(
+                                    Image.fromarray(pixels), self.data_backend_id, dict(metadata), image_path=filepath
+                                ).prepare()
+                                actual = TrainingSample(
+                                    Image.fromarray(array), self.data_backend_id, result_metadata, image_path=filepath
+                                ).prepare()
+                            np.testing.assert_array_equal(np.asarray(actual.image), np.asarray(expected.image))
+                            self.assertEqual(actual.crop_coordinates, expected.crop_coordinates)
+                            self.assertEqual(actual.aspect_ratio, expected.aspect_ratio)
+                            self.assertEqual(result_metadata, metadata)
 
     def test_image_initialization(self):
         """Test that the image is correctly initialized and converted."""
