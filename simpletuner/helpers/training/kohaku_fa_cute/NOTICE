@@ -1,0 +1,56 @@
+SimpleTuner CuTe attention
+
+The local kernels use warp MMA on Ada/RTX Blackwell and WGMMA on eligible Hopper
+tiles. Hopper uses TMA loads with double buffering where alignment, strides and
+tile size permit. They keep unscaled row maxima separate from logarithmic
+normalization and apply the attention scale after FP32 gradient accumulation.
+Each gradient tile has one
+owner; grouped-head gradients accumulate in FP32 without atomics. Boolean mask
+tiles are classified on each invocation, including CUDA graph replay, to skip
+empty tiles. Wide dK/dV tiles distribute columns across warp groups.
+
+For all supported head dimensions on H100/L40S, backward retains the attention output and
+uses a tensor-core output/dO dot product as a centering base. It recomputes the
+FP32 residual from probabilities and dP, keeps that residual separate from the
+base, and corrects dQ after accumulating centered and mean products. The rounded
+output is not used as the final softmax correction. RTX Blackwell retains the
+two-pass query-gradient calculation. On Hopper, the 64/128-wide query kernel
+computes its centering base internally. Output and gradient storage preserve
+projection order to avoid layout copies.
+Hopper products within one warp group consume register-resident weights to avoid
+shared-memory staging and synchronization. Backward dispatches its constituent
+kernels through one compiled host entry point.
+Hopper key/value gradients with 128-wide tiles asynchronously load row statistics
+into shared memory while computing QK and dP.
+Hopper backward tiles with 128-wide operands overlap FP32 probability calculation
+with the dP matrix product.
+Query gradients retain rounded half-precision weights for tensor-core products,
+with FP32 row sums consuming those same rounded values.
+Output and gradient epilogues reuse shared memory for coalesced vector stores.
+Masked forward classifies tiles and computes attention through one host entry;
+TMA stages synchronize the CTA even when a mask skips a tile.
+Long dense Hopper forward tiles with 128-wide heads use three compute warp groups
+sharing K/V stages with a dedicated TMA load warp group. Native autograd and compiler-safe custom operators share
+allocation and TVM FFI dispatch. Native dispatch registers the underlying FFI
+function to avoid reentering the Python keyword wrapper on warm launches.
+Compiled host entries are cached by device and
+tensor metadata, bounded to 128 configurations, and released before Python shutdown.
+
+row_view and operand_a adapt accumulator-layout transforms from NVIDIA CUTLASS:
+examples/python/CuTeDSL/cute/ampere/kernel/attention/flash_attention_v2.py
+WGMMA and TMA API usage follows the BSD-licensed Hopper examples:
+examples/python/CuTeDSL/cute/hopper/kernel/dense_gemm/dense_gemm.py
+hopper_operand adapts the register-operand layout conversion from:
+examples/python/CuTeDSL/cute/hopper/kernel/attention/fmha.py
+https://github.com/NVIDIA/cutlass
+Reference revision: 0b55a2f691d69981583568fd9eb69687b1f0de8a
+Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
+BSD-3-Clause; the full license is included in LICENSE.
+
+Packed Float32-to-BFloat16/Float16 conversion adapts the cvt_f16x2_f32 and
+cvt_f16 helpers from FlashAttention:
+flash_attn/cute/utils.py
+https://github.com/Dao-AILab/flash-attention
+Reference revision: 85d6dfe3573708b5632915950cd8b069b924ba52
+Copyright (c) 2025, Tri Dao.
+BSD-3-Clause; the full license and contributor list are included in LICENSE.

@@ -1,0 +1,100 @@
+[
+ {
+  "key": [
+   "sm103",
+   "backward",
+   192,
+   2,
+   false,
+   "long"
+  ],
+  "config": {
+   "dc": 64,
+   "nch": 3,
+   "alias": true,
+   "kv_bufs": 1,
+   "q_slots": 3,
+   "do_slots": 7,
+   "p_regs": 144,
+   "ds_regs": 144,
+   "small_regs": 32,
+   "reduce_cols": 32,
+   "reduce_stages": 1,
+   "stream": true,
+   "nsl": 2,
+   "nw": 2,
+   "k_res": true
+  }
+ },
+ {
+  "key": [
+   "sm103",
+   "backward",
+   192,
+   2,
+   true,
+   "long"
+  ],
+  "config": {
+   "dc": 64,
+   "nch": 3,
+   "alias": true,
+   "kv_bufs": 1,
+   "q_slots": 3,
+   "do_slots": 7,
+   "p_regs": 144,
+   "ds_regs": 144,
+   "small_regs": 32,
+   "reduce_cols": 32,
+   "reduce_stages": 1,
+   "stream": true,
+   "nsl": 2,
+   "nw": 2,
+   "k_res": true
+  }
+ },
+ {
+  "key": [
+   "sm103",
+   "forward",
+   192,
+   2,
+   false,
+   "long"
+  ],
+  "config": {
+   "dc": 64,
+   "nch": 3,
+   "block_n": 128,
+   "s_slots": 2,
+   "q_bufs": 1,
+   "kv_slots": 3,
+   "kv_group": 3,
+   "halves": 1,
+   "vsplit": 1,
+   "out_bufs": 1
+  }
+ },
+ {
+  "key": [
+   "sm103",
+   "forward",
+   192,
+   2,
+   true,
+   "long"
+  ],
+  "config": {
+   "dc": 64,
+   "nch": 3,
+   "block_n": 128,
+   "s_slots": 2,
+   "q_bufs": 1,
+   "kv_slots": 8,
+   "kv_group": 1,
+   "halves": 1,
+   "vsplit": 1,
+   "out_bufs": 2
+  }
+ }
+]
