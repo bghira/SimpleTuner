@@ -9,9 +9,36 @@ from safetensors import safe_open
 from safetensors.torch import save_file
 
 
+def _remove_unused_qkv_projections(weights: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    converted = dict(weights)
+    prefixes = {key.rsplit(".", 1)[0] for key in weights if key.startswith("lycoris_") and "_attn_to_qkv." in key}
+    for prefix in prefixes:
+        for projection in "qkv":
+            target = prefix.removesuffix("qkv") + projection
+            parts = {key.removeprefix(target + "."): value for key, value in weights.items() if key.startswith(target + ".")}
+            if not parts:
+                continue
+            if not {"lokr_w1", "lokr_w2"} <= parts.keys() or parts.keys() - {"lokr_w1", "lokr_w2", "alpha", "dora_scale"}:
+                raise ValueError(f"{target} must be a full-matrix LoKR projection.")
+            w1, w2 = parts["lokr_w1"], parts["lokr_w2"]
+            if w1.ndim != 2 or w2.ndim != 2:
+                raise ValueError(f"{target} must contain linear LoKR factors.")
+            if not (
+                torch.isfinite(w1).all()
+                and torch.isfinite(w2).all()
+                and (torch.count_nonzero(w1) == 0 or torch.count_nonzero(w2) == 0)
+            ):
+                raise ValueError(f"{target} already contains nonzero separate projection weights.")
+            # Fused attention never calls these zero-delta modules, including their DoRA scales.
+            for suffix in parts:
+                del converted[f"{target}.{suffix}"]
+    return converted
+
+
 def split_fused_lokr(
     weights: dict[str, torch.Tensor], config: dict, base_weights: dict[str, torch.Tensor] | None = None
 ) -> dict[str, torch.Tensor]:
+    weights = _remove_unused_qkv_projections(weights)
     converted = dict(weights)
     prefixes = {key.rsplit(".", 1)[0] for key in weights if key.startswith("lycoris_") and "_attn_to_qkv." in key}
     if not prefixes:
@@ -63,9 +90,6 @@ def split_fused_lokr(
         offset = 0
         for projection, size in zip(("q", "k", "v"), sizes):
             target = prefix.removesuffix("qkv") + projection
-            for suffix in ("lokr_w1", "lokr_w2", "alpha", "dora_scale"):
-                if f"{target}.{suffix}" in converted:
-                    raise ValueError(f"{target} already contains separate projection weights.")
             converted[f"{target}.lokr_w1"] = torch.ones((1, 1), dtype=torch.float32)
             converted[f"{target}.lokr_w2"] = delta[offset : offset + size].clone()
             offset += size
@@ -90,6 +114,7 @@ def main():
     with safe_open(args.input, framework="pt", device="cpu") as checkpoint:
         weights = {key: checkpoint.get_tensor(key) for key in checkpoint.keys()}
         metadata = checkpoint.metadata()
+    weights = _remove_unused_qkv_projections(weights)
     base_weights = None
     if any(key.endswith(".dora_scale") for key in weights):
         if not args.base_model:

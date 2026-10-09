@@ -178,7 +178,7 @@ Krea2 の validation は重いので、調整中は prompt を少なくしてく
 
 ### 融合フル行列 LoKR の ComfyUI エクスポート
 
-融合 QKV 投影で学習したフル行列の LyCORIS LoKR は、次のコマンドで ComfyUI 用の独立した投影に変換できます。ベースモデルの transformer の `config.json` を指定してください。出力方向に正規化した DoRA では、Krea2 の元の `raw.safetensors` も `--base-model` に指定してください。融合投影と独立した投影の両方について、元の DoRA マージ後の差分を展開し、ComfyUI の異なる正規化を回避します。他のアダプターテンソルは保持されます。DoRA を使用しない場合は `--base-model` を省略できます。融合差分を FP32 行列として展開し、Kronecker 因子の境界をまたぐ Q/K/V スライスも正確に保持するため、出力ファイルは元のチェックポイントより大きくなる場合があります。分解した LoKR 因子と入力方向に正規化した DoRA は非対応です。学習と再開には元のチェックポイントを使用してください。
+融合 QKV 投影で学習したフル行列の LyCORIS LoKR は、次のコマンドで ComfyUI 用の独立した投影に変換できます。ベースモデルの transformer の `config.json` を指定してください。出力方向に正規化した DoRA では、Krea2 の元の `raw.safetensors` も `--base-model` に指定してください。融合投影と独立した投影の両方について、元の DoRA マージ後の差分を展開し、ComfyUI の異なる正規化を回避します。融合アダプターと併存する未使用のゼロ差分 Q/K/V エントリーは、DoRA スケールも含めて削除します。差分がゼロでない競合アダプターはエラーにします。他のアダプターテンソルは保持されます。DoRA を使用しない場合は `--base-model` を省略できます。融合差分を FP32 行列として展開し、Kronecker 因子の境界をまたぐ Q/K/V スライスも正確に保持するため、出力ファイルは元のチェックポイントより大きくなる場合があります。分解した LoKR 因子と入力方向に正規化した DoRA は非対応です。学習と再開には元のチェックポイントを使用してください。
 
 ```bash
 .venv/bin/python scripts/convert_krea2_lokr_to_comfyui.py \

@@ -68,6 +68,55 @@ class Krea2LoKRExportTests(unittest.TestCase):
                     )
                     torch.testing.assert_close(actual_delta, delta, rtol=0, atol=0)
 
+    def test_unused_separate_projections_do_not_change_fused_export(self):
+        for prefix, rows in (
+            ("lycoris_transformer_blocks_0_attn_to_qkv", 48),
+            ("lycoris_text_fusion_layerwise_blocks_0_attn_to_qkv", 96),
+            ("lycoris_text_fusion_refiner_blocks_0_attn_to_qkv", 96),
+        ):
+            for with_dora in (False, True):
+                for zero_factor in ("lokr_w1", "lokr_w2"):
+                    with self.subTest(prefix=prefix, with_dora=with_dora, zero_factor=zero_factor):
+                        fused = {f"{prefix}.lokr_w1": torch.randn(16, 2), f"{prefix}.lokr_w2": torch.randn(rows // 16, 16)}
+                        if with_dora:
+                            fused[f"{prefix}.dora_scale"] = torch.rand(rows, 1)
+                        base = {prefix: torch.randn(rows, 32)}
+                        weights = dict(fused)
+                        for projection, size in zip("qkv", (32, (rows - 32) // 2, (rows - 32) // 2)):
+                            target = prefix.removesuffix("qkv") + projection
+                            weights.update(
+                                {
+                                    f"{target}.lokr_w1": torch.randn(2, 2),
+                                    f"{target}.lokr_w2": torch.randn(size // 2, 16),
+                                    f"{target}.alpha": torch.tensor(10000.0),
+                                }
+                            )
+                            weights[f"{target}.{zero_factor}"].zero_()
+                            if with_dora:
+                                weights[f"{target}.dora_scale"] = torch.rand(size, 1)
+                        originals = {key: value.clone() for key, value in weights.items()}
+                        actual = split_fused_lokr(weights, self.config, base)
+                        expected = split_fused_lokr(fused, self.config, base)
+                        self.assertEqual(actual.keys(), expected.keys())
+                        for key in expected:
+                            torch.testing.assert_close(actual[key], expected[key], rtol=0, atol=0)
+                        self.assertEqual(weights.keys(), originals.keys())
+                        for key in weights:
+                            torch.testing.assert_close(weights[key], originals[key], rtol=0, atol=0)
+
+    def test_rejects_nonzero_and_unsupported_separate_projections(self):
+        prefix = "lycoris_text_fusion_layerwise_blocks_0_attn_to_qkv"
+        fused = {f"{prefix}.lokr_w1": torch.ones(16, 2), f"{prefix}.lokr_w2": torch.ones(6, 16)}
+        for projection in "qkv":
+            target = prefix.removesuffix("qkv") + projection
+            separate = {f"{target}.lokr_w1": torch.ones(2, 2), f"{target}.lokr_w2": torch.ones(16, 16)}
+            with self.subTest(projection=projection), self.assertRaisesRegex(ValueError, "nonzero separate projection"):
+                split_fused_lokr(fused | separate, self.config)
+            separate[f"{target}.lokr_w2"].zero_()
+            separate[f"{target}.lokr_w1_a"] = torch.ones(2, 2)
+            with self.subTest(projection=projection), self.assertRaisesRegex(ValueError, "full-matrix LoKR"):
+                split_fused_lokr(fused | separate, self.config)
+
     def test_rejects_config_mismatch_decomposed_factors_and_input_normalized_dora(self):
         prefix = "lycoris_transformer_blocks_0_attn_to_qkv"
         valid = {f"{prefix}.lokr_w1": torch.ones(16, 2), f"{prefix}.lokr_w2": torch.ones(3, 16)}
@@ -129,6 +178,16 @@ class Krea2LoKRExportTests(unittest.TestCase):
                 f"{other}.lokr_w2": torch.randn(16, 16),
                 f"{other}.dora_scale": torch.rand(32, 1),
             }
+            for projection, rows in zip("qkv", (32, 8, 8)):
+                target_prefix = prefix.removesuffix("qkv") + projection
+                weights.update(
+                    {
+                        f"{target_prefix}.lokr_w1": torch.randn(2, 2),
+                        f"{target_prefix}.lokr_w2": torch.zeros(rows // 2, 16),
+                        f"{target_prefix}.dora_scale": torch.rand(rows, 1),
+                        f"{target_prefix}.alpha": torch.tensor(10000.0),
+                    }
+                )
             save_file(weights, source)
             save_file(
                 {

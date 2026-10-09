@@ -178,7 +178,7 @@ Krea2 验证成本较高，调参时先使用少量 prompts。单个 prompt 可�
 
 ### 为 ComfyUI 导出融合全矩阵 LoKR
 
-对于使用融合 QKV 投影训练的全矩阵 LyCORIS LoKR，可使用以下命令为 ComfyUI 导出独立投影。请使用基础模型 transformer 的 `config.json`。对于按输出归一化的 DoRA，还需通过 `--base-model` 提供 Krea2 原始的 `raw.safetensors`。转换器为融合和独立投影生成原生 DoRA 合并后的增量，避免 ComfyUI 不同的归一化方式造成差异。其他适配器张量保持不变。不使用 DoRA 时可省略 `--base-model`。它将融合增量展开为 FP32 矩阵，确保 Q/K/V 切片跨越 Kronecker 因子边界时仍精确；导出文件可能比原始检查点大得多。不支持分解的 LoKR 因子和按输入归一化的 DoRA。训练和恢复训练时请保留并使用原始检查点。
+对于使用融合 QKV 投影训练的全矩阵 LyCORIS LoKR，可使用以下命令为 ComfyUI 导出独立投影。请使用基础模型 transformer 的 `config.json`。对于按输出归一化的 DoRA，还需通过 `--base-model` 提供 Krea2 原始的 `raw.safetensors`。转换器为融合和独立投影生成原生 DoRA 合并后的增量，避免 ComfyUI 不同的归一化方式造成差异。融合适配器旁未使用且增量为零的独立 Q/K/V 条目及其 DoRA 缩放会被移除；增量非零的冲突适配器会被拒绝。其他适配器张量保持不变。不使用 DoRA 时可省略 `--base-model`。它将融合增量展开为 FP32 矩阵，确保 Q/K/V 切片跨越 Kronecker 因子边界时仍精确；导出文件可能比原始检查点大得多。不支持分解的 LoKR 因子和按输入归一化的 DoRA。训练和恢复训练时请保留并使用原始检查点。
 
 ```bash
 .venv/bin/python scripts/convert_krea2_lokr_to_comfyui.py \
