@@ -358,6 +358,9 @@ class Trainer:
             self.model.check_user_config()
             self.model.validate_mixflow_config()
             StateTracker.set_model(self.model)
+            fsdp_plugin = getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None)
+            if getattr(self.config, "fsdp_enable", False) and fsdp_plugin is not None:
+                self._configure_fsdp_model_metadata(fsdp_plugin)
             if getattr(self.config, "optimizer", None) == "muon":
                 if not getattr(self.model, "SUPPORTS_MUON_CLIP", False):
                     raise ValueError(
@@ -1421,6 +1424,24 @@ class Trainer:
         )
         plugin = FullyShardedDataParallelPlugin(**plugin_kwargs)
 
+        self._fsdp_configured_transformer_cls = getattr(plugin, "transformer_cls_names_to_wrap", None)
+        self._configure_fsdp_model_metadata(plugin)
+
+        if resolved_state_dict_display:
+            setattr(plugin, "_state_dict_type_enum", plugin.state_dict_type)
+            setattr(plugin, "state_dict_type_display", resolved_state_dict_display)
+            plugin.state_dict_type = resolved_state_dict_display
+
+        if auto_wrap_policy and callable(getattr(plugin, "auto_wrap_policy", None)):
+            setattr(plugin, "_auto_wrap_policy_callable", plugin.auto_wrap_policy)
+            setattr(plugin, "auto_wrap_policy_display", auto_wrap_policy)
+            plugin.auto_wrap_policy = auto_wrap_policy
+
+        return plugin
+
+    def _configure_fsdp_model_metadata(self, plugin):
+        """Refresh wrapping hints after model selection without rebuilding the execution plugin."""
+
         def _normalize_candidate_names(raw_names: Any) -> Optional[List[str]]:
             if not raw_names:
                 return None
@@ -1437,20 +1458,24 @@ class Trainer:
                     normalized.append(candidate)
             return normalized or None
 
-        original_plugin_names = _normalize_candidate_names(getattr(plugin, "transformer_cls_names_to_wrap", None))
+        original_plugin_names = _normalize_candidate_names(self._fsdp_configured_transformer_cls)
         plugin_names = original_plugin_names
-        plugin_names_origin = "config" if parsed_transformer_cls else None
+        plugin_names_origin = "config" if original_plugin_names else None
 
         model_instance = getattr(self, "model", None)
         model_family = getattr(self.config, "model_family", None)
         model_family_cls = ModelRegistry.get(model_family) if model_family else None
+
+        metadata_source = model_instance if model_instance is not None else model_family_cls
+        selected_model_cls = getattr(metadata_source, "MODEL_CLASS", None)
 
         component = None
         candidate_names: Optional[List[str]] = None
         candidate_source = None
 
         if model_instance is not None:
-            component = model_instance.get_trained_component(unwrap_model=False)
+            if getattr(model_instance, "model", None) is not None or getattr(model_instance, "controlnet", None) is not None:
+                component = model_instance.get_trained_component(unwrap_model=False)
             candidate_names = _normalize_candidate_names(getattr(component, "_no_split_modules", None))
             if candidate_names:
                 candidate_source = "instance"
@@ -1459,10 +1484,10 @@ class Trainer:
                 if candidate_names:
                     candidate_source = "instance"
 
-        if candidate_names is None and model_family_cls is not None:
-            class_level_candidates = _normalize_candidate_names(getattr(model_family_cls, "_no_split_modules", None))
+        if candidate_names is None and metadata_source is not None:
+            class_level_candidates = _normalize_candidate_names(getattr(metadata_source, "_no_split_modules", None))
             if not class_level_candidates:
-                transformer_cls = getattr(model_family_cls, "MODEL_CLASS", None)
+                transformer_cls = selected_model_cls
                 if transformer_cls is not None:
                     class_level_candidates = _normalize_candidate_names(getattr(transformer_cls, "_no_split_modules", None))
                     if class_level_candidates is None:
@@ -1486,7 +1511,7 @@ class Trainer:
                 component,
                 model_instance,
                 model_family_cls,
-                getattr(model_family_cls, "MODEL_CLASS", None) if model_family_cls else None,
+                selected_model_cls,
             ]
             for source in sources:
                 if source is None:
@@ -1534,7 +1559,7 @@ class Trainer:
         if component is not None:
             base_component_name = component.__class__.__name__
         elif model_family_cls is not None:
-            transformer_cls = getattr(model_family_cls, "MODEL_CLASS", None)
+            transformer_cls = selected_model_cls
             if transformer_cls is not None:
                 base_component_name = transformer_cls.__name__
 
@@ -1640,17 +1665,6 @@ class Trainer:
             )
             plugin.cpu_ram_efficient_loading = False
             setattr(self.config, "fsdp_cpu_ram_efficient_loading", False)
-        if resolved_state_dict_display:
-            setattr(plugin, "_state_dict_type_enum", plugin.state_dict_type)
-            setattr(plugin, "state_dict_type_display", resolved_state_dict_display)
-            plugin.state_dict_type = resolved_state_dict_display
-
-        if auto_wrap_policy and callable(getattr(plugin, "auto_wrap_policy", None)):
-            setattr(plugin, "_auto_wrap_policy_callable", plugin.auto_wrap_policy)
-            setattr(plugin, "auto_wrap_policy_display", auto_wrap_policy)
-            plugin.auto_wrap_policy = auto_wrap_policy
-
-        return plugin
 
     @staticmethod
     def _prepare_fsdp_plugin_for_accelerator(fsdp_plugin: FullyShardedDataParallelPlugin) -> FullyShardedDataParallelPlugin:
