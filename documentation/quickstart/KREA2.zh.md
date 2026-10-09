@@ -175,3 +175,14 @@ Krea2 验证成本较高，调参时先使用少量 prompts。单个 prompt 可�
 - 如果 int8 显存更低但更慢，这与我们的 H100 测试一致。
 - 如果参考图像没有影响验证结果，请确认 `krea2_reference_latents=true` 且验证 dataset 使用成对参考数据。
 - 如果很快 overfit，请降低 learning rate、减少 steps 或增加数据集多样性。
+
+### 为 ComfyUI 导出融合全矩阵 LoKR
+
+对于使用融合 QKV 投影训练的全矩阵 LyCORIS LoKR，可使用以下命令为 ComfyUI 导出独立投影。请使用基础模型 transformer 的 `config.json`。转换器保留按输出归一化的 DoRA 缩放值及其他适配器张量。它将融合增量展开为 FP32 矩阵，确保 Q/K/V 切片跨越 Kronecker 因子边界时仍精确；导出文件可能比原始检查点大得多。不支持分解的 LoKR 因子和按输入归一化的 DoRA。训练和恢复训练时请保留并使用原始检查点。
+
+```bash
+.venv/bin/python scripts/convert_krea2_lokr_to_comfyui.py \
+  --input adapter.safetensors \
+  --output adapter-comfyui.safetensors \
+  --transformer-config transformer/config.json
+```

@@ -304,3 +304,14 @@ Confirm that `krea2_reference_latents=true` is enabled and that the validation d
 ### The model overfits quickly
 
 Use fewer steps, lower the learning rate, add more prompts for validation, or increase dataset variety. Krea2 is large enough to memorise small subject datasets quickly.
+
+### ComfyUI export for fused full-matrix LoKR
+
+For a full-matrix LyCORIS LoKR trained with fused QKV projections, export separate projections for ComfyUI with the following command. Use the base model transformer's `config.json`. The converter preserves output-normalized DoRA scales and all unrelated adapter tensors. It materializes fused deltas as FP32 matrices so that Q/K/V slices remain exact even when they cross Kronecker factor boundaries; the export can be substantially larger than the native checkpoint. Decomposed LoKR factors and input-normalized DoRA are not supported. Keep the native checkpoint for training and resume.
+
+```bash
+.venv/bin/python scripts/convert_krea2_lokr_to_comfyui.py \
+  --input adapter.safetensors \
+  --output adapter-comfyui.safetensors \
+  --transformer-config transformer/config.json
+```

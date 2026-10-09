@@ -175,3 +175,14 @@ As medições abaixo foram feitas em uma NVIDIA H100 80GB usando o trainer real 
 - Se int8 usa menos VRAM mas é mais lento, isso corresponde aos nossos testes H100.
 - Se a imagem de referência não afeta a validação, confirme `krea2_reference_latents=true` e dataset pareado.
 - Se overfitar rápido, reduza learning rate, reduza steps ou aumente a variedade do dataset.
+
+### Exportação para ComfyUI de LoKR de matriz completa com QKV fundido
+
+Para um LoKR LyCORIS de matriz completa treinado com projeções QKV fundidas, exporte projeções separadas para o ComfyUI com o comando abaixo. Use o `config.json` do transformer do modelo base. O conversor preserva as escalas DoRA normalizadas pela saída e os demais tensores do adaptador. Ele materializa os deltas fundidos como matrizes FP32 para manter os cortes Q/K/V exatos mesmo quando cruzam os limites dos fatores de Kronecker; a exportação pode ser consideravelmente maior. Fatores LoKR decompostos e DoRA normalizado pela entrada não são suportados. Mantenha o checkpoint nativo para treinamento e retomada.
+
+```bash
+.venv/bin/python scripts/convert_krea2_lokr_to_comfyui.py \
+  --input adapter.safetensors \
+  --output adapter-comfyui.safetensors \
+  --transformer-config transformer/config.json
+```

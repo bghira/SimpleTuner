@@ -175,3 +175,14 @@ Krea2 validation महंगी है, इसलिए tuning के समय
 - यदि int8 कम VRAM इस्तेमाल करता है लेकिन धीमा है, यह हमारे H100 tests से मेल खाता है।
 - यदि reference image validation को प्रभावित नहीं कर रही है, `krea2_reference_latents=true` और paired validation dataset जांचें।
 - यदि model जल्दी overfit करता है, learning rate घटाएं, steps घटाएं, या dataset variety बढ़ाएं।
+
+### फ्यूज़्ड पूर्ण-मैट्रिक्स LoKR का ComfyUI निर्यात
+
+फ्यूज़्ड QKV प्रोजेक्शन के साथ प्रशिक्षित पूर्ण-मैट्रिक्स LyCORIS LoKR को नीचे दिए कमांड से ComfyUI के लिए अलग प्रोजेक्शन में निर्यात करें। बेस मॉडल के transformer की `config.json` का उपयोग करें। कन्वर्टर आउटपुट दिशा में सामान्यीकृत DoRA स्केल और अन्य एडाप्टर टेंसर सुरक्षित रखता है। यह फ्यूज़्ड डेल्टा को FP32 मैट्रिक्स में बनाता है, जिससे Kronecker फ़ैक्टर सीमाओं को पार करने वाले Q/K/V स्लाइस भी सटीक रहते हैं; निर्यात फ़ाइल मूल चेकपॉइंट से काफ़ी बड़ी हो सकती है। विघटित LoKR फ़ैक्टर और इनपुट दिशा में सामान्यीकृत DoRA समर्थित नहीं हैं। प्रशिक्षण और उसे फिर शुरू करने के लिए मूल चेकपॉइंट रखें।
+
+```bash
+.venv/bin/python scripts/convert_krea2_lokr_to_comfyui.py \
+  --input adapter.safetensors \
+  --output adapter-comfyui.safetensors \
+  --transformer-config transformer/config.json
+```
