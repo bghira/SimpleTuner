@@ -3246,6 +3246,10 @@ class FactoryRegistry:
         ):
             info_log(f"(id={init_backend['id']}) Reloading bucket manager cache on subprocesses after refresh.")
             init_backend["metadata_backend"].reload_cache()
+            # Discovery also populates the geometry used when preparing VAE inputs.
+            StateTracker.load_aspect_resolution_map(
+                dataloader_resolution=init_backend["config"]["resolution"],
+            )
 
         if (
             not has_metadata_clone_source
