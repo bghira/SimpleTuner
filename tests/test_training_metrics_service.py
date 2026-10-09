@@ -99,6 +99,21 @@ class TrainingMetricsServiceTests(unittest.TestCase):
         self.assertEqual(result["runs"][0]["model_family"], "anima")
         self.assertTrue(result["runs"][0]["has_report"])
 
+    def test_api_and_report_preserve_sparse_evaluation_points(self):
+        from simpletuner.helpers.training.local_metrics import render_static_report
+
+        records = [{"step": step, "metrics": {"loss": float(step)}} for step in range(100)]
+        for step in (7, 23, 51):
+            records[step]["metrics"]["loss/val/eval"] = step / 100
+        self._write_jsonl(METRICS_FILENAME, records)
+        api_records = self.service.get_run("anima", max_points=10)["records"]
+        report = render_static_report(self.output_dir, max_points=10).read_text(encoding="utf-8")
+        payload = json.loads(
+            report.split('<script id="training-metrics-data" type="application/json">')[1].split("</script>")[0]
+        )
+        for source in (api_records, payload["records"]):
+            self.assertEqual([record["step"] for record in source if "loss/val/eval" in record["metrics"]], [7, 23, 51])
+
     def test_get_run_filters_metrics_steps_and_downsamples(self):
         result = self.service.get_run(
             "anima",
