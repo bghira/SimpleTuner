@@ -34,6 +34,27 @@ def _fake_attention_ctx() -> types.SimpleNamespace:
 
 
 class DiffusersTemplatedAttentionBackwardOverrideTests(unittest.TestCase):
+    def test_qwen_vae_attention_is_independent_of_denoiser_backend(self):
+        from diffusers.models.autoencoders.autoencoder_kl_qwenimage import QwenImageAttentionBlock
+
+        devices = ["cpu"]
+        if torch.backends.mps.is_available():
+            devices.append("mps")
+        if torch.cuda.is_available():
+            devices.append("cuda")
+        for device in devices:
+            with self.subTest(device=device):
+                block = QwenImageAttentionBlock(384).to(device)
+                value = torch.randn(1, 384, 1, 4, 4, device=device, requires_grad=True)
+                expected = block(value)
+                with torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.CUDNN_ATTENTION):
+                    observed = block(value)
+                    observed.sum().backward()
+                    self.assertFalse(torch.backends.cuda.math_sdp_enabled())
+                    self.assertTrue(torch.backends.cuda.cudnn_sdp_enabled())
+                torch.testing.assert_close(observed, expected)
+                self.assertTrue(torch.isfinite(value.grad).all())
+
     def test_uniform_varlen_metadata_compiles_with_dynamic_shapes(self):
         def metadata(query, key):
             return attention_dispatch._prepare_for_flash_attn_or_sage_varlen_without_mask(

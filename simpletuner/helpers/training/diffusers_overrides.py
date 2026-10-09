@@ -22,6 +22,23 @@ logger = logging.getLogger(__name__)
 PERMANENT_FUSION = True
 
 
+def patch_qwen_image_vae_attention():
+    from diffusers.models.autoencoders.autoencoder_kl_qwenimage import QwenImageAttentionBlock
+
+    original_forward = QwenImageAttentionBlock.forward
+
+    @wraps(original_forward)
+    def forward(self, x):
+        # Keep the VAE's 384-channel head independent of the denoiser's fused backend.
+        with torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH):
+            return original_forward(self, x)
+
+    QwenImageAttentionBlock.forward = forward
+
+
+patch_qwen_image_vae_attention()
+
+
 def patch_peft_auxiliary_adapter_switching():
     """Keep modules_to_save on the same adapter role as Diffusers' LoRA layers."""
     original_set_adapter = PeftAdapterMixin.set_adapter
