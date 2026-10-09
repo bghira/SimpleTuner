@@ -85,6 +85,16 @@ Para compile reduce-overhead:
 }
 ```
 
+### Tamanho do kernel LoKR do LyCORIS 4
+
+Se o treinamento LoKR com LyCORIS 4 apresentar `kron apply factors too large for the kernel`, selecione o backend de kernels PyTorch antes de iniciar o treinador ou a WebUI. O erro vem do limite de tamanho dos fatores do kernel Triton experimental. O `torch.compile` do SimpleTuner pode continuar habilitado; desativar a compilação por si só não troca os kernels do LyCORIS.
+
+```bash
+export LYCORIS_KERNEL_BACKEND=torch
+```
+
+[Backends de kernels do LyCORIS](https://github.com/KohakuBlueleaf/LyCORIS/blob/main/docs/kernels/backends.md).
+
 ## Treinamento com Imagem de Referência
 
 Krea2 suporta condicionamento opcional por latentes de referência para datasets de edição. Ative quando o dataloader fornecer imagens de referência pareadas ou latentes de referência em cache:
@@ -175,13 +185,3 @@ As medições abaixo foram feitas em uma NVIDIA H100 80GB usando o trainer real 
 - Se int8 usa menos VRAM mas é mais lento, isso corresponde aos nossos testes H100.
 - Se a imagem de referência não afeta a validação, confirme `krea2_reference_latents=true` e dataset pareado.
 - Se overfitar rápido, reduza learning rate, reduza steps ou aumente a variedade do dataset.
-
-### Tamanho do kernel LoKR do LyCORIS 4
-
-Se o treinamento LoKR com LyCORIS 4 apresentar `kron apply factors too large for the kernel`, selecione o backend de kernels PyTorch antes de iniciar o treinador ou a WebUI. O erro vem do limite de tamanho dos fatores do kernel Triton experimental. O `torch.compile` do SimpleTuner pode continuar habilitado; desativar a compilação por si só não troca os kernels do LyCORIS.
-
-```bash
-export LYCORIS_KERNEL_BACKEND=torch
-```
-
-[Backends de kernels do LyCORIS](https://github.com/KohakuBlueleaf/LyCORIS/blob/main/docs/kernels/backends.md).
