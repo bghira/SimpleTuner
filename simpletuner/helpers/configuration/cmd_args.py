@@ -23,6 +23,7 @@ from simpletuner.helpers.distillation.common import validate_distillation_text_e
 from simpletuner.helpers.logging import get_logger
 from simpletuner.helpers.training.attention_backend import (
     AttentionBackendMode,
+    get_kohaku_fa_unavailable_reason,
     get_metal_flash_attention_unavailable_reason,
     is_sageattention_available,
     xformers_compute_capability_error,
@@ -1450,10 +1451,11 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             raise ValueError("--validation_external_script is required when --validation_method=external-script.")
         args.validation_external_script = str(script_value).strip()
 
-    attention_mech = getattr(args, "attention_mechanism", "diffusers")
-    normalized_attention_mech = str(attention_mech or "diffusers").strip().lower().replace("_", "-")
+    attention_mech = getattr(args, "attention_mechanism", "kohaku-fa-auto")
+    normalized_attention_mech = str(attention_mech or "kohaku-fa-auto").strip().lower().replace("_", "-")
     non_cuda_supported_mechanisms = {
         "diffusers",
+        "kohaku-fa-auto",
         "native",
         "native-math",
         "native-efficient",
@@ -1470,6 +1472,11 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
 
     if hasattr(args, "sageattention_usage"):
         args.sageattention_usage = AttentionBackendMode.from_raw(args.sageattention_usage)
+
+    if normalized_attention_mech == "kohaku-fa":
+        reason = get_kohaku_fa_unavailable_reason()
+        if reason:
+            raise ValueError(reason)
 
     if attention_mech == "xformers":
         xformers_error = xformers_compute_capability_error()

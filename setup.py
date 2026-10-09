@@ -361,6 +361,7 @@ _is_building_dist = any(arg in sys.argv for arg in ("bdist_wheel", "sdist", "bui
 # Optional extras
 extras_require = {
     "jxl": ["pillow-jxl-plugin>=1.3.1"],
+    "attention-cute": ["nvidia-cutlass-dsl>=4.8,<4.9", "apache-tvm-ffi>=0.1.14,<0.2", "ninja>=1.11"],
     "captioning": ["caption-flow[vllm]>=0.5.2"],
     "captioning-cuda13": get_captioning_cuda13_dependencies(),
     "cuda13-captioning": get_captioning_cuda13_dependencies(),

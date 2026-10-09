@@ -72,6 +72,12 @@ exclude = ["tests*", "scripts*", "install*", "config*", "documentation*"]
 simpletuner = [
     "examples/**/*",
     "helpers/ramtorch/LICENSE",
+    "helpers/training/kohakufa/LICENSE",
+    "helpers/training/kohakufa/NOTICE",
+    "helpers/training/kohakufa/sm100/tuned/*.json",
+    "helpers/training/kohaku_fa_cute/LICENSE",
+    "helpers/training/kohaku_fa_cute/NOTICE",
+    "helpers/training/kohaku_fa_cute/native.cpp",
     "py.typed",
 ]
 

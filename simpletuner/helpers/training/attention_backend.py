@@ -8,7 +8,7 @@ import sys
 from contextlib import ExitStack
 from dataclasses import dataclass
 from enum import Enum
-from functools import lru_cache
+from functools import lru_cache, partial
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional, Tuple
 
 import torch
@@ -572,6 +572,110 @@ def is_sageattention_available() -> bool:
         return False
 
 
+_KOHAKU_FA_CUTE_CAPABILITIES = {(8, 9), (9, 0), (12, 0)}
+_KOHAKU_FA_GLUON_CAPABILITIES = {(10, 0), (10, 3)}
+_KOHAKU_FA_AUTO_CAPABILITIES = {(8, 9), (9, 0)}
+
+
+def get_kohaku_fa_unavailable_reason() -> Optional[str]:
+    if not torch.cuda.is_available():
+        return "kohaku-fa requires a supported NVIDIA CUDA GPU."
+    capability = torch.cuda.get_device_capability()
+    if capability not in _KOHAKU_FA_CUTE_CAPABILITIES | _KOHAKU_FA_GLUON_CAPABILITIES:
+        return "kohaku-fa supports sm_89, sm_90, sm_100, sm_103 and sm_120; this GPU is unsupported."
+    from packaging.version import Version
+
+    minimum_torch = "2.11" if capability in _KOHAKU_FA_CUTE_CAPABILITIES else "2.9"
+    if Version(torch.__version__.split("+")[0]) < Version(minimum_torch):
+        return f"KohakuFA requires PyTorch >= {minimum_torch} on this GPU."
+    from importlib.metadata import PackageNotFoundError, version
+
+    requirements = (
+        (("nvidia-cutlass-dsl", "4.8"), ("apache-tvm-ffi", "0.1.14"), ("ninja", "1.11"))
+        if capability in _KOHAKU_FA_CUTE_CAPABILITIES
+        else (("triton", "3.7"),)
+    )
+    for package, minimum in requirements:
+        try:
+            installed = version(package)
+        except PackageNotFoundError:
+            return f"kohaku-fa requires {package} >= {minimum}; install it with pip install '{package}>={minimum}'."
+        if Version(installed) < Version(minimum):
+            return f"kohaku-fa requires {package} >= {minimum}."
+    return None
+
+
+def _kohaku_fa_sdpa(
+    attention,
+    query,
+    key,
+    value,
+    attn_mask=None,
+    dropout_p=0.0,
+    is_causal=False,
+    scale=None,
+    enable_gqa=False,
+):
+    if dropout_p != 0.0:
+        raise ValueError("kohaku-fa does not support attention dropout.")
+    if any(t.ndim != 4 for t in (query, key, value)):
+        raise ValueError("kohaku-fa requires 4D [batch, heads, sequence, dim] inputs.")
+    if any(t.device != query.device or t.device.type != "cuda" for t in (query, key, value)):
+        raise ValueError("kohaku-fa requires Q/K/V on the same CUDA device.")
+    if torch.cuda.get_device_capability(query.device) not in _KOHAKU_FA_CUTE_CAPABILITIES | _KOHAKU_FA_GLUON_CAPABILITIES:
+        raise ValueError("kohaku-fa requires sm_89, sm_90, sm_100, sm_103 or sm_120.")
+    if query.dtype not in (torch.float16, torch.bfloat16) or any(t.dtype != query.dtype for t in (key, value)):
+        raise ValueError("kohaku-fa requires matching FP16/BF16 Q/K/V; FP32 attention is unsupported.")
+    if not enable_gqa and query.shape[1] != key.shape[1]:
+        raise ValueError("kohaku-fa requires enable_gqa=True for differing Q and K/V head counts.")
+    if attn_mask is not None:
+        if attn_mask.dtype != torch.bool:
+            raise ValueError("kohaku-fa supports boolean attention masks only, not additive masks.")
+        if attn_mask.device != query.device:
+            raise ValueError("kohaku-fa requires the attention mask on the Q/K/V device.")
+        if is_causal:
+            raise ValueError("kohaku-fa requires causal visibility folded into the boolean mask.")
+    return attention(query, key, value, mask=attn_mask, causal=is_causal, scale=scale)
+
+
+def _automatic_kohaku_fa_sdpa(
+    sdpa,
+    capabilities,
+    query,
+    key,
+    value,
+    attn_mask=None,
+    dropout_p=0.0,
+    is_causal=False,
+    scale=None,
+    enable_gqa=False,
+):
+    compatible = (
+        dropout_p == 0.0
+        and all(t.ndim == 4 for t in (query, key, value))
+        and query.device.type == "cuda"
+        and key.device == query.device == value.device
+        and query.dtype in (torch.float16, torch.bfloat16)
+        and key.dtype == query.dtype == value.dtype
+        and all(query.shape)
+        and all(key.shape)
+        and key.shape == value.shape
+        and query.shape[0] == key.shape[0]
+        and query.shape[3] == key.shape[3]
+        and query.shape[3] <= 512
+        and query.shape[1] % key.shape[1] == 0
+        and (enable_gqa or query.shape[1] == key.shape[1])
+        and (attn_mask is None or (attn_mask.dtype == torch.bool and attn_mask.device == query.device and not is_causal))
+    )
+    if compatible:
+        compatible = torch.cuda.get_device_capability(query.device) in capabilities
+    if compatible:
+        return sdpa(query, key, value, attn_mask, dropout_p, is_causal, scale=scale, enable_gqa=enable_gqa)
+    return AttentionBackendController._call_original_sdpa(
+        query, key, value, attn_mask, dropout_p, is_causal, scale, enable_gqa
+    )
+
+
 @lru_cache(maxsize=8)
 def get_metal_flash_attention_unavailable_reason(backend: str = "metal-flash-attention") -> Optional[str]:
     """Return why the UMFA PyTorch custom-op backend cannot be used, or None when usable."""
@@ -1114,13 +1218,17 @@ class AttentionBackendController:
     @classmethod
     def apply(cls, config, phase: AttentionPhase) -> None:
         cls._active_phase = phase
-        backend_value = getattr(config, "attention_mechanism", "diffusers")
+        backend_value = getattr(config, "attention_mechanism", "kohaku-fa-auto")
         if not isinstance(backend_value, str):
-            backend_value = "diffusers"
-        backend = (backend_value or "diffusers").strip().lower()
+            backend_value = "kohaku-fa-auto"
+        backend = (backend_value or "kohaku-fa-auto").strip().lower()
         if not backend:
-            backend = "diffusers"
+            backend = "kohaku-fa-auto"
         backend_alias = backend.replace("_", "-")
+
+        if backend_alias in ("kohaku-fa", "kohaku-fa-auto"):
+            cls._enable_kohaku_fa(config, phase, automatic=backend_alias == "kohaku-fa-auto")
+            return
 
         if AttentionBackendName is None and backend_alias in _DIFFUSERS_BACKEND_TARGETS:
             message = (
@@ -1169,6 +1277,58 @@ class AttentionBackendController:
         functional = torch.nn.functional
         if not hasattr(functional, "scaled_dot_product_attention_sdpa"):
             setattr(functional, "scaled_dot_product_attention_sdpa", functional.scaled_dot_product_attention)
+
+    @classmethod
+    def _enable_kohaku_fa(cls, config, phase: AttentionPhase, automatic: bool = False) -> None:
+        parallel = int(getattr(config, "context_parallel_size", 1) or 1) > 1
+        sparse = getattr(config, "minimax_h3_sparse_attention", "disabled") not in (None, "disabled")
+        backend = "kohaku-fa-auto" if automatic else "kohaku-fa"
+        if automatic and (parallel or sparse or phase != AttentionPhase.TRAIN):
+            cls.restore_default()
+            cls._active_backend = backend
+            cls._active_phase = phase
+            return
+        if parallel:
+            raise ValueError("kohaku-fa does not support context parallel attention.")
+        if sparse:
+            raise ValueError("kohaku-fa requires --minimax_h3_sparse_attention=disabled.")
+        if cls._active_backend == backend and not automatic:
+            return
+        reason = get_kohaku_fa_unavailable_reason()
+        if automatic and reason is None and torch.cuda.get_device_capability() not in _KOHAKU_FA_AUTO_CAPABILITIES:
+            reason = "Automatic Kohaku attention requires the centered backward kernels on sm_89 or sm_90."
+        if reason:
+            if automatic:
+                cls.restore_default()
+                cls._active_backend = backend
+                cls._active_phase = phase
+                logger.info("Automatic attention uses native SDPA: %s", reason)
+                return
+            raise RuntimeError(reason)
+        capabilities = (
+            _KOHAKU_FA_CUTE_CAPABILITIES
+            if torch.cuda.get_device_capability() in _KOHAKU_FA_CUTE_CAPABILITIES
+            else _KOHAKU_FA_GLUON_CAPABILITIES
+        )
+        if capabilities == _KOHAKU_FA_CUTE_CAPABILITIES:
+            if automatic:
+                from simpletuner.helpers.training.kohaku_fa_cute import automatic_scaled_dot_product_attention as sdpa
+            else:
+                from simpletuner.helpers.training.kohaku_fa_cute import scaled_dot_product_attention as sdpa
+        else:
+            from simpletuner.helpers.training.kohakufa import attention
+
+            sdpa = partial(_kohaku_fa_sdpa, attention)
+            sdpa.__name__ = "kohaku_fa_scaled_dot_product_attention"
+
+        cls.restore_default()
+        cls._active_phase = phase
+        cls._store_sdpa_reference()
+        cls._enable_diffusers_backend(backend, AttentionBackendName.NATIVE)
+        original = torch.nn.functional.scaled_dot_product_attention
+        cls._diffusers_backend_context.callback(setattr, torch.nn.functional, "scaled_dot_product_attention", original)
+
+        torch.nn.functional.scaled_dot_product_attention = sdpa
 
     @classmethod
     def _call_original_sdpa(cls, query, key, value, attn_mask, dropout_p, is_causal, scale, enable_gqa):
