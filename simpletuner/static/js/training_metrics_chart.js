@@ -156,7 +156,9 @@
             context.clearRect(0, 0, width, height);
 
             const timestampValues = this.records.map(timestampMs).filter((value) => value !== null);
-            const startTimestamp = timestampValues.length ? Math.min(...timestampValues) : null;
+            const startTimestamp = timestampValues.length
+                ? timestampValues.reduce((min, value) => Math.min(min, value), Infinity)
+                : null;
             const activeXAxisMode = this.xAxisMode === 'minutes' && startTimestamp !== null ? 'minutes' : 'step';
             const points = this.records
                 .map((record) => ({
@@ -190,10 +192,10 @@
             const plotWidth = width - padding.left - padding.right;
             const plotHeight = height - padding.top - padding.bottom;
             const xValues = points.map((point) => point.xValue);
-            let minX = Math.min(...xValues);
-            let maxX = Math.max(...xValues);
-            let minValue = Math.min(...values);
-            let maxValue = Math.max(...values);
+            let minX = xValues.reduce((min, value) => Math.min(min, value), Infinity);
+            let maxX = xValues.reduce((max, value) => Math.max(max, value), -Infinity);
+            let minValue = values.reduce((min, value) => Math.min(min, value), Infinity);
+            let maxValue = values.reduce((max, value) => Math.max(max, value), -Infinity);
             if (minX === maxX) maxX = minX + 1;
             if (minValue === maxValue) {
                 const offset = Math.abs(minValue) * 0.05 || 1;
@@ -402,10 +404,10 @@
             const padding = { left: 64, right: 20, top: 20, bottom: 42 };
             const plotWidth = width - padding.left - padding.right;
             const plotHeight = height - padding.top - padding.bottom;
-            let minStep = Math.min(...points.map((point) => point.step));
-            let maxStep = Math.max(...points.map((point) => point.step));
-            let minTimestep = Math.min(...points.map((point) => point.timestep));
-            let maxTimestep = Math.max(...points.map((point) => point.timestep));
+            let minStep = points.reduce((min, point) => Math.min(min, point.step), Infinity);
+            let maxStep = points.reduce((max, point) => Math.max(max, point.step), -Infinity);
+            let minTimestep = points.reduce((min, point) => Math.min(min, point.timestep), Infinity);
+            let maxTimestep = points.reduce((max, point) => Math.max(max, point.timestep), -Infinity);
             if (minStep === maxStep) maxStep = minStep + 1;
             if (minTimestep === maxTimestep) maxTimestep = minTimestep + 1;
             const xForStep = (step) => padding.left + ((step - minStep) / (maxStep - minStep)) * plotWidth;
