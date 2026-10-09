@@ -180,11 +180,12 @@ Estas mediciones se tomaron en una NVIDIA H100 de 80GB usando el trainer real de
 
 ### Exportación a ComfyUI de LoKR de matriz completa con QKV fusionado
 
-Para un LoKR LyCORIS de matriz completa entrenado con proyecciones QKV fusionadas, exporta proyecciones separadas para ComfyUI con este comando. Usa el `config.json` del transformer del modelo base. El conversor conserva las escalas DoRA normalizadas por salida y los demás tensores del adaptador. Materializa los deltas fusionados como matrices FP32 para que las divisiones Q/K/V sean exactas incluso si cruzan los límites de los factores de Kronecker; la exportación puede ser considerablemente más grande. No admite factores LoKR descompuestos ni DoRA normalizado por entrada. Conserva el checkpoint nativo para entrenar y reanudar.
+Para un LoKR LyCORIS de matriz completa entrenado con proyecciones QKV fusionadas, exporta proyecciones separadas para ComfyUI con este comando. Usa el `config.json` del transformer del modelo base. Para DoRA normalizado por salida, proporciona también el `raw.safetensors` original de Krea2 mediante `--base-model`. El conversor materializa las diferencias fusionadas de DoRA para proyecciones fusionadas y separadas, evitando la distinta normalización de ComfyUI. Conserva los demás tensores. Omite `--base-model` si el adaptador no utiliza DoRA. Materializa los deltas fusionados como matrices FP32 para que las divisiones Q/K/V sean exactas incluso si cruzan los límites de los factores de Kronecker; la exportación puede ser considerablemente más grande. No admite factores LoKR descompuestos ni DoRA normalizado por entrada. Conserva el checkpoint nativo para entrenar y reanudar.
 
 ```bash
 .venv/bin/python scripts/convert_krea2_lokr_to_comfyui.py \
   --input adapter.safetensors \
   --output adapter-comfyui.safetensors \
-  --transformer-config transformer/config.json
+  --transformer-config transformer/config.json \
+  --base-model raw.safetensors
 ```

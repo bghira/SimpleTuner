@@ -307,11 +307,12 @@ Use fewer steps, lower the learning rate, add more prompts for validation, or in
 
 ### ComfyUI export for fused full-matrix LoKR
 
-For a full-matrix LyCORIS LoKR trained with fused QKV projections, export separate projections for ComfyUI with the following command. Use the base model transformer's `config.json`. The converter preserves output-normalized DoRA scales and all unrelated adapter tensors. It materializes fused deltas as FP32 matrices so that Q/K/V slices remain exact even when they cross Kronecker factor boundaries; the export can be substantially larger than the native checkpoint. Decomposed LoKR factors and input-normalized DoRA are not supported. Keep the native checkpoint for training and resume.
+For a full-matrix LyCORIS LoKR trained with fused QKV projections, export separate projections for ComfyUI with the following command. Use the base model transformer's `config.json`. For output-normalized DoRA, also provide the original Krea2 `raw.safetensors` with `--base-model`. The converter materializes native DoRA merged differences for both fused and unfused projections, avoiding ComfyUI's different normalization. Other adapter tensors are preserved. Omit `--base-model` for adapters without DoRA. It materializes fused deltas as FP32 matrices so that Q/K/V slices remain exact even when they cross Kronecker factor boundaries; the export can be substantially larger than the native checkpoint. Decomposed LoKR factors and input-normalized DoRA are not supported. Keep the native checkpoint for training and resume.
 
 ```bash
 .venv/bin/python scripts/convert_krea2_lokr_to_comfyui.py \
   --input adapter.safetensors \
   --output adapter-comfyui.safetensors \
-  --transformer-config transformer/config.json
+  --transformer-config transformer/config.json \
+  --base-model raw.safetensors
 ```

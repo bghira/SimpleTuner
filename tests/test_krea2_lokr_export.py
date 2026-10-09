@@ -35,7 +35,7 @@ class Krea2LoKRExportTests(unittest.TestCase):
                     w2 = torch.randn(sum(sizes) // 16, 16).to(dtype)
                     delta = torch.kron(w1.float(), w2.float())
                     base = torch.randn_like(delta)
-                    dora = torch.rand(sum(sizes), 1)
+                    dora = torch.rand(sum(sizes), 1).to(dtype)
                     unrelated = torch.randn(2, 3)
                     weights = {
                         f"{prefix}.lokr_w1": w1,
@@ -44,19 +44,29 @@ class Krea2LoKRExportTests(unittest.TestCase):
                         f"{prefix}.dora_scale": dora,
                         "lycoris_transformer_blocks_0_ff_up.lokr_w1": unrelated,
                     }
-                    converted = split_fused_lokr(weights, self.config)
+                    converted = split_fused_lokr(weights, self.config, {prefix: base})
                     self.assertIs(converted["lycoris_transformer_blocks_0_ff_up.lokr_w1"], unrelated)
                     self.assertFalse(any("to_qkv" in key for key in converted))
-                    original_merged = (base + delta) * dora / (base + delta).norm(dim=1, keepdim=True)
+                    original_merged = (base + delta).to(dora.dtype)
+                    original_merged = original_merged * (
+                        dora / (original_merged.norm(dim=1, keepdim=True) + torch.finfo(dora.dtype).eps)
+                    )
                     offset = 0
                     for projection, size in zip("qkv", sizes):
                         target = prefix.removesuffix("qkv") + projection
                         actual_delta = torch.kron(converted[f"{target}.lokr_w1"], converted[f"{target}.lokr_w2"])
-                        torch.testing.assert_close(actual_delta, delta[offset : offset + size], rtol=0, atol=0)
                         merged = base[offset : offset + size] + actual_delta
-                        merged = merged * converted[f"{target}.dora_scale"] / merged.norm(dim=1, keepdim=True)
-                        torch.testing.assert_close(merged, original_merged[offset : offset + size], rtol=0, atol=0)
+                        self.assertNotIn(f"{target}.dora_scale", converted)
+                        torch.testing.assert_close(
+                            merged, original_merged[offset : offset + size].float(), rtol=1e-5, atol=1e-6
+                        )
                         offset += size
+                    without_dora = {key: value for key, value in weights.items() if not key.endswith(".dora_scale")}
+                    converted = split_fused_lokr(without_dora, self.config)
+                    actual_delta = torch.cat(
+                        [converted[f"{prefix.removesuffix('qkv') + projection}.lokr_w2"] for projection in "qkv"]
+                    )
+                    torch.testing.assert_close(actual_delta, delta, rtol=0, atol=0)
 
     def test_rejects_config_mismatch_decomposed_factors_and_input_normalized_dora(self):
         prefix = "lycoris_transformer_blocks_0_attn_to_qkv"
@@ -68,7 +78,7 @@ class Krea2LoKRExportTests(unittest.TestCase):
             {"lycoris_transformer_blocks_0_attn_to_q.lokr_w1": torch.ones(1, 1)},
         ):
             with self.subTest(keys=list(changes)), self.assertRaises(ValueError):
-                split_fused_lokr(valid | changes, self.config)
+                split_fused_lokr(valid | changes, self.config, {prefix: torch.ones(48, 32)})
 
     def test_cli_preserves_metadata_and_native_checkpoint(self):
         import sys
@@ -98,3 +108,62 @@ class Krea2LoKRExportTests(unittest.TestCase):
             command[command.index(str(target))] = str(source)
             self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
             self.assertEqual(source.read_bytes(), original)
+
+    def test_cli_materializes_fused_and_unfused_dora_against_original_base(self):
+        import sys
+
+        prefix = "lycoris_transformer_blocks_0_attn_to_qkv"
+        other = "lycoris_transformer_blocks_0_ff_up"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, target, config, base_path = (
+                root / name for name in ("native.safetensors", "comfy.safetensors", "config.json", "raw.safetensors")
+            )
+            base = torch.randn(48, 32)
+            base_other = torch.randn(32, 32)
+            weights = {
+                f"{prefix}.lokr_w1": torch.randn(16, 2),
+                f"{prefix}.lokr_w2": torch.randn(3, 16),
+                f"{prefix}.dora_scale": torch.rand(48, 1),
+                f"{other}.lokr_w1": torch.randn(2, 2),
+                f"{other}.lokr_w2": torch.randn(16, 16),
+                f"{other}.dora_scale": torch.rand(32, 1),
+            }
+            save_file(weights, source)
+            save_file(
+                {
+                    "blocks.0.attn.wq.weight": base[:32].clone(),
+                    "blocks.0.attn.wk.weight": base[32:40].clone(),
+                    "blocks.0.attn.wv.weight": base[40:].clone(),
+                    "blocks.0.mlp.up.weight": base_other,
+                },
+                base_path,
+            )
+            config.write_text(json.dumps(self.config))
+            command = [
+                sys.executable,
+                "scripts/convert_krea2_lokr_to_comfyui.py",
+                "--input",
+                str(source),
+                "--output",
+                str(target),
+                "--transformer-config",
+                str(config),
+            ]
+            self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
+            subprocess.run(command + ["--base-model", str(base_path)], capture_output=True, check=True)
+            converted = load_file(target)
+            self.assertFalse(any(key.endswith(".dora_scale") for key in converted))
+            for name, original in ((prefix, base), (other, base_other)):
+                delta = torch.kron(weights[f"{name}.lokr_w1"], weights[f"{name}.lokr_w2"])
+                merged = original + delta
+                expected = merged * (
+                    weights[f"{name}.dora_scale"] / (merged.norm(dim=1, keepdim=True) + torch.finfo(merged.dtype).eps)
+                )
+                if name == prefix:
+                    exported = torch.cat(
+                        [converted[f"{prefix.removesuffix('qkv') + projection}.lokr_w2"] for projection in "qkv"]
+                    )
+                else:
+                    exported = converted[f"{name}.lokr_w2"]
+                torch.testing.assert_close(original + exported, expected, rtol=1e-5, atol=1e-6)
