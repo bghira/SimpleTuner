@@ -85,6 +85,16 @@ reduce-overhead compile:
 }
 ```
 
+### LyCORIS 4 LoKR のカーネルサイズ
+
+LyCORIS 4 の LoKR 学習で `kron apply factors too large for the kernel` が発生する場合は、トレーナーまたは WebUI の起動前に PyTorch カーネルバックエンドを選択してください。このエラーは実験的な Triton カーネルの因子サイズ制限によるものです。SimpleTuner の `torch.compile` は有効なままで構いません。コンパイルを無効にするだけでは LyCORIS のカーネルは切り替わりません。
+
+```bash
+export LYCORIS_KERNEL_BACKEND=torch
+```
+
+[LyCORIS のカーネルバックエンド](https://github.com/KohakuBlueleaf/LyCORIS/blob/main/docs/kernels/backends.md).
+
 ## 参照画像トレーニング
 
 Krea2 は編集系 dataset 向けに、任意の参照 latent 条件付けをサポートします。ペアの参照画像またはキャッシュ済み参照 latent を dataloader が提供する場合に有効化します。

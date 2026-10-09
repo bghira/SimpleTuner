@@ -85,6 +85,16 @@ reduce-overhead compile：
 }
 ```
 
+### LyCORIS 4 LoKR 内核尺寸
+
+如果 LyCORIS 4 的 LoKR 训练出现 `kron apply factors too large for the kernel`，请在启动训练器或 WebUI 前选择其 PyTorch 内核后端。此错误来自实验性 Triton 内核的因子尺寸限制。SimpleTuner 的 `torch.compile` 可以保持启用；仅禁用编译并不会切换 LyCORIS 内核。
+
+```bash
+export LYCORIS_KERNEL_BACKEND=torch
+```
+
+[LyCORIS 内核后端](https://github.com/KohakuBlueleaf/LyCORIS/blob/main/docs/kernels/backends.md).
+
 ## 参考图像训练
 
 Krea2 支持面向编辑数据集的可选参考 latent 条件。若 dataloader 提供成对参考图像或缓存的参考 latents，可启用：
