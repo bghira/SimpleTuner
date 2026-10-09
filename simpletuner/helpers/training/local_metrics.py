@@ -104,13 +104,25 @@ def read_timestep_distribution_records(output_dir: str | os.PathLike[str]) -> li
 
 
 def downsample_records(records: list[dict[str, Any]], max_points: int) -> list[dict[str, Any]]:
+    """Sample each metric independently to preserve sparse evaluation series."""
     if max_points < 2:
         raise ValueError("max_points must be at least 2.")
     if len(records) <= max_points:
         return records
 
-    last_index = len(records) - 1
-    selected = {round(index * last_index / (max_points - 1)) for index in range(max_points)}
+    metric_indices: dict[str, list[int]] = {}
+    for index, record in enumerate(records):
+        for name, value in record.get("metrics", {}).items():
+            if isinstance(value, (int, float)) and math.isfinite(value):
+                metric_indices.setdefault(name, []).append(index)
+
+    selected = {0, len(records) - 1}
+    for indices in metric_indices.values():
+        if len(indices) <= max_points:
+            selected.update(indices)
+        else:
+            last_index = len(indices) - 1
+            selected.update(indices[round(index * last_index / (max_points - 1))] for index in range(max_points))
     return [records[index] for index in sorted(selected)]
 
 
