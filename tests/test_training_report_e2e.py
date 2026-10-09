@@ -12,7 +12,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 
-from simpletuner.helpers.training.local_metrics import MEDIA_FILENAME, render_static_report
+from simpletuner.helpers.training.local_metrics import MEDIA_FILENAME, TIMESTEP_DISTRIBUTION_FILENAME, render_static_report
 from tests.selenium_support import _chrome_options
 
 
@@ -149,6 +149,52 @@ class TrainingReportNavigationTests(unittest.TestCase):
         self.assertEqual(self.element("media-grid").text, "No validation media")
         self.assertFalse(self.driver.find_elements(By.CSS_SELECTOR, ".media-step"))
         self.assertFalse(self.element("media-lightbox").is_displayed())
+
+    def test_long_run_timestep_report_renders_all_samples_with_finite_coordinates(self):
+        records = [{"step": step, "timesteps": list(range(8))} for step in range(35000)]
+        (self.output / TIMESTEP_DISTRIBUTION_FILENAME).write_text("\n".join(json.dumps(record) for record in records))
+        script = self.driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {
+                "source": """
+                window.sampleArcs = 0;
+                window.invalidArcs = 0;
+                const arc = CanvasRenderingContext2D.prototype.arc;
+                CanvasRenderingContext2D.prototype.arc = function(x, y, ...args) {
+                    if (this.canvas.id === 'timestep-chart') {
+                        window.sampleArcs++;
+                        if (!Number.isFinite(x) || !Number.isFinite(y)) window.invalidArcs++;
+                    }
+                    return arc.call(this, x, y, ...args);
+                };
+            """
+            },
+        )
+        self.addCleanup(self.driver.execute_cdp_cmd, "Page.removeScriptToEvaluateOnNewDocument", script)
+        self.driver.get(render_static_report(self.output).as_uri())
+        self.assertTrue(self.element("timestep-section").is_displayed())
+        self.assertEqual(self.driver.execute_script("return [window.sampleArcs, window.invalidArcs]"), [280000, 0])
+
+    def test_large_metric_history_renders_finite_bounds(self):
+        bounds = self.driver.execute_script(
+            """
+            const records = Array.from({length: 200000}, (_, step) => ({
+                step, timestamp: new Date(step * 1000).toISOString(), metrics: {loss: step % 7}
+            }));
+            const chart = new window.TrainingMetricsCharts.TrainingMetricsChart(
+                document.getElementById('metrics-chart')
+            );
+            chart.setData(records, ['loss'], {xAxisMode: 'minutes'});
+            const bounds = [chart.geometry.minX, chart.geometry.maxX,
+                chart.geometry.minValue, chart.geometry.maxValue];
+            chart.destroy();
+            return bounds;
+        """
+        )
+        self.assertEqual(bounds[0], 0)
+        self.assertAlmostEqual(bounds[1], 199999 / 60)
+        self.assertLess(bounds[2], 0)
+        self.assertGreater(bounds[3], 6)
 
     def test_mobile_timeline_reveals_current_step_in_long_runs(self):
         records = [
