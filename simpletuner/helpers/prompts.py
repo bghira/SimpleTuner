@@ -432,7 +432,8 @@ class PromptHandler:
                 else:
                     image_caption = instance_prompt + " " + image_caption
 
-            return image_caption
+            caption_values = PromptHandler._normalize_caption_payload(image_caption)
+            return PromptHandler._restore_caption_payload_shape(image_caption, caption_values)
         except Exception as e:
             logger.error(f"Could not read caption file {caption_file}: {e}")
 
