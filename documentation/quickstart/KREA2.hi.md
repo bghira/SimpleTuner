@@ -175,3 +175,13 @@ Krea2 validation महंगी है, इसलिए tuning के समय
 - यदि int8 कम VRAM इस्तेमाल करता है लेकिन धीमा है, यह हमारे H100 tests से मेल खाता है।
 - यदि reference image validation को प्रभावित नहीं कर रही है, `krea2_reference_latents=true` और paired validation dataset जांचें।
 - यदि model जल्दी overfit करता है, learning rate घटाएं, steps घटाएं, या dataset variety बढ़ाएं।
+
+### LyCORIS 4 LoKR कर्नेल आकार
+
+यदि LyCORIS 4 के LoKR प्रशिक्षण में `kron apply factors too large for the kernel` आता है, तो ट्रेनर या WebUI शुरू करने से पहले उसका PyTorch कर्नेल बैकएंड चुनें। यह त्रुटि प्रयोगात्मक Triton कर्नेल की फ़ैक्टर आकार सीमा के कारण आती है। SimpleTuner का `torch.compile` चालू रह सकता है; केवल कंपाइलेशन बंद करने से LyCORIS का कर्नेल नहीं बदलता।
+
+```bash
+export LYCORIS_KERNEL_BACKEND=torch
+```
+
+[LyCORIS कर्नेल बैकएंड](https://github.com/KohakuBlueleaf/LyCORIS/blob/main/docs/kernels/backends.md).

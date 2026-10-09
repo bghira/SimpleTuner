@@ -177,3 +177,13 @@ Estas mediciones se tomaron en una NVIDIA H100 de 80GB usando el trainer real de
 - Si int8 usa menos VRAM pero es más lento, coincide con nuestras pruebas H100.
 - Si la imagen de referencia no influye en validación, confirma que `krea2_reference_latents=true` y que el dataset de validación usa pares de referencia.
 - Si overfitea rápido, baja learning rate, reduce pasos o amplía la variedad del dataset.
+
+### Tamaño del kernel LoKR de LyCORIS 4
+
+Si el entrenamiento LoKR con LyCORIS 4 produce `kron apply factors too large for the kernel`, selecciona su backend de kernels PyTorch antes de iniciar el entrenador o la WebUI. El error proviene del límite de tamaño de los factores del kernel Triton experimental. `torch.compile` de SimpleTuner puede seguir habilitado; desactivar la compilación por sí solo no cambia los kernels de LyCORIS.
+
+```bash
+export LYCORIS_KERNEL_BACKEND=torch
+```
+
+[Backends de kernels de LyCORIS](https://github.com/KohakuBlueleaf/LyCORIS/blob/main/docs/kernels/backends.md).

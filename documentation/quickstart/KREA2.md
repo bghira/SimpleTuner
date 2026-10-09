@@ -304,3 +304,13 @@ Confirm that `krea2_reference_latents=true` is enabled and that the validation d
 ### The model overfits quickly
 
 Use fewer steps, lower the learning rate, add more prompts for validation, or increase dataset variety. Krea2 is large enough to memorise small subject datasets quickly.
+
+### LyCORIS 4 LoKR kernel size
+
+If LyCORIS 4 LoKR training raises `kron apply factors too large for the kernel`, select its PyTorch kernel backend before starting the trainer or WebUI. The error comes from the experimental Triton kernel's factor-size limit. SimpleTuner's `torch.compile` can remain enabled; disabling compilation alone does not switch LyCORIS kernels.
+
+```bash
+export LYCORIS_KERNEL_BACKEND=torch
+```
+
+[LyCORIS kernel backends](https://github.com/KohakuBlueleaf/LyCORIS/blob/main/docs/kernels/backends.md).
