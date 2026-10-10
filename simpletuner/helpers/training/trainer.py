@@ -4512,6 +4512,9 @@ class Trainer:
             )
         )
         primary_model = self.model.get_trained_component(unwrap_model=False)
+        if self.lycoris_wrapped_network is not None:
+            # DDP and FSDP2 only wrap, reduce and remap the prepared module's parameters.
+            primary_model.add_module("lycoris_wrapped_network", self.lycoris_wrapped_network)
         if hasattr(self.model, "before_accelerator_prepare"):
             self.model.before_accelerator_prepare()
         self.model_hooks.validate_fsdp2_pipeline_export()
@@ -7692,6 +7695,7 @@ class Trainer:
         validation_images = None
         validation_audios = None
         final_lora_save_kwargs = None
+        final_lycoris_state_dict = None
         fsdp_plugin = getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None)
         is_fsdp2_full_model_save = (
             self.config.model_type == "full"
@@ -7700,6 +7704,9 @@ class Trainer:
         )
         fsdp2_model_for_save = None
         fsdp2_pipeline_export_spec = None
+        if "lora" in self.config.model_type and getattr(self.accelerator, "is_fsdp2", False):
+            # FSDP2 leaves the root group unsharded after validation's forward.
+            self.model.get_trained_component(unwrap_model=False).reshard()
         if "lora" in self.config.model_type and "standard" == self.config.lora_type.lower():
             from simpletuner.helpers.training.save_hooks import _materialize_state_dict_for_save
 
@@ -7727,6 +7734,14 @@ class Trainer:
 
             if self.config.fsdp_enable:
                 self.accelerator.wait_for_everyone()
+        elif (
+            "lora" in self.config.model_type
+            and "lycoris" == self.config.lora_type.lower()
+            and getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None
+        ):
+            from simpletuner.helpers.training.save_hooks import _materialize_lycoris_state_dict_for_save
+
+            final_lycoris_state_dict = _materialize_lycoris_state_dict_for_save(self.accelerator._lycoris_wrapped_network)
 
         with self._fsdp2_full_export_failure_guard(is_fsdp2_full_model_save):
             if is_fsdp2_full_model_save:
@@ -7811,12 +7826,14 @@ class Trainer:
                     if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer:
                         logger.info(f"Saving final LyCORIS checkpoint to {self.config.output_dir}")
                         # Save final LyCORIS checkpoint.
-                        if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
+                        if final_lycoris_state_dict is not None:
+                            from safetensors.torch import save_file
+
                             from simpletuner.helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME
 
-                            self.accelerator._lycoris_wrapped_network.save_weights(
+                            save_file(
+                                final_lycoris_state_dict,
                                 os.path.join(self.config.output_dir, LORA_SAFETENSORS_FILENAME),
-                                list(self.accelerator._lycoris_wrapped_network.parameters())[0].dtype,
                                 {"lycoris_config": json.dumps(self.lycoris_config)},  # metadata
                             )
                             shutil.copy2(
