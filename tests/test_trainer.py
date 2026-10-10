@@ -3655,6 +3655,30 @@ class TestTrainer(unittest.TestCase):
             },
         )
 
+    def test_lycoris_network_is_registered_on_the_trained_component_before_prepare(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(disable_accelerator=False)
+        primary_model = torch.nn.Linear(2, 2)
+        trainer.lycoris_wrapped_network = torch.nn.Module()
+        trainer.model = Mock(spec=["get_trained_component"])
+        trainer.model.get_trained_component.return_value = primary_model
+        trainer._send_webhook_msg = Mock()
+        trainer._emit_event = Mock()
+        trainer.job_id = None
+        trainer.accelerator = Mock()
+
+        class StopAfterRegistration(Exception):
+            pass
+
+        trainer.model_hooks = Mock()
+        trainer.model_hooks.validate_fsdp2_pipeline_export.side_effect = StopAfterRegistration
+        with patch("simpletuner.helpers.training.trainer.StateTracker") as mock_state_tracker:
+            mock_state_tracker.get_data_backends.return_value = {"backend1": {"train_dataloader": Mock()}}
+            with self.assertRaises(StopAfterRegistration):
+                trainer.init_prepare_models(lr_scheduler=None)
+
+        self.assertIs(primary_model.lycoris_wrapped_network, trainer.lycoris_wrapped_network)
+
     def test_init_trackers_is_idempotent(self):
         trainer = object.__new__(Trainer)
         trainer.accelerator = Mock(is_main_process=True)

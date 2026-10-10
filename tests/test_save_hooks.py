@@ -7,9 +7,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import torch
 from accelerate.utils import DistributedType
 
-from simpletuner.helpers.training.save_hooks import SaveHookManager
+from simpletuner.helpers.training.save_hooks import LORA_SAFETENSORS_FILENAME, SaveHookManager
 from simpletuner.helpers.training.state_tracker import StateTracker
 
 
@@ -87,6 +88,53 @@ class SaveHookManagerTests(unittest.TestCase):
             with self.subTest(is_local_main_process=is_local_main_process):
                 save_state, _ = self._run_save_model_hook(is_local_main_process)
                 self.assertEqual(save_state.call_count, 1)
+
+    def _adapter_hook_manager(self, output_dir, is_main_process=True):
+        lycoris_config_path = Path(output_dir) / "source_lycoris.json"
+        lycoris_config_path.write_text(json.dumps({"algo": "lokr"}))
+        network = torch.nn.Module()
+        network.lokr_w1 = torch.nn.Parameter(torch.ones(2))
+        manager = object.__new__(SaveHookManager)
+        manager.accelerator = SimpleNamespace(
+            distributed_type=DistributedType.FSDP,
+            is_main_process=is_main_process,
+            is_local_main_process=is_main_process,
+            _lycoris_wrapped_network=network,
+            wait_for_everyone=Mock(),
+        )
+        manager.args = SimpleNamespace(
+            model_type="lora", lora_type="lycoris", lycoris_config=str(lycoris_config_path), use_ema=False
+        )
+        manager.training_state_path = "training_state.json"
+        manager._build_modelspec_metadata = Mock(return_value={})
+        return manager
+
+    def test_fsdp2_lycoris_save_gathers_on_every_rank_and_writes_on_main(self):
+        for is_main_process in (True, False):
+            with self.subTest(is_main_process=is_main_process), tempfile.TemporaryDirectory() as tmpdir:
+                manager = self._adapter_hook_manager(tmpdir, is_main_process=is_main_process)
+                manager._offload_models_during_save = Mock(return_value=nullcontext())
+                manager._is_fsdp2 = Mock(return_value=True)
+                network = manager.accelerator._lycoris_wrapped_network
+                network.state_dict = Mock(wraps=network.state_dict)
+                with patch("simpletuner.helpers.training.save_hooks.StateTracker"):
+                    manager.save_model_hook([], [], tmpdir)
+
+                network.state_dict.assert_called_once()
+                self.assertEqual((Path(tmpdir) / LORA_SAFETENSORS_FILENAME).exists(), is_main_process)
+
+    def test_fsdp2_adapter_resume_relies_on_accelerate_shards(self):
+        for lora_type, loader in (("lycoris", "_load_lycoris"), ("standard", "_load_lora")):
+            for is_fsdp2 in (True, False):
+                with self.subTest(lora_type=lora_type, is_fsdp2=is_fsdp2), tempfile.TemporaryDirectory() as tmpdir:
+                    manager = self._adapter_hook_manager(tmpdir)
+                    manager.args.lora_type = lora_type
+                    manager._is_fsdp2 = Mock(return_value=is_fsdp2)
+                    setattr(manager, loader, Mock())
+                    with patch("simpletuner.helpers.training.save_hooks.StateTracker"):
+                        manager.load_model_hook([], tmpdir)
+
+                    self.assertEqual(getattr(manager, loader).call_count, int(not is_fsdp2))
 
 
 class RamtorchPrefetchOrderWriterTests(unittest.TestCase):
