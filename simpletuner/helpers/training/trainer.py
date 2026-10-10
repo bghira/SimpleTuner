@@ -5224,10 +5224,7 @@ class Trainer:
         self.state["current_epoch"] = self.state["first_epoch"]
         StateTracker.set_epoch(self.state["current_epoch"])
         if hasattr(lr_scheduler, "last_epoch"):
-            lr_scheduler.last_epoch = (
-                training_state_in_ckpt.get("epoch_step", self.state.get("global_resume_step", 1))
-                * self.accelerator.num_processes
-            )
+            lr_scheduler.last_epoch = self.state["global_resume_step"] * self.accelerator.num_processes
 
         if self.state["current_epoch"] > self.config.num_train_epochs + 1 and self.config.strict_epoch_limit:
             logger.info(
