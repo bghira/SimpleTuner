@@ -116,7 +116,10 @@ class ResumeLRSchedulerTests(unittest.TestCase):
                 patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backends", return_value={}),
                 patch("simpletuner.helpers.training.state_tracker.StateTracker.get_global_step", return_value=200),
                 patch("simpletuner.helpers.training.state_tracker.StateTracker.set_global_resume_step"),
-                patch("simpletuner.helpers.training.state_tracker.StateTracker.get_training_state", return_value={}),
+                patch(
+                    "simpletuner.helpers.training.state_tracker.StateTracker.get_training_state",
+                    return_value={"epoch_step": 100},
+                ),
                 patch("simpletuner.helpers.training.state_tracker.StateTracker.get_epoch", return_value=1),
                 patch("simpletuner.helpers.training.state_tracker.StateTracker.set_epoch"),
             ):
@@ -128,6 +131,7 @@ class ResumeLRSchedulerTests(unittest.TestCase):
             self.assertEqual(scheduler_state["last_epoch"], 1600)
             self.assertEqual(scheduler_state["_step_count"], 1601)
             self.assertEqual(scheduler_state["_last_lr"], [1e-5])
+            self.assertEqual(lr_scheduler.last_epoch, 1600)
             lr_scheduler.load_state_dict.assert_called_once_with(scheduler_state)
             trainer.accelerator.load_state.assert_called_once_with(str(checkpoint_dir))
             mock_attention_backend.assert_called_once_with(str(checkpoint_dir))
