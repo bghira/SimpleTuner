@@ -5005,7 +5005,6 @@ class Trainer:
     def _restore_constant_scheduler_lr(
         self,
         lr_scheduler,
-        optimizer_param_groups: list[dict[str, Any]],
         configured_base_lrs: list[float | None],
         global_step: int,
     ) -> None:
@@ -5029,7 +5028,7 @@ class Trainer:
             scheduler_state["_step_count"] = scheduler_step + 1
         lr_scheduler.load_state_dict(scheduler_state)
 
-        for group_index, group in enumerate(optimizer_param_groups):
+        for group_index, group in enumerate(lr_scheduler.optimizer.param_groups):
             if group_index >= len(restored_lrs) or restored_lrs[group_index] is None:
                 continue
             group["initial_lr"] = configured_base_lrs[group_index]
@@ -5053,7 +5052,6 @@ class Trainer:
                 configured_param_group_lrs = [group.get("initial_lr", group.get("lr")) for group in optimizer_param_groups]
                 self._restore_constant_scheduler_lr(
                     lr_scheduler,
-                    optimizer_param_groups,
                     configured_param_group_lrs,
                     initial_lora_step,
                 )
@@ -5174,7 +5172,6 @@ class Trainer:
         try:
             self._restore_constant_scheduler_lr(
                 lr_scheduler,
-                optimizer_param_groups,
                 configured_param_group_lrs,
                 self.state["global_resume_step"],
             )

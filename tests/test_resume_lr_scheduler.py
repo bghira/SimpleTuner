@@ -42,11 +42,10 @@ class ResumeLRSchedulerTests(unittest.TestCase):
             trainer._emit_event = Mock()
             trainer.checkpoint_manager = CheckpointManager(tmpdir)
             scheduler_state = {"base_lrs": [0.25, 0.25], "_last_lr": [0.25, 0.25]}
-            lr_scheduler = Mock()
+            lr_scheduler = Mock(optimizer=trainer.optimizer)
             lr_scheduler.state_dict.return_value = scheduler_state
-            trainer.accelerator.load_state.side_effect = lambda _checkpoint: trainer.optimizer.param_groups.__setitem__(
-                slice(None),
-                [{"lr": 0.25}, {"lr": 0.25}],
+            trainer.accelerator.load_state.side_effect = lambda _checkpoint: setattr(
+                trainer.optimizer, "param_groups", [{"lr": 0.25}, {"lr": 0.25}]
             )
 
             with (
@@ -105,7 +104,7 @@ class ResumeLRSchedulerTests(unittest.TestCase):
                 "_step_count": 801,
                 "_last_lr": [1e-5],
             }
-            lr_scheduler = Mock(split_batches=False)
+            lr_scheduler = Mock(split_batches=False, optimizer=trainer.optimizer)
             lr_scheduler.state_dict.return_value = scheduler_state
             trainer.accelerator.load_state.side_effect = lambda _checkpoint: trainer.optimizer.param_groups.__setitem__(
                 slice(None),

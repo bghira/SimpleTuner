@@ -2470,7 +2470,7 @@ class TestTrainer(unittest.TestCase):
             "_step_count": 1,
             "_last_lr": [0.0],
         }
-        lr_scheduler = Mock(split_batches=False)
+        lr_scheduler = Mock(split_batches=False, optimizer=trainer.optimizer)
         lr_scheduler.state_dict.return_value = scheduler_state
 
         with (
@@ -2503,10 +2503,10 @@ class TestTrainer(unittest.TestCase):
             "_step_count": 1,
             "_last_lr": [0.0],
         }
-        lr_scheduler = Mock(split_batches=False)
+        lr_scheduler = Mock(split_batches=False, optimizer=Mock(param_groups=optimizer_param_groups))
         lr_scheduler.state_dict.return_value = scheduler_state
 
-        trainer._restore_constant_scheduler_lr(lr_scheduler, optimizer_param_groups, [5e-5], global_step=500)
+        trainer._restore_constant_scheduler_lr(lr_scheduler, [5e-5], global_step=500)
 
         self.assertEqual(optimizer_param_groups[0]["lr"], 2.5e-5)
         self.assertEqual(scheduler_state["_last_lr"], [2.5e-5])
