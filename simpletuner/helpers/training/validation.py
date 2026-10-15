@@ -1099,11 +1099,14 @@ def prepare_validation_prompt_list(args, embed_cache, model):
     # Compute negative embed for validation prompts, if any are set, so that it's stored before we unload the text encoder.
     if validation_prompts and precompute_text_embeddings:
         negative_prompt = StateTracker.get_args().validation_negative_prompt
+        requires_empty_negative = getattr(model, "VALIDATION_REQUIRES_EMPTY_NEGATIVE_PROMPT", False)
+        if negative_prompt is None and requires_empty_negative:
+            negative_prompt = ""
         needs_context = model.validation_negative_prompt_requires_prompt_context()
         if (
             negative_prompt is not None
             and str(negative_prompt).strip().lower() != "none"
-            and (negative_prompt != "" or needs_context)
+            and (negative_prompt != "" or needs_context or requires_empty_negative)
             and model.uses_validation_negative_prompt()
         ):
             if getattr(args, "model_family", None) == "ideogram":
@@ -1133,8 +1136,9 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             elif model.should_precompute_validation_negative_prompt():
                 logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
                 model.log_model_devices()
+                negative_prompt_record = _validation_negative_prompt_record(args, model, negative_prompt, "")
                 embed_cache.compute_embeddings_for_prompts(
-                    [negative_prompt],
+                    [negative_prompt_record],
                     is_validation=True,
                     load_from_cache=False,
                     is_negative_prompt=True,

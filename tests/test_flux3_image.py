@@ -4,11 +4,16 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import torch
 import torch.nn.functional as F
+from peft import LoraConfig
+from peft.utils import get_peft_model_state_dict
 
+from simpletuner.helpers.models.common import PredictionTypes
 from simpletuner.helpers.models.flux3_image import image_ids, patchify, text_ids, unpatchify
+from simpletuner.helpers.models.flux3_image.model import Flux3Image
 from simpletuner.helpers.models.flux3_image.pipeline import FLOW_SHIFT, Flux3ImagePipeline, guided_velocity
 from simpletuner.helpers.models.flux3_image.text import collate_embeddings
 from simpletuner.helpers.models.flux3_image.transformer import Flux3ImageTransformer2DModel
@@ -31,6 +36,36 @@ def tiny_transformer(**kwargs):
     )
     config.update(kwargs)
     return Flux3ImageTransformer2DModel(**config)
+
+
+def text_only_ddp_worker(rank, rendezvous):
+    torch.set_num_threads(1)
+    torch.distributed.init_process_group("gloo", init_method=f"file://{rendezvous}", rank=rank, world_size=2)
+    try:
+        torch.manual_seed(42)
+        model = tiny_transformer()
+        model.add_adapter(LoraConfig(r=2, lora_alpha=2, target_modules=Flux3Image.DEFAULT_LORA_TARGET))
+        wrapped = torch.nn.parallel.DistributedDataParallel(
+            model, find_unused_parameters=Flux3Image.DDP_FIND_UNUSED_PARAMETERS
+        )
+        optimizer = torch.optim.SGD([p for p in model.parameters() if p.requires_grad], lr=0.01)
+        for _ in range(2):
+            loss = (
+                wrapped(
+                    torch.randn(1, 4, 8),
+                    torch.randn(1, 3, 16),
+                    torch.tensor([0.5]),
+                    img_ids=image_ids(2, 2, "cpu"),
+                    return_dict=False,
+                )[0]
+                .square()
+                .mean()
+            )
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+    finally:
+        torch.distributed.destroy_process_group()
 
 
 def mathematical_reference(
@@ -247,6 +282,114 @@ class Flux3ImageTests(unittest.TestCase):
         self.assertEqual(output["attention_masks"].sum(1).tolist(), [80, 80, 160])
         torch.testing.assert_close(output["prompt_embeds"][:2, :80], first["prompt_embeds"])
 
+    def test_distilled_training_predicts_instantaneous_velocity(self):
+        foundation = Flux3Image.__new__(Flux3Image)
+        foundation.config = SimpleNamespace(weight_dtype=torch.float32)
+        foundation.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        foundation.model = tiny_transformer(flow_map=True)
+        foundation.PREDICTION_TYPE = PredictionTypes.FLOW_MAP
+        foundation.unwrap_model = lambda model: model
+        foundation._new_hidden_state_buffer = lambda: HiddenStateBuffer(capture_layers={1})
+        foundation.crepa_regularizer = SimpleNamespace(block_index=1)
+        batch = {
+            "noisy_latents": torch.randn(2, 8, 2, 2),
+            "latents": torch.randn(2, 8, 2, 2),
+            "noise": torch.randn(2, 8, 2, 2),
+            "timesteps": torch.tensor([250.0, 750.0]),
+            "prompt_embeds": torch.randn(2, 3, 16),
+        }
+        captured = {}
+        hook = foundation.model.register_forward_pre_hook(
+            lambda module, args, kwargs: captured.update(kwargs), with_kwargs=True
+        )
+        prediction = foundation.model_predict(batch)
+        hook.remove()
+        torch.testing.assert_close(captured["timestep"], torch.tensor([[0.25], [0.75]]))
+        torch.testing.assert_close(captured["target_timestep"], captured["timestep"])
+        target = foundation.get_prediction_target(batch)
+        torch.testing.assert_close(target, batch["noise"] - batch["latents"])
+        self.assertEqual(prediction["crepa_hidden_states"].shape, (2, 4, 16))
+        F.mse_loss(prediction["model_prediction"], target).backward()
+        self.assertIsNotNone(foundation.model.target_timestep_embedder.linear_1.weight.grad)
+
+    def test_family_defaults_apply_before_creating_the_schedule(self):
+        from simpletuner.helpers.configuration.cmd_args import get_default_config
+
+        for flavour, prediction_type in ((None, PredictionTypes.FLOW_MATCHING), ("klein", PredictionTypes.FLOW_MAP)):
+            config = SimpleNamespace(
+                **dict(
+                    get_default_config(),
+                    model_family="flux3_image",
+                    model_flavour=flavour,
+                    pretrained_model_name_or_path=None,
+                    model_type="lora",
+                    vae_path=None,
+                )
+            )
+            foundation = Flux3Image(config, SimpleNamespace(device=torch.device("cpu")))
+            foundation.check_user_config()
+            self.assertEqual(config.aspect_bucket_alignment, 16)
+            self.assertEqual(config.vae_dtype, "fp32")
+            self.assertEqual(config.tokenizer_max_length, 8192)
+            self.assertEqual(foundation.noise_schedule.config.shift, FLOW_SHIFT)
+            self.assertIs(foundation.PREDICTION_TYPE, prediction_type)
+
+    def test_ragged_reference_batches_match_individual_predictions(self):
+        foundation = Flux3Image.__new__(Flux3Image)
+        foundation.config = SimpleNamespace(weight_dtype=torch.float32)
+        foundation.accelerator = SimpleNamespace(device=torch.device("cpu"))
+        foundation.LATENT_CHANNEL_COUNT = 8
+        references = [torch.randn(8, 2, 3), torch.randn(8, 3, 3)]
+        batch = foundation.prepare_batch_conditions(
+            {
+                "latents": torch.randn(2, 8, 2, 2),
+                "conditioning_latents": [references],
+            },
+            {},
+        )
+        self.assertEqual(batch["conditioning_attention_mask"].sum(1).tolist(), [6, 9])
+        image, text, time = torch.randn(2, 4, 8), torch.randn(2, 3, 16), torch.tensor([0.2, 0.8])
+        predicted = self.model(
+            image,
+            text,
+            time,
+            img_ids=image_ids(2, 2, "cpu"),
+            conditioning_hidden_states=batch["conditioning_packed_latents"],
+            conditioning_ids=batch["conditioning_ids"],
+            conditioning_attention_mask=batch["conditioning_attention_mask"],
+        ).sample
+        for index, latent in enumerate(references):
+            individual = self.model(
+                image[index : index + 1],
+                text[index : index + 1],
+                time[index : index + 1],
+                img_ids=image_ids(2, 2, "cpu"),
+                conditioning_hidden_states=latent.flatten(1).T.unsqueeze(0),
+                conditioning_ids=image_ids(*latent.shape[-2:], "cpu", reference_index=0),
+            ).sample
+            torch.testing.assert_close(predicted[index : index + 1], individual, atol=1e-6, rtol=1e-5)
+
+    def test_twinflow_sign_module_initializes_neutrally_and_is_saved_with_lora(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.model.save_pretrained(directory)
+            model = Flux3ImageTransformer2DModel.from_pretrained(directory, enable_time_sign_embed=True)
+        torch.testing.assert_close(
+            model.time_sign_embed.weight, torch.zeros_like(model.time_sign_embed.weight), atol=0, rtol=0
+        )
+        model.add_adapter(
+            LoraConfig(
+                r=2,
+                lora_alpha=2,
+                target_modules=Flux3Image.DEFAULT_LORA_TARGET,
+                modules_to_save=["time_sign_embed"],
+            )
+        )
+        result = model(self.image, self.text, self.time, img_ids=self.ids, timestep_sign=torch.tensor([-1, 1])).sample
+        result.square().mean().backward()
+        state = get_peft_model_state_dict(model)
+        self.assertIn("time_sign_embed.weight", state)
+        self.assertTrue(any(p.grad is not None for p in model.time_sign_embed.parameters()))
+
 
 class Flux3ImagePipelineTests(unittest.TestCase):
 
@@ -338,3 +481,44 @@ class Flux3ImagePipelineTests(unittest.TestCase):
         ).sample
         result.square().mean().backward()
         self.assertTrue(self.model.proj_out.weight.grad.isfinite().all())
+
+
+class Flux3ImageIntegrationTests(unittest.TestCase):
+
+    def test_validation_precaches_empty_negative_before_unloading_text_encoder(self):
+        from simpletuner.helpers.configuration.cmd_args import get_default_config
+        from simpletuner.helpers.training.validation import prepare_validation_prompt_list
+
+        for negative in (None, ""):
+            with self.subTest(negative=negative):
+                config = SimpleNamespace(
+                    **dict(
+                        get_default_config(),
+                        model_family="flux3_image",
+                        model_flavour="klein-base",
+                        model_type="lora",
+                        pretrained_model_name_or_path=None,
+                        vae_path=None,
+                        validation_prompt="a bicycle",
+                        validation_prompt_library=False,
+                        validation_disable_unconditional=True,
+                        validation_negative_prompt=negative,
+                    )
+                )
+                foundation = Flux3Image(config, SimpleNamespace(device=torch.device("cpu")))
+                cache = SimpleNamespace(
+                    model_type="flux3_image", text_cache_ondemand=False, compute_embeddings_for_prompts=Mock()
+                )
+                with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_args", return_value=config):
+                    prepare_validation_prompt_list(config, cache, foundation)
+                cache.compute_embeddings_for_prompts.assert_any_call(
+                    [{"prompt": "", "key": "__validation_negative__", "metadata": {}}],
+                    is_validation=True,
+                    load_from_cache=False,
+                    is_negative_prompt=True,
+                )
+
+    @unittest.skipUnless(torch.distributed.is_available() and torch.distributed.is_gloo_available(), "Gloo unavailable")
+    def test_text_only_lora_completes_two_ddp_iterations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            torch.multiprocessing.spawn(text_only_ddp_worker, args=(str(Path(directory) / "rendezvous"),), nprocs=2)
