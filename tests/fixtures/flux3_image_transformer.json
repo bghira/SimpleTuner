@@ -1,0 +1,1369 @@
+{
+  "repo": "black-forest-labs/flux-3-image-klein-base",
+  "revision": "1469d27cfb9bb1bd81d3a93f5a023b39dbf136e4",
+  "config": {
+    "_class_name": "Flux3Transformer2DModel",
+    "_diffusers_version": "0.41.0.dev0",
+    "attention_head_dim": 128,
+    "axes_dims_rope": [
+      32,
+      32,
+      32,
+      32
+    ],
+    "cond_in_channels": 128,
+    "eps": 1e-06,
+    "in_channels": 128,
+    "joint_attention_dim": 20480,
+    "mlp_ratio": 3.0,
+    "num_attention_heads": 24,
+    "num_layers": 5,
+    "num_single_layers": 28,
+    "rope_theta": 10000,
+    "timestep_channels": 256
+  },
+  "shapes": {
+    "context_embedder.weight": [
+      3072,
+      20480
+    ],
+    "early_stream_modulations.image.linear.weight": [
+      9216,
+      3072
+    ],
+    "early_stream_modulations.image_cond.linear.weight": [
+      9216,
+      3072
+    ],
+    "early_stream_modulations.txt.linear.weight": [
+      9216,
+      3072
+    ],
+    "mode_blocks.image.0.attn.norm_k.weight": [
+      128
+    ],
+    "mode_blocks.image.0.attn.norm_q.weight": [
+      128
+    ],
+    "mode_blocks.image.0.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.0.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.0.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.0.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.0.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "mode_blocks.image.0.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "mode_blocks.image.1.attn.norm_k.weight": [
+      128
+    ],
+    "mode_blocks.image.1.attn.norm_q.weight": [
+      128
+    ],
+    "mode_blocks.image.1.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.1.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.1.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.1.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.1.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "mode_blocks.image.1.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "mode_blocks.image.2.attn.norm_k.weight": [
+      128
+    ],
+    "mode_blocks.image.2.attn.norm_q.weight": [
+      128
+    ],
+    "mode_blocks.image.2.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.2.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.2.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.2.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.2.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "mode_blocks.image.2.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "mode_blocks.image.3.attn.norm_k.weight": [
+      128
+    ],
+    "mode_blocks.image.3.attn.norm_q.weight": [
+      128
+    ],
+    "mode_blocks.image.3.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.3.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.3.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.3.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.3.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "mode_blocks.image.3.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "mode_blocks.image.4.attn.norm_k.weight": [
+      128
+    ],
+    "mode_blocks.image.4.attn.norm_q.weight": [
+      128
+    ],
+    "mode_blocks.image.4.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.4.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.4.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.4.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image.4.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "mode_blocks.image.4.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "mode_blocks.image_cond.0.attn.norm_k.weight": [
+      128
+    ],
+    "mode_blocks.image_cond.0.attn.norm_q.weight": [
+      128
+    ],
+    "mode_blocks.image_cond.0.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.0.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.0.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.0.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.0.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "mode_blocks.image_cond.0.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "mode_blocks.image_cond.1.attn.norm_k.weight": [
+      128
+    ],
+    "mode_blocks.image_cond.1.attn.norm_q.weight": [
+      128
+    ],
+    "mode_blocks.image_cond.1.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.1.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.1.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.1.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.1.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "mode_blocks.image_cond.1.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "mode_blocks.image_cond.2.attn.norm_k.weight": [
+      128
+    ],
+    "mode_blocks.image_cond.2.attn.norm_q.weight": [
+      128
+    ],
+    "mode_blocks.image_cond.2.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.2.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.2.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.2.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.2.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "mode_blocks.image_cond.2.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "mode_blocks.image_cond.3.attn.norm_k.weight": [
+      128
+    ],
+    "mode_blocks.image_cond.3.attn.norm_q.weight": [
+      128
+    ],
+    "mode_blocks.image_cond.3.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.3.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.3.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.3.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.3.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "mode_blocks.image_cond.3.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "mode_blocks.image_cond.4.attn.norm_k.weight": [
+      128
+    ],
+    "mode_blocks.image_cond.4.attn.norm_q.weight": [
+      128
+    ],
+    "mode_blocks.image_cond.4.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.4.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.4.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.4.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "mode_blocks.image_cond.4.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "mode_blocks.image_cond.4.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_stream_modulations.image.linear.weight": [
+      9216,
+      3072
+    ],
+    "single_stream_modulations.image_cond.linear.weight": [
+      9216,
+      3072
+    ],
+    "single_stream_modulations.txt.linear.weight": [
+      9216,
+      3072
+    ],
+    "single_transformer_blocks.0.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.0.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.0.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.0.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.0.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.0.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.0.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.0.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.1.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.1.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.1.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.1.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.1.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.1.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.1.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.1.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.10.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.10.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.10.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.10.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.10.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.10.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.10.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.10.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.11.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.11.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.11.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.11.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.11.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.11.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.11.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.11.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.12.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.12.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.12.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.12.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.12.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.12.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.12.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.12.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.13.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.13.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.13.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.13.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.13.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.13.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.13.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.13.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.14.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.14.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.14.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.14.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.14.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.14.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.14.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.14.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.15.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.15.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.15.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.15.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.15.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.15.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.15.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.15.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.16.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.16.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.16.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.16.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.16.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.16.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.16.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.16.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.17.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.17.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.17.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.17.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.17.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.17.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.17.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.17.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.18.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.18.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.18.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.18.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.18.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.18.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.18.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.18.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.19.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.19.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.19.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.19.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.19.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.19.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.19.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.19.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.2.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.2.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.2.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.2.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.2.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.2.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.2.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.2.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.20.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.20.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.20.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.20.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.20.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.20.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.20.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.20.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.21.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.21.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.21.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.21.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.21.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.21.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.21.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.21.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.22.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.22.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.22.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.22.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.22.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.22.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.22.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.22.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.23.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.23.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.23.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.23.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.23.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.23.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.3.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.3.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.3.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.3.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.3.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.3.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.3.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.3.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.4.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.4.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.4.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.4.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.4.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.4.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.4.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.4.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.5.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.5.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.5.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.5.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.5.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.5.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.5.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.5.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.6.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.6.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.6.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.6.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.6.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.6.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.6.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.6.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.7.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.7.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.7.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.7.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.7.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.7.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.7.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.7.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.8.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.8.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.8.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.8.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.8.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.8.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.8.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.8.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.9.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.9.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.9.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.9.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.9.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.9.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.9.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.9.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "timestep_embedder.linear_1.weight": [
+      3072,
+      256
+    ],
+    "timestep_embedder.linear_2.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.0.attn.norm_k.weight": [
+      128
+    ],
+    "txt_mode_blocks.0.attn.norm_q.weight": [
+      128
+    ],
+    "txt_mode_blocks.0.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.0.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.0.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.0.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.0.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "txt_mode_blocks.0.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "txt_mode_blocks.1.attn.norm_k.weight": [
+      128
+    ],
+    "txt_mode_blocks.1.attn.norm_q.weight": [
+      128
+    ],
+    "txt_mode_blocks.1.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.1.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.1.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.1.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.1.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "txt_mode_blocks.1.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "txt_mode_blocks.2.attn.norm_k.weight": [
+      128
+    ],
+    "txt_mode_blocks.2.attn.norm_q.weight": [
+      128
+    ],
+    "txt_mode_blocks.2.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.2.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.2.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.2.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.2.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "txt_mode_blocks.2.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "txt_mode_blocks.3.attn.norm_k.weight": [
+      128
+    ],
+    "txt_mode_blocks.3.attn.norm_q.weight": [
+      128
+    ],
+    "txt_mode_blocks.3.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.3.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.3.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.3.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.3.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "txt_mode_blocks.3.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "txt_mode_blocks.4.attn.norm_k.weight": [
+      128
+    ],
+    "txt_mode_blocks.4.attn.norm_q.weight": [
+      128
+    ],
+    "txt_mode_blocks.4.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.4.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.4.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.4.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "txt_mode_blocks.4.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "txt_mode_blocks.4.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "x_embedders.image.weight": [
+      3072,
+      128
+    ],
+    "x_embedders.image_cond.weight": [
+      3072,
+      128
+    ],
+    "norm_out.linear.weight": [
+      6144,
+      3072
+    ],
+    "proj_out.weight": [
+      128,
+      3072
+    ],
+    "single_transformer_blocks.23.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.23.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.24.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.24.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.24.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.24.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.24.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.24.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.24.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.24.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.25.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.25.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.25.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.25.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.25.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.25.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.25.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.25.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.26.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.26.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.26.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.26.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.26.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.26.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.26.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.26.ff.linear_out.weight": [
+      3072,
+      9216
+    ],
+    "single_transformer_blocks.27.attn.norm_k.weight": [
+      128
+    ],
+    "single_transformer_blocks.27.attn.norm_q.weight": [
+      128
+    ],
+    "single_transformer_blocks.27.attn.to_k.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.27.attn.to_out.0.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.27.attn.to_q.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.27.attn.to_v.weight": [
+      3072,
+      3072
+    ],
+    "single_transformer_blocks.27.ff.linear_in.weight": [
+      18432,
+      3072
+    ],
+    "single_transformer_blocks.27.ff.linear_out.weight": [
+      3072,
+      9216
+    ]
+  }
+}
