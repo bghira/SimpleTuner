@@ -1,5 +1,6 @@
 import json
 import math
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,8 +9,10 @@ import torch
 import torch.nn.functional as F
 
 from simpletuner.helpers.models.flux3_image import image_ids, patchify, text_ids, unpatchify
+from simpletuner.helpers.models.flux3_image.pipeline import FLOW_SHIFT, Flux3ImagePipeline, guided_velocity
 from simpletuner.helpers.models.flux3_image.text import collate_embeddings
 from simpletuner.helpers.models.flux3_image.transformer import Flux3ImageTransformer2DModel
+from simpletuner.helpers.training.custom_schedule import TwinFlowScheduler
 from simpletuner.helpers.training.layersync import LayerSyncRegularizer
 from simpletuner.helpers.utils.hidden_state_buffer import HiddenStateBuffer
 
@@ -243,3 +246,95 @@ class Flux3ImageTests(unittest.TestCase):
         self.assertEqual(output["prompt_embeds"].shape, (3, 160, 16))
         self.assertEqual(output["attention_masks"].sum(1).tolist(), [80, 80, 160])
         torch.testing.assert_close(output["prompt_embeds"][:2, :80], first["prompt_embeds"])
+
+
+class Flux3ImagePipelineTests(unittest.TestCase):
+
+    def setUp(self):
+        torch.manual_seed(321)
+        self.model = tiny_transformer()
+        self.pipeline = Flux3ImagePipeline(self.model)
+        self.pipeline.set_progress_bar_config(disable=True)
+        self.embeddings = torch.randn(2, 3, 16)
+
+    def sample(self, **kwargs):
+        args = dict(
+            prompt_embeds=self.embeddings,
+            height=32,
+            width=32,
+            num_inference_steps=4,
+            guidance_scale=1.0,
+            output_type="latent",
+            generator=[torch.Generator().manual_seed(42), torch.Generator().manual_seed(43)],
+        )
+        args.update(kwargs)
+        return self.pipeline(**args).images
+
+    def test_official_static_schedule_and_seed_reproducibility(self):
+        first, second = self.sample(), self.sample()
+        torch.testing.assert_close(first, second, rtol=0, atol=0)
+        grid = torch.linspace(1, 0, 5)
+        expected = FLOW_SHIFT * grid / (1 + (FLOW_SHIFT - 1) * grid)
+        torch.testing.assert_close(self.pipeline.scheduler.sigmas.cpu(), expected)
+        self.assertEqual(first.dtype, torch.float32)
+
+    def test_cfg_and_zero_star_have_expected_velocity_convention(self):
+        positive, negative = torch.tensor([[[2.0, 4.0]]]), torch.tensor([[[1.0, 2.0]]])
+        torch.testing.assert_close(guided_velocity(positive, negative, 3.5), negative + 3.5 * (positive - negative))
+        torch.testing.assert_close(guided_velocity(positive, negative, 3.5, True), positive)
+        out = self.sample(negative_prompt_embeds=torch.randn(2, 5, 16), guidance_scale=3.5, use_cfg_zero_star=True)
+        self.assertTrue(out.isfinite().all())
+
+    def test_twinflow_uses_supplied_generators(self):
+        self.pipeline.scheduler = TwinFlowScheduler(stochast_ratio=0.7)
+        first, second = self.sample(), self.sample()
+        torch.testing.assert_close(first, second, rtol=0, atol=0)
+
+    def test_step_callbacks_receive_only_requested_tensors_and_can_replace_latents(self):
+        for inputs in ((), ("latents",)):
+            with self.subTest(inputs=inputs):
+                calls = []
+
+                def callback(pipeline, index, timestep, values):
+                    self.assertIs(pipeline, self.pipeline)
+                    self.assertEqual(set(values), set(inputs))
+                    calls.append(index)
+                    return {"latents": torch.zeros_like(values["latents"])} if inputs else {}
+
+                result = self.sample(callback_on_step_end=callback, callback_on_step_end_tensor_inputs=inputs)
+                self.assertEqual(calls, [0, 1, 2, 3])
+                if inputs:
+                    torch.testing.assert_close(result, torch.zeros_like(result), rtol=0, atol=0)
+
+    def test_distilled_sampling_passes_destination_time(self):
+        self.pipeline = Flux3ImagePipeline(tiny_transformer(flow_map=True))
+        self.pipeline.set_progress_bar_config(disable=True)
+        result = self.sample()
+        self.assertTrue(result.isfinite().all())
+
+    def test_pipeline_roundtrip_preserves_optional_components_and_scheduler(self):
+        self.pipeline.scheduler = TwinFlowScheduler(stochast_ratio=0.7, shift=2.5)
+        with tempfile.TemporaryDirectory() as directory:
+            self.pipeline.save_pretrained(directory)
+            self.pipeline = Flux3ImagePipeline.from_pretrained(directory, torch_dtype=torch.float32)
+        self.pipeline.set_progress_bar_config(disable=True)
+        self.assertIsInstance(self.pipeline.scheduler, TwinFlowScheduler)
+        self.assertEqual(self.pipeline.scheduler.config.shift, 2.5)
+        self.assertIsNone(self.pipeline.vae)
+        self.assertTrue(self.sample().isfinite().all())
+
+    @unittest.skipUnless(torch.backends.mps.is_available() or torch.cuda.is_available(), "Accelerator unavailable")
+    def test_accelerator_twinflow_accepts_cpu_generators_and_backpropagates(self):
+        device = "cuda" if torch.cuda.is_available() else "mps"
+        self.pipeline.to(device)
+        self.pipeline.scheduler = TwinFlowScheduler(stochast_ratio=0.7)
+        first, second = self.sample(), self.sample()
+        torch.testing.assert_close(first, second, rtol=0, atol=0)
+        result = self.model(
+            torch.randn(2, 4, 8, device=device),
+            self.embeddings.to(device),
+            torch.tensor([0.25, 0.75], device=device),
+            img_ids=image_ids(2, 2, device),
+        ).sample
+        result.square().mean().backward()
+        self.assertTrue(self.model.proj_out.weight.grad.isfinite().all())
