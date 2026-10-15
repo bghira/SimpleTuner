@@ -172,6 +172,12 @@ def _materialize_state_dict_for_save(state_dict: dict[str, torch.Tensor]) -> dic
     return {strip_compile_wrapper(name): _materialize_tensor_for_save(tensor) for name, tensor in state_dict.items()}
 
 
+def _materialize_lycoris_state_dict_for_save(network) -> dict[str, torch.Tensor]:
+    # Under FSDP2 the adapter parameters are DTensor shards, so every rank must call this.
+    dtype = next(network.parameters()).dtype
+    return {name: tensor.to(dtype) for name, tensor in _materialize_state_dict_for_save(network.state_dict()).items()}
+
+
 def _get_fsdp2_pipeline_export_spec(model) -> _FSDP2PipelineExportSpec:
     is_controlnet = bool(getattr(model.config, "controlnet", False))
     pipeline_type = PipelineTypes.CONTROLNET if is_controlnet else model.DEFAULT_PIPELINE_TYPE
@@ -891,7 +897,7 @@ class SaveHookManager:
         self.model.save_lora_weights(output_dir, **lora_save_parameters, **metadata)
         self._apply_modelspec_metadata_to_lora(output_dir)
 
-    def _save_lycoris(self, models, weights, output_dir):
+    def _save_lycoris(self, models, weights, output_dir, write: bool = True):
         """
         save wrappers for lycoris. For now, text encoders are not trainable
         via lycoris.
@@ -907,25 +913,25 @@ class SaveHookManager:
         base_metadata = {"lycoris_config": json.dumps(lycoris_config)}
         base_metadata.update(self._build_modelspec_metadata(checkpoint_dir=output_dir))
 
-        self.accelerator._lycoris_wrapped_network.save_weights(
-            os.path.join(output_dir, LORA_SAFETENSORS_FILENAME),
-            list(self.accelerator._lycoris_wrapped_network.parameters())[0].dtype,
-            base_metadata,  # metadata
-        )
+        network = self.accelerator._lycoris_wrapped_network
+        state_dict = _materialize_lycoris_state_dict_for_save(network)
+        ema_state_dict = None
         if self.args.use_ema:
             # we'll store lycoris weights.
             self.ema_model.store(self.accelerator._lycoris_wrapped_network.parameters())
             # we'll write EMA to the lycoris adapter temporarily.
             self.ema_model.copy_to(self.accelerator._lycoris_wrapped_network.parameters())
+            ema_state_dict = _materialize_lycoris_state_dict_for_save(network)
+            self.ema_model.restore(self.accelerator._lycoris_wrapped_network.parameters())
+        if not write:
+            return
+
+        save_file(state_dict, os.path.join(output_dir, LORA_SAFETENSORS_FILENAME), base_metadata)
+        if ema_state_dict is not None:
             # now we can write the lycoris weights using the EMA_SAFETENSORS_FILENAME instead.
             os.makedirs(os.path.join(output_dir, "ema"), exist_ok=True)
             ema_metadata = dict(base_metadata)
-            self.accelerator._lycoris_wrapped_network.save_weights(
-                os.path.join(output_dir, "ema", EMA_SAFETENSORS_FILENAME),
-                list(self.accelerator._lycoris_wrapped_network.parameters())[0].dtype,
-                ema_metadata,  # metadata
-            )
-            self.ema_model.restore(self.accelerator._lycoris_wrapped_network.parameters())
+            save_file(ema_state_dict, os.path.join(output_dir, "ema", EMA_SAFETENSORS_FILENAME), ema_metadata)
 
         # copy the config into the repo
         shutil.copy2(self.args.lycoris_config, os.path.join(output_dir, "lycoris_config.json"))
@@ -1180,12 +1186,12 @@ class SaveHookManager:
             # For Accelerate-managed FSDP v2 checkpoints, rely on Accelerate's native sharded save.
             if self._is_fsdp2():
                 logger.info("Detected FSDP v2; skipping custom full-model save and relying on Accelerate shards.")
-                # LoRA/LyCORIS adapters are not part of the FSDP-wrapped module; save them explicitly.
+                # Also write the adapter as a standalone safetensors file for inference.
                 if "lora" in self.args.model_type:
                     if self.args.lora_type == "lycoris":
                         if is_main_process:
                             logger.info("Saving LyCORIS adapter weights alongside FSDP v2 shards.")
-                            self._save_lycoris(models=models, weights=weights, output_dir=output_dir)
+                        self._save_lycoris(models=models, weights=weights, output_dir=output_dir, write=is_main_process)
                     elif self.args.lora_type == "standard":
                         if is_main_process:
                             logger.info("Saving standard LoRA adapter weights alongside FSDP v2 shards.")
@@ -1290,10 +1296,12 @@ class SaveHookManager:
             f"load_model_hook: model_type={self.args.model_type!r}, lora_type={self.args.lora_type!r}, is_fsdp2_run={is_fsdp2_run}"
         )
         if "lora" in self.args.model_type and self.args.lora_type == "standard":
-            self._load_lora(models=models, input_dir=input_dir)
+            if not is_fsdp2_run:
+                self._load_lora(models=models, input_dir=input_dir)
             self._load_lyrics_embedder_state(input_dir=input_dir)
         elif "lora" in self.args.model_type and self.args.lora_type == "lycoris":
-            self._load_lycoris(models=models, input_dir=input_dir)
+            if not is_fsdp2_run:
+                self._load_lycoris(models=models, input_dir=input_dir)
         elif not is_fsdp2_run:
             # Check if this checkpoint looks like a LoRA checkpoint but we're trying to load it as full model
             lora_weights_path = os.path.join(input_dir, "pytorch_lora_weights.safetensors")
