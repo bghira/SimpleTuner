@@ -4,6 +4,7 @@ import os
 
 import accelerate
 import torch
+from diffusers.utils.torch_utils import randn_tensor
 from torch.optim.lr_scheduler import LambdaLR, LRScheduler
 
 logger = logging.getLogger(__name__)
@@ -1579,7 +1580,7 @@ class TwinFlowScheduler(SchedulerMixin, ConfigMixin):
             1.0 - rfba_gap_end,
             num_steps,
             dtype=torch.float64,
-            device=device,
+            device="cpu",
         )
 
         if rfba_gap_end == 0.0:
@@ -1591,8 +1592,8 @@ class TwinFlowScheduler(SchedulerMixin, ConfigMixin):
 
         # Convert to sigma format: sigma goes from 1 (noise) to 0 (clean)
         # TwinFlow uses (1 - t_steps) as the "time" coordinate
-        self.sigmas = torch.cat([(1 - t_steps), torch.zeros(1, device=device, dtype=torch.float64)])
-        self.sigmas = self.sigmas.to(dtype=torch.float32)
+        self.sigmas = torch.cat([(1 - t_steps), torch.zeros(1, dtype=torch.float64)])
+        self.sigmas = self.sigmas.to(device=device, dtype=torch.float32)
 
         # Timesteps for pipeline compatibility (scaled to num_train_timesteps)
         self.timesteps = (self.sigmas[:-1] * self.config.num_train_timesteps).to(dtype=torch.float32, device=device)
@@ -1665,15 +1666,12 @@ class TwinFlowScheduler(SchedulerMixin, ConfigMixin):
                     raise ValueError(
                         "TwinFlowScheduler received a list of generators whose length does not match the batch size."
                     )
-                noise = torch.stack(
-                    [
-                        torch.randn(sample[i].shape, generator=gen, device=sample.device, dtype=sample.dtype)
-                        for i, gen in enumerate(generator)
-                    ],
-                    dim=0,
-                )
-            else:
-                noise = torch.randn(sample.shape, generator=generator, device=sample.device, dtype=sample.dtype)
+            noise = randn_tensor(
+                sample.shape,
+                generator=list(generator) if isinstance(generator, tuple) else generator,
+                device=sample.device,
+                dtype=sample.dtype,
+            )
         else:
             noise = 0.0
 
