@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from simpletuner.helpers.configuration.cli_utils import normalize_lr_scheduler_value
 from simpletuner.helpers.training.attention_backend import (
+    get_kohaku_fa_unavailable_reason,
     get_metal_flash_attention_unavailable_reason,
     is_sageattention_available,
     xformers_compute_capability_error,
@@ -413,7 +414,11 @@ class ValidationService:
             result.add_error("lr_warmup_steps", "Warmup steps must be a whole number.")
 
         # Attention mechanism availability checks
-        attention_mech = str(self._get_config_value(config, "attention_mechanism") or "diffusers")
+        attention_mech = str(self._get_config_value(config, "attention_mechanism") or "kohaku-fa-auto")
+        if attention_mech.strip().lower().replace("_", "-") == "kohaku-fa":
+            reason = get_kohaku_fa_unavailable_reason()
+            if reason:
+                result.add_error("attention_mechanism", reason)
         if attention_mech == "xformers":
             xformers_error = xformers_compute_capability_error()
             if xformers_error:
