@@ -937,7 +937,8 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
                 name
                 for name, cls in ModelRegistry.model_families().items()
                 if hasattr(cls, "PREDICTION_TYPE")
-                and getattr(getattr(cls, "PREDICTION_TYPE"), "value", getattr(cls, "PREDICTION_TYPE")) == "flow_matching"
+                and getattr(getattr(cls, "PREDICTION_TYPE"), "value", getattr(cls, "PREDICTION_TYPE"))
+                in ("flow_matching", "flow_map")
             ],
             dependencies=[
                 FieldDependency(field="distillation_method", operator="equals", value=None),
@@ -968,7 +969,8 @@ def register_loss_fields(registry: "FieldRegistry") -> None:
                 name
                 for name, cls in ModelRegistry.model_families().items()
                 if hasattr(cls, "PREDICTION_TYPE")
-                and getattr(getattr(cls, "PREDICTION_TYPE"), "value", getattr(cls, "PREDICTION_TYPE")) == "flow_matching"
+                and getattr(getattr(cls, "PREDICTION_TYPE"), "value", getattr(cls, "PREDICTION_TYPE"))
+                in ("flow_matching", "flow_map")
             ],
             dependencies=[
                 FieldDependency(field="twinflow_enabled", operator="equals", value=True),

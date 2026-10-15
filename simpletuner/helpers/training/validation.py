@@ -59,7 +59,7 @@ from PIL import Image, ImageDraw, ImageFont
 from transformers.utils import ContextManagers
 
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info, get_model_replica_data_info
-from simpletuner.helpers.models.common import PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.common import PipelineTypes
 from simpletuner.helpers.models.cosmos.scheduler import RectifiedFlowAB2Scheduler
 from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
@@ -2024,7 +2024,7 @@ class Validation:
             self.validation_resolutions = [(256, 256)]
         else:
             self.validation_resolutions = get_validation_resolutions()
-        self.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
+        self.flow_matching = self.model.PREDICTION_TYPE.is_flow_prediction
         self.deepspeed = is_deepspeed
         self.fsdp = is_fsdp
         self._epoch_validations_completed: set[int] = set()
@@ -2963,7 +2963,7 @@ class Validation:
 
         # TwinFlow uses its own UCGM-style scheduler (supports flow and diff2flow bridge)
         if getattr(self.config, "twinflow_enabled", False) and (
-            self.model.PREDICTION_TYPE.value == "flow_matching" or getattr(self.model, "_twinflow_diffusion_bridge", False)
+            self.model.PREDICTION_TYPE.is_flow_prediction or getattr(self.model, "_twinflow_diffusion_bridge", False)
         ):
             twinflow_steps = int(getattr(self.config, "twinflow_target_step_count", 1) or 1)
             scheduler = TwinFlowScheduler(
@@ -2988,7 +2988,7 @@ class Validation:
         ):
             # set the default
             self.config.validation_noise_scheduler = self.model.DEFAULT_NOISE_SCHEDULER
-        if self.model.PREDICTION_TYPE.value == "flow_matching":
+        if self.model.PREDICTION_TYPE.is_flow_prediction:
             # some flow-matching adjustments should be made for euler and unipc video model generations.
             if self.config.validation_noise_scheduler in ["flow_matching", "flow_match_euler", "euler"]:
                 if self.config.validation_noise_scheduler == "euler":

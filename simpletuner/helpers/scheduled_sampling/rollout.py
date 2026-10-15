@@ -209,7 +209,7 @@ def apply_scheduled_sampling_rollout(model, prepared_batch: dict, noise_schedule
     if plan is None:
         return prepared_batch
 
-    if model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
+    if model.PREDICTION_TYPE.is_flow_prediction:
         return _apply_flow_matching_rollout(model, prepared_batch, noise_schedule, config)
 
     if model.PREDICTION_TYPE not in [PredictionTypes.EPSILON, PredictionTypes.V_PREDICTION]:

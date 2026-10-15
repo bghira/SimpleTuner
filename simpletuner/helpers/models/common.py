@@ -41,6 +41,7 @@ from simpletuner.helpers.models.foundation_mixins import (
     VaeLatentScalingMixin,
     VideoTransformMixin,
 )
+from simpletuner.helpers.models.prediction import PredictionTypes
 from simpletuner.helpers.models.tae import load_tae_decoder
 from simpletuner.helpers.models.xm_mixin import ExplorativeModelingMixin
 from simpletuner.helpers.scheduled_sampling import build_rollout_schedule
@@ -363,29 +364,6 @@ class PipelineTypes(Enum):
     IMG2VIDEO = "img2video"
     CONTROLNET = "controlnet"
     CONTROL = "control"
-
-
-class PredictionTypes(Enum):
-    EPSILON = "epsilon"
-    SAMPLE = "sample"
-    V_PREDICTION = "v_prediction"
-    FLOW_MATCHING = "flow_matching"
-    AUTOREGRESSIVE_NEXT_TOKEN = "autoregressive_next_token"
-
-    @staticmethod
-    def from_str(label):
-        if label in ("eps", "epsilon"):
-            return PredictionTypes.EPSILON
-        elif label in ("vpred", "v_prediction", "v-prediction"):
-            return PredictionTypes.V_PREDICTION
-        elif label in ("sample", "x_prediction", "x-prediction"):
-            return PredictionTypes.SAMPLE
-        elif label in ("flow", "flow_matching", "flow-matching"):
-            return PredictionTypes.FLOW_MATCHING
-        elif label in ("ar", "autoregressive", "autoregressive_next_token"):
-            return PredictionTypes.AUTOREGRESSIVE_NEXT_TOKEN
-        else:
-            raise NotImplementedError
 
 
 class ModelTypes(Enum):
@@ -4422,7 +4400,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
             self.noise_schedule = None
             return self.config, None
         flow_matching = False
-        if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
+        if self.PREDICTION_TYPE.is_flow_prediction:
             from diffusers import FlowMatchEulerDiscreteScheduler
 
             self.noise_schedule = FlowMatchEulerDiscreteScheduler.from_pretrained(
@@ -4538,7 +4516,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         if prepared_batch.get("target") is not None:
             # Parent-student training
             target = prepared_batch["target"]
-        elif self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
+        elif self.PREDICTION_TYPE.is_flow_prediction:
             target = self.get_flow_matching_target(prepared_batch, prefer_explicit_target=False)
         elif self.PREDICTION_TYPE is PredictionTypes.EPSILON:
             target = prepared_batch["noise"]
@@ -4862,7 +4840,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
     def validate_mixflow_config(self) -> None:
         if not self._mixflow_enabled():
             return
-        if self.PREDICTION_TYPE is not PredictionTypes.FLOW_MATCHING:
+        if not self.PREDICTION_TYPE.is_flow_prediction:
             raise ValueError("mixflow_enabled requires a flow-matching model family.")
         self._mixflow_gamma()
 
@@ -5057,7 +5035,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         if not getattr(self.config, "twinflow_enabled", False):
             return
 
-        prediction_is_flow = self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING
+        prediction_is_flow = self.PREDICTION_TYPE.is_flow_prediction
         allow_diff2flow = bool(getattr(self.config, "twinflow_allow_diff2flow", False))
         uses_diff2flow = bool(getattr(self.config, "diff2flow_enabled", False))
         if not prediction_is_flow:
@@ -5329,7 +5307,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         if getattr(self.config, "scheduled_sampling_reflexflow", None) is not None:
             return False
 
-        if self.PREDICTION_TYPE is not PredictionTypes.FLOW_MATCHING:
+        if not self.PREDICTION_TYPE.is_flow_prediction:
             return False
 
         setattr(self.config, "scheduled_sampling_reflexflow", True)
@@ -5341,7 +5319,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         """
         if not getattr(self.config, "twinflow_enabled", False):
             return False
-        if self.PREDICTION_TYPE is not PredictionTypes.FLOW_MATCHING and not self._twinflow_diffusion_bridge:
+        if not self.PREDICTION_TYPE.is_flow_prediction and not self._twinflow_diffusion_bridge:
             raise ValueError(
                 "TwinFlow is only supported for flow-matching models. Enable diff2flow bridging explicitly "
                 "to run with epsilon/v_prediction targets."
@@ -5905,7 +5883,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         else:
             batch["input_noise"] = noise
 
-        if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
+        if self.PREDICTION_TYPE.is_flow_prediction:
             if self.diffusion_blocks_controller is not None:
                 batch["sigmas"], batch["timesteps"] = self._sample_diffusion_blocks_flow_batch(batch=batch, state=state)
             else:
@@ -6139,7 +6117,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
 
         elif huber_schedule == "snr":
             # SNR-based scheduling
-            if self.PREDICTION_TYPE == PredictionTypes.FLOW_MATCHING:
+            if self.PREDICTION_TYPE.is_flow_prediction:
                 sigmas = timesteps / 1000
                 sigmas = ((1.0 - sigmas) / (sigmas + 0.0001)) ** 0.5
             else:
@@ -6185,7 +6163,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
             if flow_target is None:
                 raise ValueError("Flow target is None while diff2flow_loss is enabled.")
             loss = F.mse_loss(flow_pred.float(), flow_target.float(), reduction="none")
-        elif self.PREDICTION_TYPE == PredictionTypes.FLOW_MATCHING:
+        elif self.PREDICTION_TYPE.is_flow_prediction:
             # Check if we're using Huber or smooth L1 loss
             if loss_type in ["huber", "smooth_l1"]:
                 # Get timesteps for the batch

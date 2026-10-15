@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import simpletuner.helpers.training.validation as validation_module
+from simpletuner.helpers.models.common import PredictionTypes
 from simpletuner.helpers.training.validation import Validation
 
 
@@ -92,7 +93,7 @@ class ValidationSchedulerCacheTests(unittest.TestCase):
         )
         validation.model = SimpleNamespace(
             DEFAULT_NOISE_SCHEDULER=None,
-            PREDICTION_TYPE=SimpleNamespace(value="epsilon"),
+            PREDICTION_TYPE=PredictionTypes.EPSILON,
             pipeline=SimpleNamespace(scheduler=scheduler),
             noise_schedule=None,
             requires_special_scheduler_setup=lambda: False,

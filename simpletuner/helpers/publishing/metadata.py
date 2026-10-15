@@ -122,7 +122,7 @@ def _validation_scheduler_label(model, args) -> str:
     if scheduler_name is None:
         scheduler_name = (
             "FlowMatchEulerDiscreteScheduler"
-            if model.PREDICTION_TYPE.value == "flow_matching"
+            if model.PREDICTION_TYPE.value in ("flow_matching", "flow_map")
             else args.validation_noise_scheduler
         )
 

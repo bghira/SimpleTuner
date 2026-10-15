@@ -116,7 +116,7 @@ class ExplorativeModelingMixin:
         expanded_batch["input_noise"] = candidate_noise
 
         prediction_type = self._prediction_type_value()
-        if prediction_type == "flow_matching":
+        if prediction_type in ("flow_matching", "flow_map"):
             sigmas = expanded_batch.get("mixflow_interpolation_sigmas")
             if sigmas is None:
                 sigmas = expanded_batch.get("sigmas")
@@ -190,7 +190,7 @@ class ExplorativeModelingMixin:
             if flow_target is None:
                 raise ValueError("Flow target is None while diff2flow_loss is enabled.")
             loss = F.mse_loss(flow_pred.float(), flow_target.float(), reduction="none")
-        elif prediction_type == "flow_matching":
+        elif prediction_type in ("flow_matching", "flow_map"):
             if loss_type in ["huber", "smooth_l1"]:
                 loss = self._xm_huber_loss_tensor(model_pred, target, prepared_batch["timesteps"], loss_type)
             else:

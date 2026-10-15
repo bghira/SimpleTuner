@@ -1082,7 +1082,9 @@ class FieldService:
 
             if name in self._FLOW_SCHEDULE_FIELDS:
                 prediction_type = self._resolve_prediction_type(combined_config)
-                if prediction_type != "flow_matching" and not self._config_has_field(raw_config_data, name):
+                if prediction_type not in ("flow_matching", "flow_map") and not self._config_has_field(
+                    raw_config_data, name
+                ):
                     continue
 
             if name in self._SOFT_MIN_SNR_FIELDS:

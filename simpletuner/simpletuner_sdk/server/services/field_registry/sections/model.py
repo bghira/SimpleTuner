@@ -313,6 +313,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
                 {"value": "v_prediction", "label": "V-Prediction"},
                 {"value": "sample", "label": "Sample"},
                 {"value": "flow_matching", "label": "Flow Matching"},
+                {"value": "flow_map", "label": "Flow Map"},
             ],
             help_text="The parameterization type for the diffusion model",
             tooltip="Usually auto-detected from the model. Flow matching is used by Flux, SD3, and similar models.",

@@ -237,7 +237,7 @@ from diffusers.utils.import_utils import is_xformers_available
 from peft.utils import get_peft_model_state_dict
 from tqdm.auto import tqdm
 
-from simpletuner.helpers.models.common import ImageModelFoundation, PredictionTypes, VideoModelFoundation
+from simpletuner.helpers.models.common import ImageModelFoundation, VideoModelFoundation
 from simpletuner.helpers.training.ema import EMAModel
 
 is_optimi_available = False
@@ -2109,13 +2109,11 @@ class Trainer:
     def init_noise_schedule(self):
         if self.model is None:
             return
-        from simpletuner.helpers.models.common import PredictionTypes
-
         if not self.model.uses_noise_schedule():
             self.config.flow_matching = False
             self.noise_scheduler = None
             return
-        self.config.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
+        self.config.flow_matching = self.model.PREDICTION_TYPE.is_flow_prediction
         self.noise_scheduler = self._get_noise_schedule()
 
     def configure_webhook(self, send_startup_message: bool = True, raw_config: str = None):
@@ -6382,7 +6380,7 @@ class Trainer:
         if not (torch.is_tensor(latents) and torch.is_tensor(noise)):
             return overridden_batch
 
-        if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
+        if self.model.PREDICTION_TYPE.is_flow_prediction:
             sigma_values = custom_timesteps_tensor.to(device=latents.device, dtype=latents.dtype)
             max_timestep = float(getattr(self.noise_scheduler.config, "num_train_timesteps", 1000) or 1000)
             if torch.max(sigma_values) > 1.0:
