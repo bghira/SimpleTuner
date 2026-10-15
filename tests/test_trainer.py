@@ -1246,6 +1246,27 @@ class TestTrainer(unittest.TestCase):
         self.assertIn("--multi_gpu", captured["cmd"])
         self.assertEqual(captured["env"].get("CUDA_VISIBLE_DEVICES"), "2,3")
 
+    def test_run_trainer_job_does_not_copy_container_device_file_to_cuda(self):
+        with patch.dict(os.environ, {"NVIDIA_VISIBLE_DEVICES": "/var/run/nvidia-container-devices"}, clear=False):
+            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+            os.environ.pop("NV_GPU", None)
+            result, captured = self._run_trainer_job_with_captured_popen({"dynamo_backend": "inductor"})
+
+        self.assertEqual(result, 0)
+        self.assertFalse("CUDA_VISIBLE_DEVICES" in captured["env"])
+        self.assertEqual(captured["env"]["NVIDIA_VISIBLE_DEVICES"], "/var/run/nvidia-container-devices")
+
+    def test_run_trainer_job_keeps_explicit_cuda_selection_with_container_device_file(self):
+        with patch.dict(
+            os.environ,
+            {"CUDA_VISIBLE_DEVICES": "1", "NVIDIA_VISIBLE_DEVICES": "/var/run/nvidia-container-devices"},
+            clear=False,
+        ):
+            result, captured = self._run_trainer_job_with_captured_popen({"dynamo_backend": "inductor"})
+
+        self.assertEqual(result, 0)
+        self.assertEqual(captured["env"]["CUDA_VISIBLE_DEVICES"], "1")
+
     def test_run_trainer_job_does_not_duplicate_accelerate_selector(self):
         result, captured = self._run_trainer_job_with_captured_popen(
             {
