@@ -14,6 +14,7 @@ from accelerate.utils.versions import compare_versions
 from diffusers.training_utils import _collate_lora_metadata
 from diffusers.utils import convert_state_dict_to_diffusers, convert_unet_state_dict_to_peft
 from diffusers.utils.state_dict_utils import StateDictType
+from huggingface_hub import load_torch_model
 from peft import set_peft_model_state_dict
 from peft.utils import get_peft_model_state_dict
 from safetensors import safe_open
@@ -178,6 +179,13 @@ def _materialize_lycoris_state_dict_for_save(network) -> dict[str, torch.Tensor]
     return {name: tensor.to(dtype) for name, tensor in _materialize_state_dict_for_save(network.state_dict()).items()}
 
 
+_TRAINING_PROJECTOR_PREFIXES = ("crepa_projector.", "urepa_projector.")
+
+
+def _inference_state_dict(state_dict):
+    return {name: value for name, value in state_dict.items() if not name.startswith(_TRAINING_PROJECTOR_PREFIXES)}
+
+
 def _get_fsdp2_pipeline_export_spec(model) -> _FSDP2PipelineExportSpec:
     is_controlnet = bool(getattr(model.config, "controlnet", False))
     pipeline_type = PipelineTypes.CONTROLNET if is_controlnet else model.DEFAULT_PIPELINE_TYPE
@@ -215,7 +223,7 @@ def _get_fsdp2_pipeline_export_spec(model) -> _FSDP2PipelineExportSpec:
     try:
         with torch.device("meta"):
             rebuilt_component = model_class.from_config(model_config)
-        component_state = component.state_dict()
+        component_state = _inference_state_dict(component.state_dict())
         rebuilt_state = rebuilt_component.state_dict()
     except Exception as exc:
         raise RuntimeError(f"FSDP2 full-model export cannot reconstruct {model_class.__name__} from its config.") from exc
@@ -289,7 +297,7 @@ def _build_model_from_state_dict_for_save(model_class, model_config, state_dict:
         raise RuntimeError("Cannot build a save-only model from an empty state dict.")
     with torch.device("meta"):
         model = model_class.from_config(model_config)
-    model.load_state_dict(state_dict, strict=True, assign=True)
+    model.load_state_dict(_inference_state_dict(state_dict), strict=True, assign=True)
     return model
 
 
@@ -1262,14 +1270,30 @@ class SaveHookManager:
                             logger.info(f"Loaded SDNQ model state for model {i}")
                             continue
 
-                    load_model = self.denoiser_class.from_pretrained(input_dir, subfolder=self.denoiser_subdir)
+                    checkpoint_dir = os.path.join(input_dir, self.denoiser_subdir)
+                    checkpoint_config = self.denoiser_class.load_config(checkpoint_dir)
+                    incompatible = load_torch_model(
+                        model,
+                        checkpoint_dir,
+                        filename_pattern="diffusion_pytorch_model{suffix}.safetensors",
+                        strict=False,
+                    )
+                    metadata_keys = set()
+                    if getattr(self.args, "prediction_type", None) == "v_prediction" and getattr(
+                        self.args, "rescale_betas_zero_snr", False
+                    ):
+                        metadata_keys = {"v_pred", "ztsnr"}
+                    unexpected_keys = set(incompatible.unexpected_keys) - metadata_keys
+                    if incompatible.missing_keys or unexpected_keys:
+                        raise RuntimeError(
+                            f"Checkpoint keys do not match the training model: missing={incompatible.missing_keys}, "
+                            f"unexpected={sorted(unexpected_keys)}."
+                        )
                     if self.args.model_family == "sd3" and not self.args.train_text_encoder:
                         logger.info("Unloading text encoders for full SD3 training without --train_text_encoder")
                         self.text_encoder_0, self.text_encoder_1 = (None, None)
 
-                    model.register_to_config(**load_model.config)
-                    model.load_state_dict(load_model.state_dict())
-                    del load_model
+                    model.register_to_config(**checkpoint_config)
                 except Exception as e:
                     import traceback
 

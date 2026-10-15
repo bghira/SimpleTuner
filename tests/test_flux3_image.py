@@ -518,6 +518,48 @@ class Flux3ImageIntegrationTests(unittest.TestCase):
                     is_negative_prompt=True,
                 )
 
+    def test_full_resume_restores_training_projector_and_parameter_identity(self):
+        from simpletuner.helpers.training.save_hooks import SaveHookManager
+
+        for shard_size in ("10GB", "10KB"):
+            with self.subTest(shard_size=shard_size), tempfile.TemporaryDirectory() as directory:
+                model = tiny_transformer()
+                model.crepa_projector = torch.nn.Sequential(torch.nn.LayerNorm(16), torch.nn.Linear(16, 8))
+                expected = {key: value.clone() for key, value in model.state_dict().items()}
+                identities = {key: id(value) for key, value in model.named_parameters()}
+                model.save_pretrained(Path(directory) / "transformer", max_shard_size=shard_size)
+                with torch.no_grad():
+                    for parameter in model.parameters():
+                        parameter.zero_()
+                manager = SaveHookManager.__new__(SaveHookManager)
+                manager.args = SimpleNamespace(model_type="full", model_family="flux3_image")
+                manager.denoiser_class = Flux3ImageTransformer2DModel
+                manager.denoiser_subdir = "transformer"
+                manager._load_full_model([model], directory)
+                for key, value in model.state_dict().items():
+                    torch.testing.assert_close(value, expected[key], rtol=0, atol=0)
+                self.assertEqual({key: id(value) for key, value in model.named_parameters()}, identities)
+
+    def test_inference_export_omits_training_projector_and_rejects_unknown_parameters(self):
+        from simpletuner.helpers.training.save_hooks import (
+            _build_model_from_state_dict_for_save,
+            _get_fsdp2_pipeline_export_spec,
+        )
+
+        foundation = Flux3Image.__new__(Flux3Image)
+        foundation.config = SimpleNamespace(controlnet=False)
+        foundation.model = tiny_transformer()
+        foundation.unwrap_model = lambda model=None: model or foundation.model
+        foundation.model.crepa_projector = torch.nn.Linear(16, 8)
+        spec = _get_fsdp2_pipeline_export_spec(foundation)
+        exported = _build_model_from_state_dict_for_save(spec.model_class, spec.model_config, foundation.model.state_dict())
+        self.assertFalse(hasattr(exported, "crepa_projector"))
+        for name, parameter in exported.named_parameters():
+            torch.testing.assert_close(parameter, foundation.model.state_dict()[name], atol=0, rtol=0)
+        foundation.model.unexpected_head = torch.nn.Linear(16, 8)
+        with self.assertRaisesRegex(RuntimeError, "cannot be reconstructed exactly"):
+            _get_fsdp2_pipeline_export_spec(foundation)
+
     @unittest.skipUnless(torch.distributed.is_available() and torch.distributed.is_gloo_available(), "Gloo unavailable")
     def test_text_only_lora_completes_two_ddp_iterations(self):
         with tempfile.TemporaryDirectory() as directory:
