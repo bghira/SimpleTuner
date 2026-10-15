@@ -5,6 +5,7 @@ from diffusers import FlowMatchEulerDiscreteScheduler
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoTokenizer, Qwen3VLModel
 
+from simpletuner.helpers.assistant_lora import load_assistant_adapter
 from simpletuner.helpers.configuration.registry import ConfigRegistry, make_default_rule, make_override_rule
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.flux2.autoencoder import AutoencoderKLFlux2
@@ -39,6 +40,7 @@ class Flux3Image(ImageModelFoundation):
         "klein": "black-forest-labs/flux-3-image-klein",
     }
     MODEL_LICENSE = "other"
+    ASSISTANT_LORA_FLAVOURS = ("klein",)
     DEFAULT_LORA_TARGET = ["attn.to_q", "attn.to_k", "attn.to_v", "attn.to_out.0"]
     DEFAULT_LYCORIS_TARGET = ["Flux3ImageTransformerBlock"]
     TEXT_ENCODER_CONFIGURATION = {
@@ -163,6 +165,19 @@ class Flux3Image(ImageModelFoundation):
         if "guidance_scale_real" in pipeline_kwargs:
             pipeline_kwargs["guidance_scale"] = pipeline_kwargs.pop("guidance_scale_real")
         return pipeline_kwargs
+
+    def post_model_load_setup(self):
+        super().post_model_load_setup()
+        path = getattr(self.config, "assistant_lora_path", None)
+        if path and self.supports_assistant_lora(self.config) and self.config.model_type == "lora":
+            self.assistant_lora_loaded = load_assistant_adapter(
+                transformer=self.unwrap_model(model=self.model),
+                pipeline_cls=Flux3ImagePipeline,
+                lora_path=path,
+                adapter_name=self.assistant_adapter_name,
+                weight_name=getattr(self.config, "assistant_lora_weight_name", None),
+                low_cpu_mem_usage=getattr(self.config, "low_cpu_mem_usage", False),
+            )
 
     def get_lora_save_layers(self):
         layers = list(super().get_lora_save_layers() or [])

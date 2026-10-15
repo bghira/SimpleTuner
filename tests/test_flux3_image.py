@@ -11,6 +11,8 @@ import torch.nn.functional as F
 from peft import LoraConfig
 from peft.utils import get_peft_model_state_dict
 
+from simpletuner.helpers.assistant_lora import load_assistant_adapter
+from simpletuner.helpers.distillation.assistant_lora.distiller import AssistantLoRADistiller
 from simpletuner.helpers.models.common import PredictionTypes
 from simpletuner.helpers.models.flux3_image import image_ids, patchify, text_ids, unpatchify
 from simpletuner.helpers.models.flux3_image.model import Flux3Image
@@ -147,7 +149,6 @@ def mathematical_reference(
 
 
 class Flux3ImageTests(unittest.TestCase):
-
     def setUp(self):
         torch.manual_seed(123)
         self.model = tiny_transformer()
@@ -369,6 +370,24 @@ class Flux3ImageTests(unittest.TestCase):
             ).sample
             torch.testing.assert_close(predicted[index : index + 1], individual, atol=1e-6, rtol=1e-5)
 
+    def test_assistant_adapter_loads_frozen_alongside_a_trainable_adapter(self):
+        config = LoraConfig(r=2, lora_alpha=2, target_modules=["to_q", "to_v"])
+        self.model.add_adapter(config, adapter_name="default")
+        state = get_peft_model_state_dict(self.model, adapter_name="default")
+        with tempfile.TemporaryDirectory() as directory:
+            Flux3ImagePipeline.save_lora_weights(directory, transformer_lora_layers=state)
+            recipient = tiny_transformer(flow_map=True)
+            self.assertTrue(
+                load_assistant_adapter(
+                    transformer=recipient, pipeline_cls=Flux3ImagePipeline, lora_path=directory, adapter_name="assistant"
+                )
+            )
+            assistant = [p for name, p in recipient.named_parameters() if ".assistant." in name]
+            self.assertTrue(assistant)
+            self.assertFalse(any(p.requires_grad for p in assistant))
+            recipient.add_adapter(config, adapter_name="default")
+            self.assertTrue(any(p.requires_grad for name, p in recipient.named_parameters() if ".default." in name))
+
     def test_twinflow_sign_module_initializes_neutrally_and_is_saved_with_lora(self):
         with tempfile.TemporaryDirectory() as directory:
             self.model.save_pretrained(directory)
@@ -392,7 +411,6 @@ class Flux3ImageTests(unittest.TestCase):
 
 
 class Flux3ImagePipelineTests(unittest.TestCase):
-
     def setUp(self):
         torch.manual_seed(321)
         self.model = tiny_transformer()
@@ -484,7 +502,6 @@ class Flux3ImagePipelineTests(unittest.TestCase):
 
 
 class Flux3ImageIntegrationTests(unittest.TestCase):
-
     def test_validation_precaches_empty_negative_before_unloading_text_encoder(self):
         from simpletuner.helpers.configuration.cmd_args import get_default_config
         from simpletuner.helpers.training.validation import prepare_validation_prompt_list
@@ -564,3 +581,53 @@ class Flux3ImageIntegrationTests(unittest.TestCase):
     def test_text_only_lora_completes_two_ddp_iterations(self):
         with tempfile.TemporaryDirectory() as directory:
             torch.multiprocessing.spawn(text_only_ddp_worker, args=(str(Path(directory) / "rendezvous"),), nprocs=2)
+
+    def test_assistant_rollout_prepares_a_real_flow_map_training_batch(self):
+        from simpletuner.helpers.configuration.cmd_args import get_default_config
+
+        config = SimpleNamespace(
+            **dict(
+                get_default_config(),
+                model_family="flux3_image",
+                model_flavour="klein",
+                model_type="lora",
+                pretrained_model_name_or_path=None,
+                vae_path=None,
+                weight_dtype=torch.float32,
+                flow_matching=True,
+            )
+        )
+        accelerator = SimpleNamespace(
+            device=torch.device("cpu"),
+            process_index=0,
+            num_processes=1,
+            is_main_process=True,
+            unwrap_model=lambda model, **kwargs: model,
+        )
+        foundation = Flux3Image(config, accelerator)
+        foundation.check_user_config()
+        foundation.model = tiny_transformer(in_channels=128, cond_in_channels=128, flow_map=True)
+        foundation.model.add_adapter(LoraConfig(r=2, lora_alpha=2, target_modules=Flux3Image.DEFAULT_LORA_TARGET))
+        distiller = AssistantLoRADistiller(
+            foundation,
+            config={
+                "model_type": "lora",
+                "num_inference_steps": 2,
+                "resolutions": [[48, 32]],
+            },
+        )
+        cached = {"prompt_embeds": torch.randn(2, 80, 16), "attention_masks": torch.ones(2, 80, dtype=torch.bool)}
+        backend = {"text_embed_cache": SimpleNamespace(compute_embeddings_for_prompts=Mock(return_value=cached))}
+        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backend", return_value=backend):
+            batch = distiller.prepare_caption_batch(
+                {"captions": ["a bicycle", "a fox"], "data_backend_id": "captions"}, foundation, {"global_step": 0}
+            )
+        self.assertEqual(batch["noisy_latents"].shape, (2, 128, 2, 3))
+        prediction = foundation.model_predict(batch)["model_prediction"]
+        F.mse_loss(prediction, foundation.get_prediction_target(batch)).backward()
+        self.assertTrue(any(p.grad is not None for name, p in foundation.model.named_parameters() if "lora_B" in name))
+        self.assertFalse(any(p.grad is not None for name, p in foundation.model.named_parameters() if "lora_" not in name))
+
+
+if __name__ == "__main__":
+    unittest.main()
