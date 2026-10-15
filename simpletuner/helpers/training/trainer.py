@@ -7269,8 +7269,11 @@ class Trainer:
                                         else:
                                             raise
                                 elif self.config.grad_clip_method == "value":
-                                    logger.warning(
-                                        "FSDP does not support grad_clip_method='value'. Skipping gradient clipping."
+                                    # FSDP2 gradients are DTensor shards; the elementwise clamp is shard-local.
+                                    self.accelerator.unscale_gradients()
+                                    torch.nn.utils.clip_grad_value_(
+                                        self._get_trainable_parameters(),
+                                        self.config.max_grad_norm,
                                     )
                                 else:
                                     raise ValueError(
