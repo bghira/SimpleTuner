@@ -524,12 +524,15 @@ class Flux3ImageIntegrationTests(unittest.TestCase):
                 )
                 foundation = Flux3Image(config, SimpleNamespace(device=torch.device("cpu")))
                 cache = SimpleNamespace(
-                    model_type="flux3_image", text_cache_ondemand=False, compute_embeddings_for_prompts=Mock()
+                    model_type="flux3_image",
+                    text_cache_ondemand=False,
+                    _requires_path_based_keys=False,
+                    compute_embeddings_for_prompts=Mock(),
                 )
                 with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_args", return_value=config):
                     prepare_validation_prompt_list(config, cache, foundation)
                 cache.compute_embeddings_for_prompts.assert_any_call(
-                    [{"prompt": "", "key": "__validation_negative__", "metadata": {}}],
+                    [""],
                     is_validation=True,
                     load_from_cache=False,
                     is_negative_prompt=True,
