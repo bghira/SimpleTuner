@@ -212,10 +212,10 @@ class TestQuantizationConfigParsing(unittest.TestCase):
             del sys.modules["sdnq.common"]
             configure_sdnq_compile_mode()
 
-        self.assertEqual(os.environ["SDNQ_USE_TORCH_COMPILE"], "0")
+            self.assertEqual(os.environ["SDNQ_USE_TORCH_COMPILE"], "0")
 
-        StateTracker.set_args(SimpleNamespace(sdnq_compile_mode="compile"))
-        configure_sdnq_compile_mode()
+            StateTracker.set_args(SimpleNamespace(sdnq_compile_mode="compile"))
+            configure_sdnq_compile_mode()
 
         self.assertEqual(os.environ["SDNQ_USE_TORCH_COMPILE"], "1")
 
@@ -280,10 +280,12 @@ class TestQuantizationConfigParsing(unittest.TestCase):
 
     def test_sdnq_compile_mode_configures_during_parse(self):
         os.environ.pop("SDNQ_USE_TORCH_COMPILE", None)
-        args = parse_cmdline_args(
-            input_args=_base_args() + ["--base_model_precision=int8-sdnq", "--sdnq_compile_mode=eager"],
-            exit_on_error=False,
-        )
+        with patch.dict(sys.modules):
+            sys.modules.pop("sdnq.common", None)
+            args = parse_cmdline_args(
+                input_args=_base_args() + ["--base_model_precision=int8-sdnq", "--sdnq_compile_mode=eager"],
+                exit_on_error=False,
+            )
 
         self.assertEqual(args.sdnq_compile_mode, "eager")
         self.assertEqual(os.environ["SDNQ_USE_TORCH_COMPILE"], "0")
