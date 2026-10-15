@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 import setuptools
+from packaging.requirements import Requirement
 
 
 def load_setup_kwargs() -> dict:
@@ -31,19 +32,13 @@ class SetupPlatformDependencyTests(unittest.TestCase):
     def test_platform_extras_use_latest_torchao_with_expected_torch_floor(self):
         extras_require = load_setup_kwargs()["extras_require"]
 
-        for extra_name in ("cuda", "cuda13", "rocm", "cpu"):
+        for extra_name in ("cuda", "cuda13", "rocm", "cpu", "apple"):
             with self.subTest(extra=extra_name):
                 dependencies = extras_require[extra_name]
-                self.assertIn("torch>=2.11.0", dependencies)
-                self.assertIn("torchvision>=0.26.0", dependencies)
+                self.assertIn("torch>=2.13.0", dependencies)
+                self.assertIn("torchvision>=0.28.0", dependencies)
                 self.assertIn("torchaudio>=2.11.0", dependencies)
                 self.assertIn("torchao>=0.17.0,<0.18.0", dependencies)
-
-        apple_dependencies = extras_require["apple"]
-        self.assertIn("torch>=2.13.0", apple_dependencies)
-        self.assertIn("torchvision>=0.28.0", apple_dependencies)
-        self.assertIn("torchaudio>=2.11.0", apple_dependencies)
-        self.assertIn("torchao>=0.17.0,<0.18.0", apple_dependencies)
 
     def test_cuda_nightly_extras_use_latest_torchao_range(self):
         extras_require = load_setup_kwargs()["extras_require"]
@@ -69,22 +64,24 @@ class SetupPlatformDependencyTests(unittest.TestCase):
                 self.assertTrue(expected.issubset(set(extras_require[extra_name])))
                 self.assertIn("transformer_engine[pytorch]>=2.16.0,<2.17.0", extras_require[extra_name])
 
-    def test_cuda13_vllm_is_limited_to_captioning_extras(self):
+    def test_captioning_aliases_delegate_worker_dependencies_to_captionflow(self):
         extras_require = load_setup_kwargs()["extras_require"]
-        expected = "vllm>=0.20.0,<0.26.0"
 
         for extra_name in ("cuda", "cuda13", "cuda-nightly", "cuda13-nightly", "rocm", "apple", "cpu"):
             with self.subTest(extra=extra_name):
                 dependencies = extras_require[extra_name]
-                self.assertNotIn(expected, dependencies)
                 self.assertFalse(any(dependency.startswith("vllm") for dependency in dependencies))
 
-        for extra_name in ("captioning-cuda13", "cuda13-captioning"):
+        for extra_name in ("captioning", "captioning-cuda13", "cuda13-captioning"):
             with self.subTest(extra=extra_name):
                 dependencies = extras_require[extra_name]
-                self.assertIn(expected, dependencies)
-                self.assertFalse(any(dependency.startswith("vllm @ ") for dependency in dependencies))
-                self.assertNotIn("vllm>=0.19.1,<0.20.0", dependencies)
+                self.assertEqual(dependencies, extras_require["captioning"])
+                self.assertEqual(len(dependencies), 1)
+                captionflow = Requirement(dependencies[0])
+                self.assertEqual(captionflow.name, "caption-flow")
+                self.assertEqual(captionflow.extras, {"vllm"})
+                self.assertFalse(captionflow.specifier.contains("0.5.6"))
+                self.assertTrue(captionflow.specifier.contains("0.5.7"))
 
 
 if __name__ == "__main__":
