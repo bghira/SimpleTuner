@@ -8086,6 +8086,9 @@ def run_trainer_job(config):
             return None
         if len(tokens) == 1 and tokens[0].lower() in {"all", "none", "void"}:
             return None
+        # Container device-list paths are not CUDA device identifiers.
+        if any(token.startswith("/") for token in tokens):
+            return None
         return ",".join(tokens)
 
     def _resolve_hf_token() -> Optional[str]:
