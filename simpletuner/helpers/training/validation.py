@@ -471,7 +471,13 @@ def _validation_reference_prompt_metadata(reference_images, image_path: str | No
         metadata["data_backend_id"] = data_backend_ids[0]
         metadata["data_backend_ids"] = data_backend_ids
     if pixel_values:
-        metadata["conditioning_pixel_values"] = pixel_values[0] if len(pixel_values) == 1 else torch.stack(pixel_values)
+        if len(pixel_values) == 1:
+            metadata["conditioning_pixel_values"] = pixel_values[0]
+        elif all(value.shape == pixel_values[0].shape for value in pixel_values):
+            metadata["conditioning_pixel_values"] = torch.stack(pixel_values)
+        else:
+            metadata["conditioning_pixel_values"] = pixel_values
+        metadata["conditioning_pixel_values_range"] = (0.0, 1.0)
     return metadata
 
 
@@ -4706,7 +4712,9 @@ class Validation:
                 _embed = self._gather_prompt_embeds(
                     prompt,
                     validation_shortname,
-                    validation_input_image_for_resolution,
+                    self.model.validation_prompt_image_context(
+                        validation_input_image, validation_input_image_for_resolution
+                    ),
                     cache_shortname=cache_key,
                     lyrics=lyrics,
                 )

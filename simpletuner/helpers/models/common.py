@@ -42,6 +42,7 @@ from simpletuner.helpers.models.foundation_mixins import (
     VideoTransformMixin,
 )
 from simpletuner.helpers.models.prediction import PredictionTypes
+from simpletuner.helpers.models.prompt_upsampling import ImagePromptUpsamplingMixin
 from simpletuner.helpers.models.tae import load_tae_decoder
 from simpletuner.helpers.models.xm_mixin import ExplorativeModelingMixin
 from simpletuner.helpers.scheduled_sampling import build_rollout_schedule
@@ -1366,12 +1367,25 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         """
         return TextEmbedCacheKey.CAPTION
 
+    def text_embed_cache_namespace(self) -> Optional[str]:
+        return None
+
+    def text_embed_cache_context_key(self, metadata: dict, *, prompt=None) -> Optional[str]:
+        return None
+
+    def validation_prompt_image_context(self, original_image, prepared_image):
+        return prepared_image
+
     def requires_text_embed_image_context(self) -> bool:
         """
         Returns True when encode_text_batch must be supplied with per-prompt image
         context (e.g., reference pixels). Defaults to False.
         """
         return False
+
+    def requires_text_embed_conditioning_pixels(self) -> bool:
+        """Whether collate must prepare reference tensors in addition to image paths."""
+        return self.requires_text_embed_image_context()
 
     def requires_conditioning_latents(self) -> bool:
         """
@@ -6546,7 +6560,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         return total_twin_loss, log_payload
 
 
-class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFoundation):
+class ImageModelFoundation(ImagePromptUpsamplingMixin, PipelineSupportMixin, VaeLatentScalingMixin, ModelFoundation):
     """
     Implements logic common to image-based diffusion models.
     Handles typical VAE, text encoder loading and a UNet forward pass.

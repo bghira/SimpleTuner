@@ -176,7 +176,7 @@ Optional:
 }
 ```
 
-यह JSON conversion से पहले Ideogram prompt upsampler से prompts rewrite करता है। यह slow है, इसलिए basic training path verify होने तक disabled रखें।
+Upsampler JSON conversion और text embedding से पहले positive training captions और validation prompts विस्तार करता है। Negative prompts और dropout के खाली captions वैसे ही रहते हैं। Expanded embeddings अलग कैश होती हैं और मूल caption फ़ाइलें सुरक्षित रहती हैं।
 
 ## LoRA और LyCORIS
 

@@ -532,6 +532,19 @@ class PromptHandler:
         return PromptHandler._restore_caption_payload_shape(caption, caption_values)
 
     @staticmethod
+    def caption_for_sampler(sampler, image_path):
+        return PromptHandler.magic_prompt(
+            sampler_backend_id=sampler.id,
+            data_backend=sampler.data_backend,
+            image_path=image_path,
+            caption_strategy=sampler.caption_strategy,
+            use_captions=sampler.use_captions,
+            prepend_instance_prompt=sampler.prepend_instance_prompt,
+            instance_prompt=sampler.instance_prompt,
+            disable_multiline_split=sampler.disable_multiline_split,
+        )
+
+    @staticmethod
     def magic_prompt(
         image_path: str,
         use_captions: bool,

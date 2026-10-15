@@ -753,16 +753,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             image_metadata["image_path"] = image_path
 
             # Use the magic prompt handler to retrieve the captions.
-            instance_prompt = PromptHandler.magic_prompt(
-                sampler_backend_id=self.id,
-                data_backend=self.data_backend,
-                image_path=image_metadata["image_path"],
-                caption_strategy=self.caption_strategy,
-                use_captions=self.use_captions,
-                prepend_instance_prompt=self.prepend_instance_prompt,
-                instance_prompt=self.instance_prompt,
-                disable_multiline_split=self.disable_multiline_split,
-            )
+            instance_prompt = PromptHandler.caption_for_sampler(self, image_metadata["image_path"])
             if type(instance_prompt) == list:
                 instance_prompt = random.choice(instance_prompt)
                 self.debug_log(f"Selecting random prompt from list: {instance_prompt}")
@@ -826,34 +817,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         if isinstance(conditioning_sample.image, np.ndarray) and conditioning_sample.image.ndim == 3:
             conditioning_sample.image = Image.fromarray(conditioning_sample.image.astype(np.uint8))
         # Use the magic prompt handler to retrieve the captions.
-        prompt_kwargs = {
-            "caption_strategy": self.caption_strategy,
-            "instance_prompt": self.instance_prompt,
-            "data_backend": self.data_backend,
-            "sampler_backend_id": self.id,
-            "prepend_instance_prompt": self.prepend_instance_prompt,
-            "use_captions": self.use_captions,
-            "image_path": full_path,
-            "disable_multiline_split": self.disable_multiline_split,
-        }
+        caption_sampler = self
+        caption_path = full_path
         if self.source_dataset_id is not None and self.caption_strategy is None:
-            # we'll retrieve captions from the source dataset.
-            training_sample_path = conditioning_sample.training_sample_path(training_dataset_id=self.source_dataset_id)
-            source_dataset: "MultiAspectSampler" = StateTracker.get_data_backend(self.source_dataset_id)["sampler"]
-            prompt_kwargs.update(
-                {
-                    "caption_strategy": source_dataset.caption_strategy,
-                    "instance_prompt": source_dataset.instance_prompt,
-                    "data_backend": source_dataset.data_backend,
-                    "sampler_backend_id": source_dataset.id,
-                    "prepend_instance_prompt": source_dataset.prepend_instance_prompt,
-                    "use_captions": source_dataset.use_captions,
-                    "image_path": training_sample_path,
-                    "disable_multiline_split": source_dataset.disable_multiline_split,
-                }
-            )
-        self.logger.debug(f"Using prompt kwargs: {prompt_kwargs}")
-        instance_prompt = PromptHandler.magic_prompt(**prompt_kwargs)
+            caption_path = conditioning_sample.training_sample_path(training_dataset_id=self.source_dataset_id)
+            caption_sampler = StateTracker.get_data_backend(self.source_dataset_id)["sampler"]
+        instance_prompt = PromptHandler.caption_for_sampler(caption_sampler, caption_path)
         if type(instance_prompt) == list:
             instance_prompt = random.choice(instance_prompt)
             self.debug_log(f"Selecting random prompt from list: {instance_prompt}")

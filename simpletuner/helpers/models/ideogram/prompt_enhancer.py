@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import importlib.util
 import math
+import warnings
 
 import torch
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.modeling_utils import ModelMixin
 from torch import nn
+
+from simpletuner.helpers.models.prompt_upsampling import PromptUpsampler
 
 PROMPT_UPSAMPLE_TEMPERATURE = 1.0
 
@@ -115,6 +119,8 @@ def generate_captions(
     max_new_tokens: int = 1024,
     generator: torch.Generator | list[torch.Generator] | None = None,
     device: torch.device | None = None,
+    reference_images=(),
+    processor=None,
 ) -> list[str]:
     device = device or prompt_enhancer.device
     prompts = [prompt] if isinstance(prompt, str) else list(prompt)
@@ -129,14 +135,23 @@ def generate_captions(
 
     captions = []
     for i, text_prompt in enumerate(prompts):
+        system_message = CAPTION_SYSTEM_MESSAGE
+        content = CAPTION_USER_TEMPLATE.format(aspect_ratio=aspect_ratio, original_prompt=text_prompt)
+        if reference_images:
+            system_message += (
+                "\nThe user supplied reference images for an edit. Describe the requested final image in the same JSON "
+                "schema. Preserve the references' subjects and appearance except for changes the user requests."
+            )
+            content = [{"type": "image", "image": image} for image in reference_images] + [{"type": "text", "text": content}]
         messages = [
-            {"role": "system", "content": CAPTION_SYSTEM_MESSAGE},
+            {"role": "system", "content": system_message},
             {
                 "role": "user",
-                "content": CAPTION_USER_TEMPLATE.format(aspect_ratio=aspect_ratio, original_prompt=text_prompt),
+                "content": content,
             },
         ]
-        inputs = tokenizer.apply_chat_template(
+        input_processor = processor if reference_images else tokenizer
+        inputs = input_processor.apply_chat_template(
             messages, add_generation_prompt=True, tokenize=True, return_tensors="pt", return_dict=True
         ).to(device)
         generate_kwargs = {
@@ -155,3 +170,52 @@ def generate_captions(
         new_tokens = generated[:, inputs["input_ids"].shape[1] :]
         captions.append(tokenizer.decode(new_tokens[0], skip_special_tokens=True).strip())
     return captions
+
+
+class IdeogramPromptUpsampler(PromptUpsampler):
+    def __init__(self, text_encoder, tokenizer, head, device):
+        self.tokenizer = tokenizer
+        self.head = head
+        self.device = device
+        self.enhancer = build_prompt_enhancer(text_encoder, head)
+        self.logits_processor = None
+        if importlib.util.find_spec("outlines") is not None:
+            self.logits_processor = build_caption_logits_processor(self.enhancer, tokenizer)
+        else:
+            warnings.warn(
+                "`outlines` is not installed; Ideogram prompt upsampling runs unconstrained "
+                "and may not return schema-valid JSON.",
+                stacklevel=2,
+            )
+        self.processor = None
+        self.temperature = PROMPT_UPSAMPLE_TEMPERATURE
+        self.max_new_tokens = 1024
+        self.generator = None
+
+    def upsample(self, requests):
+        self.head.to(self.device)
+        self.enhancer.model.to(self.device)
+        captions = []
+        for request in requests:
+            if request.reference_images and self.processor is None:
+                from transformers import AutoProcessor
+
+                self.processor = AutoProcessor.from_pretrained("Qwen/Qwen3-VL-8B-Instruct")
+                self.processor.tokenizer = self.tokenizer
+            captions.extend(
+                generate_captions(
+                    self.enhancer,
+                    self.tokenizer,
+                    self.logits_processor,
+                    request.prompt,
+                    request.height,
+                    request.width,
+                    temperature=self.temperature,
+                    max_new_tokens=self.max_new_tokens,
+                    generator=self.generator,
+                    device=self.device,
+                    reference_images=request.reference_images,
+                    processor=self.processor,
+                )
+            )
+        return captions

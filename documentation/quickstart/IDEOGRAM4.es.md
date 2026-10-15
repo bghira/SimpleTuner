@@ -176,7 +176,7 @@ Opcionalmente:
 }
 ```
 
-Esto reescribe prompts con el prompt upsampler de Ideogram antes de convertirlos a JSON. Es más lento; déjalo desactivado hasta confirmar que el entrenamiento base funciona.
+El upsampler reescribe las descripciones positivas de entrenamiento y los prompts de validación antes de convertirlos a JSON y generar embeddings. Conserva los prompts negativos y captions vacías de dropout. Las cachés ampliadas se separan de las normales y se mantienen los archivos originales.
 
 ## LoRA y LyCORIS
 
