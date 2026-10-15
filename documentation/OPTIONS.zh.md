@@ -1208,6 +1208,14 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 - **说明**：使用 `combined` 时不能在条件数据集中定义单独的 `captions`，会使用源数据集的字幕。
 - **另见**：[DATALOADER.md](DATALOADER.md#conditioning_data) 获取多条件数据集配置说明。
 
+### `--flux3_prompt_upsample` {#--flux3_prompt_upsample}
+
+**默认值:** `false`
+
+此选项默认关闭。启用后，SimpleTuner 会下载独立的 Qwen3.5-9B 模型（权重约 19 GB），在缓存文本嵌入之前扩写正向提示词。编辑任务会使用配对参考图。负向提示词、dropout 空描述和原始描述文件均保持不变。
+
+请预留额外系统内存和预处理时间。扩写模型与文本编码器轮流使用 GPU，生成的嵌入会在训练中复用。SimpleTuner 将扩写嵌入与原始嵌入分别保存，再次选择相同参考图时可复用缓存结果。
+
 ### `--krea2_reference_latents` {#--krea2_reference_latents}
 
 - **内容**：启用 Krea 2 reference dataset 训练。

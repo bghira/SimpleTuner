@@ -1203,6 +1203,14 @@ Diferentes modelos esperam diferentes dados de conditioning:
 - **Nota**: Ao usar `combined`, voce nao pode definir `captions` separadas nos datasets de condicionamento; as captions do dataset de origem sao usadas.
 - **Veja tambem**: [DATALOADER.md](DATALOADER.md#conditioning_data) para configurar multiplos datasets de condicionamento.
 
+### `--flux3_prompt_upsample` {#--flux3_prompt_upsample}
+
+**Padrão:** `false`
+
+A opção vem desativada. Ao ativá-la, o SimpleTuner baixa o modelo Qwen3.5-9B separado (cerca de 19 GB de pesos) e reescreve prompts positivos antes de armazenar seus embeddings. Para edições, usa as imagens de referência pareadas. Prompts negativos, legendas vazias de dropout e arquivos originais são preservados.
+
+Reserve mais RAM e tempo de pré-processamento. O upsampler e o codificador de texto se alternam na GPU, e os embeddings são reutilizados no treino. O SimpleTuner separa os embeddings expandidos dos originais e reutiliza os resultados quando as mesmas referências são selecionadas novamente.
+
 ### `--krea2_reference_latents` {#--krea2_reference_latents}
 
 - **O que**: Habilita treino Krea 2 com reference dataset.

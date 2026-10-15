@@ -1205,6 +1205,14 @@ Different models different conditioning data expect करते हैं:
 - **Note**: `combined` उपयोग करने पर आप conditioning datasets पर अलग `captions` परिभाषित नहीं कर सकते; source dataset के captions ही उपयोग होते हैं।
 - **See also**: multiple conditioning datasets कॉन्फ़िगर करने के लिए [DATALOADER.md](DATALOADER.md#conditioning_data) देखें।
 
+### `--flux3_prompt_upsample` {#--flux3_prompt_upsample}
+
+**डिफ़ॉल्ट:** `false`
+
+यह डिफ़ॉल्ट रूप से बंद है। चालू करने पर SimpleTuner अलग Qwen3.5-9B मॉडल (लगभग 19 GB weights) डाउनलोड करता है और text embeddings कैश करने से पहले positive prompts को विस्तार देता है। एडिट के लिए जोड़ी गई रेफ़रेंस इमेज इस्तेमाल होती हैं। Negative prompts, dropout के खाली captions और मूल caption फ़ाइलें वैसे ही रहती हैं।
+
+अतिरिक्त system RAM और preprocessing समय रखें। Upsampler और text encoder बारी-बारी से GPU इस्तेमाल करते हैं; बनी embeddings प्रशिक्षण में दोबारा इस्तेमाल होती हैं। SimpleTuner expanded और मूल embeddings अलग रखता है और वही references दोबारा चुनने पर कैश परिणाम फिर इस्तेमाल करता है।
+
 ### `--krea2_reference_latents` {#--krea2_reference_latents}
 
 - **What**: Krea 2 reference dataset training enable करें।

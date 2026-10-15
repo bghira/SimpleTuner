@@ -11,6 +11,7 @@ from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, 
 from simpletuner.helpers.models.flux2.autoencoder import AutoencoderKLFlux2
 from simpletuner.helpers.models.flux3_image import denormalize_latents, image_ids, normalize_latents, patchify, unpatchify
 from simpletuner.helpers.models.flux3_image.pipeline import FLOW_SHIFT, Flux3ImagePipeline
+from simpletuner.helpers.models.flux3_image.prompt_upsampler import PROMPT_UPSAMPLER_MODEL_ID, Flux3ImagePromptUpsampler
 from simpletuner.helpers.models.flux3_image.text import MAX_TEXT_LENGTH, collate_embeddings, encode_prompts
 from simpletuner.helpers.models.flux3_image.transformer import Flux3ImageTransformer2DModel
 from simpletuner.helpers.models.registry import ModelRegistry
@@ -40,6 +41,8 @@ class Flux3Image(ImageModelFoundation):
         "klein": "black-forest-labs/flux-3-image-klein",
     }
     MODEL_LICENSE = "other"
+    PROMPT_UPSAMPLING_CONFIG_KEY = "flux3_prompt_upsample"
+    PROMPT_UPSAMPLING_MODEL_ID = PROMPT_UPSAMPLER_MODEL_ID
     ASSISTANT_LORA_FLAVOURS = ("klein",)
     DEFAULT_LORA_TARGET = ["attn.to_q", "attn.to_k", "attn.to_v", "attn.to_out.0"]
     DEFAULT_LYCORIS_TARGET = ["Flux3ImageTransformerBlock"]
@@ -103,6 +106,9 @@ class Flux3Image(ImageModelFoundation):
         return encode_prompts(
             self.tokenizers[0], encoder, prompts, self.accelerator.device, self.config.tokenizer_max_length
         )
+
+    def create_prompt_upsampler(self):
+        return Flux3ImagePromptUpsampler(self.accelerator.device, self.config.weight_dtype, self.text_encoders)
 
     def _format_text_embedding(self, text_embedding):
         embeddings, masks = text_embedding

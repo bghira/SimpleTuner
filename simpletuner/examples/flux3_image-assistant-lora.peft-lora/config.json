@@ -77,5 +77,6 @@
     "vae_dtype": "fp32",
     "flow_schedule_auto_shift": false,
     "flow_schedule_shift": 6.93,
-    "tokenizer_max_length": 8192
+    "tokenizer_max_length": 8192,
+    "flux3_prompt_upsample": false
 }
