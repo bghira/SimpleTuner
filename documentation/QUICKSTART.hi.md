@@ -17,6 +17,7 @@
 | ERNIE-Image | Not specified | [ERNIE.hi.md](quickstart/ERNIE.hi.md) |
 | Flux.1 | 8B-12B | [FLUX.hi.md](quickstart/FLUX.hi.md)<br>[FLUX_KONTEXT.hi.md](quickstart/FLUX_KONTEXT.hi.md) |
 | Flux.2 | 4B-32B | [FLUX2.hi.md](quickstart/FLUX2.hi.md) |
+| Flux.3 Image Klein | 5.6B | [FLUX3_IMAGE.hi.md](quickstart/FLUX3_IMAGE.hi.md) |
 | HeartMuLa | 3B | [HEARTMULA.hi.md](quickstart/HEARTMULA.hi.md) |
 | HiDream | 17B (8.5B MoE) | [HIDREAM.hi.md](quickstart/HIDREAM.hi.md) |
 | Hunyuan Video | 8.3B | [HUNYUANVIDEO.hi.md](quickstart/HUNYUANVIDEO.hi.md) |

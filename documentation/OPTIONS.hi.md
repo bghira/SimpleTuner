@@ -57,11 +57,13 @@ simpletuner configure config/foo/config.json
 ### `--model_family`
 
 - **What**: यह निर्धारित करता है कि कौन‑सा model architecture train किया जा रहा है।
-- **Choices**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
+- **Choices**: pixart_sigma, flux, flux3_image, sd3, sdxl, kolors, legacy
 
 ### `--model_flavour`
 
 `--model_family` के भीतर checkpoint का प्रकार चुनता है। `qwen_image` के लिए डिफ़ॉल्ट `v2.1` (`Qwen/Qwen-Image-2.1`) है। पुराने आर्किटेक्चर को प्रशिक्षित करने के लिए `v1.0`, `v2.0` या मौजूदा `edit-*` प्रकार स्पष्ट रूप से सेट करें; adapters और embedding/latent कैश 2.1 के साथ अदला-बदली नहीं किए जा सकते। [Qwen Image quickstart](quickstart/QWEN_IMAGE_2-1.hi.md) देखें।
+
+5.6B पैरामीटर वाले इमेज Transformer के लिए `model_family: "flux3_image"` चुनें। डिफ़ॉल्ट `klein-base`, `black-forest-labs/flux-3-image-klein-base` लोड करता है; `klein`, डिस्टिल्ड `black-forest-labs/flux-3-image-klein` लोड करता है। डाउनलोड से पहले चुने गए रिपॉज़िटरी की एक्सेस स्वीकार करें। [FLUX [Kom]munity लाइसेंस](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE) देखें।
 
 ### `--lora_format`
 

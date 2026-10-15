@@ -10,6 +10,7 @@ Guías paso a paso para entrenar cada arquitectura de modelo compatible.
 | ------- | ------------ | --- | :---: | ------- |
 | **Flux.1** | 12B | [BFL Non-Commercial](https://bfl.ai/legal/non-commercial-license-terms) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Aplican condiciones<sup>3</sup> | [Guía de Flux.1](FLUX.md) |
 | **Flux.2** | 32B | [BFL Non-Commercial](https://bfl.ai/legal/non-commercial-license-terms) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Aplican condiciones<sup>4</sup> | [Guía de Flux.2](FLUX2.md) |
+| **FLUX.3 Image Klein** | 5.6B | [FLUX [Kom]munity](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE) | Aplican condiciones | [FLUX.3 Image Klein](FLUX3_IMAGE.es.md) |
 | **Flux Kontext** | 12B | [BFL Non-Commercial](https://bfl.ai/legal/non-commercial-license-terms) | No<sup>5</sup> | [Guía de Kontext](FLUX_KONTEXT.md) |
 | **Chroma** | 8.9B | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Sí | [Guía de Chroma](CHROMA.md) |
 | **Stable Diffusion 3** | 2-8B | [Stability AI Community](https://stability.ai/license) | Aplican condiciones<sup>2</sup> | [Guía de SD3](SD3.md) |

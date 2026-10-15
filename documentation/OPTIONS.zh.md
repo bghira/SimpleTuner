@@ -57,11 +57,13 @@ simpletuner configure config/foo/config.json
 ### `--model_family`
 
 - **内容**：指定训练的模型架构。
-- **选项**：pixart_sigma, flux, sd3, sdxl, kolors, legacy
+- **选项**：pixart_sigma, flux, flux3_image, sd3, sdxl, kolors, legacy
 
 ### `--model_flavour`
 
 选择 `--model_family` 中的检查点变体。`qwen_image` 的默认值是 `v2.1`（`Qwen/Qwen-Image-2.1`）。若要训练旧架构，请明确设置 `v1.0`、`v2.0` 或现有的 `edit-*` 版本；适配器、嵌入缓存和潜变量缓存不能与 2.1 互换。参阅 [Qwen Image 快速入门](quickstart/QWEN_IMAGE_2-1.zh.md)。
+
+使用 `model_family: "flux3_image"` 训练 5.6B 参数的图像 Transformer。默认变体 `klein-base` 加载 `black-forest-labs/flux-3-image-klein-base`；`klein` 加载蒸馏模型 `black-forest-labs/flux-3-image-klein`。下载前请先取得所选仓库的访问权限。参见 [FLUX [Kom]munity 许可证](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE)。
 
 ### `--lora_format`
 

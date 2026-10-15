@@ -100,7 +100,7 @@
 
 | タイプ | モデル |
 |--------|--------|
-| **画像** | Flux.1/2、SD3、SDXL、Chroma、Auraflow、PixArt、Sana、Lumina2、HiDream など |
+| **画像** | Flux.1/2, [FLUX.3 Image Klein](quickstart/FLUX3_IMAGE.ja.md)、SD3、SDXL、Chroma、Auraflow、PixArt、Sana、Lumina2、HiDream など |
 | **動画** | Wan、LTX Video、Hunyuan Video、Kandinsky 5、LongCat |
 | **音声** | ACE-Step |
 

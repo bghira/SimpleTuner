@@ -57,11 +57,13 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 ### `--model_family`
 
 - **Qué**: Determina qué arquitectura de modelo se está entrenando.
-- **Opciones**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
+- **Opciones**: pixart_sigma, flux, flux3_image, sd3, sdxl, kolors, legacy
 
 ### `--model_flavour`
 
 Selecciona una variante de checkpoint dentro de `--model_family`. Para `qwen_image`, el valor predeterminado es `v2.1` (`Qwen/Qwen-Image-2.1`). Indique explícitamente `v1.0`, `v2.0` o una variante `edit-*` existente para entrenar una arquitectura anterior; los adaptadores y las cachés de embeddings/latentes no son intercambiables con 2.1. Consulte la [guía de Qwen Image](quickstart/QWEN_IMAGE_2-1.es.md).
+
+Usa `model_family: "flux3_image"` para el transformador de imágenes de 5,6B parámetros. La variante predeterminada `klein-base` carga `black-forest-labs/flux-3-image-klein-base`; `klein` carga el modelo destilado `black-forest-labs/flux-3-image-klein`. Acepta el acceso al repositorio elegido antes de descargarlo. Consulta la [licencia FLUX [Kom]munity](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE).
 
 ### `--lora_format`
 

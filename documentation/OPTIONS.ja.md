@@ -57,11 +57,13 @@ simpletuner configure config/foo/config.json
 ### `--model_family`
 
 - **内容**: どのモデルアーキテクチャを学習するかを指定します。
-- **選択肢**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
+- **選択肢**: pixart_sigma, flux, flux3_image, sd3, sdxl, kolors, legacy
 
 ### `--model_flavour`
 
 `--model_family` 内のチェックポイントの種類を選択します。`qwen_image` の既定値は `v2.1`（`Qwen/Qwen-Image-2.1`）です。旧アーキテクチャを学習する場合は `v1.0`、`v2.0`、または既存の `edit-*` を明示してください。アダプター、埋め込みキャッシュ、潜在キャッシュは 2.1 と互換性がありません。[Qwen Image クイックスタート](quickstart/QWEN_IMAGE_2-1.ja.md) を参照してください。
+
+56 億パラメータの画像 Transformer には `model_family: "flux3_image"` を使います。既定の `klein-base` は `black-forest-labs/flux-3-image-klein-base`、`klein` は蒸留モデル `black-forest-labs/flux-3-image-klein` を読み込みます。ダウンロード前に対象リポジトリへのアクセスを取得してください。[FLUX [Kom]munity ライセンス](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE)も確認してください。
 
 ### `--lora_format`
 
