@@ -3,25 +3,11 @@
 import torch
 import torch.nn.functional as F
 
+from simpletuner.helpers.models.text import collate_embeddings
+
 TEXT_LAYERS = (4, 8, 12, 16, 20, 24, 28, 32)
 MAX_TEXT_LENGTH = 8192
 TEXT_PADDING_MULTIPLE = 80
-
-
-def collate_embeddings(entries):
-    embeddings, masks = [], []
-    for entry in entries:
-        value = entry["prompt_embeds"]
-        mask = entry["attention_masks"]
-        if value.ndim == 2:
-            value, mask = value.unsqueeze(0), mask.reshape(1, -1)
-        embeddings.extend(value.unbind(0))
-        masks.extend(mask.bool().unbind(0))
-    length = max(value.shape[0] for value in embeddings)
-    return {
-        "prompt_embeds": torch.stack([F.pad(value, (0, 0, 0, length - value.shape[0])) for value in embeddings]),
-        "attention_masks": torch.stack([F.pad(value, (0, length - value.shape[0])) for value in masks]),
-    }
 
 
 @torch.no_grad()
