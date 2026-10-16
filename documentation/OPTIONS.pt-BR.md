@@ -1219,6 +1219,14 @@ A opção vem desativada. Ao ativá-la, o SimpleTuner baixa o modelo Qwen3.5-9B 
 
 Reserve mais RAM e tempo de pré-processamento. O upsampler e o codificador de texto se alternam na GPU, e os embeddings são reutilizados no treino. O SimpleTuner separa os embeddings expandidos dos originais e reutiliza os resultados quando as mesmas referências são selecionadas novamente.
 
+### `--moss_image_validation_shift` {#--moss_image_validation_shift}
+
+Deslocamento de fluxo para a validação do MOSS-Image. Padrão: **5.0**. O treinamento usa a grade original sem deslocamento (`flow_schedule_shift: 1.0`). Este valor distribui os passos de amostragem pelos níveis de ruído.
+
+### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
+
+Lista JSON de camadas do transformador, com índices a partir de zero, ignoradas no ramo negativo do CFG do MOSS-Image. Padrão: **[22]**, conforme a receita do projeto. Use `[]` para CFG padrão. Os índices vão de 0 a 41. O ramo positivo é configurado separadamente com `validation_guidance_skip_layers` e `validation_guidance_skip_scale`.
+
 ### `--krea2_reference_latents` {#--krea2_reference_latents}
 
 - **O que**: Habilita treino Krea 2 com reference dataset.

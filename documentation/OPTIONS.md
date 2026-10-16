@@ -1245,6 +1245,14 @@ Upsampling is off by default. When enabled, SimpleTuner downloads the separate Q
 
 Allow extra system RAM and preprocessing time. The upsampler and text encoder take turns on the GPU, and the resulting embeddings are reused during training. SimpleTuner keeps expanded and original prompt embeddings separate, and reuses cached results when the same references are selected again.
 
+### `--moss_image_validation_shift` {#--moss_image_validation_shift}
+
+Inference flow shift for MOSS-Image validation. Default: **5.0**. Training uses the checkpoint’s unshifted grid (`flow_schedule_shift: 1.0`). Increase or decrease this value to change how sampling steps are distributed across noise levels.
+
+### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
+
+JSON list of zero-based transformer layers skipped in MOSS-Image’s negative CFG branch. Default: **[22]**, following the project’s sampling recipe. Set `[]` for standard CFG. Layer indices range from 0 to 41. Positive-branch skip-layer guidance is configured separately with `validation_guidance_skip_layers` and `validation_guidance_skip_scale`.
+
 ### `--krea2_reference_latents` {#--krea2_reference_latents}
 
 - **What**: Enable Krea 2 reference-dataset training.

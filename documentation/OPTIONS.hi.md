@@ -1221,6 +1221,14 @@ Different models different conditioning data expect करते हैं:
 
 अतिरिक्त system RAM और preprocessing समय रखें। Upsampler और text encoder बारी-बारी से GPU इस्तेमाल करते हैं; बनी embeddings प्रशिक्षण में दोबारा इस्तेमाल होती हैं। SimpleTuner expanded और मूल embeddings अलग रखता है और वही references दोबारा चुनने पर कैश परिणाम फिर इस्तेमाल करता है।
 
+### `--moss_image_validation_shift` {#--moss_image_validation_shift}
+
+MOSS-Image वैलिडेशन में इन्फ़रेंस flow shift। डिफ़ॉल्ट: **5.0**। प्रशिक्षण मूल बिना-शिफ़्ट ग्रिड (`flow_schedule_shift: 1.0`) का उपयोग करता है। यह मान अलग-अलग noise स्तरों पर सैंपलिंग स्टेप का वितरण बदलता है।
+
+### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
+
+MOSS-Image की नकारात्मक CFG शाखा में छोड़ी जाने वाली Transformer लेयर की JSON सूची। इंडेक्स शून्य से शुरू होते हैं और सीमा 0 से 41 है। परियोजना की रेसिपी के अनुसार डिफ़ॉल्ट **[22]** है। मानक CFG के लिए `[]` दें। सकारात्मक शाखा को `validation_guidance_skip_layers` और `validation_guidance_skip_scale` से अलग सेट करें।
+
 ### `--krea2_reference_latents` {#--krea2_reference_latents}
 
 - **What**: Krea 2 reference dataset training enable करें।

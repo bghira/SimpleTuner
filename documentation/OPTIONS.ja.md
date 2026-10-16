@@ -1222,6 +1222,14 @@ Flux Kontext の検証もこのコンディショニングベースの経路を�
 
 追加のシステム RAM と前処理時間を確保してください。アップサンプラーとテキストエンコーダーが交互に GPU を使い、生成した埋め込みを学習で再利用します。展開した埋め込みと元の埋め込みは分けて保存され、同じ参照画像を再び選んだ場合はキャッシュを再利用します。
 
+### `--moss_image_validation_shift` {#--moss_image_validation_shift}
+
+MOSS-Image 検証の推論フローシフト。既定値: **5.0**。学習には元のシフトなしグリッド (`flow_schedule_shift: 1.0`) を使います。この値でノイズレベルごとのサンプリングステップ配分を調整します。
+
+### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
+
+MOSS-Image の負の CFG 分岐でスキップする Transformer レイヤーの JSON リストです。インデックスは 0 始まりで、範囲は 0〜41 です。既定値はプロジェクト推奨の **[22]**。通常の CFG には `[]` を指定します。正の分岐は `validation_guidance_skip_layers` と `validation_guidance_skip_scale` で別途設定します。
+
 ### `--krea2_reference_latents` {#--krea2_reference_latents}
 
 - **内容**: Krea 2 の reference dataset training を有効化します。

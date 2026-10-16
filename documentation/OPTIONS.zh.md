@@ -1224,6 +1224,14 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 
 请预留额外系统内存和预处理时间。扩写模型与文本编码器轮流使用 GPU，生成的嵌入会在训练中复用。SimpleTuner 将扩写嵌入与原始嵌入分别保存，再次选择相同参考图时可复用缓存结果。
 
+### `--moss_image_validation_shift` {#--moss_image_validation_shift}
+
+MOSS-Image 验证时的推理流偏移。默认值：**5.0**。训练使用原始未偏移网格（`flow_schedule_shift: 1.0`）。此值控制采样步骤在不同噪声级别之间的分布。
+
+### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
+
+在 MOSS-Image 负向 CFG 分支跳过的 Transformer 层 JSON 列表，层号从零开始，范围为 0 至 41。默认值：**[22]**，遵循项目采样配方。设为 `[]` 使用标准 CFG。正向分支通过 `validation_guidance_skip_layers` 和 `validation_guidance_skip_scale` 单独配置。
+
 ### `--krea2_reference_latents` {#--krea2_reference_latents}
 
 - **内容**：启用 Krea 2 reference dataset 训练。
