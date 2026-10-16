@@ -10,7 +10,6 @@
     "crop": false,
     "cache_dir_vae": "cache/vae/moss-image/sft",
     "text_embeds": "text",
-    "train_batch_size": 1,
     "repeats": 10
   },
   {

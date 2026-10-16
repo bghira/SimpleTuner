@@ -35,7 +35,7 @@
     "skip_file_discovery": false,
     "tracker_project_name": "lora-training",
     "tracker_run_name": "moss_image.peft-lora",
-    "train_batch_size": 1,
+    "train_batch_size": 2,
     "use_ema": false,
     "vae_batch_size": 1,
     "validation_guidance": 3.0,
@@ -79,5 +79,7 @@
     "moss_image_validation_shift": 5.0,
     "moss_image_uncond_skip_layers": [
         22
-    ]
+    ],
+    "gradient_checkpointing_backend": "torch",
+    "gradient_checkpointing_offload_attention": false
 }
