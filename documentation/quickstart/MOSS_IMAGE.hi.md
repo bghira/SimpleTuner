@@ -4,16 +4,30 @@
 
 [MOSS-Image-Base](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base) के लिए `model_family: "moss_image"`, `model_flavour: "base"` और `model_type: "lora"` चुनें। चुने हुए डेटा पर परिष्कृत [MOSS-Image-SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT) के लिए `model_flavour: "sft"` चुनें। दोनों में 5B इमेज Transformer, Qwen3.5-9B टेक्स्ट एन्कोडर और FLUX.2 VAE हैं। चेकपॉइंट [Apache-2.0](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base/blob/main/LICENSE) के अंतर्गत जारी हैं। प्रशिक्षण में टेक्स्ट एन्कोडर फ़्रीज़ रहता है।
 
+## VRAM प्रीसेट चुनें
+
+GPU मेमोरी के अनुसार रेसिपी चुनें। हर स्तर 1024×1024 के बराबर क्षेत्र पर प्रशिक्षण करता है, चित्रों का अनुपात बनाए रखता है और rank-32 BF16 LoRA तथा REPA सक्षम रखता है।
+
+| GPU मेमोरी | Base उदाहरण | SFT उदाहरण | प्रति बैच चित्र | `gradient_checkpointing_interval` |
+| --- | --- | --- | ---: | ---: |
+| 24 GB | `moss_image-24g.peft-lora` | `moss_image-sft-24g.peft-lora` | 1 | 1 |
+| 32 GB | `moss_image-32g.peft-lora` | `moss_image-sft-32g.peft-lora` | 1 | 2 |
+| 48 GB | `moss_image-48g.peft-lora` | `moss_image-sft-48g.peft-lora` | 2 | 2 |
+| 80 GB | `moss_image-80g.peft-lora` | `moss_image-sft-80g.peft-lora` | 4 | 2 |
+| 144 GB | `moss_image-144g.peft-lora` | `moss_image-sft-144g.peft-lora` | 8 | 2 |
+
+डिफ़ॉल्ट `moss_image.peft-lora` और `moss_image-sft.peft-lora` में 48 GB सेटिंग हैं। बैच आकार शुरुआती संदर्भ हैं: लंबे कैप्शन, अतिरिक्त सुविधाओं या अनुपात बकेट में बैच से कम चित्र होने पर `train_batch_size` घटाएँ। 144 GB स्तर H200 श्रेणी के GPU के लिए है।
+
 ## SimpleTuner इंस्टॉल करें
 
-नीचे दी गई CUDA रेसिपी में Python 3.13 और NVIDIA GPU का उपयोग करें। 48 GB GPU शुरुआती संदर्भ है; कैप्शन की लंबाई, बैच आकार और अतिरिक्त सुविधाएँ मेमोरी को प्रभावित करती हैं। अन्य प्लेटफ़ॉर्म और CUDA संस्करणों के लिए [इंस्टॉलेशन गाइड](../INSTALL.md) देखें।
+नीचे दी गई CUDA रेसिपी में Python 3.13 और NVIDIA GPU का उपयोग करें। अन्य प्लेटफ़ॉर्म और CUDA संस्करणों के लिए [इंस्टॉलेशन गाइड](../INSTALL.md) देखें।
 
 ```bash
 git clone https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
 python3.13 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[cuda]'
+pip install -e '.[cuda,attention-cute]'
 ```
 
 ## चित्र और कैप्शन तैयार करें
@@ -32,13 +46,13 @@ datasets/moss-image/
 
 ## प्रशिक्षण कॉन्फ़िगरेशन बनाएँ
 
-Base रेसिपी और नमूना प्रॉम्प्ट कॉपी करें। SFT से शुरू करने के लिए कमांड में `moss_image.peft-lora` की जगह `moss_image-sft.peft-lora` रखें।
+48 GB Base रेसिपी और नमूना प्रॉम्प्ट कॉपी करें। `48g` की जगह अपना चुना स्तर रखें। SFT के लिए कमांड में `moss_image-48g.peft-lora` को `moss_image-sft-48g.peft-lora` से बदलें।
 
 ```bash
 mkdir -p config/examples datasets/moss-image
-cp -R simpletuner/examples/moss_image.peft-lora config/examples/
+cp -R simpletuner/examples/moss_image-48g.peft-lora config/examples/
 cp simpletuner/examples/moss_image-prompts.json config/examples/
-cp config/examples/moss_image.peft-lora/config.json config/config.json
+cp config/examples/moss_image-48g.peft-lora/config.json config/config.json
 ```
 
 रेसिपी में rank-32 BF16 LoRA, `1e-4` लर्निंग रेट, gradient checkpointing, REPA, 4,000 ऑप्टिमाइज़र स्टेप और 1024-स्तर प्रशिक्षण है। `config/config.json` खोलकर मौजूदा कॉन्फ़िगरेशन में ये प्रविष्टियाँ बदलें:
@@ -46,7 +60,6 @@ cp config/examples/moss_image.peft-lora/config.json config/config.json
 ```json
 {
   "output_dir": "output/my-moss-lora",
-  "train_batch_size": 1,
   "validation_prompt": "A studio photograph of TOK on a wooden table, soft window light, a pale gray background.",
   "user_prompt_library": null
 }
@@ -79,9 +92,9 @@ WebUI में denoising के दौरान प्रगति चित्
 
 ## मेमोरी और प्रशिक्षण विकल्प
 
-पहली बार `train_batch_size: 1` रखें। पर्याप्त चित्र और GPU मेमोरी मिलने पर इसे बढ़ाएँ। `gradient_checkpointing_backend` में `torch`, `unsloth`, `torch-ffn` या `unsloth-ffn` चुनें; interval और `gradient_checkpointing_segment_stride` कवरेज नियंत्रित करते हैं। Musubi, `musubi_blocks_to_swap` से ब्लॉक CPU और GPU के बीच ले जाता है। RamTorch के लिए `ramtorch: true` तथा चयनात्मक ऑफ़लोड के लिए `ramtorch_transformer_percent` है। ऑफ़लोड में सिस्टम RAM और ट्रांसफ़र समय लगता है; एक समय में एक तरीका सेट करें। [OPTIONS](../OPTIONS.md) देखें।
+रेसिपी चुने हुए VRAM स्तर के अनुसार `train_batch_size` सेट करती है। छोटे डेटासेट या लंबे कैप्शन और अतिरिक्त सुविधाओं के लिए इसे घटाएँ। `gradient_checkpointing_backend` में `torch`, `unsloth`, `torch-ffn` या `unsloth-ffn` चुनें; interval और `gradient_checkpointing_segment_stride` कवरेज नियंत्रित करते हैं। Musubi, `musubi_blocks_to_swap` से ब्लॉक CPU और GPU के बीच ले जाता है। RamTorch के लिए `ramtorch: true` तथा चयनात्मक ऑफ़लोड के लिए `ramtorch_transformer_percent` है। ऑफ़लोड में सिस्टम RAM और ट्रांसफ़र समय लगता है; एक समय में एक तरीका सेट करें। [OPTIONS](../OPTIONS.md) देखें।
 
-NVIDIA GPU के लिए वैकल्पिक CuTE attention निर्भरताएँ `pip install -e '.[cuda,attention-cute]'` से इंस्टॉल करें, फिर `attention_mechanism: "kohaku-fa"` चुनें। साझा चयनकर्ता अन्य इंस्टॉल किए गए बैकएंड भी स्वीकार करता है। backward के लिए सहेजे गए attention tensors ऑफ़लोड करने के लिए `gradient_checkpointing_offload_attention: true` तथा ट्रांसफ़र प्रीफ़ेच के लिए `gradient_checkpointing_offload_prefetch: true` दें।
+CUDA इंस्टॉलेशन में CuTE attention शामिल है। प्रशिक्षण के दौरान डिफ़ॉल्ट `attention_mechanism: "kohaku-fa-auto"` Ada और Hopper GPU पर CuTE तथा अन्य आर्किटेक्चर पर मूल SDPA चुनता है। backward के लिए सहेजे गए attention tensors ऑफ़लोड करने के लिए `gradient_checkpointing_offload_attention: true` तथा ट्रांसफ़र प्रीफ़ेच के लिए `gradient_checkpointing_offload_prefetch: true` दें। अन्य attention बैकएंड के लिए [OPTIONS](../OPTIONS.md) देखें।
 
 रेसिपी [REPA](../experimental/IMAGE_REPA.md) सक्षम करती है। बाद की लेयर की इमेज विशेषताओं को पहले की लेयर से मिलाने के लिए [LayerSync](../experimental/LAYERSYNC.md) जोड़ें:
 

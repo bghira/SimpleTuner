@@ -4,16 +4,30 @@ Train a MOSS-Image LoRA on your own images. A LoRA is a small adapter that teach
 
 Choose `model_family: "moss_image"`, `model_flavour: "base"`, and `model_type: "lora"` to start with [MOSS-Image-Base](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base). Choose `model_flavour: "sft"` for [MOSS-Image-SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT), which was refined on curated data. Both share a 5B image transformer, a Qwen3.5-9B text encoder, and a FLUX.2 VAE. Both checkpoints are released under [Apache-2.0](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base/blob/main/LICENSE). The text encoder stays frozen during training.
 
+## Choose a VRAM preset
+
+Choose the recipe matching your GPU memory. Every tier trains at a 1024×1024 equivalent area, preserves image aspect ratios, and keeps rank-32 BF16 LoRA and REPA enabled.
+
+| GPU memory | Base example | SFT example | Images per batch | `gradient_checkpointing_interval` |
+| --- | --- | --- | ---: | ---: |
+| 24 GB | `moss_image-24g.peft-lora` | `moss_image-sft-24g.peft-lora` | 1 | 1 |
+| 32 GB | `moss_image-32g.peft-lora` | `moss_image-sft-32g.peft-lora` | 1 | 2 |
+| 48 GB | `moss_image-48g.peft-lora` | `moss_image-sft-48g.peft-lora` | 2 | 2 |
+| 80 GB | `moss_image-80g.peft-lora` | `moss_image-sft-80g.peft-lora` | 4 | 2 |
+| 144 GB | `moss_image-144g.peft-lora` | `moss_image-sft-144g.peft-lora` | 8 | 2 |
+
+The default `moss_image.peft-lora` and `moss_image-sft.peft-lora` examples use the 48 GB settings. Batch sizes are starting points: use a smaller `train_batch_size` for longer captions, additional training features, or a dataset with fewer images in an aspect bucket than the batch size. The 144 GB tier is intended for H200-class GPUs.
+
 ## Install SimpleTuner
 
-Use Python 3.13 and an NVIDIA GPU for the CUDA recipe below. A 48 GB GPU is a useful starting point for this recipe; caption length, batch size, and additional training features affect memory use. See the [installation guide](../INSTALL.md) for other platforms and CUDA versions.
+Use Python 3.13 and an NVIDIA GPU for the CUDA recipe below. See the [installation guide](../INSTALL.md) for other platforms and CUDA versions.
 
 ```bash
 git clone https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
 python3.13 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[cuda]'
+pip install -e '.[cuda,attention-cute]'
 ```
 
 ## Prepare images and captions
@@ -32,13 +46,13 @@ Choose a subject word such as `TOK` and include it in every caption for that sub
 
 ## Set up your training configuration
 
-Copy the Base recipe and its sample prompts. To start from SFT, substitute `moss_image-sft.peft-lora` for `moss_image.peft-lora` in the copy commands.
+Copy the 48 GB Base recipe and its sample prompts. Replace `48g` with your selected tier. For SFT, replace `moss_image-48g.peft-lora` with `moss_image-sft-48g.peft-lora` in the commands.
 
 ```bash
 mkdir -p config/examples datasets/moss-image
-cp -R simpletuner/examples/moss_image.peft-lora config/examples/
+cp -R simpletuner/examples/moss_image-48g.peft-lora config/examples/
 cp simpletuner/examples/moss_image-prompts.json config/examples/
-cp config/examples/moss_image.peft-lora/config.json config/config.json
+cp config/examples/moss_image-48g.peft-lora/config.json config/config.json
 ```
 
 The supplied configuration uses rank-32 BF16 LoRA, learning rate `1e-4`, gradient checkpointing, REPA, 4,000 optimizer steps, and 1024-scale training. Open `config/config.json` and edit these entries inside the existing configuration:
@@ -46,7 +60,6 @@ The supplied configuration uses rank-32 BF16 LoRA, learning rate `1e-4`, gradien
 ```json
 {
   "output_dir": "output/my-moss-lora",
-  "train_batch_size": 1,
   "validation_prompt": "A studio photograph of TOK on a wooden table, soft window light, a pale gray background.",
   "user_prompt_library": null
 }
@@ -79,9 +92,9 @@ To see progress frames during denoising in the WebUI, add the following settings
 
 ## Memory and training options
 
-Keep `train_batch_size: 1` for a first run. Increase it when the dataset has enough images and GPU memory is available. `gradient_checkpointing_backend` accepts `torch`, `unsloth`, `torch-ffn`, and `unsloth-ffn`; `gradient_checkpointing_interval` and `gradient_checkpointing_segment_stride` control its coverage. Musubi block swapping moves selected transformer blocks between GPU and CPU using `musubi_blocks_to_swap`. RamTorch uses `ramtorch: true` and supports selective offloading with `ramtorch_transformer_percent`. These offload options use system RAM and add transfer work; configure one approach at a time. See [OPTIONS](../OPTIONS.md).
+The recipe sets `train_batch_size` for your chosen VRAM tier. Reduce it for a small dataset or when captions and additional features need more memory. `gradient_checkpointing_backend` accepts `torch`, `unsloth`, `torch-ffn`, and `unsloth-ffn`; `gradient_checkpointing_interval` and `gradient_checkpointing_segment_stride` control its coverage. Musubi block swapping moves selected transformer blocks between GPU and CPU using `musubi_blocks_to_swap`. RamTorch uses `ramtorch: true` and supports selective offloading with `ramtorch_transformer_percent`. These offload options use system RAM and add transfer work; configure one approach at a time. See [OPTIONS](../OPTIONS.md).
 
-For NVIDIA GPUs, install the optional CuTE attention dependencies with `pip install -e '.[cuda,attention-cute]'`, then choose `attention_mechanism: "kohaku-fa"`. The shared attention selector also accepts other installed backends. To offload attention tensors saved for backward, enable `gradient_checkpointing_offload_attention: true`; `gradient_checkpointing_offload_prefetch: true` enables transfer prefetching.
+The CUDA installation includes CuTE attention. During training, the default `attention_mechanism: "kohaku-fa-auto"` selects CuTE on Ada and Hopper GPUs and native SDPA on other architectures. To offload attention tensors saved for backward, enable `gradient_checkpointing_offload_attention: true`; `gradient_checkpointing_offload_prefetch: true` enables transfer prefetching. See [OPTIONS](../OPTIONS.md) for other attention backends.
 
 The recipe enables [REPA](../experimental/IMAGE_REPA.md). To align later image features with an earlier layer, add [LayerSync](../experimental/LAYERSYNC.md):
 

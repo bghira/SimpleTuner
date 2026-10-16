@@ -4,16 +4,30 @@ Treine um LoRA do MOSS-Image com suas próprias imagens. Um LoRA é um pequeno a
 
 Comece com `model_family: "moss_image"`, `model_flavour: "base"` e `model_type: "lora"` para usar [MOSS-Image-Base](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base). Escolha `model_flavour: "sft"` para [MOSS-Image-SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT), refinado com dados selecionados. Ambos compartilham um transformador de imagens de 5B, o codificador de texto Qwen3.5-9B e um VAE FLUX.2. Os checkpoints usam [Apache-2.0](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base/blob/main/LICENSE). O codificador de texto permanece congelado durante o treinamento.
 
+## Escolher um preset de VRAM
+
+Escolha a receita de acordo com a memória da GPU. Todos os níveis treinam com área equivalente a 1024×1024, preservam as proporções e mantêm LoRA BF16 de rank 32 e REPA.
+
+| Memória da GPU | Exemplo Base | Exemplo SFT | Imagens por lote | `gradient_checkpointing_interval` |
+| --- | --- | --- | ---: | ---: |
+| 24 GB | `moss_image-24g.peft-lora` | `moss_image-sft-24g.peft-lora` | 1 | 1 |
+| 32 GB | `moss_image-32g.peft-lora` | `moss_image-sft-32g.peft-lora` | 1 | 2 |
+| 48 GB | `moss_image-48g.peft-lora` | `moss_image-sft-48g.peft-lora` | 2 | 2 |
+| 80 GB | `moss_image-80g.peft-lora` | `moss_image-sft-80g.peft-lora` | 4 | 2 |
+| 144 GB | `moss_image-144g.peft-lora` | `moss_image-sft-144g.peft-lora` | 8 | 2 |
+
+Os exemplos padrão `moss_image.peft-lora` e `moss_image-sft.peft-lora` usam os ajustes de 48 GB. Os lotes são pontos de partida: reduza `train_batch_size` para legendas mais longas, recursos adicionais ou datasets com menos imagens por bucket de proporção que o tamanho do lote. O nível de 144 GB é destinado a GPUs da classe H200.
+
 ## Instalar o SimpleTuner
 
-Use Python 3.13 e uma GPU NVIDIA para a receita CUDA abaixo. Uma GPU de 48 GB é um bom ponto de partida; comprimento das legendas, tamanho do lote e recursos adicionais afetam a memória. Consulte a [instalação](../INSTALL.md) para outras plataformas e versões do CUDA.
+Use Python 3.13 e uma GPU NVIDIA para a receita CUDA abaixo. Consulte a [instalação](../INSTALL.md) para outras plataformas e versões do CUDA.
 
 ```bash
 git clone https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
 python3.13 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[cuda]'
+pip install -e '.[cuda,attention-cute]'
 ```
 
 ## Preparar imagens e legendas
@@ -32,13 +46,13 @@ Escolha uma palavra como `TOK` e inclua-a em todas as legendas daquele assunto. 
 
 ## Configurar o treinamento
 
-Copie a receita Base e seus prompts. Para começar com SFT, substitua `moss_image.peft-lora` por `moss_image-sft.peft-lora` nos comandos.
+Copie a receita Base de 48 GB e seus prompts. Substitua `48g` pelo nível escolhido. Para SFT, substitua `moss_image-48g.peft-lora` por `moss_image-sft-48g.peft-lora` nos comandos.
 
 ```bash
 mkdir -p config/examples datasets/moss-image
-cp -R simpletuner/examples/moss_image.peft-lora config/examples/
+cp -R simpletuner/examples/moss_image-48g.peft-lora config/examples/
 cp simpletuner/examples/moss_image-prompts.json config/examples/
-cp config/examples/moss_image.peft-lora/config.json config/config.json
+cp config/examples/moss_image-48g.peft-lora/config.json config/config.json
 ```
 
 A configuração usa LoRA BF16 de rank 32, taxa de aprendizado `1e-4`, gradient checkpointing, REPA, 4.000 passos do otimizador e escala 1024. Abra `config/config.json` e altere estas entradas na configuração existente:
@@ -46,7 +60,6 @@ A configuração usa LoRA BF16 de rank 32, taxa de aprendizado `1e-4`, gradient 
 ```json
 {
   "output_dir": "output/my-moss-lora",
-  "train_batch_size": 1,
   "validation_prompt": "A studio photograph of TOK on a wooden table, soft window light, a pale gray background.",
   "user_prompt_library": null
 }
@@ -79,9 +92,9 @@ Adicione os ajustes abaixo para ver quadros de progresso durante o denoising na 
 
 ## Memória e opções de treinamento
 
-Mantenha `train_batch_size: 1` na primeira execução. Aumente quando houver imagens e memória suficientes. `gradient_checkpointing_backend` aceita `torch`, `unsloth`, `torch-ffn` e `unsloth-ffn`; o intervalo e `gradient_checkpointing_segment_stride` controlam a cobertura. Musubi move blocos entre GPU e CPU com `musubi_blocks_to_swap`. RamTorch usa `ramtorch: true` e permite descarga seletiva com `ramtorch_transformer_percent`. A descarga usa RAM e adiciona transferências; configure uma abordagem de cada vez. Consulte [OPTIONS](../OPTIONS.md).
+A receita define `train_batch_size` para o nível de VRAM escolhido. Reduza para datasets pequenos ou quando legendas e recursos adicionais precisarem de mais memória. `gradient_checkpointing_backend` aceita `torch`, `unsloth`, `torch-ffn` e `unsloth-ffn`; o intervalo e `gradient_checkpointing_segment_stride` controlam a cobertura. Musubi move blocos entre GPU e CPU com `musubi_blocks_to_swap`. RamTorch usa `ramtorch: true` e permite descarga seletiva com `ramtorch_transformer_percent`. A descarga usa RAM e adiciona transferências; configure uma abordagem de cada vez. Consulte [OPTIONS](../OPTIONS.md).
 
-Em GPUs NVIDIA, instale as dependências opcionais de atenção CuTE com `pip install -e '.[cuda,attention-cute]'` e selecione `attention_mechanism: "kohaku-fa"`. O seletor compartilhado também aceita outros backends instalados. Ative `gradient_checkpointing_offload_attention: true` para descarregar os tensores de atenção salvos para backward; `gradient_checkpointing_offload_prefetch: true` ativa a pré-busca das transferências.
+A instalação CUDA inclui atenção CuTE. Durante o treinamento, o padrão `attention_mechanism: "kohaku-fa-auto"` seleciona CuTE em GPUs Ada e Hopper e SDPA nativo em outras arquiteturas. Ative `gradient_checkpointing_offload_attention: true` para descarregar os tensores de atenção salvos para backward; `gradient_checkpointing_offload_prefetch: true` ativa a pré-busca das transferências. Consulte [OPTIONS](../OPTIONS.md) para outros backends de atenção.
 
 A receita ativa [REPA](../experimental/IMAGE_REPA.md). Para alinhar características de uma camada posterior a uma anterior, adicione [LayerSync](../experimental/LAYERSYNC.md):
 

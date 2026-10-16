@@ -4,16 +4,30 @@
 
 [MOSS-Image-Base](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base) を使うには `model_family: "moss_image"`、`model_flavour: "base"`、`model_type: "lora"` を選びます。選別されたデータで調整された [MOSS-Image-SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT) を使う場合は `model_flavour: "sft"` にします。両モデルは 5B の画像 Transformer、Qwen3.5-9B テキストエンコーダー、FLUX.2 VAE を共有し、[Apache-2.0](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base/blob/main/LICENSE) で公開されています。学習中はテキストエンコーダーを固定します。
 
+## VRAM プリセットの選択
+
+GPU メモリーに合ったレシピを選びます。全レベルで 1024×1024 相当の面積、縦横比の維持、rank 32 BF16 LoRA、REPA を使用します。
+
+| GPU メモリー | Base の例 | SFT の例 | バッチ内画像数 | `gradient_checkpointing_interval` |
+| --- | --- | --- | ---: | ---: |
+| 24 GB | `moss_image-24g.peft-lora` | `moss_image-sft-24g.peft-lora` | 1 | 1 |
+| 32 GB | `moss_image-32g.peft-lora` | `moss_image-sft-32g.peft-lora` | 1 | 2 |
+| 48 GB | `moss_image-48g.peft-lora` | `moss_image-sft-48g.peft-lora` | 2 | 2 |
+| 80 GB | `moss_image-80g.peft-lora` | `moss_image-sft-80g.peft-lora` | 4 | 2 |
+| 144 GB | `moss_image-144g.peft-lora` | `moss_image-sft-144g.peft-lora` | 8 | 2 |
+
+既定の `moss_image.peft-lora` と `moss_image-sft.peft-lora` は 48 GB 設定です。バッチサイズは開始時の目安です。長いキャプション、追加機能、または縦横比バケットの画像数がバッチサイズより少ない場合は `train_batch_size` を下げてください。144 GB レベルは H200 クラスの GPU 向けです。
+
 ## SimpleTuner のインストール
 
-以下の CUDA レシピには Python 3.13 と NVIDIA GPU を使います。48 GB GPU が開始時の目安です。キャプションの長さ、バッチサイズ、追加機能によってメモリー使用量は変わります。他の環境は[インストールガイド](../INSTALL.md)を参照してください。
+以下の CUDA レシピには Python 3.13 と NVIDIA GPU を使います。他の環境や CUDA バージョンは[インストールガイド](../INSTALL.md)を参照してください。
 
 ```bash
 git clone https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
 python3.13 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[cuda]'
+pip install -e '.[cuda,attention-cute]'
 ```
 
 ## 画像とキャプションの準備
@@ -32,13 +46,13 @@ datasets/moss-image/
 
 ## 学習設定
 
-Base レシピとサンプルプロンプトをコピーします。SFT を使う場合は、コマンド中の `moss_image.peft-lora` を `moss_image-sft.peft-lora` に置き換えます。
+48 GB の Base レシピとサンプルプロンプトをコピーします。`48g` は選んだレベルに置き換えてください。SFT の場合はコマンド中の `moss_image-48g.peft-lora` を `moss_image-sft-48g.peft-lora` に変更します。
 
 ```bash
 mkdir -p config/examples datasets/moss-image
-cp -R simpletuner/examples/moss_image.peft-lora config/examples/
+cp -R simpletuner/examples/moss_image-48g.peft-lora config/examples/
 cp simpletuner/examples/moss_image-prompts.json config/examples/
-cp config/examples/moss_image.peft-lora/config.json config/config.json
+cp config/examples/moss_image-48g.peft-lora/config.json config/config.json
 ```
 
 レシピは rank 32 の BF16 LoRA、学習率 `1e-4`、gradient checkpointing、REPA、4,000 オプティマイザーステップ、1024 相当の解像度を使用します。`config/config.json` を開き、既存設定内の次の項目を編集します。
@@ -46,7 +60,6 @@ cp config/examples/moss_image.peft-lora/config.json config/config.json
 ```json
 {
   "output_dir": "output/my-moss-lora",
-  "train_batch_size": 1,
   "validation_prompt": "A studio photograph of TOK on a wooden table, soft window light, a pale gray background.",
   "user_prompt_library": null
 }
@@ -79,9 +92,9 @@ WebUI でノイズ除去中の進捗画像を見るには、次の設定を追�
 
 ## メモリーと学習オプション
 
-初回は `train_batch_size: 1` を使い、画像数と GPU メモリーに余裕があれば増やします。`gradient_checkpointing_backend` は `torch`、`unsloth`、`torch-ffn`、`unsloth-ffn` を選べます。適用範囲は interval と `gradient_checkpointing_segment_stride` で調整します。Musubi は `musubi_blocks_to_swap` でブロックを GPU と CPU 間で移動します。RamTorch は `ramtorch: true` と `ramtorch_transformer_percent` で選択的にオフロードします。システム RAM と転送時間を使うため、一度に一つの方式から設定してください。[OPTIONS](../OPTIONS.md)に詳細があります。
+レシピの `train_batch_size` は選択した VRAM レベルに合わせてあります。小規模データセットや、長いキャプション・追加機能でメモリーが増える場合は下げてください。 `gradient_checkpointing_backend` は `torch`、`unsloth`、`torch-ffn`、`unsloth-ffn` を選べます。適用範囲は interval と `gradient_checkpointing_segment_stride` で調整します。Musubi は `musubi_blocks_to_swap` でブロックを GPU と CPU 間で移動します。RamTorch は `ramtorch: true` と `ramtorch_transformer_percent` で選択的にオフロードします。システム RAM と転送時間を使うため、一度に一つの方式から設定してください。[OPTIONS](../OPTIONS.md)に詳細があります。
 
-NVIDIA GPU では `pip install -e '.[cuda,attention-cute]'` で任意の CuTE attention 依存関係を追加し、`attention_mechanism: "kohaku-fa"` を選べます。共通セレクターは他のインストール済みバックエンドも利用できます。逆伝播用に保存する attention テンソルをオフロードするには `gradient_checkpointing_offload_attention: true`、転送の先読みには `gradient_checkpointing_offload_prefetch: true` を指定します。
+CUDA のインストールには CuTE attention が含まれます。学習時の既定値 `attention_mechanism: "kohaku-fa-auto"` は Ada・Hopper GPU で CuTE、それ以外のアーキテクチャで標準の SDPA を選びます。逆伝播用に保存する attention テンソルをオフロードするには `gradient_checkpointing_offload_attention: true`、転送の先読みには `gradient_checkpointing_offload_prefetch: true` を指定します。他の attention バックエンドは [OPTIONS](../OPTIONS.md) を参照してください。
 
 レシピは [REPA](../experimental/IMAGE_REPA.md) を有効にします。後段の画像特徴を前段と揃えるには、[LayerSync](../experimental/LAYERSYNC.md) を追加します。
 

@@ -4,16 +4,30 @@
 
 使用 [MOSS-Image-Base](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base) 时，设置 `model_family: "moss_image"`、`model_flavour: "base"` 和 `model_type: "lora"`。若使用经过精选数据微调的 [MOSS-Image-SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT)，则设置 `model_flavour: "sft"`。两者共享 5B 图像 Transformer、Qwen3.5-9B 文本编码器和 FLUX.2 VAE，采用 [Apache-2.0](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base/blob/main/LICENSE) 许可证。训练期间冻结文本编码器。
 
+## 选择 VRAM 预设
+
+根据 GPU 显存选择配方。所有档位都使用 1024×1024 等效面积训练、保留宽高比，并启用 rank 32 BF16 LoRA 和 REPA。
+
+| GPU 显存 | Base 示例 | SFT 示例 | 每批图片数 | `gradient_checkpointing_interval` |
+| --- | --- | --- | ---: | ---: |
+| 24 GB | `moss_image-24g.peft-lora` | `moss_image-sft-24g.peft-lora` | 1 | 1 |
+| 32 GB | `moss_image-32g.peft-lora` | `moss_image-sft-32g.peft-lora` | 1 | 2 |
+| 48 GB | `moss_image-48g.peft-lora` | `moss_image-sft-48g.peft-lora` | 2 | 2 |
+| 80 GB | `moss_image-80g.peft-lora` | `moss_image-sft-80g.peft-lora` | 4 | 2 |
+| 144 GB | `moss_image-144g.peft-lora` | `moss_image-sft-144g.peft-lora` | 8 | 2 |
+
+默认的 `moss_image.peft-lora` 和 `moss_image-sft.peft-lora` 使用 48 GB 设置。批次大小只是起点：描述较长、启用额外训练功能，或宽高比桶中的图片数少于批次大小时，请减小 `train_batch_size`。144 GB 档位面向 H200 级别 GPU。
+
 ## 安装 SimpleTuner
 
-以下 CUDA 配方使用 Python 3.13 和 NVIDIA GPU。48 GB GPU 是起步参考；描述长度、批次大小和附加功能会影响显存用量。其他平台和 CUDA 版本请参阅[安装指南](../INSTALL.md)。
+以下 CUDA 配方使用 Python 3.13 和 NVIDIA GPU。其他平台和 CUDA 版本请参阅[安装指南](../INSTALL.md)。
 
 ```bash
 git clone https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
 python3.13 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[cuda]'
+pip install -e '.[cuda,attention-cute]'
 ```
 
 ## 准备图片和描述
@@ -32,13 +46,13 @@ datasets/moss-image/
 
 ## 设置训练配置
 
-复制 Base 配方和示例提示词。如需从 SFT 开始，将命令中的 `moss_image.peft-lora` 替换为 `moss_image-sft.peft-lora`。
+复制 48 GB Base 配方及示例提示词，将 `48g` 替换为所选档位。使用 SFT 时，把命令中的 `moss_image-48g.peft-lora` 换成 `moss_image-sft-48g.peft-lora`。
 
 ```bash
 mkdir -p config/examples datasets/moss-image
-cp -R simpletuner/examples/moss_image.peft-lora config/examples/
+cp -R simpletuner/examples/moss_image-48g.peft-lora config/examples/
 cp simpletuner/examples/moss_image-prompts.json config/examples/
-cp config/examples/moss_image.peft-lora/config.json config/config.json
+cp config/examples/moss_image-48g.peft-lora/config.json config/config.json
 ```
 
 配方使用 rank 32 BF16 LoRA、`1e-4` 学习率、梯度检查点、REPA、4,000 个优化器步骤以及 1024 级别分辨率。打开 `config/config.json`，在原有配置内修改以下项目：
@@ -46,7 +60,6 @@ cp config/examples/moss_image.peft-lora/config.json config/config.json
 ```json
 {
   "output_dir": "output/my-moss-lora",
-  "train_batch_size": 1,
   "validation_prompt": "A studio photograph of TOK on a wooden table, soft window light, a pale gray background.",
   "user_prompt_library": null
 }
@@ -79,9 +92,9 @@ simpletuner train
 
 ## 内存与训练选项
 
-首次使用 `train_batch_size: 1`，有足够图片和显存后再增加。`gradient_checkpointing_backend` 支持 `torch`、`unsloth`、`torch-ffn` 和 `unsloth-ffn`；interval 与 `gradient_checkpointing_segment_stride` 控制覆盖范围。Musubi 通过 `musubi_blocks_to_swap` 在 CPU 与 GPU 之间移动块。RamTorch 使用 `ramtorch: true`，可通过 `ramtorch_transformer_percent` 选择卸载比例。这些方案占用系统内存并增加传输开销，请一次配置一种。参见 [OPTIONS](../OPTIONS.md)。
+配方已按所选 VRAM 档位设置 `train_batch_size`。数据集较小，或描述和额外功能需要更多显存时，请减小该值。 `gradient_checkpointing_backend` 支持 `torch`、`unsloth`、`torch-ffn` 和 `unsloth-ffn`；interval 与 `gradient_checkpointing_segment_stride` 控制覆盖范围。Musubi 通过 `musubi_blocks_to_swap` 在 CPU 与 GPU 之间移动块。RamTorch 使用 `ramtorch: true`，可通过 `ramtorch_transformer_percent` 选择卸载比例。这些方案占用系统内存并增加传输开销，请一次配置一种。参见 [OPTIONS](../OPTIONS.md)。
 
-在 NVIDIA GPU 上，使用 `pip install -e '.[cuda,attention-cute]'` 安装可选 CuTE 注意力依赖，然后设置 `attention_mechanism: "kohaku-fa"`。共享选择器也接受其他已安装后端。启用 `gradient_checkpointing_offload_attention: true` 可卸载为反向传播保存的注意力张量；`gradient_checkpointing_offload_prefetch: true` 启用传输预取。
+CUDA 安装包含 CuTE 注意力依赖。训练时，默认的 `attention_mechanism: "kohaku-fa-auto"` 在 Ada 和 Hopper GPU 上选择 CuTE，在其他架构上使用原生 SDPA。启用 `gradient_checkpointing_offload_attention: true` 可卸载为反向传播保存的注意力张量；`gradient_checkpointing_offload_prefetch: true` 启用传输预取。其他注意力后端请参阅 [OPTIONS](../OPTIONS.md)。
 
 配方启用 [REPA](../experimental/IMAGE_REPA.md)。如需使较后层的图像特征与前层对齐，添加 [LayerSync](../experimental/LAYERSYNC.md)：
 
