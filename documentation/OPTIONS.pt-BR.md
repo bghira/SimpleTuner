@@ -2071,7 +2071,11 @@ As opcoes acima se aplicam em grande parte ao `config.json` — mas algumas entr
 
 Este e um panorama basico para ajudar voce a comecar. Para uma lista completa de opcoes e explicacoes mais detalhadas, consulte a especificacao completa:
 
-```
+## Referência da linha de comando
+
+### Uso
+
+```text
 usage: train.py [-h] --model_family
                 {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo}
                 [--model_flavour MODEL_FLAVOUR] [--controlnet [CONTROLNET]]
@@ -2353,6 +2357,11 @@ usage: train.py [-h] --model_family
 
 The following SimpleTuner command-line options are available:
 
+```
+
+### Argumentos
+
+```text
 options:
   -h, --help            show this help message and exit
   --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo,ace_step,heartmula}

@@ -2076,7 +2076,11 @@ LayerSync は同一 Transformer 内の「学生」レイヤーを、より強い
 
 これは基本的な概要で、最初の手がかりとして役立つことを目的としています。完全なオプション一覧と詳細な説明については、次の完全な仕様を参照してください:
 
-```
+## コマンドラインリファレンス
+
+### 使用方法
+
+```text
 usage: train.py [-h] --model_family
                 {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo}
                 [--model_flavour MODEL_FLAVOUR] [--controlnet [CONTROLNET]]
@@ -2358,6 +2362,11 @@ usage: train.py [-h] --model_family
 
 The following SimpleTuner command-line options are available:
 
+```
+
+### 引数
+
+```text
 options:
   -h, --help            show this help message and exit
   --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo,ace_step,heartmula}
