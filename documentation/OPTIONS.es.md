@@ -686,6 +686,12 @@ Esto es útil para herramientas de monitoreo que reciben webhooks de múltiples 
 - **Qué**: El nombre del modelo en Huggingface Hub y el directorio de resultados locales.
 - **Por qué**: Este valor se usa como nombre de directorio bajo la ubicación especificada como `--output_dir`. Si se proporciona `--push_to_hub`, este se convertirá en el nombre del modelo en Huggingface Hub.
 
+### `--model_card_base_model`
+
+- **Qué**: ID del repositorio base de Hugging Face que se usará en la ficha del modelo generada y en el ejemplo genérico de inferencia con LoRA.
+- **Predeterminado**: Sin definir; usa `--pretrained_model_name_or_path` cuando es un ID del Hub. Las rutas locales se sustituyen por `<model_family>/unknown-model`.
+- **Cuándo**: Configúralo al entrenar desde un checkpoint local o incluido en el contenedor cuyo repositorio original conoces. Cambia los metadatos publicados, no los pesos cargados para entrenar. Usa un ID como `black-forest-labs/flux-3-image-klein-base`, no una ruta ni una URL.
+
 ### `--modelspec_comment`
 
 - **Qué**: Texto incorporado en los metadatos del archivo safetensors como `modelspec.comment`
@@ -2070,7 +2076,11 @@ Las opciones anteriores aplican en su mayor parte a `config.json`, pero algunas 
 
 Este es un resumen básico pensado para ayudarte a empezar. Para una lista completa de opciones y explicaciones más detalladas, consulta la especificación completa:
 
-```
+## Referencia de la línea de comandos
+
+### Uso
+
+```text
 usage: train.py [-h] --model_family
                 {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo}
                 [--model_flavour MODEL_FLAVOUR] [--controlnet [CONTROLNET]]
@@ -2315,6 +2325,7 @@ usage: train.py [-h] --model_family
                 [--model_card_private [MODEL_CARD_PRIVATE]]
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
+                [--model_card_base_model MODEL_CARD_BASE_MODEL]
                 [--modelspec_comment MODELSPEC_COMMENT]
                 [--report_to {simpletuner,tensorboard,wandb,swanlab,comet_ml,custom-tracker,none}]
                 [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
@@ -2351,6 +2362,11 @@ usage: train.py [-h] --model_family
 
 The following SimpleTuner command-line options are available:
 
+```
+
+### Argumentos
+
+```text
 options:
   -h, --help            show this help message and exit
   --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo,ace_step,heartmula}
@@ -3058,6 +3074,8 @@ options:
   --model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]
                         Remove the default NSFW warning from the generated
                         model card on Hugging Face Hub.
+  --model_card_base_model MODEL_CARD_BASE_MODEL
+                        Base repository for model-card metadata when training from a local checkpoint.
   --model_card_note MODEL_CARD_NOTE
                         Optional note that appears at the top of the generated
                         model card.

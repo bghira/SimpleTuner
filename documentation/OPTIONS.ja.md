@@ -686,6 +686,12 @@ TorchInductor の host wrapper を選択します。`cpp` が既定で dispatch 
 - **内容**: Hugging Face Hub のモデル名およびローカル結果ディレクトリ名。
 - **理由**: `--output_dir` で指定した場所の配下にこの名前のディレクトリが作成されます。`--push_to_hub` を指定した場合、Hugging Face Hub 上のモデル名になります。
 
+### `--model_card_base_model`
+
+- **内容**: 生成されるモデルカードと汎用 LoRA 推論例に記載する Hugging Face のベースリポジトリ ID。
+- **デフォルト**: 未設定。`--pretrained_model_name_or_path` が Hub ID の場合はその値を使います。ローカルパスは `<model_family>/unknown-model` に置き換えます。
+- **用途**: ローカルまたはコンテナに同梱されたチェックポイントから学習し、元のリポジトリが分かっている場合に設定します。公開メタデータを変更するだけで、学習用に読み込む重みは変わりません。ファイルパスや URL ではなく、`black-forest-labs/flux-3-image-klein-base` のようなリポジトリ ID を指定してください。
+
 ### `--modelspec_comment`
 
 - **内容**: safetensors ファイルのメタデータに `modelspec.comment` として埋め込まれるテキスト
@@ -2070,7 +2076,11 @@ LayerSync は同一 Transformer 内の「学生」レイヤーを、より強い
 
 これは基本的な概要で、最初の手がかりとして役立つことを目的としています。完全なオプション一覧と詳細な説明については、次の完全な仕様を参照してください:
 
-```
+## コマンドラインリファレンス
+
+### 使用方法
+
+```text
 usage: train.py [-h] --model_family
                 {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo}
                 [--model_flavour MODEL_FLAVOUR] [--controlnet [CONTROLNET]]
@@ -2315,6 +2325,7 @@ usage: train.py [-h] --model_family
                 [--model_card_private [MODEL_CARD_PRIVATE]]
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
+                [--model_card_base_model MODEL_CARD_BASE_MODEL]
                 [--modelspec_comment MODELSPEC_COMMENT]
                 [--report_to {simpletuner,tensorboard,wandb,swanlab,comet_ml,custom-tracker,none}]
                 [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
@@ -2351,6 +2362,11 @@ usage: train.py [-h] --model_family
 
 The following SimpleTuner command-line options are available:
 
+```
+
+### 引数
+
+```text
 options:
   -h, --help            show this help message and exit
   --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo,ace_step,heartmula}
@@ -3057,6 +3073,8 @@ options:
   --model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]
                         Remove the default NSFW warning from the generated
                         model card on Hugging Face Hub.
+  --model_card_base_model MODEL_CARD_BASE_MODEL
+                        Base repository for model-card metadata when training from a local checkpoint.
   --model_card_note MODEL_CARD_NOTE
                         Optional note that appears at the top of the generated
                         model card.

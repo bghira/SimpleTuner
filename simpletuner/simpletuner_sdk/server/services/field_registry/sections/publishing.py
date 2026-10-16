@@ -194,6 +194,24 @@ def register_publishing_fields(registry: "FieldRegistry") -> None:
 
     registry._add_field(
         ConfigField(
+            name="model_card_base_model",
+            arg_name="--model_card_base_model",
+            ui_label="Base Model Repository",
+            field_type=FieldType.TEXT,
+            tab="publishing",
+            section="model_card",
+            default_value=None,
+            placeholder="organization/base-model",
+            help_text="Hugging Face base repository to name in the generated model card when loading a local checkpoint.",
+            tooltip="Sets the card's base model identity and generic LoRA inference example without changing the weights loaded for training.",
+            importance=ImportanceLevel.ADVANCED,
+            order=3,
+            documentation="OPTIONS.md#--model_card_base_model",
+        )
+    )
+
+    registry._add_field(
+        ConfigField(
             name="modelspec_comment",
             arg_name="--modelspec_comment",
             ui_label="Modelspec Comment",
@@ -206,7 +224,7 @@ def register_publishing_fields(registry: "FieldRegistry") -> None:
             help_text="JSON value embedded in safetensors metadata. Can be a string or array of strings. Supports {env:VAR_NAME}, {current_step}, {current_epoch}, and {timestamp} placeholders.",
             tooltip="Use this to add notes, version info, or training context visible in tools like ComfyUI model info.",
             importance=ImportanceLevel.ADVANCED,
-            order=3,
+            order=4,
             documentation="OPTIONS.md#--modelspec_comment",
         )
     )

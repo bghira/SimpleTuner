@@ -688,6 +688,12 @@ TRAINING_DYNAMO_BACKEND=inductor
 - **内容**：Hugging Face Hub 模型名称与本地结果目录名。
 - **原因**：该值用作 `--output_dir` 下的目录名称。若设置 `--push_to_hub`，这将成为 Hugging Face Hub 上的模型名。
 
+### `--model_card_base_model`
+
+- **作用**：在生成的模型卡和通用 LoRA 推理示例中使用的 Hugging Face 基础模型仓库 ID。
+- **默认值**：未设置；当 `--pretrained_model_name_or_path` 是 Hub ID 时使用该值。本地路径会替换为 `<model_family>/unknown-model`。
+- **适用情况**：从本地或容器内置检查点训练且已知原始仓库时设置。此选项只更改发布的元数据，不会改变训练时加载的权重。请使用 `black-forest-labs/flux-3-image-klein-base` 这样的仓库 ID，而不是文件路径或 URL。
+
 ### `--modelspec_comment`
 
 - **内容**：嵌入到 safetensors 文件元数据中的文本，键为 `modelspec.comment`
@@ -2072,7 +2078,11 @@ LayerSync 通过在同一 Transformer 内让“学生”层对齐更强的“教
 
 这是一个基础概览，旨在帮助你快速上手。完整选项列表与更详细说明请参阅完整规范：
 
-```
+## 命令行参考
+
+### 用法
+
+```text
 usage: train.py [-h] --model_family
                 {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo}
                 [--model_flavour MODEL_FLAVOUR] [--controlnet [CONTROLNET]]
@@ -2317,6 +2327,7 @@ usage: train.py [-h] --model_family
                 [--model_card_private [MODEL_CARD_PRIVATE]]
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
+                [--model_card_base_model MODEL_CARD_BASE_MODEL]
                 [--modelspec_comment MODELSPEC_COMMENT]
                 [--report_to {simpletuner,tensorboard,wandb,swanlab,comet_ml,custom-tracker,none}]
                 [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
@@ -2353,6 +2364,11 @@ usage: train.py [-h] --model_family
 
 The following SimpleTuner command-line options are available:
 
+```
+
+### 参数
+
+```text
 options:
   -h, --help            show this help message and exit
   --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo,ace_step,heartmula}
@@ -3058,6 +3074,8 @@ options:
   --model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]
                         Remove the default NSFW warning from the generated
                         model card on Hugging Face Hub.
+  --model_card_base_model MODEL_CARD_BASE_MODEL
+                        Base repository for model-card metadata when training from a local checkpoint.
   --model_card_note MODEL_CARD_NOTE
                         Optional note that appears at the top of the generated
                         model card.
