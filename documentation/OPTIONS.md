@@ -710,6 +710,12 @@ This is useful for monitoring tools receiving webhooks from multiple training ru
 - **What**: The name of the Huggingface Hub model and local results directory.
 - **Why**: This value is used as the directory name under the location specified as `--output_dir`. If `--push_to_hub` is provided, this will become the name of the model on Huggingface Hub.
 
+### `--model_card_base_model`
+
+- **What**: Hugging Face base repository ID to use in the generated model card and generic LoRA inference example.
+- **Default**: Unset; uses `--pretrained_model_name_or_path` when it is a Hub ID. Local paths are replaced with `<model_family>/unknown-model`.
+- **When**: Set this when training from a local or baked checkpoint whose original repository is known. It changes published metadata, not the weights loaded for training. Use a repository ID such as `black-forest-labs/flux-3-image-klein-base`, not a filesystem path or URL.
+
 ### `--modelspec_comment`
 
 - **What**: Text embedded in safetensors file metadata as `modelspec.comment`
@@ -2338,6 +2344,7 @@ usage: train.py [-h] --model_family
                 [--model_card_private [MODEL_CARD_PRIVATE]]
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
+                [--model_card_base_model MODEL_CARD_BASE_MODEL]
                 [--modelspec_comment MODELSPEC_COMMENT]
                 [--report_to {simpletuner,tensorboard,wandb,swanlab,comet_ml,custom-tracker,none}]
                 [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
@@ -3082,6 +3089,8 @@ options:
   --model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]
                         Remove the default NSFW warning from the generated
                         model card on Hugging Face Hub.
+  --model_card_base_model MODEL_CARD_BASE_MODEL
+                        Base repository for model-card metadata when training from a local checkpoint.
   --model_card_note MODEL_CARD_NOTE
                         Optional note that appears at the top of the generated
                         model card.

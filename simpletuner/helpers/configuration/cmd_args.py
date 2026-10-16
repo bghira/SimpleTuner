@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 import torch
 from accelerate import InitProcessGroupKwargs
 from accelerate.utils import ProjectConfiguration
+from huggingface_hub.utils import validate_repo_id
 
 from simpletuner.helpers.configuration.cli_utils import mapping_to_cli_args, normalize_lr_scheduler_value
 from simpletuner.helpers.configuration.platform_validation import validate_mps_train_batch_size
@@ -758,6 +759,9 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         except ValueError as exc:
             logger.error(str(exc))
             raise
+
+    if getattr(args, "model_card_base_model", None):
+        validate_repo_id(args.model_card_base_model)
 
     if isinstance(getattr(args, "post_checkpoint_script", None), str):
         candidate = args.post_checkpoint_script.strip()

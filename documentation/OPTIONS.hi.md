@@ -685,6 +685,12 @@ Alternative attention mechanisms समर्थित हैं, जिनक�
 - **What**: Huggingface Hub मॉडल और local results directory का नाम।
 - **Why**: यह मान `--output_dir` द्वारा निर्दिष्ट स्थान के अंतर्गत directory नाम के रूप में उपयोग होता है। यदि `--push_to_hub` दिया गया है, तो यही Huggingface Hub पर मॉडल का नाम होगा।
 
+### `--model_card_base_model`
+
+- **क्या**: जनरेट किए गए मॉडल कार्ड और सामान्य LoRA इन्फरेंस उदाहरण में इस्तेमाल होने वाला Hugging Face बेस रिपॉज़िटरी ID।
+- **डिफ़ॉल्ट**: सेट नहीं; यदि `--pretrained_model_name_or_path` एक Hub ID है तो उसका उपयोग होता है। स्थानीय पथों की जगह `<model_family>/unknown-model` लिखा जाता है।
+- **कब**: जब स्थानीय या कंटेनर में शामिल चेकपॉइंट से प्रशिक्षण कर रहे हों और उसकी मूल रिपॉज़िटरी जानते हों, तब इसे सेट करें। यह प्रकाशित मेटाडेटा बदलता है, प्रशिक्षण के लिए लोड किए गए वज़न नहीं। `black-forest-labs/flux-3-image-klein-base` जैसा रिपॉज़िटरी ID दें, फ़ाइल सिस्टम पथ या URL नहीं।
+
 ### `--modelspec_comment`
 
 - **What**: safetensors फ़ाइल metadata में `modelspec.comment` के रूप में embedded text
@@ -2312,6 +2318,7 @@ usage: train.py [-h] --model_family
                 [--model_card_private [MODEL_CARD_PRIVATE]]
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
+                [--model_card_base_model MODEL_CARD_BASE_MODEL]
                 [--modelspec_comment MODELSPEC_COMMENT]
                 [--report_to {simpletuner,tensorboard,wandb,swanlab,comet_ml,custom-tracker,none}]
                 [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
@@ -3055,6 +3062,8 @@ options:
   --model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]
                         Remove the default NSFW warning from the generated
                         model card on Hugging Face Hub.
+  --model_card_base_model MODEL_CARD_BASE_MODEL
+                        Base repository for model-card metadata when training from a local checkpoint.
   --model_card_note MODEL_CARD_NOTE
                         Optional note that appears at the top of the generated
                         model card.

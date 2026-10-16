@@ -16,6 +16,7 @@ from simpletuner.helpers.publishing.metadata import (
     _audio_dataset_overview,
     _guidance_rescale,
     _license_metadata,
+    _model_card_base_model,
     _model_imports,
     _model_load,
     _negative_prompt,
@@ -57,6 +58,7 @@ class TestMetadataFunctions(unittest.TestCase):
         self.args.lora_dropout = 0.0
         self.args.lora_init_type = "kaiming_uniform"
         self.args.model_card_note = "Test note"
+        self.args.model_card_base_model = None
         self.args.validation_using_datasets = False
         self.args.flow_matching_loss = "compatible"
         self.args.flux_fast_schedule = False
@@ -179,6 +181,31 @@ class TestMetadataFunctions(unittest.TestCase):
             self.args.lora_type = "lycoris"
             output = _model_load(self.args, model=self.mock_model)
             self.assertIn("pytorch_lora_weights.safetensors", output)
+
+    def test_model_load_uses_public_base_model_for_both_lora_formats(self):
+        self.args.pretrained_model_name_or_path = "/opt/models/flux3_image"
+        self.args.model_card_base_model = "black-forest-labs/flux-3-image-klein-base"
+        with patch("simpletuner.helpers.publishing.metadata.StateTracker.get_model", return_value=None):
+            for lora_type in ("standard", "lycoris"):
+                with self.subTest(lora_type=lora_type):
+                    self.args.lora_type = lora_type
+                    output = _model_load(self.args, repo_id="owner/adapter", model=self.mock_model)
+                    self.assertIn("model_id = 'black-forest-labs/flux-3-image-klein-base'", output)
+                    self.assertNotIn(self.args.pretrained_model_name_or_path, output)
+        self.assertEqual(self.args.pretrained_model_name_or_path, "/opt/models/flux3_image")
+
+    def test_model_card_base_model_keeps_hub_ids_and_hides_local_paths(self):
+        self.assertEqual(_model_card_base_model(self.args, "owner/base-model"), "owner/base-model")
+        for source in ("/opt/models/base", "./weights", r"C:\models\base"):
+            with self.subTest(source=source):
+                self.assertEqual(_model_card_base_model(self.args, source), "sdxl/unknown-model")
+        with tempfile.TemporaryDirectory(dir=".") as directory:
+            self.assertEqual(_model_card_base_model(self.args, Path(directory).name), "sdxl/unknown-model")
+
+    def test_model_card_base_model_rejects_invalid_override(self):
+        self.args.model_card_base_model = "/opt/models/base"
+        with self.assertRaises(ValueError):
+            _model_card_base_model(self.args, "owner/base-model")
 
     def test_torch_device(self):
         output = _torch_device()
@@ -553,6 +580,53 @@ class TestMetadataFunctions(unittest.TestCase):
                                 self.assertNotIn(" license_name:", written)
                                 self.assertNotIn(" license_link:", written)
 
+    def test_save_model_card_uses_public_base_model_throughout(self):
+        self.args.model_family = "flux3_image"
+        self.args.pretrained_model_name_or_path = "/opt/models/flux3_image"
+        self.args.model_card_base_model = "black-forest-labs/flux-3-image-klein-base"
+        self.args.controlnet = False
+        self.args.control = False
+        model = MagicMock(
+            MODEL_LICENSE="other",
+            PREDICTION_TYPE=SimpleNamespace(value="flow_matching"),
+            MODEL_TYPE=SimpleNamespace(value="transformer"),
+            gligen=False,
+        )
+        model.validation_audio_sample_rate.return_value = None
+        model.custom_model_card_schedule_info.return_value = ""
+        model.custom_model_card_code_example.return_value = ""
+
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_model_family", return_value="flux3_image"),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_data_backends", return_value={}),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_weight_dtype", return_value=torch.bfloat16),
+                patch(
+                    "simpletuner.helpers.publishing.metadata.StateTracker.get_accelerator",
+                    return_value=SimpleNamespace(num_processes=1),
+                ),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_args", return_value=self.args),
+                patch("simpletuner.helpers.publishing.metadata.StateTracker.get_model", return_value=model),
+            ):
+                save_model_card(
+                    model=model,
+                    repo_id="owner/adapter",
+                    base_model=self.args.pretrained_model_name_or_path,
+                    repo_folder=directory,
+                    global_step=4000,
+                    epoch=1,
+                )
+            card = Path(directory, "README.md").read_text()
+
+        front_matter = yaml.safe_load(card.split("---", 2)[1])
+        source = "black-forest-labs/flux-3-image-klein-base"
+        self.assertEqual(front_matter["base_model"], source)
+        self.assertIn(f"derived from [{source}](https://huggingface.co/{source})", card)
+        self.assertIn(f"model_id = '{source}'", card)
+        self.assertNotIn("unknown-model", card)
+        self.assertNotIn(self.args.pretrained_model_name_or_path, card)
+        self.assertEqual(self.args.pretrained_model_name_or_path, "/opt/models/flux3_image")
+
     def test_upload_full_model_uses_empty_repo_path_for_top_level_uploads(self):
         hub_manager = object.__new__(HubManager)
         hub_manager.config = SimpleNamespace(push_to_hub=True, output_dir="output")
@@ -810,6 +884,7 @@ class TestMetadataFunctions(unittest.TestCase):
 class TestGligenModelCard(unittest.TestCase):
     def setUp(self):
         self.args = MagicMock()
+        self.args.model_card_base_model = None
         self.args.lora_type = "standard"
         self.args.model_type = "lora"
         self.args.model_family = "sdxl"
