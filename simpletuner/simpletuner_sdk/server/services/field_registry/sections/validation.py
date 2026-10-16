@@ -765,7 +765,9 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             order=10,
             subsection="advanced",
             dependencies=[
-                FieldDependency(field="model_family", operator="in", values=["auraflow", "chroma", "sd3", "wan", "wan_s2v"]),
+                FieldDependency(
+                    field="model_family", operator="in", values=["auraflow", "chroma", "moss_image", "sd3", "wan", "wan_s2v"]
+                ),
             ],
         )
     )
@@ -787,7 +789,9 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             order=11,
             subsection="advanced",
             dependencies=[
-                FieldDependency(field="model_family", operator="in", values=["auraflow", "chroma", "sd3", "wan", "wan_s2v"]),
+                FieldDependency(
+                    field="model_family", operator="in", values=["auraflow", "chroma", "moss_image", "sd3", "wan", "wan_s2v"]
+                ),
             ],
         )
     )
@@ -809,7 +813,9 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             order=12,
             subsection="advanced",
             dependencies=[
-                FieldDependency(field="model_family", operator="in", values=["auraflow", "chroma", "sd3", "wan", "wan_s2v"]),
+                FieldDependency(
+                    field="model_family", operator="in", values=["auraflow", "chroma", "moss_image", "sd3", "wan", "wan_s2v"]
+                ),
             ],
         )
     )
@@ -831,7 +837,9 @@ def register_validation_fields(registry: "FieldRegistry") -> None:
             order=13,
             subsection="advanced",
             dependencies=[
-                FieldDependency(field="model_family", operator="in", values=["auraflow", "chroma", "sd3", "wan", "wan_s2v"]),
+                FieldDependency(
+                    field="model_family", operator="in", values=["auraflow", "chroma", "moss_image", "sd3", "wan", "wan_s2v"]
+                ),
             ],
         )
     )

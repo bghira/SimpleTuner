@@ -140,6 +140,8 @@ def _model_imports(args):
     output = "import torch\n"
     if args.model_family == "flux3_image":
         output += "from simpletuner.helpers.models.flux3_image.pipeline import Flux3ImagePipeline as DiffusionPipeline"
+    elif args.model_family == "moss_image":
+        output += "from simpletuner.helpers.models.moss_image.pipeline import MOSSImagePipeline as DiffusionPipeline"
     else:
         output += "from diffusers import DiffusionPipeline"
     if "lycoris" == args.lora_type.lower() and "lora" in args.model_type:
@@ -550,6 +552,8 @@ def save_metadata_sample(
 
 
 def _model_card_family_tag(model_family: str):
+    if model_family == "moss_image":
+        return "moss-image"
     if model_family in ["ltxvideo", "ltxvideo2"]:
         # the hub has a hyphen.
         return "ltx-video" if model_family == "ltxvideo" else "ltx-2"
