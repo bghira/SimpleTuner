@@ -54,7 +54,9 @@ def register_fields(registry) -> None:
             model_specific=["ideogram"],
             default_value=False,
             help_text="Use Ideogram 4's prompt enhancer to rewrite prompts before text embedding cache generation.",
-            tooltip="When enabled and supported by the loaded pipeline, captions are expanded with Ideogram's prompt upsampler before JSON conversion and encoding.",
+            tooltip=(
+                "Expands positive captions before JSON conversion and encoding. Negative and empty prompts are preserved."
+            ),
             importance=ImportanceLevel.ADVANCED,
             dependencies=[FieldDependency(field="model_family", operator="equals", value="ideogram")],
             order=35,

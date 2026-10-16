@@ -100,7 +100,7 @@
 
 | Type | Models |
 |------|--------|
-| **Image** | Flux.1/2, SD3, SDXL, Chroma, Auraflow, PixArt, Sana, Lumina2, HiDream, and more |
+| **Image** | Flux.1/2, [FLUX.3 Image Klein](quickstart/FLUX3_IMAGE.md), SD3, SDXL, Chroma, Auraflow, PixArt, Sana, Lumina2, HiDream, and more |
 | **Video** | Wan, LTX Video, Hunyuan Video, Kandinsky 5, LongCat |
 | **Audio** | ACE-Step |
 

@@ -57,11 +57,13 @@ Onde `foo` e seu ambiente de config — ou use `config/config.json` se nao estiv
 ### `--model_family`
 
 - **O que**: Determina qual arquitetura de modelo sera treinada.
-- **Opcoes**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
+- **Opcoes**: pixart_sigma, flux, flux3_image, sd3, sdxl, kolors, legacy
 
 ### `--model_flavour`
 
 Seleciona uma variante de checkpoint dentro de `--model_family`. Para `qwen_image`, o padrão é `v2.1` (`Qwen/Qwen-Image-2.1`). Defina explicitamente `v1.0`, `v2.0` ou uma variante `edit-*` existente para treinar uma arquitetura anterior; adapters e caches de embeddings/latentes não são intercambiáveis com 2.1. Veja o [guia do Qwen Image](quickstart/QWEN_IMAGE_2-1.pt-BR.md).
+
+Use `model_family: "flux3_image"` para o transformador de imagens de 5,6B parâmetros. A variante padrão `klein-base` carrega `black-forest-labs/flux-3-image-klein-base`; `klein` carrega o modelo destilado `black-forest-labs/flux-3-image-klein`. Aceite o acesso ao repositório escolhido antes do download. Consulte a [licença FLUX [Kom]munity](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE).
 
 ### `--lora_format`
 
@@ -1203,6 +1205,14 @@ Diferentes modelos esperam diferentes dados de conditioning:
 - **Nota**: Ao usar `combined`, voce nao pode definir `captions` separadas nos datasets de condicionamento; as captions do dataset de origem sao usadas.
 - **Veja tambem**: [DATALOADER.md](DATALOADER.md#conditioning_data) para configurar multiplos datasets de condicionamento.
 
+### `--flux3_prompt_upsample` {#--flux3_prompt_upsample}
+
+**Padrão:** `false`
+
+A opção vem desativada. Ao ativá-la, o SimpleTuner baixa o modelo Qwen3.5-9B separado (cerca de 19 GB de pesos) e reescreve prompts positivos antes de armazenar seus embeddings. Para edições, usa as imagens de referência pareadas. Prompts negativos, legendas vazias de dropout e arquivos originais são preservados.
+
+Reserve mais RAM e tempo de pré-processamento. O upsampler e o codificador de texto se alternam na GPU, e os embeddings são reutilizados no treino. O SimpleTuner separa os embeddings expandidos dos originais e reutiliza os resultados quando as mesmas referências são selecionadas novamente.
+
 ### `--krea2_reference_latents` {#--krea2_reference_latents}
 
 - **O que**: Habilita treino Krea 2 com reference dataset.
@@ -2064,7 +2074,7 @@ usage: train.py [-h] --model_family
                 --model_type {full,lora} [--seed SEED]
                 [--resolution RESOLUTION]
                 [--resume_from_checkpoint RESUME_FROM_CHECKPOINT]
-                [--prediction_type {epsilon,v_prediction,sample,flow_matching}]
+                [--prediction_type {epsilon,v_prediction,sample,flow_matching,flow_map}]
                 [--pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH]
                 [--vae_dtype {default,fp32,fp16,bf16}]
                 [--vae_cache_ondemand [VAE_CACHE_ONDEMAND]]
@@ -2366,7 +2376,7 @@ options:
                         Resolution for training images
   --resume_from_checkpoint RESUME_FROM_CHECKPOINT
                         Select checkpoint to resume training from
-  --prediction_type {epsilon,v_prediction,sample,flow_matching}
+  --prediction_type {epsilon,v_prediction,sample,flow_matching,flow_map}
                         The parameterization type for the diffusion model
   --pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH
                         Path to pretrained VAE model

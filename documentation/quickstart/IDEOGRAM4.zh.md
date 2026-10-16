@@ -176,7 +176,7 @@ Ideogram 4 更适合结构化 JSON caption。推荐字段包括：
 }
 ```
 
-它会在 JSON 转换前通过 Ideogram prompt upsampler 改写提示词。此功能更慢，建议先确认基础训练路径正常后再启用。
+扩写模型会在 JSON 转换和文本嵌入之前改写正向训练描述及验证提示词。负向提示词及 dropout 空描述保持不变。扩写嵌入与普通嵌入分别缓存，原始描述文件保持不变。
 
 ## LoRA 和 LyCORIS
 

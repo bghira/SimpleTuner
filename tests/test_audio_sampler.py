@@ -45,9 +45,9 @@ class TestAudioSampler(unittest.TestCase):
         self.mock_accelerator.num_processes = 1
 
         # Mock PromptHandler to avoid magic prompt logic
-        self.patcher_prompt = patch("simpletuner.helpers.multiaspect.sampler.PromptHandler")
+        self.patcher_prompt = patch("simpletuner.helpers.multiaspect.sampler.PromptHandler.magic_prompt")
         self.mock_prompt = self.patcher_prompt.start()
-        self.mock_prompt.magic_prompt.return_value = "test caption"
+        self.mock_prompt.return_value = "test caption"
 
         # Mock accelerate logger
         self.patcher_logger = patch("simpletuner.helpers.multiaspect.sampler.get_logger")

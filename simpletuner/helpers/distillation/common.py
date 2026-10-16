@@ -69,9 +69,7 @@ class DistillationBase:
     def _init_scheduler_configs(self):
         """Initialize scheduler configurations based on teacher model type."""
         # Detect model type (flow matching vs. DDPM)
-        from simpletuner.helpers.models.common import PredictionTypes
-
-        self.is_flow_matching = self.teacher_model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING
+        self.is_flow_matching = self.teacher_model.PREDICTION_TYPE.is_flow_prediction
 
         # Store scheduler configurations for later use
         if hasattr(self.teacher_model, "noise_schedule"):

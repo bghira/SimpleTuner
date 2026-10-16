@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import types
 import warnings
@@ -32,9 +31,7 @@ from simpletuner.helpers.models.ideogram.constants import (
 from simpletuner.helpers.models.ideogram.prompt_enhancer import (
     PROMPT_UPSAMPLE_TEMPERATURE,
     Ideogram4PromptEnhancerHead,
-    build_caption_logits_processor,
-    build_prompt_enhancer,
-    generate_captions,
+    IdeogramPromptUpsampler,
 )
 from simpletuner.helpers.models.ideogram.quantized_loading import (
     FP8_TEXT_ENCODER_CONFIG_FLAG,
@@ -54,6 +51,7 @@ from simpletuner.helpers.models.ideogram.scheduler import (
     make_step_intervals,
 )
 from simpletuner.helpers.models.ideogram.transformer import Ideogram4Config, Ideogram4Transformer
+from simpletuner.helpers.models.prompt_upsampling import upsample_prompt_batch
 from simpletuner.helpers.training.lora_format import get_peft_kwargs
 
 
@@ -504,9 +502,7 @@ class Ideogram4Pipeline(Ideogram4LoraLoaderMixin):
         self.dtype = dtype
         self.caption_verifier = CaptionVerifier()
         self._progress_bar_config = {}
-        self._prompt_enhancer = None
-        self._caption_logits_processor = None
-        self._prompt_upsample_unconstrained_warned = False
+        self._prompt_upsampler = None
         self.hf_device_map = None
 
     def to(
@@ -611,6 +607,7 @@ class Ideogram4Pipeline(Ideogram4LoraLoaderMixin):
         max_new_tokens: int = 1024,
         generator: torch.Generator | list[torch.Generator] | None = None,
         device: torch.device | None = None,
+        reference_images=None,
     ) -> list[str]:
         """Rewrite prompt(s) into Ideogram 4's structured JSON caption schema."""
         if self.prompt_enhancer_head is None:
@@ -618,29 +615,17 @@ class Ideogram4Pipeline(Ideogram4LoraLoaderMixin):
                 "Prompt upsampling requires a prompt_enhancer_head. Load "
                 "Ideogram4PromptEnhancerHead and pass it to Ideogram4Pipeline."
             )
-        if self._prompt_enhancer is None:
-            self._prompt_enhancer = build_prompt_enhancer(self.text_encoder, self.prompt_enhancer_head)
-        if self._caption_logits_processor is None and importlib.util.find_spec("outlines") is not None:
-            self._caption_logits_processor = build_caption_logits_processor(self._prompt_enhancer, self.text_tokenizer)
-        if self._caption_logits_processor is None and not self._prompt_upsample_unconstrained_warned:
-            warnings.warn(
-                "`outlines` is not installed; Ideogram prompt upsampling runs unconstrained and may not return schema-valid JSON.",
-                stacklevel=2,
+        if self._prompt_upsampler is None:
+            self._prompt_upsampler = IdeogramPromptUpsampler(
+                self.text_encoder, self.text_tokenizer, self.prompt_enhancer_head, device or self.device
             )
-            self._prompt_upsample_unconstrained_warned = True
-
-        return generate_captions(
-            self._prompt_enhancer,
-            self.text_tokenizer,
-            self._caption_logits_processor,
-            prompt,
-            height,
-            width,
-            temperature=temperature,
-            max_new_tokens=max_new_tokens,
-            generator=generator,
-            device=device or self.device,
-        )
+        self._prompt_upsampler.device = device or self.device
+        self._prompt_upsampler.temperature = temperature
+        self._prompt_upsampler.max_new_tokens = max_new_tokens
+        self._prompt_upsampler.generator = generator
+        prompts = [prompt] if isinstance(prompt, str) else list(prompt)
+        contexts = [{"reference_images": reference_images}] * len(prompts) if reference_images else None
+        return upsample_prompt_batch(self._prompt_upsampler, prompts, height=height, width=width, prompt_contexts=contexts)
 
     def _tokenize(self, prompt: str) -> tuple[torch.Tensor, int]:
         """Build chat-formatted token ids for a single prompt."""

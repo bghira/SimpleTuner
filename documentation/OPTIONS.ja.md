@@ -57,11 +57,13 @@ simpletuner configure config/foo/config.json
 ### `--model_family`
 
 - **内容**: どのモデルアーキテクチャを学習するかを指定します。
-- **選択肢**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
+- **選択肢**: pixart_sigma, flux, flux3_image, sd3, sdxl, kolors, legacy
 
 ### `--model_flavour`
 
 `--model_family` 内のチェックポイントの種類を選択します。`qwen_image` の既定値は `v2.1`（`Qwen/Qwen-Image-2.1`）です。旧アーキテクチャを学習する場合は `v1.0`、`v2.0`、または既存の `edit-*` を明示してください。アダプター、埋め込みキャッシュ、潜在キャッシュは 2.1 と互換性がありません。[Qwen Image クイックスタート](quickstart/QWEN_IMAGE_2-1.ja.md) を参照してください。
+
+56 億パラメータの画像 Transformer には `model_family: "flux3_image"` を使います。既定の `klein-base` は `black-forest-labs/flux-3-image-klein-base`、`klein` は蒸留モデル `black-forest-labs/flux-3-image-klein` を読み込みます。ダウンロード前に対象リポジトリへのアクセスを取得してください。[FLUX [Kom]munity ライセンス](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE)も確認してください。
 
 ### `--lora_format`
 
@@ -1206,6 +1208,14 @@ Flux Kontext の検証もこのコンディショニングベースの経路を�
 - **注記**: `combined` を使う場合、条件データセットに個別の `captions` は定義できません。ソースデータセットのキャプションが使用されます。
 - **参照**: 複数条件データセットの設定は [DATALOADER.md](DATALOADER.md#conditioning_data) を参照してください。
 
+### `--flux3_prompt_upsample` {#--flux3_prompt_upsample}
+
+**既定値:** `false`
+
+既定では無効です。有効にすると別の Qwen3.5-9B モデル（重み約 19 GB）をダウンロードし、テキスト埋め込みのキャッシュ前に正のプロンプトを書き直します。編集では対応する参照画像を使います。負のプロンプト、dropout の空キャプション、元のキャプションファイルは保持されます。
+
+追加のシステム RAM と前処理時間を確保してください。アップサンプラーとテキストエンコーダーが交互に GPU を使い、生成した埋め込みを学習で再利用します。展開した埋め込みと元の埋め込みは分けて保存され、同じ参照画像を再び選んだ場合はキャッシュを再利用します。
+
 ### `--krea2_reference_latents` {#--krea2_reference_latents}
 
 - **内容**: Krea 2 の reference dataset training を有効化します。
@@ -2069,7 +2079,7 @@ usage: train.py [-h] --model_family
                 --model_type {full,lora} [--seed SEED]
                 [--resolution RESOLUTION]
                 [--resume_from_checkpoint RESUME_FROM_CHECKPOINT]
-                [--prediction_type {epsilon,v_prediction,sample,flow_matching}]
+                [--prediction_type {epsilon,v_prediction,sample,flow_matching,flow_map}]
                 [--pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH]
                 [--vae_dtype {default,fp32,fp16,bf16}]
                 [--vae_cache_ondemand [VAE_CACHE_ONDEMAND]]
@@ -2371,7 +2381,7 @@ options:
                         Resolution for training images
   --resume_from_checkpoint RESUME_FROM_CHECKPOINT
                         Select checkpoint to resume training from
-  --prediction_type {epsilon,v_prediction,sample,flow_matching}
+  --prediction_type {epsilon,v_prediction,sample,flow_matching,flow_map}
                         The parameterization type for the diffusion model
   --pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH
                         Path to pretrained VAE model

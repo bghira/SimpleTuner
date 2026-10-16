@@ -59,7 +59,7 @@ from PIL import Image, ImageDraw, ImageFont
 from transformers.utils import ContextManagers
 
 from simpletuner.helpers.data_backend.runtime.context_parallel_sync import get_cp_info, get_model_replica_data_info
-from simpletuner.helpers.models.common import PipelineTypes, PredictionTypes
+from simpletuner.helpers.models.common import PipelineTypes
 from simpletuner.helpers.models.cosmos.scheduler import RectifiedFlowAB2Scheduler
 from simpletuner.helpers.models.hidream.schedule import FlowUniPCMultistepScheduler
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
@@ -471,7 +471,13 @@ def _validation_reference_prompt_metadata(reference_images, image_path: str | No
         metadata["data_backend_id"] = data_backend_ids[0]
         metadata["data_backend_ids"] = data_backend_ids
     if pixel_values:
-        metadata["conditioning_pixel_values"] = pixel_values[0] if len(pixel_values) == 1 else torch.stack(pixel_values)
+        if len(pixel_values) == 1:
+            metadata["conditioning_pixel_values"] = pixel_values[0]
+        elif all(value.shape == pixel_values[0].shape for value in pixel_values):
+            metadata["conditioning_pixel_values"] = torch.stack(pixel_values)
+        else:
+            metadata["conditioning_pixel_values"] = pixel_values
+        metadata["conditioning_pixel_values_range"] = (0.0, 1.0)
     return metadata
 
 
@@ -1099,11 +1105,14 @@ def prepare_validation_prompt_list(args, embed_cache, model):
     # Compute negative embed for validation prompts, if any are set, so that it's stored before we unload the text encoder.
     if validation_prompts and precompute_text_embeddings:
         negative_prompt = StateTracker.get_args().validation_negative_prompt
+        requires_empty_negative = getattr(model, "VALIDATION_REQUIRES_EMPTY_NEGATIVE_PROMPT", False)
+        if negative_prompt is None and requires_empty_negative:
+            negative_prompt = ""
         needs_context = model.validation_negative_prompt_requires_prompt_context()
         if (
             negative_prompt is not None
             and str(negative_prompt).strip().lower() != "none"
-            and (negative_prompt != "" or needs_context)
+            and (negative_prompt != "" or needs_context or requires_empty_negative)
             and model.uses_validation_negative_prompt()
         ):
             if getattr(args, "model_family", None) == "ideogram":
@@ -1133,8 +1142,13 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             elif model.should_precompute_validation_negative_prompt():
                 logger.info(f"Precomputing the negative prompt embed for validations: {negative_prompt}")
                 model.log_model_devices()
+                negative_prompt_input = (
+                    _validation_negative_prompt_record(args, model, negative_prompt, "")
+                    if embed_cache._requires_path_based_keys
+                    else negative_prompt
+                )
                 embed_cache.compute_embeddings_for_prompts(
-                    [negative_prompt],
+                    [negative_prompt_input],
                     is_validation=True,
                     load_from_cache=False,
                     is_negative_prompt=True,
@@ -2024,7 +2038,7 @@ class Validation:
             self.validation_resolutions = [(256, 256)]
         else:
             self.validation_resolutions = get_validation_resolutions()
-        self.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
+        self.flow_matching = self.model.PREDICTION_TYPE.is_flow_prediction
         self.deepspeed = is_deepspeed
         self.fsdp = is_fsdp
         self._epoch_validations_completed: set[int] = set()
@@ -2963,7 +2977,7 @@ class Validation:
 
         # TwinFlow uses its own UCGM-style scheduler (supports flow and diff2flow bridge)
         if getattr(self.config, "twinflow_enabled", False) and (
-            self.model.PREDICTION_TYPE.value == "flow_matching" or getattr(self.model, "_twinflow_diffusion_bridge", False)
+            self.model.PREDICTION_TYPE.is_flow_prediction or getattr(self.model, "_twinflow_diffusion_bridge", False)
         ):
             twinflow_steps = int(getattr(self.config, "twinflow_target_step_count", 1) or 1)
             scheduler = TwinFlowScheduler(
@@ -2988,7 +3002,7 @@ class Validation:
         ):
             # set the default
             self.config.validation_noise_scheduler = self.model.DEFAULT_NOISE_SCHEDULER
-        if self.model.PREDICTION_TYPE.value == "flow_matching":
+        if self.model.PREDICTION_TYPE.is_flow_prediction:
             # some flow-matching adjustments should be made for euler and unipc video model generations.
             if self.config.validation_noise_scheduler in ["flow_matching", "flow_match_euler", "euler"]:
                 if self.config.validation_noise_scheduler == "euler":
@@ -4702,7 +4716,9 @@ class Validation:
                 _embed = self._gather_prompt_embeds(
                     prompt,
                     validation_shortname,
-                    validation_input_image_for_resolution,
+                    self.model.validation_prompt_image_context(
+                        validation_input_image, validation_input_image_for_resolution
+                    ),
                     cache_shortname=cache_key,
                     lyrics=lyrics,
                 )

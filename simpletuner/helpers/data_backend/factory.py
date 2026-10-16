@@ -3819,9 +3819,16 @@ class FactoryRegistry:
                 conditioning_info = []
             else:
                 conditioning_info = []
-                for cond_backend in conditioning_datasets:
+                ordered_conditioning_datasets = sorted(
+                    conditioning_datasets,
+                    key=lambda entry: entry.get("config", {}).get("conditioning_type")
+                    not in ("reference_strict", "reference_loose"),
+                )
+                for cond_backend in ordered_conditioning_datasets:
                     cond_backend_id = cond_backend.get("id")
                     cond_config = cond_backend.get("config", {})
+                    if cond_config.get("conditioning_type") in ("mask", "segmentation"):
+                        continue
                     cond_dataset_root = cond_config.get("instance_data_dir")
                     if cond_backend_id and cond_dataset_root:
                         conditioning_info.append((cond_backend_id, cond_dataset_root))
@@ -3912,11 +3919,49 @@ class FactoryRegistry:
                     key_value = normalize_data_path(image_path_str, None)
                 else:
                     key_value = caption
+                contexts = [metadata]
+                context_key_fn = getattr(self.model, "text_embed_cache_context_key", None)
+                has_context_key = context_key_fn is not None and context_key_fn(metadata) is not None
+                if getattr(self.args, "conditioning_multidataset_sampling", "combined") == "random" and has_context_key:
+                    paths = metadata.get("image_paths", [])
+                    backend_ids = metadata.get("data_backend_ids", [])
+                    if len(paths) > 1:
+                        contexts = [
+                            dict(
+                                metadata,
+                                image_paths=[path],
+                                data_backend_ids=[backend_id],
+                                image_path=path,
+                                data_backend_id=backend_id,
+                            )
+                            for path, backend_id in zip(paths, backend_ids)
+                        ]
                 key_builder = getattr(self.model, "text_embed_cache_key_value", None)
-                if callable(key_builder):
-                    key_value = key_builder(prompt=caption, default_key=key_value, metadata=metadata)
-                prompt_records.append({"prompt": caption, "key": key_value, "metadata": metadata})
-                self._append_image_context_dropout_prompt_record(prompt_records, key_value, metadata)
+                for context in contexts:
+                    context_captions = [caption]
+                    if len(contexts) > 1:
+                        reference_id = context["data_backend_ids"][0]
+                        reference_backend = next(entry for entry in conditioning_datasets if entry["id"] == reference_id)
+                        caption_sampler = reference_backend["sampler"]
+                        caption_path = context["image_paths"][0]
+                        if caption_sampler.source_dataset_id is not None and caption_sampler.caption_strategy is None:
+                            caption_sampler = init_backend["sampler"]
+                            caption_path = image_path_str
+                        reference_captions = PromptHandler.caption_for_sampler(caption_sampler, caption_path)
+                        if reference_captions:
+                            context_captions = (
+                                reference_captions if isinstance(reference_captions, list) else [reference_captions]
+                            )
+                    for context_caption in context_captions:
+                        context_caption = context_caption or caption
+                        context_key = key_value
+                        caption_context = dict(context, prompt=context_caption)
+                        if callable(key_builder):
+                            context_key = key_builder(
+                                prompt=context_caption, default_key=key_value, metadata=caption_context
+                            )
+                        prompt_records.append({"prompt": context_caption, "key": context_key, "metadata": caption_context})
+                        self._append_image_context_dropout_prompt_record(prompt_records, context_key, caption_context)
 
             init_backend["text_embed_cache"].compute_embeddings_for_prompts(
                 prompt_records,

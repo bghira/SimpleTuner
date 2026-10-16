@@ -246,7 +246,7 @@ Prompt upsampling can be enabled with:
 }
 ```
 
-This rewrites validation/training prompts through the Ideogram prompt upsampler before JSON conversion. It is optional and slower. Leave it disabled until the base training path is working.
+Prompt upsampling rewrites positive training captions and validation prompts before JSON conversion and text embedding. Negative prompts and empty dropout captions are kept unchanged. Expanded embeddings are cached separately from plain-prompt embeddings; the original caption files are preserved.
 
 ## Dataset configuration
 

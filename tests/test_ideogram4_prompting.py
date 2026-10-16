@@ -475,7 +475,14 @@ class Ideogram4PromptingTests(unittest.TestCase):
         original_pipeline = module.Ideogram4Pipeline
         try:
             module.Ideogram4Pipeline = DummyPipeline
-            encoded = model._encode_prompts(["plain prompt"])
+
+            class Upsampler:
+                def upsample(self, requests):
+                    self.requests = requests
+                    return [DummyPipeline().upsample_prompt(r.prompt, r.height, r.width) for r in requests]
+
+            model._prompt_upsampler = Upsampler()
+            encoded = model.encode_text_batch(["plain prompt"])
         finally:
             module.Ideogram4Pipeline = original_pipeline
 

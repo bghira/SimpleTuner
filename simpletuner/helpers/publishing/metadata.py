@@ -122,7 +122,7 @@ def _validation_scheduler_label(model, args) -> str:
     if scheduler_name is None:
         scheduler_name = (
             "FlowMatchEulerDiscreteScheduler"
-            if model.PREDICTION_TYPE.value == "flow_matching"
+            if model.PREDICTION_TYPE.value in ("flow_matching", "flow_map")
             else args.validation_noise_scheduler
         )
 
@@ -137,7 +137,10 @@ def _validation_scheduler_label(model, args) -> str:
 
 def _model_imports(args):
     output = "import torch\n"
-    output += "from diffusers import DiffusionPipeline"
+    if args.model_family == "flux3_image":
+        output += "from simpletuner.helpers.models.flux3_image.pipeline import Flux3ImagePipeline as DiffusionPipeline"
+    else:
+        output += "from diffusers import DiffusionPipeline"
     if "lycoris" == args.lora_type.lower() and "lora" in args.model_type:
         output += "\nfrom lycoris import create_lycoris_from_weights"
     model = StateTracker.get_model()
