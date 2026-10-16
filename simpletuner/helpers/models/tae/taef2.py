@@ -21,7 +21,7 @@ class Clamp(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, n_in: int, n_out: int):
+    def __init__(self, n_in: int, n_out: int, use_midblock_gn: bool = False):
         super().__init__()
         self.conv = nn.Sequential(
             conv(n_in, n_out),
@@ -32,8 +32,20 @@ class Block(nn.Module):
         )
         self.skip = nn.Conv2d(n_in, n_out, 1, bias=False) if n_in != n_out else nn.Identity()
         self.act = nn.ReLU(inplace=True)
+        self.pool = (
+            nn.Sequential(
+                nn.Conv2d(n_in, n_in * 4, 1, bias=False),
+                nn.GroupNorm(4, n_in * 4),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(n_in * 4, n_in, 1, bias=False),
+            )
+            if use_midblock_gn
+            else None
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.pool is not None:
+            x = x + self.pool(x)
         return self.act(self.conv(x) + self.skip(x))
 
 
@@ -45,21 +57,16 @@ class TAEF2Decoder(nn.Module):
 
     def __init__(self, use_midblock_gn: bool = True):
         super().__init__()
-        # FLUX.2 architecture uses group norm in midblock for proper distillation
         self.use_midblock_gn = use_midblock_gn
 
         layers = [
             Clamp(),
             conv(self.latent_channels, 64),
             nn.ReLU(inplace=True),
-            Block(64, 64),
-            Block(64, 64),
-            Block(64, 64),
+            Block(64, 64, use_midblock_gn=use_midblock_gn),
+            Block(64, 64, use_midblock_gn=use_midblock_gn),
+            Block(64, 64, use_midblock_gn=use_midblock_gn),
         ]
-
-        # Add group norm if using midblock_gn (required for flux_2)
-        if use_midblock_gn:
-            layers.append(nn.GroupNorm(1, 64))
 
         layers.extend(
             [
@@ -75,7 +82,7 @@ class TAEF2Decoder(nn.Module):
                 Block(64, 64),
                 nn.Upsample(scale_factor=2),
                 conv(64, 64, bias=False),
-                nn.ReLU(inplace=True),
+                Block(64, 64),
                 conv(64, self.image_channels),
             ]
         )
@@ -110,13 +117,12 @@ class TAEF2(nn.Module):
         else:
             state_dict = torch.load(path, map_location="cpu", weights_only=True)
 
-        # The checkpoint may have encoder keys we don't need
         decoder_state = {}
         for key, value in state_dict.items():
-            if key.startswith("decoder."):
-                decoder_state[key] = value
-
-        self.load_state_dict(decoder_state, strict=False)
+            if key.startswith("decoder.layers."):
+                _, _, index, *suffix = key.split(".")
+                decoder_state[".".join(("decoder", str(int(index) + 1), *suffix))] = value
+        self.decoder.load_state_dict(decoder_state, strict=True)
 
     @torch.no_grad()
     def decode(self, latents: torch.Tensor) -> torch.Tensor:
