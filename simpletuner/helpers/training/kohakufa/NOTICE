@@ -1,0 +1,9 @@
+KohakuFA
+Source: https://github.com/KohakuBlueleaf/KohakuFA
+Revision: efd5b72622ce04fcafbe6ca3e368649d8b7b9527
+License: Apache-2.0 (see LICENSE)
+Local changes: relocate Python imports and custom-op namespace to SimpleTuner.
+mask.py: fixed-size CSR tile lists avoid dynamic output shapes and host synchronization.
+mask.py: broadcast singleton query/key mask dimensions to match PyTorch SDPA.
+mask.py: register packing as a custom op with fake outputs, matching attention ops,
+to avoid Inductor bitcast and Triton mutation-analysis failures.

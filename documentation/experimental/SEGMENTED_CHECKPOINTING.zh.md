@@ -31,7 +31,7 @@ CPU offload 和 FFN-only checkpointing 请看 [Unsloth-style checkpointing](UNSL
 
 这会 checkpoint blocks `0-1`，正常运行 `2-3`，checkpoint `4-5`，正常运行 `6-7`，然后重复。stride 必须大于等于 interval；不支持重叠 schedule。
 
-支持 segmented whole-block 的路径：Flux.1、Flux.2、HunyuanVideo、Krea 2、LongCat Image、LongCat Video、LTXVideo 0.9、LTXVideo2、Lumina2、MageFlow、MiniMax H3、PixArt、Qwen Image 2.1、SD3、SanaVideo、Z-Image、ZLab I1 和 Wan。
+支持 segmented whole-block 的路径：Flux.1、Flux.2、Flux.3 Image Klein、HunyuanVideo、Krea 2、LongCat Image、LongCat Video、LTXVideo 0.9、LTXVideo2、Lumina2、MageFlow、MiniMax H3、PixArt、Qwen Image 2.1、SD3、SanaVideo、Z-Image、ZLab I1 和 Wan。
 
 Stable Cascade stage C 也支持 interval 和 stride，但 schedule 作用在 UNet 的 Res/Timestep/Attention micro-block 序列上，而不是 transformer whole-block group。
 
@@ -272,6 +272,43 @@ Example: `ernie.peft-lora`. Resolution: 512x512.
 | fp8-torchao | interval2 | 3.316 / 8.54 | 2.973 / 8.49 |
 | fp8-torchao | seg2-stride4 | 2.994 / 8.54 | 3.046 / 8.49 |
 | fp8-torchao | seg2-stride4-offload | unsupported | unsupported |
+
+### Flux.3 Image Klein
+
+示例：`flux3_image.peft-lora`，Klein Base。训练设置：512x512 中心裁剪，batch 1，rank/alpha 32 的注意力 LoRA，BF16 AdamW，原生 SDPA，区域 Inductor 编译（`default`，C++ wrapper）。关闭 CREPA 和助手适配器。每个测量行运行 30 次更新；每步耗时不计前五次更新和缓存准备。 VRAM 为 PyTorch 在训练更新期间分配内存的峰值。
+
+数据集：`RareConcepts/Domokun`，27 张图像。固定 caption：`a photograph of a toy character`（缓存文本长度为 80 tokens）。
+
+PyTorch `2.14.1+cu130`; Diffusers `0.41.0`; Transformers `5.20.1`; PEFT `0.21.2`; Accelerate `1.15.0`; SDNQ `0.2.8`; TorchAO `0.17.0+cu130`. `dynamo_dynamic=true`.
+
+图像、文本、参考图像以及联合流的块序列分别分段。`interval2` 对相邻的两个块一起 checkpoint；`seg2-stride4` 对两个块 checkpoint，随后两个块保留激活。隐藏状态捕获使用逐块路径。不支持 attention activation offload。
+
+| Precision | Mode | H100 | L40S |
+| --- | --- | ---: | ---: |
+| bf16 | none | 0.159 / 13.69 | 0.231 / 13.65 |
+| bf16 | activation-offload | unsupported | unsupported |
+| bf16 | layer | 0.265 / 11.05 | 0.302 / 11.01 |
+| bf16 | interval2 | 0.249 / 11.04 | 0.298 / 11.00 |
+| bf16 | seg2-stride4 | 0.209 / 12.26 | 0.270 / 12.22 |
+| bf16 | seg2-stride4-offload | unsupported | unsupported |
+| int8-sdnq-hadamard | none | 0.189 / 12.39 | 0.267 / 12.35 |
+| int8-sdnq-hadamard | activation-offload | unsupported | unsupported |
+| int8-sdnq-hadamard | layer | 0.340 / 6.34 | 0.349 / 6.31 |
+| int8-sdnq-hadamard | interval2 | 0.277 / 6.34 | 0.344 / 6.31 |
+| int8-sdnq-hadamard | seg2-stride4 | 0.232 / 9.14 | 0.301 / 9.10 |
+| int8-sdnq-hadamard | seg2-stride4-offload | unsupported | unsupported |
+| fp8-torchao | none | 0.195 / 10.39 | 0.250 / 10.33 |
+| fp8-torchao | activation-offload | unsupported | unsupported |
+| fp8-torchao | layer | 0.325 / 6.20 | 0.330 / 6.15 |
+| fp8-torchao | interval2 | 0.302 / 6.15 | 0.331 / 6.09 |
+| fp8-torchao | seg2-stride4 | 0.252 / 8.10 | 0.288 / 8.05 |
+| fp8-torchao | seg2-stride4-offload | unsupported | unsupported |
+| fp8wo-torchao | none | 0.181 / 16.74 | 0.258 / 16.69 |
+| fp8wo-torchao | activation-offload | unsupported | unsupported |
+| fp8wo-torchao | layer | 0.285 / 6.09 | 0.364 / 6.04 |
+| fp8wo-torchao | interval2 | 0.265 / 6.30 | 0.368 / 6.25 |
+| fp8wo-torchao | seg2-stride4 | 0.221 / 11.17 | 0.297 / 11.12 |
+| fp8wo-torchao | seg2-stride4-offload | unsupported | unsupported |
 
 ### HeartMula
 

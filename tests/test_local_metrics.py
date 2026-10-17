@@ -141,6 +141,28 @@ class LocalMetricsTrackerTests(unittest.TestCase):
         self.assertFalse(is_local_metrics_enabled("all"))
         self.assertFalse(is_local_metrics_enabled("wandb"))
 
+    def test_downsampling_preserves_sparse_series_as_training_advances(self):
+        records = [{"step": step, "metrics": {"train_loss": float(step)}} for step in range(100)]
+        for step in (7, 23, 51):
+            records[step]["metrics"]["loss/val/clothing"] = step / 100
+            records[step]["metrics"]["loss/val/generic"] = step / 200
+        for length in (60, 80, 100):
+            with self.subTest(length=length):
+                sampled = downsample_records(records[:length], max_points=10)
+                for name in ("loss/val/clothing", "loss/val/generic"):
+                    self.assertEqual([record["step"] for record in sampled if name in record["metrics"]], [7, 23, 51])
+                self.assertEqual(sampled[0], records[0])
+                self.assertEqual(sampled[-1], records[length - 1])
+
+    def test_downsampling_samples_disjoint_metric_series(self):
+        records = [{"step": step, "metrics": {"a" if step % 2 else "b": float(step)}} for step in range(100)]
+        sampled = downsample_records(records, max_points=5)
+        for name in ("a", "b"):
+            series = [record for record in sampled if name in record["metrics"]]
+            self.assertEqual(len(series), 5)
+            self.assertEqual(series[0]["step"], 1 if name == "a" else 0)
+            self.assertEqual(series[-1]["step"], 99 if name == "a" else 98)
+
     def test_timestep_distribution_records_grouped_samples(self):
         with tempfile.TemporaryDirectory() as directory:
             config = SimpleNamespace(output_dir=directory, report_to="simpletuner")

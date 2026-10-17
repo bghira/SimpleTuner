@@ -157,6 +157,35 @@ class TestPromptHandler(unittest.TestCase):
         self.assertEqual(result_caption, "a photo of a cat")
         self.assertEqual([result_caption], PromptHandler._normalize_caption_payload(result_caption))
 
+    @patch("simpletuner.helpers.prompts.StateTracker.get_image_files", return_value=["image.png"])
+    @patch("simpletuner.helpers.prompts.StateTracker.get_data_backend", return_value={})
+    @patch("simpletuner.helpers.prompts.StateTracker.get_data_backend_config", return_value={})
+    def test_textfile_training_captions_match_precache(self, *_):
+        cases = (
+            (" woven into a rug, the symbol 囍 appears. ", False, False, "woven into a rug, the symbol 囍 appears."),
+            (b"  caption \r\n", False, False, ["caption"]),
+            (" first caption \n \n second caption \n", False, False, ["first caption", "second caption"]),
+            (" first line \n second line \n", True, False, "first line \n second line"),
+            (" caption ", False, True, "style  caption"),
+        )
+        for content, disable_split, prepend, expected in cases:
+            with self.subTest(content=content, disable_split=disable_split, prepend=prepend):
+                self.data_backend.exists.return_value = True
+                self.data_backend.read.return_value = content
+                kwargs = dict(
+                    use_captions=True,
+                    prepend_instance_prompt=prepend,
+                    data_backend=self.data_backend,
+                    caption_strategy="textfile",
+                    instance_prompt="style",
+                    disable_multiline_split=disable_split,
+                )
+                training = PromptHandler.magic_prompt(image_path="image.png", **kwargs)
+                precache, missing = PromptHandler.get_all_captions(instance_data_dir="images", **kwargs)
+                self.assertEqual(training, expected)
+                self.assertEqual([training] if isinstance(training, str) else training, precache)
+                self.assertEqual(missing, [])
+
     @patch("simpletuner.helpers.prompts.StateTracker.get_data_backend")
     def test_webshart_caption_strategy_uses_metadata_caption_cache(self, mock_get_data_backend):
         metadata_backend = MagicMock()

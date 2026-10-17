@@ -188,6 +188,133 @@ class CollateFunctionTests(unittest.TestCase):
         backend_mock = active_mocks[5]
         backend_mock.assert_called()
 
+    def test_collate_passes_all_selected_reference_paths_to_text_encoding(self):
+        from threading import Thread
+
+        from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+        from simpletuner.helpers.models.flux3_image.model import Flux3Image
+
+        self.base_args.conditioning_multidataset_sampling = "combined"
+        references = [
+            {
+                "id": backend_id,
+                "data_backend": _make_stub_data_backend(),
+                "config": {
+                    "instance_data_dir": f"/refs/{backend_id}",
+                    "conditioning_type": "reference_loose" if backend_id == "second" else None,
+                },
+                "sampler": SimpleNamespace(source_dataset_id=None, caption_strategy="textfile"),
+                "text_embed_cache": SimpleNamespace(disabled=False),
+            }
+            for backend_id in ("first", "second")
+        ]
+        data_backend = {
+            "text_embed_cache": SimpleNamespace(disabled=False),
+            "data_backend": _make_stub_data_backend(),
+            "config": {"instance_data_dir": "/train"},
+            "conditioning_data": references,
+        }
+        model = _StubModel(requires_conditioning_latents=True, requires_text_embed_image_context=True)
+        model.requires_text_embed_conditioning_pixels = lambda: False
+        image_model = Flux3Image.__new__(Flux3Image)
+        image_model.config = SimpleNamespace(flux3_prompt_upsample=True, resolution=512)
+        model.text_embed_cache_key = image_model.text_embed_cache_key
+        model.text_embed_cache_metadata_for_sample = image_model.text_embed_cache_metadata_for_sample
+        self.base_batch[0]["conditioning_samples"] = [
+            _StubConditioningSample(
+                training_path=f"/refs/{reference['id']}/sample.png",
+                backend_id=reference["id"],
+                paired_training_path="/train/sample.png",
+                conditioning_type=reference["config"]["conditioning_type"],
+            )
+            for reference in references
+        ]
+        patchers, _ = self._patch_state_tracker(
+            model=model,
+            data_backend=data_backend,
+            text_outputs={"prompt_embeds": torch.zeros(1, 1)},
+            backend_lookup={"backend-1": data_backend, **{backend["id"]: backend for backend in references}},
+        )
+        with ExitStack() as stack:
+            mocks = [stack.enter_context(patcher) for patcher in patchers]
+            stack.enter_context(
+                patch("simpletuner.helpers.training.collate.conditioning_pixels", side_effect=AssertionError)
+            )
+            collate_fn(self.base_batch)
+        record = mocks[9].call_args.args[0][0]
+        self.assertEqual(record["metadata"]["image_paths"], ["/refs/second/sample.png", "/refs/first/sample.png"])
+        self.assertEqual(record["metadata"]["data_backend_ids"], ["second", "first"])
+
+        cache = TextEmbeddingCache.__new__(TextEmbeddingCache)
+        cache.batch_write_thread = Thread()
+        cache.model = image_model
+        cache.model_type = "flux3_image"
+        cache.key_type = TextEmbedCacheKey.DATASET_AND_FILENAME
+        cache._requires_path_based_keys = True
+        cache.cache_dir = "cache"
+        precache = MagicMock()
+        registry = FactoryRegistry.__new__(FactoryRegistry)
+        registry.model = image_model
+        registry.args = self.base_args
+        registry.args.caption_strategy = "textfile"
+        registry.args.prepend_instance_prompt = False
+        registry.args.instance_prompt = ""
+        registry.text_encoders = []
+        registry.accelerator = SimpleNamespace(device="cpu")
+        init_backend = dict(
+            data_backend,
+            id="backend-1",
+            instance_data_dir="/train",
+            text_embed_cache=precache,
+            metadata_backend=SimpleNamespace(get_metadata_by_filepath=lambda _: {"target_size": (32, 32)}),
+        )
+        registry._deferred_text_embed_backends = [({"caption_strategy": "textfile"}, init_backend)]
+        with (
+            patch.object(StateTracker, "get_conditioning_datasets", return_value=references),
+            patch(
+                "simpletuner.helpers.data_backend.factory.PromptHandler.get_all_captions",
+                return_value=(["caption"], [], ["/train/sample.png"]),
+            ),
+            patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+        ):
+            registry._process_deferred_text_embeddings()
+        precomputed = precache.compute_embeddings_for_prompts.call_args.args[0][0]
+        self.assertEqual(cache.hash_prompt_with_path(record), cache.hash_prompt_with_path(precomputed))
+
+        self.base_args.conditioning_multidataset_sampling = "random"
+        reference_captions = {"first": ["first edit", "alternate first edit"], "second": ["second edit"]}
+        registry._deferred_text_embed_backends = [({"caption_strategy": "textfile"}, init_backend)]
+        with (
+            patch.object(StateTracker, "get_conditioning_datasets", return_value=references),
+            patch(
+                "simpletuner.helpers.data_backend.factory.PromptHandler.get_all_captions",
+                return_value=([""], [], ["/train/sample.png"]),
+            ),
+            patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+            patch(
+                "simpletuner.helpers.data_backend.factory.PromptHandler.caption_for_sampler",
+                side_effect=lambda sampler, path: reference_captions["first" if "/first/" in path else "second"],
+            ),
+        ):
+            registry._process_deferred_text_embeddings()
+        precomputed_keys = {
+            cache.hash_prompt_with_path(entry) for entry in precache.compute_embeddings_for_prompts.call_args.args[0]
+        }
+        all_samples = self.base_batch[0]["conditioning_samples"]
+        selected_keys = set()
+        for sample in all_samples:
+            for caption in reference_captions[sample.data_backend_id]:
+                sample.caption = caption
+                self.base_batch[0]["conditioning_samples"] = [sample]
+                with ExitStack() as stack:
+                    mocks = [stack.enter_context(patcher) for patcher in patchers]
+                    collate_fn(self.base_batch)
+                selected_keys.add(cache.hash_prompt_with_path(mocks[9].call_args.args[0][0]))
+        self.assertEqual(selected_keys, precomputed_keys)
+        self.assertEqual(len(selected_keys), 3)
+
     def test_collate_fn_loads_anyflow_unconditional_embeddings(self):
         self.base_args.distillation_method = "anyflow"
         self.base_args.distillation_config = {"anyflow": {"fuse_guidance_scale": 3.0}}

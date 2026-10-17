@@ -85,6 +85,16 @@ Para compile reduce-overhead:
 }
 ```
 
+### Tamaño del kernel LoKR de LyCORIS 4
+
+Si el entrenamiento LoKR con LyCORIS 4 produce `kron apply factors too large for the kernel`, selecciona su backend de kernels PyTorch antes de iniciar el entrenador o la WebUI. El error proviene del límite de tamaño de los factores del kernel Triton experimental. `torch.compile` de SimpleTuner puede seguir habilitado; desactivar la compilación por sí solo no cambia los kernels de LyCORIS.
+
+```bash
+export LYCORIS_KERNEL_BACKEND=torch
+```
+
+[Backends de kernels de LyCORIS](https://github.com/KohakuBlueleaf/LyCORIS/blob/main/docs/kernels/backends.md).
+
 ## Entrenamiento con imagen de referencia
 
 Krea2 soporta acondicionamiento opcional con latentes de referencia para datasets de edición. Actívalo cuando tu dataloader proporcione imágenes de referencia emparejadas o latentes de referencia en caché:
@@ -177,3 +187,15 @@ Estas mediciones se tomaron en una NVIDIA H100 de 80GB usando el trainer real de
 - Si int8 usa menos VRAM pero es más lento, coincide con nuestras pruebas H100.
 - Si la imagen de referencia no influye en validación, confirma que `krea2_reference_latents=true` y que el dataset de validación usa pares de referencia.
 - Si overfitea rápido, baja learning rate, reduce pasos o amplía la variedad del dataset.
+
+### Exportación a ComfyUI de LoKR de matriz completa con QKV fusionado
+
+Para un LoKR LyCORIS de matriz completa entrenado con proyecciones QKV fusionadas, exporta proyecciones separadas para ComfyUI con este comando. Usa el `config.json` del transformer del modelo base. Para DoRA normalizado por salida, proporciona también el `raw.safetensors` original de Krea2 mediante `--base-model`. El conversor materializa las diferencias fusionadas de DoRA para proyecciones fusionadas y separadas, evitando la distinta normalización de ComfyUI. Elimina las entradas Q/K/V separadas sin uso y con delta cero junto a un adaptador fusionado, incluidas sus escalas DoRA; rechaza los adaptadores en conflicto con delta distinto de cero. Conserva los demás tensores. Omite `--base-model` si el adaptador no utiliza DoRA. Materializa los deltas fusionados como matrices FP32 para que las divisiones Q/K/V sean exactas incluso si cruzan los límites de los factores de Kronecker; la exportación puede ser considerablemente más grande. No admite factores LoKR descompuestos ni DoRA normalizado por entrada. Conserva el checkpoint nativo para entrenar y reanudar.
+
+```bash
+.venv/bin/python scripts/convert_krea2_lokr_to_comfyui.py \
+  --input adapter.safetensors \
+  --output adapter-comfyui.safetensors \
+  --transformer-config transformer/config.json \
+  --base-model raw.safetensors
+```

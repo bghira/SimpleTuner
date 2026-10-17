@@ -251,6 +251,8 @@ nav:
     - Image Models:
       - Flux.1: quickstart/FLUX.md
       - Flux.2: quickstart/FLUX2.md
+      - FLUX.3 Image Klein: quickstart/FLUX3_IMAGE.md
+      - MOSS-Image: quickstart/MOSS_IMAGE.md
       - Flux Kontext: quickstart/FLUX_KONTEXT.md
       - Stable Diffusion 3: quickstart/SD3.md
       - Stable Diffusion XL: quickstart/SDXL.md

@@ -1246,6 +1246,27 @@ class TestTrainer(unittest.TestCase):
         self.assertIn("--multi_gpu", captured["cmd"])
         self.assertEqual(captured["env"].get("CUDA_VISIBLE_DEVICES"), "2,3")
 
+    def test_run_trainer_job_does_not_copy_container_device_file_to_cuda(self):
+        with patch.dict(os.environ, {"NVIDIA_VISIBLE_DEVICES": "/var/run/nvidia-container-devices"}, clear=False):
+            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+            os.environ.pop("NV_GPU", None)
+            result, captured = self._run_trainer_job_with_captured_popen({"dynamo_backend": "inductor"})
+
+        self.assertEqual(result, 0)
+        self.assertFalse("CUDA_VISIBLE_DEVICES" in captured["env"])
+        self.assertEqual(captured["env"]["NVIDIA_VISIBLE_DEVICES"], "/var/run/nvidia-container-devices")
+
+    def test_run_trainer_job_keeps_explicit_cuda_selection_with_container_device_file(self):
+        with patch.dict(
+            os.environ,
+            {"CUDA_VISIBLE_DEVICES": "1", "NVIDIA_VISIBLE_DEVICES": "/var/run/nvidia-container-devices"},
+            clear=False,
+        ):
+            result, captured = self._run_trainer_job_with_captured_popen({"dynamo_backend": "inductor"})
+
+        self.assertEqual(result, 0)
+        self.assertEqual(captured["env"]["CUDA_VISIBLE_DEVICES"], "1")
+
     def test_run_trainer_job_does_not_duplicate_accelerate_selector(self):
         result, captured = self._run_trainer_job_with_captured_popen(
             {
@@ -3592,6 +3613,95 @@ class TestTrainer(unittest.TestCase):
         )
         mock_trained_model.set_requires_gradient_sync.assert_any_call(False)
 
+    def test_fsdp2_value_clipping_clamps_trainable_gradients(self):
+        """Run one synced FSDP2 train() step with value clipping and stop right after the clipping block."""
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(
+            model_type="full",
+            train_text_encoder=False,
+            lora_type="standard",
+            num_train_epochs=1,
+            max_train_steps=1000,
+            train_batch_size=1,
+            dataloader_prefetch=False,
+            lr_scheduler="constant",
+            eval_dataset_id=None,
+            num_update_steps_per_epoch=1,
+            strict_epoch_limit=True,
+            distillation_method=None,
+            disable_accelerator=False,
+            optimizer="adamw",
+            gradient_precision="fp32",
+            gradient_accumulation_steps=1,
+            max_grad_norm=0.5,
+            fsdp_enable=True,
+            grad_clip_method="value",
+            use_deepspeed_optimizer=False,
+        )
+        param = torch.nn.Parameter(torch.zeros(4))
+        param.grad = torch.tensor([-2.0, -0.25, 0.25, 2.0])
+        trainer.model = Mock()
+        trainer.text_encoders = []
+        trainer._compute_model_prediction_loss = Mock(return_value=(torch.tensor(0.5), {}, torch.tensor(0.5), None, None))
+        trainer._max_grad_value = Mock(return_value=torch.tensor(2.0))
+        trainer._get_trainable_parameters = Mock(return_value=[param])
+        trainer.params_to_optimize = []
+        trainer._context_parallel_topology = None
+        trainer.prepare_batch = Mock(side_effect=lambda batch: batch)
+        trainer.state = {
+            "global_step": 0,
+            "global_resume_step": 0,
+            "current_epoch": 1,
+            "first_epoch": 1,
+            "lr": 0.0001,
+        }
+        trainer.timesteps_buffer = []
+        trainer.distiller = None
+        trainer.bf = None
+        trainer.extra_lr_scheduler_kwargs = {}
+        trainer.train_loss = 0.0
+        trainer._epoch_rollover = Mock()
+        trainer._should_checkpoint_epoch = Mock(return_value=False)
+        trainer._exit_on_signal = Mock()
+        trainer.init_trackers = Mock()
+        trainer._train_initial_msg = Mock()
+        trainer.iteration_tracker = Mock()
+
+        class StopAfterClipping(Exception):
+            pass
+
+        @contextmanager
+        def accumulate(*models):
+            yield
+
+        trainer.accelerator = Mock(
+            is_main_process=True,
+            num_processes=1,
+            sync_gradients=True,
+            accumulate=accumulate,
+        )
+
+        def stop_at_optimizer_step(message, *args, **kwargs):
+            if message == "Stepping components forward.":
+                raise StopAfterClipping
+
+        batch = {"latents": torch.zeros(1, 4, 4, 4), "timesteps": torch.zeros(1)}
+        with (
+            patch("simpletuner.helpers.training.state_tracker.StateTracker") as mock_state_tracker,
+            patch("simpletuner.helpers.training.trainer.tqdm"),
+            patch("simpletuner.helpers.training.trainer.logger"),
+            patch("simpletuner.helpers.training.trainer.training_logger") as mock_training_logger,
+            patch("simpletuner.helpers.training.trainer.random_dataloader_iterator", return_value=batch),
+        ):
+            mock_state_tracker.get_data_backends = Mock(return_value={"backend1": {"train_dataloader": [batch]}})
+            mock_state_tracker.backend_status = Mock(return_value=False)
+            mock_training_logger.debug.side_effect = stop_at_optimizer_step
+            with self.assertRaises(StopAfterClipping):
+                trainer.train()
+
+        trainer.accelerator.unscale_gradients.assert_called_once()
+        self.assertTrue(torch.equal(param.grad, torch.tensor([-0.5, -0.25, 0.25, 0.5])))
+
     def test_build_init_tracker_kwargs_filters_to_active_trackers(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             trainer = object.__new__(Trainer)
@@ -3654,6 +3764,30 @@ class TestTrainer(unittest.TestCase):
                 "resume": "allow",
             },
         )
+
+    def test_lycoris_network_is_registered_on_the_trained_component_before_prepare(self):
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(disable_accelerator=False)
+        primary_model = torch.nn.Linear(2, 2)
+        trainer.lycoris_wrapped_network = torch.nn.Module()
+        trainer.model = Mock(spec=["get_trained_component"])
+        trainer.model.get_trained_component.return_value = primary_model
+        trainer._send_webhook_msg = Mock()
+        trainer._emit_event = Mock()
+        trainer.job_id = None
+        trainer.accelerator = Mock()
+
+        class StopAfterRegistration(Exception):
+            pass
+
+        trainer.model_hooks = Mock()
+        trainer.model_hooks.validate_fsdp2_pipeline_export.side_effect = StopAfterRegistration
+        with patch("simpletuner.helpers.training.trainer.StateTracker") as mock_state_tracker:
+            mock_state_tracker.get_data_backends.return_value = {"backend1": {"train_dataloader": Mock()}}
+            with self.assertRaises(StopAfterRegistration):
+                trainer.init_prepare_models(lr_scheduler=None)
+
+        self.assertIs(primary_model.lycoris_wrapped_network, trainer.lycoris_wrapped_network)
 
     def test_init_trackers_is_idempotent(self):
         trainer = object.__new__(Trainer)

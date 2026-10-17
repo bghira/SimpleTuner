@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import importlib.util
 import math
+import warnings
 
 import torch
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.modeling_utils import ModelMixin
 from torch import nn
+
+from simpletuner.helpers.models.ideogram.prompting import Ideogram4JSONSchemaConverter
+from simpletuner.helpers.models.prompt_upsampling import PromptUpsampler
 
 PROMPT_UPSAMPLE_TEMPERATURE = 1.0
 
@@ -33,75 +38,15 @@ def build_prompt_enhancer(text_encoder, prompt_enhancer_head):
     return enhancer.eval()
 
 
-CAPTION_SYSTEM_MESSAGE = """You convert a short user idea into a structured JSON caption for an image renderer. Output ONE minified single-line JSON object and NOTHING else (no markdown, no commentary).
-
-SCHEMA - keys in this exact order:
-{"high_level_description":"...","compositional_deconstruction":{"background":"...","elements":[ ... ]}}
-- object element: {"type":"obj","desc":"..."}
-- text element:   {"type":"text","text":"VERBATIM CHARS","desc":"..."}
-
-STEP 1 - PICK THE MEDIUM. It decides what `background` and `elements` mean. Honor any medium or style the user implies; default to photograph only when nothing else fits. Render ANY subject faithfully - real, fantastical, sci-fi, surreal, abstract - in the chosen medium.
-
-A) DESIGNED ARTIFACT - poster, logo, album/book cover, flyer, banner, sticker, packaging, app icon, infographic, menu, card, wordmark. THE FRAME IS THE ARTIFACT - never a photo of it hanging in a room.
-   - high_level_description: name it as graphic design (e.g. "a minimalist jazz poster, flat graphic design...").
-   - background: the design's OWN backdrop only - a flat color, gradient, or simple texture filling the frame. No room, wall, floor, easel, depth, or camera/photo language.
-   - elements: the design's parts as a flat 2D layout - a `text` element for every headline/label (verbatim), `obj` elements for the central graphic/illustration/shapes/badges. Place by region (top / center / bottom).
-
-B) SCENE - a photograph, illustration, painting, 3D render, anime frame, etc. of a real or imagined place or subject.
-   - high_level_description: one sentence naming the subject and the medium/style.
-   - background: the scene SHELL - surroundings, ground/sky/walls, atmosphere, ambient light; concrete and specific. The ground/floor/water surface lives here, never as an element.
-   - elements: the main subject FIRST as an `obj`, then supporting `obj` elements (props, secondary subjects) that plausibly belong. Add `text` elements only where the scene would really carry text (signs, labels, brands).
-
-C) ABSTRACT / CONCEPTUAL - "nostalgia", "chaos and order", "sound waves", pure pattern. Concretize the idea into a deliberate visual composition.
-   - background: the dominant color field, gradient, or texture of the composition.
-   - elements: the shapes, forms, motifs, or symbolic objects that carry the concept, as `obj` elements. Add `text` only if the idea calls for words.
-
-UNIVERSAL RULES (every medium):
-1. The user's core subject/concept MUST appear among the elements (as an `obj`, normally first). Naming it only in high_level_description or background is NOT enough.
-2. Commit to ONE concrete value each (one color, one style, one count). No hedging: ban "various", "such as", "e.g.", "or similar", "maybe", "X or Y" for one property.
-3. NEVER use a transparent, empty, or plain white background UNLESS the user explicitly says "transparent", "isolated", "sticker", or "cutout".
-4. A coherent subject (one animal, person, vehicle, object) is exactly ONE element; its parts go inside its `desc`. Use separate elements for genuinely separate subjects.
-5. Each `desc` is 25-55 words, identity-first, standalone. Do not mention shadows, depth of field, bokeh, lens, focus, or grain.
-6. high_level_description: one sentence, at most 40 words, starts with the subject, names the medium. Preserve non-ASCII characters as-is.
-7. Output STRICTLY VALID JSON: double quotes around every key and string, NO trailing commas, each element object closes with "}" right after its last value.
-8. Catch the "warm" impulse. Only when you are about to describe light as "warm", "golden", "amber", or "honey", stop and check: is there a specific physical source in the scene casting that colour (candle, sunset, lamp, neon, fire)? If YES, name the source and the colour it casts instead of the mood word. If NO, leave the light neutral ("soft" or "even").
-9. Describe physical reality, not impressions. Avoid mood-words like "luminous", "radiant", "vibrant", "lush", "dynamic", "gorgeous", "stunning", "breathtaking", "mesmerizing", and metaphorical "glowing".
-10. Every named thing must appear as its own element. Each subject, object, sign, and quoted phrase the user names gets its own element; quoted text becomes its own verbatim `text` element.
-11. Don't add what wasn't asked for. No glitch art, wireframe overlay, body fragmentation, double-exposure, "dissolving", or extra stylization unless requested.
-12. Name attributes concretely, anchored to landmarks.
-13. Name real references by name. If the user names a brand, product, character, place, or person, keep that exact name in the `desc`.
-14. "Professional photo/headshot" of a person means professional context: neutral attire, soft even daylight, neutral backdrop, friendly expression."""
-
-
 CAPTION_USER_TEMPLATE = """TARGET IMAGE ASPECT RATIO: {aspect_ratio} (width:height).
 User idea: {original_prompt}"""
 
 
 def build_caption_logits_processor(model, tokenizer):
-    from typing import List, Literal, Union
-
     import outlines
-    from pydantic import BaseModel, Field
-
-    class ObjElement(BaseModel):
-        type: Literal["obj"]
-        desc: str
-
-    class TextElement(BaseModel):
-        type: Literal["text"]
-        text: str
-        desc: str
-
-    class Composition(BaseModel):
-        background: str
-        elements: List[Union[ObjElement, TextElement]] = Field(min_length=1)
-
-    class Caption(BaseModel):
-        high_level_description: str
-        compositional_deconstruction: Composition
 
     outlines_model = outlines.from_transformers(model, tokenizer)
-    return outlines.Generator(outlines_model, Caption).logits_processor
+    return outlines.Generator(outlines_model, Ideogram4JSONSchemaConverter.CAPTION_MODEL).logits_processor
 
 
 def generate_captions(
@@ -115,6 +60,8 @@ def generate_captions(
     max_new_tokens: int = 1024,
     generator: torch.Generator | list[torch.Generator] | None = None,
     device: torch.device | None = None,
+    reference_images=(),
+    processor=None,
 ) -> list[str]:
     device = device or prompt_enhancer.device
     prompts = [prompt] if isinstance(prompt, str) else list(prompt)
@@ -129,14 +76,23 @@ def generate_captions(
 
     captions = []
     for i, text_prompt in enumerate(prompts):
+        system_message = Ideogram4JSONSchemaConverter.GENERATION_INSTRUCTIONS
+        content = CAPTION_USER_TEMPLATE.format(aspect_ratio=aspect_ratio, original_prompt=text_prompt)
+        if reference_images:
+            system_message += (
+                "\nThe user supplied reference images for an edit. Describe the requested final image in the same JSON "
+                "schema. Preserve the references' subjects and appearance except for changes the user requests."
+            )
+            content = [{"type": "image", "image": image} for image in reference_images] + [{"type": "text", "text": content}]
         messages = [
-            {"role": "system", "content": CAPTION_SYSTEM_MESSAGE},
+            {"role": "system", "content": system_message},
             {
                 "role": "user",
-                "content": CAPTION_USER_TEMPLATE.format(aspect_ratio=aspect_ratio, original_prompt=text_prompt),
+                "content": content,
             },
         ]
-        inputs = tokenizer.apply_chat_template(
+        input_processor = processor if reference_images else tokenizer
+        inputs = input_processor.apply_chat_template(
             messages, add_generation_prompt=True, tokenize=True, return_tensors="pt", return_dict=True
         ).to(device)
         generate_kwargs = {
@@ -155,3 +111,52 @@ def generate_captions(
         new_tokens = generated[:, inputs["input_ids"].shape[1] :]
         captions.append(tokenizer.decode(new_tokens[0], skip_special_tokens=True).strip())
     return captions
+
+
+class IdeogramPromptUpsampler(PromptUpsampler):
+    def __init__(self, text_encoder, tokenizer, head, device):
+        self.tokenizer = tokenizer
+        self.head = head
+        self.device = device
+        self.enhancer = build_prompt_enhancer(text_encoder, head)
+        self.logits_processor = None
+        if importlib.util.find_spec("outlines") is not None:
+            self.logits_processor = build_caption_logits_processor(self.enhancer, tokenizer)
+        else:
+            warnings.warn(
+                "`outlines` is not installed; Ideogram prompt upsampling runs unconstrained "
+                "and may not return schema-valid JSON.",
+                stacklevel=2,
+            )
+        self.processor = None
+        self.temperature = PROMPT_UPSAMPLE_TEMPERATURE
+        self.max_new_tokens = 1024
+        self.generator = None
+
+    def upsample(self, requests):
+        self.head.to(self.device)
+        self.enhancer.model.to(self.device)
+        captions = []
+        for request in requests:
+            if request.reference_images and self.processor is None:
+                from transformers import AutoProcessor
+
+                self.processor = AutoProcessor.from_pretrained("Qwen/Qwen3-VL-8B-Instruct")
+                self.processor.tokenizer = self.tokenizer
+            captions.extend(
+                generate_captions(
+                    self.enhancer,
+                    self.tokenizer,
+                    self.logits_processor,
+                    request.prompt,
+                    request.height,
+                    request.width,
+                    temperature=self.temperature,
+                    max_new_tokens=self.max_new_tokens,
+                    generator=self.generator,
+                    device=self.device,
+                    reference_images=request.reference_images,
+                    processor=self.processor,
+                )
+            )
+        return captions

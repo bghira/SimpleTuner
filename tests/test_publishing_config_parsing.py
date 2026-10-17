@@ -36,6 +36,26 @@ class _StubProvider(PublishingProvider):
 
 
 class TestPublishingConfigParsing(unittest.TestCase):
+    def test_model_card_base_model_does_not_change_checkpoint_path(self):
+        args = parse_cmdline_args(
+            input_args=_base_args()
+            + [
+                "--pretrained_model_name_or_path=/opt/models/flux3_image",
+                "--model_card_base_model=black-forest-labs/flux-3-image-klein-base",
+            ],
+            exit_on_error=True,
+        )
+        self.assertEqual(args.pretrained_model_name_or_path, "/opt/models/flux3_image")
+        self.assertEqual(args.model_card_base_model, "black-forest-labs/flux-3-image-klein-base")
+
+    def test_model_card_base_model_rejects_paths_and_urls(self):
+        for source in ("/opt/models/base", "./weights", r"C:\models\base", "https://huggingface.co/owner/model"):
+            with self.subTest(source=source), self.assertRaises(ValueError):
+                parse_cmdline_args(
+                    input_args=_base_args() + [f"--model_card_base_model={source}"],
+                    exit_on_error=True,
+                )
+
     def test_blank_publishing_config_is_disabled(self):
         args_list = _base_args() + ["--publishing_config="]
 

@@ -145,6 +145,16 @@ For reduce-overhead compile:
 
 Compile should be considered a batch-size-1 performance option first. It can make larger batches OOM even when the same batch fits without compile.
 
+### LyCORIS 4 LoKR kernel size
+
+If LyCORIS 4 LoKR training raises `kron apply factors too large for the kernel`, select its PyTorch kernel backend before starting the trainer or WebUI. The error comes from the experimental Triton kernel's factor-size limit. SimpleTuner's `torch.compile` can remain enabled; disabling compilation alone does not switch LyCORIS kernels.
+
+```bash
+export LYCORIS_KERNEL_BACKEND=torch
+```
+
+[LyCORIS kernel backends](https://github.com/KohakuBlueleaf/LyCORIS/blob/main/docs/kernels/backends.md).
+
 ## Dataloader configuration
 
 Krea2 uses the same general image dataloader structure as the other image transformer models. The example config uses a small Domokun dataset:
@@ -304,3 +314,15 @@ Confirm that `krea2_reference_latents=true` is enabled and that the validation d
 ### The model overfits quickly
 
 Use fewer steps, lower the learning rate, add more prompts for validation, or increase dataset variety. Krea2 is large enough to memorise small subject datasets quickly.
+
+### ComfyUI export for fused full-matrix LoKR
+
+For a full-matrix LyCORIS LoKR trained with fused QKV projections, export separate projections for ComfyUI with the following command. Use the base model transformer's `config.json`. For output-normalized DoRA, also provide the original Krea2 `raw.safetensors` with `--base-model`. The converter materializes native DoRA merged differences for both fused and unfused projections, avoiding ComfyUI's different normalization. Unused zero-delta separate Q/K/V entries beside a fused adapter, including their DoRA scales, are removed; nonzero conflicting adapters are rejected. Other adapter tensors are preserved. Omit `--base-model` for adapters without DoRA. It materializes fused deltas as FP32 matrices so that Q/K/V slices remain exact even when they cross Kronecker factor boundaries; the export can be substantially larger than the native checkpoint. Decomposed LoKR factors and input-normalized DoRA are not supported. Keep the native checkpoint for training and resume.
+
+```bash
+.venv/bin/python scripts/convert_krea2_lokr_to_comfyui.py \
+  --input adapter.safetensors \
+  --output adapter-comfyui.safetensors \
+  --transformer-config transformer/config.json \
+  --base-model raw.safetensors
+```

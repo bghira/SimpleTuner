@@ -57,11 +57,15 @@ Donde `foo` es tu entorno de configuración; o simplemente usa `config/config.js
 ### `--model_family`
 
 - **Qué**: Determina qué arquitectura de modelo se está entrenando.
-- **Opciones**: pixart_sigma, flux, sd3, sdxl, kolors, legacy
+- **Opciones**: pixart_sigma, flux, flux3_image, sd3, sdxl, kolors, legacy
 
 ### `--model_flavour`
 
 Selecciona una variante de checkpoint dentro de `--model_family`. Para `qwen_image`, el valor predeterminado es `v2.1` (`Qwen/Qwen-Image-2.1`). Indique explícitamente `v1.0`, `v2.0` o una variante `edit-*` existente para entrenar una arquitectura anterior; los adaptadores y las cachés de embeddings/latentes no son intercambiables con 2.1. Consulte la [guía de Qwen Image](quickstart/QWEN_IMAGE_2-1.es.md).
+
+Usa `model_family: "flux3_image"` para el transformador de imágenes de 5,6B parámetros. La variante predeterminada `klein-base` carga `black-forest-labs/flux-3-image-klein-base`; `klein` carga el modelo destilado `black-forest-labs/flux-3-image-klein`. Acepta el acceso al repositorio elegido antes de descargarlo. Consulta la [licencia FLUX [Kom]munity](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE).
+
+Para `moss_image`, la variante predeterminada `sft` carga `OpenMOSS-Team/MOSS-Image-SFT`. Usa `model_flavour: "base"` para `OpenMOSS-Team/MOSS-Image-Base`. Los ejemplos entrenan con un área equivalente a 512×512. Consulta la [guía de MOSS-Image](quickstart/MOSS_IMAGE.es.md).
 
 ### `--lora_format`
 
@@ -398,7 +402,7 @@ Selecciona una variante de checkpoint dentro de `--model_family`. Para `qwen_ima
 ### `--gradient_checkpointing_interval`
 
 - **Qué**: Intervalo dependiente del modelo para checkpointing de bloques transformer. Un valor de 1 equivale básicamente a dejar `--gradient_checkpointing` habilitado.
-- **Nota**: Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Qwen Image 2.1, Z-Image y Wan usan chunks contiguos de *n* bloques en rutas whole-block. Otras familias que exponen esta opción pueden seguir usando el comportamiento anterior de "checkpoint cada *n* bloques". Los grupos contiguos mayores guardan menos estados de frontera, pero siguen recalculando los bloques con checkpoint. Mide el equilibrio entre velocidad y pico de memoria; consulta [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.es.md#qwen-image-21).
+- **Nota**: Flux, Flux.2, Flux.3 Image Klein, Krea 2, LTXVideo2, MageFlow, Qwen Image 2.1, Z-Image y Wan usan chunks contiguos de *n* bloques en rutas whole-block. Otras familias que exponen esta opción pueden seguir usando el comportamiento anterior de "checkpoint cada *n* bloques". Los grupos contiguos mayores guardan menos estados de frontera, pero siguen recalculando los bloques con checkpoint. Mide el equilibrio entre velocidad y pico de memoria; consulta [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.es.md#qwen-image-21).
 
 ### `--gradient_checkpointing_segment_stride`
 
@@ -627,10 +631,12 @@ Repositorio opcional de Hugging Face para recuperar y publicar el blob indicado 
 
 Se soportan mecanismos de atención alternativos, con distintos niveles de compatibilidad u otros compromisos:
 
-- `diffusers` usa los kernels SDPA nativos de PyTorch y es el predeterminado.
+- `diffusers` usa los kernels SDPA nativos de PyTorch.
 - `xformers` habilita el kernel de atención [xformers](https://github.com/facebookresearch/xformers) de Meta (entrenamiento + inferencia) cuando el modelo subyacente expone `enable_xformers_memory_efficient_attention`.
 - `flash-attn`, `flash-attn-2`, `flash-attn-3` y `flash-attn-3-varlen` se enganchan al helper `attention_backend` de Diffusers para enrutar la atención a través de los kernels FlashAttention v1/2/3. Instala las wheels correspondientes de `flash-attn` / `flash-attn-interface` y ten en cuenta que FA3 actualmente requiere GPUs Hopper.
 - `flex` selecciona el backend FlexAttention de PyTorch 2.5 (FP16/BF16 en CUDA). Debes compilar/instalar los kernels Flex por separado; consulta [documentation/attention/FLEX.md](attention/FLEX.md).
+- `kohaku-fa` usa kernels CuTe locales experimentales de forward/backward en L40S (sm_89), H100 (sm_90) y RTX Blackwell (sm_120), y kernels [KohakuFA](https://github.com/KohakuBlueleaf/KohakuFA) incluidos en B200/B300 (sm_100/sm_103). CuTe requiere PyTorch >= 2.11. Para CuTe, instale `pip install "simpletuner[attention-cute]"` (CUTLASS DSL >= 4.8 y TVM FFI >= 0.1.14); B200/B300 requieren Triton >= 3.7. No se necesita un paquete externo de atención. SDPA directo de PyTorch y la atención nativa de Diffusers usan este backend. Admite Q/K/V FP16/BF16 del mismo tipo, máscaras booleanas, dimensiones de cabeza 1..512 y consultas agrupadas; rechaza FP32, máscaras aditivas, dropout, paralelismo de contexto y atención dispersa MiniMax-H3. Los kernels restan el máximo sin escalar antes del escalado y guardan por separado el máximo y la normalización logarítmica. CuTe usa warp MMA en Ada y WGMMA con cargas TMA compatibles en Hopper. Los bloques de las máscaras booleanas se clasifican en cada llamada, incluida la reproducción de grafos CUDA, para omitir bloques vacíos. El backward recalcula la corrección softmax en FP32 y escala los gradientes tras la acumulación FP32. En H100/L40S, las cabezas de todas las dimensiones admitidas usan una corrección centrada y una única pasada para el gradiente de query; estas cabezas también conservan la salida de atención para el backward. Esto mejora la precisión con logits grandes, pero no demuestra la causa de fallos de entrenamiento AnyFlow. La ruta CuTe se ha validado en H100 y L40S; sm_120 aún no se ha probado en hardware. Las cargas Hopper compatibles usan doble búfer, y el kernel de gradiente de query de dimensión 64/128 calcula internamente la base de centrado. Los layouts de salida y gradiente conservan el orden de las proyecciones para evitar copias. Los productos Hopper dentro de un único warp group consumen pesos desde registros, evitando almacenarlos en memoria compartida. El entrenamiento eager usa autograd nativo; el entrenamiento compilado usa operadores personalizados registrados y comparte el código nativo de asignación y ejecución TVM FFI. La configuración de ejecución se almacena en caché por dispositivo y metadatos de los tensores. Las escrituras de salida y gradientes usan vectores coalescentes. La atención densa larga en Hopper con cabezas de dimensión 128 usa tres warp groups de cálculo y un warp group dedicado a las cargas TMA, compartiendo los mismos bloques K/V. La ruta CuTe requiere un compilador C++17 y Ninja >= 1.11; la extensión se compila en el primer uso. B200/B300 requieren PyTorch >= 2.9.
+- `kohaku-fa-auto` es la política automática de entrenamiento predeterminada. Selecciona Kohaku para llamadas CUDA compatibles cuando están instaladas las dependencias necesarias; CPU/MPS, GPU no compatibles, FP32, dropout, máscaras aditivas, dimensiones de cabeza y funciones de modelo no compatibles usan SDPA nativa. La evaluación conserva la atención nativa. No se ocultan los errores de importación, compilación o ejecución de los kernels Kohaku seleccionados. Configure `diffusers` explícitamente para usar SDPA nativa en todas las llamadas. El cálculo de mayor precisión puede aumentar el tiempo por paso; los bloques compilados de Flux y MiniMax medidos en H100 tardaron aproximadamente un 7,9% y un 6,0% más que la SDPA nativa. La selección automática de Kohaku se limita a sm_89/sm_90, cuyo cálculo centrado de la retropropagación conserva los gradientes diminutos en la atención saturada; Blackwell usa SDPA nativa con esta política.
 - `metal-flash-attention` usa el backend PyTorch custom-op de Universal Metal Flash Attention en Apple Silicon. Instala primero el paquete UMFA `examples/pytorch-custom-op-ffi`; SimpleTuner enruta la atencion por el dispatcher MPS SDPA de PyTorch, que los builds UMFA actuales registran. Las llamadas SDPA MPS FP32/FP16/BF16 4D elegibles — cualquier cantidad de heads incluida single-head, cualquier sequence length, layouts transposed estilo FLUX, masks bool/additive de hasta 4D y llamadas causales (entrenamiento incluido — el backward causal pasa paridad exacta de gradientes) — se codifican directamente en el command stream MPS de PyTorch sin sincronizacion por llamada, y las entradas FP16/BF16 usan kernels nativos de baja precision sin promocion a FP32. Las llamadas con dropout o `enable_gqa` hacen fallback a PyTorch SDPA; builds antiguos `PrivateUse1` son bypassed por tensores `torch.device("mps")`. SimpleTuner ejecuta comprobaciones iniciales de paridad FP32/FP16/BF16 forward y autograd, ademas de paridad causal forward, y rechaza builds UMFA que no coincidan numericamente o que no expongan `get_dispatch_stats()`. `metal-flash-attention-int8` y `metal-flash-attention-int4` configuran el modo global de cuantizacion blockwise de UMFA con `set_quantization_mode(ext.QUANT_INT8, ext.QUANT_BLOCK_WISE)` o `set_quantization_mode(ext.QUANT_INT4, ext.QUANT_BLOCK_WISE)`, limpian ese modo al cambiar backends y requieren una comprobacion inicial adicional de salidas con autograd, gradientes multi-head finitos, soporte dispatcher-level para bool/additive masks y ningun fallback PyTorch. Usa `metal_sdpa_extension.get_dispatch_stats()` durante una ejecucion para confirmar que `fp32_instream` (o `quantized_autograd` para los alias quantized) aumenta y `pytorch_fallback` queda en `0`; bool masks all-true tambien aumentan `mask_all_true_skipped`. La extension expone ademas `rope_scaled_dot_product_attention`, un entry point RoPE+SDPA fusionado que sigue la convencion rotary interleaved-pair de FLUX.1/FLUX.2/Krea2/Z-Image; el entrenamiento fluye por un autograd fusionado (rotacion inversa sobre dQ/dK en backward); las llamadas con gradientes que usan mask o GQA hacen fallback a rotacion eager.
 - `cudnn`, `native-efficient`, `native-flash`, `native-math`, `native-npu` y `native-xla` seleccionan el backend SDPA correspondiente expuesto por `torch.nn.attention.sdpa_kernel`. Son útiles cuando quieres determinismo (`native-math`), el kernel SDPA de CuDNN o los aceleradores nativos del proveedor (NPU/XLA).
 - `sla` habilita [Sparse–Linear Attention (SLA)](https://github.com/thu-ml/SLA), proporcionando un kernel híbrido disperso/lineal afinable que puede usarse tanto para entrenamiento como para validación sin gating adicional.
@@ -681,6 +687,12 @@ Esto es útil para herramientas de monitoreo que reciben webhooks de múltiples 
 
 - **Qué**: El nombre del modelo en Huggingface Hub y el directorio de resultados locales.
 - **Por qué**: Este valor se usa como nombre de directorio bajo la ubicación especificada como `--output_dir`. Si se proporciona `--push_to_hub`, este se convertirá en el nombre del modelo en Huggingface Hub.
+
+### `--model_card_base_model`
+
+- **Qué**: ID del repositorio base de Hugging Face que se usará en la ficha del modelo generada y en el ejemplo genérico de inferencia con LoRA.
+- **Predeterminado**: Sin definir; usa `--pretrained_model_name_or_path` cuando es un ID del Hub. Las rutas locales se sustituyen por `<model_family>/unknown-model`.
+- **Cuándo**: Configúralo al entrenar desde un checkpoint local o incluido en el contenedor cuyo repositorio original conoces. Cambia los metadatos publicados, no los pesos cargados para entrenar. Usa un ID como `black-forest-labs/flux-3-image-klein-base`, no una ruta ni una URL.
 
 ### `--modelspec_comment`
 
@@ -1205,6 +1217,34 @@ Diferentes modelos esperan diferentes datos de conditioning:
   - `random` selecciona aleatoriamente un dataset de condicionamiento por muestra, alternando condiciones durante el entrenamiento.
 - **Nota**: Al usar `combined`, no puedes definir `captions` separados en datasets de condicionamiento; se usan las captions del dataset fuente.
 - **Ver también**: [DATALOADER.md](DATALOADER.md#conditioning_data) para configurar múltiples datasets de condicionamiento.
+
+### `--flux3_prompt_upsample` {#--flux3_prompt_upsample}
+
+**Predeterminado:** `false`
+
+Está desactivado por defecto. Al activarlo, SimpleTuner descarga el modelo Qwen3.5-9B separado (unos 19 GB de pesos) y reescribe los prompts positivos antes de guardar sus embeddings. Para ediciones utiliza tus imágenes de referencia emparejadas. Conserva los prompts negativos, las descripciones vacías de dropout y los archivos originales.
+
+Prepara RAM adicional y más tiempo de preprocesamiento. El upsampler y el codificador de texto se turnan en la GPU; sus embeddings se reutilizan durante el entrenamiento. SimpleTuner separa los embeddings ampliados de los originales y reutiliza los resultados cuando vuelven a elegirse las mismas referencias.
+
+### `--moss_image_auto_json` {#--moss_image_auto_json}
+
+Codifica las descripciones positivas con el esquema JSON nativo `summary`/`items` de MOSS-Image. Predeterminado: **false**. Las descripciones simples se envuelven sin inventar posiciones; los layouts existentes se validan y serializan. Se conservan los prompts vacíos y negativos.
+
+### `--moss_image_prompt_upsample` {#--moss_image_prompt_upsample}
+
+Usa un modelo de visión y lenguaje para ampliar las descripciones positivas a layouts JSON nativos antes de almacenar los embeddings. Predeterminado: **false**. Las imágenes de entrenamiento fundamentan las descripciones y cajas, usando las dimensiones reales del bucket. También amplía los prompts de validación y activa la conversión JSON nativa.
+
+### `--moss_image_prompt_upsampler_model_id` {#--moss_image_prompt_upsampler_model_id}
+
+Repositorio o ruta local del modelo de descripción. Predeterminado: **Qwen/Qwen3.5-27B**. Se usa con `moss_image_prompt_upsample`. El modelo requiere una GPU de 80 GB y RAM adicional; comparte la GPU por turnos con el codificador de texto. Cambiar el modelo o activar JSON usa una caché de embeddings independiente.
+
+### `--moss_image_validation_shift` {#--moss_image_validation_shift}
+
+Desplazamiento de flujo para la validación de MOSS-Image. Predeterminado: **5.0**. El entrenamiento usa la cuadrícula original sin desplazar (`flow_schedule_shift: 1.0`). Este valor distribuye los pasos de muestreo entre los niveles de ruido.
+
+### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
+
+Lista JSON de capas del transformador, con índices desde cero, omitidas en la rama negativa de CFG de MOSS-Image. Predeterminado: **[22]**, según la receta del proyecto. Usa `[]` para CFG estándar. Los índices van de 0 a 41. La rama positiva se configura por separado con `validation_guidance_skip_layers` y `validation_guidance_skip_scale`.
 
 ### `--krea2_reference_latents` {#--krea2_reference_latents}
 
@@ -2058,7 +2098,11 @@ Las opciones anteriores aplican en su mayor parte a `config.json`, pero algunas 
 
 Este es un resumen básico pensado para ayudarte a empezar. Para una lista completa de opciones y explicaciones más detalladas, consulta la especificación completa:
 
-```
+## Referencia de la línea de comandos
+
+### Uso
+
+```text
 usage: train.py [-h] --model_family
                 {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo}
                 [--model_flavour MODEL_FLAVOUR] [--controlnet [CONTROLNET]]
@@ -2067,7 +2111,7 @@ usage: train.py [-h] --model_family
                 --model_type {full,lora} [--seed SEED]
                 [--resolution RESOLUTION]
                 [--resume_from_checkpoint RESUME_FROM_CHECKPOINT]
-                [--prediction_type {epsilon,v_prediction,sample,flow_matching}]
+                [--prediction_type {epsilon,v_prediction,sample,flow_matching,flow_map}]
                 [--pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH]
                 [--vae_dtype {default,fp32,fp16,bf16}]
                 [--vae_cache_ondemand [VAE_CACHE_ONDEMAND]]
@@ -2212,7 +2256,7 @@ usage: train.py [-h] --model_family
                 [--sd3_t5_uncond_behaviour {empty_string,zero}]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 [--mixed_precision {no,fp16,bf16,fp8}]
-                [--attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,metal-flash-attention,metal-flash-attention-int8,metal-flash-attention-int4,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}]
+                [--attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,kohaku-fa,kohaku-fa-auto,metal-flash-attention,metal-flash-attention-int8,metal-flash-attention-int4,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}]
                 [--sageattention_usage {training,inference,training+inference}]
                 [--disable_tf32 [DISABLE_TF32]]
                 [--set_grads_to_none [SET_GRADS_TO_NONE]]
@@ -2303,6 +2347,7 @@ usage: train.py [-h] --model_family
                 [--model_card_private [MODEL_CARD_PRIVATE]]
                 [--model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]]
                 [--model_card_note MODEL_CARD_NOTE]
+                [--model_card_base_model MODEL_CARD_BASE_MODEL]
                 [--modelspec_comment MODELSPEC_COMMENT]
                 [--report_to {simpletuner,tensorboard,wandb,swanlab,comet_ml,custom-tracker,none}]
                 [--checkpoint_step_interval CHECKPOINT_STEP_INTERVAL]
@@ -2339,6 +2384,11 @@ usage: train.py [-h] --model_family
 
 The following SimpleTuner command-line options are available:
 
+```
+
+### Argumentos
+
+```text
 options:
   -h, --help            show this help message and exit
   --model_family {kolors,auraflow,omnigen,flux,deepfloyd,cosmos2image,sana,qwen_image,pixart_sigma,sdxl,sd1x,sd2x,wan,hidream,sd3,lumina2,ltxvideo,ace_step,heartmula}
@@ -2370,7 +2420,7 @@ options:
                         Resolution for training images
   --resume_from_checkpoint RESUME_FROM_CHECKPOINT
                         Select checkpoint to resume training from
-  --prediction_type {epsilon,v_prediction,sample,flow_matching}
+  --prediction_type {epsilon,v_prediction,sample,flow_matching,flow_map}
                         The parameterization type for the diffusion model
   --pretrained_vae_model_name_or_path PRETRAINED_VAE_MODEL_NAME_OR_PATH
                         Path to pretrained VAE model
@@ -2732,7 +2782,7 @@ options:
                         Sigma data for soft min SNR weighting
   --mixed_precision {no,fp16,bf16,fp8}
                         Precision for training computations
-  --attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,metal-flash-attention,metal-flash-attention-int8,metal-flash-attention-int4,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}
+  --attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,kohaku-fa,kohaku-fa-auto,metal-flash-attention,metal-flash-attention-int8,metal-flash-attention-int4,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}
                         Attention computation backend
   --sageattention_usage {training,inference,training+inference}
                         When to use SageAttention
@@ -3046,6 +3096,8 @@ options:
   --model_card_safe_for_work [MODEL_CARD_SAFE_FOR_WORK]
                         Remove the default NSFW warning from the generated
                         model card on Hugging Face Hub.
+  --model_card_base_model MODEL_CARD_BASE_MODEL
+                        Base repository for model-card metadata when training from a local checkpoint.
   --model_card_note MODEL_CARD_NOTE
                         Optional note that appears at the top of the generated
                         model card.

@@ -136,14 +136,27 @@ class TextEmbeddingCache(WebhookMixin):
                 normalized = f"{dataset_id}:{canonicalize_data_uri(data_path)}"
         return normalized
 
-    def create_hash(self, key_value, prompt=None):
+    def create_hash(self, key_value, prompt=None, metadata=None):
         normalized_key = self._normalize_key_value(key_value)
+        model = self.model if self.model is not None else StateTracker.get_model()
         # Precomputed part of the format string
         hash_format = f"-{self.model_type}"
 
         # Reuse the hash object
         md5_hash = hashlib.md5()
+        namespace_fn = getattr(model, "text_embed_cache_namespace", None)
+        if namespace_fn is not None:
+            namespace = namespace_fn()
+            if namespace:
+                md5_hash.update(namespace.encode())
+                md5_hash.update(b"\0")
         md5_hash.update(str(normalized_key).encode())
+        context_key_fn = getattr(model, "text_embed_cache_context_key", None)
+        if context_key_fn is not None:
+            context_key = context_key_fn(metadata or {}, prompt=prompt)
+            if context_key:
+                md5_hash.update(b"\0context\0")
+                md5_hash.update(context_key.encode())
         # Path keys preserve sample context but are shared by multiline caption alternatives.
         if self._requires_path_based_keys and prompt:
             md5_hash.update(b"\0prompt\0")
@@ -177,12 +190,14 @@ class TextEmbeddingCache(WebhookMixin):
         key_value = self._resolve_cache_key_value(prompt_record)
         return os.path.join(
             self.cache_dir,
-            self.create_hash(key_value, prompt=prompt_record.get("prompt")) + ".pt",
+            self.create_hash(key_value, prompt=prompt_record.get("prompt"), metadata=prompt_record.get("metadata")) + ".pt",
         )
 
     def hash_prompt(self, prompt_record: PromptCacheRecord):
         key_value = prompt_record.get("key") or prompt_record.get("prompt")
-        return self.create_hash(key_value, prompt=prompt_record.get("prompt")) + ".pt"
+        return (
+            self.create_hash(key_value, prompt=prompt_record.get("prompt"), metadata=prompt_record.get("metadata")) + ".pt"
+        )
 
     def _normalize_prompt_records(self, prompts: Optional[Sequence[Any]]) -> List[PromptCacheRecord]:
         normalized: List[PromptCacheRecord] = []

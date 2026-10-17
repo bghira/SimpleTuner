@@ -906,7 +906,9 @@ def collate_fn(batch):
             requires_conditioning_latents = (
                 model.requires_conditioning_latents() or is_i2v_data or _flow_dpo_requires_reference_latents()
             )
-            needs_reference_pixels = getattr(model, "requires_text_embed_image_context", lambda: False)()
+            needs_reference_pixels = getattr(
+                model, "requires_text_embed_conditioning_pixels", model.requires_text_embed_image_context
+            )()
 
             # Combine reference and untyped backends for latent/pixel collection
             # Untyped backends are processed like reference backends for backwards compatibility
@@ -1080,6 +1082,18 @@ def collate_fn(batch):
                     "prompt": prompt,
                     "dataset_relative_path": normalized_identifier,
                 }
+                if conditioning_examples:
+                    reference_paths, reference_backend_ids = [], []
+                    for reference_backend in reference_backends + untyped_backends:
+                        backend_id = reference_backend["id"]
+                        pairs = conditioning_pairs_by_backend[backend_id]
+                        for sample, _, paired_example in pairs:
+                            if paired_example is example:
+                                reference_paths.append(sample.image_path(basename_only=False))
+                                reference_backend_ids.append(backend_id)
+                    if reference_paths:
+                        prompt_metadata["image_paths"] = reference_paths
+                        prompt_metadata["data_backend_ids"] = reference_backend_ids
                 if callable(metadata_builder):
                     prompt_metadata.update(
                         metadata_builder(
@@ -1100,10 +1114,14 @@ def collate_fn(batch):
             # we can still use it for text embedding context.)
             has_multiple_combined_refs = len(conditioning_backends) > 1 and is_combined_mode
             pixel_value = None
-            if not has_multiple_combined_refs:
+            if (
+                not has_multiple_combined_refs
+                and getattr(model, "requires_text_embed_conditioning_pixels", model.requires_text_embed_image_context)()
+            ):
                 pixel_value = _conditioning_pixel_value_for_example(idx)
                 if pixel_value is not None:
                     metadata["conditioning_pixel_values"] = pixel_value
+                    metadata["conditioning_pixel_values_range"] = (0.0, 1.0)
             if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME and example_backend_id and example_path:
                 default_key = f"{example_backend_id}:{normalized_identifier}"
             elif key_type is TextEmbedCacheKey.FILENAME and example_path:

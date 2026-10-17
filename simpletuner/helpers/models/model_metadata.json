@@ -133,6 +133,13 @@
         "name": "Flux.2",
         "prediction_type": "flow_matching"
     },
+    "flux3_image": {
+        "class_name": "Flux3Image",
+        "flavour_choices": ["klein-base", "klein"],
+        "module_path": "simpletuner.helpers.models.flux3_image.model",
+        "name": "FLUX.3 Image Klein",
+        "prediction_type": "flow_matching"
+    },
     "heartmula": {
         "class_name": "HeartMuLa",
         "flavour_choices": [
@@ -326,6 +333,16 @@
         ],
         "module_path": "simpletuner.helpers.models.minimaxmusic.model",
         "name": "MiniMax Music 3",
+        "prediction_type": "flow_matching"
+    },
+    "moss_image": {
+        "class_name": "MOSSImage",
+        "flavour_choices": [
+            "base",
+            "sft"
+        ],
+        "module_path": "simpletuner.helpers.models.moss_image.model",
+        "name": "MOSS-Image",
         "prediction_type": "flow_matching"
     },
     "omnigen": {

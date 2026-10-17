@@ -41,6 +41,9 @@ from simpletuner.helpers.models.foundation_mixins import (
     VaeLatentScalingMixin,
     VideoTransformMixin,
 )
+from simpletuner.helpers.models.json_schema import JSONSchemaConverter
+from simpletuner.helpers.models.prediction import PredictionTypes
+from simpletuner.helpers.models.prompt_upsampling import ImagePromptUpsamplingMixin
 from simpletuner.helpers.models.tae import load_tae_decoder
 from simpletuner.helpers.models.xm_mixin import ExplorativeModelingMixin
 from simpletuner.helpers.scheduled_sampling import build_rollout_schedule
@@ -363,29 +366,6 @@ class PipelineTypes(Enum):
     IMG2VIDEO = "img2video"
     CONTROLNET = "controlnet"
     CONTROL = "control"
-
-
-class PredictionTypes(Enum):
-    EPSILON = "epsilon"
-    SAMPLE = "sample"
-    V_PREDICTION = "v_prediction"
-    FLOW_MATCHING = "flow_matching"
-    AUTOREGRESSIVE_NEXT_TOKEN = "autoregressive_next_token"
-
-    @staticmethod
-    def from_str(label):
-        if label in ("eps", "epsilon"):
-            return PredictionTypes.EPSILON
-        elif label in ("vpred", "v_prediction", "v-prediction"):
-            return PredictionTypes.V_PREDICTION
-        elif label in ("sample", "x_prediction", "x-prediction"):
-            return PredictionTypes.SAMPLE
-        elif label in ("flow", "flow_matching", "flow-matching"):
-            return PredictionTypes.FLOW_MATCHING
-        elif label in ("ar", "autoregressive", "autoregressive_next_token"):
-            return PredictionTypes.AUTOREGRESSIVE_NEXT_TOKEN
-        else:
-            raise NotImplementedError
 
 
 class ModelTypes(Enum):
@@ -1388,12 +1368,44 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         """
         return TextEmbedCacheKey.CAPTION
 
+    def get_json_schema_converter(self) -> Optional[JSONSchemaConverter]:
+        return None
+
+    def convert_prompts_to_json(self, text_batch, *, is_negative_prompt=False, prompt_contexts=None):
+        converter = self.get_json_schema_converter()
+        if converter is not None and (not is_negative_prompt or converter.CONVERT_NEGATIVE_PROMPTS):
+            if prompt_contexts is not None and len(prompt_contexts) != len(text_batch):
+                raise ValueError("Prompt context must contain one entry per prompt.")
+            contexts = prompt_contexts if prompt_contexts is not None else [{} for _ in text_batch]
+            text_batch = [
+                converter.convert(prompt, height=(context or {}).get("height"), width=(context or {}).get("width"))
+                for prompt, context in zip(text_batch, contexts)
+            ]
+        return text_batch
+
+    def text_embed_cache_namespace(self) -> Optional[str]:
+        converter = self.get_json_schema_converter()
+        return f"json-schema:{converter.SCHEMA_ID}" if converter is not None else None
+
+    def text_embed_cache_context_key(self, metadata: dict, *, prompt=None) -> Optional[str]:
+        return None
+
+    def requires_text_embed_resolution_context(self) -> bool:
+        return False
+
+    def validation_prompt_image_context(self, original_image, prepared_image):
+        return prepared_image
+
     def requires_text_embed_image_context(self) -> bool:
         """
         Returns True when encode_text_batch must be supplied with per-prompt image
         context (e.g., reference pixels). Defaults to False.
         """
         return False
+
+    def requires_text_embed_conditioning_pixels(self) -> bool:
+        """Whether collate must prepare reference tensors in addition to image paths."""
+        return self.requires_text_embed_image_context()
 
     def requires_conditioning_latents(self) -> bool:
         """
@@ -4386,6 +4398,16 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         When we're running the pipeline, we'll update the kwargs specifically for this model here.
         """
 
+        converter = self.get_json_schema_converter()
+        prompt = pipeline_kwargs.get("prompt")
+        if converter is not None and prompt is not None:
+            pipeline_kwargs = dict(pipeline_kwargs)
+            kwargs = {key: pipeline_kwargs.get(key) for key in ("height", "width")}
+            pipeline_kwargs["prompt"] = (
+                [converter.convert(item, **kwargs) for item in prompt]
+                if isinstance(prompt, list)
+                else converter.convert(prompt, **kwargs)
+            )
         return pipeline_kwargs
 
     def run_multistage_validation(
@@ -4422,7 +4444,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
             self.noise_schedule = None
             return self.config, None
         flow_matching = False
-        if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
+        if self.PREDICTION_TYPE.is_flow_prediction:
             from diffusers import FlowMatchEulerDiscreteScheduler
 
             self.noise_schedule = FlowMatchEulerDiscreteScheduler.from_pretrained(
@@ -4538,7 +4560,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         if prepared_batch.get("target") is not None:
             # Parent-student training
             target = prepared_batch["target"]
-        elif self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
+        elif self.PREDICTION_TYPE.is_flow_prediction:
             target = self.get_flow_matching_target(prepared_batch, prefer_explicit_target=False)
         elif self.PREDICTION_TYPE is PredictionTypes.EPSILON:
             target = prepared_batch["noise"]
@@ -4862,7 +4884,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
     def validate_mixflow_config(self) -> None:
         if not self._mixflow_enabled():
             return
-        if self.PREDICTION_TYPE is not PredictionTypes.FLOW_MATCHING:
+        if not self.PREDICTION_TYPE.is_flow_prediction:
             raise ValueError("mixflow_enabled requires a flow-matching model family.")
         self._mixflow_gamma()
 
@@ -5057,7 +5079,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         if not getattr(self.config, "twinflow_enabled", False):
             return
 
-        prediction_is_flow = self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING
+        prediction_is_flow = self.PREDICTION_TYPE.is_flow_prediction
         allow_diff2flow = bool(getattr(self.config, "twinflow_allow_diff2flow", False))
         uses_diff2flow = bool(getattr(self.config, "diff2flow_enabled", False))
         if not prediction_is_flow:
@@ -5329,7 +5351,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         if getattr(self.config, "scheduled_sampling_reflexflow", None) is not None:
             return False
 
-        if self.PREDICTION_TYPE is not PredictionTypes.FLOW_MATCHING:
+        if not self.PREDICTION_TYPE.is_flow_prediction:
             return False
 
         setattr(self.config, "scheduled_sampling_reflexflow", True)
@@ -5341,7 +5363,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         """
         if not getattr(self.config, "twinflow_enabled", False):
             return False
-        if self.PREDICTION_TYPE is not PredictionTypes.FLOW_MATCHING and not self._twinflow_diffusion_bridge:
+        if not self.PREDICTION_TYPE.is_flow_prediction and not self._twinflow_diffusion_bridge:
             raise ValueError(
                 "TwinFlow is only supported for flow-matching models. Enable diff2flow bridging explicitly "
                 "to run with epsilon/v_prediction targets."
@@ -5905,7 +5927,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         else:
             batch["input_noise"] = noise
 
-        if self.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
+        if self.PREDICTION_TYPE.is_flow_prediction:
             if self.diffusion_blocks_controller is not None:
                 batch["sigmas"], batch["timesteps"] = self._sample_diffusion_blocks_flow_batch(batch=batch, state=state)
             else:
@@ -5991,6 +6013,9 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         """
         if not self.TEXT_ENCODER_CONFIGURATION:
             raise ValueError("No text encoder configuration found.")
+        text_batch = self.convert_prompts_to_json(
+            text_batch, is_negative_prompt=is_negative_prompt, prompt_contexts=prompt_contexts
+        )
         previous_context = getattr(self, "_current_prompt_contexts", None)
         self._current_prompt_contexts = prompt_contexts
         try:
@@ -6058,14 +6083,16 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         Returns:
             Dictionary of encoded negative prompt embeddings
         """
-        return self._encode_prompts([negative_prompt], is_negative_prompt=True)
+        prompts = self.convert_prompts_to_json([negative_prompt], is_negative_prompt=True)
+        return self._encode_prompts(prompts, is_negative_prompt=True)
 
     @torch.no_grad()
     def encode_dropout_caption(self, positive_prompt_embeds: dict = None):
         """
         Encode a null/empty prompt for caption dropout. Models with custom behaviour can override.
         """
-        encoded_text = self._encode_prompts([""], is_negative_prompt=False)
+        prompts = self.convert_prompts_to_json([""], is_negative_prompt=False)
+        encoded_text = self._encode_prompts(prompts, is_negative_prompt=False)
         return self._format_text_embedding(encoded_text)
 
     def conditional_loss(
@@ -6139,7 +6166,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
 
         elif huber_schedule == "snr":
             # SNR-based scheduling
-            if self.PREDICTION_TYPE == PredictionTypes.FLOW_MATCHING:
+            if self.PREDICTION_TYPE.is_flow_prediction:
                 sigmas = timesteps / 1000
                 sigmas = ((1.0 - sigmas) / (sigmas + 0.0001)) ** 0.5
             else:
@@ -6185,7 +6212,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
             if flow_target is None:
                 raise ValueError("Flow target is None while diff2flow_loss is enabled.")
             loss = F.mse_loss(flow_pred.float(), flow_target.float(), reduction="none")
-        elif self.PREDICTION_TYPE == PredictionTypes.FLOW_MATCHING:
+        elif self.PREDICTION_TYPE.is_flow_prediction:
             # Check if we're using Huber or smooth L1 loss
             if loss_type in ["huber", "smooth_l1"]:
                 # Get timesteps for the batch
@@ -6568,7 +6595,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         return total_twin_loss, log_payload
 
 
-class ImageModelFoundation(PipelineSupportMixin, VaeLatentScalingMixin, ModelFoundation):
+class ImageModelFoundation(ImagePromptUpsamplingMixin, PipelineSupportMixin, VaeLatentScalingMixin, ModelFoundation):
     """
     Implements logic common to image-based diffusion models.
     Handles typical VAE, text encoder loading and a UNet forward pass.

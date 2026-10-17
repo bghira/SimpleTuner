@@ -65,12 +65,6 @@ def _python_tag() -> str:
 
 
 PYTORCH_DEPENDENCIES = [
-    "torch>=2.11.0",
-    "torchvision>=0.26.0",
-    "torchaudio>=2.11.0",
-]
-
-APPLE_PYTORCH_DEPENDENCIES = [
     "torch>=2.13.0",
     "torchvision>=0.28.0",
     "torchaudio>=2.11.0",
@@ -127,7 +121,7 @@ def build_triton_wheel_url(version: str, base_url: str) -> str:
     return f"triton @ {base_url}/{filename}"
 
 
-VLLM_TORCH_211_DEPENDENCY = "vllm>=0.20.0,<0.26.0"
+CAPTIONING_DEPENDENCIES = ["caption-flow[vllm]>=0.5.7"]
 
 
 def get_cuda13_dependencies():
@@ -214,7 +208,7 @@ def get_rocm_dependencies():
 
 def get_apple_dependencies():
     return [
-        *APPLE_PYTORCH_DEPENDENCIES,
+        *PYTORCH_DEPENDENCIES,
         TORCHAO_DEPENDENCY,
     ]
 
@@ -223,16 +217,6 @@ def get_cpu_dependencies():
     return [
         *PYTORCH_DEPENDENCIES,
         TORCHAO_DEPENDENCY,
-    ]
-
-
-def get_captioning_cuda13_dependencies():
-    """CaptionFlow dependencies with a vLLM release compatible with the PyTorch 2.11 stack."""
-    return [
-        "caption-flow>=0.5.2",
-        "numpy>=2.2.0,<2.3.0",
-        "transformers>=5.5.1,<6.0.0",
-        VLLM_TORCH_211_DEPENDENCY,
     ]
 
 
@@ -361,9 +345,10 @@ _is_building_dist = any(arg in sys.argv for arg in ("bdist_wheel", "sdist", "bui
 # Optional extras
 extras_require = {
     "jxl": ["pillow-jxl-plugin>=1.3.1"],
-    "captioning": ["caption-flow[vllm]>=0.5.2"],
-    "captioning-cuda13": get_captioning_cuda13_dependencies(),
-    "cuda13-captioning": get_captioning_cuda13_dependencies(),
+    "attention-cute": ["nvidia-cutlass-dsl>=4.8,<4.9", "apache-tvm-ffi>=0.1.14,<0.2", "ninja>=1.11"],
+    "captioning": list(CAPTIONING_DEPENDENCIES),
+    "captioning-cuda13": list(CAPTIONING_DEPENDENCIES),
+    "cuda13-captioning": list(CAPTIONING_DEPENDENCIES),
     "transformerengine": [TRANSFORMERENGINE_DEPENDENCY],
     "transformerengine-cuda13": [
         TRANSFORMERENGINE_DEPENDENCY,

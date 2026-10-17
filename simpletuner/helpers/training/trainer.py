@@ -237,7 +237,7 @@ from diffusers.utils.import_utils import is_xformers_available
 from peft.utils import get_peft_model_state_dict
 from tqdm.auto import tqdm
 
-from simpletuner.helpers.models.common import ImageModelFoundation, PredictionTypes, VideoModelFoundation
+from simpletuner.helpers.models.common import ImageModelFoundation, VideoModelFoundation
 from simpletuner.helpers.training.ema import EMAModel
 
 is_optimi_available = False
@@ -358,6 +358,9 @@ class Trainer:
             self.model.check_user_config()
             self.model.validate_mixflow_config()
             StateTracker.set_model(self.model)
+            fsdp_plugin = getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None)
+            if getattr(self.config, "fsdp_enable", False) and fsdp_plugin is not None:
+                self._configure_fsdp_model_metadata(fsdp_plugin)
             if getattr(self.config, "optimizer", None) == "muon":
                 if not getattr(self.model, "SUPPORTS_MUON_CLIP", False):
                     raise ValueError(
@@ -1421,6 +1424,24 @@ class Trainer:
         )
         plugin = FullyShardedDataParallelPlugin(**plugin_kwargs)
 
+        self._fsdp_configured_transformer_cls = getattr(plugin, "transformer_cls_names_to_wrap", None)
+        self._configure_fsdp_model_metadata(plugin)
+
+        if resolved_state_dict_display:
+            setattr(plugin, "_state_dict_type_enum", plugin.state_dict_type)
+            setattr(plugin, "state_dict_type_display", resolved_state_dict_display)
+            plugin.state_dict_type = resolved_state_dict_display
+
+        if auto_wrap_policy and callable(getattr(plugin, "auto_wrap_policy", None)):
+            setattr(plugin, "_auto_wrap_policy_callable", plugin.auto_wrap_policy)
+            setattr(plugin, "auto_wrap_policy_display", auto_wrap_policy)
+            plugin.auto_wrap_policy = auto_wrap_policy
+
+        return plugin
+
+    def _configure_fsdp_model_metadata(self, plugin):
+        """Refresh wrapping hints after model selection without rebuilding the execution plugin."""
+
         def _normalize_candidate_names(raw_names: Any) -> Optional[List[str]]:
             if not raw_names:
                 return None
@@ -1437,20 +1458,24 @@ class Trainer:
                     normalized.append(candidate)
             return normalized or None
 
-        original_plugin_names = _normalize_candidate_names(getattr(plugin, "transformer_cls_names_to_wrap", None))
+        original_plugin_names = _normalize_candidate_names(self._fsdp_configured_transformer_cls)
         plugin_names = original_plugin_names
-        plugin_names_origin = "config" if parsed_transformer_cls else None
+        plugin_names_origin = "config" if original_plugin_names else None
 
         model_instance = getattr(self, "model", None)
         model_family = getattr(self.config, "model_family", None)
         model_family_cls = ModelRegistry.get(model_family) if model_family else None
+
+        metadata_source = model_instance if model_instance is not None else model_family_cls
+        selected_model_cls = getattr(metadata_source, "MODEL_CLASS", None)
 
         component = None
         candidate_names: Optional[List[str]] = None
         candidate_source = None
 
         if model_instance is not None:
-            component = model_instance.get_trained_component(unwrap_model=False)
+            if getattr(model_instance, "model", None) is not None or getattr(model_instance, "controlnet", None) is not None:
+                component = model_instance.get_trained_component(unwrap_model=False)
             candidate_names = _normalize_candidate_names(getattr(component, "_no_split_modules", None))
             if candidate_names:
                 candidate_source = "instance"
@@ -1459,10 +1484,10 @@ class Trainer:
                 if candidate_names:
                     candidate_source = "instance"
 
-        if candidate_names is None and model_family_cls is not None:
-            class_level_candidates = _normalize_candidate_names(getattr(model_family_cls, "_no_split_modules", None))
+        if candidate_names is None and metadata_source is not None:
+            class_level_candidates = _normalize_candidate_names(getattr(metadata_source, "_no_split_modules", None))
             if not class_level_candidates:
-                transformer_cls = getattr(model_family_cls, "MODEL_CLASS", None)
+                transformer_cls = selected_model_cls
                 if transformer_cls is not None:
                     class_level_candidates = _normalize_candidate_names(getattr(transformer_cls, "_no_split_modules", None))
                     if class_level_candidates is None:
@@ -1486,7 +1511,7 @@ class Trainer:
                 component,
                 model_instance,
                 model_family_cls,
-                getattr(model_family_cls, "MODEL_CLASS", None) if model_family_cls else None,
+                selected_model_cls,
             ]
             for source in sources:
                 if source is None:
@@ -1534,7 +1559,7 @@ class Trainer:
         if component is not None:
             base_component_name = component.__class__.__name__
         elif model_family_cls is not None:
-            transformer_cls = getattr(model_family_cls, "MODEL_CLASS", None)
+            transformer_cls = selected_model_cls
             if transformer_cls is not None:
                 base_component_name = transformer_cls.__name__
 
@@ -1640,17 +1665,6 @@ class Trainer:
             )
             plugin.cpu_ram_efficient_loading = False
             setattr(self.config, "fsdp_cpu_ram_efficient_loading", False)
-        if resolved_state_dict_display:
-            setattr(plugin, "_state_dict_type_enum", plugin.state_dict_type)
-            setattr(plugin, "state_dict_type_display", resolved_state_dict_display)
-            plugin.state_dict_type = resolved_state_dict_display
-
-        if auto_wrap_policy and callable(getattr(plugin, "auto_wrap_policy", None)):
-            setattr(plugin, "_auto_wrap_policy_callable", plugin.auto_wrap_policy)
-            setattr(plugin, "auto_wrap_policy_display", auto_wrap_policy)
-            plugin.auto_wrap_policy = auto_wrap_policy
-
-        return plugin
 
     @staticmethod
     def _prepare_fsdp_plugin_for_accelerator(fsdp_plugin: FullyShardedDataParallelPlugin) -> FullyShardedDataParallelPlugin:
@@ -2095,13 +2109,11 @@ class Trainer:
     def init_noise_schedule(self):
         if self.model is None:
             return
-        from simpletuner.helpers.models.common import PredictionTypes
-
         if not self.model.uses_noise_schedule():
             self.config.flow_matching = False
             self.noise_scheduler = None
             return
-        self.config.flow_matching = True if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING else False
+        self.config.flow_matching = self.model.PREDICTION_TYPE.is_flow_prediction
         self.noise_scheduler = self._get_noise_schedule()
 
     def configure_webhook(self, send_startup_message: bool = True, raw_config: str = None):
@@ -4498,6 +4510,9 @@ class Trainer:
             )
         )
         primary_model = self.model.get_trained_component(unwrap_model=False)
+        if self.lycoris_wrapped_network is not None:
+            # DDP and FSDP2 only wrap, reduce and remap the prepared module's parameters.
+            primary_model.add_module("lycoris_wrapped_network", self.lycoris_wrapped_network)
         if hasattr(self.model, "before_accelerator_prepare"):
             self.model.before_accelerator_prepare()
         self.model_hooks.validate_fsdp2_pipeline_export()
@@ -5210,10 +5225,7 @@ class Trainer:
         self.state["current_epoch"] = self.state["first_epoch"]
         StateTracker.set_epoch(self.state["current_epoch"])
         if hasattr(lr_scheduler, "last_epoch"):
-            lr_scheduler.last_epoch = (
-                training_state_in_ckpt.get("epoch_step", self.state.get("global_resume_step", 1))
-                * self.accelerator.num_processes
-            )
+            lr_scheduler.last_epoch = self.state["global_resume_step"] * self.accelerator.num_processes
 
         if self.state["current_epoch"] > self.config.num_train_epochs + 1 and self.config.strict_epoch_limit:
             logger.info(
@@ -6368,7 +6380,7 @@ class Trainer:
         if not (torch.is_tensor(latents) and torch.is_tensor(noise)):
             return overridden_batch
 
-        if self.model.PREDICTION_TYPE is PredictionTypes.FLOW_MATCHING:
+        if self.model.PREDICTION_TYPE.is_flow_prediction:
             sigma_values = custom_timesteps_tensor.to(device=latents.device, dtype=latents.dtype)
             max_timestep = float(getattr(self.noise_scheduler.config, "num_train_timesteps", 1000) or 1000)
             if torch.max(sigma_values) > 1.0:
@@ -7255,8 +7267,11 @@ class Trainer:
                                         else:
                                             raise
                                 elif self.config.grad_clip_method == "value":
-                                    logger.warning(
-                                        "FSDP does not support grad_clip_method='value'. Skipping gradient clipping."
+                                    # FSDP2 gradients are DTensor shards; the elementwise clamp is shard-local.
+                                    self.accelerator.unscale_gradients()
+                                    torch.nn.utils.clip_grad_value_(
+                                        self._get_trainable_parameters(),
+                                        self.config.max_grad_norm,
                                     )
                                 else:
                                     raise ValueError(
@@ -7678,6 +7693,7 @@ class Trainer:
         validation_images = None
         validation_audios = None
         final_lora_save_kwargs = None
+        final_lycoris_state_dict = None
         fsdp_plugin = getattr(getattr(self.accelerator, "state", None), "fsdp_plugin", None)
         is_fsdp2_full_model_save = (
             self.config.model_type == "full"
@@ -7686,6 +7702,9 @@ class Trainer:
         )
         fsdp2_model_for_save = None
         fsdp2_pipeline_export_spec = None
+        if "lora" in self.config.model_type and getattr(self.accelerator, "is_fsdp2", False):
+            # FSDP2 leaves the root group unsharded after validation's forward.
+            self.model.get_trained_component(unwrap_model=False).reshard()
         if "lora" in self.config.model_type and "standard" == self.config.lora_type.lower():
             from simpletuner.helpers.training.save_hooks import _materialize_state_dict_for_save
 
@@ -7713,6 +7732,14 @@ class Trainer:
 
             if self.config.fsdp_enable:
                 self.accelerator.wait_for_everyone()
+        elif (
+            "lora" in self.config.model_type
+            and "lycoris" == self.config.lora_type.lower()
+            and getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None
+        ):
+            from simpletuner.helpers.training.save_hooks import _materialize_lycoris_state_dict_for_save
+
+            final_lycoris_state_dict = _materialize_lycoris_state_dict_for_save(self.accelerator._lycoris_wrapped_network)
 
         with self._fsdp2_full_export_failure_guard(is_fsdp2_full_model_save):
             if is_fsdp2_full_model_save:
@@ -7797,12 +7824,14 @@ class Trainer:
                     if self.accelerator.is_main_process or self.config.use_deepspeed_optimizer:
                         logger.info(f"Saving final LyCORIS checkpoint to {self.config.output_dir}")
                         # Save final LyCORIS checkpoint.
-                        if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
+                        if final_lycoris_state_dict is not None:
+                            from safetensors.torch import save_file
+
                             from simpletuner.helpers.publishing.huggingface import LORA_SAFETENSORS_FILENAME
 
-                            self.accelerator._lycoris_wrapped_network.save_weights(
+                            save_file(
+                                final_lycoris_state_dict,
                                 os.path.join(self.config.output_dir, LORA_SAFETENSORS_FILENAME),
-                                list(self.accelerator._lycoris_wrapped_network.parameters())[0].dtype,
                                 {"lycoris_config": json.dumps(self.lycoris_config)},  # metadata
                             )
                             shutil.copy2(
@@ -8054,6 +8083,9 @@ def run_trainer_job(config):
         if not tokens:
             return None
         if len(tokens) == 1 and tokens[0].lower() in {"all", "none", "void"}:
+            return None
+        # Container device-list paths are not CUDA device identifiers.
+        if any(token.startswith("/") for token in tokens):
             return None
         return ",".join(tokens)
 

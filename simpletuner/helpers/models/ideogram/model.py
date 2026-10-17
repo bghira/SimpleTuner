@@ -20,8 +20,8 @@ from simpletuner.helpers.models.ideogram.pipeline import (
     _load_indexed_or_single_state_dict,
     _load_qwen3_vl,
 )
-from simpletuner.helpers.models.ideogram.prompt_enhancer import Ideogram4PromptEnhancerHead
-from simpletuner.helpers.models.ideogram.prompting import maybe_convert_prompt_to_ideogram_json
+from simpletuner.helpers.models.ideogram.prompt_enhancer import Ideogram4PromptEnhancerHead, IdeogramPromptUpsampler
+from simpletuner.helpers.models.ideogram.prompting import Ideogram4JSONSchemaConverter
 from simpletuner.helpers.models.ideogram.quantized_loading import dequantize_fp8_state_dict, is_fp8_state_dict
 from simpletuner.helpers.models.ideogram.scheduler import get_schedule_for_resolution
 from simpletuner.helpers.models.ideogram.text_projection import Ideogram4TextProjection, Ideogram4TextProjectionConfig
@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 class Ideogram4(ImageModelFoundation):
     NAME = "Ideogram 4"
+    PROMPT_UPSAMPLING_CONFIG_KEY = "ideogram_prompt_upsample"
     MODEL_DESCRIPTION = "Ideogram 4 conditional transformer"
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
@@ -168,8 +169,6 @@ class Ideogram4(ImageModelFoundation):
         )
         self.tokenizers = [tokenizer]
         self.text_encoders = [text_encoder]
-        if getattr(self.config, "ideogram_prompt_upsample", False):
-            self.load_prompt_enhancer_head(move_to_device=move_to_device)
         return text_encoder
 
     def load_prompt_enhancer_head(self, move_to_device: bool = True):
@@ -213,12 +212,13 @@ class Ideogram4(ImageModelFoundation):
         self.pipeline = pipeline
         return pipeline
 
+    def get_json_schema_converter(self):
+        return Ideogram4JSONSchemaConverter() if getattr(self.config, "ideogram_auto_json", True) else None
+
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
+        pipeline_kwargs = super().update_pipeline_call_kwargs(pipeline_kwargs)
         if "prompt" in pipeline_kwargs and pipeline_kwargs["prompt"] is not None:
-            pipeline_kwargs["prompts"] = maybe_convert_prompt_to_ideogram_json(
-                pipeline_kwargs.pop("prompt"),
-                enabled=getattr(self.config, "ideogram_auto_json", True),
-            )
+            pipeline_kwargs["prompts"] = pipeline_kwargs.pop("prompt")
         elif pipeline_kwargs.get("prompt") is None:
             pipeline_kwargs.pop("prompt", None)
         pipeline_kwargs.pop("negative_prompt", None)
@@ -233,50 +233,23 @@ class Ideogram4(ImageModelFoundation):
         pipeline_kwargs.setdefault("raise_on_caption_issues", False)
         return pipeline_kwargs
 
-    def _prompt_upsample_resolution(self) -> tuple[int, int]:
-        resolution = (
-            getattr(self.config, "resolution", None)
-            or getattr(self.config, "validation_resolution", None)
-            or getattr(self.config, "maximum_image_size", None)
-            or "1024x1024"
+    def create_prompt_upsampler(self):
+        if getattr(self, "prompt_enhancer_head", None) is None:
+            self.load_prompt_enhancer_head()
+        return IdeogramPromptUpsampler(
+            self.text_encoders[0], self.tokenizers[0], self.prompt_enhancer_head, self.accelerator.device
         )
-        if isinstance(resolution, (tuple, list)) and len(resolution) >= 2:
-            return int(resolution[0]), int(resolution[1])
-        if isinstance(resolution, int):
-            return resolution, resolution
-        if isinstance(resolution, str):
-            parts = resolution.lower().replace(",", "x").split("x")
-            if len(parts) >= 2:
-                try:
-                    return int(parts[0].strip()), int(parts[1].strip())
-                except ValueError:
-                    pass
-            try:
-                parsed = int(resolution)
-                return parsed, parsed
-            except ValueError:
-                pass
-        return 1024, 1024
 
-    def _maybe_upsample_prompt(self, prompt: str, encoder_shell: Ideogram4Pipeline) -> str:
-        if not getattr(self.config, "ideogram_prompt_upsample", False):
-            return prompt
-        if getattr(self, "prompt_enhancer_head", None) is not None and hasattr(self.prompt_enhancer_head, "to"):
-            self.prompt_enhancer_head.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
-        upsample_prompt = getattr(encoder_shell, "upsample_prompt", None)
-        if upsample_prompt is None:
-            raise ValueError("--ideogram_prompt_upsample requires an Ideogram pipeline with upsample_prompt().")
-        height, width = self._prompt_upsample_resolution()
-        upsampled = upsample_prompt(prompt, height=height, width=width, device=self.accelerator.device)
-        if isinstance(upsampled, list):
-            return upsampled[0]
-        return upsampled
+    def get_prompt_upsampler_model_id(self):
+        return getattr(self.config, "ideogram_prompt_enhancer_head_id", None) or self.DEFAULT_PROMPT_ENHANCER_HEAD
+
+    def unload_text_encoder(self):
+        self.prompt_enhancer_head = None
+        super().unload_text_encoder()
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         if getattr(self, "text_encoders", None) is None:
             self.load_text_encoder(move_to_device=True)
-        if getattr(self.config, "ideogram_prompt_upsample", False) and getattr(self, "prompt_enhancer_head", None) is None:
-            self.load_prompt_enhancer_head(move_to_device=True)
 
         tokenizer = self.tokenizers[0]
         if not getattr(self, "_logged_text_encoder_devices", False):
@@ -319,11 +292,6 @@ class Ideogram4(ImageModelFoundation):
         )
         tokenized = []
         for prompt in prompts:
-            prompt = self._maybe_upsample_prompt(str(prompt), encoder_shell)
-            prompt = maybe_convert_prompt_to_ideogram_json(
-                prompt,
-                enabled=getattr(self.config, "ideogram_auto_json", True),
-            )
             messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
             text = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
             encoded = tokenizer(text, return_tensors="pt", add_special_tokens=False)

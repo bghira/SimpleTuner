@@ -7,6 +7,7 @@ import numpy as np
 import scipy.io.wavfile
 import torch
 from diffusers.utils.export_utils import export_to_gif
+from huggingface_hub.utils import HFValidationError, validate_repo_id
 from PIL import Image
 
 from simpletuner.helpers.configuration.sanitization import make_public_config_serializable
@@ -122,7 +123,7 @@ def _validation_scheduler_label(model, args) -> str:
     if scheduler_name is None:
         scheduler_name = (
             "FlowMatchEulerDiscreteScheduler"
-            if model.PREDICTION_TYPE.value == "flow_matching"
+            if model.PREDICTION_TYPE.value in ("flow_matching", "flow_map")
             else args.validation_noise_scheduler
         )
 
@@ -137,7 +138,12 @@ def _validation_scheduler_label(model, args) -> str:
 
 def _model_imports(args):
     output = "import torch\n"
-    output += "from diffusers import DiffusionPipeline"
+    if args.model_family == "flux3_image":
+        output += "from simpletuner.helpers.models.flux3_image.pipeline import Flux3ImagePipeline as DiffusionPipeline"
+    elif args.model_family == "moss_image":
+        output += "from simpletuner.helpers.models.moss_image.pipeline import MOSSImagePipeline as DiffusionPipeline"
+    else:
+        output += "from diffusers import DiffusionPipeline"
     if "lycoris" == args.lora_type.lower() and "lora" in args.model_type:
         output += "\nfrom lycoris import create_lycoris_from_weights"
     model = StateTracker.get_model()
@@ -216,13 +222,30 @@ def _gligen_injection_code(model):
     )
 
 
-def _model_load(args, repo_id: str = None, model=None):
+def _model_card_base_model(args, base_model: str = None) -> str:
+    override = getattr(args, "model_card_base_model", None)
+    if override:
+        validate_repo_id(override)
+        return override
+    source = args.pretrained_model_name_or_path if base_model is None else base_model
+    unknown_model = f"{args.model_family}/unknown-model"
+    if os.path.exists(source):
+        return unknown_model
+    try:
+        validate_repo_id(source)
+    except HFValidationError:
+        return unknown_model
+    return source
+
+
+def _model_load(args, repo_id: str = None, model=None, base_model: str = None):
     model_component_name = _model_component_name(model)
     hf_user_name = StateTracker.get_hf_username()
     if hf_user_name is not None and repo_id and "/" not in repo_id:
         repo_id = f"{hf_user_name}/{repo_id}" if hf_user_name else repo_id
     gligen_code = _gligen_injection_code(model)
     if "lora" in args.model_type:
+        base_model = _model_card_base_model(args, base_model)
         if args.lora_type.lower() == "standard":
             lora_imports = ""
             if args.peft_lora_mode == "singlora":
@@ -232,7 +255,7 @@ def _model_load(args, repo_id: str = None, model=None):
 
             output = (
                 f"{lora_imports}"
-                f"model_id = '{args.pretrained_model_name_or_path}'"
+                f"model_id = '{base_model}'"
                 f"\nadapter_id = '{repo_id if repo_id is not None else args.output_dir}'"
                 f"\npipeline = DiffusionPipeline.from_pretrained(model_id, torch_dtype={StateTracker.get_weight_dtype()}) # loading directly in bf16"
                 f"{gligen_code}"
@@ -241,7 +264,7 @@ def _model_load(args, repo_id: str = None, model=None):
         elif args.lora_type.lower() == "lycoris":
             output = (
                 f"{lycoris_download_info()}"
-                f"\nmodel_id = '{args.pretrained_model_name_or_path}'"
+                f"\nmodel_id = '{base_model}'"
                 f"\nadapter_repo_id = '{repo_id if repo_id is not None else args.output_dir}'"
                 f"\nadapter_filename = 'pytorch_lora_weights.safetensors'"
                 f"\nadapter_file_path = download_adapter(repo_id=adapter_repo_id)"
@@ -347,7 +370,7 @@ model_output.save("output.png", format="PNG")
 """
 
 
-def code_example(args, repo_id: str = None, model=None):
+def code_example(args, repo_id: str = None, model=None, base_model: str = None):
     """Return a string with the code example."""
     # Check if model provides custom code example
     if model and hasattr(model, "custom_model_card_code_example"):
@@ -358,7 +381,7 @@ def code_example(args, repo_id: str = None, model=None):
 ```python
 {_model_imports(args)}
 
-{_model_load(args, repo_id, model=model)}
+{_model_load(args, repo_id, model=model, base_model=base_model)}
 
 prompt = "{args.validation_prompt if args.validation_prompt else 'An astronaut is riding a horse through the jungles of Thailand.'}"
 {_negative_prompt(args)}
@@ -529,6 +552,8 @@ def save_metadata_sample(
 
 
 def _model_card_family_tag(model_family: str):
+    if model_family == "moss_image":
+        return "moss-image"
     if model_family in ["ltxvideo", "ltxvideo2"]:
         # the hub has a hyphen.
         return "ltx-video" if model_family == "ltxvideo" else "ltx-2"
@@ -731,10 +756,9 @@ def save_model_card(
 ):
     if repo_folder is None:
         raise ValueError("The repo_folder must be specified and not be None.")
-    # if we have more than one '/' in the base_model, we will turn it into unknown/model
+    args = StateTracker.get_args()
     model_family = StateTracker.get_model_family()
-    if base_model.count("/") > 1:
-        base_model = f"{model_family}/unknown-model"
+    base_model = _model_card_base_model(args, base_model)
     validation_prompts = _normalize_validation_prompts(validation_prompts)
     prompts_by_shortname = dict(zip(validation_shortnames or [], validation_prompts or []))
     logger.debug(f"Validating from prompts: {validation_prompts}")
@@ -752,7 +776,6 @@ def save_model_card(
             datasets_str += _dataset_overview_for_model(model, dataset_id, dataset_backend)
     widget_str = ""
     idx = 0
-    args = StateTracker.get_args()
     negative_prompt_text = str(args.validation_negative_prompt)
     if negative_prompt_text == "":
         negative_prompt_text = "''"
@@ -918,7 +941,7 @@ The text encoder {'**was**' if train_text_encoder else '**was not**'} trained.
 
 ## Inference
 
-{code_example(args=StateTracker.get_args(), repo_id=repo_id, model=model)}
+{code_example(args=args, repo_id=repo_id, model=model, base_model=base_model)}
 
 {ema_info(args=StateTracker.get_args())}
 """

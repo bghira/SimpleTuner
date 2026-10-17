@@ -100,7 +100,7 @@
 
 | प्रकार | मॉडल |
 |------|--------|
-| **छवि** | Flux.1/2, SD3, SDXL, Chroma, Auraflow, PixArt, Sana, Lumina2, HiDream, और अधिक |
+| **छवि** | Flux.1/2, [FLUX.3 Image Klein](quickstart/FLUX3_IMAGE.hi.md), [MOSS-Image](quickstart/MOSS_IMAGE.hi.md), SD3, SDXL, Chroma, Auraflow, PixArt, Sana, Lumina2, HiDream, और अधिक |
 | **वीडियो** | Wan, LTX Video, Hunyuan Video, Kandinsky 5, LongCat |
 | **ऑडियो** | ACE-Step |
 

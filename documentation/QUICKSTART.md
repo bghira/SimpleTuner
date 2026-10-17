@@ -17,6 +17,7 @@
 | ERNIE-Image | Not specified | [ERNIE.md](/documentation/quickstart/ERNIE.md) |
 | Flux.1 | 8B-12B | [FLUX.md](/documentation/quickstart/FLUX.md)<br>[FLUX_KONTEXT.md](/documentation/quickstart/FLUX_KONTEXT.md) |
 | Flux.2 | 4B-32B | [FLUX2.md](/documentation/quickstart/FLUX2.md) |
+| Flux.3 Image Klein | 5.6B | [FLUX3_IMAGE.md](quickstart/FLUX3_IMAGE.md) |
 | HeartMuLa | 3B | [HEARTMULA.md](/documentation/quickstart/HEARTMULA.md) |
 | HiDream | 17B (8.5B MoE) | [HIDREAM.md](/documentation/quickstart/HIDREAM.md) |
 | Hunyuan Video | 8.3B | [HUNYUANVIDEO.md](/documentation/quickstart/HUNYUANVIDEO.md) |
@@ -34,6 +35,7 @@
 | Mage-Flow | 4B | [MAGEFLOW.md](/documentation/quickstart/MAGEFLOW.md) |
 | MiniMax H3 | 33B | [MINIMAX_H3.md](/documentation/quickstart/MINIMAX_H3.md) |
 | MiniMax Music 3 | 2.4B transformer + 8B AR | [MINIMAX_MUSIC.md](/documentation/quickstart/MINIMAX_MUSIC.md) |
+| MOSS-Image | 5B | [MOSS_IMAGE.md](quickstart/MOSS_IMAGE.md) |
 | OmniGen | 3.8B | [OMNIGEN.md](/documentation/quickstart/OMNIGEN.md) |
 | PixArt Sigma | 0.6B-0.9B | [SIGMA.md](/documentation/quickstart/SIGMA.md) |
 | Qwen Image 2.1 / Qwen Image | 7B / 20B | [QWEN_IMAGE_2-1.md](quickstart/QWEN_IMAGE_2-1.md)<br>[QWEN_IMAGE.md](quickstart/QWEN_IMAGE.md)<br>[QWEN_EDIT.md](quickstart/QWEN_EDIT.md) |
@@ -86,6 +88,7 @@ The complete compatibility matrix is split by feature area so each table stays r
 | Mage-Flow | ✓ | ✓ | ✓* | ✗ | ✓ edit |
 | MiniMax H3 | ✓ | ✓ | ✓* | ✗ | ✓ opt (FL2VA/Ref2VA) |
 | MiniMax Music 3 | ✓ | ✓ | ✓* | ✗ | lyrics |
+| MOSS-Image | ✓ | ✓ | ✓ | ✗ | ✗ |
 | OmniGen | ✓ | ✓ | ✓ | ✗ | ✗ |
 | PixArt Sigma | ✗ | ✓ | ✓ | ✓ | ✗ |
 | Qwen Image | ✓ | ✓ | ✓* | ✗ | ✓ req (Edit) |
@@ -136,6 +139,7 @@ The complete compatibility matrix is split by feature area so each table stays r
 | Mage-Flow | fp8 optional | bf16 |
 | MiniMax H3 | int8/fp8 optional; convrot-int8 | bf16 |
 | MiniMax Music 3 | int8 optional | bf16 |
+| MOSS-Image | int8 / fp8 | bf16 |
 | OmniGen | int8/fp8 optional | bf16 |
 | PixArt Sigma | int8 optional | bf16 |
 | Qwen Image 2.1 / Qwen Image | 2.1: optional; v1.0/v2.0: int8/nf4 | bf16 |
@@ -186,6 +190,7 @@ The complete compatibility matrix is split by feature area so each table stays r
 | Mage-Flow | ✓ | ✓ | ✓ | ✓ |
 | MiniMax H3 | ✓ | ✓ | ✓ | ✓ |
 | MiniMax Music 3 | ✓ | ✓ | ✓ | ✗ |
+| MOSS-Image | ✓ | ✓ | ✓ | ✓ |
 | OmniGen | ✓ | ✗ | ✗ | ✗ |
 | PixArt Sigma | ✓ | ✓ | ✓ | ✗ |
 | Qwen Image | ✓ | ✓ | ✓ | ✗ |
@@ -238,6 +243,7 @@ MixFlow post-training is available for every `flow matching` row below. See the 
 | Mage-Flow | flow matching | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | MiniMax H3 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | MiniMax Music 3 | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| MOSS-Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | OmniGen | flow matching | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | PixArt Sigma | epsilon | ✗ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Qwen Image | flow matching | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -288,6 +294,7 @@ MixFlow post-training is available for every `flow matching` row below. See the 
 | Mage-Flow | Qwen3-VL | not specified | Mage-VAE |
 | MiniMax H3 | Qwen3-VL | not specified | MiniMax H3 Video VAE + Audio VAE |
 | MiniMax Music 3 | Qwen3 AR | 8B | DAV audio autoencoder + vocoder decoder |
+| MOSS-Image | Qwen3.5-9B | 9B | FLUX.2 VAE |
 | OmniGen | Integrated OmniGen encoder | not specified | AutoencoderKL |
 | PixArt Sigma | T5 XXL v1.1 | 11B | AutoencoderKL |
 | Qwen Image 2.1 / Qwen Image | Qwen3-VL / Qwen2.5-VL | 8B / 7B | Qwen Image 2.1 VAE / Qwen Image VAE |
