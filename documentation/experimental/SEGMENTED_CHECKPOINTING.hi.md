@@ -31,7 +31,7 @@ Supported whole-block paths पर `gradient_checkpointing_interval` segment wid
 
 यह blocks `0-1` checkpoint करता है, `2-3` normal चलाता है, `4-5` checkpoint करता है, `6-7` normal चलाता है, और repeat करता है। stride कम से कम interval जितना होना चाहिए; overlapping schedules valid नहीं हैं।
 
-Supported segmented whole-block paths: Flux.1, Flux.2, HunyuanVideo, Krea 2, LongCat Image, LongCat Video, LTXVideo 0.9, LTXVideo2, Lumina2, MageFlow, MiniMax H3, PixArt, Qwen Image 2.1, SD3, SanaVideo, Z-Image, ZLab I1, और Wan।
+Supported segmented whole-block paths: Flux.1, Flux.2, Flux.3 Image Klein, HunyuanVideo, Krea 2, LongCat Image, LongCat Video, LTXVideo 0.9, LTXVideo2, Lumina2, MageFlow, MiniMax H3, PixArt, Qwen Image 2.1, SD3, SanaVideo, Z-Image, ZLab I1, और Wan।
 
 Stable Cascade stage C भी interval और stride support करता है, लेकिन schedule transformer whole-block groups की जगह UNet के Res/Timestep/Attention micro-block sequence पर apply होता है।
 
@@ -272,6 +272,43 @@ Example: `ernie.peft-lora`. Resolution: 512x512.
 | fp8-torchao | interval2 | 3.316 / 8.54 | 2.973 / 8.49 |
 | fp8-torchao | seg2-stride4 | 2.994 / 8.54 | 3.046 / 8.49 |
 | fp8-torchao | seg2-stride4-offload | unsupported | unsupported |
+
+### Flux.3 Image Klein
+
+उदाहरण: `flux3_image.peft-lora`, Klein Base। प्रशिक्षण: 512x512 center crops, batch 1, rank/alpha 32 attention LoRA, BF16 AdamW, native SDPA और regional Inductor compilation (`default`, C++ wrapper)। CREPA और assistant adapter बंद हैं। हर मापी गई पंक्ति में 30 updates हैं; step time में पहले पाँच updates और cache preparation शामिल नहीं हैं। VRAM प्रशिक्षण updates के दौरान PyTorch की peak allocated memory है।
+
+Dataset: `RareConcepts/Domokun`, 27 images। स्थिर caption: `a photograph of a toy character` (80 cached text tokens)।
+
+PyTorch `2.14.1+cu130`; Diffusers `0.41.0`; Transformers `5.20.1`; PEFT `0.21.2`; Accelerate `1.15.0`; SDNQ `0.2.8`; TorchAO `0.17.0+cu130`. `dynamo_dynamic=true`.
+
+Image, text, reference-image और joint stream की block sequences अलग-अलग segment होती हैं। `interval2` लगातार दो blocks को एक साथ checkpoint करता है; `seg2-stride4` दो blocks checkpoint करता है और अगले दो की activations रखता है। Hidden-state capture per-block path इस्तेमाल करता है। Attention activation offload समर्थित नहीं है।
+
+| Precision | Mode | H100 | L40S |
+| --- | --- | ---: | ---: |
+| bf16 | none | 0.159 / 13.69 | 0.231 / 13.65 |
+| bf16 | activation-offload | unsupported | unsupported |
+| bf16 | layer | 0.265 / 11.05 | 0.302 / 11.01 |
+| bf16 | interval2 | 0.249 / 11.04 | 0.298 / 11.00 |
+| bf16 | seg2-stride4 | 0.209 / 12.26 | 0.270 / 12.22 |
+| bf16 | seg2-stride4-offload | unsupported | unsupported |
+| int8-sdnq-hadamard | none | 0.189 / 12.39 | 0.267 / 12.35 |
+| int8-sdnq-hadamard | activation-offload | unsupported | unsupported |
+| int8-sdnq-hadamard | layer | 0.340 / 6.34 | 0.349 / 6.31 |
+| int8-sdnq-hadamard | interval2 | 0.277 / 6.34 | 0.344 / 6.31 |
+| int8-sdnq-hadamard | seg2-stride4 | 0.232 / 9.14 | 0.301 / 9.10 |
+| int8-sdnq-hadamard | seg2-stride4-offload | unsupported | unsupported |
+| fp8-torchao | none | 0.195 / 10.39 | 0.250 / 10.33 |
+| fp8-torchao | activation-offload | unsupported | unsupported |
+| fp8-torchao | layer | 0.325 / 6.20 | 0.330 / 6.15 |
+| fp8-torchao | interval2 | 0.302 / 6.15 | 0.331 / 6.09 |
+| fp8-torchao | seg2-stride4 | 0.252 / 8.10 | 0.288 / 8.05 |
+| fp8-torchao | seg2-stride4-offload | unsupported | unsupported |
+| fp8wo-torchao | none | 0.181 / 16.74 | 0.258 / 16.69 |
+| fp8wo-torchao | activation-offload | unsupported | unsupported |
+| fp8wo-torchao | layer | 0.285 / 6.09 | 0.364 / 6.04 |
+| fp8wo-torchao | interval2 | 0.265 / 6.30 | 0.368 / 6.25 |
+| fp8wo-torchao | seg2-stride4 | 0.221 / 11.17 | 0.297 / 11.12 |
+| fp8wo-torchao | seg2-stride4-offload | unsupported | unsupported |
 
 ### HeartMula
 
