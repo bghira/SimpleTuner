@@ -252,6 +252,177 @@ class Flux3ImageTests(unittest.TestCase):
             if name in gradients:
                 torch.testing.assert_close(value.grad, gradients[name])
 
+    def test_segmented_checkpointing_matches_eager_outputs_and_all_gradients(self):
+        for flow_map in (False, True):
+            for conditioned in (False, True):
+                model = tiny_transformer(num_layers=5, num_single_layers=7, flow_map=flow_map)
+                inputs = {
+                    "hidden_states": self.image.clone().requires_grad_(),
+                    "encoder_hidden_states": self.text.clone().requires_grad_(),
+                    "timestep": self.time,
+                    "img_ids": self.ids,
+                    "encoder_attention_mask": torch.tensor([[True, True, False], [True, True, True]]),
+                }
+                if conditioned:
+                    inputs.update(
+                        conditioning_hidden_states=torch.randn(2, 6, 8, requires_grad=True),
+                        conditioning_ids=image_ids(2, 3, "cpu", 0),
+                        conditioning_attention_mask=torch.tensor([[True] * 5 + [False], [True] * 6]),
+                    )
+                if flow_map:
+                    inputs["target_timestep"] = torch.tensor([0.1, 0.5])
+                expected = model(**inputs).sample
+                expected.square().mean().backward()
+                parameter_gradients = {name: p.grad.clone() for name, p in model.named_parameters() if p.grad is not None}
+                input_gradients = {name: value.grad.clone() for name, value in inputs.items() if value.requires_grad}
+                model.enable_gradient_checkpointing()
+                for interval, stride in ((2, None), (2, 4), (3, 5)):
+                    with self.subTest(flow_map=flow_map, conditioned=conditioned, interval=interval, stride=stride):
+                        model.zero_grad(set_to_none=True)
+                        for value in inputs.values():
+                            if value.requires_grad:
+                                value.grad = None
+                        model.set_gradient_checkpointing_interval(interval)
+                        model.set_gradient_checkpointing_segment_stride(stride)
+                        actual = model(**inputs).sample
+                        actual.square().mean().backward()
+                        torch.testing.assert_close(actual, expected)
+                        self.assertEqual(
+                            {name for name, p in model.named_parameters() if p.grad is not None},
+                            set(parameter_gradients),
+                        )
+                        for name, parameter in model.named_parameters():
+                            if name in parameter_gradients:
+                                torch.testing.assert_close(parameter.grad, parameter_gradients[name])
+                        for name, gradient in input_gradients.items():
+                            torch.testing.assert_close(inputs[name].grad, gradient)
+
+    def test_segmented_checkpoint_calls_group_adjacent_blocks_in_every_stream(self):
+        for stride in (None, 4):
+            with self.subTest(stride=stride):
+                model = tiny_transformer(num_layers=5, num_single_layers=5)
+                model.enable_gradient_checkpointing()
+                model.set_gradient_checkpointing_interval(2)
+                model.set_gradient_checkpointing_segment_stride(stride)
+                groups = []
+                active_group = None
+
+                def record_block(name):
+                    def hook(_module, _args):
+                        if active_group is not None:
+                            active_group.append(name)
+
+                    return hook
+
+                stacks = {
+                    "text": model.txt_mode_blocks,
+                    "image": model.mode_blocks.image,
+                    "reference": model.mode_blocks.image_cond,
+                    "joint": model.single_transformer_blocks,
+                }
+                for name, blocks in stacks.items():
+                    for index, block in enumerate(blocks):
+                        block.register_forward_pre_hook(record_block((name, index)))
+
+                def record_checkpoint(function, *args, **kwargs):
+                    nonlocal active_group
+                    active_group = []
+                    groups.append(active_group)
+                    result = torch.utils.checkpoint.checkpoint(function, *args, **kwargs)
+                    active_group = None
+                    return result
+
+                model._checkpoint_fn = record_checkpoint
+                model(
+                    self.image,
+                    self.text,
+                    self.time,
+                    img_ids=self.ids,
+                    conditioning_hidden_states=torch.randn(2, 6, 8),
+                    conditioning_ids=image_ids(2, 3, "cpu", 0),
+                )
+                starts = (0, 2, 4) if stride is None else (0, 4)
+                expected = [
+                    [(name, index) for index in range(start, min(start + 2, 5))] for name in stacks for start in starts
+                ]
+                self.assertEqual(groups, expected)
+
+    def test_frozen_lora_segments_preserve_gradients_without_grad_inputs(self):
+        for dtype in (torch.float32, torch.bfloat16):
+            model = tiny_transformer(num_layers=3, num_single_layers=5).to(dtype)
+            model.add_adapter(LoraConfig(r=2, lora_alpha=2, target_modules=Flux3Image.DEFAULT_LORA_TARGET))
+            for name, parameter in model.named_parameters():
+                parameter.requires_grad_("lora_" in name)
+                if "lora_B" in name:
+                    with torch.no_grad():
+                        parameter.normal_(std=0.02)
+            inputs = {
+                "hidden_states": self.image.to(dtype),
+                "encoder_hidden_states": self.text.to(dtype),
+                "timestep": self.time.to(dtype),
+                "img_ids": self.ids,
+                "conditioning_hidden_states": torch.randn(2, 6, 8, dtype=dtype),
+                "conditioning_ids": image_ids(2, 3, "cpu", 0),
+            }
+            expected = model(**inputs).sample
+            expected.float().square().mean().backward()
+            gradients = {name: p.grad.clone() for name, p in model.named_parameters() if p.grad is not None}
+            model.enable_gradient_checkpointing()
+            for interval, stride in ((2, None), (2, 4)):
+                with self.subTest(dtype=dtype, interval=interval, stride=stride):
+                    model.zero_grad(set_to_none=True)
+                    model.set_gradient_checkpointing_interval(interval)
+                    model.set_gradient_checkpointing_segment_stride(stride)
+                    actual = model(**inputs).sample
+                    actual.float().square().mean().backward()
+                    torch.testing.assert_close(actual, expected)
+                    self.assertEqual({name for name, p in model.named_parameters() if p.grad is not None}, set(gradients))
+                    for name, parameter in model.named_parameters():
+                        if name in gradients:
+                            torch.testing.assert_close(parameter.grad, gradients[name])
+
+    def test_segmented_checkpointing_preserves_layer_capture_fallback(self):
+        self.model.enable_gradient_checkpointing()
+        self.model.set_gradient_checkpointing_interval(2)
+        self.model.set_gradient_checkpointing_segment_stride(4)
+        with patch(
+            "simpletuner.helpers.models.flux3_image.transformer.checkpoint_sequential_state",
+            side_effect=AssertionError("Layer capture must use the per-block path"),
+        ):
+            self.test_layer_capture_excludes_reference_and_text_tokens_and_retains_gradients()
+
+    def test_segmented_checkpointing_is_not_used_without_gradients(self):
+        self.model.enable_gradient_checkpointing()
+        self.model.set_gradient_checkpointing_interval(2)
+        with (
+            torch.no_grad(),
+            patch(
+                "simpletuner.helpers.models.flux3_image.transformer.checkpoint_sequential_state",
+                side_effect=AssertionError("Inference must not checkpoint"),
+            ),
+        ):
+            result = self.model(self.image, self.text, self.time, img_ids=self.ids).sample
+        self.assertEqual(result.shape, self.image.shape)
+
+    def test_regional_compilation_with_segments_preserves_gradients(self):
+        from accelerate.utils.other import compile_regions
+
+        model = tiny_transformer(num_layers=3, num_single_layers=5)
+        expected = model(self.image, self.text, self.time, img_ids=self.ids).sample
+        expected.square().mean().backward()
+        gradients = {name: p.grad.clone() for name, p in model.named_parameters() if p.grad is not None}
+        model.enable_gradient_checkpointing()
+        model.set_gradient_checkpointing_interval(2)
+        model.set_gradient_checkpointing_segment_stride(4)
+        model.zero_grad(set_to_none=True)
+        compiled = compile_regions(model, backend="eager")
+        actual = compiled(self.image, self.text, self.time, img_ids=self.ids).sample
+        actual.square().mean().backward()
+        torch.testing.assert_close(actual, expected)
+        for name, parameter in model.named_parameters():
+            if name in gradients:
+                torch.testing.assert_close(parameter.grad, gradients[name])
+
     def test_accelerate_regional_compilation_preserves_container_access_and_gradients(self):
         from accelerate.utils.other import compile_regions
 

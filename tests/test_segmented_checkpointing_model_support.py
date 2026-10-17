@@ -324,6 +324,39 @@ class Flux2SegmentedCheckpointingSupportTests(unittest.TestCase):
         )
 
 
+class Flux3ImageSegmentedCheckpointingSupportTests(unittest.TestCase):
+    def test_checkpointing_controls(self):
+        from simpletuner.helpers.models.flux3_image.transformer import Flux3ImageTransformer2DModel
+
+        assert_checkpointing_controls(self, Flux3ImageTransformer2DModel, backend=True, interval=True, stride=True)
+
+    def test_safety_check_preserves_interval_and_stride(self):
+        from simpletuner.helpers.training.default_settings.safety_check import safety_check
+
+        args = SimpleNamespace(
+            attention_mechanism="native",
+            base_model_precision="no_change",
+            controlnet=False,
+            eval_epoch_interval=None,
+            eval_steps_interval=None,
+            flow_schedule_auto_shift=False,
+            flow_schedule_shift=None,
+            gradient_checkpointing_interval=2,
+            gradient_checkpointing_segment_stride=4,
+            i_know_what_i_am_doing=False,
+            lora_type="standard",
+            model_family="flux3_image",
+            model_type="lora",
+            quantization_config=None,
+            report_to="none",
+            train_text_encoder=False,
+            user_prompt_library=None,
+        )
+        safety_check(args, accelerator=None)
+        self.assertEqual(args.gradient_checkpointing_interval, 2)
+        self.assertEqual(args.gradient_checkpointing_segment_stride, 4)
+
+
 class HiDreamSegmentedCheckpointingSupportTests(unittest.TestCase):
     def test_checkpointing_controls(self):
         from simpletuner.helpers.models.hidream.transformer import HiDreamImageTransformer2DModel

@@ -400,7 +400,7 @@ Usa `model_family: "flux3_image"` para el transformador de imágenes de 5,6B par
 ### `--gradient_checkpointing_interval`
 
 - **Qué**: Intervalo dependiente del modelo para checkpointing de bloques transformer. Un valor de 1 equivale básicamente a dejar `--gradient_checkpointing` habilitado.
-- **Nota**: Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Qwen Image 2.1, Z-Image y Wan usan chunks contiguos de *n* bloques en rutas whole-block. Otras familias que exponen esta opción pueden seguir usando el comportamiento anterior de "checkpoint cada *n* bloques". Los grupos contiguos mayores guardan menos estados de frontera, pero siguen recalculando los bloques con checkpoint. Mide el equilibrio entre velocidad y pico de memoria; consulta [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.es.md#qwen-image-21).
+- **Nota**: Flux, Flux.2, Flux.3 Image Klein, Krea 2, LTXVideo2, MageFlow, Qwen Image 2.1, Z-Image y Wan usan chunks contiguos de *n* bloques en rutas whole-block. Otras familias que exponen esta opción pueden seguir usando el comportamiento anterior de "checkpoint cada *n* bloques". Los grupos contiguos mayores guardan menos estados de frontera, pero siguen recalculando los bloques con checkpoint. Mide el equilibrio entre velocidad y pico de memoria; consulta [Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.es.md#qwen-image-21).
 
 ### `--gradient_checkpointing_segment_stride`
 
