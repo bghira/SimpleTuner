@@ -21,15 +21,22 @@ Execute os demais comandos na pasta `SimpleTuner`, com o ambiente virtual ativo.
 
 ## Escolha uma receita para sua GPU
 
-A memória GPU (VRAM) determina quantas imagens você pode processar juntas. Escolha o exemplo para sua capacidade. As receitas de 24 e 32 GB usam resolução 512; as maiores também incluem datasets de 1024.
+A memória GPU (VRAM) determina quantas imagens você pode processar juntas. Escolha o exemplo para sua capacidade. As receitas Base de 24 e 32 GB usam resolução 512; as maiores também incluem datasets de 1024.
 
-| Memória GPU | Exemplo | Imagens por lote em 512 / 1024 |
+| Memória GPU | Exemplo Base | Imagens por lote em 512 / 1024 |
 | --- | --- | --- |
 | 24 GB | `flux3_image-24g.peft-lora` | 3 / — |
 | 32 GB | `flux3_image-32g.peft-lora` | 4 / — |
 | 48 GB | `flux3_image-48g.peft-lora` | 9 / 2 |
 | 80 GB | `flux3_image-80g.peft-lora` | 18 / 5 |
 | 144 GB | `flux3_image-144g.peft-lora` | 36 / 10 |
+
+Para a variante destilada `klein`, escolha uma destas receitas. Use o nome completo nos comandos de cópia de configuração abaixo. A escala corresponde à área de uma imagem quadrada; as proporções são preservadas.
+
+| Memória da GPU | Exemplo destilado | Escala de treinamento | Imagens por lote |
+| --- | --- | --- | ---: |
+| 24 GB | `flux3_image-klein-24g.peft-lora` | 768px | 1 |
+| 80 GB | `flux3_image-klein-80g.peft-lora` | 1024px | 4 |
 
 Os lotes são pontos de partida. Legendas longas e referências exigem mais memória; reduza `train_batch_size` se ela acabar. As receitas usam LoRA de rank 32, taxa `1e-4` e REPA, que compara características de imagem durante o treino. Seus dataloaders combinam conceito e regularização para preservar o conhecimento geral do modelo.
 
@@ -53,7 +60,7 @@ Uma foto de TOK, uma pequena coruja de cerâmica com penas azuis, sobre uma mesa
 
 ## Configure o treinamento
 
-Copie a receita escolhida. Estes comandos usam 48 GB; substitua `48g` pela sua opção em cada caminho:
+Copie a receita escolhida. Estes comandos usam `flux3_image-48g.peft-lora`; substitua esse nome completo pela sua receita Base ou destilada:
 
 ```bash
 mkdir -p config/examples
@@ -84,8 +91,8 @@ Salve o conteúdo abaixo como `config/dataloader.json`. Ele informa onde estão 
     "dataset_type": "image",
     "instance_data_dir": "datasets/my-concept",
     "caption_strategy": "textfile",
-    "resolution": 512,
-    "resolution_type": "pixel",
+    "resolution": 0.589824,
+    "resolution_type": "area",
     "crop": false,
     "cache_dir_vae": "cache/vae/flux3-image/my-concept",
     "text_embeds": "text"
@@ -99,6 +106,8 @@ Salve o conteúdo abaixo como `config/dataloader.json`. Ele informa onde estão 
   }
 ]
 ```
+
+Neste dataset local, `resolution: 0.589824` com `resolution_type: "area"` equivale à área de 768×768. Use `1.048576` para o dataset em escala 1024 da receita destilada de 80 GB.
 
 `resolution` controla o tamanho de treino; as dimensões são alinhadas a múltiplos de 16. O cache guarda latentes e embeddings reutilizáveis para agilizar próximas execuções. Separe os caches por família de modelo. Consulte o [guia de dados](../DATALOADER.pt-BR.md) para adicionar datasets ou regularização.
 
@@ -191,8 +200,10 @@ image = pipe(
 image.save("my-flux3-image.png")
 ```
 
-## Opcional: treine uma LoRA assistente
+## LoRA assistente
 
-Uma LoRA assistente ajuda a adaptar o destilado `klein` para treinar outras LoRAs. Selecione `flux3_image-assistant-lora.peft-lora` para criá-la com amostras geradas pelo modelo. Depois, configure seu diretório em `assistant_lora_path` e `disable_assistant_lora: false` no treino destilado. Use `assistant_lora_strength` para a intensidade de treino e `assistant_lora_inference_strength` para gerar imagens de validação.
+O treinamento LoRA com `model_flavour: "klein"` carrega automaticamente o [assistente publicado](https://huggingface.co/SimpleTuner/flux-3-klein-image-training-assistant) como adaptador congelado. `assistant_lora_strength` usa `1.0` durante o treinamento; `assistant_lora_inference_strength` usa `0.0` na validação. Defina `disable_assistant_lora: true` para desativá-lo. Para outro adaptador, configure `assistant_lora_path` e, se necessário, `assistant_lora_weight_name`.
+
+Para treinar seu próprio assistente, selecione `flux3_image-assistant-lora.peft-lora`. Essa receita desativa o assistente existente e aprende com amostras geradas pelo modelo. Depois, indique o diretório salvo em `assistant_lora_path` na sua configuração LoRA destilada.
 
 Veja outros ajustes na [referência de opções](../OPTIONS.pt-BR.md). Ative TwinFlow com `twinflow_enabled: true` e `use_ema: true`; EMA mantém o modelo professor usado nesse método.

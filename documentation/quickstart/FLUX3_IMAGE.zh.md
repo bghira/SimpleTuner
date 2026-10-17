@@ -21,15 +21,22 @@ hf auth login
 
 ## 选择适合显卡的配置
 
-显存（VRAM）决定了每次能同时处理多少张图像。按显存容量选择示例。24 和 32 GB 配置使用 512 分辨率；更大容量的配置还包含 1024 分辨率数据集。
+显存（VRAM）决定了每次能同时处理多少张图像。按显存容量选择示例。24 和 32 GB 的 Base 配置使用 512 分辨率；更大容量的配置还包含 1024 分辨率数据集。
 
-| 显存 | 示例 | 512 / 1024 每批图像数 |
+| 显存 | Base 示例 | 512 / 1024 每批图像数 |
 | --- | --- | --- |
 | 24 GB | `flux3_image-24g.peft-lora` | 3 / — |
 | 32 GB | `flux3_image-32g.peft-lora` | 4 / — |
 | 48 GB | `flux3_image-48g.peft-lora` | 9 / 2 |
 | 80 GB | `flux3_image-80g.peft-lora` | 18 / 5 |
 | 144 GB | `flux3_image-144g.peft-lora` | 36 / 10 |
+
+蒸馏版 `klein` 使用以下配方。请在后面的配置复制命令中替换完整的示例名称。训练尺度表示正方形等效面积，图片保留原始宽高比。
+
+| GPU 显存 | 蒸馏版示例 | 训练尺度 | 每批图片数 |
+| --- | --- | --- | ---: |
+| 24 GB | `flux3_image-klein-24g.peft-lora` | 768px | 1 |
+| 80 GB | `flux3_image-klein-80g.peft-lora` | 1024px | 4 |
 
 表中的批大小可作为起点。较长描述和参考图会增加显存消耗；显存不足时减小 `train_batch_size`。示例采用 rank 32 LoRA、`1e-4` 学习率和 REPA，通过比较图像特征辅助训练。随附 dataloader 将主体图像与正则化图像结合，帮助保留模型的通用图像知识。
 
@@ -53,7 +60,7 @@ datasets/my-concept/
 
 ## 设置训练配置
 
-复制所选示例。以下命令以 48 GB 为例，请将各路径中的 `48g` 替换为你的显存档位：
+复制所选配方。以下命令使用 `flux3_image-48g.peft-lora`，请将完整示例名称替换为所选的 Base 或蒸馏版配方：
 
 ```bash
 mkdir -p config/examples
@@ -84,8 +91,8 @@ cp config/examples/flux3_image-48g.peft-lora/config.json config/config.json
     "dataset_type": "image",
     "instance_data_dir": "datasets/my-concept",
     "caption_strategy": "textfile",
-    "resolution": 512,
-    "resolution_type": "pixel",
+    "resolution": 0.589824,
+    "resolution_type": "area",
     "crop": false,
     "cache_dir_vae": "cache/vae/flux3-image/my-concept",
     "text_embeds": "text"
@@ -99,6 +106,8 @@ cp config/examples/flux3_image-48g.peft-lora/config.json config/config.json
   }
 ]
 ```
+
+此本地数据集使用 `resolution: 0.589824` 和 `resolution_type: "area"`，对应 768×768 等效面积。80 GB 蒸馏版配方的 1024 尺度数据集使用 `1.048576`。
 
 `resolution` 控制训练尺寸；图像尺寸会对齐到 16 的倍数。缓存保存可重复使用的图像潜变量和文本嵌入，加快后续启动。不同模型家族使用独立缓存目录。添加更多数据集或正则化图像的方法见[数据加载指南](../DATALOADER.zh.md)。
 
@@ -191,8 +200,10 @@ image = pipe(
 image.save("my-flux3-image.png")
 ```
 
-## 可选：训练助手 LoRA
+## 助手 LoRA
 
-助手 LoRA 可帮助蒸馏版 `klein` 适应后续 LoRA 训练。选择 `flux3_image-assistant-lora.peft-lora`，使用模型生成的样本创建助手。完成后，在蒸馏版训练配置中将 `assistant_lora_path` 设为保存的适配器目录，并设置 `disable_assistant_lora: false`。`assistant_lora_strength` 控制训练强度，`assistant_lora_inference_strength` 控制生成验证图时的强度。
+使用 `model_flavour: "klein"` 训练 LoRA 时，会自动加载[已发布的训练助手](https://huggingface.co/SimpleTuner/flux-3-klein-image-training-assistant)作为冻结的适配器。训练时 `assistant_lora_strength` 默认为 `1.0`，验证时 `assistant_lora_inference_strength` 默认为 `0.0`。设置 `disable_assistant_lora: true` 可关闭助手。使用其他适配器时，设置 `assistant_lora_path`，并按需指定 `assistant_lora_weight_name`。
+
+如需训练自己的助手，请选择 `flux3_image-assistant-lora.peft-lora`。此配方会关闭已有助手，并使用模型生成的样本学习。完成后，在蒸馏版 LoRA 配置中将 `assistant_lora_path` 设为保存的适配器目录。
 
 更多训练设置见[选项参考](../OPTIONS.zh.md)。启用 TwinFlow 时同时设置 `twinflow_enabled: true` 和 `use_ema: true`；EMA 维护该训练方法使用的教师模型。
