@@ -2,11 +2,11 @@
 
 自分の画像で MOSS-Image の LoRA を学習しましょう。LoRA は、元のチェックポイントを保ちながら被写体や画風を学習する小さなアダプターです。
 
-[MOSS-Image-Base](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base) を使うには `model_family: "moss_image"`、`model_flavour: "base"`、`model_type: "lora"` を選びます。選別されたデータで調整された [MOSS-Image-SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT) を使う場合は `model_flavour: "sft"` にします。両モデルは 5B の画像 Transformer、Qwen3.5-9B テキストエンコーダー、FLUX.2 VAE を共有し、[Apache-2.0](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base/blob/main/LICENSE) で公開されています。学習中はテキストエンコーダーを固定します。
+`model_family: "moss_image"`、`model_flavour: "sft"`、`model_type: "lora"` を選び、選別されたデータで調整された既定の [MOSS-Image-SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT) から始めます。[MOSS-Image-Base](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base) を使う場合は `model_flavour: "base"` にします。両モデルは 5B の画像 Transformer、Qwen3.5-9B テキストエンコーダー、FLUX.2 VAE を共有し、[Apache-2.0](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base/blob/main/LICENSE) で公開されています。学習中はテキストエンコーダーを固定します。
 
 ## VRAM プリセットの選択
 
-GPU メモリーに合ったレシピを選びます。全レベルで 1024×1024 相当の面積、縦横比の維持、rank 32 BF16 LoRA、REPA を使用します。
+GPU メモリーに合ったレシピを選びます。全レベルで 512×512 相当の面積、縦横比の維持、rank 32 BF16 LoRA、REPA を使用します。
 
 | GPU メモリー | Base の例 | SFT の例 | バッチ内画像数 | `gradient_checkpointing_interval` |
 | --- | --- | --- | ---: | ---: |
@@ -32,7 +32,7 @@ pip install -e '.[cuda,attention-cute]'
 
 ## 画像とキャプションの準備
 
-`datasets/moss-image` を作成し、画像と同名の `.txt` キャプションを入れます。約 1 メガピクセルでの学習に十分な細部を持つ鮮明な画像を用意してください。正方形なら 1024×1024 に相当し、縦長・横長画像は縦横比を維持します。
+`datasets/moss-image` を作成し、画像と同名の `.txt` キャプションを入れます。512px での学習に十分な細部を持つ鮮明な画像を用意してください。正方形なら 512×512 に相当し、縦長・横長画像は縦横比を維持します。
 
 ```text
 datasets/moss-image/
@@ -46,16 +46,16 @@ datasets/moss-image/
 
 ## 学習設定
 
-48 GB の Base レシピとサンプルプロンプトをコピーします。`48g` は選んだレベルに置き換えてください。SFT の場合はコマンド中の `moss_image-48g.peft-lora` を `moss_image-sft-48g.peft-lora` に変更します。
+48 GB の SFT レシピとサンプルプロンプトをコピーします。`48g` は選んだレベルに置き換えてください。Base の場合はコマンド中の `moss_image-sft-48g.peft-lora` を `moss_image-48g.peft-lora` に変更します。
 
 ```bash
 mkdir -p config/examples datasets/moss-image
-cp -R simpletuner/examples/moss_image-48g.peft-lora config/examples/
+cp -R simpletuner/examples/moss_image-sft-48g.peft-lora config/examples/
 cp simpletuner/examples/moss_image-prompts.json config/examples/
-cp config/examples/moss_image-48g.peft-lora/config.json config/config.json
+cp config/examples/moss_image-sft-48g.peft-lora/config.json config/config.json
 ```
 
-レシピは rank 32 の BF16 LoRA、学習率 `1e-4`、gradient checkpointing、REPA、4,000 オプティマイザーステップ、1024 相当の解像度を使用します。`config/config.json` を開き、既存設定内の次の項目を編集します。
+レシピは rank 32 の BF16 LoRA、学習率 `1e-4`、gradient checkpointing、REPA、4,000 オプティマイザーステップ、512 相当の解像度を使用します。`config/config.json` を開き、既存設定内の次の項目を編集します。
 
 ```json
 {
@@ -65,7 +65,7 @@ cp config/examples/moss_image-48g.peft-lora/config.json config/config.json
 }
 ```
 
-コピーした `dataloader.json` は `datasets/moss-image` のテキストファイルを読み、潜在表現とテキスト埋め込みをキャッシュします。`resolution_type: "area"` と `resolution: 1.048576` は 1024×1024 相当の面積です。寸法は 16 の倍数に揃えます。データセット追加や正則化画像は[データローダーガイド](../DATALOADER.md)を参照してください。
+コピーした `dataloader.json` は `datasets/moss-image` のテキストファイルを読み、潜在表現とテキスト埋め込みをキャッシュします。`resolution_type: "area"` と `resolution: 0.262144` は 512×512 相当の面積です。寸法は 16 の倍数に揃えます。データセット追加や正則化画像は[データローダーガイド](../DATALOADER.md)を参照してください。
 
 ## 学習とプレビューの比較
 
@@ -147,7 +147,7 @@ import torch
 from simpletuner.helpers.models.moss_image.pipeline import MOSSImagePipeline
 
 pipe = MOSSImagePipeline.from_pretrained(
-    "OpenMOSS-Team/MOSS-Image-Base", torch_dtype=torch.bfloat16
+    "OpenMOSS-Team/MOSS-Image-SFT", torch_dtype=torch.bfloat16
 )
 pipe.load_lora_weights("output/my-moss-lora")
 pipe.to("cuda")

@@ -65,6 +65,8 @@ simpletuner configure config/foo/config.json
 
 5.6B पैरामीटर वाले इमेज Transformer के लिए `model_family: "flux3_image"` चुनें। डिफ़ॉल्ट `klein-base`, `black-forest-labs/flux-3-image-klein-base` लोड करता है; `klein`, डिस्टिल्ड `black-forest-labs/flux-3-image-klein` लोड करता है। डाउनलोड से पहले चुने गए रिपॉज़िटरी की एक्सेस स्वीकार करें। [FLUX [Kom]munity लाइसेंस](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE) देखें।
 
+`moss_image` में डिफ़ॉल्ट `sft` विकल्प `OpenMOSS-Team/MOSS-Image-SFT` लोड करता है। `OpenMOSS-Team/MOSS-Image-Base` के लिए `model_flavour: "base"` चुनें। प्रशिक्षण उदाहरण 512×512 के बराबर क्षेत्र इस्तेमाल करते हैं। [MOSS-Image क्विकस्टार्ट](quickstart/MOSS_IMAGE.hi.md) देखें।
+
 ### `--lora_format`
 
 - **What**: load/save के लिए LoRA checkpoint key format चुनता है।

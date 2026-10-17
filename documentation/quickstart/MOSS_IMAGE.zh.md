@@ -2,11 +2,11 @@
 
 使用自己的图片训练 MOSS-Image LoRA。LoRA 是一个小型适配器，可以学习主体或风格，同时保留原始检查点。
 
-使用 [MOSS-Image-Base](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base) 时，设置 `model_family: "moss_image"`、`model_flavour: "base"` 和 `model_type: "lora"`。若使用经过精选数据微调的 [MOSS-Image-SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT)，则设置 `model_flavour: "sft"`。两者共享 5B 图像 Transformer、Qwen3.5-9B 文本编码器和 FLUX.2 VAE，采用 [Apache-2.0](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base/blob/main/LICENSE) 许可证。训练期间冻结文本编码器。
+设置 `model_family: "moss_image"`、`model_flavour: "sft"` 和 `model_type: "lora"`，从默认的 [MOSS-Image-SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT) 开始；该模型经过精选数据微调。使用 [MOSS-Image-Base](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base) 时，设置 `model_flavour: "base"`。两者共享 5B 图像 Transformer、Qwen3.5-9B 文本编码器和 FLUX.2 VAE，采用 [Apache-2.0](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base/blob/main/LICENSE) 许可证。训练期间冻结文本编码器。
 
 ## 选择 VRAM 预设
 
-根据 GPU 显存选择配方。所有档位都使用 1024×1024 等效面积训练、保留宽高比，并启用 rank 32 BF16 LoRA 和 REPA。
+根据 GPU 显存选择配方。所有档位都使用 512×512 等效面积训练、保留宽高比，并启用 rank 32 BF16 LoRA 和 REPA。
 
 | GPU 显存 | Base 示例 | SFT 示例 | 每批图片数 | `gradient_checkpointing_interval` |
 | --- | --- | --- | ---: | ---: |
@@ -32,7 +32,7 @@ pip install -e '.[cuda,attention-cute]'
 
 ## 准备图片和描述
 
-创建 `datasets/moss-image`，放入图片及同名 `.txt` 描述文件。使用细节足以支持约一百万像素训练的清晰图片。正方形对应 1024×1024，宽图和长图保留宽高比。
+创建 `datasets/moss-image`，放入图片及同名 `.txt` 描述文件。使用细节足以支持 512px 训练的清晰图片。正方形对应 512×512，宽图和长图保留宽高比。
 
 ```text
 datasets/moss-image/
@@ -46,16 +46,16 @@ datasets/moss-image/
 
 ## 设置训练配置
 
-复制 48 GB Base 配方及示例提示词，将 `48g` 替换为所选档位。使用 SFT 时，把命令中的 `moss_image-48g.peft-lora` 换成 `moss_image-sft-48g.peft-lora`。
+复制 48 GB SFT 配方及示例提示词，将 `48g` 替换为所选档位。使用 Base 时，把命令中的 `moss_image-sft-48g.peft-lora` 换成 `moss_image-48g.peft-lora`。
 
 ```bash
 mkdir -p config/examples datasets/moss-image
-cp -R simpletuner/examples/moss_image-48g.peft-lora config/examples/
+cp -R simpletuner/examples/moss_image-sft-48g.peft-lora config/examples/
 cp simpletuner/examples/moss_image-prompts.json config/examples/
-cp config/examples/moss_image-48g.peft-lora/config.json config/config.json
+cp config/examples/moss_image-sft-48g.peft-lora/config.json config/config.json
 ```
 
-配方使用 rank 32 BF16 LoRA、`1e-4` 学习率、梯度检查点、REPA、4,000 个优化器步骤以及 1024 级别分辨率。打开 `config/config.json`，在原有配置内修改以下项目：
+配方使用 rank 32 BF16 LoRA、`1e-4` 学习率、梯度检查点、REPA、4,000 个优化器步骤以及 512 级别分辨率。打开 `config/config.json`，在原有配置内修改以下项目：
 
 ```json
 {
@@ -65,7 +65,7 @@ cp config/examples/moss_image-48g.peft-lora/config.json config/config.json
 }
 ```
 
-复制的 `dataloader.json` 指向 `datasets/moss-image`，读取配套文本并缓存潜变量和文本嵌入。`resolution_type: "area"` 与 `resolution: 1.048576` 表示 1024×1024 等效面积。图片尺寸对齐至 16 的倍数。更多数据集和正则化图片设置请参阅[数据加载器指南](../DATALOADER.md)。
+复制的 `dataloader.json` 指向 `datasets/moss-image`，读取配套文本并缓存潜变量和文本嵌入。`resolution_type: "area"` 与 `resolution: 0.262144` 表示 512×512 等效面积。图片尺寸对齐至 16 的倍数。更多数据集和正则化图片设置请参阅[数据加载器指南](../DATALOADER.md)。
 
 ## 训练并比较预览
 
@@ -147,7 +147,7 @@ import torch
 from simpletuner.helpers.models.moss_image.pipeline import MOSSImagePipeline
 
 pipe = MOSSImagePipeline.from_pretrained(
-    "OpenMOSS-Team/MOSS-Image-Base", torch_dtype=torch.bfloat16
+    "OpenMOSS-Team/MOSS-Image-SFT", torch_dtype=torch.bfloat16
 )
 pipe.load_lora_weights("output/my-moss-lora")
 pipe.to("cuda")

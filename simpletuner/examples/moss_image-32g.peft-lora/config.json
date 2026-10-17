@@ -29,7 +29,7 @@
     "push_checkpoints_to_hub": false,
     "push_to_hub": false,
     "report_to": "none",
-    "resolution": 1024,
+    "resolution": 512,
     "resolution_type": "pixel",
     "seed": 42,
     "skip_file_discovery": false,

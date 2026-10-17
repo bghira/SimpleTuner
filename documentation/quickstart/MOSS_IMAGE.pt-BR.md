@@ -2,11 +2,11 @@
 
 Treine um LoRA do MOSS-Image com suas próprias imagens. Um LoRA é um pequeno adaptador que ensina um assunto ou estilo ao modelo e mantém o checkpoint original separado.
 
-Comece com `model_family: "moss_image"`, `model_flavour: "base"` e `model_type: "lora"` para usar [MOSS-Image-Base](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base). Escolha `model_flavour: "sft"` para [MOSS-Image-SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT), refinado com dados selecionados. Ambos compartilham um transformador de imagens de 5B, o codificador de texto Qwen3.5-9B e um VAE FLUX.2. Os checkpoints usam [Apache-2.0](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base/blob/main/LICENSE). O codificador de texto permanece congelado durante o treinamento.
+Comece com `model_family: "moss_image"`, `model_flavour: "sft"` e `model_type: "lora"` para usar [MOSS-Image-SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT), a variante padrão, refinada com dados selecionados. Escolha `model_flavour: "base"` para [MOSS-Image-Base](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base). Ambos compartilham um transformador de imagens de 5B, o codificador de texto Qwen3.5-9B e um VAE FLUX.2. Os checkpoints usam [Apache-2.0](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base/blob/main/LICENSE). O codificador de texto permanece congelado durante o treinamento.
 
 ## Escolher um preset de VRAM
 
-Escolha a receita de acordo com a memória da GPU. Todos os níveis treinam com área equivalente a 1024×1024, preservam as proporções e mantêm LoRA BF16 de rank 32 e REPA.
+Escolha a receita de acordo com a memória da GPU. Todos os níveis treinam com área equivalente a 512×512, preservam as proporções e mantêm LoRA BF16 de rank 32 e REPA.
 
 | Memória da GPU | Exemplo Base | Exemplo SFT | Imagens por lote | `gradient_checkpointing_interval` |
 | --- | --- | --- | ---: | ---: |
@@ -32,7 +32,7 @@ pip install -e '.[cuda,attention-cute]'
 
 ## Preparar imagens e legendas
 
-Crie `datasets/moss-image` e adicione imagens com arquivos `.txt` de mesmo nome. Use imagens nítidas com detalhes suficientes para treinar em cerca de um megapixel. Uma imagem quadrada nessa escala tem 1024×1024; imagens largas e altas mantêm suas proporções.
+Crie `datasets/moss-image` e adicione imagens com arquivos `.txt` de mesmo nome. Use imagens nítidas com detalhes suficientes para treinar em 512px. Uma imagem quadrada nessa escala tem 512×512; imagens largas e altas mantêm suas proporções.
 
 ```text
 datasets/moss-image/
@@ -46,16 +46,16 @@ Escolha uma palavra como `TOK` e inclua-a em todas as legendas daquele assunto. 
 
 ## Configurar o treinamento
 
-Copie a receita Base de 48 GB e seus prompts. Substitua `48g` pelo nível escolhido. Para SFT, substitua `moss_image-48g.peft-lora` por `moss_image-sft-48g.peft-lora` nos comandos.
+Copie a receita SFT de 48 GB e seus prompts. Substitua `48g` pelo nível escolhido. Para Base, substitua `moss_image-sft-48g.peft-lora` por `moss_image-48g.peft-lora` nos comandos.
 
 ```bash
 mkdir -p config/examples datasets/moss-image
-cp -R simpletuner/examples/moss_image-48g.peft-lora config/examples/
+cp -R simpletuner/examples/moss_image-sft-48g.peft-lora config/examples/
 cp simpletuner/examples/moss_image-prompts.json config/examples/
-cp config/examples/moss_image-48g.peft-lora/config.json config/config.json
+cp config/examples/moss_image-sft-48g.peft-lora/config.json config/config.json
 ```
 
-A configuração usa LoRA BF16 de rank 32, taxa de aprendizado `1e-4`, gradient checkpointing, REPA, 4.000 passos do otimizador e escala 1024. Abra `config/config.json` e altere estas entradas na configuração existente:
+A configuração usa LoRA BF16 de rank 32, taxa de aprendizado `1e-4`, gradient checkpointing, REPA, 4.000 passos do otimizador e escala 512. Abra `config/config.json` e altere estas entradas na configuração existente:
 
 ```json
 {
@@ -65,7 +65,7 @@ A configuração usa LoRA BF16 de rank 32, taxa de aprendizado `1e-4`, gradient 
 }
 ```
 
-O `dataloader.json` copiado aponta para `datasets/moss-image`, lê as legendas correspondentes e armazena latentes e embeddings em cache. `resolution: 1.048576` com `resolution_type: "area"` equivale à área de 1024×1024. As dimensões são alinhadas a múltiplos de 16. Consulte o [guia do dataloader](../DATALOADER.md) para mais datasets e imagens de regularização.
+O `dataloader.json` copiado aponta para `datasets/moss-image`, lê as legendas correspondentes e armazena latentes e embeddings em cache. `resolution: 0.262144` com `resolution_type: "area"` equivale à área de 512×512. As dimensões são alinhadas a múltiplos de 16. Consulte o [guia do dataloader](../DATALOADER.md) para mais datasets e imagens de regularização.
 
 ## Treinar e comparar prévias
 
@@ -147,7 +147,7 @@ import torch
 from simpletuner.helpers.models.moss_image.pipeline import MOSSImagePipeline
 
 pipe = MOSSImagePipeline.from_pretrained(
-    "OpenMOSS-Team/MOSS-Image-Base", torch_dtype=torch.bfloat16
+    "OpenMOSS-Team/MOSS-Image-SFT", torch_dtype=torch.bfloat16
 )
 pipe.load_lora_weights("output/my-moss-lora")
 pipe.to("cuda")

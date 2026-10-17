@@ -65,6 +65,8 @@ simpletuner configure config/foo/config.json
 
 使用 `model_family: "flux3_image"` 训练 5.6B 参数的图像 Transformer。默认变体 `klein-base` 加载 `black-forest-labs/flux-3-image-klein-base`；`klein` 加载蒸馏模型 `black-forest-labs/flux-3-image-klein`。下载前请先取得所选仓库的访问权限。参见 [FLUX [Kom]munity 许可证](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE)。
 
+`moss_image` 默认的 `sft` 变体加载 `OpenMOSS-Team/MOSS-Image-SFT`。使用 `OpenMOSS-Team/MOSS-Image-Base` 时，设置 `model_flavour: "base"`。训练示例采用 512×512 等效面积。参阅 [MOSS-Image 快速入门](quickstart/MOSS_IMAGE.zh.md)。
+
 ### `--lora_format`
 
 - **内容**：选择 LoRA 检查点的加载/保存键格式。

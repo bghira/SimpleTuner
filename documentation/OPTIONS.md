@@ -65,6 +65,8 @@ Select a checkpoint variant within `--model_family`. For `qwen_image`, the defau
 
 Use `model_family: "flux3_image"` for the 5.6B image transformer. The default `klein-base` flavour loads `black-forest-labs/flux-3-image-klein-base`; `klein` loads the distilled `black-forest-labs/flux-3-image-klein`. Accept access to the selected repository before downloading. See the [FLUX [Kom]munity license](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE).
 
+For `moss_image`, the default `sft` flavour loads `OpenMOSS-Team/MOSS-Image-SFT`. Set `model_flavour: "base"` for `OpenMOSS-Team/MOSS-Image-Base`. The training examples use 512×512 equivalent image area. See the [MOSS-Image quickstart](quickstart/MOSS_IMAGE.md).
+
 ### `--lora_format`
 
 - **What**: Select the LoRA checkpoint key format for load/save.

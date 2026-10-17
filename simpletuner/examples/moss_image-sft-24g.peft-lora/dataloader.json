@@ -5,7 +5,7 @@
     "dataset_type": "image",
     "instance_data_dir": "datasets/moss-image",
     "caption_strategy": "textfile",
-    "resolution": 1.048576,
+    "resolution": 0.262144,
     "resolution_type": "area",
     "crop": false,
     "cache_dir_vae": "cache/vae/moss-image/sft",

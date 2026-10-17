@@ -5,10 +5,10 @@
     "dataset_type": "image",
     "instance_data_dir": "datasets/moss-image",
     "caption_strategy": "textfile",
-    "resolution": 1.048576,
+    "resolution": 0.262144,
     "resolution_type": "area",
     "crop": false,
-    "cache_dir_vae": "cache/vae/moss-image/base",
+    "cache_dir_vae": "cache/vae/moss-image/sft",
     "text_embeds": "text",
     "repeats": 10
   },
@@ -17,6 +17,6 @@
     "type": "local",
     "dataset_type": "text_embeds",
     "default": true,
-    "cache_dir": "cache/text/moss-image/base"
+    "cache_dir": "cache/text/moss-image/sft"
   }
 ]

@@ -30,7 +30,7 @@ class MOSSImage(ImageModelFoundation):
     MODEL_TYPE = ModelTypes.TRANSFORMER
     MODEL_CLASS = MOSSImageTransformer
     MODEL_SUBFOLDER = "transformer"
-    DEFAULT_MODEL_FLAVOUR = "base"
+    DEFAULT_MODEL_FLAVOUR = "sft"
     HUGGINGFACE_PATHS = {"base": "OpenMOSS-Team/MOSS-Image-Base", "sft": "OpenMOSS-Team/MOSS-Image-SFT"}
     MODEL_LICENSE = "apache-2.0"
     AUTOENCODER_CLASS = AutoencoderKLFlux2

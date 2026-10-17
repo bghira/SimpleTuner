@@ -2,11 +2,11 @@
 
 अपनी तस्वीरों से MOSS-Image LoRA प्रशिक्षित करें। LoRA एक छोटा अडैप्टर है जो मूल चेकपॉइंट को अलग रखते हुए मॉडल को विषय या शैली सिखाता है।
 
-[MOSS-Image-Base](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base) के लिए `model_family: "moss_image"`, `model_flavour: "base"` और `model_type: "lora"` चुनें। चुने हुए डेटा पर परिष्कृत [MOSS-Image-SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT) के लिए `model_flavour: "sft"` चुनें। दोनों में 5B इमेज Transformer, Qwen3.5-9B टेक्स्ट एन्कोडर और FLUX.2 VAE हैं। चेकपॉइंट [Apache-2.0](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base/blob/main/LICENSE) के अंतर्गत जारी हैं। प्रशिक्षण में टेक्स्ट एन्कोडर फ़्रीज़ रहता है।
+`model_family: "moss_image"`, `model_flavour: "sft"` और `model_type: "lora"` चुनकर डिफ़ॉल्ट [MOSS-Image-SFT](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT) से शुरू करें, जिसे चुने हुए डेटा पर परिष्कृत किया गया है। [MOSS-Image-Base](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base) के लिए `model_flavour: "base"` चुनें। दोनों में 5B इमेज Transformer, Qwen3.5-9B टेक्स्ट एन्कोडर और FLUX.2 VAE हैं। चेकपॉइंट [Apache-2.0](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base/blob/main/LICENSE) के अंतर्गत जारी हैं। प्रशिक्षण में टेक्स्ट एन्कोडर फ़्रीज़ रहता है।
 
 ## VRAM प्रीसेट चुनें
 
-GPU मेमोरी के अनुसार रेसिपी चुनें। हर स्तर 1024×1024 के बराबर क्षेत्र पर प्रशिक्षण करता है, चित्रों का अनुपात बनाए रखता है और rank-32 BF16 LoRA तथा REPA सक्षम रखता है।
+GPU मेमोरी के अनुसार रेसिपी चुनें। हर स्तर 512×512 के बराबर क्षेत्र पर प्रशिक्षण करता है, चित्रों का अनुपात बनाए रखता है और rank-32 BF16 LoRA तथा REPA सक्षम रखता है।
 
 | GPU मेमोरी | Base उदाहरण | SFT उदाहरण | प्रति बैच चित्र | `gradient_checkpointing_interval` |
 | --- | --- | --- | ---: | ---: |
@@ -32,7 +32,7 @@ pip install -e '.[cuda,attention-cute]'
 
 ## चित्र और कैप्शन तैयार करें
 
-`datasets/moss-image` बनाएँ और चित्रों के साथ उसी नाम की `.txt` कैप्शन फ़ाइलें रखें। लगभग एक मेगापिक्सेल प्रशिक्षण के लिए पर्याप्त बारीकी वाले साफ़ चित्र चुनें। वर्गाकार चित्र 1024×1024 होता है; चौड़े और लंबे चित्र अपना अनुपात बनाए रखते हैं।
+`datasets/moss-image` बनाएँ और चित्रों के साथ उसी नाम की `.txt` कैप्शन फ़ाइलें रखें। 512px प्रशिक्षण के लिए पर्याप्त बारीकी वाले साफ़ चित्र चुनें। वर्गाकार चित्र 512×512 होता है; चौड़े और लंबे चित्र अपना अनुपात बनाए रखते हैं।
 
 ```text
 datasets/moss-image/
@@ -46,16 +46,16 @@ datasets/moss-image/
 
 ## प्रशिक्षण कॉन्फ़िगरेशन बनाएँ
 
-48 GB Base रेसिपी और नमूना प्रॉम्प्ट कॉपी करें। `48g` की जगह अपना चुना स्तर रखें। SFT के लिए कमांड में `moss_image-48g.peft-lora` को `moss_image-sft-48g.peft-lora` से बदलें।
+48 GB SFT रेसिपी और नमूना प्रॉम्प्ट कॉपी करें। `48g` की जगह अपना चुना स्तर रखें। Base के लिए कमांड में `moss_image-sft-48g.peft-lora` को `moss_image-48g.peft-lora` से बदलें।
 
 ```bash
 mkdir -p config/examples datasets/moss-image
-cp -R simpletuner/examples/moss_image-48g.peft-lora config/examples/
+cp -R simpletuner/examples/moss_image-sft-48g.peft-lora config/examples/
 cp simpletuner/examples/moss_image-prompts.json config/examples/
-cp config/examples/moss_image-48g.peft-lora/config.json config/config.json
+cp config/examples/moss_image-sft-48g.peft-lora/config.json config/config.json
 ```
 
-रेसिपी में rank-32 BF16 LoRA, `1e-4` लर्निंग रेट, gradient checkpointing, REPA, 4,000 ऑप्टिमाइज़र स्टेप और 1024-स्तर प्रशिक्षण है। `config/config.json` खोलकर मौजूदा कॉन्फ़िगरेशन में ये प्रविष्टियाँ बदलें:
+रेसिपी में rank-32 BF16 LoRA, `1e-4` लर्निंग रेट, gradient checkpointing, REPA, 4,000 ऑप्टिमाइज़र स्टेप और 512-स्तर प्रशिक्षण है। `config/config.json` खोलकर मौजूदा कॉन्फ़िगरेशन में ये प्रविष्टियाँ बदलें:
 
 ```json
 {
@@ -65,7 +65,7 @@ cp config/examples/moss_image-48g.peft-lora/config.json config/config.json
 }
 ```
 
-कॉपी किया गया `dataloader.json`, `datasets/moss-image` की टेक्स्ट फ़ाइलें पढ़ता है और latent व टेक्स्ट embeddings कैश करता है। `resolution_type: "area"` के साथ `resolution: 1.048576` का अर्थ 1024×1024 के बराबर क्षेत्र है। आयाम 16 के गुणज में होते हैं। अतिरिक्त डेटासेट और नियमितीकरण चित्रों के लिए [डेटालोडर गाइड](../DATALOADER.md) देखें।
+कॉपी किया गया `dataloader.json`, `datasets/moss-image` की टेक्स्ट फ़ाइलें पढ़ता है और latent व टेक्स्ट embeddings कैश करता है। `resolution_type: "area"` के साथ `resolution: 0.262144` का अर्थ 512×512 के बराबर क्षेत्र है। आयाम 16 के गुणज में होते हैं। अतिरिक्त डेटासेट और नियमितीकरण चित्रों के लिए [डेटालोडर गाइड](../DATALOADER.md) देखें।
 
 ## प्रशिक्षण और प्रीव्यू तुलना
 
@@ -147,7 +147,7 @@ import torch
 from simpletuner.helpers.models.moss_image.pipeline import MOSSImagePipeline
 
 pipe = MOSSImagePipeline.from_pretrained(
-    "OpenMOSS-Team/MOSS-Image-Base", torch_dtype=torch.bfloat16
+    "OpenMOSS-Team/MOSS-Image-SFT", torch_dtype=torch.bfloat16
 )
 pipe.load_lora_weights("output/my-moss-lora")
 pipe.to("cuda")

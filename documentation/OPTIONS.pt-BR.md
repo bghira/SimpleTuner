@@ -65,6 +65,8 @@ Seleciona uma variante de checkpoint dentro de `--model_family`. Para `qwen_imag
 
 Use `model_family: "flux3_image"` para o transformador de imagens de 5,6B parâmetros. A variante padrão `klein-base` carrega `black-forest-labs/flux-3-image-klein-base`; `klein` carrega o modelo destilado `black-forest-labs/flux-3-image-klein`. Aceite o acesso ao repositório escolhido antes do download. Consulte a [licença FLUX [Kom]munity](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE).
 
+Para `moss_image`, a variante padrão `sft` carrega `OpenMOSS-Team/MOSS-Image-SFT`. Use `model_flavour: "base"` para `OpenMOSS-Team/MOSS-Image-Base`. Os exemplos treinam com área equivalente a 512×512. Veja o [guia MOSS-Image](quickstart/MOSS_IMAGE.pt-BR.md).
+
 ### `--lora_format`
 
 - **O que**: Seleciona o formato de chaves do checkpoint LoRA para load/save.
