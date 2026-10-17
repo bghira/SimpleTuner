@@ -158,3 +158,77 @@ image = pipe(
 ).images[0]
 image.save("my-moss-image.png")
 ```
+
+## 训练编辑或参考图像 LoRA
+
+选择 `model_flavour: "sft-edit"` 或 `"base-edit"`，即可使用参考图像训练。这两个变体从对应的 SFT 或 Base 检查点开始，通过适配器学习参考图像条件。可从 `simpletuner/examples/moss_image-sft-edit.peft-lora` 或 `moss_image-base-edit.peft-lora` 开始；两者均采用每批一个目标、512 等效分辨率训练、REPA 和数据集验证。
+
+```bash
+mkdir -p config/examples datasets/moss-edits datasets/moss-references
+cp -R simpletuner/examples/moss_image-sft-edit.peft-lora config/examples/
+cp config/examples/moss_image-sft-edit.peft-lora/config.json config/config.json
+```
+
+将期望的输出放在 `datasets/moss-edits/sample.png`，编辑指令放在 `datasets/moss-edits/sample.txt`，输入参考图放在 `datasets/moss-references/sample.png`。两个目录中的图像文件名（包括扩展名）必须一致。指令示例：`Change the blue mug to red while keeping the background unchanged.` 编辑示例提供以下数据加载器配置：
+
+```json
+[
+  {
+    "id": "edits",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "datasets/moss-edits",
+    "caption_strategy": "textfile",
+    "resolution": 0.262144,
+    "resolution_type": "area",
+    "crop": false,
+    "conditioning_data": [
+      "references"
+    ],
+    "cache_dir_vae": "cache/vae/moss-image/sft-edit/targets",
+    "text_embeds": "text",
+    "repeats": 10
+  },
+  {
+    "id": "references",
+    "type": "local",
+    "dataset_type": "conditioning",
+    "instance_data_dir": "datasets/moss-references",
+    "conditioning_type": "reference_loose",
+    "resolution": 0.262144,
+    "resolution_type": "area",
+    "crop": false,
+    "cache_dir_vae": "cache/vae/moss-image/sft-edit/references"
+  },
+  {
+    "id": "text",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "cache/text/moss-image/sft-edit"
+  }
+]
+```
+
+`reference_loose` 保留每张参考图的宽高比，并允许参考图与目标图尺寸不同。对于对齐的图像对，使用 `reference_strict`。将更多参考数据集加入 `conditioning_data`，并保持 `conditioning_multidataset_sampling: "combined"`，即可同时提供多个参考。`"random"` 为每个样本选择一个参考数据集；指令不同时，请为各参考数据集提供相应的指令说明文件。目标、参考和文本缓存应分别保存。参考图会增加显存消耗；可按需减小批量或使用上述卸载选项。
+
+验证使用配对数据集中的参考图和指令。参考像素经过冻结的 Qwen3.5 视觉编码器，干净的 VAE 潜变量提供图像细节；训练损失只针对目标图像计算。说明文本丢弃会保留参考图，仅移除指令。Qwen 图像处理器会自动从 `Qwen/Qwen3.5-9B` 下载。
+
+训练后，加载编辑适配器，并通过 `image` 传入一张参考图或参考图列表。对于提示词批次，使用嵌套列表，为每条提示词提供一组参考图。采样默认启用参考 K/V 缓存；设置 `cache_reference_kv=False` 可在每一步重新计算参考 token。
+
+```python
+import torch
+from diffusers.utils import load_image
+from simpletuner.helpers.models.moss_image.pipeline import MOSSImagePipeline
+
+pipe = MOSSImagePipeline.from_pretrained(
+    "OpenMOSS-Team/MOSS-Image-SFT", torch_dtype=torch.bfloat16
+).to("cuda")
+pipe.load_lora_weights("output/examples/moss_image-sft-edit.peft-lora")
+image = pipe(
+    "Change the blue mug to red while keeping the background unchanged.",
+    image=[load_image("reference.png")],
+    height=512, width=512, num_inference_steps=50, guidance_scale=3.0,
+).images[0]
+image.save("edited.png")
+```

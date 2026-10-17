@@ -67,6 +67,8 @@ simpletuner configure config/foo/config.json
 
 `moss_image` 默认的 `sft` 变体加载 `OpenMOSS-Team/MOSS-Image-SFT`。使用 `OpenMOSS-Team/MOSS-Image-Base` 时，设置 `model_flavour: "base"`。训练示例采用 512×512 等效面积。参阅 [MOSS-Image 快速入门](quickstart/MOSS_IMAGE.zh.md)。
 
+选择 `model_flavour: "sft-edit"` 或 `"base-edit"`，即可使用参考图像训练。这两个变体从对应的 SFT 或 Base 检查点开始，通过适配器学习参考图像条件。可从 `simpletuner/examples/moss_image-sft-edit.peft-lora` 或 `moss_image-base-edit.peft-lora` 开始；两者均采用每批一个目标、512 等效分辨率训练、REPA 和数据集验证。
+
 ### `--lora_format`
 
 - **内容**：选择 LoRA 检查点的加载/保存键格式。

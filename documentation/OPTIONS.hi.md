@@ -67,6 +67,8 @@ simpletuner configure config/foo/config.json
 
 `moss_image` में डिफ़ॉल्ट `sft` विकल्प `OpenMOSS-Team/MOSS-Image-SFT` लोड करता है। `OpenMOSS-Team/MOSS-Image-Base` के लिए `model_flavour: "base"` चुनें। प्रशिक्षण उदाहरण 512×512 के बराबर क्षेत्र इस्तेमाल करते हैं। [MOSS-Image क्विकस्टार्ट](quickstart/MOSS_IMAGE.hi.md) देखें।
 
+रेफ़रेंस इमेज के साथ ट्रेन करने के लिए `model_flavour: "sft-edit"` या `"base-edit"` चुनें। ये फ़्लेवर संबंधित SFT या Base checkpoint से शुरू होते हैं और आपके adapter के माध्यम से रेफ़रेंस कंडीशनिंग सीखते हैं। `simpletuner/examples/moss_image-sft-edit.peft-lora` या `moss_image-base-edit.peft-lora` से शुरू करें; इनमें प्रति बैच एक लक्ष्य इमेज, 512-स्केल ट्रेनिंग, REPA और डेटासेट वैलिडेशन शामिल हैं।
+
 ### `--lora_format`
 
 - **What**: load/save के लिए LoRA checkpoint key format चुनता है।

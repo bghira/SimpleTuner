@@ -67,6 +67,8 @@ simpletuner configure config/foo/config.json
 
 `moss_image` の既定の `sft` は `OpenMOSS-Team/MOSS-Image-SFT` を読み込みます。`OpenMOSS-Team/MOSS-Image-Base` には `model_flavour: "base"` を指定します。学習例は 512×512 相当の面積を使います。[MOSS-Image クイックスタート](quickstart/MOSS_IMAGE.ja.md)を参照してください。
 
+参照画像付きで学習するには `model_flavour: "sft-edit"` または `"base-edit"` を選びます。対応するSFTまたはBaseチェックポイントから開始し、アダプターで参照画像による条件付けを学習します。`simpletuner/examples/moss_image-sft-edit.peft-lora` または `moss_image-base-edit.peft-lora` を使用してください。いずれもバッチあたりターゲット1枚、512相当の学習、REPA、データセットによる検証を設定しています。
+
 ### `--lora_format`
 
 - **内容**: LoRA チェックポイントの load/save 形式を選択します。

@@ -67,6 +67,8 @@ Usa `model_family: "flux3_image"` para el transformador de imágenes de 5,6B par
 
 Para `moss_image`, la variante predeterminada `sft` carga `OpenMOSS-Team/MOSS-Image-SFT`. Usa `model_flavour: "base"` para `OpenMOSS-Team/MOSS-Image-Base`. Los ejemplos entrenan con un área equivalente a 512×512. Consulta la [guía de MOSS-Image](quickstart/MOSS_IMAGE.es.md).
 
+Elige `model_flavour: "sft-edit"` o `"base-edit"` para entrenar con imágenes de referencia. Estas variantes parten del checkpoint SFT o Base correspondiente y aprenden el condicionamiento mediante tu adaptador. Empieza con `simpletuner/examples/moss_image-sft-edit.peft-lora` o `moss_image-base-edit.peft-lora`; usan una imagen objetivo por lote, entrenamiento a escala 512, REPA y validación del conjunto de datos.
+
 ### `--lora_format`
 
 - **Qué**: Selecciona el formato de claves del checkpoint LoRA para cargar/guardar.

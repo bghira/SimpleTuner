@@ -158,3 +158,77 @@ image = pipe(
 ).images[0]
 image.save("my-moss-image.png")
 ```
+
+## Treine uma LoRA de edição ou referência
+
+Escolha `model_flavour: "sft-edit"` ou `"base-edit"` para treinar com imagens de referência. Essas variantes partem do checkpoint SFT ou Base correspondente e aprendem o condicionamento por referência por meio do adaptador. Comece com `simpletuner/examples/moss_image-sft-edit.peft-lora` ou `moss_image-base-edit.peft-lora`; ambos usam um alvo por lote, treinamento na escala 512, REPA e validação pelo conjunto de dados.
+
+```bash
+mkdir -p config/examples datasets/moss-edits datasets/moss-references
+cp -R simpletuner/examples/moss_image-sft-edit.peft-lora config/examples/
+cp config/examples/moss_image-sft-edit.peft-lora/config.json config/config.json
+```
+
+Coloque a saída desejada em `datasets/moss-edits/sample.png`, a instrução em `datasets/moss-edits/sample.txt` e a referência de entrada em `datasets/moss-references/sample.png`. Os nomes das imagens, incluindo as extensões, devem coincidir nas duas pastas. Uma instrução de exemplo é `Change the blue mug to red while keeping the background unchanged.` Os exemplos de edição incluem esta configuração do dataloader:
+
+```json
+[
+  {
+    "id": "edits",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "datasets/moss-edits",
+    "caption_strategy": "textfile",
+    "resolution": 0.262144,
+    "resolution_type": "area",
+    "crop": false,
+    "conditioning_data": [
+      "references"
+    ],
+    "cache_dir_vae": "cache/vae/moss-image/sft-edit/targets",
+    "text_embeds": "text",
+    "repeats": 10
+  },
+  {
+    "id": "references",
+    "type": "local",
+    "dataset_type": "conditioning",
+    "instance_data_dir": "datasets/moss-references",
+    "conditioning_type": "reference_loose",
+    "resolution": 0.262144,
+    "resolution_type": "area",
+    "crop": false,
+    "cache_dir_vae": "cache/vae/moss-image/sft-edit/references"
+  },
+  {
+    "id": "text",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "cache/text/moss-image/sft-edit"
+  }
+]
+```
+
+`reference_loose` preserva a proporção de cada referência e permite tamanhos diferentes para referências e alvos. Use `reference_strict` para pares alinhados. Adicione outros conjuntos de referência a `conditioning_data` e mantenha `conditioning_multidataset_sampling: "combined"` para fornecer várias referências juntas. `"random"` escolhe um conjunto de referência por amostra; adicione instruções próprias a cada conjunto quando forem diferentes. Separe os caches de alvos, referências e texto. As referências consomem memória adicional: reduza o lote ou use as opções de offloading acima conforme necessário.
+
+A validação usa as referências e instruções dos conjuntos pareados. Os pixels de referência passam pela torre visual congelada do Qwen3.5, enquanto os latentes limpos do VAE fornecem os detalhes; a perda é calculada sobre a imagem alvo. O descarte de legendas preserva as referências e remove apenas a instrução. O processador de imagens Qwen é baixado automaticamente de `Qwen/Qwen3.5-9B`.
+
+Após o treinamento, carregue o adaptador de edição e passe uma imagem de referência ou uma lista para `image`. Para um lote de prompts, use uma lista aninhada com um conjunto de referências por prompt. O cache K/V das referências está ativado na amostragem; use `cache_reference_kv=False` para recalcular os tokens de referência a cada passo.
+
+```python
+import torch
+from diffusers.utils import load_image
+from simpletuner.helpers.models.moss_image.pipeline import MOSSImagePipeline
+
+pipe = MOSSImagePipeline.from_pretrained(
+    "OpenMOSS-Team/MOSS-Image-SFT", torch_dtype=torch.bfloat16
+).to("cuda")
+pipe.load_lora_weights("output/examples/moss_image-sft-edit.peft-lora")
+image = pipe(
+    "Change the blue mug to red while keeping the background unchanged.",
+    image=[load_image("reference.png")],
+    height=512, width=512, num_inference_steps=50, guidance_scale=3.0,
+).images[0]
+image.save("edited.png")
+```

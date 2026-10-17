@@ -158,3 +158,77 @@ image = pipe(
 ).images[0]
 image.save("my-moss-image.png")
 ```
+
+## 編集・参照画像LoRAを学習する
+
+参照画像付きで学習するには `model_flavour: "sft-edit"` または `"base-edit"` を選びます。対応するSFTまたはBaseチェックポイントから開始し、アダプターで参照画像による条件付けを学習します。`simpletuner/examples/moss_image-sft-edit.peft-lora` または `moss_image-base-edit.peft-lora` を使用してください。いずれもバッチあたりターゲット1枚、512相当の学習、REPA、データセットによる検証を設定しています。
+
+```bash
+mkdir -p config/examples datasets/moss-edits datasets/moss-references
+cp -R simpletuner/examples/moss_image-sft-edit.peft-lora config/examples/
+cp config/examples/moss_image-sft-edit.peft-lora/config.json config/config.json
+```
+
+目的の出力を `datasets/moss-edits/sample.png`、編集指示を `datasets/moss-edits/sample.txt`、入力参照画像を `datasets/moss-references/sample.png` に配置します。両フォルダーの画像ファイル名は拡張子も含めて一致させます。指示の例は `Change the blue mug to red while keeping the background unchanged.` です。編集用の例には次のデータローダー設定が含まれます。
+
+```json
+[
+  {
+    "id": "edits",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "datasets/moss-edits",
+    "caption_strategy": "textfile",
+    "resolution": 0.262144,
+    "resolution_type": "area",
+    "crop": false,
+    "conditioning_data": [
+      "references"
+    ],
+    "cache_dir_vae": "cache/vae/moss-image/sft-edit/targets",
+    "text_embeds": "text",
+    "repeats": 10
+  },
+  {
+    "id": "references",
+    "type": "local",
+    "dataset_type": "conditioning",
+    "instance_data_dir": "datasets/moss-references",
+    "conditioning_type": "reference_loose",
+    "resolution": 0.262144,
+    "resolution_type": "area",
+    "crop": false,
+    "cache_dir_vae": "cache/vae/moss-image/sft-edit/references"
+  },
+  {
+    "id": "text",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "cache/text/moss-image/sft-edit"
+  }
+]
+```
+
+`reference_loose` は各参照画像のアスペクト比を保持し、参照画像とターゲットのサイズが異なっていても使用できます。位置が対応する画像ペアには `reference_strict` を使います。複数の参照画像を同時に渡すには、`conditioning_data` に参照データセットを追加し、`conditioning_multidataset_sampling: "combined"` を維持します。`"random"` はサンプルごとに参照データセットを1つ選びます。指示が異なる場合は各参照データセットに対応する指示キャプションを用意してください。ターゲット、参照画像、テキストのキャッシュは分けます。参照画像は追加メモリを必要とするため、必要に応じてバッチサイズを減らすか、上記のオフロード機能を使ってください。
+
+検証にはペアデータセットの参照画像と指示を使用します。参照ピクセルは固定されたQwen3.5の視覚タワーを通り、ノイズのないVAE潜在表現が画像の詳細を補います。学習損失はターゲット画像に対して計算します。キャプションドロップアウトは参照画像を保持し、指示だけを除去します。Qwen画像プロセッサーは `Qwen/Qwen3.5-9B` から自動でダウンロードされます。
+
+学習後は編集アダプターを読み込み、参照画像1枚または参照画像のリストを `image` に渡します。プロンプトのバッチでは、各プロンプトに対応する参照画像のリストを入れた入れ子リストを使います。サンプリングでは参照K/Vキャッシュが有効です。毎ステップ参照トークンを再計算する場合は `cache_reference_kv=False` を指定します。
+
+```python
+import torch
+from diffusers.utils import load_image
+from simpletuner.helpers.models.moss_image.pipeline import MOSSImagePipeline
+
+pipe = MOSSImagePipeline.from_pretrained(
+    "OpenMOSS-Team/MOSS-Image-SFT", torch_dtype=torch.bfloat16
+).to("cuda")
+pipe.load_lora_weights("output/examples/moss_image-sft-edit.peft-lora")
+image = pipe(
+    "Change the blue mug to red while keeping the background unchanged.",
+    image=[load_image("reference.png")],
+    height=512, width=512, num_inference_steps=50, guidance_scale=3.0,
+).images[0]
+image.save("edited.png")
+```
