@@ -158,3 +158,77 @@ image = pipe(
 ).images[0]
 image.save("my-moss-image.png")
 ```
+
+## एडिट या रेफ़रेंस LoRA ट्रेन करें
+
+रेफ़रेंस इमेज के साथ ट्रेन करने के लिए `model_flavour: "sft-edit"` या `"base-edit"` चुनें। ये फ़्लेवर संबंधित SFT या Base checkpoint से शुरू होते हैं और आपके adapter के माध्यम से रेफ़रेंस कंडीशनिंग सीखते हैं। `simpletuner/examples/moss_image-sft-edit.peft-lora` या `moss_image-base-edit.peft-lora` से शुरू करें; इनमें प्रति बैच एक लक्ष्य इमेज, 512-स्केल ट्रेनिंग, REPA और डेटासेट वैलिडेशन शामिल हैं।
+
+```bash
+mkdir -p config/examples datasets/moss-edits datasets/moss-references
+cp -R simpletuner/examples/moss_image-sft-edit.peft-lora config/examples/
+cp config/examples/moss_image-sft-edit.peft-lora/config.json config/config.json
+```
+
+वांछित आउटपुट `datasets/moss-edits/sample.png`, उसका निर्देश `datasets/moss-edits/sample.txt` और इनपुट रेफ़रेंस `datasets/moss-references/sample.png` में रखें। दोनों फ़ोल्डर में इमेज के नाम और एक्सटेंशन समान होने चाहिए। उदाहरण निर्देश: `Change the blue mug to red while keeping the background unchanged.` एडिट उदाहरणों में यह dataloader कॉन्फ़िगरेशन है:
+
+```json
+[
+  {
+    "id": "edits",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "datasets/moss-edits",
+    "caption_strategy": "textfile",
+    "resolution": 0.262144,
+    "resolution_type": "area",
+    "crop": false,
+    "conditioning_data": [
+      "references"
+    ],
+    "cache_dir_vae": "cache/vae/moss-image/sft-edit/targets",
+    "text_embeds": "text",
+    "repeats": 10
+  },
+  {
+    "id": "references",
+    "type": "local",
+    "dataset_type": "conditioning",
+    "instance_data_dir": "datasets/moss-references",
+    "conditioning_type": "reference_loose",
+    "resolution": 0.262144,
+    "resolution_type": "area",
+    "crop": false,
+    "cache_dir_vae": "cache/vae/moss-image/sft-edit/references"
+  },
+  {
+    "id": "text",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "cache/text/moss-image/sft-edit"
+  }
+]
+```
+
+`reference_loose` हर रेफ़रेंस का आस्पेक्ट रेशियो बनाए रखता है और रेफ़रेंस तथा लक्ष्य के अलग आकार स्वीकार करता है। संरेखित जोड़ों के लिए `reference_strict` उपयोग करें। कई रेफ़रेंस साथ देने के लिए `conditioning_data` में और रेफ़रेंस डेटासेट जोड़ें और `conditioning_multidataset_sampling: "combined"` रखें। `"random"` हर सैंपल के लिए एक रेफ़रेंस डेटासेट चुनता है; निर्देश अलग हों तो हर रेफ़रेंस डेटासेट में संबंधित निर्देश captions रखें। लक्ष्य, रेफ़रेंस और टेक्स्ट की कैश अलग रखें। रेफ़रेंस को अतिरिक्त मेमोरी चाहिए: आवश्यकतानुसार बैच घटाएं या ऊपर दिए गए ऑफ़लोड विकल्प उपयोग करें।
+
+वैलिडेशन जोड़ीदार डेटासेट की रेफ़रेंस इमेज और निर्देश उपयोग करता है। रेफ़रेंस पिक्सेल फ़्रोज़न Qwen3.5 vision tower से गुजरते हैं और साफ़ VAE latents इमेज विवरण देते हैं; ट्रेनिंग लॉस केवल लक्ष्य इमेज पर होता है। Caption dropout रेफ़रेंस बनाए रखता है और केवल निर्देश हटाता है। Qwen image processor अपने आप `Qwen/Qwen3.5-9B` से डाउनलोड होता है।
+
+ट्रेनिंग के बाद एडिट adapter लोड करें और `image` में एक रेफ़रेंस इमेज या रेफ़रेंस की सूची दें। Prompt बैच के लिए हर prompt का एक रेफ़रेंस समूह रखने वाली nested सूची दें। सैंपलिंग में रेफ़रेंस K/V कैश चालू है; हर चरण में रेफ़रेंस tokens दोबारा गणना करने के लिए `cache_reference_kv=False` दें।
+
+```python
+import torch
+from diffusers.utils import load_image
+from simpletuner.helpers.models.moss_image.pipeline import MOSSImagePipeline
+
+pipe = MOSSImagePipeline.from_pretrained(
+    "OpenMOSS-Team/MOSS-Image-SFT", torch_dtype=torch.bfloat16
+).to("cuda")
+pipe.load_lora_weights("output/examples/moss_image-sft-edit.peft-lora")
+image = pipe(
+    "Change the blue mug to red while keeping the background unchanged.",
+    image=[load_image("reference.png")],
+    height=512, width=512, num_inference_steps=50, guidance_scale=3.0,
+).images[0]
+image.save("edited.png")
+```

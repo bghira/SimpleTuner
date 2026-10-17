@@ -33,6 +33,7 @@ def native_layout():
 def model(**overrides):
     foundation = MOSSImage.__new__(MOSSImage)
     foundation.config = SimpleNamespace(
+        model_flavour="sft",
         moss_image_auto_json=True,
         moss_image_prompt_upsample=False,
         moss_image_uncond_skip_layers=[22],

@@ -62,12 +62,28 @@ class MOSSImageAttentionProcessor:
     _attention_backend = None
     _parallel_config = None
 
-    def __call__(self, attn, q, k, v, rope):
+    def __call__(self, attn, q, k, v, rope, reference_start=None, reference_kv=None, reference_kv_out=None):
         shape = (*q.shape[:2], attn.heads, q.shape[-1] // attn.heads)
         q = _rotate(q.reshape(shape), rope)
         k = _rotate(k.reshape(shape), rope)
         v = v.reshape(shape)
+        if reference_kv_out is not None:
+            reference_kv_out.append((k[:, reference_start:].detach().clone(), v[:, reference_start:].detach().clone()))
+        if reference_kv is not None:
+            k = torch.cat((k, reference_kv[0]), dim=1)
+            v = torch.cat((v, reference_kv[1]), dim=1)
         with activation_offload_context(attn.offload_attention, label=f"{attn.__class__.__qualname__}:attention"):
+            if reference_start is not None:
+                live = dispatch_attention_fn(
+                    q[:, :reference_start].to(v.dtype), k.to(v.dtype), v, backend=self._attention_backend
+                )
+                references = dispatch_attention_fn(
+                    q[:, reference_start:].to(v.dtype),
+                    k[:, reference_start:].to(v.dtype),
+                    v[:, reference_start:],
+                    backend=self._attention_backend,
+                )
+                return torch.cat((live, references), dim=1).flatten(2)
             return dispatch_attention_fn(q.to(v.dtype), k.to(v.dtype), v, backend=self._attention_backend).flatten(2)
 
 
@@ -126,7 +142,17 @@ class MOSSImageTransformerBlock(nn.Module, AttentionModuleMixin):
         hidden, gate = self.proj["ffn_up_gate"](y.to(self.proj["ffn_up_gate"].weight.dtype)).chunk(2, -1)
         return self.proj["ffn_down"](_situ(hidden, gate))
 
-    def forward(self, x, rope, modulation, checkpoint_ffn=False, checkpoint_fn=checkpoint):
+    def forward(
+        self,
+        x,
+        rope,
+        modulation,
+        reference_start=None,
+        reference_kv=None,
+        reference_kv_out=None,
+        checkpoint_ffn=False,
+        checkpoint_fn=checkpoint,
+    ):
         if modulation.ndim == 3:
             modulation = modulation.unsqueeze(2)
         shift_a, scale_a, gate_a, shift_f, scale_f, gate_f = modulation.unbind(1)
@@ -135,7 +161,8 @@ class MOSSImageTransformerBlock(nn.Module, AttentionModuleMixin):
         y = y.to(dtype)
         q = self.q_norm(self.proj["q"](y).unflatten(-1, (self.heads, -1))).flatten(2)
         k = self.k_norm(self.proj["k"](y).unflatten(-1, (self.heads, -1))).flatten(2)
-        x = x + self.proj["o"](self.processor(self, q, k, self.proj["v"](y), rope)) * gate_a
+        attention = self.processor(self, q, k, self.proj["v"](y), rope, reference_start, reference_kv, reference_kv_out)
+        x = x + self.proj["o"](attention) * gate_a
         y = self.norm2(x) * (1 + scale_f) + shift_f
         ffn = checkpoint_fn(self._feed_forward, y, use_reentrant=False) if checkpoint_ffn else self._feed_forward(y)
         return x + ffn * gate_f
@@ -164,7 +191,7 @@ class _RoPE(nn.Module):
         # Frequencies are derived constants; retain the key for checkpoint compatibility.
         self.bands = self._default_bands(self.bands.device)
 
-    def forward(self, height, width, text_length, device):
+    def forward(self, height, width, text_length, device, reference_shapes=()):
         # Diffusers/Accelerate can install tensors directly, bypassing load hooks.
         if self.bands.dtype != torch.float32:
             self.bands = self._default_bands(device)
@@ -175,7 +202,17 @@ class _RoPE(nn.Module):
         image[:, 3] -= (width - 1) / 2
         text = torch.zeros(text_length, 4, device=device, dtype=torch.float32)
         text[:, 1] = torch.arange(text_length, device=device)
-        phase = torch.cat((image, text), 0).unsqueeze(-1) * self.bands
+        coordinates = [image, text]
+        for reference_index, (ref_height, ref_width) in enumerate(reference_shapes, start=1):
+            rh, rw = torch.meshgrid(
+                torch.arange(ref_height, device=device), torch.arange(ref_width, device=device), indexing="ij"
+            )
+            reference = torch.stack((torch.full_like(rh, reference_index), torch.full_like(rh, text_length), rh, rw), -1)
+            reference = reference.flatten(0, 1).float()
+            reference[:, 2] -= (ref_height - 1) / 2
+            reference[:, 3] -= (ref_width - 1) / 2
+            coordinates.append(reference)
+        phase = torch.cat(coordinates, 0).unsqueeze(-1) * self.bands
         return torch.cat((phase.sin(), phase.cos()), -2).flatten(-2).unsqueeze(0)
 
 
@@ -312,11 +349,26 @@ class MOSSImageTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, AttentionM
         timestep_sign=None,
         r_timestep=None,
         attention_kwargs=None,
+        reference_latents=None,
+        _reference_cache=None,
     ):
         skip_layers = _validate_skip_layers(skip_layers, len(self.layers))
         if hidden_states.ndim != 4 or hidden_states.shape[1] != self.config.latent_channels:
             raise ValueError("hidden_states must be [B, latent_channels, H, W].")
         batch, _, height, width = hidden_states.shape
+        if reference_latents is not None:
+            if len(reference_latents) != batch:
+                raise ValueError("Reference latent sets must match the target batch size.")
+            for references in reference_latents:
+                for reference in references:
+                    if (
+                        reference.ndim != 3
+                        or reference.shape[0] != self.config.latent_channels
+                        or min(reference.shape[-2:]) < 1
+                    ):
+                        raise ValueError("Reference latents must be nonempty [latent_channels, H, W] grids.")
+        if _reference_cache is not None and (torch.is_grad_enabled() or len(_reference_cache) != batch):
+            raise ValueError("Reference K/V caching requires inference mode and one cache per sample.")
         if encoder_hidden_states.ndim != 3 or encoder_hidden_states.shape[0] != batch:
             raise ValueError("encoder_hidden_states must be [B, S, text_dim].")
         mask = encoder_attention_mask
@@ -356,6 +408,11 @@ class MOSSImageTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, AttentionM
             head = head.reshape(batch, height * width, 2, -1).transpose(1, 2)
         else:
             mod, head = mod.reshape(batch, 6, -1), head.reshape(batch, 2, -1)
+        reference_mod = None
+        if reference_latents is not None and any(reference_latents):
+            clean_time = self._time_embedding(torch.zeros(batch, device=times.device), self.time_embedding)
+            reference_mod = self.shared_block_modulation(clean_time.to(self.shared_block_modulation.weight.dtype))
+            reference_mod = reference_mod.reshape(batch, 6, 1, -1)
         manager = self._musubi_block_swap
         swapping = manager is not None and manager.activate(self.layers, hidden_states.device, torch.is_grad_enabled())
         captured = {}
@@ -367,13 +424,29 @@ class MOSSImageTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, AttentionM
                 raise ValueError("Each sample needs at least one valid text token.")
             image = hidden_states[index : index + 1].flatten(2).transpose(1, 2)
             image = self.video_embedder(image.to(self.video_embedder.weight.dtype).contiguous())
-            rope = self.rope(height, width, context.shape[1], hidden_states.device).to(image.dtype)
-            text = self.text_embedder(context, rope[:, height * width :], self._run_block)
+            references = reference_latents[index] if reference_latents is not None else []
+            cache = _reference_cache[index] if _reference_cache is not None and references else None
+            reuse_references = bool(cache)
+            reference_shapes = [value.shape[-2:] for value in references] if not reuse_references else []
+            rope = self.rope(height, width, context.shape[1], hidden_states.device, reference_shapes).to(image.dtype)
+            live_length = height * width + context.shape[1]
+            text = self.text_embedder(context, rope[:, height * width : live_length], self._run_block)
             x = torch.cat((image, text), 1)
             modulation = mod[index : index + 1]
             if tokenwise:
                 text_modulation = modulation.mean(dim=2, keepdim=True).expand(-1, -1, context.shape[1], -1)
                 modulation = torch.cat((modulation, text_modulation), dim=2)
+            reference_start = None
+            if references and not reuse_references:
+                reference_start = live_length
+                reference_tokens = torch.cat([value.flatten(1).T for value in references]).unsqueeze(0)
+                reference_tokens = reference_tokens.to(device=image.device, dtype=self.video_embedder.weight.dtype)
+                x = torch.cat((x, self.video_embedder(reference_tokens)), dim=1)
+                if not tokenwise:
+                    modulation = modulation.unsqueeze(2).expand(-1, -1, live_length, -1)
+                modulation = torch.cat(
+                    (modulation, reference_mod[index : index + 1].expand(-1, -1, reference_tokens.shape[1], -1)), dim=2
+                )
             active = [(i, block) for i, block in enumerate(self.layers) if i not in skip_layers]
             segmented = (
                 torch.is_grad_enabled()
@@ -385,13 +458,13 @@ class MOSSImageTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, AttentionM
             )
             if segmented:
 
-                def run_segment_block(_index, entry, value, rotation, conditioning):
-                    return entry[1](value, rotation, conditioning), rotation, conditioning
+                def run_segment_block(_index, entry, value, rotation, conditioning, split):
+                    return entry[1](value, rotation, conditioning, split), rotation, conditioning, split
 
-                x, _, _ = checkpoint_sequential_state(
+                x, _, _, _ = checkpoint_sequential_state(
                     active,
                     self.gradient_checkpointing_interval,
-                    (x, rope, modulation),
+                    (x, rope, modulation, reference_start),
                     run_segment_block,
                     self._checkpoint_fn,
                     {"use_reentrant": False},
@@ -409,7 +482,19 @@ class MOSSImageTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, AttentionM
                                 and not self.gradient_checkpointing_backend.endswith("-ffn")
                             ),
                         )
-                    x = self._run_block(layer, layer_index, x, rope, modulation)
+                    captured_kv = [] if cache is not None and not reuse_references else None
+                    x = self._run_block(
+                        layer,
+                        layer_index,
+                        x,
+                        rope,
+                        modulation,
+                        reference_start,
+                        cache[layer_index] if reuse_references else None,
+                        captured_kv,
+                    )
+                    if captured_kv is not None:
+                        cache[layer_index] = captured_kv[0]
                     if hidden_states_buffer is not None and (capture_layers is None or layer_index in capture_layers):
                         captured.setdefault(layer_index, []).append(x[:, : height * width])
                     if managed:

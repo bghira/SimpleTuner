@@ -465,7 +465,7 @@ class MOSSImageTests(unittest.TestCase):
 
     def test_native_flavours_parse_and_resolve_without_remote_code(self):
         self.assertEqual(ModelRegistry.get("moss_image").NAME, "MOSS-Image")
-        for flavour in ("base", "sft"):
+        for flavour in ("base", "sft", "base-edit", "sft-edit"):
             args = parse_cmdline_args(
                 input_args=[
                     "--model_family=moss_image",

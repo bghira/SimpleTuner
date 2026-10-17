@@ -158,3 +158,77 @@ image = pipe(
 ).images[0]
 image.save("my-moss-image.png")
 ```
+
+## Train an edit or reference LoRA
+
+Choose `model_flavour: "sft-edit"` or `"base-edit"` to train with reference images. These flavours start from the corresponding SFT or Base checkpoint and learn reference conditioning through your adapter. Start with `simpletuner/examples/moss_image-sft-edit.peft-lora` or `moss_image-base-edit.peft-lora`; each uses one target per batch, 512-scale training, REPA, and dataset validation.
+
+```bash
+mkdir -p config/examples datasets/moss-edits datasets/moss-references
+cp -R simpletuner/examples/moss_image-sft-edit.peft-lora config/examples/
+cp config/examples/moss_image-sft-edit.peft-lora/config.json config/config.json
+```
+
+Put the desired output in `datasets/moss-edits/sample.png`, its instruction in `datasets/moss-edits/sample.txt`, and the input reference in `datasets/moss-references/sample.png`. Match image filenames, including their extensions, across both directories. For example, the instruction could be `Change the blue mug to red while keeping the background unchanged.` The edit examples provide this dataloader configuration:
+
+```json
+[
+  {
+    "id": "edits",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "datasets/moss-edits",
+    "caption_strategy": "textfile",
+    "resolution": 0.262144,
+    "resolution_type": "area",
+    "crop": false,
+    "conditioning_data": [
+      "references"
+    ],
+    "cache_dir_vae": "cache/vae/moss-image/sft-edit/targets",
+    "text_embeds": "text",
+    "repeats": 10
+  },
+  {
+    "id": "references",
+    "type": "local",
+    "dataset_type": "conditioning",
+    "instance_data_dir": "datasets/moss-references",
+    "conditioning_type": "reference_loose",
+    "resolution": 0.262144,
+    "resolution_type": "area",
+    "crop": false,
+    "cache_dir_vae": "cache/vae/moss-image/sft-edit/references"
+  },
+  {
+    "id": "text",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "cache/text/moss-image/sft-edit"
+  }
+]
+```
+
+`reference_loose` preserves each reference’s aspect ratio and permits different reference and target sizes. Use `reference_strict` for aligned image pairs. Add more reference datasets to `conditioning_data` and keep `conditioning_multidataset_sampling: "combined"` to provide multiple references together. `"random"` chooses one reference dataset per sample; give each reference dataset its own matching instruction captions when they differ. Keep target, reference, and text caches separate. References consume extra memory: reduce batch size or use the offloading options above as needed.
+
+Validation uses the reference images and instructions from the paired datasets. Reference pixels pass through the frozen Qwen3.5 vision tower, while clean VAE latents supply image detail; the training loss covers the target image. Caption dropout retains the references and removes only the instruction. The Qwen image processor downloads automatically from `Qwen/Qwen3.5-9B`.
+
+After training, load the edit adapter and pass one reference image or a list of references to `image`. For a prompt batch, use a nested list with one reference set per prompt. Reference K/V caching is enabled during sampling; set `cache_reference_kv=False` to recompute reference tokens at each step.
+
+```python
+import torch
+from diffusers.utils import load_image
+from simpletuner.helpers.models.moss_image.pipeline import MOSSImagePipeline
+
+pipe = MOSSImagePipeline.from_pretrained(
+    "OpenMOSS-Team/MOSS-Image-SFT", torch_dtype=torch.bfloat16
+).to("cuda")
+pipe.load_lora_weights("output/examples/moss_image-sft-edit.peft-lora")
+image = pipe(
+    "Change the blue mug to red while keeping the background unchanged.",
+    image=[load_image("reference.png")],
+    height=512, width=512, num_inference_steps=50, guidance_scale=3.0,
+).images[0]
+image.save("edited.png")
+```

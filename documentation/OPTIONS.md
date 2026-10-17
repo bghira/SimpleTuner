@@ -67,6 +67,8 @@ Use `model_family: "flux3_image"` for the 5.6B image transformer. The default `k
 
 For `moss_image`, the default `sft` flavour loads `OpenMOSS-Team/MOSS-Image-SFT`. Set `model_flavour: "base"` for `OpenMOSS-Team/MOSS-Image-Base`. The training examples use 512×512 equivalent image area. See the [MOSS-Image quickstart](quickstart/MOSS_IMAGE.md).
 
+Choose `model_flavour: "sft-edit"` or `"base-edit"` to train with reference images. These flavours start from the corresponding SFT or Base checkpoint and learn reference conditioning through your adapter. Start with `simpletuner/examples/moss_image-sft-edit.peft-lora` or `moss_image-base-edit.peft-lora`; each uses one target per batch, 512-scale training, REPA, and dataset validation.
+
 ### `--lora_format`
 
 - **What**: Select the LoRA checkpoint key format for load/save.

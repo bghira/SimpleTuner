@@ -1396,6 +1396,10 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
     def validation_prompt_image_context(self, original_image, prepared_image):
         return prepared_image
 
+    def validation_preserves_reference_images(self) -> bool:
+        """Keep reference pixels intact when the pipeline handles reference resizing."""
+        return False
+
     def requires_text_embed_image_context(self) -> bool:
         """
         Returns True when encode_text_batch must be supplied with per-prompt image
