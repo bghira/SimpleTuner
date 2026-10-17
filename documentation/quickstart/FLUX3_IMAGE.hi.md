@@ -21,15 +21,22 @@ hf auth login
 
 ## अपनी GPU के लिए रेसिपी चुनें
 
-GPU मेमोरी (VRAM) तय करती है कि एक साथ कितनी इमेज प्रोसेस कर सकते हैं। अपनी क्षमता के अनुसार उदाहरण चुनें। 24 और 32 GB रेसिपी 512 रेज़ोल्यूशन इस्तेमाल करती हैं; बड़ी रेसिपी में 1024 डेटासेट भी हैं।
+GPU मेमोरी (VRAM) तय करती है कि एक साथ कितनी इमेज प्रोसेस कर सकते हैं। अपनी क्षमता के अनुसार उदाहरण चुनें। 24 और 32 GB Base रेसिपी 512 रेज़ोल्यूशन इस्तेमाल करती हैं; बड़ी रेसिपी में 1024 डेटासेट भी हैं।
 
-| GPU मेमोरी | उदाहरण | 512 / 1024 पर प्रति बैच इमेज |
+| GPU मेमोरी | Base उदाहरण | 512 / 1024 पर प्रति बैच इमेज |
 | --- | --- | --- |
 | 24 GB | `flux3_image-24g.peft-lora` | 3 / — |
 | 32 GB | `flux3_image-32g.peft-lora` | 4 / — |
 | 48 GB | `flux3_image-48g.peft-lora` | 9 / 2 |
 | 80 GB | `flux3_image-80g.peft-lora` | 18 / 5 |
 | 144 GB | `flux3_image-144g.peft-lora` | 36 / 10 |
+
+डिस्टिल्ड `klein` के लिए इनमें से एक रेसिपी चुनें। नीचे दिए गए कॉन्फ़िगरेशन कॉपी कमांड में उसका पूरा उदाहरण नाम रखें। प्रशिक्षण स्केल वर्गाकार चित्र के बराबर क्षेत्र बताता है; चित्रों का अनुपात बना रहता है।
+
+| GPU मेमोरी | डिस्टिल्ड उदाहरण | प्रशिक्षण स्केल | प्रति बैच चित्र |
+| --- | --- | --- | ---: |
+| 24 GB | `flux3_image-klein-24g.peft-lora` | 768px | 1 |
+| 80 GB | `flux3_image-klein-80g.peft-lora` | 1024px | 4 |
 
 तालिका के बैच आकार शुरुआती मान हैं। लंबे captions और रेफ़रेंस इमेज अधिक मेमोरी लेते हैं; मेमोरी कम पड़ने पर `train_batch_size` घटाएँ। रेसिपी rank-32 LoRA, `1e-4` learning rate और REPA इस्तेमाल करती हैं, जो प्रशिक्षण के दौरान इमेज features की तुलना करता है। साथ दिए dataloaders में कॉन्सेप्ट और regularisation इमेज हैं, जो मॉडल का सामान्य इमेज ज्ञान बनाए रखने में मदद करती हैं।
 
@@ -53,7 +60,7 @@ datasets/my-concept/
 
 ## प्रशिक्षण कॉन्फ़िगरेशन बनाएँ
 
-चुनी हुई रेसिपी कॉपी करें। नीचे 48 GB का उदाहरण है; हर पथ में `48g` को अपने चुने टियर से बदलें:
+चुनी हुई रेसिपी कॉपी करें। इन कमांड में `flux3_image-48g.peft-lora` है; इस पूरे उदाहरण नाम को अपनी चुनी हुई Base या डिस्टिल्ड रेसिपी से बदलें:
 
 ```bash
 mkdir -p config/examples
@@ -84,8 +91,8 @@ cp config/examples/flux3_image-48g.peft-lora/config.json config/config.json
     "dataset_type": "image",
     "instance_data_dir": "datasets/my-concept",
     "caption_strategy": "textfile",
-    "resolution": 512,
-    "resolution_type": "pixel",
+    "resolution": 0.589824,
+    "resolution_type": "area",
     "crop": false,
     "cache_dir_vae": "cache/vae/flux3-image/my-concept",
     "text_embeds": "text"
@@ -99,6 +106,8 @@ cp config/examples/flux3_image-48g.peft-lora/config.json config/config.json
   }
 ]
 ```
+
+इस स्थानीय डेटासेट में `resolution: 0.589824` और `resolution_type: "area"` से 768×768 के बराबर क्षेत्र मिलता है। 80 GB डिस्टिल्ड रेसिपी के 1024 स्केल वाले डेटासेट के लिए `1.048576` रखें।
 
 `resolution` प्रशिक्षण इमेज का आकार तय करता है; आयाम 16 के गुणज में समायोजित होते हैं। कैश दोबारा इस्तेमाल होने वाले latents और text embeddings रखता है, जिससे अगली रन जल्दी शुरू होती है। अलग मॉडल परिवारों के कैश अलग रखें। अधिक डेटासेट या regularisation इमेज के लिए [dataloader गाइड](../DATALOADER.hi.md) देखें।
 
@@ -191,8 +200,10 @@ image = pipe(
 image.save("my-flux3-image.png")
 ```
 
-## वैकल्पिक: assistant LoRA ट्रेन करें
+## सहायक LoRA
 
-Assistant LoRA डिस्टिल्ड `klein` को आगे LoRA प्रशिक्षण के लिए ढालने में मदद करती है। मॉडल की बनाई samples से इसे बनाने के लिए `flux3_image-assistant-lora.peft-lora` चुनें। प्रशिक्षण के बाद अपनी distilled training config में `assistant_lora_path` को उसके अडैप्टर फ़ोल्डर पर रखें और `disable_assistant_lora: false` करें। प्रशिक्षण के लिए `assistant_lora_strength` और validation इमेज के लिए `assistant_lora_inference_strength` इस्तेमाल करें।
+`model_flavour: "klein"` के साथ LoRA प्रशिक्षण अपने आप [प्रकाशित प्रशिक्षण सहायक](https://huggingface.co/SimpleTuner/flux-3-klein-image-training-assistant) को फ़्रीज़ किए गए अडैप्टर के रूप में लोड करता है। प्रशिक्षण में `assistant_lora_strength` का डिफ़ॉल्ट `1.0` और validation में `assistant_lora_inference_strength` का डिफ़ॉल्ट `0.0` है। इसे बंद करने के लिए `disable_assistant_lora: true` रखें। दूसरा अडैप्टर इस्तेमाल करने के लिए `assistant_lora_path` और ज़रूरत हो तो `assistant_lora_weight_name` दें।
+
+अपना सहायक प्रशिक्षित करने के लिए `flux3_image-assistant-lora.peft-lora` चुनें। यह रेसिपी मौजूदा सहायक को बंद करती है और मॉडल की बनाई samples से सीखती है। इसके बाद अपनी डिस्टिल्ड LoRA कॉन्फ़िगरेशन में `assistant_lora_path` को सहेजे गए अडैप्टर फ़ोल्डर पर रखें।
 
 अधिक सेटिंग्स [options reference](../OPTIONS.hi.md) में हैं। TwinFlow के लिए `twinflow_enabled: true` और `use_ema: true` दोनों रखें; EMA इस प्रशिक्षण विधि का teacher मॉडल बनाए रखता है।

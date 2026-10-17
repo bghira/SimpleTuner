@@ -299,8 +299,8 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
 
     assistant_dependencies = [
         FieldDependency(field="model_type", value="lora"),
-        FieldDependency(field="model_family", operator="in", values=["flux", "z_image", "ernie"]),
-        FieldDependency(field="model_flavour", operator="in", values=["schnell", "turbo"]),
+        FieldDependency(field="model_family", operator="in", values=["flux", "flux3_image", "z_image", "ernie"]),
+        FieldDependency(field="model_flavour", operator="in", values=["schnell", "klein", "turbo"]),
     ]
 
     registry._add_field(
@@ -314,8 +314,8 @@ def register_lora_fields(registry: "FieldRegistry") -> None:
             subsection="advanced",
             default_value=None,
             dependencies=assistant_dependencies,
-            help_text="Optional frozen assistant LoRA applied during training (Flux schnell / Z-Image turbo / ERNIE turbo).",
-            tooltip="Provide a safetensors path or Hub repo for the assistant adapter. Disabled when empty.",
+            help_text="Frozen assistant LoRA applied during training (Flux schnell / FLUX.3 Klein / Z-Image turbo / ERNIE turbo).",
+            tooltip="Provide a safetensors path or Hub repo, or leave empty to use the model's default. Use Disable Assistant LoRA to opt out.",
             importance=ImportanceLevel.ADVANCED,
             order=8.5,
         )

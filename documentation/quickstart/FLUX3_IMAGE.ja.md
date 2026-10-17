@@ -21,15 +21,22 @@ hf auth login
 
 ## GPU に合う設定を選ぶ
 
-GPU メモリ（VRAM）によって同時に処理できる画像数が決まります。容量に合う例を選んでください。24、32 GB 設定は解像度 512、それ以上の設定は 1024 のデータセットも含みます。
+GPU メモリ（VRAM）によって同時に処理できる画像数が決まります。容量に合う例を選んでください。24、32 GB の Base 設定は解像度 512、それ以上の設定は 1024 のデータセットも含みます。
 
-| GPU メモリ | 設定例 | 512 / 1024 のバッチ内画像数 |
+| GPU メモリ | Base 設定例 | 512 / 1024 のバッチ内画像数 |
 | --- | --- | --- |
 | 24 GB | `flux3_image-24g.peft-lora` | 3 / — |
 | 32 GB | `flux3_image-32g.peft-lora` | 4 / — |
 | 48 GB | `flux3_image-48g.peft-lora` | 9 / 2 |
 | 80 GB | `flux3_image-80g.peft-lora` | 18 / 5 |
 | 144 GB | `flux3_image-144g.peft-lora` | 36 / 10 |
+
+蒸留版の `klein` には次のレシピを選びます。後述の設定コピーコマンドで、例の名前全体を置き換えてください。学習スケールは正方形に換算した面積を表し、画像の縦横比は維持されます。
+
+| GPU メモリ | 蒸留版の設定例 | 学習スケール | バッチ内画像数 |
+| --- | --- | --- | ---: |
+| 24 GB | `flux3_image-klein-24g.peft-lora` | 768px | 1 |
+| 80 GB | `flux3_image-klein-80g.peft-lora` | 1024px | 4 |
 
 表のバッチ数を出発点にしてください。長いキャプションや参照画像はメモリを多く使うため、不足時は `train_batch_size` を下げます。設定例は rank 32 LoRA、学習率 `1e-4`、画像特徴を比較する REPA を使います。付属 dataloader は被写体画像と正則化画像を組み合わせ、モデルの幅広い画像知識の保持を助けます。
 
@@ -53,7 +60,7 @@ datasets/my-concept/
 
 ## 学習設定を作る
 
-選んだ設定例をコピーします。以下は 48 GB の例です。各パスの `48g` を選択した容量に置き換えてください。
+選んだレシピをコピーします。以下は `flux3_image-48g.peft-lora` の例です。名前全体を、選択した Base または蒸留版のレシピに置き換えてください。
 
 ```bash
 mkdir -p config/examples
@@ -84,8 +91,8 @@ cp config/examples/flux3_image-48g.peft-lora/config.json config/config.json
     "dataset_type": "image",
     "instance_data_dir": "datasets/my-concept",
     "caption_strategy": "textfile",
-    "resolution": 512,
-    "resolution_type": "pixel",
+    "resolution": 0.589824,
+    "resolution_type": "area",
     "crop": false,
     "cache_dir_vae": "cache/vae/flux3-image/my-concept",
     "text_embeds": "text"
@@ -99,6 +106,8 @@ cp config/examples/flux3_image-48g.peft-lora/config.json config/config.json
   }
 ]
 ```
+
+このローカルデータセットでは、`resolution: 0.589824` と `resolution_type: "area"` で 768×768 相当の面積になります。80 GB の蒸留版レシピの 1024 スケールには `1.048576` を使います。
 
 `resolution` は学習画像のサイズです。画像寸法は 16 の倍数にそろえられます。キャッシュは画像の潜在表現とテキスト埋め込みを再利用し、次回の起動を速めます。モデルファミリーごとに保存先を分けてください。追加データや正則化画像は[データローダーガイド](../DATALOADER.ja.md)を参照してください。
 
@@ -191,8 +200,10 @@ image = pipe(
 image.save("my-flux3-image.png")
 ```
 
-## 任意：アシスタント LoRA を学習する
+## アシスタント LoRA
 
-アシスタント LoRA は、蒸留モデル `klein` で追加の LoRA を学習するための調整を助けます。`flux3_image-assistant-lora.peft-lora` を選び、モデル生成サンプルで作成します。終了後、蒸留モデルの学習設定で `assistant_lora_path` に保存先を指定し、`disable_assistant_lora: false` を設定します。学習時は `assistant_lora_strength`、検証画像生成時は `assistant_lora_inference_strength` で強度を調整します。
+`model_flavour: "klein"` の LoRA 学習では、[公開済みの学習用アシスタント](https://huggingface.co/SimpleTuner/flux-3-klein-image-training-assistant)を凍結したアダプターとして自動で読み込みます。学習時の `assistant_lora_strength` は既定で `1.0`、検証時の `assistant_lora_inference_strength` は `0.0` です。無効にするには `disable_assistant_lora: true` を設定します。別のアダプターを使う場合は `assistant_lora_path` と、必要に応じて `assistant_lora_weight_name` を指定します。
+
+独自のアシスタントを学習するには `flux3_image-assistant-lora.peft-lora` を選びます。このレシピは既存のアシスタントを無効にし、モデルが生成したサンプルから学習します。完了後、蒸留版の LoRA 設定で `assistant_lora_path` に保存先を指定してください。
 
 追加設定は[オプションリファレンス](../OPTIONS.ja.md)を参照してください。TwinFlow は `twinflow_enabled: true` と `use_ema: true` を同時に設定します。EMA はこの学習方法で使う教師モデルを維持します。

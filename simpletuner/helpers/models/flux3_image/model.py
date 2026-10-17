@@ -44,6 +44,8 @@ class Flux3Image(ImageModelFoundation):
     PROMPT_UPSAMPLING_CONFIG_KEY = "flux3_prompt_upsample"
     PROMPT_UPSAMPLING_MODEL_ID = PROMPT_UPSAMPLER_MODEL_ID
     ASSISTANT_LORA_FLAVOURS = ("klein",)
+    ASSISTANT_LORA_PATH = "SimpleTuner/flux-3-klein-image-training-assistant"
+    ASSISTANT_LORA_WEIGHT_NAME = "pytorch_lora_weights.safetensors"
     DEFAULT_LORA_TARGET = ["attn.to_q", "attn.to_k", "attn.to_v", "attn.to_out.0"]
     DEFAULT_LYCORIS_TARGET = ["Flux3ImageTransformerBlock"]
     TEXT_ENCODER_CONFIGURATION = {
@@ -97,6 +99,11 @@ class Flux3Image(ImageModelFoundation):
         if self.config.model_flavour == "klein":
             self.config.validation_guidance = 1.0
             self.config.validation_guidance_real = 1.0
+            if self.config.model_type == "lora" and self.supports_assistant_lora(self.config):
+                if getattr(self.config, "assistant_lora_path", None) in (None, "", "None"):
+                    self.config.assistant_lora_path = self.ASSISTANT_LORA_PATH
+                if getattr(self.config, "assistant_lora_weight_name", None) in (None, "", "None"):
+                    self.config.assistant_lora_weight_name = self.ASSISTANT_LORA_WEIGHT_NAME
 
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         if not self.text_encoders:

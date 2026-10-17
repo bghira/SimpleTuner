@@ -85,6 +85,27 @@ class TestModelFieldRegistry(unittest.TestCase):
         self.assertIn("validation_lyrics", validation_fields)
         self.assertIn("validation_audio_duration", validation_fields)
 
+    def test_flux3_assistant_controls_are_available_for_distilled_lora(self):
+        assistant_fields = {
+            "assistant_lora_path",
+            "assistant_lora_strength",
+            "assistant_lora_inference_strength",
+            "disable_assistant_lora",
+        }
+        for flavour, model_type, expected in (
+            ("klein", "lora", True),
+            ("klein-base", "lora", False),
+            ("klein", "full", False),
+        ):
+            with self.subTest(flavour=flavour, model_type=model_type):
+                fields = {
+                    field.name
+                    for field in self.registry.get_fields_for_tab(
+                        "model", context={"model_family": "flux3_image", "model_flavour": flavour, "model_type": model_type}
+                    )
+                }
+                self.assertEqual(fields & assistant_fields, assistant_fields if expected else set())
+
     def test_minimaxmusic_exposes_continuation_geometry_fields(self):
         target_frames = self.registry.get_field("minimax_music_lm_target_frames")
         crop_mode = self.registry.get_field("minimax_music_lm_continuation_crop_mode")
