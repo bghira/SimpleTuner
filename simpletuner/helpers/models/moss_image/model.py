@@ -10,8 +10,10 @@ from simpletuner.helpers.configuration.registry import ConfigRegistry, make_defa
 from simpletuner.helpers.models.common import ImageModelFoundation, ModelTypes, PipelineTypes, PredictionTypes
 from simpletuner.helpers.models.flux2.latents import denormalize_latents, normalize_latents, patchify, unpatchify
 from simpletuner.helpers.models.moss_image.pipeline import MOSSImagePipeline, MOSSImageScheduler
+from simpletuner.helpers.models.moss_image.prompting import MossImageJSONSchemaConverter
 from simpletuner.helpers.models.moss_image.text import MAX_TEXT_LENGTH, encode_prompts
 from simpletuner.helpers.models.moss_image.transformer import MOSSImageTransformer, _validate_skip_layers
+from simpletuner.helpers.models.prompt_upsampling import TransformersJSONPromptUpsampler
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.models.tae.types import Flux2TAESpec
 from simpletuner.helpers.models.text import collate_embeddings
@@ -20,6 +22,8 @@ from simpletuner.helpers.musubi_block_swap import apply_musubi_pretrained_defaul
 
 class MOSSImage(ImageModelFoundation):
     NAME = "MOSS-Image"
+    PROMPT_UPSAMPLING_CONFIG_KEY = "moss_image_prompt_upsample"
+    PROMPT_UPSAMPLING_MODEL_ID = "Qwen/Qwen3.5-27B"
     MODEL_DESCRIPTION = "MOSS-Image text-to-image generation with native text and layout control"
     ENABLED_IN_WIZARD = True
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
@@ -105,6 +109,35 @@ class MOSSImage(ImageModelFoundation):
         self.noise_schedule = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=1.0)
         return self.config, self.noise_schedule
 
+    def get_json_schema_converter(self):
+        if getattr(self.config, "moss_image_auto_json", False) or self.prompt_upsampling_enabled():
+            return MossImageJSONSchemaConverter()
+        return None
+
+    def create_prompt_upsampler(self):
+        return TransformersJSONPromptUpsampler(
+            model_id=self.get_prompt_upsampler_model_id(),
+            converter=self.get_json_schema_converter(),
+            device=self.accelerator.device,
+            dtype=self.config.weight_dtype,
+            text_encoders=self.text_encoders,
+        )
+
+    def get_prompt_upsampler_model_id(self):
+        return self.config.moss_image_prompt_upsampler_model_id
+
+    def text_embed_cache_metadata_for_filepath(self, *, init_backend, image_path, **kwargs):
+        metadata = super().text_embed_cache_metadata_for_filepath(init_backend=init_backend, image_path=image_path, **kwargs)
+        if self.prompt_upsampling_enabled():
+            metadata.update(image_paths=[str(image_path)], data_backend_ids=[init_backend["id"]])
+        return metadata
+
+    def text_embed_cache_metadata_for_sample(self, *, example, **kwargs):
+        metadata = super().text_embed_cache_metadata_for_sample(example=example, **kwargs)
+        if self.prompt_upsampling_enabled():
+            metadata.update(image_paths=[str(example["image_path"])], data_backend_ids=[example["data_backend_id"]])
+        return metadata
+
     def _encode_prompts(self, prompts, is_negative_prompt=False):
         if not self.text_encoders:
             self.load_text_encoder()
@@ -169,7 +202,7 @@ class MOSSImage(ImageModelFoundation):
         return latents
 
     def update_pipeline_call_kwargs(self, kwargs):
-        kwargs = dict(kwargs)
+        kwargs = dict(super().update_pipeline_call_kwargs(kwargs))
         kwargs["uncond_skip_layers"] = self.config.moss_image_uncond_skip_layers
         if "guidance_scale_real" in kwargs:
             kwargs["guidance_scale"] = kwargs.pop("guidance_scale_real")
