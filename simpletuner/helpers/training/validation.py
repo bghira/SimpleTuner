@@ -883,6 +883,18 @@ def _validation_negative_prompt_record(
     }
 
 
+def _precache_validation_prompt_embeddings(args, embed_cache, model, prompt_records, **kwargs):
+    requires_resolution = getattr(model, "requires_text_embed_resolution_context", None)
+    if requires_resolution is not None and requires_resolution() is True and not kwargs.get("is_negative_prompt", False):
+        resolutions = parse_validation_resolutions(args.validation_resolution, model_flavour=args.model_flavour)
+        prompt_records = [
+            dict(record, metadata={**(record.get("metadata") or {}), "width": width, "height": height})
+            for record in prompt_records
+            for width, height in (resolutions if record["prompt"].strip() else [(None, None)])
+        ]
+    return embed_cache.compute_embeddings_for_prompts(prompt_records, **kwargs)
+
+
 def prepare_validation_prompt_list(args, embed_cache, model):
     model_uses_text_cache = True
     if hasattr(model, "uses_text_embeddings_cache"):
@@ -909,7 +921,9 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         if metadata:
             prompt_record["metadata"] = metadata
         if precompute_text_embeddings:
-            embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
+            _precache_validation_prompt_embeddings(
+                args, embed_cache, model, [prompt_record], is_validation=True, load_from_cache=False
+            )
     model_type = getattr(embed_cache, "model_type", None)
     validation_sample_images = None
     deepfloyd_stage2_needs_validation_images = (
@@ -978,7 +992,9 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                         "metadata": metadata,
                     }
                     if precompute_text_embeddings:
-                        embed_cache.compute_embeddings_for_prompts([prompt_record], load_from_cache=False)
+                        _precache_validation_prompt_embeddings(
+                            args, embed_cache, model, [prompt_record], load_from_cache=False
+                        )
                 else:
                     # For models that don't require image context, use shortname as key
                     prompt_record = {
@@ -989,7 +1005,9 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                     if metadata:
                         prompt_record["metadata"] = metadata
                     if precompute_text_embeddings:
-                        embed_cache.compute_embeddings_for_prompts([prompt_record], load_from_cache=False)
+                        _precache_validation_prompt_embeddings(
+                            args, embed_cache, model, [prompt_record], load_from_cache=False
+                        )
                 sample_prompts.append(PromptLibraryEntry(prompt=validation_prompt))
                 sample_shortnames.append(shortname)
                 if reference_images:
@@ -1024,7 +1042,9 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             if metadata:
                 prompt_record["metadata"] = metadata
             if precompute_text_embeddings:
-                embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
+                _precache_validation_prompt_embeddings(
+                    args, embed_cache, model, [prompt_record], is_validation=True, load_from_cache=False
+                )
             validation_prompts.append(entry)
             validation_shortnames.append(shortname)
 
@@ -1050,14 +1070,19 @@ def prepare_validation_prompt_list(args, embed_cache, model):
             if metadata:
                 prompt_record["metadata"] = metadata
             if precompute_text_embeddings:
-                embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
+                _precache_validation_prompt_embeddings(
+                    args, embed_cache, model, [prompt_record], is_validation=True, load_from_cache=False
+                )
             if entry.bbox_entities:
                 entity_records = []
                 for idx, entity in enumerate(entry.bbox_entities):
                     entity_key = f"__grounding_val_{shortname}__bbox_{idx}"
                     entity_records.append({"prompt": entity["label"], "key": entity_key})
                 if precompute_text_embeddings:
-                    embed_cache.compute_embeddings_for_prompts(
+                    _precache_validation_prompt_embeddings(
+                        args,
+                        embed_cache,
+                        model,
                         entity_records,
                         return_concat=False,
                         is_validation=True,
@@ -1075,7 +1100,10 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                         {"prompt": label, "key": f"__grounding_val_{shortname}__kf_{label}"} for label in sorted(seen_labels)
                     ]
                     if precompute_text_embeddings:
-                        embed_cache.compute_embeddings_for_prompts(
+                        _precache_validation_prompt_embeddings(
+                            args,
+                            embed_cache,
+                            model,
                             kf_records,
                             return_concat=False,
                             is_validation=True,
@@ -1101,7 +1129,9 @@ def prepare_validation_prompt_list(args, embed_cache, model):
         if metadata:
             prompt_record["metadata"] = metadata
         if precompute_text_embeddings:
-            embed_cache.compute_embeddings_for_prompts([prompt_record], is_validation=True, load_from_cache=False)
+            _precache_validation_prompt_embeddings(
+                args, embed_cache, model, [prompt_record], is_validation=True, load_from_cache=False
+            )
     # Compute negative embed for validation prompts, if any are set, so that it's stored before we unload the text encoder.
     if validation_prompts and precompute_text_embeddings:
         negative_prompt = StateTracker.get_args().validation_negative_prompt
@@ -1133,7 +1163,10 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                         validation_prompt_inputs.get(shortname),
                         positive_prompt=entry.prompt,
                     )
-                    embed_cache.compute_embeddings_for_prompts(
+                    _precache_validation_prompt_embeddings(
+                        args,
+                        embed_cache,
+                        model,
                         [negative_prompt_record],
                         is_validation=True,
                         load_from_cache=False,
@@ -1147,7 +1180,10 @@ def prepare_validation_prompt_list(args, embed_cache, model):
                     if embed_cache._requires_path_based_keys
                     else negative_prompt
                 )
-                embed_cache.compute_embeddings_for_prompts(
+                _precache_validation_prompt_embeddings(
+                    args,
+                    embed_cache,
+                    model,
                     [negative_prompt_input],
                     is_validation=True,
                     load_from_cache=False,
@@ -2290,6 +2326,7 @@ class Validation:
         validation_input_image=None,
         cache_shortname: str | None = None,
         lyrics: str | None = None,
+        resolution: tuple[int, int] | None = None,
     ):
         # For validation prompts, use the cache_shortname (defaults to validation_shortname) as cache key for lookup.
         args = StateTracker.get_args()
@@ -2302,7 +2339,7 @@ class Validation:
             "prompt": validation_prompt,
             "key": cache_key,
         }
-        metadata = {}
+        metadata = {"width": resolution[0], "height": resolution[1]} if resolution is not None else {}
         if self.model.requires_text_embed_image_context() and validation_input_image is not None:
             metadata.update(_validation_reference_prompt_metadata(validation_input_image) or {})
         audio_metadata = _validation_prompt_cache_metadata(args, self.model, lyrics=lyrics)
@@ -4713,6 +4750,10 @@ class Validation:
                 ema_validation_images[validation_shortname] = []
                 validation_audio_results[validation_shortname] = []
             try:
+                resolution_kwargs = {}
+                requires_resolution = getattr(self.model, "requires_text_embed_resolution_context", None)
+                if requires_resolution is not None and requires_resolution() is True:
+                    resolution_kwargs["resolution"] = (validation_resolution_width, validation_resolution_height)
                 _embed = self._gather_prompt_embeds(
                     prompt,
                     validation_shortname,
@@ -4721,6 +4762,7 @@ class Validation:
                     ),
                     cache_shortname=cache_key,
                     lyrics=lyrics,
+                    **resolution_kwargs,
                 )
                 if _embed is not None:
                     extra_validation_kwargs.update(_embed)

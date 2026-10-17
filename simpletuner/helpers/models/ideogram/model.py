@@ -21,7 +21,7 @@ from simpletuner.helpers.models.ideogram.pipeline import (
     _load_qwen3_vl,
 )
 from simpletuner.helpers.models.ideogram.prompt_enhancer import Ideogram4PromptEnhancerHead, IdeogramPromptUpsampler
-from simpletuner.helpers.models.ideogram.prompting import maybe_convert_prompt_to_ideogram_json
+from simpletuner.helpers.models.ideogram.prompting import Ideogram4JSONSchemaConverter
 from simpletuner.helpers.models.ideogram.quantized_loading import dequantize_fp8_state_dict, is_fp8_state_dict
 from simpletuner.helpers.models.ideogram.scheduler import get_schedule_for_resolution
 from simpletuner.helpers.models.ideogram.text_projection import Ideogram4TextProjection, Ideogram4TextProjectionConfig
@@ -212,12 +212,13 @@ class Ideogram4(ImageModelFoundation):
         self.pipeline = pipeline
         return pipeline
 
+    def get_json_schema_converter(self):
+        return Ideogram4JSONSchemaConverter() if getattr(self.config, "ideogram_auto_json", True) else None
+
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
+        pipeline_kwargs = super().update_pipeline_call_kwargs(pipeline_kwargs)
         if "prompt" in pipeline_kwargs and pipeline_kwargs["prompt"] is not None:
-            pipeline_kwargs["prompts"] = maybe_convert_prompt_to_ideogram_json(
-                pipeline_kwargs.pop("prompt"),
-                enabled=getattr(self.config, "ideogram_auto_json", True),
-            )
+            pipeline_kwargs["prompts"] = pipeline_kwargs.pop("prompt")
         elif pipeline_kwargs.get("prompt") is None:
             pipeline_kwargs.pop("prompt", None)
         pipeline_kwargs.pop("negative_prompt", None)
@@ -239,11 +240,8 @@ class Ideogram4(ImageModelFoundation):
             self.text_encoders[0], self.tokenizers[0], self.prompt_enhancer_head, self.accelerator.device
         )
 
-    def text_embed_cache_namespace(self):
-        if self.prompt_upsampling_enabled():
-            repo_id = getattr(self.config, "ideogram_prompt_enhancer_head_id", None) or self.DEFAULT_PROMPT_ENHANCER_HEAD
-            return f"prompt-upsampling:{repo_id}"
-        return super().text_embed_cache_namespace()
+    def get_prompt_upsampler_model_id(self):
+        return getattr(self.config, "ideogram_prompt_enhancer_head_id", None) or self.DEFAULT_PROMPT_ENHANCER_HEAD
 
     def unload_text_encoder(self):
         self.prompt_enhancer_head = None
@@ -294,10 +292,6 @@ class Ideogram4(ImageModelFoundation):
         )
         tokenized = []
         for prompt in prompts:
-            prompt = maybe_convert_prompt_to_ideogram_json(
-                prompt,
-                enabled=getattr(self.config, "ideogram_auto_json", True),
-            )
             messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
             text = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
             encoded = tokenizer(text, return_tensors="pt", add_special_tokens=False)

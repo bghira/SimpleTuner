@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -55,6 +56,22 @@ def reference_images_from_context(context: dict) -> tuple[Image.Image, ...]:
         array = (array.permute(1, 2, 0) * 255).round().to(torch.uint8).numpy()
         images.append(Image.fromarray(array))
     return tuple(images)
+
+
+def resize_reference_images(images, max_total_pixels=1048576):
+    if not images:
+        return ()
+    pixel_budget = max_total_pixels // len(images)
+    output = []
+    for image in images:
+        scale = min(1.0, math.sqrt(pixel_budget / (image.width * image.height)))
+        if scale < 1:
+            image = image.resize(
+                (max(1, int(image.width * scale)), max(1, int(image.height * scale))),
+                Image.Resampling.LANCZOS,
+            )
+        output.append(image)
+    return tuple(output)
 
 
 def prompt_upsampling_context_key(metadata, height, width):
@@ -117,16 +134,25 @@ class ImagePromptUpsamplingMixin:
             return TextEmbedCacheKey.DATASET_AND_FILENAME
         return super().text_embed_cache_key()
 
+    def get_prompt_upsampler_model_id(self):
+        return self.PROMPT_UPSAMPLING_MODEL_ID
+
     def text_embed_cache_namespace(self) -> str | None:
+        namespace = super().text_embed_cache_namespace()
         if self.prompt_upsampling_enabled():
-            return f"prompt-upsampling:{self.PROMPT_UPSAMPLING_MODEL_ID}"
-        return super().text_embed_cache_namespace()
+            upsampler = f"prompt-upsampling:{self.get_prompt_upsampler_model_id()}"
+            return f"{upsampler}:{namespace}" if namespace else upsampler
+        return namespace
 
     def text_embed_cache_context_key(self, metadata, *, prompt=None):
         if not self.prompt_upsampling_enabled() or (prompt is not None and not str(prompt).strip()):
             return None
         height, width = self._prompt_upsample_resolution()
         return prompt_upsampling_context_key(metadata, height, width)
+
+    def requires_text_embed_resolution_context(self) -> bool:
+        converter = self.get_json_schema_converter()
+        return self.prompt_upsampling_enabled() and converter is not None and converter.USES_PIXEL_COORDINATES
 
     def validation_prompt_image_context(self, original_image, prepared_image):
         if self.prompt_upsampling_enabled():
@@ -193,3 +219,59 @@ class ImagePromptUpsamplingMixin:
     def unload_text_encoder(self):
         self._prompt_upsampler = None
         super().unload_text_encoder()
+
+
+class TransformersJSONPromptUpsampler(PromptUpsampler):
+    def __init__(self, *, model_id, converter, device, dtype, text_encoders):
+        from transformers import AutoModelForImageTextToText, AutoProcessor
+
+        self.converter = converter
+        self.device = device
+        self.text_encoders = text_encoders
+        self.processor = AutoProcessor.from_pretrained(model_id)
+        self.model = AutoModelForImageTextToText.from_pretrained(model_id, dtype=dtype).eval().requires_grad_(False)
+
+    @torch.no_grad()
+    def upsample(self, requests):
+        for encoder in self.text_encoders:
+            encoder.to("cpu")
+        captions = []
+        try:
+            self.model.to(self.device)
+            for request in requests:
+                if request.prompt.lstrip().startswith("{"):
+                    captions.append(self.converter.convert(request.prompt, height=request.height, width=request.width))
+                    continue
+                instruction = (
+                    self.converter.generation_instructions(height=request.height, width=request.width)
+                    + "Return exactly one JSON object matching this schema, without Markdown: "
+                    + json.dumps(self.converter.json_schema())
+                )
+                content = [{"type": "image", "image": image} for image in resize_reference_images(request.reference_images)]
+                content.append({"type": "text", "text": instruction + "\nOriginal caption: " + request.prompt})
+                inputs = self.processor.apply_chat_template(
+                    [{"role": "user", "content": content}],
+                    add_generation_prompt=True,
+                    tokenize=True,
+                    return_dict=True,
+                    return_tensors="pt",
+                    enable_thinking=True,
+                ).to(self.device)
+                length = inputs["input_ids"].shape[1]
+                output = self.model.generate(**inputs, max_new_tokens=16384, do_sample=False)
+                tokens = output[0, length:]
+                end_thinking = self.processor.tokenizer.get_vocab().get("</think>")
+                if end_thinking is not None:
+                    positions = (tokens == end_thinking).nonzero(as_tuple=True)[0]
+                    if positions.numel():
+                        tokens = tokens[int(positions[-1]) + 1 :]
+                text = self.processor.decode(tokens, skip_special_tokens=True).strip()
+                caption = json.loads(text)
+                if not isinstance(caption, dict):
+                    raise ValueError("A JSON prompt upsampler must return an object.")
+                captions.append(
+                    self.converter.convert(self.converter.serialize(caption), height=request.height, width=request.width)
+                )
+        finally:
+            self.model.to("cpu")
+        return captions

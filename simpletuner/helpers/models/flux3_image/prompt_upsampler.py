@@ -1,14 +1,12 @@
 """The FLUX.3 Image Klein Qwen3.5 prompt-upsample backend."""
 
 import json
-import math
 
 import torch
 from huggingface_hub import hf_hub_download
-from PIL import Image
 from transformers import AutoProcessor, LogitsProcessor, Qwen3_5ForConditionalGeneration
 
-from simpletuner.helpers.models.prompt_upsampling import PromptUpsampler
+from simpletuner.helpers.models.prompt_upsampling import PromptUpsampler, resize_reference_images
 
 PROMPT_UPSAMPLER_MODEL_ID = "black-forest-labs/flux-3-image-klein-pup"
 
@@ -52,14 +50,7 @@ class Flux3ImagePromptUpsampler(PromptUpsampler):
                 content = request.prompt
                 if references:
                     content = []
-                    pixel_budget = 1048576 // len(references)
-                    for image in references:
-                        scale = min(1.0, math.sqrt(pixel_budget / (image.width * image.height)))
-                        if scale < 1:
-                            image = image.resize(
-                                (max(1, int(image.width * scale)), max(1, int(image.height * scale))),
-                                Image.Resampling.LANCZOS,
-                            )
+                    for image in resize_reference_images(references):
                         content.append({"type": "image", "image": image})
                     content.append(
                         {
