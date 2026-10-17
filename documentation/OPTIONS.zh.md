@@ -65,6 +65,8 @@ simpletuner configure config/foo/config.json
 
 使用 `model_family: "flux3_image"` 训练 5.6B 参数的图像 Transformer。默认变体 `klein-base` 加载 `black-forest-labs/flux-3-image-klein-base`；`klein` 加载蒸馏模型 `black-forest-labs/flux-3-image-klein`。下载前请先取得所选仓库的访问权限。参见 [FLUX [Kom]munity 许可证](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE)。
 
+`moss_image` 默认的 `sft` 变体加载 `OpenMOSS-Team/MOSS-Image-SFT`。使用 `OpenMOSS-Team/MOSS-Image-Base` 时，设置 `model_flavour: "base"`。训练示例采用 512×512 等效面积。参阅 [MOSS-Image 快速入门](quickstart/MOSS_IMAGE.zh.md)。
+
 ### `--lora_format`
 
 - **内容**：选择 LoRA 检查点的加载/保存键格式。
@@ -1223,6 +1225,26 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 此选项默认关闭。启用后，SimpleTuner 会下载独立的 Qwen3.5-9B 模型（权重约 19 GB），在缓存文本嵌入之前扩写正向提示词。编辑任务会使用配对参考图。负向提示词、dropout 空描述和原始描述文件均保持不变。
 
 请预留额外系统内存和预处理时间。扩写模型与文本编码器轮流使用 GPU，生成的嵌入会在训练中复用。SimpleTuner 将扩写嵌入与原始嵌入分别保存，再次选择相同参考图时可复用缓存结果。
+
+### `--moss_image_auto_json` {#--moss_image_auto_json}
+
+使用 MOSS-Image 原生 `summary`/`items` JSON 布局格式编码正向描述。默认值：**false**。普通描述会封装为 JSON，不会凭空添加物体位置；现有布局会被验证并序列化。空提示词和负向提示词保持不变。
+
+### `--moss_image_prompt_upsample` {#--moss_image_prompt_upsample}
+
+在缓存文本嵌入前，使用视觉语言模型将正向描述扩写为详细的原生 JSON 布局。默认值：**false**。根据训练图像生成描述和边界框，并使用实际分桶尺寸。验证提示词也会扩写，同时启用原生 JSON 转换。
+
+### `--moss_image_prompt_upsampler_model_id` {#--moss_image_prompt_upsampler_model_id}
+
+描述模型的仓库或本地路径。默认值：**Qwen/Qwen3.5-27B**。与 `moss_image_prompt_upsample` 配合使用。默认模型需要 80 GB GPU 和额外系统内存，与文本编码器轮流使用 GPU。更换模型或启用 JSON 后会使用独立的嵌入缓存。
+
+### `--moss_image_validation_shift` {#--moss_image_validation_shift}
+
+MOSS-Image 验证时的推理流偏移。默认值：**5.0**。训练使用原始未偏移网格（`flow_schedule_shift: 1.0`）。此值控制采样步骤在不同噪声级别之间的分布。
+
+### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
+
+在 MOSS-Image 负向 CFG 分支跳过的 Transformer 层 JSON 列表，层号从零开始，范围为 0 至 41。默认值：**[22]**，遵循项目采样配方。设为 `[]` 使用标准 CFG。正向分支通过 `validation_guidance_skip_layers` 和 `validation_guidance_skip_scale` 单独配置。
 
 ### `--krea2_reference_latents` {#--krea2_reference_latents}
 

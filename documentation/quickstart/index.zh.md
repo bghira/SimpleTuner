@@ -11,6 +11,7 @@
 | **Flux.1** | 12B | [BFL Non-Commercial](https://bfl.ai/legal/non-commercial-license-terms) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 有条件<sup>3</sup> | [Flux.1 指南](FLUX.md) |
 | **Flux.2** | 32B | [BFL Non-Commercial](https://bfl.ai/legal/non-commercial-license-terms) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 有条件<sup>4</sup> | [Flux.2 指南](FLUX2.md) |
 | **FLUX.3 Image Klein** | 5.6B | [FLUX [Kom]munity](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE) | 适用许可条件 | [FLUX.3 Image Klein](FLUX3_IMAGE.zh.md) |
+| **MOSS-Image** | 5B | [Apache-2.0](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base/blob/main/LICENSE) | 是 | [MOSS-Image](MOSS_IMAGE.zh.md) |
 | **Flux Kontext** | 12B | [BFL Non-Commercial](https://bfl.ai/legal/non-commercial-license-terms) | 否<sup>5</sup> | [Kontext 指南](FLUX_KONTEXT.md) |
 | **Chroma** | 8.9B | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 是 | [Chroma 指南](CHROMA.md) |
 | **Stable Diffusion 3** | 2-8B | [Stability AI Community](https://stability.ai/license) | 有条件<sup>2</sup> | [SD3 指南](SD3.md) |

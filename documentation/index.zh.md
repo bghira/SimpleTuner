@@ -100,7 +100,7 @@
 
 | 类型 | 模型 |
 |------|------|
-| **图像** | Flux.1/2, [FLUX.3 Image Klein](quickstart/FLUX3_IMAGE.zh.md)、SD3、SDXL、Chroma、Auraflow、PixArt、Sana、Lumina2、HiDream 等 |
+| **图像** | Flux.1/2, [FLUX.3 Image Klein](quickstart/FLUX3_IMAGE.zh.md), [MOSS-Image](quickstart/MOSS_IMAGE.zh.md)、SD3、SDXL、Chroma、Auraflow、PixArt、Sana、Lumina2、HiDream 等 |
 | **视频** | Wan、LTX Video、Hunyuan Video、Kandinsky 5、LongCat |
 | **音频** | ACE-Step |
 

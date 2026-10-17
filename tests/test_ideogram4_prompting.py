@@ -13,7 +13,7 @@ from safetensors.torch import load_file, save_file
 from simpletuner.helpers.models.ideogram.constants import LLM_TOKEN_INDICATOR, OUTPUT_IMAGE_INDICATOR
 from simpletuner.helpers.models.ideogram.model import Ideogram4
 from simpletuner.helpers.models.ideogram.pipeline import Ideogram4Pipeline
-from simpletuner.helpers.models.ideogram.prompting import maybe_convert_prompt_to_ideogram_json
+from simpletuner.helpers.models.ideogram.prompting import Ideogram4JSONSchemaConverter
 from simpletuner.helpers.models.ideogram.scheduler import get_schedule_for_resolution
 from simpletuner.helpers.models.ideogram.text_projection import Ideogram4TextProjection, Ideogram4TextProjectionConfig
 from simpletuner.helpers.models.ideogram.transformer import Ideogram4Config, Ideogram4Transformer
@@ -38,7 +38,7 @@ class Ideogram4PromptingTests(unittest.TestCase):
         self.assertTrue(torch.equal(model.flowmap_delta_emb_gate, torch.tensor([0.25])))
 
     def test_plain_prompt_is_wrapped_as_schema_json(self):
-        converted = maybe_convert_prompt_to_ideogram_json("35mm photo of a blue boat at sunset #1b3a5c")
+        converted = Ideogram4JSONSchemaConverter().convert("35mm photo of a blue boat at sunset #1b3a5c")
         parsed = json.loads(converted)
 
         self.assertEqual(parsed["high_level_description"], "35mm photo of a blue boat at sunset #1b3a5c")
@@ -63,7 +63,7 @@ class Ideogram4PromptingTests(unittest.TestCase):
             }
         )
 
-        parsed = json.loads(maybe_convert_prompt_to_ideogram_json(raw))
+        parsed = json.loads(Ideogram4JSONSchemaConverter().convert(raw))
 
         self.assertEqual(
             list(parsed["style_description"].keys()),

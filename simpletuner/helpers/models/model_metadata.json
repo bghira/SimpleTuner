@@ -335,6 +335,16 @@
         "name": "MiniMax Music 3",
         "prediction_type": "flow_matching"
     },
+    "moss_image": {
+        "class_name": "MOSSImage",
+        "flavour_choices": [
+            "base",
+            "sft"
+        ],
+        "module_path": "simpletuner.helpers.models.moss_image.model",
+        "name": "MOSS-Image",
+        "prediction_type": "flow_matching"
+    },
     "omnigen": {
         "class_name": "OmniGen",
         "flavour_choices": [

@@ -65,6 +65,8 @@ simpletuner configure config/foo/config.json
 
 56 億パラメータの画像 Transformer には `model_family: "flux3_image"` を使います。既定の `klein-base` は `black-forest-labs/flux-3-image-klein-base`、`klein` は蒸留モデル `black-forest-labs/flux-3-image-klein` を読み込みます。ダウンロード前に対象リポジトリへのアクセスを取得してください。[FLUX [Kom]munity ライセンス](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE)も確認してください。
 
+`moss_image` の既定の `sft` は `OpenMOSS-Team/MOSS-Image-SFT` を読み込みます。`OpenMOSS-Team/MOSS-Image-Base` には `model_flavour: "base"` を指定します。学習例は 512×512 相当の面積を使います。[MOSS-Image クイックスタート](quickstart/MOSS_IMAGE.ja.md)を参照してください。
+
 ### `--lora_format`
 
 - **内容**: LoRA チェックポイントの load/save 形式を選択します。
@@ -1221,6 +1223,26 @@ Flux Kontext の検証もこのコンディショニングベースの経路を�
 既定では無効です。有効にすると別の Qwen3.5-9B モデル（重み約 19 GB）をダウンロードし、テキスト埋め込みのキャッシュ前に正のプロンプトを書き直します。編集では対応する参照画像を使います。負のプロンプト、dropout の空キャプション、元のキャプションファイルは保持されます。
 
 追加のシステム RAM と前処理時間を確保してください。アップサンプラーとテキストエンコーダーが交互に GPU を使い、生成した埋め込みを学習で再利用します。展開した埋め込みと元の埋め込みは分けて保存され、同じ参照画像を再び選んだ場合はキャッシュを再利用します。
+
+### `--moss_image_auto_json` {#--moss_image_auto_json}
+
+正のキャプションを MOSS-Image 固有の `summary`/`items` JSON レイアウト形式でエンコードします。既定値は **false**。通常の文章は物体位置を推測せずに JSON に包み、既存のレイアウトは検証してシリアライズします。空のプロンプトとネガティブプロンプトは保持します。
+
+### `--moss_image_prompt_upsample` {#--moss_image_prompt_upsample}
+
+テキスト埋め込みのキャッシュ前に、視覚言語モデルで正のキャプションを詳細なネイティブ JSON レイアウトに拡張します。既定値は **false**。学習画像に基づいて説明とバウンディングボックスを作成し、実際のバケット寸法を使います。検証プロンプトも拡張し、ネイティブ JSON 変換も有効になります。
+
+### `--moss_image_prompt_upsampler_model_id` {#--moss_image_prompt_upsampler_model_id}
+
+キャプションモデルのリポジトリまたはローカルパス。既定値は **Qwen/Qwen3.5-27B**。`moss_image_prompt_upsample` と併用します。既定モデルには 80 GB GPU と追加のシステム RAM が必要で、テキストエンコーダーと交互に GPU を使います。モデルの変更や JSON の有効化では別の埋め込みキャッシュを使います。
+
+### `--moss_image_validation_shift` {#--moss_image_validation_shift}
+
+MOSS-Image 検証の推論フローシフト。既定値: **5.0**。学習には元のシフトなしグリッド (`flow_schedule_shift: 1.0`) を使います。この値でノイズレベルごとのサンプリングステップ配分を調整します。
+
+### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
+
+MOSS-Image の負の CFG 分岐でスキップする Transformer レイヤーの JSON リストです。インデックスは 0 始まりで、範囲は 0〜41 です。既定値はプロジェクト推奨の **[22]**。通常の CFG には `[]` を指定します。正の分岐は `validation_guidance_skip_layers` と `validation_guidance_skip_scale` で別途設定します。
 
 ### `--krea2_reference_latents` {#--krea2_reference_latents}
 

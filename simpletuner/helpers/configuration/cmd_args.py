@@ -1375,7 +1375,7 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
             args.set_grads_to_none = True
 
     if args.validation_guidance_skip_layers is not None:
-        if args.model_family not in ["sd3", "wan", "wan_s2v", "zlab_i1"]:
+        if args.model_family not in ["sd3", "wan", "wan_s2v", "zlab_i1", "moss_image"]:
             raise ValueError("Currently, skip-layer guidance is not supported for {}".format(args.model_family))
         try:
             import json

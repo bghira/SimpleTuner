@@ -65,6 +65,8 @@ simpletuner configure config/foo/config.json
 
 5.6B पैरामीटर वाले इमेज Transformer के लिए `model_family: "flux3_image"` चुनें। डिफ़ॉल्ट `klein-base`, `black-forest-labs/flux-3-image-klein-base` लोड करता है; `klein`, डिस्टिल्ड `black-forest-labs/flux-3-image-klein` लोड करता है। डाउनलोड से पहले चुने गए रिपॉज़िटरी की एक्सेस स्वीकार करें। [FLUX [Kom]munity लाइसेंस](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE) देखें।
 
+`moss_image` में डिफ़ॉल्ट `sft` विकल्प `OpenMOSS-Team/MOSS-Image-SFT` लोड करता है। `OpenMOSS-Team/MOSS-Image-Base` के लिए `model_flavour: "base"` चुनें। प्रशिक्षण उदाहरण 512×512 के बराबर क्षेत्र इस्तेमाल करते हैं। [MOSS-Image क्विकस्टार्ट](quickstart/MOSS_IMAGE.hi.md) देखें।
+
 ### `--lora_format`
 
 - **What**: load/save के लिए LoRA checkpoint key format चुनता है।
@@ -1220,6 +1222,26 @@ Different models different conditioning data expect करते हैं:
 यह डिफ़ॉल्ट रूप से बंद है। चालू करने पर SimpleTuner अलग Qwen3.5-9B मॉडल (लगभग 19 GB weights) डाउनलोड करता है और text embeddings कैश करने से पहले positive prompts को विस्तार देता है। एडिट के लिए जोड़ी गई रेफ़रेंस इमेज इस्तेमाल होती हैं। Negative prompts, dropout के खाली captions और मूल caption फ़ाइलें वैसे ही रहती हैं।
 
 अतिरिक्त system RAM और preprocessing समय रखें। Upsampler और text encoder बारी-बारी से GPU इस्तेमाल करते हैं; बनी embeddings प्रशिक्षण में दोबारा इस्तेमाल होती हैं। SimpleTuner expanded और मूल embeddings अलग रखता है और वही references दोबारा चुनने पर कैश परिणाम फिर इस्तेमाल करता है।
+
+### `--moss_image_auto_json` {#--moss_image_auto_json}
+
+सकारात्मक captions को MOSS-Image के मूल `summary`/`items` JSON layout schema में encode करता है। डिफ़ॉल्ट: **false**। सामान्य captions को वस्तुओं की स्थिति गढ़े बिना JSON में रखा जाता है; मौजूदा layouts की जाँच और serialization होता है। खाली और नकारात्मक prompts सुरक्षित रहते हैं।
+
+### `--moss_image_prompt_upsample` {#--moss_image_prompt_upsample}
+
+Text embeddings कैश करने से पहले vision-language मॉडल से सकारात्मक captions को विस्तृत मूल JSON layouts में बदलता है। डिफ़ॉल्ट: **false**। प्रशिक्षण चित्रों के आधार पर विवरण और bounding boxes बनते हैं, जो वास्तविक bucket dimensions इस्तेमाल करते हैं। Validation prompts भी विस्तृत होते हैं और मूल JSON conversion सक्रिय हो जाता है।
+
+### `--moss_image_prompt_upsampler_model_id` {#--moss_image_prompt_upsampler_model_id}
+
+Caption मॉडल का repository या स्थानीय पथ। डिफ़ॉल्ट: **Qwen/Qwen3.5-27B**। `moss_image_prompt_upsample` के साथ इस्तेमाल होता है। डिफ़ॉल्ट मॉडल के लिए 80 GB GPU और अतिरिक्त system RAM चाहिए; यह text encoder के साथ बारी-बारी GPU इस्तेमाल करता है। मॉडल बदलने या JSON सक्रिय करने पर अलग embedding cache इस्तेमाल होता है।
+
+### `--moss_image_validation_shift` {#--moss_image_validation_shift}
+
+MOSS-Image वैलिडेशन में इन्फ़रेंस flow shift। डिफ़ॉल्ट: **5.0**। प्रशिक्षण मूल बिना-शिफ़्ट ग्रिड (`flow_schedule_shift: 1.0`) का उपयोग करता है। यह मान अलग-अलग noise स्तरों पर सैंपलिंग स्टेप का वितरण बदलता है।
+
+### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
+
+MOSS-Image की नकारात्मक CFG शाखा में छोड़ी जाने वाली Transformer लेयर की JSON सूची। इंडेक्स शून्य से शुरू होते हैं और सीमा 0 से 41 है। परियोजना की रेसिपी के अनुसार डिफ़ॉल्ट **[22]** है। मानक CFG के लिए `[]` दें। सकारात्मक शाखा को `validation_guidance_skip_layers` और `validation_guidance_skip_scale` से अलग सेट करें।
 
 ### `--krea2_reference_latents` {#--krea2_reference_latents}
 

@@ -65,6 +65,8 @@ Selecciona una variante de checkpoint dentro de `--model_family`. Para `qwen_ima
 
 Usa `model_family: "flux3_image"` para el transformador de imágenes de 5,6B parámetros. La variante predeterminada `klein-base` carga `black-forest-labs/flux-3-image-klein-base`; `klein` carga el modelo destilado `black-forest-labs/flux-3-image-klein`. Acepta el acceso al repositorio elegido antes de descargarlo. Consulta la [licencia FLUX [Kom]munity](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE).
 
+Para `moss_image`, la variante predeterminada `sft` carga `OpenMOSS-Team/MOSS-Image-SFT`. Usa `model_flavour: "base"` para `OpenMOSS-Team/MOSS-Image-Base`. Los ejemplos entrenan con un área equivalente a 512×512. Consulta la [guía de MOSS-Image](quickstart/MOSS_IMAGE.es.md).
+
 ### `--lora_format`
 
 - **Qué**: Selecciona el formato de claves del checkpoint LoRA para cargar/guardar.
@@ -1223,6 +1225,26 @@ Diferentes modelos esperan diferentes datos de conditioning:
 Está desactivado por defecto. Al activarlo, SimpleTuner descarga el modelo Qwen3.5-9B separado (unos 19 GB de pesos) y reescribe los prompts positivos antes de guardar sus embeddings. Para ediciones utiliza tus imágenes de referencia emparejadas. Conserva los prompts negativos, las descripciones vacías de dropout y los archivos originales.
 
 Prepara RAM adicional y más tiempo de preprocesamiento. El upsampler y el codificador de texto se turnan en la GPU; sus embeddings se reutilizan durante el entrenamiento. SimpleTuner separa los embeddings ampliados de los originales y reutiliza los resultados cuando vuelven a elegirse las mismas referencias.
+
+### `--moss_image_auto_json` {#--moss_image_auto_json}
+
+Codifica las descripciones positivas con el esquema JSON nativo `summary`/`items` de MOSS-Image. Predeterminado: **false**. Las descripciones simples se envuelven sin inventar posiciones; los layouts existentes se validan y serializan. Se conservan los prompts vacíos y negativos.
+
+### `--moss_image_prompt_upsample` {#--moss_image_prompt_upsample}
+
+Usa un modelo de visión y lenguaje para ampliar las descripciones positivas a layouts JSON nativos antes de almacenar los embeddings. Predeterminado: **false**. Las imágenes de entrenamiento fundamentan las descripciones y cajas, usando las dimensiones reales del bucket. También amplía los prompts de validación y activa la conversión JSON nativa.
+
+### `--moss_image_prompt_upsampler_model_id` {#--moss_image_prompt_upsampler_model_id}
+
+Repositorio o ruta local del modelo de descripción. Predeterminado: **Qwen/Qwen3.5-27B**. Se usa con `moss_image_prompt_upsample`. El modelo requiere una GPU de 80 GB y RAM adicional; comparte la GPU por turnos con el codificador de texto. Cambiar el modelo o activar JSON usa una caché de embeddings independiente.
+
+### `--moss_image_validation_shift` {#--moss_image_validation_shift}
+
+Desplazamiento de flujo para la validación de MOSS-Image. Predeterminado: **5.0**. El entrenamiento usa la cuadrícula original sin desplazar (`flow_schedule_shift: 1.0`). Este valor distribuye los pasos de muestreo entre los niveles de ruido.
+
+### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
+
+Lista JSON de capas del transformador, con índices desde cero, omitidas en la rama negativa de CFG de MOSS-Image. Predeterminado: **[22]**, según la receta del proyecto. Usa `[]` para CFG estándar. Los índices van de 0 a 41. La rama positiva se configura por separado con `validation_guidance_skip_layers` y `validation_guidance_skip_scale`.
 
 ### `--krea2_reference_latents` {#--krea2_reference_latents}
 

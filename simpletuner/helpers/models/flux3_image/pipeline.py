@@ -18,17 +18,9 @@ from simpletuner.helpers.models.flux2.autoencoder import AutoencoderKLFlux2
 from simpletuner.helpers.models.flux3_image import denormalize_latents, image_ids, normalize_latents, patchify, unpatchify
 from simpletuner.helpers.models.flux3_image.text import MAX_TEXT_LENGTH, encode_prompts
 from simpletuner.helpers.models.flux3_image.transformer import Flux3ImageTransformer2DModel
+from simpletuner.helpers.models.guidance import guided_velocity
 
 FLOW_SHIFT = 6.93
-
-
-def guided_velocity(positive, negative, scale, zero_star=False):
-    positive, negative = positive.float(), negative.float()
-    if zero_star:
-        p, n = positive.flatten(1), negative.flatten(1)
-        alpha = (p * n).sum(1) / n.square().sum(1).clamp_min(1e-8)
-        negative = negative * alpha.view(-1, *([1] * (negative.ndim - 1)))
-    return negative + scale * (positive - negative)
 
 
 class Flux3ImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):

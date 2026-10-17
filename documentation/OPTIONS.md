@@ -65,6 +65,8 @@ Select a checkpoint variant within `--model_family`. For `qwen_image`, the defau
 
 Use `model_family: "flux3_image"` for the 5.6B image transformer. The default `klein-base` flavour loads `black-forest-labs/flux-3-image-klein-base`; `klein` loads the distilled `black-forest-labs/flux-3-image-klein`. Accept access to the selected repository before downloading. See the [FLUX [Kom]munity license](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE).
 
+For `moss_image`, the default `sft` flavour loads `OpenMOSS-Team/MOSS-Image-SFT`. Set `model_flavour: "base"` for `OpenMOSS-Team/MOSS-Image-Base`. The training examples use 512×512 equivalent image area. See the [MOSS-Image quickstart](quickstart/MOSS_IMAGE.md).
+
 ### `--lora_format`
 
 - **What**: Select the LoRA checkpoint key format for load/save.
@@ -1244,6 +1246,26 @@ Different models expect different conditioning data:
 Upsampling is off by default. When enabled, SimpleTuner downloads the separate Qwen3.5-9B model (about 19 GB of weights) and rewrites positive prompts before caching their text embeddings. It uses your paired reference images for edit requests. Negative prompts and empty dropout captions are kept unchanged. Your original caption files are preserved.
 
 Allow extra system RAM and preprocessing time. The upsampler and text encoder take turns on the GPU, and the resulting embeddings are reused during training. SimpleTuner keeps expanded and original prompt embeddings separate, and reuses cached results when the same references are selected again.
+
+### `--moss_image_auto_json` {#--moss_image_auto_json}
+
+Encode positive captions using MOSS-Image’s native `summary`/`items` JSON layout schema. Default: **false**. Plain captions are wrapped without inventing object positions; existing layouts are validated and serialized. Empty and negative prompts are preserved.
+
+### `--moss_image_prompt_upsample` {#--moss_image_prompt_upsample}
+
+Use a vision-language model to expand positive captions into detailed native JSON layouts before caching text embeddings. Default: **false**. Training images ground the captions and bounding boxes, which use the actual bucket dimensions. Validation prompts are expanded as well. This also enables native JSON conversion.
+
+### `--moss_image_prompt_upsampler_model_id` {#--moss_image_prompt_upsampler_model_id}
+
+Captioning model repository or local path. Default: **Qwen/Qwen3.5-27B**. Used with `moss_image_prompt_upsample`. The default model needs an 80 GB GPU and additional system RAM; it takes turns with the text encoder on the GPU. Changing this model or enabling JSON captions uses a separate embedding cache.
+
+### `--moss_image_validation_shift` {#--moss_image_validation_shift}
+
+Inference flow shift for MOSS-Image validation. Default: **5.0**. Training uses the checkpoint’s unshifted grid (`flow_schedule_shift: 1.0`). Increase or decrease this value to change how sampling steps are distributed across noise levels.
+
+### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
+
+JSON list of zero-based transformer layers skipped in MOSS-Image’s negative CFG branch. Default: **[22]**, following the project’s sampling recipe. Set `[]` for standard CFG. Layer indices range from 0 to 41. Positive-branch skip-layer guidance is configured separately with `validation_guidance_skip_layers` and `validation_guidance_skip_scale`.
 
 ### `--krea2_reference_latents` {#--krea2_reference_latents}
 
