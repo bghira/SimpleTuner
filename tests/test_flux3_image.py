@@ -13,7 +13,7 @@ from peft.utils import get_peft_model_state_dict
 
 from simpletuner.helpers.assistant_lora import load_assistant_adapter
 from simpletuner.helpers.distillation.assistant_lora.distiller import AssistantLoRADistiller
-from simpletuner.helpers.models.common import PredictionTypes
+from simpletuner.helpers.models.common import ImageModelFoundation, PredictionTypes
 from simpletuner.helpers.models.flux3_image import image_ids, patchify, text_ids, unpatchify
 from simpletuner.helpers.models.flux3_image.model import Flux3Image
 from simpletuner.helpers.models.flux3_image.pipeline import FLOW_SHIFT, Flux3ImagePipeline, guided_velocity
@@ -505,6 +505,86 @@ class Flux3ImageTests(unittest.TestCase):
             self.assertEqual(config.tokenizer_max_length, 8192)
             self.assertEqual(foundation.noise_schedule.config.shift, FLOW_SHIFT)
             self.assertIs(foundation.PREDICTION_TYPE, prediction_type)
+
+    def test_distilled_assistant_defaults_are_recorded_and_loaded(self):
+        from simpletuner.helpers.configuration.cmd_args import get_default_config
+
+        for overrides in (
+            {},
+            {"assistant_lora_path": "", "assistant_lora_weight_name": ""},
+            {"assistant_lora_path": "None", "assistant_lora_weight_name": "None"},
+            {"assistant_lora_path": "custom/assistant", "assistant_lora_weight_name": "custom.safetensors"},
+        ):
+            with self.subTest(overrides=overrides):
+                config = SimpleNamespace(
+                    **(
+                        dict(
+                            get_default_config(),
+                            model_family="flux3_image",
+                            model_flavour="klein",
+                            model_type="lora",
+                            pretrained_model_name_or_path=None,
+                            vae_path=None,
+                        )
+                        | overrides
+                    )
+                )
+                foundation = Flux3Image(config, SimpleNamespace(device=torch.device("cpu")))
+                foundation.check_user_config()
+                expected_path = overrides.get("assistant_lora_path")
+                if expected_path in (None, "", "None"):
+                    expected_path = "SimpleTuner/flux-3-klein-image-training-assistant"
+                expected_weight = overrides.get("assistant_lora_weight_name")
+                if expected_weight in (None, "", "None"):
+                    expected_weight = "pytorch_lora_weights.safetensors"
+                self.assertEqual(config.assistant_lora_path, expected_path)
+                self.assertEqual(config.assistant_lora_weight_name, expected_weight)
+                transformer = Mock()
+                foundation.unwrap_model = Mock(return_value=transformer)
+                with (
+                    patch.object(ImageModelFoundation, "post_model_load_setup"),
+                    patch("simpletuner.helpers.models.flux3_image.model.load_assistant_adapter", return_value=True) as load,
+                ):
+                    foundation.post_model_load_setup()
+                self.assertIs(load.call_args.kwargs["transformer"], transformer)
+                self.assertEqual(load.call_args.kwargs["lora_path"], expected_path)
+                self.assertEqual(load.call_args.kwargs["weight_name"], expected_weight)
+                self.assertEqual(load.call_args.kwargs["adapter_name"], "assistant")
+                self.assertTrue(foundation.assistant_lora_loaded)
+
+    def test_assistant_default_is_skipped_for_base_disabled_and_full_training(self):
+        from simpletuner.helpers.configuration.cmd_args import get_default_config
+
+        for overrides in (
+            {"model_flavour": "klein-base"},
+            {"disable_assistant_lora": True},
+            {"model_type": "full"},
+        ):
+            with self.subTest(overrides=overrides):
+                config = SimpleNamespace(
+                    **(
+                        dict(
+                            get_default_config(),
+                            model_family="flux3_image",
+                            model_flavour="klein",
+                            model_type="lora",
+                            pretrained_model_name_or_path=None,
+                            vae_path=None,
+                        )
+                        | overrides
+                    )
+                )
+                foundation = Flux3Image(config, SimpleNamespace(device=torch.device("cpu")))
+                foundation.check_user_config()
+                self.assertIsNone(config.assistant_lora_path)
+                self.assertIsNone(getattr(config, "assistant_lora_weight_name", None))
+                with (
+                    patch.object(ImageModelFoundation, "post_model_load_setup"),
+                    patch("simpletuner.helpers.models.flux3_image.model.load_assistant_adapter") as load,
+                ):
+                    foundation.post_model_load_setup()
+                load.assert_not_called()
+                self.assertFalse(foundation.assistant_lora_loaded)
 
     def test_ragged_reference_batches_match_individual_predictions(self):
         foundation = Flux3Image.__new__(Flux3Image)
