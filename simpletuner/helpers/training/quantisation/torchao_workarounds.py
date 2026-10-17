@@ -142,8 +142,42 @@ try:
     _torchao_float8_tensor = importlib.import_module("torchao.quantization.quantize_.workflows.float8.float8_tensor")
     _orig_addmm_float8_unwrapped_inference = _torchao_float8_inference.addmm_float8_unwrapped_inference
     _orig_addmm_float8_unwrapped = _torchao_float8_ops.addmm_float8_unwrapped
+    _orig_float8_addmm_impl = _torchao_float8_tensor._float8_addmm_impl
     _orig_torch_scaled_mm = torch._scaled_mm
-    _orig_aten_scaled_mm = torch.ops.aten._scaled_mm.default
+
+    class _FrozenFloat8AddmmGrad(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, input_tensor, weight_tensor, bias):
+            ctx.save_for_backward(weight_tensor.qdata, weight_tensor.scale)
+            ctx.input_shape = input_tensor.shape
+            ctx.weight_dtype = weight_tensor.dtype
+            ctx.has_bias = bias is not None
+            return _orig_float8_addmm_impl(input_tensor, weight_tensor, bias)
+
+        @staticmethod
+        def backward(ctx, grad_output):
+            weight_data, weight_scale = ctx.saved_tensors
+            grad_input = grad_bias = None
+            if ctx.needs_input_grad[0]:
+                weight = _dequantize_affine_float8(weight_data, weight_scale, ctx.weight_dtype)
+                grad_input = grad_output.reshape(-1, grad_output.shape[-1]).matmul(weight.to(grad_output.dtype).t())
+                grad_input = grad_input.reshape(ctx.input_shape)
+            if ctx.has_bias and ctx.needs_input_grad[2]:
+                grad_bias = grad_output.reshape(-1, grad_output.shape[-1]).sum(0)
+            return grad_input, None, grad_bias
+
+    def _simpletuner_float8_addmm_impl(input_tensor, weight_tensor, bias=None):
+        # Frozen-weight input gradients must bypass float8 casts and scale selection.
+        if (
+            weight_tensor.act_quant_kwargs is not None
+            and not isinstance(input_tensor, _torchao_float8_tensor.Float8Tensor)
+            and not weight_tensor.requires_grad
+            and (input_tensor.requires_grad or (bias is not None and bias.requires_grad))
+        ):
+            return _FrozenFloat8AddmmGrad.apply(input_tensor, weight_tensor, bias)
+        return _orig_float8_addmm_impl(input_tensor, weight_tensor, bias)
+
+    _torchao_float8_tensor._float8_addmm_impl = _simpletuner_float8_addmm_impl
 
     class _ScaledMmGrad(torch.autograd.Function):
         @staticmethod
@@ -223,37 +257,6 @@ try:
         )
 
     torch._scaled_mm = _simpletuner_scaled_mm
-
-    def _simpletuner_aten_scaled_mm(
-        input: torch.Tensor,
-        mat2: torch.Tensor,
-        scale_a: torch.Tensor,
-        scale_b: torch.Tensor,
-        bias: Optional[torch.Tensor] = None,
-        scale_result: Optional[torch.Tensor] = None,
-        out_dtype: Optional[torch.dtype] = None,
-        use_fast_accum: bool = False,
-    ) -> torch.Tensor:
-        if scale_result is None and (
-            input.requires_grad
-            or mat2.requires_grad
-            or scale_a.requires_grad
-            or scale_b.requires_grad
-            or (bias is not None and bias.requires_grad)
-        ):
-            return _ScaledMmGrad.apply(input, mat2, scale_a, scale_b, bias, out_dtype, use_fast_accum)
-        return _orig_aten_scaled_mm(
-            input,
-            mat2,
-            scale_a,
-            scale_b,
-            bias,
-            scale_result,
-            out_dtype,
-            use_fast_accum,
-        )
-
-    torch.ops.aten._scaled_mm.default = _simpletuner_aten_scaled_mm
 
     class _ScaledMmInputGrad(torch.autograd.Function):
         @staticmethod
