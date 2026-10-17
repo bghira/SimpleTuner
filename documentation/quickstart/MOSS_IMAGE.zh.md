@@ -115,6 +115,17 @@ MOSS-Image 接受详细描述、标签序列和 JSON 布局。项目的[提示�
 
 布局描述场景、文字和物体位置。坐标使用像素单位的 `[y_min, x_min, y_max, x_max]`，以画布中心为原点。1024×1024 画布的范围为 −512 到 +512。用 `json.dumps(layout, ensure_ascii=False)` 序列化后作为提示词传入，生成尺寸应与布局一致。
 
+要在预处理时将描述扩写为原生 JSON，请在训练配置中添加：
+
+```json
+{
+  "moss_image_auto_json": true,
+  "moss_image_prompt_upsample": true
+}
+```
+
+默认描述模型为项目推荐的 VLM 之一 `Qwen/Qwen3.5-27B`。请使用 80 GB GPU 并预留额外系统内存。SimpleTuner 根据每张训练图像及其分桶尺寸生成场景描述和以画布中心为原点的像素边界框，再缓存文本嵌入。验证提示词也会扩写，空提示词和负向提示词保持不变。如需仅将现有描述封装为 JSON 而不加载描述模型，只启用 `moss_image_auto_json`。
+
 ```json
 {
   "summary": {"caption": "A cream travel poster with the title EXPLORE above a blue mountain."},

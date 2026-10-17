@@ -1224,6 +1224,18 @@ Está desactivado por defecto. Al activarlo, SimpleTuner descarga el modelo Qwen
 
 Prepara RAM adicional y más tiempo de preprocesamiento. El upsampler y el codificador de texto se turnan en la GPU; sus embeddings se reutilizan durante el entrenamiento. SimpleTuner separa los embeddings ampliados de los originales y reutiliza los resultados cuando vuelven a elegirse las mismas referencias.
 
+### `--moss_image_auto_json` {#--moss_image_auto_json}
+
+Codifica las descripciones positivas con el esquema JSON nativo `summary`/`items` de MOSS-Image. Predeterminado: **false**. Las descripciones simples se envuelven sin inventar posiciones; los layouts existentes se validan y serializan. Se conservan los prompts vacíos y negativos.
+
+### `--moss_image_prompt_upsample` {#--moss_image_prompt_upsample}
+
+Usa un modelo de visión y lenguaje para ampliar las descripciones positivas a layouts JSON nativos antes de almacenar los embeddings. Predeterminado: **false**. Las imágenes de entrenamiento fundamentan las descripciones y cajas, usando las dimensiones reales del bucket. También amplía los prompts de validación y activa la conversión JSON nativa.
+
+### `--moss_image_prompt_upsampler_model_id` {#--moss_image_prompt_upsampler_model_id}
+
+Repositorio o ruta local del modelo de descripción. Predeterminado: **Qwen/Qwen3.5-27B**. Se usa con `moss_image_prompt_upsample`. El modelo requiere una GPU de 80 GB y RAM adicional; comparte la GPU por turnos con el codificador de texto. Cambiar el modelo o activar JSON usa una caché de embeddings independiente.
+
 ### `--moss_image_validation_shift` {#--moss_image_validation_shift}
 
 Desplazamiento de flujo para la validación de MOSS-Image. Predeterminado: **5.0**. El entrenamiento usa la cuadrícula original sin desplazar (`flow_schedule_shift: 1.0`). Este valor distribuye los pasos de muestreo entre los niveles de ruido.

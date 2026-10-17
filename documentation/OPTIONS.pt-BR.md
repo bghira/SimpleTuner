@@ -1219,6 +1219,18 @@ A opção vem desativada. Ao ativá-la, o SimpleTuner baixa o modelo Qwen3.5-9B 
 
 Reserve mais RAM e tempo de pré-processamento. O upsampler e o codificador de texto se alternam na GPU, e os embeddings são reutilizados no treino. O SimpleTuner separa os embeddings expandidos dos originais e reutiliza os resultados quando as mesmas referências são selecionadas novamente.
 
+### `--moss_image_auto_json` {#--moss_image_auto_json}
+
+Codifica legendas positivas com o esquema JSON nativo `summary`/`items` do MOSS-Image. Padrão: **false**. Legendas simples são encapsuladas sem inventar posições; layouts existentes são validados e serializados. Prompts vazios e negativos são preservados.
+
+### `--moss_image_prompt_upsample` {#--moss_image_prompt_upsample}
+
+Usa um modelo de visão e linguagem para expandir legendas positivas em layouts JSON nativos detalhados antes de armazenar embeddings. Padrão: **false**. As imagens de treino fundamentam as descrições e caixas, usando as dimensões reais do bucket. Os prompts de validação também são expandidos e a conversão JSON nativa é ativada.
+
+### `--moss_image_prompt_upsampler_model_id` {#--moss_image_prompt_upsampler_model_id}
+
+Repositório ou caminho local do modelo de legendas. Padrão: **Qwen/Qwen3.5-27B**. Usado com `moss_image_prompt_upsample`. O modelo requer GPU de 80 GB e RAM adicional; alterna o uso da GPU com o codificador de texto. Alterar o modelo ou ativar JSON usa um cache de embeddings separado.
+
 ### `--moss_image_validation_shift` {#--moss_image_validation_shift}
 
 Deslocamento de fluxo para a validação do MOSS-Image. Padrão: **5.0**. O treinamento usa a grade original sem deslocamento (`flow_schedule_shift: 1.0`). Este valor distribui os passos de amostragem pelos níveis de ruído.

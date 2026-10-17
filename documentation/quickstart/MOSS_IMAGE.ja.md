@@ -115,6 +115,17 @@ CUDA のインストールには CuTE attention が含まれます。学習時�
 
 レイアウトは場面、文字、物体の位置を記述します。座標はキャンバス中心を原点とするピクセル単位の `[y_min, x_min, y_max, x_max]` です。1024×1024 では −512 から +512 になります。`json.dumps(layout, ensure_ascii=False)` で文字列化してプロンプトに渡し、レイアウトと同じ生成寸法を使います。
 
+前処理でキャプションをネイティブ JSON に拡張するには、学習設定に次を追加します。
+
+```json
+{
+  "moss_image_auto_json": true,
+  "moss_image_prompt_upsample": true
+}
+```
+
+既定のキャプションモデルは、プロジェクト推奨の VLM の一つである `Qwen/Qwen3.5-27B` です。80 GB GPU と追加のシステム RAM を用意してください。各学習画像とバケット寸法を使って説明と中心原点のピクセル座標ボックスを生成し、テキスト埋め込みをキャッシュします。検証プロンプトも拡張し、空とネガティブのプロンプトは変更しません。別モデルを読み込まず既存キャプションを JSON に包むには、`moss_image_auto_json` だけを有効にします。
+
 ```json
 {
   "summary": {"caption": "A cream travel poster with the title EXPLORE above a blue mountain."},

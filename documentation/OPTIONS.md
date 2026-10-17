@@ -1245,6 +1245,18 @@ Upsampling is off by default. When enabled, SimpleTuner downloads the separate Q
 
 Allow extra system RAM and preprocessing time. The upsampler and text encoder take turns on the GPU, and the resulting embeddings are reused during training. SimpleTuner keeps expanded and original prompt embeddings separate, and reuses cached results when the same references are selected again.
 
+### `--moss_image_auto_json` {#--moss_image_auto_json}
+
+Encode positive captions using MOSS-Image’s native `summary`/`items` JSON layout schema. Default: **false**. Plain captions are wrapped without inventing object positions; existing layouts are validated and serialized. Empty and negative prompts are preserved.
+
+### `--moss_image_prompt_upsample` {#--moss_image_prompt_upsample}
+
+Use a vision-language model to expand positive captions into detailed native JSON layouts before caching text embeddings. Default: **false**. Training images ground the captions and bounding boxes, which use the actual bucket dimensions. Validation prompts are expanded as well. This also enables native JSON conversion.
+
+### `--moss_image_prompt_upsampler_model_id` {#--moss_image_prompt_upsampler_model_id}
+
+Captioning model repository or local path. Default: **Qwen/Qwen3.5-27B**. Used with `moss_image_prompt_upsample`. The default model needs an 80 GB GPU and additional system RAM; it takes turns with the text encoder on the GPU. Changing this model or enabling JSON captions uses a separate embedding cache.
+
 ### `--moss_image_validation_shift` {#--moss_image_validation_shift}
 
 Inference flow shift for MOSS-Image validation. Default: **5.0**. Training uses the checkpoint’s unshifted grid (`flow_schedule_shift: 1.0`). Increase or decrease this value to change how sampling steps are distributed across noise levels.

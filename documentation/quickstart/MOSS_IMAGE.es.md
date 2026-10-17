@@ -115,6 +115,17 @@ MOSS-Image acepta descripciones detalladas, etiquetas y layouts JSON. La [skill 
 
 Un layout describe la escena, el texto y las posiciones. Las coordenadas son `[y_min, x_min, y_max, x_max]` en píxeles, con origen en el centro del lienzo. En 1024×1024 van de −512 a +512. Serializa con `json.dumps(layout, ensure_ascii=False)` y pasa esa cadena como prompt; usa dimensiones de generación iguales a las del layout.
 
+Para ampliar las descripciones a JSON nativo durante el preprocesamiento, añade estos ajustes a tu configuración:
+
+```json
+{
+  "moss_image_auto_json": true,
+  "moss_image_prompt_upsample": true
+}
+```
+
+El modelo predeterminado es `Qwen/Qwen3.5-27B`, uno de los VLM recomendados por el proyecto. Usa una GPU de 80 GB y reserva RAM adicional. SimpleTuner utiliza cada imagen y las dimensiones de su bucket para generar descripciones y cajas en píxeles centrados, y almacena los embeddings. También amplía los prompts de validación; conserva los vacíos y negativos. Para envolver las descripciones existentes en JSON sin cargar otro modelo, activa solo `moss_image_auto_json`.
+
 ```json
 {
   "summary": {"caption": "A cream travel poster with the title EXPLORE above a blue mountain."},

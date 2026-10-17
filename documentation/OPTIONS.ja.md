@@ -1222,6 +1222,18 @@ Flux Kontext の検証もこのコンディショニングベースの経路を�
 
 追加のシステム RAM と前処理時間を確保してください。アップサンプラーとテキストエンコーダーが交互に GPU を使い、生成した埋め込みを学習で再利用します。展開した埋め込みと元の埋め込みは分けて保存され、同じ参照画像を再び選んだ場合はキャッシュを再利用します。
 
+### `--moss_image_auto_json` {#--moss_image_auto_json}
+
+正のキャプションを MOSS-Image 固有の `summary`/`items` JSON レイアウト形式でエンコードします。既定値は **false**。通常の文章は物体位置を推測せずに JSON に包み、既存のレイアウトは検証してシリアライズします。空のプロンプトとネガティブプロンプトは保持します。
+
+### `--moss_image_prompt_upsample` {#--moss_image_prompt_upsample}
+
+テキスト埋め込みのキャッシュ前に、視覚言語モデルで正のキャプションを詳細なネイティブ JSON レイアウトに拡張します。既定値は **false**。学習画像に基づいて説明とバウンディングボックスを作成し、実際のバケット寸法を使います。検証プロンプトも拡張し、ネイティブ JSON 変換も有効になります。
+
+### `--moss_image_prompt_upsampler_model_id` {#--moss_image_prompt_upsampler_model_id}
+
+キャプションモデルのリポジトリまたはローカルパス。既定値は **Qwen/Qwen3.5-27B**。`moss_image_prompt_upsample` と併用します。既定モデルには 80 GB GPU と追加のシステム RAM が必要で、テキストエンコーダーと交互に GPU を使います。モデルの変更や JSON の有効化では別の埋め込みキャッシュを使います。
+
 ### `--moss_image_validation_shift` {#--moss_image_validation_shift}
 
 MOSS-Image 検証の推論フローシフト。既定値: **5.0**。学習には元のシフトなしグリッド (`flow_schedule_shift: 1.0`) を使います。この値でノイズレベルごとのサンプリングステップ配分を調整します。

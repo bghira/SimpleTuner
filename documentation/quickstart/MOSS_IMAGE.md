@@ -115,6 +115,17 @@ MOSS-Image accepts detailed captions, tag sequences, and JSON layout prompts. Th
 
 A layout describes the scene, rendered text, and object positions. Coordinates use `[y_min, x_min, y_max, x_max]` in pixels with the canvas centre as the origin. On a 1024×1024 canvas the range is −512 to +512. Serialize a layout with `json.dumps(layout, ensure_ascii=False)` and pass the resulting string as the prompt; use generation dimensions matching the layout.
 
+To expand captions into native JSON during preprocessing, add these settings to your training configuration:
+
+```json
+{
+  "moss_image_auto_json": true,
+  "moss_image_prompt_upsample": true
+}
+```
+
+The default caption model is `Qwen/Qwen3.5-27B`, one of the project’s recommended VLMs. Use an 80 GB GPU and allow extra system RAM for it. SimpleTuner uses each training image and its bucket dimensions to generate scene descriptions and centered pixel bounding boxes, then caches the text embeddings. Validation prompts are expanded too; empty and negative prompts stay unchanged. To wrap existing captions as JSON without loading a caption model, enable only `moss_image_auto_json`.
+
 ```json
 {
   "summary": {"caption": "A cream travel poster with the title EXPLORE above a blue mountain."},

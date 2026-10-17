@@ -1221,6 +1221,18 @@ Different models different conditioning data expect करते हैं:
 
 अतिरिक्त system RAM और preprocessing समय रखें। Upsampler और text encoder बारी-बारी से GPU इस्तेमाल करते हैं; बनी embeddings प्रशिक्षण में दोबारा इस्तेमाल होती हैं। SimpleTuner expanded और मूल embeddings अलग रखता है और वही references दोबारा चुनने पर कैश परिणाम फिर इस्तेमाल करता है।
 
+### `--moss_image_auto_json` {#--moss_image_auto_json}
+
+सकारात्मक captions को MOSS-Image के मूल `summary`/`items` JSON layout schema में encode करता है। डिफ़ॉल्ट: **false**। सामान्य captions को वस्तुओं की स्थिति गढ़े बिना JSON में रखा जाता है; मौजूदा layouts की जाँच और serialization होता है। खाली और नकारात्मक prompts सुरक्षित रहते हैं।
+
+### `--moss_image_prompt_upsample` {#--moss_image_prompt_upsample}
+
+Text embeddings कैश करने से पहले vision-language मॉडल से सकारात्मक captions को विस्तृत मूल JSON layouts में बदलता है। डिफ़ॉल्ट: **false**। प्रशिक्षण चित्रों के आधार पर विवरण और bounding boxes बनते हैं, जो वास्तविक bucket dimensions इस्तेमाल करते हैं। Validation prompts भी विस्तृत होते हैं और मूल JSON conversion सक्रिय हो जाता है।
+
+### `--moss_image_prompt_upsampler_model_id` {#--moss_image_prompt_upsampler_model_id}
+
+Caption मॉडल का repository या स्थानीय पथ। डिफ़ॉल्ट: **Qwen/Qwen3.5-27B**। `moss_image_prompt_upsample` के साथ इस्तेमाल होता है। डिफ़ॉल्ट मॉडल के लिए 80 GB GPU और अतिरिक्त system RAM चाहिए; यह text encoder के साथ बारी-बारी GPU इस्तेमाल करता है। मॉडल बदलने या JSON सक्रिय करने पर अलग embedding cache इस्तेमाल होता है।
+
 ### `--moss_image_validation_shift` {#--moss_image_validation_shift}
 
 MOSS-Image वैलिडेशन में इन्फ़रेंस flow shift। डिफ़ॉल्ट: **5.0**। प्रशिक्षण मूल बिना-शिफ़्ट ग्रिड (`flow_schedule_shift: 1.0`) का उपयोग करता है। यह मान अलग-अलग noise स्तरों पर सैंपलिंग स्टेप का वितरण बदलता है।

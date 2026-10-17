@@ -115,6 +115,17 @@ MOSS-Image aceita legendas detalhadas, tags e layouts JSON. A [skill de melhoria
 
 Um layout descreve a cena, o texto e suas posições. As coordenadas são `[y_min, x_min, y_max, x_max]` em pixels, com origem no centro da tela. Em 1024×1024 vão de −512 a +512. Serialize com `json.dumps(layout, ensure_ascii=False)` e passe a string como prompt; use dimensões iguais às do layout.
 
+Para expandir legendas para JSON nativo durante o pré-processamento, adicione estas opções à configuração de treino:
+
+```json
+{
+  "moss_image_auto_json": true,
+  "moss_image_prompt_upsample": true
+}
+```
+
+O modelo padrão é `Qwen/Qwen3.5-27B`, um dos VLMs recomendados pelo projeto. Use uma GPU de 80 GB e reserve RAM adicional. O SimpleTuner usa cada imagem e as dimensões de seu bucket para gerar descrições e caixas em pixels centrados, depois armazena os embeddings. Os prompts de validação também são expandidos; os vazios e negativos ficam intactos. Para encapsular legendas existentes em JSON sem carregar outro modelo, ative somente `moss_image_auto_json`.
+
 ```json
 {
   "summary": {"caption": "A cream travel poster with the title EXPLORE above a blue mountain."},

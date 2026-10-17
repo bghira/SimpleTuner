@@ -115,6 +115,17 @@ MOSS-Image विस्तृत कैप्शन, टैग और JSON ल�
 
 लेआउट दृश्य, पाठ और वस्तुओं की स्थिति बताता है। निर्देशांक पिक्सेल में `[y_min, x_min, y_max, x_max]` हैं, जिनका मूल कैनवास के केंद्र में है। 1024×1024 पर सीमा −512 से +512 है। `json.dumps(layout, ensure_ascii=False)` से स्ट्रिंग बनाकर प्रॉम्प्ट दें और लेआउट के समान जनरेशन आयाम रखें।
 
+प्रीप्रोसेसिंग में captions को मूल JSON में विस्तृत करने के लिए प्रशिक्षण कॉन्फ़िगरेशन में ये सेटिंग जोड़ें:
+
+```json
+{
+  "moss_image_auto_json": true,
+  "moss_image_prompt_upsample": true
+}
+```
+
+डिफ़ॉल्ट caption मॉडल `Qwen/Qwen3.5-27B` है, जिसे परियोजना सुझाती है। 80 GB GPU और अतिरिक्त system RAM रखें। SimpleTuner हर प्रशिक्षण चित्र और उसके bucket dimensions से दृश्य विवरण और केंद्र से मापे गए pixel bounding boxes बनाता है, फिर text embeddings कैश करता है। Validation prompts भी विस्तृत होते हैं; खाली और नकारात्मक prompts नहीं बदलते। नया caption मॉडल लोड किए बिना मौजूदा captions को JSON में रखने के लिए केवल `moss_image_auto_json` सक्रिय करें।
+
 ```json
 {
   "summary": {"caption": "A cream travel poster with the title EXPLORE above a blue mountain."},
