@@ -14,7 +14,7 @@ from torch import nn
 
 from simpletuner.helpers.models.flux3_image import text_ids
 from simpletuner.helpers.training.checkpointing import checkpoint
-from simpletuner.helpers.training.gradient_checkpointing_interval import should_checkpoint_block
+from simpletuner.helpers.training.gradient_checkpointing_interval import checkpoint_sequential_state, should_checkpoint_block
 
 
 class Flux3ImageRMSNorm(nn.Module):
@@ -226,6 +226,21 @@ class Flux3ImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, At
             return self._checkpoint_fn(block, hidden_states, modulation, rotary, mask, use_reentrant=False)
         return block(hidden_states, modulation, rotary, mask)
 
+    def _run_segmented_blocks(self, blocks, hidden_states, modulation, rotary, mask):
+        def run_block(_index, block, value):
+            return block(value, modulation, rotary, mask)
+
+        (hidden_states,) = checkpoint_sequential_state(
+            blocks,
+            self.gradient_checkpointing_interval,
+            (hidden_states,),
+            run_block,
+            self._checkpoint_fn,
+            {"use_reentrant": False},
+            segment_stride=self.gradient_checkpointing_segment_stride,
+        )
+        return hidden_states
+
     def _time_embedding(self, timestep, dtype):
         shape = timestep.shape
         projected = self.time_proj(timestep.flatten().to(dtype) * 1000).to(dtype)
@@ -301,9 +316,19 @@ class Flux3ImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, At
             stages["image_cond"] = self.mode_blocks.image_cond
             if conditioning_attention_mask is not None:
                 masks["image_cond"] = conditioning_attention_mask[:, None, None, :].bool()
+        use_segmented_checkpointing = (
+            torch.is_grad_enabled()
+            and self.gradient_checkpointing
+            and self.gradient_checkpointing_interval is not None
+            and self.gradient_checkpointing_interval > 1
+            and hidden_states_buffer is None
+        )
         for mode in streams:
             rotary = self.pos_embed(positions[mode])
             modulation = getattr(self.early_stream_modulations, mode)(embeddings[mode])
+            if use_segmented_checkpointing:
+                streams[mode] = self._run_segmented_blocks(stages[mode], streams[mode], modulation, rotary, masks.get(mode))
+                continue
             for index, block in enumerate(stages[mode]):
                 streams[mode] = self._run_block(block, index, streams[mode], modulation, rotary, masks.get(mode))
                 if mode == "image" and hidden_states_buffer is not None:
@@ -337,12 +362,15 @@ class Flux3ImageTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, At
                 dim=1,
             )
             mask = valid[:, None, None, :]
-        for index, block in enumerate(self.single_transformer_blocks):
-            joint = self._run_block(block, index, joint, modulation, rotary, mask)
-            if hidden_states_buffer is not None:
-                hidden_states_buffer[f"layer_{self.config.num_layers + index}"] = joint[
-                    :, text_length : text_length + image_length
-                ]
+        if use_segmented_checkpointing:
+            joint = self._run_segmented_blocks(self.single_transformer_blocks, joint, modulation, rotary, mask)
+        else:
+            for index, block in enumerate(self.single_transformer_blocks):
+                joint = self._run_block(block, index, joint, modulation, rotary, mask)
+                if hidden_states_buffer is not None:
+                    hidden_states_buffer[f"layer_{self.config.num_layers + index}"] = joint[
+                        :, text_length : text_length + image_length
+                    ]
         generated = joint[:, text_length : text_length + image_length]
         prediction = self.proj_out(self.norm_out(generated, image_embedding))
         if not return_dict:

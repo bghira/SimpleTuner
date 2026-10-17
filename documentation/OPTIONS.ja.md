@@ -400,7 +400,7 @@ simpletuner configure config/foo/config.json
 ### `--gradient_checkpointing_interval`
 
 - **内容**: transformer block checkpointing のモデル依存 interval です。1 は `--gradient_checkpointing` を有効にした状態とほぼ同じです。
-- **注記**: Flux、Flux.2、Krea 2、LTXVideo2、MageFlow、Qwen Image 2.1、Z-Image、Wan は whole-block path で連続した *n* block chunk を使います。このオプションを持つ他の family は、従来の「*n* block ごとに checkpoint」挙動のままの場合があります。連続グループを大きくすると保存する境界状態は減りますが、checkpoint 内の block は再計算します。速度とピークメモリのトレードオフを測定してください。[Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.ja.md#qwen-image-21) を参照。
+- **注記**: Flux、Flux.2、Flux.3 Image Klein、Krea 2、LTXVideo2、MageFlow、Qwen Image 2.1、Z-Image、Wan は whole-block path で連続した *n* block chunk を使います。このオプションを持つ他の family は、従来の「*n* block ごとに checkpoint」挙動のままの場合があります。連続グループを大きくすると保存する境界状態は減りますが、checkpoint 内の block は再計算します。速度とピークメモリのトレードオフを測定してください。[Segmented Checkpointing](experimental/SEGMENTED_CHECKPOINTING.ja.md#qwen-image-21) を参照。
 
 ### `--gradient_checkpointing_segment_stride`
 

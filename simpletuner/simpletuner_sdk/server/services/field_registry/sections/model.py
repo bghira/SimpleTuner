@@ -492,7 +492,7 @@ def register_model_fields(registry: "FieldRegistry") -> None:
             validation_rules=[ValidationRule(ValidationRuleType.MIN, value=1, message="Interval must be at least 1")],
             dependencies=[FieldDependency(field="gradient_checkpointing", operator="equals", value=True, action="enable")],
             help_text="Adjust checkpoint spacing or chunk size for supported transformer blocks (leave blank for per-block checkpointing)",
-            tooltip="Flux, Flux.2, Krea 2, LTXVideo2, MageFlow, Z-Image, and Wan whole-block paths use contiguous chunks of N blocks. Other families may checkpoint every N-th block. Higher values can reduce recompute but keep more activations in VRAM.",
+            tooltip="Flux, Flux.2, Flux.3 Image Klein, Krea 2, LTXVideo2, MageFlow, Z-Image, and Wan whole-block paths use contiguous chunks of N blocks. Larger chunks retain fewer boundary activations but still recompute their blocks. Other families may checkpoint every N-th block.",
             importance=ImportanceLevel.ADVANCED,
             order=16,
             documentation="OPTIONS.md#--gradient_checkpointing_interval",

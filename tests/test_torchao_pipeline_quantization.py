@@ -9,7 +9,11 @@ from simpletuner.helpers.training.quantisation import (
     get_quant_fn,
     mark_torchao_ddp_ignore_params,
 )
-from simpletuner.helpers.training.quantisation.fp8_native import Fp8NativeLinear, patch_peft_fp8_native_dispatcher
+from simpletuner.helpers.training.quantisation.fp8_native import (
+    Fp8NativeLinear,
+    _scaled_mm_supported,
+    patch_peft_fp8_native_dispatcher,
+)
 
 
 class TestTorchAoPipelineQuantization(unittest.TestCase):
@@ -144,6 +148,8 @@ class TestTorchAoPipelineQuantization(unittest.TestCase):
         self.assertIsInstance(model[0], Fp8NativeLinear)
         self.assertEqual(model[0].weight.dtype, torch.float8_e4m3fn)
         x = torch.randn(2, 32, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+        if not _scaled_mm_supported(x):
+            self.skipTest("fp8-native is unavailable on this CUDA device")
         y = model(x).sum()
         y.backward()
         self.assertIsNotNone(x.grad)
@@ -161,6 +167,8 @@ class TestTorchAoPipelineQuantization(unittest.TestCase):
 
         model = get_peft_model(model, LoraConfig(r=4, lora_alpha=4, target_modules=["0"]))
         x = torch.randn(2, 32, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+        if not _scaled_mm_supported(x):
+            self.skipTest("fp8-native is unavailable on this CUDA device")
         y = model(x).sum()
         y.backward()
 
