@@ -11,7 +11,7 @@ from torch.nn import functional as F
 from simpletuner.helpers.models.common import ImageModelFoundation, TextEmbedCacheKey
 from simpletuner.helpers.models.moss_image.model import MOSSImage
 from simpletuner.helpers.models.moss_image.pipeline import MOSSImagePipeline
-from simpletuner.helpers.models.moss_image.transformer import MOSSImageAttentionProcessor, _rotate
+from simpletuner.helpers.models.moss_image.transformer import MOSSImageAttentionProcessor, MOSSImageTransformer, _rotate
 from simpletuner.helpers.utils.hidden_state_buffer import HiddenStateBuffer
 from tests.test_moss_image import tiny_transformer
 
@@ -21,10 +21,13 @@ class MOSSImageEditTests(unittest.TestCase):
     def setUpClass(cls):
         cls.threads = torch.get_num_threads()
         torch.set_num_threads(1)
+        cls.allow_tf32 = torch.backends.cuda.matmul.allow_tf32
+        torch.backends.cuda.matmul.allow_tf32 = False
 
     @classmethod
     def tearDownClass(cls):
         torch.set_num_threads(cls.threads)
+        torch.backends.cuda.matmul.allow_tf32 = cls.allow_tf32
 
     def setUp(self):
         torch.manual_seed(17)
@@ -54,6 +57,109 @@ class MOSSImageEditTests(unittest.TestCase):
         actual = self.model(self.image, self.times, self.text, self.mask, reference_latents=[[], []]).sample
         torch.testing.assert_close(actual, baseline)
 
+    def test_edit_blocks_execute_once_for_the_full_batch(self):
+        batches = []
+        handles = [
+            block.register_forward_pre_hook(lambda _module, args: batches.append(args[0].shape[0]))
+            for block in (*self.model.text_embedder.blocks, *self.model.layers)
+        ]
+        try:
+            self.predict()
+        finally:
+            for handle in handles:
+                handle.remove()
+        self.assertEqual(batches, [2] * 5)
+
+    @unittest.skipUnless(torch.cuda.is_available(), "Kohaku-FA requires CUDA")
+    def test_kohaku_batched_padding_and_empty_reference_rows_have_finite_gradients(self):
+        from simpletuner.helpers.training.kohaku_fa_cute import scaled_dot_product_attention
+
+        model = MOSSImageTransformer(
+            dim=384, ffn_dim=768, num_heads=3, num_layers=3, text_dim=16, freq_dim=16, latent_channels=8
+        ).to(device="cuda", dtype=torch.bfloat16)
+        image, text = self.image.cuda().bfloat16(), self.text.cuda().bfloat16()
+        times, mask = self.times.cuda(), self.mask.cuda()
+        references = [[], [self.references[1][0].cuda().bfloat16()]]
+        with patch.object(F, "scaled_dot_product_attention", scaled_dot_product_attention):
+            output = model(image, times, text, mask, reference_latents=references).sample
+            expected = torch.cat(
+                [
+                    model(
+                        image[i : i + 1], times[i : i + 1], text[i : i + 1, mask[i]], reference_latents=[references[i]]
+                    ).sample
+                    for i in range(2)
+                ]
+            )
+            torch.testing.assert_close(output, expected, atol=0.02, rtol=0.02)
+            output.float().square().mean().backward()
+            self.assertTrue(all(torch.isfinite(p.grad).all() for p in model.parameters() if p.grad is not None))
+            with torch.no_grad():
+                cache = {}
+                first = model(image, times, text, mask, reference_latents=references, _reference_cache=cache).sample
+                second = model(image, times, text, mask, reference_latents=references, _reference_cache=cache).sample
+                torch.testing.assert_close(first, second, atol=0.02, rtol=0.02)
+
+    def test_mixed_empty_references_match_individual_samples_and_cached_steps(self):
+        devices = ["cpu"]
+        if torch.cuda.is_available():
+            devices.append("cuda")
+        if torch.backends.mps.is_available():
+            devices.append("mps")
+        for device in devices:
+            with self.subTest(device=device):
+                model = tiny_transformer().to(device)
+                image, text, times, mask = [value.to(device) for value in (self.image, self.text, self.times, self.mask)]
+                references = [[], [self.references[1][0].to(device)]]
+                actual = model(image, times, text, mask, reference_latents=references).sample
+                expected = torch.cat(
+                    [
+                        model(
+                            image[i : i + 1],
+                            times[i : i + 1],
+                            text[i : i + 1],
+                            mask[i : i + 1],
+                            reference_latents=[references[i]],
+                        ).sample
+                        for i in range(2)
+                    ]
+                )
+                torch.testing.assert_close(actual, expected, atol=1e-5, rtol=1e-4)
+                actual.square().mean().backward()
+                self.assertTrue(torch.isfinite(model.video_embedder.weight.grad).all())
+                with torch.no_grad():
+                    cache = {}
+                    first = model(image, times, text, mask, reference_latents=references, _reference_cache=cache).sample
+                    second = model(image, times, text, mask, reference_latents=references, _reference_cache=cache).sample
+                    torch.testing.assert_close(first, second, atol=1e-5, rtol=1e-4)
+
+    def test_batched_edit_lora_block_swap_preserves_gradients(self):
+        from peft import LoraConfig
+
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            self.skipTest("Block swap requires an accelerator")
+        image, text, times, mask = [value.to(device) for value in (self.image, self.text, self.times, self.mask)]
+        references = [[value.to(device) for value in sample] for sample in self.references]
+        results = []
+        for blocks_to_swap in (0, 1):
+            model = tiny_transformer(musubi_blocks_to_swap=blocks_to_swap).to(device)
+            model.requires_grad_(False)
+            model.add_adapter(LoraConfig(r=2, lora_alpha=2, target_modules=MOSSImage.DEFAULT_LORA_TARGET))
+            if device == "cuda":
+                model.enable_gradient_checkpointing()
+                model.set_gradient_checkpointing_interval(2)
+            output = model(image, times, text, mask, reference_latents=references).sample
+            output.square().mean().backward()
+            gradients = {name: p.grad.detach().cpu() for name, p in model.named_parameters() if p.requires_grad}
+            results.append((output.detach().cpu(), gradients))
+        torch.testing.assert_close(results[0][0], results[1][0], atol=1e-5, rtol=1e-4)
+        for name, gradient in results[0][1].items():
+            with self.subTest(parameter=name):
+                torch.testing.assert_close(gradient, results[1][1][name], atol=1e-5, rtol=1e-4)
+
     def test_ragged_reference_batches_match_individual_samples_and_receive_gradients(self):
         self.references[0][0].requires_grad_()
         prediction = self.predict()
@@ -77,13 +183,24 @@ class MOSSImageEditTests(unittest.TestCase):
 
     def test_split_attention_matches_explicit_reference_isolation_mask(self):
         class MaskedProcessor(MOSSImageAttentionProcessor):
-            def __call__(self, attn, q, k, v, rope, reference_start=None, reference_kv=None, reference_kv_out=None):
+            def __call__(
+                self,
+                attn,
+                q,
+                k,
+                v,
+                rope,
+                reference_start=None,
+                reference_kv=None,
+                reference_kv_out=None,
+                attention_mask=None,
+            ):
                 shape = (*q.shape[:2], attn.heads, q.shape[-1] // attn.heads)
                 q, k = _rotate(q.reshape(shape), rope), _rotate(k.reshape(shape), rope)
                 v = v.reshape(shape)
-                allowed = torch.ones(q.shape[1], q.shape[1], device=q.device, dtype=torch.bool)
+                allowed = attention_mask.expand(-1, -1, q.shape[1], -1).clone()
                 if reference_start is not None:
-                    allowed[reference_start:, :reference_start] = False
+                    allowed[..., reference_start:, :reference_start] = False
                 return (
                     F.scaled_dot_product_attention(
                         q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2), attn_mask=allowed
@@ -106,7 +223,7 @@ class MOSSImageEditTests(unittest.TestCase):
                 if interval_type:
                     model.enable_flowmap_time_conditioning(0.25, interval_type)
                     extra["r_timestep"] = torch.tensor([100.0, 50.0])
-                first, second = [{}, {}], [{}, {}]
+                first, second = {}, {}
                 self.predict(model, _reference_cache=first, timestep_sign=torch.ones(2), **extra)
                 model(
                     -self.image,
@@ -118,10 +235,9 @@ class MOSSImageEditTests(unittest.TestCase):
                     timestep_sign=-torch.ones(2),
                     **extra,
                 )
-                for a, b in zip(first, second):
-                    self.assertEqual(set(a), {0, 1, 2})
-                    for index in a:
-                        torch.testing.assert_close(a[index], b[index], atol=1e-6, rtol=1e-5)
+                self.assertEqual(set(first), {0, 1, 2})
+                for index in first:
+                    torch.testing.assert_close(first[index], second[index], atol=1e-6, rtol=1e-5)
 
     def test_cached_sampling_matches_uncached_cfg_and_changing_skip_windows(self):
         pipeline = MOSSImagePipeline(self.model)
@@ -157,18 +273,19 @@ class MOSSImageEditTests(unittest.TestCase):
         lengths = []
         handle = self.model.video_embedder.register_forward_pre_hook(lambda _module, args: lengths.append(args[0].shape[1]))
         with torch.no_grad():
-            cache = [{}, {}]
+            cache = {}
             first = self.predict(_reference_cache=cache)
-            self.assertEqual(len(lengths), 4)
+            self.assertEqual(lengths, [6, 7])
             lengths.clear()
             second = self.predict(_reference_cache=cache)
-            self.assertEqual(lengths, [6, 6])
+            self.assertEqual(lengths, [6])
             torch.testing.assert_close(first, second)
         handle.remove()
 
     def test_reference_rope_uses_image_index_and_centered_grid(self):
-        baseline = self.model.rope(2, 3, 5, torch.device("cpu"))
-        rope = self.model.rope(2, 3, 5, torch.device("cpu"), [(1, 2), (1, 1)])
+        mask = torch.ones(1, 5, dtype=torch.bool)
+        baseline = self.model.rope(2, 3, mask)
+        rope = self.model.rope(2, 3, mask, [[(1, 2), (1, 1)]])
         torch.testing.assert_close(rope[:, :11], baseline)
         coordinates = torch.tensor([[1, 5, 0, -0.5], [1, 5, 0, 0.5], [2, 5, 0, 0]])
         phase = coordinates[..., None] * self.model.rope.bands
@@ -285,7 +402,7 @@ class MOSSImageEditTests(unittest.TestCase):
             with self.subTest(references=references), self.assertRaises(ValueError):
                 self.model(self.image, self.times, self.text, self.mask, reference_latents=references)
         with self.assertRaisesRegex(ValueError, "inference mode"):
-            self.predict(_reference_cache=[{}, {}])
+            self.predict(_reference_cache={})
 
     def test_reference_image_batches_and_aspects_are_preserved(self):
         pipeline = MOSSImagePipeline(self.model)
@@ -417,7 +534,7 @@ class MOSSImageEditTests(unittest.TestCase):
         result.square().mean().backward()
         self.assertTrue(torch.isfinite(model.video_embedder.weight.grad).all())
         with torch.no_grad():
-            cache = [{}, {}]
+            cache = {}
             initial = model(*arguments, reference_latents=references, _reference_cache=cache).sample
             reused = model(*arguments, reference_latents=references, _reference_cache=cache).sample
             torch.testing.assert_close(initial, reused, atol=1e-5, rtol=1e-4)

@@ -324,7 +324,7 @@ class MOSSImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         self.scheduler.set_timesteps(num_inference_steps, device=device)
         num_steps = self._num_timesteps = len(self.scheduler.timesteps)
         reference_caches = {
-            name: [{} for _ in range(shape[0])] if cache_reference_kv and reference_latents is not None else None
+            name: {} if cache_reference_kv and reference_latents is not None else None
             for name in ("positive", "negative", "skip")
         }
         for step_index, timestep in enumerate(self.progress_bar(self.scheduler.timesteps)):
@@ -360,7 +360,7 @@ class MOSSImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                         skip_layers=skip,
                         _reference_cache=reference_caches.setdefault(
                             ("negative", tuple(sorted(skip or ()))),
-                            [{} for _ in range(shape[0])] if cache_reference_kv and reference_latents is not None else None,
+                            {} if cache_reference_kv and reference_latents is not None else None,
                         ),
                         **model_kwargs,
                     ).sample.float()
