@@ -192,7 +192,9 @@ class Attention:
     @cute.jit
     def create_tma(self, source, layout, padded):
         # Keep singleton sequence axes in the TMA descriptor.
-        sequence = cutlass.Int32(source.shape[2]) if source.shape[2] == 1 else source.shape[2]
+        sequence = (
+            cutlass.Int32(source.shape[2]) if cute.is_static(source.shape[2]) and source.shape[2] == 1 else source.shape[2]
+        )
         tensor = cute.make_tensor(
             source.iterator,
             cute.make_layout(
@@ -642,13 +644,7 @@ class Attention:
 
     @cute.jit
     def visible(self, mask, batch, head, row, col, sq, sk, full):
-        query_rows = self.columns if self.mode == "kv" else self.rows
-        key_rows = self.rows if self.mode == "kv" else self.columns
-        valid = True
-        if cutlass.const_expr(sq % query_rows != 0):
-            valid = row < sq
-        if cutlass.const_expr(sk % key_rows != 0):
-            valid = valid and col < sk
+        valid = row < sq and col < sk
         if cutlass.const_expr(self.causal):
             if not full:
                 valid = valid and col <= row
@@ -1226,18 +1222,43 @@ def kernel_configuration(device, mode, descriptors):
     return (columns, width, warps, hopper, centered, tma, tma and dimension in (64, 128))
 
 
-@lru_cache(maxsize=128)
 def compile_kernel(device, mode, causal, masked, descriptors):
     configuration = kernel_configuration(device, "q" if mode == "backward" else mode, descriptors)
-    if (
+    specialized_load = (
         mode == "forward"
         and not (causal or masked)
         and configuration[5]
         and descriptors[0][1][-1] == 128
         and descriptors[0][1][2] >= 1536
         and descriptors[1][1][2] >= 1024
-    ):
+    )
+    if specialized_load:
         configuration = (64, configuration[1], 8, *configuration[3:])
+    kv_configuration = kernel_configuration(device, "kv", descriptors)
+    vector = copy_vector(descriptors[index] for index in (0, 1, 2, 7))
+    base_vector = copy_vector(descriptors[i] for i in (4, 7))
+    # Match native.cpp's cache classes: runtime sequence axes and aligned strides.
+    layouts = tuple(
+        (
+            dtype,
+            tuple(
+                -1 if size != 1 and (axis == 2 or axis == 3 and (i == 12 or i == 3 and masked)) else size
+                for axis, size in enumerate(shape)
+            ),
+            tuple(s if s <= 1 else -min(8, s & -s) if dtype in (torch.float16, torch.bfloat16) else -1 for s in stride),
+            alignment,
+        )
+        for i, (dtype, shape, stride, alignment) in enumerate(descriptors)
+    )
+    return _compile_kernel(
+        device, mode, causal, masked, layouts, configuration, kv_configuration, vector, base_vector, specialized_load
+    )
+
+
+@lru_cache(maxsize=128)
+def _compile_kernel(
+    device, mode, causal, masked, layouts, configuration, kv_configuration, vector, base_vector, specialized_load
+):
     dtypes = {
         torch.float16: cutlass.Float16,
         torch.bfloat16: cutlass.BFloat16,
@@ -1246,27 +1267,22 @@ def compile_kernel(device, mode, causal, masked, descriptors):
         torch.int32: cutlass.Int32,
     }
     arguments = [
-        make_fake_tensor(dtypes[dtype], shape, stride=stride, memspace=cute.AddressSpace.gmem, assumed_align=alignment)
-        for dtype, shape, stride, alignment in descriptors
-    ]
-    vector = copy_vector(descriptors[index] for index in (0, 1, 2, 7))
-    if mode == "backward":
-        kv_configuration = kernel_configuration(device, "kv", descriptors)
-        base_dot = configuration[4] and not (configuration[3] and descriptors[0][1][-1] in (64, 128))
-        program = JointBackward(
-            causal, masked, configuration, kv_configuration, vector, copy_vector(descriptors[i] for i in (4, 7)), base_dot
+        make_fake_tensor(
+            dtypes[dtype],
+            tuple(cute.sym_int() if size == -1 else size for size in shape),
+            stride=tuple(cute.sym_int64(divisibility=-s) if s < 0 else s for s in stride),
+            memspace=cute.AddressSpace.gmem,
+            assumed_align=alignment,
         )
+        for dtype, shape, stride, alignment in layouts
+    ]
+    if mode == "backward":
+        base_dot = configuration[4] and not (configuration[3] and layouts[0][1][-1] in (64, 128))
+        program = JointBackward(causal, masked, configuration, kv_configuration, vector, base_vector, base_dot)
     elif mode == "forward" and masked:
         program = JointForward(causal, configuration, vector)
     else:
-        if (
-            mode == "forward"
-            and not (causal or masked)
-            and configuration[5]
-            and descriptors[0][1][-1] == 128
-            and descriptors[0][1][2] >= 1536
-            and descriptors[1][1][2] >= 1024
-        ):
+        if specialized_load:
             program = ForwardLoadSpecialized(mode, causal, masked, *configuration, vector=vector)
         else:
             program = Attention(mode, causal, masked, *configuration, vector=vector)
@@ -1428,14 +1444,19 @@ class JointForward:
     ):
         source = cute.make_tensor(
             mask.iterator,
-            cute.make_layout(tuple(1 if mask.stride[i] == 0 else mask.shape[i] for i in range(4)), stride=mask.stride),
+            cute.make_layout(
+                tuple(1 if cute.is_static(mask.stride[i]) and mask.stride[i] == 0 else mask.shape[i] for i in range(4)),
+                stride=mask.stride,
+            ),
         )
         self.classify(source, blocks, stream)
         expanded = cute.make_tensor(
             blocks.iterator,
             cute.make_layout(
                 (q.shape[0], q.shape[1], cute.ceil_div(q.shape[2], 64), cute.ceil_div(k.shape[2], 64)),
-                stride=tuple(0 if blocks.shape[i] == 1 else blocks.stride[i] for i in range(4)),
+                stride=tuple(
+                    0 if cute.is_static(blocks.shape[i]) and blocks.shape[i] == 1 else blocks.stride[i] for i in range(4)
+                ),
             ),
         )
         self.attention(q, k, v, mask, out, maximum, logsum, dout, delta, dq, dk, dv, expanded, delta_base, scale, stream)
