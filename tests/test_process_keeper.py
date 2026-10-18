@@ -227,14 +227,14 @@ class TestProcessLifecycle(ProcessKeeperTestCase):
         self.assertEqual(process.job_id, job_id)
 
         status = get_process_status(job_id)
-        self.assertIn(status, ["pending", "running"])
+        self.assertIn(status, ["pending", "running", "completed"])
 
-        # Wait for task to complete (task takes 0.1s, event thread polls every 0.1s)
-        # get_process_status now actively waits for event thread, so 0.3s should be sufficient
-        time.sleep(0.3)
-        status = get_process_status(job_id)
-        self.assertNotEqual(status, "running")
-        self.assertIn(status, ["completed", "failed"])
+        deadline = time.monotonic() + 5
+        while status in {"pending", "running"} and time.monotonic() < deadline:
+            time.sleep(0.05)
+            status = get_process_status(job_id)
+
+        self.assertEqual(status, "completed")
 
     def test_custom_command_reaches_worker(self):
         job_id = "test_custom_command"
