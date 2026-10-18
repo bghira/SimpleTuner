@@ -79,6 +79,8 @@ simpletuner train
 
 从 **50 步**、**CFG 3** 和 **1024×1024** 验证开始。采样的 `moss_image_validation_shift` 默认为 **5**；训练使用原始未偏移时间网格。`moss_image_uncond_skip_layers` 默认为 **[22]**，在负向 CFG 分支跳过第 22 层。设为 `[]` 可使用标准 CFG。正向分支的额外跳层引导由 `validation_guidance_skip_layers`、`validation_guidance_skip_scale` 及起止设置控制，参见 [OPTIONS](../OPTIONS.md)。Python 生成时设置 `use_cfg_zero_star=True` 可启用 CFG-Zero*。
 
+训练会自动使用 MOSS-Image 原生噪声分布，包括 1% 均匀混合。验证时仅应用一次采样偏移，并包含最终的零噪声端点。使用 AnyFlow 时，验证与训练轨迹应采用相同偏移。
+
 ## 采样过程预览
 
 添加以下设置，可在 WebUI 查看去噪进度图片。预览使用 TAEF2，最终验证图片使用完整 VAE。CLI 可通过已配置的 webhook 发送预览。

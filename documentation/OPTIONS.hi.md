@@ -1239,7 +1239,7 @@ Caption मॉडल का repository या स्थानीय पथ। �
 
 ### `--moss_image_validation_shift` {#--moss_image_validation_shift}
 
-MOSS-Image वैलिडेशन में इन्फ़रेंस flow shift। डिफ़ॉल्ट: **5.0**। प्रशिक्षण मूल बिना-शिफ़्ट ग्रिड (`flow_schedule_shift: 1.0`) का उपयोग करता है। यह मान अलग-अलग noise स्तरों पर सैंपलिंग स्टेप का वितरण बदलता है।
+MOSS-Image वैलिडेशन का इन्फ़रेंस flow shift। डिफ़ॉल्ट: **5.0**। शिफ़्ट को noise से शून्य तक समान अंतराल वाले ग्रिड पर केवल एक बार लागू किया जाता है; शिफ़्ट 1 पर चार स्टेप `[1, 0.75, 0.5, 0.25, 0]` होते हैं, जो AnyFlow प्रशिक्षण रोलआउट से मेल खाते हैं। प्रशिक्षण बिना-शिफ़्ट वाले 1,000-बिंदु ग्रिड पर [तकनीकी रिपोर्ट, परिशिष्ट A.2](https://github.com/OpenMOSS/MOSS-Image/blob/main/paper/MOSS_Image_Technical_Report.pdf) के अनुसार truncated और rescaled logit-normal वितरण तथा 1% uniform मिश्रण का उपयोग करता है। `flow_sigmoid_scale` मूल मानक विचलन 0.95 का गुणक है; शून्य पर point mass के साथ uniform मिश्रण मिलता है। uniform, beta, cubic और custom timestep विकल्प भी चुने जा सकते हैं।
 
 ### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
 

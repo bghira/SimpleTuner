@@ -79,6 +79,8 @@ simpletuner train
 
 Start with **50 steps**, **CFG 3**, and **1024×1024** validation. `moss_image_validation_shift` defaults to **5** for sampling; training uses the checkpoint’s unshifted grid. `moss_image_uncond_skip_layers` defaults to **[22]**, skipping layer 22 in the negative guidance branch. Set it to `[]` for standard CFG. Additional positive-branch skip-layer guidance uses `validation_guidance_skip_layers`, `validation_guidance_skip_scale`, and the start/stop settings in [OPTIONS](../OPTIONS.md). In Python generation, `use_cfg_zero_star=True` enables CFG-Zero*.
 
+Training automatically uses MOSS-Image’s native noise distribution, including its 1% uniform mixture. Validation applies the sampling shift once and includes the final zero-noise endpoint. For AnyFlow, use the same shift for validation and training rollouts.
+
 ## Preview images while sampling
 
 To see progress frames during denoising in the WebUI, add the following settings. Tiny AutoEncoder previews use TAEF2; final validation images use the full VAE. CLI runs can deliver previews through a configured webhook.

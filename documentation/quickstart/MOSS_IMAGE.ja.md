@@ -79,6 +79,8 @@ simpletuner train
 
 まず **50 ステップ**、**CFG 3**、**1024×1024** で検証します。サンプリング用 `moss_image_validation_shift` の既定値は **5** で、学習には元のシフトなしのグリッドを使います。`moss_image_uncond_skip_layers` は既定で **[22]** となり、負の CFG 分岐でレイヤー 22 をスキップします。通常の CFG には `[]` を指定します。正の分岐での追加 SLG は `validation_guidance_skip_layers`、`validation_guidance_skip_scale` と開始・終了設定で制御します。[OPTIONS](../OPTIONS.md)を参照してください。Python では `use_cfg_zero_star=True` で CFG-Zero* を使えます。
 
+学習では 1% の一様分布を混合した MOSS-Image 本来のノイズ分布を自動使用します。検証はサンプリングシフトを一度だけ適用し、最後のゼロノイズ端点を含みます。AnyFlow では検証と学習ロールアウトに同じシフトを指定してください。
+
 ## サンプリング中のプレビュー
 
 WebUI でノイズ除去中の進捗画像を見るには、次の設定を追加します。プレビューは TAEF2、最終検証画像は完全な VAE を使います。CLI では設定した webhook にプレビューを配信できます。

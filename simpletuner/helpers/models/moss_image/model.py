@@ -176,6 +176,30 @@ class MOSSImage(ImageModelFoundation):
         self.noise_schedule = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=1.0)
         return self.config, self.noise_schedule
 
+    def sample_default_flow_sigmas(self, batch: dict, state: dict) -> torch.Tensor:
+        # Technical report A.2, Eq. 4: truncated, rescaled logit-normal plus 1% uniform.
+        scale = float(self.config.flow_sigmoid_scale)
+        if scale < 0:
+            raise ValueError("MOSS-Image flow_sigmoid_scale must be non-negative.")
+        offset = self._get_dataset_timestep_sampling_offset(batch)
+        device = batch["latents"].device
+        cache_key = (scale, offset, device)
+        if getattr(self, "_noise_sampling_cache_key", None) != cache_key:
+            total = self.noise_schedule.config.num_train_timesteps
+            edges = torch.linspace(0, 0.95, total + 1, dtype=torch.float64)
+            std = 0.95 * scale
+            mean = 1.09 + std * offset
+            if std == 0:
+                cdf = (torch.logit(edges) >= mean).double()
+            else:
+                log_cdf = torch.special.log_ndtr((torch.logit(edges) - mean) / std)
+                cdf = (log_cdf - log_cdf[-1]).exp()
+            probabilities = 0.99 * torch.diff(cdf) + 0.01 / total
+            self._noise_sampling_probabilities = probabilities.to(device=device, dtype=torch.float32)
+            self._noise_sampling_cache_key = cache_key
+        indices = torch.multinomial(self._noise_sampling_probabilities, batch["latents"].shape[0], replacement=True)
+        return (indices.float() + 1) / self.noise_schedule.config.num_train_timesteps
+
     def get_json_schema_converter(self):
         if getattr(self.config, "moss_image_auto_json", False) or self.prompt_upsampling_enabled():
             return MossImageJSONSchemaConverter()
