@@ -8,6 +8,52 @@ import torch
     "Requires Ada, Hopper or RTX Blackwell",
 )
 class CuTeAttentionTests(unittest.TestCase):
+    def test_unseen_sequence_lengths_reuse_native_programs(self):
+        from unittest.mock import patch
+
+        from simpletuner.helpers.training.kohaku_fa_cute import native
+
+        for mode in ("dense", "mask", "padding", "causal", "gqa", "projection"):
+            with self.subTest(mode=mode):
+                native.extension().clear_cache()
+                with patch.object(native, "compile_kernel", wraps=native.compile_kernel) as compiler:
+                    for queries, keys in ((137, 193), (144, 208), (201, 269)):
+                        q = torch.randn(2, 4, queries, 64, device="cuda", dtype=torch.bfloat16)
+                        k, v = [
+                            torch.randn(2, 2 if mode == "gqa" else 4, keys, 64, device="cuda", dtype=q.dtype)
+                            for _ in range(2)
+                        ]
+                        if mode == "projection":
+                            q, k, v = [x.transpose(1, 2).contiguous().transpose(1, 2) for x in (q, k, v)]
+                        mask = None
+                        if mode == "mask":
+                            mask = torch.rand(1, 1, queries, keys, device="cuda") > 0.25
+                            mask[..., 0, :] = False
+                        elif mode == "padding":
+                            mask = torch.arange(keys, device="cuda") < keys - 7
+                        self.compare(q, k, v, mask=mask, causal=mode == "causal")
+                        self.assertEqual(compiler.call_count, 2)
+                        self.assertEqual(native.extension().cache_size(), 2)
+
+    def test_dynamic_lengths_preserve_forward_configuration_thresholds(self):
+        from unittest.mock import patch
+
+        from simpletuner.helpers.training.kohaku_fa_cute import native
+
+        cases = (
+            (2, 16, ((1023, 17), (1025, 17), (1027, 17))),
+            (1, 2, ((1535, 1031), (1537, 1031), (1551, 1043))),
+        )
+        for batch, heads, lengths in cases:
+            with self.subTest(batch=batch, heads=heads):
+                native.extension().clear_cache()
+                with patch.object(native, "compile_kernel", wraps=native.compile_kernel) as compiler:
+                    for index, (queries, keys) in enumerate(lengths):
+                        q = torch.randn(batch, heads, queries, 128, device="cuda", dtype=torch.bfloat16)
+                        k, v = [torch.randn(batch, heads, keys, 128, device="cuda", dtype=q.dtype) for _ in range(2)]
+                        self.compare(q, k, v)
+                        self.assertEqual(compiler.call_count, 2 if index == 0 else 3)
+
     def test_warm_dispatch_does_not_reenter_python_kernels(self):
         import cProfile
         from pathlib import Path

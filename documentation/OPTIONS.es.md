@@ -67,6 +67,8 @@ Usa `model_family: "flux3_image"` para el transformador de imágenes de 5,6B par
 
 Para `moss_image`, la variante predeterminada `sft` carga `OpenMOSS-Team/MOSS-Image-SFT`. Usa `model_flavour: "base"` para `OpenMOSS-Team/MOSS-Image-Base`. Los ejemplos entrenan con un área equivalente a 512×512. Consulta la [guía de MOSS-Image](quickstart/MOSS_IMAGE.es.md).
 
+Elige `model_flavour: "sft-edit"` o `"base-edit"` para entrenar con imágenes de referencia. Estas variantes parten del checkpoint SFT o Base correspondiente y aprenden el condicionamiento mediante tu adaptador. Empieza con `simpletuner/examples/moss_image-sft-edit.peft-lora` o `moss_image-base-edit.peft-lora`; usan una imagen objetivo por lote, entrenamiento a escala 512, REPA y validación del conjunto de datos.
+
 ### `--lora_format`
 
 - **Qué**: Selecciona el formato de claves del checkpoint LoRA para cargar/guardar.
@@ -1240,7 +1242,7 @@ Repositorio o ruta local del modelo de descripción. Predeterminado: **Qwen/Qwen
 
 ### `--moss_image_validation_shift` {#--moss_image_validation_shift}
 
-Desplazamiento de flujo para la validación de MOSS-Image. Predeterminado: **5.0**. El entrenamiento usa la cuadrícula original sin desplazar (`flow_schedule_shift: 1.0`). Este valor distribuye los pasos de muestreo entre los niveles de ruido.
+Desplazamiento de flujo para la validación de MOSS-Image. Predeterminado: **5.0**. Se aplica una sola vez a una cuadrícula uniforme desde ruido hasta cero; cuatro pasos con desplazamiento 1 usan `[1, 0.75, 0.5, 0.25, 0]`, igual que las trayectorias de entrenamiento de AnyFlow. El entrenamiento usa una cuadrícula sin desplazar de 1.000 puntos, con la distribución logit-normal truncada y reescalada y una mezcla uniforme del 1% del [informe técnico, Apéndice A.2](https://github.com/OpenMOSS/MOSS-Image/blob/main/paper/MOSS_Image_Technical_Report.pdf). `flow_sigmoid_scale` multiplica la desviación estándar nativa de 0,95; cero produce una masa puntual con la mezcla uniforme. Siguen disponibles las selecciones explícitas uniforme, beta, cúbica y de pasos personalizados.
 
 ### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
 

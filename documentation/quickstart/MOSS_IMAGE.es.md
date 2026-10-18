@@ -79,6 +79,8 @@ simpletuner train
 
 Empieza con **50 pasos**, **CFG 3** y validación de **1024×1024**. `moss_image_validation_shift` vale **5** para el muestreo; el entrenamiento utiliza la cuadrícula original sin desplazamiento. `moss_image_uncond_skip_layers` vale **[22]** y omite esa capa en la rama negativa de CFG. Usa `[]` para CFG estándar. La omisión adicional en la rama positiva usa `validation_guidance_skip_layers`, `validation_guidance_skip_scale` y los límites de inicio y fin de [OPTIONS](../OPTIONS.md). En Python, `use_cfg_zero_star=True` activa CFG-Zero*.
 
+El entrenamiento usa automáticamente la distribución de ruido nativa de MOSS-Image, incluida su mezcla uniforme del 1%. La validación aplica el desplazamiento una sola vez e incluye el extremo final sin ruido. Para AnyFlow, usa el mismo desplazamiento en validación y en las trayectorias de entrenamiento.
+
 ## Vistas previas durante el muestreo
 
 Añade estos ajustes para ver fotogramas de progreso durante el denoising en la WebUI. Las vistas previas usan TAEF2 y las imágenes finales usan el VAE completo. La CLI puede enviar vistas previas a un webhook configurado.
@@ -157,4 +159,78 @@ image = pipe(
     generator=torch.Generator("cuda").manual_seed(42),
 ).images[0]
 image.save("my-moss-image.png")
+```
+
+## Entrenar una LoRA de edición o referencia
+
+Elige `model_flavour: "sft-edit"` o `"base-edit"` para entrenar con imágenes de referencia. Estas variantes parten del checkpoint SFT o Base correspondiente y aprenden el condicionamiento mediante tu adaptador. Empieza con `simpletuner/examples/moss_image-sft-edit.peft-lora` o `moss_image-base-edit.peft-lora`; usan una imagen objetivo por lote, entrenamiento a escala 512, REPA y validación del conjunto de datos.
+
+```bash
+mkdir -p config/examples datasets/moss-edits datasets/moss-references
+cp -R simpletuner/examples/moss_image-sft-edit.peft-lora config/examples/
+cp config/examples/moss_image-sft-edit.peft-lora/config.json config/config.json
+```
+
+Guarda el resultado deseado en `datasets/moss-edits/sample.png`, la instrucción en `datasets/moss-edits/sample.txt` y la referencia de entrada en `datasets/moss-references/sample.png`. Los nombres de las imágenes, incluidas las extensiones, deben coincidir en ambas carpetas. Una instrucción de ejemplo es `Change the blue mug to red while keeping the background unchanged.` Los ejemplos de edición incluyen esta configuración del dataloader:
+
+```json
+[
+  {
+    "id": "edits",
+    "type": "local",
+    "dataset_type": "image",
+    "instance_data_dir": "datasets/moss-edits",
+    "caption_strategy": "textfile",
+    "resolution": 0.262144,
+    "resolution_type": "area",
+    "crop": false,
+    "conditioning_data": [
+      "references"
+    ],
+    "cache_dir_vae": "cache/vae/moss-image/sft-edit/targets",
+    "text_embeds": "text",
+    "repeats": 10
+  },
+  {
+    "id": "references",
+    "type": "local",
+    "dataset_type": "conditioning",
+    "instance_data_dir": "datasets/moss-references",
+    "conditioning_type": "reference_loose",
+    "resolution": 0.262144,
+    "resolution_type": "area",
+    "crop": false,
+    "cache_dir_vae": "cache/vae/moss-image/sft-edit/references"
+  },
+  {
+    "id": "text",
+    "type": "local",
+    "dataset_type": "text_embeds",
+    "default": true,
+    "cache_dir": "cache/text/moss-image/sft-edit"
+  }
+]
+```
+
+`reference_loose` conserva la relación de aspecto de cada referencia y permite tamaños distintos para referencias y objetivos. Usa `reference_strict` para pares alineados. Añade más conjuntos de referencia a `conditioning_data` y mantén `conditioning_multidataset_sampling: "combined"` para proporcionar varias referencias juntas. `"random"` selecciona un conjunto de referencia por muestra; añade instrucciones propias a cada conjunto cuando sean diferentes. Separa las cachés de objetivos, referencias y texto. Las referencias requieren memoria adicional: reduce el lote o utiliza las opciones de descarga anteriores según sea necesario.
+
+La validación utiliza las referencias e instrucciones de los conjuntos emparejados. Los píxeles de referencia pasan por la torre visual congelada de Qwen3.5 y los latentes limpios del VAE aportan los detalles; la pérdida se calcula sobre la imagen objetivo. El descarte de captions conserva las referencias y elimina solo la instrucción. El procesador de imágenes Qwen se descarga automáticamente de `Qwen/Qwen3.5-9B`.
+
+Tras entrenar, carga el adaptador de edición y pasa una imagen de referencia o una lista a `image`. Para un lote de prompts, usa una lista anidada con un conjunto de referencias por prompt. La caché K/V de referencias está activada durante el muestreo; usa `cache_reference_kv=False` para recalcular los tokens de referencia en cada paso.
+
+```python
+import torch
+from diffusers.utils import load_image
+from simpletuner.helpers.models.moss_image.pipeline import MOSSImagePipeline
+
+pipe = MOSSImagePipeline.from_pretrained(
+    "OpenMOSS-Team/MOSS-Image-SFT", torch_dtype=torch.bfloat16
+).to("cuda")
+pipe.load_lora_weights("output/examples/moss_image-sft-edit.peft-lora")
+image = pipe(
+    "Change the blue mug to red while keeping the background unchanged.",
+    image=[load_image("reference.png")],
+    height=512, width=512, num_inference_steps=50, guidance_scale=3.0,
+).images[0]
+image.save("edited.png")
 ```

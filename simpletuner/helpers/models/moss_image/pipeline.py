@@ -14,40 +14,30 @@ from diffusers.loaders import FluxLoraLoaderMixin
 from diffusers.pipelines.pipeline_utils import ImagePipelineOutput
 from diffusers.utils.torch_utils import randn_tensor
 from huggingface_hub import hf_hub_download
+from PIL import Image
 from transformers import Qwen2Tokenizer, Qwen3_5Model
 
-from simpletuner.helpers.models.flux2.latents import denormalize_latents, unpatchify
+from simpletuner.helpers.models.flux2.latents import denormalize_latents, normalize_latents, patchify, unpatchify
 from simpletuner.helpers.models.guidance import guided_velocity
-from simpletuner.helpers.models.moss_image.text import MAX_TEXT_LENGTH, encode_prompts
+from simpletuner.helpers.models.moss_image.text import MAX_TEXT_LENGTH, encode_prompts, load_image_processor
 from simpletuner.helpers.models.moss_image.transformer import MOSSImageTransformer, _validate_skip_layers
 from simpletuner.helpers.training.adapter import _sidecar_destination
 
 
 class MOSSImageScheduler(FlowMatchEulerDiscreteScheduler):
-    """Euler integration using the training project's V2, nearest-grid schedule."""
+    """Euler integration on a flow grid shifted once, including the terminal zero."""
 
     @register_to_config
-    def __init__(self, num_train_timesteps=1000, shift=5.0, training_shift=1.0):
+    def __init__(self, num_train_timesteps=1000, shift=5.0):
         super().__init__(num_train_timesteps=num_train_timesteps, shift=1.0)
-        self.register_to_config(shift=shift, training_shift=training_shift)
+        self.register_to_config(shift=shift)
 
     def set_timesteps(self, num_inference_steps=50, device=None):
-        if num_inference_steps < 1 or self.config.shift <= 0 or self.config.training_shift <= 0:
-            raise ValueError("Steps and shifts must be positive.")
-        total = self.config.num_train_timesteps
-
-        def grid(count, shift):
-            lower = shift / (total + shift - 1)
-            values = torch.linspace(1, lower, count)
-            return shift * values / (1 + (shift - 1) * values)
-
-        sigmas = grid(num_inference_steps, self.config.shift)
-        training = grid(total, self.config.training_shift).flip(0)
-        upper = torch.searchsorted(training, sigmas).clamp(max=total - 1)
-        lower = (upper - 1).clamp(min=0)
-        nearest = torch.where((sigmas - training[lower]).abs() <= (training[upper] - sigmas).abs(), lower, upper)
-        sigmas = torch.unique_consecutive(training[nearest])
-        # Our sigmas have already been shifted and snapped. Avoid a second shift.
+        if num_inference_steps < 1 or self.config.shift <= 0:
+            raise ValueError("Steps and shift must be positive.")
+        values = torch.linspace(1, 0, num_inference_steps + 1, device=device)[:-1]
+        shift = self.config.shift
+        sigmas = shift * values / (1 + (shift - 1) * values)
         self._shift = 1.0
         super().set_timesteps(device=device, sigmas=sigmas.tolist())
 
@@ -58,7 +48,9 @@ class MOSSImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
     _lora_loadable_modules = ["transformer"]
     _callback_tensor_inputs = ["latents"]
 
-    def __init__(self, transformer, scheduler=None, text_encoder=None, tokenizer=None, vae=None):
+    def __init__(
+        self, transformer, scheduler=None, text_encoder=None, tokenizer=None, vae=None, reference_image_processor=None
+    ):
         super().__init__()
         self.register_modules(
             transformer=transformer,
@@ -68,6 +60,7 @@ class MOSSImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             vae=vae,
         )
         self.image_processor = VaeImageProcessor(vae_scale_factor=16)
+        self.reference_image_processor = reference_image_processor
         self.vae_scale_factor = 8
         self._interrupt = False
 
@@ -120,13 +113,54 @@ class MOSSImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
     def num_timesteps(self):
         return self._num_timesteps
 
-    def encode_prompt(self, prompt, max_sequence_length=MAX_TEXT_LENGTH):
+    def encode_prompt(self, prompt, max_sequence_length=MAX_TEXT_LENGTH, reference_images=None):
         if self.text_encoder is None or self.tokenizer is None:
             raise ValueError("MOSS-Image text encoding requires a tokenizer and Qwen3.5 text encoder.")
         prompts = [prompt] if isinstance(prompt, str) else list(prompt)
         if not prompts or not all(isinstance(value, str) for value in prompts):
             raise ValueError("prompt must be a string or a nonempty list of strings.")
-        return encode_prompts(self.tokenizer, self.text_encoder, prompts, self._execution_device, max_sequence_length)
+        if reference_images is not None and self.reference_image_processor is None:
+            self.reference_image_processor = load_image_processor()
+        return encode_prompts(
+            self.tokenizer,
+            self.text_encoder,
+            prompts,
+            self._execution_device,
+            max_sequence_length,
+            reference_images=reference_images,
+            image_processor=self.reference_image_processor,
+        )
+
+    def _reference_images(self, image, batch):
+        if image is None:
+            return None
+        if isinstance(image, Image.Image):
+            image = [image]
+        if not isinstance(image, (list, tuple)) or not image:
+            raise ValueError("image must contain PIL reference images.")
+        if isinstance(image[0], Image.Image):
+            image = [image] * batch
+        if len(image) != batch or any(not images for images in image):
+            raise ValueError("Provide one nonempty reference image set per prompt, or a shared list of references.")
+        if any(not isinstance(value, Image.Image) for images in image for value in images):
+            raise ValueError("MOSS-Image references must be PIL images.")
+        return [[value.convert("RGB") for value in images] for images in image]
+
+    def _encode_reference_latents(self, references, height, width, device):
+        if self.vae is None:
+            raise ValueError("Reference image encoding requires a FLUX.2 VAE.")
+        results = []
+        for images in references:
+            latents = []
+            for image in images:
+                scale = math.sqrt(height * width / (image.height * image.width))
+                ref_height = max(16, round(image.height * scale / 16) * 16)
+                ref_width = max(16, round(image.width * scale / 16) * 16)
+                pixels = self.image_processor.preprocess(image, height=ref_height, width=ref_width)
+                encoded = self.vae.encode(pixels.to(device=device, dtype=self.vae.dtype)).latent_dist.mode()
+                latents.append(normalize_latents(patchify(encoded), self.vae)[0])
+            results.append(latents)
+        return results
 
     def load_lora_weights(self, source, adapter_name=None, hotswap=False, **kwargs):
         deltatime_type = kwargs.pop("flowmap_deltatime_type", None)
@@ -190,6 +224,9 @@ class MOSSImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         self,
         prompt=None,
         *,
+        image=None,
+        reference_latents=None,
+        cache_reference_kv=True,
         height=1024,
         width=1024,
         num_inference_steps=50,
@@ -241,9 +278,19 @@ class MOSSImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
         self._guidance_scale = guidance_scale
         self._interrupt = False
         device = self._execution_device
+        batch = prompt_embeds.shape[0] if prompt_embeds is not None else (1 if isinstance(prompt, str) else len(prompt))
+        references = self._reference_images(image, batch)
+        if references is not None and reference_latents is not None:
+            raise ValueError("Provide image or reference_latents, rather than both.")
         if prompt_embeds is None:
-            prompt_embeds, prompt_attention_mask = self.encode_prompt(prompt, max_sequence_length)
+            prompt_embeds, prompt_attention_mask = self.encode_prompt(prompt, max_sequence_length, references)
         batch = prompt_embeds.shape[0]
+        if references is not None:
+            reference_latents = self._encode_reference_latents(references, height, width, device)
+        if reference_latents is not None:
+            if len(reference_latents) != batch:
+                raise ValueError("Reference latent sets must match the prompt batch size.")
+            reference_latents = [sample for sample in reference_latents for _ in range(num_images_per_prompt)]
 
         def prepare(embeds, mask):
             if embeds.ndim != 3 or embeds.shape[0] != batch:
@@ -263,7 +310,9 @@ class MOSSImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 negatives = [negative_prompt] * batch if isinstance(negative_prompt, str) else negative_prompt
                 if len(negatives) != batch:
                     raise ValueError("negative_prompt must match prompt batch size.")
-                negative_prompt_embeds, negative_prompt_attention_mask = self.encode_prompt(negatives, max_sequence_length)
+                negative_prompt_embeds, negative_prompt_attention_mask = self.encode_prompt(
+                    negatives, max_sequence_length, references
+                )
             negative, negative_mask = prepare(negative_prompt_embeds, negative_prompt_attention_mask)
         shape = (batch * num_images_per_prompt, self.transformer.config.latent_channels, height // 16, width // 16)
         if latents is None:
@@ -274,11 +323,15 @@ class MOSSImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
             latents = latents.to(device=device, dtype=torch.float32)
         self.scheduler.set_timesteps(num_inference_steps, device=device)
         num_steps = self._num_timesteps = len(self.scheduler.timesteps)
+        reference_caches = {
+            name: {} if cache_reference_kv and reference_latents is not None else None
+            for name in ("positive", "negative", "skip")
+        }
         for step_index, timestep in enumerate(self.progress_bar(self.scheduler.timesteps)):
             if self.interrupt:
                 break
             skip_active = slg_start <= step_index / num_steps < slg_stop
-            model_kwargs = {"attention_kwargs": attention_kwargs}
+            model_kwargs = {"attention_kwargs": attention_kwargs, "reference_latents": reference_latents}
             if self.transformer.flowmap_deltatime_type is not None:
                 model_kwargs["r_timestep"] = (
                     self.scheduler.sigmas[step_index + 1].to(device) * self.scheduler.config.num_train_timesteps
@@ -290,6 +343,7 @@ class MOSSImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                 timestep,
                 positive,
                 positive_mask,
+                _reference_cache=reference_caches["positive"],
                 **model_kwargs,
             ).sample.float()
             prediction = conditional
@@ -304,6 +358,10 @@ class MOSSImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                         negative,
                         negative_mask,
                         skip_layers=skip,
+                        _reference_cache=reference_caches.setdefault(
+                            ("negative", tuple(sorted(skip or ()))),
+                            {} if cache_reference_kv and reference_latents is not None else None,
+                        ),
                         **model_kwargs,
                     ).sample.float()
                     prediction = guided_velocity(conditional, uncond, guidance_scale, use_cfg_zero_star)
@@ -320,6 +378,7 @@ class MOSSImagePipeline(DiffusionPipeline, FluxLoraLoaderMixin):
                     positive,
                     positive_mask,
                     skip_layers=slg_layers,
+                    _reference_cache=reference_caches["skip"],
                     **model_kwargs,
                 ).sample.float()
                 if not do_cfg:

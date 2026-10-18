@@ -67,6 +67,8 @@ simpletuner configure config/foo/config.json
 
 `moss_image` 默认的 `sft` 变体加载 `OpenMOSS-Team/MOSS-Image-SFT`。使用 `OpenMOSS-Team/MOSS-Image-Base` 时，设置 `model_flavour: "base"`。训练示例采用 512×512 等效面积。参阅 [MOSS-Image 快速入门](quickstart/MOSS_IMAGE.zh.md)。
 
+选择 `model_flavour: "sft-edit"` 或 `"base-edit"`，即可使用参考图像训练。这两个变体从对应的 SFT 或 Base 检查点开始，通过适配器学习参考图像条件。可从 `simpletuner/examples/moss_image-sft-edit.peft-lora` 或 `moss_image-base-edit.peft-lora` 开始；两者均采用每批一个目标、512 等效分辨率训练、REPA 和数据集验证。
+
 ### `--lora_format`
 
 - **内容**：选择 LoRA 检查点的加载/保存键格式。
@@ -1240,7 +1242,7 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 
 ### `--moss_image_validation_shift` {#--moss_image_validation_shift}
 
-MOSS-Image 验证时的推理流偏移。默认值：**5.0**。训练使用原始未偏移网格（`flow_schedule_shift: 1.0`）。此值控制采样步骤在不同噪声级别之间的分布。
+MOSS-Image 验证时的推理流偏移，默认 **5.0**。偏移仅应用一次，基础网格从噪声均匀下降到零；偏移为 1 的四步网格为 `[1, 0.75, 0.5, 0.25, 0]`，与 AnyFlow 训练轨迹一致。训练使用未偏移的 1,000 点网格，以及[技术报告附录 A.2](https://github.com/OpenMOSS/MOSS-Image/blob/main/paper/MOSS_Image_Technical_Report.pdf)中的截断、重新缩放 logit-normal 分布和 1% 均匀混合。`flow_sigmoid_scale` 乘以原生标准差 0.95；设为零时使用点质量分布加均匀混合。仍可显式选择均匀、beta、三次密度或自定义时间步方案。
 
 ### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
 

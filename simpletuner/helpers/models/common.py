@@ -1396,6 +1396,10 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
     def validation_prompt_image_context(self, original_image, prepared_image):
         return prepared_image
 
+    def validation_preserves_reference_images(self) -> bool:
+        """Keep reference pixels intact when the pipeline handles reference resizing."""
+        return False
+
     def requires_text_embed_image_context(self) -> bool:
         """
         Returns True when encode_text_batch must be supplied with per-prompt image
@@ -5026,12 +5030,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
                 self.config.flow_use_uniform_schedule,
             ]
         ):
-            normal = torch.randn((bsz,), device=self.accelerator.device)
-            timestep_offset = self._get_dataset_timestep_sampling_offset(batch)
-            if timestep_offset:
-                normal = normal + timestep_offset
-            sigmas = torch.sigmoid(self.config.flow_sigmoid_scale * normal)
-            sigmas = apply_flow_schedule_shift(self.config, self.noise_schedule, sigmas, batch["noise"])
+            sigmas = self.sample_default_flow_sigmas(batch=batch, state=state)
         elif self.config.flow_use_uniform_schedule:
             sigmas = torch.rand((bsz,), device=self.accelerator.device)
             sigmas = apply_flow_schedule_shift(self.config, self.noise_schedule, sigmas, batch["noise"])
@@ -5049,6 +5048,15 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
             )
         timesteps = sigmas * 1000.0
         return sigmas, timesteps
+
+    def sample_default_flow_sigmas(self, batch: dict, state: dict) -> torch.Tensor:
+        """Sample the model's default flow distribution; explicit schedule selections stay shared."""
+        normal = torch.randn((batch["latents"].shape[0],), device=self.accelerator.device)
+        timestep_offset = self._get_dataset_timestep_sampling_offset(batch)
+        if timestep_offset:
+            normal = normal + timestep_offset
+        sigmas = torch.sigmoid(self.config.flow_sigmoid_scale * normal)
+        return apply_flow_schedule_shift(self.config, self.noise_schedule, sigmas, batch["noise"])
 
     def flow_matching_timesteps_from_sigmas(
         self,

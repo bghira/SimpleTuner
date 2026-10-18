@@ -32,13 +32,26 @@ std::mutex cache_mutex;
 Key configuration_key(bool backward, const Tensors &tensors, bool causal, bool masked) {
     Key key = {backward, tensors[0].get_device(), causal, masked};
     key.reserve(160);
-    for (const auto &tensor : tensors) {
+    // These thresholds select different Hopper forward programs.
+    if (!backward && tensors[0].size(3) == 128) {
+        key.push_back(tensors[0].numel() / tensors[0].size(3) >= 32768);
+        key.push_back(tensors[0].size(2) >= 1536 && tensors[1].size(2) >= 1024);
+    }
+    for (size_t i = 0; i < tensors.size(); ++i) {
+        const auto &tensor = tensors[i];
         key.push_back(static_cast<int64_t>(tensor.scalar_type()));
         key.push_back(tensor.dim());
         auto pointer = reinterpret_cast<uintptr_t>(tensor.data_ptr());
         key.push_back(std::min<uintptr_t>(16, pointer & -pointer));
-        key.insert(key.end(), tensor.sizes().begin(), tensor.sizes().end());
-        key.insert(key.end(), tensor.strides().begin(), tensor.strides().end());
+        for (int axis = 0; axis < tensor.dim(); ++axis) {
+            bool sequence = axis == 2 || (axis == 3 && (i == 12 || (i == 3 && masked)));
+            key.push_back(sequence && tensor.size(axis) != 1 ? -1 : tensor.size(axis));
+        }
+        bool half = tensor.scalar_type() == at::kHalf || tensor.scalar_type() == at::kBFloat16;
+        for (auto stride : tensor.strides()) {
+            auto divisor = half ? std::min<int64_t>(8, stride & -stride) : 1;
+            key.push_back(stride <= 1 ? stride : -divisor);
+        }
     }
     return key;
 }

@@ -67,6 +67,8 @@ simpletuner configure config/foo/config.json
 
 `moss_image` の既定の `sft` は `OpenMOSS-Team/MOSS-Image-SFT` を読み込みます。`OpenMOSS-Team/MOSS-Image-Base` には `model_flavour: "base"` を指定します。学習例は 512×512 相当の面積を使います。[MOSS-Image クイックスタート](quickstart/MOSS_IMAGE.ja.md)を参照してください。
 
+参照画像付きで学習するには `model_flavour: "sft-edit"` または `"base-edit"` を選びます。対応するSFTまたはBaseチェックポイントから開始し、アダプターで参照画像による条件付けを学習します。`simpletuner/examples/moss_image-sft-edit.peft-lora` または `moss_image-base-edit.peft-lora` を使用してください。いずれもバッチあたりターゲット1枚、512相当の学習、REPA、データセットによる検証を設定しています。
+
 ### `--lora_format`
 
 - **内容**: LoRA チェックポイントの load/save 形式を選択します。
@@ -1238,7 +1240,7 @@ Flux Kontext の検証もこのコンディショニングベースの経路を�
 
 ### `--moss_image_validation_shift` {#--moss_image_validation_shift}
 
-MOSS-Image 検証の推論フローシフト。既定値: **5.0**。学習には元のシフトなしグリッド (`flow_schedule_shift: 1.0`) を使います。この値でノイズレベルごとのサンプリングステップ配分を調整します。
+MOSS-Image 検証の推論フローシフト。既定値は **5.0** です。ノイズからゼロまで等間隔のグリッドにシフトを一度だけ適用します。シフト 1 の 4 ステップは `[1, 0.75, 0.5, 0.25, 0]` で、AnyFlow の学習ロールアウトと一致します。学習ではシフトなしの 1,000 点グリッドと、[技術報告の付録 A.2](https://github.com/OpenMOSS/MOSS-Image/blob/main/paper/MOSS_Image_Technical_Report.pdf)に記載された切り詰め・再スケール済み logit-normal 分布に 1% の一様分布を混合します。`flow_sigmoid_scale` は標準偏差 0.95 の倍率です。ゼロでは点質量と一様分布の混合になります。一様、beta、3 次密度、カスタム時間ステップも明示的に選択できます。
 
 ### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
 

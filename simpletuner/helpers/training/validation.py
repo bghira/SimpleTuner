@@ -4654,6 +4654,8 @@ class Validation:
                     validation_resolution_width, validation_resolution_height = (
                         val * 4 for val in extra_validation_kwargs["image"].size
                     )
+                elif self.model.validation_preserves_reference_images():
+                    validation_resolution_width, validation_resolution_height = resolution
                 elif (
                     self.config.controlnet
                     or self.config.validation_using_datasets

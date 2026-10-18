@@ -11,6 +11,7 @@ from diffusers.models.modeling_outputs import Transformer2DModelOutput
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.utils import apply_lora_scale
 from torch import nn
+from torch.nn.utils.rnn import pad_sequence
 
 from simpletuner.helpers.models.flowmap import (
     blend_flowmap_embeddings,
@@ -62,13 +63,38 @@ class MOSSImageAttentionProcessor:
     _attention_backend = None
     _parallel_config = None
 
-    def __call__(self, attn, q, k, v, rope):
+    def __call__(
+        self, attn, q, k, v, rope, reference_start=None, reference_kv=None, reference_kv_out=None, attention_mask=None
+    ):
         shape = (*q.shape[:2], attn.heads, q.shape[-1] // attn.heads)
         q = _rotate(q.reshape(shape), rope)
         k = _rotate(k.reshape(shape), rope)
         v = v.reshape(shape)
+        if reference_kv_out is not None:
+            reference_kv_out.append((k[:, reference_start:].detach().clone(), v[:, reference_start:].detach().clone()))
+        if reference_kv is not None:
+            k = torch.cat((k, reference_kv[0]), dim=1)
+            v = torch.cat((v, reference_kv[1]), dim=1)
         with activation_offload_context(attn.offload_attention, label=f"{attn.__class__.__qualname__}:attention"):
-            return dispatch_attention_fn(q.to(v.dtype), k.to(v.dtype), v, backend=self._attention_backend).flatten(2)
+            if reference_start is not None:
+                live = dispatch_attention_fn(
+                    q[:, :reference_start].to(v.dtype),
+                    k.to(v.dtype),
+                    v,
+                    attn_mask=attention_mask,
+                    backend=self._attention_backend,
+                )
+                references = dispatch_attention_fn(
+                    q[:, reference_start:].to(v.dtype),
+                    k[:, reference_start:].to(v.dtype),
+                    v[:, reference_start:],
+                    attn_mask=attention_mask[..., reference_start:] if attention_mask is not None else None,
+                    backend=self._attention_backend,
+                )
+                return torch.cat((live, references), dim=1).flatten(2)
+            return dispatch_attention_fn(
+                q.to(v.dtype), k.to(v.dtype), v, attn_mask=attention_mask, backend=self._attention_backend
+            ).flatten(2)
 
 
 class MOSSImageTextBlock(nn.Module, AttentionModuleMixin):
@@ -87,11 +113,11 @@ class MOSSImageTextBlock(nn.Module, AttentionModuleMixin):
     def _feed_forward(self, y):
         return self.ffn_down(_situ(self.ffn_up(y), self.ffn_gate(y)))
 
-    def forward(self, x, rope, checkpoint_ffn=False, checkpoint_fn=checkpoint):
+    def forward(self, x, rope, attention_mask=None, checkpoint_ffn=False, checkpoint_fn=checkpoint):
         q, k, v = self.qkv(self.norm1(x)).chunk(3, -1)
         q = self.q_norm(q.unflatten(-1, (self.heads, -1))).flatten(2)
         k = self.k_norm(k.unflatten(-1, (self.heads, -1))).flatten(2)
-        x = x + self.proj(self.processor(self, q, k, v, rope))
+        x = x + self.proj(self.processor(self, q, k, v, rope, attention_mask=attention_mask))
         y = self.norm2(x)
         ffn = checkpoint_fn(self._feed_forward, y, use_reentrant=False) if checkpoint_ffn else self._feed_forward(y)
         return x + ffn
@@ -103,10 +129,10 @@ class _TextProjection(nn.Module):
         self.proj = nn.Linear(text_dim, dim)
         self.blocks = nn.ModuleList([MOSSImageTextBlock(dim, ffn_dim, heads) for _ in range(2)])
 
-    def forward(self, x, rope, run_block):
+    def forward(self, x, rope, run_block, attention_mask):
         x = self.proj(x.to(self.proj.weight.dtype))
         for index, block in enumerate(self.blocks):
-            x = run_block(block, index, x, rope)
+            x = run_block(block, index, x, rope, attention_mask)
         return x
 
 
@@ -126,7 +152,18 @@ class MOSSImageTransformerBlock(nn.Module, AttentionModuleMixin):
         hidden, gate = self.proj["ffn_up_gate"](y.to(self.proj["ffn_up_gate"].weight.dtype)).chunk(2, -1)
         return self.proj["ffn_down"](_situ(hidden, gate))
 
-    def forward(self, x, rope, modulation, checkpoint_ffn=False, checkpoint_fn=checkpoint):
+    def forward(
+        self,
+        x,
+        rope,
+        modulation,
+        reference_start=None,
+        reference_kv=None,
+        reference_kv_out=None,
+        attention_mask=None,
+        checkpoint_ffn=False,
+        checkpoint_fn=checkpoint,
+    ):
         if modulation.ndim == 3:
             modulation = modulation.unsqueeze(2)
         shift_a, scale_a, gate_a, shift_f, scale_f, gate_f = modulation.unbind(1)
@@ -135,7 +172,18 @@ class MOSSImageTransformerBlock(nn.Module, AttentionModuleMixin):
         y = y.to(dtype)
         q = self.q_norm(self.proj["q"](y).unflatten(-1, (self.heads, -1))).flatten(2)
         k = self.k_norm(self.proj["k"](y).unflatten(-1, (self.heads, -1))).flatten(2)
-        x = x + self.proj["o"](self.processor(self, q, k, self.proj["v"](y), rope)) * gate_a
+        attention = self.processor(
+            self,
+            q,
+            k,
+            self.proj["v"](y),
+            rope,
+            reference_start,
+            reference_kv,
+            reference_kv_out,
+            attention_mask=attention_mask,
+        )
+        x = x + self.proj["o"](attention) * gate_a
         y = self.norm2(x) * (1 + scale_f) + shift_f
         ffn = checkpoint_fn(self._feed_forward, y, use_reentrant=False) if checkpoint_ffn else self._feed_forward(y)
         return x + ffn * gate_f
@@ -164,26 +212,42 @@ class _RoPE(nn.Module):
         # Frequencies are derived constants; retain the key for checkpoint compatibility.
         self.bands = self._default_bands(self.bands.device)
 
-    def forward(self, height, width, text_length, device):
+    @staticmethod
+    def _image_coordinates(height, width, device, reference_index=0):
+        h, w = torch.meshgrid(torch.arange(height, device=device), torch.arange(width, device=device), indexing="ij")
+        coordinates = torch.stack((torch.full_like(h, reference_index), torch.zeros_like(h), h, w), -1).flatten(0, 1).float()
+        coordinates[:, 2] -= (height - 1) / 2
+        coordinates[:, 3] -= (width - 1) / 2
+        return coordinates
+
+    def forward(self, height, width, text_mask, reference_shapes=None):
         # Diffusers/Accelerate can install tensors directly, bypassing load hooks.
         if self.bands.dtype != torch.float32:
-            self.bands = self._default_bands(device)
-        # Coordinates: (r, f, h, w); sequence order is image followed by text.
-        h, w = torch.meshgrid(torch.arange(height, device=device), torch.arange(width, device=device), indexing="ij")
-        image = torch.stack((torch.zeros_like(h), torch.full_like(h, text_length), h, w), -1).flatten(0, 1).float()
-        image[:, 2] -= (height - 1) / 2
-        image[:, 3] -= (width - 1) / 2
-        text = torch.zeros(text_length, 4, device=device, dtype=torch.float32)
-        text[:, 1] = torch.arange(text_length, device=device)
-        phase = torch.cat((image, text), 0).unsqueeze(-1) * self.bands
-        return torch.cat((phase.sin(), phase.cos()), -2).flatten(-2).unsqueeze(0)
+            self.bands = self._default_bands(text_mask.device)
+        batch, text_length = text_mask.shape
+        lengths = text_mask.sum(1)
+        image = self._image_coordinates(height, width, text_mask.device).expand(batch, -1, -1).clone()
+        image[:, :, 1] = lengths[:, None]
+        text = image.new_zeros(batch, text_length, 4)
+        text[:, :, 1] = (text_mask.long().cumsum(1) - 1).clamp_min(0)
+        coordinates = [image, text]
+        if reference_shapes is not None and any(reference_shapes):
+            references = []
+            for shapes in reference_shapes:
+                grids = [self._image_coordinates(h, w, text_mask.device, i) for i, (h, w) in enumerate(shapes, start=1)]
+                references.append(torch.cat(grids) if grids else image.new_empty(0, 4))
+            references = pad_sequence(references, batch_first=True)
+            references[:, :, 1] = lengths[:, None]
+            coordinates.append(references)
+        phase = torch.cat(coordinates, 1).unsqueeze(-1) * self.bands
+        return torch.cat((phase.sin(), phase.cos()), -2).flatten(-2)
 
 
 class MOSSImageTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, AttentionMixin):
     """MOSSImage DiT with training-compatible state-dict names and SDPA attention.
 
-    Each sample is evaluated at its true text length, including text refinement;
-    padded tokens cannot influence either text or joint attention.
+    Batched attention excludes padded text and reference keys while preserving
+    each sample's true text length in its rotary coordinates.
     """
 
     _supports_gradient_checkpointing = True
@@ -312,11 +376,26 @@ class MOSSImageTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, AttentionM
         timestep_sign=None,
         r_timestep=None,
         attention_kwargs=None,
+        reference_latents=None,
+        _reference_cache=None,
     ):
         skip_layers = _validate_skip_layers(skip_layers, len(self.layers))
         if hidden_states.ndim != 4 or hidden_states.shape[1] != self.config.latent_channels:
             raise ValueError("hidden_states must be [B, latent_channels, H, W].")
         batch, _, height, width = hidden_states.shape
+        if reference_latents is not None:
+            if len(reference_latents) != batch:
+                raise ValueError("Reference latent sets must match the target batch size.")
+            for references in reference_latents:
+                for reference in references:
+                    if (
+                        reference.ndim != 3
+                        or reference.shape[0] != self.config.latent_channels
+                        or min(reference.shape[-2:]) < 1
+                    ):
+                        raise ValueError("Reference latents must be nonempty [latent_channels, H, W] grids.")
+        if _reference_cache is not None and torch.is_grad_enabled():
+            raise ValueError("Reference K/V caching requires inference mode.")
         if encoder_hidden_states.ndim != 3 or encoder_hidden_states.shape[0] != batch:
             raise ValueError("encoder_hidden_states must be [B, S, text_dim].")
         mask = encoder_attention_mask
@@ -324,6 +403,9 @@ class MOSSImageTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, AttentionM
             mask = torch.ones(encoder_hidden_states.shape[:2], dtype=torch.bool, device=hidden_states.device)
         if mask.shape != encoder_hidden_states.shape[:2] or not torch.all((mask == 0) | (mask == 1)):
             raise ValueError("encoder_attention_mask must be a binary [B, S] mask.")
+        mask = mask.to(device=hidden_states.device, dtype=torch.bool)
+        if not mask.any(dim=1).all():
+            raise ValueError("Each sample needs at least one valid text token.")
         times = torch.as_tensor(timestep, device=hidden_states.device, dtype=torch.float32)
         tokenwise = times.ndim == 2
         if tokenwise:
@@ -356,73 +438,123 @@ class MOSSImageTransformer(ModelMixin, ConfigMixin, PeftAdapterMixin, AttentionM
             head = head.reshape(batch, height * width, 2, -1).transpose(1, 2)
         else:
             mod, head = mod.reshape(batch, 6, -1), head.reshape(batch, 2, -1)
+        image_length = height * width
+        text_length = encoder_hidden_states.shape[1]
+        live_length = image_length + text_length
+        image = self.video_embedder(
+            hidden_states.flatten(2).transpose(1, 2).to(self.video_embedder.weight.dtype).contiguous()
+        )
+        references = reference_latents if reference_latents is not None else [[] for _ in range(batch)]
+        reference_shapes = [[value.shape[-2:] for value in sample] for sample in references]
+        reference_lengths = [sum(h * w for h, w in shapes) for shapes in reference_shapes]
+        reference_mask = (
+            torch.arange(max(reference_lengths), device=image.device)[None, :]
+            < torch.tensor(reference_lengths, device=image.device)[:, None]
+        )
+        reuse_references = bool(_reference_cache)
+        rope = self.rope(height, width, mask, None if reuse_references else reference_shapes).to(image.dtype)
+        context = encoder_hidden_states.masked_fill(~mask[:, :, None], 0)
+        text = self.text_embedder(context, rope[:, image_length:live_length], self._run_block, mask[:, None, None, :])
+        x = torch.cat((image, text), 1)
+        modulation = mod
+        if tokenwise:
+            text_modulation = mod.mean(dim=2, keepdim=True).expand(-1, -1, text_length, -1)
+            modulation = torch.cat((mod, text_modulation), dim=2)
+        reference_start = None
+        if any(reference_lengths) and not reuse_references:
+            reference_start = live_length
+            reference_tokens = pad_sequence(
+                [
+                    (
+                        torch.cat(
+                            [value.flatten(1).T.to(image.device, self.video_embedder.weight.dtype) for value in sample]
+                        )
+                        if sample
+                        else image.new_empty(0, self.config.latent_channels)
+                    )
+                    for sample in references
+                ],
+                batch_first=True,
+            )
+            x = torch.cat((x, self.video_embedder(reference_tokens)), dim=1)
+            clean_time = self._time_embedding(torch.zeros(batch, device=times.device), self.time_embedding)
+            reference_mod = self.shared_block_modulation(clean_time.to(self.shared_block_modulation.weight.dtype))
+            reference_mod = reference_mod.reshape(batch, 6, 1, -1).expand(-1, -1, reference_tokens.shape[1], -1)
+            if not tokenwise:
+                modulation = mod.unsqueeze(2).expand(-1, -1, live_length, -1)
+            modulation = torch.cat((modulation, reference_mod), dim=2)
+        attention_mask = torch.cat(
+            (torch.ones(batch, image_length, device=image.device, dtype=torch.bool), mask, reference_mask), 1
+        )
+        attention_mask = attention_mask[:, None, None, :]
         manager = self._musubi_block_swap
         swapping = manager is not None and manager.activate(self.layers, hidden_states.device, torch.is_grad_enabled())
-        captured = {}
         capture_layers = getattr(hidden_states_buffer, "capture_layers", None)
-        outputs = []
-        for index in range(batch):
-            context = encoder_hidden_states[index : index + 1, mask[index].bool()]
-            if context.shape[1] == 0:
-                raise ValueError("Each sample needs at least one valid text token.")
-            image = hidden_states[index : index + 1].flatten(2).transpose(1, 2)
-            image = self.video_embedder(image.to(self.video_embedder.weight.dtype).contiguous())
-            rope = self.rope(height, width, context.shape[1], hidden_states.device).to(image.dtype)
-            text = self.text_embedder(context, rope[:, height * width :], self._run_block)
-            x = torch.cat((image, text), 1)
-            modulation = mod[index : index + 1]
-            if tokenwise:
-                text_modulation = modulation.mean(dim=2, keepdim=True).expand(-1, -1, context.shape[1], -1)
-                modulation = torch.cat((modulation, text_modulation), dim=2)
-            active = [(i, block) for i, block in enumerate(self.layers) if i not in skip_layers]
-            segmented = (
-                torch.is_grad_enabled()
-                and self.gradient_checkpointing
-                and (self.gradient_checkpointing_interval or 1) > 1
-                and not self.gradient_checkpointing_backend.endswith("-ffn")
-                and not swapping
-                and hidden_states_buffer is None
-            )
-            if segmented:
+        active = [(i, block) for i, block in enumerate(self.layers) if i not in skip_layers]
+        segmented = (
+            torch.is_grad_enabled()
+            and self.gradient_checkpointing
+            and (self.gradient_checkpointing_interval or 1) > 1
+            and not self.gradient_checkpointing_backend.endswith("-ffn")
+            and not swapping
+            and hidden_states_buffer is None
+        )
+        if segmented:
 
-                def run_segment_block(_index, entry, value, rotation, conditioning):
-                    return entry[1](value, rotation, conditioning), rotation, conditioning
-
-                x, _, _ = checkpoint_sequential_state(
-                    active,
-                    self.gradient_checkpointing_interval,
-                    (x, rope, modulation),
-                    run_segment_block,
-                    self._checkpoint_fn,
-                    {"use_reentrant": False},
-                    self.gradient_checkpointing_segment_stride,
+            def run_segment_block(_index, entry, value, rotation, conditioning, split, padding):
+                return (
+                    entry[1](value, rotation, conditioning, split, attention_mask=padding),
+                    rotation,
+                    conditioning,
+                    split,
+                    padding,
                 )
-            else:
-                for layer_index, layer in active:
-                    managed = swapping and manager.is_managed_block(layer_index)
-                    if managed:
-                        manager.stream_in(
-                            layer,
-                            hidden_states.device,
-                            checkpointed=(
-                                self._checkpoint_block(layer_index)
-                                and not self.gradient_checkpointing_backend.endswith("-ffn")
-                            ),
-                        )
-                    x = self._run_block(layer, layer_index, x, rope, modulation)
-                    if hidden_states_buffer is not None and (capture_layers is None or layer_index in capture_layers):
-                        captured.setdefault(layer_index, []).append(x[:, : height * width])
-                    if managed:
-                        manager.stream_out(layer)
-            x = self.final_norm_video(x[:, : height * width].to(self.final_norm_video.weight.dtype))
-            offset, scale = head[index : index + 1].unbind(1)
-            if not tokenwise:
-                offset, scale = offset[:, None], scale[:, None]
-            x = x * (1 + scale) + offset
-            x = self.final_linear_video(x.to(self.final_linear_video.weight.dtype))
-            outputs.append(x.transpose(1, 2).reshape(1, -1, height, width))
-        if hidden_states_buffer is not None:
-            for layer_index, rows in captured.items():
-                hidden_states_buffer[f"layer_{layer_index}"] = torch.cat(rows)
-        sample = torch.cat(outputs)
+
+            x, _, _, _, _ = checkpoint_sequential_state(
+                active,
+                self.gradient_checkpointing_interval,
+                (x, rope, modulation, reference_start, attention_mask),
+                run_segment_block,
+                self._checkpoint_fn,
+                {"use_reentrant": False},
+                self.gradient_checkpointing_segment_stride,
+            )
+        else:
+            for layer_index, layer in active:
+                managed = swapping and manager.is_managed_block(layer_index)
+                if managed:
+                    manager.stream_in(
+                        layer,
+                        hidden_states.device,
+                        checkpointed=(
+                            self._checkpoint_block(layer_index) and not self.gradient_checkpointing_backend.endswith("-ffn")
+                        ),
+                    )
+                captured_kv = (
+                    [] if _reference_cache is not None and any(reference_lengths) and not reuse_references else None
+                )
+                x = self._run_block(
+                    layer,
+                    layer_index,
+                    x,
+                    rope,
+                    modulation,
+                    reference_start,
+                    _reference_cache[layer_index] if reuse_references else None,
+                    captured_kv,
+                    attention_mask,
+                )
+                if captured_kv is not None:
+                    _reference_cache[layer_index] = captured_kv[0]
+                if hidden_states_buffer is not None and (capture_layers is None or layer_index in capture_layers):
+                    hidden_states_buffer[f"layer_{layer_index}"] = x[:, :image_length]
+                if managed:
+                    manager.stream_out(layer)
+        x = self.final_norm_video(x[:, :image_length].to(self.final_norm_video.weight.dtype))
+        offset, scale = head.unbind(1)
+        if not tokenwise:
+            offset, scale = offset[:, None], scale[:, None]
+        x = x * (1 + scale) + offset
+        x = self.final_linear_video(x.to(self.final_linear_video.weight.dtype))
+        sample = x.transpose(1, 2).reshape(batch, -1, height, width)
         return Transformer2DModelOutput(sample=sample) if return_dict else (sample,)

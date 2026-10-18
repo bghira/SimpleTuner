@@ -67,6 +67,8 @@ Use `model_family: "flux3_image"` para o transformador de imagens de 5,6B parâm
 
 Para `moss_image`, a variante padrão `sft` carrega `OpenMOSS-Team/MOSS-Image-SFT`. Use `model_flavour: "base"` para `OpenMOSS-Team/MOSS-Image-Base`. Os exemplos treinam com área equivalente a 512×512. Veja o [guia MOSS-Image](quickstart/MOSS_IMAGE.pt-BR.md).
 
+Escolha `model_flavour: "sft-edit"` ou `"base-edit"` para treinar com imagens de referência. Essas variantes partem do checkpoint SFT ou Base correspondente e aprendem o condicionamento por referência por meio do adaptador. Comece com `simpletuner/examples/moss_image-sft-edit.peft-lora` ou `moss_image-base-edit.peft-lora`; ambos usam um alvo por lote, treinamento na escala 512, REPA e validação pelo conjunto de dados.
+
 ### `--lora_format`
 
 - **O que**: Seleciona o formato de chaves do checkpoint LoRA para load/save.
@@ -1235,7 +1237,7 @@ Repositório ou caminho local do modelo de legendas. Padrão: **Qwen/Qwen3.5-27B
 
 ### `--moss_image_validation_shift` {#--moss_image_validation_shift}
 
-Deslocamento de fluxo para a validação do MOSS-Image. Padrão: **5.0**. O treinamento usa a grade original sem deslocamento (`flow_schedule_shift: 1.0`). Este valor distribui os passos de amostragem pelos níveis de ruído.
+Deslocamento de fluxo na validação do MOSS-Image. Padrão: **5.0**. O deslocamento é aplicado uma única vez a uma grade uniforme do ruído até zero; quatro passos com deslocamento 1 usam `[1, 0.75, 0.5, 0.25, 0]`, como nas trajetórias de treinamento do AnyFlow. O treinamento usa uma grade sem deslocamento de 1.000 pontos, com a distribuição logit-normal truncada e reescalada e mistura uniforme de 1% do [relatório técnico, Apêndice A.2](https://github.com/OpenMOSS/MOSS-Image/blob/main/paper/MOSS_Image_Technical_Report.pdf). `flow_sigmoid_scale` multiplica o desvio padrão nativo de 0,95; zero produz uma massa pontual com a mistura uniforme. As opções explícitas de amostragem uniforme, beta, cúbica e de passos personalizados continuam disponíveis.
 
 ### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
 
