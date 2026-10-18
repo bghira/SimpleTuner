@@ -4126,3 +4126,95 @@ class FailedLocalJobContinueTestCase(_TrainerPageMixin, WebUITestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EnvironmentExampleFilterTestCase(_TrainerPageMixin, WebUITestCase):
+    MAX_BROWSERS = 1
+
+    @staticmethod
+    def _select(driver, form, field):
+        return Select(driver.find_element(By.CSS_SELECTOR, f"{form} select[x-model='newEnvironment.{field}']"))
+
+    def _exercise_filter(self, driver, form):
+        family = lambda: self._select(driver, form, "model_family")
+        examples = lambda: self._select(driver, form, "example")
+        WebDriverWait(driver, 20).until(lambda _: len(family().options) > 1 and len(examples().options) > 1)
+        if examples().first_selected_option.get_attribute("value"):
+            examples().select_by_value("")
+        for selected_family in ("flux3_image", "moss_image"):
+            family().select_by_value(selected_family)
+            WebDriverWait(driver, 10).until(
+                lambda _: len(examples().options) > 1
+                and all(opt.get_attribute("value").startswith(selected_family + "/") for opt in examples().options[1:])
+            )
+            self.assertEqual(examples().first_selected_option.get_attribute("value"), "")
+            name = next(opt.get_attribute("value") for opt in examples().options if "/48g/" in opt.get_attribute("value"))
+            examples().select_by_value(name)
+            flavour = lambda: self._select(driver, form, "model_flavour")
+            WebDriverWait(driver, 10).until(lambda _: not flavour()._el.is_enabled())
+            self.assertTrue(family()._el.is_enabled())
+            state = driver.execute_script("return Alpine.$data(document.querySelector(arguments[0])).buildPayload();", form)
+            self.assertEqual(state["example"], name)
+            self.assertEqual(state["model_family"], selected_family)
+            self.assertEqual(state["model_flavour"], name.split("/")[1])
+        family().select_by_value("flux3_image")
+        WebDriverWait(driver, 10).until(lambda _: examples().first_selected_option.get_attribute("value") == "")
+        self.assertTrue(self._select(driver, form, "model_flavour")._el.is_enabled())
+        state = driver.execute_script(
+            "const c = Alpine.$data(document.querySelector(arguments[0]));"
+            "return {locked: c.exampleLocked, hasDataset: c.exampleHasDataloader, keepDataset: c.keepExampleDataloader};",
+            form,
+        )
+        self.assertEqual(state, {"locked": False, "hasDataset": False, "keepDataset": False})
+
+    def test_environment_modal_filters_examples_by_family(self):
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            page = self._trainer_page(driver)
+            driver.get(self.base_url + "/web/trainer")
+            page.wait_for_tab("basic")
+            self.dismiss_onboarding(driver)
+            page.switch_to_environments_tab()
+            driver.execute_script("Alpine.$data(document.querySelector('#environments-tab-content')).dismissHeroCTA();")
+            button = WebDriverWait(driver, 15).until(
+                EC.element_to_be_clickable((By.CSS_SELECTOR, "button[aria-label='Create Environment']"))
+            )
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
+            button.click()
+            form = "[x-ref='createEnvironmentForm']"
+            WebDriverWait(driver, 10).until(EC.visibility_of_element_located((By.CSS_SELECTOR, form)))
+            driver.find_element(By.CSS_SELECTOR, f'{form} input[placeholder="my-environment"]').send_keys("filtered-modal")
+            self._exercise_filter(driver, form)
+
+        self.for_each_browser("environment_example_filter", scenario)
+
+    def test_onboarding_filters_examples_and_bootstraps_nested_preset(self):
+        self.with_sample_environment()
+
+        def scenario(driver, _browser):
+            driver.get(self.base_url + "/web/trainer")
+            self._trainer_page(driver).wait_for_tab("basic")
+            driver.execute_script(
+                "const store = Alpine.store('trainer');"
+                "store.activeOnboardingStep = {id: 'environment', input_type: 'environment', title: 'Create Environment'};"
+                "store.overlayVisible = true;"
+            )
+            form = "[x-ref='onboardingEnvironmentForm']"
+            WebDriverWait(driver, 20).until(EC.visibility_of_element_located((By.CSS_SELECTOR, form)))
+            preset = "flux3_image/klein/24g/peft-lora"
+            result = driver.execute_async_script(
+                "const done = arguments[arguments.length - 1];"
+                'Alpine.$data(document.querySelector(arguments[0])).prepareForDisplay({name: "filtered-onboarding", example: arguments[1]})'
+                ".then(() => done(true)).catch(e => done(String(e)));",
+                form,
+                preset,
+            )
+            self.assertIs(result, True)
+            self.assertEqual(
+                self._select(driver, form, "model_family").first_selected_option.get_attribute("value"), "flux3_image"
+            )
+            self.assertEqual(self._select(driver, form, "example").first_selected_option.get_attribute("value"), preset)
+            self._exercise_filter(driver, form)
+
+        self.for_each_browser("onboarding_example_filter", scenario)
