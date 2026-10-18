@@ -104,8 +104,57 @@ class MOSSImageTests(unittest.TestCase):
 
         with patch.object(transformer, "dispatch_attention_fn", wraps=transformer.dispatch_attention_fn) as dispatch:
             self.predict()
-        self.assertEqual(dispatch.call_count, 10)
+        self.assertEqual(dispatch.call_count, 5)
+        self.assertTrue(all(call.args[0].shape[0] == 2 for call in dispatch.call_args_list))
         self.assertEqual(len(self.model.attn_processors), 5)
+
+    def test_batched_outputs_and_gradients_match_unpadded_individual_samples(self):
+        for tokenwise in (False, True):
+            with self.subTest(tokenwise=tokenwise):
+                batched = tiny_transformer(enable_time_sign_embed=True)
+                batched.enable_flowmap_time_conditioning(0.25, "t-r")
+                with torch.no_grad():
+                    batched.time_sign_embed.weight[1].fill_(0.2)
+                individual = copy.deepcopy(batched)
+                image, text = self.image.clone().requires_grad_(), self.text.clone().requires_grad_()
+                mask = torch.tensor([[0, 1, 1, 0, 1], [1, 0, 1, 0, 0]], dtype=torch.bool)
+                times = self.time[:, None].expand(-1, 6) if tokenwise else self.time
+                ends = times / 2
+                signs = torch.tensor([-1, 1])
+                output = batched(image, times, text, mask, r_timestep=ends, timestep_sign=signs).sample
+                output.square().mean().backward()
+                image_grad, text_grad = image.grad.clone(), text.grad.clone()
+                image.grad, text.grad = None, None
+                rows = []
+                for index in range(2):
+                    row = individual(
+                        image[index : index + 1],
+                        times[index : index + 1],
+                        text[index : index + 1, mask[index]],
+                        r_timestep=ends[index : index + 1],
+                        timestep_sign=signs[index : index + 1],
+                    ).sample
+                    (row.square().sum() / output.numel()).backward()
+                    rows.append(row)
+                torch.testing.assert_close(output, torch.cat(rows), atol=1e-6, rtol=1e-5)
+                torch.testing.assert_close(image_grad, image.grad, atol=1e-6, rtol=1e-5)
+                torch.testing.assert_close(text_grad, text.grad, atol=1e-6, rtol=1e-5)
+                for (name, parameter), (_, expected) in zip(batched.named_parameters(), individual.named_parameters()):
+                    with self.subTest(parameter=name):
+                        torch.testing.assert_close(parameter.grad, expected.grad, atol=1e-6, rtol=1e-5)
+
+    def test_masked_nan_embeddings_and_empty_captions(self):
+        expected = self.predict()
+        text = self.text.clone().requires_grad_()
+        changed = text.masked_fill(~self.mask[:, :, None], float("nan"))
+        output = self.model(self.image, self.time, changed, self.mask).sample
+        torch.testing.assert_close(output, expected)
+        output.square().mean().backward()
+        self.assertTrue(torch.isfinite(text.grad).all())
+        self.assertEqual(text.grad[~self.mask].abs().sum().item(), 0)
+        for mask in (torch.zeros_like(self.mask), self.mask.new_zeros(2, 0)):
+            with self.subTest(shape=mask.shape), self.assertRaisesRegex(ValueError, "at least one valid text token"):
+                self.model(self.image, self.time, self.text[:, : mask.shape[1]], mask)
 
     def test_attention_activation_offload_preserves_gradients(self):
         eager = self.predict()
