@@ -79,6 +79,8 @@ simpletuner train
 
 Empieza con **50 pasos**, **CFG 3** y validación de **1024×1024**. `moss_image_validation_shift` vale **5** para el muestreo; el entrenamiento utiliza la cuadrícula original sin desplazamiento. `moss_image_uncond_skip_layers` vale **[22]** y omite esa capa en la rama negativa de CFG. Usa `[]` para CFG estándar. La omisión adicional en la rama positiva usa `validation_guidance_skip_layers`, `validation_guidance_skip_scale` y los límites de inicio y fin de [OPTIONS](../OPTIONS.md). En Python, `use_cfg_zero_star=True` activa CFG-Zero*.
 
+El entrenamiento usa automáticamente la distribución de ruido nativa de MOSS-Image, incluida su mezcla uniforme del 1%. La validación aplica el desplazamiento una sola vez e incluye el extremo final sin ruido. Para AnyFlow, usa el mismo desplazamiento en validación y en las trayectorias de entrenamiento.
+
 ## Vistas previas durante el muestreo
 
 Añade estos ajustes para ver fotogramas de progreso durante el denoising en la WebUI. Las vistas previas usan TAEF2 y las imágenes finales usan el VAE completo. La CLI puede enviar vistas previas a un webhook configurado.

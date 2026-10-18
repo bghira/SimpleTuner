@@ -72,13 +72,23 @@ class MOSSImageTests(unittest.TestCase):
         inputs.update(kwargs)
         return (pipeline or self.pipeline())(**inputs).images
 
-    def test_forward_and_sampling_match_the_pinned_upstream(self):
+    def test_forward_matches_the_pinned_upstream(self):
         with torch.no_grad():
             torch.testing.assert_close(self.predict(), torch.tensor(FIXTURE["expected"]), atol=1e-6, rtol=1e-5)
             torch.testing.assert_close(
                 self.predict(skip_layers=[1]), torch.tensor(FIXTURE["skip_layer_1"]), atol=1e-6, rtol=1e-5
             )
-        torch.testing.assert_close(self.sample(), torch.tensor(FIXTURE["sampled"]), atol=1e-6, rtol=1e-5)
+
+    def test_sampling_matches_independent_euler_integration(self):
+        expected = self.image.clone()
+        sigmas = [1.0, 10 / 11, 5 / 7, 0.0]
+        with torch.no_grad():
+            for start, end in zip(sigmas[:-1], sigmas[1:]):
+                time = torch.full((2,), start * 1000)
+                positive = self.model(expected, time, self.text, self.mask).sample
+                negative = self.model(expected, time, -self.text, self.mask, skip_layers=[1]).sample
+                expected = expected + (end - start) * (negative + 3 * (positive - negative))
+        torch.testing.assert_close(self.sample(), expected, atol=1e-5, rtol=1e-4)
 
     def test_padding_cannot_influence_text_refinement_or_joint_attention(self):
         expected = self.predict()
@@ -482,6 +492,96 @@ class MOSSImageTests(unittest.TestCase):
             self.assertEqual(args.model_flavour, flavour)
             self.assertEqual(args.moss_image_uncond_skip_layers, "[]")
             self.assertEqual(args.validation_guidance_skip_layers, [24])
+
+    def flow_foundation(self, **overrides):
+        from simpletuner.helpers.configuration.cmd_args import get_default_config
+
+        config = SimpleNamespace(
+            **dict(
+                get_default_config(),
+                model_family="moss_image",
+                model_flavour="sft",
+                pretrained_model_name_or_path=None,
+                model_type="lora",
+                vae_path=None,
+                **overrides,
+            )
+        )
+        foundation = MOSSImage(config, SimpleNamespace(device=torch.device("cpu")))
+        foundation._get_dataset_timestep_sampling_offset = lambda batch: 0.0
+        return foundation
+
+    def test_native_noise_distribution_matches_report_equation_four(self):
+        foundation = self.flow_foundation()
+        batch = {"latents": torch.empty(200000, 1), "noise": torch.empty(200000, 1)}
+        with torch.random.fork_rng():
+            torch.manual_seed(51)
+            sigmas, timesteps = foundation.sample_flow_sigmas(batch, {})
+        self.assertAlmostEqual(sigmas.mean().item(), 0.7441694326, delta=0.003)
+        self.assertAlmostEqual((sigmas >= 0.7).float().mean().item(), 0.6541584951, delta=0.004)
+        torch.testing.assert_close(timesteps, sigmas * 1000)
+        torch.testing.assert_close(timesteps, timesteps.round(), atol=0.0001, rtol=0)
+        self.assertTrue(torch.all((sigmas >= 0.001) & (sigmas <= 1)))
+        self.assertTrue(torch.all(foundation._noise_sampling_probabilities >= 0.00001))
+
+    def test_native_noise_scale_zero_and_dataset_offset(self):
+        batch = {"latents": torch.empty(10000, 1), "noise": torch.empty(10000, 1)}
+        foundation = self.flow_foundation(flow_sigmoid_scale=0.0)
+        sigmas, _ = foundation.sample_flow_sigmas(batch, {})
+        self.assertGreater((sigmas == 0.788).float().mean().item(), 0.97)
+        foundation.config.flow_sigmoid_scale = 1.0
+        foundation.sample_flow_sigmas(batch, {})
+        original = foundation._noise_sampling_probabilities.clone()
+        foundation._get_dataset_timestep_sampling_offset = lambda batch: 0.5
+        foundation.sample_flow_sigmas(batch, {})
+        grid = torch.arange(1, 1001) / 1000
+        self.assertGreater((grid * foundation._noise_sampling_probabilities).sum(), (grid * original).sum())
+
+    def test_native_sampling_remains_finite_for_large_dataset_offsets(self):
+        foundation = self.flow_foundation()
+        batch = {"latents": torch.empty(128, 1), "noise": torch.empty(128, 1)}
+        for offset in [-10.0, 10.0]:
+            with self.subTest(offset=offset):
+                foundation._get_dataset_timestep_sampling_offset = lambda batch: offset
+                sigmas, _ = foundation.sample_flow_sigmas(batch, {})
+                self.assertTrue(torch.isfinite(sigmas).all())
+                self.assertAlmostEqual(foundation._noise_sampling_probabilities.sum().item(), 1.0, places=6)
+
+    def test_explicit_schedules_bypass_native_sampling(self):
+        batch = {"latents": torch.empty(8, 1), "noise": torch.empty(8, 1)}
+        for options in [
+            {"flow_use_uniform_schedule": True},
+            {"flow_use_beta_schedule": True},
+            {"flow_custom_timesteps": [250, 750]},
+        ]:
+            with self.subTest(options=options):
+                foundation = self.flow_foundation(**options)
+                with patch.object(
+                    foundation, "sample_default_flow_sigmas", side_effect=AssertionError("native sampler called")
+                ):
+                    sigmas, timesteps = foundation.sample_flow_sigmas(batch, {})
+                self.assertEqual(sigmas.shape, (8,))
+                self.assertTrue(torch.all((sigmas >= 0) & (sigmas <= 1)))
+
+    def test_scheduler_shifts_uniform_rollout_grid_once(self):
+        expected = {1: [1, 0.75, 0.5, 0.25, 0], 3: [1, 0.9, 0.75, 0.5, 0], 5: [1, 0.9375, 5 / 6, 0.625, 0]}
+        from simpletuner.helpers.distillation.anyflow.distiller import AnyFlowDistiller
+
+        for shift, values in expected.items():
+            with self.subTest(shift=shift):
+                scheduler = MOSSImageScheduler(shift=shift)
+                scheduler.set_timesteps(4)
+                torch.testing.assert_close(scheduler.sigmas, torch.tensor(values))
+                distiller = object.__new__(AnyFlowDistiller)
+                distiller.config = {"schedule_shift": shift}
+                distiller.noise_scheduler = scheduler
+                rollout = distiller._apply_scheduler_shift(torch.linspace(1, 0, 5))
+                torch.testing.assert_close(scheduler.sigmas, rollout)
+        scheduler.set_timesteps(1)
+        torch.testing.assert_close(scheduler.sigmas, torch.tensor([1.0, 0.0]))
+        scheduler.set_timesteps(50)
+        self.assertEqual(len(scheduler.timesteps), 50)
+        self.assertAlmostEqual(scheduler.sigmas[-2].item(), 5 * 0.02 / (1 + 4 * 0.02), places=6)
 
     def test_scheduler_matches_training_grid_and_preserves_float32_updates(self):
         scheduler = MOSSImageScheduler()

@@ -1263,7 +1263,7 @@ Captioning model repository or local path. Default: **Qwen/Qwen3.5-27B**. Used w
 
 ### `--moss_image_validation_shift` {#--moss_image_validation_shift}
 
-Inference flow shift for MOSS-Image validation. Default: **5.0**. Training uses the checkpoint’s unshifted grid (`flow_schedule_shift: 1.0`). Increase or decrease this value to change how sampling steps are distributed across noise levels.
+Inference flow shift for MOSS-Image validation. Default: **5.0**. The shift is applied once to an evenly spaced grid from noise to zero; four steps at shift 1 use `[1, 0.75, 0.5, 0.25, 0]`, matching AnyFlow training rollouts. Training uses an unshifted 1,000-point grid with the native truncated, rescaled logit-normal distribution and a 1% uniform mixture from the [technical report, Appendix A.2](https://github.com/OpenMOSS/MOSS-Image/blob/main/paper/MOSS_Image_Technical_Report.pdf). `flow_sigmoid_scale` multiplies the native standard deviation of 0.95; zero selects a point mass plus the uniform mixture. Explicit uniform, beta, cubic, and custom timestep schedules remain available.
 
 ### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
 

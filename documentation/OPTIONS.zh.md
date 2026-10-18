@@ -1242,7 +1242,7 @@ Flux Kontext 的验证也始终走这条基于条件的路径。使用 `--eval_d
 
 ### `--moss_image_validation_shift` {#--moss_image_validation_shift}
 
-MOSS-Image 验证时的推理流偏移。默认值：**5.0**。训练使用原始未偏移网格（`flow_schedule_shift: 1.0`）。此值控制采样步骤在不同噪声级别之间的分布。
+MOSS-Image 验证时的推理流偏移，默认 **5.0**。偏移仅应用一次，基础网格从噪声均匀下降到零；偏移为 1 的四步网格为 `[1, 0.75, 0.5, 0.25, 0]`，与 AnyFlow 训练轨迹一致。训练使用未偏移的 1,000 点网格，以及[技术报告附录 A.2](https://github.com/OpenMOSS/MOSS-Image/blob/main/paper/MOSS_Image_Technical_Report.pdf)中的截断、重新缩放 logit-normal 分布和 1% 均匀混合。`flow_sigmoid_scale` 乘以原生标准差 0.95；设为零时使用点质量分布加均匀混合。仍可显式选择均匀、beta、三次密度或自定义时间步方案。
 
 ### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
 

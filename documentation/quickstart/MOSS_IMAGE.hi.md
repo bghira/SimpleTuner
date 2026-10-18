@@ -79,6 +79,8 @@ simpletuner train
 
 **50 स्टेप**, **CFG 3** और **1024×1024** वैलिडेशन से शुरू करें। सैंपलिंग के लिए `moss_image_validation_shift` का डिफ़ॉल्ट **5** है; प्रशिक्षण मूल बिना-शिफ़्ट ग्रिड का उपयोग करता है। `moss_image_uncond_skip_layers` का डिफ़ॉल्ट **[22]** है, जिससे नकारात्मक CFG शाखा में लेयर 22 छोड़ी जाती है। मानक CFG के लिए `[]` दें। सकारात्मक शाखा की अतिरिक्त skip-layer guidance को `validation_guidance_skip_layers`, `validation_guidance_skip_scale` तथा start/stop सेटिंग नियंत्रित करती हैं; [OPTIONS](../OPTIONS.md) देखें। Python में `use_cfg_zero_star=True` से CFG-Zero* सक्षम करें।
 
+प्रशिक्षण अपने आप MOSS-Image का मूल noise वितरण और 1% uniform मिश्रण उपयोग करता है। वैलिडेशन sampling shift को केवल एक बार लागू करता है और अंतिम zero-noise बिंदु शामिल करता है। AnyFlow में वैलिडेशन और प्रशिक्षण रोलआउट के लिए समान shift रखें।
+
 ## सैंपलिंग के दौरान प्रीव्यू
 
 WebUI में denoising के दौरान प्रगति चित्र देखने के लिए नीचे की सेटिंग जोड़ें। प्रीव्यू TAEF2 और अंतिम वैलिडेशन चित्र पूर्ण VAE इस्तेमाल करते हैं। CLI कॉन्फ़िगर किए गए webhook से प्रीव्यू भेज सकता है।

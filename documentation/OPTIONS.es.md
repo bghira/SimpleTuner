@@ -1242,7 +1242,7 @@ Repositorio o ruta local del modelo de descripción. Predeterminado: **Qwen/Qwen
 
 ### `--moss_image_validation_shift` {#--moss_image_validation_shift}
 
-Desplazamiento de flujo para la validación de MOSS-Image. Predeterminado: **5.0**. El entrenamiento usa la cuadrícula original sin desplazar (`flow_schedule_shift: 1.0`). Este valor distribuye los pasos de muestreo entre los niveles de ruido.
+Desplazamiento de flujo para la validación de MOSS-Image. Predeterminado: **5.0**. Se aplica una sola vez a una cuadrícula uniforme desde ruido hasta cero; cuatro pasos con desplazamiento 1 usan `[1, 0.75, 0.5, 0.25, 0]`, igual que las trayectorias de entrenamiento de AnyFlow. El entrenamiento usa una cuadrícula sin desplazar de 1.000 puntos, con la distribución logit-normal truncada y reescalada y una mezcla uniforme del 1% del [informe técnico, Apéndice A.2](https://github.com/OpenMOSS/MOSS-Image/blob/main/paper/MOSS_Image_Technical_Report.pdf). `flow_sigmoid_scale` multiplica la desviación estándar nativa de 0,95; cero produce una masa puntual con la mezcla uniforme. Siguen disponibles las selecciones explícitas uniforme, beta, cúbica y de pasos personalizados.
 
 ### `--moss_image_uncond_skip_layers` {#--moss_image_uncond_skip_layers}
 
