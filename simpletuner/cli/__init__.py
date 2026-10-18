@@ -109,9 +109,9 @@ def _add_train_parser(subparsers):
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
   simpletuner train                           # Use config.json in current directory
-  simpletuner train --example sdxl-lora       # Use a built-in example
+  simpletuner train --example sdxl/default/default/lycoris-lokr       # Use a built-in example
   simpletuner train --env my-config           # Use a named environment
-  simpletuner train example=sdxl-lora         # Alternative syntax
+  simpletuner train example=sdxl/default/default/lycoris-lokr         # Alternative syntax
 """,
     )
     train_parser.set_defaults(func=train.cmd_train)

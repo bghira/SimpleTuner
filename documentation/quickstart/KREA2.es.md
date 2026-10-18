@@ -5,7 +5,7 @@ Esta guía cubre el entrenamiento LoRA de Krea2 en SimpleTuner. Krea2 es un tran
 El ejemplo inicial está en:
 
 ```bash
-simpletuner/examples/krea2.peft-lora/config.json
+simpletuner/examples/krea2/raw/default/peft-lora/config.json
 ```
 
 ## Punto de partida recomendado

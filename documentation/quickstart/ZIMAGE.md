@@ -21,7 +21,7 @@ Apple GPUs are not recommended for training.
 
 ### Measured SDNQ Hadamard performance
 
-These measurements used the `z-image-turbo.peft-lora` Domokun example for 1000 steps with validation enabled, `base_model_precision=int8-sdnq`, `sdnq_use_hadamard=true`, `sdnq_group_size=-1`, `sdnq_hadamard_group_size=256`, and gradient checkpointing enabled. See the [ConvRot / Hadamard SDNQ quick setup](../experimental/CONVROT.md#quick-setup) for the options that enable this path. Treat these numbers as comparison points for this recipe, not as hardware guarantees.
+These measurements used the `z_image/turbo/default/peft-lora` Domokun example for 1000 steps with validation enabled, `base_model_precision=int8-sdnq`, `sdnq_use_hadamard=true`, `sdnq_group_size=-1`, `sdnq_hadamard_group_size=256`, and gradient checkpointing enabled. See the [ConvRot / Hadamard SDNQ quick setup](../experimental/CONVROT.md#quick-setup) for the options that enable this path. Treat these numbers as comparison points for this recipe, not as hardware guarantees.
 
 | GPU | Run | Train loop s/step | Mean train step | p50 | p95 | Peak allocated VRAM |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |

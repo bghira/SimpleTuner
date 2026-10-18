@@ -245,13 +245,13 @@ Ejemplo de hook:
 
 Donde `notify.sh` publica la URL en tu API web de seguimiento. Siéntete libre de adaptar a Slack, dashboards personalizados o cualquier otra integración.
 
-Ejemplo funcional: `simpletuner/examples/external-validation/replicate_post_upload.py` demuestra el uso de `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}` y `{huggingface_path}` para activar una inferencia de Replicate después de las subidas.
+Ejemplo funcional: `simpletuner/examples/_shared/external-validation/replicate_post_upload.py` demuestra el uso de `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}` y `{huggingface_path}` para activar una inferencia de Replicate después de las subidas.
 
-Otro ejemplo: `simpletuner/examples/external-validation/wavespeed_post_upload.py` llama la API de WaveSpeed y hace polling del resultado usando los mismos placeholders.
+Otro ejemplo: `simpletuner/examples/_shared/external-validation/wavespeed_post_upload.py` llama la API de WaveSpeed y hace polling del resultado usando los mismos placeholders.
 
-Ejemplo enfocado en Flux: `simpletuner/examples/external-validation/fal_post_upload.py` llama el endpoint de Flux LoRA en fal.ai; requiere `FAL_KEY` y solo se ejecuta cuando `model_family` incluye `flux`.
+Ejemplo enfocado en Flux: `simpletuner/examples/_shared/external-validation/fal_post_upload.py` llama el endpoint de Flux LoRA en fal.ai; requiere `FAL_KEY` y solo se ejecuta cuando `model_family` incluye `flux`.
 
-Ejemplo de GPU local: `simpletuner/examples/external-validation/use_second_gpu.py` ejecuta inferencia de Flux LoRA en otra GPU (por defecto `cuda:1`) y puede usarse incluso cuando no ocurren subidas.
+Ejemplo de GPU local: `simpletuner/examples/_shared/external-validation/use_second_gpu.py` ejecuta inferencia de Flux LoRA en otra GPU (por defecto `cuda:1`) y puede usarse incluso cuando no ocurren subidas.
 
 <img width="508" height="600" alt="image" src="https://github.com/user-attachments/assets/e699ba57-526b-4f60-9e8c-0ba410761c9f" />
 

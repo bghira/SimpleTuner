@@ -67,7 +67,7 @@ simpletuner configure config/foo/config.json
 
 `moss_image` 默认的 `sft` 变体加载 `OpenMOSS-Team/MOSS-Image-SFT`。使用 `OpenMOSS-Team/MOSS-Image-Base` 时，设置 `model_flavour: "base"`。训练示例采用 512×512 等效面积。参阅 [MOSS-Image 快速入门](quickstart/MOSS_IMAGE.zh.md)。
 
-选择 `model_flavour: "sft-edit"` 或 `"base-edit"`，即可使用参考图像训练。这两个变体从对应的 SFT 或 Base 检查点开始，通过适配器学习参考图像条件。可从 `simpletuner/examples/moss_image-sft-edit.peft-lora` 或 `moss_image-base-edit.peft-lora` 开始；两者均采用每批一个目标、512 等效分辨率训练、REPA 和数据集验证。
+选择 `model_flavour: "sft-edit"` 或 `"base-edit"`，即可使用参考图像训练。这两个变体从对应的 SFT 或 Base 检查点开始，通过适配器学习参考图像条件。可从 `simpletuner/examples/moss_image/sft-edit/default/peft-lora` 或 `moss_image/base-edit/default/peft-lora` 开始；两者均采用每批一个目标、512 等效分辨率训练、REPA 和数据集验证。
 
 ### `--lora_format`
 
@@ -918,10 +918,10 @@ TRAINING_DYNAMO_BACKEND=inductor
        -d "{\"remote_uri\":\"${REMOTE}\"}"
   ```
 - **可用示例**：
-  - `simpletuner/examples/external-validation/replicate_post_upload.py` 展示 Replicate 钩子，使用 `{remote_checkpoint_path}`、`{model_family}`、`{model_type}`、`{lora_type}`、`{huggingface_path}` 在上传后触发推理。
-  - `simpletuner/examples/external-validation/wavespeed_post_upload.py` 展示 WaveSpeed 钩子，使用相同占位符并包含异步轮询。
-  - `simpletuner/examples/external-validation/fal_post_upload.py` 展示 fal.ai Flux LoRA 钩子（需要 `FAL_KEY`）。
-  - `simpletuner/examples/external-validation/use_second_gpu.py` 在第二块 GPU 上运行 Flux LoRA 推理，即使没有远程上传也能工作。
+  - `simpletuner/examples/_shared/external-validation/replicate_post_upload.py` 展示 Replicate 钩子，使用 `{remote_checkpoint_path}`、`{model_family}`、`{model_type}`、`{lora_type}`、`{huggingface_path}` 在上传后触发推理。
+  - `simpletuner/examples/_shared/external-validation/wavespeed_post_upload.py` 展示 WaveSpeed 钩子，使用相同占位符并包含异步轮询。
+  - `simpletuner/examples/_shared/external-validation/fal_post_upload.py` 展示 fal.ai Flux LoRA 钩子（需要 `FAL_KEY`）。
+  - `simpletuner/examples/_shared/external-validation/use_second_gpu.py` 在第二块 GPU 上运行 Flux LoRA 推理，即使没有远程上传也能工作。
 
 ### `--post_checkpoint_script`
 

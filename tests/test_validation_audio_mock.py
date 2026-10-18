@@ -102,7 +102,7 @@ class TestAudioValidation(unittest.TestCase):
             validation_prompt="driving pop, bright synths",
             validation_negative_prompt="None",
             validation_disable_unconditional=True,
-            data_backend_config="config/examples/heartmula-audio.json",
+            data_backend_config="config/examples/_shared/heartmula-audio.json",
         )
 
         with patch("simpletuner.helpers.training.validation.StateTracker.get_args", return_value=args):
@@ -236,7 +236,7 @@ class TestAudioValidation(unittest.TestCase):
             validation_prompt=None,
             validation_negative_prompt="None",
             validation_disable_unconditional=True,
-            data_backend_config="config/examples/acestep-audio.json",
+            data_backend_config="config/examples/_shared/acestep-audio.json",
         )
 
         with (

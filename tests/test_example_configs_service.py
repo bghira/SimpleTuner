@@ -307,3 +307,32 @@ class ExampleConfigsServiceTests(unittest.TestCase):
         self.assertIsNotNone(info.dataloader_path, "Dataloader path should be detected from revived assets")
         self.assertEqual(info.dataloader_path.resolve(), dataloader_file.resolve())
         self.assertEqual(info.dataloader_payload, payload)
+
+    def test_nested_recipes_are_distinct_and_shared_files_are_excluded(self) -> None:
+        shared = self.examples_root / "_shared"
+        shared.mkdir()
+        payload = [{"id": "demo", "type": "local"}]
+        (shared / "dataloader.json").write_text(json.dumps(payload))
+        (shared / "config.json").write_text(json.dumps({"model_family": "demo"}))
+        for family in ("demo", "other"):
+            bundle = self.examples_root / family / "base" / "24g" / "peft-lora"
+            bundle.mkdir(parents=True)
+            (bundle / "config.json").write_text(
+                json.dumps(
+                    {
+                        "model_family": family,
+                        "model_flavour": "base",
+                        "data_backend_config": "config/examples/_shared/dataloader.json",
+                    }
+                )
+            )
+        service = ExampleConfigsService()
+        with patch.object(ExampleConfigsService, "_examples_root", return_value=self.examples_root):
+            examples = service.list_examples()
+            self.assertEqual([info.name for info in examples], ["demo/base/24g/peft-lora", "other/base/24g/peft-lora"])
+            self.assertEqual(service.get_example("other/base/24g/peft-lora").defaults["model_family"], "other")
+            with self.assertRaises(FileNotFoundError):
+                service.get_example("peft-lora")
+        for info in examples:
+            self.assertEqual(info.dataloader_payload, payload)
+            self.assertTrue(info.to_public_dict()["has_dataloader"])

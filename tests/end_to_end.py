@@ -76,16 +76,9 @@ class SimpleTunerTestRunner:
 
     def discover_examples(self) -> List[str]:
         """Discover all example configurations"""
-        examples_dir = Path("config/examples")
-        if not examples_dir.exists():
-            return []
+        from simpletuner.cli.train import list_examples
 
-        examples = []
-        for item in examples_dir.iterdir():
-            if item.is_dir() and (item / "config.json").exists():
-                examples.append(item.name)
-
-        return sorted(examples)
+        return list_examples()
 
     def load_state(self):
         """Load previous test state for resumable runs"""
@@ -638,7 +631,7 @@ class SimpleTunerTestRunner:
         # Discover examples
         examples = self.discover_examples()
         if not examples:
-            stdscr.addstr(10, 10, "No examples found in config/examples/")
+            stdscr.addstr(10, 10, "No bundled examples found")
             stdscr.addstr(11, 10, "Press any key to exit...")
             stdscr.refresh()
             stdscr.nodelay(False)

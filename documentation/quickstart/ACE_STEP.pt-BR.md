@@ -52,10 +52,10 @@ Use a configuração correspondente à variante desejada.
 
 Presets de exemplo prontos para uso estão disponíveis em:
 
-- `simpletuner/examples/ace_step-v1-0.peft-lora`
-- `simpletuner/examples/ace_step-v1-5.peft-lora`
+- `simpletuner/examples/ace_step/base/default/v1-0.peft-lora`
+- `simpletuner/examples/ace_step/v15-base/default/v1-5.peft-lora`
 
-Você pode iniciá-los diretamente com `simpletuner train example=ace_step-v1-0.peft-lora` ou `simpletuner train example=ace_step-v1-5.peft-lora`.
+Você pode iniciá-los diretamente com `simpletuner train example=ace_step/base/default/v1-0.peft-lora` ou `simpletuner train example=ace_step/v15-base/default/v1-5.peft-lora`.
 
 #### Exemplo ACE-Step v1
 

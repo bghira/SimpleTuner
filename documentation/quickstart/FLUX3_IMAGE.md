@@ -25,18 +25,18 @@ GPU memory (VRAM) determines how many images you can process together. Choose th
 
 | GPU memory | Base example | Images per batch at 512 / 1024 |
 | --- | --- | --- |
-| 24 GB | `flux3_image-24g.peft-lora` | 3 / — |
-| 32 GB | `flux3_image-32g.peft-lora` | 4 / — |
-| 48 GB | `flux3_image-48g.peft-lora` | 9 / 2 |
-| 80 GB | `flux3_image-80g.peft-lora` | 18 / 5 |
-| 144 GB | `flux3_image-144g.peft-lora` | 36 / 10 |
+| 24 GB | `flux3_image/klein-base/24g/peft-lora` | 3 / — |
+| 32 GB | `flux3_image/klein-base/32g/peft-lora` | 4 / — |
+| 48 GB | `flux3_image/klein-base/48g/peft-lora` | 9 / 2 |
+| 80 GB | `flux3_image/klein-base/80g/peft-lora` | 18 / 5 |
+| 144 GB | `flux3_image/klein-base/144g/peft-lora` | 36 / 10 |
 
 For the distilled `klein` flavour, choose one of these recipes. Use its full example name in the configuration-copy commands below. The training scale is a square-equivalent area; image aspect ratios are preserved.
 
 | GPU memory | Distilled example | Training scale | Images per batch |
 | --- | --- | --- | ---: |
-| 24 GB | `flux3_image-klein-24g.peft-lora` | 768px | 1 |
-| 80 GB | `flux3_image-klein-80g.peft-lora` | 1024px | 4 |
+| 24 GB | `flux3_image/klein/24g/peft-lora` | 768px | 1 |
+| 80 GB | `flux3_image/klein/80g/peft-lora` | 1024px | 4 |
 
 The batch sizes are starting points. Longer captions and reference images increase memory use; lower `train_batch_size` if you run out of memory. The recipes use rank-32 LoRA, learning rate `1e-4`, and REPA, which compares image features during training. Their supplied dataloaders include concept images and regularisation images to help retain the model’s broader image knowledge.
 
@@ -60,13 +60,15 @@ A photo of TOK, a small ceramic owl with blue feathers, on a wooden table.
 
 ## Set up the training configuration
 
-Copy the recipe you selected. These commands show `flux3_image-48g.peft-lora`; replace that full example name with your chosen Base or distilled recipe:
+Copy the recipe you selected. These commands show `flux3_image/klein-base/48g/peft-lora`; replace that full example name with your chosen Base or distilled recipe:
 
 ```bash
-mkdir -p config/examples
-cp -R simpletuner/examples/flux3_image-48g.peft-lora config/examples/
-cp simpletuner/examples/flux3_image-prompts.json config/examples/
-cp config/examples/flux3_image-48g.peft-lora/config.json config/config.json
+mkdir -p config/examples/_shared
+mkdir -p config/examples/flux3_image/klein-base/48g
+cp -R simpletuner/examples/flux3_image/klein-base/48g/peft-lora config/examples/flux3_image/klein-base/48g/
+mkdir -p config/examples/_shared
+cp simpletuner/examples/_shared/flux3_image-prompts.json config/examples/_shared/
+cp config/examples/flux3_image/klein-base/48g/peft-lora/config.json config/config.json
 ```
 
 Open `config/config.json` in a text editor. For your first run with the local images above, change the following values inside the existing configuration:
@@ -79,7 +81,7 @@ Open `config/config.json` in a text editor. For your first run with the local im
 }
 ```
 
-A batch size of 1 lets you start with a small dataset. Increase it once the first run is working and you have enough images and free GPU memory. Set `max_train_steps` to control the training length. Edit `config/examples/flux3_image-prompts.json` to include prompts with your subject word; these prompts produce progress images during training.
+A batch size of 1 lets you start with a small dataset. Increase it once the first run is working and you have enough images and free GPU memory. Set `max_train_steps` to control the training length. Edit `config/examples/_shared/flux3_image-prompts.json` to include prompts with your subject word; these prompts produce progress images during training.
 
 Save the following as `config/dataloader.json`. This file tells SimpleTuner where to find the images, how to read their captions, and where to store cached data:
 
@@ -204,6 +206,6 @@ image.save("my-flux3-image.png")
 
 LoRA training with `model_flavour: "klein"` automatically loads the [published training assistant](https://huggingface.co/SimpleTuner/flux-3-klein-image-training-assistant) as a frozen adapter. `assistant_lora_strength` defaults to `1.0` during training; `assistant_lora_inference_strength` defaults to `0.0` for validation. Set `disable_assistant_lora: true` to turn it off. To use another adapter, set `assistant_lora_path` and, if needed, `assistant_lora_weight_name`.
 
-To train your own assistant, select `flux3_image-assistant-lora.peft-lora`. This recipe disables the existing assistant and learns from model-generated samples. Afterwards, set `assistant_lora_path` to its saved adapter directory in your distilled LoRA configuration.
+To train your own assistant, select `flux3_image/klein/default/assistant-lora.peft-lora`. This recipe disables the existing assistant and learns from model-generated samples. Afterwards, set `assistant_lora_path` to its saved adapter directory in your distilled LoRA configuration.
 
 For additional training settings, see the [options reference](../OPTIONS.md). Enable TwinFlow with both `twinflow_enabled: true` and `use_ema: true`; EMA maintains the teacher model used during this training method.

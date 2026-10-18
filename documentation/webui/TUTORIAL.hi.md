@@ -245,13 +245,13 @@ Checkpoints बाद में training resume करने देते है
 
 जहाँ `notify.sh` URL को आपके tracker web API पर पोस्ट करता है। आप इसे Slack, कस्टम dashboards, या किसी अन्य इंटीग्रेशन के लिए अनुकूलित कर सकते हैं।
 
-Working sample: `simpletuner/examples/external-validation/replicate_post_upload.py` `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}`, और `{huggingface_path}` का उपयोग करके uploads के बाद Replicate inference ट्रिगर करना दिखाता है।
+Working sample: `simpletuner/examples/_shared/external-validation/replicate_post_upload.py` `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}`, और `{huggingface_path}` का उपयोग करके uploads के बाद Replicate inference ट्रिगर करना दिखाता है।
 
-Another sample: `simpletuner/examples/external-validation/wavespeed_post_upload.py` WaveSpeed API कॉल करता है और परिणाम के लिए पोल करता है, वही placeholders उपयोग करते हुए।
+Another sample: `simpletuner/examples/_shared/external-validation/wavespeed_post_upload.py` WaveSpeed API कॉल करता है और परिणाम के लिए पोल करता है, वही placeholders उपयोग करते हुए।
 
-Flux-focused sample: `simpletuner/examples/external-validation/fal_post_upload.py` fal.ai Flux LoRA endpoint कॉल करता है; इसे `FAL_KEY` चाहिए और केवल तब चलता है जब `model_family` में `flux` शामिल हो।
+Flux-focused sample: `simpletuner/examples/_shared/external-validation/fal_post_upload.py` fal.ai Flux LoRA endpoint कॉल करता है; इसे `FAL_KEY` चाहिए और केवल तब चलता है जब `model_family` में `flux` शामिल हो।
 
-Local GPU sample: `simpletuner/examples/external-validation/use_second_gpu.py` किसी दूसरे GPU (डिफ़ॉल्ट `cuda:1`) पर Flux LoRA inference चलाता है और uploads के बिना भी उपयोग किया जा सकता है।
+Local GPU sample: `simpletuner/examples/_shared/external-validation/use_second_gpu.py` किसी दूसरे GPU (डिफ़ॉल्ट `cuda:1`) पर Flux LoRA inference चलाता है और uploads के बिना भी उपयोग किया जा सकता है।
 
 <img width="508" height="600" alt="image" src="https://github.com/user-attachments/assets/e699ba57-526b-4f60-9e8c-0ba410761c9f" />
 

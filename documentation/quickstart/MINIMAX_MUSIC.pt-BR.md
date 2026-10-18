@@ -80,14 +80,14 @@ Crie `config/minimaxmusic-training-demo/config.json`:
 
 Templates prontos estão disponíveis em:
 
-- `simpletuner/examples/minimaxmusic-music3.peft-lora`
-- `simpletuner/examples/minimaxmusic-audio.json`
-- `simpletuner/examples/minimaxmusic-prompts.json`
+- `simpletuner/examples/minimaxmusic/music3/default/peft-lora`
+- `simpletuner/examples/_shared/minimaxmusic-audio.json`
+- `simpletuner/examples/_shared/minimaxmusic-prompts.json`
 
 Execute o exemplo:
 
 ```bash
-simpletuner train example=minimaxmusic-music3.peft-lora
+simpletuner train example=minimaxmusic/music3/default/peft-lora
 ```
 
 ## VAECache

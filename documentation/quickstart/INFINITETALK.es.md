@@ -23,10 +23,10 @@ Los ejemplos autorizan el kernel Hub fijado `kernels-community/flash-attn3` con 
 
 | VRAM | Fotogramas | Pesos | Residencia | Ejemplo |
 | --- | ---: | --- | --- | --- |
-| 24 GB | 17 | bf16 | RamTorch, todos los bloques | `infinitetalk-14b-480p-24gb.peft-lora` |
-| 32 GB | 17 | int8 TorchAO | intercambio de 20 bloques | `infinitetalk-14b-480p-32gb.peft-lora` |
-| 48 GB | 33 | bf16 | intercambio de 24 bloques | `infinitetalk-14b-480p-48gb.peft-lora` |
-| 80 GB | 49 | bf16 | residente | `infinitetalk-14b-480p-80gb.peft-lora` |
+| 24 GB | 17 | bf16 | RamTorch, todos los bloques | `infinitetalk/single-14b-480p/24g/14b-480p.peft-lora` |
+| 32 GB | 17 | int8 TorchAO | intercambio de 20 bloques | `infinitetalk/single-14b-480p/32g/14b-480p.peft-lora` |
+| 48 GB | 33 | bf16 | intercambio de 24 bloques | `infinitetalk/single-14b-480p/48g/14b-480p.peft-lora` |
+| 80 GB | 49 | bf16 | residente | `infinitetalk/single-14b-480p/80g/14b-480p.peft-lora` |
 
 ## Datos
 
@@ -48,7 +48,7 @@ Reglas de alineación:
 
 ```bash
 simpletuner train \
-  --config simpletuner/examples/infinitetalk-14b-480p-80gb.peft-lora/config.json
+  --config simpletuner/examples/infinitetalk/single-14b-480p/80g/14b-480p.peft-lora/config.json
 ```
 
 ```json

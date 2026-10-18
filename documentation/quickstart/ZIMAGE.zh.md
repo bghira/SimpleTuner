@@ -22,7 +22,7 @@ Z-Image 比 Flux 省显存，但仍受益于高性能 GPU。训练 rank-16 LoRA 
 
 ### SDNQ Hadamard 实测性能
 
-这些数据使用 `z-image-turbo.peft-lora` Domokun 示例训练 1000 步，启用验证、`base_model_precision=int8-sdnq`、`sdnq_use_hadamard=true`、`sdnq_group_size=-1`、`sdnq_hadamard_group_size=256` 和 gradient checkpointing。启用该路径的选项见 [ConvRot / Hadamard SDNQ quick setup](../experimental/CONVROT.md#quick-setup)。请把它们作为该配方的比较数据，不要当作硬件保证。
+这些数据使用 `z_image/turbo/default/peft-lora` Domokun 示例训练 1000 步，启用验证、`base_model_precision=int8-sdnq`、`sdnq_use_hadamard=true`、`sdnq_group_size=-1`、`sdnq_hadamard_group_size=256` 和 gradient checkpointing。启用该路径的选项见 [ConvRot / Hadamard SDNQ quick setup](../experimental/CONVROT.md#quick-setup)。请把它们作为该配方的比较数据，不要当作硬件保证。
 
 | GPU | 运行 | train loop 秒/步 | 平均 train step | p50 | p95 | 峰值已分配 VRAM |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |

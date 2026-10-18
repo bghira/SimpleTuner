@@ -61,10 +61,10 @@ controller = DiffusionBlocksController(pipe.transformer, config)
 
 ## Anima 示例
 
-示例位于 `simpletuner/examples/anima.peft-lora+diffusion-blocks/config.json`。Anima v1.0 有 28 层；`layers_per_block=4` 会创建 7 个块。
+示例位于 `simpletuner/examples/anima/base-v1.0/default/peft-lora+diffusion-blocks/config.json`。Anima v1.0 有 28 层；`layers_per_block=4` 会创建 7 个块。
 
 ```bash
-simpletuner train env=examples/anima.peft-lora+diffusion-blocks max_train_steps=10 validation_steps=10
+simpletuner train env=examples/anima/base-v1.0/default/peft-lora+diffusion-blocks max_train_steps=10 validation_steps=10
 ```
 
 恢复训练时不得改变 block 路径、层数、边界、`blocks_to_train`、拓扑、world size、batch sampling 或 timestep 配置。推理时执行全部层会改变架构并使训练目标失效。

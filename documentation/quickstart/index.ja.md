@@ -1,5 +1,10 @@
 # モデルガイド
 
+[学習サンプル](https://github.com/bghira/SimpleTuner/tree/main/simpletuner/examples/README.ja.md) — サンプルは `model_family/model_flavour/vram/recipe` の構成です。モデルファミリー、フレーバー、`24g`・`48g`・`80g` などの VRAM 枠の順で選びます。VRAM の `default` は特定の容量を指定せず、フレーバーの `default` はモデル設定の既定値を使います。`8x80g` は各 80 GB の GPU が 8 台必要です。
+
+WebUI の環境作成画面とセットアップウィザードでは、先にモデルファミリーを選びます。そのファミリーのサンプルだけが表示されます。ファミリーを変更すると以前のサンプル選択は解除されます。
+
+
 対応する各モデルアーキテクチャのトレーニング手順ガイドです。
 
 ## 画像モデル

@@ -75,7 +75,7 @@ Then open http://localhost:8001 and select the ERNIE model family in the trainin
 
 You can start from the included example:
 
-- example config: `simpletuner/examples/ernie.peft-lora/config.json`
+- example config: `simpletuner/examples/ernie/base/default/peft-lora/config.json`
 - runnable local env: `config/ernie-example/config.json`
 
 If you prefer to wire it manually, copy `config/config.json.example` to `config/config.json` and change the important values below.

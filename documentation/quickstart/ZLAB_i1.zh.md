@@ -17,8 +17,8 @@ i1 不是 Flux 的简单变体。它使用 FLUX.2 VAE、T5Gemma 文本编码器�
 ## 内置示例
 
 ```bash
-simpletuner train example=zlab-i1.peft-lora
-simpletuner train example=zlab-i1.lycoris-lokr
+simpletuner train example=zlab_i1/3b/default/peft-lora
+simpletuner train example=zlab_i1/3b/default/lycoris-lokr
 ```
 
 建议先跑 PEFT LoRA。只有在需要 LoKr 分解时再使用 LyCORIS LoKr 示例。
@@ -45,7 +45,7 @@ simpletuner train example=zlab-i1.lycoris-lokr
 验证会使用 i1 的原生 pipeline。快速 smoke test 可以临时降低步数：
 
 ```bash
-simpletuner train example=zlab-i1.peft-lora validation_num_inference_steps=4 num_eval_images=1
+simpletuner train example=zlab_i1/3b/default/peft-lora validation_num_inference_steps=4 num_eval_images=1
 ```
 
 4 步只适合确认 pipeline 能生成和保存图片。判断质量前请使用默认的 250 步。

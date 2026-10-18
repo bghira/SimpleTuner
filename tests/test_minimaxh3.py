@@ -1360,9 +1360,11 @@ class MiniMaxH3Tests(unittest.TestCase):
 
     def test_h3_low_vram_examples_enable_text_encoder_ramtorch(self):
         examples_root = Path(__file__).resolve().parents[1] / "simpletuner" / "examples"
-        with (examples_root / "minimaxh3-fl2va-convrot-int8-24g.peft-lora+ramtorch" / "config.json").open() as handle:
+        with (
+            examples_root / "minimaxh3/convrot-int8/24g/fl2va-convrot-int8.peft-lora+ramtorch" / "config.json"
+        ).open() as handle:
             config_24g = json.load(handle)
-        with (examples_root / "minimaxh3-fl2va-convrot-int8-32g.peft-lora" / "config.json").open() as handle:
+        with (examples_root / "minimaxh3/convrot-int8/32g/fl2va-convrot-int8.peft-lora" / "config.json").open() as handle:
             config_32g = json.load(handle)
 
         self.assertTrue(config_24g["ramtorch"])

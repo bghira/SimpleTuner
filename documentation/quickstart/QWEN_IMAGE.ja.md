@@ -142,7 +142,7 @@ cp config/config.json.example config/config.json
 
 > ⚠️ **24GB GPU で重要:** テキストエンコーダ単体で ~16GB VRAM を消費します。`int2-quanto` または `nf4-bnb` を使うことで大幅に削減できます。
 
-標準の `qwen_image.peft-lora` は現在 2.1 を学習します。旧版ではこの例ではなく、明示した設定で `simpletuner train` を実行してください。
+標準の `qwen_image/v2.1/default/peft-lora` は現在 2.1 を学習します。旧版ではこの例ではなく、明示した設定で `simpletuner train` を実行してください。
 
 ### 高度な実験的機能
 

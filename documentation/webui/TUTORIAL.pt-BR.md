@@ -244,13 +244,13 @@ Exemplo de hook:
 
 Onde `notify.sh` envia a URL para sua API de tracker. Sinta-se livre para adaptar para Slack, dashboards customizados ou qualquer outra integracao.
 
-Exemplo funcional: `simpletuner/examples/external-validation/replicate_post_upload.py` demonstra usar `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}` e `{huggingface_path}` para disparar uma inferencia Replicate apos uploads.
+Exemplo funcional: `simpletuner/examples/_shared/external-validation/replicate_post_upload.py` demonstra usar `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}` e `{huggingface_path}` para disparar uma inferencia Replicate apos uploads.
 
-Outro exemplo: `simpletuner/examples/external-validation/wavespeed_post_upload.py` chama a API WaveSpeed e faz polling do resultado, usando os mesmos placeholders.
+Outro exemplo: `simpletuner/examples/_shared/external-validation/wavespeed_post_upload.py` chama a API WaveSpeed e faz polling do resultado, usando os mesmos placeholders.
 
-Exemplo focado em Flux: `simpletuner/examples/external-validation/fal_post_upload.py` chama o endpoint fal.ai Flux LoRA; requer `FAL_KEY` e so roda quando `model_family` inclui `flux`.
+Exemplo focado em Flux: `simpletuner/examples/_shared/external-validation/fal_post_upload.py` chama o endpoint fal.ai Flux LoRA; requer `FAL_KEY` e so roda quando `model_family` inclui `flux`.
 
-Exemplo de GPU local: `simpletuner/examples/external-validation/use_second_gpu.py` roda inferencia Flux LoRA em outra GPU (padrao `cuda:1`) e pode ser usado mesmo quando nao ha uploads.
+Exemplo de GPU local: `simpletuner/examples/_shared/external-validation/use_second_gpu.py` roda inferencia Flux LoRA em outra GPU (padrao `cuda:1`) e pode ser usado mesmo quando nao ha uploads.
 
 <img width="508" height="600" alt="image" src="https://github.com/user-attachments/assets/e699ba57-526b-4f60-9e8c-0ba410761c9f" />
 

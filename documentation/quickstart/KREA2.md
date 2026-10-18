@@ -7,7 +7,7 @@ Krea2 is a large flow-matching image transformer using Qwen-style text condition
 The starter example lives here:
 
 ```bash
-simpletuner/examples/krea2.peft-lora/config.json
+simpletuner/examples/krea2/raw/default/peft-lora/config.json
 ```
 
 ## Hardware requirements
@@ -83,7 +83,7 @@ The server listens on port 8001 by default.
 Copy the example config and edit it:
 
 ```bash
-cp simpletuner/examples/krea2.peft-lora/config.json config/config.json
+cp simpletuner/examples/krea2/raw/default/peft-lora/config.json config/config.json
 ```
 
 The important values are:

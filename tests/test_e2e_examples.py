@@ -2,7 +2,7 @@
 """
 SimpleTuner End-to-End Example Tests
 
-These tests load all example configurations from simpletuner/examples/*/config.json
+These tests load all example configurations from simpletuner/examples/**/config.json
 and run them through the Trainer with minimal steps to ensure they work end-to-end.
 
 Tests are only run when SIMPLETUNER_E2E_TEST environment variable is set to "1" or "TRUE".
@@ -30,16 +30,9 @@ def get_examples_dir() -> Path:
 
 def discover_examples() -> List[Path]:
     """Discover all example configurations."""
-    examples_dir = get_examples_dir()
-    if not examples_dir.exists():
-        return []
+    from simpletuner.helpers.configuration.examples import discover_examples as discover
 
-    examples = []
-    for item in examples_dir.iterdir():
-        if item.is_dir() and (item / "config.json").exists():
-            examples.append(item)
-
-    return sorted(examples)
+    return [path.parent for path in discover(get_examples_dir()).values() if path.suffix == ".json"]
 
 
 def load_example_config(example_path: Path) -> Dict:
@@ -56,7 +49,7 @@ def load_example_config(example_path: Path) -> Dict:
 
     # Ensure output goes to a test directory
     original_output = config.get("output_dir", "output")
-    config["output_dir"] = f"test_outputs/e2e/{example_path.name}"
+    config["output_dir"] = f"test_outputs/e2e/{example_path.relative_to(get_examples_dir()).as_posix()}"
 
     # Disable unnecessary features for faster testing
     config.setdefault("use_ema", False)
@@ -82,8 +75,8 @@ def load_example_config(example_path: Path) -> Dict:
         if field in config and config[field]:
             # Replace config/examples/ with the actual examples directory path
             if isinstance(config[field], str) and "config/examples/" in config[field]:
-                filename = Path(config[field]).name
-                config[field] = str(examples_dir / filename)
+                relative = config[field].removeprefix("config/examples/")
+                config[field] = str(examples_dir / relative)
 
     return config
 
@@ -164,7 +157,9 @@ class TestE2EExamples(unittest.TestCase):
         except Exception as e:
             import traceback
 
-            self.fail(f"Example {example_path.name} failed: {e}\n{traceback.format_exc()}")
+            self.fail(
+                f"Example {example_path.relative_to(get_examples_dir()).as_posix()} failed: {e}\n{traceback.format_exc()}"
+            )
 
     # Dynamically generate test methods for each example
     # This happens at module load time
@@ -176,7 +171,7 @@ def _generate_test_methods():
     examples = discover_examples()
 
     for example_path in examples:
-        example_name = example_path.name
+        example_name = example_path.relative_to(get_examples_dir()).as_posix()
 
         # Create a test method for this example
         def test_method(self, example_path=example_path):
@@ -184,7 +179,7 @@ def _generate_test_methods():
             self._run_example(example_path)
 
         # Set the method name and docstring
-        test_method.__name__ = f"test_example_{example_name.replace('.', '_').replace('-', '_')}"
+        test_method.__name__ = f"test_example_{example_name.replace('/', '_').replace('.', '_').replace('-', '_')}"
         test_method.__doc__ = f"Test example: {example_name}"
 
         # Add the method to the test class

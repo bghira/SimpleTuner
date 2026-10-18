@@ -17,8 +17,8 @@ i1 は Flux の単純な派生ではありません。FLUX.2 VAE、T5Gemma text 
 ## 付属サンプル
 
 ```bash
-simpletuner train example=zlab-i1.peft-lora
-simpletuner train example=zlab-i1.lycoris-lokr
+simpletuner train example=zlab_i1/3b/default/peft-lora
+simpletuner train example=zlab_i1/3b/default/lycoris-lokr
 ```
 
 最初は PEFT LoRA を使ってください。LyCORIS LoKr は標準 LoRA ではなく LoKr 分解を使いたい場合に向いています。
@@ -45,7 +45,7 @@ simpletuner train example=zlab-i1.lycoris-lokr
 検証は i1 のネイティブ pipeline で動きます。短い smoke test:
 
 ```bash
-simpletuner train example=zlab-i1.peft-lora validation_num_inference_steps=4 num_eval_images=1
+simpletuner train example=zlab_i1/3b/default/peft-lora validation_num_inference_steps=4 num_eval_images=1
 ```
 
 4 steps は生成と保存の確認だけです。品質を見る場合は 250 steps を使ってください。

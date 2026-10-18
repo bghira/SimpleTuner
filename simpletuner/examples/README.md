@@ -1,109 +1,29 @@
-## Example configurations
+# Training examples
 
-These configurations are provided as an easy way to **immediately** run a training session with SimpleTuner across a large number of architectures.
+Examples are organised as `model_family/model_flavour/vram/recipe`. Choose a model family, then its flavour and a memory tier such as `24g`, `48g`, or `80g`. The `default` tier has no specific VRAM target; a `default` flavour uses the model’s configured default. Multi-GPU tiers such as `8x80g` require eight GPUs with that memory per GPU.
 
-The options are set up so that a 24G card (NVIDIA 4090) can run training out of the box. In order to do this, compromises were made for resolution, training batch size, or LoRA rank.
+Named recipe folders keep LoRA, LoKr, ControlNet, AnyFlow, and conditioning variants separate. Shared dataset plans, prompt libraries, and validation scripts live in `_shared/`.
 
-It's recommended to use these only as a basic starting point.
+## List examples and run a recipe
 
-### Running an example
-
-All examples can be easily run without modifying the configurations.
-
-We'll assume you don't have any python dependencies installed yet, and that an NVIDIA device is in use.
-
-To run `kontext.peft-lora` example:
-
-**Option 1 (Recommended - pip install):**
-```bash
-pip install 'simpletuner[cuda]'
-# or for CUDA 13 / Blackwell users: pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
-simpletuner train example=kontext.peft-lora
-```
-
-**Option 2 (Git clone method):**
-```bash
-git clone https://github.com/bghira/simpletuner
-cd simpletuner
-python3.13 -m venv .venv
-. .venv/bin/activate
-pip install -e .
-simpletuner train env=examples/kontext.peft-lora
-```
-
-**Option 3 (Legacy method - still works):**
-```bash
-git clone https://github.com/bghira/simpletuner
-cd simpletuner
-python3.13 -m venv .venv
-. .venv/bin/activate
-pip install -e .
-ENV=examples/kontext.peft-lora ./train.sh
-```
-
-This will automatically download an example reference dataset, pre-cache embeds, and run 100 steps of training on a standard PEFT LoRA.
-
-ACE-Step examples are split by model generation:
-
-- `ace_step-v1-0.peft-lora` for the original ACE-Step v1 3.5B path
-- `ace_step-v1-5.peft-lora` for the forward-compatible ACE-Step v1.5 LoRA path
-
-MiniMax Music examples:
-
-- `minimaxmusic-music3.peft-lora` trains MiniMax Music 3 LoRA with raw audio encoded by VAECache through the DAV audio VAE, and references `minimaxmusic-prompts.json` for caption + lyrics validation prompts.
-- `minimaxmusic-music3-24g.peft-lora` uses CPU-side INT8-SDNQ Hadamard quantization, segmented checkpointing, and maximum Musubi block swapping for audio up to 30 seconds.
-- `minimaxmusic-music3-32g.peft-lora` uses CPU-side quantization and swaps half of the transformer blocks for audio up to 40 seconds.
-- `minimaxmusic-music3-48g.peft-lora` uses accelerator-side quantization and sparse segmented checkpointing while keeping the quantized transformer resident for audio up to 60 seconds.
-- `minimaxmusic-music3-lm.peft-lora` trains the autoregressive language-model planner on full songs.
-- `minimaxmusic-music3-lm-xm-nextlat.peft-lora` adds two-candidate, block-scoped XM route selection and NextLat while retaining full-song training.
-- `minimaxmusic-music3-lm-xm-nextlat-regularisation.peft-lora` applies the same XM and NextLat objective to 128-frame causal continuation targets and samples an unrelated 128-song regularisation backend at probability 0.5. Every continuation keeps the song prefix as context while masking its loss; regularisation batches learn the frozen base planner's distribution instead of their ground-truth RVQ tokens.
-
-LTX-2 conditioning examples are split by conditioning style:
-
-- `ltxvideo2-19b-t2v.peft-lora+first-frame-conditioning` shows the shorthand `ltx2_*` probability fields.
-- `ltxvideo2-19b-t2v.peft-lora+intrinsic-conditioning` shows the explicit `ltx2_intrinsic_conditioning` object list.
-- `ltxvideo2-19b-t2v.peft-lora+reference-conditioning` shows IC-LoRA reference conditioning with coordinate scale overrides.
-- `ltxvideo2-2.3-dev-720p-single-gpu.peft-lora+ramtorch` adapts the LTX-2.3 720p profile for one GPU with RamTorch transformer-block streaming.
-- `ltxvideo2-2.5-dev-768x512-mps-48g.peft-lora` targets the released split LTX-2.5 pack on Apple Silicon with UMFA INT8 attention for a 48G 768x512 MPS training example.
-- `ltxvideo2-2.5-dev-768x512-mps-128g.peft-lora` targets the released split LTX-2.5 pack on Apple Silicon with UMFA BF16 attention for a 128G 768x512 MPS training example.
-
-Z-Image conditioning examples:
-
-- `z-image-turbo.peft-lora+canny-conditioning` auto-generates Canny edge conditioning data and validates with those references through the IC-LoRA conditioning path.
-
-Cosmos3 examples:
-
-- `cosmos3-image.lycoris-lokr` uses `RareConcepts/Domokun`.
-- `cosmos3-edge-image-24g.lycoris-lokr` and `cosmos3-edge-image-32g.lycoris-lokr` target 1024px ARB image LoKr on 24GB and 32GB cards.
-- `cosmos3-nano-image-24g.lycoris-lokr`, `cosmos3-nano-image-32g.lycoris-lokr`, `cosmos3-nano-image-48g.lycoris-lokr`, and `cosmos3-nano-image-80g.lycoris-lokr` target 1024px ARB image LoKr on progressively larger GPUs.
-- `cosmos3-super-image-48g.lycoris-lokr` and `cosmos3-super-image-80g.lycoris-lokr` target 1024px ARB image LoKr for the Super text-to-image flavour.
-- `cosmos3-image-48g.lycoris-lokr` and `cosmos3-image-80g.lycoris-lokr` are legacy aliases for Nano 48GB and 80GB profiles.
-- `cosmos3-video.lycoris-lokr` uses `sayakpaul/video-dataset-disney-organized`.
-- `cosmos3-video-audio.lycoris-lokr` uses local synchronized drumming files with `audio.auto_split`.
-- `cosmos3-super-i2v.lycoris-lokr` uses `nvidia/Cosmos3-Super-Image2Video` with `video.is_i2v`.
-
-MiniMax-H3 examples:
-
-- `minimaxh3-t2v-fp8-141g.peft-lora+anyflow` is an H200-class AnyFlow forward-stage profile using resident FP8
-  weights, sparse FlexAttention, 8-GPU DDP with batch 1 per rank, and segmented checkpointing interval 2 / stride 10.
-
-Large multi-GPU video examples are split from the standard 24G examples:
-
-- `wan2.1-t2v-1.3b-480p-141g.peft-lora+anyflow` reproduces NVIDIA's 480p, 81-frame Wan 2.1 1.3B AnyFlow forward stage on 8x141GB GPUs. It uses DDP, global batch 32, rank-256 LoRA, and no activation checkpointing.
-- `wan2.1-t2v-14b-480p-8xh100.peft-lora+cp-fa3`
-- `wan2.1-i2v-14b-480p-8xh100.peft-lora+cp-fa3`
-- `wan2.1-i2v-14b-720p-8xh100.peft-lora+cp-fa3`
-- `ltxvideo2-2.3-dev-720p-8xh100.peft-lora+cp-fa3`
-- `ltxvideo2-2.3-dev-1080p-8xh100.peft-lora+cp-fa3`
-
-The 14B Wan and LTX-Video profiles assume 8xH100-class hardware, BF16 weights, `context_parallel_size=2`, and the Hugging Face FlashAttention 3 varlen backend. The 1.3B AnyFlow profile instead uses data parallelism across 8x141GB GPUs and the FlashAttention 3 backend selected by an H200 performance sweep. On A100-class systems, copy the relevant example and benchmark `flash-attn-varlen-hub` before training.
-
-### Modifying and extending an example
-
-You'll want to copy the folder from `simpletuner/examples` to `config` before modifying anything, otherwise your changes will conflict with newer example config updates.
+After installing SimpleTuner, list the available recipes and pass the full relative path to `example=`:
 
 ```bash
-cp -R simpletuner/examples/kontext.peft-lora config/kontext.peft-lora
+simpletuner examples list
+simpletuner train example=flux3_image/klein/24g/peft-lora
 ```
 
-Inside the file `config/kontext.peft-lora/config.json` you will need to update the locations of `output_dir` and `dataloader_config`
+## Copy and customise
+
+The copy command preserves the catalog folders beneath the destination and copies referenced JSON assets into the recipe folder. Edit the copied configuration and dataset plan for your data, then train from that environment:
+
+```bash
+simpletuner examples copy flux3_image/klein/24g/peft-lora --dest config
+# config/flux3_image/klein/24g/peft-lora/config.json
+cd config/flux3_image/klein/24g/peft-lora
+simpletuner train
+```
+
+In the WebUI environment creator and setup wizard, select the model family first. The example selector shows only that family’s recipes. Changing the family clears the previous example selection.
+
+These recipes are starting points. Check the model guide and adjust batch size, resolution, and training length for your dataset and hardware.

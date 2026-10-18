@@ -67,7 +67,7 @@ Usa `model_family: "flux3_image"` para el transformador de imágenes de 5,6B par
 
 Para `moss_image`, la variante predeterminada `sft` carga `OpenMOSS-Team/MOSS-Image-SFT`. Usa `model_flavour: "base"` para `OpenMOSS-Team/MOSS-Image-Base`. Los ejemplos entrenan con un área equivalente a 512×512. Consulta la [guía de MOSS-Image](quickstart/MOSS_IMAGE.es.md).
 
-Elige `model_flavour: "sft-edit"` o `"base-edit"` para entrenar con imágenes de referencia. Estas variantes parten del checkpoint SFT o Base correspondiente y aprenden el condicionamiento mediante tu adaptador. Empieza con `simpletuner/examples/moss_image-sft-edit.peft-lora` o `moss_image-base-edit.peft-lora`; usan una imagen objetivo por lote, entrenamiento a escala 512, REPA y validación del conjunto de datos.
+Elige `model_flavour: "sft-edit"` o `"base-edit"` para entrenar con imágenes de referencia. Estas variantes parten del checkpoint SFT o Base correspondiente y aprenden el condicionamiento mediante tu adaptador. Empieza con `simpletuner/examples/moss_image/sft-edit/default/peft-lora` o `moss_image/base-edit/default/peft-lora`; usan una imagen objetivo por lote, entrenamiento a escala 512, REPA y validación del conjunto de datos.
 
 ### `--lora_format`
 
@@ -915,10 +915,10 @@ Muchas configuraciones se establecen a través del [dataloader config](DATALOADE
        -d "{\"remote_uri\":\"${REMOTE}\"}"
   ```
 - **Ejemplos funcionales**:
-  - `simpletuner/examples/external-validation/replicate_post_upload.py` muestra un hook de Replicate que consume `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}` y `{huggingface_path}` para disparar inferencia después de las subidas.
-  - `simpletuner/examples/external-validation/wavespeed_post_upload.py` muestra un hook de WaveSpeed usando los mismos marcadores más el polling asíncrono de WaveSpeed.
-  - `simpletuner/examples/external-validation/fal_post_upload.py` muestra un hook de Flux LoRA en fal.ai (requiere `FAL_KEY`).
-  - `simpletuner/examples/external-validation/use_second_gpu.py` ejecuta inferencia Flux LoRA en una GPU secundaria y funciona incluso sin subidas remotas.
+  - `simpletuner/examples/_shared/external-validation/replicate_post_upload.py` muestra un hook de Replicate que consume `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}` y `{huggingface_path}` para disparar inferencia después de las subidas.
+  - `simpletuner/examples/_shared/external-validation/wavespeed_post_upload.py` muestra un hook de WaveSpeed usando los mismos marcadores más el polling asíncrono de WaveSpeed.
+  - `simpletuner/examples/_shared/external-validation/fal_post_upload.py` muestra un hook de Flux LoRA en fal.ai (requiere `FAL_KEY`).
+  - `simpletuner/examples/_shared/external-validation/use_second_gpu.py` ejecuta inferencia Flux LoRA en una GPU secundaria y funciona incluso sin subidas remotas.
 
 ### `--post_checkpoint_script`
 

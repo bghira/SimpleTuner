@@ -37,7 +37,7 @@ Después selecciona la familia ERNIE en el asistente de entrenamiento.
 
 La forma más simple es usar el ejemplo incluido:
 
-- config de ejemplo: `simpletuner/examples/ernie.peft-lora/config.json`
+- config de ejemplo: `simpletuner/examples/ernie/base/default/peft-lora/config.json`
 - entorno local ejecutable: `config/ernie-example/config.json`
 
 Ejecución:

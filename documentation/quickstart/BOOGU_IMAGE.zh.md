@@ -5,8 +5,8 @@
 内置起始配置:
 
 ```bash
-simpletuner/examples/boogu-image-v0.1.peft-lora/config.json
-simpletuner/examples/boogu-image-v0.1.lycoris-lokr/config.json
+simpletuner/examples/boogu_image/v0.1-base/default/peft-lora/config.json
+simpletuner/examples/boogu_image/v0.1-base/default/lycoris-lokr/config.json
 ```
 
 ## 硬件需求
@@ -115,22 +115,22 @@ cp config/config.json.example config/config.json
   "max_train_steps": 1000,
   "resolution": 1024,
   "resolution_type": "pixel_area",
-  "data_backend_config": "config/examples/multidatabackend-small-dreambooth-1024px.json"
+  "data_backend_config": "config/examples/_shared/multidatabackend-small-dreambooth-1024px.json"
 }
 ```
 
 ## 运行示例
 
 ```bash
-simpletuner train example=boogu-image-v0.1.peft-lora
-simpletuner train example=boogu-image-v0.1.lycoris-lokr
+simpletuner train example=boogu_image/v0.1-base/default/peft-lora
+simpletuner train example=boogu_image/v0.1-base/default/lycoris-lokr
 ```
 
 开发 checkout 形式:
 
 ```bash
-simpletuner train env=examples/boogu-image-v0.1.peft-lora
-simpletuner train env=examples/boogu-image-v0.1.lycoris-lokr
+simpletuner train env=examples/boogu_image/v0.1-base/default/peft-lora
+simpletuner train env=examples/boogu_image/v0.1-base/default/lycoris-lokr
 ```
 
 ## FP8 flavours

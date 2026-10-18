@@ -142,7 +142,7 @@ Your config.json will look something like this for a minimal setup:
 
 > ⚠️ **Critical for 24GB GPUs**: The text encoder alone uses ~16GB VRAM. With `int2-quanto` or `nf4-bnb` quantization, this can be reduced significantly.
 
-The bundled `qwen_image.peft-lora` example now trains 2.1. For these older flavours, use your explicit configuration with `simpletuner train` rather than that example.
+The bundled `qwen_image/v2.1/default/peft-lora` example now trains 2.1. For these older flavours, use your explicit configuration with `simpletuner train` rather than that example.
 
 ### Advanced Experimental Features
 

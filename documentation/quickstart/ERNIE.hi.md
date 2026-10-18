@@ -37,7 +37,7 @@ simpletuner server
 
 शुरू करने का सबसे आसान तरीका शामिल example का उपयोग करना है:
 
-- example config: `simpletuner/examples/ernie.peft-lora/config.json`
+- example config: `simpletuner/examples/ernie/base/default/peft-lora/config.json`
 - runnable local env: `config/ernie-example/config.json`
 
 चलाएँ:
