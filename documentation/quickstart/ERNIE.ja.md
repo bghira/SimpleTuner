@@ -37,7 +37,7 @@ simpletuner server
 
 まずは同梱のサンプルから始めるのが簡単です。
 
-- サンプル設定: `simpletuner/examples/ernie.peft-lora/config.json`
+- サンプル設定: `simpletuner/examples/ernie/base/default/peft-lora/config.json`
 - 実行用ローカル環境: `config/ernie-example/config.json`
 
 実行:

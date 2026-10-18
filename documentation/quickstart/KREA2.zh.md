@@ -5,7 +5,7 @@
 起始示例位于：
 
 ```bash
-simpletuner/examples/krea2.peft-lora/config.json
+simpletuner/examples/krea2/raw/default/peft-lora/config.json
 ```
 
 ## 推荐起点

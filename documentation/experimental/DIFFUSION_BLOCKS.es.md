@@ -61,10 +61,10 @@ Conserva `controller` durante la vida del pipeline y usa la configuracion exacta
 
 ## Ejemplo Anima
 
-Consulta `simpletuner/examples/anima.peft-lora+diffusion-blocks/config.json`. Las 28 capas de Anima v1.0 forman 7 bloques con `layers_per_block=4`.
+Consulta `simpletuner/examples/anima/base-v1.0/default/peft-lora+diffusion-blocks/config.json`. Las 28 capas de Anima v1.0 forman 7 bloques con `layers_per_block=4`.
 
 ```bash
-simpletuner train env=examples/anima.peft-lora+diffusion-blocks max_train_steps=10 validation_steps=10
+simpletuner train env=examples/anima/base-v1.0/default/peft-lora+diffusion-blocks max_train_steps=10 validation_steps=10
 ```
 
 Al reanudar no cambies paths, numero de capas, limites, `blocks_to_train`, topologia, world size, batch sampling ni timesteps. Ejecutar todas las capas en inferencia invalida el objetivo entrenado.

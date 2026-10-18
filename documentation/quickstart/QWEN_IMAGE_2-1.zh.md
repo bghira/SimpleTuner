@@ -18,18 +18,18 @@ pip install 'simpletuner[cuda]'
 
 ## 选择显存预设
 
-标准示例结合[辅助适配器 v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3)、合成数据正则化、REPA 和自动流调度偏移。默认的 `qwen_image.peft-lora` 与 48 GB 预设一样使用 512px + 1024px。24/32 GB 预设仅使用 512px，验证也相同。
+标准示例结合[辅助适配器 v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3)、合成数据正则化、REPA 和自动流调度偏移。默认的 `qwen_image/v2.1/default/peft-lora` 与 48 GB 预设一样使用 512px + 1024px。24/32 GB 预设仅使用 512px，验证也相同。
 
 | 显存预算 | 示例 | 基础分辨率 | 更新次数 | 梯度检查点间隔 |
 | --- | --- | --- | --- | --- |
-| 24 GB | `qwen_image-2.1-24g.peft-lora` | 512px | 2000 | 1 |
-| 32 GB | `qwen_image-2.1-32g.peft-lora` | 512px | 2000 | 2 |
-| 48 GB | `qwen_image-2.1-48g.peft-lora` | 512px + 1024px | 4000 | 2 |
-| 80 GB | `qwen_image-2.1-80g.peft-lora` | 512px + 1024px | 4000 | 2 |
-| 144 GB | `qwen_image-2.1-144g.peft-lora` | 512px + 1024px | 4000 | 2 |
+| 24 GB | `qwen_image/v2.1/24g/peft-lora` | 512px | 2000 | 1 |
+| 32 GB | `qwen_image/v2.1/32g/peft-lora` | 512px | 2000 | 2 |
+| 48 GB | `qwen_image/v2.1/48g/peft-lora` | 512px + 1024px | 4000 | 2 |
+| 80 GB | `qwen_image/v2.1/80g/peft-lora` | 512px + 1024px | 4000 | 2 |
+| 144 GB | `qwen_image/v2.1/144g/peft-lora` | 512px + 1024px | 4000 | 2 |
 
 ```bash
-simpletuner train example=qwen_image-2.1-48g.peft-lora
+simpletuner train example=qwen_image/v2.1/48g/peft-lora
 ```
 
 所有预设使用 BF16、rank/alpha 32、batch 1、学习率 `1e-4` 的 AdamW BF16、25 步预热和 1.0 范数裁剪。REPA 使用 `dinov2_vitg14`、第 8 层、权重 0.5、编码尺寸 518、空间对齐，时间距离为 0。启用自动偏移，静态偏移为 0。辅助适配器在训练中冻结、验证时禁用。正则化目标来自同时禁用两个适配器的原始基础模型预测。
@@ -179,9 +179,9 @@ Qwen Image 2.1 解码单张图像时不再保留未使用的时序特征缓存�
 配置启用了动态编译以处理可变描述长度。`schedule_shift: 2.000802574061872` 对应已发布调度器在 1024px（4,096 个潜变量 token）下的设置；更改分辨率时需重新计算。
 
 ```bash
-simpletuner train example=qwen_image-2.1-anyflow-stage1.peft-lora
-simpletuner train example=qwen_image-2.1-anyflow-stage2.peft-lora
-simpletuner train example=qwen_image-2.1-anyflow-stage3.peft-lora
+simpletuner train example=qwen_image/v2.1/default/anyflow-stage1.peft-lora
+simpletuner train example=qwen_image/v2.1/default/anyflow-stage2.peft-lora
+simpletuner train example=qwen_image/v2.1/default/anyflow-stage3.peft-lora
 ```
 
 阶段 2、3 通过 `init_lora` 加载上一阶段的最终 adapter，重新初始化优化器和数据加载器状态。采样权重控制尚未耗尽的数据集之间的交替，并不保证最终样本比例。此受限试验不覆盖完整先验语料库。字符串字段 `long_caption` 可使用现有 Webshart caption selector，无需原生 JSON 对象 caption 支持。
@@ -207,7 +207,7 @@ simpletuner train example=qwen_image-2.1-anyflow-stage3.peft-lora
 
 ### 使用字幕训练辅助 LoRA
 
-`qwen_image-2.1-assistant-lora.peft-lora` 是面向 L40S 的实验起点：BF16、批量 1、间隔 2 的梯度检查点、rank 32，以及学习率 `1e-4` 的 AdamW BF16。预算为 1,000 次更新，每 50 次验证和保存。正式训练前，请用多样化字幕替换十二条冒烟测试字幕；此示例尚未验证收敛效果。
+`qwen_image/v2.1/default/assistant-lora.peft-lora` 是面向 L40S 的实验起点：BF16、批量 1、间隔 2 的梯度检查点、rank 32，以及学习率 `1e-4` 的 AdamW BF16。预算为 1,000 次更新，每 50 次验证和保存。正式训练前，请用多样化字幕替换十二条冒烟测试字幕；此示例尚未验证收敛效果。
 
 `grad_clip_method: "norm"`, `max_grad_norm: 1.0`.
 
@@ -227,7 +227,7 @@ Qwen Image 2.1 LoRA 训练默认加载 [训练辅助适配器 v3](https://huggin
 
 #### 四种基础分辨率与宽高比分桶的辅助 LoRA 实验
 
-`qwen_image-2.1-assistant-lora-multires.peft-lora` 循环使用基础分辨率 512、1024、1536 和 2048 对应的共 12 个宽高比桶。每种基础分辨率都有正方形、4:7 竖图和 7:4 横图三个桶；每个批次使用一个桶，在完整循环中各基础分辨率及宽高比的训练次数相同。它保留基础示例的教师 40 步、BF16 批量 1、每 2 个块进行检查点重计算、秩 32、AdamW BF16 和 1,000 次更新，并共用其描述文本后端及验证提示词。请将测试文本替换为基准实验中使用的同一组多样化描述。在新的输出目录中从全新的适配器和优化器开始；`resume_from_checkpoint: ""` 禁用恢复。保留第一次运行的权重以便比较。
+`qwen_image/v2.1/default/assistant-lora-multires.peft-lora` 循环使用基础分辨率 512、1024、1536 和 2048 对应的共 12 个宽高比桶。每种基础分辨率都有正方形、4:7 竖图和 7:4 横图三个桶；每个批次使用一个桶，在完整循环中各基础分辨率及宽高比的训练次数相同。它保留基础示例的教师 40 步、BF16 批量 1、每 2 个块进行检查点重计算、秩 32、AdamW BF16 和 1,000 次更新，并共用其描述文本后端及验证提示词。请将测试文本替换为基准实验中使用的同一组多样化描述。在新的输出目录中从全新的适配器和优化器开始；`resume_from_checkpoint: ""` 禁用恢复。保留第一次运行的权重以便比较。
 
 此实验检验多种图像尺寸是否能改善辅助适配器，并不证明原生分辨率要求或质量收益。L40S 的 1,000 次更新已完成全部 12 个桶，并在 1024×1024 和 2048×2048 下验证。最终狐狸和肖像图像仍然连贯，但存在分块 VAE 解码已知的颜色接缝。教师直接生成潜变量目标，不经过 VAE 解码。对后续概念训练的收益仍未验证。
 
@@ -239,7 +239,7 @@ Assistant LoRA 与 AnyFlow 一样，仅在运行期间将 Dynamo 缓存下限设
 
 #### 使用可复用生成图像训练辅助 LoRA
 
-`qwen_image-2.1-assistant-lora-offline.peft-lora` 通过 Webshart 使用 [10,000 张生成图像](https://huggingface.co/datasets/webshart/qwen-image-2.1-generated-images)训练。数据集使用 CC12M 的 `long_caption` 提示词、40 步原生教师推理、CFG 1 和完整图像 VAE 解码。12 个图像后端覆盖 512、1024、1536、2048 基础分辨率的正方形、竖幅和横幅桶，采样权重相等，不设置重复。
+`qwen_image/v2.1/default/assistant-lora-offline.peft-lora` 通过 Webshart 使用 [10,000 张生成图像](https://huggingface.co/datasets/webshart/qwen-image-2.1-generated-images)训练。数据集使用 CC12M 的 `long_caption` 提示词、40 步原生教师推理、CFG 1 和完整图像 VAE 解码。12 个图像后端覆盖 512、1024、1536、2048 基础分辨率的正方形、竖幅和横幅桶，采样权重相等，不设置重复。
 
 此配方从头训练，使用已修正的 `adamw_bf16`、学习率 `1e-4`、`grad_clip_method: "norm"`、`max_grad_norm: 1.0`、BF16、批量 1、秩 32 和每两块一组的梯度检查点。计划训练 1,000 次更新，每 50 次保存，每 100 次以 1024 分辨率验证。发布前另行生成 2048px 预览。关闭 VAE 分块，编码批量为 1。`vae_cache_ondemand: true` 在采样时编码并缓存图像，避免在 1,000 次更新前先编码全部 10,000 张图像。普通图像训练取代在线教师生成；创建辅助适配器时省略 `distillation_method`，并保留 `disable_assistant_lora: true`。
 
@@ -248,7 +248,7 @@ Assistant LoRA 与 AnyFlow 一样，仅在运行期间将 Dynamo 缓存下限设
 [替换后的 v1 助手](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v1) 已在 L40S 上完成此方案的 1,000 次更新，并检查了最终的 1024 和 2048 图像。随后进行的 Domokun 对照实验采用 2048 分辨率、LR `1e-4`、全局范数裁剪 1.0，各训练 1,000 次更新；助手在训练时冻结，在验证时禁用。对照组和助手组在两个角色提示词下仍生成人物。对照组将明显的 Domokun 特征带入了无关的狐狸提示词；助手组保留了可辨认的狐狸。两组的人像均保持连贯。这仅是概念外溢减少的有限证据，不代表成功学会角色或普遍提升质量；评估仅使用一个训练种子和四个提示词。
 
 ```bash
-simpletuner train example=qwen_image-2.1-assistant-lora-offline.peft-lora
+simpletuner train example=qwen_image/v2.1/default/assistant-lora-offline.peft-lora
 ```
 
 </details>

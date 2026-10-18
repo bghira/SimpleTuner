@@ -6,11 +6,11 @@ MiniMax H3 एक 33B flow-matching video/audio model है। SimpleTuner `min
 
 इन examples से शुरू करें:
 
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-24g.peft-lora+ramtorch`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-32g.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-48g.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-80g.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/default/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/24g/fl2va-convrot-int8.peft-lora+ramtorch`
+- `simpletuner/examples/minimaxh3/convrot-int8/32g/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/48g/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/80g/fl2va-convrot-int8.peft-lora`
 
 अपनी VRAM के सबसे करीब preset लें, फिर smoke test के बाद resolution, frames, attention backend, और checkpointing बदलें।
 
@@ -114,7 +114,7 @@ Implementation 3D query/key video blocks को mean-pool करके parameter
 ## Run
 
 ```bash
-simpletuner train example=minimaxh3-fl2va-convrot-int8.peft-lora
+simpletuner train example=minimaxh3/convrot-int8/default/fl2va-convrot-int8.peft-lora
 ```
 
 Long run से पहले छोटा smoke test करें और देखें कि `h3_drift_loss`, normal loss, और validation samples साथ-साथ sensible move कर रहे हैं।

@@ -11,6 +11,8 @@ import subprocess
 from pathlib import Path
 from typing import List, Optional
 
+from simpletuner.helpers.configuration.examples import discover_examples
+
 from .common import (
     _candidate_config_paths,
     _extract_cli_override,
@@ -29,17 +31,8 @@ def get_examples_dir() -> Path:
 
 
 def list_examples() -> List[str]:
-    """List all available examples (directories only)."""
-    examples_dir = get_examples_dir()
-    if not examples_dir.exists():
-        return []
-
-    examples = []
-    for item in examples_dir.iterdir():
-        if item.is_dir() and not item.name.startswith("."):
-            examples.append(item.name)
-
-    return sorted(examples)
+    """List bundled training recipes by their relative catalog paths."""
+    return list(discover_examples(get_examples_dir()))
 
 
 def setup_environment_from_example(example_name: str) -> dict:
@@ -47,32 +40,11 @@ def setup_environment_from_example(example_name: str) -> dict:
     env = os.environ.copy()
     env["ENV"] = f"examples/{example_name}"
 
-    examples_dir = get_examples_dir()
-    example_path = examples_dir / example_name
-
-    if example_path.is_dir():
-        if (example_path / "config.json").exists():
-            env["CONFIG_BACKEND"] = "json"
-            env["CONFIG_PATH"] = str(example_path / "config")
-        elif (example_path / "config.toml").exists():
-            env["CONFIG_BACKEND"] = "toml"
-            env["CONFIG_PATH"] = str(example_path / "config")
-        elif (example_path / "config.env").exists():
-            env["CONFIG_BACKEND"] = "env"
-            env["CONFIG_PATH"] = str(example_path / "config")
-        else:
-            raise ValueError(f"No config file found in example {example_name}")
-    elif example_path.is_file():
-        if example_path.suffix == ".json":
-            env["CONFIG_BACKEND"] = "json"
-            env["CONFIG_PATH"] = str(example_path.with_suffix(""))
-        elif example_path.suffix == ".toml":
-            env["CONFIG_BACKEND"] = "toml"
-            env["CONFIG_PATH"] = str(example_path.with_suffix(""))
-        else:
-            raise ValueError(f"Unsupported config file type: {example_path.suffix}")
-    else:
+    config_path = discover_examples(get_examples_dir()).get(example_name)
+    if config_path is None:
         raise ValueError(f"Example {example_name} not found")
+    env["CONFIG_BACKEND"] = config_path.suffix.removeprefix(".")
+    env["CONFIG_PATH"] = str(config_path.with_suffix(""))
 
     if "TQDM_NCOLS" not in env:
         env["TQDM_NCOLS"] = "125"

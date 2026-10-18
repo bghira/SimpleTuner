@@ -18,18 +18,18 @@ pip install 'simpletuner[cuda]'
 
 ## Escolha um preset de VRAM
 
-Os exemplos combinam [assistente v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3), regularização sintética, REPA e deslocamento automático do fluxo. O padrão `qwen_image.peft-lora` usa a mesma receita de 512px + 1024px do preset de 48 GB. Os presets de 24/32 GB usam apenas 512px, inclusive na validação.
+Os exemplos combinam [assistente v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3), regularização sintética, REPA e deslocamento automático do fluxo. O padrão `qwen_image/v2.1/default/peft-lora` usa a mesma receita de 512px + 1024px do preset de 48 GB. Os presets de 24/32 GB usam apenas 512px, inclusive na validação.
 
 | VRAM | Exemplo | Resoluções base | Atualizações | Intervalo de checkpointing de gradientes |
 | --- | --- | --- | --- | --- |
-| 24 GB | `qwen_image-2.1-24g.peft-lora` | 512px | 2000 | 1 |
-| 32 GB | `qwen_image-2.1-32g.peft-lora` | 512px | 2000 | 2 |
-| 48 GB | `qwen_image-2.1-48g.peft-lora` | 512px + 1024px | 4000 | 2 |
-| 80 GB | `qwen_image-2.1-80g.peft-lora` | 512px + 1024px | 4000 | 2 |
-| 144 GB | `qwen_image-2.1-144g.peft-lora` | 512px + 1024px | 4000 | 2 |
+| 24 GB | `qwen_image/v2.1/24g/peft-lora` | 512px | 2000 | 1 |
+| 32 GB | `qwen_image/v2.1/32g/peft-lora` | 512px | 2000 | 2 |
+| 48 GB | `qwen_image/v2.1/48g/peft-lora` | 512px + 1024px | 4000 | 2 |
+| 80 GB | `qwen_image/v2.1/80g/peft-lora` | 512px + 1024px | 4000 | 2 |
+| 144 GB | `qwen_image/v2.1/144g/peft-lora` | 512px + 1024px | 4000 | 2 |
 
 ```bash
-simpletuner train example=qwen_image-2.1-48g.peft-lora
+simpletuner train example=qwen_image/v2.1/48g/peft-lora
 ```
 
 Todos usam BF16, rank/alpha 32, lote 1, AdamW BF16 a `1e-4`, 25 passos de aquecimento e corte de norma em 1.0. REPA usa `dinov2_vitg14`, bloco 8, peso 0.5, tamanho 518, alinhamento espacial e distância temporal 0. O deslocamento automático está ativo e o estático é 0. O assistente fica congelado e é desativado na validação. A regularização usa a previsão do modelo base com ambos os adaptadores desativados como alvo.
@@ -179,9 +179,9 @@ Revise os checkpoints de 2.000, 5.000 e 10.000 atualizações antes de estender 
 A compilação dinâmica está habilitada para captions de comprimentos variados. `schedule_shift: 2.000802574061872` corresponde ao scheduler publicado a 1024px (4.096 tokens latentes); recalcule ao alterar a resolução.
 
 ```bash
-simpletuner train example=qwen_image-2.1-anyflow-stage1.peft-lora
-simpletuner train example=qwen_image-2.1-anyflow-stage2.peft-lora
-simpletuner train example=qwen_image-2.1-anyflow-stage3.peft-lora
+simpletuner train example=qwen_image/v2.1/default/anyflow-stage1.peft-lora
+simpletuner train example=qwen_image/v2.1/default/anyflow-stage2.peft-lora
+simpletuner train example=qwen_image/v2.1/default/anyflow-stage3.peft-lora
 ```
 
 As etapas 2 e 3 carregam o adapter final anterior com `init_lora` e iniciam novos estados do otimizador e dataloader. Os pesos controlam a seleção entre datasets ainda disponíveis, sem garantir porcentagens finais. O piloto limitado não cobre os corpora completos. O campo textual `long_caption` funciona com o seletor de captions Webshart existente e não exige suporte a captions como objetos JSON nativos.
@@ -207,7 +207,7 @@ Repetir a continuação de 1.000 atualizações com o otimizador corrigido, o me
 
 ### Treinar uma LoRA auxiliar a partir de legendas
 
-`qwen_image-2.1-assistant-lora.peft-lora` é um ponto de partida experimental para L40S: BF16, lote 1, checkpointing com intervalo 2, rank 32 e AdamW BF16 a `1e-4`. O orçamento é de 1.000 atualizações, com validação e salvamento a cada 50. Substitua as doze legendas de teste por textos diversos antes de um treino efetivo; a convergência ainda não foi validada.
+`qwen_image/v2.1/default/assistant-lora.peft-lora` é um ponto de partida experimental para L40S: BF16, lote 1, checkpointing com intervalo 2, rank 32 e AdamW BF16 a `1e-4`. O orçamento é de 1.000 atualizações, com validação e salvamento a cada 50. Substitua as doze legendas de teste por textos diversos antes de um treino efetivo; a convergência ainda não foi validada.
 
 `grad_clip_method: "norm"`, `max_grad_norm: 1.0`.
 
@@ -227,7 +227,7 @@ Datasets de legendas exigem `dataloader_prefetch: false` para que o cursor do ch
 
 #### Experimento de assistente com quatro resoluções base e buckets de proporção
 
-`qwen_image-2.1-assistant-lora-multires.peft-lora` percorre 12 buckets de proporção nas resoluções base 512, 1024, 1536 e 2048. Cada base inclui um bucket quadrado, um retrato 4:7 e uma paisagem 7:4; cada lote usa um bucket, com exposição igual por base e proporção durante um ciclo completo. Mantém os 40 passos do professor, BF16 com lote 1, checkpointing a cada 2 blocos, rank 32, AdamW BF16 e 1.000 atualizações do exemplo base, compartilhando seu backend de captions e seus prompts de validação. Substitua as captions de teste pelo mesmo conjunto diverso usado na referência. Comece com um adaptador e um otimizador novos no novo diretório de saída; `resume_from_checkpoint: ""` desativa a retomada. Preserve os pesos da primeira execução para comparação.
+`qwen_image/v2.1/default/assistant-lora-multires.peft-lora` percorre 12 buckets de proporção nas resoluções base 512, 1024, 1536 e 2048. Cada base inclui um bucket quadrado, um retrato 4:7 e uma paisagem 7:4; cada lote usa um bucket, com exposição igual por base e proporção durante um ciclo completo. Mantém os 40 passos do professor, BF16 com lote 1, checkpointing a cada 2 blocos, rank 32, AdamW BF16 e 1.000 atualizações do exemplo base, compartilhando seu backend de captions e seus prompts de validação. Substitua as captions de teste pelo mesmo conjunto diverso usado na referência. Comece com um adaptador e um otimizador novos no novo diretório de saída; `resume_from_checkpoint: ""` desativa a retomada. Preserve os pesos da primeira execução para comparação.
 
 O experimento testa se a exposição a vários tamanhos melhora o assistente; não estabelece uma exigência de resolução nativa nem um ganho de qualidade. A execução de 1.000 atualizações na L40S completou os 12 buckets, com validação em 1024×1024 e 2048×2048. As imagens finais da raposa e do retrato permaneceram coerentes, com as conhecidas linhas de cor da decodificação do VAE com tiling. O professor gera alvos latentes sem decodificação pelo VAE. O benefício no treinamento posterior de conceitos continua sem verificação.
 
@@ -239,7 +239,7 @@ Um teste posterior de Domokun treinou dois adaptadores novos por 250 atualizaç�
 
 #### LoRA auxiliar com imagens geradas reutilizáveis
 
-`qwen_image-2.1-assistant-lora-offline.peft-lora` treina com [10.000 imagens geradas](https://huggingface.co/datasets/webshart/qwen-image-2.1-generated-images) via Webshart. O dataset usa prompts `long_caption` do CC12M, 40 passos nativos do professor, CFG 1 e decodificação VAE da imagem inteira. Doze backends cobrem buckets quadrados, verticais e horizontais nas resoluções base 512, 1024, 1536 e 2048, com pesos de amostragem iguais e sem repetições.
+`qwen_image/v2.1/default/assistant-lora-offline.peft-lora` treina com [10.000 imagens geradas](https://huggingface.co/datasets/webshart/qwen-image-2.1-generated-images) via Webshart. O dataset usa prompts `long_caption` do CC12M, 40 passos nativos do professor, CFG 1 e decodificação VAE da imagem inteira. Doze backends cobrem buckets quadrados, verticais e horizontais nas resoluções base 512, 1024, 1536 e 2048, com pesos de amostragem iguais e sem repetições.
 
 Esta receita inicia um treinamento novo com `adamw_bf16` corrigido, LR `1e-4`, `grad_clip_method: "norm"`, `max_grad_norm: 1.0`, BF16 com lote 1, rank 32 e checkpointing a cada 2 blocos. São 1.000 atualizações, salvamento a cada 50 e validação a cada 100 em 1024. Gere prévias adicionais em 2048px antes de publicar. O tiling do VAE fica desativado e a codificação usa lote 1. `vae_cache_ondemand: true` codifica e armazena as imagens conforme são amostradas, evitando codificar todas as 10.000 imagens antes de 1.000 atualizações. O treinamento comum com imagens substitui a geração online do professor; omita `distillation_method` e mantenha `disable_assistant_lora: true` ao criar o auxiliar.
 
@@ -248,7 +248,7 @@ O dataset pode ser reutilizado. Os PNGs exigem nova codificação VAE, portanto 
 O [assistente v1 substituto](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v1) concluiu esta receita de 1.000 atualizações na L40S, com revisão final das imagens em 1024 e 2048. Uma comparação equivalente de Domokun com 1.000 atualizações em 2048, LR `1e-4` e clipping de norma 1.0 manteve o assistente congelado no treinamento e desativado na validação. Tanto o controle quanto o treino assistido ainda geraram pessoas para os dois prompts do personagem. O controle introduziu traços fortes de Domokun em um prompt não relacionado de raposa; o treino assistido preservou uma raposa reconhecível. Ambos preservaram um retrato coerente. Isso é evidência limitada de menor contaminação entre conceitos, não de aprendizado bem-sucedido do personagem ou de benefício geral de qualidade; a avaliação usa uma semente de treinamento e quatro prompts.
 
 ```bash
-simpletuner train example=qwen_image-2.1-assistant-lora-offline.peft-lora
+simpletuner train example=qwen_image/v2.1/default/assistant-lora-offline.peft-lora
 ```
 
 </details>

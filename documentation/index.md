@@ -114,3 +114,5 @@ See [Model Guides](quickstart/index.md) for complete documentation.
 ## License
 
 SimpleTuner is open source software.
+
+[Training examples](https://github.com/bghira/SimpleTuner/tree/main/simpletuner/examples/README.md)

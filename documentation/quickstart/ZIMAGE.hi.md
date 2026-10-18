@@ -21,7 +21,7 @@ Apple GPUs पर प्रशिक्षण अनुशंसित नही
 
 ### SDNQ Hadamard की मापी गई performance
 
-ये measurements `z-image-turbo.peft-lora` Domokun example पर 1000 steps, validation enabled, `base_model_precision=int8-sdnq`, `sdnq_use_hadamard=true`, `sdnq_group_size=-1`, `sdnq_hadamard_group_size=256`, और gradient checkpointing enabled के साथ लिए गए। इस path को enable करने वाले options के लिए [ConvRot / Hadamard SDNQ quick setup](../experimental/CONVROT.md#quick-setup) देखें। इन्हें इस recipe के comparison points मानें, hardware guarantee नहीं।
+ये measurements `z_image/turbo/default/peft-lora` Domokun example पर 1000 steps, validation enabled, `base_model_precision=int8-sdnq`, `sdnq_use_hadamard=true`, `sdnq_group_size=-1`, `sdnq_hadamard_group_size=256`, और gradient checkpointing enabled के साथ लिए गए। इस path को enable करने वाले options के लिए [ConvRot / Hadamard SDNQ quick setup](../experimental/CONVROT.md#quick-setup) देखें। इन्हें इस recipe के comparison points मानें, hardware guarantee नहीं।
 
 | GPU | Run | Train loop s/step | Mean train step | p50 | p95 | Peak allocated VRAM |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |

@@ -10,13 +10,13 @@ Elige la receta según la memoria de tu GPU. Todos los niveles entrenan con un �
 
 | Memoria GPU | Ejemplo Base | Ejemplo SFT | Imágenes por lote | `gradient_checkpointing_interval` |
 | --- | --- | --- | ---: | ---: |
-| 24 GB | `moss_image-24g.peft-lora` | `moss_image-sft-24g.peft-lora` | 1 | 1 |
-| 32 GB | `moss_image-32g.peft-lora` | `moss_image-sft-32g.peft-lora` | 1 | 2 |
-| 48 GB | `moss_image-48g.peft-lora` | `moss_image-sft-48g.peft-lora` | 2 | 2 |
-| 80 GB | `moss_image-80g.peft-lora` | `moss_image-sft-80g.peft-lora` | 4 | 2 |
-| 144 GB | `moss_image-144g.peft-lora` | `moss_image-sft-144g.peft-lora` | 8 | 2 |
+| 24 GB | `moss_image/base/24g/peft-lora` | `moss_image/sft/24g/peft-lora` | 1 | 1 |
+| 32 GB | `moss_image/base/32g/peft-lora` | `moss_image/sft/32g/peft-lora` | 1 | 2 |
+| 48 GB | `moss_image/base/48g/peft-lora` | `moss_image/sft/48g/peft-lora` | 2 | 2 |
+| 80 GB | `moss_image/base/80g/peft-lora` | `moss_image/sft/80g/peft-lora` | 4 | 2 |
+| 144 GB | `moss_image/base/144g/peft-lora` | `moss_image/sft/144g/peft-lora` | 8 | 2 |
 
-Los ejemplos predeterminados `moss_image.peft-lora` y `moss_image-sft.peft-lora` usan los ajustes de 48 GB. Los lotes son puntos de partida: reduce `train_batch_size` para descripciones más largas, funciones adicionales o datasets con menos imágenes por grupo de proporción que el tamaño del lote. El nivel de 144 GB está pensado para GPU de clase H200.
+Los ejemplos predeterminados `moss_image/sft/default/default.peft-lora` y `moss_image/sft/default/peft-lora` usan los ajustes de 48 GB. Los lotes son puntos de partida: reduce `train_batch_size` para descripciones más largas, funciones adicionales o datasets con menos imágenes por grupo de proporción que el tamaño del lote. El nivel de 144 GB está pensado para GPU de clase H200.
 
 ## Instalar SimpleTuner
 
@@ -46,13 +46,15 @@ Elige una palabra como `TOK` e inclúyela en todas las descripciones de ese suje
 
 ## Configurar el entrenamiento
 
-Copia la receta SFT de 48 GB y sus prompts. Sustituye `48g` por el nivel elegido. Para Base, sustituye `moss_image-sft-48g.peft-lora` por `moss_image-48g.peft-lora` en los comandos.
+Copia la receta SFT de 48 GB y sus prompts. Sustituye `48g` por el nivel elegido. Para Base, sustituye `moss_image/sft/48g/peft-lora` por `moss_image/base/48g/peft-lora` en los comandos.
 
 ```bash
-mkdir -p config/examples datasets/moss-image
-cp -R simpletuner/examples/moss_image-sft-48g.peft-lora config/examples/
-cp simpletuner/examples/moss_image-prompts.json config/examples/
-cp config/examples/moss_image-sft-48g.peft-lora/config.json config/config.json
+mkdir -p config/examples/_shared datasets/moss-image
+mkdir -p config/examples/moss_image/sft/48g
+cp -R simpletuner/examples/moss_image/sft/48g/peft-lora config/examples/moss_image/sft/48g/
+mkdir -p config/examples/_shared
+cp simpletuner/examples/_shared/moss_image-prompts.json config/examples/_shared/
+cp config/examples/moss_image/sft/48g/peft-lora/config.json config/config.json
 ```
 
 La configuración utiliza LoRA BF16 de rango 32, tasa de aprendizaje `1e-4`, gradient checkpointing, REPA, 4.000 pasos del optimizador y escala 512. Abre `config/config.json` y modifica estas entradas dentro de la configuración existente:
@@ -163,12 +165,13 @@ image.save("my-moss-image.png")
 
 ## Entrenar una LoRA de edición o referencia
 
-Elige `model_flavour: "sft-edit"` o `"base-edit"` para entrenar con imágenes de referencia. Estas variantes parten del checkpoint SFT o Base correspondiente y aprenden el condicionamiento mediante tu adaptador. Empieza con `simpletuner/examples/moss_image-sft-edit.peft-lora` o `moss_image-base-edit.peft-lora`; usan una imagen objetivo por lote, entrenamiento a escala 512, REPA y validación del conjunto de datos.
+Elige `model_flavour: "sft-edit"` o `"base-edit"` para entrenar con imágenes de referencia. Estas variantes parten del checkpoint SFT o Base correspondiente y aprenden el condicionamiento mediante tu adaptador. Empieza con `simpletuner/examples/moss_image/sft-edit/default/peft-lora` o `moss_image/base-edit/default/peft-lora`; usan una imagen objetivo por lote, entrenamiento a escala 512, REPA y validación del conjunto de datos.
 
 ```bash
-mkdir -p config/examples datasets/moss-edits datasets/moss-references
-cp -R simpletuner/examples/moss_image-sft-edit.peft-lora config/examples/
-cp config/examples/moss_image-sft-edit.peft-lora/config.json config/config.json
+mkdir -p config/examples/_shared datasets/moss-edits datasets/moss-references
+mkdir -p config/examples/moss_image/sft-edit/default
+cp -R simpletuner/examples/moss_image/sft-edit/default/peft-lora config/examples/moss_image/sft-edit/default/
+cp config/examples/moss_image/sft-edit/default/peft-lora/config.json config/config.json
 ```
 
 Guarda el resultado deseado en `datasets/moss-edits/sample.png`, la instrucción en `datasets/moss-edits/sample.txt` y la referencia de entrada en `datasets/moss-references/sample.png`. Los nombres de las imágenes, incluidas las extensiones, deben coincidir en ambas carpetas. Una instrucción de ejemplo es `Change the blue mug to red while keeping the background unchanged.` Los ejemplos de edición incluyen esta configuración del dataloader:

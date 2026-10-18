@@ -5,8 +5,8 @@ This guide covers LoRA and LyCORIS LoKr training for Boogu-Image 0.1 in SimpleTu
 The included starter configs are:
 
 ```bash
-simpletuner/examples/boogu-image-v0.1.peft-lora/config.json
-simpletuner/examples/boogu-image-v0.1.lycoris-lokr/config.json
+simpletuner/examples/boogu_image/v0.1-base/default/peft-lora/config.json
+simpletuner/examples/boogu_image/v0.1-base/default/lycoris-lokr/config.json
 ```
 
 ## Hardware requirements
@@ -124,7 +124,7 @@ Minimal PEFT LoRA config:
   "max_train_steps": 1000,
   "resolution": 1024,
   "resolution_type": "pixel_area",
-  "data_backend_config": "config/examples/multidatabackend-small-dreambooth-1024px.json"
+  "data_backend_config": "config/examples/_shared/multidatabackend-small-dreambooth-1024px.json"
 }
 ```
 
@@ -133,27 +133,27 @@ Minimal PEFT LoRA config:
 PEFT LoRA:
 
 ```bash
-simpletuner train example=boogu-image-v0.1.peft-lora
+simpletuner train example=boogu_image/v0.1-base/default/peft-lora
 ```
 
 LyCORIS LoKr:
 
 ```bash
-simpletuner train example=boogu-image-v0.1.lycoris-lokr
+simpletuner train example=boogu_image/v0.1-base/default/lycoris-lokr
 ```
 
 Git checkout / development form:
 
 ```bash
-simpletuner train env=examples/boogu-image-v0.1.peft-lora
-simpletuner train env=examples/boogu-image-v0.1.lycoris-lokr
+simpletuner train env=examples/boogu_image/v0.1-base/default/peft-lora
+simpletuner train env=examples/boogu_image/v0.1-base/default/lycoris-lokr
 ```
 
 Legacy wrapper form:
 
 ```bash
-ENV=examples/boogu-image-v0.1.peft-lora ./train.sh
-ENV=examples/boogu-image-v0.1.lycoris-lokr ./train.sh
+ENV=examples/boogu_image/v0.1-base/default/peft-lora ./train.sh
+ENV=examples/boogu_image/v0.1-base/default/lycoris-lokr ./train.sh
 ```
 
 ## FP8 flavours

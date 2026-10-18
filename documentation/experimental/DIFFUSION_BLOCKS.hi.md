@@ -61,10 +61,10 @@ Pipeline के पूरे lifetime में `controller` रखें और
 
 ## Anima example
 
-`simpletuner/examples/anima.peft-lora+diffusion-blocks/config.json` देखें। Anima v1.0 की 28 layers, `layers_per_block=4` पर 7 blocks बनाती हैं।
+`simpletuner/examples/anima/base-v1.0/default/peft-lora+diffusion-blocks/config.json` देखें। Anima v1.0 की 28 layers, `layers_per_block=4` पर 7 blocks बनाती हैं।
 
 ```bash
-simpletuner train env=examples/anima.peft-lora+diffusion-blocks max_train_steps=10 validation_steps=10
+simpletuner train env=examples/anima/base-v1.0/default/peft-lora+diffusion-blocks max_train_steps=10 validation_steps=10
 ```
 
 Resume पर paths, layer count, boundaries, `blocks_to_train`, topology, world size, batch sampling, या timestep configuration न बदलें। Inference में सभी layers चलाना trained objective को invalid करता है।

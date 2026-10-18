@@ -52,10 +52,10 @@ SimpleTuner で使える ACE-Step flavour は次のとおりです。
 
 すぐに使える example preset は次の場所にあります。
 
-- `simpletuner/examples/ace_step-v1-0.peft-lora`
-- `simpletuner/examples/ace_step-v1-5.peft-lora`
+- `simpletuner/examples/ace_step/base/default/v1-0.peft-lora`
+- `simpletuner/examples/ace_step/v15-base/default/v1-5.peft-lora`
 
-`simpletuner train example=ace_step-v1-0.peft-lora` または `simpletuner train example=ace_step-v1-5.peft-lora` で直接起動できます。
+`simpletuner train example=ace_step/base/default/v1-0.peft-lora` または `simpletuner train example=ace_step/v15-base/default/v1-5.peft-lora` で直接起動できます。
 
 #### ACE-Step v1 の例
 

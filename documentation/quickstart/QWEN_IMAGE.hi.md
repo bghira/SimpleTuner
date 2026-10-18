@@ -142,7 +142,7 @@ cp config/config.json.example config/config.json
 
 > ⚠️ **24GB GPUs के लिए महत्वपूर्ण**: text encoder अकेला ~16GB VRAM उपयोग करता है। `int2-quanto` या `nf4-bnb` quantization के साथ इसे काफी कम किया जा सकता है।
 
-शामिल `qwen_image.peft-lora` उदाहरण अब 2.1 प्रशिक्षित करता है। पुराने प्रकारों के लिए उस उदाहरण की जगह अपनी स्पष्ट config से `simpletuner train` चलाएँ।
+शामिल `qwen_image/v2.1/default/peft-lora` उदाहरण अब 2.1 प्रशिक्षित करता है। पुराने प्रकारों के लिए उस उदाहरण की जगह अपनी स्पष्ट config से `simpletuner train` चलाएँ।
 
 ### उन्नत प्रयोगात्मक विशेषताएँ
 

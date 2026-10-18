@@ -6,11 +6,11 @@ MiniMax H3 は 33B の flow-matching video/audio モデルです。SimpleTuner �
 
 次の examples から始めます。
 
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-24g.peft-lora+ramtorch`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-32g.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-48g.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-80g.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/default/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/24g/fl2va-convrot-int8.peft-lora+ramtorch`
+- `simpletuner/examples/minimaxh3/convrot-int8/32g/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/48g/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/80g/fl2va-convrot-int8.peft-lora`
 
 VRAM に近い preset を選び、smoke test 後に resolution、frame count、attention backend、checkpointing を調整します。
 
@@ -114,7 +114,7 @@ MiniMax は、H3 の最終 training stage で MoBA-style 3D sparse attention を
 ## Run
 
 ```bash
-simpletuner train example=minimaxh3-fl2va-convrot-int8.peft-lora
+simpletuner train example=minimaxh3/convrot-int8/default/fl2va-convrot-int8.peft-lora
 ```
 
 long run の前に短い smoke test を行い、`h3_drift_loss`、normal loss、validation sample が一貫して動くことを確認します。

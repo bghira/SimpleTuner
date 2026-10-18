@@ -37,7 +37,7 @@ simpletuner server
 
 可以直接从仓库自带示例开始：
 
-- 示例配置：`simpletuner/examples/ernie.peft-lora/config.json`
+- 示例配置：`simpletuner/examples/ernie/base/default/peft-lora/config.json`
 - 本地环境：`config/ernie-example/config.json`
 
 运行：

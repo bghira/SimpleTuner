@@ -114,3 +114,5 @@
 ## लाइसेंस
 
 SimpleTuner ओपन सोर्स सॉफ़्टवेयर है।
+
+[प्रशिक्षण उदाहरण](https://github.com/bghira/SimpleTuner/tree/main/simpletuner/examples/README.hi.md)

@@ -17,8 +17,8 @@ Los ejemplos usan `int8-quanto`, `bf16`, `gradient_checkpointing=true` y `train_
 ## Ejemplos incluidos
 
 ```bash
-simpletuner train example=zlab-i1.peft-lora
-simpletuner train example=zlab-i1.lycoris-lokr
+simpletuner train example=zlab_i1/3b/default/peft-lora
+simpletuner train example=zlab_i1/3b/default/lycoris-lokr
 ```
 
 Empieza con PEFT LoRA. Usa LyCORIS LoKr cuando quieras esa factorización en lugar de un LoRA estándar.
@@ -45,7 +45,7 @@ El flavour `3b` resuelve a `bghira/zlab-i1-diffusers`, con el transformer en el 
 La validación funciona con el pipeline nativo de i1. Para una prueba rápida:
 
 ```bash
-simpletuner train example=zlab-i1.peft-lora validation_num_inference_steps=4 num_eval_images=1
+simpletuner train example=zlab_i1/3b/default/peft-lora validation_num_inference_steps=4 num_eval_images=1
 ```
 
 Cuatro pasos solo comprueban que el pipeline genera y guarda imágenes. Usa 250 pasos antes de evaluar calidad.

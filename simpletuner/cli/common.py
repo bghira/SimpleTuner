@@ -159,7 +159,7 @@ def _candidate_config_paths(env: str, backend_override: Optional[str], config_pa
         return candidates
 
     env_path = Path(env).expanduser()
-    if env_path.suffix:
+    if env_path.suffix in {".json", ".toml", ".env"}:
         _add(env_path)
         if not env_path.is_absolute():
             _add(Path.cwd() / env_path)

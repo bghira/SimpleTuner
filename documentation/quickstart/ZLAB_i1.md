@@ -28,8 +28,8 @@ Apple GPUs are not recommended for i1 training. CUDA is the expected path.
 Two ready-to-run examples are included:
 
 ```bash
-simpletuner train example=zlab-i1.peft-lora
-simpletuner train example=zlab-i1.lycoris-lokr
+simpletuner train example=zlab_i1/3b/default/peft-lora
+simpletuner train example=zlab_i1/3b/default/lycoris-lokr
 ```
 
 The PEFT example is the safer first run. The LyCORIS LoKr example is useful when you specifically want LoKr factorisation instead of a standard LoRA adapter.
@@ -68,7 +68,7 @@ SimpleTuner validation works through the native i1 pipeline. The defaults follow
 For quick smoke tests, you can temporarily reduce validation steps:
 
 ```bash
-simpletuner train example=zlab-i1.peft-lora validation_num_inference_steps=4 num_eval_images=1
+simpletuner train example=zlab_i1/3b/default/peft-lora validation_num_inference_steps=4 num_eval_images=1
 ```
 
 Four steps is only a pipeline sanity check. Use the full 250-step setting before judging quality.

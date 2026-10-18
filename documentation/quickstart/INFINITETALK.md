@@ -29,10 +29,10 @@ The profiles keep batch size at 1. Increase gradient accumulation for a larger e
 
 | VRAM | Frames | Base weights | Weight residency | Example |
 | --- | ---: | --- | --- | --- |
-| 24 GB | 17 | bf16 | RamTorch, all blocks streamed | `infinitetalk-14b-480p-24gb.peft-lora` |
-| 32 GB | 17 | int8 TorchAO | 20 blocks swapped | `infinitetalk-14b-480p-32gb.peft-lora` |
-| 48 GB | 33 | bf16 | 24 blocks swapped | `infinitetalk-14b-480p-48gb.peft-lora` |
-| 80 GB | 49 | bf16 | resident | `infinitetalk-14b-480p-80gb.peft-lora` |
+| 24 GB | 17 | bf16 | RamTorch, all blocks streamed | `infinitetalk/single-14b-480p/24g/14b-480p.peft-lora` |
+| 32 GB | 17 | int8 TorchAO | 20 blocks swapped | `infinitetalk/single-14b-480p/32g/14b-480p.peft-lora` |
+| 48 GB | 33 | bf16 | 24 blocks swapped | `infinitetalk/single-14b-480p/48g/14b-480p.peft-lora` |
+| 80 GB | 49 | bf16 | resident | `infinitetalk/single-14b-480p/80g/14b-480p.peft-lora` |
 
 CPU RAM, attention backend, optimizer, and frame dimensions affect the actual peak. Start with the matching profile and lower `video.num_frames` before lowering spatial resolution.
 
@@ -90,7 +90,7 @@ Run the 80 GB profile:
 
 ```bash
 simpletuner train \
-  --config simpletuner/examples/infinitetalk-14b-480p-80gb.peft-lora/config.json
+  --config simpletuner/examples/infinitetalk/single-14b-480p/80g/14b-480p.peft-lora/config.json
 ```
 
 The important model settings are:

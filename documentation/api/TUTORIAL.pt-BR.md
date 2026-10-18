@@ -346,10 +346,10 @@ curl -s -X POST http://localhost:8001/api/training/validation/run
 - Prefere manter os uploads embutidos do SimpleTuner e passar a URL remota para sua propria ferramenta? Configure `--post_upload_script` em vez disso; ele dispara uma vez por provedor de publicacao/upload para Hugging Face Hub com `{remote_checkpoint_path}` (se fornecido pelo backend) e os mesmos placeholders de contexto. O SimpleTuner nao ingere resultados do seu script, entao registre artefatos/metricas no seu tracker.
   - Exemplo: `--post_upload_script='/opt/hooks/notify.sh {remote_checkpoint_path} {tracker_project_name} {tracker_run_name}'` onde `notify.sh` chama sua API de tracker.
   - Exemplos de trabalho:
-    - `simpletuner/examples/external-validation/replicate_post_upload.py` dispara uma inferencia Replicate usando `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}` e `{huggingface_path}`.
-    - `simpletuner/examples/external-validation/wavespeed_post_upload.py` dispara inferencia WaveSpeed e faz polling de conclusao usando os mesmos placeholders.
-    - `simpletuner/examples/external-validation/fal_post_upload.py` dispara inferencia Flux LoRA no fal.ai (requer `FAL_KEY` e `model_family` contendo `flux`).
-    - `simpletuner/examples/external-validation/use_second_gpu.py` roda inferencia Flux LoRA em outra GPU sem exigir uploads.
+    - `simpletuner/examples/_shared/external-validation/replicate_post_upload.py` dispara uma inferencia Replicate usando `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}` e `{huggingface_path}`.
+    - `simpletuner/examples/_shared/external-validation/wavespeed_post_upload.py` dispara inferencia WaveSpeed e faz polling de conclusao usando os mesmos placeholders.
+    - `simpletuner/examples/_shared/external-validation/fal_post_upload.py` dispara inferencia Flux LoRA no fal.ai (requer `FAL_KEY` e `model_family` contendo `flux`).
+    - `simpletuner/examples/_shared/external-validation/use_second_gpu.py` roda inferencia Flux LoRA em outra GPU sem exigir uploads.
 
 Se nenhum job estiver ativo o endpoint retorna HTTP 400, entao verifique `/api/training/status` antes ao fazer retries por script.
 

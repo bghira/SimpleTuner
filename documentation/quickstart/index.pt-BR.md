@@ -1,5 +1,10 @@
 # Guias de Modelos
 
+[Exemplos de treinamento](https://github.com/bghira/SimpleTuner/tree/main/simpletuner/examples/README.pt-BR.md) — Os exemplos seguem `model_family/model_flavour/vram/recipe`. Escolha a família, a variante e uma faixa de memória como `24g`, `48g` ou `80g`. A faixa de VRAM `default` não define uma capacidade específica; a variante `default` usa o padrão configurado pelo modelo. Uma faixa como `8x80g` exige oito GPUs com 80 GB cada.
+
+No criador de ambientes e no assistente de configuração da WebUI, selecione primeiro a família. O seletor mostra somente receitas dessa família. Alterar a família limpa a seleção anterior.
+
+
 Guias passo a passo para treinar cada arquitetura de modelo suportada.
 
 ## Modelos de Imagem

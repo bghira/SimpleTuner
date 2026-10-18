@@ -67,7 +67,7 @@ simpletuner configure config/foo/config.json
 
 `moss_image` の既定の `sft` は `OpenMOSS-Team/MOSS-Image-SFT` を読み込みます。`OpenMOSS-Team/MOSS-Image-Base` には `model_flavour: "base"` を指定します。学習例は 512×512 相当の面積を使います。[MOSS-Image クイックスタート](quickstart/MOSS_IMAGE.ja.md)を参照してください。
 
-参照画像付きで学習するには `model_flavour: "sft-edit"` または `"base-edit"` を選びます。対応するSFTまたはBaseチェックポイントから開始し、アダプターで参照画像による条件付けを学習します。`simpletuner/examples/moss_image-sft-edit.peft-lora` または `moss_image-base-edit.peft-lora` を使用してください。いずれもバッチあたりターゲット1枚、512相当の学習、REPA、データセットによる検証を設定しています。
+参照画像付きで学習するには `model_flavour: "sft-edit"` または `"base-edit"` を選びます。対応するSFTまたはBaseチェックポイントから開始し、アダプターで参照画像による条件付けを学習します。`simpletuner/examples/moss_image/sft-edit/default/peft-lora` または `moss_image/base-edit/default/peft-lora` を使用してください。いずれもバッチあたりターゲット1枚、512相当の学習、REPA、データセットによる検証を設定しています。
 
 ### `--lora_format`
 
@@ -916,10 +916,10 @@ TorchInductor の host wrapper を選択します。`cpp` が既定で dispatch 
        -d "{\"remote_uri\":\"${REMOTE}\"}"
   ```
 - **動作サンプル**:
-  - `simpletuner/examples/external-validation/replicate_post_upload.py` は `{remote_checkpoint_path}`、`{model_family}`、`{model_type}`、`{lora_type}`、`{huggingface_path}` を使ってアップロード後に推論を起動する Replicate フック。
-  - `simpletuner/examples/external-validation/wavespeed_post_upload.py` は同じプレースホルダに加えて WaveSpeed の非同期ポーリングを使うフック。
-  - `simpletuner/examples/external-validation/fal_post_upload.py` は fal.ai Flux LoRA フック（`FAL_KEY` が必要）。
-  - `simpletuner/examples/external-validation/use_second_gpu.py` は二次 GPU で Flux LoRA 推論を実行し、リモートアップロードがなくても動作します。
+  - `simpletuner/examples/_shared/external-validation/replicate_post_upload.py` は `{remote_checkpoint_path}`、`{model_family}`、`{model_type}`、`{lora_type}`、`{huggingface_path}` を使ってアップロード後に推論を起動する Replicate フック。
+  - `simpletuner/examples/_shared/external-validation/wavespeed_post_upload.py` は同じプレースホルダに加えて WaveSpeed の非同期ポーリングを使うフック。
+  - `simpletuner/examples/_shared/external-validation/fal_post_upload.py` は fal.ai Flux LoRA フック（`FAL_KEY` が必要）。
+  - `simpletuner/examples/_shared/external-validation/use_second_gpu.py` は二次 GPU で Flux LoRA 推論を実行し、リモートアップロードがなくても動作します。
 
 ### `--post_checkpoint_script`
 

@@ -1,5 +1,10 @@
 # 快速开始指南
 
+[训练示例](https://github.com/bghira/SimpleTuner/tree/main/simpletuner/examples/README.zh.md) — 示例按 `model_family/model_flavour/vram/recipe` 组织。先选择模型系列，再选择变体和 `24g`、`48g` 或 `80g` 等显存档位。`default` 显存档位没有特定显存目标；`default` 变体使用模型配置的默认值。`8x80g` 等多 GPU 档位需要八张显存各为 80 GB 的 GPU。
+
+在 WebUI 环境创建器和设置向导中，先选择模型系列。示例选择器只显示该系列的配方。切换系列会清除先前选择的示例。
+
+
 **注意**：如需更高级的配置，请参阅[教程](TUTORIAL.md)和[选项参考](OPTIONS.md)。
 
 ## 模型快速开始指南

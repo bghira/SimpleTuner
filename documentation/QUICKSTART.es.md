@@ -1,5 +1,10 @@
 # Guía de inicio rápido
 
+[Ejemplos de entrenamiento](https://github.com/bghira/SimpleTuner/tree/main/simpletuner/examples/README.es.md) — Los ejemplos se organizan como `model_family/model_flavour/vram/recipe`. Elige la familia, su variante y un nivel de memoria como `24g`, `48g` u `80g`. El nivel de VRAM `default` no especifica una capacidad; la variante `default` utiliza el valor predeterminado del modelo. Un nivel como `8x80g` requiere ocho GPU de 80 GB cada una.
+
+En el creador de entornos y el asistente de configuración de la WebUI, selecciona primero la familia. El selector solo muestra recetas de esa familia. Cambiarla borra la selección anterior.
+
+
 **Nota**: Para configuraciones más avanzadas, consulta el [tutorial](TUTORIAL.md) y la [referencia de opciones](OPTIONS.md).
 
 ## Guías de inicio rápido por modelo

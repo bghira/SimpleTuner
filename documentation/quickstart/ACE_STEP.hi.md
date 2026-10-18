@@ -52,10 +52,10 @@ SimpleTuner वर्तमान में ACE-Step के लिए ये fla
 
 तुरंत उपयोग के लिए example presets यहाँ उपलब्ध हैं:
 
-- `simpletuner/examples/ace_step-v1-0.peft-lora`
-- `simpletuner/examples/ace_step-v1-5.peft-lora`
+- `simpletuner/examples/ace_step/base/default/v1-0.peft-lora`
+- `simpletuner/examples/ace_step/v15-base/default/v1-5.peft-lora`
 
-आप इन्हें सीधे `simpletuner train example=ace_step-v1-0.peft-lora` या `simpletuner train example=ace_step-v1-5.peft-lora` से चला सकते हैं।
+आप इन्हें सीधे `simpletuner train example=ace_step/base/default/v1-0.peft-lora` या `simpletuner train example=ace_step/v15-base/default/v1-5.peft-lora` से चला सकते हैं।
 
 #### ACE-Step v1 उदाहरण
 

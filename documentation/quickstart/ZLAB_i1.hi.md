@@ -17,8 +17,8 @@ Example configs `int8-quanto`, `bf16`, `gradient_checkpointing=true`, और `tr
 ## Included examples
 
 ```bash
-simpletuner train example=zlab-i1.peft-lora
-simpletuner train example=zlab-i1.lycoris-lokr
+simpletuner train example=zlab_i1/3b/default/peft-lora
+simpletuner train example=zlab_i1/3b/default/lycoris-lokr
 ```
 
 पहले PEFT LoRA चलाएं। LyCORIS LoKr तब इस्तेमाल करें जब आपको standard LoRA के बजाय LoKr factorisation चाहिए।
@@ -45,7 +45,7 @@ simpletuner train example=zlab-i1.lycoris-lokr
 Validation native i1 pipeline से चलता है। Quick smoke test के लिए:
 
 ```bash
-simpletuner train example=zlab-i1.peft-lora validation_num_inference_steps=4 num_eval_images=1
+simpletuner train example=zlab_i1/3b/default/peft-lora validation_num_inference_steps=4 num_eval_images=1
 ```
 
 4 steps सिर्फ pipeline और image saving check करते हैं। Quality judge करने से पहले 250 steps इस्तेमाल करें।

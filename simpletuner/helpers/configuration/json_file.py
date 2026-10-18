@@ -29,7 +29,7 @@ def _candidate_json_paths(env: str | None) -> list[Path]:
 
     if env and env != "default":
         env_path = Path(env).expanduser()
-        if env_path.suffix:
+        if env_path.suffix == ".json":
             candidates.append(env_path)
             if not env_path.is_absolute():
                 candidates.append(Path.cwd() / env_path)

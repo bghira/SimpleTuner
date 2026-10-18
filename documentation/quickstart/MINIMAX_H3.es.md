@@ -6,11 +6,11 @@ MiniMax H3 es un modelo de video/audio flow-matching de 33B. SimpleTuner soporta
 
 Empieza desde uno de estos ejemplos:
 
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-24g.peft-lora+ramtorch`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-32g.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-48g.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-80g.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/default/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/24g/fl2va-convrot-int8.peft-lora+ramtorch`
+- `simpletuner/examples/minimaxh3/convrot-int8/32g/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/48g/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/80g/fl2va-convrot-int8.peft-lora`
 
 Usa el preset más cercano a tu VRAM y ajusta resolución, frames, attention backend y checkpointing después de un smoke test.
 
@@ -114,7 +114,7 @@ Este modo requiere CUDA y agrega un límite de grafo Dynamo alrededor de FlexAtt
 ## Ejecutar
 
 ```bash
-simpletuner train example=minimaxh3-fl2va-convrot-int8.peft-lora
+simpletuner train example=minimaxh3/convrot-int8/default/fl2va-convrot-int8.peft-lora
 ```
 
 Haz un smoke test corto y revisa que `h3_drift_loss`, la pérdida normal y las validaciones se comporten de forma coherente.

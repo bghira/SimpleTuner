@@ -5,7 +5,7 @@
 示例配置：
 
 ```bash
-simpletuner/examples/ideogram-fp8.peft-lora/config.json
+simpletuner/examples/ideogram/fp8/default/peft-lora/config.json
 ```
 
 ## 硬件和精度
@@ -44,9 +44,9 @@ Validation 会有单独的生成峰值，所以启用 `ideogram_validation=true`
 复制示例配置和 dataloader：
 
 ```bash
-mkdir -p config/examples
-cp simpletuner/examples/ideogram-fp8.peft-lora/config.json config/config.json
-cp simpletuner/examples/multidatabackend-ideogram-dreambooth-1024px.json config/examples/multidatabackend-ideogram-dreambooth-1024px.json
+mkdir -p config/examples/_shared
+cp simpletuner/examples/ideogram/fp8/default/peft-lora/config.json config/config.json
+cp simpletuner/examples/_shared/multidatabackend-ideogram-dreambooth-1024px.json config/examples/_shared/multidatabackend-ideogram-dreambooth-1024px.json
 ```
 
 关键字段：

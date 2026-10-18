@@ -10,13 +10,13 @@ GPU मेमोरी के अनुसार रेसिपी चुने
 
 | GPU मेमोरी | Base उदाहरण | SFT उदाहरण | प्रति बैच चित्र | `gradient_checkpointing_interval` |
 | --- | --- | --- | ---: | ---: |
-| 24 GB | `moss_image-24g.peft-lora` | `moss_image-sft-24g.peft-lora` | 1 | 1 |
-| 32 GB | `moss_image-32g.peft-lora` | `moss_image-sft-32g.peft-lora` | 1 | 2 |
-| 48 GB | `moss_image-48g.peft-lora` | `moss_image-sft-48g.peft-lora` | 2 | 2 |
-| 80 GB | `moss_image-80g.peft-lora` | `moss_image-sft-80g.peft-lora` | 4 | 2 |
-| 144 GB | `moss_image-144g.peft-lora` | `moss_image-sft-144g.peft-lora` | 8 | 2 |
+| 24 GB | `moss_image/base/24g/peft-lora` | `moss_image/sft/24g/peft-lora` | 1 | 1 |
+| 32 GB | `moss_image/base/32g/peft-lora` | `moss_image/sft/32g/peft-lora` | 1 | 2 |
+| 48 GB | `moss_image/base/48g/peft-lora` | `moss_image/sft/48g/peft-lora` | 2 | 2 |
+| 80 GB | `moss_image/base/80g/peft-lora` | `moss_image/sft/80g/peft-lora` | 4 | 2 |
+| 144 GB | `moss_image/base/144g/peft-lora` | `moss_image/sft/144g/peft-lora` | 8 | 2 |
 
-डिफ़ॉल्ट `moss_image.peft-lora` और `moss_image-sft.peft-lora` में 48 GB सेटिंग हैं। बैच आकार शुरुआती संदर्भ हैं: लंबे कैप्शन, अतिरिक्त सुविधाओं या अनुपात बकेट में बैच से कम चित्र होने पर `train_batch_size` घटाएँ। 144 GB स्तर H200 श्रेणी के GPU के लिए है।
+डिफ़ॉल्ट `moss_image/sft/default/default.peft-lora` और `moss_image/sft/default/peft-lora` में 48 GB सेटिंग हैं। बैच आकार शुरुआती संदर्भ हैं: लंबे कैप्शन, अतिरिक्त सुविधाओं या अनुपात बकेट में बैच से कम चित्र होने पर `train_batch_size` घटाएँ। 144 GB स्तर H200 श्रेणी के GPU के लिए है।
 
 ## SimpleTuner इंस्टॉल करें
 
@@ -46,13 +46,15 @@ datasets/moss-image/
 
 ## प्रशिक्षण कॉन्फ़िगरेशन बनाएँ
 
-48 GB SFT रेसिपी और नमूना प्रॉम्प्ट कॉपी करें। `48g` की जगह अपना चुना स्तर रखें। Base के लिए कमांड में `moss_image-sft-48g.peft-lora` को `moss_image-48g.peft-lora` से बदलें।
+48 GB SFT रेसिपी और नमूना प्रॉम्प्ट कॉपी करें। `48g` की जगह अपना चुना स्तर रखें। Base के लिए कमांड में `moss_image/sft/48g/peft-lora` को `moss_image/base/48g/peft-lora` से बदलें।
 
 ```bash
-mkdir -p config/examples datasets/moss-image
-cp -R simpletuner/examples/moss_image-sft-48g.peft-lora config/examples/
-cp simpletuner/examples/moss_image-prompts.json config/examples/
-cp config/examples/moss_image-sft-48g.peft-lora/config.json config/config.json
+mkdir -p config/examples/_shared datasets/moss-image
+mkdir -p config/examples/moss_image/sft/48g
+cp -R simpletuner/examples/moss_image/sft/48g/peft-lora config/examples/moss_image/sft/48g/
+mkdir -p config/examples/_shared
+cp simpletuner/examples/_shared/moss_image-prompts.json config/examples/_shared/
+cp config/examples/moss_image/sft/48g/peft-lora/config.json config/config.json
 ```
 
 रेसिपी में rank-32 BF16 LoRA, `1e-4` लर्निंग रेट, gradient checkpointing, REPA, 4,000 ऑप्टिमाइज़र स्टेप और 512-स्तर प्रशिक्षण है। `config/config.json` खोलकर मौजूदा कॉन्फ़िगरेशन में ये प्रविष्टियाँ बदलें:
@@ -163,12 +165,13 @@ image.save("my-moss-image.png")
 
 ## एडिट या रेफ़रेंस LoRA ट्रेन करें
 
-रेफ़रेंस इमेज के साथ ट्रेन करने के लिए `model_flavour: "sft-edit"` या `"base-edit"` चुनें। ये फ़्लेवर संबंधित SFT या Base checkpoint से शुरू होते हैं और आपके adapter के माध्यम से रेफ़रेंस कंडीशनिंग सीखते हैं। `simpletuner/examples/moss_image-sft-edit.peft-lora` या `moss_image-base-edit.peft-lora` से शुरू करें; इनमें प्रति बैच एक लक्ष्य इमेज, 512-स्केल ट्रेनिंग, REPA और डेटासेट वैलिडेशन शामिल हैं।
+रेफ़रेंस इमेज के साथ ट्रेन करने के लिए `model_flavour: "sft-edit"` या `"base-edit"` चुनें। ये फ़्लेवर संबंधित SFT या Base checkpoint से शुरू होते हैं और आपके adapter के माध्यम से रेफ़रेंस कंडीशनिंग सीखते हैं। `simpletuner/examples/moss_image/sft-edit/default/peft-lora` या `moss_image/base-edit/default/peft-lora` से शुरू करें; इनमें प्रति बैच एक लक्ष्य इमेज, 512-स्केल ट्रेनिंग, REPA और डेटासेट वैलिडेशन शामिल हैं।
 
 ```bash
-mkdir -p config/examples datasets/moss-edits datasets/moss-references
-cp -R simpletuner/examples/moss_image-sft-edit.peft-lora config/examples/
-cp config/examples/moss_image-sft-edit.peft-lora/config.json config/config.json
+mkdir -p config/examples/_shared datasets/moss-edits datasets/moss-references
+mkdir -p config/examples/moss_image/sft-edit/default
+cp -R simpletuner/examples/moss_image/sft-edit/default/peft-lora config/examples/moss_image/sft-edit/default/
+cp config/examples/moss_image/sft-edit/default/peft-lora/config.json config/config.json
 ```
 
 वांछित आउटपुट `datasets/moss-edits/sample.png`, उसका निर्देश `datasets/moss-edits/sample.txt` और इनपुट रेफ़रेंस `datasets/moss-references/sample.png` में रखें। दोनों फ़ोल्डर में इमेज के नाम और एक्सटेंशन समान होने चाहिए। उदाहरण निर्देश: `Change the blue mug to red while keeping the background unchanged.` एडिट उदाहरणों में यह dataloader कॉन्फ़िगरेशन है:

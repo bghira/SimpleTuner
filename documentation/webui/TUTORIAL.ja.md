@@ -245,13 +245,13 @@ SimpleTuner の組み込み公開プロバイダー(または Hugging Face Hub �
 
 ここで、`notify.sh` は URL をトラッカーの Web API に投稿します。Slack、カスタムダッシュボード、またはその他の統合に自由に適応させてください。
 
-実際のサンプル: `simpletuner/examples/external-validation/replicate_post_upload.py` は、`{remote_checkpoint_path}`、`{model_family}`、`{model_type}`、`{lora_type}`、`{huggingface_path}` を使用して、アップロード後に Replicate 推論をトリガーする方法を示しています。
+実際のサンプル: `simpletuner/examples/_shared/external-validation/replicate_post_upload.py` は、`{remote_checkpoint_path}`、`{model_family}`、`{model_type}`、`{lora_type}`、`{huggingface_path}` を使用して、アップロード後に Replicate 推論をトリガーする方法を示しています。
 
-別のサンプル: `simpletuner/examples/external-validation/wavespeed_post_upload.py` は WaveSpeed API を呼び出し、同じプレースホルダーを使用して結果をポーリングします。
+別のサンプル: `simpletuner/examples/_shared/external-validation/wavespeed_post_upload.py` は WaveSpeed API を呼び出し、同じプレースホルダーを使用して結果をポーリングします。
 
-Flux に焦点を当てたサンプル: `simpletuner/examples/external-validation/fal_post_upload.py` は fal.ai Flux LoRA エンドポイントを呼び出します。`FAL_KEY` が必要で、`model_family` に `flux` が含まれている場合にのみ実行されます。
+Flux に焦点を当てたサンプル: `simpletuner/examples/_shared/external-validation/fal_post_upload.py` は fal.ai Flux LoRA エンドポイントを呼び出します。`FAL_KEY` が必要で、`model_family` に `flux` が含まれている場合にのみ実行されます。
 
-ローカル GPU サンプル: `simpletuner/examples/external-validation/use_second_gpu.py` は別の GPU(デフォルトは `cuda:1`)で Flux LoRA 推論を実行し、アップロードが発生しない場合でも使用できます。
+ローカル GPU サンプル: `simpletuner/examples/_shared/external-validation/use_second_gpu.py` は別の GPU(デフォルトは `cuda:1`)で Flux LoRA 推論を実行し、アップロードが発生しない場合でも使用できます。
 
 <img width="508" height="600" alt="image" src="https://github.com/user-attachments/assets/e699ba57-526b-4f60-9e8c-0ba410761c9f" />
 

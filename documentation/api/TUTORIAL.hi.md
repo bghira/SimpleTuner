@@ -344,10 +344,10 @@ curl -s -X POST http://localhost:8001/api/training/validation/run
 - SimpleTuner के built-in uploads रखना चाहते हैं, लेकिन remote URL को अपनी toolchain को देना चाहते हैं? `--post_upload_script` कॉन्फ़िगर करें; यह प्रति publishing provider/Hugging Face Hub upload पर `{remote_checkpoint_path}` (यदि backend देता है) और वही context placeholders के साथ चलता है। SimpleTuner आपके script का परिणाम ingest नहीं करता, इसलिए अपने tracker में artifacts/metrics खुद लॉग करें।
   - उदाहरण: `--post_upload_script='/opt/hooks/notify.sh {remote_checkpoint_path} {tracker_project_name} {tracker_run_name}'` जहां `notify.sh` आपका tracker API कॉल करता है।
   - Working samples:
-    - `simpletuner/examples/external-validation/replicate_post_upload.py` `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}`, और `{huggingface_path}` के साथ Replicate inference ट्रिगर करता है।
-    - `simpletuner/examples/external-validation/wavespeed_post_upload.py` WaveSpeed inference ट्रिगर करता है और completion तक poll करता है, वही placeholders इस्तेमाल करता है।
-    - `simpletuner/examples/external-validation/fal_post_upload.py` fal.ai Flux LoRA inference ट्रिगर करता है (इसके लिए `FAL_KEY` और `model_family` में `flux` होना चाहिए)।
-    - `simpletuner/examples/external-validation/use_second_gpu.py` बिना uploads के दूसरी GPU पर Flux LoRA inference चलाता है।
+    - `simpletuner/examples/_shared/external-validation/replicate_post_upload.py` `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}`, और `{huggingface_path}` के साथ Replicate inference ट्रिगर करता है।
+    - `simpletuner/examples/_shared/external-validation/wavespeed_post_upload.py` WaveSpeed inference ट्रिगर करता है और completion तक poll करता है, वही placeholders इस्तेमाल करता है।
+    - `simpletuner/examples/_shared/external-validation/fal_post_upload.py` fal.ai Flux LoRA inference ट्रिगर करता है (इसके लिए `FAL_KEY` और `model_family` में `flux` होना चाहिए)।
+    - `simpletuner/examples/_shared/external-validation/use_second_gpu.py` बिना uploads के दूसरी GPU पर Flux LoRA inference चलाता है।
 
 अगर कोई job active नहीं है तो endpoint HTTP 400 लौटाता है, इसलिए scripting retries से पहले `/api/training/status` चेक करें।
 

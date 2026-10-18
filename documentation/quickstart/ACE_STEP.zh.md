@@ -52,10 +52,10 @@ SimpleTuner 当前支持以下 ACE-Step flavour：
 
 现成可用的示例 preset 位于：
 
-- `simpletuner/examples/ace_step-v1-0.peft-lora`
-- `simpletuner/examples/ace_step-v1-5.peft-lora`
+- `simpletuner/examples/ace_step/base/default/v1-0.peft-lora`
+- `simpletuner/examples/ace_step/v15-base/default/v1-5.peft-lora`
 
-你可以直接使用 `simpletuner train example=ace_step-v1-0.peft-lora` 或 `simpletuner train example=ace_step-v1-5.peft-lora` 启动。
+你可以直接使用 `simpletuner train example=ace_step/base/default/v1-0.peft-lora` 或 `simpletuner train example=ace_step/v15-base/default/v1-5.peft-lora` 启动。
 
 #### ACE-Step v1 示例
 
