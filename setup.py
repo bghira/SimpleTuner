@@ -277,6 +277,7 @@ base_deps = [
     "pillow>=11.3.0",
     "trainingsample>=0.3.0,<0.4.0",
     "accelerate>=1.5.2",
+    "filelock>=3.16.1",
     "safetensors>=0.5.3",
     "open-clip-torch>=2.26.1",
     "iterutils>=0.1.6",
