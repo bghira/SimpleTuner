@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
+from accelerate.utils import DynamoBackend, TorchDynamoPlugin
 from peft import LoraConfig
 from peft.utils import get_peft_model_state_dict
 
@@ -49,6 +50,71 @@ class MOSSImageTests(unittest.TestCase):
 
     def predict(self, model=None, **kwargs):
         return (model or self.model)(self.image, self.time, self.text, self.mask, **kwargs).sample
+
+    def _regional_compilation_foundation(self, plugin):
+        foundation = object.__new__(MOSSImage)
+        foundation.model = self.model
+        foundation.config = SimpleNamespace(controlnet=False)
+        foundation.accelerator = SimpleNamespace(
+            state=SimpleNamespace(dynamo_plugin=plugin),
+            unwrap_model=lambda model, **kwargs: model,
+        )
+        return foundation
+
+    def test_regional_compilation_targets_repeated_blocks_and_preserves_gradients(self):
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        expected = self.predict()
+        expected.square().mean().backward()
+        gradients = {name: parameter.grad.clone() for name, parameter in self.model.named_parameters()}
+        self.model.zero_grad(set_to_none=True)
+        parameter_ids = [id(parameter) for parameter in self.model.parameters()]
+        plugin = TorchDynamoPlugin(backend="eager", use_regional_compilation=True, dynamic=True, fullgraph=True)
+        foundation = self._regional_compilation_foundation(plugin)
+
+        with patch("torch.compile", wraps=torch.compile) as compile_model:
+            with foundation.regional_compilation_context():
+                self.assertEqual(plugin.backend, DynamoBackend.NO)
+            compiled = [call.args[0].__self__ for call in compile_model.call_args_list]
+        self.assertEqual(compiled, list(self.model.layers))
+        self.assertEqual(plugin.backend, DynamoBackend.EAGER)
+        self.assertTrue(plugin.use_regional_compilation)
+        self.assertEqual(parameter_ids, [id(parameter) for parameter in self.model.parameters()])
+        self.assertIsInstance(self.model.layers, torch.nn.ModuleList)
+        for auxiliary in (self.model.shared_block_modulation, self.model.video_head_modulation, self.model.time_embedding):
+            self.assertIsNone(auxiliary._compiled_call_impl)
+
+        actual = self.predict()
+        actual.square().mean().backward()
+        torch.testing.assert_close(actual, expected)
+        for name, parameter in self.model.named_parameters():
+            torch.testing.assert_close(parameter.grad, gradients[name])
+
+    def test_regional_compilation_leaves_other_policies_unchanged(self):
+        for backend, regional, declared_blocks in (("no", True, True), ("eager", False, True), ("eager", True, False)):
+            with self.subTest(backend=backend, regional=regional, declared_blocks=declared_blocks):
+                plugin = TorchDynamoPlugin(backend=backend, use_regional_compilation=regional)
+                original = plugin.to_dict()
+                foundation = self._regional_compilation_foundation(plugin)
+                foundation.REGIONAL_COMPILE_REPEATED_BLOCKS = declared_blocks
+                with patch.object(self.model, "compile_repeated_blocks") as compile_blocks:
+                    with foundation.regional_compilation_context():
+                        self.assertEqual(plugin.to_dict(), original)
+                    compile_blocks.assert_not_called()
+                self.assertEqual(plugin.to_dict(), original)
+
+    def test_regional_compilation_restores_plugin_when_prepare_raises(self):
+        plugin = TorchDynamoPlugin(backend="eager", use_regional_compilation=True, fullgraph=True, dynamic=True)
+        original = plugin.to_dict()
+        foundation = self._regional_compilation_foundation(plugin)
+        compile_kwargs = plugin.to_kwargs()
+        with patch.object(self.model, "compile_repeated_blocks") as compile_blocks:
+            with self.assertRaisesRegex(RuntimeError, "prepare failed"):
+                with foundation.regional_compilation_context():
+                    self.assertEqual(plugin.backend, DynamoBackend.NO)
+                    raise RuntimeError("prepare failed")
+            compile_blocks.assert_called_once_with(**compile_kwargs)
+        self.assertEqual(plugin.to_dict(), original)
 
     def pipeline(self, model=None):
         pipeline = MOSSImagePipeline(model or self.model)
