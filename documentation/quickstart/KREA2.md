@@ -145,15 +145,19 @@ For reduce-overhead compile:
 
 Compile should be considered a batch-size-1 performance option first. It can make larger batches OOM even when the same batch fits without compile.
 
-### LyCORIS 4 LoKR kernel size
+### LyCORIS version
 
-If LyCORIS 4 LoKR training raises `kron apply factors too large for the kernel`, select its PyTorch kernel backend before starting the trainer or WebUI. The error comes from the experimental Triton kernel's factor-size limit. SimpleTuner's `torch.compile` can remain enabled; disabling compilation alone does not switch LyCORIS kernels.
+Use LyCORIS 4.1.3 or later for LoKR training. This version handles the large factors that caused `kron apply factors too large for the kernel` in earlier 4.x versions.
+
+To upgrade an existing installation, run this in your SimpleTuner environment:
 
 ```bash
-export LYCORIS_KERNEL_BACKEND=torch
+pip install --upgrade "lycoris-lora>=4.1.3"
 ```
 
-[LyCORIS kernel backends](https://github.com/KohakuBlueleaf/LyCORIS/blob/main/docs/kernels/backends.md).
+If you previously set `LYCORIS_KERNEL_BACKEND=torch` for this error, remove that override from your launch environment to use automatic backend selection.
+
+[LyCORIS 4.1.3 release](https://github.com/KohakuBlueleaf/LyCORIS/releases/tag/v4.1.3).
 
 ## Dataloader configuration
 
