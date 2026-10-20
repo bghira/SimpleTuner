@@ -1,5 +1,9 @@
 SimpleTuner CuTe attention
 
+Key-centering API and precision diagnostics synchronized with KohakuFA-CuTe
+revision 8dfecf221dcb94465ee9d878036003015b1f71ce (PRs #2, #3 and #4).
+https://github.com/SimpleTuner-io/KohakuFA-CuTe
+
 The local kernels use warp MMA on Ada/RTX Blackwell and WGMMA on eligible Hopper
 tiles. Hopper uses TMA loads with double buffering where alignment, strides and
 tile size permit. They keep unscaled row maxima separate from logarithmic
