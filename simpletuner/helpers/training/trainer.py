@@ -4623,14 +4623,15 @@ class Trainer:
             standalone_cp_prepare_config = getattr(accelerator_state, "parallelism_config", None)
             accelerator_state.parallelism_config = None
         try:
-            if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
-                results = self.accelerator.prepare(*prepare_targets)
-            else:
-                device_placement = [
-                    (False if label == "primary_model" and skip_model_device_placement else True)
-                    for label in prepared_labels
-                ]
-                results = self.accelerator.prepare(*prepare_targets, device_placement=device_placement)
+            with self.model.regional_compilation_context():
+                if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+                    results = self.accelerator.prepare(*prepare_targets)
+                else:
+                    device_placement = [
+                        (False if label == "primary_model" and skip_model_device_placement else True)
+                        for label in prepared_labels
+                    ]
+                    results = self.accelerator.prepare(*prepare_targets, device_placement=device_placement)
         finally:
             if hide_standalone_cp_from_accelerate_prepare:
                 accelerator_state.parallelism_config = standalone_cp_prepare_config
@@ -4700,7 +4701,8 @@ class Trainer:
         if hasattr(self.model, "before_accelerator_prepare"):
             self.model.before_accelerator_prepare()
 
-        prepared_model = self.accelerator.prepare_model(primary_model, evaluation_mode=True)
+        with self.model.regional_compilation_context():
+            prepared_model = self.accelerator.prepare_model(primary_model, evaluation_mode=True)
         prepared_model = rebind_prepared_forward(prepared_model, primary_model)
         self.model.set_prepared_model(prepared_model)
         prepared_model.eval()

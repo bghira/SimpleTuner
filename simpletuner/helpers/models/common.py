@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 import numpy as np
 import torch
 import torch.nn.functional as F
+from accelerate.utils import DynamoBackend
 from huggingface_hub import snapshot_download
 from PIL import Image
 from torch.distributions import Beta
@@ -433,6 +434,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
     MAXIMUM_CANVAS_SIZE = None
     SUPPORTS_LORA = None
     SUPPORTS_CONTROLNET = None
+    REGIONAL_COMPILE_REPEATED_BLOCKS = False
     FLOWMAP_R_TIMESTEP_BATCH_KEY = "flowmap_r_timesteps"
     FLOWMAP_R_TIMESTEP_KWARG = "r_timestep"
     STRICT_I2V_FLAVOURS = tuple()
@@ -3701,6 +3703,25 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
 
     def before_accelerator_prepare(self):
         pass
+
+    @contextlib.contextmanager
+    def regional_compilation_context(self):
+        """Select declared repeated blocks instead of Accelerate's auxiliary regions."""
+        if not self.REGIONAL_COMPILE_REPEATED_BLOCKS:
+            yield
+            return
+        plugin = self.accelerator.state.dynamo_plugin
+        if plugin.backend == DynamoBackend.NO or not plugin.use_regional_compilation:
+            yield
+            return
+
+        self.get_trained_component().compile_repeated_blocks(**plugin.to_kwargs())
+        backend = plugin.backend
+        plugin.backend = DynamoBackend.NO
+        try:
+            yield
+        finally:
+            plugin.backend = backend
 
     def freeze_components(self):
         if self.vae is not None:

@@ -40,6 +40,7 @@ class MOSSImage(ImageModelFoundation):
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
     MODEL_TYPE = ModelTypes.TRANSFORMER
     MODEL_CLASS = MOSSImageTransformer
+    REGIONAL_COMPILE_REPEATED_BLOCKS = True
     MODEL_SUBFOLDER = "transformer"
     DEFAULT_MODEL_FLAVOUR = "sft"
     HUGGINGFACE_PATHS = {
