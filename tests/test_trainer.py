@@ -1665,6 +1665,20 @@ class TestTrainer(unittest.TestCase):
 
         trainer.ema_model.to.assert_not_called()
 
+    def test_place_ema_model_preserves_fp32_for_bf16_training(self):
+        from simpletuner.helpers.training.ema import EMAModel
+
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(ema_device="cpu", ema_cpu_only=True, weight_dtype=torch.bfloat16)
+        parameter = torch.nn.Parameter(torch.ones(4, dtype=torch.bfloat16))
+        trainer.ema_model = EMAModel(args=trainer.config, accelerator=None, parameters=[parameter])
+        trainer.ema_model.shadow_params[0].fill_(1.001)
+
+        trainer._place_ema_model(is_fsdp2_run=False)
+
+        self.assertEqual(trainer.ema_model.shadow_params[0].dtype, torch.float32)
+        torch.testing.assert_close(trainer.ema_model.shadow_params[0], torch.full((4,), 1.001))
+
     def test_init_distillation_adapter_modules_delegates_to_factory(self):
         trainer = object.__new__(Trainer)
         trainer.config = SimpleNamespace(

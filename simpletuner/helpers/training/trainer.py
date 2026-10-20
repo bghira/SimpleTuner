@@ -4446,10 +4446,7 @@ class Trainer:
 
         if self.config.ema_device == "accelerator":
             logger.info("Moving EMA model weights to accelerator...")
-        self.ema_model.to(
-            (self.accelerator.device if self.config.ema_device == "accelerator" else "cpu"),
-            dtype=self.config.weight_dtype,
-        )
+        self.ema_model.to(self.accelerator.device if self.config.ema_device == "accelerator" else "cpu")
 
         if self.config.ema_device == "cpu" and not self.config.ema_cpu_only:
             logger.info("Pinning EMA model weights to CPU...")
