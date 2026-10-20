@@ -90,8 +90,6 @@ class WebshartMetadataBackend(MetadataBackend):
         context = accelerator.main_process_first() if hasattr(accelerator, "main_process_first") else nullcontext()
         with context:
             self.reload_cache()
-            self.load_image_metadata()
-            self._load_caption_cache()
         if hasattr(accelerator, "wait_for_everyone"):
             accelerator.wait_for_everyone()
 
@@ -165,6 +163,8 @@ class WebshartMetadataBackend(MetadataBackend):
             self.filtering_statistics = cache_data.get("filtering_statistics")
         else:
             logger.debug("No webshart cache file found, starting fresh.")
+        self.load_image_metadata()
+        self._load_caption_cache()
 
     def save_cache(self, enforce_constraints: bool = False):
         if enforce_constraints:
@@ -426,7 +426,6 @@ class WebshartMetadataBackend(MetadataBackend):
 
         if not ignore_existing_cache:
             self.reload_cache()
-            self.load_image_metadata()
             existing_files = (
                 set().union(*self.aspect_ratio_bucket_indices.values()) if self.aspect_ratio_bucket_indices else set()
             )
