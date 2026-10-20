@@ -51,8 +51,8 @@ class KeyCenteringTests(unittest.TestCase):
 
 
 @unittest.skipUnless(
-    torch.cuda.is_available() and torch.cuda.get_device_capability() in {(8, 9), (9, 0)},
-    "Requires centered Ada/Hopper kernels",
+    torch.cuda.is_available() and torch.cuda.get_device_capability() in {(8, 9), (9, 0), (10, 0), (10, 3), (12, 0)},
+    "Requires centered Ada, Hopper or Blackwell kernels",
 )
 class CuTeKeyCenteringTests(unittest.TestCase):
     def test_compiled_checkpointed_production_block_lora_updates(self):

@@ -1,13 +1,455 @@
+import itertools
 import unittest
 
 import torch
 
 
 @unittest.skipUnless(
-    torch.cuda.is_available() and torch.cuda.get_device_capability() in {(8, 9), (9, 0), (12, 0)},
-    "Requires Ada, Hopper or RTX Blackwell",
+    torch.cuda.is_available() and torch.cuda.get_device_capability() in {(8, 9), (9, 0), (10, 0), (10, 3), (12, 0)},
+    "Requires Ada, Hopper or Blackwell",
 )
 class CuTeAttentionTests(unittest.TestCase):
+    def test_sm103_native_products_tails_gqa_and_signed_scale(self):
+        if torch.cuda.get_device_capability() != (10, 3):
+            self.skipTest("Requires B300 TMEM reductions.")
+        from unittest.mock import patch
+
+        from simpletuner.helpers.training.kohaku_fa_cute import kernels, native
+
+        original = kernels.kernel_configuration
+        for dim, rows in itertools.product((64, 128, 256, 512), (64, 128)):
+            for dtype in (torch.float16, torch.bfloat16):
+                for pipelined in (False, True):
+                    if dim == 512 and pipelined:
+                        continue
+
+                    def configuration(device, mode, descriptors):
+                        if (
+                            mode == "forward"
+                            or mode == "q"
+                            and (rows == 64 or dim <= 256)
+                            or mode == "kv"
+                            and not pipelined
+                            and (rows == 64 or dim <= 256)
+                        ):
+                            configuration = (32, min(dim, 256), 4, False, mode != "forward", True, pipelined, False, rows)
+                            return (*configuration, True) if mode != "forward" and dim >= 256 else configuration
+                        return original(device, mode, descriptors)
+
+                    with patch.object(kernels, "kernel_configuration", configuration):
+                        native.extension().clear_cache()
+                        try:
+                            for queries, keys, causal, scale in (
+                                (1, 193, False, None),
+                                (1, 193, True, None),
+                                (65, 1, True, None),
+                                (137, 193, False, -0.125),
+                                (137, 193, True, 0.0),
+                            ):
+                                with self.subTest(
+                                    dim=dim, rows=rows, dtype=dtype, pipelined=pipelined, causal=causal, scale=scale
+                                ):
+                                    torch.manual_seed(174)
+                                    q = torch.randn(1, queries, 4, dim, device="cuda", dtype=dtype).transpose(1, 2)
+                                    k, v = [
+                                        torch.randn(1, keys, 2, dim, device="cuda", dtype=dtype).transpose(1, 2)
+                                        for _ in range(2)
+                                    ]
+                                    self.compare(q, k, v, causal=causal, scale=scale)
+                        finally:
+                            native.extension().clear_cache()
+
+    def test_sm103_tmem_reductions_read_changed_graph_inputs(self):
+        if torch.cuda.get_device_capability() != (10, 3):
+            self.skipTest("Requires B300 TMEM reductions.")
+        from unittest.mock import patch
+
+        from simpletuner.helpers.training.kohaku_fa_cute import attention, kernels, native
+
+        original = kernels.kernel_configuration
+
+        def configuration(device, mode, descriptors):
+            if mode == "forward":
+                return 64, 64, 4, False, False, True, True, False, rows
+            return original(device, mode, descriptors)
+
+        with patch.object(kernels, "kernel_configuration", configuration):
+            native.extension().clear_cache()
+            try:
+                for rows, scale in itertools.product((64, 128), (0.125, -0.125)):
+                    native.extension().clear_cache()
+                    inputs = [torch.randn(1, 2, 193, 64, device="cuda", dtype=torch.bfloat16) for _ in range(3)]
+                    stream = torch.cuda.Stream()
+                    stream.wait_stream(torch.cuda.current_stream())
+                    with torch.cuda.stream(stream):
+                        for _ in range(3):
+                            attention(*inputs, scale=scale)
+                    torch.cuda.current_stream().wait_stream(stream)
+                    graph = torch.cuda.CUDAGraph()
+                    with torch.cuda.graph(graph, stream=stream):
+                        actual = attention(*inputs, scale=scale)
+                    for seed in (175, 176, 177):
+                        torch.manual_seed(seed)
+                        for tensor in inputs:
+                            tensor.copy_(torch.randn_like(tensor))
+                        graph.replay()
+                        # The default fused SDPA backend can return NaNs for negative scales.
+                        with torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH):
+                            expected = torch.nn.functional.scaled_dot_product_attention(*inputs, scale=scale)
+                        torch.testing.assert_close(actual, expected, atol=0.02, rtol=0.02)
+            finally:
+                native.extension().clear_cache()
+
+    def test_blackwell_probability_tiles_match_checked_reconstruction(self):
+        if torch.cuda.get_device_capability() not in ((10, 0), (10, 3)):
+            self.skipTest("Requires the Blackwell producer/consumer pipeline.")
+        from contextlib import nullcontext
+        from unittest.mock import patch
+
+        from simpletuner.helpers.training.kohaku_fa_cute import attention, blackwell_pipeline, kernels, native
+
+        worker = blackwell_pipeline.Backward
+        for dim, columns, dtype, causal in itertools.product(
+            (128, 512), (64, 128), (torch.float16, torch.bfloat16), (False, True)
+        ):
+
+            def configuration(device, mode, descriptors):
+                selected = kernels._BLACKWELL_PIPELINE_CONFIGURATIONS[(dim, mode)]
+                return selected if mode == "forward" else (columns, *selected[1:])
+
+            torch.manual_seed(238)
+            q = torch.randn(1, 4, 257, dim, device="cuda", dtype=dtype)
+            k, v = [torch.randn(1, 2, 385, dim, device="cuda", dtype=dtype) for _ in range(2)]
+            dout = torch.randn_like(q)
+            with (
+                self.subTest(dim=dim, columns=columns, dtype=dtype, causal=causal),
+                patch.object(kernels, "kernel_configuration", configuration),
+            ):
+                results = []
+                try:
+                    for checked in (False, True):
+                        native.extension().clear_cache()
+                        kernels._compile_kernel.cache_clear()
+                        context = (
+                            patch.object(worker, "reconstruct_probabilities", worker.reconstruct_values)
+                            if checked
+                            else nullcontext()
+                        )
+                        with context:
+                            inputs = [tensor.detach().requires_grad_() for tensor in (q, k, v)]
+                            output = attention(*inputs, causal=causal, scale=-0.125)
+                            results.append((output.detach(), *torch.autograd.grad(output, inputs, dout)))
+                    for actual, expected in zip(*results):
+                        torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+                finally:
+                    native.extension().clear_cache()
+                    kernels._compile_kernel.cache_clear()
+
+    def test_blackwell_probability_tiles_read_changed_graph_inputs(self):
+        if torch.cuda.get_device_capability() not in ((10, 0), (10, 3)):
+            self.skipTest("Requires the Blackwell producer/consumer pipeline.")
+        from unittest.mock import patch
+
+        from scripts.benchmark_attention_precision import fp64_reference
+        from simpletuner.helpers.training.kohaku_fa_cute import attention, kernels, native
+
+        for dim, columns, dtype in itertools.product((128, 512), (64, 128), (torch.float16, torch.bfloat16)):
+
+            def configuration(device, mode, descriptors):
+                selected = kernels._BLACKWELL_PIPELINE_CONFIGURATIONS[(dim, mode)]
+                return selected if mode == "forward" else (columns, *selected[1:])
+
+            with (
+                self.subTest(dim=dim, columns=columns, dtype=dtype),
+                patch.object(kernels, "kernel_configuration", configuration),
+            ):
+                native.extension().clear_cache()
+                kernels._compile_kernel.cache_clear()
+                try:
+                    q = torch.randn(1, 4, 257, dim, device="cuda", dtype=dtype).requires_grad_()
+                    k, v = [torch.randn(1, 2, 385, dim, device="cuda", dtype=dtype).requires_grad_() for _ in range(2)]
+                    dout = torch.randn_like(q)
+                    stream = torch.cuda.Stream()
+                    stream.wait_stream(torch.cuda.current_stream())
+                    with torch.cuda.stream(stream):
+                        for _ in range(3):
+                            output = attention(q, k, v, scale=1.0)
+                            torch.autograd.grad(output, (q, k, v), dout)
+                        graph = torch.cuda.CUDAGraph()
+                        with torch.cuda.graph(graph, stream=stream):
+                            output = attention(q, k, v, scale=1.0)
+                            gradients = torch.autograd.grad(output, (q, k, v), dout)
+                    torch.cuda.current_stream().wait_stream(stream)
+                    for saturated in (False, True, False):
+                        with torch.no_grad():
+                            if saturated:
+                                for tensor in (q, k, v, dout):
+                                    tensor.zero_()
+                                q[..., 0], k[..., 0], k[:, :, 0, 0] = 10, 5 if dtype == torch.bfloat16 else 9, 10
+                                v[..., 0], v[:, :, 0, 0], dout[..., 0] = -1, 1, 1
+                            else:
+                                for tensor in (q, k, v, dout):
+                                    tensor.normal_()
+                                q.mul_(0.1)
+                                k.mul_(0.1)
+                        graph.replay()
+                        torch.cuda.synchronize()
+                        expected = fp64_reference((q, k, v), dout, scale=1.0)
+                        for actual, reference in zip((output, *gradients), expected):
+                            torch.testing.assert_close(
+                                actual.double(),
+                                reference,
+                                atol=(
+                                    0
+                                    if saturated and dtype == torch.bfloat16
+                                    else 0.03 if dtype == torch.bfloat16 else 0.005
+                                ),
+                                rtol=0.03 if dtype == torch.bfloat16 else 0.005,
+                            )
+                        if saturated:
+                            self.assertGreater(gradients[0][..., 0].min().item(), 0)
+                finally:
+                    native.extension().clear_cache()
+                    kernels._compile_kernel.cache_clear()
+
+    def test_blackwell_warp_specialized_pipeline(self):
+        self._check_blackwell_pipeline(fused=False)
+
+    def test_sm103_fused_dispatch_crosses_sequence_threshold(self):
+        if torch.cuda.get_device_capability() != (10, 3):
+            self.skipTest("Requires B300 dispatch.")
+        from scripts.benchmark_attention_precision import fp64_reference
+        from simpletuner.helpers.training.kohaku_fa_cute import attention, kernels, native
+
+        for dim, dtype in itertools.product((64, 128, 256, 512), (torch.float16, torch.bfloat16)):
+            threshold = 1024 if dim == 64 else 512 if dim == 128 else 256
+            native.extension().clear_cache()
+            try:
+                for keys in (threshold - 1, threshold + 1, threshold - 1):
+                    with self.subTest(dim=dim, dtype=dtype, keys=keys):
+                        q = torch.zeros(1, 4, 17, dim, device="cuda", dtype=dtype)
+                        k = torch.zeros(1, 2, keys, dim, device="cuda", dtype=dtype)
+                        v, dout = torch.zeros_like(k), torch.zeros_like(q)
+                        q[..., 0], k[..., 0], k[:, :, 0, 0] = 10, 5 if dtype == torch.bfloat16 else 9, 10
+                        v[..., 0], v[:, :, 0, 0], dout[..., 0] = -1, 1, 1
+                        descriptors = tuple(kernels.descriptor(t) for t in (q, k, v, q, q, q, q, dout))
+                        for mode in ("q", "kv"):
+                            configuration = kernels.kernel_configuration(q.device.index, mode, descriptors)
+                            if keys >= threshold:
+                                self.assertEqual(configuration[0], 128)
+                                self.assertEqual(configuration[2], 12)
+                            else:
+                                self.assertNotEqual(configuration[2], 12)
+                        expected = fp64_reference((q, k, v), dout, scale=1.0)
+                        inputs = [tensor.requires_grad_() for tensor in (q, k, v)]
+                        out = attention(*inputs, scale=1.0)
+                        gradients = torch.autograd.grad(out, inputs, dout)
+                        self.assertGreater(gradients[0][..., 0].min().item(), 0)
+                        for actual, reference in zip((out, *gradients), expected):
+                            torch.testing.assert_close(
+                                actual.double(), reference, atol=1e-7 if dtype == torch.float16 else 0, rtol=0.03
+                            )
+            finally:
+                native.extension().clear_cache()
+
+    def test_blackwell_fused_probability_and_ds_pipeline(self):
+        self._check_blackwell_pipeline(fused=True)
+
+    def test_blackwell_fused_pipeline_retains_saturated_gradients(self):
+        if torch.cuda.get_device_capability() not in ((10, 0), (10, 3)):
+            self.skipTest("Requires the fused Blackwell pipeline.")
+        from unittest.mock import patch
+
+        from scripts.benchmark_attention_precision import fp64_reference
+        from simpletuner.helpers.training.kohaku_fa_cute import attention, kernels, native
+
+        for dim, dtype in itertools.product((64, 128, 256, 512), (torch.float16, torch.bfloat16)):
+
+            def configuration(device, mode, descriptors):
+                return kernels._SM100_FUSED_CONFIGURATIONS[(dim, mode)]
+
+            with self.subTest(dim=dim, dtype=dtype), patch.object(kernels, "kernel_configuration", configuration):
+                native.extension().clear_cache()
+                try:
+                    q = torch.zeros(1, 4, 17, dim, device="cuda", dtype=dtype)
+                    k = torch.zeros(1, 2, 19, dim, device="cuda", dtype=dtype)
+                    v, dout = torch.zeros_like(k), torch.zeros_like(q)
+                    q[..., 0], k[..., 0], k[:, :, 0, 0] = 10, 5 if dtype == torch.bfloat16 else 9, 10
+                    v[..., 0], v[:, :, 0, 0], dout[..., 0] = -1, 1, 1
+                    expected = fp64_reference((q, k, v), dout, scale=1.0)
+                    inputs = [tensor.requires_grad_() for tensor in (q, k, v)]
+                    output = attention(*inputs, scale=1.0)
+                    actual = output, *torch.autograd.grad(output, inputs, dout)
+                    self.assertGreater(actual[1][..., 0].min().item(), 0)
+                    for got, want in zip(actual, expected):
+                        torch.testing.assert_close(got.double(), want, atol=1e-7 if dtype == torch.float16 else 0, rtol=0.03)
+                finally:
+                    native.extension().clear_cache()
+
+    def _check_blackwell_pipeline(self, *, fused):
+        if torch.cuda.get_device_capability() not in ((10, 0), (10, 3)):
+            self.skipTest("Requires the measured datacentre Blackwell architecture.")
+        from unittest.mock import patch
+
+        from simpletuner.helpers.training.kohaku_fa_cute import kernels, native
+
+        for dim, dtype in itertools.product((64, 128, 256, 512), (torch.float16, torch.bfloat16)):
+
+            def configuration(device, mode, descriptors):
+                table = kernels._SM100_FUSED_CONFIGURATIONS if fused else kernels._BLACKWELL_PIPELINE_CONFIGURATIONS
+                return table[(dim, mode)]
+
+            with patch.object(kernels, "kernel_configuration", configuration):
+                native.extension().clear_cache()
+                try:
+                    # Long key tails exercise both the five-slot fused ring and the legacy eight-slot ring.
+                    for queries, keys, causal, scale in (
+                        (257, 641, False, None),
+                        (65, 129, True, -0.125),
+                        (1, 641, True, 0.0),
+                        (65, 1, True, None),
+                    ):
+                        with self.subTest(dim=dim, dtype=dtype, queries=queries, keys=keys, causal=causal, scale=scale):
+                            torch.manual_seed(178)
+                            q = torch.randn(1, queries, 4, dim, device="cuda", dtype=dtype).transpose(1, 2)
+                            k, v = [
+                                torch.randn(1, keys, 2, dim, device="cuda", dtype=dtype).transpose(1, 2) for _ in range(2)
+                            ]
+                            self.compare(q, k, v, causal=causal, scale=scale)
+                finally:
+                    native.extension().clear_cache()
+
+    def test_blackwell_pipeline_reads_changed_graph_inputs(self):
+        self._check_blackwell_graph_inputs(fused=False)
+
+    def test_blackwell_fused_pipeline_reads_changed_graph_inputs(self):
+        self._check_blackwell_graph_inputs(fused=True)
+
+    def _check_blackwell_graph_inputs(self, *, fused):
+        if torch.cuda.get_device_capability() not in ((10, 0), (10, 3)):
+            self.skipTest("Requires the measured datacentre Blackwell architecture.")
+        from unittest.mock import patch
+
+        from simpletuner.helpers.training.kohaku_fa_cute import attention, kernels, native
+
+        for dim, scale in itertools.product((64, 128, 512) if fused else (128, 512), (0.125, -0.125)):
+
+            def configuration(device, mode, descriptors):
+                table = kernels._SM100_FUSED_CONFIGURATIONS if fused else kernels._BLACKWELL_PIPELINE_CONFIGURATIONS
+                return table[(dim, mode)]
+
+            with self.subTest(dim=dim, scale=scale), patch.object(kernels, "kernel_configuration", configuration):
+                native.extension().clear_cache()
+                try:
+                    inputs = [
+                        torch.randn(1, 2, 257, dim, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+                        for _ in range(3)
+                    ]
+                    dout = torch.randn_like(inputs[0])
+
+                    def run():
+                        output = attention(*inputs, scale=scale)
+                        return output, *torch.autograd.grad(output, inputs, dout)
+
+                    stream = torch.cuda.Stream()
+                    stream.wait_stream(torch.cuda.current_stream())
+                    with torch.cuda.stream(stream):
+                        for _ in range(3):
+                            run()
+                    torch.cuda.current_stream().wait_stream(stream)
+                    graph = torch.cuda.CUDAGraph()
+                    with torch.cuda.graph(graph, stream=stream):
+                        actual = run()
+                    for seed in (179, 180):
+                        torch.manual_seed(seed)
+                        with torch.no_grad():
+                            for tensor in (*inputs, dout):
+                                tensor.copy_(torch.randn_like(tensor))
+                        graph.replay()
+                        refs = [tensor.detach().double().requires_grad_() for tensor in inputs]
+                        with torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH):
+                            expected = torch.nn.functional.scaled_dot_product_attention(*refs, scale=scale)
+                        gradients = torch.autograd.grad(expected, refs, dout.double())
+                        for got, want in zip(actual, (expected, *gradients)):
+                            torch.testing.assert_close(got.double(), want, atol=0.03, rtol=0.03)
+                finally:
+                    native.extension().clear_cache()
+
+    def test_sm100_wide_tma_layouts_and_signed_scale(self):
+        if torch.cuda.get_device_capability() != (10, 0):
+            self.skipTest("Requires measured sm_100 wide-head configurations.")
+        for dtype in (torch.float16, torch.bfloat16):
+            for queries, keys, bshd, causal, scale in (
+                (1, 65, True, False, None),
+                (65, 1, True, True, None),
+                (73, 129, True, True, -(512**-0.5)),
+                (73, 129, False, False, 0.0),
+                (73, 129, False, False, None),
+            ):
+                with self.subTest(dtype=dtype, queries=queries, keys=keys, bshd=bshd, causal=causal, scale=scale):
+                    torch.manual_seed(131)
+                    q = torch.randn(1, 4, queries, 512, device="cuda", dtype=dtype)
+                    k, v = [torch.randn(1, 2, keys, 512, device="cuda", dtype=dtype) for _ in range(2)]
+                    if bshd:
+                        q, k, v = [x.transpose(1, 2).contiguous().transpose(1, 2) for x in (q, k, v)]
+                    self.compare(q, k, v, causal=causal, scale=scale, compiled=queries == 73 and scale is None)
+
+    def test_sm100_tcgen_statistics_across_key_tiles(self):
+        if torch.cuda.get_device_capability() not in ((10, 0), (10, 3)):
+            self.skipTest("Requires datacenter Blackwell tcgen05 instructions.")
+        from unittest.mock import patch
+
+        from simpletuner.helpers.training.kohaku_fa_cute import kernels, native
+
+        for dtype in (torch.float16, torch.bfloat16):
+            for tma, pipelined in ((False, False), (True, False), (True, True)):
+
+                def configuration(device, mode, descriptors):
+                    return 32, 64, 4, False, mode != "forward", tma, pipelined, True
+
+                with patch.object(kernels, "kernel_configuration", configuration):
+                    native.extension().clear_cache()
+                    try:
+                        for visibility in ("dense", "causal", "mask"):
+                            with self.subTest(dtype=dtype, tma=tma, pipelined=pipelined, visibility=visibility):
+                                torch.manual_seed(129)
+                                q = torch.randn(1, 4, 137, 64, device="cuda", dtype=dtype)
+                                k, v = [torch.randn(1, 2, 193, 64, device="cuda", dtype=dtype) for _ in range(2)]
+                                q, k, v = [x.transpose(1, 2).contiguous().transpose(1, 2) for x in (q, k, v)]
+                                mask = None
+                                if visibility == "mask":
+                                    mask = (
+                                        torch.arange(137, device="cuda")[:, None] // 31
+                                        == torch.arange(193, device="cuda")[None, :] // 31
+                                    )
+                                    mask[0] = False
+                                self.compare(q, k, v, mask=mask, causal=visibility == "causal")
+                    finally:
+                        native.extension().clear_cache()
+
+    def test_centered_backward_statistics_across_multiple_key_tiles(self):
+        for dtype in (torch.float16, torch.bfloat16):
+            with self.subTest(dtype=dtype):
+                torch.manual_seed(127)
+                q = torch.randn(1, 16, 137, 64, device="cuda", dtype=dtype)
+                k, v = [torch.randn(1, 16, 193, 64, device="cuda", dtype=dtype) for _ in range(2)]
+                self.compare(q, k, v)
+
+    def test_dynamic_lengths_cross_blackwell_pipeline_threshold(self):
+        if torch.cuda.get_device_capability() not in ((10, 0), (10, 3)):
+            self.skipTest("Requires datacentre Blackwell TMEM.")
+        from unittest.mock import patch
+
+        from simpletuner.helpers.training.kohaku_fa_cute import native
+
+        native.extension().clear_cache()
+        with patch.object(native, "compile_kernel", wraps=native.compile_kernel) as compiler:
+            for index, queries in enumerate((511, 513, 519)):
+                q = torch.randn(1, 2, queries, 128, device="cuda", dtype=torch.bfloat16)
+                k, v = [torch.randn(1, 2, 193, 128, device="cuda", dtype=q.dtype) for _ in range(2)]
+                self.compare(q, k, v)
+                self.assertEqual(compiler.call_count, 2 if index == 0 else 4)
+
     def test_unseen_sequence_lengths_reuse_native_programs(self):
         from unittest.mock import patch
 
@@ -107,6 +549,8 @@ class CuTeAttentionTests(unittest.TestCase):
                 builder.assert_not_called()
 
     def test_automatic_training_routes_supported_and_native_calls_in_fullgraph(self):
+        if torch.cuda.get_device_capability() in {(10, 0), (10, 3)}:
+            self.skipTest("The training policy retains native SDPA on Gluon architectures.")
         from types import SimpleNamespace
 
         from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
@@ -211,6 +655,8 @@ class CuTeAttentionTests(unittest.TestCase):
         self.assertEqual(native.cache_size(), 0)
 
     def test_compile_after_backend_selection_in_fresh_process(self):
+        if torch.cuda.get_device_capability() in {(10, 0), (10, 3)}:
+            self.skipTest("Explicit backend selection uses Gluon on datacentre Blackwell.")
         import subprocess
         import sys
         import textwrap
@@ -400,8 +846,8 @@ class CuTeAttentionTests(unittest.TestCase):
         from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import attention
 
-        if torch.cuda.get_device_capability() not in {(8, 9), (9, 0)}:
-            self.skipTest("Centered backward requires Ada or Hopper.")
+        if torch.cuda.get_device_capability() not in {(8, 9), (9, 0), (10, 0), (10, 3), (12, 0)}:
+            self.skipTest("Centered backward requires Ada, Hopper or Blackwell.")
         for dtype in (torch.bfloat16, torch.float16):
             for dim in (1, 17, 64, 80, 96, 128, 160, 192, 224, 256, 257, 384, 511, 512):
                 with self.subTest(dtype=dtype, dim=dim):

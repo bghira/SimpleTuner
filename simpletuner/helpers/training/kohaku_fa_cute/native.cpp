@@ -37,6 +37,13 @@ Key configuration_key(bool backward, const Tensors &tensors, bool causal, bool m
         key.push_back(tensors[0].numel() / tensors[0].size(3) >= 32768);
         key.push_back(tensors[0].size(2) >= 1536 && tensors[1].size(2) >= 1024);
     }
+    // Blackwell producer/consumer dispatch has a measured short-sequence fallback.
+    // Keep this class in both cache keys: its forward and backward programs differ.
+    const auto dimension = tensors[0].size(3);
+    if (dimension == 64 || dimension == 128 || dimension == 256 || dimension == 512) {
+        const auto threshold = dimension == 64 ? 1024 : dimension == 128 ? 512 : 256;
+        key.push_back(std::max(tensors[0].size(2), tensors[1].size(2)) >= threshold);
+    }
     for (size_t i = 0; i < tensors.size(); ++i) {
         const auto &tensor = tensors[i];
         key.push_back(static_cast<int64_t>(tensor.scalar_type()));
@@ -187,7 +194,7 @@ std::pair<int, int> device_capability(int device) {
 
 bool supported_device(int device) {
     auto [major, minor] = device_capability(device);
-    return (major == 8 && minor == 9) || (major == 9 && minor == 0) || (major == 12 && minor == 0);
+    return (major == 8 && minor == 9) || (major == 9 && minor == 0) || (major == 10 && (minor == 0 || minor == 3)) || (major == 12 && minor == 0);
 }
 
 bool compatible(Tensor q, Tensor k, Tensor v, const std::optional<Tensor> &mask, double dropout, bool causal, bool gqa) {
@@ -197,7 +204,7 @@ bool compatible(Tensor q, Tensor k, Tensor v, const std::optional<Tensor> &mask,
            k.sizes() == v.sizes() && q.size(0) == k.size(0) && q.size(3) == k.size(3) && q.size(3) <= 512 &&
            q.size(1) % k.size(1) == 0 && (gqa || q.size(1) == k.size(1)) &&
            (!mask || (mask->scalar_type() == at::kBool && mask->device() == q.device() && !causal)) &&
-           supported_device(q.get_device()) && device_capability(q.get_device()).first != 12;
+           supported_device(q.get_device());
 }
 
 bool validate(Tensor q, Tensor k, Tensor v, const std::optional<Tensor> &mask) {
@@ -217,8 +224,8 @@ bool validate(Tensor q, Tensor k, Tensor v, const std::optional<Tensor> &mask) {
                           "kohaku-fa supports boolean attention masks only, not additive masks.");
         TORCH_CHECK_VALUE(mask->device() == q.device(), "kohaku-fa requires the attention mask on the Q/K/V device.");
     }
-    TORCH_CHECK_VALUE(supported_device(q.get_device()), "CuTe attention requires sm_89, sm_90 or sm_120.");
-    return device_capability(q.get_device()).first != 12;
+    TORCH_CHECK_VALUE(supported_device(q.get_device()), "CuTe attention requires sm_89, sm_90, sm_100, sm_103 or sm_120.");
+    return true;
 }
 } // namespace
 

@@ -32,9 +32,9 @@ class KohakuFAIntegrationTests(unittest.TestCase):
         self.assertIs(torch.nn.functional.scaled_dot_product_attention, original)
         self.assertEqual(AttentionBackendController.active_backend(), "kohaku-fa-auto")
 
-    def test_default_keeps_native_attention_on_uncentered_architectures(self):
+    def test_default_keeps_native_attention_on_gluon_architectures(self):
         original = torch.nn.functional.scaled_dot_product_attention
-        for capability in ((10, 0), (10, 3), (12, 0)):
+        for capability in ((10, 0), (10, 3)):
             with (
                 self.subTest(capability=capability),
                 patch("simpletuner.helpers.training.attention_backend.get_kohaku_fa_unavailable_reason", return_value=None),
@@ -44,22 +44,41 @@ class KohakuFAIntegrationTests(unittest.TestCase):
                 self.assertIs(torch.nn.functional.scaled_dot_product_attention, original)
                 self.assertEqual(AttentionBackendController.active_backend(), "kohaku-fa-auto")
 
+    def test_local_cute_automatic_selection_supports_blackwell_before_warmup(self):
+        from simpletuner.helpers.training.kohaku_fa_cute import api
+
+        q = SimpleNamespace(ndim=4, shape=(1, 2, 17, 64), dtype=torch.bfloat16, device=torch.device("cuda", 0))
+        with (
+            patch.object(api, "extension") as extension,
+            patch.object(api, "kohaku_fa_scaled_dot_product_attention", return_value="cute") as kernel,
+        ):
+            extension.cache_info.return_value = SimpleNamespace(currsize=0)
+            for capability in ((10, 0), (10, 3), (12, 0)):
+                with (
+                    self.subTest(capability=capability),
+                    patch.object(torch.cuda, "get_device_capability", return_value=capability),
+                ):
+                    self.assertEqual(api.automatic_kohaku_fa_scaled_dot_product_attention(q, q, q), "cute")
+            self.assertEqual(kernel.call_count, 3)
+            extension.assert_not_called()
+
     def test_implicit_default_routes_training_and_restores_evaluation(self):
         original = torch.nn.functional.scaled_dot_product_attention
         kernel = Mock()
         module = SimpleNamespace(automatic_scaled_dot_product_attention=kernel)
-        with (
-            patch("simpletuner.helpers.training.attention_backend.get_kohaku_fa_unavailable_reason", return_value=None),
-            patch.object(torch.cuda, "get_device_capability", return_value=(9, 0)),
-            patch.dict("sys.modules", {"simpletuner.helpers.training.kohaku_fa_cute": module}),
-        ):
-            for phase in (AttentionPhase.TRAIN, AttentionPhase.EVAL, AttentionPhase.TRAIN):
-                AttentionBackendController.apply(SimpleNamespace(), phase)
-                self.assertEqual(AttentionBackendController.active_backend(), "kohaku-fa-auto")
-                if phase == AttentionPhase.TRAIN:
-                    self.assertIs(torch.nn.functional.scaled_dot_product_attention, kernel)
-                else:
-                    self.assertIs(torch.nn.functional.scaled_dot_product_attention, original)
+        for capability in ((9, 0), (12, 0)):
+            with (
+                patch("simpletuner.helpers.training.attention_backend.get_kohaku_fa_unavailable_reason", return_value=None),
+                patch.object(torch.cuda, "get_device_capability", return_value=capability),
+                patch.dict("sys.modules", {"simpletuner.helpers.training.kohaku_fa_cute": module}),
+            ):
+                for phase in (AttentionPhase.TRAIN, AttentionPhase.EVAL, AttentionPhase.TRAIN):
+                    AttentionBackendController.apply(SimpleNamespace(), phase)
+                    self.assertEqual(AttentionBackendController.active_backend(), "kohaku-fa-auto")
+                    if phase == AttentionPhase.TRAIN:
+                        self.assertIs(torch.nn.functional.scaled_dot_product_attention, kernel)
+                    else:
+                        self.assertIs(torch.nn.functional.scaled_dot_product_attention, original)
 
     def test_non_cuda_host_rejected_without_importing_kernels(self):
         with patch.object(torch.cuda, "is_available", return_value=False):
