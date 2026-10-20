@@ -85,15 +85,19 @@ reduce-overhead compile:
 }
 ```
 
-### LyCORIS 4 LoKR のカーネルサイズ
+### LyCORIS のバージョン
 
-LyCORIS 4 の LoKR 学習で `kron apply factors too large for the kernel` が発生する場合は、トレーナーまたは WebUI の起動前に PyTorch カーネルバックエンドを選択してください。このエラーは実験的な Triton カーネルの因子サイズ制限によるものです。SimpleTuner の `torch.compile` は有効なままで構いません。コンパイルを無効にするだけでは LyCORIS のカーネルは切り替わりません。
+LoKR 学習には LyCORIS 4.1.3 以降を使用してください。このバージョンは大きな因子を処理でき、以前の 4.x バージョンで発生していた `kron apply factors too large for the kernel` エラーを解消します。
+
+既存のインストールを更新するには、SimpleTuner の環境で次を実行してください：
 
 ```bash
-export LYCORIS_KERNEL_BACKEND=torch
+pip install --upgrade "lycoris-lora>=4.1.3"
 ```
 
-[LyCORIS のカーネルバックエンド](https://github.com/KohakuBlueleaf/LyCORIS/blob/main/docs/kernels/backends.md).
+このエラーへの対処として `LYCORIS_KERNEL_BACKEND=torch` を設定していた場合は、起動環境からその設定を削除すると、バックエンドが自動選択されます。
+
+[LyCORIS 4.1.3 リリース](https://github.com/KohakuBlueleaf/LyCORIS/releases/tag/v4.1.3).
 
 ## 参照画像トレーニング
 

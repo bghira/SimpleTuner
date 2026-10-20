@@ -85,15 +85,19 @@ reduce-overhead compile：
 }
 ```
 
-### LyCORIS 4 LoKR 内核尺寸
+### LyCORIS 版本
 
-如果 LyCORIS 4 的 LoKR 训练出现 `kron apply factors too large for the kernel`，请在启动训练器或 WebUI 前选择其 PyTorch 内核后端。此错误来自实验性 Triton 内核的因子尺寸限制。SimpleTuner 的 `torch.compile` 可以保持启用；仅禁用编译并不会切换 LyCORIS 内核。
+LoKR 训练请使用 LyCORIS 4.1.3 或更高版本。此版本可以处理较大的因子，解决早期 4.x 版本中出现的 `kron apply factors too large for the kernel` 错误。
+
+要升级现有安装，请在 SimpleTuner 环境中运行：
 
 ```bash
-export LYCORIS_KERNEL_BACKEND=torch
+pip install --upgrade "lycoris-lora>=4.1.3"
 ```
 
-[LyCORIS 内核后端](https://github.com/KohakuBlueleaf/LyCORIS/blob/main/docs/kernels/backends.md).
+如果此前为解决此错误设置了 `LYCORIS_KERNEL_BACKEND=torch`，请从启动环境中移除此设置，以使用自动后端选择。
+
+[LyCORIS 4.1.3 版本说明](https://github.com/KohakuBlueleaf/LyCORIS/releases/tag/v4.1.3).
 
 ## 参考图像训练
 
