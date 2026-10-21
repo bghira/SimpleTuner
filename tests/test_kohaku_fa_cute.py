@@ -490,9 +490,12 @@ class CuTeAttentionTests(unittest.TestCase):
                 try:
                     with patch.object(native, "compile_kernel", wraps=native.compile_kernel) as compiler:
                         cases = (
+                            (511, 511, False),
                             (512, 512, False),
+                            (513, 513, False),
                             (2048, 2048, False),
                             (1024, 1024, False),
+                            (1025, 1025, False),
                             (2049, 2049, False),
                             (2049, 2051, False),
                             (2048, 2048, True),
@@ -517,13 +520,13 @@ class CuTeAttentionTests(unittest.TestCase):
         from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import attention, native
 
-        for causal in (False, True):
-            with self.subTest(causal=causal):
+        for causal, sequence in ((False, 512), (True, 512), (False, 2048), (True, 2048)):
+            with self.subTest(causal=causal, sequence=sequence):
                 native.extension().clear_cache()
                 try:
                     torch.manual_seed(372)
                     inputs = [
-                        torch.randn(1, 8, 2048, 512, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+                        torch.randn(1, 8, sequence, 512, device="cuda", dtype=torch.bfloat16, requires_grad=True)
                         for _ in range(3)
                     ]
                     dout = torch.randn_like(inputs[0])
@@ -556,11 +559,11 @@ class CuTeAttentionTests(unittest.TestCase):
         from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import attention, native
 
-        for causal in (False, True):
-            with self.subTest(causal=causal):
+        for causal, sequence in ((False, 513), (True, 513), (False, 2049), (True, 2049)):
+            with self.subTest(causal=causal, sequence=sequence):
                 native.extension().clear_cache()
                 try:
-                    q = torch.zeros(1, 8, 2049, 512, device="cuda", dtype=torch.bfloat16)
+                    q = torch.zeros(1, 8, sequence, 512, device="cuda", dtype=torch.bfloat16)
                     k, v, dout = torch.zeros_like(q), torch.zeros_like(q), torch.zeros_like(q)
                     k[..., :3, 0] = torch.tensor([-1, 0, 1], device="cuda", dtype=q.dtype)
                     v[..., 0], dout[..., 0] = 1, 1

@@ -4,9 +4,9 @@ Keeping the P-weighted-key mean / dV sum in registers leaves TMEM for a
 256-wide dQ/dK accumulator. D512 output slicing falls from four to two while
 FP32 probabilities and the full centered correction are retained.
 
-The measured selector targets long dense/causal BF16 MHA on SM103. Other inputs use the
+The measured selector targets dense/causal BF16 MHA on SM103. Other inputs use the
 existing backward. Role-local register changes need a launch bound and a CTA
-join before restoring registers; narrow windows limit the remaining spills.
+join before restoring registers; vector staging reduces readout register pressure.
 """
 
 import cuda.bindings.driver as cuda
@@ -288,7 +288,12 @@ class RegisterAux(Backward):
                 with cute.arch.elect_one():
                     tcgen05.commit(final)
         elif tid < 128:
-            cute.arch.setmaxregister_decrease(80)
+            # Causal KV predicates need more pointwise registers. Vector staging
+            # lets its auxiliary consumers fit in the correspondingly smaller pool.
+            if cutlass.const_expr(self.mode == "kv" and self.causal):
+                cute.arch.setmaxregister_decrease(96)
+            else:
+                cute.arch.setmaxregister_decrease(80)
             local = tid
             row_max, row_log, center = (cutlass.Float32(0), cutlass.Float32(0), cutlass.Float32(0))
             total, rounded = (cutlass.Float32(0), cutlass.Float32(0))
@@ -352,7 +357,10 @@ class RegisterAux(Backward):
             if local == 0:
                 cute.arch.mbarrier_arrive(tr)
         else:
-            cute.arch.setmaxregister_increase(184)
+            if cutlass.const_expr(self.mode == "kv" and self.causal):
+                cute.arch.setmaxregister_increase(176)
+            else:
+                cute.arch.setmaxregister_increase(184)
             local, half = ((tid - 128) % 128, (tid - 128) // 128)
             acc = cute.make_rmem_tensor((128,), cutlass.Float32)
             acc.fill(0)
@@ -372,10 +380,15 @@ class RegisterAux(Backward):
                 sigma = stats[0, local]
             staging = a[None, None, half]
             # Export dV before reading dK so its accumulator can die here.
+            # The TMEM-compatible copy packs narrow windows into vector shared
+            # stores, avoiding the scalar swizzled-address expansion and spills.
             if cutlass.const_expr(self.mode == "kv"):
                 for c in cutlass.range_constexpr(2):
-                    for i in cutlass.range_constexpr(64):
-                        staging[local, i] = acc[c * 64 + i].to(q.element_type)
+                    for part in cutlass.range_constexpr(4):
+                        values = cute.make_rmem_tensor((16,), cutlass.Float32)
+                        for i in cutlass.range_constexpr(16):
+                            values[i] = acc[c * 64 + part * 16 + i]
+                        self.store_ds(values, cute.local_tile(staging, (128, 16), (0, part)), local)
                     self.subgroup_sync(half)
                     self.store_output(staging, dv, batch, own_head, start, offset + half * 128 + c * 64, local)
                     self.subgroup_sync(half)
@@ -386,7 +399,8 @@ class RegisterAux(Backward):
                         value = result[i]
                         if cutlass.const_expr(self.mode == "q"):
                             value -= sigma * acc[c * 64 + part * 16 + i]
-                        staging[local, part * 16 + i] = (value * scale).to(q.element_type)
+                        result[i] = value * scale
+                    self.store_ds(result, cute.local_tile(staging, (128, 16), (0, part)), local)
                 self.subgroup_sync(half)
                 target = dq if cutlass.const_expr(self.mode == "q") else dk
                 self.store_output(staging, target, batch, own_head, start, offset + half * 128 + c * 64, local)
@@ -417,7 +431,7 @@ class JointBackward:
 
 
 class AdaptiveBackward:
-    """Use wide dense/causal BF16 D512 tiles for long, sufficiently parallel MHA."""
+    """Use wide dense/causal BF16 D512 tiles for sufficiently parallel MHA."""
 
     def __init__(self, causal, fallback, base_vector):
         self.wide = JointBackward(causal, base_vector)
@@ -427,7 +441,7 @@ class AdaptiveBackward:
     def __call__(
         self, q, k, v, mask, out, maximum, logsum, dout, delta, dq, dk, dv, blocks, base, scale, stream: cuda.CUstream
     ):
-        if q.shape[2] >= 2048 and k.shape[2] == q.shape[2] and k.shape[1] == q.shape[1] and q.shape[0] * q.shape[1] >= 8:
+        if q.shape[2] >= 512 and k.shape[2] == q.shape[2] and k.shape[1] == q.shape[1] and q.shape[0] * q.shape[1] >= 8:
             self.wide(q, k, v, mask, out, maximum, logsum, dout, delta, dq, dk, dv, blocks, base, scale, stream)
         else:
             self.fallback(q, k, v, mask, out, maximum, logsum, dout, delta, dq, dk, dv, blocks, base, scale, stream)
