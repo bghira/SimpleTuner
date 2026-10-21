@@ -9,6 +9,71 @@ import torch
     "Requires Ada, Hopper or Blackwell",
 )
 class CuTeAttentionTests(unittest.TestCase):
+    def test_sm120_backward_layouts_reuse_warm_programs(self):
+        if torch.cuda.get_device_capability() != (12, 0):
+            self.skipTest("Requires the SM120 query pipeline.")
+        from unittest.mock import patch
+
+        from simpletuner.helpers.training.kohaku_fa_cute import native
+
+        for dimension, dtype in itertools.product((64, 256, 512), (torch.float16, torch.bfloat16)):
+            native.extension().clear_cache()
+            try:
+                with patch.object(native, "compile_kernel", wraps=native.compile_kernel) as compiler:
+                    for queries, keys in ((257, 261), (513, 517), (273, 261)):
+                        for causal in (False, True):
+                            with self.subTest(dim=dimension, dtype=dtype, queries=queries, keys=keys, causal=causal):
+                                torch.manual_seed(409)
+                                q = torch.randn(1, queries, 2, dimension, device="cuda", dtype=dtype).transpose(1, 2)
+                                k, v = [
+                                    torch.randn(1, keys, 2, dimension, device="cuda", dtype=dtype).transpose(1, 2)
+                                    for _ in range(2)
+                                ]
+                                self.compare(q, k, v, causal=causal, scale=-0.125)
+                                self.assertEqual(compiler.call_count, 2 if queries == 257 and not causal else 4)
+                                self.assertEqual(native.extension().cache_size(), compiler.call_count)
+            finally:
+                native.extension().clear_cache()
+
+    def test_sm120_backward_layouts_read_changed_graph_inputs(self):
+        if torch.cuda.get_device_capability() != (12, 0):
+            self.skipTest("Requires the SM120 query pipeline.")
+        from scripts.benchmark_attention_precision import fp64_reference
+        from simpletuner.helpers.training.kohaku_fa_cute import attention, native
+
+        for dimension, dtype, causal in itertools.product((64, 256, 512), (torch.float16, torch.bfloat16), (False, True)):
+            with self.subTest(dim=dimension, dtype=dtype, causal=causal):
+                native.extension().clear_cache()
+                try:
+                    inputs = [
+                        torch.randn(1, 2, 257, dimension, device="cuda", dtype=dtype, requires_grad=True) for _ in range(3)
+                    ]
+                    dout = torch.randn_like(inputs[0])
+
+                    def run():
+                        out = attention(*inputs, causal=causal, scale=-0.125)
+                        return out, *torch.autograd.grad(out, inputs, dout)
+
+                    run()
+                    run()
+                    torch.cuda.synchronize()
+                    graph = torch.cuda.CUDAGraph()
+                    with torch.cuda.graph(graph):
+                        actual = run()
+                    for seed in (410, 411):
+                        torch.manual_seed(seed)
+                        with torch.no_grad():
+                            for tensor in (*inputs, dout):
+                                tensor.copy_(torch.randn_like(tensor))
+                        graph.replay()
+                        torch.cuda.synchronize()
+                        expected = fp64_reference(inputs, dout, causal=causal, scale=-0.125)
+                        tolerance = 0.03 if dtype == torch.bfloat16 else 0.005
+                        for got, want in zip(actual, expected):
+                            torch.testing.assert_close(got.double(), want, atol=tolerance, rtol=tolerance)
+                finally:
+                    native.extension().clear_cache()
+
     def test_sm103_native_products_tails_gqa_and_signed_scale(self):
         if torch.cuda.get_device_capability() != (10, 3):
             self.skipTest("Requires B300 TMEM reductions.")
@@ -974,9 +1039,8 @@ class CuTeAttentionTests(unittest.TestCase):
                 for got, want in zip(grads[:2], expected_grads[:2]):
                     self.assertTrue(torch.isfinite(got).all())
                     rounded_reference = want.to(dtype)
-                    if dtype == torch.float16 and logit_scale == 1e6:
-                        # This fixture's FP64 gradients are below FP16's subnormal range.
-                        self.assertEqual(rounded_reference.count_nonzero().item(), 0)
+                    if rounded_reference.count_nonzero().item() == 0:
+                        # Classify underflow from this device's rounded FP64 reference.
                         self.assertEqual(got.count_nonzero().item(), 0)
                         continue
                     self.assertGreater(rounded_reference.count_nonzero().item(), 0)
