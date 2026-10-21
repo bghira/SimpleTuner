@@ -7,6 +7,7 @@ import time
 from math import ceil, floor
 from multiprocessing import Process, Queue
 from pathlib import Path
+from queue import Queue as ThreadQueue
 
 # For semaphore
 from threading import Semaphore, Thread
@@ -623,11 +624,14 @@ class MetadataBackend:
         num_cpus = StateTracker.get_args().aspect_bucket_worker_count
         files_split = np.array_split(new_files, num_cpus)
 
-        metadata_updates_queue = Queue()
-        written_files_queue = Queue()
-        filtered_files_queue = Queue()
-        tqdm_queue = Queue()
-        aspect_ratio_bucket_indices_queue = Queue()
+        use_multiprocessing = StateTracker.get_args().enable_multiprocessing
+        worker_cls = Process if use_multiprocessing else Thread
+        queue_cls = Queue if use_multiprocessing else ThreadQueue
+        metadata_updates_queue = queue_cls()
+        written_files_queue = queue_cls()
+        filtered_files_queue = queue_cls()
+        tqdm_queue = queue_cls()
+        aspect_ratio_bucket_indices_queue = queue_cls()
         if not ignore_existing_cache and not self.image_metadata_loaded:
             try:
                 self.load_image_metadata()
@@ -635,7 +639,6 @@ class MetadataBackend:
                 raise Exception(
                     f"Error loading image metadata. You may have to remove the metadata json file '{self.metadata_file}' and VAE cache manually: {e}"
                 )
-        worker_cls = Process if StateTracker.get_args().enable_multiprocessing else Thread
         workers = [
             worker_cls(
                 target=self._bucket_worker,

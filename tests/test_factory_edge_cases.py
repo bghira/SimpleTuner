@@ -1761,14 +1761,10 @@ class TestFactoryEdgeCases(unittest.TestCase):
         factory._handle_config_versioning = MagicMock()
 
         def finish_discovery():
-            Path(self.temp_dir, f"aspect_resolution_map-{resolution}.json").write_text(
-                json.dumps({"0.68": expected_size})
-            )
+            Path(self.temp_dir, f"aspect_resolution_map-{resolution}.json").write_text(json.dumps({"0.68": expected_size}))
 
         def check_geometry(**kwargs):
-            target_size, _, aspect = MultiaspectImage.calculate_new_size_by_pixel_area(
-                0.68, resolution, (680, 1000)
-            )
+            target_size, _, aspect = MultiaspectImage.calculate_new_size_by_pixel_area(0.68, resolution, (680, 1000))
             self.assertEqual(aspect, 0.68)
             self.assertEqual(target_size, expected_size)
 
@@ -1785,8 +1781,9 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     "dataset_type": "image",
                     "metadata_backend": metadata_backend,
                 }
-                with patch.object(StateTracker, "args", self.args), patch.object(
-                    StateTracker, "aspect_resolution_map", {resolution: {"0.68": (1264, 1856)}}
+                with (
+                    patch.object(StateTracker, "args", self.args),
+                    patch.object(StateTracker, "aspect_resolution_map", {resolution: {"0.68": (1264, 1856)}}),
                 ):
                     factory._handle_bucket_operations(
                         backend={"id": "train"},
@@ -2575,6 +2572,9 @@ class TestEvalDatasetVAECacheMetadata(TestFactoryEdgeCases):
         Eval datasets (type "eval") must be found when searching for metadata
         during VAE cache processing.
         """
+        from multiprocessing.queues import Queue as ProcessQueue
+        from threading import Event
+
         from PIL import Image
 
         from simpletuner.helpers.data_backend.local import LocalDataBackend
@@ -2637,7 +2637,18 @@ class TestEvalDatasetVAECacheMetadata(TestFactoryEdgeCases):
             metadata_update_interval=60,
             cache_file_suffix="eval-test",
         )
-        metadata_backend.refresh_buckets()
+        release_feeders = Event()
+        original_feed = ProcessQueue._feed
+
+        def feed_after_refresh(*args, **kwargs):
+            release_feeders.wait()
+            return original_feed(*args, **kwargs)
+
+        try:
+            with patch.object(ProcessQueue, "_feed", side_effect=feed_after_refresh):
+                metadata_backend.refresh_buckets()
+        finally:
+            release_feeders.set()
 
         # Register the data backend in StateTracker (as factory does at line 4141)
         init_backend = {
