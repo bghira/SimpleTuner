@@ -98,7 +98,7 @@ WebUI में denoising के दौरान प्रगति चित्
 
 रेसिपी चुने हुए VRAM स्तर के अनुसार `train_batch_size` सेट करती है। छोटे डेटासेट या लंबे कैप्शन और अतिरिक्त सुविधाओं के लिए इसे घटाएँ। `gradient_checkpointing_backend` में `torch`, `unsloth`, `torch-ffn` या `unsloth-ffn` चुनें; interval और `gradient_checkpointing_segment_stride` कवरेज नियंत्रित करते हैं। Musubi, `musubi_blocks_to_swap` से ब्लॉक CPU और GPU के बीच ले जाता है। RamTorch के लिए `ramtorch: true` तथा चयनात्मक ऑफ़लोड के लिए `ramtorch_transformer_percent` है। ऑफ़लोड में सिस्टम RAM और ट्रांसफ़र समय लगता है; एक समय में एक तरीका सेट करें। [OPTIONS](../OPTIONS.md) देखें।
 
-CUDA इंस्टॉलेशन में CuTE attention शामिल है। प्रशिक्षण के दौरान डिफ़ॉल्ट `attention_mechanism: "kohaku-fa-auto"` Ada और Hopper GPU पर CuTE तथा अन्य आर्किटेक्चर पर मूल SDPA चुनता है। backward के लिए सहेजे गए attention tensors ऑफ़लोड करने के लिए `gradient_checkpointing_offload_attention: true` तथा ट्रांसफ़र प्रीफ़ेच के लिए `gradient_checkpointing_offload_prefetch: true` दें। अन्य attention बैकएंड के लिए [OPTIONS](../OPTIONS.md) देखें।
+CUDA इंस्टॉलेशन में CuTE attention शामिल है। प्रशिक्षण के दौरान डिफ़ॉल्ट `attention_mechanism: "kohaku-fa-auto"` Ada, Hopper और RTX Blackwell GPU पर CuTE तथा अन्य आर्किटेक्चर पर मूल SDPA चुनता है। backward के लिए सहेजे गए attention tensors ऑफ़लोड करने के लिए `gradient_checkpointing_offload_attention: true` तथा ट्रांसफ़र प्रीफ़ेच के लिए `gradient_checkpointing_offload_prefetch: true` दें। अन्य attention बैकएंड के लिए [OPTIONS](../OPTIONS.md) देखें।
 
 रेसिपी [REPA](../experimental/IMAGE_REPA.md) सक्षम करती है। बाद की लेयर की इमेज विशेषताओं को पहले की लेयर से मिलाने के लिए [LayerSync](../experimental/LAYERSYNC.md) जोड़ें:
 

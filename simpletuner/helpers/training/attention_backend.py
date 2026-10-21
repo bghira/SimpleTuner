@@ -574,7 +574,7 @@ def is_sageattention_available() -> bool:
 
 _KOHAKU_FA_CUTE_CAPABILITIES = {(8, 9), (9, 0), (12, 0)}
 _KOHAKU_FA_GLUON_CAPABILITIES = {(10, 0), (10, 3)}
-_KOHAKU_FA_AUTO_CAPABILITIES = {(8, 9), (9, 0)}
+_KOHAKU_FA_AUTO_CAPABILITIES = {(8, 9), (9, 0), (12, 0)}
 
 
 def get_kohaku_fa_unavailable_reason() -> Optional[str]:
@@ -1296,7 +1296,7 @@ class AttentionBackendController:
             return
         reason = get_kohaku_fa_unavailable_reason()
         if automatic and reason is None and torch.cuda.get_device_capability() not in _KOHAKU_FA_AUTO_CAPABILITIES:
-            reason = "Automatic Kohaku attention requires the centered backward kernels on sm_89 or sm_90."
+            reason = "Automatic Kohaku attention requires the centered CuTe kernels on sm_89, sm_90 or sm_120."
         if reason:
             if automatic:
                 cls.restore_default()

@@ -98,7 +98,7 @@ simpletuner train
 
 配方已按所选 VRAM 档位设置 `train_batch_size`。数据集较小，或描述和额外功能需要更多显存时，请减小该值。 `gradient_checkpointing_backend` 支持 `torch`、`unsloth`、`torch-ffn` 和 `unsloth-ffn`；interval 与 `gradient_checkpointing_segment_stride` 控制覆盖范围。Musubi 通过 `musubi_blocks_to_swap` 在 CPU 与 GPU 之间移动块。RamTorch 使用 `ramtorch: true`，可通过 `ramtorch_transformer_percent` 选择卸载比例。这些方案占用系统内存并增加传输开销，请一次配置一种。参见 [OPTIONS](../OPTIONS.md)。
 
-CUDA 安装包含 CuTE 注意力依赖。训练时，默认的 `attention_mechanism: "kohaku-fa-auto"` 在 Ada 和 Hopper GPU 上选择 CuTE，在其他架构上使用原生 SDPA。启用 `gradient_checkpointing_offload_attention: true` 可卸载为反向传播保存的注意力张量；`gradient_checkpointing_offload_prefetch: true` 启用传输预取。其他注意力后端请参阅 [OPTIONS](../OPTIONS.md)。
+CUDA 安装包含 CuTE 注意力依赖。训练时，默认的 `attention_mechanism: "kohaku-fa-auto"` 在 Ada、Hopper 和 RTX Blackwell GPU 上选择 CuTE，在其他架构上使用原生 SDPA。启用 `gradient_checkpointing_offload_attention: true` 可卸载为反向传播保存的注意力张量；`gradient_checkpointing_offload_prefetch: true` 启用传输预取。其他注意力后端请参阅 [OPTIONS](../OPTIONS.md)。
 
 配方启用 [REPA](../experimental/IMAGE_REPA.md)。如需使较后层的图像特征与前层对齐，添加 [LayerSync](../experimental/LAYERSYNC.md)：
 

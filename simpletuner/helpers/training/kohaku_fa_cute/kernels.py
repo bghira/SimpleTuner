@@ -1,4 +1,4 @@
-"""Shared-tile attention with unscaled softmax maxima on Ada, Hopper and RTX Blackwell.
+"""Shared-tile attention with unscaled softmax maxima on Ada, Hopper and Blackwell.
 
 The accumulator layout transforms follow NVIDIA's BSD-licensed CuTe Ampere
 attention example; see LICENSE. The attention and gradient kernels are local.
@@ -10,12 +10,15 @@ from math import prod
 import cuda.bindings.driver as cuda
 import cutlass
 import cutlass.cute as cute
+import cutlass.pipeline as pipeline
 import torch
 from cutlass._mlir.dialects import llvm
 from cutlass.cute.nvgpu import cpasync, warp, warpgroup
 from cutlass.cute.runtime import make_fake_stream, make_fake_tensor
 from cutlass.cutlass_dsl import T, dsl_user_op
-from cutlass.memory import SmemAllocator
+from cutlass.memory import SmemAllocator, TmemAllocator
+
+from .blackwell import dot as blackwell_dot
 
 
 @cute.jit
@@ -111,15 +114,23 @@ class Attention:
         centered=False,
         tma=False,
         pipelined=False,
+        tcgen=False,
+        sm103_rows=0,
         vector=8,
+        reload_center=False,
     ):
         self.mode, self.causal, self.masked = mode, causal, masked
         self.columns, self.width, self.warps = columns, width, warps
         self.hopper, self.centered, self.tma = hopper, centered, tma
         self.pipelined = pipelined
+        self.tcgen = tcgen
+        self.sm103_rows = sm103_rows
+        self.reload_center = reload_center
         self.pointwise_overlap = hopper and centered and width == 128 and mode != "forward"
         self.column_warps = 2 if mode == "kv" and width > 128 and not hopper else 1
         self.rows = 64 if hopper else 16 * (warps // self.column_warps)
+        if tcgen and (hopper or warps != 4 or self.rows != 64 or columns not in (32, 64)):
+            raise ValueError("tcgen05 score tiles require four warps and a 64x32 or 64x64 tile.")
         self.grid_rows = 128 if hopper and mode == "forward" and warps == 8 else self.rows
         self.specialized_load = False
         self.vector = vector
@@ -338,8 +349,10 @@ class Attention:
             cute.arch.sync_threads()
 
     @cute.jit
-    def dot(self, a, b, mma, thread, tid, wait: cutlass.Constexpr = True):
-        if cutlass.const_expr(self.hopper):
+    def dot(self, a, b, mma, thread, tid, wait: cutlass.Constexpr = True, tcgen_state=None):
+        if cutlass.const_expr(self.tcgen):
+            result = blackwell_dot(a, b, thread, tid, self.columns, tcgen_state)
+        elif cutlass.const_expr(self.hopper):
             result = self.dot_hopper(a, b, mma, thread, tid, wait)
         else:
             result = cute.make_rmem_tensor(thread.partition_shape_C((self.rows, self.columns)), cutlass.Float32)
@@ -459,6 +472,7 @@ class Attention:
         thread,
         tid,
         shared_statistics=None,
+        tcgen_state=None,
     ):
         maximum, logsum, delta, delta_base = statistics
         batch, head, start, query, sq, sk = location
@@ -481,8 +495,8 @@ class Attention:
                         shared_statistics[field, tid] = cutlass.Float32(0.0)
             cute.arch.cp_async_commit_group()
         coords = thread.partition_C(cute.make_identity_tensor((self.rows, self.columns)))
-        scores = self.dot(left, right, mma, thread, tid, wait=not self.pointwise_overlap)
-        dp = self.dot(other_left, other_right, mma, thread, tid, wait=not self.pointwise_overlap)
+        scores = self.dot(left, right, mma, thread, tid, wait=not self.pointwise_overlap, tcgen_state=tcgen_state)
+        dp = self.dot(other_left, other_right, mma, thread, tid, wait=not self.pointwise_overlap, tcgen_state=tcgen_state)
         if cutlass.const_expr(self.pointwise_overlap):
             warpgroup.wait_group(1)
         if cutlass.const_expr(shared_statistics is not None):
@@ -551,9 +565,23 @@ class Attention:
         mma,
         thread,
         tid,
+        tcgen_state=None,
     ):
         scores, probabilities = self.kv_weights(
-            left, right, other_left, other_right, mask, statistics, location, full, magnitude, sign, mma, thread, tid
+            left,
+            right,
+            other_left,
+            other_right,
+            mask,
+            statistics,
+            location,
+            full,
+            magnitude,
+            sign,
+            mma,
+            thread,
+            tid,
+            tcgen_state=tcgen_state,
         )
         coords = thread.partition_C(cute.make_identity_tensor((self.rows, self.columns)))
         for i in cutlass.range_constexpr(cute.size(coords)):
@@ -609,7 +637,7 @@ class Attention:
 
     @cute.jit
     def shared(self, allocator, dtype: cutlass.Constexpr, layout):
-        if cutlass.const_expr(self.hopper):
+        if cutlass.const_expr(self.hopper or self.tma or self.tcgen or self.sm103_rows):
             tensor = allocator.allocate_tensor(
                 dtype, layout.outer, byte_alignment=1024 if self.tma else 128, swizzle=layout.inner
             )
@@ -688,7 +716,7 @@ class Attention:
         accum.fill(0.0)
         av = row_view(accum)
         padded = cute.ceil_div(q.shape[3], self.width) * self.width
-        if cutlass.const_expr(self.hopper):
+        if cutlass.const_expr(self.hopper or self.tma or self.tcgen):
             atom = warpgroup.make_smem_layout_atom(
                 warpgroup.SmemLayoutAtomKind.K_SW128 if padded % 64 == 0 else warpgroup.SmemLayoutAtomKind.K_SW64,
                 q.element_type,
@@ -698,6 +726,28 @@ class Attention:
         left_layout = cute.tile_to_shape(atom, (self.grid_rows, padded), (0, 1))
         right_layout = cute.tile_to_shape(atom, (self.columns, padded), (0, 1))
         allocator = SmemAllocator()
+        tcgen_state = None
+        if cutlass.const_expr(self.tcgen):
+            mma_barrier = allocator.allocate_array(cutlass.Int64, 1)
+            phase_buffer = allocator.allocate_array(cutlass.Int32, 1)
+            tmem_buffer = allocator.allocate_array(cutlass.Int32, 1)
+            scratch = allocator.allocate_tensor(
+                cutlass.Float32, cute.make_layout((64, self.columns), stride=(self.columns, 1)), byte_alignment=128
+            )
+            tmem = TmemAllocator(
+                alloc_result_dst_smem_ptr=tmem_buffer,
+                barrier_for_retrieve=pipeline.NamedBarrier(barrier_id=1, num_threads=128),
+            )
+            tmem.allocate(self.columns)
+            tmem.wait_for_alloc()
+            tmem_pointer = tmem.retrieve_ptr(cutlass.Float32)
+            tmem.relinquish_alloc_permit()
+            if tid == 0:
+                phase_buffer[0] = 0
+                cute.arch.mbarrier_init(mma_barrier, 1)
+            cute.arch.mbarrier_init_fence()
+            cute.arch.sync_threads()
+            tcgen_state = (tmem_pointer, mma_barrier, scratch, phase_buffer)
         shared_statistics = None
         if cutlass.const_expr(self.mode == "kv" and self.hopper and self.warps == 4 and self.width == 128):
             shared_statistics = allocator.allocate_tensor(
@@ -761,7 +811,7 @@ class Attention:
                         phase_tma = self.load_pair(
                             k, v, right, other_right, batch, kvhead, block * self.columns, tid, tma_args, barrier, phase_tma
                         )
-                    scores = self.dot(left, right, mma, thread, tid)
+                    scores = self.dot(left, right, mma, thread, tid, tcgen_state=tcgen_state)
                     self.online_softmax(
                         scores,
                         coords,
@@ -802,7 +852,7 @@ class Attention:
                     cute.arch.cp_async_commit_group()
                     cute.arch.cp_async_wait_group(0)
                     cute.arch.sync_threads()
-                    diagonal = self.dot(other_left, other_right, mma, thread, tid)
+                    diagonal = self.dot(other_left, other_right, mma, thread, tid, tcgen_state=tcgen_state)
                     diagonal_view = row_view(diagonal)
                     for r in cutlass.range_constexpr(cute.size(rc.shape[0])):
                         value = cutlass.Float32(0.0)
@@ -821,7 +871,9 @@ class Attention:
                 row_max[r] = cutlass.Float32(0.0)
                 row_logsum[r] = cutlass.Float32(0.0)
                 if qr < q.shape[2]:
-                    if cutlass.const_expr(self.centered and not (self.hopper and q.shape[3] in (64, 128))):
+                    if cutlass.const_expr(
+                        self.centered and not self.reload_center and not (self.hopper and q.shape[3] in (64, 128))
+                    ):
                         base[r] = delta_base[batch, head, qr]
                     row_max[r] = maximum[batch, head, qr]
                     row_logsum[r] = logsum[batch, head, qr]
@@ -866,12 +918,31 @@ class Attention:
                                 barrier,
                                 phase_tma,
                             )
-                        scores = self.dot(left, right, mma, thread, tid, wait=not self.pointwise_overlap)
-                        dp = self.dot(other_left, other_right, mma, thread, tid, wait=not self.pointwise_overlap)
+                        scores = self.dot(
+                            left, right, mma, thread, tid, wait=not self.pointwise_overlap, tcgen_state=tcgen_state
+                        )
+                        dp = self.dot(
+                            other_left,
+                            other_right,
+                            mma,
+                            thread,
+                            tid,
+                            wait=not self.pointwise_overlap,
+                            tcgen_state=tcgen_state,
+                        )
                         if cutlass.const_expr(self.pointwise_overlap):
                             warpgroup.wait_group(1)
                         sv, pv = row_view(scores), row_view(dp)
                         for r in cutlass.range_constexpr(cute.size(rc.shape[0])):
+                            if cutlass.const_expr(self.centered):
+                                center = base[r]
+                                if cutlass.const_expr(self.reload_center):
+                                    # Keep the external center out of the long-lived
+                                    # warp-MMA register fragments on Blackwell.
+                                    center = cutlass.Float32(0.0)
+                                    qr = start + rc[r, 0][0]
+                                    if qr < q.shape[2]:
+                                        center = delta_base[batch, head, qr]
                             for c in cutlass.range_constexpr(cute.size(rc.shape[1])):
                                 row, col = rc[r, c]
                                 probability = cutlass.Float32(0.0)
@@ -885,7 +956,7 @@ class Attention:
                                 if cutlass.const_expr(self.pointwise_overlap):
                                     sv[r, c] = probability
                                 elif cutlass.const_expr(self.centered):
-                                    sv[r, c] = probability * (pv[r, c] - base[r])
+                                    sv[r, c] = probability * (pv[r, c] - center)
                                     pv[r, c] = probability
                                 elif cutlass.const_expr(phase == 0):
                                     sv[r, c] = probability * pv[r, c]
@@ -929,7 +1000,7 @@ class Attention:
             kvhead = bh % k.shape[1]
             if cutlass.const_expr(self.column_warps > 1 or self.warps == 8):
                 weight_atom = atom
-                if cutlass.const_expr(self.hopper):
+                if cutlass.const_expr(self.hopper or self.tma or self.tcgen):
                     weight_atom = warpgroup.make_smem_layout_atom(
                         (
                             warpgroup.SmemLayoutAtomKind.K_SW128
@@ -1007,6 +1078,7 @@ class Attention:
                                         mma,
                                         thread,
                                         tid,
+                                        tcgen_state=tcgen_state,
                                     )
                             else:
                                 self.kv_shared_weights(
@@ -1025,6 +1097,7 @@ class Attention:
                                     mma,
                                     thread,
                                     tid,
+                                    tcgen_state=tcgen_state,
                                 )
                             cute.arch.sync_threads()
                             self.product(shared_scores, right, offset, mma, thread, tid, accum)
@@ -1045,6 +1118,7 @@ class Attention:
                                 thread,
                                 tid,
                                 shared_statistics,
+                                tcgen_state=tcgen_state,
                             )
                             self.product(scores, right, offset, mma, thread, tid, accum)
                             self.product(probability, other_right, offset, mma, thread, tid, accv)
@@ -1052,6 +1126,9 @@ class Attention:
                         cute.arch.sync_threads()
             self.store_result(accum, dk, left, batch, kvhead, start, offset, thread, tid, scale)
             self.store_result(accv, dv, left, batch, kvhead, start, offset, thread, tid, cutlass.Float32(1.0))
+        if cutlass.const_expr(self.tcgen):
+            cute.arch.sync_threads()
+            tmem.free(tmem_pointer)
 
 
 class ForwardLoadSpecialized(Attention):
@@ -1183,6 +1260,98 @@ def copy_vector(descriptors):
     )
 
 
+_SM100_CONFIGURATIONS = {
+    # columns, width, warps, WGMMA, centered, TMA, pipelined; optional tcgen05 flag.
+    (64, "forward"): (64, 64, 2, False, False, True, True),
+    (64, "q"): (32, 64, 1, False, True, True, True),
+    (64, "kv"): (64, 64, 2, False, True, True, True),
+    (128, "forward"): (64, 128, 4, False, False, True, True),
+    (128, "q"): (32, 128, 2, False, True, True, True),
+    (128, "kv"): (32, 128, 2, False, True, True, True),
+    (256, "forward"): (32, 256, 4, False, False, True, True),
+    (256, "q"): (32, 128, 4, False, True, True, False),
+    (256, "kv"): (64, 256, 4, False, True, True, False),
+    (512, "forward"): (32, 256, 4, False, False, True, True, True),
+    (512, "q"): (32, 128, 4, False, True, False, False),
+    (512, "kv"): (32, 256, 4, False, True, False, False),
+}
+
+_SM103_CONFIGURATIONS = {
+    # columns, output width, warps, WGMMA, centered, TMA, pipeline; optional tcgen05 / native row count.
+    (64, "forward"): (64, 64, 2, False, False, True, True),
+    (64, "q"): (64, 64, 1, False, True, True, False),
+    (64, "kv"): (64, 64, 2, False, True, True, True),
+    (128, "forward"): (64, 128, 4, False, False, True, True, False, 64),
+    (128, "q"): (64, 128, 4, False, True, True, False, False, 64, True),
+    (128, "kv"): (64, 128, 4, False, True, True, False, False, 64, True),
+    (256, "forward"): (32, 256, 4, False, False, True, True),
+    (256, "q"): (64, 256, 4, False, True, True, False, False, 64, True),
+    (256, "kv"): (64, 256, 4, False, True, True, False),
+    (512, "forward"): (32, 256, 4, False, False, True, True, True),
+    (512, "q"): (32, 256, 4, False, True, True, False, False, 64, True),
+    (512, "kv"): (32, 256, 4, False, True, False, False),
+}
+
+# Shared producer/consumer pipeline; the legacy tables also serve masks and
+# layouts that cannot use TMA. Each stage uses 128-row native products.
+_BLACKWELL_PIPELINE_CONFIGURATIONS = {
+    (dimension, mode): (
+        128 if mode == "forward" else 64,
+        min(dimension, 256 if mode == "forward" else 128),
+        12,
+        False,
+        mode != "forward",
+        True,
+        True,
+        False,
+        128,
+    )
+    for dimension in (64, 128, 256, 512)
+    for mode in ("forward", "q", "kv")
+}
+
+
+# Measured sm_100 path: two 64-column consumer groups each keep FP32 P for
+# their own dS columns, while packed P aliases the consumed score tile.
+_SM100_FUSED_CONFIGURATIONS = {
+    key: (configuration if key[1] == "forward" else (128, *configuration[1:]))
+    for key, configuration in _BLACKWELL_PIPELINE_CONFIGURATIONS.items()
+}
+
+
+# B300 MIG validation selects the same 128-column centered backward tiles.
+# Keep a distinct table so later full-device tuning can diverge independently.
+_SM103_FUSED_CONFIGURATIONS = dict(_SM100_FUSED_CONFIGURATIONS)
+
+
+_SM120_CONFIGURATIONS = {
+    # columns, output width, warps, TMA, double buffering; measured on RTX 5090.
+    (64, "forward"): (64, 64, 4, True, True),
+    (64, "q"): (32, 64, 4, True, True),
+    (64, "kv"): (64, 64, 4, True, True),
+    (128, "forward"): (32, 128, 4, True, True),
+    (128, "q"): (32, 128, 4, False, False),
+    (128, "kv"): (32, 128, 4, False, False),
+    (256, "forward"): (16, 256, 4, True, False),
+    (256, "q"): (32, 128, 4, False, False),
+    (256, "kv"): (32, 256, 4, False, False),
+    (512, "forward"): (16, 256, 4, False, False),
+    (512, "q"): (16, 128, 2, False, False),
+    (512, "kv"): (32, 256, 2, False, False),
+}
+
+
+def _aligned_tiles(descriptors):
+    return all(
+        alignment >= 16 and stride[-1] == 1 and all(s > 0 and s % 8 == 0 for s in stride[:-1])
+        for _, _, stride, alignment in (descriptors[i] for i in (0, 1, 2, 7))
+    )
+
+
+def _tma_compatible(dimension, descriptors):
+    return dimension in (64, 128, 256) and _aligned_tiles(descriptors)
+
+
 def kernel_configuration(device, mode, descriptors):
     capability = torch.cuda.get_device_capability(device)
     dimension = descriptors[0][1][-1]
@@ -1200,25 +1369,42 @@ def kernel_configuration(device, mode, descriptors):
             columns, warps = 32, 8
         elif mode != "forward" and dimension > 128:
             hopper = False
-    centered = capability in ((8, 9), (9, 0)) and mode != "forward"
+    centered = capability in ((8, 9), (9, 0), (10, 0), (10, 3), (12, 0)) and mode != "forward"
     if centered and mode == "q":
         width = (dimension + 31) // 32 * 32 if dimension <= 192 else 128
         warps = 4 if dimension <= 256 else 1
         hopper = capability == (9, 0) and dimension <= 256
         columns = 64 if hopper and dimension <= 128 and width % 64 == 0 else 32
-    tma = (
-        hopper
-        and dimension in (64, 128, 256)
-        and all(
-            alignment >= 16 and stride[-1] == 1 and all(s > 0 and s % 8 == 0 for s in stride[:-1])
-            for _, _, stride, alignment in (descriptors[i] for i in (0, 1, 2, 7))
-        )
-    )
+    tma = hopper and _tma_compatible(dimension, descriptors)
     if mode == "forward":
         if dimension == 128 and tma and prod(descriptors[0][1][:-1]) >= 32768:
             columns = 32
         elif capability == (8, 9) and dimension == 256:
             warps = 4
+    if capability in ((10, 0), (10, 3)):
+        configurations = _SM100_CONFIGURATIONS if capability == (10, 0) else _SM103_CONFIGURATIONS
+        selected = configurations.get((dimension, mode))
+        if selected is not None:
+            requires_aligned = selected[5] or any(selected[7:])
+            eligible = descriptors[3][0] != torch.bool and _aligned_tiles(descriptors)
+            # Small sequences do not amortize the larger producer/consumer CTA.
+            threshold = 1024 if dimension == 64 else 512 if dimension == 128 else 256
+            sequence = max(descriptors[0][1][2], descriptors[1][1][2])
+            if eligible and sequence >= threshold:
+                pipelines = _SM100_FUSED_CONFIGURATIONS if capability == (10, 0) else _SM103_FUSED_CONFIGURATIONS
+                pipeline = pipelines.get((dimension, mode))
+                if pipeline is not None:
+                    return pipeline
+            if not requires_aligned or eligible:
+                return selected
+    if capability == (12, 0):
+        selected = _SM120_CONFIGURATIONS.get((dimension, mode))
+        if selected is not None:
+            cols, output_width, selected_warps, use_tma, pipeline = selected
+            # Sparse boolean masks retain the generic tile-skipping path.
+            eligible = descriptors[3][0] != torch.bool and _tma_compatible(dimension, descriptors)
+            if not use_tma or eligible:
+                return cols, output_width, selected_warps, False, mode != "forward", use_tma, pipeline
     return (columns, width, warps, hopper, centered, tma, tma and dimension in (64, 128))
 
 
@@ -1227,6 +1413,7 @@ def compile_kernel(device, mode, causal, masked, descriptors):
     specialized_load = (
         mode == "forward"
         and not (causal or masked)
+        and configuration[3]
         and configuration[5]
         and descriptors[0][1][-1] == 128
         and descriptors[0][1][2] >= 1536
@@ -1278,14 +1465,64 @@ def _compile_kernel(
     ]
     if mode == "backward":
         base_dot = configuration[4] and not (configuration[3] and layouts[0][1][-1] in (64, 128))
-        program = JointBackward(causal, masked, configuration, kv_configuration, vector, base_vector, base_dot)
+        program = JointBackward(
+            causal,
+            masked,
+            configuration,
+            kv_configuration,
+            vector,
+            base_vector,
+            base_dot,
+            reload_center=torch.cuda.get_device_capability(device) in ((10, 0), (10, 3), (12, 0)),
+            hardware_reductions=torch.cuda.get_device_capability(device) == (10, 3),
+            blackwell_operand_chunk=128 if layouts[0][1][-1] == 128 else 64,
+        )
+        if (
+            not masked
+            and layouts[0][0] == torch.bfloat16
+            and layouts[0][1][-1] == 512
+            and torch.cuda.get_device_capability(device) == (10, 3)
+            and configuration == _SM103_FUSED_CONFIGURATIONS[(512, "q")]
+            and kv_configuration == _SM103_FUSED_CONFIGURATIONS[(512, "kv")]
+            and layouts[0][1][1] == layouts[1][1][1]
+            and layouts[0][1][0] * layouts[0][1][1] >= 8
+        ):
+            from .blackwell_pipeline import Backward as PipelineBackward
+
+            # Preserve explicit pipeline sources supplied by profiling/tuning tools.
+            if isinstance(program.query, PipelineBackward) and isinstance(program.keyvalue, PipelineBackward):
+                from .blackwell_register_aux import AdaptiveBackward
+
+                program = AdaptiveBackward(causal, program, base_vector)
     elif mode == "forward" and masked:
         program = JointForward(causal, configuration, vector)
     else:
         if specialized_load:
             program = ForwardLoadSpecialized(mode, causal, masked, *configuration, vector=vector)
+        elif len(configuration) > 8 and configuration[8]:
+            if configuration[2] == 12:
+                from .blackwell_pipeline import Forward
+            else:
+                from .sm103 import Forward
+
+            program = Forward(
+                mode,
+                causal,
+                masked,
+                *configuration,
+                vector=vector,
+                hardware_reductions=torch.cuda.get_device_capability(device) == (10, 3),
+                **({"head_dimension": layouts[0][1][-1]} if configuration[2] == 12 else {}),
+            )
         else:
-            program = Attention(mode, causal, masked, *configuration, vector=vector)
+            program = Attention(
+                mode,
+                causal,
+                masked,
+                *configuration,
+                vector=vector,
+                reload_center=torch.cuda.get_device_capability(device) in ((10, 0), (10, 3), (12, 0)),
+            )
     with torch.cuda.device(device):
         return cute.compile(
             program,
@@ -1297,7 +1534,7 @@ def _compile_kernel(
 
 
 def centered_backward(q):
-    return torch.cuda.get_device_capability(q.device.index) in ((8, 9), (9, 0))
+    return torch.cuda.get_device_capability(q.device.index) in ((8, 9), (9, 0), (10, 0), (10, 3), (12, 0))
 
 
 class PackMask:
@@ -1385,9 +1622,56 @@ class OutputDelta:
 
 
 class JointBackward:
-    def __init__(self, causal, masked, q_configuration, kv_configuration, vector, base_vector, base_dot):
-        self.query = Attention("q", causal, masked, *q_configuration, vector=vector)
-        self.keyvalue = Attention("kv", causal, masked, *kv_configuration, vector=vector)
+    def __init__(
+        self,
+        causal,
+        masked,
+        q_configuration,
+        kv_configuration,
+        vector,
+        base_vector,
+        base_dot,
+        reload_center=False,
+        hardware_reductions=True,
+        blackwell_operand_chunk=64,
+    ):
+        if len(q_configuration) > 8 and q_configuration[8]:
+            if q_configuration[2] == 12:
+                from .blackwell_pipeline import Query
+            else:
+                from .sm103 import Query
+
+            self.query = Query(
+                "q",
+                causal,
+                masked,
+                *q_configuration[:9],
+                vector=vector,
+                reload_center=reload_center,
+                stream_aux=len(q_configuration) > 9 and q_configuration[9],
+                hardware_reductions=hardware_reductions,
+                **({"operand_chunk": blackwell_operand_chunk} if q_configuration[2] == 12 else {}),
+            )
+        else:
+            self.query = Attention("q", causal, masked, *q_configuration, vector=vector, reload_center=reload_center)
+        if len(kv_configuration) > 8 and kv_configuration[8]:
+            if kv_configuration[2] == 12:
+                from .blackwell_pipeline import KeyValue
+            else:
+                from .sm103 import KeyValue
+
+            self.keyvalue = KeyValue(
+                "kv",
+                causal,
+                masked,
+                *kv_configuration[:9],
+                vector=vector,
+                stream_aux=len(kv_configuration) > 9 and kv_configuration[9],
+                hardware_reductions=hardware_reductions,
+                **({"operand_chunk": blackwell_operand_chunk} if kv_configuration[2] == 12 else {}),
+            )
+        else:
+            self.keyvalue = Attention("kv", causal, masked, *kv_configuration, vector=vector)
         self.base_dot = base_dot
         self.centering = OutputDelta(base_vector)
 

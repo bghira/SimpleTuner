@@ -98,7 +98,7 @@ WebUI でノイズ除去中の進捗画像を見るには、次の設定を追�
 
 レシピの `train_batch_size` は選択した VRAM レベルに合わせてあります。小規模データセットや、長いキャプション・追加機能でメモリーが増える場合は下げてください。 `gradient_checkpointing_backend` は `torch`、`unsloth`、`torch-ffn`、`unsloth-ffn` を選べます。適用範囲は interval と `gradient_checkpointing_segment_stride` で調整します。Musubi は `musubi_blocks_to_swap` でブロックを GPU と CPU 間で移動します。RamTorch は `ramtorch: true` と `ramtorch_transformer_percent` で選択的にオフロードします。システム RAM と転送時間を使うため、一度に一つの方式から設定してください。[OPTIONS](../OPTIONS.md)に詳細があります。
 
-CUDA のインストールには CuTE attention が含まれます。学習時の既定値 `attention_mechanism: "kohaku-fa-auto"` は Ada・Hopper GPU で CuTE、それ以外のアーキテクチャで標準の SDPA を選びます。逆伝播用に保存する attention テンソルをオフロードするには `gradient_checkpointing_offload_attention: true`、転送の先読みには `gradient_checkpointing_offload_prefetch: true` を指定します。他の attention バックエンドは [OPTIONS](../OPTIONS.md) を参照してください。
+CUDA のインストールには CuTE attention が含まれます。学習時の既定値 `attention_mechanism: "kohaku-fa-auto"` は Ada・Hopper・RTX Blackwell GPU で CuTE、それ以外のアーキテクチャで標準の SDPA を選びます。逆伝播用に保存する attention テンソルをオフロードするには `gradient_checkpointing_offload_attention: true`、転送の先読みには `gradient_checkpointing_offload_prefetch: true` を指定します。他の attention バックエンドは [OPTIONS](../OPTIONS.md) を参照してください。
 
 レシピは [REPA](../experimental/IMAGE_REPA.md) を有効にします。後段の画像特徴を前段と揃えるには、[LayerSync](../experimental/LAYERSYNC.md) を追加します。
 

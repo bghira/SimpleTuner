@@ -4,6 +4,8 @@ from functools import lru_cache
 
 import torch
 
+_CAPABILITIES = {(8, 9), (9, 0), (10, 0), (10, 3), (12, 0)}
+
 
 @lru_cache(maxsize=1)
 def extension():
@@ -18,7 +20,8 @@ def forward_impl(
     return tuple(extension().forward(q, k, v, mask, scale, causal))
 
 
-forward = torch.library.custom_op("simpletuner_cute_attention::forward", mutates_args=())(forward_impl)
+# Invalidate cached backward graphs from the uncentered Blackwell implementation.
+forward = torch.library.custom_op("simpletuner_cute_attention::forward_v2", mutates_args=())(forward_impl)
 
 
 @forward.register_fake
@@ -53,7 +56,7 @@ def backward_impl(
     return tuple(extension().backward(q, k, v, mask, maximum, logsum, dout, blocks, out, scale, causal))
 
 
-backward = torch.library.custom_op("simpletuner_cute_attention::backward", mutates_args=())(backward_impl)
+backward = torch.library.custom_op("simpletuner_cute_attention::backward_v2", mutates_args=())(backward_impl)
 
 
 @backward.register_fake
@@ -162,11 +165,11 @@ def automatic_kohaku_fa_scaled_dot_product_attention(
     enable_gqa=False,
 ):
     if torch.compiler.is_compiling() or extension.cache_info().currsize == 0:
-        from simpletuner.helpers.training.attention_backend import _KOHAKU_FA_AUTO_CAPABILITIES, _automatic_kohaku_fa_sdpa
+        from simpletuner.helpers.training.attention_backend import _automatic_kohaku_fa_sdpa
 
         return _automatic_kohaku_fa_sdpa(
             kohaku_fa_scaled_dot_product_attention,
-            _KOHAKU_FA_AUTO_CAPABILITIES,
+            _CAPABILITIES,
             query,
             key,
             value,
