@@ -968,7 +968,8 @@ class CuTeAttentionTests(unittest.TestCase):
     def test_preserves_projection_layout_with_compiled_backward(self):
         from simpletuner.helpers.training.kohaku_fa_cute import attention
 
-        for dim in (64, 128, 256):
+        dimensions = (64, 128, 256, 512) if torch.cuda.get_device_capability() == (12, 0) else (64, 128, 256)
+        for dim in dimensions:
             with self.subTest(dim=dim):
                 torch.manual_seed(87)
                 inputs = [
@@ -1029,9 +1030,11 @@ class CuTeAttentionTests(unittest.TestCase):
         from scripts.benchmark_attention_precision import fp64_reference, make_inputs
         from simpletuner.helpers.training.kohaku_fa_cute import attention
 
-        for dtype, logit_scale in ((torch.float16, 1e5), (torch.float16, 1e6), (torch.bfloat16, 1e6)):
-            with self.subTest(dtype=dtype, logit_scale=logit_scale):
-                q, k, v, dout = make_inputs(logit_scale, device="cuda", dtype=dtype, seq=256, dim=256, seed=0)
+        dimensions = (256, 512) if torch.cuda.get_device_capability() == (12, 0) else (256,)
+        cases = ((torch.float16, 1e5), (torch.float16, 1e6), (torch.bfloat16, 1e6))
+        for dimension, (dtype, logit_scale) in itertools.product(dimensions, cases):
+            with self.subTest(dim=dimension, dtype=dtype, logit_scale=logit_scale):
+                q, k, v, dout = make_inputs(logit_scale, device="cuda", dtype=dtype, seq=256, dim=dimension, seed=0)
                 _, *expected_grads = fp64_reference((q, k, v), dout)
                 inputs = [tensor.requires_grad_() for tensor in (q, k, v)]
                 output = attention(*inputs)

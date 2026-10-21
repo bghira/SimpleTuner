@@ -58,12 +58,26 @@ class CuTeConfigurationTests(unittest.TestCase):
                 for causal in (False, True):
                     with self.subTest(dtype=dtype, dimension=dimension, causal=causal):
                         program = self._compiled_program((12, 0), "backward", dimension, dtype, causal=causal)
-                        self.assertEqual(program.query.column_warps, {256: 4, 512: 2}.get(dimension, 1))
-                        self.assertEqual(program.query.width, 256 if dimension in (256, 512) else dimension)
+                        self.assertEqual(program.query.column_warps, {256: 4, 512: 4}.get(dimension, 1))
+                        self.assertEqual(program.query.width, dimension)
                         self.assertEqual(
                             program.keyvalue.stage_statistics,
                             dimension == 64 and causal or dimension == 256 and not causal,
                         )
+
+    def test_sm120_full_width_d512_forward_and_backward(self):
+        for dtype in (torch.float16, torch.bfloat16):
+            for causal in (False, True):
+                with self.subTest(dtype=dtype, causal=causal):
+                    forward = self._compiled_program((12, 0), "forward", 512, dtype, causal=causal)
+                    backward = self._compiled_program((12, 0), "backward", 512, dtype, causal=causal)
+                    self.assertEqual(forward.width, 512)
+                    self.assertTrue(forward.forward_columns)
+                    for worker in (backward.query, backward.keyvalue):
+                        self.assertEqual(worker.width, 512)
+                        self.assertEqual(worker.score_warps, 2)
+                    self.assertTrue(backward.query.split_query)
+                    self.assertTrue(backward.keyvalue.split_kv)
 
     def test_sm120_query_selection_preserves_other_architectures_masks_and_unaligned_layouts(self):
         from simpletuner.helpers.training.kohaku_fa_cute import kernels
