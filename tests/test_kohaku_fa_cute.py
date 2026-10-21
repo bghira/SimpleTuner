@@ -477,6 +477,139 @@ class CuTeAttentionTests(unittest.TestCase):
                         self.assertEqual(compiler.call_count, 2)
                         self.assertEqual(native.extension().cache_size(), 2)
 
+    def test_sm103_wide_reuses_cache_across_length_dispatch(self):
+        if torch.cuda.get_device_capability() != (10, 3):
+            self.skipTest("Requires the SM103 wide backward.")
+        from unittest.mock import patch
+
+        from simpletuner.helpers.training.kohaku_fa_cute import native
+
+        for causal in (False, True):
+            with self.subTest(causal=causal):
+                native.extension().clear_cache()
+                try:
+                    with patch.object(native, "compile_kernel", wraps=native.compile_kernel) as compiler:
+                        cases = (
+                            (512, 512, False),
+                            (2048, 2048, False),
+                            (1024, 1024, False),
+                            (2049, 2049, False),
+                            (2049, 2051, False),
+                            (2048, 2048, True),
+                            (2048, 2048, False),
+                        )
+                        for queries, keys, projection in cases:
+                            with self.subTest(queries=queries, keys=keys, projection=projection):
+                                torch.manual_seed(371)
+                                q = torch.randn(1, 8, queries, 512, device="cuda", dtype=torch.bfloat16)
+                                k, v = [torch.randn(1, 8, keys, 512, device="cuda", dtype=q.dtype) for _ in range(2)]
+                                if projection:
+                                    q, k, v = [tensor.transpose(1, 2).contiguous().transpose(1, 2) for tensor in (q, k, v)]
+                                self.compare(q, k, v, causal=causal)
+                                self.assertEqual(compiler.call_count, 2)
+                                self.assertEqual(native.extension().cache_size(), 2)
+                finally:
+                    native.extension().clear_cache()
+
+    def test_sm103_wide_graph_reads_changed_inputs(self):
+        if torch.cuda.get_device_capability() != (10, 3):
+            self.skipTest("Requires the SM103 wide backward.")
+        from scripts.benchmark_attention_precision import fp64_reference
+        from simpletuner.helpers.training.kohaku_fa_cute import attention, native
+
+        for causal in (False, True):
+            with self.subTest(causal=causal):
+                native.extension().clear_cache()
+                try:
+                    torch.manual_seed(372)
+                    inputs = [
+                        torch.randn(1, 8, 2048, 512, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+                        for _ in range(3)
+                    ]
+                    dout = torch.randn_like(inputs[0])
+
+                    def run():
+                        out = attention(*inputs, causal=causal, scale=-0.125)
+                        return out, *torch.autograd.grad(out, inputs, dout)
+
+                    run()
+                    run()
+                    torch.cuda.synchronize()
+                    graph = torch.cuda.CUDAGraph()
+                    with torch.cuda.graph(graph):
+                        actual = run()
+                    for _ in range(2):
+                        with torch.no_grad():
+                            for tensor in (*inputs, dout):
+                                tensor.copy_(torch.randn_like(tensor))
+                        graph.replay()
+                        torch.cuda.synchronize()
+                        expected = fp64_reference(inputs, dout, causal=causal, scale=-0.125)
+                        for got, want in zip(actual, expected):
+                            torch.testing.assert_close(got.double(), want, atol=0.03, rtol=0.03)
+                finally:
+                    native.extension().clear_cache()
+
+    def test_sm103_wide_preserves_zero_covariance(self):
+        if torch.cuda.get_device_capability() != (10, 3):
+            self.skipTest("Requires the SM103 wide backward.")
+        from scripts.benchmark_attention_precision import fp64_reference
+        from simpletuner.helpers.training.kohaku_fa_cute import attention, native
+
+        for causal in (False, True):
+            with self.subTest(causal=causal):
+                native.extension().clear_cache()
+                try:
+                    q = torch.zeros(1, 8, 2049, 512, device="cuda", dtype=torch.bfloat16)
+                    k, v, dout = torch.zeros_like(q), torch.zeros_like(q), torch.zeros_like(q)
+                    k[..., :3, 0] = torch.tensor([-1, 0, 1], device="cuda", dtype=q.dtype)
+                    v[..., 0], dout[..., 0] = 1, 1
+                    v[..., 1, 0] = 1 + torch.finfo(q.dtype).eps
+                    for scale in (-0.125, 0.0, 1.0):
+                        with self.subTest(scale=scale):
+                            expected = fp64_reference((q, k, v), dout, causal=causal, scale=scale)
+                            inputs = [tensor.detach().requires_grad_(True) for tensor in (q, k, v)]
+                            out = attention(*inputs, causal=causal, scale=scale)
+                            actual = out, *torch.autograd.grad(out, inputs, dout)
+                            self.assertEqual(actual[1][..., 2:, :].count_nonzero().item(), 0)
+                            for got, want in zip(actual, expected):
+                                torch.testing.assert_close(got.double(), want, atol=0, rtol=0.03)
+                finally:
+                    native.extension().clear_cache()
+
+    def test_blackwell_wide_query_keeps_zero_covariance(self):
+        if torch.cuda.get_device_capability() not in ((10, 0), (10, 3)):
+            self.skipTest("Requires the Blackwell query pipeline.")
+        from unittest.mock import patch
+
+        from scripts.benchmark_attention_precision import fp64_reference
+        from simpletuner.helpers.training.kohaku_fa_cute import attention, kernels, native
+
+        for dim, dtype in itertools.product((256, 512), (torch.float16, torch.bfloat16)):
+
+            def configuration(device, mode, descriptors):
+                return kernels._SM100_FUSED_CONFIGURATIONS[(dim, mode)]
+
+            with self.subTest(dim=dim, dtype=dtype), patch.object(kernels, "kernel_configuration", configuration):
+                native.extension().clear_cache()
+                try:
+                    q = torch.zeros(1, 2, 257, dim, device="cuda", dtype=dtype)
+                    k = torch.zeros(1, 2, 3, dim, device="cuda", dtype=dtype)
+                    k[..., 0] = torch.tensor([-1, 0, 1], device="cuda", dtype=dtype)
+                    v, dout = torch.zeros_like(k), torch.zeros_like(q)
+                    v[..., 0] = 1
+                    v[:, :, 1, 0] = 1 + torch.finfo(dtype).eps
+                    dout[..., 0] = 1
+                    expected = fp64_reference((q, k, v), dout, scale=1.0)
+                    inputs = [t.requires_grad_() for t in (q, k, v)]
+                    out = attention(*inputs, scale=1.0)
+                    actual = out, *torch.autograd.grad(out, inputs, dout)
+                    self.assertEqual(actual[1].count_nonzero().item(), 0)
+                    for got, want in zip(actual, expected):
+                        torch.testing.assert_close(got.double(), want, atol=1e-7 if dtype == torch.float16 else 0, rtol=0.03)
+                finally:
+                    native.extension().clear_cache()
+
     def test_dynamic_lengths_preserve_forward_configuration_thresholds(self):
         from unittest.mock import patch
 
@@ -828,15 +961,22 @@ class CuTeAttentionTests(unittest.TestCase):
         from scripts.benchmark_attention_precision import fp64_reference, make_inputs
         from simpletuner.helpers.training.kohaku_fa_cute import attention
 
-        for dtype in (torch.float16, torch.bfloat16):
-            with self.subTest(dtype=dtype):
-                q, k, v, dout = make_inputs(1e6, device="cuda", dtype=dtype, seq=256, dim=256, seed=0)
+        for dtype, logit_scale in ((torch.float16, 1e5), (torch.float16, 1e6), (torch.bfloat16, 1e6)):
+            with self.subTest(dtype=dtype, logit_scale=logit_scale):
+                q, k, v, dout = make_inputs(logit_scale, device="cuda", dtype=dtype, seq=256, dim=256, seed=0)
                 _, *expected_grads = fp64_reference((q, k, v), dout)
                 inputs = [tensor.requires_grad_() for tensor in (q, k, v)]
                 output = attention(*inputs)
                 grads = torch.autograd.grad(output, inputs, dout)
                 for got, want in zip(grads[:2], expected_grads[:2]):
                     self.assertTrue(torch.isfinite(got).all())
+                    rounded_reference = want.to(dtype)
+                    if dtype == torch.float16 and logit_scale == 1e6:
+                        # This fixture's FP64 gradients are below FP16's subnormal range.
+                        self.assertEqual(rounded_reference.count_nonzero().item(), 0)
+                        self.assertEqual(got.count_nonzero().item(), 0)
+                        continue
+                    self.assertGreater(rounded_reference.count_nonzero().item(), 0)
                     relative_error = torch.linalg.vector_norm(got.double() - want) / torch.linalg.vector_norm(want)
                     cosine = torch.nn.functional.cosine_similarity(got.double().flatten(), want.flatten(), dim=0)
                     self.assertLess(relative_error.item(), 0.3)

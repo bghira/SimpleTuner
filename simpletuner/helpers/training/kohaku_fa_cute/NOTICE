@@ -1,7 +1,7 @@
 SimpleTuner CuTe attention
 
 Kernel implementation synchronized with KohakuFA-CuTe revision
-3a398da7fc571cfe59f0e2d5b4c2a9c7f0d4bd9a.
+dee9d848d709d5eb176e1b175f908e53bfa1b9bf.
 https://github.com/SimpleTuner-io/KohakuFA-CuTe
 
 The kernels use warp MMA on Ada and RTX Blackwell, WGMMA/TMA on Hopper,
@@ -12,6 +12,10 @@ and late gradient scaling. B200 and B300 use fused probability/dS consumers
 for 128-column backward tiles; B300 retains its hardware TMEM reductions.
 Interior probability tiles omit per-element bounds checks; tails and causal
 boundaries retain visibility checks with the same centered arithmetic.
+
+Blackwell uses packed FP32 arithmetic, overlapped operand/statistic transfers,
+and adjacent D512 gradient slices. Long BF16 D512 MHA on B300 uses a
+register-resident FP32 auxiliary with 256-wide gradient accumulators.
 
 The producer/consumer architecture in blackwell_pipeline.py adapts KohakuFA's
 sm100/fwd.py and sm100/bwd.py at revision

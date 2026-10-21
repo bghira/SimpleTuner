@@ -1475,7 +1475,25 @@ def _compile_kernel(
             base_dot,
             reload_center=torch.cuda.get_device_capability(device) in ((10, 0), (10, 3), (12, 0)),
             hardware_reductions=torch.cuda.get_device_capability(device) == (10, 3),
+            blackwell_operand_chunk=128 if layouts[0][1][-1] == 128 else 64,
         )
+        if (
+            not masked
+            and layouts[0][0] == torch.bfloat16
+            and layouts[0][1][-1] == 512
+            and torch.cuda.get_device_capability(device) == (10, 3)
+            and configuration == _SM103_FUSED_CONFIGURATIONS[(512, "q")]
+            and kv_configuration == _SM103_FUSED_CONFIGURATIONS[(512, "kv")]
+            and layouts[0][1][1] == layouts[1][1][1]
+            and layouts[0][1][0] * layouts[0][1][1] >= 8
+        ):
+            from .blackwell_pipeline import Backward as PipelineBackward
+
+            # Preserve explicit pipeline sources supplied by profiling/tuning tools.
+            if isinstance(program.query, PipelineBackward) and isinstance(program.keyvalue, PipelineBackward):
+                from .blackwell_register_aux import AdaptiveBackward
+
+                program = AdaptiveBackward(causal, program, base_vector)
     elif mode == "forward" and masked:
         program = JointForward(causal, configuration, vector)
     else:
@@ -1494,6 +1512,7 @@ def _compile_kernel(
                 *configuration,
                 vector=vector,
                 hardware_reductions=torch.cuda.get_device_capability(device) == (10, 3),
+                **({"head_dimension": layouts[0][1][-1]} if configuration[2] == 12 else {}),
             )
         else:
             program = Attention(
@@ -1614,6 +1633,7 @@ class JointBackward:
         base_dot,
         reload_center=False,
         hardware_reductions=True,
+        blackwell_operand_chunk=64,
     ):
         if len(q_configuration) > 8 and q_configuration[8]:
             if q_configuration[2] == 12:
@@ -1630,6 +1650,7 @@ class JointBackward:
                 reload_center=reload_center,
                 stream_aux=len(q_configuration) > 9 and q_configuration[9],
                 hardware_reductions=hardware_reductions,
+                **({"operand_chunk": blackwell_operand_chunk} if q_configuration[2] == 12 else {}),
             )
         else:
             self.query = Attention("q", causal, masked, *q_configuration, vector=vector, reload_center=reload_center)
@@ -1647,6 +1668,7 @@ class JointBackward:
                 vector=vector,
                 stream_aux=len(kv_configuration) > 9 and kv_configuration[9],
                 hardware_reductions=hardware_reductions,
+                **({"operand_chunk": blackwell_operand_chunk} if kv_configuration[2] == 12 else {}),
             )
         else:
             self.keyvalue = Attention("kv", causal, masked, *kv_configuration, vector=vector)
