@@ -572,9 +572,9 @@ def is_sageattention_available() -> bool:
         return False
 
 
-_KOHAKU_FA_CUTE_CAPABILITIES = {(8, 9), (9, 0), (12, 0)}
+_KOHAKU_FA_CUTE_CAPABILITIES = {(8, 6), (8, 9), (9, 0), (12, 0)}
 _KOHAKU_FA_GLUON_CAPABILITIES = {(10, 0), (10, 3)}
-_KOHAKU_FA_AUTO_CAPABILITIES = {(8, 9), (9, 0), (12, 0)}
+_KOHAKU_FA_AUTO_CAPABILITIES = {(8, 6), (8, 9), (9, 0), (12, 0)}
 
 
 def get_kohaku_fa_unavailable_reason() -> Optional[str]:
@@ -582,7 +582,7 @@ def get_kohaku_fa_unavailable_reason() -> Optional[str]:
         return "kohaku-fa requires a supported NVIDIA CUDA GPU."
     capability = torch.cuda.get_device_capability()
     if capability not in _KOHAKU_FA_CUTE_CAPABILITIES | _KOHAKU_FA_GLUON_CAPABILITIES:
-        return "kohaku-fa supports sm_89, sm_90, sm_100, sm_103 and sm_120; this GPU is unsupported."
+        return "kohaku-fa supports sm_86, sm_89, sm_90, sm_100, sm_103 and sm_120; this GPU is unsupported."
     from packaging.version import Version
 
     minimum_torch = "2.11" if capability in _KOHAKU_FA_CUTE_CAPABILITIES else "2.9"
@@ -623,7 +623,7 @@ def _kohaku_fa_sdpa(
     if any(t.device != query.device or t.device.type != "cuda" for t in (query, key, value)):
         raise ValueError("kohaku-fa requires Q/K/V on the same CUDA device.")
     if torch.cuda.get_device_capability(query.device) not in _KOHAKU_FA_CUTE_CAPABILITIES | _KOHAKU_FA_GLUON_CAPABILITIES:
-        raise ValueError("kohaku-fa requires sm_89, sm_90, sm_100, sm_103 or sm_120.")
+        raise ValueError("kohaku-fa requires sm_86, sm_89, sm_90, sm_100, sm_103 or sm_120.")
     if query.dtype not in (torch.float16, torch.bfloat16) or any(t.dtype != query.dtype for t in (key, value)):
         raise ValueError("kohaku-fa requires matching FP16/BF16 Q/K/V; FP32 attention is unsupported.")
     if not enable_gqa and query.shape[1] != key.shape[1]:
@@ -1296,7 +1296,7 @@ class AttentionBackendController:
             return
         reason = get_kohaku_fa_unavailable_reason()
         if automatic and reason is None and torch.cuda.get_device_capability() not in _KOHAKU_FA_AUTO_CAPABILITIES:
-            reason = "Automatic Kohaku attention requires the centered CuTe kernels on sm_89, sm_90 or sm_120."
+            reason = "Automatic Kohaku attention requires the centered CuTe kernels on sm_86, sm_89, sm_90 or sm_120."
         if reason:
             if automatic:
                 cls.restore_default()

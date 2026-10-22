@@ -1,11 +1,12 @@
 SimpleTuner CuTe attention
 
 Kernel implementation synchronized with KohakuFA-CuTe revision
-181c1c23e79c8a60f5663c982df1205663518803.
+c0786ddcd88d964f83a5d4eef40b7d028eee99de.
 https://github.com/SimpleTuner-io/KohakuFA-CuTe
 
-The kernels use warp MMA on Ada and RTX Blackwell, WGMMA/TMA on Hopper,
-and native tcgen05/TMEM producer/consumer pipelines on B200 and B300.
+The kernels use warp MMA on SM86 Ampere, Ada and RTX Blackwell,
+WGMMA/TMA on Hopper, and native tcgen05/TMEM producer/consumer pipelines
+on B200 and B300.
 Architecture-specific configurations preserve the centered FP32 backward
 calculation, separate unscaled row maxima and logarithmic normalization,
 and late gradient scaling. B200 and B300 use fused probability/dS consumers
@@ -22,7 +23,10 @@ SM120 backward shares score products across query column warps for
 D256/D512, combines row corrections before publishing them, and stages KV
 statistics for the selected dense D256 and causal D64 configurations.
 Aligned D512 forward and backward use full-width tiles with shared score
-producers and separate output consumers.
+producers and separate output consumers. Consumer GPU backward pairs QK/dP
+producers and packs DS/P stores. SM86/SM89 use wider D512 operand copies;
+Ada uses tuned D256 tiles and cache policy, while SM120 also tunes causal
+D128 query sharing.
 
 The producer/consumer architecture in blackwell_pipeline.py adapts KohakuFA's
 sm100/fwd.py and sm100/bwd.py at revision

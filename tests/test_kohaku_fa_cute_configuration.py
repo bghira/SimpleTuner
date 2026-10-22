@@ -9,12 +9,15 @@ import torch
 
 @unittest.skipUnless(importlib.util.find_spec("cutlass") is not None, "Requires the optional CuTe DSL runtime")
 class CuTeConfigurationTests(unittest.TestCase):
-    def _compiled_program(self, capability, mode, dimension, dtype, heads=8, kv_heads=None, *, causal=False):
+    def _compiled_program(
+        self, capability, mode, dimension, dtype, heads=8, kv_heads=None, *, causal=False, masked=False, aligned=True
+    ):
         from simpletuner.helpers.training.kohaku_fa_cute import kernels
 
-        q = torch.empty(1, heads, 512, dimension, dtype=dtype)
-        k = torch.empty(1, heads if kv_heads is None else kv_heads, 512, dimension, dtype=dtype)
-        placeholder = torch.empty(1, dtype=torch.int32)
+        width = dimension if aligned else dimension + 1
+        q = torch.empty(1, heads, 512, width, dtype=dtype)[..., :dimension]
+        k = torch.empty(1, heads if kv_heads is None else kv_heads, 512, width, dtype=dtype)[..., :dimension]
+        placeholder = torch.ones(512, 512, dtype=torch.bool) if masked else torch.empty(1, dtype=torch.int32)
         descriptors = tuple(kernels.descriptor(tensor) for tensor in (q, k, k, placeholder, q, q, q, q))
         kernels._compile_kernel.cache_clear()
         try:
@@ -23,7 +26,7 @@ class CuTeConfigurationTests(unittest.TestCase):
                 patch.object(torch.cuda, "device", return_value=nullcontext()),
                 patch.object(kernels.cute, "compile", side_effect=lambda program, *args, **kwargs: program),
             ):
-                return kernels.compile_kernel(0, mode, causal, False, descriptors)
+                return kernels.compile_kernel(0, mode, causal, masked, descriptors)
         finally:
             kernels._compile_kernel.cache_clear()
 
@@ -58,7 +61,10 @@ class CuTeConfigurationTests(unittest.TestCase):
                 for causal in (False, True):
                     with self.subTest(dtype=dtype, dimension=dimension, causal=causal):
                         program = self._compiled_program((12, 0), "backward", dimension, dtype, causal=causal)
-                        self.assertEqual(program.query.column_warps, {256: 4, 512: 4}.get(dimension, 1))
+                        self.assertEqual(
+                            program.query.column_warps,
+                            2 if dimension == 128 and causal else {256: 4, 512: 4}.get(dimension, 1),
+                        )
                         self.assertEqual(program.query.width, dimension)
                         self.assertEqual(
                             program.keyvalue.stage_statistics,
@@ -79,11 +85,51 @@ class CuTeConfigurationTests(unittest.TestCase):
                     self.assertTrue(backward.query.split_query)
                     self.assertTrue(backward.keyvalue.split_kv)
 
+    def test_consumer_d512_pairs_scores_and_selects_copy_layout(self):
+        for capability in ((8, 6), (8, 9), (12, 0)):
+            for dtype in (torch.float16, torch.bfloat16):
+                for causal in (False, True):
+                    with self.subTest(capability=capability, dtype=dtype, causal=causal):
+                        backward = self._compiled_program(capability, "backward", 512, dtype, causal=causal)
+                        for worker in (backward.query, backward.keyvalue):
+                            self.assertEqual(worker.width, 512)
+                            self.assertTrue(worker.paired_scores)
+                            self.assertEqual(worker.wide_row_copies, capability in ((8, 6), (8, 9)))
+                            self.assertEqual(worker.copy_cache_global, capability == (12, 0))
+
+    def test_ada_d256_shares_query_products_and_stages_kv_statistics(self):
+        for dtype in (torch.float16, torch.bfloat16):
+            for causal in (False, True):
+                with self.subTest(dtype=dtype, causal=causal):
+                    backward = self._compiled_program((8, 9), "backward", 256, dtype, causal=causal)
+                    self.assertEqual(backward.query.width, 256)
+                    self.assertEqual(backward.query.column_warps, 4)
+                    self.assertTrue(backward.query.reload_center)
+                    self.assertTrue(backward.query.copy_cache_global)
+                    self.assertTrue(backward.keyvalue.stage_statistics)
+                    self.assertFalse(backward.query.paired_scores)
+
+    def test_masked_and_unaligned_consumer_calls_keep_generic_score_layouts(self):
+        for capability in ((8, 6), (8, 9), (12, 0)):
+            for masked, aligned in ((True, True), (False, False)):
+                with self.subTest(capability=capability, masked=masked, aligned=aligned):
+                    backward = self._compiled_program(
+                        capability, "backward", 512, torch.bfloat16, masked=masked, aligned=aligned
+                    )
+                    for worker in (backward.query, backward.keyvalue):
+                        self.assertFalse(worker.paired_scores)
+                        self.assertFalse(worker.wide_row_copies)
+
     def test_sm120_query_selection_preserves_other_architectures_masks_and_unaligned_layouts(self):
         from simpletuner.helpers.training.kohaku_fa_cute import kernels
 
         for capability, masked, aligned in (
-            ((8, 9), False, True),
+            ((8, 0), False, True),
+            ((8, 7), False, True),
+            ((8, 6), True, True),
+            ((8, 9), True, True),
+            ((8, 6), False, False),
+            ((8, 9), False, False),
             ((9, 0), False, True),
             ((10, 0), False, True),
             ((10, 3), False, True),
@@ -145,7 +191,7 @@ class CuTeConfigurationTests(unittest.TestCase):
         output = torch.empty_like(q)
         stats = torch.empty(q.shape[:-1], dtype=torch.float32)
         blocks = torch.empty(1, dtype=torch.int32)
-        for capability in ((8, 9), (9, 0), (10, 0), (10, 3), (12, 0)):
+        for capability in ((8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0)):
             with (
                 self.subTest(capability=capability),
                 patch.object(torch.cuda, "get_device_capability", return_value=capability),
