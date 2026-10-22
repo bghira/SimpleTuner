@@ -5,20 +5,22 @@ import torch
 
 
 @unittest.skipUnless(
-    torch.cuda.is_available() and torch.cuda.get_device_capability() in {(8, 9), (9, 0), (10, 0), (10, 3), (12, 0)},
-    "Requires Ada, Hopper or Blackwell",
+    torch.cuda.is_available() and torch.cuda.get_device_capability() in {(8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0)},
+    "Requires Ampere, Ada, Hopper or Blackwell",
 )
 class CuTeAttentionTests(unittest.TestCase):
-    def test_sm120_backward_layouts_reuse_warm_programs(self):
-        if torch.cuda.get_device_capability() != (12, 0):
-            self.skipTest("Requires the SM120 query pipeline.")
+    def test_generic_backward_layouts_reuse_warm_programs(self):
+        if torch.cuda.get_device_capability() not in ((8, 6), (8, 9), (12, 0)):
+            self.skipTest("Requires measured generic warp-MMA layouts.")
         from unittest.mock import patch
 
         from simpletuner.helpers.training.kohaku_fa_cute import native
 
-        for dimension, dtype in itertools.product((64, 256, 512), (torch.float16, torch.bfloat16)):
+        for dimension, dtype in itertools.product((64, 128, 256, 512), (torch.float16, torch.bfloat16)):
             native.extension().clear_cache()
             try:
+                classes = set()
+                threshold = {64: 1024, 128: 512, 256: 256, 512: 256}[dimension]
                 with patch.object(native, "compile_kernel", wraps=native.compile_kernel) as compiler:
                     for queries, keys in ((257, 261), (513, 517), (273, 261)):
                         for causal in (False, True):
@@ -30,18 +32,21 @@ class CuTeAttentionTests(unittest.TestCase):
                                     for _ in range(2)
                                 ]
                                 self.compare(q, k, v, causal=causal, scale=-0.125)
-                                self.assertEqual(compiler.call_count, 2 if queries == 257 and not causal else 4)
+                                classes.add((causal, max(queries, keys) >= threshold))
+                                self.assertEqual(compiler.call_count, 2 * len(classes))
                                 self.assertEqual(native.extension().cache_size(), compiler.call_count)
             finally:
                 native.extension().clear_cache()
 
-    def test_sm120_backward_layouts_read_changed_graph_inputs(self):
-        if torch.cuda.get_device_capability() != (12, 0):
-            self.skipTest("Requires the SM120 query pipeline.")
+    def test_generic_backward_layouts_read_changed_graph_inputs(self):
+        if torch.cuda.get_device_capability() not in ((8, 6), (8, 9), (12, 0)):
+            self.skipTest("Requires measured generic warp-MMA layouts.")
         from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import attention, native
 
-        for dimension, dtype, causal in itertools.product((64, 256, 512), (torch.float16, torch.bfloat16), (False, True)):
+        for dimension, dtype, causal in itertools.product(
+            (64, 128, 256, 512), (torch.float16, torch.bfloat16), (False, True)
+        ):
             with self.subTest(dim=dimension, dtype=dtype, causal=causal):
                 native.extension().clear_cache()
                 try:
@@ -968,20 +973,22 @@ class CuTeAttentionTests(unittest.TestCase):
     def test_preserves_projection_layout_with_compiled_backward(self):
         from simpletuner.helpers.training.kohaku_fa_cute import attention
 
-        dimensions = (64, 128, 256, 512) if torch.cuda.get_device_capability() == (12, 0) else (64, 128, 256)
-        for dim in dimensions:
-            with self.subTest(dim=dim):
+        dimensions = (
+            (64, 128, 256, 512) if torch.cuda.get_device_capability() in ((8, 6), (8, 9), (12, 0)) else (64, 128, 256)
+        )
+        for dim, causal in itertools.product(dimensions, (False, True)):
+            with self.subTest(dim=dim, causal=causal):
                 torch.manual_seed(87)
                 inputs = [
                     torch.randn(1, 137, 2, dim, device="cuda", dtype=torch.bfloat16).transpose(1, 2).requires_grad_()
                     for _ in range(3)
                 ]
                 torch.compiler.reset()
-                output = torch.compile(attention, fullgraph=True)(*inputs)
+                output = torch.compile(attention, fullgraph=True)(*inputs, causal=causal)
                 gradients = torch.autograd.grad(output, inputs, torch.randn_like(output))
                 for tensor in (output, *gradients):
                     self.assertEqual(tensor.stride(), inputs[0].stride())
-                self.compare(*inputs, compiled=True)
+                self.compare(*inputs, causal=causal, compiled=True)
 
     def test_wide_head_tails_masks_gqa_and_strides(self):
         for dim in (129, 192, 257, 384, 511):
@@ -1030,7 +1037,11 @@ class CuTeAttentionTests(unittest.TestCase):
         from scripts.benchmark_attention_precision import fp64_reference, make_inputs
         from simpletuner.helpers.training.kohaku_fa_cute import attention
 
-        dimensions = (256, 512) if torch.cuda.get_device_capability() == (12, 0) else (256,)
+        dimensions = (
+            (128, 256, 512)
+            if torch.cuda.get_device_capability() == (12, 0)
+            else (256, 512) if torch.cuda.get_device_capability() in ((8, 6), (8, 9)) else (256,)
+        )
         cases = ((torch.float16, 1e5), (torch.float16, 1e6), (torch.bfloat16, 1e6))
         for dimension, (dtype, logit_scale) in itertools.product(dimensions, cases):
             with self.subTest(dim=dimension, dtype=dtype, logit_scale=logit_scale):
@@ -1048,7 +1059,9 @@ class CuTeAttentionTests(unittest.TestCase):
                         continue
                     self.assertGreater(rounded_reference.count_nonzero().item(), 0)
                     relative_error = torch.linalg.vector_norm(got.double() - want) / torch.linalg.vector_norm(want)
-                    cosine = torch.nn.functional.cosine_similarity(got.double().flatten(), want.flatten(), dim=0)
+                    cosine = torch.nn.functional.cosine_similarity(
+                        got.double().flatten(), want.flatten(), dim=0, eps=torch.finfo(want.dtype).tiny
+                    )
                     self.assertLess(relative_error.item(), 0.3)
                     self.assertGreater(cosine.item(), 0.995)
 
@@ -1056,8 +1069,8 @@ class CuTeAttentionTests(unittest.TestCase):
         from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import attention
 
-        if torch.cuda.get_device_capability() not in {(8, 9), (9, 0), (10, 0), (10, 3), (12, 0)}:
-            self.skipTest("Centered backward requires Ada, Hopper or Blackwell.")
+        if torch.cuda.get_device_capability() not in {(8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0)}:
+            self.skipTest("Centered backward requires Ampere, Ada, Hopper or Blackwell.")
         for dtype in (torch.bfloat16, torch.float16):
             for dim in (1, 17, 64, 80, 96, 128, 160, 192, 224, 256, 257, 384, 511, 512):
                 with self.subTest(dtype=dtype, dim=dim):

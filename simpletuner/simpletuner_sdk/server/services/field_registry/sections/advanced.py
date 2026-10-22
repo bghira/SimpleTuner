@@ -745,7 +745,7 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
             default_value="kohaku-fa-auto",
             choices=[{"value": a, "label": a} for a in attention_mechanisms],
             help_text="Attention computation backend",
-            tooltip="kohaku-fa-auto is the default. kohaku-fa uses experimental local CuTe kernels on L40S/H100/RTX Blackwell (PyTorch >= 2.11, CUTLASS DSL >= 4.8, TVM FFI >= 0.1.14), and vendored kernels on B200/B300 (PyTorch >= 2.9, Triton >= 3.7). kohaku-fa-auto selects centered Kohaku kernels on L40S/H100/RTX Blackwell for compatible training calls and native SDPA otherwise.",
+            tooltip="kohaku-fa-auto is the default. kohaku-fa uses experimental local CuTe kernels on SM86 Ampere/RTX 40/L40S/H100/RTX Blackwell (PyTorch >= 2.11, CUTLASS DSL >= 4.8, TVM FFI >= 0.1.14), and vendored kernels on B200/B300 (PyTorch >= 2.9, Triton >= 3.7). kohaku-fa-auto selects centered Kohaku kernels on SM86 Ampere/RTX 40/L40S/H100/RTX Blackwell for compatible training calls and native SDPA otherwise.",
             importance=ImportanceLevel.ADVANCED,
             order=10,
         )

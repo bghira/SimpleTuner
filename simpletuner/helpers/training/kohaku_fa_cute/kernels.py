@@ -1,4 +1,4 @@
-"""Shared-tile attention with unscaled softmax maxima on Ada, Hopper and Blackwell.
+"""Shared-tile attention with unscaled softmax maxima on Ampere, Ada, Hopper and Blackwell.
 
 The accumulator layout transforms follow NVIDIA's BSD-licensed CuTe Ampere
 attention example; see LICENSE. The attention and gradient kernels are local.
@@ -120,6 +120,9 @@ class Attention:
         reload_center=False,
         query_column_warps=1,
         stage_statistics=False,
+        copy_cache_global=False,
+        paired_scores=False,
+        wide_row_copies=False,
     ):
         self.mode, self.causal, self.masked = mode, causal, masked
         self.columns, self.width, self.warps = columns, width, warps
@@ -129,6 +132,9 @@ class Attention:
         self.sm103_rows = sm103_rows
         self.reload_center = reload_center
         self.stage_statistics = stage_statistics
+        self.copy_cache_global = copy_cache_global
+        self.paired_scores = paired_scores
+        self.wide_row_copies = wide_row_copies
         if stage_statistics and (mode != "kv" or hopper or warps != 4 or not centered):
             raise ValueError("Shared KV statistics require a centered four-warp generic KV kernel.")
         self.pointwise_overlap = hopper and centered and width == 128 and mode != "forward"
@@ -163,13 +169,15 @@ class Attention:
             mode == "q"
             and centered
             and not masked
-            and width == 512
+            and (width == 512 or paired_scores and width == 128)
             and columns == 32
             and warps == 4
-            and self.column_warps == 4
+            and self.column_warps == (2 if width == 128 else 4)
             and not (hopper or tma or pipelined or tcgen or sm103_rows)
         )
-        self.score_column_warps = 2 if self.split_query or self.split_kv else self.column_warps
+        self.score_column_warps = (
+            1 if self.split_query and width == 128 else 2 if self.split_query or self.split_kv else self.column_warps
+        )
         self.score_warps = 2 if self.split_query or self.split_kv else warps
         self.rows = 64 if hopper else 16 * (warps // self.column_warps)
         if tcgen and (hopper or warps != 4 or self.rows != 64 or columns not in (32, 64)):
@@ -315,8 +323,22 @@ class Attention:
     def load(self, source, shared, batch, head, start, tid):
         if cutlass.const_expr(self.vector > 1):
             rows, width = cute.size(shared, mode=[0]), cute.size(shared, mode=[1])
-            atom = cute.make_copy_atom(cpasync.CopyG2SOp(), source.element_type, num_bits_per_copy=16 * self.vector)
-            column_threads = max(32 // self.vector, 32 * self.warps // rows)
+            atom = cute.make_copy_atom(
+                cpasync.CopyG2SOp(
+                    cache_mode=(
+                        cpasync.LoadCacheMode.GLOBAL
+                        if self.copy_cache_global and self.vector == 8
+                        else cpasync.LoadCacheMode.ALWAYS
+                    )
+                ),
+                source.element_type,
+                num_bits_per_copy=16 * self.vector,
+            )
+            column_threads = (
+                min(32, width // self.vector)
+                if cutlass.const_expr(self.wide_row_copies and self.vector == 8)
+                else max(32 // self.vector, 32 * self.warps // rows)
+            )
             copy = cute.make_tiled_copy_tv(
                 atom,
                 cute.make_layout((32 * self.warps // column_threads, column_threads), stride=(column_threads, 1)),
@@ -516,6 +538,7 @@ class Attention:
         tid,
         shared_statistics=None,
         tcgen_state=None,
+        precomputed=None,
     ):
         maximum, logsum, delta, delta_base = statistics
         batch, head, start, query, sq, sk = location
@@ -538,8 +561,13 @@ class Attention:
                         shared_statistics[field, tid] = cutlass.Float32(0.0)
             cute.arch.cp_async_commit_group()
         coords = thread.partition_C(cute.make_identity_tensor((self.rows, self.columns)))
-        scores = self.dot(left, right, mma, thread, tid, wait=not self.pointwise_overlap, tcgen_state=tcgen_state)
-        dp = self.dot(other_left, other_right, mma, thread, tid, wait=not self.pointwise_overlap, tcgen_state=tcgen_state)
+        if cutlass.const_expr(precomputed is not None):
+            scores, dp = precomputed
+        else:
+            scores = self.dot(left, right, mma, thread, tid, wait=not self.pointwise_overlap, tcgen_state=tcgen_state)
+            dp = self.dot(
+                other_left, other_right, mma, thread, tid, wait=not self.pointwise_overlap, tcgen_state=tcgen_state
+            )
         if cutlass.const_expr(self.pointwise_overlap):
             warpgroup.wait_group(1)
         if cutlass.const_expr(shared_statistics is not None):
@@ -694,6 +722,42 @@ class Attention:
                 cute.gemm(mma, mean, rp[None, None, chunk], rb[None, None, chunk], mean)
 
     @cute.jit
+    def store_packed_weights(self, values, shared, coords):
+        packed = cute.recast_tensor(values, cutlass.Int32)
+        for i in cutlass.range_constexpr(cute.size(packed)):
+            row, col = coords[2 * i]
+            pointer = shared.iterator + cute.crd2idx((row, col), shared.layout)
+            destination = cute.make_tensor(cute.recast_ptr(pointer, dtype=cutlass.Int32), cute.make_layout(1))
+            destination[0] = packed[i]
+
+    @cute.jit
+    def paired_score_dots(self, left, right, other_left, other_right, scratch_source, mma, thread, tid):
+        a_pointer, b_pointer = left.iterator, right.iterator
+        if tid >= (32 * self.score_warps):
+            a_pointer, b_pointer = other_left.iterator, other_right.iterator
+        a = cute.make_tensor(a_pointer, left.layout)
+        b = cute.make_tensor(b_pointer, right.layout)
+        values = self.dot(a, b, mma, thread, tid % (32 * self.score_warps))
+        scratch = cute.make_tensor(
+            cute.recast_ptr(scratch_source.iterator, dtype=cutlass.Float32),
+            cute.make_layout((self.rows, self.columns), stride=(self.columns, 1)),
+        )
+        coords = thread.partition_C(cute.make_identity_tensor((self.rows, self.columns)))
+        cute.arch.sync_threads()
+        if tid >= (32 * self.score_warps):
+            for i in cutlass.range_constexpr(cute.size(coords)):
+                row, col = coords[i]
+                scratch[row, col] = values[i]
+        cute.arch.sync_threads()
+        dp = cute.make_fragment_like(values)
+        dp.fill(0.0)
+        if tid < (32 * self.score_warps):
+            for i in cutlass.range_constexpr(cute.size(coords)):
+                row, col = coords[i]
+                dp[i] = scratch[row, col]
+        return values, dp
+
+    @cute.jit
     def split_query_step(
         self,
         operands,
@@ -723,9 +787,17 @@ class Attention:
         rc = row_view(coords)
         rounded_scores = cute.make_rmem_tensor(score_thread.partition_shape_C((self.rows, self.columns)), left.element_type)
         rounded_probabilities = cute.make_fragment_like(rounded_scores)
+        if cutlass.const_expr(self.paired_scores):
+            scores, dp = self.paired_score_dots(
+                left, right, other_left, other_right, other_right, score_mma, score_thread, tid
+            )
+        else:
+            scores = cute.make_rmem_tensor(score_thread.partition_shape_C((self.rows, self.columns)), cutlass.Float32)
+            dp = cute.make_fragment_like(scores)
         if tid < 32 * self.score_warps:
-            scores = self.dot(left, right, score_mma, score_thread, tid)
-            dp = self.dot(other_left, other_right, score_mma, score_thread, tid)
+            if cutlass.const_expr(not self.paired_scores):
+                scores.store(self.dot(left, right, score_mma, score_thread, tid).load())
+                dp.store(self.dot(other_left, other_right, score_mma, score_thread, tid).load())
             sv, pv = row_view(scores), row_view(dp)
             for r in cutlass.range_constexpr(cute.size(rc.shape[0])):
                 center = base[r]
@@ -752,10 +824,14 @@ class Attention:
         # Both producers finish V reads before any warp can repurpose it.
         cute.arch.sync_threads()
         if tid < 32 * self.score_warps:
-            for i in cutlass.range_constexpr(cute.size(coords)):
-                row, col = coords[i]
-                query_derivatives[row, col] = rounded_scores[i]
-                query_probabilities[row, col] = rounded_probabilities[i]
+            if cutlass.const_expr(self.paired_scores):
+                self.store_packed_weights(rounded_scores, query_derivatives, coords)
+                self.store_packed_weights(rounded_probabilities, query_probabilities, coords)
+            else:
+                for i in cutlass.range_constexpr(cute.size(coords)):
+                    row, col = coords[i]
+                    query_derivatives[row, col] = rounded_scores[i]
+                    query_probabilities[row, col] = rounded_probabilities[i]
         cute.arch.sync_threads()
         self.dual_product(query_derivatives, query_probabilities, right, offset, mma, thread, tid, accum, mean)
 
@@ -784,6 +860,11 @@ class Attention:
         coords = score_thread.partition_C(cute.make_identity_tensor((self.rows, self.columns)))
         rounded_scores = cute.make_rmem_tensor(score_thread.partition_shape_C((self.rows, self.columns)), left.element_type)
         rounded_probabilities = cute.make_fragment_like(rounded_scores)
+        precomputed = None
+        if cutlass.const_expr(self.paired_scores):
+            precomputed = self.paired_score_dots(
+                left, right, other_left, other_right, shared_scores, score_mma, score_thread, tid
+            )
         if tid < 32 * self.score_warps:
             scores, probability = self.kv_weights(
                 left,
@@ -799,17 +880,21 @@ class Attention:
                 score_mma,
                 score_thread,
                 tid,
+                precomputed=precomputed,
             )
             packed_half_conversion(scores, rounded_scores)
             packed_half_conversion(probability, rounded_probabilities)
-        # All score-warps finish their stationary-V reads before any warp can
-        # overwrite that buffer with the two rounded product operands.
+        # All FP32 dP reads finish before its scratch becomes packed DS/P.
         cute.arch.sync_threads()
         if tid < 32 * self.score_warps:
-            for i in cutlass.range_constexpr(cute.size(coords)):
-                row, col = coords[i]
-                shared_scores[row, col] = rounded_scores[i]
-                shared_probabilities[row, col] = rounded_probabilities[i]
+            if cutlass.const_expr(self.paired_scores):
+                self.store_packed_weights(rounded_scores, shared_scores, coords)
+                self.store_packed_weights(rounded_probabilities, shared_probabilities, coords)
+            else:
+                for i in cutlass.range_constexpr(cute.size(coords)):
+                    row, col = coords[i]
+                    shared_scores[row, col] = rounded_scores[i]
+                    shared_probabilities[row, col] = rounded_probabilities[i]
         cute.arch.sync_threads()
         self.product(shared_scores, right, offset, mma, thread, tid, accum)
         self.product(shared_probabilities, other_right, offset, mma, thread, tid, accv)
@@ -1173,20 +1258,21 @@ class Attention:
                 base.fill(0.0)
             if cutlass.const_expr(self.column_warps > 1):
                 weight_layout = cute.tile_to_shape(atom, (self.rows, self.columns), (0, 1))
-                if cutlass.const_expr(self.column_warps > 2 or self.warps == 2):
+                if cutlass.const_expr(self.column_warps > 2 or self.warps == 2 or self.split_query):
                     # V is dead after dP; reuse its storage for the two MMA operands.
                     query_derivatives = cute.make_tensor(other_right.iterator, weight_layout)
                     query_probabilities = cute.make_tensor(other_right.iterator + self.rows * self.columns, weight_layout)
                 else:
                     query_derivatives = self.shared(allocator, q.element_type, weight_layout)
                     query_probabilities = self.shared(allocator, q.element_type, weight_layout)
-                query_sums = allocator.allocate_tensor(
-                    cutlass.Float32,
-                    cute.make_layout(
-                        (2, self.column_warps, self.rows), stride=(self.column_warps * self.rows, self.rows, 1)
-                    ),
-                    byte_alignment=128,
+                sums_layout = cute.make_layout(
+                    (2, self.column_warps, self.rows), stride=(self.column_warps * self.rows, self.rows, 1)
                 )
+                if cutlass.const_expr(self.split_query and self.width == 128):
+                    # Row reduction happens after the final product and loop barrier.
+                    query_sums = cute.make_tensor(cute.recast_ptr(other_right.iterator, dtype=cutlass.Float32), sums_layout)
+                else:
+                    query_sums = allocator.allocate_tensor(cutlass.Float32, sums_layout, byte_alignment=128)
             if cutlass.const_expr(self.centered and self.hopper and q.shape[3] in (64, 128)):
                 for part in cutlass.range_constexpr(self.rows // self.columns):
                     self.load(out, other_right, batch, head, start + part * self.columns, tid)
@@ -1363,7 +1449,7 @@ class Attention:
                                         rounded_view[r, None].load().to(cutlass.Float32).reduce(cute.ReductionOp.ADD, 0.0, 0)
                                     )
                                 if cutlass.const_expr(self.column_warps > 1):
-                                    if cutlass.const_expr(self.column_warps > 2 or self.warps == 2):
+                                    if cutlass.const_expr(self.column_warps > 2 or self.warps == 2 or self.split_query):
                                         # All warps must finish reading V before its storage is overwritten.
                                         cute.arch.sync_threads()
                                     for i in cutlass.range_constexpr(cute.size(coords)):
@@ -1406,12 +1492,13 @@ class Attention:
                         q.element_type,
                     )
                 weight_layout = cute.tile_to_shape(weight_atom, (self.rows, self.columns), (0, 1))
-                if cutlass.const_expr(self.split_kv):
-                    # Generic (non-TMA) V iterator has no carried TMA swizzle.
-                    # Two M16N32 half operands occupy 2KiB of its 16KiB tile.
+                if cutlass.const_expr(self.split_kv and not self.paired_scores):
+                    # Sequential score production can reuse the consumed V tile.
                     shared_scores = cute.make_tensor(other_left.iterator, weight_layout)
                     shared_probabilities = cute.make_tensor(other_left.iterator + self.rows * self.columns, weight_layout)
                 else:
+                    # Paired producers retain V across iterations and publish FP32
+                    # dP into the two dedicated half operands before packing DS/P.
                     shared_scores = self.shared(allocator, q.element_type, weight_layout)
                     shared_probabilities = self.shared(allocator, q.element_type, weight_layout)
             accv = cute.make_rmem_tensor(accum.shape, cutlass.Float32)
@@ -1458,10 +1545,8 @@ class Attention:
                         )
                     if active:
                         if cutlass.const_expr(not self.pipelined):
-                            if cutlass.const_expr(self.split_kv):
-                                # V was reused as DS/P after the previous dP.
-                                # load_pair's existing commit/wait/barrier also
-                                # covers this extra asynchronous V reload.
+                            if cutlass.const_expr(self.split_kv and not self.paired_scores):
+                                # The sequential path reused V for the previous DS/P.
                                 self.load(v, other_left, batch, kvhead, start, tid)
                             phase_tma = self.load_pair(
                                 q,
@@ -1797,7 +1882,7 @@ def kernel_configuration(device, mode, descriptors):
     columns = 32 if mode == "kv" or mode == "q" and dimension > 128 else 64
     width = min(256, (dimension + 31) // 32 * 32)
     warps = 4 if dimension <= 256 else 2 if mode == "kv" else 1
-    if dimension > 128 and capability == (8, 9):
+    if dimension > 128 and capability in ((8, 6), (8, 9)):
         columns, warps = (32, (4 if mode == "kv" else 2) if dimension <= 256 else (2 if mode == "kv" else 1))
     if dimension > 256:
         columns = 32
@@ -1808,7 +1893,7 @@ def kernel_configuration(device, mode, descriptors):
             columns, warps = 32, 8
         elif mode != "forward" and dimension > 128:
             hopper = False
-    centered = capability in ((8, 9), (9, 0), (10, 0), (10, 3), (12, 0)) and mode != "forward"
+    centered = capability in ((8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0)) and mode != "forward"
     if centered and mode == "q":
         width = (dimension + 31) // 32 * 32 if dimension <= 192 else 128
         warps = 4 if dimension <= 256 else 1
@@ -1836,6 +1921,34 @@ def kernel_configuration(device, mode, descriptors):
                     return pipeline
             if not requires_aligned or eligible:
                 return selected
+    if (
+        capability == (8, 9)
+        and dimension in (256, 512)
+        and descriptors[3][0] != torch.bool
+        and descriptors[0][0] in (torch.float16, torch.bfloat16)
+        and _aligned_tiles(descriptors)
+    ):
+        if mode == "forward":
+            return 32, dimension, 8 if dimension == 256 else 4, False, False, False, False
+        if mode == "kv":
+            return 32, dimension, 4, False, True, False, False
+    if (
+        capability == (8, 6)
+        and dimension == 512
+        and descriptors[3][0] != torch.bool
+        and descriptors[0][0] in (torch.float16, torch.bfloat16)
+        and _aligned_tiles(descriptors)
+    ):
+        return 32, 512, 4, False, mode != "forward", False, False
+    if (
+        capability == (8, 6)
+        and dimension == 256
+        and mode == "forward"
+        and descriptors[3][0] != torch.bool
+        and descriptors[0][0] in (torch.float16, torch.bfloat16)
+        and _aligned_tiles(descriptors)
+    ):
+        return 32, 256, 8, False, False, False, False
     if capability == (12, 0):
         selected = _SM120_CONFIGURATIONS.get((dimension, mode))
         if (
@@ -1869,6 +1982,24 @@ def kernel_configuration(device, mode, descriptors):
 def backward_query_configuration(device, causal, masked, descriptors):
     configuration = kernel_configuration(device, "q", descriptors)
     if (
+        torch.cuda.get_device_capability(device) == (8, 9)
+        and not masked
+        and descriptors[0][0] in (torch.float16, torch.bfloat16)
+        and descriptors[0][1][-1] == 256
+        and configuration == (32, 128, 4, False, True, False, False)
+        and _aligned_tiles(descriptors)
+    ):
+        return 64, 256, 8, False, True, False, False
+    if (
+        torch.cuda.get_device_capability(device) == (8, 9)
+        and not masked
+        and descriptors[0][0] in (torch.float16, torch.bfloat16)
+        and descriptors[0][1][-1] == 512
+        and configuration == (32, 128, 1, False, True, False, False)
+        and _aligned_tiles(descriptors)
+    ):
+        return 32, 512, 4, False, True, False, False
+    if (
         torch.cuda.get_device_capability(device) == (12, 0)
         and not masked
         and descriptors[0][0] in (torch.float16, torch.bfloat16)
@@ -1877,6 +2008,14 @@ def backward_query_configuration(device, causal, masked, descriptors):
         and _aligned_tiles(descriptors)
     ):
         return 32, 512, 4, False, True, False, False
+    if (
+        torch.cuda.get_device_capability(device) == (8, 6)
+        and not masked
+        and descriptors[0][0] in (torch.float16, torch.bfloat16)
+        and descriptors[0][1][-1] == 256
+        and _aligned_tiles(descriptors)
+    ):
+        return 64, 256, 8, False, True, False, False
     # Share QK/dP across the full output width instead of recomputing them per slice.
     if (
         torch.cuda.get_device_capability(device) == (12, 0)
@@ -1942,20 +2081,28 @@ def backward_options(device, causal, masked, descriptors, q_configuration, kv_co
     # These options are part of the Python compilation cache key. Keep shape-dependent
     # choices within the same runtime sequence/stride classes used by native.cpp.
     if (
-        torch.cuda.get_device_capability(device) != (12, 0)
+        torch.cuda.get_device_capability(device) not in ((8, 6), (8, 9), (12, 0))
         or masked
         or descriptors[0][0] not in (torch.float16, torch.bfloat16)
     ):
         return 1, False
     dimension = descriptors[0][1][-1]
     column_warps = 4 if dimension == 256 and q_configuration == (64, 256, 8, False, True, False, False) else 1
+    if (
+        torch.cuda.get_device_capability(device) == (12, 0)
+        and causal
+        and dimension == 128
+        and q_configuration == (32, 128, 4, False, True, False, False)
+        and _aligned_tiles(descriptors)
+    ):
+        column_warps = 2
     if dimension == 512 and q_configuration == (32, 256, 2, False, True, False, False):
         column_warps = 2
     if dimension == 512 and q_configuration == (32, 512, 4, False, True, False, False):
         column_warps = 4
     # Prefetch each row's four scalars once while QK/dP execute. Restrict the
     # extra shared memory/barrier to the head/mask classes that benefit.
-    statistics = (
+    statistics = torch.cuda.get_device_capability(device) in ((8, 6), (12, 0)) and (
         dimension == 64
         and causal
         and kv_configuration == (64, 64, 4, False, True, True, True)
@@ -1963,6 +2110,10 @@ def backward_options(device, causal, masked, descriptors, q_configuration, kv_co
         and not causal
         and kv_configuration == (32, 256, 4, False, True, False, False)
     )
+    if torch.cuda.get_device_capability(device) == (8, 9):
+        statistics = (
+            dimension == 256 and kv_configuration == (32, 256, 4, False, True, False, False) and _aligned_tiles(descriptors)
+        )
     return column_warps, statistics
 
 
@@ -1997,6 +2148,13 @@ def _compile_kernel(
         )
         for dtype, shape, stride, alignment in layouts
     ]
+    capability = torch.cuda.get_device_capability(device)
+    copy_cache_global = not masked and (
+        capability == (8, 9)
+        and layouts[0][1][-1] in (64, 128, 256)
+        or capability == (12, 0)
+        and layouts[0][1][-1] in (128, 256, 512)
+    )
     if mode == "backward":
         base_dot = configuration[4] and not (configuration[3] and layouts[0][1][-1] in (64, 128))
         program = JointBackward(
@@ -2007,11 +2165,42 @@ def _compile_kernel(
             vector,
             base_vector,
             base_dot,
-            reload_center=torch.cuda.get_device_capability(device) in ((10, 0), (10, 3), (12, 0)),
+            reload_center=(
+                capability in ((10, 0), (10, 3), (12, 0))
+                or capability == (8, 9)
+                and not masked
+                and configuration == (64, 256, 8, False, True, False, False)
+            ),
             hardware_reductions=torch.cuda.get_device_capability(device) == (10, 3),
             blackwell_operand_chunk=128 if layouts[0][1][-1] == 128 else 64,
             query_column_warps=backward_options[0],
             stage_statistics=backward_options[1],
+            copy_cache_global=copy_cache_global,
+            paired_scores=(
+                not masked
+                and (
+                    capability == (8, 6)
+                    and configuration == (32, 512, 4, False, True, False, False)
+                    and kv_configuration == (32, 512, 4, False, True, False, False)
+                    or capability == (8, 9)
+                    and configuration[1] == 512
+                    and kv_configuration[1] == 512
+                    or capability == (12, 0)
+                    and (
+                        layouts[0][1][-1] == 128
+                        and backward_options[0] == 2
+                        or layouts[0][1][-1] == 512
+                        and backward_options[0] == 4
+                    )
+                    and configuration == (32, layouts[0][1][-1], 4, False, True, False, False)
+                )
+            ),
+            wide_row_copies=(
+                capability in ((8, 6), (8, 9))
+                and not masked
+                and configuration == (32, 512, 4, False, True, False, False)
+                and kv_configuration == (32, 512, 4, False, True, False, False)
+            ),
         )
         if (
             not masked
@@ -2058,6 +2247,7 @@ def _compile_kernel(
                 *configuration,
                 vector=vector,
                 reload_center=torch.cuda.get_device_capability(device) in ((10, 0), (10, 3), (12, 0)),
+                copy_cache_global=copy_cache_global,
             )
     with torch.cuda.device(device):
         return cute.compile(
@@ -2070,7 +2260,7 @@ def _compile_kernel(
 
 
 def centered_backward(q):
-    return torch.cuda.get_device_capability(q.device.index) in ((8, 9), (9, 0), (10, 0), (10, 3), (12, 0))
+    return torch.cuda.get_device_capability(q.device.index) in ((8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0))
 
 
 class PackMask:
@@ -2172,6 +2362,9 @@ class JointBackward:
         blackwell_operand_chunk=64,
         query_column_warps=1,
         stage_statistics=False,
+        copy_cache_global=False,
+        paired_scores=False,
+        wide_row_copies=False,
     ):
         if len(q_configuration) > 8 and q_configuration[8]:
             if q_configuration[2] == 12:
@@ -2199,6 +2392,9 @@ class JointBackward:
                 vector=vector,
                 reload_center=reload_center,
                 query_column_warps=query_column_warps,
+                copy_cache_global=copy_cache_global,
+                paired_scores=paired_scores,
+                wide_row_copies=wide_row_copies,
             )
         if len(kv_configuration) > 8 and kv_configuration[8]:
             if kv_configuration[2] == 12:
@@ -2218,7 +2414,15 @@ class JointBackward:
             )
         else:
             self.keyvalue = Attention(
-                "kv", causal, masked, *kv_configuration, vector=vector, stage_statistics=stage_statistics
+                "kv",
+                causal,
+                masked,
+                *kv_configuration,
+                vector=vector,
+                stage_statistics=stage_statistics,
+                copy_cache_global=copy_cache_global,
+                paired_scores=paired_scores,
+                wide_row_copies=wide_row_copies,
             )
         self.base_dot = base_dot
         self.centering = OutputDelta(base_vector)

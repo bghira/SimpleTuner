@@ -44,7 +44,7 @@ class KohakuFAIntegrationTests(unittest.TestCase):
                 self.assertIs(torch.nn.functional.scaled_dot_product_attention, original)
                 self.assertEqual(AttentionBackendController.active_backend(), "kohaku-fa-auto")
 
-    def test_local_cute_automatic_selection_supports_blackwell_before_warmup(self):
+    def test_local_cute_automatic_selection_supports_all_architectures_before_warmup(self):
         from simpletuner.helpers.training.kohaku_fa_cute import api
 
         q = SimpleNamespace(ndim=4, shape=(1, 2, 17, 64), dtype=torch.bfloat16, device=torch.device("cuda", 0))
@@ -53,20 +53,20 @@ class KohakuFAIntegrationTests(unittest.TestCase):
             patch.object(api, "kohaku_fa_scaled_dot_product_attention", return_value="cute") as kernel,
         ):
             extension.cache_info.return_value = SimpleNamespace(currsize=0)
-            for capability in ((10, 0), (10, 3), (12, 0)):
+            for capability in ((8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0)):
                 with (
                     self.subTest(capability=capability),
                     patch.object(torch.cuda, "get_device_capability", return_value=capability),
                 ):
                     self.assertEqual(api.automatic_kohaku_fa_scaled_dot_product_attention(q, q, q), "cute")
-            self.assertEqual(kernel.call_count, 3)
+            self.assertEqual(kernel.call_count, 6)
             extension.assert_not_called()
 
     def test_implicit_default_routes_training_and_restores_evaluation(self):
         original = torch.nn.functional.scaled_dot_product_attention
         kernel = Mock()
         module = SimpleNamespace(automatic_scaled_dot_product_attention=kernel)
-        for capability in ((9, 0), (12, 0)):
+        for capability in ((8, 6), (8, 9), (9, 0), (12, 0)):
             with (
                 patch("simpletuner.helpers.training.attention_backend.get_kohaku_fa_unavailable_reason", return_value=None),
                 patch.object(torch.cuda, "get_device_capability", return_value=capability),
@@ -178,7 +178,7 @@ class KohakuFAIntegrationTests(unittest.TestCase):
         kernel.assert_not_called()
 
     def test_unsupported_architectures_rejected(self):
-        for capability in [(7, 5), (8, 0), (12, 1)]:
+        for capability in [(7, 5), (8, 0), (8, 7), (12, 1)]:
             with (
                 self.subTest(capability=capability),
                 patch.object(torch.cuda, "is_available", return_value=True),
@@ -188,6 +188,7 @@ class KohakuFAIntegrationTests(unittest.TestCase):
 
     def test_architecture_specific_dependencies(self):
         for capability, packages in [
+            ((8, 6), {"nvidia-cutlass-dsl": "4.8", "apache-tvm-ffi": "0.1.14", "ninja": "1.11"}),
             ((8, 9), {"nvidia-cutlass-dsl": "4.8", "apache-tvm-ffi": "0.1.14", "ninja": "1.11"}),
             ((9, 0), {"nvidia-cutlass-dsl": "4.8", "apache-tvm-ffi": "0.1.14", "ninja": "1.11"}),
             ((12, 0), {"nvidia-cutlass-dsl": "4.8", "apache-tvm-ffi": "0.1.14", "ninja": "1.11"}),
