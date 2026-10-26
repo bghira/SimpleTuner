@@ -775,6 +775,10 @@ This is useful for monitoring tools receiving webhooks from multiple training ru
     - This is required if you have differently-sized datasets that you want the model to learn equally.
     - But adjusting `repeats` manually is **required** to properly sample Dreambooth images against your regularisation set
 
+### `--vae_enable_tiling`
+
+Enable VAE tiling from startup with `--vae_enable_tiling=true`. Even when this option is false, an untiled CUDA VAE that supports tiling automatically enables it after an out-of-memory error during encoding or decoding, then retries that call once. Tiling remains enabled for subsequent calls. If tiling is already active, unsupported, or the retry fails, the error is propagated. Other errors and non-CUDA out-of-memory errors are not retried.
+
 ### `--vae_cache_scan_behaviour`
 
 - **What**: Configure the behaviour of the integrity scan check.

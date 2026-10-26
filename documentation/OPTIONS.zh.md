@@ -753,6 +753,10 @@ TRAINING_DYNAMO_BACKEND=inductor
     - 当数据集大小不同但希望模型均衡学习时必须使用。
     - 但 Dreambooth 图像与正则化集的正确采样**需要**手动调整 `repeats`。
 
+### `--vae_enable_tiling`
+
+使用 `--vae_enable_tiling=true` 可从启动时启用 VAE 分块。即使此选项为 false，支持分块且尚未分块的 CUDA VAE 在编码或解码时发生显存不足后，也会自动启用分块并重试一次。后续调用继续使用分块。如果分块已启用、不受支持，或重试仍失败，错误将继续抛出。其他错误和非 CUDA 内存不足错误不会重试。
+
 ### `--vae_cache_scan_behaviour`
 
 - **内容**：配置完整性扫描的行为。

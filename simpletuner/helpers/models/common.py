@@ -2665,7 +2665,9 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
             return
         if not hasattr(self, "vae") or self.vae is None or getattr(self.vae, "device", None) == "meta":
             self.load_vae()
-        return self.vae
+        from simpletuner.helpers.models.vae_tiling import enable_automatic_vae_tiling
+
+        return enable_automatic_vae_tiling(self.vae)
 
     def _get_vae_load_kwargs(self):
         return {

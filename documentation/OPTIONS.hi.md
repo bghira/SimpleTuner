@@ -750,6 +750,10 @@ Alternative attention mechanisms समर्थित हैं, जिनक�
     - यह तब आवश्यक है जब आपके datasets अलग‑अलग sizes के हों और आप चाहते हों कि मॉडल उन्हें समान रूप से सीखे।
     - लेकिन Dreambooth images को regularisation set के विरुद्ध सही तरह sample करने के लिए `repeats` को manually adjust करना **आवश्यक** है
 
+### `--vae_enable_tiling`
+
+`--vae_enable_tiling=true` से शुरुआत से VAE tiling सक्षम करें। विकल्प false होने पर भी, tiling समर्थित CUDA VAE में encoding या decoding के दौरान memory की कमी होने पर tiling अपने आप सक्षम होती है और उसी call को एक बार फिर चलाया जाता है। आगे के calls में tiling चालू रहती है। यदि tiling पहले से चालू है, समर्थित नहीं है या दोबारा प्रयास विफल होता है, तो error आगे भेजी जाती है। अन्य errors और गैर-CUDA memory errors पर दोबारा प्रयास नहीं होता।
+
 ### `--vae_cache_scan_behaviour`
 
 - **What**: integrity scan check का व्यवहार कॉन्फ़िगर करता है।
