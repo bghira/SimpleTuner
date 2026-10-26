@@ -726,7 +726,6 @@ def register_advanced_fields(registry: "FieldRegistry") -> None:
         "metal-flash-attention-int8",
         "metal-flash-attention-int4",
         "native",
-        "cudnn",
         "native-efficient",
         "native-flash",
         "native-math",

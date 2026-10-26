@@ -78,7 +78,7 @@ video. A opcao explicita `audio_only` continua aceita, mas nao e obrigatoria.
 ## Paralelismo de contexto
 
 O context parallelism do H3 usa Ulysses com `context_parallel_strategy: "alltoall"`. A sequencia packed pode receber
-padding ate o grau CP, entao o backend de attention local precisa aceitar uma mascara. `native` e `cudnn` sao suportados;
+padding ate o grau CP, entao o backend de attention local precisa aceitar uma mascara. `native` e suportado;
 o SimpleTuner substitui outros backends por `native` quando CP esta ativo.
 
 Com cerca de 8k audio tokens, CP troca comunicacao por menos memoria de activations e checkpointing mais leve. CP nao

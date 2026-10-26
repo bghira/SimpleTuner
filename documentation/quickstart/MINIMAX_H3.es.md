@@ -78,8 +78,8 @@ su loss. La opción explícita `audio_only` sigue siendo válida, pero no es nec
 ## Paralelismo de contexto
 
 El context parallelism de H3 usa Ulysses con `context_parallel_strategy: "alltoall"`. La secuencia packed puede incluir
-padding hasta el grado CP, por lo que el backend de atención local debe aceptar una máscara. `native` y `cudnn` son
-compatibles; SimpleTuner reemplaza otros backends por `native` cuando CP está habilitado.
+padding hasta el grado CP, por lo que el backend de atención local debe aceptar una máscara. `native` es
+compatible; SimpleTuner reemplaza otros backends por `native` cuando CP está habilitado.
 
 Con unos 8k audio tokens, CP principalmente intercambia comunicación por menos memoria de activaciones y checkpointing
 más ligero. CP no divide los pesos por sí solo; compáralo con DDP salvo que la secuencia sea mayor o se combine con FSDP.

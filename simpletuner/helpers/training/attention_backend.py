@@ -15,6 +15,9 @@ import torch
 
 from simpletuner.helpers.logging import get_logger
 
+# cuDNN SDPA can return NaN gradients from finite inputs, including in cuDNN 9.27.
+torch.backends.cuda.enable_cudnn_sdp(False)
+
 try:
     from diffusers.models.attention_dispatch import AttentionBackendName, _check_attention_backend_requirements
     from diffusers.models.attention_dispatch import attention_backend as diffusers_attention_backend
@@ -175,8 +178,6 @@ _DIFFUSERS_BACKEND_TARGETS: Dict[str, str] = {
     "flex": "flex",
     "flex-attn": "flex",
     "native": "native",
-    "cudnn": "_native_cudnn",
-    "native-cudnn": "_native_cudnn",
     "native-efficient": "_native_efficient",
     "native-flash": "_native_flash",
     "native-math": "_native_math",
@@ -196,7 +197,6 @@ _TORCH_SDPA_BACKENDS = {
     "_native_math": torch.nn.attention.SDPBackend.MATH,
     "_native_flash": torch.nn.attention.SDPBackend.FLASH_ATTENTION,
     "_native_efficient": torch.nn.attention.SDPBackend.EFFICIENT_ATTENTION,
-    "_native_cudnn": torch.nn.attention.SDPBackend.CUDNN_ATTENTION,
 }
 
 
@@ -1217,6 +1217,7 @@ class AttentionBackendController:
 
     @classmethod
     def apply(cls, config, phase: AttentionPhase) -> None:
+        torch.backends.cuda.enable_cudnn_sdp(False)
         cls._active_phase = phase
         backend_value = getattr(config, "attention_mechanism", "kohaku-fa-auto")
         if not isinstance(backend_value, str):
@@ -1225,6 +1226,11 @@ class AttentionBackendController:
         if not backend:
             backend = "kohaku-fa-auto"
         backend_alias = backend.replace("_", "-")
+        if backend_alias.lstrip("-") in ("cudnn", "native-cudnn"):
+            raise ValueError(
+                "cuDNN SDPA is disabled because it can produce NaN gradients. "
+                "Use 'kohaku-fa-auto', 'native', or 'native-flash' instead."
+            )
 
         if backend_alias in ("kohaku-fa", "kohaku-fa-auto"):
             cls._enable_kohaku_fa(config, phase, automatic=backend_alias == "kohaku-fa-auto")
@@ -1652,15 +1658,15 @@ class AttentionBackendController:
 
     @classmethod
     def _disable_diffusers_backend(cls) -> None:
-        if cls._diffusers_backend_context is None:
-            return
-        try:
-            cls._diffusers_backend_context.__exit__(None, None, None)
-        except Exception as exc:  # pragma: no cover - defensive logging only
-            logger.debug("Failed to exit attention backend context cleanly (%s). Ignoring.", exc)
-        finally:
-            cls._diffusers_backend_context = None
-            cls._diffusers_backend_name = None
+        if cls._diffusers_backend_context is not None:
+            try:
+                cls._diffusers_backend_context.__exit__(None, None, None)
+            except Exception as exc:  # pragma: no cover - defensive logging only
+                logger.debug("Failed to exit attention backend context cleanly (%s). Ignoring.", exc)
+            finally:
+                cls._diffusers_backend_context = None
+                cls._diffusers_backend_name = None
+        torch.backends.cuda.enable_cudnn_sdp(False)
 
     @staticmethod
     def _is_sageattention_backend(backend: str) -> bool:

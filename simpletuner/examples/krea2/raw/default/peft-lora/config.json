@@ -6,7 +6,7 @@
     "compress_disk_cache": false,
     "data_backend_config": "config/examples/_shared/multidatabackend-small-dreambooth-512px.json",
     "disable_bucket_pruning": true,
-    "attention_mechanism": "cudnn",
+    "attention_mechanism": "kohaku-fa",
     "dynamo_backend": "inductor",
     "dynamo_mode": "reduce-overhead",
     "dynamo_use_regional_compilation": true,
