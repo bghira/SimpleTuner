@@ -749,6 +749,10 @@ Isso e util para ferramentas de monitoramento que recebem webhooks de varios tre
     - Isso e necessario se voce tem datasets de tamanhos diferentes e quer que o modelo aprenda igualmente.
     - Mas ajustar `repeats` manualmente e **obrigatorio** para amostrar imagens Dreambooth contra seu conjunto de regularizacao corretamente.
 
+### `--vae_enable_tiling`
+
+Use `--vae_enable_tiling=true` para ativar o processamento em blocos do VAE desde o início. Mesmo com a opção false, um VAE CUDA compatível ativa blocos automaticamente após falta de memória durante a codificação ou decodificação e repete essa chamada uma vez. Os blocos permanecem ativos nas chamadas seguintes. Se já estiverem ativos, não forem suportados ou a nova tentativa falhar, o erro é propagado. Outros erros e falta de memória fora do CUDA não são repetidos.
+
 ### `--vae_cache_scan_behaviour`
 
 - **O que**: Configura o comportamento da varredura de integridade.
