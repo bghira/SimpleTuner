@@ -19,7 +19,7 @@ Para a primeira execução, use a configuração de exemplo e mantenha o modelo 
   "model_type": "lora",
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "mixed_precision": "bf16",
-  "attention_mechanism": "cudnn",
+  "attention_mechanism": "kohaku-fa",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "train_batch_size": 1,
@@ -39,7 +39,7 @@ Recomendações:
 
 - Use `bf16` quando couber.
 - Use `int8-torchao` quando precisar de folga de memória.
-- Use `attention_mechanism=cudnn` em GPUs NVIDIA; o caminho SDPA nativo do Krea2 pode usar memória suficiente para causar OOM em runs de classe L40S que normalmente caberiam.
+- Use `attention_mechanism=kohaku-fa` em GPUs NVIDIA compatíveis. Instale as dependências com `pip install "simpletuner[attention-cute]"`.
 - Mantenha `gradient_checkpointing=true`.
 - Mantenha `fuse_qkv_projections=true`.
 - Use `dynamo_backend=inductor`, `dynamo_mode=reduce-overhead` e `dynamo_use_regional_compilation=true` apenas depois de confirmar que batch/resolução cabem.
@@ -54,7 +54,7 @@ Recomendações:
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "base_model_precision": "no_change",
   "mixed_precision": "bf16",
-  "attention_mechanism": "cudnn",
+  "attention_mechanism": "kohaku-fa",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "optimizer": "optimi-lion",

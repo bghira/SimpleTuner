@@ -66,7 +66,7 @@ logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 # MiniMax-H3 tags every row of the packed sequence with the modality it belongs to and keeps one set of AdaLN
 # modulation parameters per (timestep, modality) pair: 0 = video, 1 = text, 2 = audio.
 MINIMAX_H3_MODALITY_NUM = 3
-_H3_MASKED_CONTEXT_PARALLEL_BACKENDS = frozenset({AttentionBackendName.NATIVE, AttentionBackendName._NATIVE_CUDNN})
+_H3_MASKED_CONTEXT_PARALLEL_BACKENDS = frozenset({AttentionBackendName.NATIVE})
 
 
 def _linear_compute_dtype(linear: nn.Module) -> torch.dtype:

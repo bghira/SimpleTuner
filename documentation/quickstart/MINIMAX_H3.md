@@ -78,7 +78,7 @@ loss. The explicit `audio_only` setting remains accepted but is not required.
 ## Context parallelism
 
 H3 context parallelism uses Ulysses with `context_parallel_strategy: "alltoall"`. The packed sequence may be padded to
-the CP degree, so its local attention backend must accept a mask. `native` and `cudnn` are supported; SimpleTuner replaces
+the CP degree, so its local attention backend must accept a mask. `native` is supported; SimpleTuner replaces
 other backend choices with `native` when CP is enabled.
 
 At roughly 8k audio tokens, CP mainly trades communication for lower activation memory and lighter checkpointing. CP

@@ -380,18 +380,28 @@ class TestMiniMaxH3SparseAttention(unittest.TestCase):
         set_backend.assert_called_once_with("native")
 
     def test_context_parallel_preserves_mask_capable_backend(self):
-        for backend in ("native", "_native_cudnn"):
-            with self.subTest(backend=backend):
-                model = tiny_h3_transformer(num_layers=1)
-                model.transformer_blocks[0].attn.processor._attention_backend = backend
+        model = tiny_h3_transformer(num_layers=1)
+        model.transformer_blocks[0].attn.processor._attention_backend = "native"
 
-                with (
-                    patch.object(model, "set_attention_backend") as set_backend,
-                    patch("diffusers.models.modeling_utils.ModelMixin.enable_parallelism"),
-                ):
-                    model.enable_parallelism(config=SimpleNamespace(ring_degree=1, ulysses_degree=2))
+        with (
+            patch.object(model, "set_attention_backend") as set_backend,
+            patch("diffusers.models.modeling_utils.ModelMixin.enable_parallelism"),
+        ):
+            model.enable_parallelism(config=SimpleNamespace(ring_degree=1, ulysses_degree=2))
 
-                set_backend.assert_not_called()
+        set_backend.assert_not_called()
+
+    def test_context_parallel_replaces_cudnn_backend(self):
+        model = tiny_h3_transformer(num_layers=1)
+        model.transformer_blocks[0].attn.processor._attention_backend = "_native_cudnn"
+
+        with (
+            patch.object(model, "set_attention_backend") as set_backend,
+            patch("diffusers.models.modeling_utils.ModelMixin.enable_parallelism"),
+        ):
+            model.enable_parallelism(config=SimpleNamespace(ring_degree=1, ulysses_degree=2))
+
+        set_backend.assert_called_once_with("native")
 
     def test_context_parallel_rejects_ring_strategy(self):
         model = tiny_h3_transformer(num_layers=1)

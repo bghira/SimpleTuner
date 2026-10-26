@@ -77,7 +77,7 @@ Negative prompting 不属于基础 H3 契约。SimpleTuner 为 de-distilled chec
 ## 上下文并行
 
 H3 context parallelism 使用 Ulysses 和 `context_parallel_strategy: "alltoall"`。packed sequence 可能会 padding 到
-CP degree，因此本地 attention backend 必须支持 mask。`native` 和 `cudnn` 受支持；启用 CP 时，SimpleTuner 会把
+CP degree，因此本地 attention backend 必须支持 mask。`native` 受支持；启用 CP 时，SimpleTuner 会把
 其他 backend 替换为 `native`。
 
 在约 8k audio tokens 时，CP 主要用通信开销换取更低的 activation memory 和更轻的 checkpointing。CP 本身不

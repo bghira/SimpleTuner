@@ -79,7 +79,7 @@ video loss を mask します。明示的な `audio_only` も使用できます�
 
 H3 context parallelism は Ulysses と `context_parallel_strategy: "alltoall"` を使用します。packed sequence は CP
 degree に合わせて padding される場合があるため、local attention backend は mask を受け付ける必要があります。
-`native` と `cudnn` をサポートし、CP 有効時のその他の backend は SimpleTuner が `native` に置き換えます。
+`native` をサポートし、CP 有効時のその他の backend は SimpleTuner が `native` に置き換えます。
 
 約 8k audio tokens では、CP は主に communication と引き換えに activation memory と checkpointing を減らします。
 CP 単体では weights を shard しないため、より長い sequence または FSDP との併用でなければ DDP と比較してください。

@@ -664,17 +664,58 @@ class TestAttentionBackendPersistence(unittest.TestCase):
             "native-cudnn": torch.backends.cuda.cudnn_sdp_enabled,
         }
         original = {name: check() for name, check in enabled.items()}
-        for backend in (*enabled, "cudnn"):
+        for backend in ("native-math", "native-flash", "native-efficient"):
             with self.subTest(backend=backend):
                 config = SimpleNamespace(attention_mechanism=backend)
                 for phase in (AttentionPhase.TRAIN, AttentionPhase.EVAL, AttentionPhase.TRAIN):
                     AttentionBackendController.apply(config, phase)
-                    expected = "native-cudnn" if backend == "cudnn" else backend
                     self.assertEqual(
-                        {name: check() for name, check in enabled.items()}, {name: name == expected for name in enabled}
+                        {name: check() for name, check in enabled.items()}, {name: name == backend for name in enabled}
                     )
                 AttentionBackendController.restore_default()
                 self.assertEqual({name: check() for name, check in enabled.items()}, original)
+
+    def test_cudnn_selection_is_rejected(self):
+        for backend in ("cudnn", "native-cudnn", "native_cudnn", "_native_cudnn"):
+            with self.subTest(backend=backend):
+                torch.backends.cuda.enable_cudnn_sdp(True)
+                with self.assertRaisesRegex(ValueError, "cuDNN SDPA is disabled"):
+                    AttentionBackendController.apply(SimpleNamespace(attention_mechanism=backend), AttentionPhase.TRAIN)
+                self.assertFalse(torch.backends.cuda.cudnn_sdp_enabled())
+                self.assertIsNone(AttentionBackendController._resolve_diffusers_backend(backend))
+
+    def test_default_and_phase_switches_keep_cudnn_disabled(self):
+        for backend in ("native", "diffusers", "kohaku-fa-auto"):
+            with (
+                self.subTest(backend=backend),
+                patch.object(attention_backend_module, "get_kohaku_fa_unavailable_reason", return_value="No CUDA GPU"),
+            ):
+                for phase in (AttentionPhase.TRAIN, AttentionPhase.EVAL, AttentionPhase.TRAIN):
+                    torch.backends.cuda.enable_cudnn_sdp(True)
+                    AttentionBackendController.apply(SimpleNamespace(attention_mechanism=backend), phase)
+                    self.assertFalse(torch.backends.cuda.cudnn_sdp_enabled())
+                torch.backends.cuda.enable_cudnn_sdp(True)
+                AttentionBackendController.restore_default()
+                self.assertFalse(torch.backends.cuda.cudnn_sdp_enabled())
+
+    def test_context_cleanup_does_not_restore_cudnn(self):
+        torch.backends.cuda.enable_cudnn_sdp(True)
+        context = torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.MATH)
+        context.__enter__()
+        AttentionBackendController._diffusers_backend_context = context
+
+        AttentionBackendController.restore_default()
+
+        self.assertFalse(torch.backends.cuda.cudnn_sdp_enabled())
+
+    def test_cli_and_webui_choices_exclude_cudnn(self):
+        from simpletuner.helpers.configuration.cmd_args import get_argument_parser
+        from simpletuner.simpletuner_sdk.server.services.field_registry.registry import field_registry
+
+        field = field_registry.get_field("attention_mechanism")
+        self.assertNotIn("cudnn", [choice["value"] for choice in field.choices])
+        action = get_argument_parser()._option_string_actions["--attention_mechanism"]
+        self.assertNotIn("cudnn", action.choices)
 
     def test_hub_backend_omits_empty_kernel_user_agent(self):
         if not attention_backend_module._DIFFUSERS_BACKEND_ALIASES:
