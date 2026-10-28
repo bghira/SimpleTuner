@@ -1251,6 +1251,7 @@ class AnyFlowDistiller(DistillationBase):
 
     def _set_batch_sigma_path(self, batch: Dict[str, Any], sigmas: torch.Tensor) -> None:
         latents = batch["latents"]
+        latents = latents.to(dtype=torch.promote_types(latents.dtype, torch.float32))
         noise = batch["noise"].to(device=latents.device, dtype=latents.dtype)
         sigma_for_latents = self._broadcast_time(sigmas, latents).to(device=latents.device, dtype=latents.dtype)
         batch["noisy_latents"] = (1.0 - sigma_for_latents) * latents + sigma_for_latents * noise
