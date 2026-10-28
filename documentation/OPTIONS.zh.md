@@ -455,6 +455,13 @@ simpletuner configure config/foo/config.json
   - `cpu` 量化约需 30 秒。（**默认**）
   - `pipeline` 将量化交给 Diffusers，通过 `--quantization_config` 或管线可用的预设（如 `nf4-bnb`、`int8-torchao` `fp8-torchao`、`int8-quanto`、`.gguf` 检查点）。
 
+### `--adapter_model_precision`
+
+- **可选值**：`no_change`（默认）、`fp32`。
+- `no_change` 保留现有适配器精度行为。`fp32` 将可训练的 LoRA/LyCORIS 参数和辅助可训练模块存储为 FP32，冻结的基础模型权重保持配置的精度。启用训练的文本编码器适配器也会转换为 FP32。
+- FP32 可以保留在 BF16 中因舍入而丢失的小幅更新，但会增加适配器、梯度和优化器状态的内存占用。前向计算的混合精度仍由 `--mixed_precision` 控制。
+- 需要 `--model_type=lora` 和支持 FP32 参数的优化器，如 `torch-adamw` 或 `optimi-adamw`。不兼容 `adamw_bf16`。此选项不会量化适配器。
+
 ### `--base_model_precision`
 
 - **内容**：降低模型精度并用更少内存训练。支持三种量化后端：BitsAndBytes（pipeline）、TorchAO（pipeline 或手动）、Optimum Quanto（pipeline 或手动）。

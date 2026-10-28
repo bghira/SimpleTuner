@@ -355,6 +355,13 @@ class MOSSImageTests(unittest.TestCase):
         prediction.square().mean().backward()
         trainable = self.model.delta_timestep_embedder.modules_to_save["default"]
         self.assertGreater(trainable[0].weight.grad.abs().sum().item(), 0)
+        original_delta = trainable[0].weight.detach().clone()
+        optimizer = torch.optim.AdamW(
+            [parameter for parameter in self.model.parameters() if parameter.requires_grad], lr=1e-3
+        )
+        optimizer.step()
+        self.assertFalse(torch.equal(original_delta, trainable[0].weight))
+        expected_delta = {name: value.detach().clone() for name, value in trainable.state_dict().items()}
         with tempfile.TemporaryDirectory() as directory:
             MOSSImagePipeline.save_lora_weights(
                 directory,
@@ -364,7 +371,39 @@ class MOSSImageTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "flowmap_deltatime_type"):
                 self.pipeline(tiny_transformer()).load_lora_weights(directory)
             restored = self.pipeline(tiny_transformer())
-            restored.load_lora_weights(directory, flowmap_deltatime_type="t-r", flowmap_gate_value=0.25)
+            restored.load_lora_weights(
+                directory, adapter_name="default", flowmap_deltatime_type="t-r", flowmap_gate_value=0.25
+            )
+            restored_state = get_peft_model_state_dict(restored.transformer)
+            for name, value in expected_delta.items():
+                torch.testing.assert_close(restored_state[f"delta_timestep_embedder.{name}"], value, rtol=0, atol=0)
+
+            from simpletuner.helpers.training.adapter import load_lora_weights
+
+            for loader in ("init_lora", "checkpoint"):
+                with self.subTest(loader=loader):
+                    target = tiny_transformer()
+                    target.enable_flowmap_time_conditioning(0.25, "t-r")
+                    target.crepa_projector = torch.nn.Linear(32, 4)
+                    target.add_adapter(copy.deepcopy(self.model.peft_config["default"]))
+                    if loader == "init_lora":
+                        load_lora_weights({"transformer": target}, Path(directory) / "pytorch_lora_weights.safetensors")
+                    else:
+                        foundation = object.__new__(MOSSImage)
+                        foundation.model = target
+                        foundation.controlnet = None
+                        foundation.text_encoders = []
+                        foundation.config = SimpleNamespace(controlnet=False)
+                        foundation.unwrap_model = lambda model=None, **kwargs: target if model is None else model
+                        foundation.load_lora_weights([target], directory)
+                    target.enable_flowmap_time_conditioning(0.25, "t-r")
+                    target_state = get_peft_model_state_dict(target)
+                    for name, value in expected_delta.items():
+                        torch.testing.assert_close(target_state[f"delta_timestep_embedder.{name}"], value, rtol=0, atol=0)
+                    torch.testing.assert_close(
+                        self.predict(target, r_timestep=torch.tensor([400.0, 100.0])),
+                        self.predict(r_timestep=torch.tensor([400.0, 100.0])),
+                    )
         torch.testing.assert_close(self.sample(restored), self.sample())
 
     def test_anyflow_metadata_reload_preserves_accelerator_placement(self):

@@ -1240,11 +1240,14 @@ class SaveHookManager:
         while len(models) > 0:
             model = models.pop()
 
+        adapter_fp32 = getattr(self.args, "adapter_model_precision", "no_change") == "fp32"
+        if adapter_fp32:
+            self.accelerator._lycoris_wrapped_network.to(dtype=torch.float32)
         state = self.accelerator._lycoris_wrapped_network.load_weights(os.path.join(input_dir, LORA_SAFETENSORS_FILENAME))
         if len(state.keys()) > 0:
             logging.error(f"LyCORIS failed to load: {state}")
             raise RuntimeError("Loading of LyCORIS model failed")
-        weight_dtype = StateTracker.get_weight_dtype()
+        weight_dtype = torch.float32 if adapter_fp32 else StateTracker.get_weight_dtype()
         if self.model.get_trained_component() is not None:
             self.accelerator._lycoris_wrapped_network.to(device=self.accelerator.device, dtype=weight_dtype)
         else:

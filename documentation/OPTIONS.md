@@ -461,6 +461,13 @@ Choose `model_flavour: "sft-edit"` or `"base-edit"` to train with reference imag
   - On `cpu`, quantisation takes about 30 seconds. (**Default**)
   - `pipeline` delegates quantization to Diffusers using `--quantization_config` or pipeline-capable presets (e.g., `nf4-bnb`, `int8-torchao`, `fp8-torchao`, `int8-quanto`, or `.gguf` checkpoints).
 
+### `--adapter_model_precision`
+
+- **Choices**: `no_change` (default), `fp32`.
+- `no_change` preserves existing adapter precision behavior. `fp32` stores trainable LoRA/LyCORIS parameters and auxiliary trainable modules in FP32 while frozen base weights retain their configured precision. Enabled text encoder adapters are also upcast.
+- FP32 can preserve updates that would round away in BF16. It increases adapter, gradient, and optimizer-state memory; mixed-precision forward computation remains controlled by `--mixed_precision`.
+- Requires `--model_type=lora` and an optimizer that supports FP32 parameters, such as `torch-adamw` or `optimi-adamw`. `adamw_bf16` is incompatible. This option does not quantize adapters.
+
 ### `--base_model_precision`
 
 - **What**: Reduce model precision and train using less memory. There are three supported quantisation backends: BitsAndBytes (pipeline), TorchAO (pipeline or manual), and Optimum Quanto (pipeline or manual).

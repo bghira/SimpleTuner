@@ -455,6 +455,13 @@ Elige `model_flavour: "sft-edit"` o `"base-edit"` para entrenar con imágenes de
   - En `cpu`, la cuantización tarda unos 30 segundos. (**Predeterminado**)
   - `pipeline` delega la cuantización a Diffusers usando `--quantization_config` o presets compatibles con pipeline (p. ej., `nf4-bnb`, `int8-torchao`, `fp8-torchao`, `int8-quanto`, o checkpoints `.gguf`).
 
+### `--adapter_model_precision`
+
+- **Opciones**: `no_change` (predeterminado), `fp32`.
+- `no_change` conserva el comportamiento actual de precisión de los adaptadores. `fp32` almacena los parámetros entrenables de LoRA/LyCORIS y los módulos auxiliares entrenables en FP32, mientras que los pesos congelados del modelo base mantienen la precisión configurada. También se convierten los adaptadores de los codificadores de texto habilitados para entrenamiento.
+- FP32 puede conservar pequeñas actualizaciones que se perderían por redondeo en BF16. Aumenta la memoria de los adaptadores, gradientes y estados del optimizador; la precisión mixta del cálculo directo sigue controlada por `--mixed_precision`.
+- Requiere `--model_type=lora` y un optimizador compatible con parámetros FP32, como `torch-adamw` u `optimi-adamw`. No es compatible con `adamw_bf16`. Esta opción no cuantiza adaptadores.
+
 ### `--base_model_precision`
 
 - **Qué**: Reduce la precisión del modelo y entrena usando menos memoria. Hay tres backends de cuantización compatibles: BitsAndBytes (pipeline), TorchAO (pipeline o manual) y Optimum Quanto (pipeline o manual).

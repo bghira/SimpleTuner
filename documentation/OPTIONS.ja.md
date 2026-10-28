@@ -455,6 +455,13 @@ simpletuner configure config/foo/config.json
   - `cpu` では量子化に約 30 秒かかります。（**既定**）
   - `pipeline` は `--quantization_config` またはパイプライン対応のプリセット（例: `nf4-bnb`、`int8-torchao` `fp8-torchao`、`int8-quanto`、`.gguf` チェックポイント）を使って Diffusers に量子化を委譲します。
 
+### `--adapter_model_precision`
+
+- **選択肢**: `no_change`（既定）、`fp32`。
+- `no_change` は既存のアダプター精度の動作を維持します。`fp32` は学習可能な LoRA/LyCORIS パラメーターと補助学習モジュールを FP32 で保持し、凍結したベースモデルの重みは設定された精度を維持します。学習対象のテキストエンコーダーアダプターも FP32 に変換されます。
+- FP32 は BF16 の丸めで失われる小さな更新を保持できますが、アダプター、勾配、オプティマイザー状態のメモリ使用量が増えます。順伝播の混合精度は引き続き `--mixed_precision` で制御します。
+- `--model_type=lora` と、`torch-adamw` または `optimi-adamw` など FP32 パラメーターを扱えるオプティマイザーが必要です。`adamw_bf16` とは併用できません。アダプターの量子化は行いません。
+
 ### `--base_model_precision`
 
 - **内容**: モデル精度を下げ、少ないメモリで学習します。対応する量子化バックエンドは BitsAndBytes（pipeline）、TorchAO（pipeline または手動）、Optimum Quanto（pipeline または手動）の 3 つです。
