@@ -2,6 +2,7 @@
 
 import atexit
 from functools import lru_cache
+from hashlib import sha256
 from itertools import count
 from pathlib import Path
 
@@ -26,9 +27,13 @@ def compile_kernel(mode, tensors, causal, masked):
 @lru_cache(maxsize=1)
 def extension():
     library = Path(libinfo.find_libtvm_ffi()).parent
+    source = Path(__file__).with_suffix(".cpp")
+    # Checkouts and copied source trees can retain older modification times.
+    # Give each C++ revision its own build cache rather than trusting mtimes.
+    name = "simpletuner_cute_attention_native_" + sha256(source.read_bytes()).hexdigest()[:16]
     module = load(
-        name="simpletuner_cute_attention_native",
-        sources=[str(Path(__file__).with_suffix(".cpp"))],
+        name=name,
+        sources=[str(source)],
         extra_include_paths=[
             libinfo.find_include_path(),
             libinfo.find_dlpack_include_path(),

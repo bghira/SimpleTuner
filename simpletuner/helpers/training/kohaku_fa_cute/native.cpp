@@ -29,9 +29,26 @@ std::map<Key, Entry> programs;
 std::list<Key> recent;
 std::mutex cache_mutex;
 
+std::pair<int, int> device_capability(int device);
+
+int split_forward_count(const Tensor &q, const Tensor &k, bool masked, bool causal) {
+    // Short schema queries need parallelism along the memory sequence.
+    if (masked || causal || q.size(0) != 1 || q.size(1) != 16 || k.size(1) != 16 || q.size(3) != 64 ||
+        q.size(2) > 256 || k.size(2) < 256 || k.size(2) > 16384)
+        return 0;
+    const auto capability = device_capability(q.get_device());
+    if (capability != std::make_pair(8, 9) && capability != std::make_pair(9, 0))
+        return 0;
+    return q.size(2) > 64 || k.size(2) <= 256 ? 4 : 16;
+}
+
 Key configuration_key(bool backward, const Tensors &tensors, bool causal, bool masked) {
     Key key = {backward, tensors[0].get_device(), causal, masked};
     key.reserve(160);
+    if (!backward && tensors[7].dim() == 5) {
+        key.push_back(tensors[0].size(2) > 32);
+        key.push_back(tensors[0].size(2) > 64);
+    }
     // These thresholds select different Hopper forward programs.
     if (!backward && tensors[0].size(3) == 128) {
         key.push_back(tensors[0].numel() / tensors[0].size(3) >= 32768);
@@ -134,7 +151,13 @@ variable_list forward(Tensor q, Tensor k, Tensor v, Tensor mask, bool masked, do
                  mask.stride(2) == 0 ? 1 : (q.size(2) + 63) / 64, mask.stride(3) == 0 ? 1 : (k.size(2) + 63) / 64};
     }
     auto blocks = at::empty(shape, q.options().dtype(at::kInt));
-    launch(false, {q, k, v, mask, out, maximum, logsum, out, maximum, out, out, out, blocks, maximum}, scale, causal,
+    auto partial = out, split_stats = maximum;
+    const auto splits = split_forward_count(q, k, masked, causal);
+    if (splits) {
+        partial = at::empty({q.size(0), q.size(1), q.size(2), splits, q.size(3)}, q.options().dtype(at::kFloat));
+        split_stats = at::empty({q.size(0), q.size(1), q.size(2), splits, 2}, q.options().dtype(at::kFloat));
+    }
+    launch(false, {q, k, v, mask, out, maximum, logsum, partial, split_stats, out, out, out, blocks, maximum}, scale, causal,
            masked);
     return {out, maximum, logsum, blocks};
 }
