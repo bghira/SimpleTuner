@@ -268,11 +268,6 @@ class ParquetMetadataBackend(MetadataBackend):
             self.aspect_ratio_bucket_indices = cache_data.get("aspect_ratio_bucket_indices", {})
             if set_config:
                 self.config = cache_data.get("config", {})
-                if self.config != {}:
-                    StateTracker.set_data_backend_config(
-                        data_backend_id=self.id,
-                        config=self.config,
-                    )
             # Load filtering statistics if present
             self.filtering_statistics = cache_data.get("filtering_statistics")
             try:

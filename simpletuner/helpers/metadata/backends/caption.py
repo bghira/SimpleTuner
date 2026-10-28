@@ -86,8 +86,8 @@ class CaptionMetadataBackend(MetadataBackend):
                 raw = self.data_backend.read(self.cache_file)
                 cache_data = json.loads(raw)
                 self._ordered_ids = list(cache_data.get("ordered_ids", []))
-                if set_config and cache_data.get("config"):
-                    StateTracker.set_data_backend_config(self.id, cache_data["config"])
+                if set_config:
+                    self.config = cache_data.get("config", {})
             except Exception as exc:  # pragma: no cover - extremely defensive
                 logger.warning(f"(id={self.id}) Failed to load caption cache: {exc}")
                 self._ordered_ids = []
