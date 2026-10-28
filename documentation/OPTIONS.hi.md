@@ -454,6 +454,13 @@ simpletuner configure config/foo/config.json
   - `cpu` पर quantisation में लगभग 30 seconds लगते हैं। (**Default**)
   - `pipeline` Diffusers को `--quantization_config` या pipeline‑capable presets (उदा. `nf4-bnb`, `int8-torchao`, `fp8-torchao`, `int8-quanto`, या `.gguf` checkpoints) के साथ quantization delegate करता है।
 
+### `--adapter_model_precision`
+
+- **विकल्प**: `no_change` (डिफ़ॉल्ट), `fp32`।
+- `no_change` अडैप्टर की मौजूदा प्रिसिज़न व्यवस्था को बनाए रखता है। `fp32` प्रशिक्षण योग्य LoRA/LyCORIS पैरामीटर और सहायक प्रशिक्षण योग्य मॉड्यूल को FP32 में रखता है, जबकि स्थिर बेस मॉडल के वज़न अपनी कॉन्फ़िगर की गई प्रिसिज़न में रहते हैं। प्रशिक्षण के लिए सक्षम टेक्स्ट एन्कोडर अडैप्टर भी FP32 में बदले जाते हैं।
+- FP32 उन छोटे अपडेट को सुरक्षित रख सकता है जो BF16 में राउंडिंग से खो जाते हैं। इससे अडैप्टर, ग्रेडिएंट और ऑप्टिमाइज़र स्टेट की मेमोरी बढ़ती है; फ़ॉरवर्ड गणना की मिश्रित प्रिसिज़न अभी भी `--mixed_precision` से नियंत्रित होती है।
+- इसके लिए `--model_type=lora` और FP32 पैरामीटर का समर्थन करने वाला ऑप्टिमाइज़र, जैसे `torch-adamw` या `optimi-adamw`, आवश्यक है। यह `adamw_bf16` के साथ संगत नहीं है। यह विकल्प अडैप्टर को क्वांटाइज़ नहीं करता।
+
 ### `--base_model_precision`
 
 - **What**: model precision घटाएँ और कम memory में training करें। तीन समर्थित quantisation backends हैं: BitsAndBytes (pipeline), TorchAO (pipeline या manual), और Optimum Quanto (pipeline या manual)।

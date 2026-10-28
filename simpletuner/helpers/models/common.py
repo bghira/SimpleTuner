@@ -1099,6 +1099,11 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         else:
             self.model.add_adapter(self.lora_config)
 
+        if getattr(self.config, "adapter_model_precision", "no_change") == "fp32":
+            from diffusers.training_utils import cast_training_params
+
+            cast_training_params(trained_component, dtype=torch.float32)
+
         if getattr(self.config, "init_lora", None):
             use_dora = getattr(self.config, "use_dora", False) if isinstance(self.lora_config, LoraConfig) else False
             addkeys, misskeys = load_lora_weights(

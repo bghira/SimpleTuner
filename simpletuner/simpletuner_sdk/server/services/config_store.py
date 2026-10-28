@@ -1365,6 +1365,17 @@ class ConfigStore:
 
             normalized_model_type = str(model_type or "").lower()
 
+            if config.get("--adapter_model_precision", config.get("adapter_model_precision")) == "fp32":
+                adapter_model_type = config.get("--model_type", config.get("model_type"))
+                if adapter_model_type and adapter_model_type != "lora":
+                    validation.errors.append("adapter_model_precision=fp32 requires model_type=lora.")
+                    validation.is_valid = False
+                if config.get("--optimizer", config.get("optimizer")) == "adamw_bf16":
+                    validation.errors.append(
+                        "adapter_model_precision=fp32 is incompatible with adamw_bf16. Use torch-adamw or optimi-adamw."
+                    )
+                    validation.is_valid = False
+
             base_precision_raw = config.get("--base_model_precision")
             if base_precision_raw is None:
                 base_precision_raw = config.get("base_model_precision")

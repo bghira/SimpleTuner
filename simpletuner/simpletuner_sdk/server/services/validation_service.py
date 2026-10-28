@@ -363,6 +363,14 @@ class ValidationService:
             result.add_error("lora_rank", "LoRA rank is required when using LoRA model type")
 
         base_precision_raw = self._get_config_value(config, "base_model_precision")
+        if self._get_config_value(config, "adapter_model_precision") == "fp32":
+            if model_type and model_type != "lora":
+                result.add_error("adapter_model_precision", "adapter_model_precision=fp32 requires model_type=lora.")
+            if self._get_config_value(config, "optimizer") == "adamw_bf16":
+                result.add_error(
+                    "adapter_model_precision",
+                    "adapter_model_precision=fp32 is incompatible with adamw_bf16. Use torch-adamw or optimi-adamw.",
+                )
         base_precision = ""
         if base_precision_raw not in (None, ""):
             base_precision = str(base_precision_raw).strip().lower()
