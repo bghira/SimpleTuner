@@ -1,16 +1,25 @@
 import logging
 import math
 from enum import Enum, auto
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from filelock import FileLock
 
 if TYPE_CHECKING:
     from simpletuner.helpers.models.common import ModelFoundation
 
 logger = logging.getLogger(__name__)
+
+
+def _load_dinov2_encoder(encoder_name: str) -> nn.Module:
+    hub_dir = Path(torch.hub.get_dir())
+    hub_dir.mkdir(parents=True, exist_ok=True)
+    with FileLock(hub_dir / ".simpletuner-dinov2.lock"):
+        return torch.hub.load("facebookresearch/dinov2", encoder_name)
 
 
 def spatial_zscore(features: torch.Tensor, alpha: float = 1.0, eps: float = 1e-6) -> torch.Tensor:
@@ -818,8 +827,7 @@ class CrepaRegularizer:
             dtype = self._encoder_dtype()
             self.encoder = QwenVLVisionEncoder.from_pretrained(self.encoder_name, self.device, dtype)
         else:
-            # Dinov2 torch hub exports lightweight models; user confirmed network usage is acceptable.
-            self.encoder = torch.hub.load("facebookresearch/dinov2", self.encoder_name)
+            self.encoder = _load_dinov2_encoder(self.encoder_name)
             self.encoder.eval().requires_grad_(False).to(self.device, dtype=torch.float32)
 
         dummy = torch.zeros(1, 3, self.encoder_image_size, self.encoder_image_size, device=self.device)
@@ -1391,7 +1399,7 @@ class UrepaRegularizer:
         if self.encoder is not None:
             return
 
-        self.encoder = torch.hub.load("facebookresearch/dinov2", self.encoder_name)
+        self.encoder = _load_dinov2_encoder(self.encoder_name)
         self.encoder.eval().requires_grad_(False).to(self.device, dtype=torch.float32)
 
         # Probe encoder dimension

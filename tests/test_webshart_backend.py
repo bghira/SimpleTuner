@@ -591,6 +591,43 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
                 metadata._load_caption_cache()
                 self.assertEqual(metadata.caption_cache_entry(sample_id), selected)
 
+    def test_worker_reload_receives_captions_and_metadata_after_main_process_refresh(self):
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        with (
+            patch.object(StateTracker, "get_data_backend_config", return_value={"caption_strategy": "webshart"}),
+            patch.object(StateTracker, "set_image_files"),
+            patch.object(StateTracker, "set_data_backend_config"),
+        ):
+            main = self._metadata_backend(self._backend("short"))
+            worker = self._metadata_backend(self._backend("short"))
+            self.assertEqual(worker.caption_cache, {})
+            with (
+                patch.object(main, "_prepare_metadata", side_effect=lambda path, data: (1.0, data)),
+                patch.object(main, "_enforce_min_bucket_size"),
+            ):
+                main.compute_aspect_ratio_bucket_indices()
+
+            sample_id = self._sample_id(main.data_backend)
+            for set_config in (False, True):
+                with self.subTest(set_config=set_config):
+                    worker.caption_cache = {"stale": "old caption"}
+                    worker.image_metadata = {"stale": {"captions": "old caption"}}
+                    worker.image_metadata_loaded = True
+                    with patch.object(
+                        worker.data_backend,
+                        "get_caption",
+                        side_effect=AssertionError("Worker should use the caption cache written by the main process"),
+                    ) as read_caption:
+                        worker.reload_cache(set_config=set_config)
+                        self.assertEqual(worker.aspect_ratio_bucket_indices, {"1.0": [sample_id]})
+                        self.assertEqual(worker.caption_cache_entry(sample_id), "brief caption")
+                        read_caption.assert_not_called()
+                    self.assertNotIn("stale", worker.caption_cache)
+                    self.assertTrue(worker.image_metadata_loaded)
+                    self.assertNotIn("stale", worker.image_metadata)
+                    self.assertEqual(worker.image_metadata[sample_id]["captions"], "brief caption")
+
     def test_bucketing_and_cache_reload_use_selected_captions(self):
         from simpletuner.helpers.training.state_tracker import StateTracker
 

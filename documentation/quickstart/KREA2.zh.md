@@ -5,7 +5,7 @@
 起始示例位于：
 
 ```bash
-simpletuner/examples/krea2.peft-lora/config.json
+simpletuner/examples/krea2/raw/default/peft-lora/config.json
 ```
 
 ## 推荐起点
@@ -19,7 +19,7 @@ simpletuner/examples/krea2.peft-lora/config.json
   "model_type": "lora",
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "mixed_precision": "bf16",
-  "attention_mechanism": "cudnn",
+  "attention_mechanism": "kohaku-fa",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "train_batch_size": 1,
@@ -39,7 +39,7 @@ TorchAO int8 weight-only 可以显著降低 VRAM，但在测试的 SimpleTuner �
 
 - 能放下时使用 `bf16`。
 - 需要显存余量时使用 `int8-torchao`。
-- 在 NVIDIA GPU 上使用 `attention_mechanism=cudnn`；Krea2 的 native SDPA 路径可能占用足够多的内存，使本应能放下的 L40S 级训练 run OOM。
+- 在支持的 NVIDIA GPU 上使用 `attention_mechanism=kohaku-fa`。所需依赖已包含在 `cuda` 和 `cuda13` 扩展中。
 - 保持 `gradient_checkpointing=true`。
 - 保持 `fuse_qkv_projections=true`。
 - 只有在确认 batch/resolution 能放下后，才启用 `dynamo_backend=inductor`、`dynamo_mode=reduce-overhead` 和 `dynamo_use_regional_compilation=true`。
@@ -54,7 +54,7 @@ TorchAO int8 weight-only 可以显著降低 VRAM，但在测试的 SimpleTuner �
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "base_model_precision": "no_change",
   "mixed_precision": "bf16",
-  "attention_mechanism": "cudnn",
+  "attention_mechanism": "kohaku-fa",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "optimizer": "optimi-lion",
@@ -85,15 +85,19 @@ reduce-overhead compile：
 }
 ```
 
-### LyCORIS 4 LoKR 内核尺寸
+### LyCORIS 版本
 
-如果 LyCORIS 4 的 LoKR 训练出现 `kron apply factors too large for the kernel`，请在启动训练器或 WebUI 前选择其 PyTorch 内核后端。此错误来自实验性 Triton 内核的因子尺寸限制。SimpleTuner 的 `torch.compile` 可以保持启用；仅禁用编译并不会切换 LyCORIS 内核。
+LoKR 训练请使用 LyCORIS 4.1.3 或更高版本。此版本可以处理较大的因子，解决早期 4.x 版本中出现的 `kron apply factors too large for the kernel` 错误。
+
+要升级现有安装，请在 SimpleTuner 环境中运行：
 
 ```bash
-export LYCORIS_KERNEL_BACKEND=torch
+pip install --upgrade "lycoris-lora>=4.1.3"
 ```
 
-[LyCORIS 内核后端](https://github.com/KohakuBlueleaf/LyCORIS/blob/main/docs/kernels/backends.md).
+如果此前为解决此错误设置了 `LYCORIS_KERNEL_BACKEND=torch`，请从启动环境中移除此设置，以使用自动后端选择。
+
+[LyCORIS 4.1.3 版本说明](https://github.com/KohakuBlueleaf/LyCORIS/releases/tag/v4.1.3).
 
 ## 参考图像训练
 

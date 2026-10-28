@@ -47,11 +47,11 @@ class DiffusersTemplatedAttentionBackwardOverrideTests(unittest.TestCase):
                 block = QwenImageAttentionBlock(384).to(device)
                 value = torch.randn(1, 384, 1, 4, 4, device=device, requires_grad=True)
                 expected = block(value)
-                with torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.CUDNN_ATTENTION):
+                with torch.nn.attention.sdpa_kernel(torch.nn.attention.SDPBackend.FLASH_ATTENTION):
                     observed = block(value)
                     observed.sum().backward()
                     self.assertFalse(torch.backends.cuda.math_sdp_enabled())
-                    self.assertTrue(torch.backends.cuda.cudnn_sdp_enabled())
+                    self.assertTrue(torch.backends.cuda.flash_sdp_enabled())
                 torch.testing.assert_close(observed, expected)
                 self.assertTrue(torch.isfinite(value.grad).all())
 
@@ -96,12 +96,6 @@ class DiffusersTemplatedAttentionBackwardOverrideTests(unittest.TestCase):
         self.assertEqual(tuple(grad_query.shape), (2, 5, 3, 7))
         self.assertEqual(tuple(grad_key.shape), (2, 5, 3, 7))
         self.assertEqual(tuple(grad_value.shape), (2, 5, 3, 7))
-
-    def test_cudnn_backward_does_not_transpose_saved_key_value_twice(self):
-        self._assert_backward_uses_saved_bhsd_layout(
-            attention_dispatch._cudnn_attention_backward_op,
-            "_scaled_dot_product_cudnn_attention_backward",
-        )
 
     def test_native_flash_backward_does_not_transpose_saved_key_value_twice(self):
         self._assert_backward_uses_saved_bhsd_layout(

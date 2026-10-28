@@ -1,9 +1,17 @@
 """Eager and compiler-safe autograd for the local CuTe kernels."""
 
+from functools import lru_cache
+
 import torch
 
-from .kernels import centered_backward
-from .native import extension
+_CAPABILITIES = {(8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0)}
+
+
+@lru_cache(maxsize=1)
+def extension():
+    from .native import extension as native_extension
+
+    return native_extension()
 
 
 def forward_impl(
@@ -12,7 +20,8 @@ def forward_impl(
     return tuple(extension().forward(q, k, v, mask, scale, causal))
 
 
-forward = torch.library.custom_op("simpletuner_cute_attention::forward", mutates_args=())(forward_impl)
+# Invalidate cached backward graphs from the uncentered Blackwell implementation.
+forward = torch.library.custom_op("simpletuner_cute_attention::forward_v2", mutates_args=())(forward_impl)
 
 
 @forward.register_fake
@@ -47,7 +56,7 @@ def backward_impl(
     return tuple(extension().backward(q, k, v, mask, maximum, logsum, dout, blocks, out, scale, causal))
 
 
-backward = torch.library.custom_op("simpletuner_cute_attention::backward", mutates_args=())(backward_impl)
+backward = torch.library.custom_op("simpletuner_cute_attention::backward_v2", mutates_args=())(backward_impl)
 
 
 @backward.register_fake
@@ -56,6 +65,8 @@ def backward_fake(q, k, v, mask, maximum, logsum, dout, blocks, out, scale, caus
 
 
 def setup_context(ctx, inputs, output):
+    from .kernels import centered_backward
+
     q, k, v, mask, ctx.scale, ctx.causal = inputs
     out, maximum, logsum, blocks = output
     ctx.has_mask = mask is not None
@@ -88,8 +99,21 @@ def autograd_backward(ctx, dout, dmaximum, dlogsum, dblocks):
 forward.register_autograd(autograd_backward, setup_context=setup_context)
 
 
-def attention(q, k, v, *, mask=None, causal=False, scale=None):
-    if not torch.compiler.is_compiling():
+def _center_keys(k):
+    """Subtract the per-head mean in FP32 and round once to the input dtype."""
+    keys = k.float()
+    return (keys - keys.mean(dim=-2, keepdim=True)).to(k.dtype)
+
+
+def attention(q, k, v, *, mask=None, causal=False, scale=None, center_keys=False):
+    """Strict CUDA attention for [B, H, S, D] inputs, with implicit GQA.
+
+    Optional key centering subtracts each batch/head's mean key in FP32 before
+    rounding back to the input dtype. Softmax is invariant to this shared logit
+    shift in exact arithmetic, including with masks. Autograd differentiates
+    through the mean, projecting the gradient back to the original keys.
+    """
+    if not center_keys and not torch.compiler.is_compiling():
         return extension().attention(q, k, v, mask, scale, causal)
     if q.ndim != 4 or k.ndim != 4 or v.ndim != 4:
         raise ValueError("CuTe attention requires 4D Q/K/V tensors.")
@@ -105,6 +129,10 @@ def attention(q, k, v, *, mask=None, causal=False, scale=None):
         if mask.dtype != torch.bool or mask.device != q.device:
             raise ValueError("CuTe attention requires a boolean mask on the Q/K/V device.")
         mask = mask.expand(q.shape[0], q.shape[1], q.shape[2], k.shape[2])
+    if center_keys:
+        k = _center_keys(k)
+    if not torch.compiler.is_compiling():
+        return extension().attention(q, k, v, mask, scale, causal)
     arguments = (q, k, v, mask, q.shape[-1] ** -0.5 if scale is None else float(scale), causal)
     return forward(*arguments)[0]
 
@@ -119,7 +147,7 @@ def kohaku_fa_scaled_dot_product_attention(
     scale=None,
     enable_gqa=False,
 ):
-    if torch.compiler.is_compiling():
+    if torch.compiler.is_compiling() or query.device.type != "cuda":
         from simpletuner.helpers.training.attention_backend import _kohaku_fa_sdpa
 
         return _kohaku_fa_sdpa(attention, query, key, value, attn_mask, dropout_p, is_causal, scale, enable_gqa)
@@ -137,11 +165,11 @@ def automatic_kohaku_fa_scaled_dot_product_attention(
     enable_gqa=False,
 ):
     if torch.compiler.is_compiling() or extension.cache_info().currsize == 0:
-        from simpletuner.helpers.training.attention_backend import _KOHAKU_FA_AUTO_CAPABILITIES, _automatic_kohaku_fa_sdpa
+        from simpletuner.helpers.training.attention_backend import _automatic_kohaku_fa_sdpa
 
         return _automatic_kohaku_fa_sdpa(
             kohaku_fa_scaled_dot_product_attention,
-            _KOHAKU_FA_AUTO_CAPABILITIES,
+            _CAPABILITIES,
             query,
             key,
             value,

@@ -1665,6 +1665,20 @@ class TestTrainer(unittest.TestCase):
 
         trainer.ema_model.to.assert_not_called()
 
+    def test_place_ema_model_preserves_fp32_for_bf16_training(self):
+        from simpletuner.helpers.training.ema import EMAModel
+
+        trainer = object.__new__(Trainer)
+        trainer.config = SimpleNamespace(ema_device="cpu", ema_cpu_only=True, weight_dtype=torch.bfloat16)
+        parameter = torch.nn.Parameter(torch.ones(4, dtype=torch.bfloat16))
+        trainer.ema_model = EMAModel(args=trainer.config, accelerator=None, parameters=[parameter])
+        trainer.ema_model.shadow_params[0].fill_(1.001)
+
+        trainer._place_ema_model(is_fsdp2_run=False)
+
+        self.assertEqual(trainer.ema_model.shadow_params[0].dtype, torch.float32)
+        torch.testing.assert_close(trainer.ema_model.shadow_params[0], torch.full((4,), 1.001))
+
     def test_init_distillation_adapter_modules_delegates_to_factory(self):
         trainer = object.__new__(Trainer)
         trainer.config = SimpleNamespace(
@@ -3788,6 +3802,62 @@ class TestTrainer(unittest.TestCase):
                 trainer.init_prepare_models(lr_scheduler=None)
 
         self.assertIs(primary_model.lycoris_wrapped_network, trainer.lycoris_wrapped_network)
+
+    def test_training_and_inference_prepare_use_model_compilation_context(self):
+        for stage in ("training", "inference"):
+            with self.subTest(stage=stage):
+                trainer = object.__new__(Trainer)
+                trainer.config = SimpleNamespace(
+                    disable_accelerator=False,
+                    base_model_precision="no_change",
+                    model_type="full",
+                    train_text_encoder=False,
+                )
+                primary_model = torch.nn.Linear(2, 2)
+                trainer.model = Mock()
+                trainer.model.get_trained_component.return_value = primary_model
+                events = []
+
+                @contextmanager
+                def compilation_context():
+                    events.append("enter")
+                    try:
+                        yield
+                    finally:
+                        events.append("exit")
+
+                trainer.model.regional_compilation_context.side_effect = compilation_context
+
+                def prepare(*objects, **kwargs):
+                    self.assertEqual(events, ["enter"])
+                    events.append("prepare")
+                    return objects if stage == "training" else objects[0]
+
+                trainer.accelerator = Mock(distributed_type=DistributedType.NO, state=SimpleNamespace())
+                trainer.accelerator.prepare.side_effect = prepare
+                trainer.accelerator.prepare_model.side_effect = prepare
+                trainer.lycoris_wrapped_network = None
+                trainer.model_hooks = Mock()
+                trainer._context_parallel_topology = None
+                trainer.optimizer = Mock()
+                trainer.sidecar_optimizer = None
+                trainer.sidecar_lr_scheduler = None
+                trainer._send_webhook_msg = Mock()
+                trainer._emit_event = Mock()
+                trainer._ramtorch_distributed = Mock(return_value=False)
+                trainer._report_cuda_usage_if_requested = Mock()
+                trainer._finalize_deepspeed_config_auto_values = Mock()
+                trainer._recalculate_training_steps = Mock()
+                trainer.job_id = None
+                with patch("simpletuner.helpers.training.trainer.StateTracker") as tracker:
+                    tracker.get_data_backends.return_value = {"images": {"train_dataloader": Mock()}}
+                    if stage == "training":
+                        trainer.init_prepare_models(lr_scheduler=None)
+                    else:
+                        trainer.prepare_model_for_inference()
+
+                self.assertEqual(events, ["enter", "prepare", "exit"])
+                trainer.model.set_prepared_model.assert_called_once_with(primary_model)
 
     def test_init_trackers_is_idempotent(self):
         trainer = object.__new__(Trainer)

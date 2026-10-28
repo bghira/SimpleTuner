@@ -10,13 +10,13 @@ GPU メモリーに合ったレシピを選びます。全レベルで 512×512 
 
 | GPU メモリー | Base の例 | SFT の例 | バッチ内画像数 | `gradient_checkpointing_interval` |
 | --- | --- | --- | ---: | ---: |
-| 24 GB | `moss_image-24g.peft-lora` | `moss_image-sft-24g.peft-lora` | 1 | 1 |
-| 32 GB | `moss_image-32g.peft-lora` | `moss_image-sft-32g.peft-lora` | 1 | 2 |
-| 48 GB | `moss_image-48g.peft-lora` | `moss_image-sft-48g.peft-lora` | 2 | 2 |
-| 80 GB | `moss_image-80g.peft-lora` | `moss_image-sft-80g.peft-lora` | 4 | 2 |
-| 144 GB | `moss_image-144g.peft-lora` | `moss_image-sft-144g.peft-lora` | 8 | 2 |
+| 24 GB | `moss_image/base/24g/peft-lora` | `moss_image/sft/24g/peft-lora` | 1 | 1 |
+| 32 GB | `moss_image/base/32g/peft-lora` | `moss_image/sft/32g/peft-lora` | 1 | 2 |
+| 48 GB | `moss_image/base/48g/peft-lora` | `moss_image/sft/48g/peft-lora` | 2 | 2 |
+| 80 GB | `moss_image/base/80g/peft-lora` | `moss_image/sft/80g/peft-lora` | 4 | 2 |
+| 144 GB | `moss_image/base/144g/peft-lora` | `moss_image/sft/144g/peft-lora` | 8 | 2 |
 
-既定の `moss_image.peft-lora` と `moss_image-sft.peft-lora` は 48 GB 設定です。バッチサイズは開始時の目安です。長いキャプション、追加機能、または縦横比バケットの画像数がバッチサイズより少ない場合は `train_batch_size` を下げてください。144 GB レベルは H200 クラスの GPU 向けです。
+既定の `moss_image/sft/default/default.peft-lora` と `moss_image/sft/default/peft-lora` は 48 GB 設定です。バッチサイズは開始時の目安です。長いキャプション、追加機能、または縦横比バケットの画像数がバッチサイズより少ない場合は `train_batch_size` を下げてください。144 GB レベルは H200 クラスの GPU 向けです。
 
 ## SimpleTuner のインストール
 
@@ -27,7 +27,7 @@ git clone https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
 python3.13 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[cuda,attention-cute]'
+pip install -e '.[cuda]'
 ```
 
 ## 画像とキャプションの準備
@@ -46,13 +46,15 @@ datasets/moss-image/
 
 ## 学習設定
 
-48 GB の SFT レシピとサンプルプロンプトをコピーします。`48g` は選んだレベルに置き換えてください。Base の場合はコマンド中の `moss_image-sft-48g.peft-lora` を `moss_image-48g.peft-lora` に変更します。
+48 GB の SFT レシピとサンプルプロンプトをコピーします。`48g` は選んだレベルに置き換えてください。Base の場合はコマンド中の `moss_image/sft/48g/peft-lora` を `moss_image/base/48g/peft-lora` に変更します。
 
 ```bash
-mkdir -p config/examples datasets/moss-image
-cp -R simpletuner/examples/moss_image-sft-48g.peft-lora config/examples/
-cp simpletuner/examples/moss_image-prompts.json config/examples/
-cp config/examples/moss_image-sft-48g.peft-lora/config.json config/config.json
+mkdir -p config/examples/_shared datasets/moss-image
+mkdir -p config/examples/moss_image/sft/48g
+cp -R simpletuner/examples/moss_image/sft/48g/peft-lora config/examples/moss_image/sft/48g/
+mkdir -p config/examples/_shared
+cp simpletuner/examples/_shared/moss_image-prompts.json config/examples/_shared/
+cp config/examples/moss_image/sft/48g/peft-lora/config.json config/config.json
 ```
 
 レシピは rank 32 の BF16 LoRA、学習率 `1e-4`、gradient checkpointing、REPA、4,000 オプティマイザーステップ、512 相当の解像度を使用します。`config/config.json` を開き、既存設定内の次の項目を編集します。
@@ -96,7 +98,7 @@ WebUI でノイズ除去中の進捗画像を見るには、次の設定を追�
 
 レシピの `train_batch_size` は選択した VRAM レベルに合わせてあります。小規模データセットや、長いキャプション・追加機能でメモリーが増える場合は下げてください。 `gradient_checkpointing_backend` は `torch`、`unsloth`、`torch-ffn`、`unsloth-ffn` を選べます。適用範囲は interval と `gradient_checkpointing_segment_stride` で調整します。Musubi は `musubi_blocks_to_swap` でブロックを GPU と CPU 間で移動します。RamTorch は `ramtorch: true` と `ramtorch_transformer_percent` で選択的にオフロードします。システム RAM と転送時間を使うため、一度に一つの方式から設定してください。[OPTIONS](../OPTIONS.md)に詳細があります。
 
-CUDA のインストールには CuTE attention が含まれます。学習時の既定値 `attention_mechanism: "kohaku-fa-auto"` は Ada・Hopper GPU で CuTE、それ以外のアーキテクチャで標準の SDPA を選びます。逆伝播用に保存する attention テンソルをオフロードするには `gradient_checkpointing_offload_attention: true`、転送の先読みには `gradient_checkpointing_offload_prefetch: true` を指定します。他の attention バックエンドは [OPTIONS](../OPTIONS.md) を参照してください。
+CUDA のインストールには CuTE attention が含まれます。学習時の既定値 `attention_mechanism: "kohaku-fa-auto"` は Ada・Hopper・RTX Blackwell GPU で CuTE、それ以外のアーキテクチャで標準の SDPA を選びます。逆伝播用に保存する attention テンソルをオフロードするには `gradient_checkpointing_offload_attention: true`、転送の先読みには `gradient_checkpointing_offload_prefetch: true` を指定します。他の attention バックエンドは [OPTIONS](../OPTIONS.md) を参照してください。
 
 レシピは [REPA](../experimental/IMAGE_REPA.md) を有効にします。後段の画像特徴を前段と揃えるには、[LayerSync](../experimental/LAYERSYNC.md) を追加します。
 
@@ -163,12 +165,13 @@ image.save("my-moss-image.png")
 
 ## 編集・参照画像LoRAを学習する
 
-参照画像付きで学習するには `model_flavour: "sft-edit"` または `"base-edit"` を選びます。対応するSFTまたはBaseチェックポイントから開始し、アダプターで参照画像による条件付けを学習します。`simpletuner/examples/moss_image-sft-edit.peft-lora` または `moss_image-base-edit.peft-lora` を使用してください。いずれもバッチあたりターゲット1枚、512相当の学習、REPA、データセットによる検証を設定しています。
+参照画像付きで学習するには `model_flavour: "sft-edit"` または `"base-edit"` を選びます。対応するSFTまたはBaseチェックポイントから開始し、アダプターで参照画像による条件付けを学習します。`simpletuner/examples/moss_image/sft-edit/default/peft-lora` または `moss_image/base-edit/default/peft-lora` を使用してください。いずれもバッチあたりターゲット1枚、512相当の学習、REPA、データセットによる検証を設定しています。
 
 ```bash
-mkdir -p config/examples datasets/moss-edits datasets/moss-references
-cp -R simpletuner/examples/moss_image-sft-edit.peft-lora config/examples/
-cp config/examples/moss_image-sft-edit.peft-lora/config.json config/config.json
+mkdir -p config/examples/_shared datasets/moss-edits datasets/moss-references
+mkdir -p config/examples/moss_image/sft-edit/default
+cp -R simpletuner/examples/moss_image/sft-edit/default/peft-lora config/examples/moss_image/sft-edit/default/
+cp config/examples/moss_image/sft-edit/default/peft-lora/config.json config/config.json
 ```
 
 目的の出力を `datasets/moss-edits/sample.png`、編集指示を `datasets/moss-edits/sample.txt`、入力参照画像を `datasets/moss-references/sample.png` に配置します。両フォルダーの画像ファイル名は拡張子も含めて一致させます。指示の例は `Change the blue mug to red while keeping the background unchanged.` です。編集用の例には次のデータローダー設定が含まれます。

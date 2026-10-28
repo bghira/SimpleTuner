@@ -61,10 +61,10 @@ pipeline の有効期間中 `controller` を保持し、`simpletuner_config.json
 
 ## Anima 例
 
-`simpletuner/examples/anima.peft-lora+diffusion-blocks/config.json` を参照してください。Anima v1.0 の 28 layer は `layers_per_block=4` で 7 block になります。
+`simpletuner/examples/anima/base-v1.0/default/peft-lora+diffusion-blocks/config.json` を参照してください。Anima v1.0 の 28 layer は `layers_per_block=4` で 7 block になります。
 
 ```bash
-simpletuner train env=examples/anima.peft-lora+diffusion-blocks max_train_steps=10 validation_steps=10
+simpletuner train env=examples/anima/base-v1.0/default/peft-lora+diffusion-blocks max_train_steps=10 validation_steps=10
 ```
 
 resume では block path、layer 数、境界、`blocks_to_train`、topology、world size、batch sampling、timestep 設定を変更しないでください。推論時に全 layer を実行すると別のアーキテクチャになります。

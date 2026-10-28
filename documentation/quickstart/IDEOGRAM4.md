@@ -5,7 +5,7 @@ This guide covers LoRA training for Ideogram 4 in SimpleTuner. Ideogram 4 is a l
 The included starter config is:
 
 ```bash
-simpletuner/examples/ideogram-fp8.peft-lora/config.json
+simpletuner/examples/ideogram/fp8/default/peft-lora/config.json
 ```
 
 ## Hardware requirements
@@ -79,9 +79,9 @@ For manual installation or development setup, see the [installation documentatio
 Copy the example config and dataloader into your config directory:
 
 ```bash
-mkdir -p config/examples
-cp simpletuner/examples/ideogram-fp8.peft-lora/config.json config/config.json
-cp simpletuner/examples/multidatabackend-ideogram-dreambooth-1024px.json config/examples/multidatabackend-ideogram-dreambooth-1024px.json
+mkdir -p config/examples/_shared
+cp simpletuner/examples/ideogram/fp8/default/peft-lora/config.json config/config.json
+cp simpletuner/examples/_shared/multidatabackend-ideogram-dreambooth-1024px.json config/examples/_shared/multidatabackend-ideogram-dreambooth-1024px.json
 ```
 
 Important fields:
@@ -253,7 +253,7 @@ Prompt upsampling rewrites positive training captions and validation prompts bef
 The included example uses the Domokun demo dataset and a JSON instance prompt:
 
 ```bash
-simpletuner/examples/multidatabackend-ideogram-dreambooth-1024px.json
+simpletuner/examples/_shared/multidatabackend-ideogram-dreambooth-1024px.json
 ```
 
 For your own local dataset, use the same shape:

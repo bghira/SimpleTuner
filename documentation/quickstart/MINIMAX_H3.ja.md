@@ -6,11 +6,11 @@ MiniMax H3 は 33B の flow-matching video/audio モデルです。SimpleTuner �
 
 次の examples から始めます。
 
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-24g.peft-lora+ramtorch`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-32g.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-48g.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-80g.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/default/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/24g/fl2va-convrot-int8.peft-lora+ramtorch`
+- `simpletuner/examples/minimaxh3/convrot-int8/32g/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/48g/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/80g/fl2va-convrot-int8.peft-lora`
 
 VRAM に近い preset を選び、smoke test 後に resolution、frame count、attention backend、checkpointing を調整します。
 
@@ -79,7 +79,7 @@ video loss を mask します。明示的な `audio_only` も使用できます�
 
 H3 context parallelism は Ulysses と `context_parallel_strategy: "alltoall"` を使用します。packed sequence は CP
 degree に合わせて padding される場合があるため、local attention backend は mask を受け付ける必要があります。
-`native` と `cudnn` をサポートし、CP 有効時のその他の backend は SimpleTuner が `native` に置き換えます。
+`native` をサポートし、CP 有効時のその他の backend は SimpleTuner が `native` に置き換えます。
 
 約 8k audio tokens では、CP は主に communication と引き換えに activation memory と checkpointing を減らします。
 CP 単体では weights を shard しないため、より長い sequence または FSDP との併用でなければ DDP と比較してください。
@@ -114,7 +114,7 @@ MiniMax は、H3 の最終 training stage で MoBA-style 3D sparse attention を
 ## Run
 
 ```bash
-simpletuner train example=minimaxh3-fl2va-convrot-int8.peft-lora
+simpletuner train example=minimaxh3/convrot-int8/default/fl2va-convrot-int8.peft-lora
 ```
 
 long run の前に短い smoke test を行い、`h3_drift_loss`、normal loss、validation sample が一貫して動くことを確認します。

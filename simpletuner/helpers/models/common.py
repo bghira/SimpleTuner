@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 import numpy as np
 import torch
 import torch.nn.functional as F
+from accelerate.utils import DynamoBackend
 from huggingface_hub import snapshot_download
 from PIL import Image
 from torch.distributions import Beta
@@ -433,6 +434,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
     MAXIMUM_CANVAS_SIZE = None
     SUPPORTS_LORA = None
     SUPPORTS_CONTROLNET = None
+    REGIONAL_COMPILE_REPEATED_BLOCKS = False
     FLOWMAP_R_TIMESTEP_BATCH_KEY = "flowmap_r_timesteps"
     FLOWMAP_R_TIMESTEP_KWARG = "r_timestep"
     STRICT_I2V_FLAVOURS = tuple()
@@ -1096,6 +1098,11 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
             self.controlnet.add_adapter(self.lora_config)
         else:
             self.model.add_adapter(self.lora_config)
+
+        if getattr(self.config, "adapter_model_precision", "no_change") == "fp32":
+            from diffusers.training_utils import cast_training_params
+
+            cast_training_params(trained_component, dtype=torch.float32)
 
         if getattr(self.config, "init_lora", None):
             use_dora = getattr(self.config, "use_dora", False) if isinstance(self.lora_config, LoraConfig) else False
@@ -2663,7 +2670,9 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
             return
         if not hasattr(self, "vae") or self.vae is None or getattr(self.vae, "device", None) == "meta":
             self.load_vae()
-        return self.vae
+        from simpletuner.helpers.models.vae_tiling import enable_automatic_vae_tiling
+
+        return enable_automatic_vae_tiling(self.vae)
 
     def _get_vae_load_kwargs(self):
         return {
@@ -3702,6 +3711,25 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
     def before_accelerator_prepare(self):
         pass
 
+    @contextlib.contextmanager
+    def regional_compilation_context(self):
+        """Select declared repeated blocks instead of Accelerate's auxiliary regions."""
+        if not self.REGIONAL_COMPILE_REPEATED_BLOCKS:
+            yield
+            return
+        plugin = self.accelerator.state.dynamo_plugin
+        if plugin.backend == DynamoBackend.NO or not plugin.use_regional_compilation:
+            yield
+            return
+
+        self.get_trained_component().compile_repeated_blocks(**plugin.to_kwargs())
+        backend = plugin.backend
+        plugin.backend = DynamoBackend.NO
+        try:
+            yield
+        finally:
+            plugin.backend = backend
+
     def freeze_components(self):
         if self.vae is not None:
             self.vae.requires_grad_(False)
@@ -4532,6 +4560,10 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
 
     def flow_matching_target(self, latents: torch.Tensor, noise: torch.Tensor) -> torch.Tensor:
         return self.noiseward_flow_to_prediction(noise - latents)
+
+    def flow_matching_guidance_mask(self, text_conditioning_mask: torch.Tensor) -> torch.Tensor:
+        """Select samples whose MeanFlow derivative uses fused guidance."""
+        return text_conditioning_mask
 
     def get_flow_matching_target(
         self,

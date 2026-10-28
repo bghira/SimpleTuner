@@ -1,5 +1,10 @@
 # Model Guides
 
+[Training examples](https://github.com/bghira/SimpleTuner/tree/main/simpletuner/examples/README.md) — Examples are organised as `model_family/model_flavour/vram/recipe`. Choose a model family, then its flavour and a memory tier such as `24g`, `48g`, or `80g`. The `default` tier has no specific VRAM target; a `default` flavour uses the model’s configured default. Multi-GPU tiers such as `8x80g` require eight GPUs with that memory per GPU.
+
+In the WebUI environment creator and setup wizard, select the model family first. The example selector shows only that family’s recipes. Changing the family clears the previous example selection.
+
+
 Step-by-step guides for training each supported model architecture.
 
 ## Image Models

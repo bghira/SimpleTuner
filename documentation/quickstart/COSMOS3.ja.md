@@ -72,12 +72,12 @@ pip install -e .
 
 | Example | Flavour | Dataset | Media | Backend |
 | --- | --- | --- | --- | --- |
-| `cosmos3-image.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | image | `multidatabackend-cosmos3-domokun-512px.json` |
-| `cosmos3-image-48g.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | 画像、48 GB 向け調整 | `multidatabackend-cosmos3-domokun-1024-arb.json` |
-| `cosmos3-image-80g.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | 画像、80 GB 向け調整 | `multidatabackend-cosmos3-domokun-1024-arb.json` |
-| `cosmos3-video.lycoris-lokr` | `nano` | `sayakpaul/video-dataset-disney-organized` | video | `multidatabackend-cosmos3-disney-video-480p+49f.json` |
-| `cosmos3-video-audio.lycoris-lokr` | `nano` | `bghira/Synchronised-Drumming-Gemini3Captions` | video + audio | `multidatabackend-cosmos3-drumming-video-audio-480p+49f.json` |
-| `cosmos3-super-i2v.lycoris-lokr` | `super-i2v` | `sayakpaul/video-dataset-disney-organized` | image-to-video | `multidatabackend-cosmos3-disney-i2v-480p+49f.json` |
+| `cosmos3/nano/default/image.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | image | `multidatabackend-cosmos3-domokun-512px.json` |
+| `cosmos3/nano/48g/legacy-image.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | 画像、48 GB 向け調整 | `multidatabackend-cosmos3-domokun-1024-arb.json` |
+| `cosmos3/nano/80g/legacy-image.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | 画像、80 GB 向け調整 | `multidatabackend-cosmos3-domokun-1024-arb.json` |
+| `cosmos3/nano/default/video.lycoris-lokr` | `nano` | `sayakpaul/video-dataset-disney-organized` | video | `multidatabackend-cosmos3-disney-video-480p+49f.json` |
+| `cosmos3/nano/default/video-audio.lycoris-lokr` | `nano` | `bghira/Synchronised-Drumming-Gemini3Captions` | video + audio | `multidatabackend-cosmos3-drumming-video-audio-480p+49f.json` |
+| `cosmos3/super-i2v/default/lycoris-lokr` | `super-i2v` | `sayakpaul/video-dataset-disney-organized` | image-to-video | `multidatabackend-cosmos3-disney-i2v-480p+49f.json` |
 
 `48g` と `80g` の画像例は、nano 画像 LoKr レシピをメモリ容量向けに調整したバリアントです。どちらも 1024px のアスペクト比対応バックエンドを使います。`48g` 設定は `gradient_checkpointing_interval: 2` で gradient checkpointing を維持し、`80g` 設定は gradient checkpointing を無効化して `flash-attn-3-hub` を有効化します。
 
@@ -96,7 +96,7 @@ pip install -e .
 ### Image
 
 - Dataset: [`RareConcepts/Domokun`](https://huggingface.co/datasets/RareConcepts/Domokun)
-- Backend: `config/examples/multidatabackend-cosmos3-domokun-512px.json`
+- Backend: `config/examples/_shared/multidatabackend-cosmos3-domokun-512px.json`
 - Backend type: `huggingface`
 - Caption strategy: `instanceprompt`
 - Text embed cache: reasoner cache only
@@ -105,7 +105,7 @@ pip install -e .
 ### Video
 
 - Dataset: [`sayakpaul/video-dataset-disney-organized`](https://huggingface.co/datasets/sayakpaul/video-dataset-disney-organized)
-- Backend: `config/examples/multidatabackend-cosmos3-disney-video-480p+49f.json`
+- Backend: `config/examples/_shared/multidatabackend-cosmos3-disney-video-480p+49f.json`
 - Backend type: `huggingface`
 - Columns: `video`, `prompt`
 - Text embed cache: reasoner cache only
@@ -114,7 +114,7 @@ pip install -e .
 ### Video With Audio
 
 - Dataset: [`bghira/Synchronised-Drumming-Gemini3Captions`](https://huggingface.co/datasets/bghira/Synchronised-Drumming-Gemini3Captions)
-- Backend: `config/examples/multidatabackend-cosmos3-drumming-video-audio-480p+49f.json`
+- Backend: `config/examples/_shared/multidatabackend-cosmos3-drumming-video-audio-480p+49f.json`
 - Backend type: `local`
 - Files: `.mpeg` videos with adjacent `.txt` captions
 - Text embed cache: reasoner cache only
@@ -144,7 +144,7 @@ Audio backend block:
 ### Super-I2V
 
 - Dataset: [`sayakpaul/video-dataset-disney-organized`](https://huggingface.co/datasets/sayakpaul/video-dataset-disney-organized)
-- Backend: `config/examples/multidatabackend-cosmos3-disney-i2v-480p+49f.json`
+- Backend: `config/examples/_shared/multidatabackend-cosmos3-disney-i2v-480p+49f.json`
 - Backend type: `huggingface`
 - Columns: `video`, `prompt`
 - `video.is_i2v`: `true`
@@ -167,12 +167,12 @@ SimpleTuner はこの flag から paired strict reference conditioning backend �
 ## Run
 
 ```bash
-simpletuner train example=cosmos3-image.lycoris-lokr
-simpletuner train example=cosmos3-image-48g.lycoris-lokr
-simpletuner train example=cosmos3-image-80g.lycoris-lokr
-simpletuner train example=cosmos3-video.lycoris-lokr
-simpletuner train example=cosmos3-video-audio.lycoris-lokr
-simpletuner train example=cosmos3-super-i2v.lycoris-lokr
+simpletuner train example=cosmos3/nano/default/image.lycoris-lokr
+simpletuner train example=cosmos3/nano/48g/legacy-image.lycoris-lokr
+simpletuner train example=cosmos3/nano/80g/legacy-image.lycoris-lokr
+simpletuner train example=cosmos3/nano/default/video.lycoris-lokr
+simpletuner train example=cosmos3/nano/default/video-audio.lycoris-lokr
+simpletuner train example=cosmos3/super-i2v/default/lycoris-lokr
 ```
 
 ## Validation

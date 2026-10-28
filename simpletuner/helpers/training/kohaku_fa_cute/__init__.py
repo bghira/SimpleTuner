@@ -1,4 +1,4 @@
-"""Locally maintained CuTe attention for Ada, Hopper and RTX Blackwell."""
+"""Locally maintained CuTe attention for Ampere, Ada, Hopper and Blackwell."""
 
 from .api import attention
 from .api import automatic_kohaku_fa_scaled_dot_product_attention as automatic_scaled_dot_product_attention

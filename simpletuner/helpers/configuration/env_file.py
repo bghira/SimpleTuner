@@ -90,6 +90,7 @@ env_to_args_map = {
     "LR_SCHEDULE": "--lr_scheduler",
     "LR_WARMUP_STEPS": "--lr_warmup_steps",
     "BASE_MODEL_PRECISION": "--base_model_precision",
+    "ADAPTER_MODEL_PRECISION": "--adapter_model_precision",
     "QUANTIZE_VIA": "--quantize_via",
     "QUANTIZATION_CONFIG": "--quantization_config",
     "SDNQ_WEIGHTS_DTYPE": "--sdnq_weights_dtype",

@@ -5,7 +5,7 @@ Esta guía cubre el entrenamiento LoRA de Ideogram 4 en SimpleTuner. Ideogram 4 
 Configuración inicial:
 
 ```bash
-simpletuner/examples/ideogram-fp8.peft-lora/config.json
+simpletuner/examples/ideogram/fp8/default/peft-lora/config.json
 ```
 
 ## Hardware y precisión
@@ -44,9 +44,9 @@ Para `torch.compile`, prefiere regional compilation con pesos FP8 nativos:
 Copia la configuración y el dataloader de ejemplo:
 
 ```bash
-mkdir -p config/examples
-cp simpletuner/examples/ideogram-fp8.peft-lora/config.json config/config.json
-cp simpletuner/examples/multidatabackend-ideogram-dreambooth-1024px.json config/examples/multidatabackend-ideogram-dreambooth-1024px.json
+mkdir -p config/examples/_shared
+cp simpletuner/examples/ideogram/fp8/default/peft-lora/config.json config/config.json
+cp simpletuner/examples/_shared/multidatabackend-ideogram-dreambooth-1024px.json config/examples/_shared/multidatabackend-ideogram-dreambooth-1024px.json
 ```
 
 Campos importantes:

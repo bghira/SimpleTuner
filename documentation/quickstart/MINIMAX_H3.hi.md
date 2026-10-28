@@ -6,11 +6,11 @@ MiniMax H3 एक 33B flow-matching video/audio model है। SimpleTuner `min
 
 इन examples से शुरू करें:
 
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-24g.peft-lora+ramtorch`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-32g.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-48g.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-80g.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/default/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/24g/fl2va-convrot-int8.peft-lora+ramtorch`
+- `simpletuner/examples/minimaxh3/convrot-int8/32g/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/48g/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/80g/fl2va-convrot-int8.peft-lora`
 
 अपनी VRAM के सबसे करीब preset लें, फिर smoke test के बाद resolution, frames, attention backend, और checkpointing बदलें।
 
@@ -78,8 +78,8 @@ SimpleTuner normalized backend config में `audio.audio_only: true` record 
 ## Context parallelism
 
 H3 context parallelism Ulysses को `context_parallel_strategy: "alltoall"` के साथ use करता है। Packed sequence को CP
-degree तक pad किया जा सकता है, इसलिए local attention backend को mask accept करना होगा। `native` और `cudnn` supported
-हैं; CP enabled होने पर SimpleTuner दूसरे backend choices को `native` से replace करता है।
+degree तक pad किया जा सकता है, इसलिए local attention backend को mask accept करना होगा। `native` supported
+है; CP enabled होने पर SimpleTuner दूसरे backend choices को `native` से replace करता है।
 
 लगभग 8k audio tokens पर CP communication के बदले activation memory घटाता है और हल्का checkpointing देता है। CP अपने
 आप weights shard नहीं करता, इसलिए लंबी sequence या FSDP combination के बिना इसे DDP के विरुद्ध benchmark करें।
@@ -114,7 +114,7 @@ Implementation 3D query/key video blocks को mean-pool करके parameter
 ## Run
 
 ```bash
-simpletuner train example=minimaxh3-fl2va-convrot-int8.peft-lora
+simpletuner train example=minimaxh3/convrot-int8/default/fl2va-convrot-int8.peft-lora
 ```
 
 Long run से पहले छोटा smoke test करें और देखें कि `h3_drift_loss`, normal loss, और validation samples साथ-साथ sensible move कर रहे हैं।

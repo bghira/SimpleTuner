@@ -47,6 +47,11 @@
             ],
             examples: [],
             examplesMap: {},
+            get filteredExamples() {
+                return this.examples.filter(
+                    (example) => example.defaults?.model_family === this.newEnvironment.model_family
+                );
+            },
             dataloaderConfigs: [],
             createNewDataloader: true,
             selectedDataloaderPath: "",
@@ -228,6 +233,14 @@
                 }
             },
 
+            async handleModelFamilyChange(value) {
+                this.newEnvironment.model_family = value;
+                this.newEnvironment.model_flavour = null;
+                this.modelFlavours = [];
+                await this.handleExampleSelection("");
+                await this.loadModelFlavours(value);
+            },
+
             async handleExampleSelection(value) {
                 this.newEnvironment.example = value;
                 if (!value) {
@@ -261,6 +274,9 @@
                 if (defaults.model_family) {
                     this.newEnvironment.model_family = defaults.model_family;
                     await this.loadModelFlavours(defaults.model_family);
+                }
+                if (this.newEnvironment.example !== value || this.newEnvironment.model_family !== defaults.model_family) {
+                    return;
                 }
                 this.newEnvironment.model_flavour = defaults.model_flavour ?? null;
 
@@ -408,7 +424,9 @@
                     return;
                 }
                 if (this.modelFlavourCache[family]) {
-                    this.modelFlavours = this.modelFlavourCache[family];
+                    if (this.newEnvironment.model_family === family) {
+                        this.modelFlavours = this.modelFlavourCache[family];
+                    }
                     return;
                 }
                 try {
@@ -418,13 +436,17 @@
                         const data = await response.json();
                         const flavours = Array.isArray(data.flavours) ? data.flavours : [];
                         this.modelFlavourCache[family] = flavours;
-                        this.modelFlavours = flavours;
-                    } else {
+                        if (this.newEnvironment.model_family === family) {
+                            this.modelFlavours = flavours;
+                        }
+                    } else if (this.newEnvironment.model_family === family) {
                         this.modelFlavours = [];
                     }
                 } catch (error) {
                     console.error("Failed to load model flavours:", error);
-                    this.modelFlavours = [];
+                    if (this.newEnvironment.model_family === family) {
+                        this.modelFlavours = [];
+                    }
                 }
             },
 

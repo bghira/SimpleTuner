@@ -346,10 +346,10 @@ curl -s -X POST http://localhost:8001/api/training/validation/run
 - SimpleTunerの組み込みアップロードを維持し、結果のリモートURLを独自のツールに渡すことを好みますか？ 代わりに`--post_upload_script`を設定します。これは公開プロバイダー/Hugging Face Hubアップロードごとに1回、`{remote_checkpoint_path}`（バックエンドによって提供される場合）と同じコンテキストプレースホルダーで発動します。SimpleTunerはスクリプトからの結果を取り込まないため、アーティファクト/メトリクスを自分でトラッカーにログします。
   - 例: `--post_upload_script='/opt/hooks/notify.sh {remote_checkpoint_path} {tracker_project_name} {tracker_run_name}'`（`notify.sh`はトラッカーAPIを呼び出します）。
   - 動作サンプル:
-    - `simpletuner/examples/external-validation/replicate_post_upload.py`は`{remote_checkpoint_path}`、`{model_family}`、`{model_type}`、`{lora_type}`、`{huggingface_path}`を使用してReplicate推論をトリガーします。
-    - `simpletuner/examples/external-validation/wavespeed_post_upload.py`は同じプレースホルダーを使用してWaveSpeed推論をトリガーし、完了をポーリングします。
-    - `simpletuner/examples/external-validation/fal_post_upload.py`はfal.ai Flux LoRA推論をトリガーします（`FAL_KEY`と`flux`を含む`model_family`が必要）。
-    - `simpletuner/examples/external-validation/use_second_gpu.py`はアップロードを必要とせずに別のGPUでFlux LoRA推論を実行します。
+    - `simpletuner/examples/_shared/external-validation/replicate_post_upload.py`は`{remote_checkpoint_path}`、`{model_family}`、`{model_type}`、`{lora_type}`、`{huggingface_path}`を使用してReplicate推論をトリガーします。
+    - `simpletuner/examples/_shared/external-validation/wavespeed_post_upload.py`は同じプレースホルダーを使用してWaveSpeed推論をトリガーし、完了をポーリングします。
+    - `simpletuner/examples/_shared/external-validation/fal_post_upload.py`はfal.ai Flux LoRA推論をトリガーします（`FAL_KEY`と`flux`を含む`model_family`が必要）。
+    - `simpletuner/examples/_shared/external-validation/use_second_gpu.py`はアップロードを必要とせずに別のGPUでFlux LoRA推論を実行します。
 
 アクティブなジョブがない場合、エンドポイントはHTTP 400を返すため、リトライをスクリプト化する際は最初に`/api/training/status`を確認してください。
 

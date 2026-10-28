@@ -114,3 +114,5 @@
 ## ライセンス
 
 SimpleTuner はオープンソースソフトウェアです。
+
+[学習サンプル](https://github.com/bghira/SimpleTuner/tree/main/simpletuner/examples/README.ja.md)

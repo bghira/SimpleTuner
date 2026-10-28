@@ -69,7 +69,7 @@ La matriz de abajo es la fuente de verdad para este sweep. Las notas especificas
 
 ### ACE Step 1.5
 
-Example: `ace_step-v1-5.peft-lora`. Resolution: 512.
+Example: `ace_step/v15-base/default/v1-5.peft-lora`. Resolution: 512.
 
 Note: This sweep did not produce a usable ACE Step throughput row. The status-only entries below should be treated as coverage gaps, not as a recommendation.
 
@@ -96,7 +96,7 @@ Note: This sweep did not produce a usable ACE Step throughput row. The status-on
 
 ### Destilacion AnyFlow en Anima
 
-Ejemplo: `anima-anyflow-stage1.peft-lora`. Resolucion: 1024x1024. Esta fila mide destilacion AnyFlow usando Anima, no el ejemplo LoRA de Anima puro. Usa `anima.peft-lora` para entrenamiento de imagen Anima puro a 1024x1024.
+Ejemplo: `anima/base-v1.0/default/anyflow-stage1.peft-lora`. Resolucion: 1024x1024. Esta fila mide destilacion AnyFlow usando Anima, no el ejemplo LoRA de Anima puro. Usa `anima/base-v1.0/default/peft-lora` para entrenamiento de imagen Anima puro a 1024x1024.
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |
@@ -121,7 +121,7 @@ Ejemplo: `anima-anyflow-stage1.peft-lora`. Resolucion: 1024x1024. Esta fila mide
 
 ### AuraFlow
 
-Example: `auraflow.peft-lora`. Resolution: 1024x1024.
+Example: `auraflow/v0.3/default/peft-lora`. Resolution: 1024x1024.
 
 Nota: AuraFlow soporta cuantizacion con SDNQ y TorchAO. Las filas cuantizadas sin checkpointing estan abajo; las filas cuantizadas con checkpointing necesitan una nueva medicion completa antes de publicar numeros aqui.
 
@@ -148,7 +148,7 @@ Nota: AuraFlow soporta cuantizacion con SDNQ y TorchAO. Las filas cuantizadas si
 
 ### Boogu Image
 
-Example: `boogu-image-v0.1.peft-lora`. Resolution: 1024x1024.
+Example: `boogu_image/v0.1-base/default/peft-lora`. Resolution: 1024x1024.
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |
@@ -173,7 +173,7 @@ Example: `boogu-image-v0.1.peft-lora`. Resolution: 1024x1024.
 
 ### Chroma
 
-Example: `chroma.peft-lora`. Resolution: 1024x1024.
+Example: `chroma/default/default/peft-lora`. Resolution: 1024x1024.
 
 Note: Checkpointed Chroma rows use `attention_mechanism=native-efficient`, which was the stable attention path for this sweep.
 
@@ -200,7 +200,7 @@ Note: Checkpointed Chroma rows use `attention_mechanism=native-efficient`, which
 
 ### Cosmos 2 Image
 
-Example: `cosmos2image.lycoris-lokr`. Resolution: 512x512.
+Example: `cosmos/default/default/lycoris-lokr`. Resolution: 512x512.
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |
@@ -225,7 +225,7 @@ Example: `cosmos2image.lycoris-lokr`. Resolution: 512x512.
 
 ### Cosmos 3
 
-Example: `cosmos3-edge-image-24g.lycoris-lokr`. Resolution: 1024 px.
+Example: `cosmos3/edge/24g/image.lycoris-lokr`. Resolution: 1024 px.
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |
@@ -250,7 +250,7 @@ Example: `cosmos3-edge-image-24g.lycoris-lokr`. Resolution: 1024 px.
 
 ### ERNIE 4.5 Image
 
-Example: `ernie.peft-lora`. Resolution: 512x512.
+Example: `ernie/base/default/peft-lora`. Resolution: 512x512.
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |
@@ -275,7 +275,7 @@ Example: `ernie.peft-lora`. Resolution: 512x512.
 
 ### Flux.3 Image Klein
 
-Ejemplo: `flux3_image.peft-lora`, Klein Base. Entrenamiento: recortes centrales de 512x512, batch 1, LoRA de atención con rank/alpha 32, AdamW BF16, SDPA nativo y compilación regional Inductor (`default`, wrapper C++). CREPA y el adaptador asistente están desactivados. Cada fila medida ejecuta 30 actualizaciones; el tiempo por paso excluye las primeras cinco y la preparación de cachés. VRAM indica el pico de memoria asignada por PyTorch durante las actualizaciones de entrenamiento.
+Ejemplo: `flux3_image/klein-base/default/peft-lora`, Klein Base. Entrenamiento: recortes centrales de 512x512, batch 1, LoRA de atención con rank/alpha 32, AdamW BF16, SDPA nativo y compilación regional Inductor (`default`, wrapper C++). CREPA y el adaptador asistente están desactivados. Cada fila medida ejecuta 30 actualizaciones; el tiempo por paso excluye las primeras cinco y la preparación de cachés. VRAM indica el pico de memoria asignada por PyTorch durante las actualizaciones de entrenamiento.
 
 Dataset: `RareConcepts/Domokun`, 27 imágenes. Caption fijo: `a photograph of a toy character` (80 tokens de texto en caché).
 
@@ -312,7 +312,7 @@ Las secuencias de bloques de imagen, texto, imagen de referencia y flujo conjunt
 
 ### HeartMula
 
-Example: `heartmula.peft-lora`. Entrenamiento con tokens de audio.
+Example: `heartmula/3b/default/peft-lora`. Entrenamiento con tokens de audio.
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |
@@ -337,7 +337,7 @@ Example: `heartmula.peft-lora`. Entrenamiento con tokens de audio.
 
 ### HiDream
 
-Example: `hidream.peft-lora`. Resolution: 512x512.
+Example: `hidream/full/default/peft-lora`. Resolution: 512x512.
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |
@@ -364,7 +364,7 @@ SDNQ Hadamard numbers use `sdnq_compile_mode=eager`. The compiled SDNQ path quan
 
 ### HunyuanVideo
 
-Ejemplo: `hunyuanvideo-1.5-t2v.peft-lora`. Forma de training: video buckets de 480 pixel-area, 48 frames, batch 2.
+Ejemplo: `hunyuanvideo/t2v-480p/default/1.5-t2v.peft-lora`. Forma de training: video buckets de 480 pixel-area, 48 frames, batch 2.
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |
@@ -391,7 +391,7 @@ HunyuanVideo usa muchas activations con esta forma de training. Per-block e inte
 
 ### Ideogram 4.0
 
-Ejemplo: `ideogram-fp8.peft-lora`. Resolucion: 1024x1024. El flavour fp8 usa el checkpoint fp8 nativo weight-only de Ideogram 4 (`base_model_precision=no_change`); `bf16-upcast` establece `ideogram_fp8_base_upcast=true` para dequantizar los pesos base a bf16 al cargar. Pedir cualquier otro `base_model_precision` (p. ej. `int8-sdnq`) tambien dequantiza primero para que el quantizer opere sobre pesos reales.
+Ejemplo: `ideogram/fp8/default/peft-lora`. Resolucion: 1024x1024. El flavour fp8 usa el checkpoint fp8 nativo weight-only de Ideogram 4 (`base_model_precision=no_change`); `bf16-upcast` establece `ideogram_fp8_base_upcast=true` para dequantizar los pesos base a bf16 al cargar. Pedir cualquier otro `base_model_precision` (p. ej. `int8-sdnq`) tambien dequantiza primero para que el quantizer opere sobre pesos reales.
 
 Las revisiones anteriores de esta tabla se midieron antes de que Ideogram respetara `gradient_checkpointing_interval`, `gradient_checkpointing_segment_stride` o `gradient_checkpointing_backend` (su loader custom se saltaba la conexion compartida), y antes de que `int8-sdnq` realmente quantizara el checkpoint fp8 — todas las filas de checkpointing eran en silencio checkpointing torch full-layer sobre pesos fp8-native. Los numeros de H100 de abajo son posteriores al fix; las filas de L40S estan pendientes de re-medicion.
 
@@ -416,7 +416,7 @@ Conclusiones: seg2-stride4 es ~14% mas rapido que full-layer a cambio de ~24 GiB
 
 ### Kandinsky 5 Image
 
-Example: `kandinsky5-image-6b-t2i.lycoris-lokr`. Resolution: 1024x1024.
+Example: `kandinsky5_image/default/default/6b-t2i.lycoris-lokr`. Resolution: 1024x1024.
 
 Note: batch 3 at 1024x1024 needs full checkpointing on both cards. SDNQ with Hadamard is the best low-VRAM row; H100 can also use partial checkpointing with SDNQ, but only near the top of the card.
 
@@ -443,7 +443,7 @@ Note: batch 3 at 1024x1024 needs full checkpointing on both cards. SDNQ with Had
 
 ### Kandinsky 5 Video
 
-Example: `kandinsky5-video-2b-t2v.peft-lora`. Resolution: 768x512, 81f.
+Example: `kandinsky5_video/default/default/2b-t2v.peft-lora`. Resolution: 768x512, 81f.
 
 Kandinsky 5 video is activation-heavy at this frame count. Full block checkpointing is the practical baseline on both cards. On H100, `interval2` and `seg2-stride4` are faster when they fit; on L40S, SDNQ `interval2` is the only partial-checkpoint row here that fits without attention activation offload.
 
@@ -470,7 +470,7 @@ Kandinsky 5 video is activation-heavy at this frame count. Full block checkpoint
 
 ### Kolors
 
-Example: `kolors.peft-lora`. Resolution: 1024x1024.
+Example: `kolors/1.0/default/peft-lora`. Resolution: 1024x1024.
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |
@@ -495,7 +495,7 @@ Example: `kolors.peft-lora`. Resolution: 1024x1024.
 
 ### Krea 2
 
-Ejemplo: `krea2.peft-lora`. Resolucion de entrenamiento: recorte cuadrado de 512 px. Ajuste de validacion del ejemplo: 1024x1024; la validacion estuvo desactivada en el benchmark.
+Ejemplo: `krea2/raw/default/peft-lora`. Resolucion de entrenamiento: recorte cuadrado de 512 px. Ajuste de validacion del ejemplo: 1024x1024; la validacion estuvo desactivada en el benchmark.
 
 La tabla principal usa regional compilation. Eso ayuda al step speed de Krea2, pero no da una comparacion limpia de VRAM: el compiled graph/workspace mantiene el pico cerca del pico sin checkpointing en varios modos. Una corrida de control bf16 con regional compilation desactivado mostro que el checkpointing esta conectado y tiene la forma esperada de memoria/velocidad:
 
@@ -531,7 +531,7 @@ La fila `activation-offload` aqui significa full-block checkpointing mas attenti
 
 ### LongCat Image
 
-Ejemplo: `longcat-image.peft-lora`. Resolucion de entrenamiento: 512 px cuadrada; resolucion de validacion: 1024x1024. Las filas usan `attention_mechanism=native-flash`.
+Ejemplo: `longcat_image/default/default/peft-lora`. Resolucion de entrenamiento: 512 px cuadrada; resolucion de validacion: 1024x1024. Las filas usan `attention_mechanism=native-flash`.
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |
@@ -556,7 +556,7 @@ Ejemplo: `longcat-image.peft-lora`. Resolucion de entrenamiento: 512 px cuadrada
 
 ### LongCat Video
 
-Ejemplo: `longcat-video.peft-lora+ramtorch`. Resolucion: 832x480, 81f. Las filas usan `attention_mechanism=native-flash`.
+Ejemplo: `longcat_video/final/default/peft-lora+ramtorch`. Resolucion: 832x480, 81f. Las filas usan `attention_mechanism=native-flash`.
 
 LongCat Video usa muchas activations con esta forma. Full per-block checkpointing es la fila practica. Las filas partial checkpoint (`interval2`, `seg2-stride4`) no caben aqui, incluso con attention activation offload en la fila strided. Attention activation offload simple cabe para bf16 y SDNQ, pero es mucho mas lento que full checkpointing.
 
@@ -583,7 +583,7 @@ LongCat Video usa muchas activations con esta forma. Full per-block checkpointin
 
 ### LTXVideo 0.9.5
 
-Example: `ltxvideo-0.9.5-t2v.peft-lora`. Resolution: 768x512, 49f.
+Example: `ltxvideo/0.9.5/default/t2v.peft-lora`. Resolution: 768x512, 49f.
 
 Los numeros son segundos warm por step / GiB pico. El promedio de la ejecucion completa incluye setup y compile, y queda en los artifacts del sweep.
 
@@ -610,7 +610,7 @@ Las filas de attention activation offload no estan soportadas para LTXVideo 0.9 
 
 ### LTXVideo2 2.3
 
-Example: `ltxvideo2-2.3-dev-720p-single-gpu.peft-lora+sdnq-hadamard`. Resolution: 1280x704, 49f.
+Example: `ltxvideo2/2.3-dev/default/720p-single-gpu.peft-lora+sdnq-hadamard`. Resolution: 1280x704, 49f.
 
 Note: LTXVideo2 2.3 should be read from the no-regional-compile rows in this sweep; regional compile raised memory pressure for this model.
 
@@ -637,7 +637,7 @@ Note: LTXVideo2 2.3 should be read from the no-regional-compile rows in this swe
 
 ### Lumina2
 
-Example: `lumina2.peft-lora`. Resolution: 512x512.
+Example: `lumina2/default/default/peft-lora`. Resolution: 512x512.
 
 Nota: Lumina2 ahora usa la ruta segmented whole-block. `interval2` checkpointa cada segmento de dos blocks; `seg2-stride4` checkpointa dos blocks, deja que los dos siguientes conserven activations y repite. Attention activation offload no fue parte de esta corrida de Lumina2.
 
@@ -662,7 +662,7 @@ Nota: Lumina2 ahora usa la ruta segmented whole-block. `interval2` checkpointa c
 
 ### MageFlow
 
-Example: `mageflow-image-24g.peft-lora`. Resolution: 1024x1024.
+Example: `mageflow/turbo/24g/image.peft-lora`. Resolution: 1024x1024.
 
 Nota: la ruta de imagen variable de MageFlow a 1024px se beneficia sobre todo de attention activation offload y FP8 weight-only. Los modos de block checkpointing son validos, pero no redujeron el pico de residencia medido en este sweep.
 
@@ -681,7 +681,7 @@ Nota: la ruta de imagen variable de MageFlow a 1024px se beneficia sobre todo de
 
 ### OmniGen
 
-Example: `omnigen.lycoris-lokr`. Resolution: 1024x1024.
+Example: `omnigen/default/default/lycoris-lokr`. Resolution: 1024x1024.
 
 Nota: OmniGen usa prompts como token IDs en vez de embeddings de texto cacheados. Estas filas miden los caminos soportados sin checkpointing y con checkpointing torch de bloque completo; los controles interval, segmented-stride y attention-offload no estan implementados para esta familia en este barrido.
 
@@ -698,7 +698,7 @@ Nota: OmniGen usa prompts como token IDs en vez de embeddings de texto cacheados
 
 ### PixArt
 
-Example: `pixart.lycoris-lokr`. Resolution: 1024x1024.
+Example: `pixart/default/default/lycoris-lokr`. Resolution: 1024x1024.
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |
@@ -723,7 +723,7 @@ Example: `pixart.lycoris-lokr`. Resolution: 1024x1024.
 
 ### Qwen Image 2.1
 
-Mediciones en H200 y L40S con el modelo de GPU verificado: `qwen_image.peft-lora`, Qwen-Image 2.1, Domokun a 512x512, BF16, LoRA rank 32, Optimi Lion y compilación regional Inductor (modo `default`). Cada ejecución tiene 20 pasos y excluye los cinco primeros del tiempo. Las celdas muestran **segundos/paso / VRAM máxima GiB**; el pico incluye la preparación de componentes.
+Mediciones en H200 y L40S con el modelo de GPU verificado: `qwen_image/v2.1/default/peft-lora`, Qwen-Image 2.1, Domokun a 512x512, BF16, LoRA rank 32, Optimi Lion y compilación regional Inductor (modo `default`). Cada ejecución tiene 20 pasos y excluye los cinco primeros del tiempo. Las celdas muestran **segundos/paso / VRAM máxima GiB**; el pico incluye la preparación de componentes.
 
 Entorno: `torch==2.11.0+cu128`, `diffusers==0.40.0`; 10 tokens de texto y 1024 de imagen. La preparación de componentes domina algunos picos de memoria con batch 1.
 
@@ -781,7 +781,7 @@ La receta Domokun de 250 steps sirve para medir throughput, no como receta de co
 
 ### Qwen Image
 
-Mediciones históricas de Qwen-Image 1.0 (`model_flavour: "v1.0"`), con el antiguo ejemplo `qwen_image.peft-lora` a 1024x1024. El ejemplo ahora selecciona 2.1. Los resultados casi idénticos de interval/stride no demuestran que hubiera distintas programaciones activas y no deben orientar la configuración de 2.1.
+Mediciones históricas de Qwen-Image 1.0 (`model_flavour: "v1.0"`), con el antiguo ejemplo `qwen_image/v2.1/default/peft-lora` a 1024x1024. El ejemplo ahora selecciona 2.1. Los resultados casi idénticos de interval/stride no demuestran que hubiera distintas programaciones activas y no deben orientar la configuración de 2.1.
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |
@@ -806,7 +806,7 @@ Mediciones históricas de Qwen-Image 1.0 (`model_flavour: "v1.0"`), con el antig
 
 ### Sana
 
-Example: `sana.lycoris-lokr`. Resolution: 1024x1024.
+Example: `sana/default/default/lycoris-lokr`. Resolution: 1024x1024.
 
 Note: Sana has interval checkpointing; stride is not a separate segmented schedule for this family in the measured rows.
 
@@ -833,7 +833,7 @@ Note: Sana has interval checkpointing; stride is not a separate segmented schedu
 
 ### SanaVideo
 
-Example: `sanavideo-2b-480p.peft-lora`. Resolution: 832x480, 49f.
+Example: `sanavideo/2b-480p/default/peft-lora`. Resolution: 832x480, 49f.
 
 Note: SanaVideo usa linear attention, asi que attention activation offload sigue unsupported. Segmented whole-block checkpointing esta soportado en la ruta standard.
 
@@ -860,7 +860,7 @@ Note: SanaVideo usa linear attention, asi que attention activation offload sigue
 
 ### SD 1.x
 
-Example: `sd1x-dreamshaper.peft-lora`. Resolution: 512x512.
+Example: `sd1x/dreamshaper/default/peft-lora`. Resolution: 512x512.
 
 Nota: SD1x usa la ruta UNet de diffusers. El checkpointing por capa funciona, pero los controles interval y segmented stride no estan conectados para esta familia.
 
@@ -887,7 +887,7 @@ Nota: SD1x usa la ruta UNet de diffusers. El checkpointing por capa funciona, pe
 
 ### SD3
 
-Example: `sd3.peft-lora`. Resolution: 1024x1024.
+Example: `sd3/default/default/peft-lora`. Resolution: 1024x1024.
 
 Nota: SD3 usa checkpointing segmentado contiguo real en la ruta transformer simple. Attention activation offload esta soportado; reduce mucho la VRAM, pero cuesta throughput.
 
@@ -920,7 +920,7 @@ Nota: SD3 usa checkpointing segmentado contiguo real en la ruta transformer simp
 
 ### SDXL
 
-Example: `sdxl.lycoris-lokr`. Resolution: 1024x1024.
+Example: `sdxl/default/default/lycoris-lokr`. Resolution: 1024x1024.
 
 Note: SDXL has real layer checkpointing. Interval and stride rows are included as coverage data, not as segmented-support recommendations.
 
@@ -947,7 +947,7 @@ Note: SDXL has real layer checkpointing. Interval and stride rows are included a
 
 ### Stable Cascade
 
-Example: `cascade-stage-c.lycoris-lokr`. Resolution: 1024x1024.
+Example: `stable_cascade/default/default/stage-c.lycoris-lokr`. Resolution: 1024x1024.
 
 Nota: stage C usa la ruta prior en precision completa. Estas filas se ejecutaron con `mixed_precision=no` y `base_model_precision=no_change`; las filas de precision base cuantizada no son significativas para este modelo. Los modos interval y stride operan sobre la secuencia de micro-bloques Res/Timestep/Attention del UNet.
 
@@ -974,7 +974,7 @@ Nota: stage C usa la ruta prior en precision completa. Estas filas se ejecutaron
 
 ### Wan 2.1 T2V 1.3B
 
-Example: `wan2.1-t2v-1.3b-480p-single-gpu.peft-lora+ramtorch`. Resolution: 832x480, 81f.
+Example: `wan/t2v-480p-1.3b-2.1/default/t2v-1.3b-480p-single-gpu.peft-lora+ramtorch`. Resolution: 832x480, 81f.
 
 Note: Wan 1.3B should be read from the no-regional-compile/RamTorch rows; regional compile was not a useful throughput setting in this sweep.
 
@@ -1001,7 +1001,7 @@ Note: Wan 1.3B should be read from the no-regional-compile/RamTorch rows; region
 
 ### Wan 2.1 T2V 14B
 
-Example: `wan2.1-t2v-14b-480p-single-gpu.peft-lora+ramtorch`. Resolution: 832x480, 81f.
+Example: `wan/t2v-480p-14b-2.1/default/t2v-14b-480p-single-gpu.peft-lora+ramtorch`. Resolution: 832x480, 81f.
 
 Note: Wan 14B is mainly a fit test for activation savings. Status-only cells are still useful because they show which combinations reached the memory limit.
 
@@ -1028,7 +1028,7 @@ Note: Wan 14B is mainly a fit test for activation savings. Status-only cells are
 
 ### Wan S2V
 
-Example: `wan-s2v-14b-480p.peft-lora+ramtorch`. Resolution: 832x480, 81f.
+Example: `wan_s2v/s2v-14b-2.2/default/14b-480p.peft-lora+ramtorch`. Resolution: 832x480, 81f.
 
 Note: Wan S2V is included as coverage data for the video/audio path. Treat failed cells as implementation coverage gaps.
 
@@ -1055,7 +1055,7 @@ Note: Wan S2V is included as coverage data for the video/audio path. Treat faile
 
 ### Z-Image Turbo
 
-Example: `z-image-turbo.peft-lora`. Resolution: 1024x1024.
+Example: `z_image/turbo/default/peft-lora`. Resolution: 1024x1024.
 
 | Precision | Mode | H100 | L40S |
 | --- | --- | ---: | ---: |
@@ -1080,7 +1080,7 @@ Example: `z-image-turbo.peft-lora`. Resolution: 1024x1024.
 
 ### ZLab I1
 
-Example: `zlab-i1.peft-lora`. Resolution: 1024x1024.
+Example: `zlab_i1/3b/default/peft-lora`. Resolution: 1024x1024.
 
 Nota: ZLab I1 lleva sus skip tensors tipo U-Net dentro del estado segmented checkpoint. Attention activation offload no esta conectado para esta familia.
 

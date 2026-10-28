@@ -10,13 +10,13 @@
 
 | GPU 显存 | Base 示例 | SFT 示例 | 每批图片数 | `gradient_checkpointing_interval` |
 | --- | --- | --- | ---: | ---: |
-| 24 GB | `moss_image-24g.peft-lora` | `moss_image-sft-24g.peft-lora` | 1 | 1 |
-| 32 GB | `moss_image-32g.peft-lora` | `moss_image-sft-32g.peft-lora` | 1 | 2 |
-| 48 GB | `moss_image-48g.peft-lora` | `moss_image-sft-48g.peft-lora` | 2 | 2 |
-| 80 GB | `moss_image-80g.peft-lora` | `moss_image-sft-80g.peft-lora` | 4 | 2 |
-| 144 GB | `moss_image-144g.peft-lora` | `moss_image-sft-144g.peft-lora` | 8 | 2 |
+| 24 GB | `moss_image/base/24g/peft-lora` | `moss_image/sft/24g/peft-lora` | 1 | 1 |
+| 32 GB | `moss_image/base/32g/peft-lora` | `moss_image/sft/32g/peft-lora` | 1 | 2 |
+| 48 GB | `moss_image/base/48g/peft-lora` | `moss_image/sft/48g/peft-lora` | 2 | 2 |
+| 80 GB | `moss_image/base/80g/peft-lora` | `moss_image/sft/80g/peft-lora` | 4 | 2 |
+| 144 GB | `moss_image/base/144g/peft-lora` | `moss_image/sft/144g/peft-lora` | 8 | 2 |
 
-默认的 `moss_image.peft-lora` 和 `moss_image-sft.peft-lora` 使用 48 GB 设置。批次大小只是起点：描述较长、启用额外训练功能，或宽高比桶中的图片数少于批次大小时，请减小 `train_batch_size`。144 GB 档位面向 H200 级别 GPU。
+默认的 `moss_image/sft/default/default.peft-lora` 和 `moss_image/sft/default/peft-lora` 使用 48 GB 设置。批次大小只是起点：描述较长、启用额外训练功能，或宽高比桶中的图片数少于批次大小时，请减小 `train_batch_size`。144 GB 档位面向 H200 级别 GPU。
 
 ## 安装 SimpleTuner
 
@@ -27,7 +27,7 @@ git clone https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
 python3.13 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[cuda,attention-cute]'
+pip install -e '.[cuda]'
 ```
 
 ## 准备图片和描述
@@ -46,13 +46,15 @@ datasets/moss-image/
 
 ## 设置训练配置
 
-复制 48 GB SFT 配方及示例提示词，将 `48g` 替换为所选档位。使用 Base 时，把命令中的 `moss_image-sft-48g.peft-lora` 换成 `moss_image-48g.peft-lora`。
+复制 48 GB SFT 配方及示例提示词，将 `48g` 替换为所选档位。使用 Base 时，把命令中的 `moss_image/sft/48g/peft-lora` 换成 `moss_image/base/48g/peft-lora`。
 
 ```bash
-mkdir -p config/examples datasets/moss-image
-cp -R simpletuner/examples/moss_image-sft-48g.peft-lora config/examples/
-cp simpletuner/examples/moss_image-prompts.json config/examples/
-cp config/examples/moss_image-sft-48g.peft-lora/config.json config/config.json
+mkdir -p config/examples/_shared datasets/moss-image
+mkdir -p config/examples/moss_image/sft/48g
+cp -R simpletuner/examples/moss_image/sft/48g/peft-lora config/examples/moss_image/sft/48g/
+mkdir -p config/examples/_shared
+cp simpletuner/examples/_shared/moss_image-prompts.json config/examples/_shared/
+cp config/examples/moss_image/sft/48g/peft-lora/config.json config/config.json
 ```
 
 配方使用 rank 32 BF16 LoRA、`1e-4` 学习率、梯度检查点、REPA、4,000 个优化器步骤以及 512 级别分辨率。打开 `config/config.json`，在原有配置内修改以下项目：
@@ -96,7 +98,7 @@ simpletuner train
 
 配方已按所选 VRAM 档位设置 `train_batch_size`。数据集较小，或描述和额外功能需要更多显存时，请减小该值。 `gradient_checkpointing_backend` 支持 `torch`、`unsloth`、`torch-ffn` 和 `unsloth-ffn`；interval 与 `gradient_checkpointing_segment_stride` 控制覆盖范围。Musubi 通过 `musubi_blocks_to_swap` 在 CPU 与 GPU 之间移动块。RamTorch 使用 `ramtorch: true`，可通过 `ramtorch_transformer_percent` 选择卸载比例。这些方案占用系统内存并增加传输开销，请一次配置一种。参见 [OPTIONS](../OPTIONS.md)。
 
-CUDA 安装包含 CuTE 注意力依赖。训练时，默认的 `attention_mechanism: "kohaku-fa-auto"` 在 Ada 和 Hopper GPU 上选择 CuTE，在其他架构上使用原生 SDPA。启用 `gradient_checkpointing_offload_attention: true` 可卸载为反向传播保存的注意力张量；`gradient_checkpointing_offload_prefetch: true` 启用传输预取。其他注意力后端请参阅 [OPTIONS](../OPTIONS.md)。
+CUDA 安装包含 CuTE 注意力依赖。训练时，默认的 `attention_mechanism: "kohaku-fa-auto"` 在 Ada、Hopper 和 RTX Blackwell GPU 上选择 CuTE，在其他架构上使用原生 SDPA。启用 `gradient_checkpointing_offload_attention: true` 可卸载为反向传播保存的注意力张量；`gradient_checkpointing_offload_prefetch: true` 启用传输预取。其他注意力后端请参阅 [OPTIONS](../OPTIONS.md)。
 
 配方启用 [REPA](../experimental/IMAGE_REPA.md)。如需使较后层的图像特征与前层对齐，添加 [LayerSync](../experimental/LAYERSYNC.md)：
 
@@ -163,12 +165,13 @@ image.save("my-moss-image.png")
 
 ## 训练编辑或参考图像 LoRA
 
-选择 `model_flavour: "sft-edit"` 或 `"base-edit"`，即可使用参考图像训练。这两个变体从对应的 SFT 或 Base 检查点开始，通过适配器学习参考图像条件。可从 `simpletuner/examples/moss_image-sft-edit.peft-lora` 或 `moss_image-base-edit.peft-lora` 开始；两者均采用每批一个目标、512 等效分辨率训练、REPA 和数据集验证。
+选择 `model_flavour: "sft-edit"` 或 `"base-edit"`，即可使用参考图像训练。这两个变体从对应的 SFT 或 Base 检查点开始，通过适配器学习参考图像条件。可从 `simpletuner/examples/moss_image/sft-edit/default/peft-lora` 或 `moss_image/base-edit/default/peft-lora` 开始；两者均采用每批一个目标、512 等效分辨率训练、REPA 和数据集验证。
 
 ```bash
-mkdir -p config/examples datasets/moss-edits datasets/moss-references
-cp -R simpletuner/examples/moss_image-sft-edit.peft-lora config/examples/
-cp config/examples/moss_image-sft-edit.peft-lora/config.json config/config.json
+mkdir -p config/examples/_shared datasets/moss-edits datasets/moss-references
+mkdir -p config/examples/moss_image/sft-edit/default
+cp -R simpletuner/examples/moss_image/sft-edit/default/peft-lora config/examples/moss_image/sft-edit/default/
+cp config/examples/moss_image/sft-edit/default/peft-lora/config.json config/config.json
 ```
 
 将期望的输出放在 `datasets/moss-edits/sample.png`，编辑指令放在 `datasets/moss-edits/sample.txt`，输入参考图放在 `datasets/moss-references/sample.png`。两个目录中的图像文件名（包括扩展名）必须一致。指令示例：`Change the blue mug to red while keeping the background unchanged.` 编辑示例提供以下数据加载器配置：

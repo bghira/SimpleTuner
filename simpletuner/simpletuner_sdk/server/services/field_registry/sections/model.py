@@ -440,6 +440,28 @@ def register_model_fields(registry: "FieldRegistry") -> None:
         )
     )
 
+    registry._add_field(
+        ConfigField(
+            name="adapter_model_precision",
+            arg_name="--adapter_model_precision",
+            ui_label="Adapter Model Precision",
+            field_type=FieldType.SELECT,
+            tab="model",
+            section="quantization",
+            default_value="no_change",
+            choices=[
+                {"value": "no_change", "label": "No change"},
+                {"value": "fp32", "label": "FP32"},
+            ],
+            help_text="Storage precision for trainable LoRA and LyCORIS parameters.",
+            tooltip="FP32 preserves small adapter updates while frozen base weights retain their configured precision. Requires an optimizer that supports FP32 parameters, such as torch-adamw or optimi-adamw.",
+            importance=ImportanceLevel.ADVANCED,
+            order=14,
+            dependencies=[FieldDependency(field="model_type", operator="equals", value="lora", action="enable")],
+            documentation="OPTIONS.md#--adapter_model_precision",
+        )
+    )
+
     # Base Model Precision
     registry._add_field(
         ConfigField(

@@ -346,10 +346,10 @@ curl -s -X POST http://localhost:8001/api/training/validation/run
 - ¿Prefieres mantener las subidas integradas de SimpleTuner y pasar la URL remota resultante a tu propia herramienta? Configura `--post_upload_script` en su lugar; se dispara una vez por proveedor de publicación/subida a Hugging Face Hub con `{remote_checkpoint_path}` (si lo proporciona el backend) y los mismos marcadores de contexto. SimpleTuner no ingiere resultados de tu script, así que registra artefactos/métricas en tu tracker por tu cuenta.
   - Ejemplo: `--post_upload_script='/opt/hooks/notify.sh {remote_checkpoint_path} {tracker_project_name} {tracker_run_name}'` donde `notify.sh` llama a tu API de tracker.
   - Ejemplos funcionales:
-    - `simpletuner/examples/external-validation/replicate_post_upload.py` dispara una inferencia de Replicate usando `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}` y `{huggingface_path}`.
-    - `simpletuner/examples/external-validation/wavespeed_post_upload.py` dispara una inferencia de WaveSpeed y hace polling de finalización usando los mismos marcadores.
-    - `simpletuner/examples/external-validation/fal_post_upload.py` dispara una inferencia Flux LoRA en fal.ai (requiere `FAL_KEY` y `model_family` que contenga `flux`).
-    - `simpletuner/examples/external-validation/use_second_gpu.py` ejecuta inferencia Flux LoRA en otra GPU sin requerir subidas.
+    - `simpletuner/examples/_shared/external-validation/replicate_post_upload.py` dispara una inferencia de Replicate usando `{remote_checkpoint_path}`, `{model_family}`, `{model_type}`, `{lora_type}` y `{huggingface_path}`.
+    - `simpletuner/examples/_shared/external-validation/wavespeed_post_upload.py` dispara una inferencia de WaveSpeed y hace polling de finalización usando los mismos marcadores.
+    - `simpletuner/examples/_shared/external-validation/fal_post_upload.py` dispara una inferencia Flux LoRA en fal.ai (requiere `FAL_KEY` y `model_family` que contenga `flux`).
+    - `simpletuner/examples/_shared/external-validation/use_second_gpu.py` ejecuta inferencia Flux LoRA en otra GPU sin requerir subidas.
 
 Si no hay un trabajo activo, el endpoint devuelve HTTP 400, así que consulta `/api/training/status` primero al automatizar reintentos.
 

@@ -67,7 +67,7 @@ simpletuner configure config/foo/config.json
 
 `moss_image` 默认的 `sft` 变体加载 `OpenMOSS-Team/MOSS-Image-SFT`。使用 `OpenMOSS-Team/MOSS-Image-Base` 时，设置 `model_flavour: "base"`。训练示例采用 512×512 等效面积。参阅 [MOSS-Image 快速入门](quickstart/MOSS_IMAGE.zh.md)。
 
-选择 `model_flavour: "sft-edit"` 或 `"base-edit"`，即可使用参考图像训练。这两个变体从对应的 SFT 或 Base 检查点开始，通过适配器学习参考图像条件。可从 `simpletuner/examples/moss_image-sft-edit.peft-lora` 或 `moss_image-base-edit.peft-lora` 开始；两者均采用每批一个目标、512 等效分辨率训练、REPA 和数据集验证。
+选择 `model_flavour: "sft-edit"` 或 `"base-edit"`，即可使用参考图像训练。这两个变体从对应的 SFT 或 Base 检查点开始，通过适配器学习参考图像条件。可从 `simpletuner/examples/moss_image/sft-edit/default/peft-lora` 或 `moss_image/base-edit/default/peft-lora` 开始；两者均采用每批一个目标、512 等效分辨率训练、REPA 和数据集验证。
 
 ### `--lora_format`
 
@@ -455,6 +455,13 @@ simpletuner configure config/foo/config.json
   - `cpu` 量化约需 30 秒。（**默认**）
   - `pipeline` 将量化交给 Diffusers，通过 `--quantization_config` 或管线可用的预设（如 `nf4-bnb`、`int8-torchao` `fp8-torchao`、`int8-quanto`、`.gguf` 检查点）。
 
+### `--adapter_model_precision`
+
+- **可选值**：`no_change`（默认）、`fp32`。
+- `no_change` 保留现有适配器精度行为。`fp32` 将可训练的 LoRA/LyCORIS 参数和辅助可训练模块存储为 FP32，冻结的基础模型权重保持配置的精度。启用训练的文本编码器适配器也会转换为 FP32。
+- FP32 可以保留在 BF16 中因舍入而丢失的小幅更新，但会增加适配器、梯度和优化器状态的内存占用。前向计算的混合精度仍由 `--mixed_precision` 控制。
+- 需要 `--model_type=lora` 和支持 FP32 参数的优化器，如 `torch-adamw` 或 `optimi-adamw`。不兼容 `adamw_bf16`。此选项不会量化适配器。
+
 ### `--base_model_precision`
 
 - **内容**：降低模型精度并用更少内存训练。支持三种量化后端：BitsAndBytes（pipeline）、TorchAO（pipeline 或手动）、Optimum Quanto（pipeline 或手动）。
@@ -639,10 +646,10 @@ TRAINING_DYNAMO_BACKEND=inductor
 - `xformers` 在模型暴露 `enable_xformers_memory_efficient_attention` 时启用 Meta 的 [xformers](https://github.com/facebookresearch/xformers) 注意力内核（训练+推理）。
 - `flash-attn`、`flash-attn-2`、`flash-attn-3`、`flash-attn-3-varlen` 接入 Diffusers 的 `attention_backend`，将注意力路由到 FlashAttention v1/2/3 内核。需安装对应的 `flash-attn` / `flash-attn-interface`，且 FA3 目前需要 Hopper GPU。
 - `flex` 选择 PyTorch 2.5 的 FlexAttention 后端（CUDA 上 FP16/BF16）。需单独编译/安装 Flex 内核，见 [documentation/attention/FLEX.md](attention/FLEX.md)。
-- `kohaku-fa` 在 L40S（sm_89）、H100（sm_90）和 RTX Blackwell（sm_120）上使用实验性本地 CuTe 前向/反向内核，在 B200/B300（sm_100/sm_103）上使用内置的 [KohakuFA](https://github.com/KohakuBlueleaf/KohakuFA) 内核。CuTe 需要 PyTorch >= 2.11。CuTe 可通过 `pip install "simpletuner[attention-cute]"` 安装依赖（CUTLASS DSL >= 4.8、TVM FFI >= 0.1.14）；B200/B300 需要 Triton >= 3.7。无需外部注意力包。直接 PyTorch SDPA 和 Diffusers 原生注意力均使用此后端。支持同类型 FP16/BF16 Q/K/V、布尔掩码、1..512 的头维度和分组查询注意力；拒绝 FP32 输入、加性掩码、dropout、上下文并行和 MiniMax-H3 稀疏注意力。内核先减去未缩放的行最大值，再缩放，并分别保存最大值与对数归一化项。CuTe 在 Ada 上使用 warp MMA，在 Hopper 上使用 WGMMA 和符合条件的 TMA 加载。每次调用（包括 CUDA 图重放）都会对布尔掩码分块分类，以跳过空分块。反向重新计算 FP32 softmax 校正项，并在 FP32 累加后缩放梯度。H100/L40S 上所有支持的头维度均使用中心化校正和单次查询梯度遍历，并为反向保留注意力输出。这可改善大 logits 的精度，但不能证明 AnyFlow 训练失败的原因。 CuTe 路径已在 H100 和 L40S 上验证；sm_120 尚未进行硬件测试。 符合条件的 Hopper 加载使用双缓冲，64/128 维查询梯度内核在内部计算中心化基准。输出和梯度布局保留投影顺序，以避免复制。 Hopper 单个 warp group 内的乘积直接使用寄存器中的权重，避免共享内存暂存。Eager 训练使用原生 autograd，编译训练使用注册的自定义算子，两者共享原生分配和 TVM FFI 启动代码。启动配置按设备和张量元数据缓存。 输出和梯度通过合并访问的向量写入。对于头维度为 128 的长序列稠密注意力，Hopper 使用三个计算 warp group 和一个专用的 TMA 加载 warp group，共享同一组 K/V 分块。 CuTe 路径需要 C++17 编译器和 Ninja >= 1.11；扩展在首次使用时构建。B200/B300 需要 PyTorch >= 2.9。
-- `kohaku-fa-auto` 是默认的自动训练策略。安装所需依赖后，它为兼容的 CUDA 调用选择 Kohaku；CPU/MPS、不支持的 GPU、FP32、dropout、加性掩码、不支持的头维度和模型功能使用原生 SDPA。评估保留原生注意力路径。选中的 Kohaku 导入、编译和内核错误不会被隐藏。显式设置 `diffusers` 可让所有调用使用原生 SDPA。更高精度的计算可能增加训练步耗时；测量中，H100 上编译后的 Flux 和 MiniMax 模块分别比原生 SDPA 慢约 7.9% 和 6.0%。 自动选择 Kohaku 仅限于 sm_89/sm_90，其中心化反向计算保留饱和注意力中的微小梯度；在此策略下 Blackwell 使用原生 SDPA。
+- `kohaku-fa` 在 SM86 Ampere GPU（RTX 30 系列/A40）、Ada GPU（RTX 40 系列/L40S，sm_89）、H100（sm_90）和 RTX Blackwell（sm_120）上使用本地 CuTe 内核，在 B200/B300（sm_100/sm_103）上使用内置的 [KohakuFA](https://github.com/KohakuBlueleaf/KohakuFA) 内核。CuTe 依赖已包含在 `cuda` 和 `cuda13` 扩展中，需要 PyTorch >= 2.11、CUTLASS DSL >= 4.8、TVM FFI >= 0.1.14、Ninja >= 1.11 和 C++17 编译器。原生扩展在首次使用时编译。B200/B300 需要 PyTorch >= 2.9 和 Triton >= 3.7。无需外部注意力包。直接 PyTorch SDPA 和 Diffusers 原生注意力均使用此后端。支持同类型 FP16/BF16 Q/K/V、布尔掩码、1..512 的头维度和分组查询注意力；拒绝 FP32 输入、加性掩码、dropout、上下文并行和 MiniMax-H3 稀疏注意力。CuTe 分别保存未缩放的行最大值与对数归一化项，使用中心化的 FP32 反向修正，并在 FP32 累加后缩放梯度。RTX Blackwell 使用中心化反向传播和针对该架构调整的分块配置。 通过展平执行网格，支持批大小与注意力头数的乘积超过 65,535 的情况。Ada/Hopper 还为因果 GQA 和短查询交叉注意力提供专用前向路径。
+- `kohaku-fa-auto` 是默认的自动训练策略。安装所需依赖后，它为兼容的 CUDA 调用选择 Kohaku；CPU/MPS、不支持的 GPU、FP32、dropout、加性掩码、不支持的头维度和模型功能使用原生 SDPA。评估保留原生注意力路径。选中的 Kohaku 导入、编译和内核错误不会被隐藏。显式设置 `diffusers` 可让所有调用使用原生 SDPA。更高精度的计算可能增加训练步耗时；测量中，H100 上编译后的 Flux 和 MiniMax 模块分别比原生 SDPA 慢约 7.9% 和 6.0%。 自动 CuTe 选择支持 sm_86/sm_89/sm_90/sm_120，中心化反向传播可保留饱和注意力中的微小梯度；B200/B300 在此策略下使用原生 SDPA。
 - `metal-flash-attention` 在 Apple Silicon 上使用 Universal Metal Flash Attention 的 PyTorch custom-op 后端。请先安装 UMFA 的 `examples/pytorch-custom-op-ffi` 包；SimpleTuner 通过 PyTorch 的 MPS SDPA dispatcher 路由注意力，当前 UMFA build 会注册该 dispatcher。符合条件的 MPS FP32/FP16/BF16 4D SDPA 调用 —— 任意 head 数量（含 single-head）、任意 sequence length、transposed FLUX-style layouts、最多 4D 的 bool/additive masks、以及 causal 调用（含训练 —— causal backward 通过精确梯度一致性验证） —— 会直接编码进 PyTorch 的 MPS command stream，没有每次调用的同步；FP16/BF16 输入使用原生低精度 kernel，不会提升为 FP32。带 dropout 或 `enable_gqa` 的调用会 fallback 到 PyTorch SDPA；旧的 `PrivateUse1` build 会被 `torch.device("mps")` tensors 绕过。SimpleTuner 会在启动时做 FP32/FP16/BF16 forward 和 autograd 数值一致性检查，以及 causal forward parity，并拒绝数值不匹配或不暴露 `get_dispatch_stats()` 的 UMFA build。`metal-flash-attention-int8` 和 `metal-flash-attention-int4` 会通过 `set_quantization_mode(ext.QUANT_INT8, ext.QUANT_BLOCK_WISE)` 或 `set_quantization_mode(ext.QUANT_INT4, ext.QUANT_BLOCK_WISE)` 设置 UMFA 的全局 blockwise quantization mode，切换 backend 时清除该模式，并需要额外的启动检查来确认输出连接 autograd、multi-head 梯度有限、dispatcher-level bool/additive mask 支持且没有 PyTorch fallback。运行中可使用 `metal_sdpa_extension.get_dispatch_stats()` 确认 `fp32_instream`（量化别名则为 `quantized_autograd`）增加且 `pytorch_fallback` 保持为 `0`；all-true bool masks 还会增加 `mask_all_true_skipped`。扩展还提供 `rope_scaled_dot_product_attention`，一个符合 FLUX.1/FLUX.2/Krea2/Z-Image interleaved-pair rotary 约定的融合 RoPE+SDPA 入口；训练走融合 autograd（backward 中对 dQ/dK 应用逆旋转）；需要梯度的带 mask 或 GQA 调用则 fallback 到 eager 旋转。
-- `cudnn`、`native-efficient`、`native-flash`、`native-math`、`native-npu`、`native-xla` 选择 `torch.nn.attention.sdpa_kernel` 暴露的对应 SDPA 后端。适合需要确定性（`native-math`）、CuDNN SDPA 内核或厂商原生加速器（NPU/XLA）的场景。
+- `native-efficient`、`native-flash`、`native-math`、`native-npu` 和 `native-xla` 选择对应的原生注意力后端。训练和推理均禁用 cuDNN SDPA，因为包括 cuDNN 9.27 在内的版本可能从有限输入产生 NaN 梯度。`cudnn` 和 `native-cudnn` 会被拒绝；请改用 `kohaku-fa-auto` 或 `native`。
 - `sla` 启用 [Sparse–Linear Attention (SLA)](https://github.com/thu-ml/SLA)，提供可调的稀疏/线性混合内核，训练与验证均可使用。
   - 选择该后端前请安装 SLA 包（例如 `pip install -e ~/src/SLA`）。
   - SimpleTuner 会将 SLA 学到的投影权重保存到每个检查点内的 `sla_attention.pt`，恢复与推理时需保留该文件以保持 SLA 状态。
@@ -752,6 +759,10 @@ TRAINING_DYNAMO_BACKEND=inductor
   - `auto-weighting` - 默认行为，使用数据集长度均匀采样各数据集，以保持整体分布均匀。
     - 当数据集大小不同但希望模型均衡学习时必须使用。
     - 但 Dreambooth 图像与正则化集的正确采样**需要**手动调整 `repeats`。
+
+### `--vae_enable_tiling`
+
+使用 `--vae_enable_tiling=true` 可从启动时启用 VAE 分块。即使此选项为 false，支持分块且尚未分块的 CUDA VAE 在编码或解码时发生显存不足后，也会自动启用分块并重试一次。后续调用继续使用分块。如果分块已启用、不受支持，或重试仍失败，错误将继续抛出。其他错误和非 CUDA 内存不足错误不会重试。
 
 ### `--vae_cache_scan_behaviour`
 
@@ -918,10 +929,10 @@ TRAINING_DYNAMO_BACKEND=inductor
        -d "{\"remote_uri\":\"${REMOTE}\"}"
   ```
 - **可用示例**：
-  - `simpletuner/examples/external-validation/replicate_post_upload.py` 展示 Replicate 钩子，使用 `{remote_checkpoint_path}`、`{model_family}`、`{model_type}`、`{lora_type}`、`{huggingface_path}` 在上传后触发推理。
-  - `simpletuner/examples/external-validation/wavespeed_post_upload.py` 展示 WaveSpeed 钩子，使用相同占位符并包含异步轮询。
-  - `simpletuner/examples/external-validation/fal_post_upload.py` 展示 fal.ai Flux LoRA 钩子（需要 `FAL_KEY`）。
-  - `simpletuner/examples/external-validation/use_second_gpu.py` 在第二块 GPU 上运行 Flux LoRA 推理，即使没有远程上传也能工作。
+  - `simpletuner/examples/_shared/external-validation/replicate_post_upload.py` 展示 Replicate 钩子，使用 `{remote_checkpoint_path}`、`{model_family}`、`{model_type}`、`{lora_type}`、`{huggingface_path}` 在上传后触发推理。
+  - `simpletuner/examples/_shared/external-validation/wavespeed_post_upload.py` 展示 WaveSpeed 钩子，使用相同占位符并包含异步轮询。
+  - `simpletuner/examples/_shared/external-validation/fal_post_upload.py` 展示 fal.ai Flux LoRA 钩子（需要 `FAL_KEY`）。
+  - `simpletuner/examples/_shared/external-validation/use_second_gpu.py` 在第二块 GPU 上运行 Flux LoRA 推理，即使没有远程上传也能工作。
 
 ### `--post_checkpoint_script`
 
@@ -2260,7 +2271,7 @@ usage: train.py [-h] --model_family
                 [--sd3_t5_uncond_behaviour {empty_string,zero}]
                 [--soft_min_snr_sigma_data SOFT_MIN_SNR_SIGMA_DATA]
                 [--mixed_precision {no,fp16,bf16,fp8}]
-                [--attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,kohaku-fa,kohaku-fa-auto,metal-flash-attention,metal-flash-attention-int8,metal-flash-attention-int4,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}]
+                [--attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,kohaku-fa,kohaku-fa-auto,metal-flash-attention,metal-flash-attention-int8,metal-flash-attention-int4,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}]
                 [--sageattention_usage {training,inference,training+inference}]
                 [--disable_tf32 [DISABLE_TF32]]
                 [--set_grads_to_none [SET_GRADS_TO_NONE]]
@@ -2784,7 +2795,7 @@ options:
                         Sigma data for soft min SNR weighting
   --mixed_precision {no,fp16,bf16,fp8}
                         Precision for training computations
-  --attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,kohaku-fa,kohaku-fa-auto,metal-flash-attention,metal-flash-attention-int8,metal-flash-attention-int4,cudnn,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}
+  --attention_mechanism {diffusers,xformers,flash-attn,flash-attn-2,flash-attn-3,flash-attn-3-varlen,flex,kohaku-fa,kohaku-fa-auto,metal-flash-attention,metal-flash-attention-int8,metal-flash-attention-int4,native-efficient,native-flash,native-math,native-npu,native-xla,sla,sageattention,sageattention-int8-fp16-triton,sageattention-int8-fp16-cuda,sageattention-int8-fp8-cuda}
                         Attention computation backend
   --sageattention_usage {training,inference,training+inference}
                         When to use SageAttention

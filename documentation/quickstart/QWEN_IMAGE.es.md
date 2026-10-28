@@ -142,7 +142,7 @@ Tu config.json se verá algo así para un setup mínimo:
 
 > ⚠️ **Crítico para GPUs de 24GB**: El codificador de texto por sí solo usa ~16GB de VRAM. Con cuantización `int2-quanto` o `nf4-bnb`, esto se puede reducir significativamente.
 
-El ejemplo `qwen_image.peft-lora` ahora entrena 2.1. Para las variantes anteriores, usa tu configuración explícita con `simpletuner train` en lugar de ese ejemplo.
+El ejemplo `qwen_image/v2.1/default/peft-lora` ahora entrena 2.1. Para las variantes anteriores, usa tu configuración explícita con `simpletuner train` en lugar de ese ejemplo.
 
 ### Funciones experimentales avanzadas
 

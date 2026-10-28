@@ -871,6 +871,13 @@ def parse_cmdline_args(input_args=None, exit_on_error: bool = False):
         args.base_model_precision = "fp8-torchao"
         args.quantize_via = "accelerator"
     base_precision = getattr(args, "base_model_precision", "no_change")
+    if args.adapter_model_precision == "fp32":
+        if args.model_type != "lora":
+            raise ValueError("adapter_model_precision=fp32 requires model_type=lora.")
+        if args.optimizer == "adamw_bf16":
+            raise ValueError(
+                "adapter_model_precision=fp32 is incompatible with adamw_bf16. Use torch-adamw or optimi-adamw."
+            )
     model_path = str(getattr(args, "pretrained_model_name_or_path", "") or "")
     is_gguf_checkpoint = model_path.endswith(".gguf")
     quantize_via_pipeline = getattr(args, "quantize_via", "accelerator") == "pipeline"

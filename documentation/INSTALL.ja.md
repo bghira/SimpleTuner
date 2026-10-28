@@ -30,6 +30,8 @@ pip install 'simpletuner[jxl]'
 pip install 'simpletuner[dev]'
 ```
 
+`cuda` と `cuda13` の extras には、KohakuFA-CuTe に必要な CUTLASS DSL、TVM FFI、Ninja が含まれています。C++17 コンパイラを用意してください。拡張機能は初回使用時にビルドされます。
+
 ### Git リポジトリ方式
 
 ローカル開発やテスト用に、SimpleTuner リポジトリをクローンして Python venv をセットアップできます:

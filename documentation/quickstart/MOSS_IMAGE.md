@@ -10,13 +10,13 @@ Choose the recipe matching your GPU memory. Every tier trains at a 512×512 equi
 
 | GPU memory | Base example | SFT example | Images per batch | `gradient_checkpointing_interval` |
 | --- | --- | --- | ---: | ---: |
-| 24 GB | `moss_image-24g.peft-lora` | `moss_image-sft-24g.peft-lora` | 1 | 1 |
-| 32 GB | `moss_image-32g.peft-lora` | `moss_image-sft-32g.peft-lora` | 1 | 2 |
-| 48 GB | `moss_image-48g.peft-lora` | `moss_image-sft-48g.peft-lora` | 2 | 2 |
-| 80 GB | `moss_image-80g.peft-lora` | `moss_image-sft-80g.peft-lora` | 4 | 2 |
-| 144 GB | `moss_image-144g.peft-lora` | `moss_image-sft-144g.peft-lora` | 8 | 2 |
+| 24 GB | `moss_image/base/24g/peft-lora` | `moss_image/sft/24g/peft-lora` | 1 | 1 |
+| 32 GB | `moss_image/base/32g/peft-lora` | `moss_image/sft/32g/peft-lora` | 1 | 2 |
+| 48 GB | `moss_image/base/48g/peft-lora` | `moss_image/sft/48g/peft-lora` | 2 | 2 |
+| 80 GB | `moss_image/base/80g/peft-lora` | `moss_image/sft/80g/peft-lora` | 4 | 2 |
+| 144 GB | `moss_image/base/144g/peft-lora` | `moss_image/sft/144g/peft-lora` | 8 | 2 |
 
-The default `moss_image.peft-lora` and `moss_image-sft.peft-lora` examples use the 48 GB settings. Batch sizes are starting points: use a smaller `train_batch_size` for longer captions, additional training features, or a dataset with fewer images in an aspect bucket than the batch size. The 144 GB tier is intended for H200-class GPUs.
+The default `moss_image/sft/default/default.peft-lora` and `moss_image/sft/default/peft-lora` examples use the 48 GB settings. Batch sizes are starting points: use a smaller `train_batch_size` for longer captions, additional training features, or a dataset with fewer images in an aspect bucket than the batch size. The 144 GB tier is intended for H200-class GPUs.
 
 ## Install SimpleTuner
 
@@ -27,7 +27,7 @@ git clone https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
 python3.13 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[cuda,attention-cute]'
+pip install -e '.[cuda]'
 ```
 
 ## Prepare images and captions
@@ -46,13 +46,15 @@ Choose a subject word such as `TOK` and include it in every caption for that sub
 
 ## Set up your training configuration
 
-Copy the 48 GB SFT recipe and its sample prompts. Replace `48g` with your selected tier. For Base, replace `moss_image-sft-48g.peft-lora` with `moss_image-48g.peft-lora` in the commands.
+Copy the 48 GB SFT recipe and its sample prompts. Replace `48g` with your selected tier. For Base, replace `moss_image/sft/48g/peft-lora` with `moss_image/base/48g/peft-lora` in the commands.
 
 ```bash
-mkdir -p config/examples datasets/moss-image
-cp -R simpletuner/examples/moss_image-sft-48g.peft-lora config/examples/
-cp simpletuner/examples/moss_image-prompts.json config/examples/
-cp config/examples/moss_image-sft-48g.peft-lora/config.json config/config.json
+mkdir -p config/examples/_shared datasets/moss-image
+mkdir -p config/examples/moss_image/sft/48g
+cp -R simpletuner/examples/moss_image/sft/48g/peft-lora config/examples/moss_image/sft/48g/
+mkdir -p config/examples/_shared
+cp simpletuner/examples/_shared/moss_image-prompts.json config/examples/_shared/
+cp config/examples/moss_image/sft/48g/peft-lora/config.json config/config.json
 ```
 
 The supplied configuration uses rank-32 BF16 LoRA, learning rate `1e-4`, gradient checkpointing, REPA, 4,000 optimizer steps, and 512-scale training. Open `config/config.json` and edit these entries inside the existing configuration:
@@ -96,7 +98,7 @@ To see progress frames during denoising in the WebUI, add the following settings
 
 The recipe sets `train_batch_size` for your chosen VRAM tier. Reduce it for a small dataset or when captions and additional features need more memory. `gradient_checkpointing_backend` accepts `torch`, `unsloth`, `torch-ffn`, and `unsloth-ffn`; `gradient_checkpointing_interval` and `gradient_checkpointing_segment_stride` control its coverage. Musubi block swapping moves selected transformer blocks between GPU and CPU using `musubi_blocks_to_swap`. RamTorch uses `ramtorch: true` and supports selective offloading with `ramtorch_transformer_percent`. These offload options use system RAM and add transfer work; configure one approach at a time. See [OPTIONS](../OPTIONS.md).
 
-The CUDA installation includes CuTE attention. During training, the default `attention_mechanism: "kohaku-fa-auto"` selects CuTE on Ada and Hopper GPUs and native SDPA on other architectures. To offload attention tensors saved for backward, enable `gradient_checkpointing_offload_attention: true`; `gradient_checkpointing_offload_prefetch: true` enables transfer prefetching. See [OPTIONS](../OPTIONS.md) for other attention backends.
+The CUDA installation includes CuTE attention. During training, the default `attention_mechanism: "kohaku-fa-auto"` selects CuTE on Ada, Hopper and RTX Blackwell GPUs and native SDPA on other architectures. To offload attention tensors saved for backward, enable `gradient_checkpointing_offload_attention: true`; `gradient_checkpointing_offload_prefetch: true` enables transfer prefetching. See [OPTIONS](../OPTIONS.md) for other attention backends.
 
 The recipe enables [REPA](../experimental/IMAGE_REPA.md). To align later image features with an earlier layer, add [LayerSync](../experimental/LAYERSYNC.md):
 
@@ -163,12 +165,13 @@ image.save("my-moss-image.png")
 
 ## Train an edit or reference LoRA
 
-Choose `model_flavour: "sft-edit"` or `"base-edit"` to train with reference images. These flavours start from the corresponding SFT or Base checkpoint and learn reference conditioning through your adapter. Start with `simpletuner/examples/moss_image-sft-edit.peft-lora` or `moss_image-base-edit.peft-lora`; each uses one target per batch, 512-scale training, REPA, and dataset validation.
+Choose `model_flavour: "sft-edit"` or `"base-edit"` to train with reference images. These flavours start from the corresponding SFT or Base checkpoint and learn reference conditioning through your adapter. Start with `simpletuner/examples/moss_image/sft-edit/default/peft-lora` or `moss_image/base-edit/default/peft-lora`; each uses one target per batch, 512-scale training, REPA, and dataset validation.
 
 ```bash
-mkdir -p config/examples datasets/moss-edits datasets/moss-references
-cp -R simpletuner/examples/moss_image-sft-edit.peft-lora config/examples/
-cp config/examples/moss_image-sft-edit.peft-lora/config.json config/config.json
+mkdir -p config/examples/_shared datasets/moss-edits datasets/moss-references
+mkdir -p config/examples/moss_image/sft-edit/default
+cp -R simpletuner/examples/moss_image/sft-edit/default/peft-lora config/examples/moss_image/sft-edit/default/
+cp config/examples/moss_image/sft-edit/default/peft-lora/config.json config/config.json
 ```
 
 Put the desired output in `datasets/moss-edits/sample.png`, its instruction in `datasets/moss-edits/sample.txt`, and the input reference in `datasets/moss-references/sample.png`. Match image filenames, including their extensions, across both directories. For example, the instruction could be `Change the blue mug to red while keeping the background unchanged.` The edit examples provide this dataloader configuration:

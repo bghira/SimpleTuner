@@ -5,7 +5,7 @@ Este guia cobre treinamento LoRA do Krea2 no SimpleTuner. Krea2 é um transforme
 O exemplo inicial está em:
 
 ```bash
-simpletuner/examples/krea2.peft-lora/config.json
+simpletuner/examples/krea2/raw/default/peft-lora/config.json
 ```
 
 ## Ponto de Partida Recomendado
@@ -19,7 +19,7 @@ Para a primeira execução, use a configuração de exemplo e mantenha o modelo 
   "model_type": "lora",
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "mixed_precision": "bf16",
-  "attention_mechanism": "cudnn",
+  "attention_mechanism": "kohaku-fa",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "train_batch_size": 1,
@@ -39,7 +39,7 @@ Recomendações:
 
 - Use `bf16` quando couber.
 - Use `int8-torchao` quando precisar de folga de memória.
-- Use `attention_mechanism=cudnn` em GPUs NVIDIA; o caminho SDPA nativo do Krea2 pode usar memória suficiente para causar OOM em runs de classe L40S que normalmente caberiam.
+- Use `attention_mechanism=kohaku-fa` em GPUs NVIDIA compatíveis. As dependências estão incluídas nos extras `cuda` e `cuda13`.
 - Mantenha `gradient_checkpointing=true`.
 - Mantenha `fuse_qkv_projections=true`.
 - Use `dynamo_backend=inductor`, `dynamo_mode=reduce-overhead` e `dynamo_use_regional_compilation=true` apenas depois de confirmar que batch/resolução cabem.
@@ -54,7 +54,7 @@ Recomendações:
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "base_model_precision": "no_change",
   "mixed_precision": "bf16",
-  "attention_mechanism": "cudnn",
+  "attention_mechanism": "kohaku-fa",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "optimizer": "optimi-lion",
@@ -85,15 +85,19 @@ Para compile reduce-overhead:
 }
 ```
 
-### Tamanho do kernel LoKR do LyCORIS 4
+### Versão do LyCORIS
 
-Se o treinamento LoKR com LyCORIS 4 apresentar `kron apply factors too large for the kernel`, selecione o backend de kernels PyTorch antes de iniciar o treinador ou a WebUI. O erro vem do limite de tamanho dos fatores do kernel Triton experimental. O `torch.compile` do SimpleTuner pode continuar habilitado; desativar a compilação por si só não troca os kernels do LyCORIS.
+Use o LyCORIS 4.1.3 ou posterior para treinar LoKR. Essa versão lida com os fatores grandes que causavam o erro `kron apply factors too large for the kernel` nas versões 4.x anteriores.
+
+Para atualizar uma instalação existente, execute no seu ambiente do SimpleTuner:
 
 ```bash
-export LYCORIS_KERNEL_BACKEND=torch
+pip install --upgrade "lycoris-lora>=4.1.3"
 ```
 
-[Backends de kernels do LyCORIS](https://github.com/KohakuBlueleaf/LyCORIS/blob/main/docs/kernels/backends.md).
+Se você definiu `LYCORIS_KERNEL_BACKEND=torch` para contornar esse erro, remova essa configuração do ambiente de inicialização para usar a seleção automática de backend.
+
+[Versão 4.1.3 do LyCORIS](https://github.com/KohakuBlueleaf/LyCORIS/releases/tag/v4.1.3).
 
 ## Treinamento com Imagem de Referência
 

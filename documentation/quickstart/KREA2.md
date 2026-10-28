@@ -7,7 +7,7 @@ Krea2 is a large flow-matching image transformer using Qwen-style text condition
 The starter example lives here:
 
 ```bash
-simpletuner/examples/krea2.peft-lora/config.json
+simpletuner/examples/krea2/raw/default/peft-lora/config.json
 ```
 
 ## Hardware requirements
@@ -83,7 +83,7 @@ The server listens on port 8001 by default.
 Copy the example config and edit it:
 
 ```bash
-cp simpletuner/examples/krea2.peft-lora/config.json config/config.json
+cp simpletuner/examples/krea2/raw/default/peft-lora/config.json config/config.json
 ```
 
 The important values are:
@@ -93,7 +93,7 @@ The important values are:
 - `model_flavour` - set this to `raw`.
 - `pretrained_model_name_or_path` - set this to `krea/Krea-2-Raw`.
 - `mixed_precision` - keep this at `bf16` on modern NVIDIA GPUs.
-- `attention_mechanism` - use `cudnn` on NVIDIA GPUs. Krea2's native SDPA path can use enough memory to OOM otherwise-valid L40S-class training runs.
+- `attention_mechanism` - use `kohaku-fa` on supported NVIDIA GPUs. Its dependencies are included in the `cuda` and `cuda13` extras.
 - `gradient_checkpointing` - keep this enabled unless you are deliberately measuring memory.
 - `fuse_qkv_projections` - keep this enabled. Krea2 supports permanent QKV fusion for the attention projections, and the LoRA target changes to the fused projection.
 - `train_batch_size` - start at 1. Increase after the run is stable.
@@ -112,7 +112,7 @@ A conservative bf16 starting point:
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "base_model_precision": "no_change",
   "mixed_precision": "bf16",
-  "attention_mechanism": "cudnn",
+  "attention_mechanism": "kohaku-fa",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "optimizer": "optimi-lion",
@@ -145,15 +145,19 @@ For reduce-overhead compile:
 
 Compile should be considered a batch-size-1 performance option first. It can make larger batches OOM even when the same batch fits without compile.
 
-### LyCORIS 4 LoKR kernel size
+### LyCORIS version
 
-If LyCORIS 4 LoKR training raises `kron apply factors too large for the kernel`, select its PyTorch kernel backend before starting the trainer or WebUI. The error comes from the experimental Triton kernel's factor-size limit. SimpleTuner's `torch.compile` can remain enabled; disabling compilation alone does not switch LyCORIS kernels.
+Use LyCORIS 4.1.3 or later for LoKR training. This version handles the large factors that caused `kron apply factors too large for the kernel` in earlier 4.x versions.
+
+To upgrade an existing installation, run this in your SimpleTuner environment:
 
 ```bash
-export LYCORIS_KERNEL_BACKEND=torch
+pip install --upgrade "lycoris-lora>=4.1.3"
 ```
 
-[LyCORIS kernel backends](https://github.com/KohakuBlueleaf/LyCORIS/blob/main/docs/kernels/backends.md).
+If you previously set `LYCORIS_KERNEL_BACKEND=torch` for this error, remove that override from your launch environment to use automatic backend selection.
+
+[LyCORIS 4.1.3 release](https://github.com/KohakuBlueleaf/LyCORIS/releases/tag/v4.1.3).
 
 ## Dataloader configuration
 

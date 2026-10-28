@@ -114,3 +114,5 @@ Consulta [Guías de modelos](quickstart/index.md) para documentación completa.
 ## Licencia
 
 SimpleTuner es software de código abierto.
+
+[Ejemplos de entrenamiento](https://github.com/bghira/SimpleTuner/tree/main/simpletuner/examples/README.es.md)

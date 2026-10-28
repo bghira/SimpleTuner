@@ -350,8 +350,8 @@ class ConfigsServiceEnvironmentTests(unittest.TestCase):
         example_dir.mkdir(parents=True, exist_ok=True)
 
         example_config = {
-            "lycoris_config": "config/examples/pixart.lycoris-lokr/lycoris_config.json",
-            "data_backend_config": "config/examples/pixart.lycoris-lokr/multidatabackend.json",
+            "lycoris_config": "config/examples/pixart/default/default/lycoris-lokr/lycoris_config.json",
+            "data_backend_config": "config/examples/pixart/default/default/lycoris-lokr/multidatabackend.json",
         }
 
         (example_dir / "config.json").write_text(json.dumps(example_config, indent=2), encoding="utf-8")

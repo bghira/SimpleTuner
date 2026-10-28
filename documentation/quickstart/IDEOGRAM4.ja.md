@@ -5,7 +5,7 @@
 スターター設定:
 
 ```bash
-simpletuner/examples/ideogram-fp8.peft-lora/config.json
+simpletuner/examples/ideogram/fp8/default/peft-lora/config.json
 ```
 
 ## ハードウェアと精度
@@ -44,9 +44,9 @@ Validation には別の生成ピークがあるため、`ideogram_validation=tru
 設定と dataloader をコピーします:
 
 ```bash
-mkdir -p config/examples
-cp simpletuner/examples/ideogram-fp8.peft-lora/config.json config/config.json
-cp simpletuner/examples/multidatabackend-ideogram-dreambooth-1024px.json config/examples/multidatabackend-ideogram-dreambooth-1024px.json
+mkdir -p config/examples/_shared
+cp simpletuner/examples/ideogram/fp8/default/peft-lora/config.json config/config.json
+cp simpletuner/examples/_shared/multidatabackend-ideogram-dreambooth-1024px.json config/examples/_shared/multidatabackend-ideogram-dreambooth-1024px.json
 ```
 
 重要な項目:

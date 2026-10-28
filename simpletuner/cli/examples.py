@@ -9,6 +9,8 @@ import shutil
 from pathlib import Path
 from typing import List
 
+from simpletuner.helpers.configuration.examples import discover_examples
+
 from .train import get_examples_dir, list_examples
 
 
@@ -30,15 +32,14 @@ def find_referenced_files(config_path: Path) -> List[str]:
         ]
 
         for field in fields_to_check:
-            if field in config:
-                value = config[field]
+            key = field if field in config else f"--{field}"
+            if key in config:
+                value = config[key]
                 if isinstance(value, str):
-                    if "examples/" in value and value.endswith(".json"):
-                        try:
-                            relative_path = Path(value).relative_to("config/examples")
-                            referenced_files.append(str(relative_path))
-                        except ValueError:
-                            referenced_files.append(Path(value).name)
+                    for prefix in ("config/examples/", "simpletuner/examples/"):
+                        if value.startswith(prefix) and value.endswith(".json"):
+                            referenced_files.append(value.removeprefix(prefix))
+                            break
 
     except (json.JSONDecodeError, FileNotFoundError) as e:
         print(f"Warning: Could not parse config file {config_path}: {e}")
@@ -64,12 +65,13 @@ def update_config_paths(config_path: Path, referenced_files: List[str]) -> None:
         updated = False
         referenced_basenames = {Path(ref_file).name for ref_file in referenced_files}
         for field in fields_to_check:
-            if field in config:
-                value = config[field]
+            key = field if field in config else f"--{field}"
+            if key in config:
+                value = config[key]
                 if isinstance(value, str) and "examples/" in value:
                     filename = Path(value).name
                     if value in referenced_files or filename in referenced_basenames:
-                        config[field] = filename
+                        config[key] = filename
                         updated = True
                         print(f"  Updated {field}: {value} -> {filename}")
 
@@ -85,12 +87,14 @@ def update_config_paths(config_path: Path, referenced_files: List[str]) -> None:
 def copy_example(example_name: str, dest: str = None) -> bool:
     """Copy an example to destination directory."""
     examples_dir = get_examples_dir()
-    example_path = examples_dir / example_name
+    config_path = discover_examples(examples_dir).get(example_name)
 
-    if not example_path.exists():
+    if config_path is None:
         print(f"Error: Example '{example_name}' not found.")
         print(f"Available examples: {', '.join(list_examples())}")
         return False
+
+    example_path = config_path.parent
 
     if dest is None:
         dest = "."
@@ -98,40 +102,29 @@ def copy_example(example_name: str, dest: str = None) -> bool:
     dest_path = Path(dest)
 
     try:
-        if example_path.is_dir():
-            dest_example = dest_path / example_name
-            if dest_example.exists():
-                print(f"Error: Destination '{dest_example}' already exists.")
-                return False
-            shutil.copytree(example_path, dest_example)
-            print(f"Copied example directory '{example_name}' to '{dest_example}'")
+        dest_example = dest_path / example_name
+        if dest_example.exists():
+            print(f"Error: Destination '{dest_example}' already exists.")
+            return False
+        shutil.copytree(example_path, dest_example)
+        print(f"Copied example directory '{example_name}' to '{dest_example}'")
 
-            config_json = dest_example / "config.json"
-            if config_json.exists():
-                referenced_files = find_referenced_files(config_json)
-                if referenced_files:
-                    print(f"Found {len(referenced_files)} referenced file(s) to copy...")
+        config_json = dest_example / "config.json"
+        if config_json.exists():
+            referenced_files = find_referenced_files(config_json)
+            if referenced_files:
+                print(f"Found {len(referenced_files)} referenced file(s) to copy...")
 
-                    for ref_file in referenced_files:
-                        source_file = examples_dir / ref_file
-                        if not source_file.exists():
-                            source_file = examples_dir / Path(ref_file).name
-                        if source_file.exists():
-                            dest_file = dest_example / Path(ref_file).name
-                            shutil.copy2(source_file, dest_file)
-                            print(f"  Copied referenced file: {ref_file}")
-                        else:
-                            print(f"  Warning: Referenced file not found: {ref_file}")
+                for ref_file in referenced_files:
+                    source_file = examples_dir / ref_file
+                    if source_file.exists():
+                        dest_file = dest_example / Path(ref_file).name
+                        shutil.copy2(source_file, dest_file)
+                        print(f"  Copied referenced file: {ref_file}")
+                    else:
+                        print(f"  Warning: Referenced file not found: {ref_file}")
 
-                    update_config_paths(config_json, referenced_files)
-        else:
-            dest_file = dest_path / example_path.name
-            if dest_file.exists():
-                print(f"Error: Destination '{dest_file}' already exists.")
-                return False
-            shutil.copy2(example_path, dest_file)
-            print(f"Copied example file '{example_name}' to '{dest_file}'")
-
+                update_config_paths(config_json, referenced_files)
         return True
     except Exception as e:
         print(f"Error copying example: {e}")

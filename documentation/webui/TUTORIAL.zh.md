@@ -245,13 +245,13 @@ configs/
 
 其中 `notify.sh` 将 URL 发布到您的跟踪器 Web API。随意适配到 Slack、自定义仪表板或任何其他集成。
 
-工作示例：`simpletuner/examples/external-validation/replicate_post_upload.py` 演示了使用 `{remote_checkpoint_path}`、`{model_family}`、`{model_type}`、`{lora_type}` 和 `{huggingface_path}` 在上传后触发 Replicate 推理。
+工作示例：`simpletuner/examples/_shared/external-validation/replicate_post_upload.py` 演示了使用 `{remote_checkpoint_path}`、`{model_family}`、`{model_type}`、`{lora_type}` 和 `{huggingface_path}` 在上传后触发 Replicate 推理。
 
-另一个示例：`simpletuner/examples/external-validation/wavespeed_post_upload.py` 调用 WaveSpeed API 并轮询结果，使用相同的占位符。
+另一个示例：`simpletuner/examples/_shared/external-validation/wavespeed_post_upload.py` 调用 WaveSpeed API 并轮询结果，使用相同的占位符。
 
-Flux 专用示例：`simpletuner/examples/external-validation/fal_post_upload.py` 调用 fal.ai Flux LoRA 端点；它需要 `FAL_KEY` 并且仅在 `model_family` 包含 `flux` 时运行。
+Flux 专用示例：`simpletuner/examples/_shared/external-validation/fal_post_upload.py` 调用 fal.ai Flux LoRA 端点；它需要 `FAL_KEY` 并且仅在 `model_family` 包含 `flux` 时运行。
 
-本地 GPU 示例：`simpletuner/examples/external-validation/use_second_gpu.py` 在另一个 GPU 上运行 Flux LoRA 推理（默认为 `cuda:1`），即使没有上传发生也可以使用。
+本地 GPU 示例：`simpletuner/examples/_shared/external-validation/use_second_gpu.py` 在另一个 GPU 上运行 Flux LoRA 推理（默认为 `cuda:1`），即使没有上传发生也可以使用。
 
 <img width="508" height="600" alt="image" src="https://github.com/user-attachments/assets/e699ba57-526b-4f60-9e8c-0ba410761c9f" />
 

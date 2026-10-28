@@ -639,6 +639,55 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertEqual(sampler_cls.call_args.kwargs["batch_size"], effective_train_batch_size)
         return init_backend
 
+    def test_registered_webshart_cache_reload_preserves_sampler_batch_size(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
+        from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        self.args.train_batch_size = 8
+        for dataset_batch_size in (None, 4):
+            with self.subTest(dataset_batch_size=dataset_batch_size):
+                backend = {
+                    "id": "registered-webshart",
+                    "type": "local",
+                    "dataset_type": "image",
+                    "instance_data_dir": self.temp_dir,
+                }
+                if dataset_batch_size is not None:
+                    backend["train_batch_size"] = dataset_batch_size
+                init_backend = init_backend_config(backend, self.args, self.accelerator)
+                live_config = init_backend["config"]
+                metadata = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
+                metadata.id = backend["id"]
+                metadata.cache_file = "buckets.json"
+                metadata.batch_size = live_config["train_batch_size"]
+                metadata.data_backend = MagicMock()
+                metadata.data_backend.read.return_value = json.dumps(
+                    {"config": {"train_batch_size": 2}, "aspect_ratio_bucket_indices": {"1.0": ["sample.jpg"]}}
+                )
+                metadata.load_image_metadata = MagicMock()
+                metadata._load_caption_cache = MagicMock()
+                metadata._sync_image_files_with_buckets = MagicMock()
+                init_backend["metadata_backend"] = metadata
+                init_backend["data_backend"] = metadata.data_backend
+                factory = FactoryRegistry(
+                    args=self.args,
+                    accelerator=self.accelerator,
+                    text_encoders=self.text_encoders,
+                    tokenizers=self.tokenizers,
+                    model=self.model,
+                )
+                with (
+                    patch.dict(StateTracker.data_backends, {backend["id"]: init_backend}, clear=True),
+                    patch("simpletuner.helpers.data_backend.factory.MultiAspectDataset"),
+                    patch("simpletuner.helpers.data_backend.factory.MultiAspectSampler") as sampler,
+                    patch("simpletuner.helpers.data_backend.factory.torch.utils.data.DataLoader"),
+                ):
+                    metadata.reload_cache()
+                    factory._create_dataset_and_sampler(backend, init_backend, conditioning_type=None)
+                self.assertIs(init_backend["config"], live_config)
+                self.assertEqual(sampler.call_args.kwargs["batch_size"], dataset_batch_size or 8)
+
     def test_cached_batch_size_does_not_override_changed_global_default(self):
         self.args.train_batch_size = 4
         backend = {
@@ -1761,14 +1810,10 @@ class TestFactoryEdgeCases(unittest.TestCase):
         factory._handle_config_versioning = MagicMock()
 
         def finish_discovery():
-            Path(self.temp_dir, f"aspect_resolution_map-{resolution}.json").write_text(
-                json.dumps({"0.68": expected_size})
-            )
+            Path(self.temp_dir, f"aspect_resolution_map-{resolution}.json").write_text(json.dumps({"0.68": expected_size}))
 
         def check_geometry(**kwargs):
-            target_size, _, aspect = MultiaspectImage.calculate_new_size_by_pixel_area(
-                0.68, resolution, (680, 1000)
-            )
+            target_size, _, aspect = MultiaspectImage.calculate_new_size_by_pixel_area(0.68, resolution, (680, 1000))
             self.assertEqual(aspect, 0.68)
             self.assertEqual(target_size, expected_size)
 
@@ -1785,8 +1830,9 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     "dataset_type": "image",
                     "metadata_backend": metadata_backend,
                 }
-                with patch.object(StateTracker, "args", self.args), patch.object(
-                    StateTracker, "aspect_resolution_map", {resolution: {"0.68": (1264, 1856)}}
+                with (
+                    patch.object(StateTracker, "args", self.args),
+                    patch.object(StateTracker, "aspect_resolution_map", {resolution: {"0.68": (1264, 1856)}}),
                 ):
                     factory._handle_bucket_operations(
                         backend={"id": "train"},
@@ -2575,6 +2621,9 @@ class TestEvalDatasetVAECacheMetadata(TestFactoryEdgeCases):
         Eval datasets (type "eval") must be found when searching for metadata
         during VAE cache processing.
         """
+        from multiprocessing.queues import Queue as ProcessQueue
+        from threading import Event
+
         from PIL import Image
 
         from simpletuner.helpers.data_backend.local import LocalDataBackend
@@ -2637,7 +2686,18 @@ class TestEvalDatasetVAECacheMetadata(TestFactoryEdgeCases):
             metadata_update_interval=60,
             cache_file_suffix="eval-test",
         )
-        metadata_backend.refresh_buckets()
+        release_feeders = Event()
+        original_feed = ProcessQueue._feed
+
+        def feed_after_refresh(*args, **kwargs):
+            release_feeders.wait()
+            return original_feed(*args, **kwargs)
+
+        try:
+            with patch.object(ProcessQueue, "_feed", side_effect=feed_after_refresh):
+                metadata_backend.refresh_buckets()
+        finally:
+            release_feeders.set()
 
         # Register the data backend in StateTracker (as factory does at line 4141)
         init_backend = {

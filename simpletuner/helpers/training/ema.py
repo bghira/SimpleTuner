@@ -129,7 +129,7 @@ class EMAModel:
 
         parameters = list(parameters)
         self._tracked_param_ids = [id(param) for param in parameters]
-        self.shadow_params = [p.clone().detach() for p in parameters]
+        self.shadow_params = [p.detach().to(dtype=torch.float32, copy=True) for p in parameters]
 
         if kwargs.get("device", None) is not None:
             deprecation_message = "The `device` argument is deprecated. Please use `to` instead."
@@ -162,7 +162,8 @@ class EMAModel:
         """
         Decide whether foreach ops are safe for the provided tensors.
 
-        Foreach kernels require homogeneous devices and dtypes and do not support DTensors.
+        Each tensor list must have a uniform device and dtype; paired lists may differ in dtype.
+        DTensors are updated individually.
         """
         if not self.foreach:
             return False
@@ -183,7 +184,7 @@ class EMAModel:
 
         primary_dtypes = {tensor.dtype for tensor in primary_tensors}
         secondary_dtypes = primary_dtypes if secondary_tensors is None else {tensor.dtype for tensor in secondary_tensors}
-        if len(primary_dtypes) != 1 or len(secondary_dtypes) != 1 or primary_dtypes != secondary_dtypes:
+        if len(primary_dtypes) != 1 or len(secondary_dtypes) != 1:
             return False
 
         return True
@@ -486,9 +487,10 @@ class EMAModel:
         # This probably won't work, but we'll do it anyway.
         self.shadow_params = [p.pin_memory() for p in self.shadow_params]
 
-    def to(self, *args, **kwargs):
+    def to(self, device=None, non_blocking=False):
+        """Move EMA accumulators without reducing their FP32 precision."""
         for param in self.shadow_params:
-            param.data = param.data.to(*args, **kwargs)
+            param.data = param.data.to(device=device, dtype=torch.float32, non_blocking=non_blocking)
         return self
 
     def cuda(self, device=None):

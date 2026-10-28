@@ -114,3 +114,5 @@
 ## 许可证
 
 SimpleTuner 是开源软件。
+
+[训练示例](https://github.com/bghira/SimpleTuner/tree/main/simpletuner/examples/README.zh.md)

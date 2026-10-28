@@ -71,6 +71,7 @@ PYTORCH_DEPENDENCIES = [
 ]
 
 TORCHAO_DEPENDENCY = "torchao>=0.17.0,<0.18.0"
+CUTE_ATTENTION_DEPENDENCIES = ["nvidia-cutlass-dsl>=4.8,<4.9", "apache-tvm-ffi>=0.1.14,<0.2", "ninja>=1.11"]
 TRANSFORMERENGINE_DEPENDENCY = "transformer_engine[pytorch]>=2.16.0,<2.17.0"
 CUDA13_RUNTIME_DEPENDENCIES = [
     "nvidia-cublas>=13.3.0.5",
@@ -128,6 +129,7 @@ def get_cuda13_dependencies():
     """Get CUDA 13 specific dependencies (use --extra-index-url https://download.pytorch.org/whl/cu130)."""
     return [
         *PYTORCH_DEPENDENCIES,
+        *CUTE_ATTENTION_DEPENDENCIES,
         "triton>=3.3.0",
         "deepspeed>=0.17.2",
         TORCHAO_DEPENDENCY,
@@ -151,6 +153,7 @@ def get_cuda_nightly_dependencies():
         build_cuda_nightly_wheel_url("torchvision", torchvision_version),
         build_cuda_nightly_wheel_url("torchaudio", torchaudio_version),
         build_triton_wheel_url(triton_version, "https://download.pytorch.org/whl/nightly"),
+        *CUTE_ATTENTION_DEPENDENCIES,
         "bitsandbytes>=0.45.0",
         "deepspeed>=0.17.2",
         TORCHAO_DEPENDENCY,
@@ -173,6 +176,7 @@ def get_cuda13_nightly_dependencies():
         build_cuda13_nightly_wheel_url("torchvision", torchvision_version),
         build_cuda13_nightly_wheel_url("torchaudio", torchaudio_version),
         build_triton_wheel_url(triton_version, "https://download.pytorch.org/whl/nightly"),
+        *CUTE_ATTENTION_DEPENDENCIES,
         "deepspeed>=0.17.2",
         TORCHAO_DEPENDENCY,
         "bitsandbytes>=0.45.0",
@@ -186,6 +190,7 @@ def get_cuda13_nightly_dependencies():
 def get_cuda_dependencies():
     return [
         *PYTORCH_DEPENDENCIES,
+        *CUTE_ATTENTION_DEPENDENCIES,
         "triton>=3.3.0",
         "bitsandbytes>=0.45.0",
         "deepspeed>=0.17.2",
@@ -277,6 +282,7 @@ base_deps = [
     "pillow>=11.3.0",
     "trainingsample>=0.3.0,<0.4.0",
     "accelerate>=1.5.2",
+    "filelock>=3.16.1",
     "safetensors>=0.5.3",
     "open-clip-torch>=2.26.1",
     "iterutils>=0.1.6",
@@ -300,7 +306,7 @@ base_deps = [
     "spacy>=3.7.4",
     "hangul-romanize>=0.1.0",
     "optimum-quanto>=0.2.7",
-    "lycoris-lora>=3.4.0",
+    "lycoris-lora>=4.1.3",
     "kernels>=0.16.0,<0.17.0",
     "torch-optimi>=0.2.1",
     "librosa>=0.10.2",
@@ -345,7 +351,6 @@ _is_building_dist = any(arg in sys.argv for arg in ("bdist_wheel", "sdist", "bui
 # Optional extras
 extras_require = {
     "jxl": ["pillow-jxl-plugin>=1.3.1"],
-    "attention-cute": ["nvidia-cutlass-dsl>=4.8,<4.9", "apache-tvm-ffi>=0.1.14,<0.2", "ninja>=1.11"],
     "captioning": list(CAPTIONING_DEPENDENCIES),
     "captioning-cuda13": list(CAPTIONING_DEPENDENCIES),
     "cuda13-captioning": list(CAPTIONING_DEPENDENCIES),

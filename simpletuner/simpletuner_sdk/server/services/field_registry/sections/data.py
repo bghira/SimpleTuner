@@ -452,7 +452,7 @@ def register_data_fields(registry: "FieldRegistry") -> None:
             section="vae_config",
             default_value=False,
             help_text="Enable VAE tiling for large images",
-            tooltip="Process large images in tiles to reduce memory usage. Useful for very high resolution images.",
+            tooltip="Start VAE encoding and decoding with tiling enabled. Supported CUDA VAEs also enable tiling automatically after an out-of-memory error and retry once.",
             importance=ImportanceLevel.ADVANCED,
             order=22,
         )

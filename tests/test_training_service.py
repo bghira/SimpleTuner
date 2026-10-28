@@ -430,7 +430,7 @@ class TrainingServiceTests(unittest.TestCase):
             ),
         ):
             result = training_service.start_training_job(
-                {"--user_prompt_library": "config/examples/minimaxmusic-prompts.json"}
+                {"--user_prompt_library": "config/examples/_shared/minimaxmusic-prompts.json"}
             )
 
         runtime_path = Path(captured["config"]["--user_prompt_library"])

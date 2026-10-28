@@ -9,6 +9,18 @@ from pathlib import Path
 
 import torch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
+def centered_sdpa(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False, *, scale=None, enable_gqa=False):
+    from simpletuner.helpers.training.kohaku_fa_cute import attention
+
+    if dropout_p != 0.0:
+        raise ValueError("CuTe attention does not support dropout.")
+    if not enable_gqa and q.shape[1] != k.shape[1]:
+        raise ValueError("Differing Q and K/V heads require enable_gqa=True.")
+    return attention(q, k, v, mask=attn_mask, causal=is_causal, scale=scale, center_keys=True)
+
 
 def make_inputs(logit_scale, *, device, dtype, seq, dim, seed, heads=2):
     generator = torch.Generator(device=device).manual_seed(seed)
@@ -82,6 +94,41 @@ def metrics(got, reference):
     }
 
 
+def row_metrics(got, reference):
+    """Error per last-dimension vector, flattened in batch/head/sequence order.
+
+    Keep zero-reference rows undefined rather than assigning them an artificial
+    relative error. Normalize before computing norms so tiny gradients survive.
+    """
+    if got.shape != reference.shape or got.ndim < 1 or got.shape[-1] == 0:
+        raise ValueError("row metrics require matching tensors with a nonempty final dimension")
+    shape = list(got.shape[:-1])
+    got, reference = [tensor.detach().double().reshape(-1, tensor.shape[-1]) for tensor in (got, reference)]
+
+    def norm(tensor):
+        largest = tensor.abs().amax(-1)
+        divisor = torch.where(largest > 0, largest, 1)
+        return largest * (tensor / divisor[:, None]).norm(dim=-1)
+
+    finite = torch.isfinite(got).all(-1) & torch.isfinite(reference).all(-1)
+    denominator = norm(reference)
+    error = norm(got - reference)
+    relative = error / denominator
+    log_relative = error.log10() - denominator.log10()
+
+    def values(tensor, valid):
+        return [value if math.isfinite(value) else None for value in tensor.masked_fill(~valid, torch.nan).tolist()]
+
+    return {
+        "shape": shape,
+        "finite": finite.tolist(),
+        "reference_norm": values(denominator, torch.isfinite(reference).all(-1)),
+        "relative_error": values(relative, finite & (denominator > 0)),
+        "log10_relative_error": values(log_relative, finite & (denominator > 0) & (error > 0)),
+        "max_absolute_error": values((got - reference).abs().amax(-1), finite),
+    }
+
+
 def timing(fn, inputs, dout, mask, causal, iterations):
     q, k, v = [t.detach().clone().requires_grad_(True) for t in inputs]
 
@@ -129,10 +176,11 @@ def main():
     parser.add_argument(
         "--backends",
         nargs="+",
-        choices=["auto", "math", "flash", "efficient", "cudnn", "kohaku-fa", "kohaku-fa-auto"],
+        choices=["auto", "math", "flash", "efficient", "cudnn", "kohaku-fa", "kohaku-fa-auto", "kohaku-fa-centered"],
         default=["math", "flash", "efficient", "cudnn"],
     )
     parser.add_argument("--causal", action="store_true")
+    parser.add_argument("--row-errors", action="store_true", help="Retain per-row errors for distribution plots.")
     parser.add_argument(
         "--timing-iterations",
         type=int,
@@ -189,7 +237,6 @@ def main():
             )
             try:
                 if backend in ("kohaku-fa", "kohaku-fa-auto"):
-                    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
                     from types import SimpleNamespace
 
                     from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
@@ -200,10 +247,12 @@ def main():
                     )
                 context = (
                     nullcontext()
-                    if backend in ("auto", "kohaku-fa", "kohaku-fa-auto")
+                    if backend in ("auto", "kohaku-fa", "kohaku-fa-auto", "kohaku-fa-centered")
                     else torch.nn.attention.sdpa_kernel(kernels[backend])
                 )
                 fn = torch.nn.functional.scaled_dot_product_attention if backend in ("kohaku-fa", "kohaku-fa-auto") else sdpa
+                if backend == "kohaku-fa-centered":
+                    fn = centered_sdpa
                 try:
                     with context:
                         got = evaluate(fn, (q, k, v), dout, mask, args.causal)
@@ -213,8 +262,12 @@ def main():
                     if backend in ("kohaku-fa", "kohaku-fa-auto"):
                         AttentionBackendController.restore_default()
                 row["metrics"] = {name: metrics(g, r) for name, g, r in zip(("out", "dq", "dk", "dv"), got, reference)}
+                if args.row_errors:
+                    row["row_metrics"] = {
+                        name: row_metrics(g, r) for name, g, r in zip(("out", "dq", "dk", "dv"), got, reference)
+                    }
                 row["status"] = "ok"
-            except RuntimeError as error:
+            except (RuntimeError, ValueError, ImportError) as error:
                 row.update(status="error", error=str(error))
             rows.append(row)
             print(json.dumps(row), flush=True)
@@ -227,7 +280,7 @@ def main():
         "rows": rows,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2) + "\n")
+    args.output.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n")
 
 
 if __name__ == "__main__":

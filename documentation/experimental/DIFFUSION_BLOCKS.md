@@ -71,12 +71,12 @@ Keep the controller alive for the lifetime of the pipeline. It selects the layer
 
 ## Anima example
 
-The tuned example is `simpletuner/examples/anima.peft-lora+diffusion-blocks/config.json`. Anima v1.0 has 28 denoiser layers; `layers_per_block=4` creates seven blocks.
+The tuned example is `simpletuner/examples/anima/base-v1.0/default/peft-lora+diffusion-blocks/config.json`. Anima v1.0 has 28 denoiser layers; `layers_per_block=4` creates seven blocks.
 
 For a smoke test, use a short run first:
 
 ```bash
-simpletuner train env=examples/anima.peft-lora+diffusion-blocks \
+simpletuner train env=examples/anima/base-v1.0/default/peft-lora+diffusion-blocks \
   max_train_steps=10 \
   validation_steps=10
 ```

@@ -142,7 +142,7 @@ cp config/config.json.example config/config.json
 
 > ⚠️ **24GB GPU 关键点**：仅文本编码器就需 ~16GB VRAM。`int2-quanto` 或 `nf4-bnb` 可大幅降低。
 
-内置 `qwen_image.peft-lora` 示例现在训练 2.1。旧版应使用显式配置运行 `simpletuner train`，不要使用该示例。
+内置 `qwen_image/v2.1/default/peft-lora` 示例现在训练 2.1。旧版应使用显式配置运行 `simpletuner train`，不要使用该示例。
 
 ### 高级实验功能
 

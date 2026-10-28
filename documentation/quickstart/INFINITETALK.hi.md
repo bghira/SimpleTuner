@@ -23,10 +23,10 @@ pip install 'simpletuner[cuda]'
 
 | VRAM | फ्रेम | वज़न | रेजिडेंसी | उदाहरण |
 | --- | ---: | --- | --- | --- |
-| 24 GB | 17 | bf16 | सभी ब्लॉक RamTorch | `infinitetalk-14b-480p-24gb.peft-lora` |
-| 32 GB | 17 | int8 TorchAO | 20 ब्लॉक स्वैप | `infinitetalk-14b-480p-32gb.peft-lora` |
-| 48 GB | 33 | bf16 | 24 ब्लॉक स्वैप | `infinitetalk-14b-480p-48gb.peft-lora` |
-| 80 GB | 49 | bf16 | रेजिडेंट | `infinitetalk-14b-480p-80gb.peft-lora` |
+| 24 GB | 17 | bf16 | सभी ब्लॉक RamTorch | `infinitetalk/single-14b-480p/24g/14b-480p.peft-lora` |
+| 32 GB | 17 | int8 TorchAO | 20 ब्लॉक स्वैप | `infinitetalk/single-14b-480p/32g/14b-480p.peft-lora` |
+| 48 GB | 33 | bf16 | 24 ब्लॉक स्वैप | `infinitetalk/single-14b-480p/48g/14b-480p.peft-lora` |
+| 80 GB | 49 | bf16 | रेजिडेंट | `infinitetalk/single-14b-480p/80g/14b-480p.peft-lora` |
 
 ## डेटा
 
@@ -46,7 +46,7 @@ pip install 'simpletuner[cuda]'
 
 ```bash
 simpletuner train \
-  --config simpletuner/examples/infinitetalk-14b-480p-80gb.peft-lora/config.json
+  --config simpletuner/examples/infinitetalk/single-14b-480p/80g/14b-480p.peft-lora/config.json
 ```
 
 ```json

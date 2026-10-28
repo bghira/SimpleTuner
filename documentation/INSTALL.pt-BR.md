@@ -30,6 +30,8 @@ pip install 'simpletuner[jxl]'
 pip install 'simpletuner[dev]'
 ```
 
+Os extras `cuda` e `cuda13` incluem CUTLASS DSL, TVM FFI e Ninja para KohakuFA-CuTe. Tenha um compilador C++17 disponível; a extensão é compilada no primeiro uso.
+
 ### Método via repositório Git
 
 Para desenvolvimento local ou testes, você pode clonar o repositório SimpleTuner e configurar o venv do Python:

@@ -18,18 +18,18 @@ pip install 'simpletuner[cuda]'
 
 ## VRAM के अनुसार preset चुनें
 
-मानक उदाहरण [assistant v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3), synthetic regularisation, REPA और automatic flow shift जोड़ते हैं। डिफ़ॉल्ट `qwen_image.peft-lora` में 48 GB preset वाली 512px + 1024px विधि है। 24/32 GB presets में validation सहित केवल 512px है।
+मानक उदाहरण [assistant v3](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v3), synthetic regularisation, REPA और automatic flow shift जोड़ते हैं। डिफ़ॉल्ट `qwen_image/v2.1/default/peft-lora` में 48 GB preset वाली 512px + 1024px विधि है। 24/32 GB presets में validation सहित केवल 512px है।
 
 | VRAM बजट | उदाहरण | आधार रिज़ॉल्यूशन | अपडेट | ग्रेडिएंट चेकपॉइंटिंग अंतराल |
 | --- | --- | --- | --- | --- |
-| 24 GB | `qwen_image-2.1-24g.peft-lora` | 512px | 2000 | 1 |
-| 32 GB | `qwen_image-2.1-32g.peft-lora` | 512px | 2000 | 2 |
-| 48 GB | `qwen_image-2.1-48g.peft-lora` | 512px + 1024px | 4000 | 2 |
-| 80 GB | `qwen_image-2.1-80g.peft-lora` | 512px + 1024px | 4000 | 2 |
-| 144 GB | `qwen_image-2.1-144g.peft-lora` | 512px + 1024px | 4000 | 2 |
+| 24 GB | `qwen_image/v2.1/24g/peft-lora` | 512px | 2000 | 1 |
+| 32 GB | `qwen_image/v2.1/32g/peft-lora` | 512px | 2000 | 2 |
+| 48 GB | `qwen_image/v2.1/48g/peft-lora` | 512px + 1024px | 4000 | 2 |
+| 80 GB | `qwen_image/v2.1/80g/peft-lora` | 512px + 1024px | 4000 | 2 |
+| 144 GB | `qwen_image/v2.1/144g/peft-lora` | 512px + 1024px | 4000 | 2 |
 
 ```bash
-simpletuner train example=qwen_image-2.1-48g.peft-lora
+simpletuner train example=qwen_image/v2.1/48g/peft-lora
 ```
 
 सभी प्रीसेट BF16, rank/alpha 32, batch 1, `1e-4` पर AdamW BF16, 25 वार्मअप अपडेट और 1.0 नॉर्म क्लिपिंग इस्तेमाल करते हैं। REPA में `dinov2_vitg14`, ब्लॉक 8, वज़न 0.5, एन्कोडर आकार 518, स्थानिक संरेखण और समय दूरी 0 है। ऑटो शिफ्ट चालू और स्थिर शिफ्ट 0 है। सहायक प्रशिक्षण में स्थिर और वैलिडेशन में निष्क्रिय रहता है। नियमितीकरण का लक्ष्य दोनों अडैप्टर बंद करके बेस मॉडल की भविष्यवाणी से बनता है।
@@ -179,9 +179,9 @@ Stage 1 को 20,000 updates तक बढ़ाने से पहले 2,00
 अलग-अलग caption lengths के लिए dynamic compilation चालू है। `schedule_shift: 2.000802574061872` जारी scheduler की 1024px (4,096 latent tokens) सेटिंग से मेल खाता है; resolution बदलने पर इसे दोबारा गणना करें।
 
 ```bash
-simpletuner train example=qwen_image-2.1-anyflow-stage1.peft-lora
-simpletuner train example=qwen_image-2.1-anyflow-stage2.peft-lora
-simpletuner train example=qwen_image-2.1-anyflow-stage3.peft-lora
+simpletuner train example=qwen_image/v2.1/default/anyflow-stage1.peft-lora
+simpletuner train example=qwen_image/v2.1/default/anyflow-stage2.peft-lora
+simpletuner train example=qwen_image/v2.1/default/anyflow-stage3.peft-lora
 ```
 
 Stages 2 और 3 पिछले stage का अंतिम adapter `init_lora` से लोड करते हैं और optimizer तथा dataloader की नई state शुरू करते हैं। Sampling weights उपलब्ध datasets के बीच चयन नियंत्रित करते हैं; अंतिम sample प्रतिशत की गारंटी नहीं देते। यह सीमित पायलट पूरे prior corpora को कवर नहीं करता। String वाला `long_caption` मौजूदा Webshart caption selector के साथ काम करता है; native JSON-object caption support आवश्यक नहीं है।
@@ -207,7 +207,7 @@ Stages 1 और 2 में `diffusion_target: "base_prediction"` तथा `fus
 
 ### कैप्शन से सहायक LoRA का प्रशिक्षण
 
-`qwen_image-2.1-assistant-lora.peft-lora` L40S के लिए प्रयोगात्मक प्रारंभिक सेटिंग है: BF16, बैच 1, अंतराल 2 पर ग्रेडिएंट चेकपॉइंटिंग, rank 32 और `1e-4` पर AdamW BF16। इसमें 1,000 अपडेट का बजट है और हर 50 अपडेट पर सत्यापन तथा सेव होता है। वास्तविक प्रशिक्षण से पहले बारह परीक्षण कैप्शन को विविध कैप्शन से बदलें; इस सेटिंग के अभिसरण की पुष्टि नहीं हुई है।
+`qwen_image/v2.1/default/assistant-lora.peft-lora` L40S के लिए प्रयोगात्मक प्रारंभिक सेटिंग है: BF16, बैच 1, अंतराल 2 पर ग्रेडिएंट चेकपॉइंटिंग, rank 32 और `1e-4` पर AdamW BF16। इसमें 1,000 अपडेट का बजट है और हर 50 अपडेट पर सत्यापन तथा सेव होता है। वास्तविक प्रशिक्षण से पहले बारह परीक्षण कैप्शन को विविध कैप्शन से बदलें; इस सेटिंग के अभिसरण की पुष्टि नहीं हुई है।
 
 `grad_clip_method: "norm"`, `max_grad_norm: 1.0`.
 
@@ -227,7 +227,7 @@ Qwen Image 2.1 LoRA प्रशिक्षण अब डिफ़ॉल्ट 
 
 #### चार बेस रिज़ॉल्यूशन और आस्पेक्ट रेशियो बकेट वाला असिस्टेंट प्रयोग
 
-`qwen_image-2.1-assistant-lora-multires.peft-lora` 512, 1024, 1536 और 2048 बेस रिज़ॉल्यूशन के कुल 12 आस्पेक्ट रेशियो बकेट को क्रम से दोहराता है। हर बेस पर वर्गाकार, 4:7 पोर्ट्रेट और 7:4 लैंडस्केप बकेट हैं; हर बैच एक बकेट इस्तेमाल करता है और पूरे चक्र में हर बेस और आस्पेक्ट को बराबर एक्सपोज़र मिलता है। इसमें मूल उदाहरण के 40 teacher steps, BF16 batch 1, हर 2 blocks पर checkpointing, rank 32, AdamW BF16 और 1,000 updates बने रहते हैं। यह वही caption backend और validation prompts इस्तेमाल करता है। परीक्षण captions को baseline में इस्तेमाल किए गए उसी विविध caption सेट से बदलें। नए output directory में नया adapter और optimizer शुरू करें; `resume_from_checkpoint: ""` से resume बंद रहता है। तुलना के लिए पहले run के weights सुरक्षित रखें।
+`qwen_image/v2.1/default/assistant-lora-multires.peft-lora` 512, 1024, 1536 और 2048 बेस रिज़ॉल्यूशन के कुल 12 आस्पेक्ट रेशियो बकेट को क्रम से दोहराता है। हर बेस पर वर्गाकार, 4:7 पोर्ट्रेट और 7:4 लैंडस्केप बकेट हैं; हर बैच एक बकेट इस्तेमाल करता है और पूरे चक्र में हर बेस और आस्पेक्ट को बराबर एक्सपोज़र मिलता है। इसमें मूल उदाहरण के 40 teacher steps, BF16 batch 1, हर 2 blocks पर checkpointing, rank 32, AdamW BF16 और 1,000 updates बने रहते हैं। यह वही caption backend और validation prompts इस्तेमाल करता है। परीक्षण captions को baseline में इस्तेमाल किए गए उसी विविध caption सेट से बदलें। नए output directory में नया adapter और optimizer शुरू करें; `resume_from_checkpoint: ""` से resume बंद रहता है। तुलना के लिए पहले run के weights सुरक्षित रखें।
 
 यह प्रयोग जाँचता है कि कई image sizes से assistant बेहतर होता है या नहीं; यह native resolution की आवश्यकता या गुणवत्ता लाभ का प्रमाण नहीं है। L40S पर 1,000 अपडेट सभी 12 buckets के साथ पूरे हुए और 1024×1024 तथा 2048×2048 पर validation हुआ। अंतिम लोमड़ी और portrait की तस्वीरें सुसंगत रहीं, लेकिन tiled VAE decoding की ज्ञात रंगीन सीमाएँ मौजूद थीं। Teacher बिना VAE decoding के latent targets बनाता है। बाद के concept training में लाभ अभी सत्यापित नहीं है।
 
@@ -239,7 +239,7 @@ Assistant LoRA में AnyFlow की तरह run के दायरे म
 
 #### दोबारा उपयोग की जा सकने वाली जनरेटेड छवियों से सहायक LoRA
 
-`qwen_image-2.1-assistant-lora-offline.peft-lora` Webshart से [10,000 जनरेटेड छवियों](https://huggingface.co/datasets/webshart/qwen-image-2.1-generated-images) पर प्रशिक्षण करता है। डेटासेट CC12M के `long_caption` प्रॉम्प्ट, शिक्षक के 40 नेटिव स्टेप, CFG 1 और पूरी छवि की VAE डिकोडिंग का उपयोग करता है। बारह इमेज बैकएंड 512, 1024, 1536 और 2048 बेस रिज़ॉल्यूशन पर वर्गाकार, पोर्ट्रेट और लैंडस्केप बकेट देते हैं। सभी का सैंपलिंग भार समान है और repeats शून्य हैं।
+`qwen_image/v2.1/default/assistant-lora-offline.peft-lora` Webshart से [10,000 जनरेटेड छवियों](https://huggingface.co/datasets/webshart/qwen-image-2.1-generated-images) पर प्रशिक्षण करता है। डेटासेट CC12M के `long_caption` प्रॉम्प्ट, शिक्षक के 40 नेटिव स्टेप, CFG 1 और पूरी छवि की VAE डिकोडिंग का उपयोग करता है। बारह इमेज बैकएंड 512, 1024, 1536 और 2048 बेस रिज़ॉल्यूशन पर वर्गाकार, पोर्ट्रेट और लैंडस्केप बकेट देते हैं। सभी का सैंपलिंग भार समान है और repeats शून्य हैं।
 
 यह नई शुरुआत वाली विधि सुधारे गए `adamw_bf16`, LR `1e-4`, `grad_clip_method: "norm"`, `max_grad_norm: 1.0`, BF16 बैच 1, रैंक 32 और हर दो ब्लॉक पर चेकपॉइंटिंग का उपयोग करती है। इसमें 1,000 अपडेट, हर 50 पर सेव और हर 100 पर 1024 में वैलिडेशन है। प्रकाशित करने से पहले अलग से 2048px प्रीव्यू बनाएँ। VAE tiling बंद है और एन्कोडिंग बैच 1 है। `vae_cache_ondemand: true` सैंपल चुने जाने पर छवियों को एन्कोड और कैश करता है, जिससे 1,000 अपडेट से पहले सभी 10,000 छवियों को एन्कोड नहीं करना पड़ता। सामान्य इमेज प्रशिक्षण ऑनलाइन शिक्षक जनरेशन की जगह लेता है; नया सहायक बनाते समय `distillation_method` छोड़ें और `disable_assistant_lora: true` रखें।
 
@@ -248,7 +248,7 @@ Assistant LoRA में AnyFlow की तरह run के दायरे म
 [बदले गए v1 सहायक](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-training-assistant-v1) ने L40S पर इस विधि के 1,000 अपडेट पूरे किए; अंतिम छवियों की 1024 और 2048 पर समीक्षा की गई। इसके बाद Domokun की समान परिस्थितियों वाली तुलना में 2048, LR `1e-4` और norm clipping 1.0 पर दोनों रन को 1,000 अपडेट दिए गए। सहायक प्रशिक्षण में frozen और validation में बंद रहा। नियंत्रण और सहायक वाले दोनों रन ने चरित्र के दोनों प्रॉम्प्ट पर अब भी लोगों की छवियाँ बनाईं। नियंत्रण ने एक असंबंधित लोमड़ी प्रॉम्प्ट में Domokun के स्पष्ट लक्षण डाल दिए; सहायक वाले रन ने पहचानने योग्य लोमड़ी बनाए रखी। दोनों में पोर्ट्रेट सुसंगत रहा। यह अवधारणा के दूसरे प्रॉम्प्ट में फैलने में कमी का सीमित प्रमाण है, सफल चरित्र सीखने या सामान्य गुणवत्ता लाभ का नहीं; मूल्यांकन में एक training seed और चार प्रॉम्प्ट हैं।
 
 ```bash
-simpletuner train example=qwen_image-2.1-assistant-lora-offline.peft-lora
+simpletuner train example=qwen_image/v2.1/default/assistant-lora-offline.peft-lora
 ```
 
 </details>

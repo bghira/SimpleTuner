@@ -373,6 +373,27 @@ class CollateFunctionTests(unittest.TestCase):
         self.assertIsNone(result["prompt_embeds"])
         active_mocks[9].assert_not_called()
 
+    def test_text_conditioning_mask_tracks_selected_captions(self):
+        backend_dict = {
+            "data_backend": _make_stub_data_backend(),
+            "config": {"instance_data_dir": "/train"},
+        }
+        model = _StubModel(uses_text_embeddings_cache=False)
+        for caption, dropout, expected in (("caption", 0.0, True), ("", 0.0, False), ("caption", 1.0, False)):
+            with self.subTest(caption=caption, dropout=dropout):
+                self.base_args.caption_dropout_probability = dropout
+                batch = copy.deepcopy(self.base_batch)
+                batch[0]["training_samples"][0]["instance_prompt_text"] = caption
+                patchers, _ = self._patch_state_tracker(
+                    model=model, data_backend=backend_dict, text_outputs={}, backend_lookup={"backend-1": backend_dict}
+                )
+                with ExitStack() as stack:
+                    for patcher in patchers:
+                        stack.enter_context(patcher)
+                    result = collate_fn(batch)
+
+                torch.testing.assert_close(result["text_conditioning_mask"], torch.tensor([expected]))
+
     def test_compute_latents_uses_backend_ondemand_mode(self):
         vae_cache = SimpleNamespace(
             vae_cache_ondemand=True,

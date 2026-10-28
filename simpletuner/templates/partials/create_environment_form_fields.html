@@ -20,8 +20,7 @@
     <select class="form-select"
             x-model="newEnvironment.model_family"
             required
-            :disabled="exampleLocked"
-            @change="loadModelFlavours($event.target.value); newEnvironment.model_flavour=null;">
+            @change="handleModelFamilyChange($event.target.value)">
         <option value="" disabled>Select a model family</option>
         <template x-for="family in modelFamilies" :key="family">
             <option :value="family" x-text="family"></option>
@@ -54,7 +53,7 @@
             x-model="newEnvironment.example"
             @change="handleExampleSelection($event.target.value)">
         <option value="">None</option>
-        <template x-for="example in examples" :key="example.name">
+        <template x-for="example in filteredExamples" :key="example.name">
             <option :value="example.name" x-text="example.name"></option>
         </template>
     </select>

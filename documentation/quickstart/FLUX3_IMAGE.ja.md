@@ -25,18 +25,18 @@ GPU メモリ（VRAM）によって同時に処理できる画像数が決まり
 
 | GPU メモリ | Base 設定例 | 512 / 1024 のバッチ内画像数 |
 | --- | --- | --- |
-| 24 GB | `flux3_image-24g.peft-lora` | 3 / — |
-| 32 GB | `flux3_image-32g.peft-lora` | 4 / — |
-| 48 GB | `flux3_image-48g.peft-lora` | 9 / 2 |
-| 80 GB | `flux3_image-80g.peft-lora` | 18 / 5 |
-| 144 GB | `flux3_image-144g.peft-lora` | 36 / 10 |
+| 24 GB | `flux3_image/klein-base/24g/peft-lora` | 3 / — |
+| 32 GB | `flux3_image/klein-base/32g/peft-lora` | 4 / — |
+| 48 GB | `flux3_image/klein-base/48g/peft-lora` | 9 / 2 |
+| 80 GB | `flux3_image/klein-base/80g/peft-lora` | 18 / 5 |
+| 144 GB | `flux3_image/klein-base/144g/peft-lora` | 36 / 10 |
 
 蒸留版の `klein` には次のレシピを選びます。後述の設定コピーコマンドで、例の名前全体を置き換えてください。学習スケールは正方形に換算した面積を表し、画像の縦横比は維持されます。
 
 | GPU メモリ | 蒸留版の設定例 | 学習スケール | バッチ内画像数 |
 | --- | --- | --- | ---: |
-| 24 GB | `flux3_image-klein-24g.peft-lora` | 768px | 1 |
-| 80 GB | `flux3_image-klein-80g.peft-lora` | 1024px | 4 |
+| 24 GB | `flux3_image/klein/24g/peft-lora` | 768px | 1 |
+| 80 GB | `flux3_image/klein/80g/peft-lora` | 1024px | 4 |
 
 表のバッチ数を出発点にしてください。長いキャプションや参照画像はメモリを多く使うため、不足時は `train_batch_size` を下げます。設定例は rank 32 LoRA、学習率 `1e-4`、画像特徴を比較する REPA を使います。付属 dataloader は被写体画像と正則化画像を組み合わせ、モデルの幅広い画像知識の保持を助けます。
 
@@ -60,13 +60,15 @@ datasets/my-concept/
 
 ## 学習設定を作る
 
-選んだレシピをコピーします。以下は `flux3_image-48g.peft-lora` の例です。名前全体を、選択した Base または蒸留版のレシピに置き換えてください。
+選んだレシピをコピーします。以下は `flux3_image/klein-base/48g/peft-lora` の例です。名前全体を、選択した Base または蒸留版のレシピに置き換えてください。
 
 ```bash
-mkdir -p config/examples
-cp -R simpletuner/examples/flux3_image-48g.peft-lora config/examples/
-cp simpletuner/examples/flux3_image-prompts.json config/examples/
-cp config/examples/flux3_image-48g.peft-lora/config.json config/config.json
+mkdir -p config/examples/_shared
+mkdir -p config/examples/flux3_image/klein-base/48g
+cp -R simpletuner/examples/flux3_image/klein-base/48g/peft-lora config/examples/flux3_image/klein-base/48g/
+mkdir -p config/examples/_shared
+cp simpletuner/examples/_shared/flux3_image-prompts.json config/examples/_shared/
+cp config/examples/flux3_image/klein-base/48g/peft-lora/config.json config/config.json
 ```
 
 テキストエディターで `config/config.json` を開きます。最初に上記のローカル画像で実行する場合、既存の設定内で次の値を変更します。
@@ -79,7 +81,7 @@ cp config/examples/flux3_image-48g.peft-lora/config.json config/config.json
 }
 ```
 
-バッチ数 1 なら少数の画像で開始できます。最初の実行が成功し、画像数とメモリに余裕があれば増やしてください。`max_train_steps` で学習の長さを調整します。`config/examples/flux3_image-prompts.json` に被写体の単語を含むプロンプトを書き、学習中の進捗画像に使います。
+バッチ数 1 なら少数の画像で開始できます。最初の実行が成功し、画像数とメモリに余裕があれば増やしてください。`max_train_steps` で学習の長さを調整します。`config/examples/_shared/flux3_image-prompts.json` に被写体の単語を含むプロンプトを書き、学習中の進捗画像に使います。
 
 以下を `config/dataloader.json` に保存します。画像の場所、キャプションの読み方、キャッシュの保存先を指定するファイルです。
 
@@ -204,6 +206,6 @@ image.save("my-flux3-image.png")
 
 `model_flavour: "klein"` の LoRA 学習では、[公開済みの学習用アシスタント](https://huggingface.co/SimpleTuner/flux-3-klein-image-training-assistant)を凍結したアダプターとして自動で読み込みます。学習時の `assistant_lora_strength` は既定で `1.0`、検証時の `assistant_lora_inference_strength` は `0.0` です。無効にするには `disable_assistant_lora: true` を設定します。別のアダプターを使う場合は `assistant_lora_path` と、必要に応じて `assistant_lora_weight_name` を指定します。
 
-独自のアシスタントを学習するには `flux3_image-assistant-lora.peft-lora` を選びます。このレシピは既存のアシスタントを無効にし、モデルが生成したサンプルから学習します。完了後、蒸留版の LoRA 設定で `assistant_lora_path` に保存先を指定してください。
+独自のアシスタントを学習するには `flux3_image/klein/default/assistant-lora.peft-lora` を選びます。このレシピは既存のアシスタントを無効にし、モデルが生成したサンプルから学習します。完了後、蒸留版の LoRA 設定で `assistant_lora_path` に保存先を指定してください。
 
 追加設定は[オプションリファレンス](../OPTIONS.ja.md)を参照してください。TwinFlow は `twinflow_enabled: true` と `use_ema: true` を同時に設定します。EMA はこの学習方法で使う教師モデルを維持します。

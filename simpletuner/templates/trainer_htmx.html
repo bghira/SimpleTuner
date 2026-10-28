@@ -6360,21 +6360,51 @@ function trainerComponent() {
                                             <small class="text-muted">A unique identifier for your training configuration</small>
                                         </div>
 
-                                        <!-- Row 2: Bootstrap From Example (full width, moved up for visibility) -->
-                                        <div class="env-form-field env-form-field--full">
+                                        <!-- Row 2: Model Family + Model Flavour (side by side) -->
+                                        <div class="env-form-field">
                                             <label class="form-label">
                                                 <span class="field-badge">2</span>
+                                                Model Family <span class="text-danger">*</span>
+                                            </label>
+                                            <select class="form-select"
+                                                    :class="{'is-invalid': !newEnvironment.model_family}"
+                                                    x-model="newEnvironment.model_family"
+                                                    required
+                                                    @change="handleModelFamilyChange($event.target.value)">
+                                                <option value="" disabled>Select model...</option>
+                                                <template x-for="family in modelFamilies" :key="family">
+                                                    <option :value="family" x-text="family"></option>
+                                                </template>
+                                            </select>
+                                        </div>
+                                        <div class="env-form-field">
+                                            <label class="form-label">
+                                                <span class="field-badge field-badge--optional">2b</span>
+                                                Model Flavour
+                                            </label>
+                                            <select class="form-select" x-model="newEnvironment.model_flavour" :disabled="exampleLocked">
+                                                <option value="">Default</option>
+                                                <template x-for="flavour in modelFlavours" :key="flavour">
+                                                    <option :value="flavour" x-text="flavour"></option>
+                                                </template>
+                                            </select>
+                                        </div>
+
+                                        <!-- Row 3: Bootstrap From Example -->
+                                        <div class="env-form-field env-form-field--full">
+                                            <label class="form-label">
+                                                <span class="field-badge">3</span>
                                                 Bootstrap From Example
                                             </label>
                                             <select class="form-select"
                                                     x-model="newEnvironment.example"
                                                     @change="handleExampleSelection($event.target.value)">
                                                 <option value="">Start fresh (manual configuration)</option>
-                                                <template x-for="example in examples" :key="example.name">
+                                                <template x-for="example in filteredExamples" :key="example.name">
                                                     <option :value="example.name" x-text="example.name"></option>
                                                 </template>
                                             </select>
-                                            <div class="form-hint mt-2" x-show="examples.length > 0">
+                                            <div class="form-hint mt-2" x-show="filteredExamples.length > 0">
                                                 <i class="fas fa-lightbulb text-warning me-2 flex-shrink-0"></i>
                                                 <div>
                                                     <strong>Highly recommended:</strong> Examples provide working configurations with a demo dataset
@@ -6384,41 +6414,10 @@ function trainerComponent() {
                                                     "this will work, see?" starting points.
                                                 </div>
                                             </div>
-                                            <div class="alert alert-info py-2 mt-2" x-show="examples.length === 0 && !loadingInitialData">
+                                            <div class="alert alert-info py-2 mt-2" x-show="filteredExamples.length === 0 && !loadingInitialData">
                                                 <i class="fas fa-info-circle me-2"></i>
                                                 No example configurations found. You'll configure settings manually.
                                             </div>
-                                        </div>
-
-                                        <!-- Row 3: Model Family + Model Flavour (side by side) -->
-                                        <div class="env-form-field">
-                                            <label class="form-label">
-                                                <span class="field-badge">3</span>
-                                                Model Family <span class="text-danger">*</span>
-                                            </label>
-                                            <select class="form-select"
-                                                    :class="{'is-invalid': !newEnvironment.model_family}"
-                                                    x-model="newEnvironment.model_family"
-                                                    required
-                                                    :disabled="exampleLocked"
-                                                    @change="loadModelFlavours($event.target.value); newEnvironment.model_flavour=null;">
-                                                <option value="" disabled>Select model...</option>
-                                                <template x-for="family in modelFamilies" :key="family">
-                                                    <option :value="family" x-text="family"></option>
-                                                </template>
-                                            </select>
-                                        </div>
-                                        <div class="env-form-field">
-                                            <label class="form-label">
-                                                <span class="field-badge field-badge--optional">3b</span>
-                                                Model Flavour
-                                            </label>
-                                            <select class="form-select" x-model="newEnvironment.model_flavour" :disabled="exampleLocked">
-                                                <option value="">Default</option>
-                                                <template x-for="flavour in modelFlavours" :key="flavour">
-                                                    <option :value="flavour" x-text="flavour"></option>
-                                                </template>
-                                            </select>
                                         </div>
 
                                         <!-- Row 4: Model Type + LoRA Type (side by side) -->

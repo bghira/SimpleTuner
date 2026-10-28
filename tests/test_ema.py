@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import torch
 
@@ -105,6 +106,101 @@ class TestEMAModel(unittest.TestCase):
 
         state_dict = ema_model.state_dict(exclude_params=True)
         self.assertEqual(state_dict["warmup_steps"], 3)
+
+    def test_low_precision_parameters_accumulate_small_updates_in_fp32(self):
+        devices = ["cpu"]
+        if torch.cuda.is_available():
+            devices.append("cuda")
+        if torch.backends.mps.is_available():
+            devices.append("mps")
+        for device in devices:
+            for dtype in (torch.bfloat16, torch.float16):
+                for foreach in (False, True):
+                    with self.subTest(device=device, dtype=dtype, foreach=foreach):
+                        parameter = torch.nn.Parameter(torch.ones(4, dtype=dtype, device=device))
+                        frozen = torch.nn.Parameter(torch.ones(4, dtype=dtype, device=device), requires_grad=False)
+                        ema_model = EMAModel(
+                            args=self.args,
+                            accelerator=None,
+                            parameters=[parameter, frozen],
+                            decay=0.995,
+                            min_decay=0.995,
+                            foreach=foreach,
+                        )
+                        with torch.no_grad():
+                            parameter.add_(torch.finfo(dtype).eps)
+                            frozen.fill_(2.0)
+                        expected = torch.ones(4, dtype=torch.float32, device=device)
+                        with patch("torch._foreach_sub_", wraps=torch._foreach_sub_) as foreach_sub:
+                            for step in range(2, 130):
+                                expected.sub_(0.005 * (expected - parameter.float()))
+                                ema_model.step([parameter, frozen], global_step=step)
+
+                        self.assertEqual(ema_model.shadow_params[0].dtype, torch.float32)
+                        torch.testing.assert_close(ema_model.shadow_params[0], expected, rtol=0, atol=1e-7)
+                        self.assertTrue(torch.all(ema_model.shadow_params[0] > 1.0))
+                        torch.testing.assert_close(ema_model.shadow_params[1], frozen.float())
+                        self.assertEqual(foreach_sub.call_count, 128 if foreach else 0)
+                        self.assertEqual(parameter.dtype, dtype)
+
+    def test_device_transfers_preserve_fp32_accumulator(self):
+        parameter = torch.nn.Parameter(torch.ones(4, dtype=torch.bfloat16))
+        ema_model = EMAModel(args=self.args, accelerator=None, parameters=[parameter])
+        ema_model.shadow_params[0].fill_(1.001)
+
+        self.assertIs(ema_model.cpu(), ema_model)
+        self.assertIs(ema_model.to(device="cpu", non_blocking=True), ema_model)
+
+        self.assertEqual(ema_model.shadow_params[0].dtype, torch.float32)
+        torch.testing.assert_close(ema_model.shadow_params[0], torch.full((4,), 1.001))
+
+    def test_validation_copy_and_restore_preserve_model_dtype_and_ema_precision(self):
+        for foreach in (False, True):
+            with self.subTest(foreach=foreach):
+                parameter = torch.nn.Parameter(torch.full((4,), 2.0, dtype=torch.bfloat16))
+                ema_model = EMAModel(args=self.args, accelerator=None, parameters=[parameter], foreach=foreach)
+                ema_model.shadow_params[0].fill_(1.001)
+                shadow_before = ema_model.shadow_params[0].clone()
+                original = parameter.detach().clone()
+
+                ema_model.store([parameter])
+                ema_model.copy_to([parameter])
+                self.assertEqual(parameter.dtype, torch.bfloat16)
+                torch.testing.assert_close(parameter, shadow_before.to(torch.bfloat16))
+                ema_model.restore([parameter])
+
+                torch.testing.assert_close(parameter, original)
+                self.assertEqual(ema_model.shadow_params[0].dtype, torch.float32)
+                torch.testing.assert_close(ema_model.shadow_params[0], shadow_before, rtol=0, atol=0)
+
+    def test_checkpoint_resume_preserves_fp32_and_loads_legacy_bf16_shadows(self):
+        for saved_dtype in (torch.float32, torch.bfloat16):
+            with self.subTest(saved_dtype=saved_dtype), tempfile.TemporaryDirectory() as temp_dir:
+                parameter = torch.nn.Parameter(torch.ones(4, dtype=torch.bfloat16))
+                ema_model = EMAModel(args=self.args, accelerator=None, parameters=[parameter], foreach=False)
+                state = ema_model.state_dict()
+                state["shadow_params.0"] = torch.full((4,), 1.001, dtype=saved_dtype)
+                state["optimization_step"] = 37000
+                state["decay"] = 0.995
+                path = os.path.join(temp_dir, "ema.pt")
+                torch.save(state, path)
+
+                ema_model.load_state_dict(path)
+                self.assertEqual(ema_model.optimization_step, 37000)
+                self.assertEqual(ema_model.shadow_params[0].dtype, torch.float32)
+                torch.testing.assert_close(ema_model.shadow_params[0], state["shadow_params.0"].float(), rtol=0, atol=0)
+
+                with torch.no_grad():
+                    parameter.fill_(1.0078125)
+                expected = state["shadow_params.0"].float()
+                expected = expected - 0.005 * (expected - parameter.float())
+                ema_model.step([parameter], global_step=37001)
+                torch.testing.assert_close(ema_model.shadow_params[0], expected, rtol=0, atol=1e-7)
+
+                ema_model.save_state_dict(path)
+                saved = torch.load(path, weights_only=True)
+                self.assertEqual(saved["shadow_params.0"].dtype, torch.float32)
+                torch.testing.assert_close(saved["shadow_params.0"], expected, rtol=0, atol=1e-7)
 
     def test_save_and_load_state_dict(self):
         with tempfile.TemporaryDirectory() as temp_dir:

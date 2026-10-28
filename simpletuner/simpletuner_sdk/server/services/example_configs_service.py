@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from simpletuner.helpers.configuration.examples import discover_examples
 from simpletuner.simpletuner_sdk.server.utils.paths import get_simpletuner_root, resolve_config_path
 
 try:  # pragma: no cover - optional dependency
@@ -135,13 +136,12 @@ class ExampleConfigsService:
             return []
 
         examples: List[ExampleConfigInfo] = []
-        for item in sorted(root.iterdir(), key=lambda p: p.name.lower()):
-            # Skip items without a dot in the name (not deployable examples)
-            example_name = item.stem if item.is_file() else item.name
-            if "." not in example_name:
+        for name, config_path in discover_examples(root).items():
+            if config_path.suffix != ".json":
                 continue
-            info = self._build_example_info(item)
+            info = self._build_example_info(config_path.parent)
             if info is not None:
+                info.name = name
                 examples.append(info)
         return examples
 

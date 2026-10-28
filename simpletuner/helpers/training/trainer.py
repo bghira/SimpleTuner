@@ -3765,6 +3765,8 @@ class Trainer:
                 if tensor is None or tensor.dtype == target_dtype:
                     continue
                 param.data = tensor.to(dtype=target_dtype)
+                if param.grad is not None:
+                    param.grad.data = param.grad.data.to(dtype=target_dtype)
                 converted += 1
 
         if converted > 0:
@@ -3776,6 +3778,21 @@ class Trainer:
                 target_dtype,
                 name_fragment,
             )
+
+    def _apply_adapter_model_precision(self, parameters=None):
+        if getattr(self.config, "adapter_model_precision", "no_change") != "fp32":
+            return
+        if parameters is None:
+            parameters = list(self._get_trainable_parameters())
+            if getattr(self.config, "train_text_encoder", False):
+                for encoder in self.model.text_encoders:
+                    if encoder is not None:
+                        parameters.extend(encoder.parameters())
+        trainable = []
+        for parameter_or_group in parameters:
+            group = parameter_or_group["params"] if isinstance(parameter_or_group, dict) else [parameter_or_group]
+            trainable.extend(parameter for parameter in group if parameter.requires_grad)
+        self._ensure_parameter_dtype(trainable, torch.float32, optimizer_name="adapter_model_precision=fp32")
 
     def _recalculate_training_steps(self):
         # Scheduler and math around the number of training steps.
@@ -4182,6 +4199,12 @@ class Trainer:
         AttentionBackendController.attach_parameter_sink(self.params_to_optimize)
         logger.info(f"Connecting optimizer to {trainable_parameter_count(self.params_to_optimize)} trainable parameters")
 
+        if getattr(self.config, "adapter_model_precision", "no_change") == "fp32" and optimizer_class is AdamWBF16:
+            raise ValueError(
+                "adapter_model_precision=fp32 is incompatible with adamw_bf16. Use torch-adamw or optimi-adamw."
+            )
+        self._apply_adapter_model_precision(self.params_to_optimize)
+
         if optimizer_class is AdamWBF16:
             if getattr(self.config, "weight_dtype", None) != torch.bfloat16:
                 logger.warning(
@@ -4446,10 +4469,7 @@ class Trainer:
 
         if self.config.ema_device == "accelerator":
             logger.info("Moving EMA model weights to accelerator...")
-        self.ema_model.to(
-            (self.accelerator.device if self.config.ema_device == "accelerator" else "cpu"),
-            dtype=self.config.weight_dtype,
-        )
+        self.ema_model.to(self.accelerator.device if self.config.ema_device == "accelerator" else "cpu")
 
         if self.config.ema_device == "cpu" and not self.config.ema_cpu_only:
             logger.info("Pinning EMA model weights to CPU...")
@@ -4626,14 +4646,15 @@ class Trainer:
             standalone_cp_prepare_config = getattr(accelerator_state, "parallelism_config", None)
             accelerator_state.parallelism_config = None
         try:
-            if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
-                results = self.accelerator.prepare(*prepare_targets)
-            else:
-                device_placement = [
-                    (False if label == "primary_model" and skip_model_device_placement else True)
-                    for label in prepared_labels
-                ]
-                results = self.accelerator.prepare(*prepare_targets, device_placement=device_placement)
+            with self.model.regional_compilation_context():
+                if self.accelerator.distributed_type == DistributedType.DEEPSPEED:
+                    results = self.accelerator.prepare(*prepare_targets)
+                else:
+                    device_placement = [
+                        (False if label == "primary_model" and skip_model_device_placement else True)
+                        for label in prepared_labels
+                    ]
+                    results = self.accelerator.prepare(*prepare_targets, device_placement=device_placement)
         finally:
             if hide_standalone_cp_from_accelerate_prepare:
                 accelerator_state.parallelism_config = standalone_cp_prepare_config
@@ -4703,7 +4724,8 @@ class Trainer:
         if hasattr(self.model, "before_accelerator_prepare"):
             self.model.before_accelerator_prepare()
 
-        prepared_model = self.accelerator.prepare_model(primary_model, evaluation_mode=True)
+        with self.model.regional_compilation_context():
+            prepared_model = self.accelerator.prepare_model(primary_model, evaluation_mode=True)
         prepared_model = rebind_prepared_forward(prepared_model, primary_model)
         self.model.set_prepared_model(prepared_model)
         prepared_model.eval()
@@ -5555,6 +5577,7 @@ class Trainer:
                 fsdp_version = getattr(fsdp_plugin, "fsdp_version", None)
 
         if is_accelerator_target and fsdp_active:
+            self._apply_adapter_model_precision()
             version_note = f" (v{fsdp_version})" if fsdp_version is not None else ""
             logger.info(
                 "FSDP%s detected; skipping manual model move so Accelerator.prepare can shard from the host device.",
@@ -5571,6 +5594,9 @@ class Trainer:
         else:
             target_device = destination
 
+        move_dtype = (
+            None if getattr(self.config, "adapter_model_precision", "no_change") == "fp32" else self.config.weight_dtype
+        )
         musubi_block_swap_active = getattr(self.config, "musubi_blocks_to_swap", 0) or 0 > 0
         ramtorch_enabled = getattr(self.config, "ramtorch", False)
         if self.model.get_trained_component() is not None:
@@ -5592,7 +5618,7 @@ class Trainer:
                 if self.config.is_quantized:
                     self.model.get_trained_component(unwrap_model=False).to(target_device)
                 else:
-                    self.model.get_trained_component(unwrap_model=False).to(target_device, dtype=self.config.weight_dtype)
+                    self.model.get_trained_component(unwrap_model=False).to(target_device, dtype=move_dtype)
                 self._report_cuda_usage_if_requested("after_move_trained_component")
             elif musubi_block_swap_active and is_accelerator_target:
                 self._move_model_with_block_swap(self.model.get_trained_component(unwrap_model=False))
@@ -5612,7 +5638,7 @@ class Trainer:
                     )
         if getattr(self.accelerator, "_lycoris_wrapped_network", None) is not None:
             self.accelerator._lycoris_wrapped_network = self.accelerator._lycoris_wrapped_network.to(
-                target_device, dtype=self.config.weight_dtype
+                target_device, dtype=move_dtype
             )
 
         AttentionBackendController.apply(self.config, AttentionPhase.TRAIN)
@@ -5643,9 +5669,11 @@ class Trainer:
                 if self.config.is_quantized:
                     self.model.unwrap_model(self.model.model).to(device=target_device)
                 else:
-                    self.model.unwrap_model(self.model.model).to(device=target_device, dtype=self.config.weight_dtype)
+                    self.model.unwrap_model(self.model.model).to(device=target_device, dtype=move_dtype)
             if self.config.train_text_encoder:
                 logger.warning("Unknown results will occur when finetuning the text encoder alongside ControlNet.")
+
+        self._apply_adapter_model_precision()
 
     def mark_optimizer_train(self):
         if is_lr_schedulefree(self.config.optimizer) and hasattr(self.optimizer, "train"):

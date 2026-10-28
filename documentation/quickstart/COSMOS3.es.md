@@ -72,12 +72,12 @@ pip install -e .
 
 | Ejemplo | Flavour | Dataset | Medio | Backend |
 | --- | --- | --- | --- | --- |
-| `cosmos3-image.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | imagen | `multidatabackend-cosmos3-domokun-512px.json` |
-| `cosmos3-image-48g.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | imagen, ajustado para 48 GB | `multidatabackend-cosmos3-domokun-1024-arb.json` |
-| `cosmos3-image-80g.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | imagen, ajustado para 80 GB | `multidatabackend-cosmos3-domokun-1024-arb.json` |
-| `cosmos3-video.lycoris-lokr` | `nano` | `sayakpaul/video-dataset-disney-organized` | video | `multidatabackend-cosmos3-disney-video-480p+49f.json` |
-| `cosmos3-video-audio.lycoris-lokr` | `nano` | `bghira/Synchronised-Drumming-Gemini3Captions` | video + audio | `multidatabackend-cosmos3-drumming-video-audio-480p+49f.json` |
-| `cosmos3-super-i2v.lycoris-lokr` | `super-i2v` | `sayakpaul/video-dataset-disney-organized` | imagen-a-video | `multidatabackend-cosmos3-disney-i2v-480p+49f.json` |
+| `cosmos3/nano/default/image.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | imagen | `multidatabackend-cosmos3-domokun-512px.json` |
+| `cosmos3/nano/48g/legacy-image.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | imagen, ajustado para 48 GB | `multidatabackend-cosmos3-domokun-1024-arb.json` |
+| `cosmos3/nano/80g/legacy-image.lycoris-lokr` | `nano` | `RareConcepts/Domokun` | imagen, ajustado para 80 GB | `multidatabackend-cosmos3-domokun-1024-arb.json` |
+| `cosmos3/nano/default/video.lycoris-lokr` | `nano` | `sayakpaul/video-dataset-disney-organized` | video | `multidatabackend-cosmos3-disney-video-480p+49f.json` |
+| `cosmos3/nano/default/video-audio.lycoris-lokr` | `nano` | `bghira/Synchronised-Drumming-Gemini3Captions` | video + audio | `multidatabackend-cosmos3-drumming-video-audio-480p+49f.json` |
+| `cosmos3/super-i2v/default/lycoris-lokr` | `super-i2v` | `sayakpaul/video-dataset-disney-organized` | imagen-a-video | `multidatabackend-cosmos3-disney-i2v-480p+49f.json` |
 
 Los ejemplos de imagen `48g` y `80g` son variantes de la receta nano image LoKr ajustadas por tamaño de memoria. Ambos usan el backend 1024px aspect-ratio. La config `48g` mantiene gradient checkpointing con `gradient_checkpointing_interval: 2`; la config `80g` desactiva gradient checkpointing y habilita `flash-attn-3-hub`.
 
@@ -96,7 +96,7 @@ Los ejemplos de imagen `48g` y `80g` son variantes de la receta nano image LoKr 
 ### Imagen
 
 - Dataset: [`RareConcepts/Domokun`](https://huggingface.co/datasets/RareConcepts/Domokun)
-- Backend: `config/examples/multidatabackend-cosmos3-domokun-512px.json`
+- Backend: `config/examples/_shared/multidatabackend-cosmos3-domokun-512px.json`
 - Tipo de backend: `huggingface`
 - Estrategia de captions: `instanceprompt`
 - Cache de text embeds: solo cache del reasoner
@@ -105,7 +105,7 @@ Los ejemplos de imagen `48g` y `80g` son variantes de la receta nano image LoKr 
 ### Video
 
 - Dataset: [`sayakpaul/video-dataset-disney-organized`](https://huggingface.co/datasets/sayakpaul/video-dataset-disney-organized)
-- Backend: `config/examples/multidatabackend-cosmos3-disney-video-480p+49f.json`
+- Backend: `config/examples/_shared/multidatabackend-cosmos3-disney-video-480p+49f.json`
 - Tipo de backend: `huggingface`
 - Columnas: `video`, `prompt`
 - Cache de text embeds: solo cache del reasoner
@@ -114,7 +114,7 @@ Los ejemplos de imagen `48g` y `80g` son variantes de la receta nano image LoKr 
 ### Video con audio
 
 - Dataset: [`bghira/Synchronised-Drumming-Gemini3Captions`](https://huggingface.co/datasets/bghira/Synchronised-Drumming-Gemini3Captions)
-- Backend: `config/examples/multidatabackend-cosmos3-drumming-video-audio-480p+49f.json`
+- Backend: `config/examples/_shared/multidatabackend-cosmos3-drumming-video-audio-480p+49f.json`
 - Tipo de backend: `local`
 - Archivos: videos `.mpeg` con captions `.txt` adyacentes
 - Cache de text embeds: solo cache del reasoner
@@ -144,7 +144,7 @@ Bloque de audio:
 ### Super-I2V
 
 - Dataset: [`sayakpaul/video-dataset-disney-organized`](https://huggingface.co/datasets/sayakpaul/video-dataset-disney-organized)
-- Backend: `config/examples/multidatabackend-cosmos3-disney-i2v-480p+49f.json`
+- Backend: `config/examples/_shared/multidatabackend-cosmos3-disney-i2v-480p+49f.json`
 - Tipo de backend: `huggingface`
 - Columnas: `video`, `prompt`
 - `video.is_i2v`: `true`
@@ -167,12 +167,12 @@ SimpleTuner crea el backend de referencia estricta desde esta marca.
 ## Ejecutar
 
 ```bash
-simpletuner train example=cosmos3-image.lycoris-lokr
-simpletuner train example=cosmos3-image-48g.lycoris-lokr
-simpletuner train example=cosmos3-image-80g.lycoris-lokr
-simpletuner train example=cosmos3-video.lycoris-lokr
-simpletuner train example=cosmos3-video-audio.lycoris-lokr
-simpletuner train example=cosmos3-super-i2v.lycoris-lokr
+simpletuner train example=cosmos3/nano/default/image.lycoris-lokr
+simpletuner train example=cosmos3/nano/48g/legacy-image.lycoris-lokr
+simpletuner train example=cosmos3/nano/80g/legacy-image.lycoris-lokr
+simpletuner train example=cosmos3/nano/default/video.lycoris-lokr
+simpletuner train example=cosmos3/nano/default/video-audio.lycoris-lokr
+simpletuner train example=cosmos3/super-i2v/default/lycoris-lokr
 ```
 
 ## Validacion

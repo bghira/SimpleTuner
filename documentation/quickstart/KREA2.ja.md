@@ -5,7 +5,7 @@
 スターター例:
 
 ```bash
-simpletuner/examples/krea2.peft-lora/config.json
+simpletuner/examples/krea2/raw/default/peft-lora/config.json
 ```
 
 ## 推奨スタート設定
@@ -19,7 +19,7 @@ simpletuner/examples/krea2.peft-lora/config.json
   "model_type": "lora",
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "mixed_precision": "bf16",
-  "attention_mechanism": "cudnn",
+  "attention_mechanism": "kohaku-fa",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "train_batch_size": 1,
@@ -39,7 +39,7 @@ TorchAO int8 weight-only は VRAM を大きく下げますが、今回テスト�
 
 - 入るなら `bf16` を使う。
 - メモリが足りない場合は `int8-torchao` を使う。
-- NVIDIA GPU では `attention_mechanism=cudnn` を使う。Krea2 の native SDPA path は、通常なら入る L40S クラスの run でも OOM するほどメモリを使うことがあります。
+- 対応する NVIDIA GPU では `attention_mechanism=kohaku-fa` を使用します。必要な依存パッケージは `cuda` と `cuda13` の extras に含まれています。
 - `gradient_checkpointing=true` を維持する。
 - `fuse_qkv_projections=true` を維持する。
 - `dynamo_backend=inductor`、`dynamo_mode=reduce-overhead`、`dynamo_use_regional_compilation=true` は、batch/resolution が入ることを確認してから使う。
@@ -54,7 +54,7 @@ TorchAO int8 weight-only は VRAM を大きく下げますが、今回テスト�
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "base_model_precision": "no_change",
   "mixed_precision": "bf16",
-  "attention_mechanism": "cudnn",
+  "attention_mechanism": "kohaku-fa",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "optimizer": "optimi-lion",
@@ -85,15 +85,19 @@ reduce-overhead compile:
 }
 ```
 
-### LyCORIS 4 LoKR のカーネルサイズ
+### LyCORIS のバージョン
 
-LyCORIS 4 の LoKR 学習で `kron apply factors too large for the kernel` が発生する場合は、トレーナーまたは WebUI の起動前に PyTorch カーネルバックエンドを選択してください。このエラーは実験的な Triton カーネルの因子サイズ制限によるものです。SimpleTuner の `torch.compile` は有効なままで構いません。コンパイルを無効にするだけでは LyCORIS のカーネルは切り替わりません。
+LoKR 学習には LyCORIS 4.1.3 以降を使用してください。このバージョンは大きな因子を処理でき、以前の 4.x バージョンで発生していた `kron apply factors too large for the kernel` エラーを解消します。
+
+既存のインストールを更新するには、SimpleTuner の環境で次を実行してください：
 
 ```bash
-export LYCORIS_KERNEL_BACKEND=torch
+pip install --upgrade "lycoris-lora>=4.1.3"
 ```
 
-[LyCORIS のカーネルバックエンド](https://github.com/KohakuBlueleaf/LyCORIS/blob/main/docs/kernels/backends.md).
+このエラーへの対処として `LYCORIS_KERNEL_BACKEND=torch` を設定していた場合は、起動環境からその設定を削除すると、バックエンドが自動選択されます。
+
+[LyCORIS 4.1.3 リリース](https://github.com/KohakuBlueleaf/LyCORIS/releases/tag/v4.1.3).
 
 ## 参照画像トレーニング
 

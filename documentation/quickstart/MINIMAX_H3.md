@@ -6,11 +6,11 @@ MiniMax H3 is a 33B flow-matching video/audio model. SimpleTuner supports adapte
 
 The checked-in examples are the recommended starting points:
 
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-24g.peft-lora+ramtorch`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-32g.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-48g.peft-lora`
-- `simpletuner/examples/minimaxh3-fl2va-convrot-int8-80g.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/default/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/24g/fl2va-convrot-int8.peft-lora+ramtorch`
+- `simpletuner/examples/minimaxh3/convrot-int8/32g/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/48g/fl2va-convrot-int8.peft-lora`
+- `simpletuner/examples/minimaxh3/convrot-int8/80g/fl2va-convrot-int8.peft-lora`
 
 Use the closest VRAM preset first, then adjust resolution, frame count, attention backend, and checkpointing after a smoke test.
 
@@ -78,7 +78,7 @@ loss. The explicit `audio_only` setting remains accepted but is not required.
 ## Context parallelism
 
 H3 context parallelism uses Ulysses with `context_parallel_strategy: "alltoall"`. The packed sequence may be padded to
-the CP degree, so its local attention backend must accept a mask. `native` and `cudnn` are supported; SimpleTuner replaces
+the CP degree, so its local attention backend must accept a mask. `native` is supported; SimpleTuner replaces
 other backend choices with `native` when CP is enabled.
 
 At roughly 8k audio tokens, CP mainly trades communication for lower activation memory and lighter checkpointing. CP
@@ -116,7 +116,7 @@ This mode currently requires CUDA and introduces a Dynamo graph boundary around 
 From the SimpleTuner directory:
 
 ```bash
-simpletuner train example=minimaxh3-fl2va-convrot-int8.peft-lora
+simpletuner train example=minimaxh3/convrot-int8/default/fl2va-convrot-int8.peft-lora
 ```
 
 Run a short smoke test before committing to a long run. Check that `h3_drift_loss`, normal training loss, and validation samples move together instead of one term dominating the run.

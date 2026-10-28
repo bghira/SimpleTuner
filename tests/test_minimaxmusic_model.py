@@ -352,7 +352,7 @@ class MiniMaxMusicModelTests(unittest.TestCase):
             validation_negative_prompt="None",
             validation_disable_unconditional=True,
             validation_audio_duration=42.0,
-            data_backend_config="config/examples/minimaxmusic-audio-48g.json",
+            data_backend_config="config/examples/_shared/minimaxmusic-audio-48g.json",
         )
         entry = PromptLibraryEntry(prompt="bright synth pop", lyrics="[verse]\nhello world")
         embed_cache = DummyEmbedCache()
@@ -1006,9 +1006,9 @@ class MiniMaxMusicExampleConfigTests(unittest.TestCase):
 
         for tier, settings in expected.items():
             with self.subTest(tier=tier):
-                config_path = examples_root / f"minimaxmusic-music3-{tier}.peft-lora" / "config.json"
+                config_path = examples_root / f"minimaxmusic/music3/{tier}/peft-lora" / "config.json"
                 config = json.loads(config_path.read_text(encoding="utf-8"))
-                data_path = examples_root / f"minimaxmusic-audio-{tier}.json"
+                data_path = examples_root / f"_shared/minimaxmusic-audio-{tier}.json"
                 data_config = json.loads(data_path.read_text(encoding="utf-8"))
 
                 self.assertEqual(config["attention_mechanism"], "flash-attn-varlen-hub")

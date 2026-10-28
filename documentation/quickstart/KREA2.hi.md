@@ -5,7 +5,7 @@
 शुरुआती example यहां है:
 
 ```bash
-simpletuner/examples/krea2.peft-lora/config.json
+simpletuner/examples/krea2/raw/default/peft-lora/config.json
 ```
 
 ## अनुशंसित शुरुआत
@@ -19,7 +19,7 @@ simpletuner/examples/krea2.peft-lora/config.json
   "model_type": "lora",
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "mixed_precision": "bf16",
-  "attention_mechanism": "cudnn",
+  "attention_mechanism": "kohaku-fa",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "train_batch_size": 1,
@@ -39,7 +39,7 @@ Recommendations:
 
 - Model fit हो तो `bf16` उपयोग करें।
 - Memory headroom चाहिए तो `int8-torchao` उपयोग करें।
-- NVIDIA GPUs पर `attention_mechanism=cudnn` उपयोग करें; Krea2 का native SDPA path इतनी memory use कर सकता है कि otherwise-valid L40S-class runs OOM हो जाएं।
+- समर्थित NVIDIA GPUs पर `attention_mechanism=kohaku-fa` उपयोग करें। इसकी निर्भरताएँ `cuda` और `cuda13` extras में शामिल हैं।
 - `gradient_checkpointing=true` रखें।
 - `fuse_qkv_projections=true` रखें।
 - `dynamo_backend=inductor`, `dynamo_mode=reduce-overhead`, और `dynamo_use_regional_compilation=true` केवल batch/resolution fit होने की पुष्टि के बाद enable करें।
@@ -54,7 +54,7 @@ Recommendations:
   "pretrained_model_name_or_path": "krea/Krea-2-Raw",
   "base_model_precision": "no_change",
   "mixed_precision": "bf16",
-  "attention_mechanism": "cudnn",
+  "attention_mechanism": "kohaku-fa",
   "gradient_checkpointing": true,
   "fuse_qkv_projections": true,
   "optimizer": "optimi-lion",
@@ -85,15 +85,19 @@ Reduce-overhead compile के लिए:
 }
 ```
 
-### LyCORIS 4 LoKR कर्नेल आकार
+### LyCORIS संस्करण
 
-यदि LyCORIS 4 के LoKR प्रशिक्षण में `kron apply factors too large for the kernel` आता है, तो ट्रेनर या WebUI शुरू करने से पहले उसका PyTorch कर्नेल बैकएंड चुनें। यह त्रुटि प्रयोगात्मक Triton कर्नेल की फ़ैक्टर आकार सीमा के कारण आती है। SimpleTuner का `torch.compile` चालू रह सकता है; केवल कंपाइलेशन बंद करने से LyCORIS का कर्नेल नहीं बदलता।
+LoKR प्रशिक्षण के लिए LyCORIS 4.1.3 या नया संस्करण उपयोग करें। यह संस्करण बड़े फ़ैक्टर को संभालता है, जिनके कारण पहले के 4.x संस्करणों में `kron apply factors too large for the kernel` त्रुटि आती थी।
+
+मौजूदा इंस्टॉलेशन को अपडेट करने के लिए अपने SimpleTuner वातावरण में यह कमांड चलाएँ:
 
 ```bash
-export LYCORIS_KERNEL_BACKEND=torch
+pip install --upgrade "lycoris-lora>=4.1.3"
 ```
 
-[LyCORIS कर्नेल बैकएंड](https://github.com/KohakuBlueleaf/LyCORIS/blob/main/docs/kernels/backends.md).
+यदि आपने इस त्रुटि को दूर करने के लिए `LYCORIS_KERNEL_BACKEND=torch` सेट किया था, तो स्वचालित बैकएंड चयन का उपयोग करने के लिए लॉन्च वातावरण से वह सेटिंग हटा दें।
+
+[LyCORIS 4.1.3 रिलीज़](https://github.com/KohakuBlueleaf/LyCORIS/releases/tag/v4.1.3).
 
 ## Reference Image Training
 
