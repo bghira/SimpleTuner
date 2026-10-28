@@ -27,7 +27,7 @@ git clone https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
 python3.13 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[cuda,attention-cute]'
+pip install -e '.[cuda]'
 ```
 
 ## 画像とキャプションの準備

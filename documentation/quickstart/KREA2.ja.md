@@ -39,7 +39,7 @@ TorchAO int8 weight-only は VRAM を大きく下げますが、今回テスト�
 
 - 入るなら `bf16` を使う。
 - メモリが足りない場合は `int8-torchao` を使う。
-- 対応する NVIDIA GPU では `attention_mechanism=kohaku-fa` を使用します。`pip install "simpletuner[attention-cute]"` で依存パッケージをインストールしてください。
+- 対応する NVIDIA GPU では `attention_mechanism=kohaku-fa` を使用します。必要な依存パッケージは `cuda` と `cuda13` の extras に含まれています。
 - `gradient_checkpointing=true` を維持する。
 - `fuse_qkv_projections=true` を維持する。
 - `dynamo_backend=inductor`、`dynamo_mode=reduce-overhead`、`dynamo_use_regional_compilation=true` は、batch/resolution が入ることを確認してから使う。

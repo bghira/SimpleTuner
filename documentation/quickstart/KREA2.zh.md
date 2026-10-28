@@ -39,7 +39,7 @@ TorchAO int8 weight-only 可以显著降低 VRAM，但在测试的 SimpleTuner �
 
 - 能放下时使用 `bf16`。
 - 需要显存余量时使用 `int8-torchao`。
-- 在支持的 NVIDIA GPU 上使用 `attention_mechanism=kohaku-fa`。使用 `pip install "simpletuner[attention-cute]"` 安装依赖。
+- 在支持的 NVIDIA GPU 上使用 `attention_mechanism=kohaku-fa`。所需依赖已包含在 `cuda` 和 `cuda13` 扩展中。
 - 保持 `gradient_checkpointing=true`。
 - 保持 `fuse_qkv_projections=true`。
 - 只有在确认 batch/resolution 能放下后，才启用 `dynamo_backend=inductor`、`dynamo_mode=reduce-overhead` 和 `dynamo_use_regional_compilation=true`。
