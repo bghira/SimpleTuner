@@ -695,6 +695,17 @@ class AnyFlowDistiller(DistillationBase):
         if self.config["diffusion_ratio"] == 1.0:
             return base_target
 
+        guidance_scale = float(self.config["fuse_guidance_scale"])
+        if guidance_scale != 1.0:
+            conditioning_mask = prepared_batch.get("text_conditioning_mask")
+            if (
+                not torch.is_tensor(conditioning_mask)
+                or conditioning_mask.dtype != torch.bool
+                or conditioning_mask.shape != t_sigmas.shape
+            ):
+                raise ValueError("AnyFlow fused guidance requires a per-sample boolean text_conditioning_mask.")
+            conditioning_mask = self.teacher_model.flow_matching_guidance_mask(conditioning_mask)
+
         epsilon = float(self.config["central_difference_epsilon"])
         plus_sigmas = t_sigmas + epsilon
         minus_sigmas = t_sigmas - epsilon
@@ -714,7 +725,12 @@ class AnyFlowDistiller(DistillationBase):
             device=plus_prediction.device,
             dtype=plus_prediction.dtype,
         )
-        total_derivative = (plus_prediction - minus_prediction) / (denominator * float(self.config["fuse_guidance_scale"]))
+        if guidance_scale != 1.0:
+            guidance_scale = self._broadcast_time(
+                torch.where(conditioning_mask.to(device=plus_prediction.device), guidance_scale, 1.0),
+                plus_prediction,
+            )
+        total_derivative = (plus_prediction - minus_prediction) / (denominator * guidance_scale)
         interval = self._broadcast_time(t_sigmas - r_sigmas, total_derivative).to(
             device=total_derivative.device,
             dtype=total_derivative.dtype,

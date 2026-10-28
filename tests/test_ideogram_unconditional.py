@@ -159,6 +159,15 @@ class IdeogramUnconditionalDispatchTests(unittest.TestCase):
         model.unconditional_transformer = None
         self.assertFalse(model._use_unconditional_transformer({"is_unconditional_pass": True}))
 
+    def test_meanflow_guidance_mask_preserves_dedicated_unconditional_model(self):
+        mask = torch.tensor([True, False])
+        for with_uncond in (False, True):
+            with self.subTest(with_uncond=with_uncond):
+                model = self._make_predict_model(with_uncond=with_uncond)
+                actual = model.flow_matching_guidance_mask(mask)
+                torch.testing.assert_close(actual, torch.ones_like(mask) if with_uncond else mask)
+                torch.testing.assert_close(mask, torch.tensor([True, False]))
+
     def test_marked_batch_dispatches_to_unconditional_transformer(self):
         model = self._make_predict_model(with_uncond=True)
         batch = self._prepared_batch(unconditional=True)

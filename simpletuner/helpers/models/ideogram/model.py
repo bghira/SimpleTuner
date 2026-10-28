@@ -612,6 +612,11 @@ class Ideogram4(ImageModelFoundation):
             and getattr(self, "unconditional_transformer", None) is not None
         )
 
+    def flow_matching_guidance_mask(self, text_conditioning_mask: torch.Tensor) -> torch.Tensor:
+        if getattr(self, "unconditional_transformer", None) is not None:
+            return torch.ones_like(text_conditioning_mask)
+        return super().flow_matching_guidance_mask(text_conditioning_mask)
+
     def _unconditional_model_predict(
         self,
         prepared_batch: dict,
