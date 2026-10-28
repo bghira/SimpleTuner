@@ -158,8 +158,6 @@ class WebshartMetadataBackend(MetadataBackend):
             self._sync_image_files_with_buckets()
             if set_config:
                 self.config = cache_data.get("config", {})
-                if self.config:
-                    StateTracker.set_data_backend_config(data_backend_id=self.id, config=self.config)
             self.filtering_statistics = cache_data.get("filtering_statistics")
         else:
             logger.debug("No webshart cache file found, starting fresh.")

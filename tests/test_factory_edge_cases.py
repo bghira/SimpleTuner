@@ -639,6 +639,55 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertEqual(sampler_cls.call_args.kwargs["batch_size"], effective_train_batch_size)
         return init_backend
 
+    def test_registered_webshart_cache_reload_preserves_sampler_batch_size(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
+        from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        self.args.train_batch_size = 8
+        for dataset_batch_size in (None, 4):
+            with self.subTest(dataset_batch_size=dataset_batch_size):
+                backend = {
+                    "id": "registered-webshart",
+                    "type": "local",
+                    "dataset_type": "image",
+                    "instance_data_dir": self.temp_dir,
+                }
+                if dataset_batch_size is not None:
+                    backend["train_batch_size"] = dataset_batch_size
+                init_backend = init_backend_config(backend, self.args, self.accelerator)
+                live_config = init_backend["config"]
+                metadata = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
+                metadata.id = backend["id"]
+                metadata.cache_file = "buckets.json"
+                metadata.batch_size = live_config["train_batch_size"]
+                metadata.data_backend = MagicMock()
+                metadata.data_backend.read.return_value = json.dumps(
+                    {"config": {"train_batch_size": 2}, "aspect_ratio_bucket_indices": {"1.0": ["sample.jpg"]}}
+                )
+                metadata.load_image_metadata = MagicMock()
+                metadata._load_caption_cache = MagicMock()
+                metadata._sync_image_files_with_buckets = MagicMock()
+                init_backend["metadata_backend"] = metadata
+                init_backend["data_backend"] = metadata.data_backend
+                factory = FactoryRegistry(
+                    args=self.args,
+                    accelerator=self.accelerator,
+                    text_encoders=self.text_encoders,
+                    tokenizers=self.tokenizers,
+                    model=self.model,
+                )
+                with (
+                    patch.dict(StateTracker.data_backends, {backend["id"]: init_backend}, clear=True),
+                    patch("simpletuner.helpers.data_backend.factory.MultiAspectDataset"),
+                    patch("simpletuner.helpers.data_backend.factory.MultiAspectSampler") as sampler,
+                    patch("simpletuner.helpers.data_backend.factory.torch.utils.data.DataLoader"),
+                ):
+                    metadata.reload_cache()
+                    factory._create_dataset_and_sampler(backend, init_backend, conditioning_type=None)
+                self.assertIs(init_backend["config"], live_config)
+                self.assertEqual(sampler.call_args.kwargs["batch_size"], dataset_batch_size or 8)
+
     def test_cached_batch_size_does_not_override_changed_global_default(self):
         self.args.train_batch_size = 4
         backend = {
