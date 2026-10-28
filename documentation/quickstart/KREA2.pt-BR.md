@@ -39,7 +39,7 @@ Recomendações:
 
 - Use `bf16` quando couber.
 - Use `int8-torchao` quando precisar de folga de memória.
-- Use `attention_mechanism=kohaku-fa` em GPUs NVIDIA compatíveis. Instale as dependências com `pip install "simpletuner[attention-cute]"`.
+- Use `attention_mechanism=kohaku-fa` em GPUs NVIDIA compatíveis. As dependências estão incluídas nos extras `cuda` e `cuda13`.
 - Mantenha `gradient_checkpointing=true`.
 - Mantenha `fuse_qkv_projections=true`.
 - Use `dynamo_backend=inductor`, `dynamo_mode=reduce-overhead` e `dynamo_use_regional_compilation=true` apenas depois de confirmar que batch/resolução cabem.

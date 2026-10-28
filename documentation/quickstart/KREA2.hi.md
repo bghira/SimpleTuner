@@ -39,7 +39,7 @@ Recommendations:
 
 - Model fit हो तो `bf16` उपयोग करें।
 - Memory headroom चाहिए तो `int8-torchao` उपयोग करें।
-- समर्थित NVIDIA GPUs पर `attention_mechanism=kohaku-fa` उपयोग करें। निर्भरताएँ `pip install "simpletuner[attention-cute]"` से स्थापित करें।
+- समर्थित NVIDIA GPUs पर `attention_mechanism=kohaku-fa` उपयोग करें। इसकी निर्भरताएँ `cuda` और `cuda13` extras में शामिल हैं।
 - `gradient_checkpointing=true` रखें।
 - `fuse_qkv_projections=true` रखें।
 - `dynamo_backend=inductor`, `dynamo_mode=reduce-overhead`, और `dynamo_use_regional_compilation=true` केवल batch/resolution fit होने की पुष्टि के बाद enable करें।
