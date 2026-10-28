@@ -18,6 +18,7 @@ from cutlass.memory import SmemAllocator, TmemAllocator
 
 from .blackwell_pipeline import Backward
 from .kernels import OutputDelta
+from .launch import block_indices, launch_grid
 
 
 class RegisterAux(Backward):
@@ -35,7 +36,7 @@ class RegisterAux(Backward):
         da, dt = self.descriptor(other_right, 128)
         length, heads = (q.shape[2], q.shape[1]) if cutlass.const_expr(self.mode == "q") else (k.shape[2], k.shape[1])
         self.kernel(q, k, maximum, logsum, dout, delta, base, dq, dk, dv, scale, (la, lt, oa, ot, ra, rt, da, dt)).launch(
-            grid=(cute.ceil_div(length, 128) * cute.ceil_div(q.shape[3], 256), q.shape[0] * heads, 1),
+            grid=launch_grid(cute.ceil_div(length, 128) * cute.ceil_div(q.shape[3], 256), q.shape[0] * heads),
             block=(512, 1, 1),
             min_blocks_per_mp=1,
             stream=stream,
@@ -101,10 +102,11 @@ class RegisterAux(Backward):
     @cute.kernel
     def kernel(self, q, k, maximum, logsum, dout, delta, base, dq, dk, dv, scale, args):
         tid, _, _ = cute.arch.thread_idx()
-        tile, bh, _ = cute.arch.block_idx()
         slices = cute.ceil_div(q.shape[3], 256)
-        tile, wi = (tile // slices, tile % slices)
         heads = q.shape[1] if cutlass.const_expr(self.mode == "q") else k.shape[1]
+        length = q.shape[2] if cutlass.const_expr(self.mode == "q") else k.shape[2]
+        tile, bh, _ = block_indices(cute.ceil_div(length, 128) * slices, q.shape[0] * heads)
+        tile, wi = (tile // slices, tile % slices)
         batch, own_head = (bh // heads, bh % heads)
         ratio = q.shape[1] // k.shape[1]
         if cutlass.const_expr(self.mode == "q" and self.causal):

@@ -27,6 +27,7 @@ from cutlass.memory import SmemAllocator, TmemAllocator
 
 from .blackwell import fence_after_sync, fence_before_sync
 from .kernels import Attention, pack_half_pair
+from .launch import block_indices, launch_grid
 from .sm103 import Forward as NativeForward
 
 
@@ -49,7 +50,7 @@ class Forward(NativeForward):
         ka, kt = self.create_tma(k, layout, self.dc)
         va, vt = self.create_tma(v, layout, self.dc)
         self.kernel(q, k, v, out, maximum, logsum, scale, (qa, qt, ka, kt, va, vt)).launch(
-            grid=(cute.ceil_div(q.shape[2], 128), q.shape[0] * q.shape[1], cute.ceil_div(q.shape[3], self.width)),
+            grid=launch_grid(cute.ceil_div(q.shape[2], 128), q.shape[0] * q.shape[1], cute.ceil_div(q.shape[3], self.width)),
             block=(384, 1, 1),
             stream=stream,
         )
@@ -227,7 +228,7 @@ class Forward(NativeForward):
     @cute.kernel
     def kernel(self, q, k, v, out, maximum, logsum, scale, args):
         tid, _, _ = cute.arch.thread_idx()
-        tile, bh, wi = cute.arch.block_idx()
+        tile, bh, wi = block_indices(cute.ceil_div(q.shape[2], 128), q.shape[0] * q.shape[1])
         batch, head = bh // q.shape[1], bh % q.shape[1]
         kvhead = head // (q.shape[1] // k.shape[1])
         start, offset = tile * 128, wi * self.width
@@ -513,7 +514,7 @@ class Backward(Forward):
             (la, lt, oa, ot, ra, rt, da, dt),
             q.shape[3] > 128,
         ).launch(
-            grid=(
+            grid=launch_grid(
                 cute.ceil_div(length, 128)
                 * (cute.ceil_div(q.shape[3], self.width) if cutlass.const_expr(q.shape[3] == 512) else 1),
                 q.shape[0] * heads,
@@ -639,9 +640,9 @@ class Backward(Forward):
                 for j in cutlass.range_constexpr(2):
                     index, col = 2 * i + j, half * 64 + 2 * i + j
                     if cutlass.const_expr(self.mode == "q"):
-                        m, log_normalizer = row_max, row_logsum
+                        row_maximum, row_log_normalizer = row_max, row_logsum
                     else:
-                        m, log_normalizer = stats[0, col, slot], stats[1, col, slot]
+                        row_maximum, row_log_normalizer = stats[0, col, slot], stats[1, col, slot]
                     probability = cutlass.Float32(0)
                     if cutlass.const_expr(self.mode == "q"):
                         valid = start + local < sq and block * self.columns + col < sk
@@ -653,7 +654,8 @@ class Backward(Forward):
                             valid = valid and block * self.columns + col >= start + local
                     if valid:
                         probability = cute.math.exp2(
-                            (values[index] * sign - m) * magnitude * 1.4426950408889634 - log_normalizer, fastmath=True
+                            (values[index] * sign - row_maximum) * magnitude * 1.4426950408889634 - row_log_normalizer,
+                            fastmath=True,
                         )
                     values[index], pair[j] = probability, probability
                 if cutlass.const_expr(self.columns != 128):
@@ -664,12 +666,15 @@ class Backward(Forward):
         self, q, k, v, maximum, logsum, dout, delta, delta_base, dq, dk, dv, scale, args, streamed: cutlass.Constexpr
     ):
         tid, _, _ = cute.arch.thread_idx()
-        tile, bh, wi = cute.arch.block_idx()
+        length, heads = (q.shape[2], q.shape[1]) if cutlass.const_expr(self.mode == "q") else (k.shape[2], k.shape[1])
+        tiles = cute.ceil_div(length, 128)
+        if cutlass.const_expr(q.shape[3] == 512):
+            tiles *= cute.ceil_div(q.shape[3], self.width)
+        tile, bh, wi = block_indices(tiles, q.shape[0] * heads)
         if cutlass.const_expr(q.shape[3] == 512):
             # Adjacent output slices reuse the inputs of one query/key row tile.
             slices = cute.ceil_div(q.shape[3], self.width)
             tile, wi = tile // slices, tile % slices
-        heads = q.shape[1] if cutlass.const_expr(self.mode == "q") else k.shape[1]
         batch, own_head = bh // heads, bh % heads
         if cutlass.const_expr(self.causal and self.mode == "q" and q.shape[3] == 512):
             # Longest causal query tiles first, so the final wave has less work.

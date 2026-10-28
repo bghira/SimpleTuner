@@ -144,7 +144,7 @@ class Forward(Attention):
         self, q, k, v, mask, out, maximum, logsum, dout, delta, dq, dk, dv, blocks, delta_base, scale, unused, tma_args
     ):
         tid, _, _ = cute.arch.thread_idx()
-        tile, bh, wi = cute.arch.block_idx()
+        tile, bh, wi = self.grid_coordinates(q, k)
         batch, head = bh // q.shape[1], bh % q.shape[1]
         kvhead = head // (q.shape[1] // k.shape[1])
         start, offset = tile * self.rows, wi * self.width
@@ -312,7 +312,7 @@ class Query(Forward):
         self, q, k, v, mask, out, maximum, logsum, dout, delta, dq, dk, dv, blocks, delta_base, scale, unused, tma_args
     ):
         tid, _, _ = cute.arch.thread_idx()
-        tile, bh, wi = cute.arch.block_idx()
+        tile, bh, wi = self.grid_coordinates(q, k)
         batch, head = bh // q.shape[1], bh % q.shape[1]
         kvhead = head // (q.shape[1] // k.shape[1])
         start, offset = tile * self.rows, wi * self.width
@@ -499,7 +499,7 @@ class KeyValue(Forward):
         self, q, k, v, mask, out, maximum, logsum, dout, delta, dq, dk, dv, blocks, delta_base, scale, unused, tma_args
     ):
         tid, _, _ = cute.arch.thread_idx()
-        tile, bh, wi = cute.arch.block_idx()
+        tile, bh, wi = self.grid_coordinates(q, k)
         batch, kvhead = bh // k.shape[1], bh % k.shape[1]
         start, offset = tile * self.rows, wi * self.width
         padded = cute.ceil_div(q.shape[3], self.width) * self.width

@@ -1,7 +1,7 @@
 SimpleTuner CuTe attention
 
 Kernel implementation synchronized with KohakuFA-CuTe revision
-c0786ddcd88d964f83a5d4eef40b7d028eee99de.
+1afb72698c74b3a1b5958d3b80948458c9bb6e84.
 https://github.com/SimpleTuner-io/KohakuFA-CuTe
 
 The kernels use warp MMA on SM86 Ampere, Ada and RTX Blackwell,
@@ -34,6 +34,13 @@ sm100/fwd.py and sm100/bwd.py at revision
 https://github.com/KohakuBlueleaf/KohakuFA
 KohakuFA is distributed under Apache-2.0, reproduced in LICENSE.Apache-2.0.
 The CuTe port retains centered backward and single-owner gradient tiles.
+
+Causal BF16 D256 GQA uses overlapping forward stages on Ada and independent
+K/V staging with ordered softmax warpgroups on Hopper. Short D64 cross-attention
+queries split across the key sequence on Ada/Hopper. Native build caches include
+the C++ source hash so copied checkouts cannot retain stale dispatch code.
+Batch/head products above 65,535 flatten onto grid-x for attention, mask
+packing and backward output-delta preparation; smaller grids are unchanged.
 
 Boolean masks are classified on every invocation, including CUDA graph replay.
 Native eager autograd and compiler-safe custom operators share allocation and
