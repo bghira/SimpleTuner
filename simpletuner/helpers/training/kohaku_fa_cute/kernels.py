@@ -19,6 +19,7 @@ from cutlass.cutlass_dsl import T, dsl_user_op
 from cutlass.memory import SmemAllocator, TmemAllocator
 
 from .blackwell import dot as blackwell_dot
+from .launch import block_indices, launch_grid
 
 
 @cute.jit
@@ -123,6 +124,7 @@ class Attention:
         copy_cache_global=False,
         paired_scores=False,
         wide_row_copies=False,
+        forward_overlap=False,
     ):
         self.mode, self.causal, self.masked = mode, causal, masked
         self.columns, self.width, self.warps = columns, width, warps
@@ -134,7 +136,8 @@ class Attention:
         self.stage_statistics = stage_statistics
         self.copy_cache_global = copy_cache_global
         self.paired_scores = paired_scores
-        self.wide_row_copies = wide_row_copies
+        self.wide_row_copies = wide_row_copies or forward_overlap
+        self.forward_overlap = forward_overlap
         if stage_statistics and (mode != "kv" or hopper or warps != 4 or not centered):
             raise ValueError("Shared KV statistics require a centered four-warp generic KV kernel.")
         self.pointwise_overlap = hopper and centered and width == 128 and mode != "forward"
@@ -246,7 +249,7 @@ class Attention:
         self.kernel(
             q, k, v, mask, out, maximum, logsum, dout, delta, dq, dk, dv, blocks, delta_base, scale, mma, tma_args
         ).launch(
-            grid=(cute.ceil_div(length, self.grid_rows), q.shape[0] * heads, widths),
+            grid=launch_grid(cute.ceil_div(length, self.grid_rows), q.shape[0] * heads, widths),
             block=(32 * self.warps, 1, 1),
             stream=stream,
         )
@@ -350,13 +353,27 @@ class Attention:
                 cute.make_identity_tensor((source.shape[2], source.shape[3])), (rows, width), (start // rows, 0)
             )
             g, dest, c = (thread.partition_S(tile), thread.partition_D(shared), thread.partition_S(coords))
-            for r in cutlass.range_constexpr(cute.size(dest.shape[1])):
-                for d in cutlass.range_constexpr(cute.size(dest.shape[2])):
-                    row, dim = c[0, r, d]
-                    if row < source.shape[2] and dim < source.shape[3]:
-                        cute.copy(copy, g[None, r, d], dest[None, r, d])
-                    else:
-                        dest[None, r, d].fill(0)
+            if cutlass.const_expr(self.forward_overlap):
+                if start + rows <= source.shape[2] and width <= source.shape[3]:
+                    for r in cutlass.range_constexpr(cute.size(dest.shape[1])):
+                        for d in cutlass.range_constexpr(cute.size(dest.shape[2])):
+                            cute.copy(copy, g[None, r, d], dest[None, r, d])
+                else:
+                    for r in cutlass.range_constexpr(cute.size(dest.shape[1])):
+                        for d in cutlass.range_constexpr(cute.size(dest.shape[2])):
+                            row, dim = c[0, r, d]
+                            if row < source.shape[2] and dim < source.shape[3]:
+                                cute.copy(copy, g[None, r, d], dest[None, r, d])
+                            else:
+                                dest[None, r, d].fill(0)
+            else:
+                for r in cutlass.range_constexpr(cute.size(dest.shape[1])):
+                    for d in cutlass.range_constexpr(cute.size(dest.shape[2])):
+                        row, dim = c[0, r, d]
+                        if row < source.shape[2] and dim < source.shape[3]:
+                            cute.copy(copy, g[None, r, d], dest[None, r, d])
+                        else:
+                            dest[None, r, d].fill(0)
         else:
             for i in cutlass.range(cute.ceil_div(cute.size(shared), 32 * self.warps), unroll=4):
                 index = i * 32 * self.warps + tid
@@ -934,10 +951,19 @@ class Attention:
         scores.store(scores.load() * sign)
         sv = row_view(scores)
         for r in cutlass.range_constexpr(cute.size(rc.shape[0])):
-            for c in cutlass.range_constexpr(cute.size(rc.shape[1])):
-                row, col = rc[r, c]
-                if not self.visible(mask, batch, head, start + row, key + col, sq, sk, full):
-                    sv[r, c] = -cutlass.Float32.inf
+            if cutlass.const_expr(self.forward_overlap):
+                # Full key tiles cannot mask published query rows. Padded
+                # query rows are independent and discarded by the store.
+                if not full or key + self.columns > sk:
+                    for c in cutlass.range_constexpr(cute.size(rc.shape[1])):
+                        row, col = rc[r, c]
+                        if not self.visible(mask, batch, head, start + row, key + col, sq, sk, full):
+                            sv[r, c] = -cutlass.Float32.inf
+            else:
+                for c in cutlass.range_constexpr(cute.size(rc.shape[1])):
+                    row, col = rc[r, c]
+                    if not self.visible(mask, batch, head, start + row, key + col, sq, sk, full):
+                        sv[r, c] = -cutlass.Float32.inf
             current = quad_max(sv[r, None].load().reduce(cute.ReductionOp.MAX, -cutlass.Float32.inf, 0))
             new = cute.arch.fmax(maxima[r], current)
             alpha = cutlass.Float32(0.0)
@@ -1030,11 +1056,19 @@ class Attention:
             full = full and key + columns <= query + 1
         return active, full
 
+    @cute.jit
+    def grid_coordinates(self, q, k):
+        length = k.shape[2] if cutlass.const_expr(self.mode == "kv") else q.shape[2]
+        heads = k.shape[1] if cutlass.const_expr(self.mode == "kv") else q.shape[1]
+        return block_indices(cute.ceil_div(length, self.grid_rows), q.shape[0] * heads)
+
     @cute.kernel
     def kernel(self, q, k, v, mask, out, maximum, logsum, dout, delta, dq, dk, dv, blocks, delta_base, scale, mma, tma_args):
         tid, _, _ = cute.arch.thread_idx()
         lane = tid % 32
-        tile, bh, width = cute.arch.block_idx()
+        tile, bh, width = self.grid_coordinates(q, k)
+        if cutlass.const_expr(self.forward_overlap):
+            tile = cute.ceil_div(q.shape[2], self.grid_rows) - 1 - tile
         thread = mma.get_slice(tid % 128 if cutlass.const_expr(self.hopper) else tid)
         batch = bh // q.shape[1]
         head = bh % q.shape[1]
@@ -1155,6 +1189,11 @@ class Attention:
             count = cute.ceil_div(limit, self.columns)
             if cutlass.const_expr(self.pipelined):
                 self.issue_pair(right_stages, other_stages, batch, kvhead, 0, 0, start, tid, tma_args, barrier, blocks)
+            if cutlass.const_expr(self.forward_overlap):
+                self.load(k, right, batch, kvhead, 0, tid)
+                cute.arch.cp_async_commit_group()
+                cute.arch.cp_async_wait_group(0)
+                cute.arch.sync_threads()
             for block in range(count):
                 active, full = self.block_visibility(
                     blocks, batch, head, start, block * self.columns, self.rows, self.columns
@@ -1175,7 +1214,11 @@ class Attention:
                         blocks,
                     )
                 if active:
-                    if cutlass.const_expr(not self.pipelined):
+                    if cutlass.const_expr(self.forward_overlap):
+                        # Transfer V while QK consumes the current K tile.
+                        self.load(v, other_right, batch, kvhead, block * self.columns, tid)
+                        cute.arch.cp_async_commit_group()
+                    elif cutlass.const_expr(not self.pipelined):
                         phase_tma = self.load_pair(
                             k,
                             v,
@@ -1190,6 +1233,13 @@ class Attention:
                             phase_tma,
                         )
                     scores = self.dot(left, right, mma, thread, tid, tcgen_state=tcgen_state)
+                    if cutlass.const_expr(self.forward_overlap):
+                        cute.arch.cp_async_wait_group(0)
+                        cute.arch.sync_threads()
+                        # QK has released K. Fetch its next tile during softmax/PV.
+                        if block + 1 < count:
+                            self.load(k, right, batch, kvhead, (block + 1) * self.columns, tid)
+                            cute.arch.cp_async_commit_group()
                     if cutlass.const_expr(self.forward_columns):
                         self.column_softmax_max(
                             scores,
@@ -1232,6 +1282,8 @@ class Attention:
                             sign,
                         )
                         self.product(scores, other_right, offset, mma, thread, tid, accum)
+                if cutlass.const_expr(self.forward_overlap):
+                    cute.arch.cp_async_wait_group(0)
                 if cutlass.const_expr(self.pipelined) or active:
                     cute.arch.sync_threads()
             for r in cutlass.range_constexpr(cute.size(rc.shape[0])):
@@ -1669,7 +1721,7 @@ class ForwardLoadSpecialized(Attention):
     def kernel(self, q, k, v, mask, out, maximum, logsum, dout, delta, dq, dk, dv, blocks, delta_base, scale, mma, tma_args):
         tid, _, _ = cute.arch.thread_idx()
         lane = tid % 32
-        tile, bh, width = cute.arch.block_idx()
+        tile, bh, width = self.grid_coordinates(q, k)
         batch = bh // q.shape[1]
         head = bh % q.shape[1]
         kvhead = head // (q.shape[1] // k.shape[1])
@@ -2050,6 +2102,8 @@ def compile_kernel(device, mode, causal, masked, descriptors):
     vector = copy_vector(descriptors[index] for index in (0, 1, 2, 7))
     base_vector = copy_vector(descriptors[i] for i in (4, 7))
     # Match native.cpp's cache classes: runtime sequence axes and aligned strides.
+    # Native forward scratch is contiguous; its row/split/feature strides depend
+    # only on the static split count and feature width, even for dynamic Sq.
     layouts = tuple(
         (
             dtype,
@@ -2057,7 +2111,14 @@ def compile_kernel(device, mode, causal, masked, descriptors):
                 -1 if size != 1 and (axis == 2 or axis == 3 and (i == 12 or i == 3 and masked)) else size
                 for axis, size in enumerate(shape)
             ),
-            tuple(s if s <= 1 else -min(8, s & -s) if dtype in (torch.float16, torch.bfloat16) else -1 for s in stride),
+            tuple(
+                (
+                    s
+                    if s <= 1 or i in (7, 8) and len(shape) == 5 and axis >= 2
+                    else -min(8, s & -s) if dtype in (torch.float16, torch.bfloat16) else -1
+                )
+                for axis, s in enumerate(stride)
+            ),
             alignment,
         )
         for i, (dtype, shape, stride, alignment) in enumerate(descriptors)
@@ -2074,6 +2135,15 @@ def compile_kernel(device, mode, causal, masked, descriptors):
         base_vector,
         specialized_load,
         backward_options(device, causal, masked, descriptors, configuration, kv_configuration),
+        (
+            (64, 1, False, 0)
+            if mode != "forward" or len(descriptors[7][1]) != 5 or descriptors[0][1][2] <= 32
+            else (
+                (128, 4, True, 0)
+                if torch.cuda.get_device_capability(device) == (9, 0)
+                else (64, 4, True, 0) if descriptors[0][1][2] <= 64 else (64, 4, True, 128)
+            )
+        ),
     )
 
 
@@ -2130,6 +2200,7 @@ def _compile_kernel(
     base_vector,
     specialized_load,
     backward_options,
+    split_configuration,
 ):
     dtypes = {
         torch.float16: cutlass.Float16,
@@ -2219,11 +2290,36 @@ def _compile_kernel(
                 from .blackwell_register_aux import AdaptiveBackward
 
                 program = AdaptiveBackward(causal, program, base_vector)
+    elif mode == "forward" and len(layouts[7][1]) == 5:
+        from .split_forward import Forward
+
+        program = Forward(
+            columns=split_configuration[0],
+            warps=split_configuration[1],
+            splits=layouts[7][1][3],
+            vector=vector,
+            staggered=split_configuration[2],
+            rows=split_configuration[3],
+        )
     elif mode == "forward" and masked:
         program = JointForward(causal, configuration, vector)
     else:
         if specialized_load:
             program = ForwardLoadSpecialized(mode, causal, masked, *configuration, vector=vector)
+        elif (
+            mode == "forward"
+            and capability == (9, 0)
+            and causal
+            and not masked
+            and layouts[0][0] == torch.bfloat16
+            and layouts[0][1][1] == 24
+            and layouts[1][1][1] == 4
+            and layouts[0][1][-1] == 256
+            and configuration == (64, 256, 4, True, False, True, False)
+        ):
+            from .hopper_forward import HopperForwardSpecialized
+
+            program = HopperForwardSpecialized(mode, causal, masked, *configuration, vector=vector)
         elif len(configuration) > 8 and configuration[8]:
             if configuration[2] == 12:
                 from .blackwell_pipeline import Forward
@@ -2248,6 +2344,17 @@ def _compile_kernel(
                 vector=vector,
                 reload_center=torch.cuda.get_device_capability(device) in ((10, 0), (10, 3), (12, 0)),
                 copy_cache_global=copy_cache_global,
+                forward_overlap=(
+                    mode == "forward"
+                    and capability == (8, 9)
+                    and causal
+                    and not masked
+                    and layouts[0][0] == torch.bfloat16
+                    and layouts[0][1][1] == 16
+                    and layouts[1][1][1] == 4
+                    and layouts[0][1][-1] == 256
+                    and configuration == (32, 256, 8, False, False, False, False)
+                ),
             )
     with torch.cuda.device(device):
         return cute.compile(
@@ -2267,7 +2374,7 @@ class PackMask:
     @cute.jit
     def __call__(self, mask: cute.Tensor, blocks: cute.Tensor, stream: cuda.CUstream):
         self.kernel(mask, blocks).launch(
-            grid=(cute.ceil_div(blocks.shape[2] * blocks.shape[3], 4), blocks.shape[0] * blocks.shape[1], 1),
+            grid=launch_grid(cute.ceil_div(blocks.shape[2] * blocks.shape[3], 4), blocks.shape[0] * blocks.shape[1]),
             block=(128, 1, 1),
             stream=stream,
         )
@@ -2275,7 +2382,7 @@ class PackMask:
     @cute.kernel
     def kernel(self, mask, blocks):
         tid, _, _ = cute.arch.thread_idx()
-        tile, bh, _ = cute.arch.block_idx()
+        tile, bh, _ = block_indices(cute.ceil_div(blocks.shape[2] * blocks.shape[3], 4), blocks.shape[0] * blocks.shape[1])
         tile = tile * 4 + tid // 32
         qr, kc = tile // blocks.shape[3], tile % blocks.shape[3]
         batch, head = bh // blocks.shape[1], bh % blocks.shape[1]
@@ -2313,13 +2420,13 @@ class OutputDelta:
             warp.MmaF16BF16Op(out.element_type, cutlass.Float32, (16, 8, 16)), (1, 1, 1), permutation_mnk=(16, 16, 16)
         )
         self.kernel(out, dout, delta, mma).launch(
-            grid=(cute.ceil_div(out.shape[2], 16), out.shape[0] * out.shape[1], 1), block=(32, 1, 1), stream=stream
+            grid=launch_grid(cute.ceil_div(out.shape[2], 16), out.shape[0] * out.shape[1]), block=(32, 1, 1), stream=stream
         )
 
     @cute.kernel
     def kernel(self, out, dout, delta, mma):
         tid, _, _ = cute.arch.thread_idx()
-        tile, bh, _ = cute.arch.block_idx()
+        tile, bh, _ = block_indices(cute.ceil_div(out.shape[2], 16), out.shape[0] * out.shape[1])
         batch, head = bh // out.shape[1], bh % out.shape[1]
         padded = cute.ceil_div(out.shape[3], 32) * 32
         atom = cute.make_composed_layout(cute.make_swizzle(2, 3, 3), 0, cute.make_layout((8, 32), stride=(32, 1)))
