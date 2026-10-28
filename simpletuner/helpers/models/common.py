@@ -4556,6 +4556,10 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
     def flow_matching_target(self, latents: torch.Tensor, noise: torch.Tensor) -> torch.Tensor:
         return self.noiseward_flow_to_prediction(noise - latents)
 
+    def flow_matching_guidance_mask(self, text_conditioning_mask: torch.Tensor) -> torch.Tensor:
+        """Select samples whose MeanFlow derivative uses fused guidance."""
+        return text_conditioning_mask
+
     def get_flow_matching_target(
         self,
         prepared_batch: dict,

@@ -1337,6 +1337,7 @@ def collate_fn(batch):
         "filepaths": filepaths,
         "data_backend_id": batch_backend_id,
         "prompts": captions,
+        "text_conditioning_mask": torch.tensor([bool(caption) for caption in captions], dtype=torch.bool),
         "text_encoder_output": all_text_encoder_outputs,
         "prompt_embeds": all_text_encoder_outputs.get("prompt_embeds"),
         "negative_prompt_embeds": unconditional_text_encoder_outputs.get("prompt_embeds"),

@@ -15,7 +15,7 @@ from simpletuner.helpers.data_backend.runtime.context_parallel_sync import Distr
 from simpletuner.helpers.distillation.anyflow.distiller import AnyFlowDistiller
 from simpletuner.helpers.distillation.anyflow.scheduler import AnyFlowValidationScheduler
 from simpletuner.helpers.distillation.factory import DistillerFactory
-from simpletuner.helpers.models.common import PredictionTypes
+from simpletuner.helpers.models.common import ModelFoundation, PredictionTypes
 
 
 class _FlowMapComponent(torch.nn.Module):
@@ -58,6 +58,7 @@ class _FlowMapComponent(torch.nn.Module):
 
 class _FlowModel:
     PREDICTION_TYPE = PredictionTypes.FLOW_MATCHING
+    flow_matching_guidance_mask = ModelFoundation.flow_matching_guidance_mask
 
     def __init__(self):
         self.component = _FlowMapComponent()
@@ -209,6 +210,7 @@ def _prepared_batch():
         "timesteps": timesteps,
         "noisy_latents": (1 - sigmas) * latents + sigmas * noise,
         "negative_encoder_hidden_states": torch.zeros(2, 1, 1),
+        "text_conditioning_mask": torch.ones(2, dtype=torch.bool),
     }
 
 
