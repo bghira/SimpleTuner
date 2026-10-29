@@ -4,7 +4,7 @@ from functools import lru_cache
 
 import torch
 
-_CAPABILITIES = {(8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0)}
+_CAPABILITIES = {(8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)}
 
 
 @lru_cache(maxsize=1)

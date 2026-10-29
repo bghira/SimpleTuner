@@ -217,7 +217,7 @@ std::pair<int, int> device_capability(int device) {
 
 bool supported_device(int device) {
     auto [major, minor] = device_capability(device);
-    return (major == 8 && (minor == 6 || minor == 9)) || (major == 9 && minor == 0) || (major == 10 && (minor == 0 || minor == 3)) || (major == 12 && minor == 0);
+    return (major == 8 && (minor == 6 || minor == 9)) || (major == 9 && minor == 0) || (major == 10 && (minor == 0 || minor == 3)) || (major == 12 && (minor == 0 || minor == 1));
 }
 
 bool compatible(Tensor q, Tensor k, Tensor v, const std::optional<Tensor> &mask, double dropout, bool causal, bool gqa) {
@@ -247,7 +247,7 @@ bool validate(Tensor q, Tensor k, Tensor v, const std::optional<Tensor> &mask) {
                           "kohaku-fa supports boolean attention masks only, not additive masks.");
         TORCH_CHECK_VALUE(mask->device() == q.device(), "kohaku-fa requires the attention mask on the Q/K/V device.");
     }
-    TORCH_CHECK_VALUE(supported_device(q.get_device()), "CuTe attention requires sm_86, sm_89, sm_90, sm_100, sm_103 or sm_120.");
+    TORCH_CHECK_VALUE(supported_device(q.get_device()), "CuTe attention requires sm_86, sm_89, sm_90, sm_100, sm_103, sm_120 or sm_121.");
     return true;
 }
 } // namespace

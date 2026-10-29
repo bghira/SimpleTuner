@@ -1,7 +1,7 @@
 SimpleTuner CuTe attention
 
 Kernel implementation synchronized with KohakuFA-CuTe revision
-1afb72698c74b3a1b5958d3b80948458c9bb6e84.
+a30bc8702ef58d6e3a7336d9fc623fcfb0801785.
 https://github.com/SimpleTuner-io/KohakuFA-CuTe
 
 The kernels use warp MMA on SM86 Ampere, Ada and RTX Blackwell,
@@ -41,6 +41,10 @@ queries split across the key sequence on Ada/Hopper. Native build caches include
 the C++ source hash so copied checkouts cannot retain stale dispatch code.
 Batch/head products above 65,535 flatten onto grid-x for attention, mask
 packing and backward output-delta preparation; smaller grids are unchanged.
+
+GB10 (SM121) uses shared D512 score tiles and streamed-feature D256/D512
+short-sequence forward kernels. Runtime length dispatch preserves compiled
+cache reuse across short-sequence boundaries.
 
 Boolean masks are classified on every invocation, including CUDA graph replay.
 Native eager autograd and compiler-safe custom operators share allocation and
