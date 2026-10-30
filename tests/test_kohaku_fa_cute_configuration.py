@@ -85,6 +85,35 @@ class CuTeConfigurationTests(unittest.TestCase):
                     self.assertTrue(backward.query.split_query)
                     self.assertTrue(backward.keyvalue.split_kv)
 
+    def test_sm121_short_forward_requires_supported_dtype_dimension_and_layout(self):
+        from simpletuner.helpers.training.kohaku_fa_cute.short_forward import AdaptiveShortForward
+
+        for capability, dimension, dtype, masked, aligned, expected in (
+            ((12, 1), 256, torch.bfloat16, False, True, True),
+            ((12, 1), 512, torch.float16, False, True, True),
+            ((12, 1), 128, torch.bfloat16, False, True, False),
+            ((12, 1), 512, torch.float32, False, True, False),
+            ((12, 1), 512, torch.bfloat16, True, True, False),
+            ((12, 1), 512, torch.bfloat16, False, False, False),
+            ((12, 0), 512, torch.bfloat16, False, True, False),
+            ((9, 0), 512, torch.bfloat16, False, True, False),
+        ):
+            with self.subTest(capability=capability, dimension=dimension, dtype=dtype, masked=masked, aligned=aligned):
+                program = self._compiled_program(capability, "forward", dimension, dtype, masked=masked, aligned=aligned)
+                self.assertEqual(isinstance(program, AdaptiveShortForward), expected)
+
+    def test_sm121_d512_uses_shared_full_width_tiles(self):
+        for dtype in (torch.float16, torch.bfloat16):
+            for causal in (False, True):
+                with self.subTest(dtype=dtype, causal=causal):
+                    forward = self._compiled_program((12, 1), "forward", 512, dtype, causal=causal)
+                    backward = self._compiled_program((12, 1), "backward", 512, dtype, causal=causal)
+                    for worker in (forward.fallback, backward.query, backward.keyvalue):
+                        self.assertEqual(worker.columns, 32)
+                        self.assertEqual(worker.width, 512)
+                        self.assertEqual(worker.warps, 4)
+                    self.assertTrue(backward.query.reload_center)
+
     def test_consumer_d512_pairs_scores_and_selects_copy_layout(self):
         for capability in ((8, 6), (8, 9), (12, 0)):
             for dtype in (torch.float16, torch.bfloat16):
@@ -191,7 +220,7 @@ class CuTeConfigurationTests(unittest.TestCase):
         output = torch.empty_like(q)
         stats = torch.empty(q.shape[:-1], dtype=torch.float32)
         blocks = torch.empty(1, dtype=torch.int32)
-        for capability in ((8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0)):
+        for capability in ((8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)):
             with (
                 self.subTest(capability=capability),
                 patch.object(torch.cuda, "get_device_capability", return_value=capability),

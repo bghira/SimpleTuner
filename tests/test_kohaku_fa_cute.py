@@ -5,7 +5,8 @@ import torch
 
 
 @unittest.skipUnless(
-    torch.cuda.is_available() and torch.cuda.get_device_capability() in {(8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0)},
+    torch.cuda.is_available()
+    and torch.cuda.get_device_capability() in {(8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)},
     "Requires Ampere, Ada, Hopper or Blackwell",
 )
 class CuTeAttentionTests(unittest.TestCase):
@@ -974,7 +975,9 @@ class CuTeAttentionTests(unittest.TestCase):
         from simpletuner.helpers.training.kohaku_fa_cute import attention
 
         dimensions = (
-            (64, 128, 256, 512) if torch.cuda.get_device_capability() in ((8, 6), (8, 9), (12, 0)) else (64, 128, 256)
+            (64, 128, 256, 512)
+            if torch.cuda.get_device_capability() in ((8, 6), (8, 9), (12, 0), (12, 1))
+            else (64, 128, 256)
         )
         for dim, causal in itertools.product(dimensions, (False, True)):
             with self.subTest(dim=dim, causal=causal):
@@ -1040,7 +1043,7 @@ class CuTeAttentionTests(unittest.TestCase):
         dimensions = (
             (128, 256, 512)
             if torch.cuda.get_device_capability() == (12, 0)
-            else (256, 512) if torch.cuda.get_device_capability() in ((8, 6), (8, 9)) else (256,)
+            else (256, 512) if torch.cuda.get_device_capability() in ((8, 6), (8, 9), (12, 1)) else (256,)
         )
         cases = ((torch.float16, 1e5), (torch.float16, 1e6), (torch.bfloat16, 1e6))
         for dimension, (dtype, logit_scale) in itertools.product(dimensions, cases):
@@ -1069,7 +1072,7 @@ class CuTeAttentionTests(unittest.TestCase):
         from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import attention
 
-        if torch.cuda.get_device_capability() not in {(8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0)}:
+        if torch.cuda.get_device_capability() not in {(8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)}:
             self.skipTest("Centered backward requires Ampere, Ada, Hopper or Blackwell.")
         for dtype in (torch.bfloat16, torch.float16):
             for dim in (1, 17, 64, 80, 96, 128, 160, 192, 224, 256, 257, 384, 511, 512):

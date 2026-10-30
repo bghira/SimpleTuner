@@ -462,11 +462,11 @@ class Attention:
         return result
 
     @cute.jit
-    def product(self, weights, source, offset, mma, thread, tid, result):
+    def product(self, weights, source, offset, mma, thread, tid, result, shared_weights: cutlass.Constexpr = False):
         if cutlass.const_expr(self.hopper):
             self.product_hopper(weights, source, offset, mma, thread, tid, result)
         else:
-            if cutlass.const_expr(self.column_warps > 1):
+            if cutlass.const_expr(self.column_warps > 1 or shared_weights):
                 ra = thread.make_fragment_A(thread.partition_A(weights))
                 ca = cute.make_tiled_copy_A(
                     cute.make_copy_atom(warp.LdMatrix8x8x16bOp(transpose=False, num_matrices=4), source.element_type), mma
@@ -486,7 +486,7 @@ class Attention:
             tb = cb.get_slice(tid)
             sb, db = tb.partition_S(transposed), tb.retile(rb)
             for chunk in cutlass.range_constexpr(self.columns // 16):
-                if cutlass.const_expr(self.column_warps > 1):
+                if cutlass.const_expr(self.column_warps > 1 or shared_weights):
                     cute.copy(ca, sa[None, None, chunk], da[None, None, chunk])
                 cute.copy(cb, sb[None, None, chunk], db[None, None, chunk])
                 cute.gemm(mma, result, ra[None, None, chunk], rb[None, None, chunk], result)
@@ -1945,7 +1945,7 @@ def kernel_configuration(device, mode, descriptors):
             columns, warps = 32, 8
         elif mode != "forward" and dimension > 128:
             hopper = False
-    centered = capability in ((8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0)) and mode != "forward"
+    centered = capability in ((8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)) and mode != "forward"
     if centered and mode == "q":
         width = (dimension + 31) // 32 * 32 if dimension <= 192 else 128
         warps = 4 if dimension <= 256 else 1
@@ -2001,6 +2001,16 @@ def kernel_configuration(device, mode, descriptors):
         and _aligned_tiles(descriptors)
     ):
         return 32, 256, 8, False, False, False, False
+    if (
+        capability == (12, 1)
+        and dimension == 512
+        and descriptors[3][0] != torch.bool
+        and descriptors[0][0] in (torch.float16, torch.bfloat16)
+        and _aligned_tiles(descriptors)
+    ):
+        # GB10 has room for one wide CTA. Share QK/dP across output
+        # columns instead of repeating them in one-warp feature slices.
+        return 32, 512, 4, False, mode != "forward", False, False
     if capability == (12, 0):
         selected = _SM120_CONFIGURATIONS.get((dimension, mode))
         if (
@@ -2151,7 +2161,7 @@ def backward_options(device, causal, masked, descriptors, q_configuration, kv_co
     # These options are part of the Python compilation cache key. Keep shape-dependent
     # choices within the same runtime sequence/stride classes used by native.cpp.
     if (
-        torch.cuda.get_device_capability(device) not in ((8, 6), (8, 9), (12, 0))
+        torch.cuda.get_device_capability(device) not in ((8, 6), (8, 9), (12, 0), (12, 1))
         or masked
         or descriptors[0][0] not in (torch.float16, torch.bfloat16)
     ):
@@ -2237,7 +2247,7 @@ def _compile_kernel(
             base_vector,
             base_dot,
             reload_center=(
-                capability in ((10, 0), (10, 3), (12, 0))
+                capability in ((10, 0), (10, 3), (12, 0), (12, 1))
                 or capability == (8, 9)
                 and not masked
                 and configuration == (64, 256, 8, False, True, False, False)
@@ -2342,7 +2352,7 @@ def _compile_kernel(
                 masked,
                 *configuration,
                 vector=vector,
-                reload_center=torch.cuda.get_device_capability(device) in ((10, 0), (10, 3), (12, 0)),
+                reload_center=torch.cuda.get_device_capability(device) in ((10, 0), (10, 3), (12, 0), (12, 1)),
                 copy_cache_global=copy_cache_global,
                 forward_overlap=(
                     mode == "forward"
@@ -2356,6 +2366,23 @@ def _compile_kernel(
                     and configuration == (32, 256, 8, False, False, False, False)
                 ),
             )
+    if (
+        mode == "forward"
+        and capability == (12, 1)
+        and not masked
+        and layouts[0][0] in (torch.float16, torch.bfloat16)
+        and layouts[0][1][-1] in (256, 512)
+        and vector == 8
+        and configuration
+        == (
+            (64, 256, 4, False, False, False, False)
+            if layouts[0][1][-1] == 256
+            else (32, 512, 4, False, False, False, False)
+        )
+    ):
+        from .short_forward import AdaptiveShortForward
+
+        program = AdaptiveShortForward(program, layouts[0][1][-1], causal, vector, layouts[0][1][0] * layouts[0][1][1])
     with torch.cuda.device(device):
         return cute.compile(
             program,
@@ -2367,7 +2394,7 @@ def _compile_kernel(
 
 
 def centered_backward(q):
-    return torch.cuda.get_device_capability(q.device.index) in ((8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0))
+    return torch.cuda.get_device_capability(q.device.index) in ((8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1))
 
 
 class PackMask:
