@@ -214,7 +214,7 @@ class CuTeConfigurationTests(unittest.TestCase):
                                 self.assertEqual(configuration[4], mode != "forward")
 
     def test_compiled_autograd_saves_output_for_centered_blackwell_backward(self):
-        from simpletuner.helpers.training.kohaku_fa_cute import api
+        from simpletuner.helpers.training.kohaku_fa_cute import _ops
 
         q = torch.empty(1, 2, 17, 64, dtype=torch.bfloat16)
         output = torch.empty_like(q)
@@ -226,6 +226,6 @@ class CuTeConfigurationTests(unittest.TestCase):
                 patch.object(torch.cuda, "get_device_capability", return_value=capability),
             ):
                 ctx = SimpleNamespace(save_for_backward=Mock(), mark_non_differentiable=Mock())
-                api.setup_context(ctx, (q, q, q, None, 0.125, False), (output, stats, stats, blocks))
+                _ops.setup_context(ctx, (q, q, q, None, 0.125, False), (output, stats, stats, blocks))
                 self.assertTrue(ctx.centered)
                 self.assertIs(ctx.save_for_backward.call_args.args[-1], output)

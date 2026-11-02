@@ -8,6 +8,7 @@ import torch
 
 from scripts.benchmark_attention_precision import fp64_reference, metrics
 from scripts.benchmark_attention_regressions import assess, cases, logits_statistics, make_case
+from tests.kohaku_fa_reference import attention_reference
 
 
 def run_attention(inputs, dout, *, mask=None, causal=False, scale=None):
@@ -20,7 +21,7 @@ def run_attention(inputs, dout, *, mask=None, causal=False, scale=None):
 
 @unittest.skipUnless(
     torch.cuda.is_available()
-    and torch.cuda.get_device_capability() in {(8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)},
+    and torch.cuda.get_device_capability() in {(8, 0), (8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)},
     "Requires supported CuTe CUDA kernels",
 )
 class TrackerRegressionTests(unittest.TestCase):
@@ -55,7 +56,7 @@ class TrackerRegressionTests(unittest.TestCase):
                             value.copy_(original)
                             value[..., length:, :] = poison
                         inputs = (q, *(value[..., :length, :] for value in storage))
-                        reference = fp64_reference(inputs, dout)
+                        reference = attention_reference(inputs, dout)
                         actual = self.run_attention(inputs, dout)
                         self.assert_reference(actual, reference)
                         for value in storage:
@@ -81,7 +82,7 @@ class TrackerRegressionTests(unittest.TestCase):
                     if layout == "bshd":
                         inputs = [value.transpose(1, 2).contiguous().transpose(1, 2) for value in inputs]
                     dout = torch.randn_like(inputs[0])
-                    self.assert_reference(self.run_attention(inputs, dout), fp64_reference(inputs, dout))
+                    self.assert_reference(self.run_attention(inputs, dout), attention_reference(inputs, dout))
 
     def test_nonpositive_scales_with_masks(self):
         torch.manual_seed(1428)
@@ -97,7 +98,7 @@ class TrackerRegressionTests(unittest.TestCase):
                         with self.subTest(dtype=dtype, scale=scale, causal=causal, masked=masked):
                             selected = mask if masked else None
                             actual = self.run_attention(inputs, dout, mask=selected, causal=causal, scale=scale)
-                            reference = fp64_reference(inputs, dout, selected, causal, scale)
+                            reference = attention_reference(inputs, dout, selected, causal, scale)
                             self.assert_reference(actual, reference)
                             if scale == 0:
                                 self.assertEqual(actual[1].count_nonzero().item(), 0)
@@ -108,7 +109,7 @@ class TrackerRegressionTests(unittest.TestCase):
         for dtype in (torch.float16, torch.bfloat16):
             inputs = [torch.randn(1, 1, length, 64, device="cuda", dtype=dtype) for length in (1, 128, 128)]
             dout = torch.randn_like(inputs[0])
-            self.assert_reference(self.run_attention(inputs, dout), fp64_reference(inputs, dout))
+            self.assert_reference(self.run_attention(inputs, dout), attention_reference(inputs, dout))
 
     def test_single_query_gqa_statistics(self):
         from simpletuner.helpers.training.kohaku_fa_cute import native
@@ -118,7 +119,7 @@ class TrackerRegressionTests(unittest.TestCase):
             inputs = [torch.randn(1, heads, 1, 128, device="cuda", dtype=torch.bfloat16)]
             inputs += [torch.randn(1, kvheads, 300, 128, device="cuda", dtype=torch.bfloat16) for _ in range(2)]
             dout = torch.randn_like(inputs[0])
-            expected = fp64_reference(inputs, dout)
+            expected = attention_reference(inputs, dout)
             self.assert_reference(self.run_attention(inputs, dout), expected)
             scale = 128**-0.5
             native.extension().forward(*inputs, None, scale, False)
@@ -145,14 +146,14 @@ class TrackerRegressionTests(unittest.TestCase):
         inputs = [torch.randn(1, 2, 129, 64, device="cuda", dtype=torch.bfloat16) for _ in range(3)]
         expanded = torch.tensor(0.25, device="cuda", dtype=torch.bfloat16).expand_as(inputs[0])
         self.assertEqual(expanded.stride(), (0, 0, 0, 0))
-        reference = fp64_reference(inputs, expanded)
+        reference = attention_reference(inputs, expanded)
         self.assert_reference(self.run_attention(inputs, expanded), reference)
         self.assert_reference(self.run_attention(inputs, expanded.contiguous()), reference)
 
 
 @unittest.skipUnless(
     torch.cuda.is_available()
-    and torch.cuda.get_device_capability() in {(8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)},
+    and torch.cuda.get_device_capability() in {(8, 0), (8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)},
     "Requires supported CuTe CUDA kernels",
 )
 class LaunchLimitTests(unittest.TestCase):
@@ -343,7 +344,7 @@ class AdversarialFixtureTests(unittest.TestCase):
 
 @unittest.skipUnless(
     torch.cuda.is_available()
-    and torch.cuda.get_device_capability() in {(8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)},
+    and torch.cuda.get_device_capability() in {(8, 0), (8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)},
     "Requires supported CuTe CUDA kernels",
 )
 class AdversarialKernelTests(unittest.TestCase):
@@ -367,7 +368,7 @@ class AdversarialKernelTests(unittest.TestCase):
             for case in cases(extended=False):
                 with self.subTest(dtype=dtype, case=case.name):
                     inputs, dout, mask = make_case(case, device="cuda", dtype=dtype)
-                    expected = fp64_reference(inputs, dout, mask, scale=case.scale)
+                    expected = attention_reference(inputs, dout, mask, scale=case.scale)
                     variables = [value.detach().requires_grad_() for value in inputs]
                     output = attention(*variables, mask=mask, scale=case.scale)
                     actual = output, *torch.autograd.grad(output, variables, dout)
@@ -406,7 +407,7 @@ class AdversarialKernelTests(unittest.TestCase):
                     return output, *torch.autograd.grad(output, variables, dout)
 
                 compiled = torch.compile(attention, fullgraph=True)
-                expected = fp64_reference(variables, dout)
+                expected = attention_reference(variables, dout)
                 self.assert_reference(run(compiled), expected, dtype, case.name)
                 stream = torch.cuda.Stream()
                 stream.wait_stream(torch.cuda.current_stream())
@@ -424,4 +425,4 @@ class AdversarialKernelTests(unittest.TestCase):
                             target.copy_(source)
                     graph.replay()
                     torch.cuda.synchronize()
-                    self.assert_reference(actual, fp64_reference(variables, dout), dtype, case.name)
+                    self.assert_reference(actual, attention_reference(variables, dout), dtype, case.name)

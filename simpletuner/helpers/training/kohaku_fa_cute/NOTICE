@@ -1,32 +1,25 @@
 SimpleTuner CuTe attention
 
-Kernel implementation synchronized with KohakuFA-CuTe revision
-a30bc8702ef58d6e3a7336d9fc623fcfb0801785.
+Kernel implementation synchronized with KohakuFA-CuTe 0.4.0 revision
+30704427809008e83ad38174e7c1780016c44258.
 https://github.com/SimpleTuner-io/KohakuFA-CuTe
 
-The kernels use warp MMA on SM86 Ampere, Ada and RTX Blackwell,
-WGMMA/TMA on Hopper, and native tcgen05/TMEM producer/consumer pipelines
-on B200 and B300.
-Architecture-specific configurations preserve the centered FP32 backward
-calculation, separate unscaled row maxima and logarithmic normalization,
-and late gradient scaling. B200 and B300 use fused probability/dS consumers
-for 128-column backward tiles; B300 retains its hardware TMEM reductions.
-Interior probability tiles omit per-element bounds checks; tails and causal
-boundaries retain visibility checks with the same centered arithmetic.
+The implementation is distributed under AGPL-3.0-or-later;
+see LICENSE.AGPL-3.0. SimpleTuner retains its training backend policy,
+package namespaces and public attention adapters.
 
-Blackwell uses packed FP32 arithmetic, overlapped operand/statistic transfers,
-and adjacent D512 gradient slices. BF16 D512 MHA on B300 at 512 tokens
-and above uses a register-resident FP32 auxiliary with 256-wide gradient
-accumulators and vectorized gradient staging.
+Supported CuTe architectures are SM80, SM86, SM89, SM90, SM100, SM103,
+SM120 and SM121. The default arithmetic preserves unscaled score maxima,
+separate logarithmic normalization, one input-dtype conversion of P and dS,
+FP32 product accumulation and late dQ/dK scaling. Backward uses the actual
+rounded forward output for its output/dO correction. Compensated precision
+helpers remain explicit experiments, outside default dispatch.
 
-SM120 backward shares score products across query column warps for
-D256/D512, combines row corrections before publishing them, and stages KV
-statistics for the selected dense D256 and causal D64 configurations.
-Aligned D512 forward and backward use full-width tiles with shared score
-producers and separate output consumers. Consumer GPU backward pairs QK/dP
-producers and packs DS/P stores. SM86/SM89 use wider D512 operand copies;
-Ada uses tuned D256 tiles and cache policy, while SM120 also tunes causal
-D128 query sharing.
+The optional FA4-derived schedules retain their pinned runtime and source
+eligibility checks. Atomic backward follows the live deterministic policy;
+owned-gradient kernels retain their independent reduction semantics.
+Native caches include the C++ source hash, and logical negative/conjugate
+view values are resolved before the DLPack boundary.
 
 The producer/consumer architecture in blackwell_pipeline.py adapts KohakuFA's
 sm100/fwd.py and sm100/bwd.py at revision
@@ -34,23 +27,6 @@ sm100/fwd.py and sm100/bwd.py at revision
 https://github.com/KohakuBlueleaf/KohakuFA
 KohakuFA is distributed under Apache-2.0, reproduced in LICENSE.Apache-2.0.
 The CuTe port retains centered backward and single-owner gradient tiles.
-
-Causal BF16 D256 GQA uses overlapping forward stages on Ada and independent
-K/V staging with ordered softmax warpgroups on Hopper. Short D64 cross-attention
-queries split across the key sequence on Ada/Hopper. Native build caches include
-the C++ source hash so copied checkouts cannot retain stale dispatch code.
-Batch/head products above 65,535 flatten onto grid-x for attention, mask
-packing and backward output-delta preparation; smaller grids are unchanged.
-
-GB10 (SM121) uses shared D512 score tiles and streamed-feature D256/D512
-short-sequence forward kernels. Runtime length dispatch preserves compiled
-cache reuse across short-sequence boundaries.
-
-Boolean masks are classified on every invocation, including CUDA graph replay.
-Native eager autograd and compiler-safe custom operators share allocation and
-TVM FFI dispatch. Compiled host entries are cached by device, tensor metadata
-and sequence-length configuration, bounded to 128 entries and released before
-Python shutdown.
 
 row_view and operand_a adapt accumulator-layout transforms from NVIDIA CUTLASS:
 examples/python/CuTeDSL/cute/ampere/kernel/attention/flash_attention_v2.py
@@ -70,3 +46,18 @@ https://github.com/Dao-AILab/flash-attention
 Reference revision: 85d6dfe3573708b5632915950cd8b069b924ba52
 Copyright (c) 2025, Tri Dao.
 BSD-3-Clause; the full license and contributor list are included in LICENSE.
+
+The optional fa4_sm80 package derives modified forward, softmax, backward, and
+preprocess methods from FlashAttention at revision
+4616f5116d33e3ba3cbb71d582caffcfcb49649c. Unchanged methods use the pinned optional
+dependency. Copyright and contributor notices are retained with the derived
+methods; the BSD-3-Clause license and AUTHORS list are reproduced in
+LICENSES/FlashAttention-BSD-3-Clause.txt and LICENSES/FlashAttention-AUTHORS.txt.
+
+The experimental fa4_hopper package derives modified Hopper WGMMA forward,
+softmax, backward, preprocessing and persistent scheduling methods from the
+same FlashAttention revision. It preserves separate unscaled maxima and
+logarithmic normalization, actual rounded-output delta, input-dtype P before
+dS, one dS conversion, FP32 accumulation and late dQ/dK scaling. Unchanged helpers
+use the pinned optional dependency. The derived methods retain copyright and
+contributor notices under the same reproduced BSD-3-Clause license.
