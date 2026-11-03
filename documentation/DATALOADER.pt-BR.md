@@ -1300,7 +1300,7 @@ Nesta configuração:
   - `fallback_caption_column` é um nome opcional de uma coluna na tabela que contém captions de fallback. Elas são usadas se o campo de caption principal estiver vazio. Neste caso, usamos a coluna `tags`.
   - `identifier_includes_extension` deve ser definido como `true` quando sua coluna de nome de arquivo contém a extensão da imagem. Caso contrário, a extensão será assumida como `.png`. É recomendado incluir extensões de arquivo na coluna de nome de arquivo da tabela.
 
-> ⚠️ O suporte a parquet é limitado à leitura de captions. Você deve preencher separadamente uma fonte de dados com suas amostras de imagem usando "{id}.png" como nome do arquivo. Veja scripts no diretório [scripts/toolkit/datasets](scripts/toolkit/datasets) para ideias.
+> ⚠️ O suporte a parquet é limitado à leitura de captions. Você deve preencher separadamente uma fonte de dados com suas amostras de imagem usando "{id}.png" como nome do arquivo. Veja scripts no diretório [scripts/datasets](/scripts/datasets) para ideias.
 
 Como em outras configurações de dataloader:
 

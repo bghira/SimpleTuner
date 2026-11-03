@@ -34,7 +34,7 @@ Dreambooth は、少量の高品質画像で被写体をモデルに注入する
 
 画像マスクを画像データとペアで定義できます。マスクの暗い部分は損失計算から無視されます。
 
-`input_dir` と `output_dir` を指定してマスクを生成する [スクリプト](/scripts/toolkit/datasets/masked_loss/generate_dataset_masks.py) が用意されています:
+`input_dir` と `output_dir` を指定してマスクを生成する [スクリプト](/scripts/datasets/masked_loss/generate_dataset_masks.py) が用意されています:
 
 ```bash
 python generate_dataset_masks.py --input_dir /images/input \

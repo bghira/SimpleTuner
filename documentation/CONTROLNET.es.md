@@ -101,7 +101,7 @@ La configuración del dataloader se mantiene bastante cerca de una configuració
 
 Aunque el soporte de ControlNet es nuevo en SimpleTuner, por ahora solo tenemos una opción disponible para generar tu conjunto de entrenamiento:
 
-- [create_canny_edge.py](/scripts/toolkit/datasets/controlnet/create_canny_edge.py)
+- [create_canny_edge.py](/scripts/datasets/controlnet/create_canny_edge.py)
   - Un ejemplo extremadamente básico para generar un conjunto de entrenamiento para modelos Canny.
   - Tendrás que modificar los valores `input_dir` y `output_dir` en el script
 

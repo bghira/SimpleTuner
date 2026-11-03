@@ -34,7 +34,7 @@ The model contains something called a "prior" which could, in theory, be preserv
 
 Image masks may be defined in pairs with image data. The dark portions of the mask will cause the loss calculations to ignore these parts of the image.
 
-An example [script](/scripts/toolkit/datasets/masked_loss/generate_dataset_masks.py) exists to generate these masks, given an input_dir and output_dir:
+An example [script](/scripts/datasets/masked_loss/generate_dataset_masks.py) exists to generate these masks, given an input_dir and output_dir:
 
 ```bash
 python generate_dataset_masks.py --input_dir /images/input \

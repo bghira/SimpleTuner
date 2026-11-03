@@ -1300,7 +1300,7 @@ Parquet caption strategy आपको अपनी सभी files को उन
   - `fallback_caption_column` एक वैकल्पिक column नाम है जिसमें fallback captions होते हैं। ये primary caption field खाली होने पर उपयोग होते हैं। यहाँ `tags` column उपयोग किया गया है।
   - `identifier_includes_extension` को `true` सेट करें जब filename column में image extension शामिल हो। अन्यथा extension `.png` मान लिया जाएगा। Table के filename column में extensions शामिल करना अनुशंसित है।
 
-> ⚠️ Parquet support capability केवल captions पढ़ने तक सीमित है। आपको अपनी image samples के लिए अलग से data source populate करना होगा, जहाँ filenames "{id}.png" हों। ideas के लिए [scripts/toolkit/datasets](scripts/toolkit/datasets) डायरेक्टरी के scripts देखें।
+> ⚠️ Parquet support capability केवल captions पढ़ने तक सीमित है। आपको अपनी image samples के लिए अलग से data source populate करना होगा, जहाँ filenames "{id}.png" हों। ideas के लिए [scripts/datasets](/scripts/datasets) डायरेक्टरी के scripts देखें।
 
 अन्य dataloader कॉन्फ़िगरेशन की तरह:
 
