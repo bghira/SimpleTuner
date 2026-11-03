@@ -101,7 +101,7 @@ dataloader कॉन्फ़िगरेशन सामान्य text‑to�
 
 SimpleTuner में ControlNet समर्थन जितना नया है, अभी प्रशिक्षण सेट बनाने के लिए हमारे पास केवल एक विकल्प है:
 
-- [create_canny_edge.py](/scripts/toolkit/datasets/controlnet/create_canny_edge.py)
+- [create_canny_edge.py](/scripts/datasets/controlnet/create_canny_edge.py)
   - Canny मॉडल प्रशिक्षण के लिए एक बेहद बुनियादी उदाहरण।
   - आपको स्क्रिप्ट में `input_dir` और `output_dir` मान बदलने होंगे
 

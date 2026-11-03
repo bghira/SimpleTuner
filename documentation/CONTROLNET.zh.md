@@ -101,7 +101,7 @@ ControlNet 模型能够完成多种任务，这取决于训练时提供的条件
 
 SimpleTuner 对 ControlNet 的支持还很新，目前用于生成训练集的选项只有一个：
 
-- [create_canny_edge.py](/scripts/toolkit/datasets/controlnet/create_canny_edge.py)
+- [create_canny_edge.py](/scripts/datasets/controlnet/create_canny_edge.py)
   - 这是一个非常基础的示例，用于生成 Canny 模型训练集。
   - 你需要修改脚本中的 `input_dir` 与 `output_dir`。
 

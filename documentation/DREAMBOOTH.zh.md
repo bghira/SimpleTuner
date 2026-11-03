@@ -34,7 +34,7 @@ Dreambooth 指的是 Google 开发的一种技术，通过少量高质量图像�
 
 图像掩码可以与图像数据成对定义。掩码的暗色区域会让损失计算忽略这些部分。
 
-提供了一个 [脚本](/scripts/toolkit/datasets/masked_loss/generate_dataset_masks.py) 用于生成掩码，需提供 input_dir 与 output_dir：
+提供了一个 [脚本](/scripts/datasets/masked_loss/generate_dataset_masks.py) 用于生成掩码，需提供 input_dir 与 output_dir：
 
 ```bash
 python generate_dataset_masks.py --input_dir /images/input \

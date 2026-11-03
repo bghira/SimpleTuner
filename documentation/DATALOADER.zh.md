@@ -1300,7 +1300,7 @@ s/this/will be found and replaced/
   - `fallback_caption_column` 是可选的备用字幕列名，当主字幕为空时使用。本例使用 `tags` 列。
   - `identifier_includes_extension` 当文件名列包含扩展名时应设为 `true`，否则默认扩展名为 `.png`。建议在文件名列中包含扩展名。
 
-> ⚠️ Parquet 支持仅限于读取字幕。你需要用 `{id}.png` 的文件名单独填充图像样本数据源。可参考 [scripts/toolkit/datasets](scripts/toolkit/datasets) 目录中的脚本。
+> ⚠️ Parquet 支持仅限于读取字幕。你需要用 `{id}.png` 的文件名单独填充图像样本数据源。可参考 [scripts/datasets](/scripts/datasets) 目录中的脚本。
 
 与其他 dataloader 配置类似：
 
