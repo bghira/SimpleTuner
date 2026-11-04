@@ -50,16 +50,17 @@ class KohakuFAIntegrationTests(unittest.TestCase):
         q = SimpleNamespace(ndim=4, shape=(1, 2, 17, 64), dtype=torch.bfloat16, device=torch.device("cuda", 0))
         with (
             patch.object(api, "extension") as extension,
+            patch.object(api.fa4_sm80, "compatible", return_value=False),
             patch.object(api, "kohaku_fa_scaled_dot_product_attention", return_value="cute") as kernel,
         ):
             extension.cache_info.return_value = SimpleNamespace(currsize=0)
-            for capability in ((8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)):
+            for capability in ((8, 0), (8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)):
                 with (
                     self.subTest(capability=capability),
                     patch.object(torch.cuda, "get_device_capability", return_value=capability),
                 ):
                     self.assertEqual(api.automatic_kohaku_fa_scaled_dot_product_attention(q, q, q), "cute")
-            self.assertEqual(kernel.call_count, 7)
+            self.assertEqual(kernel.call_count, 8)
             extension.assert_not_called()
 
     def test_implicit_default_routes_training_and_restores_evaluation(self):
@@ -178,7 +179,7 @@ class KohakuFAIntegrationTests(unittest.TestCase):
         kernel.assert_not_called()
 
     def test_unsupported_architectures_rejected(self):
-        for capability in [(7, 5), (8, 0), (8, 7), (12, 2)]:
+        for capability in [(7, 5), (8, 7), (12, 2)]:
             with (
                 self.subTest(capability=capability),
                 patch.object(torch.cuda, "is_available", return_value=True),
@@ -188,6 +189,7 @@ class KohakuFAIntegrationTests(unittest.TestCase):
 
     def test_architecture_specific_dependencies(self):
         for capability, packages in [
+            ((8, 0), {"nvidia-cutlass-dsl": "4.8", "apache-tvm-ffi": "0.1.14", "ninja": "1.11"}),
             ((8, 6), {"nvidia-cutlass-dsl": "4.8", "apache-tvm-ffi": "0.1.14", "ninja": "1.11"}),
             ((8, 9), {"nvidia-cutlass-dsl": "4.8", "apache-tvm-ffi": "0.1.14", "ninja": "1.11"}),
             ((9, 0), {"nvidia-cutlass-dsl": "4.8", "apache-tvm-ffi": "0.1.14", "ninja": "1.11"}),

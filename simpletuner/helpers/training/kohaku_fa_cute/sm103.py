@@ -439,6 +439,8 @@ class Query(Forward):
                     p = cute.math.exp2(
                         (scores[i] * sign - row_max) * magnitude * 1.4426950408889634 - row_logsum, fastmath=True
                     )
+                if cutlass.const_expr(self.baseline_precision):
+                    p = p.to(q.element_type).to(cutlass.Float32)
                 value = p * (dps[i] - center)
                 rounded = value.to(q.element_type)
                 scores[i] = value
@@ -453,32 +455,38 @@ class Query(Forward):
             transposed = cute.composition(source, cute.make_layout((self.width, self.columns), stride=(self.columns, 1)))
             if tid < 32:
                 self.issue(product_mma, ds, transposed, query_acc, block > 0)
-                self.issue(
-                    product_mma,
-                    probability,
-                    transposed,
-                    mean_acc,
-                    False if cutlass.const_expr(self.stream_aux) else block > 0,
-                )
+                if cutlass.const_expr(not self.baseline_precision):
+                    self.issue(
+                        product_mma,
+                        probability,
+                        transposed,
+                        mean_acc,
+                        False if cutlass.const_expr(self.stream_aux) else block > 0,
+                    )
                 with cute.arch.elect_one():
                     tcgen05.commit(mbar)
             cute.arch.mbarrier_wait(mbar, phase)
             phase = phase ^ 1
-            if cutlass.const_expr(self.stream_aux):
+            if cutlass.const_expr(self.stream_aux and not self.baseline_precision):
                 values, _, _ = self.read(mean_acc, tid, self.width)
                 for i in cutlass.range_constexpr(cute.size(auxiliary)):
                     auxiliary[i] += values[i]
             cute.arch.sync_threads()
         result, coords, _ = self.read(query_acc, tid, self.width)
-        if cutlass.const_expr(self.stream_aux):
-            mean = auxiliary
-        else:
-            mean, _, _ = self.read(mean_acc, tid, self.width)
+        if cutlass.const_expr(not self.baseline_precision):
+            if cutlass.const_expr(self.stream_aux):
+                mean = auxiliary
+            else:
+                mean, _, _ = self.read(mean_acc, tid, self.width)
         for i in cutlass.range_constexpr(cute.size(result)):
             row, col = coords[i]
-            left[row, col] = ((result[i] - rounded_total * mean[i]) * scale).to(q.element_type)
+            value = result[i]
+            if cutlass.const_expr(not self.baseline_precision):
+                value -= rounded_total * mean[i]
+            left[row, col] = (value * scale).to(q.element_type)
         if start + self.row_index(tid) < q.shape[2] and wi == 0 and (self.rows == 128 or tid % 32 < 16):
-            delta[batch, head, start + self.row_index(tid)] = total
+            if cutlass.const_expr(not self.baseline_precision):
+                delta[batch, head, start + self.row_index(tid)] = total
         cute.arch.sync_threads()
         self.store(left, dq, batch, head, start, offset, tid)
         cute.arch.sync_threads()
@@ -628,7 +636,8 @@ class KeyValue(Forward):
                         tensor = (maximum, logsum, delta_base, delta)[field]
                         value = cutlass.Float32(0)
                         if block * self.columns + tid < q.shape[2]:
-                            value = tensor[batch, head, block * self.columns + tid]
+                            if cutlass.const_expr(not self.baseline_precision or field != 3):
+                                value = tensor[batch, head, block * self.columns + tid]
                         stats[field, tid] = value
                 cute.arch.sync_threads()
                 scores, coords, _ = self.read(score_acc, tid, self.columns)
@@ -644,7 +653,11 @@ class KeyValue(Forward):
                             (scores[i] * sign - stats[0, col]) * magnitude * 1.4426950408889634 - stats[1, col],
                             fastmath=True,
                         )
-                    value = p * ((dps[i] - stats[2, col]) - stats[3, col])
+                    if cutlass.const_expr(self.baseline_precision):
+                        p = p.to(q.element_type).to(cutlass.Float32)
+                        value = p * (dps[i] - stats[2, col])
+                    else:
+                        value = p * ((dps[i] - stats[2, col]) - stats[3, col])
                     rounded = value.to(q.element_type)
                     scores[i] = value
                     dps[i] = rounded.to(cutlass.Float32)

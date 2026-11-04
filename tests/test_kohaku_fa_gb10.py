@@ -17,9 +17,9 @@ class GB10AttentionTests(unittest.TestCase):
     compare = legacy_tests.CuTeAttentionTests.compare
 
     def test_training_dispatch_matches_reference_in_eager_and_compiled_calls(self):
-        from scripts.benchmark_attention_precision import fp64_reference
         from scripts.benchmark_attention_regressions import assess
         from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
+        from tests.kohaku_fa_reference import attention_reference as fp64_reference
 
         for mechanism, dimension, causal in itertools.product(("kohaku-fa", "kohaku-fa-auto"), (256, 512), (False, True)):
             with self.subTest(mechanism=mechanism, dimension=dimension, causal=causal):
@@ -63,8 +63,8 @@ class GB10AttentionTests(unittest.TestCase):
                 self.compare(q, k, v, mask, mode == "causal", scale=-0.125, compiled=mode == "projection")
 
     def test_sm121_wide_graph_reads_changed_inputs(self):
-        from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import native
+        from tests.kohaku_fa_reference import attention_reference as fp64_reference
 
         extension = native.extension()
         q = torch.randn(1, 2, 33, 512, device="cuda", dtype=torch.bfloat16)
@@ -107,8 +107,9 @@ class GB10AttentionTests(unittest.TestCase):
                         self.assertEqual(compiler.call_count, 2)
 
     def test_sm121_short_forward_graph_preserves_statistics_and_aliases(self):
-        from scripts.benchmark_attention_precision import fp64_reference, metrics
+        from scripts.benchmark_attention_precision import metrics
         from simpletuner.helpers.training.kohaku_fa_cute import native
+        from tests.kohaku_fa_reference import attention_reference as fp64_reference
 
         extension = native.extension()
         for dimension, dtype, causal in itertools.product((256, 512), (torch.float16, torch.bfloat16), (False, True)):
@@ -147,9 +148,9 @@ class GB10AttentionTests(unittest.TestCase):
                     torch.testing.assert_close(actual[2].double(), logsum, atol=0.001, rtol=0.001)
 
     def test_sm121_short_forward_keeps_negative_maxima_and_tiny_gradients(self):
-        from scripts.benchmark_attention_precision import fp64_reference
         from scripts.benchmark_attention_regressions import Case, assess, make_case
         from simpletuner.helpers.training.kohaku_fa_cute import attention
+        from tests.kohaku_fa_reference import attention_reference as fp64_reference
 
         for dimension, dtype in itertools.product((256, 512), (torch.float16, torch.bfloat16)):
             cases = [
@@ -190,9 +191,9 @@ class GB10AttentionTests(unittest.TestCase):
                     self.assertEqual(result["status"], "pass", result)
 
     def test_sm121_short_forward_parallel_tiles_preserve_tail_gradients(self):
-        from scripts.benchmark_attention_precision import fp64_reference
         from scripts.benchmark_attention_regressions import assess
         from simpletuner.helpers.training.kohaku_fa_cute import attention
+        from tests.kohaku_fa_reference import attention_reference as fp64_reference
 
         for dimension, dtype, causal, (batch, heads) in itertools.product(
             (256, 512), (torch.float16, torch.bfloat16), (False, True), ((1, 16), (1, 32), (4, 16))

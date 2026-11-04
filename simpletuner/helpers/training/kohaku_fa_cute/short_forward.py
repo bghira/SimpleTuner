@@ -19,14 +19,15 @@ from .launch import block_indices, launch_grid
 class ShortForward(Attention):
     def __init__(self, causal, dimension, *, rows=16, chunk=64, output_width=64, vector=8, columns=128):
         if (
-            dimension not in (256, 512)
+            dimension not in (128, 256, 512)
             or rows not in (16, 32, 64)
             or chunk not in (32, 64, 128)
             or output_width not in (32, 64, 128)
             or columns not in (64, 128)
             or rows * output_width < 1024
+            or dimension < 2 * max(chunk, output_width)
         ):
-            raise ValueError("Short forward requires supported query, feature and output tiles for D256/D512.")
+            raise ValueError("Short forward requires supported tiles and at least two input/output feature stages.")
         super().__init__(
             "forward", causal, False, columns=columns, width=output_width, warps=4, vector=vector, copy_cache_global=True
         )

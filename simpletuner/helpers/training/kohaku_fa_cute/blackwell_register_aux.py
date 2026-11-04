@@ -1,24 +1,26 @@
 """Wide Blackwell backward with an FP32 register-resident auxiliary.
 
-Keeping the P-weighted-key mean / dV sum in registers leaves TMEM for a
-256-wide dQ/dK accumulator. D512 output slicing falls from four to two while
-FP32 probabilities and the full centered correction are retained.
+Keeping the dV sum in registers leaves TMEM for a 256-wide dQ/dK
+accumulator. D512 output slicing falls from four to two while retaining the
+default single-rounded P/dS operands and FP32 product accumulation.
 
-The measured selector targets dense/causal BF16 MHA on SM103. Other inputs use the
-existing backward. Role-local register changes need a launch bound and a CTA
-join before restoring registers; vector staging reduces readout register pressure.
+The measured selectors target dense/causal BF16 MHA on SM103 and bounded B200
+shapes. Other inputs use the existing backward. Role-local register changes
+need a launch bound and a CTA join before restoring registers; vector staging
+reduces readout register pressure.
 """
 
 import cuda.bindings.driver as cuda
 import cutlass
 import cutlass.cute as cute
 import cutlass.pipeline as pipeline
+from cutlass._mlir.dialects import llvm
 from cutlass.cute.nvgpu import OperandMajorMode, tcgen05, warpgroup
 from cutlass.memory import SmemAllocator, TmemAllocator
 
-from .blackwell_pipeline import Backward
-from .kernels import OutputDelta
-from .launch import block_indices, launch_grid
+from simpletuner.helpers.training.kohaku_fa_cute.blackwell_pipeline import Backward
+from simpletuner.helpers.training.kohaku_fa_cute.kernels import OutputDelta
+from simpletuner.helpers.training.kohaku_fa_cute.launch import block_indices, launch_grid
 
 
 class RegisterAux(Backward):
@@ -26,6 +28,14 @@ class RegisterAux(Backward):
     def __init__(self, mode, causal=False):
         super().__init__(mode, causal, False, columns=128, warps=12, width=128, tma=True)
         self.width, self.stream_slots = (256, 5)
+        self.role_statistics = False
+
+    @cute.jit
+    def statistics_sync(self, barrier: cutlass.Constexpr):
+        # The 32 statistics producers and 128 probability/derivative consumers
+        # occupy different roles. Order regular shared stores/loads as well as
+        # slot ownership; no other warp participates in this rendezvous.
+        llvm.inline_asm(None, [], f"barrier.sync {barrier}, 160;", "~{memory}", has_side_effects=True)
 
     @cute.jit
     def __call__(self, q, k, v, maximum, logsum, dout, delta, base, dq, dk, dv, scale, stream):
@@ -224,7 +234,10 @@ class RegisterAux(Backward):
                             cursor += 1
             elif tid >= 448 and tid < 480 and cutlass.const_expr(self.mode == "kv"):
                 for step in range(steps):
-                    cute.arch.mbarrier_wait(stat_free, step % 2 ^ 1)
+                    if cutlass.const_expr(self.role_statistics):
+                        self.statistics_sync(3)
+                    else:
+                        cute.arch.mbarrier_wait(stat_free, step % 2 ^ 1)
                     block = begin + step % span
                     right_head = own_head * ratio + step // span
                     for i in cutlass.range_constexpr(4):
@@ -233,11 +246,15 @@ class RegisterAux(Backward):
                             source = (maximum, logsum, base, delta)[field]
                             value = cutlass.Float32(0)
                             if block * 128 + col < q.shape[2]:
-                                value = source[batch, right_head, block * 128 + col]
+                                if cutlass.const_expr(not self.baseline_precision or field != 3):
+                                    value = source[batch, right_head, block * 128 + col]
                             stats[field, col] = value
-                    cute.arch.sync_warp()
-                    with cute.arch.elect_one():
-                        cute.arch.mbarrier_arrive(stat_ready)
+                    if cutlass.const_expr(self.role_statistics):
+                        self.statistics_sync(4)
+                    else:
+                        cute.arch.sync_warp()
+                        with cute.arch.elect_one():
+                            cute.arch.mbarrier_arrive(stat_ready)
             elif tid >= 384 and tid < 416:
                 cursor = cutlass.Int32(0)
                 for step in range(steps):
@@ -269,7 +286,8 @@ class RegisterAux(Backward):
                         slot = cursor % 5
                         cute.arch.mbarrier_wait(ready + slot, cursor // 5 % 2)
                         cute.arch.fence_view_async_shared()
-                        self.product(prod_mma, probabilities, b[None, None, slot], pointer + c * 64, False)
+                        if cutlass.const_expr(self.mode == "kv" or not self.baseline_precision):
+                            self.product(prod_mma, probabilities, b[None, None, slot], pointer + c * 64, False)
                         if cutlass.const_expr(self.mode == "q"):
                             self.product(prod_mma, derivatives, b[None, None, slot], pointer + 256 + c * 64, step > 0)
                         with cute.arch.elect_one():
@@ -313,7 +331,11 @@ class RegisterAux(Backward):
                 cute.arch.mbarrier_wait(sr, step % 2)
                 cute.arch.mbarrier_wait(wf, step % 2 ^ 1)
                 if cutlass.const_expr(self.mode == "kv"):
-                    cute.arch.mbarrier_wait(stat_ready, step % 2)
+                    if cutlass.const_expr(self.role_statistics):
+                        self.statistics_sync(3)
+                        self.statistics_sync(4)
+                    else:
+                        cute.arch.mbarrier_wait(stat_ready, step % 2)
                 # Reconstruct P while the independent dP product is running.
                 # Reuse the completed score tile for FP32 P, then reread it for
                 # dS; the shared matrix operand is the separately rounded copy.
@@ -324,6 +346,8 @@ class RegisterAux(Backward):
                         values, col, stats, local, start, block, q.shape[2], k.shape[2], row_max, row_log, magnitude, sign
                     )
                     self.store_ds(values, cute.local_tile(probabilities, (128, 16), (0, early)), local)
+                    if cutlass.const_expr(self.baseline_precision):
+                        values.store(values.load().to(q.element_type).to(cutlass.Float32))
                     self.write_matrix(pointer + col, values, 16, local)
                 cute.arch.mbarrier_wait(dr, step % 2)
                 for chunk in cutlass.range_constexpr(8):
@@ -335,7 +359,7 @@ class RegisterAux(Backward):
                         if cutlass.const_expr(self.mode == "kv"):
                             corrections = (stats[2, col + 2 * i], stats[2, col + 2 * i + 1])
                         pair = cute.arch.sub_packed_f32x2((dps[2 * i], dps[2 * i + 1]), corrections)
-                        if cutlass.const_expr(self.mode == "kv"):
+                        if cutlass.const_expr(self.mode == "kv" and not self.baseline_precision):
                             pair = cute.arch.sub_packed_f32x2(pair, (stats[3, col + 2 * i], stats[3, col + 2 * i + 1]))
                         pair = cute.arch.mul_packed_f32x2(pair, (values[2 * i], values[2 * i + 1]))
                         dps[2 * i], dps[2 * i + 1] = pair
@@ -349,12 +373,13 @@ class RegisterAux(Backward):
                 cute.arch.fence_view_async_shared()
                 if local == 0:
                     cute.arch.mbarrier_arrive(wr)
-                    if cutlass.const_expr(self.mode == "kv"):
+                    if cutlass.const_expr(self.mode == "kv" and not self.role_statistics):
                         cute.arch.mbarrier_arrive(stat_free)
             if cutlass.const_expr(self.mode == "q"):
                 stats[0, local] = rounded
                 if start + local < q.shape[2] and wi == 0:
-                    delta[batch, own_head, start + local] = total
+                    if cutlass.const_expr(not self.baseline_precision):
+                        delta[batch, own_head, start + local] = total
             cute.arch.barrier(barrier_id=2, number_of_threads=128)
             if local == 0:
                 cute.arch.mbarrier_arrive(tr)
@@ -368,10 +393,11 @@ class RegisterAux(Backward):
             acc.fill(0)
             for step in range(steps):
                 cute.arch.mbarrier_wait(ar, step % 2)
-                for c in cutlass.range_constexpr(8):
-                    result = self.read_matrix(pointer + half * 128 + c * 16, 16, local)
-                    for i in cutlass.range_constexpr(16):
-                        acc[c * 16 + i] += result[i]
+                if cutlass.const_expr(self.mode == "kv" or not self.baseline_precision):
+                    for c in cutlass.range_constexpr(8):
+                        result = self.read_matrix(pointer + half * 128 + c * 16, 16, local)
+                        for i in cutlass.range_constexpr(16):
+                            acc[c * 16 + i] += result[i]
                 self.subgroup_sync(half)
                 if local == 0:
                     cute.arch.mbarrier_arrive(af)
@@ -399,7 +425,7 @@ class RegisterAux(Backward):
                     result = self.read_matrix(pointer + 256 + half * 128 + c * 64 + part * 16, 16, local)
                     for i in cutlass.range_constexpr(16):
                         value = result[i]
-                        if cutlass.const_expr(self.mode == "q"):
+                        if cutlass.const_expr(self.mode == "q" and not self.baseline_precision):
                             value -= sigma * acc[c * 64 + part * 16 + i]
                         result[i] = value * scale
                     self.store_ds(result, cute.local_tile(staging, (128, 16), (0, part)), local)
@@ -435,15 +461,25 @@ class JointBackward:
 class AdaptiveBackward:
     """Use wide dense/causal BF16 D512 tiles for sufficiently parallel MHA."""
 
-    def __init__(self, causal, fallback, base_vector):
+    def __init__(self, causal, fallback, base_vector, maximum_length=None, minimum_length=512):
         self.wide = JointBackward(causal, base_vector)
         self.fallback = fallback
+        self.maximum_length = maximum_length
+        self.minimum_length = minimum_length
 
     @cute.jit
     def __call__(
         self, q, k, v, mask, out, maximum, logsum, dout, delta, dq, dk, dv, blocks, base, scale, stream: cuda.CUstream
     ):
-        if q.shape[2] >= 512 and k.shape[2] == q.shape[2] and k.shape[1] == q.shape[1] and q.shape[0] * q.shape[1] >= 8:
+        eligible = (
+            q.shape[2] >= self.minimum_length
+            and k.shape[2] == q.shape[2]
+            and k.shape[1] == q.shape[1]
+            and q.shape[0] * q.shape[1] >= 8
+        )
+        if cutlass.const_expr(self.maximum_length is not None):
+            eligible = eligible and q.shape[2] <= self.maximum_length
+        if eligible:
             self.wide(q, k, v, mask, out, maximum, logsum, dout, delta, dq, dk, dv, blocks, base, scale, stream)
         else:
             self.fallback(q, k, v, mask, out, maximum, logsum, dout, delta, dq, dk, dv, blocks, base, scale, stream)
