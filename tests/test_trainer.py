@@ -10,13 +10,13 @@ import tempfile
 import time
 import types
 import unittest
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, call, patch
 
 import torch
-from safetensors.torch import save_file
+from safetensors.torch import load_file, save_file
 
 from simpletuner.helpers.publishing.huggingface import HubManager
 from simpletuner.helpers.publishing.providers.s3 import S3PublishingProvider
@@ -613,6 +613,172 @@ except ImportError:
 
 
 class TestTrainer(unittest.TestCase):
+    def test_final_export_materializes_schedulefree_eval_weights_on_every_rank(self):
+        from simpletuner.helpers.training import save_hooks
+        from simpletuner.helpers.training.optimizers.adamw_schedulefree import AdamWScheduleFreeKahan
+
+        cases = (("standard", False), ("lycoris", False), ("full", False), ("full", True))
+        for export_type, use_ema in cases:
+            for is_main_process in (True, False):
+                with self.subTest(export_type=export_type, use_ema=use_ema, is_main_process=is_main_process):
+                    with tempfile.TemporaryDirectory() as tmpdir, ExitStack() as stack:
+                        component = torch.nn.Linear(1, 1, bias=False)
+                        encoders = [torch.nn.Linear(1, 1, bias=False) for _ in range(2)]
+                        parameters = list(component.parameters()) + [encoder.weight for encoder in encoders]
+                        optimizer = AdamWScheduleFreeKahan(parameters, betas=(0.5, 0.999))
+                        for parameter in parameters:
+                            parameter.data.fill_(2.0)
+                            optimizer.state[parameter]["z"] = torch.zeros_like(parameter)
+                        optimizer.param_groups[0]["train_mode"] = True
+                        # eval() maps these train weights (2) and z (0) to inference weights (4).
+                        component.reshard = Mock()
+                        model = Mock()
+                        model.MODEL_TYPE.value = "transformer"
+                        model.get_trained_component.return_value = component
+                        model.get_text_encoder.side_effect = lambda index: encoders[index] if index < 2 else None
+                        model.model = component
+                        trainer = object.__new__(Trainer)
+                        trainer.model = model
+                        trainer.optimizer = optimizer
+                        trainer.config = SimpleNamespace(
+                            optimizer="adamw_schedulefree",
+                            model_type="full" if export_type == "full" else "lora",
+                            lora_type=export_type,
+                            train_text_encoder=True,
+                            fsdp_enable=True,
+                            num_train_epochs=0,
+                            max_train_steps=0,
+                            strict_epoch_limit=True,
+                            use_ema=use_ema,
+                            save_text_encoder=False,
+                            output_dir=tmpdir,
+                            use_deepspeed_optimizer=False,
+                            lycoris_config=str(Path(tmpdir, "source.json")),
+                        )
+                        Path(trainer.config.lycoris_config).write_text("{}")
+                        trainer.lycoris_config = {}
+                        trainer.accelerator = Mock(
+                            is_main_process=is_main_process,
+                            is_local_main_process=is_main_process,
+                            is_fsdp2=True,
+                            distributed_type=DistributedType.FSDP,
+                        )
+                        trainer.accelerator.state.fsdp_plugin.fsdp_version = 2
+                        trainer.accelerator.unwrap_model.side_effect = lambda module: module
+                        trainer.accelerator._lycoris_wrapped_network = component
+                        trainer.state = {"first_epoch": 1, "current_epoch": 1, "global_step": 0}
+                        trainer.job_id = "test-final-export"
+                        trainer.train_loss = 0.0
+                        trainer.lr = 0.001
+                        trainer.validation = None
+                        trainer.hub_manager = None
+                        trainer.ema_model = Mock() if use_ema else None
+                        trainer.model_hooks = Mock()
+                        trainer.iteration_tracker = Mock()
+                        trainer._fsdp2_full_export_failure_guard = Mock(return_value=nullcontext())
+                        for name in (
+                            "init_trackers",
+                            "_train_initial_msg",
+                            "_emit_event",
+                            "_export_dynamo_cache",
+                            "_run_post_upload_script",
+                        ):
+                            setattr(trainer, name, Mock())
+                        trainer._create_torch_profiler = Mock(return_value=None)
+                        snapshots = []
+                        adapter_snapshots = []
+                        materialize_adapter = save_hooks._materialize_state_dict_for_save
+
+                        def capture_adapter(state_dict):
+                            snapshot = materialize_adapter(state_dict)
+                            adapter_snapshots.append(snapshot)
+                            return snapshot
+
+                        def capture_full(accelerator, module, ema_model=None):
+                            self.assertFalse(optimizer.param_groups[0]["train_mode"])
+                            self.assertEqual(4.0, module.weight.item())
+                            self.assertIs(ema_model, trainer.ema_model)
+                            snapshot = {"weight": module.weight.detach().clone()}
+                            if ema_model is not None:
+                                snapshot["weight"].fill_(7.0)
+                            snapshots.append(snapshot)
+                            return snapshot
+
+                        stack.enter_context(
+                            patch(
+                                "simpletuner.helpers.training.trainer.ramtorch_profile.profile_enabled", return_value=False
+                            )
+                        )
+                        stack.enter_context(patch("simpletuner.helpers.training.trainer.ContextParallelBatchSynchronizer"))
+                        stack.enter_context(patch("simpletuner.helpers.training.trainer.tqdm"))
+                        stack.enter_context(
+                            patch(
+                                "simpletuner.helpers.training.trainer.unwrap_model",
+                                side_effect=lambda accelerator, module: module,
+                            )
+                        )
+                        stack.enter_context(
+                            patch(
+                                "simpletuner.helpers.training.trainer.get_peft_model_state_dict",
+                                side_effect=lambda module: module.state_dict(),
+                            )
+                        )
+                        stack.enter_context(
+                            patch(
+                                "simpletuner.helpers.training.trainer.convert_state_dict_to_diffusers",
+                                side_effect=lambda state: state,
+                            )
+                        )
+                        stack.enter_context(patch("simpletuner.helpers.training.trainer.reclaim_memory"))
+                        full_capture = stack.enter_context(
+                            patch(
+                                "simpletuner.helpers.training.save_hooks._materialize_fsdp2_state_dict_for_save",
+                                side_effect=capture_full,
+                            )
+                        )
+                        build_model = stack.enter_context(
+                            patch("simpletuner.helpers.training.save_hooks._build_model_from_state_dict_for_save")
+                        )
+                        save_pipeline = stack.enter_context(
+                            patch("simpletuner.helpers.training.save_hooks._save_pipeline_with_component_for_save")
+                        )
+                        materialize = stack.enter_context(
+                            patch(
+                                "simpletuner.helpers.training.save_hooks._materialize_state_dict_for_save",
+                                side_effect=capture_adapter,
+                            )
+                        )
+
+                        trainer.train()
+
+                        self.assertFalse(optimizer.param_groups[0]["train_mode"])
+                        self.assertEqual(4.0, component.weight.item())
+                        if export_type == "full":
+                            full_capture.assert_called_once()
+                            self.assertEqual(7.0 if use_ema else 4.0, snapshots[0]["weight"].item())
+                            self.assertEqual(int(is_main_process), build_model.call_count)
+                            self.assertEqual(int(is_main_process), save_pipeline.call_count)
+                        else:
+                            self.assertEqual(3 if export_type == "standard" else 1, materialize.call_count)
+                            for snapshot in adapter_snapshots:
+                                self.assertEqual(4.0, snapshot["weight"].item())
+                            component.reshard.assert_called_once()
+                            if is_main_process and export_type == "standard":
+                                saved = model.save_lora_weights.call_args.kwargs
+                                for key in (
+                                    "transformer_lora_layers",
+                                    "text_encoder_lora_layers",
+                                    "text_encoder_2_lora_layers",
+                                ):
+                                    self.assertEqual(4.0, saved[key]["weight"].item())
+                            elif is_main_process:
+                                self.assertEqual(
+                                    4.0, load_file(str(Path(tmpdir, "pytorch_lora_weights.safetensors")))["weight"].item()
+                                )
+                            else:
+                                model.save_lora_weights.assert_not_called()
+                                self.assertFalse(Path(tmpdir, "pytorch_lora_weights.safetensors").exists())
+
     def test_run_checks_compile_disk_before_initialization_and_cleans_up(self):
         trainer = MagicMock()
         trainer.config = SimpleNamespace(dynamo_backend="inductor", disk_low_threshold="160M", disk_low_action="stop")
