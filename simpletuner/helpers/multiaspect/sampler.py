@@ -17,6 +17,7 @@ from simpletuner.helpers.prompts import PromptHandler
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.multi_process import rank_info
 from simpletuner.helpers.training.state_tracker import StateTracker
+from simpletuner.helpers.utils.pathing import canonicalize_data_uri
 
 pil_logger = logging.getLogger("PIL.Image")
 pil_logger.setLevel(logging.WARNING)
@@ -396,10 +397,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         If the path prefix isn't in the path, we'll add it.
         """
+        filepath = canonicalize_data_uri(filepath)
         if (
             self.metadata_backend.instance_data_dir is not None
             and self.metadata_backend.instance_data_dir not in filepath
-            and not filepath.startswith("http")
+            and not filepath.startswith(("http", "webshart://"))
         ):
             filepath = os.path.join(self.metadata_backend.instance_data_dir, filepath)
         image_data = self.data_backend.read_image(filepath)
@@ -486,7 +488,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         return [images[position] for position in self._unseen_occurrence_positions(images)]
 
     def _sample_path(self, image):
-        return os.path.join(self.metadata_backend.instance_data_dir, image) if not image.startswith("http") else image
+        image = canonicalize_data_uri(image)
+        return (
+            image
+            if image.startswith(("http", "webshart://"))
+            else os.path.join(self.metadata_backend.instance_data_dir, image)
+        )
 
     def _warn_if_bucket_empty(self, bucket, bucket_images):
         if len(bucket_images) == 0:

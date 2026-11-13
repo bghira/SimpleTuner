@@ -418,6 +418,80 @@ class TestFactoryEdgeCases(unittest.TestCase):
         cache.compute_embeddings_for_prompts.assert_called_once()
         self.assertTrue(cache.compute_embeddings_for_prompts.call_args.kwargs["split_between_processes"])
 
+    def test_bounded_text_precompute_covers_every_rank_local_sample(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+
+        for deferred in (False, True):
+            with self.subTest(deferred=deferred):
+                encoded = set()
+                for rank in range(4):
+                    factory = FactoryRegistry.__new__(FactoryRegistry)
+                    factory._uses_text_embeddings_cache = lambda: True
+                    factory._append_image_context_dropout_prompt_record = lambda *_args, **_kwargs: None
+                    factory.args = SimpleNamespace(
+                        caption_strategy="instanceprompt",
+                        prepend_instance_prompt=False,
+                        instance_prompt="caption",
+                        only_instance_prompt=False,
+                        skip_file_discovery="",
+                    )
+                    factory.accelerator = SimpleNamespace(device="cpu")
+                    factory.text_encoders = []
+                    factory.model = SimpleNamespace(
+                        requires_text_embed_image_context=lambda: False,
+                        text_embed_cache_key=lambda: TextEmbedCacheKey.DATASET_AND_FILENAME,
+                    )
+                    paths = [f"{index}.png" for index in range(rank * 4, (rank + 1) * 4)]
+                    metadata = SimpleNamespace(
+                        max_num_samples=16,
+                        aspect_ratio_bucket_indices={"1.0": paths},
+                        get_metadata_by_filepath=lambda _path: {},
+                    )
+                    cache = SimpleNamespace(text_cache_ondemand=False)
+
+                    def encode(records, *, split_between_processes, **_kwargs):
+                        if split_between_processes:
+                            records = records[rank : rank + 1]
+                        encoded.update(record["key"] for record in records)
+
+                    cache.compute_embeddings_for_prompts = encode
+                    backend = {"caption_strategy": "instanceprompt", "max_num_samples": 16}
+                    init_backend = {
+                        "id": "image-dataset",
+                        "config": {"caption_strategy": "instanceprompt"},
+                        "data_backend": SimpleNamespace(id="image-dataset"),
+                        "instance_data_dir": "dataset",
+                        "metadata_backend": metadata,
+                        "text_embed_cache": cache,
+                    }
+                    factory._deferred_text_embed_backends = [(backend, init_backend)]
+                    with (
+                        patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+                        patch(
+                            "simpletuner.helpers.data_backend.factory.StateTracker.get_args",
+                            return_value=SimpleNamespace(output_dir="output"),
+                        ),
+                        patch(
+                            "simpletuner.helpers.data_backend.factory.StateTracker.get_data_backend_config",
+                            return_value=init_backend["config"],
+                        ),
+                        patch(
+                            "simpletuner.helpers.data_backend.factory.StateTracker.get_data_backend",
+                            return_value=init_backend,
+                        ),
+                        patch(
+                            "simpletuner.helpers.data_backend.factory.StateTracker.get_conditioning_datasets",
+                            return_value=[],
+                        ),
+                        patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config"),
+                    ):
+                        if deferred:
+                            factory._process_deferred_text_embeddings()
+                        else:
+                            factory._process_text_embeddings(backend, init_backend, None)
+                self.assertEqual(encoded, {f"image-dataset:{index}.png" for index in range(16)})
+
     def test_deferred_text_embed_precompute_splits_full_dataset_records_between_processes(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
         from simpletuner.helpers.models.common import TextEmbedCacheKey
