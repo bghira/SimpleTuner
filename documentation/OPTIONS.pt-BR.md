@@ -654,6 +654,8 @@ Mecanismos de atencao alternativos sao suportados, com diferentes niveis de comp
 - `sageattention`, `sageattention-int8-fp16-triton`, `sageattention-int8-fp16-cuda` e `sageattention-int8-fp8-cuda` envolvem os kernels [SageAttention](https://github.com/thu-ml/SageAttention). Sao orientados a inferencia e devem ser usados com `--sageattention_usage` para evitar treinamento acidental.
   - Em termos simples, SageAttention reduz o custo de compute para inferencia
 
+O pacote CuTe incluído também exporta `neighborhood_attention(q, k, v, spatial_shape=(height, width), window_size=(window_h, window_w), scale=None)` para atenção de vizinhança 2D explícita sem NATTEN. Exige tensores CUDA FP16/BF16 com formas idênticas `[batch, heads, height*width, 64]`, passo e dilatação um e janelas que caibam na forma espacial. As janelas nas bordas se deslocam para dentro, inclusive as de tamanho par. A escala padrão é `0.125`; há suporte a autograd e `torch.compile`. Esta API é independente da seleção do backend SDPA e dos kernels de vizinhança 3D do decodificador LTX.
+
 > ℹ️ Os seletores Flash/Flex/PyTorch dependem do dispatcher `attention_backend` do Diffusers, entao atualmente beneficiam modelos estilo transformer que ja usam esse caminho (Flux, Wan 2.x, LTXVideo, QwenImage, etc.). UNets SD/SDXL classicos ainda usam SDPA do PyTorch diretamente.
 
 Usar `--sageattention_usage` para habilitar treino com SageAttention deve ser feito com cuidado, pois ele nao rastreia nem propaga gradientes das implementacoes CUDA customizadas para linears QKV.

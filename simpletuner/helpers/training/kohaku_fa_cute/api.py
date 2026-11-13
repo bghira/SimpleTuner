@@ -1,6 +1,7 @@
 """Strict CuTe attention and automatic per-call native SDPA selection."""
 
 from functools import lru_cache
+from math import isfinite
 
 import torch
 
@@ -80,6 +81,45 @@ def attention(q, k, v, *, mask=None, causal=False, scale=None, center_keys=False
     if fa4_sm80.compatible(q, k, v, mask, 0, causal, scale, True):
         return fa4_sm80.attention(q, k, v, causal=causal, scale=scale)
     return extension().attention(q, k, v, mask, scale, causal)
+
+
+def neighborhood_attention(q, k, v, *, spatial_shape, window_size, scale=None):
+    """Experimental noncausal 2D attention, stride/dilation one, head dim 64.
+
+    Q/K/V: matching FP16/BF16 CUDA tensors [B, heads, height*width, 64].
+    ``spatial_shape`` is (height, width); ``window_size`` is an int or (h, w).
+    Each axis starts at clamp(query - window//2, 0, extent - window),
+    matching NATTEN's shifted boundary windows, including even windows.
+    Normalized dQ and reconstructed dK corrections are enabled by default;
+    see https://github.com/SimpleTuner-io/KohakuFA-CuTe/tree/c373d7bf0a7096a9be0fcc7e488191414aac959c/docs/neighborhood
+    for the precision contract and qualification details.
+    """
+    if (
+        not isinstance(spatial_shape, (tuple, list))
+        or len(spatial_shape) != 2
+        or any(type(n) is not int or n <= 0 for n in spatial_shape)
+    ):
+        raise ValueError("spatial_shape must contain two positive integers.")
+    if type(window_size) is int:
+        window_size = (window_size, window_size)
+    if (
+        not isinstance(window_size, (tuple, list))
+        or len(window_size) != 2
+        or any(type(n) is not int or n <= 0 or n > extent for n, extent in zip(window_size, spatial_shape))
+    ):
+        raise ValueError("window_size must contain positive integers no larger than spatial_shape.")
+    _validate(q, k, v, None, 0, False, False)
+    if q.shape != k.shape or q.shape[-1] != 64 or q.shape[2] != spatial_shape[0] * spatial_shape[1]:
+        raise ValueError("Neighborhood attention requires matching [B, heads, height*width, 64] Q/K/V.")
+    scale = 0.125 if scale is None else float(scale)
+    if not isfinite(scale) or abs(scale) > torch.finfo(torch.float32).max:
+        raise ValueError("Neighborhood attention requires a finite FP32 scale.")
+    from .neighborhood_ops import forward
+
+    # DLPack describes physical storage. Resolve logical view flags while
+    # autograd can still map the logical operands back to their base tensors.
+    q, k, v = (tensor.resolve_conj().resolve_neg() for tensor in (q, k, v))
+    return forward(q, k, v, *spatial_shape, *window_size, scale)[0]
 
 
 def kohaku_fa_scaled_dot_product_attention(
