@@ -4482,6 +4482,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
             self.noise_schedule = FlowMatchEulerDiscreteScheduler.from_pretrained(
                 get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path),
                 subfolder="scheduler",
+                revision=self.config.revision,
                 shift=self.config.flow_schedule_shift,
             )
             fix_flow_match_euler_schedule_bounds(self.noise_schedule)
@@ -4496,6 +4497,7 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
             self.noise_schedule = DDPMScheduler.from_pretrained(
                 get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path),
                 subfolder="scheduler",
+                revision=self.config.revision,
                 rescale_betas_zero_snr=self.config.rescale_betas_zero_snr,
                 timestep_spacing=self.config.training_scheduler_timestep_spacing,
             )

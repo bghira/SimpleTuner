@@ -480,6 +480,7 @@ class Cosmos3Image(Cosmos2Image):
         self.noise_schedule = UniPCMultistepScheduler.from_pretrained(
             get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path),
             subfolder="scheduler",
+            revision=self.config.revision,
         )
         return self.config, self.noise_schedule
 

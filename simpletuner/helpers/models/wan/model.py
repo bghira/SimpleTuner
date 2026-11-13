@@ -444,6 +444,7 @@ class Wan(VideoModelFoundation):
             FlowMatchEulerDiscreteScheduler.from_pretrained(
                 self._model_config_path(),
                 subfolder="scheduler",
+                revision=self.config.revision,
                 shift=self.config.flow_schedule_shift,
             )
         )
