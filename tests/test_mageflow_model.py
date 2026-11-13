@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
+from transformers.modeling_outputs import BaseModelOutputWithPast
 
 from simpletuner.helpers.acceleration import AccelerationBackend
 from simpletuner.helpers.models.common import ImageModelFoundation, PipelineTypes
@@ -15,7 +16,11 @@ from simpletuner.helpers.models.mageflow.pipeline_edit import MageFlowEditPipeli
 from simpletuner.helpers.models.mageflow.transformer import MageFlowTransformer2DModel
 from simpletuner.helpers.models.mageflow.vendor.models.modules import _attn_backend as mageflow_attn_backend
 from simpletuner.helpers.models.mageflow.vendor.models.modules import mage_layers
-from simpletuner.helpers.models.mageflow.vendor.models.modules.text_encoder import _resolve_hf_attn_impl
+from simpletuner.helpers.models.mageflow.vendor.models.modules.text_encoder import (
+    CustomQwen3VLForConditionalGeneration,
+    Qwen3VLModelOutput,
+    _resolve_hf_attn_impl,
+)
 from simpletuner.helpers.models.mageflow.vendor.pipeline import _build_pack_ctx, _lens_to_cu
 from simpletuner.helpers.models.registry import ModelRegistry
 from simpletuner.helpers.training.explorative_modeling import ExplorativeModelingConfig
@@ -41,6 +46,46 @@ def _mageflow_class():
 
 
 class MageFlowModelTests(unittest.TestCase):
+    def test_text_encoder_output_modes_preserve_model_rope_deltas(self):
+        hidden = torch.randn(1, 3, 8)
+        rope_deltas = torch.tensor([[2]])
+        backbone_output = BaseModelOutputWithPast(
+            last_hidden_state=hidden,
+            hidden_states=(hidden,),
+            attentions=(torch.ones(1, 1, 3, 3),),
+        )
+
+        class Backbone(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.rope_deltas = rope_deltas
+
+            def forward(self, **kwargs):
+                return backbone_output
+
+        model = object.__new__(CustomQwen3VLForConditionalGeneration)
+        torch.nn.Module.__init__(model)
+        model.config = SimpleNamespace(output_attentions=True, output_hidden_states=True)
+        model.model = Backbone()
+        model.lm_head = torch.nn.Linear(8, 4)
+
+        for mode in ("embedding", "hidden", "full", "logits"):
+            with self.subTest(mode=mode):
+                model.set_output_mode(mode)
+                result = model(input_ids=torch.ones(1, 3, dtype=torch.long))
+                if mode == "logits":
+                    torch.testing.assert_close(result, model.lm_head(hidden))
+                    continue
+                self.assertIsInstance(result, Qwen3VLModelOutput)
+                self.assertIs(result.rope_deltas, rope_deltas)
+                self.assertIs(result.attentions, backbone_output.attentions)
+                if mode == "full":
+                    torch.testing.assert_close(result.logits, model.lm_head(hidden))
+                else:
+                    self.assertIs(result.last_hidden_state, hidden)
+                if mode in ("hidden", "full"):
+                    self.assertIs(result.hidden_states, backbone_output.hidden_states)
+
     def _xm_shell(self, candidate_count: int = 2):
         model_cls = _mageflow_class()
         model = object.__new__(model_cls)
