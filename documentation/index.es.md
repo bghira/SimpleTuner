@@ -8,7 +8,7 @@
 
     ---
 
-    Instala SimpleTuner y entrena tu primer modelo en minutos
+    Instala SimpleTuner para NVIDIA CUDA, AMD ROCm 10.0 o Apple Silicon y entrena tu primer modelo
 
     [:octicons-arrow-right-24: Instalación](INSTALL.md)
 

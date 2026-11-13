@@ -203,11 +203,13 @@ def get_cuda_dependencies():
 
 
 def get_rocm_dependencies():
-    """Get ROCm specific dependencies (use --extra-index-url https://download.pytorch.org/whl/rocm7.1)."""
+    """Get the ROCm 10.0 wheels and Python-only TorchAO from the ROCm and CPU indices."""
+    # PyTorch supplies triton-rocm; generic triton would overwrite the same Python package.
     return [
-        *PYTORCH_DEPENDENCIES,
-        "triton>=3.3.0",
-        TORCHAO_DEPENDENCY,
+        "torch==2.15.0+rocm10.0",
+        "torchvision==0.29.2+rocm10.0",
+        "torchaudio==2.11.1+rocm10.0",
+        "torchao==0.17.0+cpu",
     ]
 
 
@@ -475,7 +477,9 @@ if __name__ == "__main__":
     print(
         "  pip install '.[cuda13-transformerengine]' --extra-index-url https://download.pytorch.org/whl/cu130  # CUDA 13 + TransformerEngine"
     )
-    print("  pip install '.[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm7.1   # ROCm")
+    print(
+        "  pip install '.[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm10.0 --extra-index-url https://download.pytorch.org/whl/cpu   # ROCm"
+    )
     print("  pip install '.[apple]'                                                              # macOS")
     print("  pip install '.[cpu]'                                                                # CPU only")
     print("  pip install '.[captioning]'                                                         # CaptionFlow integration")

@@ -8,7 +8,7 @@
 
     ---
 
-    安装 SimpleTuner 并在几分钟内训练您的第一个模型
+    为 NVIDIA CUDA、AMD ROCm 10.0 或 Apple Silicon 安装 SimpleTuner 并训练您的第一个模型
 
     [:octicons-arrow-right-24: 安装指南](INSTALL.zh.md)
 

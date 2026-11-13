@@ -32,13 +32,30 @@ class SetupPlatformDependencyTests(unittest.TestCase):
     def test_platform_extras_use_latest_torchao_with_expected_torch_floor(self):
         extras_require = load_setup_kwargs()["extras_require"]
 
-        for extra_name in ("cuda", "cuda13", "rocm", "cpu", "apple"):
+        for extra_name in ("cuda", "cuda13", "cpu", "apple"):
             with self.subTest(extra=extra_name):
                 dependencies = extras_require[extra_name]
                 self.assertIn("torch>=2.13.0", dependencies)
                 self.assertIn("torchvision>=0.28.0", dependencies)
                 self.assertIn("torchaudio>=2.11.0", dependencies)
                 self.assertIn("torchao>=0.17.0,<0.18.0", dependencies)
+
+    def test_rocm_extra_selects_rocm_wheels_without_generic_triton(self):
+        dependencies = {
+            Requirement(value).name: Requirement(value) for value in load_setup_kwargs()["extras_require"]["rocm"]
+        }
+        expected = {
+            "torch": "2.15.0+rocm10.0",
+            "torchvision": "0.29.2+rocm10.0",
+            "torchaudio": "2.11.1+rocm10.0",
+            "torchao": "0.17.0+cpu",
+        }
+        self.assertEqual(set(dependencies), set(expected))
+        for name, version in expected.items():
+            with self.subTest(package=name):
+                self.assertTrue(dependencies[name].specifier.contains(version))
+                self.assertFalse(dependencies[name].specifier.contains(version.split("+")[0]))
+                self.assertFalse(dependencies[name].specifier.contains(version.split("+")[0] + "+cu130"))
 
     def test_cuda_nightly_extras_use_latest_torchao_range(self):
         extras_require = load_setup_kwargs()["extras_require"]
