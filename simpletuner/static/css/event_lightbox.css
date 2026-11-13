@@ -339,16 +339,6 @@
     }
 }
 
-/* Animation for lightbox appearance */
-.event-lightbox {
-    opacity: 0;
-    transition: opacity 0.3s ease;
-}
-
-.event-lightbox.show {
-    opacity: 1;
-}
-
 /* Focus styles for accessibility */
 .event-lightbox:focus-within {
     outline: 2px solid #007bff;

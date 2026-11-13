@@ -96,6 +96,116 @@ class _TrainerPageMixin:
         return result.get("names") or []
 
 
+class EventLightboxFlowTestCase(_TrainerPageMixin, WebUITestCase):
+    BROWSERS = ("chrome",)
+
+    def _ensure_browser(self, browser):
+        # The shared browser defaults block images; this flow must load real pixels.
+        from selenium import webdriver
+
+        from tests.selenium_support import _chrome_options
+
+        if browser not in self._driver_cache:
+            options = _chrome_options()
+            options.add_experimental_option("prefs", {"profile.managed_default_content_settings.images": 1})
+            self._driver_cache[browser] = webdriver.Chrome(options=options)
+        return self._driver_cache[browser]
+
+    def test_event_images_open_navigate_and_close(self) -> None:
+        import base64
+
+        from selenium.webdriver.common.action_chains import ActionChains
+
+        from simpletuner.simpletuner_sdk.server.services.callback_events import CallbackEvent, EventType
+        from simpletuner.simpletuner_sdk.server.services.callback_presenter import CallbackPresenter
+
+        sources = []
+        for color in ("red", "green", "blue"):
+            buffer = BytesIO()
+            Image.new("RGB", (64, 64), color=color).save(buffer, format="PNG")
+            sources.append("data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii"))
+        headline = 'Validation "preview" [step]'
+        older_images = [None, sources[0], sources[1]]
+        tiles = [
+            CallbackPresenter.to_htmx_tile(CallbackEvent(type=EventType.VALIDATION, title=headline, images=images))
+            for images in ([sources[2]], older_images)
+        ]
+
+        def scenario(driver, _browser):
+            self._trainer_page(driver).navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            WebDriverWait(driver, 10).until(lambda d: d.execute_script("return !!window.eventLightbox"))
+            dock = driver.find_element(By.CSS_SELECTOR, ".event-dock")
+            if "collapsed" in dock.get_attribute("class").split():
+                driver.find_element(By.CSS_SELECTOR, '[aria-label="Toggle events panel"]').click()
+
+            def assert_image(source, counter):
+                WebDriverWait(driver, 10).until(
+                    lambda d: d.execute_script(
+                        """
+                        const box = document.getElementById('event-lightbox');
+                        const image = box.querySelector('.event-lightbox-image');
+                        return getComputedStyle(box).display === 'flex'
+                            && getComputedStyle(box).opacity === '1'
+                            && getComputedStyle(image).opacity === '1'
+                            && image.complete && image.naturalWidth === 64
+                            && image.src === arguments[0];
+                        """,
+                        source,
+                    )
+                )
+                self.assertEqual(driver.find_element(By.CSS_SELECTOR, ".event-lightbox-counter").text, counter)
+
+            def assert_closed():
+                WebDriverWait(driver, 5).until(EC.invisibility_of_element_located((By.ID, "event-lightbox")))
+                self.assertEqual(driver.execute_script("return document.body.style.overflow"), "")
+
+            for renderer in ("javascript", "presenter"):
+                with self.subTest(renderer=renderer):
+                    driver.execute_script("document.getElementById('eventList').innerHTML = '';")
+                    if renderer == "javascript":
+                        driver.execute_script(
+                            """
+                            EventRenderer.renderEvent('validation', {message: arguments[0], images: arguments[1]});
+                            EventRenderer.renderEvent('validation', {message: arguments[0], images: [arguments[2]]});
+                            """,
+                            headline,
+                            older_images,
+                            sources[2],
+                        )
+                    else:
+                        driver.execute_script(
+                            "document.getElementById('eventList').innerHTML = arguments[0];", "".join(tiles)
+                        )
+                    images = driver.find_elements(By.CSS_SELECTOR, '#eventList [data-lightbox="event-images"]')
+                    images[2].click()
+                    assert_image(sources[1], "2 / 2")
+                    driver.find_element(By.CSS_SELECTOR, ".event-lightbox-next").click()
+                    assert_image(sources[0], "1 / 2")
+                    driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ARROW_LEFT)
+                    assert_image(sources[1], "2 / 2")
+                    driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+                    assert_closed()
+
+                    images[0].click()
+                    assert_image(sources[2], "1 / 1")
+                    self.assertFalse(driver.find_element(By.CSS_SELECTOR, ".event-lightbox-next").is_enabled())
+                    self.assertFalse(driver.find_element(By.CSS_SELECTOR, ".event-lightbox-prev").is_enabled())
+                    backdrop = driver.find_element(By.CSS_SELECTOR, ".event-lightbox-backdrop")
+                    ActionChains(driver).move_to_element_with_offset(
+                        backdrop, -backdrop.size["width"] // 2 + 5, -backdrop.size["height"] // 2 + 5
+                    ).click().perform()
+                    assert_closed()
+                    images[1].click()
+                    assert_image(sources[0], "1 / 2")
+                    driver.find_element(By.CSS_SELECTOR, ".event-lightbox-close").click()
+                    assert_closed()
+                    driver.find_element(By.CSS_SELECTOR, '[aria-label="Clear events"]').click()
+                    self.assertEqual(driver.find_elements(By.CSS_SELECTOR, "#eventList .event-image"), [])
+
+        self.for_each_browser("test_event_images_open_navigate_and_close", scenario)
+
+
 class BasicConfigurationFlowTestCase(_TrainerPageMixin, WebUITestCase):
     """Test basic configuration and save flow."""
 
