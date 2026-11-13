@@ -339,6 +339,7 @@ base_deps = [
     "torchcodec>=0.10.0",
     "sdnq>=0.2.3",
     "aiosqlite>=0.19.0",
+    "aiohttp>=3.9.0",
     "httpx>=0.28.0",
     "psutil>=5.9.0",
     "webshart>=0.5.4",
