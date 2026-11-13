@@ -6,6 +6,7 @@ import random
 import tempfile
 import unittest
 from math import ceil
+from pathlib import Path
 from types import SimpleNamespace
 
 # Import test configuration to suppress logging/warnings
@@ -38,6 +39,23 @@ from tests.helpers.data import MockDataBackend
 
 # Captured at import: a TestMultiAspectSampler case replaces MultiAspectSampler.__iter__ on the class.
 _SAMPLER_ITER = MultiAspectSampler.__iter__
+
+
+class SamplerURIPathTests(unittest.TestCase):
+    def test_webshart_training_paths_match_precache_identifiers(self):
+        from simpletuner.helpers.utils.pathing import normalize_data_path
+
+        sampler = MultiAspectSampler.__new__(MultiAspectSampler)
+        sampler.metadata_backend = SimpleNamespace(instance_data_dir="cache/webshart/source")
+        sampler.data_backend = SimpleNamespace(read_image=Mock(return_value=None))
+        canonical = "webshart://0/1497/sample.webp"
+        for identifier in (canonical, str(Path(canonical))):
+            with self.subTest(identifier=identifier):
+                training_path = sampler._sample_path(identifier)
+                self.assertEqual(normalize_data_path(training_path), normalize_data_path(canonical))
+                sampler.data_backend.read_image.reset_mock()
+                sampler.yield_single_image(identifier)
+                sampler.data_backend.read_image.assert_called_once_with(canonical)
 
 
 class TestMultiAspectSampler(unittest.TestCase):
