@@ -3195,3 +3195,7 @@ options:
 Datasets de legendas exigem `dataloader_prefetch: false` para que o cursor do checkpoint corresponda às legendas consumidas. A retomada rejeita mudanças nos identificadores/textos, lote, repetições, embaralhamento, semente, acumulação ou configuração distribuída. Os checkpoints do auxiliar também rejeitam mudanças na semente de geração, na lista de resoluções ou no número de passos de inferência do professor.
 
 Assistant LoRA e AnyFlow elevam temporariamente o limite do cache de compilação Dynamo por código para pelo menos 32, acomodando variantes do professor, treino e validação. Um limite maior do usuário é preservado; o original é restaurado ao sair, inclusive após erros.
+
+### `--minimax_h3_prompt_expander_url`
+
+Opcionalmente, defina `minimax_h3_prompt_expander_url` para um servidor compatível com OpenAI que hospede `MiniMaxAI/MiniMax-H3-Image-PE`. Os prompts oficiais de geração e edição expandem legendas positivas antes do cache, incluindo referências na edição. Para autenticação, use a variável `MINIMAX_H3_PROMPT_EXPANDER_API_KEY`. Deixe a URL vazia para manter as legendas originais. Um assistente treinado pode ser selecionado por `assistant_lora_path`; nenhum assistente não publicado é baixado por padrão.

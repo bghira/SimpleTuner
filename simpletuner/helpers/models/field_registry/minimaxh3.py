@@ -10,6 +10,23 @@ from simpletuner.simpletuner_sdk.server.services.field_registry.types import (
 def register_fields(registry) -> None:
     registry._add_field(
         ConfigField(
+            name="minimax_h3_prompt_expander_url",
+            arg_name="--minimax_h3_prompt_expander_url",
+            ui_label="H3 Image Prompt Expander URL",
+            field_type=FieldType.TEXT,
+            tab="model",
+            section="model_specific",
+            model_specific=["minimaxh3"],
+            default_value=None,
+            help_text="Optional OpenAI-compatible server for MiniMaxAI/MiniMax-H3-Image-PE. Expands positive captions before text caching; requires h3_image.",
+            tooltip="Uses MiniMax's released T2I and editing prompts. Leave empty to train on the original captions.",
+            importance=ImportanceLevel.ADVANCED,
+            order=36,
+            documentation="OPTIONS.md#--minimax_h3_prompt_expander_url",
+        )
+    )
+    registry._add_field(
+        ConfigField(
             name="minimax_h3_reference_mode",
             arg_name="--minimax_h3_reference_mode",
             ui_label="MiniMax H3 Reference Mode",

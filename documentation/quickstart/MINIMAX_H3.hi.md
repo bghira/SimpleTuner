@@ -118,3 +118,11 @@ simpletuner train example=minimaxh3/convrot-int8/default/fl2va-convrot-int8.peft
 ```
 
 Long run से पहले छोटा smoke test करें और देखें कि `h3_drift_loss`, normal loss, और validation samples साथ-साथ sensible move कर रहे हैं।
+
+## H3 Image
+
+`MiniMaxAI/MiniMax-H3-Image` के लिए `model_family: "minimaxh3"` और `model_flavour: "h3_image"` उपयोग करें। शुरुआती उदाहरण `simpletuner/examples/minimaxh3/h3_image/80g/h3_image.peft-lora` है। साझा H3 transformer `transformer_diffusers` लोड करता है; डिफ़ॉल्ट इमेज VAE `vae_diffusers` में है और इसमें 24-लेयर 2D decoder है। स्पष्ट रूप से दिए गए `pretrained_vae_model_name_or_path` या `vae_path` सुरक्षित रहते हैं; स्थानीय component directories और समर्थित single-file VAE भी स्वीकार हैं। ऑडियो VAE लोड नहीं होता।
+
+2048 या 4096 पिक्सेल के प्रशिक्षण कैनवास उपयोग करें और आकार 32 पिक्सेल के गुणज रखें; 4096 मॉडल का पसंदीदा आकार है। 80GB उदाहरण activation checkpoint offload सक्रिय करता है। प्रशिक्षण जारी किए गए छह PDD noise levels और उनके संबंधित frozen output heads का उपयोग करता है; validation में ठीक वही छह-चरण sigma schedule और guidance 1.0 लागू होते हैं। इस flavour में मनमाने चरणों का sampling और H3 वीडियो distillation recipes समर्थित नहीं हैं। ComfyUI adapters लोड और निर्यात करने के लिए `lora_format: "comfyui"` सेट करें; यह `Comfy-Org/MiniMax-H3-Image` के pruned BF16 checkpoint के साथ भी काम करता है।
+
+वैकल्पिक रूप से `minimax_h3_prompt_expander_url` को `MiniMaxAI/MiniMax-H3-Image-PE` होस्ट करने वाले OpenAI-compatible server पर सेट करें। आधिकारिक text-to-image और editing prompts कैशिंग से पहले positive captions का विस्तार करते हैं; editing में reference images भी भेजी जाती हैं। प्रमाणीकरण के लिए environment variable `MINIMAX_H3_PROMPT_EXPANDER_API_KEY` उपयोग करें। मूल captions रखने के लिए URL खाली छोड़ें। प्रशिक्षित assistant को `assistant_lora_path` से चुन सकते हैं; कोई अप्रकाशित assistant डिफ़ॉल्ट रूप से डाउनलोड नहीं होता।

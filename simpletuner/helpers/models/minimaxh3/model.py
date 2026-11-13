@@ -29,7 +29,14 @@ from simpletuner.helpers.models.common import (
 )
 from simpletuner.helpers.models.minimaxh3.autoencoder import AutoencoderKLMiniMaxH3
 from simpletuner.helpers.models.minimaxh3.autoencoder_audio import AutoencoderKLMiniMaxH3Audio
+from simpletuner.helpers.models.minimaxh3.autoencoder_image import AutoencoderKLMiniMaxH3Image
 from simpletuner.helpers.models.minimaxh3.encoders import MINIMAX_H3_DEFAULT_MAX_TEXT_LENGTH, MiniMaxH3TextEncoderStep
+from simpletuner.helpers.models.minimaxh3.image import (
+    MINIMAX_H3_IMAGE_REPO,
+    MINIMAX_H3_IMAGE_SIGMAS,
+    MiniMaxH3ImageScheduler,
+)
+from simpletuner.helpers.models.minimaxh3.image_blocks import MiniMaxH3ImageBlocks, build_image_layout
 from simpletuner.helpers.models.minimaxh3.modular_blocks_minimax_h3 import MiniMaxH3Blocks, MiniMaxH3Ref2VABlocks
 from simpletuner.helpers.models.minimaxh3.packing import (
     MINIMAX_H3_AUDIO_CHANNELS,
@@ -88,6 +95,8 @@ def _register_minimax_h3_diffusers_components() -> None:
 
     for name, cls in (
         ("AutoencoderKLMiniMaxH3", AutoencoderKLMiniMaxH3),
+        ("AutoencoderKLMiniMaxH3Image", AutoencoderKLMiniMaxH3Image),
+        ("MiniMaxH3ImageTransformer2DModel", MiniMaxH3Transformer3DModel),
         ("AutoencoderKLMiniMaxH3Audio", AutoencoderKLMiniMaxH3Audio),
         ("MiniMaxH3Scheduler", MiniMaxH3Scheduler),
         ("MiniMaxH3Transformer3DModel", MiniMaxH3Transformer3DModel),
@@ -103,6 +112,9 @@ def _is_single_file_path(path: Any) -> bool:
 class MiniMaxH3(VideoModelFoundation):
     SUPPORTS_MUON_CLIP = True
     AUTO_LORA_FORMAT_DETECTION = True
+    PROMPT_UPSAMPLING_CONFIG_KEY = "minimax_h3_prompt_expander_url"
+    PROMPT_UPSAMPLING_MODEL_ID = "MiniMaxAI/MiniMax-H3-Image-PE"
+    ASSISTANT_LORA_FLAVOURS = ("h3_image",)
     DEFAULT_AUDIO_CHANNELS = MINIMAX_H3_AUDIO_CHANNELS
     NAME = "MiniMax H3"
     MODEL_DESCRIPTION = "Joint audio-video flow-matching transformer"
@@ -129,6 +141,7 @@ class MiniMaxH3(VideoModelFoundation):
 
     DEFAULT_MODEL_FLAVOUR = "fl2va"
     HUGGINGFACE_PATHS: Dict[str, str] = {
+        "h3_image": MINIMAX_H3_IMAGE_REPO,
         "fl2va": MINIMAX_H3_BASE_REPO,
         "ref2va": MINIMAX_H3_BASE_REPO,
         "convrot-int8": MINIMAX_H3_BASE_REPO,
@@ -197,9 +210,26 @@ class MiniMaxH3(VideoModelFoundation):
         self._warned_image_audio_disabled = False
         self._validate_xm_support()
 
+    def create_prompt_upsampler(self):
+        from .prompt_expander import MiniMaxH3ImagePromptExpander
+
+        return MiniMaxH3ImagePromptExpander(self.config.minimax_h3_prompt_expander_url)
+
     def post_model_load_setup(self):
         super().post_model_load_setup()
         transformer = self.unwrap_model(self.model)
+        assistant_path = getattr(self.config, "assistant_lora_path", None)
+        if assistant_path and self.supports_assistant_lora(self.config) and self.config.model_type == "lora":
+            from simpletuner.helpers.assistant_lora import load_assistant_adapter
+
+            self.assistant_lora_loaded = load_assistant_adapter(
+                transformer=transformer,
+                pipeline_cls=MiniMaxH3Pipeline,
+                lora_path=assistant_path,
+                adapter_name=self.assistant_adapter_name,
+                weight_name=getattr(self.config, "assistant_lora_weight_name", None),
+                low_cpu_mem_usage=getattr(self.config, "low_cpu_mem_usage", False),
+            )
         sparse_config = transformer.configure_h3_sparse_attention(
             mode=getattr(self.config, "minimax_h3_sparse_attention", "disabled") or "disabled",
             block_shape=getattr(self.config, "minimax_h3_sparse_block_shape", "1,8,16") or "1,8,16",
@@ -220,7 +250,7 @@ class MiniMaxH3(VideoModelFoundation):
             )
 
     def supports_crepa_self_flow(self) -> bool:
-        return True
+        return not self._is_image_flavour()
 
     def _prepare_crepa_self_flow_batch(self, batch: dict, state: dict) -> dict:
         return self._prepare_video_crepa_self_flow_batch(batch=batch, state=state)
@@ -413,10 +443,38 @@ class MiniMaxH3(VideoModelFoundation):
             *get_bitsandbytes_presets(base_config),
         ]
 
+    def _is_image_flavour(self) -> bool:
+        return getattr(getattr(self, "config", None), "model_flavour", None) == "h3_image"
+
     def setup_model_flavour(self):
-        explicit_vae_path = getattr(self.config, "pretrained_vae_model_name_or_path", None)
+        explicit_vae_path = getattr(self.config, "pretrained_vae_model_name_or_path", None) or getattr(
+            self.config, "vae_path", None
+        )
         super().setup_model_flavour()
         flavour = getattr(self.config, "model_flavour", None)
+        if self._is_image_flavour():
+            self.AUTOENCODER_CLASS = AutoencoderKLMiniMaxH3Image
+            if getattr(self.config, "pretrained_transformer_model_name_or_path", None) is None:
+                self.config.pretrained_transformer_model_name_or_path = self.config.pretrained_model_name_or_path
+                self.config.pretrained_transformer_subfolder = "transformer_diffusers"
+            self.MODEL_LICENSE_NAME = "minimax-h3-image-community-license-agreement"
+            self.MODEL_LICENSE_LINK = f"https://huggingface.co/{MINIMAX_H3_IMAGE_REPO}/blob/main/LICENSE"
+            self.config.validation_num_video_frames = 1
+            self.config.minimax_h3_target_mode = "video"
+            self.config.validation_num_inference_steps = 6
+            self.config.validation_guidance = 1.0
+            self.config.validation_guidance_real = 1.0
+            self.config.aspect_bucket_alignment = 32
+            self.config.vae_dtype = "fp32"
+            if explicit_vae_path is None:
+                self.config.pretrained_vae_model_name_or_path = MINIMAX_H3_IMAGE_REPO
+                self.config.vae_path = MINIMAX_H3_IMAGE_REPO
+            else:
+                self.config.pretrained_vae_model_name_or_path = explicit_vae_path
+                self.config.vae_path = explicit_vae_path
+            self._h3_vae_subfolder = "vae_diffusers" if explicit_vae_path in (None, MINIMAX_H3_IMAGE_REPO) else "vae"
+            if explicit_vae_path and os.path.isfile(os.path.join(explicit_vae_path, "config.json")):
+                self._h3_vae_subfolder = None
         override_map = getattr(self, "TRANSFORMER_PATH_OVERRIDES", {})
         if getattr(self.config, "pretrained_transformer_model_name_or_path", None) is None and flavour in override_map:
             self.config.pretrained_transformer_model_name_or_path = override_map[flavour]
@@ -446,6 +504,13 @@ class MiniMaxH3(VideoModelFoundation):
         self._apply_h3_anyflow_guidance_defaults()
         self._apply_h3_schedule_defaults()
         self._force_video_vae_reference_settings()
+        if self.prompt_upsampling_enabled() and not self._is_image_flavour():
+            raise ValueError("minimax_h3_prompt_expander_url requires model_flavour=h3_image.")
+        if self._is_image_flavour():
+            if getattr(self.config, "twinflow_enabled", False) or getattr(self.config, "distillation_method", None):
+                raise ValueError("h3_image training uses the released six-step PDD schedule; distillation is unsupported.")
+            if getattr(self.config, "tokenizer_max_length", None) is None:
+                self.config.tokenizer_max_length = 4096
 
     def _apply_h3_schedule_defaults(self):
         video_shift = getattr(self.config, "flow_schedule_shift", None)
@@ -466,6 +531,9 @@ class MiniMaxH3(VideoModelFoundation):
             self.config.audio_flow_schedule_shift = 3.0
 
     def _force_video_vae_reference_settings(self):
+        if self._is_image_flavour():
+            self.config.vae_enable_tiling = True
+            return
         if getattr(self.config, "vae_enable_tiling", None) is not True:
             if getattr(self.config, "vae_enable_tiling", None) is False:
                 logger.warning(
@@ -484,7 +552,7 @@ class MiniMaxH3(VideoModelFoundation):
         model_path = getattr(self.config, "pretrained_model_name_or_path", None)
         transformer_path = getattr(self.config, "pretrained_transformer_model_name_or_path", None)
         if _is_single_file_path(model_path) or (not model_path and _is_single_file_path(transformer_path)):
-            return MINIMAX_H3_BASE_REPO
+            return MINIMAX_H3_IMAGE_REPO if self._is_image_flavour() else MINIMAX_H3_BASE_REPO
         return super()._model_config_path()
 
     def setup_training_noise_schedule(self):
@@ -498,6 +566,17 @@ class MiniMaxH3(VideoModelFoundation):
         return self.config, self.noise_schedule
 
     def sample_flow_sigmas(self, batch: dict, state: dict) -> tuple[torch.Tensor, torch.Tensor]:
+        if self._is_image_flavour():
+            # A PDD head is trained at its released noise level. One head is shared by the batch.
+            step = int(torch.randint(6, (), device=self.accelerator.device).item())
+            batch["h3_pdd_step_index"] = step
+            sigmas = torch.full(
+                (batch["latents"].shape[0],),
+                MINIMAX_H3_IMAGE_SIGMAS[step],
+                device=self.accelerator.device,
+                dtype=torch.float32,
+            )
+            return sigmas, 1.0 - sigmas
         sigmas, _timesteps = super().sample_flow_sigmas(batch=batch, state=state)
         return sigmas, self.flow_matching_timesteps_from_sigmas(sigmas)
 
@@ -512,6 +591,8 @@ class MiniMaxH3(VideoModelFoundation):
 
     def pretrained_load_args(self, pretrained_load_args: dict) -> dict:
         args = super().pretrained_load_args(pretrained_load_args)
+        if self._is_image_flavour():
+            args.update(audio_enabled=False, num_pdd_heads=6)
         return apply_musubi_pretrained_defaults(self.config, args)
 
     def _resolve_component_path(self, explicit_path: str | None = None) -> str:
@@ -544,7 +625,7 @@ class MiniMaxH3(VideoModelFoundation):
                 vae_path = self._resolve_component_path(explicit_vae_path)
                 self.vae = self.AUTOENCODER_CLASS.from_pretrained(
                     vae_path,
-                    subfolder="vae",
+                    subfolder=getattr(self, "_h3_vae_subfolder", "vae"),
                     torch_dtype=self._resolve_vae_dtype(),
                     revision=self.config.revision,
                     variant=self.config.variant,
@@ -564,18 +645,21 @@ class MiniMaxH3(VideoModelFoundation):
             self.vae.enable_slicing()
         elif hasattr(self.vae, "disable_slicing"):
             self.vae.disable_slicing()
-        if hasattr(self.vae, "enable_temporal_chunking"):
-            self.vae.enable_temporal_chunking()
-        else:
-            logger.warning(
-                "MiniMax-H3 temporal VAE chunking is required but this VAE does not expose enable_temporal_chunking()."
-            )
+        if not self._is_image_flavour():
+            if hasattr(self.vae, "enable_temporal_chunking"):
+                self.vae.enable_temporal_chunking()
+            else:
+                logger.warning(
+                    "MiniMax-H3 temporal VAE chunking is required but this VAE does not expose enable_temporal_chunking()."
+                )
         if move_to_device and self.vae.device != self.accelerator.device:
             self.vae.to(self.accelerator.device, dtype=self._resolve_vae_dtype())
         self.post_vae_load_setup()
         self._load_audio_vae(move_to_device=move_to_device)
 
     def _load_audio_vae(self, move_to_device: bool = True):
+        if self._is_image_flavour():
+            return
         if self.audio_vae is not None:
             return
         audio_vae_path = self._resolve_component_path(getattr(self.config, "pretrained_audio_vae_model_name_or_path", None))
@@ -594,7 +678,7 @@ class MiniMaxH3(VideoModelFoundation):
     def unload_vae(self):
         for pipeline in getattr(self, "pipelines", {}).values():
             if hasattr(pipeline, "update_components"):
-                pipeline.update_components(vae=None, audio_vae=None)
+                pipeline.update_components(vae=None, **({} if self._is_image_flavour() else {"audio_vae": None}))
             else:
                 setattr(pipeline, "vae", None)
                 setattr(pipeline, "audio_vae", None)
@@ -1082,6 +1166,8 @@ class MiniMaxH3(VideoModelFoundation):
         return all(matches)
 
     def encode_cache_batch(self, vae, samples, metadata_entries: Optional[list] = None):
+        if isinstance(vae, AutoencoderKLMiniMaxH3Image):
+            return vae.encode(samples, return_dict=True).latent_dist.mode()
         if isinstance(vae, AutoencoderKLMiniMaxH3):
             if self._cache_batch_is_i2v_first_frame(metadata_entries):
                 moments = vae._encode_clip(samples)
@@ -1115,10 +1201,10 @@ class MiniMaxH3(VideoModelFoundation):
         return latents
 
     def supports_audio_inputs(self) -> bool:
-        return True
+        return not self._is_image_flavour()
 
     def uses_audio_latents(self) -> bool:
-        return True
+        return not self._is_image_flavour()
 
     def get_vae_for_dataset_type(self, dataset_type: str):
         if dataset_type == "audio":
@@ -1158,6 +1244,8 @@ class MiniMaxH3(VideoModelFoundation):
         return None
 
     def _h3_target_mode_for_data_backend(self, data_backend_id: Optional[str] = None) -> str:
+        if self._is_image_flavour():
+            return "video"
         mode = self._target_mode_from_backend_config(data_backend_id) or self._configured_h3_target_mode()
         if mode == "auto":
             backend_config = StateTracker.get_data_backend_config(data_backend_id) if data_backend_id else {}
@@ -1224,6 +1312,8 @@ class MiniMaxH3(VideoModelFoundation):
         return mode
 
     def update_pipeline_call_kwargs(self, pipeline_kwargs):
+        if self._is_image_flavour():
+            pipeline_kwargs.update(num_frames=1, num_inference_steps=6, guidance_scale=1.0)
         pipeline_kwargs.setdefault("minimax_h3_target_mode", self._h3_target_mode_for_validation())
         num_frames = getattr(self.config, "validation_num_video_frames", None)
         if num_frames:
@@ -1750,15 +1840,21 @@ class MiniMaxH3(VideoModelFoundation):
         else:
             num_audio_latents = 0
             packed_audio = encoder_hidden_states.new_empty((batch_size, 0, self._audio_latent_channels()))
-        layout = build_packed_sequence(
-            text_token_tags=text_token_tags.detach().cpu(),
-            num_latent_frames=latent_frames,
-            latent_height=latent_height,
-            latent_width=latent_width,
-            num_audio_latents=num_audio_latents,
-            patch_size=patch_size,
-            keyframe_anchors=keyframe_anchors,
-        )
+        if self._is_image_flavour():
+            reference_grids = [tuple(condition_latents.shape[-2:])] if condition_latents is not None else []
+            layout = build_image_layout(
+                text_token_tags.detach().cpu(), reference_grids, latent_height, latent_width, patch_size
+            )
+        else:
+            layout = build_packed_sequence(
+                text_token_tags=text_token_tags.detach().cpu(),
+                num_latent_frames=latent_frames,
+                latent_height=latent_height,
+                latent_width=latent_width,
+                num_audio_latents=num_audio_latents,
+                patch_size=patch_size,
+                keyframe_anchors=keyframe_anchors,
+            )
         video_timesteps = self._batch_timestep_values(prepared_batch["timesteps"], batch_size, "video")
         if use_audio:
             audio_timesteps = self._batch_timestep_values(
@@ -1812,7 +1908,9 @@ class MiniMaxH3(VideoModelFoundation):
             text_lengths = text_valid_mask.sum(dim=1)
             position_ids = position_ids.unsqueeze(0).expand(batch_size, -1, -1).clone()
             position_ids[:, text_seq_len:, 0] += (text_lengths - text_seq_len).to(position_ids.dtype).unsqueeze(1)
-        timestep = timestep.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
+        timestep = timestep.to(
+            device=self.accelerator.device, dtype=torch.float32 if self._is_image_flavour() else self.config.weight_dtype
+        )
         if r_timestep is not None:
             r_timestep = r_timestep.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
         timestep_indices = timestep_indices.to(self.accelerator.device)
@@ -1857,6 +1955,8 @@ class MiniMaxH3(VideoModelFoundation):
             "minimax_h3_reference_mode": getattr(self.config, "minimax_h3_reference_mode", "vanilla") or "vanilla",
             "return_dict": True,
         }
+        if self._is_image_flavour():
+            transformer_kwargs["pdd_step_index"] = prepared_batch["h3_pdd_step_index"]
         if getattr(self.config, "twinflow_enabled", False):
             transformer_kwargs["timestep_sign"] = prepared_batch.get("twinflow_time_sign")
         if r_timestep is not None:
@@ -2151,7 +2251,7 @@ class MiniMaxH3(VideoModelFoundation):
                     **{
                         component_name: transformer,
                         "vae": vae,
-                        "audio_vae": self.audio_vae,
+                        **({} if self._is_image_flavour() else {"audio_vae": self.audio_vae}),
                     }
                 )
             else:
@@ -2172,13 +2272,21 @@ class MiniMaxH3(VideoModelFoundation):
         transformer = self.unwrap_model(self.model) if self.model is not None else None
         is_ref = getattr(self.config, "model_flavour", None) == "ref2va"
         pipeline_class = self.PIPELINE_CLASSES[pipeline_type]
-        blocks = MiniMaxH3Ref2VABlocks() if is_ref else MiniMaxH3Blocks()
+        blocks = (
+            MiniMaxH3ImageBlocks() if self._is_image_flavour() else MiniMaxH3Ref2VABlocks() if is_ref else MiniMaxH3Blocks()
+        )
         component_kwargs = {
             "vae": vae,
             "audio_vae": self.audio_vae,
-            "scheduler": MiniMaxH3Scheduler(shift=float(getattr(self.config, "flow_schedule_shift", 12.0) or 12.0)),
-            "audio_scheduler": MiniMaxH3Scheduler(
-                shift=float(getattr(self.config, "audio_flow_schedule_shift", 3.0) or 3.0)
+            "scheduler": (
+                MiniMaxH3ImageScheduler()
+                if self._is_image_flavour()
+                else MiniMaxH3Scheduler(shift=float(getattr(self.config, "flow_schedule_shift", 12.0) or 12.0))
+            ),
+            "audio_scheduler": (
+                None
+                if self._is_image_flavour()
+                else MiniMaxH3Scheduler(shift=float(getattr(self.config, "audio_flow_schedule_shift", 3.0) or 3.0))
             ),
             "text_encoder": self.text_encoders[0] if self.text_encoders else None,
             "tokenizer": self.tokenizers[0] if self.tokenizers else None,

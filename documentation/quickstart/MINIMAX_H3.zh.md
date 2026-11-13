@@ -117,3 +117,11 @@ simpletuner train example=minimaxh3/convrot-int8/default/fl2va-convrot-int8.peft
 ```
 
 长训练前先跑短 smoke test，确认 `h3_drift_loss`、正常 loss 和验证样本走势一致。
+
+## H3 图像
+
+使用 `model_family: "minimaxh3"` 和 `model_flavour: "h3_image"` 加载 `MiniMaxAI/MiniMax-H3-Image`。起始示例为 `simpletuner/examples/minimaxh3/h3_image/80g/h3_image.peft-lora`。共享 H3 Transformer 加载 `transformer_diffusers`，默认图像 VAE 位于 `vae_diffusers`，包含 24 层二维解码器。显式设置的 `pretrained_vae_model_name_or_path` 或 `vae_path` 会保留，支持本地组件目录及受支持的单文件 VAE。不会加载音频 VAE。
+
+训练画布可使用 2048 或 4096 像素，尺寸需对齐到 32 像素；模型优先推荐 4096。80GB 示例启用激活检查点卸载。训练在发布的六个 PDD 噪声级别中采样，并选择对应的冻结输出头；验证使用固定六步 sigma 调度和 1.0 引导。此变体不支持任意步数采样或 H3 视频蒸馏配方。设置 `lora_format: "comfyui"` 可加载和导出 ComfyUI 适配器，包括用于 `Comfy-Org/MiniMax-H3-Image` 的裁剪 BF16 检查点。
+
+可选设置 `minimax_h3_prompt_expander_url`，连接部署 `MiniMaxAI/MiniMax-H3-Image-PE` 的 OpenAI 兼容服务。缓存前使用官方文生图或编辑提示词扩展正向描述，编辑请求包含参考图像。需要认证时设置环境变量 `MINIMAX_H3_PROMPT_EXPANDER_API_KEY`。URL 留空可保留数据集原始描述。可通过 `assistant_lora_path` 显式选择已训练的辅助 LoRA；默认不会下载未发布的辅助模型。
