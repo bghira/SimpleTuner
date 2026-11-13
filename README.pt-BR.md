@@ -221,7 +221,7 @@ pip install 'simpletuner[cuda]'
 pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
 
 # Usuarios ROCm (GPUs AMD)
-pip install 'simpletuner[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm7.1
+pip install 'simpletuner[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm10.0 --extra-index-url https://download.pytorch.org/whl/cpu
 
 # Usuarios Apple Silicon (M1/M2/M3/M4)
 pip install 'simpletuner[apple]'

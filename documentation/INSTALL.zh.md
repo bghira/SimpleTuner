@@ -18,7 +18,7 @@ pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org
 # for CUDA 13 with TransformerEngine FP8 support
 pip install 'simpletuner[cuda13-transformerengine]' --extra-index-url https://download.pytorch.org/whl/cu130
 # for ROCm
-pip install 'simpletuner[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm7.1
+pip install 'simpletuner[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm10.0 --extra-index-url https://download.pytorch.org/whl/cpu
 # for Apple Silicon
 pip install 'simpletuner[apple]'
 # for CPU-only (not recommended)
@@ -29,6 +29,8 @@ pip install 'simpletuner[jxl]'
 # development requirements (optional, only for submitting PRs or running tests)
 pip install 'simpletuner[dev]'
 ```
+
+ROCm 扩展选择 ROCm 10.0 的 PyTorch 2.15.0 和仅含 Python 的 TorchAO 0.17.0 wheel（`+cpu`）。TorchAO 的 PyTorch/Triton 运算仍在 AMD GPU 上运行。PyTorch 会安装匹配的 `triton-rocm` 包；请勿同时安装通用的 `triton` 包。
 
 `cuda` 和 `cuda13` 扩展包含 KohakuFA-CuTe 所需的 CUTLASS DSL、TVM FFI 和 Ninja。请准备好 C++17 编译器；扩展模块将在首次使用时编译。
 
