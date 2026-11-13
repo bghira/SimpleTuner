@@ -1,4 +1,8 @@
-"""Precision policy shared by the qualified warp-MMA device schedules."""
+"""Historical compensated ordinary-attention policy for explicit experiments.
+
+Not selected by default dispatch. The owning comparison is
+benchmarks.experimental_precision_control; see benchmarks/experiments/README.md.
+Neighborhood attention has a separate default precision contract."""
 
 
 def schedule(program, dimension, *, device=None):

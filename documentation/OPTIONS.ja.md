@@ -656,6 +656,8 @@ TorchInductor の host wrapper を選択します。`cpp` が既定で dispatch 
 - `sageattention`、`sageattention-int8-fp16-triton`、`sageattention-int8-fp16-cuda`、`sageattention-int8-fp8-cuda` は [SageAttention](https://github.com/thu-ml/SageAttention) の対応カーネルを利用します。これらは推論向けであり、誤って学習で使わないよう `--sageattention_usage` と併用してください。
   - 単純に言うと、SageAttention は推論の計算量を削減します。
 
+同梱の CuTe パッケージは、NATTEN を必要としない明示的な 2D 近傍アテンション用に `neighborhood_attention(q, k, v, spatial_shape=(height, width), window_size=(window_h, window_w), scale=None)` も公開します。形状が同じ `[batch, heads, height*width, 64]` の FP16/BF16 CUDA テンソル、ストライドと dilation がともに 1、空間サイズ内に収まるウィンドウが必要です。境界では偶数サイズのウィンドウも内側に移動します。デフォルトのスケールは `0.125` で、autograd と `torch.compile` に対応します。この API は SDPA バックエンドの選択および LTX デコーダーの 3D 近傍カーネルとは独立しています。
+
 > ℹ️ Flash/Flex/PyTorch バックエンド選択は Diffusers の `attention_backend` ディスパッチャに依存するため、現状はその経路を使う Transformer 系モデル（Flux、Wan 2.x、LTXVideo、QwenImage など）で効果があります。従来の SD/SDXL UNet は PyTorch SDPA を直接使用します。
 
 `--sageattention_usage` を使って SageAttention で学習を有効化する場合は注意が必要です。カスタム CUDA 実装の QKV Linear から勾配を追跡・伝播しません。

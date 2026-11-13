@@ -658,6 +658,8 @@ TRAINING_DYNAMO_BACKEND=inductor
 - `sageattention`、`sageattention-int8-fp16-triton`、`sageattention-int8-fp16-cuda`、`sageattention-int8-fp8-cuda` 包装对应的 [SageAttention](https://github.com/thu-ml/SageAttention) 内核。这些面向推理，必须配合 `--sageattention_usage` 防止误用于训练。
   - 简单来说，SageAttention 可降低推理计算量。
 
+内置 CuTe 包还导出 `neighborhood_attention(q, k, v, spatial_shape=(height, width), window_size=(window_h, window_w), scale=None)`，用于无需 NATTEN 的显式二维邻域注意力。它要求形状相同的 FP16/BF16 CUDA 张量 `[batch, heads, height*width, 64]`，步长和膨胀率均为一，且窗口不能超过空间尺寸。边界窗口向内平移，偶数大小的窗口也如此。默认缩放为 `0.125`；支持 autograd 和 `torch.compile`。此 API 独立于 SDPA 后端选择和 LTX 解码器的三维邻域内核。
+
 > ℹ️ Flash/Flex/PyTorch 后端选择依赖 Diffusers 的 `attention_backend` 分发器，因此目前主要受益于已启用该路径的 Transformer 风格模型（Flux、Wan 2.x、LTXVideo、QwenImage 等）。经典 SD/SDXL UNet 仍直接使用 PyTorch SDPA。
 
 使用 `--sageattention_usage` 启用 SageAttention 训练需谨慎，因为其自定义 CUDA 实现不会为 QKV 线性层追踪或传播梯度。

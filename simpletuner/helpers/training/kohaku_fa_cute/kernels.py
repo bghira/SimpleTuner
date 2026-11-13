@@ -222,6 +222,11 @@ class Attention:
         self.full_copies = full_copies
         self.packed_statistics = packed_statistics
         self.baseline_precision = True
+        # Neighborhood methods set these explicitly; ordinary attention leaves them off.
+        self.experiment_fp32_probability = False
+        self.experiment_weighted_dq = False
+        self.experiment_normalized_mean = False
+        self.experiment_reconstruct_center = False
         self.compensated_normalizer = False
         self.compensated_values = False
         self.compensated_keys = False
@@ -768,7 +773,7 @@ class Attention:
             if tid < self.columns:
                 for field in cutlass.range_constexpr(4):
                     source = (maximum, logsum, delta, delta_base)[field]
-                    if cutlass.const_expr(self.baseline_precision and field == 2):
+                    if cutlass.const_expr(self.baseline_precision and not self.experiment_reconstruct_center and field == 2):
                         shared_statistics[field, tid] = cutlass.Float32(0.0)
                     elif query + tid < sq:
                         source_ptr = source.iterator + cute.crd2idx((batch, head, query + tid), source.layout)
@@ -817,7 +822,7 @@ class Attention:
                         row_logsum = shared_statistics[1, statistics_col]
                         correction = (
                             shared_statistics[2, statistics_col]
-                            if cutlass.const_expr(not self.baseline_precision)
+                            if cutlass.const_expr(not self.baseline_precision or self.experiment_reconstruct_center)
                             else cutlass.Float32(0.0)
                         )
                         center = shared_statistics[3, statistics_col]
@@ -826,7 +831,7 @@ class Attention:
                         row_logsum = logsum[batch, head, qr]
                         correction = (
                             delta[batch, head, qr]
-                            if cutlass.const_expr(not self.baseline_precision)
+                            if cutlass.const_expr(not self.baseline_precision or self.experiment_reconstruct_center)
                             else cutlass.Float32(0.0)
                         )
                         center = delta_base[batch, head, qr]
@@ -838,9 +843,13 @@ class Attention:
                             (sv[r, c] * sign - row_max) * magnitude * 1.4426950408889634 - row_logsum,
                             fastmath=True,
                         )
-                    if cutlass.const_expr(self.baseline_precision):
+                    if cutlass.const_expr(self.baseline_precision and not self.experiment_fp32_probability):
                         p = p.to(left.element_type).to(cutlass.Float32)
-                    pv[r, c] = p
+                    pv[r, c] = (
+                        p.to(left.element_type).to(cutlass.Float32)
+                        if cutlass.const_expr(self.experiment_fp32_probability)
+                        else p
+                    )
                     # Hidden coordinates retain the original zero center.
                     sv[r, c] = p * ((dpv[r, c] - (center if visible else 0.0)) - (correction if visible else 0.0))
         else:
@@ -858,7 +867,7 @@ class Attention:
                         row_logsum = shared_statistics[1, col]
                         correction = (
                             shared_statistics[2, col]
-                            if cutlass.const_expr(not self.baseline_precision)
+                            if cutlass.const_expr(not self.baseline_precision or self.experiment_reconstruct_center)
                             else cutlass.Float32(0.0)
                         )
                         center = shared_statistics[3, col]
@@ -867,7 +876,7 @@ class Attention:
                         row_logsum = logsum[batch, head, qr]
                         correction = (
                             delta[batch, head, qr]
-                            if cutlass.const_expr(not self.baseline_precision)
+                            if cutlass.const_expr(not self.baseline_precision or self.experiment_reconstruct_center)
                             else cutlass.Float32(0.0)
                         )
                         if cutlass.const_expr(self.centered):
@@ -876,9 +885,13 @@ class Attention:
                         (scores[i] * sign - row_max) * magnitude * 1.4426950408889634 - row_logsum,
                         fastmath=True,
                     )
-                if cutlass.const_expr(self.baseline_precision):
+                if cutlass.const_expr(self.baseline_precision and not self.experiment_fp32_probability):
                     p = p.to(left.element_type).to(cutlass.Float32)
-                probability[i] = p
+                probability[i] = (
+                    p.to(left.element_type).to(cutlass.Float32)
+                    if cutlass.const_expr(self.experiment_fp32_probability)
+                    else p
+                )
                 if cutlass.const_expr(not self.pointwise_overlap):
                     scores[i] = p * ((dp[i] - center) - correction)
         if cutlass.const_expr(self.pointwise_overlap):
@@ -892,14 +905,14 @@ class Attention:
                     if cutlass.const_expr(shared_statistics is not None):
                         correction = (
                             shared_statistics[2, col]
-                            if cutlass.const_expr(not self.baseline_precision)
+                            if cutlass.const_expr(not self.baseline_precision or self.experiment_reconstruct_center)
                             else cutlass.Float32(0.0)
                         )
                         center = shared_statistics[3, col]
                     else:
                         correction = (
                             delta[batch, head, qr]
-                            if cutlass.const_expr(not self.baseline_precision)
+                            if cutlass.const_expr(not self.baseline_precision or self.experiment_reconstruct_center)
                             else cutlass.Float32(0.0)
                         )
                         center = delta_base[batch, head, qr]
@@ -1388,6 +1401,20 @@ class Attention:
         return active, full
 
     @cute.jit
+    def traversal(self, start, length):
+        """Iteration bounds; spatial owners override this without mask packing."""
+        first = 0
+        if cutlass.const_expr(self.mode == "kv" and self.causal):
+            first = start // self.columns
+        if cutlass.const_expr(self.mode != "kv" and self.causal):
+            length = cutlass.min(length, start + self.rows)
+        return first, cute.ceil_div(length, self.columns), (0, 0, 0, 0)
+
+    @cute.jit
+    def traversal_block(self, iteration, bounds):
+        return iteration, True
+
+    @cute.jit
     def grid_coordinates(self, q, k):
         length = k.shape[2] if cutlass.const_expr(self.mode == "kv") else q.shape[2]
         heads = k.shape[1] if cutlass.const_expr(self.mode == "kv") else q.shape[1]
@@ -1577,8 +1604,7 @@ class Attention:
             if cutlass.const_expr(self.compensated_normalizer):
                 normalizer_carry = cute.make_rmem_tensor(sums.shape, cutlass.Float32)
                 normalizer_carry.fill(0.0)
-            limit = cutlass.min(k.shape[2], start + self.rows) if cutlass.const_expr(self.causal) else k.shape[2]
-            count = cute.ceil_div(limit, self.columns)
+            first, count, traversal_bounds = self.traversal(start, k.shape[2])
             if cutlass.const_expr(self.pipelined):
                 self.issue_pair(right_stages, other_stages, batch, kvhead, 0, 0, start, tid, tma_args, barrier, blocks)
             if cutlass.const_expr(self.forward_overlap):
@@ -1586,10 +1612,12 @@ class Attention:
                 cute.arch.cp_async_commit_group()
                 cute.arch.cp_async_wait_group(0)
                 cute.arch.sync_threads()
-            for block in range(count):
+            for iteration in range(first, count):
+                block, selected = self.traversal_block(iteration, traversal_bounds)
                 active, full = self.block_visibility(
                     blocks, batch, head, start, block * self.columns, self.rows, self.columns
                 )
+                active = active and selected
                 if cutlass.const_expr(self.pipelined):
                     right, other_right = self.pipeline_step(
                         right_stages,
@@ -1697,6 +1725,12 @@ class Attention:
             totals = cute.make_rmem_tensor((cute.size(rc.shape[0]),), cutlass.Float32)
             row_max = cute.make_rmem_tensor(totals.shape, cutlass.Float32)
             row_logsum = cute.make_rmem_tensor(totals.shape, cutlass.Float32)
+            if cutlass.const_expr(self.experiment_reconstruct_center):
+                assert self.centered and self.column_warps == 1 and self.experiment_fp32_probability
+                center_total = cute.make_rmem_tensor(totals.shape, cutlass.Float32)
+                center_mass = cute.make_rmem_tensor(totals.shape, cutlass.Float32)
+                center_total.fill(0.0)
+                center_mass.fill(0.0)
             if cutlass.const_expr(self.centered):
                 rounded = cute.make_rmem_tensor(totals.shape, cutlass.Float32)
                 base = cute.make_rmem_tensor(totals.shape, cutlass.Float32)
@@ -1797,8 +1831,7 @@ class Attention:
                         base[r] = delta_base[batch, head, qr]
                     row_max[r] = maximum[batch, head, qr]
                     row_logsum[r] = logsum[batch, head, qr]
-            limit = cutlass.min(k.shape[2], start + self.rows) if cutlass.const_expr(self.causal) else k.shape[2]
-            count = cute.ceil_div(limit, self.columns)
+            first, count, traversal_bounds = self.traversal(start, k.shape[2])
             for phase in cutlass.range_constexpr(1 if self.centered else 2):
                 if cutlass.const_expr(self.pipelined):
                     self.issue_pair(
@@ -1814,10 +1847,12 @@ class Attention:
                         barrier,
                         blocks,
                     )
-                for block in range(count):
+                for iteration in range(first, count):
+                    block, selected = self.traversal_block(iteration, traversal_bounds)
                     active, full = self.block_visibility(
                         blocks, batch, head, start, block * self.columns, self.rows, self.columns
                     )
+                    active = active and selected
                     if cutlass.const_expr(self.pipelined):
                         right, other_right = self.pipeline_step(
                             right_stages,
@@ -1920,7 +1955,10 @@ class Attention:
                                             (sv[r, c] * sign - row_max[r]) * magnitude * 1.4426950408889634 - row_logsum[r],
                                             fastmath=True,
                                         )
-                                    if cutlass.const_expr(self.baseline_precision):
+                                    if cutlass.const_expr(
+                                        (self.baseline_precision or self.experiment_weighted_dq)
+                                        and not self.experiment_fp32_probability
+                                    ):
                                         probability = probability.to(q.element_type).to(cutlass.Float32)
                                     if cutlass.const_expr(self.pointwise_overlap):
                                         sv[r, c] = probability
@@ -1940,7 +1978,17 @@ class Attention:
                                         pv[r, c] = probability
                             if cutlass.const_expr(phase == 0):
                                 for r in cutlass.range_constexpr(cute.size(rc.shape[0])):
-                                    totals[r] += quad_sum(sv[r, None].load().reduce(cute.ReductionOp.ADD, 0.0, 0))
+                                    if cutlass.const_expr(self.experiment_reconstruct_center):
+                                        # Reuse these QK/dP products before either operand
+                                        # conversion. Keep the rounded-O center separate.
+                                        center_total[r] += quad_sum(sv[r, None].load().reduce(cute.ReductionOp.ADD, 0.0, 0))
+                                        center_mass[r] += quad_sum(pv[r, None].load().reduce(cute.ReductionOp.ADD, 0.0, 0))
+                                    if cutlass.const_expr(self.experiment_normalized_mean):
+                                        # Match the actual rounded P used by the mean GEMM.
+                                        mass = pv[r, None].load().to(q.element_type).to(cutlass.Float32)
+                                        totals[r] += quad_sum(mass.reduce(cute.ReductionOp.ADD, 0.0, 0))
+                                    else:
+                                        totals[r] += quad_sum(sv[r, None].load().reduce(cute.ReductionOp.ADD, 0.0, 0))
                             else:
                                 self.product(scores, right, offset, mma, thread, tid, accum)
                             if cutlass.const_expr(self.centered):
@@ -2010,12 +2058,19 @@ class Attention:
                                     base[r],
                                 )
                             else:
-                                if cutlass.const_expr(not self.baseline_precision):
+                                if cutlass.const_expr(self.experiment_reconstruct_center):
+                                    mass = center_mass[r] if center_mass[r] > 0.0 else cutlass.Float32(1.0)
+                                    delta[batch, head, row] = center_total[r] / mass
+                                elif cutlass.const_expr(not self.baseline_precision and not self.experiment_weighted_dq):
                                     delta[batch, head, row] = totals[r]
             if cutlass.const_expr(self.centered and not self.baseline_precision):
                 mv = row_view(mean)
                 for r in cutlass.range_constexpr(cute.size(rc.shape[0])):
-                    av[r, None] = av[r, None].load() - rounded[r] * mv[r, None].load()
+                    correction = rounded[r]
+                    if cutlass.const_expr(self.experiment_normalized_mean):
+                        mass = totals[r] if totals[r] > 0.0 else cutlass.Float32(1.0)
+                        correction = correction / mass
+                    av[r, None] = av[r, None].load() - correction * mv[r, None].load()
             self.store_result(accum, dq, left, batch, head, start, offset, thread, tid, scale)
         else:
             batch = bh // k.shape[1]
@@ -2057,8 +2112,7 @@ class Attention:
             group = q.shape[1] // k.shape[1]
             for h in range(group):
                 head = kvhead * group + h
-                first = start // self.columns if cutlass.const_expr(self.causal) else 0
-                stop = cute.ceil_div(q.shape[2], self.columns)
+                first, stop, traversal_bounds = self.traversal(start, q.shape[2])
                 count = stop - first
                 if cutlass.const_expr(self.pipelined):
                     if first < stop:
@@ -2075,10 +2129,12 @@ class Attention:
                             barrier,
                             blocks,
                         )
-                for block in range(first, stop):
+                for iteration in range(first, stop):
+                    block, selected = self.traversal_block(iteration, traversal_bounds)
                     active, full = self.block_visibility(
                         blocks, batch, head, block * self.columns, start, self.columns, self.rows
                     )
+                    active = active and selected
                     if cutlass.const_expr(self.pipelined):
                         right, other_right = self.pipeline_step(
                             right_stages,

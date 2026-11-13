@@ -1,4 +1,8 @@
-"""Preserve low components of key- and value-gradient operands."""
+"""Historical compensated key/value operands for explicit ordinary-attention studies.
+
+Used by the former-policy helper in precision.py, not default dispatch.
+See benchmarks/experiments/README.md for the retained comparison and
+docs/precision.md for the current ordinary and neighborhood contracts."""
 
 from .kernels import Attention
 

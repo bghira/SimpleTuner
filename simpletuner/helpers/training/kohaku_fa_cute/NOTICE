@@ -1,12 +1,16 @@
 SimpleTuner CuTe attention
 
 Kernel implementation synchronized with KohakuFA-CuTe 0.4.0 revision
-30704427809008e83ad38174e7c1780016c44258.
+c373d7bf0a7096a9be0fcc7e488191414aac959c.
 https://github.com/SimpleTuner-io/KohakuFA-CuTe
 
 The implementation is distributed under AGPL-3.0-or-later;
 see LICENSE.AGPL-3.0. SimpleTuner retains its training backend policy,
 package namespaces and public attention adapters.
+
+Explicit 2D neighborhood attention supports shifted boundary windows without
+a NATTEN dependency. It uses normalized dQ and reconstructed dK corrections
+by default, with bounded H100 scheduling and owned-gradient spatial traversal.
 
 Supported CuTe architectures are SM80, SM86, SM89, SM90, SM100, SM103,
 SM120 and SM121. The default arithmetic preserves unscaled score maxima,
