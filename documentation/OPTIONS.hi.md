@@ -3198,3 +3198,7 @@ options:
 कैप्शन डेटासेट के लिए `dataloader_prefetch: false` आवश्यक है, ताकि चेकपॉइंट कर्सर उपयोग किए गए कैप्शन को दर्शाए। पुनः शुरू करते समय कैप्शन पहचान या पाठ, बैच, दोहराव, शफ़ल, बीज, ग्रेडिएंट संचय या वितरित व्यवस्था में बदलाव स्वीकार नहीं होते। सहायक LoRA के चेकपॉइंट जनरेशन बीज, रिज़ॉल्यूशन सूची या शिक्षक के इन्फरेंस चरणों में बदलाव भी अस्वीकार करते हैं।
 
 Assistant LoRA और AnyFlow, teacher, training और validation variants के लिए Dynamo की प्रति-code compile-cache सीमा अस्थायी रूप से कम से कम 32 करते हैं। उपयोगकर्ता की अधिक सीमा बनी रहती है; बाहर निकलने पर, त्रुटि होने पर भी, मूल सीमा बहाल होती है।
+
+### `--minimax_h3_prompt_expander_url`
+
+वैकल्पिक रूप से `minimax_h3_prompt_expander_url` को `MiniMaxAI/MiniMax-H3-Image-PE` होस्ट करने वाले OpenAI-compatible server पर सेट करें। आधिकारिक text-to-image और editing prompts कैशिंग से पहले positive captions का विस्तार करते हैं; editing में reference images भी भेजी जाती हैं। प्रमाणीकरण के लिए environment variable `MINIMAX_H3_PROMPT_EXPANDER_API_KEY` उपयोग करें। मूल captions रखने के लिए URL खाली छोड़ें। प्रशिक्षित assistant को `assistant_lora_path` से चुन सकते हैं; कोई अप्रकाशित assistant डिफ़ॉल्ट रूप से डाउनलोड नहीं होता।

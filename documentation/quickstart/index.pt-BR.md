@@ -13,6 +13,7 @@ Guias passo a passo para treinar cada arquitetura de modelo suportada.
 
 | Modelo | Parâmetros | Licença | Permite uso comercial | Guia |
 | ------- | ------------ | --- | :---: | ------ |
+| **MiniMax H3 Image** | 33.1B | [MiniMax H3 Image Community](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/main/LICENSE) | [License](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/main/LICENSE) | [H3 Image](MINIMAX_H3.md) |
 | **Flux.1** | 12B | [BFL Non-Commercial](https://bfl.ai/legal/non-commercial-license-terms) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Condições aplicáveis<sup>3</sup> | [Guia Flux.1](FLUX.md) |
 | **Flux.2** | 32B | [BFL Non-Commercial](https://bfl.ai/legal/non-commercial-license-terms) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | Condições aplicáveis<sup>4</sup> | [Guia Flux.2](FLUX2.md) |
 | **FLUX.3 Image Klein** | 5.6B | [FLUX [Kom]munity](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE) | Aplicam-se condições | [FLUX.3 Image Klein](FLUX3_IMAGE.pt-BR.md) |

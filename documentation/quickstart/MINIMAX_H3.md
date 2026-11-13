@@ -120,3 +120,11 @@ simpletuner train example=minimaxh3/convrot-int8/default/fl2va-convrot-int8.peft
 ```
 
 Run a short smoke test before committing to a long run. Check that `h3_drift_loss`, normal training loss, and validation samples move together instead of one term dominating the run.
+
+## H3 Image
+
+Use `model_family: "minimaxh3"` with `model_flavour: "h3_image"` for `MiniMaxAI/MiniMax-H3-Image`. Start with `simpletuner/examples/minimaxh3/h3_image/80g/h3_image.peft-lora`. The shared H3 transformer loads `transformer_diffusers`; the default VAE is the image checkpoint in `vae_diffusers`, with a 24-layer 2D decoder. An explicit `pretrained_vae_model_name_or_path` or `vae_path` is preserved, including local component directories and supported single-file VAE checkpoints. No audio VAE is loaded.
+
+Use 2048 or 4096 pixel training canvases (32-pixel alignment); 4096 is the model's preferred scale. The 80GB example enables activation checkpoint offload. Training samples the six released PDD noise levels with the corresponding frozen output head; validation uses the exact six-step sigma schedule and guidance 1.0. Arbitrary-step sampling and H3 video distillation recipes are not supported for this flavour. Set `lora_format: "comfyui"` for native ComfyUI adapter load/export, including the pruned BF16 checkpoint from `Comfy-Org/MiniMax-H3-Image`.
+
+Optionally set `minimax_h3_prompt_expander_url` to an OpenAI-compatible server hosting `MiniMaxAI/MiniMax-H3-Image-PE`. The released text-to-image/editing prompts expand positive captions before caching; reference images are included for edits. Set `MINIMAX_H3_PROMPT_EXPANDER_API_KEY` in the environment if authentication is required. Leave the URL empty to preserve dataset captions. A trained assistant can be selected explicitly with `assistant_lora_path`; no unreleased assistant is downloaded by default.

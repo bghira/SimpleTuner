@@ -3225,3 +3225,7 @@ Select `--distillation_method=assistant_lora` to train a positive assistant adap
 Caption datasets require `dataloader_prefetch: false` so checkpoint cursors represent consumed captions. Resume rejects changes to caption identities/text, batch size, repeats, shuffle, seed, accumulation or distributed layout. Assistant checkpoints also reject changes to the generation seed, resolution list or teacher inference-step count.
 
 Assistant LoRA and AnyFlow temporarily raise Dynamo’s per-code compile-cache limit to at least 32 for teacher, training and validation variants. A higher user limit is preserved; the original limit is restored on exit, including errors.
+
+### `--minimax_h3_prompt_expander_url`
+
+Optionally set `minimax_h3_prompt_expander_url` to an OpenAI-compatible server hosting `MiniMaxAI/MiniMax-H3-Image-PE`. The released text-to-image/editing prompts expand positive captions before caching; reference images are included for edits. Set `MINIMAX_H3_PROMPT_EXPANDER_API_KEY` in the environment if authentication is required. Leave the URL empty to preserve dataset captions. A trained assistant can be selected explicitly with `assistant_lora_path`; no unreleased assistant is downloaded by default.

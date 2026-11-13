@@ -3201,3 +3201,7 @@ options:
 字幕数据集要求 `dataloader_prefetch: false`，确保检查点游标对应已消费的字幕。恢复时若字幕标识或内容、批量、重复次数、打乱设置、种子、梯度累积或分布式布局发生变化，将报错。 辅助 LoRA 检查点同样拒绝更改生成种子、分辨率列表或教师推理步数。
 
 Assistant LoRA 和 AnyFlow 会临时将 Dynamo 每段代码的编译缓存上限提高到至少 32，以容纳教师、训练和验证变体。用户设置的更高上限会保留；退出时（包括发生错误时）恢复原来的上限。
+
+### `--minimax_h3_prompt_expander_url`
+
+可选设置 `minimax_h3_prompt_expander_url`，连接部署 `MiniMaxAI/MiniMax-H3-Image-PE` 的 OpenAI 兼容服务。缓存前使用官方文生图或编辑提示词扩展正向描述，编辑请求包含参考图像。需要认证时设置环境变量 `MINIMAX_H3_PROMPT_EXPANDER_API_KEY`。URL 留空可保留数据集原始描述。可通过 `assistant_lora_path` 显式选择已训练的辅助 LoRA；默认不会下载未发布的辅助模型。

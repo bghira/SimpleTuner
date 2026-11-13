@@ -13,6 +13,7 @@ WebUI の環境作成画面とセットアップウィザードでは、先に�
 
 | モデル | パラメータ | ライセンス | 商用利用 | ガイド |
 | ------- | ------------ | --- | :---: | ------- |
+| **MiniMax H3 Image** | 33.1B | [MiniMax H3 Image Community](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/main/LICENSE) | [License](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/main/LICENSE) | [H3 Image](MINIMAX_H3.md) |
 | **Flux.1** | 12B | [BFL Non-Commercial](https://bfl.ai/legal/non-commercial-license-terms) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 条件付き<sup>3</sup> | [Flux.1 ガイド](FLUX.md) |
 | **Flux.2** | 32B | [BFL Non-Commercial](https://bfl.ai/legal/non-commercial-license-terms) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 条件付き<sup>4</sup> | [Flux.2 ガイド](FLUX2.md) |
 | **FLUX.3 Image Klein** | 5.6B | [FLUX [Kom]munity](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE) | ライセンス条件あり | [FLUX.3 Image Klein](FLUX3_IMAGE.ja.md) |

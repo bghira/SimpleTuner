@@ -118,3 +118,11 @@ simpletuner train example=minimaxh3/convrot-int8/default/fl2va-convrot-int8.peft
 ```
 
 Faça um smoke test curto antes de uma execução longa e confirme que `h3_drift_loss`, loss normal e samples de validação evoluem de forma coerente.
+
+## H3 Image
+
+Use `model_family: "minimaxh3"` e `model_flavour: "h3_image"` para `MiniMaxAI/MiniMax-H3-Image`. Comece por `simpletuner/examples/minimaxh3/h3_image/80g/h3_image.peft-lora`. O transformer H3 compartilhado carrega `transformer_diffusers`; o VAE padrão usa `vae_diffusers`, com decodificador 2D de 24 camadas. Valores explícitos de `pretrained_vae_model_name_or_path` ou `vae_path` são preservados, incluindo diretórios locais de componentes e arquivos únicos de VAE compatíveis. Nenhum VAE de áudio é carregado.
+
+Use telas de treino de 2048 ou 4096 pixels, alinhadas a 32 pixels; 4096 é a escala preferida do modelo. O exemplo de 80GB ativa o descarregamento de checkpoints de ativação. O treino amostra os seis níveis de ruído PDD publicados com o cabeçalho de saída congelado correspondente; a validação usa a sequência sigma exata de seis passos e orientação 1.0. Amostragem com passos arbitrários e receitas de destilação de vídeo H3 não são compatíveis com esta variante. Configure `lora_format: "comfyui"` para importar e exportar adaptadores ComfyUI, inclusive com o checkpoint BF16 reduzido de `Comfy-Org/MiniMax-H3-Image`.
+
+Opcionalmente, defina `minimax_h3_prompt_expander_url` para um servidor compatível com OpenAI que hospede `MiniMaxAI/MiniMax-H3-Image-PE`. Os prompts oficiais de geração e edição expandem legendas positivas antes do cache, incluindo referências na edição. Para autenticação, use a variável `MINIMAX_H3_PROMPT_EXPANDER_API_KEY`. Deixe a URL vazia para manter as legendas originais. Um assistente treinado pode ser selecionado por `assistant_lora_path`; nenhum assistente não publicado é baixado por padrão.
