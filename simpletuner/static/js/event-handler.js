@@ -251,7 +251,7 @@ class EventHandler {
                     },
                     credentials: 'include', // Include credentials for CORS
                 },
-                { forceCallback: true }
+                { forceApi: true }
             );
 
             if (!response.ok) {
@@ -1670,7 +1670,7 @@ class EventHandler {
                 clearTimeout(this.pollTimeout);
                 this.pollTimeout = null;
             }
-            const wsUrl = ApiClient.resolveWebsocket('/api/training/events/stream', { forceCallback: true });
+            const wsUrl = ApiClient.resolveWebsocket('/api/training/events/stream', { forceApi: true });
             this.websocket = new WebSocket(wsUrl);
 
             this.websocket.onopen = () => {
