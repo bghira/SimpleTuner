@@ -215,10 +215,10 @@ SimpleTuner 支持以下模型系列。详细的训练功能支持请参阅[快�
 pip install simpletuner
 
 # CUDA 用户（NVIDIA GPU）
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
-# CUDA 13 / Blackwell 用户（NVIDIA B 系列 GPU）
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130 --extra-index-url https://download.pytorch.org/whl/cu130
+# CUDA 13.2 / Blackwell 用户（NVIDIA B 系列 GPU）
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # ROCm 用户（AMD GPU）
 pip install 'simpletuner[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm10.0 --extra-index-url https://download.pytorch.org/whl/cpu
@@ -226,6 +226,8 @@ pip install 'simpletuner[rocm]' --extra-index-url https://download.pytorch.org/w
 # Apple Silicon 用户（M1/M2/M3/M4 Mac）
 pip install 'simpletuner[apple]'
 ```
+
+如需 Transformer Engine FP8，请按照[安装指南](documentation/INSTALL.zh.md)准备编译环境并执行安装命令。
 
 有关手动安装或开发设置，请参阅[安装文档](/documentation/INSTALL.md)。
 

@@ -43,10 +43,10 @@ apt -y install nvidia-cuda-toolkit
 Instale o SimpleTuner via pip:
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 Para instalação manual ou setup de desenvolvimento, veja a [documentação de instalação](../INSTALL.md).
@@ -428,10 +428,10 @@ A partir do diretório do SimpleTuner, você tem várias opções para iniciar o
 
 **Opção 1 (Recomendado - pip install):**
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 simpletuner train
 ```
 

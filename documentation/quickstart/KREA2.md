@@ -58,10 +58,10 @@ CUDA 13 users should use an image whose CUDA runtime, CUDA headers, NVRTC, and P
 Install SimpleTuner via pip:
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 For a development checkout, follow the [installation documentation](../INSTALL.md).

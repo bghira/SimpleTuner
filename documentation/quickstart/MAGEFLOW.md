@@ -28,10 +28,10 @@ Apple GPUs are not a recommended training target for Mage-Flow.
 Install SimpleTuner:
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 For a development checkout, follow the [installation documentation](../INSTALL.md).

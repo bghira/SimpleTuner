@@ -1,4 +1,6 @@
 import runpy
+import sys
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -32,13 +34,43 @@ class SetupPlatformDependencyTests(unittest.TestCase):
     def test_platform_extras_use_latest_torchao_with_expected_torch_floor(self):
         extras_require = load_setup_kwargs()["extras_require"]
 
-        for extra_name in ("cuda", "cuda13", "cpu", "apple"):
+        for extra_name in ("cpu", "apple"):
             with self.subTest(extra=extra_name):
                 dependencies = extras_require[extra_name]
-                self.assertIn("torch>=2.13.0", dependencies)
-                self.assertIn("torchvision>=0.28.0", dependencies)
-                self.assertIn("torchaudio>=2.11.0", dependencies)
-                self.assertIn("torchao>=0.17.0,<0.18.0", dependencies)
+                self.assertIn("torch>=2.15.0", dependencies)
+                self.assertIn("torchvision>=0.29.2", dependencies)
+                self.assertIn("torchaudio>=2.11.1", dependencies)
+                self.assertIn("torchao>=0.18.0,<0.19.0", dependencies)
+
+    def test_cuda_aliases_select_only_cuda132_wheels(self):
+        extras = load_setup_kwargs()["extras_require"]
+        self.assertEqual(extras["cuda"], extras["cuda13"])
+        dependencies = {Requirement(value).name: Requirement(value) for value in extras["cuda"]}
+        for name, version in {"torch": "2.15.0", "torchvision": "0.29.2", "torchaudio": "2.11.1"}.items():
+            with self.subTest(package=name):
+                specifier = dependencies[name].specifier
+                self.assertTrue(specifier.contains(version + "+cu132"))
+                for suffix in ("", "+cu126", "+cu130", "+cu134", "+cpu", "+rocm10.0"):
+                    self.assertFalse(specifier.contains(version + suffix))
+        self.assertEqual(dependencies["nvidia-cutlass-dsl"].extras, {"cu13"})
+        self.assertNotIn("triton", dependencies)
+        self.assertFalse(any(name.startswith(("nvidia-cudnn-", "nvidia-nccl-")) for name in dependencies))
+
+    def test_nightly_aliases_use_published_cuda132_wheel_abis(self):
+        extras = load_setup_kwargs()["extras_require"]
+        self.assertEqual(extras["cuda-nightly"], extras["cuda13-nightly"])
+        dependencies = {Requirement(value).name: Requirement(value) for value in extras["cuda-nightly"]}
+        for name in ("torch", "torchvision", "torchaudio"):
+            with self.subTest(package=name):
+                url = dependencies[name].url
+                self.assertIn("/nightly/cu132/", url)
+                self.assertIn("%2Bcu132-", url)
+                if name == "torch":
+                    tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
+                    self.assertIn(f"-{tag}-{tag}-", url)
+                else:
+                    self.assertIn("-py3-none-", url)
+        self.assertNotIn("triton", dependencies)
 
     def test_rocm_extra_selects_rocm_wheels_without_generic_triton(self):
         dependencies = {
@@ -62,24 +94,17 @@ class SetupPlatformDependencyTests(unittest.TestCase):
 
         for extra_name in ("cuda-nightly", "cuda13-nightly"):
             with self.subTest(extra=extra_name):
-                self.assertIn("torchao>=0.17.0,<0.18.0", extras_require[extra_name])
+                self.assertIn("torchao>=0.18.0,<0.19.0", extras_require[extra_name])
 
-    def test_cuda13_runtime_pins_are_limited_to_transformerengine_extras(self):
-        extras_require = load_setup_kwargs()["extras_require"]
-        expected = {
-            "nvidia-cublas>=13.3.0.5",
-            "nvidia-cuda-nvrtc>=13.3.33",
-            "nvidia-cuda-runtime>=13.3.29",
-        }
+    def test_transformerengine_aliases_leave_cuda_runtime_selection_to_torch(self):
+        extras = load_setup_kwargs()["extras_require"]
+        self.assertEqual(extras["transformerengine"], ["transformer_engine[pytorch]>=2.21.0,<2.22.0"])
+        for name in ("transformerengine-cuda13", "cuda13-transformerengine"):
+            self.assertEqual(extras[name], extras["transformerengine"] + extras["cuda"])
 
-        for extra_name in ("cuda13", "cuda13-nightly"):
-            with self.subTest(extra=extra_name):
-                self.assertTrue(expected.isdisjoint(set(extras_require[extra_name])))
-
-        for extra_name in ("transformerengine-cuda13", "cuda13-transformerengine"):
-            with self.subTest(extra=extra_name):
-                self.assertTrue(expected.issubset(set(extras_require[extra_name])))
-                self.assertIn("transformer_engine[pytorch]>=2.16.0,<2.17.0", extras_require[extra_name])
+    def test_python_version_metadata_is_consistent(self):
+        project = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text())["project"]
+        self.assertEqual(load_setup_kwargs()["python_requires"], project["requires-python"])
 
     def test_captioning_aliases_delegate_worker_dependencies_to_captionflow(self):
         extras_require = load_setup_kwargs()["extras_require"]

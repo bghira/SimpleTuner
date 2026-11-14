@@ -1,3 +1,5 @@
+// TVM FFI needs its newer DLPack definitions before ATen's bundled header.
+#include <dlpack/dlpack.h>
 #include <ATen/Context.h>
 #include <ATen/DLConvertor.h>
 #include <ATen/ops/scaled_dot_product_attention.h>

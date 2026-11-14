@@ -215,10 +215,10 @@ SimpleTuner se puede instalar vía pip para la mayoría de los usuarios:
 pip install simpletuner
 
 # CUDA users (NVIDIA GPUs)
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
-# CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+# CUDA 13.2 / Blackwell users (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # ROCm users (AMD GPUs)
 pip install 'simpletuner[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm10.0 --extra-index-url https://download.pytorch.org/whl/cpu
@@ -226,6 +226,8 @@ pip install 'simpletuner[rocm]' --extra-index-url https://download.pytorch.org/w
 # Apple Silicon users (M1/M2/M3/M4 Macs)
 pip install 'simpletuner[apple]'
 ```
+
+Para Transformer Engine FP8, sigue los requisitos de compilación y los comandos de [la guía de instalación](documentation/INSTALL.es.md).
 
 Para instalación manual o setup de desarrollo, consulta la [documentación de instalación](/documentation/INSTALL.md).
 

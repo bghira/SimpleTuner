@@ -11,7 +11,7 @@
 Python 3.12–3.14 इस्तेमाल करें और अपनी मशीन के लिए [इंस्टॉलेशन गाइड](../INSTALL.hi.md) देखें। नीचे के presets NVIDIA GPUs पर जाँचे गए हैं। SimpleTuner की dependencies में `webshart` शामिल है; regularisation डेटा के लिए नेटवर्क और स्थानीय cache स्थान चाहिए।
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 <a id="vram-presets"></a>

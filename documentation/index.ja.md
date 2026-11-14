@@ -8,7 +8,7 @@
 
     ---
 
-    NVIDIA CUDA、AMD ROCm 10.0、Apple Silicon 向けに SimpleTuner をインストールし、最初のモデルをトレーニング
+    NVIDIA CUDA 13.2、AMD ROCm 10.0、Apple Silicon 向けに SimpleTuner をインストールし、最初のモデルをトレーニング
 
     [:octicons-arrow-right-24: インストール](INSTALL.ja.md)
 

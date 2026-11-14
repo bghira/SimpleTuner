@@ -31,10 +31,10 @@ apt -y install nvidia-cuda-toolkit
 Instale o SimpleTuner via pip:
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 Para instalação manual ou setup de desenvolvimento, veja a [documentação de instalação](../INSTALL.md).
@@ -87,7 +87,7 @@ Lá, você precisará modificar as seguintes variáveis:
   "use_bitfit": false,
   "pretrained_model_name_or_path": "pixart-alpha/pixart-sigma-xl-2-1024-ms",
   "model_family": "pixart_sigma",
-  "output_dir": "/home/user/output/models",
+  "output_dir": "output/models",
   "validation_resolution": "1024x1024,1280x768",
   "validation_guidance": 3.5
 }
@@ -117,7 +117,7 @@ Há mais alguns ajustes se estiver usando um Mac M-series:
 
 Dependendo do dataset que você tem, será necessário configurar seu diretório de dataset e o arquivo de configuração do dataloader de forma diferente. Neste exemplo, usaremos [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) como dataset.
 
-No seu diretório `/home/user/simpletuner/config`, crie um multidatabackend.json:
+No seu diretório `config`, crie um multidatabackend.json:
 
 <details>
 <summary>Ver exemplo de config</summary>
@@ -136,7 +136,7 @@ No seu diretório `/home/user/simpletuner/config`, crie um multidatabackend.json
     "target_downsample_size": 1.0,
     "resolution_type": "area",
     "cache_dir_vae": "cache/vae/pixart/pseudo-camera-10k",
-    "instance_data_dir": "/home/user/simpletuner/datasets/pseudo-camera-10k",
+    "instance_data_dir": "datasets/pseudo-camera-10k",
     "disabled": false,
     "skip_file_discovery": "",
     "caption_strategy": "filename",

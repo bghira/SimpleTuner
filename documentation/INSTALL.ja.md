@@ -12,11 +12,9 @@ SimpleTuner は pip を使用して簡単にインストールできます。こ
 
 ```bash
 # CUDA 用
-pip install 'simpletuner[cuda]'
-# CUDA 13 / Blackwell 用 (NVIDIA Bシリーズ GPU)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
-# TransformerEngine FP8 サポート付き CUDA 13 用
-pip install 'simpletuner[cuda13-transformerengine]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
+# CUDA 13.2 / Blackwell 用 (NVIDIA Bシリーズ GPU)
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 # ROCm 用
 pip install 'simpletuner[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm10.0 --extra-index-url https://download.pytorch.org/whl/cpu
 # Apple Silicon 用
@@ -30,9 +28,23 @@ pip install 'simpletuner[jxl]'
 pip install 'simpletuner[dev]'
 ```
 
+`cuda` と `cuda13` は、どちらも PyTorch 2.15 と CUDA 13.2 を選択します。これらの extra では CUDA 12 をサポートしません。CUDA 13.2 に対応するドライバーを使用してください。Apple Silicon と CPU でも PyTorch 2.15 が必要で、TorchAO は 0.18 に更新されています。nightly の別名は CUDA 13.2 を使用し、`SIMPLETUNER_CUDA_NIGHTLY_*` の設定を共有します。
+
 ROCm extra は ROCm 10.0 向けの PyTorch 2.15.0 と Python のみの TorchAO 0.17.0 wheel（`+cpu`）を選択します。TorchAO の PyTorch/Triton 演算は引き続き AMD GPU 上で動作します。PyTorch が対応する `triton-rocm` パッケージをインストールするため、通常の `triton` を併せてインストールしないでください。
 
-`cuda` と `cuda13` の extras には、KohakuFA-CuTe に必要な CUTLASS DSL、TVM FFI、Ninja が含まれています。C++17 コンパイラを用意してください。拡張機能は初回使用時にビルドされます。
+`cuda` と `cuda13` の extras には、KohakuFA-CuTe に必要な CUTLASS DSL、TVM FFI、Ninja が含まれています。C++20 コンパイラを用意してください。拡張機能は初回使用時にビルドされます。
+
+#### Transformer Engine FP8
+
+Transformer Engine はインストール済みの PyTorch に対してビルドされます。まず上記の `cuda` extra と CUDA 13.2 開発ツールキットをインストールし、有効な仮想環境で次のコマンドを実行してください。ツールキットの場所が異なる場合は `CUDA_HOME` を変更してください。
+
+```bash
+pip install setuptools wheel pybind11 cmake ninja
+export CUDA_HOME=/usr/local/cuda-13.2
+export CUDNN_PATH="$(python -c 'import nvidia.cudnn; print(next(iter(nvidia.cudnn.__path__)))')"
+export CPLUS_INCLUDE_PATH="$(python -c 'import nvidia.nccl; print(next(iter(nvidia.nccl.__path__)))')/include${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}"
+pip install --no-build-isolation 'simpletuner[cuda13-transformerengine]' --extra-index-url https://download.pytorch.org/whl/cu132
+```
 
 ### Git リポジトリ方式
 

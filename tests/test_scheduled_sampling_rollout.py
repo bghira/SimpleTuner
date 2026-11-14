@@ -98,6 +98,34 @@ class ScheduledSamplingRolloutTests(unittest.TestCase):
         assert_close(torch.tensor(point.sigma), torch.sqrt(1.0 - alpha_bar), atol=1e-6, rtol=1e-6)
         assert_close(torch.tensor(point.alpha), torch.sqrt(alpha_bar), atol=1e-6, rtol=1e-6)
 
+    def test_real_samplers_preserve_ddpm_prediction_across_multiple_steps(self):
+        from simpletuner.helpers.scheduled_sampling.skrample_adapter import make_data_prediction_transform
+
+        scheduler = DDPMScheduler(num_train_timesteps=32)
+        schedule = make_sigma_schedule_from_ddpm(scheduler)
+        clean = torch.full((2, 4), 0.25)
+        noise = torch.full_like(clean, 0.5)
+        for name in ("euler", "dpm", "unip", "unipc"):
+            with self.subTest(sampler=name):
+                sampler = make_sampler(name, 2)
+                current = scheduler.add_noise(clean, noise, torch.tensor([20, 20]))
+                previous = []
+                for timestep in range(20, 17, -1):
+                    result = sampler.sample(
+                        current,
+                        clean,
+                        step=(timestep / 32, (timestep - 1) / 32),
+                        model_transform=make_data_prediction_transform(),
+                        schedule=schedule,
+                        noise=None,
+                        previous=tuple(previous),
+                    )
+                    expected = scheduler.add_noise(clean, noise, torch.tensor([timestep - 1, timestep - 1]))
+                    assert_close(result.final, expected, atol=1e-6, rtol=1e-6)
+                    current = result.final
+                    if sampler.require_previous:
+                        previous = (previous + [result])[-sampler.require_previous :]
+
     def test_make_sampler_rejects_unknown_name(self):
         with self.assertRaisesRegex(ValueError, "Unsupported scheduled sampling sampler: bogus"):
             make_sampler("bogus", 2)

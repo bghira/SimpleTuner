@@ -14,7 +14,7 @@ Esta integração treina o modelo oficial de um locutor. O modo com vários locu
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 Os exemplos autorizam o kernel Hub fixado `kernels-community/flash-attn3` com `trust_remote_code: true`. Remova a opção ao escolher um backend local ou integrado.

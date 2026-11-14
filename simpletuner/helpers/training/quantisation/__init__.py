@@ -209,7 +209,16 @@ def _build_torchao_quant_type(quant_type: Any, quant_type_kwargs: Mapping[str, A
             f"{', '.join(sorted(TORCHAO_QUANT_TYPE_CONFIG_MAP))}."
         )
     config_cls = getattr(quant_api, config_cls_name)
-    return config_cls(**_normalize_torchao_quant_type_kwargs(quant_type_kwargs))
+    normalized = _normalize_torchao_quant_type_kwargs(quant_type_kwargs)
+    if quant_type == "int8_weight_only":
+        normalized.setdefault("version", 2)
+    if quant_type == "int8_weight_only" and normalized["version"] == 2 and normalized.get("group_size") is not None:
+        from torchao.quantization.granularity import PerGroup
+
+        if "granularity" in normalized:
+            raise ValueError("Specify either group_size or granularity for int8_weight_only, not both.")
+        normalized["granularity"] = PerGroup(normalized.pop("group_size"))
+    return config_cls(**normalized)
 
 
 def _split_torchao_config_kwargs(torchao_cls, override_dict: dict[str, Any], quant_type_kwargs: Mapping[str, Any]):
@@ -844,10 +853,7 @@ def _replace_linears_with_transformerengine(
     for name, child in list(module.named_children()):
         fqn = f"{prefix}.{name}" if prefix else name
         if _transformerengine_filter_fn(child, fqn):
-            fp8_model_init = getattr(te, "fp8_model_init", None)
-            if fp8_model_init_enabled and fp8_model_init is None:
-                raise RuntimeError("TransformerEngine does not expose fp8_model_init for FP8 weight storage.")
-            context = fp8_model_init(enabled=True) if fp8_model_init_enabled else nullcontext()
+            context = te.quantized_model_init(enabled=True, recipe=recipe) if fp8_model_init_enabled else nullcontext()
             with context:
                 te_linear = te.Linear(
                     child.in_features,
@@ -957,8 +963,8 @@ def _transformerengine_model(
         from transformer_engine.common.recipe import DelayedScaling, Format
     except ImportError as e:
         raise ImportError(
-            "fp8-transformerengine requires TransformerEngine. Install it with "
-            "`pip install 'simpletuner[transformerengine]'`."
+            "fp8-transformerengine requires TransformerEngine. Follow the build prerequisites and "
+            "installation commands in documentation/INSTALL.md."
         ) from e
 
     fp8_available = te.is_fp8_available(return_reason=True)

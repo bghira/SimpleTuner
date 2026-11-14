@@ -47,11 +47,11 @@ python3.13 -m venv .venv
 NVIDIA उपयोगकर्ताओं को सही dependencies के लिए CUDA extras इस्तेमाल करनी होंगी:
 
 ```bash
-pip install -e 'simpletuner[cuda]'
+pip install -e 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs):
-# pip install -e 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+# pip install -e 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 # या, यदि आपने git से clone किया है:
-# pip install -e '.[cuda]'
+# pip install -e '.[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 Apple और ROCm हार्डवेयर के उपयोगकर्ताओं के लिए अन्य extras हैं, [installation निर्देश](../INSTALL.md) देखें।

@@ -1,8 +1,8 @@
-FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
+FROM nvidia/cuda:13.2.1-cudnn-devel-ubuntu24.04
 
 # Hardware Architecture
 ENV TORCH_CUDA_ARCH_LIST=9.0
-ENV CUDA_HOME=/usr/local/cuda-12.8
+ENV CUDA_HOME=/usr/local/cuda-13.2
 ENV LD_LIBRARY_PATH=$CUDA_HOME/lib64:$CUDA_HOME/targets/x86_64-linux/lib/stubs:$LD_LIBRARY_PATH
 
 # Settings
@@ -37,18 +37,23 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
     && git lfs install
 
 # 2. Python Environment & Core Deps
-# Keep container CUDA deps explicit: the full cuda extra installs NVIDIA
-# library wheels that conflict with this CUDA base image.
+# Install the CUDA 13.2 stack before building optional CUDA extensions.
 RUN python${PYTHON_VERSION} -m venv /opt/venv \
     && pip install --upgrade pip setuptools wheel \
     && pip install --no-cache-dir \
-       "huggingface_hub[cli,hf_transfer]" \
+       --extra-index-url https://download.pytorch.org/whl/cu132 \
+       "torch==2.15.0+cu132" \
+       "torchvision==0.29.2+cu132" \
+       "torchaudio==2.11.1+cu132" \
+       "nvidia-cutlass-dsl[cu13]>=4.8.1,<4.9" \
+       "apache-tvm-ffi>=0.1.14,<0.2" \
+       huggingface_hub \
        wandb \
        mpi4py \
        ninja \
-       "bitsandbytes>=0.45.0" \
-       "deepspeed>=0.17.2" \
-       "torchao>=0.17.0,<0.18.0" \
+       "bitsandbytes>=0.50.2" \
+       "deepspeed>=0.20.0" \
+       "torchao>=0.18.0,<0.19.0" \
        "nvidia-ml-py>=12.555" \
        "lm-eval>=0.4.4"
 

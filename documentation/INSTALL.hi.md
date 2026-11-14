@@ -12,11 +12,9 @@ Windows 10 या उससे नए संस्करण पर काम क
 
 ```bash
 # for CUDA
-pip install 'simpletuner[cuda]'
-# for CUDA 13 / Blackwell (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
-# for CUDA 13 with TransformerEngine FP8 support
-pip install 'simpletuner[cuda13-transformerengine]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
+# for CUDA 13.2 / Blackwell (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 # for ROCm
 pip install 'simpletuner[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm10.0 --extra-index-url https://download.pytorch.org/whl/cpu
 # for Apple Silicon
@@ -30,9 +28,23 @@ pip install 'simpletuner[jxl]'
 pip install 'simpletuner[dev]'
 ```
 
+`cuda` और `cuda13` दोनों CUDA 13.2 के साथ PyTorch 2.15 चुनते हैं। इन extras में अब CUDA 12 समर्थित नहीं है। CUDA 13.2 के अनुकूल ड्राइवर का उपयोग करें। Apple Silicon और CPU इंस्टॉलेशन के लिए भी PyTorch 2.15 आवश्यक है; TorchAO को 0.18 पर अपडेट किया गया है। nightly aliases CUDA 13.2 का उपयोग करते हैं और `SIMPLETUNER_CUDA_NIGHTLY_*` सेटिंग्स साझा करते हैं।
+
 ROCm extra, ROCm 10.0 के लिए PyTorch 2.15.0 और केवल Python वाला TorchAO 0.17.0 wheel (`+cpu`) चुनता है। TorchAO के PyTorch/Triton ऑपरेशन अब भी AMD GPU पर चलते हैं। PyTorch उपयुक्त `triton-rocm` पैकेज इंस्टॉल करता है; इसके साथ सामान्य `triton` पैकेज इंस्टॉल न करें।
 
-`cuda` और `cuda13` extras में KohakuFA-CuTe के लिए CUTLASS DSL, TVM FFI और Ninja शामिल हैं। C++17 कंपाइलर उपलब्ध होना चाहिए; एक्सटेंशन पहली बार उपयोग करने पर संकलित होता है।
+`cuda` और `cuda13` extras में KohakuFA-CuTe के लिए CUTLASS DSL, TVM FFI और Ninja शामिल हैं। C++20 कंपाइलर उपलब्ध होना चाहिए; एक्सटेंशन पहली बार उपयोग करने पर संकलित होता है।
+
+#### Transformer Engine FP8
+
+Transformer Engine इंस्टॉल किए गए PyTorch के साथ संकलित होता है। पहले ऊपर दिया गया `cuda` extra और CUDA 13.2 विकास टूलकिट इंस्टॉल करें, फिर सक्रिय वर्चुअल एनवायरनमेंट में ये कमांड चलाएँ। टूलकिट किसी अन्य स्थान पर इंस्टॉल हो तो `CUDA_HOME` बदलें।
+
+```bash
+pip install setuptools wheel pybind11 cmake ninja
+export CUDA_HOME=/usr/local/cuda-13.2
+export CUDNN_PATH="$(python -c 'import nvidia.cudnn; print(next(iter(nvidia.cudnn.__path__)))')"
+export CPLUS_INCLUDE_PATH="$(python -c 'import nvidia.nccl; print(next(iter(nvidia.nccl.__path__)))')/include${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}"
+pip install --no-build-isolation 'simpletuner[cuda13-transformerengine]' --extra-index-url https://download.pytorch.org/whl/cu132
+```
 
 ### Git रिपॉज़िटरी विधि
 
