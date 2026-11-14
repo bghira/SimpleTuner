@@ -196,7 +196,7 @@ base_deps = [
     "wandb>=0.21.0",
     "requests>=2.32.4",
     "pillow>=11.3.0",
-    "trainingsample>=0.3.0,<0.4.0",
+    "trainingsample==0.4.0",
     "accelerate>=1.15.0",
     "filelock>=3.16.1",
     "safetensors>=0.5.3",
