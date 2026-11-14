@@ -193,6 +193,7 @@ class H3ImageTests(unittest.TestCase):
         from simpletuner.helpers.models.minimaxh3.modular_pipeline import _map_minimax_h3_diffusers_lora_module_to_native
 
         model = tiny_h3_transformer(num_layers=1, audio_enabled=False, num_pdd_heads=6, adaln_curve_grid=5, time_embed_dim=3)
+        model.adaln_t_table.copy_(torch.arange(15, dtype=torch.float32).reshape(5, 3))
         native = {}
         for key, value in model.state_dict().items():
             if key.startswith("pdd_proj_out."):
