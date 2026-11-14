@@ -15,10 +15,10 @@ ERNIE 不是轻量模型，建议按大型单流 transformer 的硬件标准准�
 ## 安装
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 更多内容见 [安装文档](../INSTALL.md)。

@@ -122,10 +122,18 @@ def neighborhood_attention(q, k, v, *, spatial_shape, window_size, scale=None):
     return forward(q, k, v, *spatial_shape, *window_size, scale)[0]
 
 
+def _autocast_sdpa_inputs(query, key, value):
+    if query.device.type == "cuda" and torch.is_autocast_enabled("cuda"):
+        dtype = torch.get_autocast_dtype("cuda")
+        return tuple(t.to(dtype) if t.is_floating_point() and t.dtype != torch.float64 else t for t in (query, key, value))
+    return query, key, value
+
+
 def kohaku_fa_scaled_dot_product_attention(
     query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None, enable_gqa=False
 ):
     """Strict CuTe implementation with the PyTorch SDPA argument convention."""
+    query, key, value = _autocast_sdpa_inputs(query, key, value)
     selected = _try_rtx4090_s1024(query, key, value, attn_mask, dropout_p, is_causal, scale, enable_gqa)
     if selected is not None:
         return selected
@@ -153,6 +161,7 @@ def automatic_kohaku_fa_scaled_dot_product_attention(
     scale=None,
     enable_gqa=False,
 ):
+    query, key, value = _autocast_sdpa_inputs(query, key, value)
     if query.device.type == "cuda":
         selected = _try_rtx4090_s1024(query, key, value, attn_mask, dropout_p, is_causal, scale, enable_gqa)
         if selected is not None:

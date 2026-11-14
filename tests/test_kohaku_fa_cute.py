@@ -1252,6 +1252,35 @@ class CuTeAttentionTests(unittest.TestCase):
             with self.subTest(scale=scale):
                 self.compare(q, k, v, scale=scale)
 
+    def test_sdpa_autocast_preserves_gradients_with_mixed_input_dtypes(self):
+        from simpletuner.helpers.training.kohaku_fa_cute.api import (
+            automatic_kohaku_fa_scaled_dot_product_attention,
+            kohaku_fa_scaled_dot_product_attention,
+        )
+
+        for dtype in (torch.float16, torch.bfloat16):
+            inputs = [torch.randn(1, 2, 33, 64, device="cuda", dtype=t) for t in (torch.float32, torch.float32, dtype)]
+            reference = [t.detach().requires_grad_() for t in inputs]
+            with torch.autocast("cuda", dtype=dtype):
+                expected = torch.nn.functional.scaled_dot_product_attention(*reference)
+            grad = torch.randn_like(expected)
+            expected_grads = torch.autograd.grad(expected, reference, grad)
+            for implementation in (kohaku_fa_scaled_dot_product_attention, automatic_kohaku_fa_scaled_dot_product_attention):
+                for compile in (False, True):
+                    with self.subTest(dtype=dtype, implementation=implementation.__name__, compile=compile):
+                        function = torch.compile(implementation, fullgraph=True) if compile else implementation
+                        tensors = [t.detach().requires_grad_() for t in inputs]
+                        with torch.autocast("cuda", dtype=dtype):
+                            output = function(*tensors)
+                        self.assertEqual(output.dtype, dtype)
+                        grads = torch.autograd.grad(output, tensors, grad)
+                        for got, want in zip((output, *grads), (expected, *expected_grads)):
+                            torch.testing.assert_close(got, want, atol=0.02, rtol=0.02)
+
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            with self.assertRaisesRegex(ValueError, "FP32 attention is unsupported"):
+                kohaku_fa_scaled_dot_product_attention(*(t.double() for t in inputs))
+
     def test_optimizer_steps_with_checkpointing_and_lora(self):
         from copy import deepcopy
         from types import SimpleNamespace

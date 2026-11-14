@@ -20,7 +20,7 @@ Mage-Flow 比 Flux.1 和 Qwen-Image 小，但仍然是大型 transformer，并�
 安装 SimpleTuner：
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 Mage-Flow 使用 packed variable-length attention。若想使用 FlashAttention 2 且不在本地编译 `flash-attn` 包，请设置 `"attention_mechanism": "flash-attn-varlen-hub"`，让 SimpleTuner 从 Hugging Face Hub 加载 kernel。使用 PyTorch SDPA 时保留默认的 `diffusers` 即可。

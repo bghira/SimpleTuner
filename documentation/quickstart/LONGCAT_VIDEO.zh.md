@@ -20,7 +20,7 @@ LongCat‑Video 是一个 13.6B 双语（zh/en）文生视频/图生视频模型
    ```
 2. 按硬件选择 extras 安装 SimpleTuner：
    ```bash
-   pip install "simpletuner[cuda]"   # NVIDIA
+   pip install "simpletuner[cuda]" --extra-index-url https://download.pytorch.org/whl/cu132   # NVIDIA
    pip install "simpletuner[mps]"    # Apple Silicon
    pip install "simpletuner[cpu]"    # CPU-only
    ```

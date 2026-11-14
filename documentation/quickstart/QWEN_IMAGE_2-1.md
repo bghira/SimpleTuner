@@ -11,7 +11,7 @@ For the 20B `v1.0` / `v2.0` models, use the [older Qwen Image guide](QWEN_IMAGE.
 Use Python 3.12–3.14 and follow the [installation guide](../INSTALL.md) for your platform. The presets below were tested on NVIDIA GPUs. `webshart` is included in SimpleTuner’s dependencies; the regularisation dataset requires network access and local cache space.
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 <a id="vram-presets"></a>

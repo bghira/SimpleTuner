@@ -8,7 +8,7 @@
 
     ---
 
-    Instale o SimpleTuner para NVIDIA CUDA, AMD ROCm 10.0 ou Apple Silicon e treine seu primeiro modelo
+    Instale o SimpleTuner para NVIDIA CUDA 13.2, AMD ROCm 10.0 ou Apple Silicon e treine seu primeiro modelo
 
     [:octicons-arrow-right-24: Instalação](INSTALL.md)
 

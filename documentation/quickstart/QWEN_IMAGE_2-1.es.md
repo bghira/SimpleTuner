@@ -11,7 +11,7 @@ Para los modelos de 20B `v1.0` / `v2.0`, consulta la [guía anterior de Qwen Ima
 Usa Python 3.12–3.14 y sigue la [guía de instalación](../INSTALL.es.md) para tu plataforma. Los presets siguientes se probaron en GPU NVIDIA. `webshart` ya está incluido en las dependencias; los datos de regularización requieren acceso a la red y espacio de caché local.
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 <a id="vram-presets"></a>

@@ -12,11 +12,9 @@
 
 ```bash
 # for CUDA
-pip install 'simpletuner[cuda]'
-# for CUDA 13 / Blackwell (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
-# for CUDA 13 with TransformerEngine FP8 support
-pip install 'simpletuner[cuda13-transformerengine]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
+# for CUDA 13.2 / Blackwell (NVIDIA B-series GPUs)
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 # for ROCm
 pip install 'simpletuner[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm10.0 --extra-index-url https://download.pytorch.org/whl/cpu
 # for Apple Silicon
@@ -30,9 +28,23 @@ pip install 'simpletuner[jxl]'
 pip install 'simpletuner[dev]'
 ```
 
+`cuda` 和 `cuda13` 均选择 PyTorch 2.15 和 CUDA 13.2。这些扩展不再支持 CUDA 12，请使用兼容 CUDA 13.2 的驱动。Apple Silicon 和 CPU 安装也要求 PyTorch 2.15；TorchAO 已更新至 0.18。两个 nightly 别名均使用 CUDA 13.2，并共享 `SIMPLETUNER_CUDA_NIGHTLY_*` 覆盖设置。
+
 ROCm 扩展选择 ROCm 10.0 的 PyTorch 2.15.0 和仅含 Python 的 TorchAO 0.17.0 wheel（`+cpu`）。TorchAO 的 PyTorch/Triton 运算仍在 AMD GPU 上运行。PyTorch 会安装匹配的 `triton-rocm` 包；请勿同时安装通用的 `triton` 包。
 
-`cuda` 和 `cuda13` 扩展包含 KohakuFA-CuTe 所需的 CUTLASS DSL、TVM FFI 和 Ninja。请准备好 C++17 编译器；扩展模块将在首次使用时编译。
+`cuda` 和 `cuda13` 扩展包含 KohakuFA-CuTe 所需的 CUTLASS DSL、TVM FFI 和 Ninja。请准备好 C++20 编译器；扩展模块将在首次使用时编译。
+
+#### Transformer Engine FP8
+
+Transformer Engine 需要针对已安装的 PyTorch 编译。请先安装上面的 `cuda` 扩展和 CUDA 13.2 开发工具包，然后在已激活的虚拟环境中运行以下命令。如果工具包安装在其他位置，请调整 `CUDA_HOME`。
+
+```bash
+pip install setuptools wheel pybind11 cmake ninja
+export CUDA_HOME=/usr/local/cuda-13.2
+export CUDNN_PATH="$(python -c 'import nvidia.cudnn; print(next(iter(nvidia.cudnn.__path__)))')"
+export CPLUS_INCLUDE_PATH="$(python -c 'import nvidia.nccl; print(next(iter(nvidia.nccl.__path__)))')/include${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}"
+pip install --no-build-isolation 'simpletuner[cuda13-transformerengine]' --extra-index-url https://download.pytorch.org/whl/cu132
+```
 
 ### Git 仓库方法
 

@@ -42,10 +42,10 @@ simpletuner/examples/boogu_image/v0.1-base/default/lycoris-lokr/config.json
 通过 pip 安装 SimpleTuner:
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell 用户
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 手动安装或开发环境设置请参考[安装文档](../INSTALL.md)。

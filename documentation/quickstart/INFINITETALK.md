@@ -17,7 +17,7 @@ Install SimpleTuner:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 FlashAttention 3 is used by the examples. Select another supported attention backend if it is unavailable on your GPU.

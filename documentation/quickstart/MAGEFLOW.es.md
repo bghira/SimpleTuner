@@ -20,7 +20,7 @@ Recomendado: 24GB como mínimo práctico para pruebas reducidas o cuantizadas, 4
 Instala SimpleTuner:
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 Mage-Flow usa atencion empaquetada de longitud variable. Para usar FlashAttention 2 sin compilar el paquete `flash-attn` localmente, define `"attention_mechanism": "flash-attn-varlen-hub"` para que SimpleTuner cargue el kernel desde Hugging Face Hub. Deja el valor predeterminado `diffusers` para PyTorch SDPA.

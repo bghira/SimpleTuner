@@ -25,8 +25,8 @@ LongCat‑Image 是一个 6B 双语（zh/en）文生图模型，使用流匹配�
    ```
 3. 按你的硬件选择 extras 安装 SimpleTuner：
    ```bash
-   pip install "simpletuner[cuda]"   # CUDA
-   pip install "simpletuner[cuda13]" # CUDA 13 / Blackwell (NVIDIA B-series GPUs)
+   pip install "simpletuner[cuda]" --extra-index-url https://download.pytorch.org/whl/cu132   # CUDA
+   pip install "simpletuner[cuda13]" --extra-index-url https://download.pytorch.org/whl/cu132 # CUDA 13 / Blackwell (NVIDIA B-series GPUs)
    pip install "simpletuner[mps]"    # Apple Silicon
    pip install "simpletuner[cpu]"    # CPU-only
    ```

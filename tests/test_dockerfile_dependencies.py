@@ -21,15 +21,23 @@ class DockerfileDependenciesTests(unittest.TestCase):
     def test_container_cuda_dependencies_are_explicit(self):
         dockerfile = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
         expected_dependencies = [
-            "bitsandbytes>=0.45.0",
-            "deepspeed>=0.17.2",
-            "torchao>=0.17.0,<0.18.0",
+            "bitsandbytes>=0.50.2",
+            "deepspeed>=0.20.0",
+            "torchao>=0.18.0,<0.19.0",
             "nvidia-ml-py>=12.555",
             "lm-eval>=0.4.4",
         ]
 
         for dependency in expected_dependencies:
             self.assertIn(dependency, dockerfile)
+
+    def test_container_toolkit_and_pytorch_use_cuda132(self):
+        dockerfile = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("FROM nvidia/cuda:13.2.1-cudnn-devel-ubuntu24.04", dockerfile)
+        self.assertIn("ENV CUDA_HOME=/usr/local/cuda-13.2", dockerfile)
+        self.assertIn("https://download.pytorch.org/whl/cu132", dockerfile)
+        for package in ("torch==2.15.0+cu132", "torchvision==0.29.2+cu132", "torchaudio==2.11.1+cu132"):
+            self.assertIn(package, dockerfile)
 
     def test_container_cuda_dependencies_skip_conflicting_nvidia_wheels(self):
         dockerfile = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")

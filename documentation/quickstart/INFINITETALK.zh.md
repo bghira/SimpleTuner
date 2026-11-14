@@ -14,7 +14,7 @@ InfiniteTalk 是基于 Wan 2.1 I2V 14B 的音频驱动视频模型。SimpleTuner
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 示例通过 `trust_remote_code: true` 授权加载固定版本的 `kernels-community/flash-attn3` Hub 内核。改用本地或内置后端时请删除该选项。

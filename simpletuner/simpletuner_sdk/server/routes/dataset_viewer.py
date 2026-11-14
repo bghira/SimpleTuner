@@ -234,7 +234,7 @@ def _captioning_install_command() -> str:
         cuda_version = ""
 
     if cuda_version.startswith("13"):
-        return "pip install 'simpletuner[cuda13,captioning]' --extra-index-url https://download.pytorch.org/whl/cu130"
+        return "pip install 'simpletuner[cuda13,captioning]' --extra-index-url https://download.pytorch.org/whl/cu132"
     return "pip install 'simpletuner[captioning]'"
 
 

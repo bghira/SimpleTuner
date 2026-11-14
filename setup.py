@@ -65,141 +65,56 @@ def _python_tag() -> str:
 
 
 PYTORCH_DEPENDENCIES = [
-    "torch>=2.13.0",
-    "torchvision>=0.28.0",
-    "torchaudio>=2.11.0",
+    "torch>=2.15.0",
+    "torchvision>=0.29.2",
+    "torchaudio>=2.11.1",
 ]
 
-TORCHAO_DEPENDENCY = "torchao>=0.17.0,<0.18.0"
-CUTE_ATTENTION_DEPENDENCIES = ["nvidia-cutlass-dsl>=4.8,<4.9", "apache-tvm-ffi>=0.1.14,<0.2", "ninja>=1.11"]
-TRANSFORMERENGINE_DEPENDENCY = "transformer_engine[pytorch]>=2.16.0,<2.17.0"
-CUDA13_RUNTIME_DEPENDENCIES = [
-    "nvidia-cublas>=13.3.0.5",
-    "nvidia-cuda-nvrtc>=13.3.33",
-    "nvidia-cuda-runtime>=13.3.29",
-]
-
-
-def _cuda_nightly_base_url() -> str:
-    """Return the base URL for CUDA 12 nightly PyTorch wheels."""
-    return os.environ.get(
-        "SIMPLETUNER_CUDA_NIGHTLY_BASE_URL",
-        "https://download.pytorch.org/whl/nightly/cu126",
-    )
-
-
-def _cuda13_nightly_base_url() -> str:
-    """Return the base URL for CUDA 13 nightly PyTorch wheels."""
-    return os.environ.get(
-        "SIMPLETUNER_CUDA13_NIGHTLY_BASE_URL",
-        "https://download.pytorch.org/whl/nightly/cu130",
-    )
+TORCHAO_DEPENDENCY = "torchao>=0.18.0,<0.19.0"
+CUTE_ATTENTION_DEPENDENCIES = ["nvidia-cutlass-dsl[cu13]>=4.8.1,<4.9", "apache-tvm-ffi>=0.1.14,<0.2", "ninja>=1.11"]
+TRANSFORMERENGINE_DEPENDENCY = "transformer_engine[pytorch]>=2.21.0,<2.22.0"
 
 
 def build_cuda_nightly_wheel_url(package: str, version: str) -> str:
-    """Build a direct wheel URL for CUDA 12 nightly PyTorch packages."""
-    py_tag = _python_tag()
-    base_url = _cuda_nightly_base_url()
+    """Build a CUDA 13.2 nightly URL using each package's published wheel ABI."""
+    base_url = os.environ.get("SIMPLETUNER_CUDA_NIGHTLY_BASE_URL", "https://download.pytorch.org/whl/nightly/cu132")
     platform_tag = os.environ.get("SIMPLETUNER_CUDA_NIGHTLY_PLATFORM_TAG", "manylinux_2_28_x86_64")
-    filename = f"{package}-{version}%2Bcu126-{py_tag}-{py_tag}-{platform_tag}.whl"
+    abi_tag = f"{_python_tag()}-{_python_tag()}" if package == "torch" else "py3-none"
+    filename = f"{package}-{version}%2Bcu132-{abi_tag}-{platform_tag}.whl"
     return f"{package} @ {base_url}/{filename}"
-
-
-def build_cuda13_nightly_wheel_url(package: str, version: str) -> str:
-    """Build a direct wheel URL for CUDA 13 nightly PyTorch packages."""
-    py_tag = _python_tag()
-    base_url = _cuda13_nightly_base_url()
-    platform_tag = os.environ.get("SIMPLETUNER_CUDA13_NIGHTLY_PLATFORM_TAG", "manylinux_2_28_x86_64")
-    filename = f"{package}-{version}%2Bcu130-{py_tag}-{py_tag}-{platform_tag}.whl"
-    return f"{package} @ {base_url}/{filename}"
-
-
-def build_triton_wheel_url(version: str, base_url: str) -> str:
-    """Build a direct wheel URL for triton from PyTorch wheel indices."""
-    py_tag = _python_tag()
-    platform_tag = os.environ.get("SIMPLETUNER_TRITON_PLATFORM_TAG", "manylinux_2_27_x86_64.manylinux_2_28_x86_64")
-    filename = f"triton-{version}-{py_tag}-{py_tag}-{platform_tag}.whl"
-    return f"triton @ {base_url}/{filename}"
 
 
 CAPTIONING_DEPENDENCIES = ["caption-flow[vllm]>=0.5.7"]
 
 
-def get_cuda13_dependencies():
-    """Get CUDA 13 specific dependencies (use --extra-index-url https://download.pytorch.org/whl/cu130)."""
+CUDA_PYTORCH_DEPENDENCIES = (
+    "torch==2.15.0+cu132",
+    "torchvision==0.29.2+cu132",
+    "torchaudio==2.11.1+cu132",
+)
+
+
+def get_cuda_dependencies(pytorch_dependencies=CUDA_PYTORCH_DEPENDENCIES):
+    """Get CUDA 13.2 dependencies from the cu132 PyTorch index."""
     return [
-        *PYTORCH_DEPENDENCIES,
+        *pytorch_dependencies,
         *CUTE_ATTENTION_DEPENDENCIES,
-        "triton>=3.3.0",
-        "deepspeed>=0.17.2",
+        "bitsandbytes>=0.50.2",
+        "deepspeed>=0.20.0",
         TORCHAO_DEPENDENCY,
-        "bitsandbytes>=0.45.0",
-        "nvidia-cudnn-cu13",
-        "nvidia-nccl-cu13",
         "nvidia-ml-py>=12.555",
         "lm-eval>=0.4.4",
     ]
 
 
 def get_cuda_nightly_dependencies():
-    """Get CUDA 12 nightly dependencies (PyTorch 2.11.0.dev) with direct wheel URLs."""
-    torch_version = os.environ.get("SIMPLETUNER_CUDA_NIGHTLY_TORCH_VERSION", "2.11.0.dev20260201")
-    torchvision_version = os.environ.get("SIMPLETUNER_CUDA_NIGHTLY_TORCHVISION_VERSION", "0.25.0.dev20260201")
-    torchaudio_version = os.environ.get("SIMPLETUNER_CUDA_NIGHTLY_TORCHAUDIO_VERSION", "2.11.0.dev20260201")
-    triton_version = os.environ.get("SIMPLETUNER_CUDA_NIGHTLY_TRITON_VERSION", "3.6.0+git9844da95")
-
-    return [
-        build_cuda_nightly_wheel_url("torch", torch_version),
-        build_cuda_nightly_wheel_url("torchvision", torchvision_version),
-        build_cuda_nightly_wheel_url("torchaudio", torchaudio_version),
-        build_triton_wheel_url(triton_version, "https://download.pytorch.org/whl/nightly"),
-        *CUTE_ATTENTION_DEPENDENCIES,
-        "bitsandbytes>=0.45.0",
-        "deepspeed>=0.17.2",
-        TORCHAO_DEPENDENCY,
-        "nvidia-cudnn-cu12",
-        "nvidia-nccl-cu12",
-        "nvidia-ml-py>=12.555",
-        "lm-eval>=0.4.4",
-    ]
-
-
-def get_cuda13_nightly_dependencies():
-    """Get CUDA 13 nightly dependencies (PyTorch 2.11.0.dev) with direct wheel URLs."""
-    torch_version = os.environ.get("SIMPLETUNER_CUDA13_NIGHTLY_TORCH_VERSION", "2.11.0.dev20260201")
-    torchvision_version = os.environ.get("SIMPLETUNER_CUDA13_NIGHTLY_TORCHVISION_VERSION", "0.25.0.dev20260201")
-    torchaudio_version = os.environ.get("SIMPLETUNER_CUDA13_NIGHTLY_TORCHAUDIO_VERSION", "2.11.0.dev20260131")
-    triton_version = os.environ.get("SIMPLETUNER_CUDA13_NIGHTLY_TRITON_VERSION", "3.6.0+git9844da95")
-
-    return [
-        build_cuda13_nightly_wheel_url("torch", torch_version),
-        build_cuda13_nightly_wheel_url("torchvision", torchvision_version),
-        build_cuda13_nightly_wheel_url("torchaudio", torchaudio_version),
-        build_triton_wheel_url(triton_version, "https://download.pytorch.org/whl/nightly"),
-        *CUTE_ATTENTION_DEPENDENCIES,
-        "deepspeed>=0.17.2",
-        TORCHAO_DEPENDENCY,
-        "bitsandbytes>=0.45.0",
-        "nvidia-cudnn-cu13",
-        "nvidia-nccl-cu13",
-        "nvidia-ml-py>=12.555",
-        "lm-eval>=0.4.4",
-    ]
-
-
-def get_cuda_dependencies():
-    return [
-        *PYTORCH_DEPENDENCIES,
-        *CUTE_ATTENTION_DEPENDENCIES,
-        "triton>=3.3.0",
-        "bitsandbytes>=0.45.0",
-        "deepspeed>=0.17.2",
-        TORCHAO_DEPENDENCY,
-        "nvidia-cudnn-cu12",
-        "nvidia-nccl-cu12",
-        "nvidia-ml-py>=12.555",
-        "lm-eval>=0.4.4",
-    ]
+    """Get CUDA 13.2 nightly wheels; PyTorch supplies its matching Triton/runtime."""
+    versions = {
+        "torch": os.environ.get("SIMPLETUNER_CUDA_NIGHTLY_TORCH_VERSION", "2.16.0.dev20261113"),
+        "torchvision": os.environ.get("SIMPLETUNER_CUDA_NIGHTLY_TORCHVISION_VERSION", "0.30.0.dev20261113"),
+        "torchaudio": os.environ.get("SIMPLETUNER_CUDA_NIGHTLY_TORCHAUDIO_VERSION", "2.11.0.dev20261113"),
+    }
+    return get_cuda_dependencies([build_cuda_nightly_wheel_url(package, version) for package, version in versions.items()])
 
 
 def get_rocm_dependencies():
@@ -275,15 +190,14 @@ def _collect_package_files(*directories: str):
 
 # Base dependencies (minimal, works on all platforms)
 base_deps = [
-    "diffusers>=0.40.0",
-    "transformers>=5.6.0",
-    "hf_transfer>=0.1.0",
+    "diffusers>=0.43.0",
+    "transformers>=5.23.0",
     "datasets>=3.0.1",
     "wandb>=0.21.0",
     "requests>=2.32.4",
     "pillow>=11.3.0",
-    "trainingsample>=0.3.0,<0.4.0",
-    "accelerate>=1.5.2",
+    "trainingsample==0.4.0",
+    "accelerate>=1.15.0",
     "filelock>=3.16.1",
     "safetensors>=0.5.3",
     "open-clip-torch>=2.26.1",
@@ -292,13 +206,13 @@ base_deps = [
     "boto3>=1.35.83",
     "pandas>=2.2.3",
     "botocore>=1.35.83",
-    "skrample>=0.5.3,<0.6.0",
+    "skrample>=0.7.0,<0.8.0",
     "torchsde>=0.2.6",
     "torchmetrics>=1.1.1",
     "colorama>=0.4.6",
     "numpy>=2.2.0",
     "num2words>=0.5.13",
-    "peft>=0.18.0",
+    "peft>=0.21.3",
     "tensorboard>=2.18.0",
     "py3langid>=0.2.2",
     "pypinyin>=0.50.0",
@@ -308,7 +222,7 @@ base_deps = [
     "hangul-romanize>=0.1.0",
     "optimum-quanto>=0.2.7",
     "lycoris-lora>=4.1.3",
-    "kernels>=0.16.0,<0.17.0",
+    "kernels>=0.18.3,<0.19.0",
     "torch-optimi>=0.2.1",
     "librosa>=0.10.2",
     "faiss-cpu>=1.13.0,<2",
@@ -337,13 +251,13 @@ base_deps = [
     "vector-quantize-pytorch>=1.27.15",
     "mup>=1.0.0",
     "cryptography>=41.0.0",
-    "torchcodec>=0.10.0",
+    "torchcodec>=0.17.0",
     "sdnq>=0.2.3",
     "aiosqlite>=0.19.0",
     "aiohttp>=3.9.0",
     "httpx>=0.28.0",
     "psutil>=5.9.0",
-    "webshart>=0.5.4",
+    "webshart>=0.7.0",
 ]
 
 # Nightly CUDA extras contain direct URLs that PyPI rejects, so only include them
@@ -357,14 +271,8 @@ extras_require = {
     "captioning-cuda13": list(CAPTIONING_DEPENDENCIES),
     "cuda13-captioning": list(CAPTIONING_DEPENDENCIES),
     "transformerengine": [TRANSFORMERENGINE_DEPENDENCY],
-    "transformerengine-cuda13": [
-        TRANSFORMERENGINE_DEPENDENCY,
-        *CUDA13_RUNTIME_DEPENDENCIES,
-    ],
-    "cuda13-transformerengine": [
-        TRANSFORMERENGINE_DEPENDENCY,
-        *CUDA13_RUNTIME_DEPENDENCIES,
-    ],
+    "transformerengine-cuda13": [TRANSFORMERENGINE_DEPENDENCY, *get_cuda_dependencies()],
+    "cuda13-transformerengine": [TRANSFORMERENGINE_DEPENDENCY, *get_cuda_dependencies()],
     "dev": [
         "selenium>=4.0.0",
         "coverage>=7.0.0",
@@ -380,7 +288,7 @@ extras_require = {
     ],
     # Platform-specific extras - user must choose one
     "cuda": list(PLATFORM_DEPENDENCIES["cuda"]),
-    "cuda13": get_cuda13_dependencies(),
+    "cuda13": list(PLATFORM_DEPENDENCIES["cuda"]),
     "rocm": get_rocm_dependencies(),
     "apple": list(PLATFORM_DEPENDENCIES["apple"]),
     "cpu": list(PLATFORM_DEPENDENCIES["cpu"]),
@@ -403,7 +311,7 @@ extras_require = {
 
 if not _is_building_dist:
     extras_require["cuda-nightly"] = get_cuda_nightly_dependencies()
-    extras_require["cuda13-nightly"] = get_cuda13_nightly_dependencies()
+    extras_require["cuda13-nightly"] = get_cuda_nightly_dependencies()
 
 # Read long description
 try:
@@ -433,7 +341,7 @@ setup(
             "helpers/ramtorch/LICENSE",
         ],
     },
-    python_requires=">=3.12,<3.15",
+    python_requires=">=3.12,<3.14",
     install_requires=base_deps,
     extras_require=extras_require,
     entry_points={
@@ -471,10 +379,10 @@ if __name__ == "__main__":
     print(f"Python version: {sys.version}")
     print(f"Platform: {platform.platform()}")
     print("\nInstall with a platform extra:")
-    print("  pip install '.[cuda]'                                                              # CUDA 12")
-    print("  pip install '.[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130   # CUDA 13")
+    print("  pip install '.[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132     # CUDA 13.2")
+    print("  pip install '.[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132   # CUDA 13.2")
     print(
-        "  pip install '.[cuda13-transformerengine]' --extra-index-url https://download.pytorch.org/whl/cu130  # CUDA 13 + TransformerEngine"
+        "  pip install --no-build-isolation '.[cuda13-transformerengine]' --extra-index-url https://download.pytorch.org/whl/cu132  # Build prerequisites: documentation/INSTALL.md"
     )
     print(
         "  pip install '.[rocm]' --extra-index-url https://download.pytorch.org/whl/rocm10.0 --extra-index-url https://download.pytorch.org/whl/cpu   # ROCm"
@@ -483,5 +391,5 @@ if __name__ == "__main__":
     print("  pip install '.[cpu]'                                                                # CPU only")
     print("  pip install '.[captioning]'                                                         # CaptionFlow integration")
     print(
-        "  pip install '.[cuda13,captioning]' --extra-index-url https://download.pytorch.org/whl/cu130  # CUDA 13 + CaptionFlow"
+        "  pip install '.[cuda13,captioning]' --extra-index-url https://download.pytorch.org/whl/cu132  # CUDA 13 + CaptionFlow"
     )

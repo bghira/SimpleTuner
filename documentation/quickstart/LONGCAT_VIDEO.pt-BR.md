@@ -20,7 +20,7 @@ LongCat-Video é um modelo bilíngue (zh/en) de texto-para-vídeo e imagem-para-
    ```
 2. Instale o SimpleTuner com o backend que corresponde ao seu hardware:
    ```bash
-   pip install "simpletuner[cuda]"   # NVIDIA
+   pip install "simpletuner[cuda]" --extra-index-url https://download.pytorch.org/whl/cu132   # NVIDIA
    pip install "simpletuner[mps]"    # Apple Silicon
    pip install "simpletuner[cpu]"    # CPU-only
    ```
