@@ -96,6 +96,88 @@ class _TrainerPageMixin:
         return result.get("names") or []
 
 
+class SplitServerRoutingTestCase(_TrainerPageMixin, WebUITestCase):
+    BROWSERS = ("chrome",)
+
+    def test_discovery_and_training_requests_use_the_correct_server(self):
+        def scenario(driver, _browser):
+            self._trainer_page(driver).navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            WebDriverWait(driver, 10).until(
+                lambda d: d.execute_script("return !!window.eventHandler && window.ServerConfig.isReady;")
+            )
+            result = driver.execute_async_script(
+                """
+                const done = arguments[0];
+                const originalFetch = window.fetch;
+                const config = window.ServerConfig;
+                const handler = window.eventHandler;
+                handler.cleanup();
+                const probes = [];
+                let readyEvents = 0;
+                const onReady = () => { readyEvents++; };
+                window.addEventListener('serverConfigReady', onReady);
+                window.fetch = (url, options) => {
+                    if (url === `${location.protocol}//${location.hostname}:8002/health`) {
+                        probes.push(8002);
+                        return Promise.reject(new TypeError('Connection refused'));
+                    }
+                    if (url === `${location.protocol}//${location.hostname}:8001/health`) {
+                        probes.push(8001);
+                        return Promise.resolve(new Response(JSON.stringify({mode: 'callback'})));
+                    }
+                    return originalFetch(url, options);
+                };
+                (async () => {
+                    try {
+                        config.apiBaseUrl = location.origin;
+                        config.isReady = false;
+                        await config.init();
+                        const discoveredCallback = config.callbackUrl;
+                        config.callbackUrl = `${location.protocol}//${location.hostname}:1`;
+                        const models = await ApiClient.fetch('/api/models/wizard');
+                        const modelData = await models.json();
+                        handler.isActive = true;
+                        handler.useWebSocket = false;
+                        const pollUrls = [];
+                        window.fetch = (url, options) => {
+                            pollUrls.push(url);
+                            return originalFetch(url, options);
+                        };
+                        await handler.fetchBroadcastEvents();
+                        handler.connectWebSocket();
+                        const socket = handler.websocket;
+                        await new Promise((resolve, reject) => {
+                            socket.addEventListener('open', resolve, {once: true});
+                            socket.addEventListener('error', () => reject(new Error('WebSocket failed')), {once: true});
+                        });
+                        done({probes, readyEvents, discoveredCallback, modelsStatus: models.status,
+                              modelData, pollUrls, websocketUrl: socket.url});
+                    } catch (error) {
+                        done({error: String(error)});
+                    } finally {
+                        handler.cleanup();
+                        window.fetch = originalFetch;
+                        window.removeEventListener('serverConfigReady', onReady);
+                        config.callbackUrl = location.origin;
+                    }
+                })();
+                """
+            )
+            self.assertNotIn("error", result)
+            self.assertEqual(result["probes"], [8002, 8001])
+            self.assertEqual(result["readyEvents"], 1)
+            self.assertTrue(result["discoveredCallback"].endswith(":8001"))
+            self.assertEqual(result["modelsStatus"], 200)
+            self.assertTrue(result["modelData"])
+            self.assertIn(f"{self.base_url}/api/training/events?since_index=0", result["pollUrls"])
+            self.assertEqual(
+                result["websocketUrl"], self.base_url.replace("http://", "ws://") + "/api/training/events/stream"
+            )
+
+        self.for_each_browser("test_split_server_routing", scenario)
+
+
 class EventLightboxFlowTestCase(_TrainerPageMixin, WebUITestCase):
     BROWSERS = ("chrome",)
 

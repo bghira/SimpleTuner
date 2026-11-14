@@ -125,26 +125,11 @@ def run_training(example: Optional[str] = None, env: Optional[str] = None, extra
                     return candidate
             return None
 
-        if arg.startswith("--accelerate_config"):
+        option = arg.split("=", 1)[0].removeprefix("--")
+        if arg.startswith("--") and option in overrides:
             value = _extract_value(arg)
             if value:
-                overrides["accelerate_config"] = value
-        elif arg.startswith("--accelerate_extra_args"):
-            value = _extract_value(arg)
-            if value:
-                overrides["accelerate_extra_args"] = value
-        elif arg.startswith("--num_processes"):
-            value = _extract_value(arg)
-            if value:
-                overrides["num_processes"] = value
-        elif arg.startswith("--num_machines"):
-            value = _extract_value(arg)
-            if value:
-                overrides["num_machines"] = value
-        elif arg.startswith("--dynamo_backend"):
-            value = _extract_value(arg)
-            if value:
-                overrides["dynamo_backend"] = value
+                overrides[option] = value
         else:
             cleaned_extra_args.append(arg)
 
@@ -170,17 +155,6 @@ def run_training(example: Optional[str] = None, env: Optional[str] = None, extra
         except FileNotFoundError as validation_error:
             print(f"Error: {validation_error}")
             return 1
-
-    if overrides["accelerate_config"]:
-        training_env["ACCELERATE_CONFIG_PATH"] = os.path.expanduser(str(overrides["accelerate_config"]))
-    if overrides["accelerate_extra_args"]:
-        training_env["ACCELERATE_EXTRA_ARGS"] = str(overrides["accelerate_extra_args"])
-    if overrides["num_processes"]:
-        training_env["TRAINING_NUM_PROCESSES"] = str(overrides["num_processes"])
-    if overrides["num_machines"]:
-        training_env["TRAINING_NUM_MACHINES"] = str(overrides["num_machines"])
-    if overrides["dynamo_backend"]:
-        training_env["TRAINING_DYNAMO_BACKEND"] = str(overrides["dynamo_backend"])
 
     if not example and not env:
         config_file = find_config_file()
@@ -225,6 +199,17 @@ def run_training(example: Optional[str] = None, env: Optional[str] = None, extra
         training_env["ENV"] = env
         print(f"Using environment: {env}")
 
+    if overrides["accelerate_config"]:
+        training_env["ACCELERATE_CONFIG_PATH"] = os.path.expanduser(str(overrides["accelerate_config"]))
+    if overrides["accelerate_extra_args"]:
+        training_env["ACCELERATE_EXTRA_ARGS"] = str(overrides["accelerate_extra_args"])
+    if overrides["num_processes"]:
+        training_env["TRAINING_NUM_PROCESSES"] = str(overrides["num_processes"])
+    if overrides["num_machines"]:
+        training_env["TRAINING_NUM_MACHINES"] = str(overrides["num_machines"])
+    if overrides["dynamo_backend"]:
+        training_env["TRAINING_DYNAMO_BACKEND"] = str(overrides["dynamo_backend"])
+
     import simpletuner
 
     train_py = simpletuner._get_package_dir() / "train.py"
@@ -252,6 +237,11 @@ def run_training(example: Optional[str] = None, env: Optional[str] = None, extra
             "accelerate",
             "launch",
             f"--config_file={accelerate_config}",
+            *[
+                f"--{name}={overrides[name]}"
+                for name in ("num_processes", "num_machines", "dynamo_backend")
+                if overrides[name]
+            ],
             str(train_py),
         ]
     else:
