@@ -31,14 +31,13 @@
                     } else if (this.mode === 'trainer') {
                         // In trainer-only mode, callback endpoints might be on a different port
                         // Try to detect if callback server is running on a different port
-                        try {
-                            // Try common callback ports by modifying the current origin
-                            const currentUrl = new URL(this.apiBaseUrl);
-                            const callbackPorts = [8002, 8001]; // Try different ports
+                        const currentUrl = new URL(this.apiBaseUrl);
+                        const callbackPorts = [8002, 8001];
 
-                            for (const port of callbackPorts) {
-                                if (port.toString() !== currentUrl.port) {
-                                    const callbackUrl = `${currentUrl.protocol}//${currentUrl.hostname}:${port}`;
+                        for (const port of callbackPorts) {
+                            if (port.toString() !== currentUrl.port) {
+                                const callbackUrl = `${currentUrl.protocol}//${currentUrl.hostname}:${port}`;
+                                try {
                                     const callbackResponse = await fetch(`${callbackUrl}/health`, {
                                         method: 'GET',
                                         mode: 'cors',
@@ -47,13 +46,16 @@
                                         signal: AbortSignal.timeout(1000) // 1 second timeout
                                     });
                                     if (callbackResponse.ok) {
-                                        this.callbackUrl = callbackUrl;
-                                        break;
+                                        const callbackHealth = await callbackResponse.json();
+                                        if (['callback', 'unified'].includes(callbackHealth.mode)) {
+                                            this.callbackUrl = callbackUrl;
+                                            break;
+                                        }
                                     }
+                                } catch (err) {
+                                    // An unavailable port does not rule out the next candidate.
                                 }
                             }
-                        } catch (err) {
-                            console.warn('No callback server detected, some features may not work');
                         }
                     }
 
@@ -83,10 +85,10 @@
         // Helper to get the appropriate URL for an endpoint
         getEndpointUrl: function(endpoint) {
             // Determine which base URL to use based on endpoint type
-            const isCallbackEndpoint = endpoint.includes('/callback') ||
-                                     endpoint.includes('/broadcast') ||
-                                     endpoint.includes('/events') ||
-                                     endpoint.includes('/models');
+            const pathname = endpoint.split(/[?#]/, 1)[0];
+            const isCallbackEndpoint = ['/callback', '/broadcast', '/api/events'].some(
+                path => pathname === path || pathname.startsWith(`${path}/`)
+            );
 
             const baseUrl = (isCallbackEndpoint && this.mode !== 'unified')
                           ? this.callbackUrl
