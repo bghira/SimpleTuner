@@ -1145,7 +1145,6 @@ class MiniMaxH3(VideoModelFoundation):
         if torch.is_tensor(sample) and sample.ndim == 5 and sample.shape[1] == 3:
             mean = torch.tensor(MINIMAX_H3_PIXEL_MEAN, device=sample.device, dtype=sample.dtype).view(1, 3, 1, 1, 1)
             std = torch.tensor(MINIMAX_H3_PIXEL_STD, device=sample.device, dtype=sample.dtype).view(1, 3, 1, 1, 1)
-            sample = (sample + 1.0) * 0.5
             return (sample - mean) / std
         return sample
 
