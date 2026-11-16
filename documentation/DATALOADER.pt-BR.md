@@ -1426,7 +1426,7 @@ Datasets Webshart carregam shards tar no estilo WebDataset pelo pacote `webshart
 
 #### Bytes de imagens Parquet no S3
 
-Use `webshart.format: "parquet"` com shards locais, do Hub ou do S3. `source` aceita `s3://bucket` ou `s3://bucket/prefix`; `webshart.manifest` seleciona um descritor de captura relativo à origem. Requer webshart com S3 nativo e manifestos de captura.
+Use `webshart.format: "parquet"` com shards locais, do Hub ou do S3. `source` aceita `s3://bucket` ou `s3://bucket/prefix`; `webshart.manifest` seleciona um descritor de captura relativo à origem. Requer webshart 0.8.0 ou posterior para S3 nativo e manifestos de captura.
 
 `webshart.columns` mapeia `image`, `captions`, `width` e `height` para colunas da origem; nomes omitidos usam esses padrões. A imagem pode ser binária ou uma estrutura com `bytes`. Capturas com `url_status != "ok"` ou `stored_bytes` vazio são excluídas sem alterar os índices físicos. Linhas sem dimensões não entram nos buckets. As URLs originais não são acessadas. Lotes ignoram imagens que não podem ser decodificadas.
 
