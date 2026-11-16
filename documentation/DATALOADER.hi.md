@@ -1423,6 +1423,20 @@ Webshart datasets `webshart` package के जरिए WebDataset-style tar sh
 - `webshart.caption_key` से caption फ़ील्ड चुन सकते हैं: एक कुंजी के लिए `"long_caption"` या कई कुंजियों को क्रम से लेने के लिए `["long_caption", "short_caption"]` दें। कुंजियाँ सीधे नाम के रूप में मिलाई जाती हैं: पहले sample के JSON metadata में, फिर indexed metadata में, और अंत में उनके `captions` dictionaries की नामित entries में। कुंजी जिस पहले स्थान पर मिलती है, वही उपयोग होता है। String और list के मान अलग caption विकल्प बनते हैं, एक prompt में जोड़े नहीं जाते। अनुपस्थित या खाली मान छोड़ दिए जाते हैं; `caption_strategy: "webshart"` के साथ चुने हुए captions न होने पर sample छोड़ दिया जाता है, भले ही उसमें default caption या `.txt` sidecar हो। यह विकल्प न देने पर default lookup बना रहता है। JSON सामग्री index में न होने पर JSON sidecar पढ़ा जाता है। Caption और bucket caches चुनी गई कुंजियों के अनुसार अलग रखे जाते हैं। WebUI की Webshart settings में हर पंक्ति पर एक कुंजी लिखें। JSON sidecar पढ़ने के लिए configured Webshart shard cache इस्तेमाल होता है; caption lookup image payload को decode या materialize नहीं करता।
 - `webshart_optimize_captions` (alternate spelling `webshart_optimise_captions`; `webshart` block के अंदर `optimize_captions`/`optimise_captions` भी accepted हैं) startup पर caption layout probe करता है और, जब captions metadata index की बजाय `.txt`/`.json` sidecar tar members में हों, उन्हें एक बार local Webshart metadata cache में fold कर देता है। इसके बिना, sidecar-caption datasets (जैसे `laion/conceptual-captions-12m-webdataset`) को हर बार captions enumerate होने पर — startup, checkpointing और model card generation में — प्रति sample एक range read की कीमत चुकानी पड़ती है। जिन datasets की metadata में captions पहले से embedded हैं, वे coalescing अपने आप skip कर देते हैं।
 
+#### S3 पर Parquet इमेज बाइट्स
+
+`webshart.format: "parquet"` से स्थानीय, Hub या S3 में संग्रहीत इमेज पढ़ें। `source` में `s3://bucket` या `s3://bucket/prefix` दें। वैकल्पिक `webshart.manifest` स्रोत के सापेक्ष कैप्चर विवरण फ़ाइल चुनता है। नेटिव S3 और कैप्चर मैनिफेस्ट वाला webshart बिल्ड चाहिए।
+
+`webshart.columns` से `image`, `captions`, `width`, `height` को स्रोत कॉलम से जोड़ें; छोड़े गए नाम यही डिफ़ॉल्ट लेते हैं। इमेज बाइनरी कॉलम या `bytes` वाला स्ट्रक्चर हो सकती है। `url_status != "ok"` या खाली `stored_bytes` वाली पंक्तियाँ वास्तविक पंक्ति सूचकांक बदले बिना हटती हैं। आयाम रहित पंक्तियाँ बकेट में नहीं आतीं। मूल URL डाउनलोड नहीं होते। बैच पढ़ते समय डिकोड न होने वाली इमेज छोड़ दी जाती हैं।
+
+मौजूदा शीर्ष-स्तरीय विकल्प `aws_region_name`, `aws_endpoint_url`, `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, `aws_max_pool_connections` उपयोग करें। endpoint में bucket न जोड़ें; डिफ़ॉल्ट 32 समवर्ती S3 अनुरोध हैं। कुंजियाँ छोड़ने पर AWS पर्यावरण चर, वेब पहचान या कंटेनर/इंस्टेंस भूमिकाएँ उपयोग होती हैं। साझा प्रोफ़ाइल फ़ाइलें समर्थित नहीं हैं। worker निरूपण में credentials नहीं रखे जाते; ज़रूरत पर subprocess वातावरण में AWS credentials निर्यात करें।
+
+Rust GIL के बाहर हस्ताक्षर, range अनुरोध, स्ट्रीमिंग कैश डाउनलोड और समानांतर row-group डिकोडिंग करता है। `webshart.parallel_downloads` बैच की row-group समवर्तिता भी सीमित करता है। पूरे शार्ड का कैश डिफ़ॉल्ट 25 GB है; `webshart.shard_cache_gb: 0` पर range पढ़ाई होती है। संग्रहीत प्रारूप बना रहता है; JPEG XL के लिए `pillow-jxl-plugin` चाहिए। `webshart_optimize_captions` केवल tar sidecars के लिए है।
+
+सीमित बेंचमार्क: `PYTHONPATH=. .venv/bin/python scripts/benchmark_webshart.py dataset.json --samples 256 --batch-size 32 --repeats 2`। discovery, metadata, decode गति, विफलताएँ और resident memory मापी जाती हैं, पूरा training step नहीं।
+
+Parquet bucket cache कैटलॉग fingerprint के अनुसार अलग रहता है। Serialized workers कैटलॉग बदलाव अस्वीकार करते हैं और पढ़ते समय shard सूचकांक तथा part path मिलाए जाते हैं। Snapshot बदलने पर dataset दोबारा खोलें।
+
 #### Captions को पहले से optimize करना
 
 यही coalescing Webshart CLI से भी उपलब्ध है, जो repaired metadata publish भी कर सकती है ताकि dataset के सभी consumers को runtime option के बिना फायदा मिले:

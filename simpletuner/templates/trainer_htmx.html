@@ -1936,7 +1936,7 @@ function trainerComponent() {
             dataset.aws_secret_access_key = this._coerceString(dataset.aws_secret_access_key);
             dataset._awsAccessVisible = false;
             dataset._awsSecretVisible = false;
-            if (dataset.type !== 'aws') {
+            if (!['aws', 'webshart'].includes(dataset.type)) {
                 dataset.aws_access_key_id = '';
                 dataset.aws_secret_access_key = '';
                 dataset.aws_endpoint_url = '';
@@ -3089,6 +3089,23 @@ function trainerComponent() {
                     const shardCacheGb = this._coerceFloat(dataset.shard_cache_gb);
                     const parallelDownloads = this._coerceInt(dataset.parallel_downloads);
                     const webshart = {};
+                    const format = this._coerceString(dataset.webshart?.format);
+                    if (format) webshart.format = format;
+                    if (format === 'parquet') {
+                        const manifest = this._coerceString(dataset.webshart?.manifest);
+                        if (manifest) webshart.manifest = manifest;
+                        const columns = {};
+                        ['image', 'captions', 'width', 'height'].forEach(key => {
+                            const value = this._coerceString(dataset.webshart?.columns?.[key]);
+                            if (value) columns[key] = value;
+                        });
+                        if (Object.keys(columns).length) webshart.columns = columns;
+                    }
+                    ['aws_region_name', 'aws_endpoint_url', 'aws_access_key_id', 'aws_secret_access_key', 'aws_session_token'].forEach(assignWebshart);
+                    const connections = this._coerceInt(dataset.aws_max_pool_connections);
+                    if (Number.isFinite(connections)) cleaned.aws_max_pool_connections = connections;
+                    else delete cleaned.aws_max_pool_connections;
+
                     if (dataset.webshart?.caption_key !== undefined) {
                         webshart.caption_key = this.sanitizeValueForSave(dataset.webshart.caption_key);
                     }

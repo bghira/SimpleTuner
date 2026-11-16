@@ -55,6 +55,10 @@ class WebshartMetadataBackend(MetadataBackend):
     ):
         if not isinstance(data_backend, WebshartDataBackend):
             raise ValueError("WebshartMetadataBackend requires WebshartDataBackend")
+        if data_backend.format == "parquet":
+            fingerprint = data_backend.dataset.fingerprint[:16]
+            cache_file = f"{cache_file}_source_{fingerprint}"
+            metadata_file = f"{metadata_file}_source_{fingerprint}"
         if data_backend.caption_key is not None:
             caption_digest = sha256(json.dumps(data_backend.caption_key).encode("utf-8")).hexdigest()[:16]
             cache_file = f"{cache_file}_captions_{caption_digest}"

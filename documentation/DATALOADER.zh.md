@@ -1421,6 +1421,40 @@ Webshart 数据集通过 `webshart` 包加载 WebDataset 风格的 tar shards。
 - `webshart.caption_key` 可用于选择字幕字段：单个键使用 `"long_caption"`，多个键使用 `["long_caption", "short_caption"]`，按列表顺序收集。键按字面名称匹配，依次检查样本的 JSON 元数据、索引元数据及两者 `captions` 字典中的命名条目；采用第一个包含该键的位置。字符串和列表值作为字幕候选，不会拼接成一个提示词。缺失或空值会被忽略；使用 `caption_strategy: "webshart"` 时，没有选中字幕的样本将被跳过，即使它有默认字幕或 `.txt` 伴随文件。省略此选项将保留默认查找方式。如果索引未包含 JSON 内容，则读取 JSON 伴随文件。字幕和分桶缓存按配置的键分别保存。在 WebUI 的 Webshart 设置中，每行输入一个键。 JSON 边车读取使用配置的 Webshart 分片缓存；字幕查询不会解码或实例化图像数据。
 - `webshart_optimize_captions`（另一拼写 `webshart_optimise_captions`；在 `webshart` 块内也接受 `optimize_captions`/`optimise_captions`）会在启动时探测 caption 布局，当 captions 位于 `.txt`/`.json` sidecar tar 成员中而不是 metadata 索引中时，将它们一次性合并进本地 Webshart metadata cache。若不启用，sidecar caption 数据集（例如 `laion/conceptual-captions-12m-webdataset`）在每次枚举 captions 时——启动、checkpoint、生成 model card——都要为每个样本付出一次 range read。metadata 中已内嵌 captions 的数据集会自动跳过合并。
 
+#### S3 上的 Parquet 图像字节
+
+设置 `webshart.format: "parquet"` 可读取本地、Hub 或 S3 兼容存储中 Parquet 分片内的图像字节。S3 地址为 `s3://bucket` 或 `s3://bucket/prefix`；可选的 `webshart.manifest` 是相对于数据源的捕获描述文件路径。需要支持原生 S3 和捕获清单的 webshart 版本。
+
+`webshart.columns` 将 `image`、`captions`、`width`、`height` 映射到源列名；省略时使用这些默认名称。图像列可以是二进制数据或包含 `bytes` 的结构体。`url_status != "ok"` 或 `stored_bytes` 为空的捕获行会被排除，物理行号保持不变。缺少尺寸的行不参与分桶。不会请求原始 URL；成功捕获仍可能包含损坏图像，批量读取会跳过解码失败的图像。
+
+使用现有顶层设置 `aws_region_name`、`aws_endpoint_url`、`aws_access_key_id`、`aws_secret_access_key`、`aws_session_token`、`aws_max_pool_connections`。端点不含桶名，并发 S3 请求默认为 32。省略密钥可使用 AWS 环境变量、Web 身份或容器/实例角色。此原生传输不读取共享配置文件。工作进程表示不包含凭据；需要时在子进程环境中导出 AWS 凭据。
+
+Rust 在 GIL 之外执行签名、范围请求、流式缓存下载和并行行组解码。`webshart.parallel_downloads` 还限制批次行组并发数。整片缓存默认为 25 GB；`webshart.shard_cache_gb: 0` 使用范围读取。字节保留存储格式；JPEG XL 需要安装 `pillow-jxl-plugin`。`webshart_optimize_captions` 仅用于 tar 边车文件。
+
+```json
+{
+  "id": "captured-images",
+  "type": "webshart",
+  "source": "s3://training-images",
+  "metadata_backend": "webshart",
+  "caption_strategy": "webshart",
+  "aws_endpoint_url": "https://storage.example",
+  "aws_region_name": "us-east-1",
+  "aws_max_pool_connections": 32,
+  "webshart": {
+    "format": "parquet",
+    "manifest": "combined/dataset.json",
+    "columns": {"image": "image", "captions": "captions", "width": "width", "height": "height"},
+    "shard_cache_gb": 25,
+    "parallel_downloads": 4
+  }
+}
+```
+
+有限读取基准：`PYTHONPATH=. .venv/bin/python scripts/benchmark_webshart.py dataset.json --samples 256 --batch-size 32 --repeats 2`。报告发现、元数据准备、解码吞吐量、失败数和常驻内存，不代表完整训练步骤。
+
+Parquet 分桶缓存按目录指纹隔离。序列化工作进程会拒绝目录变更，读取时也会核对分片索引与文件路径。切换快照时请重新打开数据集。
+
 #### 提前优化 captions
 
 同样的合并也可以通过 Webshart CLI 完成，它还能发布修复后的 metadata，让该数据集的所有使用者无需 runtime 选项即可受益：

@@ -1,0 +1,34 @@
+<div class="webshart-parquet-settings mt-2" x-init="{{ storage_dataset }}.webshart ||= {}; {{ storage_dataset }}.webshart.columns ||= {}">
+    <label class="form-label small">Shard Format</label>
+    <select class="form-select form-select-sm webshart-format" x-model="{{ storage_dataset }}.webshart.format" @change="touchConnectionField({{ storage_dataset }})">
+        <option value="tar">Tar</option><option value="parquet">Parquet</option>
+    </select>
+    <div x-show="{{ storage_dataset }}.webshart.format === 'parquet'" class="mt-2">
+        <label class="form-label small">Capture Manifest</label>
+        <input class="form-control form-control-sm webshart-manifest" x-model="{{ storage_dataset }}.webshart.manifest" @input="touchConnectionField({{ storage_dataset }})" placeholder="combined/dataset.json">
+        <div class="form-text small">Optional descriptor relative to the dataset source. Captured image bytes are read directly from Parquet.</div>
+        <div class="row g-2 mt-1">
+            <div class="col-md-3"><label class="form-label small">Image Column</label>
+                <input class="form-control form-control-sm" x-model="{{ storage_dataset }}.webshart.columns.image" @input="touchConnectionField({{ storage_dataset }})" placeholder="image"></div>
+            <div class="col-md-3"><label class="form-label small">Captions Column</label>
+                <input class="form-control form-control-sm" x-model="{{ storage_dataset }}.webshart.columns.captions" @input="touchConnectionField({{ storage_dataset }})" placeholder="captions"></div>
+            <div class="col-md-3"><label class="form-label small">Width Column</label>
+                <input class="form-control form-control-sm" x-model="{{ storage_dataset }}.webshart.columns.width" @input="touchConnectionField({{ storage_dataset }})" placeholder="width"></div>
+            <div class="col-md-3"><label class="form-label small">Height Column</label>
+                <input class="form-control form-control-sm" x-model="{{ storage_dataset }}.webshart.columns.height" @input="touchConnectionField({{ storage_dataset }})" placeholder="height"></div>
+        </div>
+        <div class="form-text small">S3 credentials may be supplied through AWS environment variables or the fields below.</div>
+        <label class="form-label small mt-2">S3 Region</label>
+        <input type="text" class="form-control form-control-sm" x-model="{{ storage_dataset }}.aws_region_name" @input="touchConnectionField({{ storage_dataset }})" autocomplete="off">
+        <label class="form-label small mt-2">S3 Endpoint</label>
+        <input type="text" class="form-control form-control-sm" x-model="{{ storage_dataset }}.aws_endpoint_url" @input="touchConnectionField({{ storage_dataset }})" autocomplete="off">
+        <label class="form-label small mt-2">AWS Access Key ID</label>
+        <input type="password" class="form-control form-control-sm" x-model="{{ storage_dataset }}.aws_access_key_id" @input="touchConnectionField({{ storage_dataset }})" autocomplete="off">
+        <label class="form-label small mt-2">AWS Secret Access Key</label>
+        <input type="password" class="form-control form-control-sm" x-model="{{ storage_dataset }}.aws_secret_access_key" @input="touchConnectionField({{ storage_dataset }})" autocomplete="off">
+        <label class="form-label small mt-2">AWS Session Token</label>
+        <input type="password" class="form-control form-control-sm" x-model="{{ storage_dataset }}.aws_session_token" @input="touchConnectionField({{ storage_dataset }})" autocomplete="off">
+        <label class="form-label small mt-2">S3 Concurrent Requests</label>
+        <input type="number" class="form-control form-control-sm" x-model.number="{{ storage_dataset }}.aws_max_pool_connections" @input="touchConnectionField({{ storage_dataset }})" min="1" placeholder="32">
+    </div>
+</div>

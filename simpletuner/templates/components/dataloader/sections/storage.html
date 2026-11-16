@@ -262,6 +262,9 @@
                         {% with caption_dataset='dataset' %}
                         {% include 'components/dataloader/webshart_caption_key.html' %}
                         {% endwith %}
+                        {% with storage_dataset='dataset' %}
+                        {% include 'components/dataloader/webshart_parquet.html' %}
+                        {% endwith %}
                         <div class="row g-3">
                             <div class="col-md-6">
                                 <label class="form-label">Dataset Source</label>

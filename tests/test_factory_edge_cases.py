@@ -575,6 +575,33 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertEqual(reloaded["webshart"]["caption_key"], "long_caption")
         self.assertFalse(reloaded["webshart"]["optimize_captions"])
 
+    def test_webshart_parquet_settings_survive_config_versioning(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
+
+        backend = {
+            "id": "webshart-parquet",
+            "type": "webshart",
+            "source": "source",
+            "caption_strategy": "webshart",
+            "aws_access_key_id": "example-access",
+            "aws_secret_access_key": "example-secret",
+            "aws_session_token": "example-session",
+            "webshart": {"format": "parquet", "manifest": "combined/dataset.json", "columns": {"captions": "text"}},
+        }
+        result = init_backend_config(backend, self.args, self.accelerator)
+        self.assertEqual(result["config"]["webshart"], backend["webshart"])
+        result["metadata_backend"] = MagicMock(config=deepcopy(result["config"]))
+        result["metadata_backend"].__len__.return_value = 1
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory.args = self.args
+        self.args.override_dataset_config = False
+        reloaded = deepcopy(backend)
+        factory._handle_config_versioning(reloaded, result)
+        self.assertEqual(reloaded["webshart"], backend["webshart"])
+        for key in ("aws_access_key_id", "aws_secret_access_key", "aws_session_token"):
+            self.assertNotIn(key, result["config"])
+            self.assertEqual(reloaded[key], backend[key])
+
     def test_init_backend_config_uses_dataset_train_batch_size(self):
         from simpletuner.helpers.data_backend.factory import init_backend_config
 

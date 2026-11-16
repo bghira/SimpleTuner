@@ -2310,6 +2310,123 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
 
         self.for_each_browser("test_webshart_caption_keys_edit_and_save", scenario)
 
+    def test_webshart_parquet_settings_edit_and_save(self) -> None:
+        self.seed_defaults()
+        config_path = self.config_dir / "default" / "multidatabackend.json"
+        config_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "id": "webshart-parquet",
+                        "type": "webshart",
+                        "dataset_type": "image",
+                        "source": "s3://images",
+                        "caption_strategy": "webshart",
+                        "metadata_backend": "webshart",
+                        "webshart": {"caption_key": "original"},
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        def scenario(driver, _browser):
+            trainer_page = self._trainer_page(driver)
+            datasets_tab = DatasetsTab(driver, base_url=self.base_url)
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+            driver.execute_script(
+                """
+                document.querySelector('#datasets-tab-content .hero-dismiss-btn').click();
+                const toggle = document.querySelector('[data-dataset-id="webshart-parquet"] .list-item-toggle');
+                if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+            """
+            )
+
+            def select_tab(name):
+                driver.execute_script(
+                    """
+                    const item = document.querySelector('[data-dataset-id="webshart-parquet"]').closest('.dataset-list-item-wrapper');
+                    [...item.querySelectorAll('button')].find(button => button.textContent.trim() === arguments[0]).click();
+                """,
+                    name,
+                )
+
+            select_tab("Storage")
+            selector = (By.CSS_SELECTOR, ".dataset-list-item-expanded .webshart-format")
+            field = WebDriverWait(driver, 10).until(
+                lambda d: next((e for e in d.find_elements(*selector) if e.is_displayed()), False)
+            )
+            driver.execute_script("Alpine.store('trainer').hasUnsavedChanges = false;")
+            Select(field).select_by_value("parquet")
+            manifest = WebDriverWait(driver, 10).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, ".dataset-list-item-expanded .webshart-manifest"))
+            )
+            manifest.send_keys("combined/dataset.json", Keys.TAB)
+            for model, value in [
+                ("dataset.aws_endpoint_url", "https://storage.example"),
+                ("dataset.aws_session_token", "example-session"),
+                ("dataset.webshart.columns.captions", "caption_text"),
+            ]:
+                field = next(
+                    e
+                    for e in driver.find_elements(
+                        By.CSS_SELECTOR, f'.dataset-list-item-expanded input[x-model$=".{model.split(".", 1)[1]}"]'
+                    )
+                    if e.is_displayed()
+                )
+                field.clear()
+                field.send_keys(value, Keys.TAB)
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === true;")
+            )
+            datasets_tab.save_datasets()
+            persisted = next(d for d in json.loads(config_path.read_text(encoding="utf-8")) if d["id"] == "webshart-parquet")
+            self.assertEqual(persisted["webshart"]["format"], "parquet")
+            self.assertEqual(persisted["webshart"]["manifest"], "combined/dataset.json")
+            self.assertEqual(persisted["webshart"]["columns"], {"captions": "caption_text"})
+            self.assertEqual(persisted["aws_endpoint_url"], "https://storage.example")
+            self.assertEqual(persisted["aws_session_token"], "example-session")
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === false;")
+            )
+            trainer_page.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer_page.switch_to_datasets_tab()
+            trainer_page.wait_for_tab("datasets")
+            driver.execute_script(
+                "const toggle = document.querySelector('[data-dataset-id=\"webshart-parquet\"] .list-item-toggle'); if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();"
+            )
+            select_tab("Storage")
+            field = WebDriverWait(driver, 10).until(
+                lambda d: next((e for e in d.find_elements(*selector) if e.is_displayed()), False)
+            )
+            self.assertEqual(field.get_attribute("value"), "parquet")
+            endpoint = WebDriverWait(driver, 10).until(
+                lambda d: next(
+                    (
+                        e
+                        for e in d.find_elements(
+                            By.CSS_SELECTOR, '.dataset-list-item-expanded input[x-model$=".aws_endpoint_url"]'
+                        )
+                        if e.is_displayed()
+                    ),
+                    False,
+                )
+            )
+            self.assertEqual(endpoint.get_attribute("value"), "https://storage.example")
+            field = WebDriverWait(driver, 10).until(
+                lambda d: next((e for e in d.find_elements(*selector) if e.is_displayed()), False)
+            )
+            Select(field).select_by_value("tar")
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === true;")
+            )
+
+        self.for_each_browser("test_webshart_parquet_settings_edit_and_save", scenario)
+
     def test_view_mode_toggle(self) -> None:
         """Test switching between list and grid view modes."""
         self.seed_defaults()

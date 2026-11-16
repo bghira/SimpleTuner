@@ -496,6 +496,9 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                 output["config"][field] = value
         webshart_output = {}
         for field in (
+            "format",
+            "manifest",
+            "columns",
             "cache_dir",
             "metadata_cache_dir",
             "shard_cache_dir",
