@@ -158,7 +158,7 @@ class ImageBackendConfig(BaseBackendConfig):
             )
 
         # AWS specific settings
-        if config.backend_type == "aws":
+        if config.backend_type in {"aws", "webshart"}:
             config.aws_bucket_name = backend_dict.get("aws_bucket_name")
             config.aws_region_name = backend_dict.get("aws_region_name")
             config.aws_endpoint_url = backend_dict.get("aws_endpoint_url")
@@ -575,10 +575,23 @@ class ImageBackendConfig(BaseBackendConfig):
                 hf_config["auto_load"] = self.huggingface_auto_load
 
         if self.backend_type == "webshart":
+            for key in (
+                "aws_region_name",
+                "aws_endpoint_url",
+                "aws_access_key_id",
+                "aws_secret_access_key",
+                "aws_session_token",
+                "aws_max_pool_connections",
+            ):
+                if getattr(self, key) is not None:
+                    config[key] = getattr(self, key)
             config["source"] = self.webshart_source
             if self.webshart_metadata is not None:
                 config["metadata"] = self.webshart_metadata
             webshart_config = config.setdefault("webshart", {})
+            for key in ("format", "manifest", "columns"):
+                if key in (self.webshart or {}):
+                    webshart_config[key] = self.webshart[key]
             if self.webshart_cache_dir is not None:
                 webshart_config["cache_dir"] = self.webshart_cache_dir
             if self.webshart_hf_token is not None:

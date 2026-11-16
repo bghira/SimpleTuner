@@ -1479,6 +1479,40 @@ Webshart datasets load WebDataset-style tar shards through the `webshart` packag
 - `webshart.caption_key` optionally selects caption fields: use `"long_caption"` for one key or `["long_caption", "short_caption"]` to collect multiple keys in order. Keys are literal names, checked in the sample’s JSON metadata, then its indexed metadata, then named entries inside their `captions` dictionaries; the first location containing a key wins. String and list values become caption variants, rather than being joined into one prompt. Missing or empty values are ignored; with `caption_strategy: "webshart"`, samples with no selected captions are skipped, even if they have default captions or a `.txt` sidecar. Omitting the option keeps the default caption lookup. JSON sidecars are read when their contents are absent from the index. Caption and bucket caches are separated by the configured selector. In the WebUI’s Webshart settings, enter one key per line. JSON sidecar reads use the configured Webshart shard cache; caption lookup does not decode or materialize image payloads.
 - `webshart_optimize_captions` (alt spelling `webshart_optimise_captions`; also accepted as `optimize_captions`/`optimise_captions` inside the `webshart` block) probes the caption layout at startup and, when captions live in `.txt`/`.json` sidecar tar members rather than the metadata index, folds them into the local Webshart metadata cache once. Without it, sidecar-caption datasets (for example `laion/conceptual-captions-12m-webdataset`) pay one range read per sample every time captions are enumerated — startup, checkpointing, and model card generation. Datasets whose metadata already embeds captions skip the coalescing automatically.
 
+#### Parquet image bytes on S3
+
+Set `webshart.format` to `parquet` to read embedded image bytes from local, Hub, or S3-compatible Parquet shards. S3 sources use `s3://bucket` or `s3://bucket/prefix`; `webshart.manifest` optionally selects a capture descriptor relative to that source. Requires webshart 0.8.0 or later for native S3 and capture-manifest support.
+
+`webshart.columns` maps `image`, `captions`, `width`, and `height` to source column names; omitted names use those defaults. Images can be binary columns or structs containing `bytes`. Captured `url_status != "ok"` and empty `stored_bytes` rows are excluded without changing physical row IDs. Missing dimensions are excluded from bucketing. Original URLs are not fetched. A successful capture status does not guarantee that the full image will decode; batch reads skip corrupt images.
+
+Use the existing top-level `aws_region_name`, `aws_endpoint_url`, `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, and `aws_max_pool_connections` settings. The endpoint excludes the bucket; concurrent S3 requests default to 32. Omit keys to use AWS environment variables, web identity, or container/instance roles. Shared profile files are not supported by this native transport. Credentials are omitted from worker representations; export AWS credentials in subprocess environments when needed.
+
+Rust performs signing, range requests, streamed cache downloads, and parallel row-group batch decoding outside the GIL. `webshart.parallel_downloads` also bounds batch row-group concurrency. Whole-shard caching defaults to 25 GB; set `webshart.shard_cache_gb` to `0` for range reads. Captured bytes retain their stored format; install `pillow-jxl-plugin` when the dataset contains JPEG XL. `webshart_optimize_captions` applies only to tar sidecars.
+
+```json
+{
+  "id": "captured-images",
+  "type": "webshart",
+  "source": "s3://training-images",
+  "metadata_backend": "webshart",
+  "caption_strategy": "webshart",
+  "aws_endpoint_url": "https://storage.example",
+  "aws_region_name": "us-east-1",
+  "aws_max_pool_connections": 32,
+  "webshart": {
+    "format": "parquet",
+    "manifest": "combined/dataset.json",
+    "columns": {"image": "image", "captions": "captions", "width": "width", "height": "height"},
+    "shard_cache_gb": 25,
+    "parallel_downloads": 4
+  }
+}
+```
+
+For a bounded loader benchmark, run `PYTHONPATH=. .venv/bin/python scripts/benchmark_webshart.py dataset.json --samples 256 --batch-size 32 --repeats 2`. It reports discovery, metadata preparation, decode throughput, failures, and resident memory. This measures loader performance, not a full training step.
+
+Parquet bucket caches are scoped to the catalog fingerprint. Serialized workers reject catalog changes, and sample reads verify that shard indices still match their part paths. Reopen the dataset when switching snapshots.
+
 #### Optimizing captions ahead of time
 
 The same coalescing is available from the Webshart CLI, which can also publish the repaired metadata so every consumer of the dataset benefits without the runtime option:

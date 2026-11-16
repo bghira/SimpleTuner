@@ -1423,6 +1423,40 @@ Webshart データセットは `webshart` パッケージで WebDataset 形式�
 - `webshart.caption_key` でキャプションのフィールドを選択できます。1つなら `"long_caption"`、複数なら `["long_caption", "short_caption"]` を指定すると、その順で収集します。キーはパスではなくそのままの名前として、サンプルの JSON メタデータ、インデックスのメタデータ、それぞれの `captions` 辞書内の名前付き項目の順に検索し、最初にキーが見つかった場所を使います。文字列やリストの値は1つのプロンプトに連結せず、キャプション候補になります。欠落した値や空の値は無視されます。`caption_strategy: "webshart"` では、選択したキャプションがないサンプルは、既定のキャプションや `.txt` サイドカーがあってもスキップされます。省略すると既定の取得方法を維持します。JSON の内容がインデックスにない場合はサイドカーを読み込みます。キャプションとバケットのキャッシュは設定したキーに応じて分離されます。WebUI の Webshart 設定では1行に1つのキーを入力します。 JSON サイドカーの読み取りは設定済みの Webshart シャードキャッシュを使用し、キャプションの取得時に画像データをデコードしたり展開したりしません。
 - `webshart_optimize_captions`（別綴り `webshart_optimise_captions`。`webshart` ブロック内では `optimize_captions`/`optimise_captions` も受け付けます）は起動時に caption layout を probe し、captions が metadata index ではなく `.txt`/`.json` の sidecar tar member にある場合、それらをローカルの Webshart metadata cache に一度だけ統合します。このオプションがないと、sidecar caption の dataset（たとえば `laion/conceptual-captions-12m-webdataset`）は captions を列挙するたび — 起動時、checkpoint 時、model card 生成時 — にサンプルごとに 1 回の range read が発生します。metadata に captions が既に埋め込まれている dataset では、統合は自動的にスキップされます。
 
+#### S3 の Parquet 画像バイト
+
+`webshart.format: "parquet"` で、ローカル、Hub、S3 互換ストレージの Parquet に埋め込まれた画像を読み込みます。S3 は `s3://bucket` または `s3://bucket/prefix`。任意の `webshart.manifest` はソースからの相対キャプチャ記述子です。ネイティブ S3 とキャプチャマニフェストには webshart 0.8.0 以降が必要です。
+
+`webshart.columns` は `image`、`captions`、`width`、`height` をソース列名に対応させます。省略時は同名です。画像はバイナリ列または `bytes` を含む構造体です。`url_status != "ok"` や空の `stored_bytes` の行は物理行番号を変えずに除外されます。寸法のない行はバケット対象外です。元 URL は取得しません。取得成功でも破損画像の場合があり、バッチ読み込みはデコード失敗をスキップします。
+
+既存のトップレベル設定 `aws_region_name`、`aws_endpoint_url`、`aws_access_key_id`、`aws_secret_access_key`、`aws_session_token`、`aws_max_pool_connections` を使います。エンドポイントにバケットを含めず、S3 同時リクエスト数は既定で 32 です。キーを省略すると AWS 環境変数、Web ID、コンテナ/インスタンスロールを利用します。共有プロファイルファイルには非対応です。ワーカー表現には認証情報を含めないため、必要なら子プロセス環境に AWS 認証情報を設定してください。
+
+署名、範囲取得、ストリームキャッシュ、並列行グループデコードは Rust が GIL 外で行います。`webshart.parallel_downloads` はバッチ内の行グループ並列数も制限します。全シャードキャッシュは既定 25 GB。`webshart.shard_cache_gb: 0` は範囲読み込みです。保存形式は変わりません。JPEG XL には `pillow-jxl-plugin` が必要です。`webshart_optimize_captions` は tar サイドカー専用です。
+
+```json
+{
+  "id": "captured-images",
+  "type": "webshart",
+  "source": "s3://training-images",
+  "metadata_backend": "webshart",
+  "caption_strategy": "webshart",
+  "aws_endpoint_url": "https://storage.example",
+  "aws_region_name": "us-east-1",
+  "aws_max_pool_connections": 32,
+  "webshart": {
+    "format": "parquet",
+    "manifest": "combined/dataset.json",
+    "columns": {"image": "image", "captions": "captions", "width": "width", "height": "height"},
+    "shard_cache_gb": 25,
+    "parallel_downloads": 4
+  }
+}
+```
+
+制限付きベンチマークは `PYTHONPATH=. .venv/bin/python scripts/benchmark_webshart.py dataset.json --samples 256 --batch-size 32 --repeats 2`。検出、メタデータ準備、デコード速度、失敗、常駐メモリを測定します。学習ステップ全体の測定ではありません。
+
+Parquet のバケットキャッシュはカタログの指紋ごとに分離されます。シリアライズされたワーカーはカタログ変更を拒否し、読み込み時にシャード番号とパスを照合します。スナップショットを切り替える際はデータセットを開き直してください。
+
 #### captions を事前に最適化する
 
 同じ統合処理は Webshart CLI からも利用でき、修復済みの metadata を公開することもできるため、runtime オプションなしで dataset のすべての利用者が恩恵を受けられます:
