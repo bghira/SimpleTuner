@@ -58,7 +58,7 @@
   "num_validation_images": 1,
   "crepa_enabled": false,
   "data_backend_sampling": "uniform",
-  "disable_assistant_lora": true,
+  "disable_assistant_lora": false,
   "aspect_bucket_alignment": 32,
   "dataloader_prefetch": false,
   "flow_schedule_auto_shift": false,
