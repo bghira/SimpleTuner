@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -68,8 +69,17 @@ class H3ImageTests(unittest.TestCase):
         self.assertTrue(all(not parameter.requires_grad for parameter in assistant))
 
     def test_default_assistant_selection_respects_training_mode_and_overrides(self):
+        example_path = (
+            Path(__file__).resolve().parents[1]
+            / "simpletuner/examples/minimaxh3/h3_image/80g/h3_image.peft-lora/config.json"
+        )
         cases = [
             ({}, MiniMaxH3.ASSISTANT_LORA_PATH, MiniMaxH3.ASSISTANT_LORA_WEIGHT_NAME),
+            (
+                json.loads(example_path.read_text()),
+                MiniMaxH3.ASSISTANT_LORA_PATH,
+                MiniMaxH3.ASSISTANT_LORA_WEIGHT_NAME,
+            ),
             ({"assistant_lora_path": ""}, MiniMaxH3.ASSISTANT_LORA_PATH, MiniMaxH3.ASSISTANT_LORA_WEIGHT_NAME),
             ({"assistant_lora_path": "None"}, MiniMaxH3.ASSISTANT_LORA_PATH, MiniMaxH3.ASSISTANT_LORA_WEIGHT_NAME),
             ({"assistant_lora_weight_name": "custom.safetensors"}, MiniMaxH3.ASSISTANT_LORA_PATH, "custom.safetensors"),
