@@ -756,6 +756,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertEqual(metadata_backend.batch_size, effective_train_batch_size)
         self.assertEqual(metadata_backend.config["train_batch_size"], effective_train_batch_size)
         self.assertEqual(sampler_cls.call_args.kwargs["batch_size"], effective_train_batch_size)
+        self.assertIs(init_backend["dataset_runtime"], sampler_cls.call_args.kwargs["dataset_runtime"])
+        self.assertEqual(init_backend["dataset_runtime"].config["caption_strategy"], self.args.caption_strategy)
         return init_backend
 
     def test_registered_webshart_cache_reload_preserves_sampler_batch_size(self):

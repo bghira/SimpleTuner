@@ -12,6 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
 from .runtime import BatchFetcher
 
 
@@ -3563,10 +3565,22 @@ class FactoryRegistry:
             if init_backend["metadata_backend"].resolution < 256:
                 warning_log("Increasing resolution to 256, as is required for DF Stage II.")
 
-        init_backend["sampler"] = MultiAspectSampler(
+        init_backend["dataset_runtime"] = DatasetRuntime(
             id=init_backend["id"],
-            metadata_backend=init_backend["metadata_backend"],
             data_backend=init_backend["data_backend"],
+            metadata_backend=init_backend["metadata_backend"],
+            config={
+                **init_backend["config"],
+                "dataset_type": dataset_type,
+                "caption_strategy": caption_strategy,
+                "use_captions": use_captions,
+                "prepend_instance_prompt": prepend_instance_prompt,
+                "instance_prompt": instance_prompt,
+                "disable_multiline_split": backend.get("disable_multiline_split", False),
+            },
+        )
+        init_backend["sampler"] = MultiAspectSampler(
+            dataset_runtime=init_backend["dataset_runtime"],
             model=self.model,
             accelerator=self.accelerator,
             batch_size=init_backend["config"].get(
@@ -3577,17 +3591,11 @@ class FactoryRegistry:
             delete_unwanted_images=backend.get("delete_unwanted_images", self.args.delete_unwanted_images),
             resolution=backend.get("resolution", self.args.resolution),
             resolution_type=backend.get("resolution_type", self.args.resolution_type),
-            caption_strategy=caption_strategy,
-            use_captions=use_captions,
-            prepend_instance_prompt=prepend_instance_prompt,
-            instance_prompt=instance_prompt,
             conditioning_type=conditioning_type,
             is_regularisation_data=is_regularisation_data,
-            dataset_type=backend.get("dataset_type"),
             source_dataset_id=init_backend["config"].get("source_dataset_id", None),
-            disable_multiline_split=backend.get("disable_multiline_split", False),
         )
-        if init_backend["sampler"].caption_strategy == "parquet":
+        if caption_strategy == "parquet":
             configure_parquet_database(backend, self.args, init_backend["data_backend"])
         init_backend["train_dataloader"] = torch.utils.data.DataLoader(
             init_backend["train_dataset"],

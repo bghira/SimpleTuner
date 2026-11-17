@@ -337,6 +337,8 @@ class PromptHandler:
         data_backend: BaseDataBackend,
         instance_prompt: str = None,
         sampler_backend_id: str = None,
+        metadata_backend=None,
+        backend_config=None,
     ) -> str:
         if sampler_backend_id is None:
             raise ValueError("Sampler backend ID is required.")
@@ -344,19 +346,26 @@ class PromptHandler:
             if not instance_prompt:
                 raise ValueError("Instance prompt is required when instance_prompt_only is enabled.")
             return instance_prompt
-        metadata_backend = StateTracker.get_data_backend(sampler_backend_id)["metadata_backend"]
         if metadata_backend is None:
-            raise ValueError(
-                f"Could not find metadata backend for sampler {sampler_backend_id}: {StateTracker.get_data_backend(sampler_backend_id)}"
-            )
-        (
-            parquet_db,
-            filename_column,
-            caption_column,
-            fallback_caption_column,
-            identifier_includes_extension,
-        ) = StateTracker.get_parquet_database(sampler_backend_id)
-        backend_config = StateTracker.get_data_backend_config(data_backend_id=data_backend.id)
+            metadata_backend = StateTracker.get_data_backend(sampler_backend_id)["metadata_backend"]
+            (
+                parquet_db,
+                filename_column,
+                caption_column,
+                fallback_caption_column,
+                identifier_includes_extension,
+            ) = StateTracker.get_parquet_database(sampler_backend_id)
+        else:
+            parquet_db = metadata_backend.parquet_database
+            parquet_config = metadata_backend.parquet_config
+            filename_column = parquet_config.get("filename_column")
+            caption_column = parquet_config.get("caption_column")
+            fallback_caption_column = parquet_config.get("fallback_caption_column")
+            identifier_includes_extension = parquet_config.get("identifier_includes_extension", False)
+        if metadata_backend is None:
+            raise ValueError(f"Could not find metadata backend for sampler {sampler_backend_id}")
+        if backend_config is None:
+            backend_config = StateTracker.get_data_backend_config(data_backend_id=data_backend.id)
         instance_data_dir = backend_config.get("instance_data_dir")
         image_filename_stem = image_path
         if instance_data_dir is not None and instance_data_dir in image_filename_stem:
@@ -446,6 +455,7 @@ class PromptHandler:
         data_backend: BaseDataBackend,
         instance_prompt: str = None,
         sampler_backend_id: str = None,
+        metadata_backend=None,
     ) -> str:
         """
         Prepare prompt from HuggingFace dataset metadata.
@@ -470,11 +480,11 @@ class PromptHandler:
             sampler_backend_id = data_backend.id
 
         # Get the metadata backend
-        backend_info = StateTracker.get_data_backend(sampler_backend_id)
-        if not backend_info or "metadata_backend" not in backend_info:
-            raise ValueError(f"Could not find metadata backend for {sampler_backend_id}")
-
-        metadata_backend = backend_info["metadata_backend"]
+        if metadata_backend is None:
+            backend_info = StateTracker.get_data_backend(sampler_backend_id)
+            if not backend_info or "metadata_backend" not in backend_info:
+                raise ValueError(f"Could not find metadata backend for {sampler_backend_id}")
+            metadata_backend = backend_info["metadata_backend"]
 
         # For HuggingFace, the image_path is already the virtual path like "0.jpg"
         caption = metadata_backend.caption_cache_entry(image_path)
@@ -507,6 +517,7 @@ class PromptHandler:
         data_backend: BaseDataBackend,
         instance_prompt: str = None,
         sampler_backend_id: str = None,
+        metadata_backend=None,
     ) -> str:
         if not use_captions:
             if not instance_prompt:
@@ -516,11 +527,11 @@ class PromptHandler:
         if sampler_backend_id is None:
             sampler_backend_id = data_backend.id
 
-        backend_info = StateTracker.get_data_backend(sampler_backend_id)
-        if not backend_info or "metadata_backend" not in backend_info:
-            raise ValueError(f"Could not find metadata backend for {sampler_backend_id}")
-
-        metadata_backend = backend_info["metadata_backend"]
+        if metadata_backend is None:
+            backend_info = StateTracker.get_data_backend(sampler_backend_id)
+            if not backend_info or "metadata_backend" not in backend_info:
+                raise ValueError(f"Could not find metadata backend for {sampler_backend_id}")
+            metadata_backend = backend_info["metadata_backend"]
         caption = metadata_backend.caption_cache_entry(image_path)
         if caption is None:
             raise CaptionNotFoundError(f"Could not find caption for {image_path} in Webshart dataset")
@@ -534,16 +545,7 @@ class PromptHandler:
 
     @staticmethod
     def caption_for_sampler(sampler, image_path):
-        return PromptHandler.magic_prompt(
-            sampler_backend_id=sampler.id,
-            data_backend=sampler.data_backend,
-            image_path=image_path,
-            caption_strategy=sampler.caption_strategy,
-            use_captions=sampler.use_captions,
-            prepend_instance_prompt=sampler.prepend_instance_prompt,
-            instance_prompt=sampler.instance_prompt,
-            disable_multiline_split=sampler.disable_multiline_split,
-        )
+        return sampler.dataset_runtime.resolve_caption(image_path)
 
     @staticmethod
     def magic_prompt(
@@ -555,6 +557,8 @@ class PromptHandler:
         instance_prompt: str = None,
         sampler_backend_id: str = None,
         disable_multiline_split: bool = False,
+        metadata_backend=None,
+        backend_config=None,
     ) -> str:
         """Pull a prompt for an image file like magic, using one of the available caption strategies.
 
@@ -574,9 +578,9 @@ class PromptHandler:
         if caption_strategy is None:
             return None
 
-        # Get shuffle config from StateTracker
         backend_id = sampler_backend_id or data_backend.id
-        backend_config = StateTracker.get_data_backend_config(backend_id) or {}
+        if backend_config is None:
+            backend_config = StateTracker.get_data_backend_config(backend_id) or {}
         caption_shuffle_config = backend_config.get("caption_shuffle", {})
         shuffle_enabled = caption_shuffle_config.get("enable", False)
 
@@ -610,6 +614,8 @@ class PromptHandler:
                 instance_prompt=instance_prompt,
                 data_backend=data_backend,
                 sampler_backend_id=sampler_backend_id,
+                metadata_backend=metadata_backend,
+                backend_config=backend_config,
             )
         elif caption_strategy == "huggingface":
             instance_prompt = PromptHandler.prepare_instance_prompt_from_huggingface(
@@ -619,6 +625,7 @@ class PromptHandler:
                 instance_prompt=instance_prompt,
                 data_backend=data_backend,
                 sampler_backend_id=sampler_backend_id,
+                metadata_backend=metadata_backend,
             )
         elif caption_strategy == "webshart":
             instance_prompt = PromptHandler.prepare_instance_prompt_from_webshart(
@@ -628,6 +635,7 @@ class PromptHandler:
                 instance_prompt=instance_prompt,
                 data_backend=data_backend,
                 sampler_backend_id=sampler_backend_id,
+                metadata_backend=metadata_backend,
             )
         elif caption_strategy == "instanceprompt":
             if instance_prompt is None:
