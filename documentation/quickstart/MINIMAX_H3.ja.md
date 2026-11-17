@@ -125,4 +125,4 @@ long run の前に短い smoke test を行い、`h3_drift_loss`、normal loss、
 
 学習キャンバスは 2048 または 4096 ピクセルで、32 ピクセル単位に揃えます。推奨スケールは 4096 です。80GB の例はアクティベーションのチェックポイントオフロードを有効にします。学習は公開された 6 つの PDD ノイズレベルと対応する固定出力ヘッドを使用し、検証は正確な 6 ステップの sigma スケジュールとガイダンス 1.0 を使用します。任意ステップのサンプリングと H3 動画蒸留レシピはこのフレーバーでは非対応です。`lora_format: "comfyui"` で ComfyUI アダプターの読み込みと書き出しができ、`Comfy-Org/MiniMax-H3-Image` の pruned BF16 チェックポイントにも対応します。
 
-任意で `minimax_h3_prompt_expander_url` に `MiniMaxAI/MiniMax-H3-Image-PE` を提供する OpenAI 互換サーバーを指定します。公式の文生画像・編集プロンプトで正のキャプションをキャッシュ前に展開し、編集時には参照画像も渡します。認証には環境変数 `MINIMAX_H3_PROMPT_EXPANDER_API_KEY` を使用します。URL を空にすると元のキャプションを保持します。学習済み補助 LoRA は `assistant_lora_path` で明示的に指定でき、未公開の補助モデルは既定でダウンロードしません。
+任意で `minimax_h3_prompt_expander_url` に `MiniMaxAI/MiniMax-H3-Image-PE` を提供する OpenAI 互換サーバーを指定します。公式の文生画像・編集プロンプトで正のキャプションをキャッシュ前に展開し、編集時には参照画像も渡します。認証には環境変数 `MINIMAX_H3_PROMPT_EXPANDER_API_KEY` を使用します。URL を空にすると元のキャプションを保持します。`h3_image` の LoRA 学習では、`SimpleTuner/minimax-h3-image-training-assistant` の補助モデル（`pytorch_lora_weights.safetensors`）を自動的に読み込み、凍結します。`assistant_lora_path` で変更するか、`disable_assistant_lora=true` で無効にできます。
