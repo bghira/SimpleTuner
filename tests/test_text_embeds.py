@@ -9,6 +9,7 @@ import torch
 
 from simpletuner.helpers.caching.text_embeds import TextEmbeddingCache
 from simpletuner.helpers.models.common import TextEmbedCacheKey
+from simpletuner.helpers.training.state_tracker import StateTracker
 
 
 class _DummyModel:
@@ -100,6 +101,97 @@ def _make_cache(key_type, **cache_kwargs):
 
 
 class TextEmbeddingCacheKeyTests(unittest.TestCase):
+    def test_precompute_consumes_bounded_batches_and_deduplicates_through_storage(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION)
+        cache.model.TEXT_ENCODER_CONFIGURATION = {"text_encoder": {}}
+        stored = set()
+        visited = []
+        encoded = []
+        cache.data_backend.exists = lambda path: path in stored
+
+        def encode(records, **kwargs):
+            self.assertFalse(kwargs["split_between_processes"])
+            self.assertLessEqual(len(records), 2)
+            self.assertLessEqual(len(visited) - sum(len(batch) for batch in encoded), 4)
+            encoded.append([record["prompt"] for record in records])
+            stored.update(cache.hash_prompt_with_path(record) for record in records)
+
+        cache.compute_prompt_embeddings_with_model = encode
+
+        def records():
+            for prompt in ("one", "one", "two", "three", "one", "four"):
+                visited.append(prompt)
+                yield {"prompt": prompt, "key": prompt}
+
+        progress = []
+        with (
+            patch.object(StateTracker, "get_text_cache_files", side_effect=AssertionError("inventory lookup")),
+            patch.object(cache.data_backend, "list_files", side_effect=AssertionError("storage listing")),
+        ):
+            self.assertEqual(cache.precompute_embeddings(records(), batch_size=2, progress_callback=progress.append), 6)
+        self.assertEqual(encoded, [["one"], ["two", "three"], ["four"]])
+        self.assertEqual(progress[-1], 6)
+
+    def test_precompute_uses_model_batching_and_completes_writes(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION, text_encoder_batch_size=2)
+
+        class BatchModel(_DummyModel):
+            TEXT_ENCODER_CONFIGURATION = {"text_encoder": {}}
+
+            def encode_text_batch(self, prompts, **kwargs):
+                return {"prompt_embeds": torch.ones(len(prompts), 2, 3)}
+
+            def unpack_text_embeddings_from_cache(self, embeddings):
+                return embeddings
+
+        cache.model = BatchModel(TextEmbedCacheKey.CAPTION)
+        stored = {}
+        cache.save_to_cache = lambda filename, embeds: stored.update({filename: embeds})
+        cache.wait_for_pending_writes = MagicMock()
+        records = ({"prompt": prompt, "key": prompt} for prompt in ("one", "two", "three"))
+        self.assertEqual(cache.precompute_embeddings(records, batch_size=2), 3)
+        self.assertEqual(len(stored), 3)
+        self.assertTrue(all(value["prompt_embeds"].shape == (1, 2, 3) for value in stored.values()))
+        cache.wait_for_pending_writes.assert_called()
+
+    def test_precompute_cancellation_stops_source_consumption(self):
+        cache = _make_cache(TextEmbedCacheKey.CAPTION)
+        cache.model.TEXT_ENCODER_CONFIGURATION = {"text_encoder": {}}
+        consumed = []
+
+        def records():
+            for index in range(100):
+                consumed.append(index)
+                yield {"prompt": str(index), "key": str(index)}
+
+        def cancel(_current):
+            raise InterruptedError("cancelled")
+
+        with self.assertRaisesRegex(InterruptedError, "cancelled"):
+            cache.precompute_embeddings(records(), batch_size=3, progress_callback=cancel)
+        self.assertEqual(consumed, [])
+
+    def test_prompt_calls_do_not_retain_records_or_reuse_them_for_empty_input(self):
+        import gc
+        import weakref
+
+        class Marker:
+            pass
+
+        cache = _make_cache(TextEmbedCacheKey.CAPTION)
+        cache.model.TEXT_ENCODER_CONFIGURATION = {"text_encoder": {}}
+        calls = []
+        cache.compute_prompt_embeddings_with_model = lambda records, **kwargs: calls.append(len(records))
+        marker = Marker()
+        reference = weakref.ref(marker)
+        with patch.object(StateTracker, "get_text_cache_files", return_value={}):
+            cache.compute_embeddings_for_prompts([{"prompt": "one", "metadata": {"marker": marker}}], return_concat=False)
+            cache.compute_embeddings_for_prompts([], return_concat=False)
+        del marker
+        gc.collect()
+        self.assertIsNone(reference())
+        self.assertEqual(calls, [1])
+
     def test_text_cache_disable_implies_ondemand(self):
         cache = _make_cache(TextEmbedCacheKey.CAPTION, text_cache_disable=True)
 

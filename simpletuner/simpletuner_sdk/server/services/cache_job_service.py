@@ -10,7 +10,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -451,82 +451,39 @@ class CacheJobService:
             return []
 
     @staticmethod
-    def _collect_prompt_records(
+    def _iter_prompt_records(
         model,
         dataset_config: Dict[str, Any],
         data_backend,
         metadata_backend,
-    ) -> List[Dict[str, Any]]:
-        """Gather captions from the dataset and build prompt records.
+    ) -> Iterator[Dict[str, Any]]:
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 
-        Mirrors the caption collection logic in
-        ``DataBackendFactory._process_text_embed_deferred_queue()``.
-        """
-        from simpletuner.helpers.models.common import TextEmbedCacheKey
-        from simpletuner.helpers.prompts import PromptHandler
-        from simpletuner.helpers.utils.pathing import normalize_data_path
-
-        caption_strategy = dataset_config.get("caption_strategy", "filename")
-        prepend_instance_prompt = dataset_config.get("prepend_instance_prompt", False)
-        instance_prompt = dataset_config.get("instance_prompt", "")
-        use_captions = True
-        if dataset_config.get("only_instance_prompt"):
-            use_captions = False
-        elif caption_strategy == "instanceprompt":
-            use_captions = False
-
-        captions, _missing, caption_image_paths = PromptHandler.get_all_captions(
-            data_backend=data_backend,
-            instance_data_dir=dataset_config.get("instance_data_dir", ""),
-            prepend_instance_prompt=prepend_instance_prompt,
-            instance_prompt=instance_prompt,
-            use_captions=use_captions,
-            caption_strategy=caption_strategy,
-            return_image_paths=True,
-            disable_multiline_split=dataset_config.get("disable_multiline_split", False),
+        if metadata_backend.read_only:
+            raise ValueError("Standalone text preparation requires unsplit dataset metadata.")
+        config = dict(dataset_config)
+        config["use_captions"] = not config.get("only_instance_prompt", False) and (
+            config.get("caption_strategy", "filename") != "instanceprompt"
         )
-
-        key_type = model.text_embed_cache_key()
-        dataset_id = dataset_config.get("id", "")
-        dataset_root = dataset_config.get("instance_data_dir")
-
-        prompt_records: List[Dict[str, Any]] = []
-        for caption, image_path in zip(captions, caption_image_paths):
-            image_path_str = str(image_path)
-            normalized_identifier = normalize_data_path(image_path_str, dataset_root)
-            metadata = {
-                "image_path": image_path_str,
-                "data_backend_id": dataset_id,
-                "prompt": caption,
-                "dataset_relative_path": normalized_identifier,
-            }
-            if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME:
-                key_value = f"{dataset_id}:{normalized_identifier}"
-            elif key_type is TextEmbedCacheKey.FILENAME:
-                key_value = normalize_data_path(image_path_str, None)
-            else:
-                key_value = caption
-            prompt_records.append({"prompt": caption, "key": key_value, "metadata": metadata})
-
-        # Add grounding entity labels if metadata has bbox_entities
-        if metadata_backend is not None:
-            for image_path in caption_image_paths:
-                image_path_str = str(image_path)
-                img_meta = metadata_backend.get_metadata_by_filepath(image_path_str)
-                if not isinstance(img_meta, dict):
-                    continue
-                bbox_entities = img_meta.get("bbox_entities")
-                if not bbox_entities:
-                    continue
-                normalized_identifier = normalize_data_path(image_path_str, dataset_root)
-                for idx, entity in enumerate(bbox_entities):
-                    label = entity.get("label", "")
-                    if not label:
-                        continue
-                    entity_key = f"{normalized_identifier}__bbox_{idx}"
-                    prompt_records.append({"prompt": label, "key": entity_key, "metadata": {"grounding_entity": True}})
-
-        return prompt_records
+        runtime = DatasetRuntime(config["id"], data_backend, metadata_backend, config)
+        buckets = metadata_backend.read_cache()
+        if not any(buckets.values()):
+            raise ValueError("No accepted samples in dataset metadata; scan the dataset before preparing text embeddings.")
+        sample_refs = (sample_ref for bucket in buckets.values() for sample_ref in bucket)
+        init_backend = {
+            "id": runtime.id,
+            "config": runtime.config,
+            "instance_data_dir": config.get("instance_data_dir"),
+            "data_backend": data_backend,
+            "metadata_backend": metadata_backend,
+            "dataset_runtime": runtime,
+        }
+        yield from runtime.iter_text_embed_records(
+            model,
+            sample_refs,
+            init_backend=init_backend,
+            on_missing_caption=lambda ref: logger.warning("Could not find caption for sample %s", ref),
+        )
 
     def _load_model(self, global_config: Dict[str, Any], args, accelerator):
         from simpletuner.helpers.models.registry import ModelRegistry
@@ -742,9 +699,7 @@ class CacheJobService:
             job.stage = "Collecting captions"
             self._broadcast("dataset_cache", self._job_to_dict(job))
 
-            prompt_records = self._collect_prompt_records(model, dataset_config, data_backend, metadata_backend)
-            if not prompt_records:
-                raise ValueError("No captions found for this dataset")
+            prompt_records = self._iter_prompt_records(model, dataset_config, data_backend, metadata_backend)
 
             # Move text encoders to device
             from simpletuner.helpers.data_backend.factory import move_text_encoders
@@ -755,28 +710,28 @@ class CacheJobService:
 
             job.status = CacheJobStatus.RUNNING
             job.stage = "Computing text embeddings"
-            job.total = len(prompt_records)
+            job.total = 0
             self._broadcast("dataset_cache", self._job_to_dict(job))
 
             _last_broadcast = [0.0]
 
-            def _text_progress(current, total):
+            def _text_progress(current):
                 self._check_cancelled(job)
                 job.current = current
-                job.total = total
                 now = time.time()
-                if now - _last_broadcast[0] >= 1.0 or current >= total:
+                if now - _last_broadcast[0] >= 1.0:
                     _last_broadcast[0] = now
                     self._broadcast("dataset_cache", self._job_to_dict(job))
 
-            text_cache.discover_all_files()
             text_cache.encode_dropout_caption()
-            text_cache.compute_embeddings_for_prompts(
+            job.total = text_cache.precompute_embeddings(
                 prompt_records,
-                return_concat=False,
-                load_from_cache=False,
+                batch_size=max(text_cache.read_batch_size, text_cache.text_encoder_batch_size),
                 progress_callback=_text_progress,
             )
+            if not job.total:
+                raise ValueError("No captions found for this dataset")
+            self._broadcast("dataset_cache", self._job_to_dict(job))
 
         finally:
             StateTracker.set_args(original_args)

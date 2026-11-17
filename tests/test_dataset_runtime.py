@@ -31,6 +31,47 @@ class DatasetRuntimeTests(unittest.TestCase):
         }
         self.runtime = DatasetRuntime("images", self.data_backend, self.metadata_backend, self.config)
 
+    def test_caption_traversal_is_lazy_and_keeps_all_alternatives(self):
+        visited = []
+
+        def selection():
+            for ref in ("one.jpg", "two.jpg", "one.jpg"):
+                visited.append(ref)
+                yield ref
+
+        records = self.runtime.iter_caption_records(selection())
+        self.assertEqual(visited, [])
+        self.assertEqual(next(records), ("first", "one.jpg"))
+        self.assertEqual(next(records), ("second", "one.jpg"))
+        self.assertEqual(visited, ["one.jpg"])
+        self.assertEqual(
+            list(records), [("first", "two.jpg"), ("second", "two.jpg"), ("first", "one.jpg"), ("second", "one.jpg")]
+        )
+
+    def test_caption_traversal_reports_missing_samples_without_collecting_them(self):
+        self.metadata_backend.caption_cache_entry.side_effect = [None, "caption"]
+        missing = []
+        records = self.runtime.iter_caption_records(["missing.jpg", "ok.jpg"], on_missing_caption=missing.append)
+        self.assertEqual(list(records), [("caption", "ok.jpg")])
+        self.assertEqual(missing, ["missing.jpg"])
+
+    def test_text_preparation_preserves_model_keys_metadata_and_grounding_labels(self):
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+
+        self.metadata["bbox_entities"] = [{"label": "cat"}, {"label": ""}]
+        config = {**self.config, "instance_data_dir": "dataset"}
+        runtime = DatasetRuntime("images", self.data_backend, self.metadata_backend, config)
+        model = SimpleNamespace(
+            text_embed_cache_key=lambda: TextEmbedCacheKey.DATASET_AND_FILENAME,
+            text_embed_cache_metadata_for_filepath=lambda **kwargs: {"height": 512},
+            text_embed_cache_key_value=lambda prompt, default_key, metadata: f"{default_key}:{metadata['height']}",
+        )
+        records = list(runtime.iter_text_embed_records(model, iter(["sample.jpg"]), init_backend={}))
+        self.assertEqual([record["prompt"] for record in records], ["first", "cat", "second", "cat"])
+        self.assertEqual(records[0]["key"], "images:sample.jpg:512")
+        self.assertEqual(records[0]["metadata"]["dataset_relative_path"], "sample.jpg")
+        self.assertEqual(records[1], {"prompt": "cat", "key": "sample.jpg__bbox_0", "metadata": {"grounding_entity": True}})
+
     def test_reads_preserve_order_and_duplicates_with_independent_nested_metadata(self):
         refs = ["webshart://2/19/a.jpg", "webshart://0/3/b.jpg", "webshart://2/19/a.jpg"]
         records = self.runtime.read_samples(refs)

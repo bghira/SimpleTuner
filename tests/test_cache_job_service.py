@@ -1,6 +1,8 @@
 """Tests for cache_job_service: capabilities, job management, mutual exclusion."""
 
 import unittest
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from simpletuner.simpletuner_sdk.server.services.cache_job_service import (
@@ -322,6 +324,72 @@ class TestStateTrackerSetup(unittest.TestCase):
             self.assertIsNone(StateTracker.get_accelerator())
         finally:
             StateTracker.set_accelerator(original)
+
+
+class TestStreamingTextPreparation(unittest.TestCase):
+    def test_job_streams_accepted_samples_without_inventory_discovery(self):
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        service = CacheJobService(broadcast_fn=MagicMock())
+        metadata = SimpleNamespace(
+            read_only=False,
+            read_cache=lambda: {"1.0": ["accepted.jpg", "also-accepted.jpg"]},
+            get_metadata_by_filepath=lambda ref: {},
+        )
+        data_backend = SimpleNamespace(id="stream-test")
+        model = SimpleNamespace(
+            text_encoders=[],
+            tokenizers=[],
+            load_text_encoder=MagicMock(),
+            load_text_tokenizer=MagicMock(),
+            text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION,
+        )
+        captured = []
+
+        def consume(records, *, batch_size, progress_callback):
+            self.assertEqual(batch_size, 2)
+            self.assertNotIsInstance(records, list)
+            progress_callback(0)
+            for index, record in enumerate(records, 1):
+                captured.append(record)
+                progress_callback(index)
+            return len(captured)
+
+        cache = SimpleNamespace(
+            read_batch_size=2,
+            text_encoder_batch_size=1,
+            encode_dropout_caption=MagicMock(),
+            precompute_embeddings=consume,
+        )
+        job = CacheJob(job_id="stream-job", dataset_id="stream-test", cache_type="text_embeds")
+        with TemporaryDirectory() as cache_dir:
+            config = {"id": "stream-test", "caption_strategy": "filename", "cache_dir_text": cache_dir}
+            with (
+                patch.object(service, "_load_model", return_value=model),
+                patch.object(
+                    service, "_create_data_backend_and_metadata", return_value=(None, data_backend, metadata, None)
+                ),
+                patch.object(service, "_cleanup_gpu"),
+                patch("simpletuner.helpers.caching.text_embeds.TextEmbeddingCache", return_value=cache),
+                patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+                patch.object(StateTracker, "get_image_files", side_effect=AssertionError("global inventory")),
+            ):
+                service._execute_text_embed_cache(job, config, {"model_family": "test"})
+        self.assertEqual([record["prompt"] for record in captured], ["accepted", "also-accepted"])
+        self.assertEqual((job.current, job.total), (2, 2))
+
+    def test_standalone_preparation_rejects_rank_local_training_buckets(self):
+        records = CacheJobService._iter_prompt_records(None, {"id": "dataset"}, None, SimpleNamespace(read_only=True))
+        with self.assertRaisesRegex(ValueError, "unsplit dataset metadata"):
+            next(records)
+
+    def test_standalone_preparation_requires_an_accepted_sample_view(self):
+        records = CacheJobService._iter_prompt_records(
+            None, {"id": "dataset"}, None, SimpleNamespace(read_only=False, read_cache=lambda: {})
+        )
+        with self.assertRaisesRegex(ValueError, "scan the dataset"):
+            next(records)
 
 
 class TestCacheJobBroadcast(unittest.TestCase):
