@@ -613,6 +613,45 @@ class TestStateTrackerGroundingCache(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestGroundingImageEmbedCacheProcessAll(unittest.TestCase):
+    def test_process_all_encodes_annotated_images_once(self):
+        import os
+        import tempfile
+        from types import SimpleNamespace
+
+        from PIL import Image
+
+        from simpletuner.helpers.caching.grounding_image_embed import GroundingImageEmbedCache
+
+        class FeatureBackend:
+            embed_dim = 4
+
+            def embed_image(self, crops):
+                return [torch.full((4,), float(index)) for index, _ in enumerate(crops)]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            annotated = os.path.join(tmpdir, "annotated.png")
+            plain = os.path.join(tmpdir, "plain.png")
+            for path in (annotated, plain):
+                Image.new("RGB", (16, 16)).save(path)
+            metadata = {
+                annotated: {
+                    "bbox_entities": [
+                        {"label": "left", "bbox": [0.0, 0.0, 0.5, 1.0]},
+                        {"label": "right", "bbox": [0.5, 0.0, 1.0, 1.0]},
+                    ]
+                },
+                plain: {"original_size": (16, 16)},
+            }
+            metadata_backend = SimpleNamespace(get_metadata=lambda: metadata)
+            cache = GroundingImageEmbedCache(FeatureBackend(), os.path.join(tmpdir, "cache"), instance_data_dir=tmpdir)
+
+            self.assertEqual(cache.process_all(metadata_backend, data_backend=None), 1)
+            self.assertEqual(cache.retrieve(annotated, 1).tolist(), [1.0] * 4)
+            self.assertIsNone(cache.retrieve(plain, 0))
+            self.assertEqual(cache.process_all(metadata_backend, data_backend=None), 0)
+
+
 class TestCfgDoubleGligenDict(unittest.TestCase):
     """Test _cfg_double_gligen_dict doubles tensors and zeros unconditional masks."""
 

@@ -109,12 +109,8 @@ class GroundingImageEmbedCache:
         Returns the number of newly processed images.
         """
         count = 0
-        image_paths = metadata_backend.get_all_image_paths() if hasattr(metadata_backend, "get_all_image_paths") else []
-        for image_path in image_paths:
+        for image_path, meta in metadata_backend.get_metadata().items():
             image_path_str = str(image_path)
-            meta = metadata_backend.get_metadata_by_filepath(image_path_str)
-            if not isinstance(meta, dict):
-                continue
             bbox_entities = meta.get("bbox_entities")
             if not bbox_entities:
                 continue
