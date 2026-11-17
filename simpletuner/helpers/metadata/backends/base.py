@@ -1396,9 +1396,11 @@ class MetadataBackend:
         num_cpus = 8
         files_split = np.array_split(new_files, num_cpus)
 
-        metadata_updates_queue = Queue()
-        tqdm_queue = Queue()
-        worker_cls = Process if StateTracker.get_args().enable_multiprocessing else Thread
+        use_multiprocessing = StateTracker.get_args().enable_multiprocessing
+        worker_cls = Process if use_multiprocessing else Thread
+        queue_cls = Queue if use_multiprocessing else ThreadQueue
+        metadata_updates_queue = queue_cls()
+        tqdm_queue = queue_cls()
         workers = [
             worker_cls(
                 target=self._bucket_worker,
@@ -1408,6 +1410,7 @@ class MetadataBackend:
                     None,  # no bucket updates
                     metadata_updates_queue,
                     None,  # no written files tracking
+                    None,  # filtered files are deleted by the worker
                     existing_files_set,
                 ),
             )
@@ -1423,7 +1426,8 @@ class MetadataBackend:
             leave=False,
             ncols=125,
         ) as pbar:
-            while any(worker.is_alive() for worker in workers):
+
+            def drain_queues():
                 while not tqdm_queue.empty():
                     pbar.update(tqdm_queue.get())
 
@@ -1434,8 +1438,13 @@ class MetadataBackend:
                         for filepath, meta in metadata_update.items():
                             self.set_metadata_by_filepath(filepath=filepath, metadata=meta, update_json=False)
 
-        for worker in workers:
-            worker.join()
+            while any(worker.is_alive() for worker in workers):
+                drain_queues()
+
+            for worker in workers:
+                worker.join()
+            # Workers queue their last updates just before exiting.
+            drain_queues()
 
         self.save_image_metadata()
         self.save_cache(enforce_constraints=True)
