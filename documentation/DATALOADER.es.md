@@ -1388,6 +1388,8 @@ Para un ejemplo básico de cómo usar un dataset de Hugging Face, configura `"ty
 
 ### Datasets Webshart
 
+Las consultas de captions usan la caché de metadatos por shard de Webshart en lugar de un mapa de captions de todo el dataset en SimpleTuner. Los archivos JSON de captions antiguos de SimpleTuner permanecen en disco y se ignoran. Los entrenamientos con captions nativos de Webshart omiten las estadísticas inferidas de palabras de activación en los metadatos de los checkpoints.
+
 Durante la preparación de la caché VAE, Webshart procesa todos los grupos de relación de aspecto de un shard antes de pasar al siguiente. Esto reduce las descargas repetidas cuando la caché de shards completos no puede contener todo el conjunto de datos. Las muestras ya almacenadas y las asignadas a otros ranks se excluyen antes de agrupar; el orden del muestreador de entrenamiento no cambia.
 
 Los captions pueden ser cadenas, objetos JSON nativos o listas mixtas de ambos.

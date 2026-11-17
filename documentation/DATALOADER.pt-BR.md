@@ -1388,6 +1388,8 @@ Para um exemplo básico de como usar um dataset do Hugging Face, defina `"type":
 
 ### Datasets Webshart
 
+As consultas de legendas usam o cache de metadados por shard do Webshart em vez de um mapa de legendas de todo o dataset no SimpleTuner. Os arquivos JSON antigos de legendas do SimpleTuner permanecem no disco e são ignorados. Treinamentos com legendas nativas do Webshart omitem as estatísticas inferidas de palavras de ativação nos metadados dos checkpoints.
+
 Durante a preparação do cache VAE, o Webshart processa todos os grupos de proporção de um shard antes de passar ao próximo. Isso reduz downloads repetidos quando o cache de shards inteiros não comporta todo o conjunto de dados. Amostras já armazenadas e amostras atribuídas a outros ranks são excluídas antes do agrupamento; a ordem do amostrador de treinamento permanece inalterada.
 
 As legendas podem ser strings, objetos JSON nativos ou listas mistas dos dois.

@@ -27,6 +27,29 @@ def _concurrent_writer(directory, barrier, iterations, errors):
 
 
 class SaveHookManagerTests(unittest.TestCase):
+    def test_native_caption_run_does_not_scan_or_infer_partial_global_tag_statistics(self):
+        manager = object.__new__(SaveHookManager)
+        native = {"data_backend": object(), "config": {"caption_strategy": "webshart"}}
+        local = {"data_backend": object(), "config": {"caption_strategy": "textfile"}}
+        with (
+            patch.object(StateTracker, "get_data_backends", return_value={"local": local, "native": native}),
+            patch("simpletuner.helpers.prompts.PromptHandler.get_all_captions", side_effect=AssertionError("caption scan")),
+        ):
+            self.assertEqual(manager._build_tag_frequency_from_captions(), {})
+        self.assertEqual(manager._tag_frequency_cache, {})
+
+    def test_local_caption_tag_statistics_are_preserved(self):
+        manager = object.__new__(SaveHookManager)
+        manager.args = SimpleNamespace()
+        local = {"data_backend": object(), "config": {"caption_strategy": "textfile"}}
+        with (
+            patch.object(StateTracker, "get_data_backends", return_value={"local": local}),
+            patch(
+                "simpletuner.helpers.prompts.PromptHandler.get_all_captions", return_value=(["style, cat", "style, dog"], [])
+            ),
+        ):
+            self.assertEqual(manager._build_tag_frequency_from_captions(), {"local": {"style": 2}})
+
     def _run_save_model_hook(self, is_local_main_process):
         output_dir = "/tmp/checkpoint"
 
