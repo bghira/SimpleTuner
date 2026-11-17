@@ -53,6 +53,16 @@ class DatasetDuplicator:
         conditioning_data_type = conditioning_config.get("type")
 
         # Check if we need to update paths (for conditioning datasets)
+        source_data = source_backend.get("data_backend")
+        target_data = target_backend.get("data_backend")
+        shared_sample_ids = (
+            getattr(source_data, "type", None) == "webshart"
+            and getattr(target_data, "type", None) == "webshart"
+            and source_data.format == target_data.format == "parquet"
+            and all(
+                getattr(source_data, field) == getattr(target_data, field) for field in ("source", "metadata", "subfolder")
+            )
+        )
         needs_path_update = source_dir != target_dir and target_backend.get("dataset_type") == "conditioning"
 
         if needs_path_update:
@@ -63,11 +73,15 @@ class DatasetDuplicator:
             for bucket, paths in source_meta.aspect_ratio_bucket_indices.items():
                 updated_paths = []
                 for path in paths:
-                    new_path = DatasetDuplicator._translate_conditioning_path(
-                        path,
-                        source_dir,
-                        target_dir,
-                        conditioning_data_type,
+                    new_path = (
+                        path
+                        if shared_sample_ids
+                        else DatasetDuplicator._translate_conditioning_path(
+                            path,
+                            source_dir,
+                            target_dir,
+                            conditioning_data_type,
+                        )
                     )
                     updated_paths.append(new_path)
                 target_meta.aspect_ratio_bucket_indices[bucket] = updated_paths
@@ -76,11 +90,15 @@ class DatasetDuplicator:
             if hasattr(source_meta, "image_metadata") and source_meta.image_metadata:
                 target_meta.image_metadata = {}
                 for path, metadata in source_meta.image_metadata.items():
-                    new_path = DatasetDuplicator._translate_conditioning_path(
-                        path,
-                        source_dir,
-                        target_dir,
-                        conditioning_data_type,
+                    new_path = (
+                        path
+                        if shared_sample_ids
+                        else DatasetDuplicator._translate_conditioning_path(
+                            path,
+                            source_dir,
+                            target_dir,
+                            conditioning_data_type,
+                        )
                     )
                     copied_metadata = dict(metadata)
                     if conditioning_data_type == "i2v_first_frame":

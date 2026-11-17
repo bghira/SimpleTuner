@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy
 import regex as re
 
+from simpletuner.helpers.data_backend.filters import build_dataset_filter, filter_file_list
 from simpletuner.helpers.training import image_file_extensions
 from simpletuner.helpers.training.multi_process import _get_rank as get_rank
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -707,6 +708,7 @@ class PromptHandler:
             )
         if isinstance(all_image_files, list) and len(all_image_files) > 0 and isinstance(all_image_files[0], tuple):
             all_image_files = all_image_files[0][2]
+        all_image_files = filter_file_list(all_image_files, build_dataset_filter(backend_config))
         from tqdm import tqdm
 
         # if caption_strategy == "parquet":

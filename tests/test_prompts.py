@@ -23,6 +23,29 @@ class _DummyMetadataBackend:
 
 
 class PromptHandlerTests(unittest.TestCase):
+    def test_caption_precache_skips_files_excluded_by_dataset_filter(self):
+        backend = _DummyBackend(["part.parquet/000000000001.jpg", "part.parquet/000000000002.jpg"])
+        with (
+            patch(
+                "simpletuner.helpers.prompts.StateTracker.get_data_backend_config",
+                return_value={"filter_func": {"path_include": "000000000001"}},
+            ),
+            patch("simpletuner.helpers.prompts.StateTracker.get_image_files", return_value=None),
+            patch("simpletuner.helpers.prompts.StateTracker.get_data_backend", return_value={}),
+        ):
+            captions, missing, paths = PromptHandler.get_all_captions(
+                instance_data_dir="",
+                use_captions=False,
+                prepend_instance_prompt=False,
+                data_backend=backend,
+                caption_strategy="instanceprompt",
+                instance_prompt="edit",
+                return_image_paths=True,
+            )
+        self.assertEqual(paths, ["part.parquet/000000000001.jpg"])
+        self.assertEqual(captions, ["edit"])
+        self.assertEqual(missing, [])
+
     def test_instanceprompt_returns_entry_per_image(self):
         backend = _DummyBackend(["a.jpg", "b.jpg", "c.jpg"])
         with patch(

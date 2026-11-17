@@ -553,6 +553,24 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertFalse(self.args.text_cache_disable)
         self.assertFalse(self.args.text_cache_ondemand)
 
+    def test_webshart_path_filter_reaches_metadata_config(self):
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+        from simpletuner.helpers.data_backend.filters import build_dataset_filter
+
+        backend = {
+            "id": "paired-edits",
+            "type": "webshart",
+            "source": "source",
+            "caption_strategy": "webshart",
+            "filter_func": {"path_include": ["000000000001.jpg"], "path_match": "contains"},
+        }
+        result = init_backend_config(backend, self.args, self.accelerator)
+        dataset_filter = build_dataset_filter(result["config"])
+        self.assertIsNotNone(dataset_filter)
+        self.assertTrue(dataset_filter.matches_path("part.parquet/000000000001.jpg"))
+        self.assertFalse(dataset_filter.matches_path("part.parquet/000000000002.jpg"))
+        self.assertIsNot(result["config"]["filter_func"], backend["filter_func"])
+
     def test_webshart_caption_settings_survive_config_versioning(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
 
