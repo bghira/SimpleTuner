@@ -418,6 +418,80 @@ class TestFactoryEdgeCases(unittest.TestCase):
         cache.compute_embeddings_for_prompts.assert_called_once()
         self.assertTrue(cache.compute_embeddings_for_prompts.call_args.kwargs["split_between_processes"])
 
+    def test_bounded_text_precompute_covers_every_rank_local_sample(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+
+        for deferred in (False, True):
+            with self.subTest(deferred=deferred):
+                encoded = set()
+                for rank in range(4):
+                    factory = FactoryRegistry.__new__(FactoryRegistry)
+                    factory._uses_text_embeddings_cache = lambda: True
+                    factory._append_image_context_dropout_prompt_record = lambda *_args, **_kwargs: None
+                    factory.args = SimpleNamespace(
+                        caption_strategy="instanceprompt",
+                        prepend_instance_prompt=False,
+                        instance_prompt="caption",
+                        only_instance_prompt=False,
+                        skip_file_discovery="",
+                    )
+                    factory.accelerator = SimpleNamespace(device="cpu")
+                    factory.text_encoders = []
+                    factory.model = SimpleNamespace(
+                        requires_text_embed_image_context=lambda: False,
+                        text_embed_cache_key=lambda: TextEmbedCacheKey.DATASET_AND_FILENAME,
+                    )
+                    paths = [f"{index}.png" for index in range(rank * 4, (rank + 1) * 4)]
+                    metadata = SimpleNamespace(
+                        max_num_samples=16,
+                        aspect_ratio_bucket_indices={"1.0": paths},
+                        get_metadata_by_filepath=lambda _path: {},
+                    )
+                    cache = SimpleNamespace(text_cache_ondemand=False)
+
+                    def encode(records, *, split_between_processes, **_kwargs):
+                        if split_between_processes:
+                            records = records[rank : rank + 1]
+                        encoded.update(record["key"] for record in records)
+
+                    cache.compute_embeddings_for_prompts = encode
+                    backend = {"caption_strategy": "instanceprompt", "max_num_samples": 16}
+                    init_backend = {
+                        "id": "image-dataset",
+                        "config": {"caption_strategy": "instanceprompt"},
+                        "data_backend": SimpleNamespace(id="image-dataset"),
+                        "instance_data_dir": "dataset",
+                        "metadata_backend": metadata,
+                        "text_embed_cache": cache,
+                    }
+                    factory._deferred_text_embed_backends = [(backend, init_backend)]
+                    with (
+                        patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
+                        patch(
+                            "simpletuner.helpers.data_backend.factory.StateTracker.get_args",
+                            return_value=SimpleNamespace(output_dir="output"),
+                        ),
+                        patch(
+                            "simpletuner.helpers.data_backend.factory.StateTracker.get_data_backend_config",
+                            return_value=init_backend["config"],
+                        ),
+                        patch(
+                            "simpletuner.helpers.data_backend.factory.StateTracker.get_data_backend",
+                            return_value=init_backend,
+                        ),
+                        patch(
+                            "simpletuner.helpers.data_backend.factory.StateTracker.get_conditioning_datasets",
+                            return_value=[],
+                        ),
+                        patch("simpletuner.helpers.data_backend.factory.StateTracker.set_data_backend_config"),
+                    ):
+                        if deferred:
+                            factory._process_deferred_text_embeddings()
+                        else:
+                            factory._process_text_embeddings(backend, init_backend, None)
+                self.assertEqual(encoded, {f"image-dataset:{index}.png" for index in range(16)})
+
     def test_deferred_text_embed_precompute_splits_full_dataset_records_between_processes(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
         from simpletuner.helpers.models.common import TextEmbedCacheKey
@@ -479,6 +553,24 @@ class TestFactoryEdgeCases(unittest.TestCase):
         self.assertFalse(self.args.text_cache_disable)
         self.assertFalse(self.args.text_cache_ondemand)
 
+    def test_webshart_path_filter_reaches_metadata_config(self):
+        from simpletuner.helpers.data_backend.factory import init_backend_config
+        from simpletuner.helpers.data_backend.filters import build_dataset_filter
+
+        backend = {
+            "id": "paired-edits",
+            "type": "webshart",
+            "source": "source",
+            "caption_strategy": "webshart",
+            "filter_func": {"path_include": ["000000000001.jpg"], "path_match": "contains"},
+        }
+        result = init_backend_config(backend, self.args, self.accelerator)
+        dataset_filter = build_dataset_filter(result["config"])
+        self.assertIsNotNone(dataset_filter)
+        self.assertTrue(dataset_filter.matches_path("part.parquet/000000000001.jpg"))
+        self.assertFalse(dataset_filter.matches_path("part.parquet/000000000002.jpg"))
+        self.assertIsNot(result["config"]["filter_func"], backend["filter_func"])
+
     def test_webshart_caption_settings_survive_config_versioning(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
 
@@ -500,6 +592,33 @@ class TestFactoryEdgeCases(unittest.TestCase):
         factory._handle_config_versioning(reloaded, result)
         self.assertEqual(reloaded["webshart"]["caption_key"], "long_caption")
         self.assertFalse(reloaded["webshart"]["optimize_captions"])
+
+    def test_webshart_parquet_settings_survive_config_versioning(self):
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry, init_backend_config
+
+        backend = {
+            "id": "webshart-parquet",
+            "type": "webshart",
+            "source": "source",
+            "caption_strategy": "webshart",
+            "aws_access_key_id": "example-access",
+            "aws_secret_access_key": "example-secret",
+            "aws_session_token": "example-session",
+            "webshart": {"format": "parquet", "manifest": "combined/dataset.json", "columns": {"captions": "text"}},
+        }
+        result = init_backend_config(backend, self.args, self.accelerator)
+        self.assertEqual(result["config"]["webshart"], backend["webshart"])
+        result["metadata_backend"] = MagicMock(config=deepcopy(result["config"]))
+        result["metadata_backend"].__len__.return_value = 1
+        factory = FactoryRegistry.__new__(FactoryRegistry)
+        factory.args = self.args
+        self.args.override_dataset_config = False
+        reloaded = deepcopy(backend)
+        factory._handle_config_versioning(reloaded, result)
+        self.assertEqual(reloaded["webshart"], backend["webshart"])
+        for key in ("aws_access_key_id", "aws_secret_access_key", "aws_session_token"):
+            self.assertNotIn(key, result["config"])
+            self.assertEqual(reloaded[key], backend[key])
 
     def test_init_backend_config_uses_dataset_train_batch_size(self):
         from simpletuner.helpers.data_backend.factory import init_backend_config

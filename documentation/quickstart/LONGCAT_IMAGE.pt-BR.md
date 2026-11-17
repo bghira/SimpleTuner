@@ -25,8 +25,8 @@ LongCat-Image é um modelo bilíngue (zh/en) de texto-para-imagem com 6B que usa
    ```
 3. Instale o SimpleTuner com os extras corretos para seu backend:
    ```bash
-   pip install "simpletuner[cuda]"   # CUDA
-   pip install "simpletuner[cuda13]" # CUDA 13 / Blackwell (NVIDIA B-series GPUs)
+   pip install "simpletuner[cuda]" --extra-index-url https://download.pytorch.org/whl/cu132   # CUDA
+   pip install "simpletuner[cuda13]" --extra-index-url https://download.pytorch.org/whl/cu132 # CUDA 13 / Blackwell (NVIDIA B-series GPUs)
    pip install "simpletuner[mps]"    # Apple Silicon
    pip install "simpletuner[cpu]"    # CPU-only
    ```

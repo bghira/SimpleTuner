@@ -101,7 +101,7 @@ ControlNet モデルは、トレーニング時に与える条件データに応
 
 SimpleTuner の ControlNet 対応はまだ新しく、現時点で利用できるトレーニングセット生成手段は 1 つです:
 
-- [create_canny_edge.py](/scripts/toolkit/datasets/controlnet/create_canny_edge.py)
+- [create_canny_edge.py](/scripts/datasets/controlnet/create_canny_edge.py)
   - Canny モデルの学習用データセットを生成するための、非常に基本的な例です。
   - スクリプト内の `input_dir` と `output_dir` を変更する必要があります。
 

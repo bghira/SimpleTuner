@@ -8,7 +8,7 @@
 
     ---
 
-    SimpleTuner をインストールして、数分で最初のモデルをトレーニング
+    NVIDIA CUDA 13.2、AMD ROCm 10.0、Apple Silicon 向けに SimpleTuner をインストールし、最初のモデルをトレーニング
 
     [:octicons-arrow-right-24: インストール](INSTALL.ja.md)
 
@@ -100,7 +100,7 @@
 
 | タイプ | モデル |
 |--------|--------|
-| **画像** | Flux.1/2, [FLUX.3 Image Klein](quickstart/FLUX3_IMAGE.ja.md), [MOSS-Image](quickstart/MOSS_IMAGE.ja.md)、SD3、SDXL、Chroma、Auraflow、PixArt、Sana、Lumina2、HiDream など |
+| **画像** | [MiniMax H3 Image](quickstart/MINIMAX_H3.md), Flux.1/2, [FLUX.3 Image Klein](quickstart/FLUX3_IMAGE.ja.md), [MOSS-Image](quickstart/MOSS_IMAGE.ja.md)、SD3、SDXL、Chroma、Auraflow、PixArt、Sana、Lumina2、HiDream など |
 | **動画** | Wan、LTX Video、Hunyuan Video、Kandinsky 5、LongCat |
 | **音声** | ACE-Step |
 

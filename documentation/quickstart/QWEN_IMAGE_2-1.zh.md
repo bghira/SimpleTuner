@@ -11,7 +11,7 @@
 使用 Python 3.12–3.14，并按照[安装指南](../INSTALL.zh.md)配置平台。以下预设在 NVIDIA GPU 上测试。SimpleTuner 已包含 `webshart` 依赖；正则化数据集需要网络访问和本地缓存空间。
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 <a id="vram-presets"></a>

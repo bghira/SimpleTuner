@@ -42,10 +42,10 @@ Se a validação compilada gerar imagens pretas em uma combinação específica 
 Instale o SimpleTuner via pip:
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # Usuários CUDA 13 / Blackwell
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 Para instalação manual ou setup de desenvolvimento, veja a [documentação de instalação](../INSTALL.md).

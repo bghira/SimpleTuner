@@ -31,10 +31,10 @@ apt -y install nvidia-cuda-toolkit
 Instale o SimpleTuner via pip:
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 Para instalação manual ou setup de desenvolvimento, veja a [documentação de instalação](../INSTALL.md).
@@ -87,7 +87,7 @@ Lá, você precisará modificar as seguintes variáveis:
   "model_type": "lora",
   "model_family": "sd3",
   "pretrained_model_name_or_path": "stabilityai/stable-diffusion-3.5-large",
-  "output_dir": "/home/user/outputs/models",
+  "output_dir": "outputs/models",
   "validation_resolution": "1024x1024,1280x768",
   "validation_guidance": 3.0,
   "validation_prompt": "your main test prompt here",
@@ -168,7 +168,7 @@ export OPTIMIZER="adamw_bf16"
 
 Dependendo do dataset que você tem, será necessário configurar o diretório do dataset e o arquivo de configuração do dataloader de forma diferente. Neste exemplo, usaremos [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) como dataset.
 
-No seu diretório `/home/user/simpletuner/config`, crie um multidatabackend.json:
+No seu diretório `config`, crie um multidatabackend.json:
 
 <details>
 <summary>Ver exemplo de configuração</summary>
@@ -186,8 +186,8 @@ No seu diretório `/home/user/simpletuner/config`, crie um multidatabackend.json
     "maximum_image_size": 1024,
     "target_downsample_size": 1024,
     "resolution_type": "pixel_area",
-    "cache_dir_vae": "/home/user/simpletuner/output/cache/vae/sd3/pseudo-camera-10k",
-    "instance_data_dir": "/home/user/simpletuner/datasets/pseudo-camera-10k",
+    "cache_dir_vae": "output/cache/vae/sd3/pseudo-camera-10k",
+    "instance_data_dir": "datasets/pseudo-camera-10k",
     "disabled": false,
     "skip_file_discovery": "",
     "caption_strategy": "filename",

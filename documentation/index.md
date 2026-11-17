@@ -8,7 +8,7 @@
 
     ---
 
-    Install SimpleTuner and train your first model in minutes
+    Install SimpleTuner for NVIDIA CUDA 13.2, AMD ROCm 10.0, or Apple Silicon and train your first model
 
     [:octicons-arrow-right-24: Installation](INSTALL.md)
 
@@ -100,7 +100,7 @@
 
 | Type | Models |
 |------|--------|
-| **Image** | Flux.1/2, [FLUX.3 Image Klein](quickstart/FLUX3_IMAGE.md), [MOSS-Image](quickstart/MOSS_IMAGE.md), SD3, SDXL, Chroma, Auraflow, PixArt, Sana, Lumina2, HiDream, and more |
+| **Image** | [MiniMax H3 Image](quickstart/MINIMAX_H3.md), Flux.1/2, [FLUX.3 Image Klein](quickstart/FLUX3_IMAGE.md), [MOSS-Image](quickstart/MOSS_IMAGE.md), SD3, SDXL, Chroma, Auraflow, PixArt, Sana, Lumina2, HiDream, and more |
 | **Video** | Wan, LTX Video, Hunyuan Video, Kandinsky 5, LongCat |
 | **Audio** | ACE-Step |
 

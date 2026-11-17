@@ -34,7 +34,7 @@ Regularisation images आमतौर पर उसी मॉडल द्वा
 
 इमेज masks को image डेटा के साथ जोड़ा जा सकता है। mask के गहरे हिस्से loss calculations को उन हिस्सों को अनदेखा करने के लिए बाध्य करते हैं।
 
-एक उदाहरण [script](/scripts/toolkit/datasets/masked_loss/generate_dataset_masks.py) उपलब्ध है, जो input_dir और output_dir दिए जाने पर masks बना सकता है:
+एक उदाहरण [script](/scripts/datasets/masked_loss/generate_dataset_masks.py) उपलब्ध है, जो input_dir और output_dir दिए जाने पर masks बना सकता है:
 
 ```bash
 python generate_dataset_masks.py --input_dir /images/input \

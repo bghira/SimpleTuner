@@ -6,7 +6,6 @@
 class EventLightbox {
     constructor() {
         this.lightboxElement = null;
-        this.currentGroup = null;
         this.currentIndex = 0;
         this.images = [];
 
@@ -110,13 +109,9 @@ class EventLightbox {
     }
 
     open(clickedImage) {
-        const group = clickedImage.getAttribute('data-lightbox-group');
-        const clickedIndex = parseInt(clickedImage.getAttribute('data-lightbox-index')) || 0;
-
-        // Collect all images in the same group
-        this.images = Array.from(document.querySelectorAll(`[data-lightbox-group="${group}"]`));
-        this.currentGroup = group;
-        this.currentIndex = clickedIndex;
+        const container = clickedImage.closest('.event-images');
+        this.images = Array.from(container.querySelectorAll('[data-lightbox="event-images"]'));
+        this.currentIndex = this.images.indexOf(clickedImage);
 
         // Show lightbox
         this.lightboxElement.style.display = 'flex';
@@ -132,7 +127,6 @@ class EventLightbox {
     close() {
         this.lightboxElement.style.display = 'none';
         document.body.style.overflow = ''; // Restore scrolling
-        this.currentGroup = null;
         this.images = [];
     }
 

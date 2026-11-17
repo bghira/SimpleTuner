@@ -287,6 +287,8 @@ def _predict_velocity(
         "minimax_h3_reference_mode": getattr(block_state, "minimax_h3_reference_mode", "vanilla") or "vanilla",
         "return_dict": False,
     }
+    if getattr(getattr(transformer, "config", None), "num_pdd_heads", 0):
+        transformer_kwargs["pdd_step_index"] = i
     if video_hidden_shape is not None:
         transformer_kwargs["video_hidden_shape"] = video_hidden_shape
     return transformer(**transformer_kwargs)

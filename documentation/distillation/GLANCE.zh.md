@@ -10,8 +10,8 @@ Glance 更像是“带分段日程的单图 LoRA”，而非真正的蒸馏流�
 
 ## 前置条件
 
-- Python 3.10–3.13，已安装 SimpleTuner（`pip install 'simpletuner[cuda]'`）
-  - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130`
+- Python 3.10–3.13，已安装 SimpleTuner（`pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132`）
+  - CUDA 13 / Blackwell users (NVIDIA B-series GPUs): `pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132`
 - 一张图像与对应字幕文件，文件名相同（如 `data/glance.png` + `data/glance.txt`）
 - 一个 flow 模型检查点（示例使用 `black-forest-labs/FLUX.1-dev`）
 

@@ -20,7 +20,7 @@ Mage-Flow Flux.1 और Qwen-Image से छोटा है, लेकिन �
 SimpleTuner इंस्टॉल करें:
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 Mage-Flow packed variable-length attention उपयोग करता है। Local `flash-attn` package build किए बिना FlashAttention 2 उपयोग करने के लिए `"attention_mechanism": "flash-attn-varlen-hub"` सेट करें, जिससे SimpleTuner Hugging Face Hub kernel लोड करेगा। PyTorch SDPA के लिए default `diffusers` value रहने दें।

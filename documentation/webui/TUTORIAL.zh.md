@@ -47,11 +47,11 @@ python3.13 -m venv .venv
 NVIDIA 用户需要使用 CUDA extras 来获取所有正确的依赖：
 
 ```bash
-pip install -e 'simpletuner[cuda]'
+pip install -e 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs):
-# pip install -e 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+# pip install -e 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 # 或者，如果您通过 git 克隆：
-# pip install -e '.[cuda]'
+# pip install -e '.[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 Apple 和 ROCm 硬件用户还有其他 extras 可用，请参阅[安装说明](../INSTALL.md)。

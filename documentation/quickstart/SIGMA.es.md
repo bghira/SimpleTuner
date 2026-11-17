@@ -31,10 +31,10 @@ apt -y install nvidia-cuda-toolkit
 Instala SimpleTuner vía pip:
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 Para instalación manual o setup de desarrollo, consulta la [documentación de instalación](../INSTALL.md).
@@ -87,7 +87,7 @@ Ahí, necesitarás modificar las siguientes variables:
   "use_bitfit": false,
   "pretrained_model_name_or_path": "pixart-alpha/pixart-sigma-xl-2-1024-ms",
   "model_family": "pixart_sigma",
-  "output_dir": "/home/user/output/models",
+  "output_dir": "output/models",
   "validation_resolution": "1024x1024,1280x768",
   "validation_guidance": 3.5
 }
@@ -117,7 +117,7 @@ Es crucial contar con un dataset sustancial para entrenar tu modelo. Hay limitac
 
 Dependiendo del dataset que tengas, necesitarás configurar el directorio de dataset y el archivo de configuración del dataloader de forma diferente. En este ejemplo, usaremos [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) como dataset.
 
-En tu directorio `/home/user/simpletuner/config`, crea un multidatabackend.json:
+En tu directorio `config`, crea un multidatabackend.json:
 
 <details>
 <summary>Ver ejemplo de config</summary>
@@ -136,7 +136,7 @@ En tu directorio `/home/user/simpletuner/config`, crea un multidatabackend.json:
     "target_downsample_size": 1.0,
     "resolution_type": "area",
     "cache_dir_vae": "cache/vae/pixart/pseudo-camera-10k",
-    "instance_data_dir": "/home/user/simpletuner/datasets/pseudo-camera-10k",
+    "instance_data_dir": "datasets/pseudo-camera-10k",
     "disabled": false,
     "skip_file_discovery": "",
     "caption_strategy": "filename",

@@ -31,10 +31,10 @@ apt -y install nvidia-cuda-toolkit
 Install SimpleTuner via pip:
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 For manual installation or development setup, see the [installation documentation](../INSTALL.md).
@@ -87,7 +87,7 @@ There, you will need to modify the following variables:
   "model_type": "lora",
   "model_family": "sd3",
   "pretrained_model_name_or_path": "stabilityai/stable-diffusion-3.5-large",
-  "output_dir": "/home/user/outputs/models",
+  "output_dir": "outputs/models",
   "validation_resolution": "1024x1024,1280x768",
   "validation_guidance": 3.0,
   "validation_prompt": "your main test prompt here",
@@ -168,7 +168,7 @@ It's crucial to have a substantial dataset to train your model on. There are lim
 
 Depending on the dataset you have, you will need to set up your dataset directory and dataloader configuration file differently. In this example, we will be using [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) as the dataset.
 
-In your `/home/user/simpletuner/config` directory, create a multidatabackend.json:
+In your `config` directory, create a multidatabackend.json:
 
 <details>
 <summary>View example config</summary>
@@ -186,8 +186,8 @@ In your `/home/user/simpletuner/config` directory, create a multidatabackend.jso
     "maximum_image_size": 1024,
     "target_downsample_size": 1024,
     "resolution_type": "pixel_area",
-    "cache_dir_vae": "/home/user/simpletuner/output/cache/vae/sd3/pseudo-camera-10k",
-    "instance_data_dir": "/home/user/simpletuner/datasets/pseudo-camera-10k",
+    "cache_dir_vae": "output/cache/vae/sd3/pseudo-camera-10k",
+    "instance_data_dir": "datasets/pseudo-camera-10k",
     "disabled": false,
     "skip_file_discovery": "",
     "caption_strategy": "filename",

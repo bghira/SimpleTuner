@@ -42,10 +42,10 @@ NVIDIA GPU では、利用可能なら Hugging Face Hub kernel の attention ali
 pip で SimpleTuner をインストールします:
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell ユーザー
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 手動インストールや開発セットアップは [installation documentation](../INSTALL.md) を参照してください。

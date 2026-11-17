@@ -34,7 +34,7 @@ O modelo contem algo chamado "prior" que, em teoria, poderia ser preservado dura
 
 Mascaras de imagem podem ser definidas em pares com dados de imagem. As partes escuras da mascara fazem com que os calculos de loss ignorem essas partes da imagem.
 
-Existe um [script](/scripts/toolkit/datasets/masked_loss/generate_dataset_masks.py) de exemplo para gerar essas mascaras, dado um input_dir e output_dir:
+Existe um [script](/scripts/datasets/masked_loss/generate_dataset_masks.py) de exemplo para gerar essas mascaras, dado um input_dir e output_dir:
 
 ```bash
 python generate_dataset_masks.py --input_dir /images/input \

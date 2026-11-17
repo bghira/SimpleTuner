@@ -31,10 +31,10 @@ apt -y install nvidia-cuda-toolkit
 通过 pip 安装 SimpleTuner：
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 如需手动安装或开发环境设置，请参阅[安装文档](../INSTALL.md)。
@@ -87,7 +87,7 @@ cp config/config.json.example config/config.json
   "model_type": "lora",
   "model_family": "sd3",
   "pretrained_model_name_or_path": "stabilityai/stable-diffusion-3.5-large",
-  "output_dir": "/home/user/outputs/models",
+  "output_dir": "outputs/models",
   "validation_resolution": "1024x1024,1280x768",
   "validation_guidance": 3.0,
   "validation_prompt": "your main test prompt here",
@@ -168,7 +168,7 @@ export OPTIMIZER="adamw_bf16"
 
 根据您拥有的数据集，您需要以不同方式设置数据集目录和数据加载器配置文件。在此示例中，我们将使用 [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) 作为数据集。
 
-在 `/home/user/simpletuner/config` 目录中创建 multidatabackend.json：
+在 `config` 目录中创建 multidatabackend.json：
 
 <details>
 <summary>查看示例配置</summary>
@@ -186,8 +186,8 @@ export OPTIMIZER="adamw_bf16"
     "maximum_image_size": 1024,
     "target_downsample_size": 1024,
     "resolution_type": "pixel_area",
-    "cache_dir_vae": "/home/user/simpletuner/output/cache/vae/sd3/pseudo-camera-10k",
-    "instance_data_dir": "/home/user/simpletuner/datasets/pseudo-camera-10k",
+    "cache_dir_vae": "output/cache/vae/sd3/pseudo-camera-10k",
+    "instance_data_dir": "datasets/pseudo-camera-10k",
     "disabled": false,
     "skip_file_discovery": "",
     "caption_strategy": "filename",

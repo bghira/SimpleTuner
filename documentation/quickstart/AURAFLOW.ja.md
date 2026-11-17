@@ -39,10 +39,10 @@ apt -y install nvidia-cuda-toolkit
 pip で SimpleTuner をインストールします:
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 手動インストールまたは開発セットアップについては、[インストールドキュメント](../INSTALL.md)を参照してください。
@@ -395,10 +395,10 @@ SimpleTuner ディレクトリから、トレーニングを開始するいく�
 
 **オプション 1（推奨 - pip install）:**
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 simpletuner train
 ```
 

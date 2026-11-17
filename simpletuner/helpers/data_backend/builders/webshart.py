@@ -56,6 +56,20 @@ class WebshartBackendBuilder(BaseBackendBuilder):
             "dataset_type": getattr(config, "dataset_type", "image"),
             "optimize_captions": bool(getattr(config, "webshart_optimize_captions", None) or False),
             "caption_key": config.webshart_caption_key,
+            "format": webshart_config.get("format", "tar"),
+            "manifest": webshart_config.get("manifest"),
+            "columns": webshart_config.get("columns"),
+            **{
+                key: getattr(config, key, None)
+                for key in (
+                    "aws_region_name",
+                    "aws_endpoint_url",
+                    "aws_access_key_id",
+                    "aws_secret_access_key",
+                    "aws_session_token",
+                )
+            },
+            "aws_max_pool_connections": getattr(config, "aws_max_pool_connections", None) or 32,
         }
         if is_mock_backend:
             backend_kwargs["identifier"] = config.id

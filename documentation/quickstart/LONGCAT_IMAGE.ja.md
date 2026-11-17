@@ -25,8 +25,8 @@ LongCat‑Image は、フローマッチングと Qwen‑2.5‑VL テキスト�
    ```
 3. ハードウェアに合った extras で SimpleTuner をインストール:
    ```bash
-   pip install "simpletuner[cuda]"   # CUDA
-   pip install "simpletuner[cuda13]" # CUDA 13 / Blackwell (NVIDIA B-series GPUs)
+   pip install "simpletuner[cuda]" --extra-index-url https://download.pytorch.org/whl/cu132   # CUDA
+   pip install "simpletuner[cuda13]" --extra-index-url https://download.pytorch.org/whl/cu132 # CUDA 13 / Blackwell (NVIDIA B-series GPUs)
    pip install "simpletuner[mps]"    # Apple Silicon
    pip install "simpletuner[cpu]"    # CPU-only
    ```

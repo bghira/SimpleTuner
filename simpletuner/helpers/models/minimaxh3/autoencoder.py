@@ -700,9 +700,12 @@ def _infer_minimax_h3_vae_config_from_checkpoint(checkpoint) -> dict[str, Any]:
     inferred_config.setdefault("latents_std", (1.0,) * latent_channels)
 
     # Comfy fixes the decoder output channels at RGB. Allow explicit test/config overrides for nonstandard fixtures.
-    patch_volume = math.prod(inferred_config["spatial_downsample_factors"]) ** 2 * math.prod(
-        inferred_config["temporal_downsample_factors"]
-    )
+    image_decoder = post_quant.ndim == 4
+    if image_decoder:
+        inferred_config["decoder_rope_dim_ratio"] = 0.5
+    patch_volume = math.prod(inferred_config["spatial_downsample_factors"]) ** 2
+    if not image_decoder:
+        patch_volume *= math.prod(inferred_config["temporal_downsample_factors"])
     if decoder_proj_out.shape[0] % patch_volume == 0:
         inferred_config["out_channels"] = decoder_proj_out.shape[0] // patch_volume
     return inferred_config
@@ -1066,6 +1069,7 @@ class AutoencoderKLMiniMaxH3(ModelMixin, ConfigMixin, AttentionMixin, Autoencode
             inv_freq = MiniMaxH3VideoRotaryPosEmbed(
                 rope_dim,
                 theta=getattr(model.config, "decoder_rope_theta", 100.0),
+                num_axes=2 if model.post_quant_conv.weight.ndim == 4 else 3,
             ).inv_freq
             _set_minimax_h3_vae_module_buffer(model, "decoder.rope.inv_freq", inv_freq)
 

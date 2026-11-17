@@ -37,13 +37,13 @@ sudo apt update && sudo apt install -y python3.13 python3.13-venv
 python3.13 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
-Contributors या जो भी सीधे repo पर काम कर रहे हैं, source से इंस्टॉल करें और फिर `pip install -e .[cuda,dev]` चलाएँ।
+Contributors या जो भी सीधे repo पर काम कर रहे हैं, source से इंस्टॉल करें और फिर `pip install -e .[cuda,dev] --extra-index-url https://download.pytorch.org/whl/cu132` चलाएँ।
 
 ## वातावरण सेटअप
 

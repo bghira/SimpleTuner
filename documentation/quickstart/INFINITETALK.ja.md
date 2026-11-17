@@ -14,7 +14,7 @@ InfiniteTalk は Wan 2.1 I2V 14B を基盤にした音声駆動動画モデル�
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 各例は `trust_remote_code: true` で固定済みの `kernels-community/flash-attn3` Hub カーネルを許可します。ローカルまたは組み込みバックエンドを選ぶ場合は削除してください。

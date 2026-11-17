@@ -13,6 +13,7 @@ WebUI के एनवायरनमेंट क्रिएटर और स�
 
 | मॉडल | पैरामीटर | लाइसेंस | व्यावसायिक उपयोग की अनुमति | गाइड |
 | ------- | ------------ | --- | :---: | ------- |
+| **MiniMax H3 Image** | 33.1B | [MiniMax H3 Image Community](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/main/LICENSE) | [License](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image/blob/main/LICENSE) | [H3 Image](MINIMAX_H3.md) |
 | **Flux.1** | 12B | [BFL Non-Commercial](https://bfl.ai/legal/non-commercial-license-terms) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | शर्तें लागू<sup>3</sup> | [Flux.1 गाइड](FLUX.md) |
 | **Flux.2** | 32B | [BFL Non-Commercial](https://bfl.ai/legal/non-commercial-license-terms) / [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | शर्तें लागू<sup>4</sup> | [Flux.2 गाइड](FLUX2.md) |
 | **FLUX.3 Image Klein** | 5.6B | [FLUX [Kom]munity](https://huggingface.co/black-forest-labs/flux-3-image-klein-base/blob/main/LICENSE) | लाइसेंस की शर्तें लागू | [FLUX.3 Image Klein](FLUX3_IMAGE.hi.md) |

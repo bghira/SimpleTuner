@@ -5,7 +5,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import torch
+from diffusers.models.attention_dispatch import dispatch_attention_fn
 from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 from simpletuner.helpers.models.common import TextEmbedCacheKey
 from simpletuner.helpers.models.krea2 import Krea2, Krea2LoraLoaderMixin, Krea2Pipeline, Krea2Transformer2DModel
@@ -669,6 +671,82 @@ class Krea2VendoredModelTests(unittest.TestCase):
         attention.unfuse_projections()
         self.assertFalse(hasattr(attention, "to_qkv"))
         self.assertFalse(attention.fused_projections)
+
+    def test_masked_attention_matches_native_gqa_outputs_and_gradients(self):
+        torch.manual_seed(3292)
+        for kv_heads in (1, 2, 4):
+            for fused in (False, True):
+                for additive in (False, True):
+                    with self.subTest(kv_heads=kv_heads, fused=fused, additive=additive):
+                        attention = Krea2Attention(hidden_size=16, num_heads=4, num_kv_heads=kv_heads)
+                        if fused:
+                            attention.fuse_projections()
+                        hidden = torch.randn(2, 7, 16, requires_grad=True)
+                        mask = torch.ones(2, 1, 1, 7, dtype=torch.bool)
+                        mask[0, ..., 3:5] = False
+                        mask[1, ..., 5:] = False
+                        if additive:
+                            mask = torch.zeros_like(mask, dtype=hidden.dtype).masked_fill(~mask, -torch.inf)
+                        phase = torch.randn(7, 2).repeat_interleave(2, dim=-1)
+                        rotary = (phase.cos(), phase.sin())
+                        projections = [attention.to_qkv] if fused else [attention.to_q, attention.to_k, attention.to_v]
+                        parameters = [hidden, *(layer.weight for layer in projections), attention.to_out[0].weight]
+
+                        with (
+                            sdpa_kernel(SDPBackend.MATH),
+                            patch(
+                                "simpletuner.helpers.models.krea2.transformer.dispatch_attention_fn",
+                                wraps=dispatch_attention_fn,
+                            ) as dispatch,
+                        ):
+                            actual = attention(hidden, attention_mask=mask, image_rotary_emb=rotary)
+                        self.assertFalse(dispatch.call_args.kwargs["enable_gqa"])
+                        self.assertEqual([tensor.shape[2] for tensor in dispatch.call_args.args], [4, 4, 4])
+
+                        def native_gqa(*args, **kwargs):
+                            # Inject the mask after the processor to retain the native GQA reference path.
+                            kwargs["attn_mask"] = mask
+                            return dispatch_attention_fn(*args, **kwargs)
+
+                        with (
+                            sdpa_kernel(SDPBackend.MATH),
+                            patch(
+                                "simpletuner.helpers.models.krea2.transformer.dispatch_attention_fn", side_effect=native_gqa
+                            ),
+                        ):
+                            expected = attention(hidden, image_rotary_emb=rotary)
+                        grad = torch.randn_like(actual)
+                        actual_grads = torch.autograd.grad(actual, parameters, grad)
+                        expected_grads = torch.autograd.grad(expected, parameters, grad)
+                        torch.testing.assert_close(actual, expected, rtol=1e-5, atol=1e-6)
+                        for actual_grad, expected_grad in zip(actual_grads, expected_grads):
+                            torch.testing.assert_close(actual_grad, expected_grad, rtol=1e-5, atol=1e-6)
+
+    def test_unmasked_attention_retains_native_gqa(self):
+        attention = Krea2Attention(hidden_size=16, num_heads=4, num_kv_heads=1)
+        with patch(
+            "simpletuner.helpers.models.krea2.transformer.dispatch_attention_fn", wraps=dispatch_attention_fn
+        ) as dispatch:
+            attention(torch.randn(2, 7, 16))
+        self.assertTrue(dispatch.call_args.kwargs["enable_gqa"])
+        self.assertIsNone(dispatch.call_args.kwargs["attn_mask"])
+        self.assertEqual([tensor.shape[2] for tensor in dispatch.call_args.args], [4, 1, 1])
+
+    @unittest.skipUnless(torch.cuda.is_available(), "Requires CUDA or ROCm efficient SDPA kernels")
+    def test_masked_gqa_runs_efficient_sdpa_forward_and_backward(self):
+        attention = Krea2Attention(hidden_size=128, num_heads=4, num_kv_heads=1).to("cuda", dtype=torch.float16)
+        hidden = torch.randn(2, 16, 128, device="cuda", dtype=torch.float16, requires_grad=True)
+        mask = torch.ones(2, 1, 1, 16, device="cuda", dtype=torch.bool)
+        mask[0, ..., 4:8] = False
+        mask[1, ..., 8:] = False
+        with sdpa_kernel(SDPBackend.EFFICIENT_ATTENTION):
+            output = attention(hidden, attention_mask=mask)
+            output.square().mean().backward()
+        self.assertTrue(torch.isfinite(output).all())
+        self.assertTrue(torch.isfinite(hidden.grad).all())
+        for parameter in attention.parameters():
+            self.assertIsNotNone(parameter.grad)
+            self.assertTrue(torch.isfinite(parameter.grad).all())
 
     def test_model_supports_crepa_self_flow(self):
         model = Krea2.__new__(Krea2)

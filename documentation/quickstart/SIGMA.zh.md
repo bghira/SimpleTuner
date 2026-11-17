@@ -31,10 +31,10 @@ apt -y install nvidia-cuda-toolkit
 通过 pip 安装 SimpleTuner：
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 如需手动安装或开发环境设置，请参阅[安装文档](../INSTALL.md)。
@@ -87,7 +87,7 @@ cp config/config.json.example config/config.json
   "use_bitfit": false,
   "pretrained_model_name_or_path": "pixart-alpha/pixart-sigma-xl-2-1024-ms",
   "model_family": "pixart_sigma",
-  "output_dir": "/home/user/output/models",
+  "output_dir": "output/models",
   "validation_resolution": "1024x1024,1280x768",
   "validation_guidance": 3.5
 }
@@ -117,7 +117,7 @@ cp config/config.json.example config/config.json
 
 根据你拥有的数据集，需要以不同方式设置数据集目录和数据加载器配置文件。本示例使用 [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) 数据集。
 
-在 `/home/user/simpletuner/config` 目录中创建 multidatabackend.json：
+在 `config` 目录中创建 multidatabackend.json：
 
 <details>
 <summary>查看示例配置</summary>
@@ -136,7 +136,7 @@ cp config/config.json.example config/config.json
     "target_downsample_size": 1.0,
     "resolution_type": "area",
     "cache_dir_vae": "cache/vae/pixart/pseudo-camera-10k",
-    "instance_data_dir": "/home/user/simpletuner/datasets/pseudo-camera-10k",
+    "instance_data_dir": "datasets/pseudo-camera-10k",
     "disabled": false,
     "skip_file_discovery": "",
     "caption_strategy": "filename",

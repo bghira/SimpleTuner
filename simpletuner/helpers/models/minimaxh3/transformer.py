@@ -226,6 +226,8 @@ _SAFETENSORS_DTYPE_MAP = {
 }
 
 _COMFY_QUANT_METADATA_SUFFIXES = (
+    # ComfyUI's inference attention hint is byte-valued metadata, not a model weight.
+    ".comfy_attention.config",
     ".weight_scale",
     ".weight_scale_2",
     ".input_scale",
@@ -409,7 +411,9 @@ def _infer_minimax_h3_config_from_checkpoint(checkpoint) -> dict[str, Any]:
     raw_keys = {_strip_minimax_h3_checkpoint_prefix(key) for key in checkpoint.keys()}
     if "video_patch_proj.weight" in raw_keys:
         video_patch_weight = _get_checkpoint_tensor(checkpoint, "video_patch_proj.weight")
-        audio_patch_weight = _get_checkpoint_tensor(checkpoint, "audio_patch_proj.weight")
+        audio_enabled = "audio_patch_proj.weight" in raw_keys
+        audio_patch_weight = _get_checkpoint_tensor(checkpoint, "audio_patch_proj.weight") if audio_enabled else None
+        output_weight = _get_checkpoint_tensor(checkpoint, "final_layer.video_out.weight")
         condition_weight = _get_checkpoint_tensor(checkpoint, "condition_proj.weight")
         q_norm_weight = _get_checkpoint_tensor(checkpoint, "blocks.0.attn.q_norm.weight")
         qkv_weight = _get_checkpoint_tensor(checkpoint, "blocks.0.attn.qkv_proj.weight")
@@ -425,7 +429,9 @@ def _infer_minimax_h3_config_from_checkpoint(checkpoint) -> dict[str, Any]:
             "num_refiner_layers": _count_indexed_blocks(raw_keys, "token_refiner.blocks."),
             "ffn_dim": ffn_weight.shape[0] // 2,
             "in_channels": video_patch_weight.shape[1] // 4,
-            "audio_in_channels": audio_patch_weight.shape[1],
+            "audio_in_channels": audio_patch_weight.shape[1] if audio_enabled else 32,
+            "audio_enabled": audio_enabled,
+            "num_pdd_heads": 0 if audio_enabled else output_weight.shape[0] // video_patch_weight.shape[1],
             "text_dim": condition_weight.shape[1],
             "attention_head_dim": q_norm_weight.shape[0],
             "num_attention_heads": qkv_weight.shape[0] // (3 * q_norm_weight.shape[0]),
@@ -447,7 +453,8 @@ def _infer_minimax_h3_config_from_checkpoint(checkpoint) -> dict[str, Any]:
 
     if "proj_in.weight" in raw_keys:
         proj_weight = _get_checkpoint_tensor(checkpoint, "proj_in.weight")
-        audio_weight = _get_checkpoint_tensor(checkpoint, "audio_proj_in.weight")
+        audio_enabled = "audio_proj_in.weight" in raw_keys
+        audio_weight = _get_checkpoint_tensor(checkpoint, "audio_proj_in.weight") if audio_enabled else None
         context_weight = _get_checkpoint_tensor(checkpoint, "context_embedder.weight")
         q_norm_weight = _get_checkpoint_tensor(checkpoint, "transformer_blocks.0.attn.norm_q.weight")
         if "transformer_blocks.0.attn.to_q.weight" in raw_keys:
@@ -469,7 +476,9 @@ def _infer_minimax_h3_config_from_checkpoint(checkpoint) -> dict[str, Any]:
             "num_refiner_layers": _count_indexed_blocks(raw_keys, "token_refiner.refiner_blocks."),
             "ffn_dim": ffn_weight.shape[0] // 2,
             "in_channels": proj_weight.shape[1] // 4,
-            "audio_in_channels": audio_weight.shape[1],
+            "audio_in_channels": audio_weight.shape[1] if audio_enabled else 32,
+            "audio_enabled": audio_enabled,
+            "num_pdd_heads": _count_indexed_blocks(raw_keys, "pdd_proj_out."),
             "text_dim": context_weight.shape[1],
             "attention_head_dim": q_norm_weight.shape[0],
             "num_attention_heads": q_output_dim // q_norm_weight.shape[0],
@@ -1266,6 +1275,8 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         ffn_dim: int = 14336,
         in_channels: int = 24,
         audio_in_channels: int = 32,
+        audio_enabled: bool = True,
+        num_pdd_heads: int = 0,
         patch_size: tuple[int, int, int] = (1, 2, 2),
         text_dim: int = 5120,
         freq_dim: int = 256,
@@ -1293,7 +1304,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
 
         # 1. Per-modality input projections
         self.proj_in = nn.Linear(video_patch_dim, hidden_size, bias=True)
-        self.audio_proj_in = nn.Linear(audio_in_channels, hidden_size, bias=True)
+        self.audio_proj_in = nn.Linear(audio_in_channels, hidden_size, bias=True) if audio_enabled else None
         self.context_embedder = nn.Linear(text_dim, hidden_size, bias=True)
 
         # 2. Timestep embedding, shared by every AdaLN projection
@@ -1371,8 +1382,13 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
             eps=final_norm_eps,
             apply_silu=not self.use_adaln_curves,
         )
-        self.proj_out = nn.Linear(hidden_size, video_patch_dim, bias=True)
-        self.audio_proj_out = nn.Linear(hidden_size, audio_in_channels, bias=True)
+        self.proj_out = nn.Linear(hidden_size, video_patch_dim, bias=True) if not num_pdd_heads else None
+        self.pdd_proj_out = (
+            nn.ModuleList([nn.Linear(hidden_size, video_patch_dim, bias=True) for _ in range(num_pdd_heads)])
+            if num_pdd_heads
+            else None
+        )
+        self.audio_proj_out = nn.Linear(hidden_size, audio_in_channels, bias=True) if audio_enabled else None
 
         self.gradient_checkpointing = False
         self.gradient_checkpointing_backend = "torch"
@@ -1775,7 +1791,11 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
                         "INT4/NVFP4 single-file loading needs a model-specific quantized tensor wrapper."
                     )
 
-                if len(mapped_keys) == 3:
+                if key in {"final_layer.video_out.weight", "final_layer.video_out.bias"} and model.pdd_proj_out is not None:
+                    suffix = key.rsplit(".", 1)[1]
+                    for index, head_tensor in enumerate(tensor.chunk(model.config.num_pdd_heads, dim=0)):
+                        non_quantized_state_dict[f"pdd_proj_out.{index}.{suffix}"] = head_tensor.contiguous()
+                elif len(mapped_keys) == 3:
                     if tensor.shape[0] % 3 != 0:
                         raise RuntimeError(f"MiniMax-H3 fused QKV tensor {raw_key} cannot be split into q/k/v tensors")
                     qkv_tensors = tensor.split(tensor.shape[0] // 3, dim=0)
@@ -1932,6 +1952,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         num_condition_video_rows: int = 0,
         num_condition_audio_rows: int = 0,
         minimax_h3_reference_mode: str | H3_REFERENCE_MODE | None = None,
+        pdd_step_index: int | None = None,
         return_dict: bool = True,
     ) -> MiniMaxH3TransformerOutput | tuple[torch.Tensor, torch.Tensor] | tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         r"""
@@ -2038,7 +2059,12 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         # bfloat16 — see `_keep_in_fp32_modules`), so every input is aligned with its projection's parameter dtype,
         # mirroring the reference's explicit casts. The text stream sets the dtype of the packed sequence.
         video_embeds = self.proj_in(hidden_states.to(_linear_compute_dtype(self.proj_in)))
-        audio_embeds = self.audio_proj_in(audio_hidden_states.to(_linear_compute_dtype(self.audio_proj_in)))
+        if self.audio_proj_in is None:
+            if audio_indices.numel():
+                raise ValueError("MiniMax-H3-Image does not support audio rows.")
+            audio_embeds = video_embeds[:, :0]
+        else:
+            audio_embeds = self.audio_proj_in(audio_hidden_states.to(_linear_compute_dtype(self.audio_proj_in)))
         text_embeds = self.context_embedder(encoder_hidden_states.to(_linear_compute_dtype(self.context_embedder)))
         self.token_refiner.gradient_checkpointing = self.gradient_checkpointing
         text_attention_mask = None
@@ -2390,8 +2416,15 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
         # 5. Both heads run over every row, then the rows of each modality are selected. The heads are listed in
         # `_keep_in_fp32_modules`, so they stay float32 while the block stack runs in the requested `torch_dtype`;
         # align the activation with their parameter dtype.
-        hidden_states = self.norm_out(hidden_states, temb, timestep_indices).to(_linear_compute_dtype(self.proj_out))
-        video_output = _gather_h3_context_parallel_output(self.proj_out(hidden_states), cp_config, dim=1).index_select(
+        hidden_states = self.norm_out(hidden_states, temb, timestep_indices)
+        if self.pdd_proj_out is not None:
+            if pdd_step_index is None:
+                raise ValueError("MiniMax-H3-Image requires pdd_step_index for its per-step output heads.")
+            output_head = self.pdd_proj_out[pdd_step_index]
+        else:
+            output_head = self.proj_out
+        hidden_states = hidden_states.to(_linear_compute_dtype(output_head))
+        video_output = _gather_h3_context_parallel_output(output_head(hidden_states), cp_config, dim=1).index_select(
             1, video_indices.to(hidden_states.device)
         )
         if audio_indices.numel():
@@ -2402,7 +2435,7 @@ class MiniMaxH3Transformer3DModel(ModelMixin, ConfigMixin, AttentionMixin, PeftA
             audio_output = hidden_states.new_empty(
                 hidden_states.shape[0],
                 0,
-                self.audio_proj_out.out_features,
+                self.config.audio_in_channels,
             )
 
         if not return_dict:

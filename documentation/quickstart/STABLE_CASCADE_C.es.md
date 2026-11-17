@@ -37,13 +37,13 @@ Sigue la instalación estándar de SimpleTuner (pip o fuente). Para una workstat
 python3.13 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
-Para contribuidores o quienes trabajen directamente en el repo, instala desde fuente y luego ejecuta `pip install -e .[cuda,dev]`.
+Para contribuidores o quienes trabajen directamente en el repo, instala desde fuente y luego ejecuta `pip install -e .[cuda,dev] --extra-index-url https://download.pytorch.org/whl/cu132`.
 
 ## Configuración del entorno
 

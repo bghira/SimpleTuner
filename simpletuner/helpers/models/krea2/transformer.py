@@ -121,12 +121,20 @@ class Krea2AttnProcessor:
                 query = apply_rotary_emb(query, image_rotary_emb, sequence_dim=1)
                 key = apply_rotary_emb(key, image_rotary_emb, sequence_dim=1)
 
+            enable_gqa = attn.num_heads != attn.num_kv_heads
+            if enable_gqa and attention_mask is not None:
+                # Equal head counts let masked attention use the efficient SDPA backend.
+                repeats = attn.num_heads // attn.num_kv_heads
+                key = key.repeat_interleave(repeats, dim=2)
+                value = value.repeat_interleave(repeats, dim=2)
+                enable_gqa = False
+
             hidden_states = dispatch_attention_fn(
                 query,
                 key,
                 value,
                 attn_mask=attention_mask,
-                enable_gqa=attn.num_heads != attn.num_kv_heads,
+                enable_gqa=enable_gqa,
                 backend=self._attention_backend,
                 parallel_config=self._parallel_config,
             )

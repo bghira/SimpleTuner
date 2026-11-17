@@ -20,7 +20,7 @@ LongCat‑Video は、フローマッチング、Qwen‑2.5‑VL テキストエ
    ```
 2. ハードウェアに合った extras で SimpleTuner をインストール:
    ```bash
-   pip install "simpletuner[cuda]"   # NVIDIA
+   pip install "simpletuner[cuda]" --extra-index-url https://download.pytorch.org/whl/cu132   # NVIDIA
    pip install "simpletuner[mps]"    # Apple Silicon
    pip install "simpletuner[cpu]"    # CPU-only
    ```

@@ -87,6 +87,7 @@ from simpletuner.helpers.data_backend.csv_url_list import CSVDataBackend
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.data_backend.dataset_types import get_arg_value as _get_arg_value
 from simpletuner.helpers.data_backend.dataset_types import resolve_dataset_train_batch_size
+from simpletuner.helpers.data_backend.filters import resolve_filter_config
 from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.data_backend.local import LocalDataBackend
 from simpletuner.helpers.data_backend.memory import MemoryDataBackend
@@ -280,6 +281,9 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
         raise ValueError(f"(id={backend.get('id')}) disable_vae_cache has been removed. Use vae_cache_disable instead.")
     dataset_type = _backend_dataset_type(backend)
     output = {"id": backend["id"], "config": {}, "dataset_type": dataset_type.value}
+    filter_config = resolve_filter_config(backend)
+    if filter_config is not None:
+        output["config"]["filter_func"] = deepcopy(filter_config)
     if backend.get("type") == "memory":
         for key in ("memory_filesystem_path", "memory_filesystem_size", "memory_filesystem_sudo"):
             if key in backend:
@@ -496,6 +500,9 @@ def init_backend_config(backend: dict, args: dict, accelerator) -> dict:
                 output["config"][field] = value
         webshart_output = {}
         for field in (
+            "format",
+            "manifest",
+            "columns",
             "cache_dir",
             "metadata_cache_dir",
             "shard_cache_dir",
@@ -3785,7 +3792,7 @@ class FactoryRegistry:
                 prompt_records,
                 return_concat=False,
                 load_from_cache=False,
-                split_between_processes=True,
+                split_between_processes=not bool(backend.get("max_num_samples")),
             )
             info_log(f"(id={init_backend['id']}) Completed processing {len(captions)} captions.")
 
@@ -3967,7 +3974,7 @@ class FactoryRegistry:
                 prompt_records,
                 return_concat=False,
                 load_from_cache=False,
-                split_between_processes=True,
+                split_between_processes=not bool(backend.get("max_num_samples")),
             )
             info_log(f"(id={dataset_id}) Completed processing {len(captions)} captions with image context.")
 

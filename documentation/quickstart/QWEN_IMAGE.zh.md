@@ -23,10 +23,10 @@ Qwen Image 是一个 20B 参数模型，仅文本编码器在量化前就消耗 
 通过 pip 安装 SimpleTuner：
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 如需手动安装或开发环境设置，请参阅[安装文档](../INSTALL.md)。

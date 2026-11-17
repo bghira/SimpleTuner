@@ -315,6 +315,7 @@
     "minimaxh3": {
         "class_name": "MiniMaxH3",
         "flavour_choices": [
+            "h3_image",
             "fl2va",
             "ref2va",
             "convrot-int8",

@@ -13,7 +13,7 @@ git clone https://github.com/bghira/SimpleTuner.git
 cd SimpleTuner
 python3.13 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[cuda]'
+pip install -e '.[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 hf auth login
 ```
 

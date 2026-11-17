@@ -116,14 +116,10 @@ class SubprocessTrainerWrapper:
                 else:
                     self._send_event("state", {"status": "completed"})
             else:
-                # Import and initialize trainer
-                # trainer_func is expected to be the Trainer class or a factory function
                 from simpletuner.helpers.configuration.json_file import normalize_args
-                from simpletuner.helpers.training.trainer import Trainer
 
-                # Create trainer instance
                 normalized_config = normalize_args(config)
-                self.trainer = Trainer(config=normalized_config)
+                self.trainer = trainer_func(config=normalized_config)
 
                 # Hook into trainer events if available
                 self._setup_trainer_hooks()

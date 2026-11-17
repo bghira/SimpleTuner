@@ -21,6 +21,7 @@ from diffusers.video_processor import VideoProcessor
 
 from .autoencoder import AutoencoderKLMiniMaxH3
 from .autoencoder_audio import AutoencoderKLMiniMaxH3Audio
+from .autoencoder_image import AutoencoderKLMiniMaxH3Image
 from .modular_pipeline import MiniMaxH3ModularPipeline
 from .packing import MINIMAX_H3_PIXEL_MEAN, MINIMAX_H3_PIXEL_STD, unpack_audio_tokens, unpatchify_video_tokens
 
@@ -100,7 +101,11 @@ class MiniMaxH3VideoDecodeStep(ModularPipelineBlocks):
         if block_state.output_type == "latent":
             block_state.videos = latents
         else:
-            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=device.type == "cuda"):
+            with torch.autocast(
+                device_type=device.type,
+                dtype=torch.float16,
+                enabled=device.type == "cuda" and not isinstance(components.vae, AutoencoderKLMiniMaxH3Image),
+            ):
                 video = components.vae.decode(latents, return_dict=False)[0]
             pixel_mean = torch.tensor(MINIMAX_H3_PIXEL_MEAN, device=device).view(1, -1, 1, 1, 1)
             pixel_std = torch.tensor(MINIMAX_H3_PIXEL_STD, device=device).view(1, -1, 1, 1, 1)

@@ -31,10 +31,10 @@ apt -y install nvidia-cuda-toolkit
 pip で SimpleTuner をインストールします:
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 手動インストールまたは開発セットアップについては、[インストールドキュメント](../INSTALL.md)を参照してください。
@@ -87,7 +87,7 @@ cp config/config.json.example config/config.json
   "use_bitfit": false,
   "pretrained_model_name_or_path": "pixart-alpha/pixart-sigma-xl-2-1024-ms",
   "model_family": "pixart_sigma",
-  "output_dir": "/home/user/output/models",
+  "output_dir": "output/models",
   "validation_resolution": "1024x1024,1280x768",
   "validation_guidance": 3.5
 }
@@ -117,7 +117,7 @@ Mac M-series を使用している場合の追加設定:
 
 手元のデータセットに応じて、データセットディレクトリとデータローダー設定ファイルを異なる方法でセットアップする必要があります。この例では [pseudo-camera-10k](https://huggingface.co/datasets/bghira/pseudo-camera-10k) を使用します。
 
-`/home/user/simpletuner/config` ディレクトリに multidatabackend.json を作成します:
+`config` ディレクトリに multidatabackend.json を作成します:
 
 <details>
 <summary>設定例を表示</summary>
@@ -136,7 +136,7 @@ Mac M-series を使用している場合の追加設定:
     "target_downsample_size": 1.0,
     "resolution_type": "area",
     "cache_dir_vae": "cache/vae/pixart/pseudo-camera-10k",
-    "instance_data_dir": "/home/user/simpletuner/datasets/pseudo-camera-10k",
+    "instance_data_dir": "datasets/pseudo-camera-10k",
     "disabled": false,
     "skip_file_discovery": "",
     "caption_strategy": "filename",

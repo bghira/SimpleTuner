@@ -1,7 +1,9 @@
 import contextlib
+import importlib.util
 import os
 import types
 import unittest
+from collections import OrderedDict
 from unittest import mock
 
 import torch
@@ -91,23 +93,24 @@ class TestTransformerEngineQuantizationHelpers(unittest.TestCase):
         torch.testing.assert_close(model[0].weight.float(), expected_weight, atol=5e-3, rtol=5e-3)
         torch.testing.assert_close(model[0].bias.float(), expected_bias, atol=5e-3, rtol=5e-3)
 
-    def test_replace_linears_uses_fp8_model_init_when_enabled(self):
+    def test_replace_linears_initializes_fp8_weights_with_the_forward_recipe(self):
         from simpletuner.helpers.training.quantisation import _replace_linears_with_transformerengine
 
         calls = []
 
         @contextlib.contextmanager
-        def fp8_model_init(enabled=True):
-            calls.append(enabled)
+        def quantized_model_init(enabled=True, recipe=None):
+            calls.append((enabled, recipe))
             yield
 
         model = torch.nn.Sequential(torch.nn.Linear(16, 32, bias=False))
-        te = types.SimpleNamespace(Linear=_StubTELinear, fp8_model_init=fp8_model_init)
+        te = types.SimpleNamespace(Linear=_StubTELinear, quantized_model_init=quantized_model_init)
+        recipe = object()
 
-        converted = _replace_linears_with_transformerengine(model, te, torch.bfloat16, fp8_model_init_enabled=True)
+        converted = _replace_linears_with_transformerengine(model, te, torch.bfloat16, recipe, fp8_model_init_enabled=True)
 
         self.assertEqual(converted, 1)
-        self.assertEqual(calls, [True])
+        self.assertEqual(calls, [(True, recipe)])
 
     def test_replace_linears_does_not_wrap_converted_linear_forward_in_fp8_autocast(self):
         from simpletuner.helpers.training.quantisation import _replace_linears_with_transformerengine
@@ -314,6 +317,41 @@ class TestTransformerEngineQuantizationHelpers(unittest.TestCase):
         self.assertTrue(calls[0][0])
         self.assertIs(calls[0][1], recipe)
         self.assertEqual(result.shape, (1, 16))
+
+
+@unittest.skipUnless(
+    torch.cuda.is_available()
+    and torch.cuda.get_device_capability() >= (8, 9)
+    and importlib.util.find_spec("transformer_engine") is not None,
+    "TransformerEngine and an Ada or newer CUDA GPU are required",
+)
+class TestTransformerEngineCuda(unittest.TestCase):
+    def test_fp8_backward_with_trainable_and_frozen_weights(self):
+        from simpletuner.helpers.training.quantisation import _transformerengine_model
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        for frozen in (False, True):
+            with self.subTest(frozen=frozen):
+                model = (
+                    torch.nn.Sequential(OrderedDict(attn=torch.nn.Sequential(OrderedDict(to_q=torch.nn.Linear(128, 128)))))
+                    .cuda()
+                    .bfloat16()
+                )
+                model.requires_grad_(not frozen)
+                args = types.SimpleNamespace(model_type="lora" if frozen else "full")
+                with mock.patch.object(StateTracker, "get_args", return_value=args):
+                    _transformerengine_model(model, "fp8-transformerengine")
+                inputs = torch.randn(32, 128, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+                output = model(inputs)
+                output.float().square().mean().backward()
+                self.assertTrue(torch.isfinite(output).all())
+                self.assertIsNotNone(inputs.grad)
+                self.assertTrue(torch.isfinite(inputs.grad).all())
+                if frozen:
+                    self.assertIsNone(model.attn.to_q.weight.grad)
+                else:
+                    self.assertIsNotNone(model.attn.to_q.weight.grad)
+                    self.assertTrue(torch.isfinite(model.attn.to_q.weight.grad).all())
 
 
 if __name__ == "__main__":

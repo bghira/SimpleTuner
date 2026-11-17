@@ -14,7 +14,7 @@ Esta integración entrena el modelo oficial de un solo hablante. El modo multiha
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 Los ejemplos autorizan el kernel Hub fijado `kernels-community/flash-attn3` con `trust_remote_code: true`. Elimínalo si eliges un backend local o integrado.

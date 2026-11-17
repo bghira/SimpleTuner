@@ -7728,6 +7728,8 @@ class Trainer:
             and self.accelerator.distributed_type == DistributedType.FSDP
             and getattr(fsdp_plugin, "fsdp_version", 1) == 2
         )
+        # Schedule-free optimizers swap live parameters; switch every rank before gathering export weights.
+        self.mark_optimizer_eval()
         fsdp2_model_for_save = None
         fsdp2_pipeline_export_spec = None
         if "lora" in self.config.model_type and getattr(self.accelerator, "is_fsdp2", False):
@@ -7806,7 +7808,6 @@ class Trainer:
                     job_id=self.job_id,
                 )
                 self._emit_event(event)
-                self.mark_optimizer_eval()
                 if self.validation is not None:
                     AttentionBackendController.apply(self.config, AttentionPhase.EVAL)
                     self.disable_gradient_checkpointing()

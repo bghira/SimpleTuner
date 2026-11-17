@@ -2155,20 +2155,29 @@ class MiniMaxH3Tests(unittest.TestCase):
 
         self.assertEqual(wrapper.config.framerate, MINIMAX_H3_FPS)
 
-    def test_pre_vae_encode_transform_maps_common_pixel_range_to_h3_image_stats(self):
+    def test_pre_vae_encode_transform_preserves_image_and_video_pixel_range(self):
+        from simpletuner.helpers.caching.vae import VAECache
+
         wrapper = MiniMaxH3.__new__(MiniMaxH3)
-        sample = torch.zeros(1, 3, 1, 1, 3)
-        sample[..., 0] = -1.0
-        sample[..., 1] = 0.0
-        sample[..., 2] = 1.0
-
-        result = wrapper.pre_vae_encode_transform_sample(sample)
-
+        cache = VAECache.__new__(VAECache)
+        cache.num_video_frames = None
+        cache.vae = SimpleNamespace(spatial_compression_ratio=16)
+        image = Image.new("RGB", (3, 1))
+        image.putdata([(0, 0, 0), (128, 128, 128), (255, 255, 255)])
+        image = image.resize((96, 32), Image.Resampling.NEAREST)
         mean = torch.tensor(MINIMAX_H3_PIXEL_MEAN).view(1, 3, 1, 1, 1)
         std = torch.tensor(MINIMAX_H3_PIXEL_STD).view(1, 3, 1, 1, 1)
-        expected_pixels = torch.tensor([0.0, 0.5, 1.0]).view(1, 1, 1, 1, 3).expand(1, 3, 1, 1, 3)
-        expected = (expected_pixels - mean) / std
-        self.assertTrue(torch.allclose(result, expected))
+        expected_pixels = torch.tensor([0.0, 128 / 255, 1.0]).repeat_interleave(32).view(1, 1, 1, 1, 96)
+
+        for dataset_type, sample, frames in (("image", image, 1), ("video", [image, image], 2)):
+            with self.subTest(dataset_type=dataset_type):
+                transformed = wrapper.get_transforms(dataset_type)(sample).unsqueeze(0)
+                with patch("simpletuner.helpers.caching.vae.StateTracker.get_model_family", return_value="minimaxh3"):
+                    prepared = cache.prepare_video_latents(transformed)
+                result = wrapper.pre_vae_encode_transform_sample(prepared)
+                expected = expected_pixels.expand(1, 3, frames, 32, 96)
+                torch.testing.assert_close(result, (expected - mean) / std)
+                torch.testing.assert_close(result * std + mean, expected)
 
     def test_video_vae_cache_uses_posterior_mode(self):
         wrapper = MiniMaxH3.__new__(MiniMaxH3)

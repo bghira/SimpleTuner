@@ -298,7 +298,7 @@ class WanModelTests(unittest.TestCase):
 
     def test_special_scheduler_setup_loads_pipeline_scheduler(self):
         model = object.__new__(Wan)
-        model.config = SimpleNamespace(flow_schedule_shift=5.0)
+        model.config = SimpleNamespace(flow_schedule_shift=5.0, revision="pinned-model-commit")
         model._model_config_path = lambda: "Wan-AI/Wan2.1-T2V-14B-Diffusers"
         scheduler = object()
 
@@ -318,6 +318,7 @@ class WanModelTests(unittest.TestCase):
         from_pretrained.assert_called_once_with(
             "Wan-AI/Wan2.1-T2V-14B-Diffusers",
             subfolder="scheduler",
+            revision="pinned-model-commit",
             shift=5.0,
         )
         fix_bounds.assert_called_once_with(scheduler)

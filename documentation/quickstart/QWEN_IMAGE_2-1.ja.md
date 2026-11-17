@@ -11,7 +11,7 @@
 Python 3.12–3.14 を使用し、環境に合った[インストールガイド](../INSTALL.ja.md)に従ってください。以下のプリセットは NVIDIA GPU で検証しています。`webshart` は依存関係に含まれます。正則化データにはネットワークとローカルキャッシュ容量が必要です。
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 <a id="vram-presets"></a>

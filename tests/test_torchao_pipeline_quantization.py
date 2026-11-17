@@ -81,9 +81,34 @@ class TestTorchAoPipelineQuantization(unittest.TestCase):
             component_type="transformers",
         )
 
+        from torchao.quantization.granularity import PerGroup
+
         self.assertIsInstance(config.quant_type, self.Int8WeightOnlyConfig)
-        self.assertEqual(config.quant_type.group_size, 64)
+        self.assertEqual(config.quant_type.granularity, PerGroup(64))
         self.assertTrue(config.include_input_output_embeddings)
+
+    def test_int8_group_size_quantizes_with_requested_granularity(self):
+        from torchao.quantization import quantize_
+        from torchao.quantization.granularity import PerGroup
+
+        config = get_pipeline_quantization_builder("int8-torchao")(
+            overrides={"quant_type_kwargs": {"group_size": 32}}, component_type="diffusers"
+        )
+        model = torch.nn.Sequential(torch.nn.Linear(64, 32)).eval()
+        inputs = torch.randn(2, 64)
+        expected = model(inputs)
+        quantize_(model, config.quant_type)
+        self.assertEqual(config.quant_type.version, 2)
+        self.assertEqual(config.quant_type.granularity, PerGroup(32))
+        torch.testing.assert_close(model(inputs), expected, rtol=0.05, atol=0.02)
+
+    def test_int8_group_size_and_granularity_are_mutually_exclusive(self):
+        from torchao.quantization.granularity import PerRow
+
+        with self.assertRaisesRegex(ValueError, "either group_size or granularity"):
+            get_pipeline_quantization_builder("int8-torchao")(
+                overrides={"group_size": 32, "granularity": PerRow()}, component_type="diffusers"
+            )
 
     def test_torchao_pipeline_supports_dynamic_activation_int4_weight_configs(self):
         cases = {

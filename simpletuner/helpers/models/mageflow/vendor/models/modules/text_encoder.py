@@ -20,11 +20,7 @@ from transformers.masking_utils import create_causal_mask
 from transformers.modeling_flash_attention_utils import FlashAttentionKwargs
 from transformers.modeling_outputs import BaseModelOutputWithPast
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
-from transformers.models.qwen3_vl.modeling_qwen3_vl import (
-    Qwen3VLCausalLMOutputWithPast,
-    apply_rotary_pos_emb,
-    eager_attention_forward,
-)
+from transformers.models.qwen3_vl.modeling_qwen3_vl import apply_rotary_pos_emb, eager_attention_forward
 from transformers.utils import ModelOutput
 
 from ._attn_backend import flash_attn_varlen_func
@@ -90,7 +86,7 @@ class CustomQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
 
         Args:
             mode: One of:
-                - "full": Return full Qwen3VLCausalLMOutputWithPast
+                - "full": Return full Qwen3VLModelOutput
                 - "embedding": Only return last hidden state (skip lm_head) (default)
                 - "logits": Only return logits
                 - "hidden": Return all hidden states
@@ -124,7 +120,7 @@ class CustomQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
         output_hidden_states: bool | None = None,
         return_dict: bool | None = None,
         **kwargs,
-    ) -> Qwen3VLCausalLMOutputWithPast | Qwen3VLModelOutput | dict | torch.Tensor:
+    ) -> Qwen3VLModelOutput | dict | torch.Tensor:
         """
         Forward pass with customizable output.
 
@@ -171,7 +167,7 @@ class CustomQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                 last_hidden_state=hidden_states,
                 past_key_values=outputs.past_key_values,
                 attentions=outputs.attentions,
-                rope_deltas=outputs.rope_deltas,
+                rope_deltas=self.model.rope_deltas,
             )
         elif self._output_mode == self.OUTPUT_MODE_LOGITS:
             return logits
@@ -181,16 +177,16 @@ class CustomQwen3VLForConditionalGeneration(Qwen3VLForConditionalGeneration):
                 hidden_states=outputs.hidden_states,
                 past_key_values=outputs.past_key_values,
                 attentions=outputs.attentions,
-                rope_deltas=outputs.rope_deltas,
+                rope_deltas=self.model.rope_deltas,
             )
         else:  # OUTPUT_MODE_FULL
-            return Qwen3VLCausalLMOutputWithPast(
+            return Qwen3VLModelOutput(
                 loss=loss,
                 logits=logits,
                 past_key_values=outputs.past_key_values,
                 hidden_states=outputs.hidden_states,
                 attentions=outputs.attentions,
-                rope_deltas=outputs.rope_deltas,
+                rope_deltas=self.model.rope_deltas,
             )
 
 

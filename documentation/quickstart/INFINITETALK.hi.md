@@ -14,7 +14,7 @@ InfiniteTalk, Wan 2.1 I2V 14B पर आधारित ऑडियो-चा�
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 उदाहरण `trust_remote_code: true` से पिन किए गए `kernels-community/flash-attn3` Hub kernel को अधिकृत करते हैं। स्थानीय या built-in backend चुनने पर इसे हटाएँ।

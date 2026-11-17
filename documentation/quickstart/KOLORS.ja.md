@@ -33,10 +33,10 @@ apt -y install nvidia-cuda-toolkit
 pip で SimpleTuner をインストールします:
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 手動インストールまたは開発セットアップについては、[インストールドキュメント](../INSTALL.md)を参照してください。
@@ -88,7 +88,7 @@ popd
   "model_type": "lora",
   "model_family": "kolors",
   "pretrained_model_name_or_path": "Kwai-Kolors/Kolors-diffusers",
-  "output_dir": "/home/user/output/models",
+  "output_dir": "output/models",
   "validation_resolution": "1024x1024,1280x768",
   "validation_guidance": 3.4,
   "use_gradient_checkpointing": true,
@@ -190,7 +190,7 @@ SimpleTuner には、トレーニングの安定性とパフォーマンスを�
     "target_downsample_size": 1.0,
     "resolution_type": "area",
     "cache_dir_vae": "cache/vae/kolors/pseudo-camera-10k",
-    "instance_data_dir": "/home/user/simpletuner/datasets/pseudo-camera-10k",
+    "instance_data_dir": "datasets/pseudo-camera-10k",
     "disabled": false,
     "skip_file_discovery": "",
     "caption_strategy": "filename",

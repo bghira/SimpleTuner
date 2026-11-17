@@ -250,6 +250,36 @@ class TestConditioningSplitAlignment(unittest.TestCase):
         DatasetDuplicator.copy_metadata(source_entry, conditioning_entry)
         return training_metadata, conditioning_metadata
 
+    def test_paired_webshart_metadata_keeps_physical_row_ids(self):
+        paths = ["webshart://0/3/a.parquet/000000000003.jpg", "webshart://1/3/b.parquet/000000000003.jpg"]
+        accelerator = self._init_state(num_processes=1, process_index=0)
+
+        def set_webshart_backends(train_meta, cond_meta, train_backend, cond_backend, source, target):
+            source["data_backend"] = SimpleNamespace(
+                type="webshart", format="parquet", source="paired", metadata="index", subfolder=None
+            )
+            target["data_backend"] = SimpleNamespace(
+                type="webshart", format="parquet", source="paired", metadata="index", subfolder=None
+            )
+            train_meta.image_metadata = {path: {"original_size": [1024, 1024]} for path in paths}
+            train_meta.image_metadata_loaded = True
+
+        train_meta, cond_meta = self._prepare_metadata_backends(
+            accelerator=accelerator,
+            base_buckets={"1.0": paths},
+            source_id="edited",
+            source_dir="cache/edited",
+            conditioning_id="reference",
+            conditioning_dir="cache/reference",
+            conditioning_config_overrides={"conditioning_type": "reference_strict"},
+            before_copy_callback=set_webshart_backends,
+        )
+        self.assertEqual(cond_meta.aspect_ratio_bucket_indices, train_meta.aspect_ratio_bucket_indices)
+        self.assertEqual(set(cond_meta.image_metadata), set(paths))
+        self.assertIsNot(cond_meta.image_metadata, train_meta.image_metadata)
+        self.assertIsNot(cond_meta.aspect_ratio_bucket_indices["1.0"], train_meta.aspect_ratio_bucket_indices["1.0"])
+        self.assertTrue(cond_meta.read_only)
+
     def test_conditioning_split_matches_training_split(self):
         base_images = {
             "1.0": [f"/datasets/train/img_{i}.png" for i in range(4)],

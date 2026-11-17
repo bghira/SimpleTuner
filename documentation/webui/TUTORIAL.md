@@ -47,11 +47,11 @@ python3.13 -m venv .venv
 NVIDIA users will have to use the CUDA extras to pull in all the right dependencies:
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs):
-# pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+# pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 # or, if you've cloned via git:
-# pip install -e '.[cuda]'
+# pip install -e '.[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 There are other extras for users on apple and rocm hardware, see the [installation instructions](../INSTALL.md).

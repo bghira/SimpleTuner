@@ -115,17 +115,17 @@ Asegúrate de haber iniciado sesión en Hugging Face CLI: `huggingface-cli login
 ## Instalación
 
 ```bash
-pip install 'simpletuner[cuda]'
+pip install 'simpletuner[cuda]' --extra-index-url https://download.pytorch.org/whl/cu132
 
 # CUDA 13 / Blackwell users (NVIDIA B-series GPUs)
-pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu130
+pip install 'simpletuner[cuda13]' --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 Para configuración de desarrollo:
 ```bash
 git clone https://github.com/bghira/SimpleTuner
 cd SimpleTuner
-pip install -e ".[cuda]"
+pip install -e ".[cuda]" --extra-index-url https://download.pytorch.org/whl/cu132
 ```
 
 ## Configuración

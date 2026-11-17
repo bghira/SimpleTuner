@@ -303,6 +303,7 @@ class Sana(ImageModelFoundation):
         self.noise_schedule = FlowMatchEulerDiscreteScheduler.from_pretrained(
             get_model_config_path(self.config.model_family, self.config.pretrained_model_name_or_path),
             subfolder="scheduler",
+            revision=self.config.revision,
         )
         fix_flow_match_euler_schedule_bounds(self.noise_schedule)
         # Lock Sana to the scheduler's built-in shift. Its sampler applies custom density before table lookup.

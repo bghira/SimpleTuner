@@ -20,7 +20,7 @@ LongCat‑Video एक 13.6B द्विभाषी (zh/en) टेक्स्
    ```
 2. अपने हार्डवेयर के अनुसार बैकएंड के साथ SimpleTuner इंस्टॉल करें:
    ```bash
-   pip install "simpletuner[cuda]"   # NVIDIA
+   pip install "simpletuner[cuda]" --extra-index-url https://download.pytorch.org/whl/cu132   # NVIDIA
    pip install "simpletuner[mps]"    # Apple Silicon
    pip install "simpletuner[cpu]"    # CPU-only
    ```

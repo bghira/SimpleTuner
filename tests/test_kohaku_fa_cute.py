@@ -5,7 +5,8 @@ import torch
 
 
 @unittest.skipUnless(
-    torch.cuda.is_available() and torch.cuda.get_device_capability() in {(8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0)},
+    torch.cuda.is_available()
+    and torch.cuda.get_device_capability() in {(8, 0), (8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)},
     "Requires Ampere, Ada, Hopper or Blackwell",
 )
 class CuTeAttentionTests(unittest.TestCase):
@@ -41,8 +42,8 @@ class CuTeAttentionTests(unittest.TestCase):
     def test_generic_backward_layouts_read_changed_graph_inputs(self):
         if torch.cuda.get_device_capability() not in ((8, 6), (8, 9), (12, 0)):
             self.skipTest("Requires measured generic warp-MMA layouts.")
-        from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import attention, native
+        from tests.kohaku_fa_reference import attention_reference as fp64_reference
 
         for dimension, dtype, causal in itertools.product(
             (64, 128, 256, 512), (torch.float16, torch.bfloat16), (False, True)
@@ -220,8 +221,8 @@ class CuTeAttentionTests(unittest.TestCase):
             self.skipTest("Requires the Blackwell producer/consumer pipeline.")
         from unittest.mock import patch
 
-        from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import attention, kernels, native
+        from tests.kohaku_fa_reference import attention_reference as fp64_reference
 
         for dim, columns, dtype in itertools.product((128, 512), (64, 128), (torch.float16, torch.bfloat16)):
 
@@ -288,8 +289,8 @@ class CuTeAttentionTests(unittest.TestCase):
     def test_sm103_fused_dispatch_crosses_sequence_threshold(self):
         if torch.cuda.get_device_capability() != (10, 3):
             self.skipTest("Requires B300 dispatch.")
-        from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import attention, kernels, native
+        from tests.kohaku_fa_reference import attention_reference as fp64_reference
 
         for dim, dtype in itertools.product((64, 128, 256, 512), (torch.float16, torch.bfloat16)):
             threshold = 1024 if dim == 64 else 512 if dim == 128 else 256
@@ -330,8 +331,8 @@ class CuTeAttentionTests(unittest.TestCase):
             self.skipTest("Requires the fused Blackwell pipeline.")
         from unittest.mock import patch
 
-        from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import attention, kernels, native
+        from tests.kohaku_fa_reference import attention_reference as fp64_reference
 
         for dim, dtype in itertools.product((64, 128, 256, 512), (torch.float16, torch.bfloat16)):
 
@@ -587,8 +588,8 @@ class CuTeAttentionTests(unittest.TestCase):
     def test_sm103_wide_graph_reads_changed_inputs(self):
         if torch.cuda.get_device_capability() != (10, 3):
             self.skipTest("Requires the SM103 wide backward.")
-        from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import attention, native
+        from tests.kohaku_fa_reference import attention_reference as fp64_reference
 
         for causal, sequence in ((False, 512), (True, 512), (False, 2048), (True, 2048)):
             with self.subTest(causal=causal, sequence=sequence):
@@ -626,8 +627,8 @@ class CuTeAttentionTests(unittest.TestCase):
     def test_sm103_wide_preserves_zero_covariance(self):
         if torch.cuda.get_device_capability() != (10, 3):
             self.skipTest("Requires the SM103 wide backward.")
-        from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import attention, native
+        from tests.kohaku_fa_reference import attention_reference as fp64_reference
 
         for causal, sequence in ((False, 513), (True, 513), (False, 2049), (True, 2049)):
             with self.subTest(causal=causal, sequence=sequence):
@@ -655,8 +656,8 @@ class CuTeAttentionTests(unittest.TestCase):
             self.skipTest("Requires the Blackwell query pipeline.")
         from unittest.mock import patch
 
-        from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import attention, kernels, native
+        from tests.kohaku_fa_reference import attention_reference as fp64_reference
 
         for dim, dtype in itertools.product((256, 512), (torch.float16, torch.bfloat16)):
 
@@ -871,7 +872,7 @@ class CuTeAttentionTests(unittest.TestCase):
             """
             from types import SimpleNamespace
             import torch
-            from scripts.benchmark_attention_precision import fp64_reference
+            from tests.kohaku_fa_reference import attention_reference as fp64_reference
             from simpletuner.helpers.training.attention_backend import AttentionBackendController, AttentionPhase
 
             AttentionBackendController.apply(SimpleNamespace(attention_mechanism="kohaku-fa"), AttentionPhase.TRAIN)
@@ -937,9 +938,21 @@ class CuTeAttentionTests(unittest.TestCase):
         function = torch.compile(attention, fullgraph=True) if compiled else attention
         actual = function(*inputs, mask=mask, causal=causal, scale=scale)
         grads = torch.autograd.grad(actual, inputs, dout)
+        from scripts.benchmark_attention_precision import metrics, rounded_reference
+
+        rounded = rounded_reference(inputs, dout, mask, causal, scale, output=actual)
         tolerance = 0.02 if q.dtype == torch.bfloat16 else 0.003
-        for got, want in zip((actual, *grads), (expected, *ref_grads)):
-            torch.testing.assert_close(got.double(), want, atol=tolerance, rtol=tolerance)
+        for got, mathematical, contract in zip((actual, *grads), (expected, *ref_grads), rounded):
+            # FP64 norm gates cover the qualified benchmark widths.
+            if q.shape[-1] in (16, 64, 128, 256, 512):
+                for head in range(got.shape[1]):
+                    error = metrics(got[:, head : head + 1], mathematical[:, head : head + 1])
+                    self.assertTrue(error["finite"])
+                    if error["reference_norm"]:
+                        self.assertLess(error["relative_error"], 0.01 if q.dtype == torch.bfloat16 else 0.005)
+                    else:
+                        self.assertEqual(got[:, head : head + 1].count_nonzero().item(), 0)
+            torch.testing.assert_close(got.double(), contract, atol=tolerance, rtol=tolerance)
         if mask is not None and mask.ndim == 4 and not mask[..., 0, :].any():
             self.assertEqual(actual[..., 0, :].count_nonzero().item(), 0)
             self.assertEqual(grads[0][..., 0, :].count_nonzero().item(), 0)
@@ -974,7 +987,9 @@ class CuTeAttentionTests(unittest.TestCase):
         from simpletuner.helpers.training.kohaku_fa_cute import attention
 
         dimensions = (
-            (64, 128, 256, 512) if torch.cuda.get_device_capability() in ((8, 6), (8, 9), (12, 0)) else (64, 128, 256)
+            (64, 128, 256, 512)
+            if torch.cuda.get_device_capability() in ((8, 6), (8, 9), (12, 0), (12, 1))
+            else (64, 128, 256)
         )
         for dim, causal in itertools.product(dimensions, (False, True)):
             with self.subTest(dim=dim, causal=causal):
@@ -1010,8 +1025,8 @@ class CuTeAttentionTests(unittest.TestCase):
                     self.compare(q, k, v, causal=True)
 
     def test_large_logits_key_and_value_gradients(self):
-        from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import attention
+        from tests.kohaku_fa_reference import attention_reference as fp64_reference
 
         for dtype in (torch.float16, torch.bfloat16):
             generator = torch.Generator(device="cuda").manual_seed(2)
@@ -1034,13 +1049,14 @@ class CuTeAttentionTests(unittest.TestCase):
                         self.assertGreater(cosine.item(), bound)
 
     def test_wide_head_gradient_cancellation(self):
-        from scripts.benchmark_attention_precision import fp64_reference, make_inputs
+        from scripts.benchmark_attention_precision import make_inputs
         from simpletuner.helpers.training.kohaku_fa_cute import attention
+        from tests.kohaku_fa_reference import attention_reference as fp64_reference
 
         dimensions = (
             (128, 256, 512)
             if torch.cuda.get_device_capability() == (12, 0)
-            else (256, 512) if torch.cuda.get_device_capability() in ((8, 6), (8, 9)) else (256,)
+            else (256, 512) if torch.cuda.get_device_capability() in ((8, 6), (8, 9), (12, 1)) else (256,)
         )
         cases = ((torch.float16, 1e5), (torch.float16, 1e6), (torch.bfloat16, 1e6))
         for dimension, (dtype, logit_scale) in itertools.product(dimensions, cases):
@@ -1066,10 +1082,10 @@ class CuTeAttentionTests(unittest.TestCase):
                     self.assertGreater(cosine.item(), 0.995)
 
     def test_saturated_softmax_gradient_sign_and_magnitude(self):
-        from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import attention
+        from tests.kohaku_fa_reference import attention_reference as fp64_reference
 
-        if torch.cuda.get_device_capability() not in {(8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0)}:
+        if torch.cuda.get_device_capability() not in {(8, 0), (8, 6), (8, 9), (9, 0), (10, 0), (10, 3), (12, 0), (12, 1)}:
             self.skipTest("Centered backward requires Ampere, Ada, Hopper or Blackwell.")
         for dtype in (torch.bfloat16, torch.float16):
             for dim in (1, 17, 64, 80, 96, 128, 160, 192, 224, 256, 257, 384, 511, 512):
@@ -1101,8 +1117,8 @@ class CuTeAttentionTests(unittest.TestCase):
                 self.compare(q, k, v, scale=-0.125, compiled=True)
 
     def test_long_dense_saturated_gradient(self):
-        from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import attention
+        from tests.kohaku_fa_reference import attention_reference as fp64_reference
 
         q = torch.zeros(1, 1537, 2, 128, device="cuda", dtype=torch.bfloat16).transpose(1, 2)
         k = torch.zeros(1, 1601, 2, 128, device="cuda", dtype=torch.bfloat16).transpose(1, 2)
@@ -1118,8 +1134,8 @@ class CuTeAttentionTests(unittest.TestCase):
             torch.testing.assert_close(got.double(), want, atol=0, rtol=0.03)
 
     def test_long_masked_runs_keep_tma_stages_synchronized(self):
-        from scripts.benchmark_attention_precision import fp64_reference
         from simpletuner.helpers.training.kohaku_fa_cute import attention
+        from tests.kohaku_fa_reference import attention_reference as fp64_reference
 
         for dim in (64, 128):
             with self.subTest(dim=dim):
@@ -1235,6 +1251,35 @@ class CuTeAttentionTests(unittest.TestCase):
         for scale in (0.0, -0.25):
             with self.subTest(scale=scale):
                 self.compare(q, k, v, scale=scale)
+
+    def test_sdpa_autocast_preserves_gradients_with_mixed_input_dtypes(self):
+        from simpletuner.helpers.training.kohaku_fa_cute.api import (
+            automatic_kohaku_fa_scaled_dot_product_attention,
+            kohaku_fa_scaled_dot_product_attention,
+        )
+
+        for dtype in (torch.float16, torch.bfloat16):
+            inputs = [torch.randn(1, 2, 33, 64, device="cuda", dtype=t) for t in (torch.float32, torch.float32, dtype)]
+            reference = [t.detach().requires_grad_() for t in inputs]
+            with torch.autocast("cuda", dtype=dtype):
+                expected = torch.nn.functional.scaled_dot_product_attention(*reference)
+            grad = torch.randn_like(expected)
+            expected_grads = torch.autograd.grad(expected, reference, grad)
+            for implementation in (kohaku_fa_scaled_dot_product_attention, automatic_kohaku_fa_scaled_dot_product_attention):
+                for compile in (False, True):
+                    with self.subTest(dtype=dtype, implementation=implementation.__name__, compile=compile):
+                        function = torch.compile(implementation, fullgraph=True) if compile else implementation
+                        tensors = [t.detach().requires_grad_() for t in inputs]
+                        with torch.autocast("cuda", dtype=dtype):
+                            output = function(*tensors)
+                        self.assertEqual(output.dtype, dtype)
+                        grads = torch.autograd.grad(output, tensors, grad)
+                        for got, want in zip((output, *grads), (expected, *expected_grads)):
+                            torch.testing.assert_close(got, want, atol=0.02, rtol=0.02)
+
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            with self.assertRaisesRegex(ValueError, "FP32 attention is unsupported"):
+                kohaku_fa_scaled_dot_product_attention(*(t.double() for t in inputs))
 
     def test_optimizer_steps_with_checkpointing_and_lora(self):
         from copy import deepcopy

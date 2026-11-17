@@ -30,6 +30,96 @@ class TestAllowEmptyFields(unittest.TestCase):
 
         self.assertIn("--validation_negative_prompt=", result)
 
+    def _parse_model_args(self, args):
+        from simpletuner.helpers.configuration.cmd_args import get_argument_parser
+
+        return get_argument_parser().parse_args(
+            [
+                "--model_family=moss_image",
+                "--output_dir=output",
+                "--model_type=lora",
+                "--optimizer=torch-adamw",
+                "--data_backend_config=data.json",
+                *args,
+            ]
+        )
+
+    def test_model_default_select_values_are_omitted_from_cli(self):
+        for prefix in ("", "--"):
+            for value in (None, "", "   "):
+                with self.subTest(prefix=prefix, value=value):
+                    args = mapping_to_cli_args(
+                        {
+                            prefix + "prediction_type": value,
+                            prefix + "validation_noise_scheduler": value,
+                            prefix + "distillation_method": value,
+                        }
+                    )
+                    self.assertEqual(args, [])
+                    parsed = self._parse_model_args(args)
+                    self.assertIsNone(parsed.prediction_type)
+                    self.assertIsNone(parsed.validation_noise_scheduler)
+                    self.assertIsNone(parsed.distillation_method)
+
+    def test_explicit_model_select_values_are_preserved(self):
+        args = mapping_to_cli_args(
+            {"prediction_type": "flow_matching", "validation_noise_scheduler": "euler", "distillation_method": "anyflow"}
+        )
+        parsed = self._parse_model_args(args)
+        self.assertEqual(parsed.prediction_type, "flow_matching")
+        self.assertEqual(parsed.validation_noise_scheduler, "euler")
+        self.assertEqual(parsed.distillation_method, "anyflow")
+
+    def test_explicit_empty_select_choice_is_preserved(self):
+        from simpletuner.simpletuner_sdk.server.services.field_registry import field_registry
+
+        field = field_registry.get_field("resume_from_checkpoint")
+        with patch.object(field, "choices", [*field.choices, {"value": None, "label": "Model Default"}]):
+            args = mapping_to_cli_args({"resume_from_checkpoint": "", "validation_negative_prompt": ""})
+        self.assertIn("--resume_from_checkpoint=", args)
+        self.assertIn("--validation_negative_prompt=", args)
+        parsed = self._parse_model_args(args)
+        self.assertEqual(parsed.resume_from_checkpoint, "")
+        self.assertEqual(parsed.validation_negative_prompt, "")
+
+    def test_moss_model_defaults_survive_repeated_webui_save_and_json_load(self):
+        from simpletuner.helpers.configuration.cmd_args import get_argument_parser
+        from simpletuner.helpers.configuration.json_file import load_json_config
+        from simpletuner.simpletuner_sdk.server.services.config_store import ConfigStore
+
+        form = {
+            "--model_family": "moss_image",
+            "--prediction_type": "",
+            "--validation_noise_scheduler": "",
+            "--distillation_method": "",
+            "--validation_negative_prompt": "",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            form.update(
+                {
+                    "--output_dir": str(Path(directory) / "output"),
+                    "--model_type": "lora",
+                    "--optimizer": "torch-adamw",
+                    "--data_backend_config": str(Path(directory) / "data.json"),
+                }
+            )
+            store = ConfigStore(config_dir=Path(directory), config_type="model")
+            for save in range(2):
+                with self.subTest(save=save):
+                    config = ConfigsService.normalize_form_to_config(form)
+                    store.save_config("model_defaults", config, overwrite=True)
+                    form, _ = store.load_config("model_defaults")
+                    self.assertEqual(form["--prediction_type"], "")
+                    self.assertEqual(form["--validation_noise_scheduler"], "")
+                    with patch.dict("os.environ", {"CONFIG_PATH": str(Path(directory) / "model_defaults.json")}):
+                        args = load_json_config()
+                    parsed = get_argument_parser().parse_args(args)
+                    self.assertEqual(parsed.model_family, "moss_image")
+                    self.assertIsNone(parsed.prediction_type)
+                    self.assertIsNone(parsed.validation_noise_scheduler)
+                    self.assertIsNone(parsed.distillation_method)
+                    self.assertEqual(parsed.validation_negative_prompt, "")
+
     def test_blank_optional_structured_config_skipped_when_mapping_to_cli_args(self):
         result = mapping_to_cli_args({"publishing_config": "", "validation_negative_prompt": ""})
 

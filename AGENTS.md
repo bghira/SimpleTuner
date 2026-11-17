@@ -10,6 +10,17 @@
 - Preferred diff tool: `difft --display=inline` (difftastic)
 - Never commit or push on your own.
 
+## Worktree management
+
+- Before making task changes or running commands that generate files, inspect `git status --short --branch` and `git worktree list`, fetch the target remote, and create a dedicated branch and worktree from the current target branch. Keep task worktrees outside the main repository directory.
+- After setup, run all task edits, builds, tests, and Git mutations in that worktree. Check the working directory and branch before making changes; keep the main repository checkout free of task changes.
+- Preserve pre-existing changes and untracked files in every checkout. If your task accidentally changes the main checkout, move only your own changes into the task worktree and verify the main checkout matches its initial state. Stop for clarification if ownership is unclear.
+- Audit worktree use at task start, at milestones during long tasks, and before handoff: run `git worktree list` and check `git status --short --branch` in the main checkout and the task worktree. Verify task changes are confined to the intended worktree and check whether worktrees from completed tasks are ready for cleanup.
+- After a PR is merged, fetch the target branch and verify the PR's merged status, including squash or rebase merges, before removing its worktree. Keep worktrees for open PRs or unfinished work.
+- Before cleanup, inspect the worktree's status, including untracked and ignored files, and confirm all task commits were included in the merged PR and no files need preserving. Never force-remove a worktree or discard unrelated work to make cleanup succeed.
+- Remove verified, completed worktrees with `git worktree remove`, prune stale worktree metadata with `git worktree prune`, and delete their local branches only after confirming the work was merged. Do not delete remote branches without user authorization.
+- At handoff, verify the main checkout still matches its initial state and report any task worktree retained for an open PR or any cleanup blocked by files or changes that need preserving.
+
 ## Code style
 
 - Defensive programming should be justified and expected by users, not masking bugs

@@ -151,6 +151,7 @@ class Kandinsky5ImageModelTests(unittest.TestCase):
         self.config = SimpleNamespace(
             model_family="kandinsky5-image",
             model_flavour=None,
+            revision=None,
             pretrained_model_name_or_path=None,
             pretrained_vae_model_name_or_path=None,
             vae_path=None,
@@ -561,6 +562,7 @@ class Kandinsky5VideoModelTests(unittest.TestCase):
         self.config = SimpleNamespace(
             model_family="kandinsky5-video",
             model_flavour=None,
+            revision=None,
             pretrained_model_name_or_path=None,
             pretrained_vae_model_name_or_path=None,
             vae_path=None,
