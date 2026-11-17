@@ -1443,10 +1443,12 @@ For a basic example of how to use a Hugging Face dataset, set `"type": "huggingf
 
 ### Webshart Datasets
 
+Caption lookups use Webshart's shard metadata cache instead of a dataset-wide SimpleTuner caption map. Legacy SimpleTuner caption JSON files remain on disk and are ignored. Runs using native Webshart captions omit inferred trigger-word statistics from checkpoint metadata.
+
 During VAE cache preparation, Webshart processes all aspect-bucket groups belonging to one shard before moving to the next shard. This reduces repeated shard downloads when the whole-shard cache cannot hold the dataset. Already-cached samples and samples assigned to other ranks are excluded before grouping; training sampler order is unchanged.
 
 Captions can be strings, native JSON objects, or mixed lists of both. Objects stay
-intact in metadata and caption caches; each object becomes one JSON text prompt
+intact during caption lookup; each object becomes one JSON text prompt
 when preparing inputs for the text encoder. Object fields are not treated as
 separate caption variants. Use a list for alternatives, or `webshart.caption_key`
 to select a named field. This requires a webshart build with native JSON caption

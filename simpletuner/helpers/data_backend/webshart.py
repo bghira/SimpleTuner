@@ -119,7 +119,6 @@ class WebshartDataBackend(BaseDataBackend):
         self.compress_cache = compress_cache
         self.dataset_type = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
         self.optimize_captions = bool(optimize_captions)
-        self._shard_sample_index_cache: dict[int, dict[str, int]] = {}
         self._shard_metadata_cache: dict[int, dict] = {}
         self._shard_metadata_cache_limit = 8
 
@@ -276,8 +275,20 @@ class WebshartDataBackend(BaseDataBackend):
         sample_id = cls.normalize_sample_id(identifier)
         if not sample_id.startswith(cls.SAMPLE_PREFIX):
             return False
-        filename = sample_id.split("/", 2)[-1] if "/" in sample_id else sample_id
-        return Path(filename).suffix.lower() not in {".pt", ".safetensors"}
+        return cls.filename_suffix(sample_id) not in {".pt", ".safetensors"}
+
+    @staticmethod
+    def filename_suffix(filename: str) -> str:
+        name = next((part for part in reversed(filename.split("/")) if part and part != "."), "")
+        suffix_start = name.rfind(".")
+        return name[suffix_start:].lower() if 0 < suffix_start < len(name) - 1 else ""
+
+    @staticmethod
+    def caption_sidecar_filename(filename: str) -> str:
+        basename_start = filename.rfind("/") + 1
+        suffix_start = filename.rfind(".")
+        stem = filename[:suffix_start] if basename_start < suffix_start < len(filename) - 1 else filename
+        return f"{stem}.txt"
 
     @classmethod
     def _normalise_file_extensions(cls, file_extensions: Optional[list]) -> set[str]:
@@ -319,7 +330,7 @@ class WebshartDataBackend(BaseDataBackend):
         return Path(self.cache_dir) / "cache" / self.id / path.name
 
     def _is_cache_identifier(self, identifier: Union[str, Path]) -> bool:
-        return Path(identifier).suffix.lower() in self.CACHE_EXTENSIONS
+        return self.filename_suffix(str(identifier)) in self.CACHE_EXTENSIONS
 
     def _read_sample_bytes(self, identifier: Union[str, Path]) -> bytes:
         sample_ref = self._resolve_sample_ref(identifier)
@@ -410,26 +421,24 @@ class WebshartDataBackend(BaseDataBackend):
             tail = _read_range(length - tail_size, length - 1)
         return head, tail, length
 
-    def _sample_index_for_filename(self, shard_idx: int, filename: str) -> Optional[int]:
-        shard_idx = int(shard_idx)
-        if shard_idx not in self._shard_sample_index_cache:
-            self._shard_sample_index_cache[shard_idx] = {
-                str(sample_filename): sample_idx
-                for sample_idx, sample_filename in enumerate(self.dataset.list_samples_in_shard(shard_idx))
-            }
-        return self._shard_sample_index_cache[shard_idx].get(str(filename))
+    def get_sample_metadata(self, image_path: str) -> dict:
+        sample_ref = self._resolve_sample_ref(image_path)
+        sample_metadata = self.get_shard_metadata(sample_ref.shard_idx).get(sample_ref.filename, {}) or {}
+        if (
+            self.caption_key is not None
+            and sample_metadata.get("json_metadata") is None
+            and sample_metadata.get("json_path")
+        ):
+            payload = self.caption_loader.load_sample_json(sample_ref.shard_idx, sample_ref.sample_idx)
+            if payload is not None:
+                sample_metadata["json_metadata"] = json.loads(payload)
+        return sample_metadata
 
     def get_caption(self, image_path: str) -> Optional[CaptionValue]:
         if not self.is_sample_id(image_path):
             return None
-
-        sample_ref = self._resolve_sample_ref(image_path)
-        sample_metadata = self.get_shard_metadata(sample_ref.shard_idx).get(sample_ref.filename, {}) or {}
+        sample_metadata = self.get_sample_metadata(image_path)
         if self.caption_key is not None:
-            if sample_metadata.get("json_metadata") is None and sample_metadata.get("json_path"):
-                payload = self.caption_loader.load_sample_json(sample_ref.shard_idx, sample_ref.sample_idx)
-                if payload is not None:
-                    sample_metadata["json_metadata"] = json.loads(payload)
             return self._select_caption_keys(sample_metadata)
 
         caption = sample_metadata.get("captions")
@@ -439,16 +448,12 @@ class WebshartDataBackend(BaseDataBackend):
 
         if self.format == "parquet":
             return None
-        caption_filename = Path(sample_ref.filename).with_suffix(".txt").name
-        caption_sample_idx = self._sample_index_for_filename(sample_ref.shard_idx, caption_filename)
-        if caption_sample_idx is None:
+        sample_ref = self._resolve_sample_ref(image_path)
+        caption_filename = self.caption_sidecar_filename(sample_ref.filename)
+        if caption_filename not in self.get_shard_metadata(sample_ref.shard_idx):
             return None
-
-        caption_sample_id = self.sample_id(sample_ref.shard_idx, caption_sample_idx, caption_filename)
-        caption = self.read(caption_sample_id)
-        if isinstance(caption, bytes):
-            caption = caption.decode("utf-8")
-        return str(caption).strip()
+        caption = self.loader.load_caption(sample_ref.shard_idx, sample_ref.sample_idx)
+        return str(caption).strip() if caption is not None else None
 
     def _select_caption_keys(self, sample_metadata: dict) -> Optional[CaptionValue]:
         json_metadata = sample_metadata.get("json_metadata") or {}
@@ -556,7 +561,7 @@ class WebshartDataBackend(BaseDataBackend):
 
     def read_image(self, filepath: str, delete_problematic_images: bool = False):
         try:
-            file_extension = Path(self.normalize_sample_id(filepath)).suffix.lower().strip(".")
+            file_extension = self.filename_suffix(self.normalize_sample_id(filepath)).strip(".")
             loader = load_video if file_extension in video_file_extensions else load_image
             return loader(self.read(filepath, as_byteIO=True))
         except Exception as exc:

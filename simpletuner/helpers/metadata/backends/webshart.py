@@ -17,6 +17,7 @@ from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.webshart import CaptionValue, WebshartDataBackend
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.prompts import CaptionNotFoundError
 from simpletuner.helpers.training import video_file_extensions
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -89,8 +90,6 @@ class WebshartMetadataBackend(MetadataBackend):
         if self.dataset_type not in {DatasetType.IMAGE, DatasetType.VIDEO, DatasetType.CONDITIONING, DatasetType.EVAL}:
             raise ValueError("WebshartMetadataBackend supports image, video, conditioning, and eval datasets only.")
 
-        self.caption_cache: Dict[str, CaptionValue] = {}
-
         context = accelerator.main_process_first() if hasattr(accelerator, "main_process_first") else nullcontext()
         with context:
             self.reload_cache()
@@ -116,40 +115,7 @@ class WebshartMetadataBackend(MetadataBackend):
         StateTracker.set_image_files([("", [], sample_ids)], data_backend_id=self.data_backend.id)
 
     def caption_cache_entry(self, index: str) -> Optional[CaptionValue]:
-        index = self.data_backend.normalize_sample_id(index)
-        caption = self.caption_cache.get(index, None)
-        if caption is not None:
-            return caption
-        caption = self.data_backend.get_caption(index)
-        if caption is not None:
-            self.caption_cache[index] = caption
-        return caption
-
-    def _caption_cache_path(self):
-        return f"{self.cache_file}_captions.json"
-
-    def _load_caption_cache(self) -> None:
-        path = self._caption_cache_path()
-        if self.data_backend.exists(path):
-            try:
-                raw = self.data_backend.read(path)
-                loaded = json.loads(raw)
-                # An empty cache file (written before captions were indexed) must not
-                # short-circuit the rebuild below, or it wedges every startup into
-                # per-sample caption lookups.
-                if loaded:
-                    self.caption_cache = loaded
-                    return
-            except Exception as exc:
-                logger.warning("Error loading webshart caption cache, regenerating when buckets refresh: %s", exc)
-        self.caption_cache = {}
-        for sample_path, metadata in self.image_metadata.items():
-            captions = metadata.get("captions") if isinstance(metadata, dict) else None
-            if captions:
-                self.caption_cache[str(sample_path)] = captions
-
-    def _save_caption_cache(self) -> None:
-        self.data_backend.write(self._caption_cache_path(), json.dumps(self.caption_cache))
+        return self.data_backend.get_caption(self.data_backend.normalize_sample_id(index))
 
     def reload_cache(self, set_config: bool = True):
         if self.data_backend.exists(self.cache_file):
@@ -166,7 +132,6 @@ class WebshartMetadataBackend(MetadataBackend):
         else:
             logger.debug("No webshart cache file found, starting fresh.")
         self.load_image_metadata()
-        self._load_caption_cache()
 
     def save_cache(self, enforce_constraints: bool = False):
         if enforce_constraints:
@@ -193,6 +158,8 @@ class WebshartMetadataBackend(MetadataBackend):
         self.image_metadata_loaded = False
         if self.data_backend.exists(self.metadata_file):
             self.image_metadata = json.loads(self.data_backend.read(self.metadata_file))
+            for metadata in self.image_metadata.values():
+                metadata.pop("captions", None)
             self.image_metadata_loaded = True
 
     def save_image_metadata(self):
@@ -299,6 +266,8 @@ class WebshartMetadataBackend(MetadataBackend):
 
     def _metadata_for_entry(self, shard_metadata: dict, filename: str, entry: dict, sample_path: str) -> dict:
         file_metadata = shard_metadata.get(filename, {}) or {}
+        if self.data_backend.caption_key is not None:
+            file_metadata = self.data_backend.get_sample_metadata(sample_path)
         width = entry.get("width", file_metadata.get("width"))
         height = entry.get("height", file_metadata.get("height"))
         metadata = {
@@ -313,10 +282,6 @@ class WebshartMetadataBackend(MetadataBackend):
         }
         if width is not None and height is not None:
             metadata["original_size"] = (int(width), int(height))
-        if "captions" in file_metadata:
-            metadata["captions"] = file_metadata["captions"]
-        if self.data_backend.caption_key is not None:
-            metadata["captions"] = self.data_backend.get_caption(sample_path)
         json_metadata = file_metadata.get("json_metadata") or {}
         if json_metadata:
             metadata["json_metadata"] = json_metadata
@@ -350,11 +315,15 @@ class WebshartMetadataBackend(MetadataBackend):
         shard_metadata: dict,
         entry: dict,
         sample_path: str,
+        require_captions: bool,
     ) -> tuple[dict, Optional[tuple[str, dict]], Optional[Exception]]:
         try:
             filename = str(entry["filename"])
             sample_metadata = self._metadata_for_entry(shard_metadata, filename, entry, sample_path)
-            return sample_metadata, self._prepare_metadata(sample_path, sample_metadata), None
+            prepared = self._prepare_metadata(sample_path, sample_metadata)
+            if prepared is not None and require_captions and not self._entry_has_caption(shard_metadata, entry, sample_path):
+                raise CaptionNotFoundError(f"Could not find caption for {sample_path}")
+            return sample_metadata, prepared, None
         except Exception as exc:
             return {}, None, exc
 
@@ -406,10 +375,19 @@ class WebshartMetadataBackend(MetadataBackend):
         for sample in self.data_backend.list_samples_in_shard(shard_idx, dataset_filter=self.dataset_filter):
             sample_idx = int(sample["sample_idx"])
             filename = str(sample["filename"])
-            if Path(filename).suffix.lower().strip(".") not in video_file_extensions:
+            if WebshartDataBackend.filename_suffix(filename).strip(".") not in video_file_extensions:
                 continue
             entries.append({"sample_idx": sample_idx, "filename": filename})
         return entries
+
+    def _entry_has_caption(self, shard_metadata: dict, entry: dict, sample_path: str) -> bool:
+        if self.data_backend.caption_key is not None:
+            return bool(self.data_backend.get_caption(sample_path))
+        file_metadata = shard_metadata.get(str(entry["filename"]), {}) or {}
+        if file_metadata.get("captions"):
+            return True
+        caption_member = self.data_backend.caption_sidecar_filename(str(entry["filename"]))
+        return caption_member in shard_metadata
 
     def compute_aspect_ratio_bucket_indices(self, ignore_existing_cache: bool = False, progress_callback=None):
         logger.info("Building aspect ratio buckets from webshart metadata...")
@@ -435,14 +413,12 @@ class WebshartMetadataBackend(MetadataBackend):
         else:
             self.aspect_ratio_bucket_indices = {}
             self.image_metadata = {}
-            self.caption_cache = {}
             existing_files = set()
 
         processed_entries = 0
         last_save_time = time.time()
         aspect_ratio_bucket_updates: Dict[float, list[str]] = {}
         metadata_updates: Dict[str, dict] = {}
-        shard_metadata_cache: Dict[int, dict] = {}
         shard_indices = self._all_shard_indices()
         worker_count = max(1, int(getattr(self.data_backend, "parallel_downloads", 1)))
         executor = (
@@ -468,7 +444,7 @@ class WebshartMetadataBackend(MetadataBackend):
                 shard_entries = self._entries_for_shard(shard_idx)
                 if not shard_entries:
                     continue
-                shard_metadata = shard_metadata_cache.setdefault(shard_idx, self.data_backend.get_shard_metadata(shard_idx))
+                shard_metadata = self.data_backend.get_shard_metadata(shard_idx)
                 candidates = []
                 for entry in shard_entries:
                     entry = {**entry, "shard_idx": shard_idx}
@@ -495,16 +471,20 @@ class WebshartMetadataBackend(MetadataBackend):
                     candidate_idx += len(chunk)
                     if executor is None:
                         results = [
-                            self._prepare_bucket_entry(shard_metadata, entry, sample_path) for entry, sample_path in chunk
+                            self._prepare_bucket_entry(shard_metadata, entry, sample_path, require_captions)
+                            for entry, sample_path in chunk
                         ]
                     else:
                         results = executor.map(
-                            lambda item: self._prepare_bucket_entry(shard_metadata, item[0], item[1]),
+                            lambda item: self._prepare_bucket_entry(shard_metadata, item[0], item[1], require_captions),
                             chunk,
                         )
 
                     for (entry, sample_path), (sample_metadata, prepared, error) in zip(chunk, results):
                         processed_entries += 1
+                        if isinstance(error, CaptionNotFoundError):
+                            statistics["skipped"]["caption_missing"] += 1
+                            continue
                         if error is not None:
                             logger.error("Error processing webshart bucket entry %s: %s", entry, error)
                             statistics["skipped"]["error"] += 1
@@ -516,18 +496,8 @@ class WebshartMetadataBackend(MetadataBackend):
                                 statistics["skipped"]["metadata_missing"] += 1
                             continue
                         bucket_key, sample_metadata = prepared
-                        if require_captions and not sample_metadata.get("captions"):
-                            # Captions may live as sibling .txt tar members instead of embedded
-                            # metadata (e.g. cc12m); get_caption() range-reads those at runtime.
-                            # get_shard_metadata returns a flat mapping keyed by member filename.
-                            caption_member = Path(str(entry["filename"])).with_suffix(".txt").name
-                            if self.data_backend.caption_key is not None or caption_member not in shard_metadata:
-                                statistics["skipped"]["caption_missing"] += 1
-                                continue
                         aspect_ratio_bucket_updates.setdefault(bucket_key, []).append(sample_path)
                         metadata_updates[sample_path] = sample_metadata
-                        if sample_metadata.get("captions"):
-                            self.caption_cache[sample_path] = sample_metadata["captions"]
                         statistics["total_processed"] += 1
 
                     current_time = time.time()
@@ -540,7 +510,6 @@ class WebshartMetadataBackend(MetadataBackend):
                         metadata_updates = {}
                         self.save_cache(enforce_constraints=False)
                         self.save_image_metadata()
-                        self._save_caption_cache()
                         last_save_time = current_time
                 if progress_callback is not None:
                     progress_callback(shard_idx + 1, len(shard_indices))
@@ -555,7 +524,6 @@ class WebshartMetadataBackend(MetadataBackend):
 
         self.filtering_statistics = statistics
         self.save_image_metadata()
-        self._save_caption_cache()
         self.save_cache(enforce_constraints=True)
         self._sync_image_files_with_buckets()
         if self.bucket_report:

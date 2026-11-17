@@ -128,6 +128,66 @@ class TestWebshartDataBackend(unittest.TestCase):
         with self.assertRaises(ValueError):
             WebshartDataBackend.parse_sample_id(Path("/tmp/sample.webp"))
 
+    def test_sample_id_classification_matches_suffix_semantics_without_path_objects(self):
+        filenames = (
+            "nested/sample.jpg",
+            "sample.PT",
+            "sample.safetensors",
+            ".pt",
+            "...pt",
+            "sample.pt/",
+            "sample.pt/.",
+            "sample.pt/..",
+            "sample.jpg/",
+            "sample.",
+            "nested/.sample.safetensors",
+            "nested/../sample.webp",
+        )
+        for filename in filenames:
+            for prefix in ("webshart://", "webshart:/"):
+                identifier = f"{prefix}2/17/{filename}"
+                expected = Path(filename).suffix.lower() not in {".pt", ".safetensors"}
+                with (
+                    self.subTest(identifier=identifier),
+                    patch(
+                        "simpletuner.helpers.data_backend.webshart.Path", side_effect=AssertionError("filesystem parsing")
+                    ),
+                ):
+                    self.assertEqual(WebshartDataBackend.is_sample_id(identifier), expected)
+        self.assertFalse(WebshartDataBackend.is_sample_id("local/sample.jpg"))
+
+    def test_caption_sidecar_names_preserve_nested_and_hidden_filename_semantics(self):
+        for filename in ("nested/sample.JPG", ".hidden", "...jpg", "sample", "sample."):
+            with self.subTest(filename=filename):
+                self.assertEqual(
+                    WebshartDataBackend.caption_sidecar_filename(filename), str(Path(filename).with_suffix(".txt"))
+                )
+
+    def test_nested_txt_sidecar_uses_native_pairing_for_lookup_and_filtering(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive_path = root / "shard.tar"
+            with tarfile.open(archive_path, "w") as archive:
+                for name, payload in {"nested/sample.jpg": b"image", "nested/sample.txt": b" caption text "}.items():
+                    info = tarfile.TarInfo(name)
+                    info.size = len(payload)
+                    archive.addfile(info, BytesIO(payload))
+            with tarfile.open(archive_path) as archive:
+                files = {info.name: {"offset": info.offset_data, "length": info.size} for info in archive.getmembers()}
+            files["nested/sample.jpg"].update(width=16, height=16)
+            (root / "shard.json").write_text(
+                json.dumps({"path": "shard.tar", "filesize": archive_path.stat().st_size, "files": files})
+            )
+            backend = WebshartDataBackend(None, "nested", directory, cache_dir=str(root / "cache"), shard_cache_gb=0)
+            sample_id = backend.sample_id(0, 0, "nested/sample.jpg")
+            with patch.object(backend, "_read_sample_bytes", side_effect=AssertionError("image payload read")):
+                self.assertEqual(backend.get_caption(sample_id), "caption text")
+            metadata = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
+            metadata.data_backend = backend
+            self.assertTrue(
+                metadata._entry_has_caption(backend.get_shard_metadata(0), {"filename": "nested/sample.jpg"}, sample_id)
+            )
+
     @patch("simpletuner.helpers.data_backend.webshart.load_video")
     def test_read_image_decodes_video_samples(self, load_video):
         backend = WebshartDataBackend.__new__(WebshartDataBackend)
@@ -229,7 +289,7 @@ class TestWebshartDataBackend(unittest.TestCase):
         self.assertEqual(metadata["num_frames"], 64)
         self.assertEqual(metadata["fps"], 24.0)
         self.assertEqual(metadata["video_duration"], 2.67)
-        self.assertEqual(metadata["captions"], "A moving subject.")
+        self.assertNotIn("captions", metadata)
 
     @patch("simpletuner.helpers.metadata.backends.webshart.shutil.which", return_value="/usr/bin/ffprobe")
     def test_video_metadata_probe_prefers_sparse_range_payload(self, _which):
@@ -256,27 +316,21 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
         backend.max_num_samples = None
         backend.metadata_update_interval = 3600
         backend.aspect_ratio_bucket_indices = {}
-        backend.caption_cache = {}
         backend.bucket_report = None
         backend.data_backend = Mock(parallel_downloads=1, caption_key=None)
-        backend.data_backend.get_shard_metadata = Mock(return_value={})
+        backend.data_backend.caption_sidecar_filename = WebshartDataBackend.caption_sidecar_filename
+        backend.data_backend.get_shard_metadata = Mock(return_value={entry["filename"]: entry for entry in entries})
         backend.reload_cache = Mock()
         backend.load_image_metadata = Mock()
         backend.save_cache = Mock()
         backend.save_image_metadata = Mock()
-        backend._save_caption_cache = Mock()
         backend._sync_image_files_with_buckets = Mock()
         backend.set_metadata_by_filepath = Mock()
         backend._all_shard_indices = Mock(return_value=[0])
         backend._entries_for_shard = Mock(return_value=entries)
         backend._sample_id_from_entry = Mock(side_effect=lambda shard_idx, entry: f"webshart://0/0/{entry['path']}")
-        backend._prepare_bucket_entry = Mock(
-            side_effect=lambda shard_metadata, entry, sample_path: (
-                {"captions": entry.get("captions")},
-                ("1.0", {"captions": entry.get("captions")}),
-                None,
-            )
-        )
+        backend._metadata_for_entry = Mock(return_value={"original_size": (512, 512)})
+        backend._prepare_metadata = Mock(side_effect=lambda sample_path, sample_metadata: ("1.0", sample_metadata))
         return backend
 
     def _entries(self):
@@ -303,7 +357,10 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
     def test_webshart_caption_strategy_accepts_txt_sidecar_samples(self):
         backend = self._build_backend(self._entries())
         backend.data_backend.get_shard_metadata = Mock(
-            return_value={"uncaptioned.txt": {"path": "uncaptioned.txt", "offset": 0, "length": 10}}
+            return_value={
+                "captioned.webp": {"captions": ["a caption"]},
+                "uncaptioned.txt": {"path": "uncaptioned.txt", "offset": 0, "length": 10},
+            }
         )
         with patch(
             "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_data_backend_config",
@@ -317,6 +374,20 @@ class TestWebshartMetadataCaptionFiltering(unittest.TestCase):
         )
         self.assertEqual(backend.filtering_statistics["skipped"]["caption_missing"], 0)
         self.assertEqual(backend.filtering_statistics["total_processed"], 2)
+        backend.data_backend.get_caption.assert_not_called()
+
+    def test_selected_caption_read_failure_remains_a_per_sample_scan_error(self):
+        backend = self._build_backend(self._entries())
+        backend.data_backend.caption_key = "short"
+        backend.data_backend.get_caption.side_effect = [RuntimeError("source read failed"), "caption"]
+        with patch(
+            "simpletuner.helpers.metadata.backends.webshart.StateTracker.get_data_backend_config",
+            return_value={"caption_strategy": "webshart"},
+        ):
+            backend.compute_aspect_ratio_bucket_indices()
+        self.assertEqual(backend.filtering_statistics["skipped"]["error"], 1)
+        self.assertEqual(backend.filtering_statistics["total_processed"], 1)
+        self.assertEqual(backend.aspect_ratio_bucket_indices, {"1.0": ["webshart://0/0/uncaptioned.webp"]})
 
     def test_other_caption_strategies_keep_caption_less_samples(self):
         backend = self._build_backend(self._entries())
@@ -562,6 +633,37 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
         restored = WebshartDataBackend.from_instance_representation(backend.get_instance_representation())
         self.assertEqual(restored.get_caption(self._sample_id(restored)), ["named caption", "brief caption"])
 
+    def test_txt_sidecar_uses_logical_sample_without_image_reads(self):
+        self.files["missing.jpg"].pop("captions")
+        self._write_index(embedded=True)
+        backend = self._backend()
+        sample_id = self._sample_id(backend, "missing.jpg")
+        with patch.object(backend, "_read_sample_bytes", side_effect=AssertionError("image payload read")):
+            self.assertEqual(backend.get_caption(sample_id), "unselected text caption")
+
+    def test_custom_caption_json_is_available_before_video_geometry_preparation(self):
+        self._write_index(embedded=False)
+        data_backend = self._backend("short")
+        sample_id = self._sample_id(data_backend)
+        sample_ref = data_backend.parse_sample_id(sample_id)
+        metadata = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
+        metadata.data_backend = data_backend
+        metadata.dataset_type = DatasetType.VIDEO
+        metadata._probe_video_metadata = Mock(side_effect=AssertionError("unnecessary video probing"))
+        payload = {**self.json_metadata, "fps": 24.0, "frame": 64, "seconds": 2.67}
+        with patch.object(
+            data_backend, "caption_loader", SimpleNamespace(load_sample_json=Mock(return_value=json.dumps(payload).encode()))
+        ):
+            record = metadata._metadata_for_entry(
+                data_backend.get_shard_metadata(0),
+                sample_ref.filename,
+                {"shard_idx": 0, "sample_idx": sample_ref.sample_idx, "filename": sample_ref.filename},
+                sample_id,
+            )
+        self.assertEqual(record["num_frames"], 64)
+        self.assertEqual(record["fps"], 24.0)
+        self.assertNotIn("captions", record)
+
     def test_native_caption_objects_survive_index_selection_and_cache(self):
         caption = {"high_level_description": "a café", "elements": [{"bbox": [1, 2, 30, 40]}]}
         for index, value in enumerate([caption, [caption], [caption, "alternate"]]):
@@ -586,10 +688,9 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
                 self.assertEqual(selected, expected)
                 metadata = self._metadata_backend(backend)
                 self.assertEqual(metadata.caption_cache_entry(sample_id), selected)
-                metadata._save_caption_cache()
-                metadata.caption_cache.clear()
-                metadata._load_caption_cache()
+                metadata.reload_cache()
                 self.assertEqual(metadata.caption_cache_entry(sample_id), selected)
+                self.assertNotIn("caption_cache", vars(metadata))
 
     def test_worker_reload_receives_captions_and_metadata_after_main_process_refresh(self):
         from simpletuner.helpers.training.state_tracker import StateTracker
@@ -601,7 +702,7 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
         ):
             main = self._metadata_backend(self._backend("short"))
             worker = self._metadata_backend(self._backend("short"))
-            self.assertEqual(worker.caption_cache, {})
+            self.assertNotIn("caption_cache", vars(worker))
             with (
                 patch.object(main, "_prepare_metadata", side_effect=lambda path, data: (1.0, data)),
                 patch.object(main, "_enforce_min_bucket_size"),
@@ -611,22 +712,15 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
             sample_id = self._sample_id(main.data_backend)
             for set_config in (False, True):
                 with self.subTest(set_config=set_config):
-                    worker.caption_cache = {"stale": "old caption"}
                     worker.image_metadata = {"stale": {"captions": "old caption"}}
                     worker.image_metadata_loaded = True
-                    with patch.object(
-                        worker.data_backend,
-                        "get_caption",
-                        side_effect=AssertionError("Worker should use the caption cache written by the main process"),
-                    ) as read_caption:
-                        worker.reload_cache(set_config=set_config)
-                        self.assertEqual(worker.aspect_ratio_bucket_indices, {"1.0": [sample_id]})
-                        self.assertEqual(worker.caption_cache_entry(sample_id), "brief caption")
-                        read_caption.assert_not_called()
-                    self.assertNotIn("stale", worker.caption_cache)
+                    worker.reload_cache(set_config=set_config)
+                    self.assertEqual(worker.aspect_ratio_bucket_indices, {"1.0": [sample_id]})
+                    self.assertEqual(worker.caption_cache_entry(sample_id), "brief caption")
+                    self.assertNotIn("caption_cache", vars(worker))
                     self.assertTrue(worker.image_metadata_loaded)
                     self.assertNotIn("stale", worker.image_metadata)
-                    self.assertEqual(worker.image_metadata[sample_id]["captions"], "brief caption")
+                    self.assertNotIn("captions", worker.image_metadata[sample_id])
 
     def test_bucketing_and_cache_reload_use_selected_captions(self):
         from simpletuner.helpers.training.state_tracker import StateTracker
@@ -688,24 +782,33 @@ class TestWebshartShardMetadataMemoization(unittest.TestCase):
         self.assertEqual(backend.loader.get_metadata.call_count, 4)
 
 
-class TestWebshartCaptionCacheLoad(unittest.TestCase):
-    def _metadata_backend(self, cache_payload):
+class TestWebshartCaptionAccess(unittest.TestCase):
+    def test_legacy_caption_json_is_ignored_and_geometry_captions_are_not_retained(self):
         backend = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
-        backend.cache_file = "aspect_ratio_bucket_indices_test.json"
-        backend.data_backend = Mock(exists=Mock(return_value=True), read=Mock(return_value=cache_payload))
-        backend.image_metadata = {"webshart://0/1/sample.jpg": {"captions": "a red bicycle"}}
-        return backend
+        backend.cache_file = "buckets.json"
+        backend.metadata_file = "geometry.json"
+        backend.aspect_ratio_bucket_indices = {}
+        files = {
+            "buckets.json_captions.json": '{"sample.jpg": "stale caption"}',
+            "geometry.json": '{"sample.jpg": {"captions": "old caption", "original_size": [16, 16]}}',
+        }
+        backend.data_backend = Mock()
+        backend.data_backend.exists.side_effect = lambda path: path in files
+        backend.data_backend.read.side_effect = files.__getitem__
+        backend.data_backend.normalize_sample_id.side_effect = str
+        backend.data_backend.get_caption.return_value = "source caption"
+        backend.reload_cache()
+        self.assertEqual(backend.image_metadata, {"sample.jpg": {"original_size": [16, 16]}})
+        backend.data_backend.read.assert_called_once_with("geometry.json")
+        self.assertEqual(backend.caption_cache_entry("sample.jpg"), "source caption")
+        self.assertIn("buckets.json_captions.json", files)
+        backend.data_backend.delete.assert_not_called()
+        self.assertNotIn("caption_cache", vars(backend))
 
-    def test_empty_cache_file_regenerates_from_image_metadata(self):
-        backend = self._metadata_backend("{}")
-
-        backend._load_caption_cache()
-
-        self.assertEqual(backend.caption_cache, {"webshart://0/1/sample.jpg": "a red bicycle"})
-
-    def test_populated_cache_file_is_used_directly(self):
-        backend = self._metadata_backend('{"webshart://0/1/sample.jpg": "cached caption"}')
-
-        backend._load_caption_cache()
-
-        self.assertEqual(backend.caption_cache, {"webshart://0/1/sample.jpg": "cached caption"})
+    def test_caption_lookup_does_not_accumulate_records(self):
+        backend = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
+        backend.data_backend = SimpleNamespace(normalize_sample_id=str, get_caption=lambda ref: [ref, "alternate"])
+        for index in range(20000):
+            ref = f"webshart://{index}/0/sample.jpg"
+            self.assertEqual(backend.caption_cache_entry(ref), [ref, "alternate"])
+        self.assertEqual(set(vars(backend)), {"data_backend"})

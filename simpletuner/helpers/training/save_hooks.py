@@ -557,7 +557,7 @@ class SaveHookManager:
 
     def _build_tag_frequency_from_captions(self) -> dict[str, dict[str, int]]:
         """
-        Scan all training captions and build frequency dict of trigger words.
+        Infer trigger-word frequencies when captions can be collected for every dataset.
         Only includes tags that appear in more than 50% of all captions.
         Returns dict of dataset_id -> {tag: count}.
 
@@ -572,11 +572,20 @@ class SaveHookManager:
 
         from simpletuner.helpers.prompts import PromptHandler
 
+        backends = StateTracker.get_data_backends()
+        if any(
+            backend.get("data_backend") is not None and backend.get("config", {}).get("caption_strategy") == "webshart"
+            for backend in backends.values()
+        ):
+            # Global tag frequencies require complete caption statistics from every dataset.
+            self._tag_frequency_cache = {}
+            return {}
+
         # First pass: collect all captions and count tag presence across all backends
         all_captions = []
         backend_captions = {}
 
-        for backend_id, backend in StateTracker.get_data_backends().items():
+        for backend_id, backend in backends.items():
             if backend.get("data_backend") is None:
                 continue
 
@@ -584,23 +593,6 @@ class SaveHookManager:
             caption_strategy = config.get("caption_strategy")
             if not caption_strategy:
                 continue
-            if caption_strategy == "webshart":
-                # Webshart captions may only exist as remote tar members; enumerating
-                # them here would issue one range-read per sample at checkpoint time.
-                metadata_backend = backend.get("metadata_backend")
-                cached_captions = list(getattr(metadata_backend, "caption_cache", {}).values()) if metadata_backend else []
-                flattened = []
-                for value in cached_captions:
-                    if isinstance(value, list):
-                        flattened.extend(str(item) for item in value)
-                    elif value:
-                        flattened.append(str(value))
-                if flattened:
-                    valid = [c for c in flattened if c and c != "__caption_dropout__"]
-                    backend_captions[backend_id] = valid
-                    all_captions.extend(valid)
-                continue
-
             prepend_instance_prompt = config.get(
                 "prepend_instance_prompt", getattr(self.args, "prepend_instance_prompt", False)
             )
