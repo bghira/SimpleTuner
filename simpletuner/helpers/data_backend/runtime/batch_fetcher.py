@@ -65,6 +65,7 @@ class BatchFetcher:
         self.queue = queue.Queue(max_size)
         self.datasets = datasets or {}
         self._keep_running = True
+        self._failure: Optional[Exception] = None
         self.step = step
         self._next_fetch_step = step
         self.device_prefetcher = None
@@ -98,15 +99,15 @@ class BatchFetcher:
                             )
                         else:
                             item = iterator_fn(self._next_fetch_step, self.datasets)
-                    except ValueError:
-                        prefetch_log_debug("No datasets available during prefetch; stopping fetch thread.")
-                        self._keep_running = False
-                        break
                     except StopIteration:
                         prefetch_log_debug("Dataloader iterator signaled completion.")
                         break
                     except Exception as exc:
-                        logger.debug(f"BatchFetcher encountered exception: {exc}")
+                        # The iterator raises ValueError once every dataset is exhausted; the trainer
+                        # has stopped consuming by then. Any consumer still waiting gets the failure.
+                        prefetch_log_debug(f"Stopping fetch thread: {exc!r}")
+                        self._failure = exc
+                        self._keep_running = False
                         break
                     if self.device_prefetcher is not None:
                         item = self.device_prefetcher.prefetch(item)
@@ -132,10 +133,14 @@ class BatchFetcher:
         self.step = step
         if self.queue.empty():
             prefetch_log_debug("Queue is empty. Waiting for data.")
-        while self.queue.empty():
-            continue
+        while True:
+            try:
+                item = self.queue.get(timeout=0.1)
+                break
+            except queue.Empty:
+                if self._failure is not None:
+                    raise self._failure
         prefetch_log_debug("Queue has data. Yielding next item.")
-        item = self.queue.get()
         if self.device_prefetcher is not None:
             item = self.device_prefetcher.consume(item)
         _set_epoch_step_for_training_step(step)

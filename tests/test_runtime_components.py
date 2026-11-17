@@ -271,6 +271,37 @@ class TestBatchFetcher(unittest.TestCase):
         except Exception as e:
             self.fail(f"fetch_responses raised an exception: {e}")
 
+    @patch("simpletuner.helpers.data_backend.runtime.batch_fetcher._set_epoch_step_for_training_step")
+    @patch("simpletuner.helpers.data_backend.runtime.batch_fetcher.random_dataloader_iterator")
+    def test_next_response_raises_producer_failure(self, mock_iterator, mock_set_epoch_step):
+        """A producer failure reaches the consumer after the batches fetched before it."""
+        failures = (RuntimeError("corrupt sample"), ValueError("Aspect ratios must be the same"))
+        for failure in failures:
+            with self.subTest(failure=type(failure).__name__):
+                mock_iterator.side_effect = [{"batch": "data1"}, failure]
+                fetcher = BatchFetcher(step=100, max_size=5, datasets=self.datasets)
+                fetcher.start_fetching().join(timeout=5)
+
+                outcomes = []
+
+                def consume():
+                    for step in (101, 102):
+                        try:
+                            outcomes.append(fetcher.next_response(step=step))
+                        except Exception as exc:
+                            outcomes.append(exc)
+
+                consumer = threading.Thread(target=consume, daemon=True)
+                consumer.start()
+                consumer.join(timeout=5)
+                still_waiting = consumer.is_alive()
+                fetcher.queue.put(None)  # release a consumer left waiting on the dead producer
+                consumer.join(timeout=5)
+
+                self.assertFalse(still_waiting, "next_response kept waiting on a producer that had failed")
+                self.assertEqual(outcomes[0], {"batch": "data1"})
+                self.assertIs(outcomes[1], failure)
+
     def test_queue_properties(self):
         """Test that queue has correct properties"""
         fetcher = BatchFetcher(step=100, max_size=7, datasets=self.datasets)
