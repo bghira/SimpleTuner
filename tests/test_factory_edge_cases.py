@@ -1906,6 +1906,46 @@ class TestFactoryEdgeCases(unittest.TestCase):
                     apply_padding=expected,
                 )
 
+    def test_bucket_split_follows_eval_dataset_selection(self):
+        """Training datasets are divided between ranks; datasets reserved for validation stay whole."""
+        from simpletuner.helpers.data_backend.factory import FactoryRegistry
+
+        factory = FactoryRegistry(
+            args=self.args,
+            accelerator=self.accelerator,
+            text_encoders=self.text_encoders,
+            tokenizers=self.tokenizers,
+            model=self.model,
+        )
+        factory._handle_config_versioning = MagicMock()
+        factory.args.max_train_steps = 100
+        factory.args.allow_dataset_oversubscription = False
+        factory.args.skip_file_discovery = "aspect"
+
+        cases = (
+            ("no_eval_selection", None, "train", True),
+            ("training_dataset_with_eval_string", "eval", "train", True),
+            ("training_dataset_with_eval_list", ["eval"], "train", True),
+            ("eval_dataset_string", "eval", "eval", False),
+            ("eval_dataset_list", ["eval", "other"], "eval", False),
+            ("training_id_is_substring_of_eval_id", "evaluation", "eval", True),
+        )
+        for name, eval_dataset_id, dataset_id, expect_split in cases:
+            with self.subTest(name=name):
+                factory.args.eval_dataset_id = eval_dataset_id
+                metadata_backend = MagicMock()
+                factory._handle_bucket_operations(
+                    backend={"id": dataset_id, "skip_file_discovery": "aspect"},
+                    init_backend={
+                        "id": dataset_id,
+                        "config": {},
+                        "dataset_type": "image",
+                        "metadata_backend": metadata_backend,
+                    },
+                    conditioning_type=None,
+                )
+                self.assertEqual(metadata_backend.split_buckets_between_processes.called, expect_split)
+
     def test_all_ranks_reload_bucket_geometry_before_split(self):
         from simpletuner.helpers.data_backend.factory import FactoryRegistry
         from simpletuner.helpers.multiaspect.image import MultiaspectImage

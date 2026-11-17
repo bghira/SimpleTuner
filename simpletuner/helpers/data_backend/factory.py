@@ -1661,6 +1661,15 @@ class FactoryRegistry:
         except (TypeError, ValueError):
             return False
 
+    def _is_eval_dataset(self, dataset_id: str) -> bool:
+        """Return True when --eval_dataset_id reserves this dataset for validation."""
+        eval_dataset_id = self.args.eval_dataset_id
+        if eval_dataset_id is None:
+            return False
+        if isinstance(eval_dataset_id, str):
+            return dataset_id == eval_dataset_id
+        return dataset_id in eval_dataset_id
+
     def _evaluate_distiller_requirements(
         self,
         data_backend_config: List[Dict[str, Any]],
@@ -3349,7 +3358,8 @@ class FactoryRegistry:
         else:
             if skip_bucket_split:
                 info_log(f"(id={init_backend['id']}) Skipping bucket split for audio-only dataset.")
-            elif self.args.eval_dataset_id is None or init_backend["id"] in self.args.eval_dataset_id:
+            elif not self._is_eval_dataset(init_backend["id"]):
+                # Validation divides its own work between ranks, so its datasets stay whole.
                 init_backend["metadata_backend"].split_buckets_between_processes(
                     gradient_accumulation_steps=self.args.gradient_accumulation_steps,
                     apply_padding=apply_padding,
