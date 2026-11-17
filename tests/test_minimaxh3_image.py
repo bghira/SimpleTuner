@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,6 +8,7 @@ from unittest.mock import patch
 import torch
 from safetensors.torch import save_file
 
+from simpletuner.helpers.models.common import VideoModelFoundation
 from simpletuner.helpers.models.minimaxh3.autoencoder_image import AutoencoderKLMiniMaxH3Image
 from simpletuner.helpers.models.minimaxh3.image import MINIMAX_H3_IMAGE_REPO, MINIMAX_H3_IMAGE_SIGMAS
 from simpletuner.helpers.models.minimaxh3.model import MiniMaxH3
@@ -32,6 +34,78 @@ def image_wrapper(vae_path=None):
 
 
 class H3ImageTests(unittest.TestCase):
+    def test_assistant_loader_loads_and_freezes_real_comfyui_weights(self):
+        from peft import LoraConfig, get_peft_model_state_dict
+
+        from simpletuner.helpers.models.minimaxh3.modular_pipeline import _convert_minimax_h3_diffusers_lora_to_comfyui
+
+        source = tiny_h3_transformer(num_layers=1, audio_enabled=False, num_pdd_heads=6)
+        source.add_adapter(LoraConfig(r=2, lora_alpha=2, target_modules=["to_q", "to_k", "to_v", "to_out.0"]))
+        with torch.no_grad():
+            for name, parameter in source.named_parameters():
+                if "lora_B" in name:
+                    parameter.normal_(std=0.1)
+        expected = get_peft_model_state_dict(source)
+        wrapper = image_wrapper()
+        wrapper.model = tiny_h3_transformer(num_layers=1, audio_enabled=False, num_pdd_heads=6)
+        wrapper.model.requires_grad_(False)
+        wrapper.accelerator.unwrap_model = lambda model, **kwargs: model
+        wrapper.assistant_adapter_name = "assistant"
+        wrapper.assistant_lora_loaded = False
+        wrapper.config.model_type = "lora"
+        wrapper.config.assistant_lora_weight_name = "assistant.safetensors"
+        with tempfile.TemporaryDirectory() as directory:
+            save_file(_convert_minimax_h3_diffusers_lora_to_comfyui(expected), Path(directory) / "assistant.safetensors")
+            wrapper.config.assistant_lora_path = directory
+            with patch.object(VideoModelFoundation, "post_model_load_setup"):
+                wrapper.post_model_load_setup()
+        self.assertTrue(wrapper.assistant_lora_loaded)
+        actual = get_peft_model_state_dict(wrapper.model, adapter_name="assistant")
+        self.assertEqual(set(actual), set(expected))
+        for name in expected:
+            torch.testing.assert_close(actual[name], expected[name])
+        assistant = [parameter for name, parameter in wrapper.model.named_parameters() if ".assistant." in name]
+        self.assertTrue(assistant)
+        self.assertTrue(all(not parameter.requires_grad for parameter in assistant))
+
+    def test_default_assistant_selection_respects_training_mode_and_overrides(self):
+        example_path = (
+            Path(__file__).resolve().parents[1]
+            / "simpletuner/examples/minimaxh3/h3_image/80g/h3_image.peft-lora/config.json"
+        )
+        cases = [
+            ({}, MiniMaxH3.ASSISTANT_LORA_PATH, MiniMaxH3.ASSISTANT_LORA_WEIGHT_NAME),
+            (
+                json.loads(example_path.read_text()),
+                MiniMaxH3.ASSISTANT_LORA_PATH,
+                MiniMaxH3.ASSISTANT_LORA_WEIGHT_NAME,
+            ),
+            ({"assistant_lora_path": ""}, MiniMaxH3.ASSISTANT_LORA_PATH, MiniMaxH3.ASSISTANT_LORA_WEIGHT_NAME),
+            ({"assistant_lora_path": "None"}, MiniMaxH3.ASSISTANT_LORA_PATH, MiniMaxH3.ASSISTANT_LORA_WEIGHT_NAME),
+            ({"assistant_lora_weight_name": "custom.safetensors"}, MiniMaxH3.ASSISTANT_LORA_PATH, "custom.safetensors"),
+            ({"assistant_lora_path": "custom/assistant"}, "custom/assistant", None),
+            (
+                {"assistant_lora_path": "custom/assistant", "assistant_lora_weight_name": "custom.safetensors"},
+                "custom/assistant",
+                "custom.safetensors",
+            ),
+            ({"disable_assistant_lora": True}, None, None),
+            ({"model_type": "full"}, None, None),
+            ({"model_flavour": "fl2va"}, None, None),
+        ]
+        for overrides, expected_path, expected_weight in cases:
+            with self.subTest(overrides=overrides):
+                wrapper = image_wrapper()
+                wrapper.config.model_type = "lora"
+                wrapper.config.assistant_lora_path = None
+                wrapper.config.assistant_lora_weight_name = None
+                for key, value in overrides.items():
+                    setattr(wrapper.config, key, value)
+                with patch.object(VideoModelFoundation, "check_user_config"):
+                    wrapper.check_user_config()
+                self.assertEqual(wrapper.config.assistant_lora_path, expected_path)
+                self.assertEqual(wrapper.config.assistant_lora_weight_name, expected_weight)
+
     def test_image_layout_advances_each_reference_clock(self):
         from simpletuner.helpers.models.minimaxh3.image_blocks import build_image_layout
 

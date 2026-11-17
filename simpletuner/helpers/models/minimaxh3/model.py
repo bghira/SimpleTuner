@@ -115,6 +115,8 @@ class MiniMaxH3(VideoModelFoundation):
     PROMPT_UPSAMPLING_CONFIG_KEY = "minimax_h3_prompt_expander_url"
     PROMPT_UPSAMPLING_MODEL_ID = "MiniMaxAI/MiniMax-H3-Image-PE"
     ASSISTANT_LORA_FLAVOURS = ("h3_image",)
+    ASSISTANT_LORA_PATH = "SimpleTuner/minimax-h3-image-training-assistant"
+    ASSISTANT_LORA_WEIGHT_NAME = "pytorch_lora_weights.safetensors"
     DEFAULT_AUDIO_CHANNELS = MINIMAX_H3_AUDIO_CHANNELS
     NAME = "MiniMax H3"
     MODEL_DESCRIPTION = "Joint audio-video flow-matching transformer"
@@ -220,16 +222,18 @@ class MiniMaxH3(VideoModelFoundation):
         transformer = self.unwrap_model(self.model)
         assistant_path = getattr(self.config, "assistant_lora_path", None)
         if assistant_path and self.supports_assistant_lora(self.config) and self.config.model_type == "lora":
-            from simpletuner.helpers.assistant_lora import load_assistant_adapter
+            from simpletuner.helpers.assistant_lora import freeze_adapter_parameters
 
-            self.assistant_lora_loaded = load_assistant_adapter(
-                transformer=transformer,
-                pipeline_cls=MiniMaxH3Pipeline,
-                lora_path=assistant_path,
+            pipeline = MiniMaxH3Pipeline(blocks=MiniMaxH3ImageBlocks())
+            pipeline.update_components(transformer=transformer)
+            pipeline.load_lora_weights(
+                assistant_path,
                 adapter_name=self.assistant_adapter_name,
                 weight_name=getattr(self.config, "assistant_lora_weight_name", None),
                 low_cpu_mem_usage=getattr(self.config, "low_cpu_mem_usage", False),
             )
+            freeze_adapter_parameters(transformer, self.assistant_adapter_name)
+            self.assistant_lora_loaded = True
         sparse_config = transformer.configure_h3_sparse_attention(
             mode=getattr(self.config, "minimax_h3_sparse_attention", "disabled") or "disabled",
             block_shape=getattr(self.config, "minimax_h3_sparse_block_shape", "1,8,16") or "1,8,16",
@@ -509,6 +513,11 @@ class MiniMaxH3(VideoModelFoundation):
         if self._is_image_flavour():
             if getattr(self.config, "twinflow_enabled", False) or getattr(self.config, "distillation_method", None):
                 raise ValueError("h3_image training uses the released six-step PDD schedule; distillation is unsupported.")
+            if self.config.model_type == "lora" and self.supports_assistant_lora(self.config):
+                if getattr(self.config, "assistant_lora_path", None) in (None, "", "None"):
+                    self.config.assistant_lora_path = self.ASSISTANT_LORA_PATH
+                    if getattr(self.config, "assistant_lora_weight_name", None) in (None, "", "None"):
+                        self.config.assistant_lora_weight_name = self.ASSISTANT_LORA_WEIGHT_NAME
             if getattr(self.config, "tokenizer_max_length", None) is None:
                 self.config.tokenizer_max_length = 4096
 

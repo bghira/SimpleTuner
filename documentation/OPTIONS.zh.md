@@ -3204,4 +3204,4 @@ Assistant LoRA 和 AnyFlow 会临时将 Dynamo 每段代码的编译缓存上限
 
 ### `--minimax_h3_prompt_expander_url`
 
-可选设置 `minimax_h3_prompt_expander_url`，连接部署 `MiniMaxAI/MiniMax-H3-Image-PE` 的 OpenAI 兼容服务。缓存前使用官方文生图或编辑提示词扩展正向描述，编辑请求包含参考图像。需要认证时设置环境变量 `MINIMAX_H3_PROMPT_EXPANDER_API_KEY`。URL 留空可保留数据集原始描述。可通过 `assistant_lora_path` 显式选择已训练的辅助 LoRA；默认不会下载未发布的辅助模型。
+可选设置 `minimax_h3_prompt_expander_url`，连接部署 `MiniMaxAI/MiniMax-H3-Image-PE` 的 OpenAI 兼容服务。缓存前使用官方文生图或编辑提示词扩展正向描述，编辑请求包含参考图像。需要认证时设置环境变量 `MINIMAX_H3_PROMPT_EXPANDER_API_KEY`。URL 留空可保留数据集原始描述。`h3_image` LoRA 训练会自动加载并冻结 `SimpleTuner/minimax-h3-image-training-assistant` 中的辅助模型（`pytorch_lora_weights.safetensors`）。使用 `assistant_lora_path` 指定其他辅助模型，或设置 `disable_assistant_lora=true` 禁用。
