@@ -94,7 +94,6 @@ from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBack
 from simpletuner.helpers.data_backend.local import LocalDataBackend
 from simpletuner.helpers.data_backend.memory import MemoryDataBackend
 from simpletuner.helpers.data_backend.runtime.schedule import (
-    dataset_is_active,
     normalize_end_epoch,
     normalize_end_step,
     normalize_start_epoch,
@@ -1000,49 +999,6 @@ def move_text_encoders(args, text_encoders: list, target_device: str, force_move
     return text_encoders
 
 
-def synchronize_conditioning_settings():
-    """
-    Synchronize resolution settings between main image datasets and their conditioning datasets
-    """
-    for (
-        main_dataset_id,
-        conditioning_dataset_id,
-    ) in StateTracker.get_conditioning_mappings():
-        main_config = StateTracker.get_data_backend_config(main_dataset_id)
-        conditioning_config = StateTracker.get_data_backend_config(conditioning_dataset_id)
-
-        # Copy resolution settings from main dataset to conditioning dataset
-        resolution_settings = [
-            "resolution",
-            "resolution_type",
-            "maximum_image_size",
-            "target_downsample_size",
-            "minimum_image_size",
-        ]
-
-        for setting in resolution_settings:
-            if setting in main_config:
-                # Log that we're overriding a setting
-                if setting in conditioning_config and conditioning_config[setting] != main_config[setting]:
-                    info_log(
-                        f"Overriding {conditioning_dataset_id}'s {setting} ({conditioning_config[setting]}) "
-                        f"with value from {main_dataset_id} ({main_config[setting]})"
-                    )
-
-                conditioning_config[setting] = main_config[setting]
-
-                StateTracker.set_data_backend_config(conditioning_dataset_id, conditioning_config)
-
-                # Also update the metadata_backend object if it exists
-                conditioning_backend = StateTracker.get_data_backend(conditioning_dataset_id)
-                if "metadata_backend" in conditioning_backend:
-                    setattr(
-                        conditioning_backend["metadata_backend"],
-                        setting,
-                        main_config[setting],
-                    )
-
-
 def from_instance_representation(representation: dict) -> "BaseDataBackend":
     """
     Create a new backend instance from a serialized representation.
@@ -1070,14 +1026,6 @@ def from_instance_representation(representation: dict) -> "BaseDataBackend":
         return S3DataBackend.from_instance_representation(representation)
     else:
         raise ValueError(f"Unknown backend type: {backend_type}")
-
-
-# Legacy callers may refer to from_instance_representation without importing it
-# explicitly. Expose the function via builtins to preserve that behaviour.
-import builtins  # noqa: E402  (delay import until after function definition)
-
-if not hasattr(builtins, "from_instance_representation"):
-    builtins.from_instance_representation = from_instance_representation
 
 
 def sort_dataset_configs_by_dependencies(data_backend_config):
@@ -5122,93 +5070,6 @@ def get_huggingface_backend(
     )
 
 
-def select_dataloader_index(step, backends):
-    # Generate weights for each backend based on some criteria, filtering out inactive backends
-    weights = []
-    backend_ids = []
-    for backend_id, backend in backends.items():
-        weight = get_backend_weight(backend_id, backend, step)
-        if weight <= 0:
-            continue
-        weights.append(weight)
-        backend_ids.append(backend_id)
-
-    if not backend_ids:
-        # No active datasets available for sampling
-        # Check if any datasets have been exhausted - if so, this is a normal epoch end
-        # If no datasets have been exhausted, this is a misconfiguration error
-        if StateTracker.exhausted_backends:
-            return None
-        current_epoch = StateTracker.get_epoch()
-        next_step = (StateTracker.get_global_step() or 0) + 1
-        raise ValueError(
-            f"No active datasets available for sampling at epoch {current_epoch}, step {next_step}. "
-            "Adjust start_epoch/start_step so at least one dataset is active."
-        )
-
-    weights = torch.tensor(weights, dtype=torch.float32)
-    weights /= weights.sum()  # Normalize the weights
-
-    # Sample a backend index based on the weights
-    chosen_index = torch.multinomial(weights, 1).item()
-    chosen_backend_id = backend_ids[chosen_index]
-
-    return chosen_backend_id
-
-
-def get_backend_weight(backend_id, backend, step):
-    if isinstance(backend, dict):
-        backend_config = backend
-    else:
-        backend_config = getattr(backend, "config", None)
-        if not isinstance(backend_config, dict):
-            backend_config = StateTracker.get_data_backend_config(backend_id) or {}
-
-    prob = backend_config.get("probability", 1)
-
-    sampling_args = StateTracker.get_args()
-    sampling_method = getattr(sampling_args, "data_backend_sampling", "uniform") if sampling_args is not None else "uniform"
-    if not isinstance(sampling_method, str):
-        sampling_method = "uniform"
-
-    is_active, _ = dataset_is_active(backend_id, backend_config, step_hint=step)
-    if not is_active:
-        return 0.0
-
-    if sampling_method == "uniform":
-        return prob
-    elif sampling_method == "auto-weighting":
-        dataset_length = StateTracker.get_dataset_size(backend_id)
-        try:
-            total = sum(
-                StateTracker.get_dataset_size(b) for b in StateTracker.get_data_backends(_types=["image", "video", "audio"])
-            )
-        except Exception:
-            total = 0
-        if not total:
-            total = dataset_length or 1
-        length_factor = dataset_length / total
-
-        adjusted_prob = prob * length_factor
-
-        disable_step = backend_config.get("disable_after_epoch_step", None)
-        try:
-            disable_step = int(disable_step) if disable_step else None
-        except (TypeError, ValueError):
-            disable_step = None
-        if disable_step is None:
-            disable_step = float("inf")
-        try:
-            current_step = int(step)
-        except Exception:
-            current_step = 0
-        adjusted_prob = 0 if current_step > disable_step else max(0, adjusted_prob * (1 - current_step / disable_step))
-
-        return adjusted_prob
-    else:
-        raise ValueError(f"Unknown sampling weighting method: {sampling_method}")
-
-
 def run_distillation_cache_generation(distiller: Optional[DistillationBase]) -> None:
     """Trigger ODE generation for registered distillation cache backends if required."""
     if distiller is None or not hasattr(distiller, "requires_distillation_cache"):
@@ -5281,9 +5142,3 @@ def configure_multi_databackend(
         distiller_profile=distiller_profile,
         distillation_method=distillation_method,
     )
-
-
-for _name in ("from_instance_representation", "get_backend_weight", "select_dataloader_index"):
-    _func = globals().get(_name)
-    if _func is not None and not hasattr(builtins, _name):
-        setattr(builtins, _name, _func)
