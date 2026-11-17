@@ -4,7 +4,9 @@ import logging
 import os
 import queue
 import time
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
+from itertools import batched
 from queue import Queue
 from threading import Thread
 from typing import Any, Dict, List, Optional, Sequence, TypedDict
@@ -39,7 +41,6 @@ class PromptCacheRecord(TypedDict, total=False):
 
 
 class TextEmbeddingCache(WebhookMixin):
-    prompt_records: List[PromptCacheRecord] = []
     _instances: "WeakSet[TextEmbeddingCache]" = WeakSet()
 
     def __init__(
@@ -89,7 +90,6 @@ class TextEmbeddingCache(WebhookMixin):
             TextEmbedCacheKey.FILENAME,
             TextEmbedCacheKey.DATASET_AND_FILENAME,
         )
-        self.prompt_records: List[PromptCacheRecord] = []
         if self.data_backend.type in {"local", "memory"}:
             self.cache_dir = os.path.abspath(self.cache_dir)
         self.data_backend.create_directory(self.cache_dir)
@@ -509,6 +509,47 @@ class TextEmbeddingCache(WebhookMixin):
 
         return prompt_embeds, masks
 
+    def precompute_embeddings(
+        self,
+        prompt_records: Iterable[PromptCacheRecord],
+        *,
+        batch_size: int = 128,
+        progress_callback: Callable[[int], None] | None = None,
+    ) -> int:
+        """Consume an explicitly partitioned preparation stream without listing the cache."""
+        if self.model is None:
+            self.model = StateTracker.get_model()
+        if not self.model.uses_text_embeddings_cache():
+            self.disabled = True
+            return 0
+        self.wait_for_pending_writes()
+        processed = 0
+        if progress_callback is not None:
+            progress_callback(processed)
+        for batch in batched(prompt_records, batch_size):
+            pending = []
+            filenames = set()
+            for record in self._normalize_prompt_records(batch):
+                filename = self.hash_prompt_with_path(record)
+                if filename in filenames or self.data_backend.exists(filename):
+                    continue
+                filenames.add(filename)
+                if self.model.requires_text_embed_image_context() and not record.get("metadata"):
+                    raise ValueError("Text embedding preparation requires image-context metadata for every prompt.")
+                pending.append(record)
+            if pending:
+                self.compute_prompt_embeddings_with_model(
+                    pending,
+                    return_concat=False,
+                    load_from_cache=False,
+                    split_between_processes=False,
+                )
+            processed += len(batch)
+            if progress_callback is not None:
+                progress_callback(processed)
+        self.wait_for_pending_writes()
+        return processed
+
     def compute_embeddings_for_prompts(
         self,
         all_prompts,
@@ -525,10 +566,7 @@ class TextEmbeddingCache(WebhookMixin):
             self.debug_log(f"Model type {self.model_type} does not use text embed caching.")
             self.disabled = True
             return None
-        normalized_inputs = self._normalize_prompt_records(all_prompts)
-        if normalized_inputs:
-            self.prompt_records = normalized_inputs
-        prompt_records = self.prompt_records
+        prompt_records = self._normalize_prompt_records(all_prompts)
         if not prompt_records:
             self.debug_log("No prompt records were provided to text embed cache.")
             return None
@@ -630,7 +668,9 @@ class TextEmbeddingCache(WebhookMixin):
         prompt_embeds_all = []
         should_encode = not load_from_cache
         args = StateTracker.get_args()
-        records = self._normalize_prompt_records(prompt_records) if prompt_records is not None else self.prompt_records
+        records = self._normalize_prompt_records(prompt_records)
+        if not records:
+            return None
         if should_encode and split_between_processes:
             local_records = self.split_prompt_records_between_processes(records)
         else:

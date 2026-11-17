@@ -8,12 +8,11 @@ import torch
 from accelerate.logging import get_logger
 from PIL import Image
 
-from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
-from simpletuner.helpers.metadata.backends.base import MetadataBackend, get_cp_aware_dp_info
+from simpletuner.helpers.metadata.backends.base import get_cp_aware_dp_info
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
 from simpletuner.helpers.multiaspect.state import BucketStateManager
-from simpletuner.helpers.prompts import PromptHandler
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.multi_process import rank_info
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -58,9 +57,7 @@ class _UnseenOccurrenceIndex:
 class MultiAspectSampler(torch.utils.data.Sampler):
     def __init__(
         self,
-        id: str,
-        metadata_backend: MetadataBackend,
-        data_backend: BaseDataBackend,
+        dataset_runtime: DatasetRuntime,
         model,
         accelerator,
         batch_size: int,
@@ -69,32 +66,17 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         minimum_image_size: int = None,
         resolution: int = 1024,
         resolution_type: str = "pixel",
-        caption_strategy: str = "filename",
-        use_captions=True,
-        prepend_instance_prompt=False,
-        instance_prompt: str = None,
         conditioning_type: str = None,
         is_regularisation_data: bool = False,
-        dataset_type: str = "image",
         source_dataset_id: str = None,
-        disable_multiline_split: bool = False,
     ):
-        """
-        Initializes the sampler with provided settings.
-        Parameters:
-        - id: An identifier to link this with its VAECache and DataBackend objects.
-        - metadata_backend: An initialised instance of MetadataBackend.
-        - batch_size: Number of samples to draw per batch.
-        - state_path: Path to store the current state of the sampler.
-        - debug_aspect_buckets: Flag to log state for debugging purposes.
-        - delete_unwanted_images: Flag to decide whether to delete unwanted (small) images or just remove from the bucket.
-        - minimum_image_size: The minimum pixel length of the smallest side of an image.
-        """
-        self.id = id
-        if self.id != data_backend.id or self.id != metadata_backend.id:
-            raise ValueError(
-                f"Sampler ID ({self.id}) must match DataBackend ID ({data_backend.id}) and MetadataBackend ID ({metadata_backend.id})."
-            )
+        self.dataset_runtime = dataset_runtime
+        self.id = dataset_runtime.id
+        self.data_backend = dataset_runtime.data_backend
+        self.metadata_backend = dataset_runtime.metadata_backend
+        if self.id != self.data_backend.id or self.id != self.metadata_backend.id:
+            raise ValueError("Dataset, data backend, and metadata backend IDs must match.")
+        dataset_type = dataset_runtime.config["dataset_type"]
         self.model = model
         # Update the logger name with the id:
         self.dataset_type = dataset_type
@@ -118,7 +100,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         self.rank_info = rank_info()
         self.accelerator = accelerator
-        self.metadata_backend = metadata_backend
         if conditioning_type is not None:
             if conditioning_type not in [
                 "controlnet",
@@ -128,7 +109,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 "reference_loose",
             ]:
                 raise ValueError(f"Unknown conditioning image type: {conditioning_type}")
-        self.data_backend = data_backend
         self.source_dataset_id = source_dataset_id
         self.current_bucket = None
         self.current_epoch = 1
@@ -139,11 +119,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.minimum_image_size = minimum_image_size
         self.resolution = resolution
         self.resolution_type = resolution_type
-        self.use_captions = use_captions
-        self.caption_strategy = caption_strategy
-        self.prepend_instance_prompt = prepend_instance_prompt
-        self.instance_prompt = instance_prompt
-        self.disable_multiline_split = disable_multiline_split
+        self.use_captions = dataset_runtime.config["use_captions"]
+        self.caption_strategy = dataset_runtime.config["caption_strategy"]
+        self.prepend_instance_prompt = dataset_runtime.config["prepend_instance_prompt"]
+        self.instance_prompt = dataset_runtime.config["instance_prompt"]
+        self.disable_multiline_split = dataset_runtime.config["disable_multiline_split"]
         self.exhausted_buckets = []
         self._unseen_indices = {}
         self.buckets = self.load_buckets()
@@ -296,7 +276,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             seen_paths.add(image_path)
 
             image_data = self.data_backend.read_image(image_path)
-            image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
+            image_metadata = self.dataset_runtime.read_samples([image_path])[0]
             training_sample = TrainingSample(
                 image=image_data,
                 data_backend_id=self.id,
@@ -306,35 +286,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             )
             training_sample.prepare()
             validation_shortname = f"{self.id}_{img_idx}"
-            # Use the magic prompt handler to retrieve the captions.
-            prompt_kwargs = {
-                "caption_strategy": self.caption_strategy,
-                "instance_prompt": self.instance_prompt,
-                "data_backend": self.data_backend,
-                "sampler_backend_id": self.id,
-                "prepend_instance_prompt": self.prepend_instance_prompt,
-                "use_captions": self.use_captions,
-                "image_path": image_path,
-                "disable_multiline_split": self.disable_multiline_split,
-            }
+            caption_dataset = self.dataset_runtime
+            caption_path = image_path
             if self.source_dataset_id is not None:
-                # we'll retrieve captions from the source dataset.
-                training_sample_path = training_sample.training_sample_path(training_dataset_id=self.source_dataset_id)
-                source_dataset: "MultiAspectSampler" = StateTracker.get_data_backend(self.source_dataset_id)["sampler"]
-                prompt_kwargs.update(
-                    {
-                        "caption_strategy": source_dataset.caption_strategy,
-                        "instance_prompt": source_dataset.instance_prompt,
-                        "data_backend": source_dataset.data_backend,
-                        "sampler_backend_id": source_dataset.id,
-                        "prepend_instance_prompt": source_dataset.prepend_instance_prompt,
-                        "use_captions": source_dataset.use_captions,
-                        "image_path": training_sample_path,
-                        "disable_multiline_split": source_dataset.disable_multiline_split,
-                    }
-                )
-            self.logger.debug(f"Using prompt kwargs: {prompt_kwargs}")
-            validation_prompt = PromptHandler.magic_prompt(**prompt_kwargs)
+                caption_path = training_sample.training_sample_path(training_dataset_id=self.source_dataset_id)
+                caption_dataset = StateTracker.get_data_backend(self.source_dataset_id)["dataset_runtime"]
+            validation_prompt = caption_dataset.resolve_caption(caption_path)
             if type(validation_prompt) == list:
                 self.debug_log(f"Selecting random prompt from list: {validation_prompt}")
                 validation_prompt = random.choice(validation_prompt)
@@ -736,11 +693,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         Validate and yield images from given samples. Return a list of valid image paths.
         """
         to_yield = []
-        for image_path in samples:
-            image_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
-            if image_metadata is None:
-                image_metadata = {}
-            image_metadata.setdefault("dataset_type", self.dataset_type)
+        for image_metadata in self.dataset_runtime.read_samples(samples):
+            image_path = image_metadata["image_path"]
             requires_crop = (
                 StateTracker.get_args().model_family
                 not in [
@@ -753,14 +707,8 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 and image_metadata.get("dataset_type") != "audio"
             )
             if requires_crop and "crop_coordinates" not in image_metadata:
-                raise Exception(
-                    f"An image was discovered ({image_path}) that did not have its metadata: {self.metadata_backend.get_metadata_by_filepath(image_path)}"
-                )
-            image_metadata["data_backend_id"] = self.id
-            image_metadata["image_path"] = image_path
-
-            # Use the magic prompt handler to retrieve the captions.
-            instance_prompt = PromptHandler.caption_for_sampler(self, image_metadata["image_path"])
+                raise Exception(f"An image was discovered ({image_path}) that did not have its metadata: {image_metadata}")
+            instance_prompt = self.dataset_runtime.resolve_caption(image_path)
             if type(instance_prompt) == list:
                 instance_prompt = random.choice(instance_prompt)
                 self.debug_log(f"Selecting random prompt from list: {instance_prompt}")
@@ -806,7 +754,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.debug_log(f"Could not fetch conditioning sample from {full_path}.")
             return None
 
-        conditioning_sample_metadata = self.metadata_backend.get_metadata_by_filepath(full_path)
+        conditioning_sample_metadata = self.dataset_runtime.read_samples([full_path])[0]
         conditioning_sample = TrainingSample(
             image=conditioning_sample_data,
             data_backend_id=self.id,
@@ -824,12 +772,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         if isinstance(conditioning_sample.image, np.ndarray) and conditioning_sample.image.ndim == 3:
             conditioning_sample.image = Image.fromarray(conditioning_sample.image.astype(np.uint8))
         # Use the magic prompt handler to retrieve the captions.
-        caption_sampler = self
+        caption_dataset = self.dataset_runtime
         caption_path = full_path
         if self.source_dataset_id is not None and self.caption_strategy is None:
             caption_path = conditioning_sample.training_sample_path(training_dataset_id=self.source_dataset_id)
-            caption_sampler = StateTracker.get_data_backend(self.source_dataset_id)["sampler"]
-        instance_prompt = PromptHandler.caption_for_sampler(caption_sampler, caption_path)
+            caption_dataset = StateTracker.get_data_backend(self.source_dataset_id)["dataset_runtime"]
+        instance_prompt = caption_dataset.resolve_caption(caption_path)
         if type(instance_prompt) == list:
             instance_prompt = random.choice(instance_prompt)
             self.debug_log(f"Selecting random prompt from list: {instance_prompt}")

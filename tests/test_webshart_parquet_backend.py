@@ -151,6 +151,32 @@ class TestWebshartParquetBackend(unittest.TestCase):
             self.assertEqual(len(paths), 2)
             self.assertEqual(metadata.filtering_statistics["skipped"]["error"], 0)
             self.assertEqual({self.backend.parse_sample_id(path).sample_idx for path in paths}, {0, 2})
+            from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+            runtime = DatasetRuntime(
+                self.backend.id,
+                self.backend,
+                metadata,
+                {
+                    **config,
+                    "dataset_type": "image",
+                    "use_captions": True,
+                    "prepend_instance_prompt": False,
+                    "instance_prompt": None,
+                    "disable_multiline_split": False,
+                },
+            )
+            requests = [paths[1], paths[0], paths[1]]
+            with (
+                patch.object(StateTracker, "get_data_backend", side_effect=AssertionError("registry lookup")),
+                patch.object(self.backend.loader, "load_sample", side_effect=AssertionError("unexpected payload read")),
+            ):
+                records = runtime.read_samples(requests)
+                self.assertEqual([record["image_path"] for record in records], requests)
+                self.assertEqual([runtime.resolve_caption(ref) for ref in requests], ["third", "first", "third"])
+                records[0]["webshart"]["sample_idx"] = 99
+                self.assertEqual(records[2]["webshart"]["sample_idx"], 2)
+                self.assertEqual(metadata.get_metadata_by_filepath(paths[1])["webshart"]["sample_idx"], 2)
             reloaded = WebshartMetadataBackend(
                 id=self.backend.id,
                 instance_data_dir=self.backend.cache_dir,

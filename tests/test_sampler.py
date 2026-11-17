@@ -27,6 +27,7 @@ from accelerate import PartialState
 from PIL import Image
 
 from simpletuner.helpers.caching.vae import VAECache
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.data_backend.dataset_types import DatasetType
 from simpletuner.helpers.data_backend.local import LocalDataBackend
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
@@ -76,9 +77,7 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.state_path = "/some/fake/state.json"
 
         self.sampler = MultiAspectSampler(
-            id="foo",
-            metadata_backend=self.metadata_backend,
-            data_backend=self.data_backend,
+            dataset_runtime=DatasetRuntime("foo", self.data_backend, self.metadata_backend, {}),
             accelerator=self.accelerator,
             batch_size=self.batch_size,
             minimum_image_size=0,
@@ -277,6 +276,7 @@ class TestMultiAspectSampler(unittest.TestCase):
 
         sampler.data_backend = SimpleNamespace(read_image=read_image)
         sampler.metadata_backend.get_metadata_by_filepath = lambda path: metadata if path == "/conditioning/11.png" else None
+        sampler.dataset_runtime = DatasetRuntime("conditioning", sampler.data_backend, sampler.metadata_backend, {})
         backend_config = {
             "conditioning_config": {"type": "i2v_first_frame"},
             "crop": False,
@@ -288,7 +288,7 @@ class TestMultiAspectSampler(unittest.TestCase):
         with (
             patch.object(StateTracker, "get_data_backend_config", return_value=backend_config),
             patch.object(StateTracker, "get_model", return_value=None),
-            patch("simpletuner.helpers.multiaspect.sampler.PromptHandler.magic_prompt", return_value="caption"),
+            patch("simpletuner.helpers.prompts.PromptHandler.magic_prompt", return_value="caption"),
         ):
             conditioning_sample = sampler.get_conditioning_sample("/training/11.mp4")
 
@@ -328,9 +328,9 @@ class TestMultiAspectSampler(unittest.TestCase):
                 conditioning_metadata.aspect_ratio_bucket_indices = {}
                 conditioning_metadata.get_metadata_by_filepath.return_value = metadata
                 conditioning_sampler = MultiAspectSampler(
-                    id=conditioning_id,
-                    metadata_backend=conditioning_metadata,
-                    data_backend=LocalDataBackend(self.accelerator, conditioning_id),
+                    dataset_runtime=DatasetRuntime(
+                        conditioning_id, LocalDataBackend(self.accelerator, conditioning_id), conditioning_metadata, {}
+                    ),
                     accelerator=self.accelerator,
                     batch_size=2,
                     model=None,
@@ -352,7 +352,7 @@ class TestMultiAspectSampler(unittest.TestCase):
                         ),
                         patch.object(StateTracker, "get_data_backend_config", return_value=backend_config),
                         patch.object(StateTracker, "get_model", return_value=None),
-                        patch("simpletuner.helpers.multiaspect.sampler.PromptHandler.magic_prompt", return_value="caption"),
+                        patch("simpletuner.helpers.prompts.PromptHandler.magic_prompt", return_value="caption"),
                     ):
                         self.sampler.logger.reset_mock()
                         output = self.sampler.connect_conditioning_samples(samples)
@@ -511,7 +511,9 @@ class TestMultiAspectSampler(unittest.TestCase):
                 yield tuple(batch)
 
         # Completely replace the iterator method
-        type(self.sampler).__iter__ = lambda self: mock_iter()
+        iterator_patch = patch.object(type(self.sampler), "__iter__", lambda self: mock_iter())
+        iterator_patch.start()
+        self.addCleanup(iterator_patch.stop)
 
         # Test that we can iterate and get the expected batches
         collected_batches = []
@@ -795,9 +797,7 @@ class TestIterationUnseenIndex(unittest.TestCase):
         data_backend = MockDataBackend()
         data_backend.id = "unseen"
         sampler = MultiAspectSampler(
-            id="unseen",
-            metadata_backend=metadata_backend,
-            data_backend=data_backend,
+            dataset_runtime=DatasetRuntime("unseen", data_backend, metadata_backend, {}),
             accelerator=MagicMock(num_processes=1, process_index=0),
             batch_size=4,
             minimum_image_size=0,

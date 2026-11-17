@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
 
 
@@ -45,7 +46,7 @@ class TestAudioSampler(unittest.TestCase):
         self.mock_accelerator.num_processes = 1
 
         # Mock PromptHandler to avoid magic prompt logic
-        self.patcher_prompt = patch("simpletuner.helpers.multiaspect.sampler.PromptHandler.magic_prompt")
+        self.patcher_prompt = patch("simpletuner.helpers.prompts.PromptHandler.magic_prompt")
         self.mock_prompt = self.patcher_prompt.start()
         self.mock_prompt.return_value = "test caption"
 
@@ -61,13 +62,10 @@ class TestAudioSampler(unittest.TestCase):
 
     def test_sampler_iterates_audio_buckets(self):
         sampler = MultiAspectSampler(
-            id="test_backend",
-            metadata_backend=self.mock_metadata,
-            data_backend=self.mock_data,
+            dataset_runtime=DatasetRuntime("test_backend", self.mock_data, self.mock_metadata, {"dataset_type": "audio"}),
             model=self.mock_model,
             accelerator=self.mock_accelerator,
             batch_size=2,
-            dataset_type="audio",
         )
 
         # Bucket "10s" has 2 items. Bucket "20s" has 1 item.
@@ -107,13 +105,10 @@ class TestAudioSampler(unittest.TestCase):
     def test_sampler_bucket_exhaustion(self):
         # Test that sampler correctly resets when all exhausted
         sampler = MultiAspectSampler(
-            id="test_backend",
-            metadata_backend=self.mock_metadata,
-            data_backend=self.mock_data,
+            dataset_runtime=DatasetRuntime("test_backend", self.mock_data, self.mock_metadata, {"dataset_type": "audio"}),
             model=self.mock_model,
             accelerator=self.mock_accelerator,
             batch_size=2,
-            dataset_type="audio",
         )
 
         iterator = iter(sampler)
@@ -137,13 +132,10 @@ class TestAudioSampler(unittest.TestCase):
         self.mock_tracker.get_args.return_value.model_family = "minimaxmusic"
         self.mock_metadata.get_metadata_by_filepath.side_effect = lambda _: None
         sampler = MultiAspectSampler(
-            id="test_backend",
-            metadata_backend=self.mock_metadata,
-            data_backend=self.mock_data,
+            dataset_runtime=DatasetRuntime("test_backend", self.mock_data, self.mock_metadata, {"dataset_type": "audio"}),
             model=self.mock_model,
             accelerator=self.mock_accelerator,
             batch_size=1,
-            dataset_type="audio",
         )
 
         samples = sampler._validate_and_yield_images_from_samples(["1.wav"], "10s")
