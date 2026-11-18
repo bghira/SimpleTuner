@@ -421,7 +421,9 @@ class TextRequestBuilder:
             entry.id: entry for entry in ordered if entry.config.get("conditioning_type") not in ("mask", "segmentation")
         }
         self.conditioning_datasets = ordered
-        self.deferred = conditioning_datasets is not None
+        self.include_grounding = (
+            conditioning_datasets is None if args is None else bool(getattr(args, "max_grounding_entities", 0))
+        )
         self.sampling = getattr(args, "conditioning_multidataset_sampling", None) or "combined"
         self.include_dropout = False
         if args is not None and getattr(model, "uses_image_context_dropout_caption_cache", lambda: False)():
@@ -496,7 +498,7 @@ class TextRequestBuilder:
                 yield request(context, text)
                 if self.include_dropout and text:
                     yield request(context, "")
-            if not self.deferred:
+            if self.include_grounding:
                 sample = init_backend["metadata_backend"].get_metadata_by_filepath(image_path)
                 if isinstance(sample, dict):
                     for index, entity in enumerate(sample.get("bbox_entities") or ()):

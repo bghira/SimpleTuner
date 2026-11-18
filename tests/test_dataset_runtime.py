@@ -237,6 +237,23 @@ class DatasetRuntimeTests(unittest.TestCase):
             ],
         )
 
+    def test_caption_preparation_only_reads_geometry_when_grounding_is_enabled(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import TextRequestBuilder
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+
+        model = SimpleNamespace(text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION)
+        metadata = Mock(get_metadata_by_filepath=Mock(return_value={"bbox_entities": [{"label": "cat"}]}))
+        init_backend = {"metadata_backend": metadata}
+        caption = [("caption", "image.jpg")]
+        builder = TextRequestBuilder(model, "images", "", args=SimpleNamespace(max_grounding_entities=0))
+        self.assertEqual([record["prompt"] for record in builder.records(caption, init_backend)], ["caption"])
+        metadata.get_metadata_by_filepath.assert_not_called()
+        builder = TextRequestBuilder(
+            model, "images", "", conditioning_datasets=[], args=SimpleNamespace(max_grounding_entities=1)
+        )
+        self.assertEqual([record["prompt"] for record in builder.records(caption, init_backend)], ["caption", "cat"])
+        metadata.get_metadata_by_filepath.assert_called_once_with("image.jpg")
+
     def test_projected_payloads_preserve_order_duplicates_and_identify_failed_references(self):
         self.data_backend.read_image_batch.return_value = (["a", "a", "b"], [1, 2, 3])
         records = self.runtime.read_samples(["a", "b", "a"], fields={"image"})
