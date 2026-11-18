@@ -200,6 +200,41 @@ def tiny_inputs(batch_size: int = 1):
     }
 
 
+class TestMiniMaxH3RegionalCompilation(unittest.TestCase):
+    def test_compiles_declared_blocks_and_preserves_gradients(self):
+        from accelerate.utils import DynamoBackend, TorchDynamoPlugin
+
+        torch._dynamo.reset()
+        self.addCleanup(torch._dynamo.reset)
+        model = tiny_h3_transformer(num_layers=2).train()
+        inputs = tiny_inputs()
+        expected = model(**inputs).sample
+        expected.square().mean().backward()
+        gradients = {name: p.grad.clone() for name, p in model.named_parameters() if p.grad is not None}
+        model.zero_grad(set_to_none=True)
+        foundation = MiniMaxH3.__new__(MiniMaxH3)
+        foundation.model = model
+        foundation.config = SimpleNamespace(controlnet=False)
+        plugin = TorchDynamoPlugin(backend="eager", use_regional_compilation=True, dynamic=True)
+        foundation.accelerator = SimpleNamespace(
+            state=SimpleNamespace(dynamo_plugin=plugin),
+            unwrap_model=lambda model, **kwargs: model,
+        )
+        with patch("torch.compile", wraps=torch.compile) as compile_model:
+            with foundation.regional_compilation_context():
+                self.assertEqual(plugin.backend, DynamoBackend.NO)
+        compiled = [call.args[0].__self__ for call in compile_model.call_args_list]
+        expected_blocks = [m for m in model.modules() if m.__class__.__name__ in model._repeated_blocks]
+        self.assertEqual(compiled, expected_blocks)
+        self.assertEqual(plugin.backend, DynamoBackend.EAGER)
+        actual = model(**inputs).sample
+        actual.square().mean().backward()
+        torch.testing.assert_close(actual, expected)
+        for name, p in model.named_parameters():
+            if name in gradients:
+                torch.testing.assert_close(p.grad, gradients[name])
+
+
 class TestMiniMaxH3RotaryPosEmbed(unittest.TestCase):
     def test_moves_inv_freq_to_position_device(self):
         rope = MiniMaxH3RotaryPosEmbed(rope_freq_dim=2)

@@ -110,6 +110,7 @@ def _is_single_file_path(path: Any) -> bool:
 
 
 class MiniMaxH3(VideoModelFoundation):
+    REGIONAL_COMPILE_REPEATED_BLOCKS = True
     SUPPORTS_MUON_CLIP = True
     AUTO_LORA_FORMAT_DETECTION = True
     PROMPT_UPSAMPLING_CONFIG_KEY = "minimax_h3_prompt_expander_url"
