@@ -176,6 +176,17 @@ effective_batch_size = train_batch_size × num_gpus × gradient_accumulation_ste
 为规避该问题，建议使用 [parquet metadata_backend](DATALOADER.md#parquet-caption-strategy-json-lines-datasets)。这样可按你的方式预处理数据。正如链接文档所示，parquet 表包含 `filename`、`width`、`height`、`caption` 列，可高效完成分桶。
 
 
+### 大到无法索引的数据集
+
+设置了 [`webshart.shuffle_window`](DATALOADER.md#reading-a-window-of-shards) 的 Webshart 数据集不会在训练前扫描。每个轮次把分片分配给各进程，两个进程不会读取同一个分片，每个进程只索引自己打开的分片。潜变量和文本嵌入在训练中编码。
+
+在多 GPU 或多节点上：
+
+- 数据集的分片数至少要等于进程数。
+- 宽高比桶不必容纳有效批量。窗口中样本过少的尺寸会重复其样本来补足。
+- `shard_cache_gb` 必须能为训练中的每个进程各容纳 `shuffle_window` 个分片，按所有进程共用一个缓存目录计算。若每个节点有自己的缓存目录，这比单个节点所需的更多。
+- 恢复时使用相同的进程数。
+
 ### 存储空间
 
 超大数据集（尤其使用 T5-XXL 文本编码器）会对原始数据、图像嵌入与文本嵌入占用巨量存储。

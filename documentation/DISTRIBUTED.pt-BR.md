@@ -178,6 +178,17 @@ O backend **discovery** atualmente restringe a coleta de dados dos buckets de pr
 Para contornar esse problema, o [metadata_backend parquet](DATALOADER.md#parquet-caption-strategy-json-lines-datasets) deve ser usado, permitindo preprocessar seus dados da forma que for mais acessivel. Como descrito na secao linkada, a tabela parquet contem as colunas `filename`, `width`, `height` e `caption` para ajudar a ordenar os dados de forma rapida e eficiente em seus respectivos buckets.
 
 
+### Datasets grandes demais para indexar
+
+Um dataset Webshart que define [`webshart.shuffle_window`](DATALOADER.md#reading-a-window-of-shards) não é varrido antes do treinamento. Cada época distribui seus shards entre os processos, de modo que dois processos nunca leem o mesmo shard, e cada processo indexa apenas os shards que tem abertos. Latentes e embeddings de texto são codificados durante o treinamento.
+
+Com várias GPUs ou nós:
+
+- O dataset precisa de pelo menos tantos shards quanto processos.
+- Um bucket de proporção não precisa conter o tamanho de lote efetivo. Um tamanho com poucas amostras em uma janela é completado repetindo suas amostras.
+- `shard_cache_gb` precisa comportar `shuffle_window` shards para cada processo do treinamento, como se todos compartilhassem um único diretório de cache. Com um diretório de cache em cada nó, isso é mais do que um nó precisa.
+- Retome com o mesmo número de processos.
+
 ### Espaco de armazenamento
 
 Datasets enormes, especialmente ao usar o codificador de texto T5-XXL, consumirao quantidades enormes de espaco para os dados originais, os embeddings de imagem e os embeddings de texto.

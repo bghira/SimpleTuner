@@ -178,6 +178,17 @@ The **discovery** backend currently restricts aspect bucket data collection to a
 To work-around this problem, the [parquet metadata_backend](DATALOADER.md#parquet-caption-strategy-json-lines-datasets) should be used, allowing you to preprocess your data in any manner accessible to you. As outlined in the linked document section, the parquet table contains the `filename`, `width`, `height`, and `caption` columns to help quickly and efficiently sort the data into its respective buckets.
 
 
+### Datasets too large to index
+
+A Webshart dataset that sets [`webshart.shuffle_window`](DATALOADER.md#reading-a-window-of-shards) is not scanned before training. Each epoch deals its shards out to the processes, so no two processes read the same shard, and a process indexes only the shards it has open. Latents and text embeds are encoded during training.
+
+With several GPUs or nodes:
+
+- The dataset needs at least as many shards as there are processes.
+- An aspect bucket does not have to hold the effective batch size. A size with too few samples in a window is filled by repeating its samples.
+- `shard_cache_gb` must hold `shuffle_window` shards for every process in the run, as if they all shared one cache directory. With a cache directory on each node, that is more than one node needs.
+- Resume with the same number of processes.
+
 ### Storage space
 
 Huge datasets, especially when using the T5-XXL text encoder, will consume enormous quantities of space for the original data, the image embeds, and the text embeds.

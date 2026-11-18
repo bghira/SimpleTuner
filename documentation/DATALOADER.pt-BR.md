@@ -1441,6 +1441,8 @@ Benchmark limitado: `PYTHONPATH=. .venv/bin/python scripts/benchmark_webshart.py
 
 Os caches de buckets Parquet são separados pela impressão digital do catálogo. Workers serializados rejeitam mudanças no catálogo, e as leituras verificam se os índices correspondem aos caminhos dos shards. Reabra o dataset ao trocar de snapshot.
 
+<a id="reading-a-window-of-shards"></a>
+
 #### Lendo uma janela de shards
 
 Sem esta opção, um dataset Webshart é indexado antes do treinamento: os metadados de cada shard são lidos, cada amostra recebe um bucket de proporção e cada época embaralha o dataset inteiro. `webshart.shuffle_window` serve para datasets grandes demais para isso. Ela define quantos shards cada processo de treinamento (rank) mantém abertos ao mesmo tempo:
