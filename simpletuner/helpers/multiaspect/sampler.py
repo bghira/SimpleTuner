@@ -13,6 +13,7 @@ from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.backends.base import get_cp_aware_dp_info
 from simpletuner.helpers.multiaspect.image import MultiaspectImage
+from simpletuner.helpers.multiaspect.progress import LegacySamplerProgress
 from simpletuner.helpers.multiaspect.state import BucketStateManager
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 from simpletuner.helpers.training.multi_process import rank_info
@@ -57,6 +58,7 @@ class _UnseenOccurrenceIndex:
 
 class MultiAspectSampler(torch.utils.data.Sampler):
     epoch_provider = None
+    _legacy_progress = None
 
     def __init__(
         self,
@@ -72,6 +74,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         conditioning_type: str = None,
         is_regularisation_data: bool = False,
         source_dataset_id: str = None,
+        track_consumed: bool = False,
     ):
         self.dataset_runtime = dataset_runtime
         self.id = dataset_runtime.id
@@ -133,6 +136,50 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self._unseen_indices = {}
         self.buckets = self.load_buckets() if self.epoch_provider is None else []
         self.state_manager = BucketStateManager(self.id)
+        if track_consumed and self.epoch_provider is None:
+            self._legacy_repeat = 0
+            self._legacy_progress = LegacySamplerProgress(self.metadata_backend.seen_images, self._legacy_state(0))
+
+    @property
+    def tracks_consumed_batches(self):
+        return self._legacy_progress is not None
+
+    def start_training_epoch(self, epoch):
+        if self.current_epoch != epoch:
+            self.current_epoch = epoch
+            self._legacy_repeat = 0
+            self.current_bucket = None
+            self.buckets = self.load_buckets()
+            self.exhausted_buckets = []
+            self.metadata_backend.seen_images = {}
+            self._unseen_indices.clear()
+            self._legacy_progress.reset(self.metadata_backend.seen_images, self._legacy_state(0))
+
+    def _legacy_state(self, position):
+        return {
+            "position": position,
+            "repeat": self._legacy_repeat,
+            "current_epoch": self.current_epoch,
+            "current_bucket": self.current_bucket,
+            "buckets": list(self.buckets),
+            "exhausted_buckets": list(self.exhausted_buckets),
+        }
+
+    def _legacy_layout(self):
+        args = StateTracker.get_args()
+        parallel = getattr(self.accelerator, "parallelism_config", None)
+        return {
+            "batch_size": self.batch_size,
+            "seed": getattr(args, "seed", None),
+            "accumulation": getattr(args, "gradient_accumulation_steps", 1),
+            "data_parallel": list(get_cp_aware_dp_info(self.accelerator)),
+            "world_size": self.accelerator.num_processes,
+            "parallelism": [getattr(parallel, key, 1) for key in ("dp_replicate_size", "dp_shard_size", "tp_size")],
+            "occurrence_revision": self.dataset_runtime.occurrence_revision(args),
+        }
+
+    def fetched_state(self):
+        return self._legacy_progress.fetched
 
     def start_native_epoch(self, epoch):
         if self.current_epoch != epoch or (self.consumed_state and self.consumed_state["layout"]["epoch"] != epoch):
@@ -179,7 +226,10 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.training_cursor = None
 
     def acknowledge_batch(self, continuation):
-        self.consumed_state = continuation
+        if self.tracks_consumed_batches:
+            self._legacy_progress.acknowledge(continuation)
+        else:
+            self.consumed_state = continuation
 
     def save_state(self, state_path: str):
         """
@@ -205,7 +255,25 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             "dp_size": effective_dp_size,
             "dp_rank": dp_rank,
         }
-        self.state_manager.save_state(state, state_path)
+        if self.tracks_consumed_batches:
+            progress = self._legacy_progress
+            with progress.checkpoint_seen() as seen:
+                state.update(
+                    {
+                        key: progress.consumed[key]
+                        for key in ("current_epoch", "current_bucket", "buckets", "exhausted_buckets")
+                    }
+                )
+                state["seen_images"] = seen
+                state["legacy_cursor"] = {
+                    "version": 1,
+                    "layout": self._legacy_layout(),
+                    "position": progress.consumed["position"],
+                    "repeat": progress.consumed["repeat"],
+                }
+                self.state_manager.save_state(state, state_path)
+        else:
+            self.state_manager.save_state(state, state_path)
 
     def _saved_schedule_is_restorable(self, previous_state: dict, state_path: str) -> bool:
         """A saved schedule is one rank's shard of the dataset.
@@ -262,6 +330,24 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             return
         if "native_epoch" in previous_state:
             raise ValueError("Restoring a provider-managed checkpoint requires the same sampling policy.")
+        legacy_cursor = previous_state.get("legacy_cursor")
+        if legacy_cursor is not None:
+            if (
+                not self.tracks_consumed_batches
+                or not isinstance(legacy_cursor, dict)
+                or legacy_cursor.get("version") != 1
+                or legacy_cursor.get("layout") != self._legacy_layout()
+                or previous_state.get("aspect_ratio_bucket_indices") != self.metadata_backend.aspect_ratio_bucket_indices
+            ):
+                raise ValueError("Legacy consumed checkpoint requires unchanged prefetch, dataset, schedule and layout.")
+            position, repeat = legacy_cursor.get("position"), legacy_cursor.get("repeat")
+            if (
+                type(position) is not int
+                or position < 0
+                or type(repeat) is not int
+                or not 0 <= repeat <= self._legacy_repeats()
+            ):
+                raise ValueError("Invalid legacy consumed checkpoint position or repeat.")
         saved_batch_size = previous_state.get("batch_size")
         if "batch_size" in previous_state and saved_batch_size != self.batch_size:
             _allow = os.environ.get("SIMPLETUNER_ALLOW_MODIFYING_BSZ", "").lower() in (
@@ -283,7 +369,11 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         # Checkpoints contain the rank-local schedule. Restore it before seen
         # state so legacy boolean flags can be expanded to all occurrences.
         saved_schedule = previous_state.get("aspect_ratio_bucket_indices")
-        if isinstance(saved_schedule, dict) and self._saved_schedule_is_restorable(previous_state, state_path):
+        if (
+            legacy_cursor is None
+            and isinstance(saved_schedule, dict)
+            and self._saved_schedule_is_restorable(previous_state, state_path)
+        ):
             self.metadata_backend.aspect_ratio_bucket_indices = saved_schedule
             self.validation_cursor.close()
         self.buckets = [str(bucket) for bucket in previous_state.get("buckets", self.load_buckets())]
@@ -317,6 +407,12 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 for ref, value in seen.items()
             )
             self._unseen_indices = {}
+        if legacy_cursor is None:
+            # Older checkpoints record fetched legacy progress and have no consumed frontier.
+            self._legacy_progress = None
+        else:
+            self._legacy_repeat = repeat
+            self._legacy_progress.reset(self.metadata_backend.seen_images, self._legacy_state(position))
 
     def load_buckets(self):
         return list(self.metadata_backend.aspect_ratio_bucket_indices.keys())
@@ -379,7 +475,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         return results
 
-    def _yield_n_from_exhausted_bucket(self, n: int, bucket: str):
+    def _yield_n_from_exhausted_bucket(self, n: int, bucket: str, *, rng=random):
         """
         when a bucket is exhausted, and we have to populate the remainder of the batch,
         we shall use this quick and dirty method to retrieve n samples from the exhausted bucket.
@@ -394,9 +490,9 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             to_grab = min(n, len(available_images), (n - len(samples)))
             if to_grab == 0:
                 break
-            samples.extend(random.sample(available_images, k=to_grab))
+            samples.extend(rng.sample(available_images, k=to_grab))
 
-        to_yield = self._validate_and_yield_images_from_samples(samples, bucket)
+        to_yield = self._validate_and_yield_images_from_samples(samples, bucket, rng=rng)
         return to_yield
 
     def _yield_random_image(self):
@@ -455,7 +551,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             return self.buckets.index(bucket_name)
         raise ValueError(f"Bucket name {bucket_name} not found in buckets: {self.buckets}")
 
-    def _reset_buckets(self, raise_exhaustion_signal: bool = True):
+    def _reset_buckets(self, raise_exhaustion_signal: bool = True, *, rng=random):
         if len(self.metadata_backend.seen_images) == 0 and len(self._get_unseen_images()) == 0:
             bucket_report = getattr(self.metadata_backend, "bucket_report", None)
             if bucket_report:
@@ -476,12 +572,15 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.logger.info(f"Resetting seen {self.sample_type_str} list and refreshing buckets. State before reset:")
             self.log_state()
         # All buckets are exhausted, so we will move onto the next epoch.
-        self.current_epoch += 1
+        if self.tracks_consumed_batches:
+            self.metadata_backend.seen_images = {}
+        else:
+            self.current_epoch += 1
+            self.metadata_backend.reset_seen_images()
         self.exhausted_buckets = []
         self.buckets = self.load_buckets()
-        self.metadata_backend.reset_seen_images()
         self._unseen_indices = {}
-        self.change_bucket()
+        self.change_bucket(rng=rng)
         if raise_exhaustion_signal:
             raise MultiDatasetExhausted()
 
@@ -582,7 +681,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.debug_log(f"Bucket {bucket} has sufficient ({len(bucket_images)}) images.")
         return False
 
-    def _get_next_bucket(self):
+    def _get_next_bucket(self, *, rng=random):
         """
         Get the next bucket excluding the exhausted ones.
         If all buckets are exhausted, first reset the seen {self.sample_type_strs} and exhausted buckets.
@@ -590,7 +689,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         available_buckets = [bucket for bucket in self.buckets if bucket not in self.exhausted_buckets]
         if not available_buckets:
             # Raise MultiDatasetExhausted
-            self._reset_buckets()
+            self._reset_buckets(rng=rng)
 
         if len(self.exhausted_buckets) > 0:
             self.debug_log(f"exhausted buckets: {self.exhausted_buckets}")
@@ -601,18 +700,18 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         else:
             self.current_bucket = 0
         if self.buckets[self.current_bucket] not in available_buckets:
-            random_bucket = random.choice(available_buckets)
+            random_bucket = rng.choice(available_buckets)
             self.current_bucket = available_buckets.index(random_bucket)
 
         next_bucket = available_buckets[self.current_bucket]
         return next_bucket
 
-    def change_bucket(self):
+    def change_bucket(self, *, rng=random):
         """
         Change the current bucket to a new one and exclude exhausted buckets from consideration.
         During _get_next_bucket(), if all buckets are exhausted, reset the exhausted list and seen {self.sample_type_strs}.
         """
-        next_bucket = self._get_next_bucket()
+        next_bucket = self._get_next_bucket(rng=rng)
         # Resolve to an integer index in self.buckets for downstream indexing.
         if next_bucket in self.buckets:
             self.current_bucket = self.buckets.index(next_bucket)
@@ -876,11 +975,14 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 # Deterministic selection based on hash of image path and current epoch
                 # This ensures the same image gets the same conditioning dataset within an epoch
                 # but different datasets across epochs
-                selected_idx = (
-                    hash(f"{sample_path}_{self.current_epoch}") % len(conditioning_datasets)
-                    if rng is None
-                    else rng.randrange(len(conditioning_datasets))
-                )
+                if rng is None:
+                    selected_idx = hash(f"{sample_path}_{self.current_epoch}") % len(conditioning_datasets)
+                elif self.tracks_consumed_batches:
+                    selected_idx = random.Random(f"{self.id}:{self.current_epoch}:{sample_path}").randrange(
+                        len(conditioning_datasets)
+                    )
+                else:
+                    selected_idx = rng.randrange(len(conditioning_datasets))
                 selected_dataset = conditioning_datasets[selected_idx]
                 sampler = selected_dataset.sampler
 
@@ -1061,7 +1163,36 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         """
         if self.epoch_provider is not None:
             yield from self._iterate_native()
-            return
+        elif self.tracks_consumed_batches:
+            yield from self._iterate_resumable()
+        else:
+            yield from self._iterate_legacy()
+
+    def _legacy_repeats(self):
+        return max(0, self.dataset_runtime.config.get("repeats", 0) or 0)
+
+    def _iterate_resumable(self):
+        progress = self._legacy_progress
+        seed = getattr(StateTracker.get_args(), "seed", 0) or 0
+        _, rank, _ = get_cp_aware_dp_info(self.accelerator)
+        repeats = self._legacy_repeats()
+        while True:
+            with progress.lock:
+                rng = random.Random(
+                    f"{self.id}:{seed}:{self.current_epoch}:{rank}:{self._legacy_repeat}:{progress.fetched['position']}"
+                )
+                try:
+                    batch = next(self._iterate_legacy(rng=rng))
+                except MultiDatasetExhausted:
+                    if self._legacy_repeat >= repeats:
+                        raise
+                    self._legacy_repeat += 1
+                    continue
+                refs = [record["image_path"] for record in batch[: self.batch_size]]
+                progress.record(self.metadata_backend.seen_images, self._legacy_state(0), refs)
+            yield batch
+
+    def _iterate_legacy(self, *, rng=random):
         # Debug: Track bucket state at iteration start
         if self.buckets:
             first_bucket = self.buckets[0]
@@ -1083,7 +1214,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.logger.warning(f"__iter__ called but self.buckets is EMPTY!")
 
         self._clear_batch_accumulator()  # Initialize an empty list to accumulate images for a batch
-        self.change_bucket()
+        self.change_bucket(rng=rng)
         while True:
             all_buckets_exhausted = True  # Initial assumption
 
@@ -1100,22 +1231,28 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                 else:
                     # Current bucket doesn't have enough images, try the next bucket
                     self.move_to_exhausted()
-                    self.change_bucket()
+                    self.change_bucket(rng=rng)
             while len(available_images) > 0:
                 if len(available_images) < self.batch_size:
                     need_image_count = self.batch_size - len(available_images)
                     self.debug_log(
                         f"Bucket {self.buckets[self.current_bucket]} has {len(available_images)} available images, but we need {need_image_count} more."
                     )
-                    to_yield = self._yield_n_from_exhausted_bucket(need_image_count, self.buckets[self.current_bucket])
+                    to_yield = self._yield_n_from_exhausted_bucket(
+                        need_image_count, self.buckets[self.current_bucket], rng=rng
+                    )
                     # add the available images
                     to_yield.extend(
-                        self._validate_and_yield_images_from_samples(available_images, self.buckets[self.current_bucket])
+                        self._validate_and_yield_images_from_samples(
+                            available_images, self.buckets[self.current_bucket], rng=rng
+                        )
                     )
                 else:
                     all_buckets_exhausted = False  # Found a non-exhausted bucket
-                    samples = random.sample(available_images, k=min(len(available_images), self.batch_size))
-                    to_yield = self._validate_and_yield_images_from_samples(samples, self.buckets[self.current_bucket])
+                    samples = rng.sample(available_images, k=min(len(available_images), self.batch_size))
+                    to_yield = self._validate_and_yield_images_from_samples(
+                        samples, self.buckets[self.current_bucket], rng=rng
+                    )
                 self.debug_log(f"Building batch with {len(self.batch_accumulator)} samples.")
                 if len(self.batch_accumulator) < self.batch_size:
                     remaining_entries_needed = self.batch_size - len(self.batch_accumulator)
@@ -1135,12 +1272,16 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     self.metadata_backend.mark_batch_as_seen(yielded_paths)
                     self._consume_unseen_occurrences(yielded_paths)
                     # if applicable, we'll append TrainingSample(s) to the end for conditioning inputs.
-                    final_yield = self.connect_conditioning_samples(final_yield)
+                    if self.tracks_consumed_batches:
+                        final_yield[0]["caption_dropout_seed"] = rng.getrandbits(64)
+                        final_yield = self.connect_conditioning_samples(final_yield, rng=rng)
+                    else:
+                        final_yield = self.connect_conditioning_samples(final_yield)
                     # if applicable, connect S2V audio paths for speech-to-video models.
                     final_yield = self.connect_s2v_samples(final_yield)
                     yield tuple(final_yield)
                     # Change bucket after a full batch is yielded
-                    self.change_bucket()
+                    self.change_bucket(rng=rng)
                     # Break out of the while loop:
                     break
 
@@ -1156,7 +1297,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     f"Bucket {self.buckets[self.current_bucket]} is now exhausted and sleepy, and we have to move it to the sleepy list before changing buckets."
                 )
                 self.move_to_exhausted()
-                self.change_bucket()
+                self.change_bucket(rng=rng)
 
             # Check if all buckets are exhausted
             if all_buckets_exhausted:
@@ -1165,18 +1306,17 @@ class MultiAspectSampler(torch.utils.data.Sampler):
                     "All buckets exhausted - since this is happening now, most likely you have chronically-underfilled buckets."
                 )
                 # Resetting buckets raises MultiDatasetExhausted
-                self._reset_buckets()
+                self._reset_buckets(rng=rng)
 
     def __len__(self):
         if self.epoch_provider is not None:
             spec = self.epoch_provider.epoch_spec(self.current_epoch, self.batch_size)
             return self.epoch_provider.scheduled_batches(spec)
-        repeats = self.dataset_runtime.config.get("repeats", 0)
         batches_per_pass = sum(
             (len(indices) + self.batch_size - 1) // self.batch_size
             for indices in self.metadata_backend.aspect_ratio_bucket_indices.values()
         )
-        return batches_per_pass * (1 + max(0, repeats))
+        return batches_per_pass * (1 + self._legacy_repeats())
 
     @staticmethod
     def convert_to_human_readable(aspect_ratio_float: float, bucket: iter, resolution: int = 1024):

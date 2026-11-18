@@ -70,6 +70,17 @@ class SamplerStatePublicationTests(unittest.TestCase):
                 manager.save_state({"seen_images": {"image.jpg": 3}, "invalid": object()}, path)
             self.assertEqual(manager.load_state(path), previous)
 
+    def test_follower_reconstructs_consumed_counts_from_portable_batches(self):
+        from simpletuner.helpers.multiaspect.progress import LegacySamplerProgress
+
+        follower = LegacySamplerProgress({}, {"position": 0, "repeat": 0})
+        follower.acknowledge({"position": 1, "repeat": 0, "refs": ("a", "a")})
+        with follower.checkpoint_seen() as seen:
+            self.assertEqual(seen, {"a": 2})
+        follower.acknowledge({"position": 2, "repeat": 1, "refs": ("b", "c")})
+        with follower.checkpoint_seen() as seen:
+            self.assertEqual(seen, {"b": 1, "c": 1})
+
 
 class TestMultiAspectSampler(unittest.TestCase):
     def setUp(self):
@@ -830,7 +841,7 @@ class TestIterationUnseenIndex(unittest.TestCase):
     def tearDown(self):
         self.get_args.stop()
 
-    def _sampler(self, buckets, seen, use_index):
+    def _sampler(self, buckets, seen, use_index, *, track_consumed=False, repeats=0):
         metadata_backend = object.__new__(DiscoveryMetadataBackend)
         metadata_backend.id = "unseen"
         metadata_backend.instance_data_dir = ""
@@ -842,14 +853,17 @@ class TestIterationUnseenIndex(unittest.TestCase):
         data_backend = MockDataBackend()
         data_backend.id = "unseen"
         sampler = MultiAspectSampler(
-            dataset_runtime=DatasetRuntime("unseen", data_backend, metadata_backend, {}),
-            accelerator=MagicMock(num_processes=1, process_index=0),
+            dataset_runtime=DatasetRuntime("unseen", data_backend, metadata_backend, {"repeats": repeats}),
+            accelerator=SimpleNamespace(num_processes=1, process_index=0),
             batch_size=4,
             minimum_image_size=0,
             model=MagicMock(),
+            track_consumed=track_consumed,
         )
-        sampler._validate_and_yield_images_from_samples = lambda samples, bucket: [{"image_path": p} for p in samples]
-        sampler.connect_conditioning_samples = lambda samples: samples
+        sampler._validate_and_yield_images_from_samples = lambda samples, bucket, **kwargs: [
+            {"image_path": p} for p in samples
+        ]
+        sampler.connect_conditioning_samples = lambda samples, **kwargs: samples
         sampler.connect_s2v_samples = lambda samples: samples
         stored = {}
         sampler.state_manager = SimpleNamespace(
@@ -859,6 +873,63 @@ class TestIterationUnseenIndex(unittest.TestCase):
         if not use_index:
             sampler._iteration_unseen_images = sampler._get_unseen_images
         return sampler
+
+    def test_consumed_checkpoint_ignores_prefetch_across_repeat_boundaries(self):
+        from simpletuner.helpers.data_backend.runtime.batch_fetcher import BatchFetcher
+        from simpletuner.helpers.data_backend.runtime.dataloader_iterator import DatasetMixer
+
+        class Batches:
+            def __init__(self, sampler):
+                self.sampler = sampler
+
+            def __iter__(self):
+                for batch in self.sampler:
+                    yield {"images": [row["image_path"] for row in batch], "seed": batch[0]["caption_dropout_seed"]}
+
+        buckets = {"0.5": ["a", "b", "b"], "1.0": ["c", "d", "e", "f"]}
+
+        def runtime():
+            sampler = self._sampler(buckets, {}, True, track_consumed=True, repeats=1)
+            dataset = sampler.dataset_runtime
+            dataset.sampler = sampler
+            dataset.training_dataloader = Batches(sampler)
+            dataset.start_epoch(1)
+            return dataset
+
+        def fetch(dataset, state=None):
+            datasets = {dataset.id: dataset}
+            mixer = DatasetMixer(datasets, epoch=1, step=0, saved=state)
+            fetcher = BatchFetcher(step=mixer.step, max_size=8, datasets=datasets, mixer=mixer)
+            fetcher.fetch_responses()
+            return fetcher
+
+        args = SimpleNamespace(seed=22, print_sampler_statistics=False)
+        with (
+            patch.object(StateTracker, "get_args", return_value=args),
+            patch.object(StateTracker, "exhausted_backends", []),
+            patch.object(StateTracker, "repeats", {}),
+            tempfile.TemporaryDirectory() as directory,
+        ):
+            filename = str(Path(directory) / "training_state.json")
+            original = runtime()
+            fetcher = fetch(original)
+            first = fetcher.next_response(1)
+            original.acknowledge_batch(first["dataset_continuation"])
+            self.assertEqual(original.sampler.fetched_state()["position"], 4)
+            self.assertEqual(original.sampler.fetched_state()["repeat"], 1)
+            original.sampler.save_state(filename)
+            state = original.sampler.state_manager.load_state(filename)
+            self.assertEqual(state["legacy_cursor"]["position"], 1)
+            self.assertEqual(state["legacy_cursor"]["repeat"], 0)
+            self.assertEqual(sum(state["seen_images"].values()), 4)
+
+            resumed = runtime()
+            resumed.sampler.state_manager.load_state = lambda path: state
+            resumed.sampler.load_states(filename)
+            replay = fetch(resumed, first["dataset_mixer_state"])
+            expected = [fetcher.next_response(step) for step in range(2, 6)]
+            self.assertEqual([replay.next_response(step) for step in range(2, 6)], expected)
+            self.assertIs(expected[-1], False)
 
     def _run(self, sampler, epochs, restore_schedule, per_step):
         """Drain `epochs` epochs, disturbing the schedule and seen state the way training can.

@@ -6980,7 +6980,7 @@ class Trainer:
             if saved_mix and not resumable:
                 raise ValueError("A dataset mixer checkpoint requires the same resumable training datasets.")
             if not resumable and any(dataset.tracks_consumed_batches for dataset in train_backends.values()):
-                raise ValueError("Caption prefetch requires each training dataset to support consumed checkpoints.")
+                raise ValueError("Resumable prefetch requires each training dataset to support consumed checkpoints.")
             for dataset in train_backends.values():
                 dataset.start_epoch(epoch)
             if resumable:

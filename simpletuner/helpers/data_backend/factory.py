@@ -3538,6 +3538,7 @@ class FactoryRegistry:
             conditioning_type=conditioning_type,
             is_regularisation_data=is_regularisation_data,
             source_dataset_id=init_backend["config"].get("source_dataset_id", None),
+            track_consumed=getattr(self.args, "dataloader_prefetch", False),
         )
         init_backend["dataset_runtime"].sampler = init_backend["sampler"]
         init_backend["dataset_runtime"].training_dataset = init_backend["train_dataset"]
@@ -3551,7 +3552,7 @@ class FactoryRegistry:
             sampler=init_backend["sampler"],
             generator=(
                 torch.Generator().manual_seed(int(self.args.seed or 0))
-                if init_backend["dataset_runtime"].uses_native_schedule
+                if init_backend["dataset_runtime"].supports_consumed_checkpoint
                 else None
             ),
             collate_fn=partial(collate_fn, dataset=init_backend["dataset_runtime"]),
