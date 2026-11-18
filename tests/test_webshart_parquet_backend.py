@@ -131,6 +131,57 @@ class TestWebshartParquetBackend(unittest.TestCase):
             metadata.compute_aspect_ratio_bucket_indices()
             self.assertEqual(metadata.describe().accepted_samples, 2)
 
+    def test_standalone_scan_reuses_configured_training_geometry(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+        from simpletuner.helpers.training.state_tracker import StateTracker
+        from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import (
+            DatasetScanService,
+            _ScanAcceleratorStub,
+            _ScanArgsNamespace,
+        )
+
+        config = {
+            "id": "standalone",
+            "type": "webshart",
+            "metadata_backend": "webshart",
+            "source": str(self.source),
+            "webshart": {"format": "parquet", "sampling_policy": "global", "cache_dir": str(self.root / "scan")},
+            "caption_strategy": "webshart",
+            "resolution": 128,
+            "resolution_type": "pixel",
+            "crop": True,
+            "crop_style": "random",
+        }
+        run_settings = {
+            "seed": 17,
+            "aspect_bucket_alignment": 32,
+            "aspect_bucket_rounding": 3,
+            "model_family": "sd1x",
+            "train_batch_size": 2,
+            "disable_bucket_pruning": False,
+            "framerate": 30,
+            "output_dir": str(self.root / "output"),
+        }
+        config["aspect_bucket_alignment"] = run_settings["aspect_bucket_alignment"]
+        global_config = {f"--{key}": value for key, value in run_settings.items()}
+        global_config["--aspect_bucket_alignment"] = 64
+        with (
+            patch.object(StateTracker, "set_args"),
+            patch.object(StateTracker, "set_accelerator"),
+            patch.object(StateTracker, "get_model", return_value=None),
+            patch.object(DatasetScanService, "_resolve_scan_output_dir", side_effect=lambda path: path),
+        ):
+            DatasetScanService()._execute_scan(config, global_config, False, lambda *_: None)
+            with (
+                closing(
+                    DatasetRuntime.from_config(config, _ScanArgsNamespace(run_settings), _ScanAcceleratorStub())
+                ) as runtime,
+                patch.object(WebshartMetadataBackend, "_scan_rows", side_effect=AssertionError("recomputed geometry")),
+            ):
+                runtime.prepare_view()
+                self.assertEqual(runtime.describe().accepted_samples, 2)
+
     def test_capture_catalogue_uses_the_configured_metadata_cache(self):
         if not getattr(type(self.backend.dataset), "supports_catalogue_cache", False):
             self.skipTest("installed Webshart has no shared capture catalogue")

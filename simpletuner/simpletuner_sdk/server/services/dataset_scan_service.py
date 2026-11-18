@@ -163,6 +163,32 @@ class DatasetScanService:
             output_dir,
         )
 
+    @classmethod
+    def _build_scan_args(cls, dataset_config: Dict[str, Any], global_config: Dict[str, Any]) -> _ScanArgsNamespace:
+        configured = {key.removeprefix("--").replace("-", "_"): value for key, value in global_config.items()}
+        scan_keys = (
+            "resolution",
+            "resolution_type",
+            "minimum_image_size",
+            "maximum_image_size",
+            "target_downsample_size",
+            "caption_strategy",
+            "only_instance_prompt",
+            "model_type",
+            "model_family",
+            "aspect_bucket_alignment",
+            "aspect_bucket_rounding",
+            "seed",
+            "train_batch_size",
+            "disable_bucket_pruning",
+            "framerate",
+            "cache_dir",
+        )
+        settings = {**configured, **dataset_config}
+        args = _ScanArgsNamespace({key: settings[key] for key in scan_keys if key in settings})
+        args.output_dir = cls._resolve_scan_output_dir(configured.get("output_dir") or args.output_dir)
+        return args
+
     @staticmethod
     def _convert_pixel_area(dataset_config: Dict[str, Any], scan_args: _ScanArgsNamespace) -> Dict[str, Any]:
         """Convert pixel_area resolution_type to area with megapixel values.
@@ -561,25 +587,7 @@ class DatasetScanService:
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
         from simpletuner.helpers.training.state_tracker import StateTracker
 
-        # Build args namespace from global config and dataset config
-        args_overrides = {}
-        for key in (
-            "resolution",
-            "resolution_type",
-            "minimum_image_size",
-            "maximum_image_size",
-            "target_downsample_size",
-            "caption_strategy",
-            "model_type",
-            "model_family",
-        ):
-            if key in dataset_config:
-                args_overrides[key] = dataset_config[key]
-            elif key in global_config:
-                args_overrides[key] = global_config[key]
-
-        scan_args = _ScanArgsNamespace(args_overrides)
-        scan_args.output_dir = self._resolve_scan_output_dir(global_config.get("output_dir") or scan_args.output_dir)
+        scan_args = self._build_scan_args(dataset_config, global_config)
         accelerator = _ScanAcceleratorStub()
 
         # Apply pixel_area -> area conversion (normally done by DataBackendFactory)

@@ -756,7 +756,7 @@ class DatasetViewerService:
         from simpletuner.helpers.data_backend.config import create_backend_config
         from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
         from simpletuner.helpers.multiaspect.image import ImageGeometry, MultiaspectImage
-        from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import DatasetScanService, _ScanArgsNamespace
+        from simpletuner.simpletuner_sdk.server.services.dataset_scan_service import DatasetScanService
 
         # Load existing metadata
         cache_path = self._find_cache_file(dataset_config, "metadata")
@@ -774,27 +774,7 @@ class DatasetViewerService:
         if not original_size:
             return None
 
-        # Build minimal args from config (mirrors scan service)
-        args_overrides = {}
-        for key in (
-            "resolution",
-            "resolution_type",
-            "minimum_image_size",
-            "maximum_image_size",
-            "target_downsample_size",
-            "caption_strategy",
-            "model_type",
-            "model_family",
-            "aspect_bucket_alignment",
-            "aspect_bucket_rounding",
-        ):
-            if key in dataset_config:
-                args_overrides[key] = dataset_config[key]
-            elif key in global_config:
-                args_overrides[key] = global_config[key]
-
-        scan_args = _ScanArgsNamespace(args_overrides)
-        scan_args.output_dir = DatasetScanService._resolve_scan_output_dir(scan_args.output_dir)
+        scan_args = DatasetScanService._build_scan_args(dataset_config, global_config)
 
         # Apply pixel_area conversion
         dataset_config = DatasetScanService._convert_pixel_area(dataset_config, scan_args)
