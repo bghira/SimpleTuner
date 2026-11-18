@@ -1955,6 +1955,51 @@ class DatasetManagementTestCase(_TrainerPageMixin, WebUITestCase):
         self.for_each_browser("test_add_and_remove_dataset", scenario)
 
 
+class DatasetViewerRevisionTestCase(_TrainerPageMixin, WebUITestCase):
+    MAX_BROWSERS = 1
+
+    def test_replaced_view_refreshes_bucket_choices(self) -> None:
+        from simpletuner.helpers.metadata.backends.webshart_membership import write_membership
+
+        root = self.home_path / "viewer-data"
+        root.mkdir(exist_ok=True)
+        config = {
+            "type": "webshart",
+            "id": "indexed",
+            "dataset_type": "image",
+            "caption_strategy": "textfile",
+            "webshart": {"source": "fixture", "cache_dir": str(root), "format": "parquet", "manifest": "dataset.json"},
+        }
+        (self.config_dir / "default" / "multidatabackend.json").write_text(json.dumps([config]))
+        publication = root / "aspect_ratio_bucket_indices_source_0123456789abcdef_indexed.json"
+        properties = {"config": config, "geometry_format": "sqlite-v1"}
+        write_membership(publication, {"square": ["old"]}, properties)
+        self.seed_defaults()
+
+        def scenario(driver, _browser):
+            trainer = self._trainer_page(driver)
+            trainer.navigate_to_trainer()
+            self.dismiss_onboarding(driver)
+            trainer.switch_to_datasets_tab()
+            trainer.wait_for_tab("datasets")
+            wait = WebDriverWait(driver, 15)
+            wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//button[contains(@class,'dataset-subtab-btn') and contains(.,'Viewer')]")
+                )
+            ).click()
+            wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".viewer-card-header"))).click()
+            wait.until(lambda d: "Unavailable" in d.find_element(By.CSS_SELECTOR, ".viewer-dataset-card").text)
+            bucket = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, ".viewer-bucket-btn")))
+            self.assertIn("square", bucket.text)
+            write_membership(publication, {"wide": ["new"]}, properties)
+            bucket.click()
+            wait.until(lambda d: "wide" in d.find_element(By.CSS_SELECTOR, ".viewer-bucket-list").text)
+            self.assertFalse(driver.find_elements(By.CSS_SELECTOR, ".viewer-bucket-btn.active"))
+
+        self.for_each_browser("test_replaced_view_refreshes_bucket_choices", scenario)
+
+
 class DatasetCaptioningTabSmokeTestCase(_TrainerPageMixin, WebUITestCase):
     """Dataset Captioning sub-tab should initialize without Alpine wiring errors."""
 
@@ -2360,6 +2405,12 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                 lambda d: next((e for e in d.find_elements(*selector) if e.is_displayed()), False)
             )
             driver.execute_script("Alpine.store('trainer').hasUnsavedChanges = false;")
+            policy_selector = (By.CSS_SELECTOR, ".dataset-list-item-expanded .webshart-sampling-policy")
+            policy = WebDriverWait(driver, 10).until(EC.visibility_of_element_located(policy_selector))
+            Select(policy).select_by_value("shard_local")
+            WebDriverWait(driver, 5).until(
+                lambda d: d.execute_script("return Alpine.store('trainer').hasUnsavedChanges === true;")
+            )
             Select(field).select_by_value("parquet")
             manifest = WebDriverWait(driver, 10).until(
                 EC.visibility_of_element_located((By.CSS_SELECTOR, ".dataset-list-item-expanded .webshart-manifest"))
@@ -2385,6 +2436,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             datasets_tab.save_datasets()
             persisted = next(d for d in json.loads(config_path.read_text(encoding="utf-8")) if d["id"] == "webshart-parquet")
             self.assertEqual(persisted["webshart"]["format"], "parquet")
+            self.assertEqual(persisted["webshart"]["sampling_policy"], "shard_local")
             self.assertEqual(persisted["webshart"]["manifest"], "combined/dataset.json")
             self.assertEqual(persisted["webshart"]["columns"], {"captions": "caption_text"})
             self.assertEqual(persisted["aws_endpoint_url"], "https://storage.example")
@@ -2402,6 +2454,9 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             select_tab("Storage")
             field = WebDriverWait(driver, 10).until(
                 lambda d: next((e for e in d.find_elements(*selector) if e.is_displayed()), False)
+            )
+            self.assertEqual(
+                Select(driver.find_element(*policy_selector)).first_selected_option.get_attribute("value"), "shard_local"
             )
             self.assertEqual(field.get_attribute("value"), "parquet")
             endpoint = WebDriverWait(driver, 10).until(
@@ -2873,7 +2928,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
             )
             self.assertIsInstance(dataset_id, str)
 
-            for field in ("text-cache-ondemand-storage-", "text-cache-disable-storage-"):
+            for field in ("text-cache-ondemand-storage-", "text-cache-disable-storage-", "text-cache-encode-only-storage-"):
                 WebDriverWait(driver, 10).until(
                     lambda d, prefix=field: d.execute_script(
                         "return !!document.getElementById(arguments[0] + arguments[1]);",
@@ -2900,7 +2955,7 @@ class DatasetBuilderViewModeTestCase(_TrainerPageMixin, WebUITestCase):
                     "  ? comp.datasets.find((candidate) => candidate && candidate.id === arguments[0])"
                     "  : null;"
                     "return dataset && dataset.text_cache_ondemand === true"
-                    "  && dataset.text_cache_disable === true"
+                    "  && dataset.text_cache_disable === true && dataset.text_cache_encode_only === true"
                     "  && store && store.hasUnsavedChanges === true;",
                     dataset_id,
                 )

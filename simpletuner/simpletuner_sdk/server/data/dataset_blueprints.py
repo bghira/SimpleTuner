@@ -917,6 +917,16 @@ _BLUEPRINTS: List[BackendBlueprint] = [
                     "options": [{"value": "tar", "label": "Tar"}, {"value": "parquet", "label": "Parquet"}],
                 },
                 {
+                    "id": "webshart.sampling_policy",
+                    "label": "training sample order",
+                    "type": "select",
+                    "options": [
+                        {"value": "", "label": "Existing sampler"},
+                        {"value": "global", "label": "Global shuffle"},
+                        {"value": "shard_local", "label": "Shard-local shuffle"},
+                    ],
+                },
+                {
                     "id": "webshart.manifest",
                     "label": "capture manifest",
                     "description": "optional source-relative image capture descriptor, such as combined/dataset.json",

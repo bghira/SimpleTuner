@@ -413,6 +413,14 @@
                 <div class="form-check mt-2">
                     <input class="form-check-input"
                            type="checkbox"
+                           :id="'text-cache-encode-only-storage-' + editingDataset.id"
+                           x-model="editingDataset.text_cache_encode_only"
+                           @change="markAsUnsaved()">
+                    <label class="form-check-label small" :for="'text-cache-encode-only-storage-' + editingDataset.id">Encode every training batch online</label>
+                </div>
+                <div class="form-check mt-2">
+                    <input class="form-check-input"
+                           type="checkbox"
                            :id="'text-cache-disable-storage-' + editingDataset.id"
                            x-model="editingDataset.text_cache_disable"
                            @change="markAsUnsaved()">

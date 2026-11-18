@@ -3091,6 +3091,8 @@ function trainerComponent() {
                     const webshart = {};
                     const format = this._coerceString(dataset.webshart?.format);
                     if (format) webshart.format = format;
+                    const samplingPolicy = this._coerceString(dataset.webshart?.sampling_policy);
+                    if (samplingPolicy) webshart.sampling_policy = samplingPolicy;
                     if (format === 'parquet') {
                         const manifest = this._coerceString(dataset.webshart?.manifest);
                         if (manifest) webshart.manifest = manifest;
