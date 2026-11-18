@@ -53,7 +53,7 @@ class AssistantLoRADistiller(DistillationBase):
         if not captions:
             raise ValueError("Assistant LoRA requires a nonempty caption batch.")
         backend_id = caption_batch["data_backend_id"]
-        cache = StateTracker.get_data_backend(backend_id)["text_embed_cache"]
+        cache = StateTracker.get_dataset(backend_id).text_embed_cache
         text_output = cache.compute_embeddings_for_prompts(captions, return_concat=True, split_between_processes=False)
         text_output = model.collate_prompt_embeds([text_output])
         text_output = {

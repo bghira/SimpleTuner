@@ -871,8 +871,8 @@ class Flux3ImageIntegrationTests(unittest.TestCase):
             },
         )
         cached = {"prompt_embeds": torch.randn(2, 80, 16), "attention_masks": torch.ones(2, 80, dtype=torch.bool)}
-        backend = {"text_embed_cache": SimpleNamespace(compute_embeddings_for_prompts=Mock(return_value=cached))}
-        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_data_backend", return_value=backend):
+        dataset = SimpleNamespace(text_embed_cache=SimpleNamespace(compute_embeddings_for_prompts=Mock(return_value=cached)))
+        with patch("simpletuner.helpers.training.state_tracker.StateTracker.get_dataset", return_value=dataset):
             batch = distiller.prepare_caption_batch(
                 {"captions": ["a bicycle", "a fox"], "data_backend_id": "captions"}, foundation, {"global_step": 0}
             )

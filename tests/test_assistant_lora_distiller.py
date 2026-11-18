@@ -133,8 +133,10 @@ class AssistantLoRADistillerTests(unittest.TestCase):
             "attention_masks": torch.ones(1, 5),
         }
         return patch(
-            "simpletuner.helpers.distillation.assistant_lora.distiller.StateTracker.get_data_backend",
-            return_value={"text_embed_cache": SimpleNamespace(compute_embeddings_for_prompts=Mock(return_value=embeddings))},
+            "simpletuner.helpers.distillation.assistant_lora.distiller.StateTracker.get_dataset",
+            return_value=SimpleNamespace(
+                text_embed_cache=SimpleNamespace(compute_embeddings_for_prompts=Mock(return_value=embeddings))
+            ),
         )
 
     def test_native_qwen_rollout_and_training_backpropagate_only_adapter(self):
@@ -201,10 +203,10 @@ class AssistantLoRADistillerTests(unittest.TestCase):
         for size in (3, 1, 2):
             embeddings = {"prompt_embeds": torch.randn(size, 5, 8)}
             with patch(
-                "simpletuner.helpers.distillation.assistant_lora.distiller.StateTracker.get_data_backend",
-                return_value={
-                    "text_embed_cache": SimpleNamespace(compute_embeddings_for_prompts=Mock(return_value=embeddings))
-                },
+                "simpletuner.helpers.distillation.assistant_lora.distiller.StateTracker.get_dataset",
+                return_value=SimpleNamespace(
+                    text_embed_cache=SimpleNamespace(compute_embeddings_for_prompts=Mock(return_value=embeddings))
+                ),
             ):
                 prepared = distiller.prepare_caption_batch(
                     {"captions": ["a fox"] * size, "data_backend_id": "captions"}, model, {}
