@@ -5,6 +5,7 @@ import os
 import queue
 import threading
 import time
+from functools import partial
 from typing import Any, Dict, Optional
 
 from simpletuner.helpers.training.multi_process import should_log
@@ -61,7 +62,7 @@ class BatchFetcher:
         self.step = step
         self._next_fetch_step = step
         self.device_prefetcher = None
-        if device_prefetch_threshold_bytes > 0:
+        if getattr(device, "type", device) == "cuda" or device_prefetch_threshold_bytes > 0:
             from .device_prefetch import CudaBatchPrefetcher
 
             self.device_prefetcher = CudaBatchPrefetcher(
@@ -79,18 +80,17 @@ class BatchFetcher:
         """main loop for fetching responses in background thread"""
         prefetch_log_debug("Launching retrieval thread.")
         iterator_fn = random_dataloader_iterator
+        iterator_options = {}
+        if self.mixer is not None:
+            iterator_options.update(update_epoch_step=False, mixer=self.mixer)
+        elif iterator_fn is DEFAULT_RANDOM_ITERATOR:
+            iterator_options["update_epoch_step"] = False
         try:
             while not self._finished.is_set():
                 if self.queue.qsize() < self.queue.maxsize:
                     prefetch_log_debug(f"Queue size: {self.queue.qsize()}. Fetching more data.")
-                    if self.mixer is not None:
-                        item = iterator_fn(self._next_fetch_step, self.datasets, update_epoch_step=False, mixer=self.mixer)
-                    elif iterator_fn is DEFAULT_RANDOM_ITERATOR:
-                        item = iterator_fn(self._next_fetch_step, self.datasets, update_epoch_step=False)
-                    else:
-                        item = iterator_fn(self._next_fetch_step, self.datasets)
-                    if self.device_prefetcher is not None:
-                        item = self.device_prefetcher.prefetch(item)
+                    retrieve = partial(iterator_fn, self._next_fetch_step, self.datasets, **iterator_options)
+                    item = self.device_prefetcher.fetch(retrieve) if self.device_prefetcher is not None else retrieve()
                     self.queue.put(item)
                     self._next_fetch_step += 1
                     if item is False:
