@@ -130,10 +130,15 @@ async def get_viewer_files(
 
 @router.get("/viewer/file-metadata")
 async def get_viewer_file_metadata(
-    dataset_id: str, file_path: str, _user: User = Depends(get_current_user)
+    dataset_id: str, file_path: str, view_revision: Optional[str] = None, _user: User = Depends(get_current_user)
 ) -> Dict[str, Any]:
     """Per-file metadata from the metadata cache."""
-    meta = _get_viewer_service().get_file_metadata(_require_dataset_config(dataset_id), file_path)
+    try:
+        meta = _get_viewer_service().get_file_metadata(
+            _require_dataset_config(dataset_id), file_path, view_revision=view_revision
+        )
+    except DatasetViewChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if meta is None:
         return {"path": file_path, "found": False}
     return {"found": True, **meta.model_dump()}
@@ -165,6 +170,7 @@ async def get_viewer_thumbnails(
 async def get_viewer_preview(
     dataset_id: str,
     file_path: str,
+    view_revision: Optional[str] = None,
     _user: User = Depends(get_current_user),
 ) -> Dict[str, Any]:
     """Preview images for the file detail modal.
@@ -176,7 +182,10 @@ async def get_viewer_preview(
     config = _require_dataset_config(dataset_id)
 
     # Load metadata so the preview can simulate the crop pipeline
-    meta = service.get_file_metadata(config, file_path)
+    try:
+        meta = service.get_file_metadata(config, file_path, view_revision=view_revision)
+    except DatasetViewChanged as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     meta_dict = meta.model_dump() if meta else None
 
     result = service.get_image_preview(config, file_path, metadata=meta_dict)

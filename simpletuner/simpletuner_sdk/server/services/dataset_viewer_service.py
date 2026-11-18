@@ -100,6 +100,7 @@ class FileMetadata(BaseModel):
     crop_coordinates: Optional[List[int]] = None
     bucket_key: Optional[str] = None
     caption: Optional[str] = None
+    view_revision: Optional[str] = None
     bbox_entities: Optional[List[Dict[str, Any]]] = None
     extra: Dict[str, Any] = Field(default_factory=dict)
 
@@ -610,13 +611,18 @@ class DatasetViewerService:
             files=files, total=total, limit=limit, offset=offset, bucket_key=bucket_key, view_revision=revision
         )
 
-    def get_file_metadata(self, dataset_config: Dict[str, Any], file_path: str) -> Optional[FileMetadata]:
+    def get_file_metadata(
+        self, dataset_config: Dict[str, Any], file_path: str, *, view_revision: Optional[str] = None
+    ) -> Optional[FileMetadata]:
         """Read per-file metadata from the metadata cache."""
         indices = self._find_cache_file(dataset_config, "indices") if dataset_config.get("type") == "webshart" else None
         index = None
         if indices is not None:
             with indices.open("rb") as source:
                 index = MembershipPages.open(source)
+        current_revision = index.header["view_revision"] if index is not None else None
+        if view_revision is not None and current_revision != view_revision:
+            raise DatasetViewChanged("The prepared dataset changed. Reopen its bucket to inspect the current view.")
         if index is not None and index.header.get("geometry_format") == "sqlite-v1":
             name = index.header["geometry_name"]
             if Path(name).name != name:
@@ -655,6 +661,7 @@ class DatasetViewerService:
             crop_coordinates=meta.get("crop_coordinates"),
             bucket_key=meta.get("bucket_key"),
             bbox_entities=meta.get("bbox_entities"),
+            view_revision=current_revision,
             extra=extra,
         )
         result.caption = self._get_file_caption(dataset_config, file_path)

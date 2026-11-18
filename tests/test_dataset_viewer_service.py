@@ -132,6 +132,10 @@ class TestWebshartMembershipPages(unittest.TestCase):
             self.assertEqual(service.get_file_metadata(configs[1], refs[4]).original_size, [8, 16])
             filtered_page = service.get_dataset_files(configs[1], bucket_key="wide", offset=1, limit=1)
             self.assertEqual((filtered_page.files, filtered_page.total), ([refs[3]], 3))
+            with self.assertRaises(DatasetViewChanged):
+                service.get_file_metadata(configs[1], refs[4], view_revision=pages.header["view_revision"])
+            metadata = service.get_file_metadata(configs[1], refs[4], view_revision=filtered_page.view_revision)
+            self.assertEqual(metadata.view_revision, filtered_page.view_revision)
             with patch.object(service, "get_dataset_files", side_effect=AssertionError("unbounded listing")):
                 report = service.get_conditioning_pairs(*configs, offset=1, limit=2)
                 self.assertEqual(report["pairs"], [{"source_path": refs[1], "conditioning_path": refs[1]}])
