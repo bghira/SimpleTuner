@@ -2402,7 +2402,9 @@ class TestTrainer(unittest.TestCase):
             "train": {
                 "config": {},
                 "sampler": [object()] * 10,
-            }
+            },
+            # What the factory registers for a text embed cache.
+            "text-embeds": {"config": {"dataset_type": "text_embeds"}},
         }
 
         trainer._recalculate_training_steps()

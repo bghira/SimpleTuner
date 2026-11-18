@@ -3847,6 +3847,9 @@ class Trainer:
                     ) from exc
             if probability_value <= 0:
                 continue
+            # A cache backend is registered with its config alone and is never sampled.
+            if "sampler" not in backend:
+                continue
             dataset_batches = len(backend["sampler"])
             total_num_batches += dataset_batches
 
@@ -3883,6 +3886,9 @@ class Trainer:
                 except (TypeError, ValueError):
                     probability_value = 0.0
             if probability_value <= 0:
+                continue
+            # A cache backend is registered with its config alone and is never sampled.
+            if "sampler" not in backend:
                 continue
             dataset_batches = len(backend["sampler"])
             schedule = StateTracker.get_dataset_schedule(backend_id) or {}
