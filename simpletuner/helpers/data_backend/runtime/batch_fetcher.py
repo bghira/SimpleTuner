@@ -4,7 +4,6 @@ import logging
 import os
 import queue
 import threading
-import time
 from functools import partial
 from typing import Any, Dict, Optional
 
@@ -58,6 +57,7 @@ class BatchFetcher:
         self._thread = None
         self._keep_running = True
         self._finished = threading.Event()
+        self._space_available = threading.Event()
         self._error = None
         self.step = step
         self._next_fetch_step = step
@@ -103,7 +103,10 @@ class BatchFetcher:
                 else:
                     if threading.current_thread() is threading.main_thread():
                         break
-                    time.sleep(0.5)
+                    self._space_available.clear()
+                    # A consumer may have dequeued before the event was cleared.
+                    if not self._finished.is_set() and self.keep_running and self.queue.qsize() >= self.queue.maxsize:
+                        self._space_available.wait()
                 if not self.keep_running:
                     break
         except StopIteration:
@@ -121,6 +124,7 @@ class BatchFetcher:
         while True:
             try:
                 item = self.queue.get(timeout=0.1)
+                self._space_available.set()
                 break
             except queue.Empty:
                 if self._finished.is_set() and self.queue.empty():
@@ -135,6 +139,7 @@ class BatchFetcher:
     def stop_fetching(self) -> None:
         self._keep_running = False
         self._finished.set()
+        self._space_available.set()
 
     def close(self) -> None:
         self.stop_fetching()
@@ -148,6 +153,8 @@ class BatchFetcher:
     @keep_running.setter
     def keep_running(self, value: bool) -> None:
         self._keep_running = bool(value)
+        if not self._keep_running:
+            self._space_available.set()
 
 
 # store default property so tests that monkey-patch keep_running can be restored safely

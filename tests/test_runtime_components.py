@@ -227,6 +227,36 @@ class TestBatchFetcher(unittest.TestCase):
         self.assertEqual(fetcher.queue.qsize(), 1)
 
     @patch("simpletuner.helpers.data_backend.runtime.batch_fetcher._set_epoch_step_for_training_step")
+    @patch("simpletuner.helpers.data_backend.runtime.batch_fetcher.random_dataloader_iterator")
+    def test_full_queue_wakes_on_consume_and_stop(self, mock_iterator, _mock_set_epoch_step):
+        mock_iterator.side_effect = lambda step, datasets: {"step": step}
+        fetcher = BatchFetcher(step=0, max_size=1, datasets=self.datasets)
+        first_wait = threading.Event()
+        second_wait = threading.Event()
+        waits = iter((first_wait, second_wait))
+        wait_for_space = fetcher._space_available.wait
+
+        def announce_wait():
+            next(waits).set()
+            return wait_for_space()
+
+        with patch.object(fetcher._space_available, "wait", side_effect=announce_wait):
+            thread = fetcher.start_fetching()
+            try:
+                self.assertTrue(first_wait.wait(timeout=2))
+                self.assertEqual(fetcher.next_response(1), {"step": 0})
+                self.assertTrue(second_wait.wait(timeout=2))
+                fetcher.stop_fetching()
+                thread.join(timeout=2)
+                self.assertFalse(thread.is_alive())
+                self.assertEqual(fetcher.next_response(2), {"step": 1})
+                self.assertEqual(mock_iterator.call_count, 2)
+            finally:
+                fetcher.stop_fetching()
+                fetcher._space_available.set()
+                thread.join(timeout=2)
+
+    @patch("simpletuner.helpers.data_backend.runtime.batch_fetcher._set_epoch_step_for_training_step")
     def test_next_response_with_data_available(self, mock_set_epoch_step):
         """Test next_response method when data is available"""
         fetcher = BatchFetcher(step=100, max_size=5, datasets=self.datasets)
