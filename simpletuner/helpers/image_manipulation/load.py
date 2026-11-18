@@ -39,6 +39,9 @@ def _trainingsample_array_to_rgb_image(img_tsr: np.ndarray) -> Image.Image:
         img_tsr = tsr.cvt_color_py(img_tsr, 8)  # 8 = COLOR_GRAY2RGB
     elif img_tsr.shape[2] == 1:
         img_tsr = tsr.cvt_color_py(img_tsr, 8)  # 8 = COLOR_GRAY2RGB
+    elif img_tsr.shape[2] == 2:
+        # Grey and alpha; the alpha is dropped as it is for RGBA.
+        img_tsr = tsr.cvt_color_py(np.ascontiguousarray(img_tsr[..., :1]), 8)
     elif img_tsr.shape[2] == 4:
         img_tsr, _timing = tsr.rgba_to_rgb_optimized(img_tsr)
     return Image.fromarray(img_tsr)
