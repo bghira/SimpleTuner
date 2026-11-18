@@ -1,8 +1,10 @@
 import unittest
+from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+from simpletuner.helpers.metadata.backends.base import MetadataBackend
 from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
 from simpletuner.helpers.prompts import CaptionNotFoundError
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -17,7 +19,10 @@ class DatasetRuntimeTests(unittest.TestCase):
             "captions": [" first ", "second"],
             "webshart": {"shard_idx": 2, "sample_idx": 19},
         }
-        self.metadata_backend = Mock()
+        self.metadata_backend = Mock(epoch_provider=None)
+        self.metadata_backend.get_metadata_batch.side_effect = lambda refs: MetadataBackend.get_metadata_batch(
+            self.metadata_backend, refs
+        )
         self.metadata_backend.get_metadata_by_filepath.return_value = self.metadata
         self.metadata_backend.caption_cache_entry.return_value = self.metadata["captions"]
         self.data_backend = Mock(id="images")
@@ -30,6 +35,122 @@ class DatasetRuntimeTests(unittest.TestCase):
             "disable_multiline_split": False,
         }
         self.runtime = DatasetRuntime("images", self.data_backend, self.metadata_backend, self.config)
+
+    def test_registry_exposes_catalogue_without_sampler_or_legacy_bundle(self):
+        with (
+            patch.object(StateTracker, "datasets", {}),
+            patch.object(StateTracker, "get_data_backends", side_effect=AssertionError("legacy lookup")),
+        ):
+            StateTracker.register_dataset(self.runtime)
+            self.assertIs(StateTracker.get_dataset("images"), self.runtime)
+            self.assertIs(StateTracker.get_metadata_by_filepath("ref", "images"), self.metadata)
+
+    def test_compatibility_bundle_uses_the_registered_runtime_config(self):
+        with patch.object(StateTracker, "datasets", {}), patch.object(StateTracker, "data_backends", {}):
+            StateTracker.register_dataset(self.runtime)
+            bundle = {"id": self.runtime.id, "config": {**self.config}}
+            StateTracker.register_data_backend(bundle)
+            self.assertIs(bundle["config"], self.runtime.config)
+            changed = {**self.runtime.config, "probability": 0.5}
+            StateTracker.set_data_backend_config(self.runtime.id, changed)
+            self.assertIs(self.runtime.config, changed)
+            self.assertIs(StateTracker.get_data_backend_config(self.runtime.id), changed)
+
+    def test_run_closes_shared_writer_once_after_dataset_handles(self):
+        from contextlib import ExitStack
+
+        writer = Mock()
+        second = DatasetRuntime("other", self.data_backend, Mock(), {})
+        order = []
+        writer.close.side_effect = lambda: order.append("writer")
+        with (
+            patch.object(StateTracker, "_dataset_resources", ExitStack()),
+            patch.object(StateTracker, "datasets", {}),
+            patch.object(StateTracker, "data_backends", {}),
+            patch.object(StateTracker, "dataset_schedule", {}),
+            patch.object(StateTracker, "default_text_embed_cache", None),
+            patch.object(StateTracker, "consumed_dataset_mixer", None),
+        ):
+            StateTracker.own_dataset_resource(writer)
+            for dataset in (self.runtime, second):
+                dataset.metadata_backend.close.side_effect = lambda dataset=dataset: order.append(dataset.id)
+                dataset.text_embed_cache = writer
+                StateTracker.register_dataset(dataset)
+                StateTracker.own_dataset_resource(dataset)
+            StateTracker.clear_data_backends()
+            StateTracker.clear_data_backends()
+        self.assertEqual(order, ["other", "images", "writer"])
+
+    def test_occurrence_revision_pins_binding_order_views_captions_and_dropout(self):
+        from simpletuner.helpers.metadata.preparation import DatasetDescription
+
+        args = SimpleNamespace(conditioning_multidataset_sampling="random", caption_dropout_probability=0.1)
+        a = DatasetRuntime("a", None, Mock(), {"instance_prompt": "first"})
+        b = DatasetRuntime("b", None, Mock(), {})
+        for related in (a, b):
+            related.metadata_backend.describe.return_value = DatasetDescription(view_revision="view-1")
+        self.runtime.conditioning_datasets = (a, b)
+        original = self.runtime.occurrence_revision(args)
+        self.runtime.conditioning_datasets = (b, a)
+        self.assertNotEqual(self.runtime.occurrence_revision(args), original)
+        self.runtime.conditioning_datasets = (a, b)
+        a.metadata_backend.describe.return_value = DatasetDescription(view_revision="view-2")
+        self.assertNotEqual(self.runtime.occurrence_revision(args), original)
+        a.metadata_backend.describe.return_value = DatasetDescription(view_revision="view-1")
+        with patch.dict(a.config, instance_prompt="second"):
+            self.assertNotEqual(self.runtime.occurrence_revision(args), original)
+        args.caption_dropout_probability = 0.5
+        self.assertNotEqual(self.runtime.occurrence_revision(args), original)
+        args.caption_dropout_probability = 0.1
+        with patch.dict(self.runtime.config, aws_secret_access_key="test-value"):
+            self.assertEqual(self.runtime.occurrence_revision(args), original)
+
+    def test_published_preparation_groups_ignore_rank_local_training_buckets(self):
+        import json
+        from io import BytesIO
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from simpletuner.helpers.data_backend.aws import S3DataBackend
+        from simpletuner.helpers.data_backend.csv_url_list import CSVDataBackend
+        from simpletuner.helpers.data_backend.local import LocalDataBackend
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
+
+        class Provider(MetadataBackend):
+            pass
+
+        accepted = {"square": ["a", "b", "c"], "wide": ["d", "e", "f"]}
+        published = json.dumps({"aspect_ratio_bucket_indices": accepted})
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            csv_file = root / "source.csv"
+            csv_file.write_text("url,caption\nhttps://example.com/sample.png,caption\n")
+            local = LocalDataBackend(None, "local")
+            csv = CSVDataBackend(None, "csv", csv_file)
+            aws = S3DataBackend.__new__(S3DataBackend)
+            aws.id, aws.bucket_name = "aws", "datasets"
+            aws.client = Mock()
+            aws.client.get_object.side_effect = lambda **kwargs: {"Body": BytesIO(published.encode())}
+
+            for backend in (local, csv, aws):
+                with self.subTest(backend=backend.id):
+                    provider = object.__new__(Provider)
+                    provider.read_only = True
+                    provider.cache_file = str(root / f"{backend.id}-buckets.json")
+                    provider.data_backend = backend
+                    if backend is not aws:
+                        backend.write(provider.cache_file, published)
+                    provider.aspect_ratio_bucket_indices = {"square": ["b", "b"], "wide": ["e"]}
+                    dataset = DatasetRuntime(backend.id, backend, provider, {})
+                    with patch.object(backend, "read", side_effect=AssertionError("full bucket index read")):
+                        self.assertEqual(dataset.read_page(offset=2, limit=3), (["c", "d", "e"], 6))
+                        for rank, expected in enumerate((["a", "c", "e"], ["b", "d", "f"])):
+                            with provider.open_preparation_view(worker=rank, workers=2) as view:
+                                self.assertEqual(list(view), expected)
+                            batches = list(dataset.iter_preparation_batches(worker=rank, workers=2, batch_size=2))
+                            self.assertEqual([ref for _, group in batches for ref in group], expected)
+                            self.assertTrue(all(set(group) <= set(accepted[bucket]) for bucket, group in batches))
+                    self.assertEqual(provider.aspect_ratio_bucket_indices, {"square": ["b", "b"], "wide": ["e"]})
 
     def test_caption_traversal_is_lazy_and_keeps_all_alternatives(self):
         visited = []
@@ -71,6 +192,53 @@ class DatasetRuntimeTests(unittest.TestCase):
         self.assertEqual(records[0]["key"], "images:sample.jpg:512")
         self.assertEqual(records[0]["metadata"]["dataset_relative_path"], "sample.jpg")
         self.assertEqual(records[1], {"prompt": "cat", "key": "sample.jpg__bbox_0", "metadata": {"grounding_entity": True}})
+
+    def test_random_mask_and_reference_emit_the_selected_caption_context_and_unconditional(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import TextRequestBuilder
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+
+        model = SimpleNamespace(
+            text_embed_cache_key=lambda: TextEmbedCacheKey.CAPTION, uses_image_context_dropout_caption_cache=lambda: True
+        )
+        args = SimpleNamespace(conditioning_multidataset_sampling="random", caption_dropout_probability=0)
+        source = SimpleNamespace(resolve_caption=lambda path: ["source A", "source B"])
+        mask = SimpleNamespace(
+            id="mask",
+            config={"conditioning_type": "mask", "source_dataset_id": "images", "caption_strategy": None},
+            conditioning_ref=lambda ref: "m/" + ref,
+        )
+        reference = SimpleNamespace(
+            id="ref",
+            config={"conditioning_type": "reference_strict"},
+            conditioning_ref=lambda ref: "r/" + ref,
+            resolve_caption=lambda path: "reference",
+        )
+        with patch(
+            "simpletuner.helpers.distillation.factory.DistillerFactory.training_batch_requirements",
+            return_value={"unconditional_text_embeddings"},
+        ):
+            builder = TextRequestBuilder(model, "images", "", conditioning_datasets=[mask, reference], args=args)
+        requests = list(builder.records([("source A", "file.png")], {"dataset_runtime": source}))
+        contexts = [(item["prompt"], item["metadata"].get("image_paths")) for item in requests]
+        self.assertEqual(
+            contexts,
+            [
+                ("reference", ["r/file.png"]),
+                ("", ["r/file.png"]),
+                ("source A", None),
+                ("", None),
+                ("source B", None),
+                ("", None),
+            ],
+        )
+
+    def test_projected_payloads_preserve_order_duplicates_and_identify_failed_references(self):
+        self.data_backend.read_image_batch.return_value = (["a", "a", "b"], [1, 2, 3])
+        records = self.runtime.read_samples(["a", "b", "a"], fields={"image"})
+        self.assertEqual([record["image"] for record in records], [1, 3, 2])
+        self.metadata_backend.get_metadata_by_filepath.assert_not_called()
+        with self.assertRaisesRegex(OSError, "missing"):
+            self.runtime.read_samples(["a", "missing"], fields={"image"})
 
     def test_reads_preserve_order_and_duplicates_with_independent_nested_metadata(self):
         refs = ["webshart://2/19/a.jpg", "webshart://0/3/b.jpg", "webshart://2/19/a.jpg"]
@@ -172,12 +340,23 @@ class DatasetRuntimeTests(unittest.TestCase):
         sampler.metadata_backend = self.metadata_backend
         sampler.dataset_runtime = self.runtime
         sampler.debug_log = Mock()
+        self.data_backend.supports_caption_projection = True
+        self.data_backend.read_caption_batch.return_value = [self.metadata["captions"], self.metadata["captions"]]
+        self.metadata["conditioning"] = {"references": ["base.png"]}
+        self.metadata["crop_coordinates"] = [0, 0]
         with (
             patch.object(StateTracker, "get_args", return_value=SimpleNamespace(model_family="sdxl")),
             patch("simpletuner.helpers.multiaspect.sampler.random.choice", side_effect=["first", "second"]),
         ):
             records = sampler._validate_and_yield_images_from_samples(["sample.jpg", "sample.jpg"], "1.0")
         self.assertEqual([record["instance_prompt_text"] for record in records], ["first", "second"])
+        self.data_backend.read_caption_batch.assert_called_once_with(["sample.jpg", "sample.jpg"])
+        records[0]["crop_coordinates"][0] = 8
+        records[1]["conditioning"]["references"].append("alternative.png")
+        self.assertEqual(records[1]["crop_coordinates"], [0, 0])
+        self.assertEqual(records[0]["conditioning"]["references"], ["base.png"])
+        self.assertEqual(self.metadata["conditioning"]["references"], ["base.png"])
+        self.assertEqual(self.metadata["crop_coordinates"], [0, 0])
         self.assertNotIn("instance_prompt_text", self.metadata)
         records[1]["webshart"]["sample_idx"] = 20
         self.assertEqual(records[0]["webshart"]["sample_idx"], 19)
@@ -193,6 +372,36 @@ class DatasetRuntimeTests(unittest.TestCase):
         self.assertIs(sampler.dataset_runtime, self.runtime)
         self.assertEqual(sampler.caption_strategy, "webshart")
 
+    def test_provider_schedule_is_independent_of_storage_config(self):
+        @dataclass(frozen=True)
+        class Schedule:
+            epoch: int
+            batch_size: int
+            occurrence_revision: str | None = None
+
+        provider = Mock()
+        provider.epoch_spec.side_effect = Schedule
+        provider.scheduled_batches.return_value = 9
+        self.metadata_backend.epoch_provider = provider
+        self.metadata_backend.id = "images"
+        runtime = DatasetRuntime("images", self.data_backend, self.metadata_backend, {})
+        sampler = MultiAspectSampler(runtime, model=None, accelerator=Mock(), batch_size=2)
+
+        self.assertTrue(runtime.uses_native_schedule)
+        self.assertEqual(len(sampler), 9)
+        provider.scheduled_batches.assert_called_once_with(Schedule(1, 2))
+        self.assertIs(sampler.validation_cursor, provider.open_validation.return_value)
+        with patch.object(runtime, "occurrence_revision", return_value="revision"):
+            self.assertIs(sampler._open_training_cursor(), provider.open_epoch.return_value)
+        provider.open_epoch.assert_called_once_with(Schedule(1, 2, "revision"))
+        self.metadata_backend.open_epoch.assert_not_called()
+
+        self.metadata_backend.epoch_provider = None
+        generic = DatasetRuntime(
+            "images", self.data_backend, self.metadata_backend, {"webshart": {"sampling_policy": "global"}}
+        )
+        self.assertFalse(generic.uses_native_schedule)
+
     def test_validation_isolates_metadata_and_resolves_source_without_source_sampler(self):
         for source_id in (None, "source"):
             with self.subTest(source_id=source_id):
@@ -202,11 +411,11 @@ class DatasetRuntimeTests(unittest.TestCase):
                 sampler.dataset_runtime = self.runtime
                 sampler.data_backend = self.data_backend
                 sampler.source_dataset_id = source_id
-                sampler._val_master_list = ["sample.jpg"]
-                sampler._val_cursor = 0
+                sampler.validation_cursor = SimpleNamespace(next_refs=Mock(return_value=["sample.jpg"]))
+                self.data_backend.read_image_batch.return_value = (["sample.jpg"], ["image"])
                 sampler.logger = Mock()
                 sampler.debug_log = Mock()
-                source_runtime = SimpleNamespace(resolve_caption=Mock(return_value="source caption"))
+                source_runtime = SimpleNamespace(resolve_captions=Mock(return_value=["source caption"]))
 
                 def training_sample(**kwargs):
                     kwargs["image_metadata"]["webshart"]["sample_idx"] = 99
@@ -216,16 +425,16 @@ class DatasetRuntimeTests(unittest.TestCase):
 
                 with (
                     patch("simpletuner.helpers.multiaspect.sampler.TrainingSample", side_effect=training_sample),
-                    patch.object(StateTracker, "get_data_backend", return_value={"dataset_runtime": source_runtime}),
+                    patch.object(StateTracker, "get_dataset", return_value=source_runtime),
                     patch("simpletuner.helpers.multiaspect.sampler.random.choice", side_effect=lambda choices: choices[0]),
                 ):
                     results = sampler.retrieve_validation_set(1)
                 self.assertEqual(results[0][1], "source caption" if source_id else "first")
                 self.assertEqual(self.metadata["webshart"]["sample_idx"], 19)
                 if source_id:
-                    source_runtime.resolve_caption.assert_called_once_with("source.jpg")
+                    source_runtime.resolve_captions.assert_called_once_with(["source.jpg"])
                 else:
-                    source_runtime.resolve_caption.assert_not_called()
+                    source_runtime.resolve_captions.assert_not_called()
 
     def test_conditioning_isolates_metadata_and_uses_source_runtime(self):
         config = {**self.config, "caption_strategy": None}
@@ -252,7 +461,7 @@ class DatasetRuntimeTests(unittest.TestCase):
 
         with (
             patch("simpletuner.helpers.multiaspect.sampler.TrainingSample", side_effect=training_sample),
-            patch.object(StateTracker, "get_data_backend", return_value={"dataset_runtime": source_runtime}),
+            patch.object(StateTracker, "get_dataset", return_value=source_runtime),
             patch.object(StateTracker, "get_data_backend_config", return_value={}),
         ):
             sample = sampler.get_conditioning_sample("sample.jpg")

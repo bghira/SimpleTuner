@@ -4080,6 +4080,10 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
                 for key, value in pipeline_kwargs.items()
                 if key not in ("pretrained_model_name_or_path", "watermarker", "watermark")
             }
+            for name in getattr(pipeline_class, "_optional_components", ()):
+                parameter = pipeline_init_signature.parameters.get(name)
+                if parameter is not None and parameter.default is inspect.Parameter.empty:
+                    init_kwargs.setdefault(name, None)
             pipeline_instance = pipeline_class(**init_kwargs)
         self.pipelines[pipeline_type] = pipeline_instance
 

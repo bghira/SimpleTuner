@@ -894,43 +894,6 @@ class MiniMaxH3(VideoModelFoundation):
             return f"{default_key}:__caption_dropout__"
         return default_key
 
-    def text_embed_cache_metadata_for_filepath(
-        self,
-        *,
-        init_backend: dict,
-        image_path: str,
-        prompt: str,
-        data_backend_id: str | None,
-        dataset_relative_path: str | None,
-    ) -> dict:
-        del init_backend, image_path, prompt
-        conditioning_datasets = StateTracker.get_conditioning_datasets(data_backend_id)
-        if not conditioning_datasets:
-            return {}
-
-        image_paths = []
-        data_backend_ids = []
-        for conditioning_backend in conditioning_datasets:
-            conditioning_backend_id = conditioning_backend.get("id")
-            conditioning_config = conditioning_backend.get("config", {})
-            conditioning_root = conditioning_config.get("instance_data_dir")
-            if not conditioning_backend_id or not conditioning_root or not dataset_relative_path:
-                continue
-            conditioning_path = os.path.join(conditioning_root, dataset_relative_path)
-            if (conditioning_config.get("conditioning_config") or {}).get("type") == "i2v_first_frame":
-                conditioning_path = os.path.splitext(conditioning_path)[0] + ".png"
-            image_paths.append(conditioning_path)
-            data_backend_ids.append(conditioning_backend_id)
-
-        if not image_paths:
-            return {}
-        return {
-            "image_paths": image_paths,
-            "data_backend_ids": data_backend_ids,
-            "image_path": image_paths[0],
-            "data_backend_id": data_backend_ids[0],
-        }
-
     def _encode_prompts(self, prompts: list, is_negative_prompt: bool = False):
         encoded = []
         components = self._text_encoder_components()
@@ -1039,13 +1002,8 @@ class MiniMaxH3(VideoModelFoundation):
             return None
         if not image_path or not data_backend_id:
             return None
-        backend_entry = StateTracker.get_data_backend(data_backend_id)
-        if backend_entry is None:
-            return None
-        data_backend = backend_entry.get("data_backend")
-        if data_backend is None:
-            return None
-        return self._coerce_prompt_image(data_backend.read_image(image_path))
+        dataset = StateTracker.get_dataset(data_backend_id)
+        return self._coerce_prompt_image(dataset.data_backend.read_image(image_path))
 
     @staticmethod
     def _coerce_prompt_image(image) -> Image.Image | None:

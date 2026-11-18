@@ -907,33 +907,36 @@ class MiniMaxH3Tests(unittest.TestCase):
             "dataset:11.mp4:__caption_dropout__",
         )
 
-    def test_text_embed_metadata_maps_first_frame_conditioning_to_png(self):
-        model = MiniMaxH3.__new__(MiniMaxH3)
-        conditioning_datasets = [
-            {
-                "id": "video_conditioning",
-                "config": {
-                    "instance_data_dir": "/cache/conditioning",
-                    "conditioning_config": {"type": "i2v_first_frame"},
-                },
-            }
-        ]
-        with patch(
-            "simpletuner.helpers.models.minimaxh3.model.StateTracker.get_conditioning_datasets",
-            return_value=conditioning_datasets,
-        ):
-            metadata = model.text_embed_cache_metadata_for_filepath(
-                init_backend={},
-                image_path="11.mp4",
-                prompt="caption",
-                data_backend_id="video_backend",
-                dataset_relative_path="nested/11.mp4",
-            )
+    def test_text_preparation_keeps_each_first_frame_reference_in_its_own_request(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime, TextRequestBuilder
 
-        self.assertEqual(metadata["image_paths"], ["/cache/conditioning/nested/11.png"])
-        self.assertEqual(metadata["data_backend_ids"], ["video_conditioning"])
-        self.assertEqual(metadata["image_path"], "/cache/conditioning/nested/11.png")
-        self.assertEqual(metadata["data_backend_id"], "video_conditioning")
+        model = MiniMaxH3.__new__(MiniMaxH3)
+        model.config = SimpleNamespace()
+        targets = [
+            DatasetRuntime(
+                name,
+                None,
+                None,
+                {"instance_data_dir": f"/cache/{name}", "conditioning_config": {"type": "i2v_first_frame"}},
+            )
+            for name in ("first", "second")
+        ]
+        for target in targets:
+            target.resolve_caption = Mock(return_value="caption")
+        builder = TextRequestBuilder(
+            model,
+            "video_backend",
+            "/source",
+            args=SimpleNamespace(conditioning_multidataset_sampling="random", caption_dropout_probability=0),
+            conditioning_datasets=targets,
+        )
+        requests = list(builder.records([("caption", "/source/nested/11.mp4")], {}))
+
+        self.assertEqual(
+            [request["metadata"]["image_paths"] for request in requests],
+            [["/cache/first/nested/11.png"], ["/cache/second/nested/11.png"]],
+        )
+        self.assertEqual([request["metadata"]["data_backend_ids"] for request in requests], [["first"], ["second"]])
 
     def test_encode_prompts_passes_image_context_to_h3_conditioner(self):
         model = MiniMaxH3.__new__(MiniMaxH3)

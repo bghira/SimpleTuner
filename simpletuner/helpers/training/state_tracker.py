@@ -4,8 +4,12 @@ import json
 import logging
 import os
 import time
+from contextlib import ExitStack
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 
 from simpletuner.helpers.data_backend.dataset_types import DatasetType, ensure_dataset_type
 from simpletuner.helpers.distillation.requirements import EMPTY_PROFILE, DistillerRequirementProfile
@@ -45,18 +49,20 @@ class StateTracker:
     all_image_files = {}
     all_vae_cache_files = {}
     all_text_cache_files = {}
-    all_conditioning_image_embed_files = {}
     all_distillation_cache_files = {}
     all_caption_files = {}
 
     ## Backend entities for retrieval
     default_text_embed_cache = None
+    _dataset_resources = ExitStack()
     _is_sdxl_refiner = False
     accelerator = None
     data_backends = {}
+    datasets: dict[str, "DatasetRuntime"] = {}
     parquet_databases = {}
     # A list of backend IDs to exhaust.
     exhausted_backends = []
+    consumed_dataset_mixer = None
     # A dict of backend IDs to the number of times they have been repeated.
     repeats = {}
     # The images we'll use for upscaling at validation time. Stored at startup.
@@ -311,6 +317,7 @@ class StateTracker:
         cls.set_global_step(training_state.get("global_step", 0))
         cls.set_epoch_step(training_state.get("epoch_step", 0))
         cls.set_epoch(training_state.get("epoch", 1))
+        cls.consumed_dataset_mixer = training_state.get("dataset_mixer")
         cls.set_exhausted_backends(training_state.get("exhausted_backends", []))
         cls.init_repeats(training_state.get("repeats", {}))
         logging.debug(f"Training state loaded: {cls.get_training_state()}")
@@ -324,6 +331,10 @@ class StateTracker:
             "exhausted_backends": cls.exhausted_backends,
             "repeats": cls.repeats,
         }
+        if cls.consumed_dataset_mixer is not None:
+            training_state["dataset_mixer"] = cls.consumed_dataset_mixer
+            training_state["exhausted_backends"] = cls.consumed_dataset_mixer["exhausted_backends"]
+            training_state["repeats"] = {}
         logger.debug(f"Saving training state: {training_state}")
         with open(state_path, "w") as f:
             json.dump(training_state, f)
@@ -654,36 +665,6 @@ class StateTracker:
         return cls.all_vae_cache_files[data_backend_id] or {}
 
     @classmethod
-    def set_conditioning_image_embed_files(cls, raw_file_list: list, data_backend_id: str):
-        raw_file_list = raw_file_list or []
-        if cls.all_conditioning_image_embed_files.get(data_backend_id) is not None:
-            cls.all_conditioning_image_embed_files[data_backend_id].clear()
-        else:
-            cls.all_conditioning_image_embed_files[data_backend_id] = {}
-        for subdirectory_list in raw_file_list:
-            if isinstance(subdirectory_list, (list, tuple)) and len(subdirectory_list) == 3:
-                _, _, files = subdirectory_list
-            else:
-                files = subdirectory_list if isinstance(subdirectory_list, list) else [subdirectory_list]
-            for embed_path in files:
-                cls.all_conditioning_image_embed_files[data_backend_id][embed_path] = False
-        cls._save_to_disk(
-            f"all_conditioning_image_embed_files_{data_backend_id}",
-            cls.all_conditioning_image_embed_files[data_backend_id],
-        )
-
-    @classmethod
-    def get_conditioning_image_embed_files(cls, data_backend_id: str, retry_limit: int = 0):
-        if (
-            data_backend_id not in cls.all_conditioning_image_embed_files
-            or cls.all_conditioning_image_embed_files.get(data_backend_id) is None
-        ):
-            cls.all_conditioning_image_embed_files[data_backend_id] = cls._load_from_disk(
-                f"all_conditioning_image_embed_files_{data_backend_id}", retry_limit=retry_limit
-            )
-        return cls.all_conditioning_image_embed_files[data_backend_id] or {}
-
-    @classmethod
     def set_distillation_cache_files(cls, raw_file_list: list, data_backend_id: str):
         if cls.all_distillation_cache_files.get(data_backend_id) is not None:
             cls.all_distillation_cache_files[data_backend_id].clear()
@@ -779,25 +760,47 @@ class StateTracker:
 
     @classmethod
     def register_data_backend(cls, data_backend):
-        cls.data_backends[data_backend["id"]] = data_backend
+        dataset_id = data_backend["id"]
+        dataset = cls.datasets.get(dataset_id)
+        if dataset is not None:
+            data_backend["config"] = dataset.config
+        cls.data_backends[dataset_id] = data_backend
 
     @classmethod
     def get_data_backend(cls, id: str):
         return cls.data_backends[id]
 
     @classmethod
+    def register_dataset(cls, dataset: "DatasetRuntime"):
+        cls.datasets[dataset.id] = dataset
+
+    @classmethod
+    def get_dataset(cls, dataset_id: str) -> "DatasetRuntime":
+        return cls.datasets[dataset_id]
+
+    @classmethod
+    def get_datasets(cls, *dataset_types) -> dict[str, "DatasetRuntime"]:
+        allowed = {ensure_dataset_type(value) for value in dataset_types}
+        return {
+            dataset_id: dataset
+            for dataset_id, dataset in cls.datasets.items()
+            if ensure_dataset_type(dataset.config["dataset_type"]) in allowed
+        }
+
+    @classmethod
     def get_dataset_size(cls, data_backend_id: str):
+        dataset = cls.datasets.get(data_backend_id)
+        if dataset is not None and dataset.sampler is not None:
+            return len(dataset.sampler)
         if "sampler" in cls.data_backends[data_backend_id]:
             return len(cls.data_backends[data_backend_id]["sampler"])
         return 0
 
     @classmethod
     def set_conditioning_datasets(cls, data_backend_id: str, conditioning_backend_ids: list[str]):
+        if data_backend_id in cls.datasets:
+            cls.datasets[data_backend_id].conditioning_datasets = tuple(cls.datasets[x] for x in conditioning_backend_ids)
         cls.data_backends[data_backend_id]["conditioning_data"] = [cls.data_backends[x] for x in conditioning_backend_ids]
-
-    @classmethod
-    def get_conditioning_datasets(cls, data_backend_id: str) -> list[dict]:
-        return cls.data_backends[data_backend_id].get("conditioning_data", [])
 
     @classmethod
     def set_grounding_image_embed_cache(cls, data_backend_id: str, cache):
@@ -810,6 +813,8 @@ class StateTracker:
     @classmethod
     def set_s2v_datasets(cls, data_backend_id: str, s2v_backend_ids: list[str]):
         """Link audio datasets for S2V (Speech-to-Video) training."""
+        if data_backend_id in cls.datasets:
+            cls.datasets[data_backend_id].audio_datasets = tuple(cls.datasets[x] for x in s2v_backend_ids)
         cls.data_backends[data_backend_id]["s2v_data"] = [cls.data_backends[x] for x in s2v_backend_ids]
 
     @classmethod
@@ -834,6 +839,9 @@ class StateTracker:
     def set_data_backend_config(cls, data_backend_id: str, config: dict):
         if data_backend_id not in cls.data_backends:
             cls.data_backends[data_backend_id] = {}
+        dataset = cls.datasets.get(data_backend_id)
+        if dataset is not None:
+            dataset.config = config
         cls.data_backends[data_backend_id]["config"] = config
 
     @classmethod
@@ -851,9 +859,17 @@ class StateTracker:
         return conditioning_mappings
 
     @classmethod
+    def own_dataset_resource(cls, resource):
+        cls._dataset_resources.callback(resource.close)
+
+    @classmethod
     def clear_data_backends(cls):
+        cls.consumed_dataset_mixer = None
         cls.data_backends = {}
+        cls.datasets = {}
         cls.dataset_schedule = {}
+        cls.default_text_embed_cache = None
+        cls._dataset_resources.close()
 
     @classmethod
     def get_data_backends(
@@ -985,14 +1001,15 @@ class StateTracker:
         data_backend_id: str,
         search_dataset_types: list = ["image", "video", "conditioning"],
     ):
-        for _, data_backend in cls.get_data_backends(_types=search_dataset_types).items():
-            if "metadata_backend" not in data_backend:
-                continue
-            if data_backend_id != data_backend["metadata_backend"].id:
-                continue
-            metadata = data_backend["metadata_backend"].get_metadata_by_filepath(filepath)
-            if metadata is not None:
-                return metadata
+        dataset = cls.datasets.get(data_backend_id)
+        if dataset is not None:
+            if dataset.config["dataset_type"] in search_dataset_types or dataset.config["dataset_type"] == DatasetType.IMAGE:
+                return dataset.metadata_backend.get_metadata_by_filepath(filepath)
+            return None
+        # Auxiliary and legacy registrations may expose metadata without a DatasetRuntime.
+        backend = cls.get_data_backends(_types=search_dataset_types).get(data_backend_id)
+        if backend is not None and "metadata_backend" in backend:
+            return backend["metadata_backend"].get_metadata_by_filepath(filepath)
         return None
 
     @classmethod
@@ -1019,9 +1036,6 @@ class StateTracker:
 
     @classmethod
     def load_aspect_resolution_map(cls, dataloader_resolution: float, retry_limit: int = 0):
-        if dataloader_resolution not in cls.aspect_resolution_map:
-            cls.aspect_resolution_map = {dataloader_resolution: {}}
-
         cls.aspect_resolution_map[dataloader_resolution] = (
             cls._load_from_disk(
                 f"aspect_resolution_map-{dataloader_resolution}",
