@@ -1,7 +1,7 @@
 import logging
 import os
 
-from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+from simpletuner.helpers.data_backend.base import conditioning_file_path
 from simpletuner.helpers.training.multi_process import should_log
 from simpletuner.helpers.training.state_tracker import StateTracker
 from simpletuner.helpers.utils.pathing import normalize_data_path
@@ -71,7 +71,7 @@ class DatasetDuplicator:
             if not needs_path_update or shared_sample_ids:
                 return path
             if generated:
-                return DatasetRuntime.conditioning_file_path(
+                return conditioning_file_path(
                     normalize_data_path(path, source_dir), os.path.abspath(target_dir), target_config
                 )
             return DatasetDuplicator._translate_conditioning_path(path, source_dir, target_dir, conditioning_data_type)
