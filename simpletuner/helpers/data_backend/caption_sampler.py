@@ -32,6 +32,7 @@ class CaptionSampler(Sampler):
         repeats: int = 0,
         shuffle: bool = True,
         seed: int = 0,
+        track_consumed: bool = False,
     ):
         self.id = id
         self.metadata_backend = metadata_backend
@@ -43,6 +44,8 @@ class CaptionSampler(Sampler):
         self.epoch = 0
         self._cursor = 0
         self._epoch_entries = None
+        self.tracks_consumed_batches = track_consumed
+        self._consumed_state = self.fetched_state()
         self.state_manager = BucketStateManager(self.id)
 
     def set_epoch(self, epoch: int) -> None:
@@ -51,12 +54,24 @@ class CaptionSampler(Sampler):
             self.epoch = int(epoch)
             self._cursor = 0
             self._epoch_entries = None
+            self._consumed_state = self.fetched_state()
+
+    def start_training_epoch(self, epoch):
+        self.set_epoch(epoch - 1)
+
+    def fetched_state(self):
+        return {"epoch": self.epoch, "cursor": self._cursor}
+
+    def acknowledge_batch(self, continuation):
+        self._consumed_state = continuation
 
     def _checkpoint_layout(self) -> dict:
-        records = [
-            [metadata_id, self.metadata_backend.get_record(metadata_id).caption_text]
-            for metadata_id in self.metadata_backend.list_metadata_ids()
-        ]
+        captions_digest = hashlib.sha256(b"[")
+        for index, record in enumerate(self.metadata_backend.iter_records()):
+            if index:
+                captions_digest.update(b", ")
+            captions_digest.update(json.dumps([record.metadata_id, record.caption_text], ensure_ascii=False).encode("utf-8"))
+        captions_digest.update(b"]")
         parallelism = getattr(self.accelerator, "parallelism_config", None)
         return {
             "batch_size": self.batch_size,
@@ -70,13 +85,12 @@ class CaptionSampler(Sampler):
             "parallelism": {
                 key: getattr(parallelism, key, 1) for key in ("dp_replicate_size", "dp_shard_size", "cp_size", "tp_size")
             },
-            "captions_sha256": hashlib.sha256(json.dumps(records, ensure_ascii=False).encode("utf-8")).hexdigest(),
+            "captions_sha256": captions_digest.hexdigest(),
         }
 
     def save_state(self, state_path: str) -> None:
-        self.state_manager.save_state(
-            {"epoch": self.epoch, "cursor": self._cursor, "layout": self._checkpoint_layout()}, state_path
-        )
+        progress = self._consumed_state if self.tracks_consumed_batches else self.fetched_state()
+        self.state_manager.save_state({**progress, "layout": self._checkpoint_layout()}, state_path)
 
     def load_states(self, state_path: str) -> None:
         state = self.state_manager.load_state(state_path)
@@ -101,6 +115,7 @@ class CaptionSampler(Sampler):
         self.epoch = epoch
         self._cursor = cursor
         self._epoch_entries = None
+        self._consumed_state = self.fetched_state()
 
     def log_state(self) -> None:
         logger.info(
@@ -115,15 +130,16 @@ class CaptionSampler(Sampler):
     # Sampler protocol
     # ------------------------------------------------------------------
     def __iter__(self) -> Iterator[Tuple[str, ...]]:
-        metadata_ids = self.metadata_backend.list_metadata_ids()
-        if not metadata_ids:
-            raise MultiDatasetExhausted()
         if self._epoch_entries is None:
+            metadata_ids = self.metadata_backend.list_metadata_ids()
+            if not metadata_ids:
+                raise MultiDatasetExhausted()
             self._epoch_entries = self._prepare_epoch_entries(metadata_ids)
         epoch_entries = self._epoch_entries
         if self._cursor >= len(epoch_entries):
-            self.set_epoch(self.epoch + 1)
-            StateTracker.set_repeats(data_backend_id=self.id, repeats=self.repeats)
+            if not self.tracks_consumed_batches:
+                self.set_epoch(self.epoch + 1)
+                StateTracker.set_repeats(data_backend_id=self.id, repeats=self.repeats)
             raise MultiDatasetExhausted()
         while self._cursor < len(epoch_entries):
             start = self._cursor
@@ -131,8 +147,7 @@ class CaptionSampler(Sampler):
             yield tuple(epoch_entries[start : start + self.batch_size])
 
     def __len__(self) -> int:
-        metadata_ids = self.metadata_backend.list_metadata_ids()
-        total_entries = len(metadata_ids) * max(self.repeats + 1, 1)
+        total_entries = len(self.metadata_backend) * (self.repeats + 1)
         if total_entries == 0:
             return 0
         total_size = self._total_size(total_entries)

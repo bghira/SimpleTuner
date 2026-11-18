@@ -552,11 +552,14 @@ class CaptionMetadataBackend(MetadataBackend):
     # ------------------------------------------------------------------
     # Access helpers for datasets / samplers
     # ------------------------------------------------------------------
-    def iter_records(self) -> Iterable[CaptionRecord]:
+    def iter_records(self, *, worker=0, workers=1) -> Iterable[CaptionRecord]:
+        if workers < 1 or not 0 <= worker < workers:
+            raise ValueError("Preparation worker must be in the range [0, workers).")
         if not self.caption_records or not self._ordered_ids:
             self.load_image_metadata()
-        for metadata_id in self._ordered_ids:
-            record = self.caption_records.get(metadata_id)
+        total = len(self._ordered_ids)
+        for index in range(total * worker // workers, total * (worker + 1) // workers):
+            record = self.caption_records.get(self._ordered_ids[index])
             if record is not None:
                 yield record
 

@@ -10,6 +10,8 @@ from simpletuner.helpers.training.caption_collate import collate_caption_batch
 
 
 class DummyCaptionMetadataBackend:
+    epoch_provider = None
+
     def __init__(self, count: int = 3):
         self._records = {
             f"meta-{index}": CaptionRecord(
@@ -25,6 +27,9 @@ class DummyCaptionMetadataBackend:
 
     def get_record(self, metadata_id: str):
         return self._records.get(metadata_id)
+
+    def iter_records(self):
+        return iter(self._records.values())
 
     def __len__(self):
         return len(self._records)
