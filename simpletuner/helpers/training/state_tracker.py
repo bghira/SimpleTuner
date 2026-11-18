@@ -652,16 +652,19 @@ class StateTracker:
 
     @classmethod
     def get_data_backend_config(cls, data_backend_id: str):
+        dataset = cls.datasets.get(data_backend_id)
+        if dataset is not None:
+            return dataset.config
         return cls.data_backends.get(data_backend_id, {}).get("config", {})
 
     @classmethod
     def set_data_backend_config(cls, data_backend_id: str, config: dict):
-        if data_backend_id not in cls.data_backends:
-            cls.data_backends[data_backend_id] = {}
         dataset = cls.datasets.get(data_backend_id)
         if dataset is not None:
             dataset.config = config
-        cls.data_backends[data_backend_id]["config"] = config
+            if data_backend_id not in cls.data_backends:
+                return
+        cls.data_backends.setdefault(data_backend_id, {})["config"] = config
 
     @classmethod
     def attach_bucket_report(cls, data_backend_id: str, bucket_report) -> None:

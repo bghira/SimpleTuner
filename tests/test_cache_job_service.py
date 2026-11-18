@@ -470,6 +470,7 @@ class TestStreamingTextPreparation(unittest.TestCase):
 
     def test_job_streams_accepted_samples_without_inventory_discovery(self):
         from simpletuner.helpers.models.common import TextEmbedCacheKey
+        from simpletuner.helpers.training.state_tracker import StateTracker
 
         service = CacheJobService(broadcast_fn=MagicMock())
         metadata = _LegacyPreparationMetadata(
@@ -490,6 +491,8 @@ class TestStreamingTextPreparation(unittest.TestCase):
         captured = []
 
         def consume(records, *, batch_size, progress_callback):
+            self.assertIs(StateTracker.get_dataset("stream-test"), runtime)
+            self.assertNotIn("stream-test", StateTracker.data_backends)
             self.assertEqual(batch_size, 2)
             self.assertNotIsInstance(records, list)
             progress_callback(0)

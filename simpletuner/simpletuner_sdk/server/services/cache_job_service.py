@@ -567,24 +567,11 @@ class CacheJobService:
     # Cache execution per type
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _register_runtime(runtime):
+    def _prepare_image_artifacts(self, job, runtime, binding, cache):
         from simpletuner.helpers.training.state_tracker import StateTracker
 
-        StateTracker.register_dataset(runtime)
-        StateTracker.register_data_backend(
-            {
-                "id": runtime.id,
-                "dataset_type": runtime.config["dataset_type"],
-                "data_backend": runtime.data_backend,
-                "metadata_backend": runtime.metadata_backend,
-                "dataset_runtime": runtime,
-            }
-        )
-
-    def _prepare_image_artifacts(self, job, runtime, binding, cache):
         setattr(runtime, binding, cache)
-        self._register_runtime(runtime)
+        StateTracker.register_dataset(runtime)
         job.status = CacheJobStatus.RUNNING
         job.stage = "Preparing latents" if binding == "vae_cache" else "Preparing conditioning embeddings"
         last_update = 0.0
@@ -714,8 +701,7 @@ class CacheJobService:
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         previous_dataset = StateTracker.datasets.pop(dataset_id, None)
-        previous = StateTracker.data_backends.get(dataset_id)
-        StateTracker.data_backends[dataset_id] = {}
+        previous = StateTracker.data_backends.pop(dataset_id, None)
         try:
             yield
         finally:
@@ -815,7 +801,7 @@ class CacheJobService:
 
             batch_size = max(text_cache.read_batch_size, text_cache.text_encoder_batch_size)
             source_runtime.text_embed_cache = text_cache
-            self._register_runtime(source_runtime)
+            StateTracker.register_dataset(source_runtime)
             conditioning = None
             ids = dataset_config.get("conditioning_data")
             if ids and getattr(model, "requires_text_embed_image_context", lambda: False)():
@@ -830,8 +816,9 @@ class CacheJobService:
                     scope.enter_context(self._job_registration(ref_id))
                     runtime = self._create_dataset_runtime(ref_config, args, accelerator, preparation_only=True)
                     scope.callback(runtime.close)
-                    self._register_runtime(runtime)
+                    StateTracker.register_dataset(runtime)
                     conditioning.append(runtime)
+                source_runtime.conditioning_datasets = tuple(conditioning)
             prompt_records = self._iter_prompt_records(
                 model, source_runtime, batch_size=batch_size, args=args, conditioning_datasets=conditioning
             )

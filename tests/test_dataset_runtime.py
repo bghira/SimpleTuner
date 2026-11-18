@@ -39,11 +39,16 @@ class DatasetRuntimeTests(unittest.TestCase):
     def test_registry_exposes_catalogue_without_sampler_or_legacy_bundle(self):
         with (
             patch.object(StateTracker, "datasets", {}),
+            patch.object(StateTracker, "data_backends", {}),
             patch.object(StateTracker, "get_data_backends", side_effect=AssertionError("legacy lookup")),
         ):
             StateTracker.register_dataset(self.runtime)
             self.assertIs(StateTracker.get_dataset("images"), self.runtime)
             self.assertIs(StateTracker.get_metadata_by_filepath("ref", "images"), self.metadata)
+            updated = {**self.runtime.config, "probability": 0.25}
+            StateTracker.set_data_backend_config("images", updated)
+            self.assertIs(StateTracker.get_data_backend_config("images"), updated)
+            self.assertNotIn("images", StateTracker.data_backends)
 
     def test_compatibility_bundle_uses_the_registered_runtime_config(self):
         with patch.object(StateTracker, "datasets", {}), patch.object(StateTracker, "data_backends", {}):
