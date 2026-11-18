@@ -5995,6 +5995,12 @@ class Trainer:
             metadata = dataset.metadata_backend
             config = dataset.config
             vae_cache = dataset.vae_cache
+            if getattr(metadata, "stable_prepared_geometry", False) is True:
+                if config.get("vae_cache_clear_each_epoch") and vae_cache is not None:
+                    vae_cache.rebuild_prepared_cache(
+                        dataset, worker=self.accelerator.process_index, workers=self.accelerator.num_processes
+                    )
+                continue
             if (
                 config.get("crop")
                 and config.get("crop_aspect") == "random"

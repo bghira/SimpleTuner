@@ -273,6 +273,10 @@ class WebshartMetadataBackend(MetadataBackend):
     def requires_complete_preparation(self):
         return self.native_policy is not None
 
+    @property
+    def stable_prepared_geometry(self):
+        return self.native_policy is not None
+
     def epoch_spec(self, epoch, batch_size, *, occurrence_revision=None):
         args = self.runtime_args
         dp_size, dp_rank, cp_size = get_cp_aware_dp_info(self.accelerator)

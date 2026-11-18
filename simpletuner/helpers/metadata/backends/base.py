@@ -108,6 +108,7 @@ class MetadataBackend:
     epoch_provider = None
     caption_projection_strategy = None
     requires_complete_preparation = False
+    stable_prepared_geometry = False
     _preparation_source = None
 
     def __init__(

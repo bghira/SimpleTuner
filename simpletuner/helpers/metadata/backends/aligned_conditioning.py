@@ -24,6 +24,7 @@ class AlignedConditioningMetadata(MetadataBackend):
     """Map generated conditioning artifacts onto a pinned source preparation view."""
 
     requires_complete_preparation = True
+    stable_prepared_geometry = True
 
     def __init__(self, *, source, **kwargs):
         super().__init__(load_cache_on_init=False, **kwargs)

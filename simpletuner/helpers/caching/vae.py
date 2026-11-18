@@ -950,6 +950,18 @@ class VAECache(WebhookMixin):
             self.process_buckets()
         self.debug_log("-> Completed cache rebuild")
 
+    def rebuild_prepared_cache(self, dataset, *, worker, workers):
+        for _, refs in dataset.iter_preparation_batches(worker=worker, workers=workers, batch_size=self.write_batch_size):
+            keys = tuple(dict.fromkeys(self.cache_path_for_image(ref) for ref in refs))
+            present = self.cache_data_backend.bulk_exists(keys)
+            for key, exists in zip(keys, present, strict=True):
+                if exists:
+                    self.cache_data_backend.delete(key)
+        self.accelerator.wait_for_everyone()
+        if not self.vae_cache_ondemand:
+            self.prepare_dataset(dataset, worker=worker, workers=workers)
+            self.accelerator.wait_for_everyone()
+
     def clear_cache(self):
         # can't simply clear directory since it might be mixed with image samples (s3 case)
         def delete(key):

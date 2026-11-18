@@ -199,6 +199,26 @@ class TestVaeCacheTraversal(unittest.TestCase):
         store.delete.assert_called_once_with("vae/known.pt")
         source.delete.assert_not_called()
 
+    def test_epoch_rebuild_deletes_only_this_workers_prepared_artifact_keys(self):
+        cache = VAECache.__new__(VAECache)
+        cache.write_batch_size = 2
+        cache.cache_data_backend = Mock()
+        cache.cache_data_backend.bulk_exists.return_value = (True, False)
+        cache.cache_path_for_image = lambda ref: f"cache/{ref}.pt"
+        cache.accelerator = Mock()
+        cache.vae_cache_ondemand = False
+        cache.prepare_dataset = Mock()
+        dataset = Mock()
+        dataset.iter_preparation_batches.return_value = iter([("square", ("present", "missing"))])
+
+        cache.rebuild_prepared_cache(dataset, worker=3, workers=8)
+
+        dataset.iter_preparation_batches.assert_called_once_with(worker=3, workers=8, batch_size=2)
+        cache.cache_data_backend.delete.assert_called_once_with("cache/present.pt")
+        cache.cache_data_backend.iter_file_keys.assert_not_called()
+        cache.prepare_dataset.assert_called_once_with(dataset, worker=3, workers=8)
+        self.assertEqual(cache.accelerator.wait_for_everyone.call_count, 2)
+
     def test_accepted_partition_drives_cold_mixed_and_warm_latents(self):
         dataset = Mock(requires_complete_preparation=True, uses_native_schedule=False)
         dataset.describe.return_value.accepted_samples = 3

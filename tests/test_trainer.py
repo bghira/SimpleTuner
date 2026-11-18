@@ -2401,6 +2401,23 @@ class TestTrainer(unittest.TestCase):
         ):
             yield
 
+    def test_epoch_rollover_keeps_native_geometry_and_rebuilds_only_requested_artifacts(self):
+        trainer, metadata, vae_cache, backends = self._rollover_fixture({}, usable_batches=10)
+        metadata.stable_prepared_geometry = True
+        trainer.accelerator.process_index = 2
+        trainer.accelerator.num_processes = 8
+        dataset = backends["train"]
+        with self._rollover_patches(backends):
+            trainer._epoch_rollover(2)
+            vae_cache.rebuild_prepared_cache.assert_not_called()
+            dataset.config["vae_cache_clear_each_epoch"] = True
+            trainer._epoch_rollover(3)
+
+        metadata.compute_aspect_ratio_bucket_indices.assert_not_called()
+        metadata.reload_cache.assert_not_called()
+        metadata.split_buckets_between_processes.assert_not_called()
+        vae_cache.rebuild_prepared_cache.assert_called_once_with(dataset, worker=2, workers=8)
+
     def test_epoch_rollover_rejects_a_rank_the_resplit_left_empty(self):
         trainer, metadata_backend, vaecache, backends = self._rollover_fixture(
             bucket_contents={"1.0": [], "1.5": []}, usable_batches=0
