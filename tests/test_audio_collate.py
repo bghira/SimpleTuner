@@ -36,16 +36,16 @@ class TestAudioCollate(unittest.TestCase):
 
         # Mock Data Backend
         self.mock_backend = MagicMock()
-        self.mock_backend.get.return_value = {"instance_data_dir": "/tmp"}
+        self.mock_backend.get.side_effect = {"config": {"instance_data_dir": "/tmp"}}.get
         self.mock_state_tracker.get_data_backend.return_value = self.mock_backend
 
         # Mock Text Embed Cache
         self.mock_text_cache = MagicMock()
+        self.mock_text_cache.text_cache_ondemand = False
         self.mock_text_cache.disabled = False
-        self.mock_text_cache.compute_prompt_embeddings_with_model.return_value = {
-            "prompt_embeds": torch.randn(1, 10, 32),
-            "attention_masks": torch.ones(1, 10),
-        }
+        self.mock_text_cache.read_training_batch.side_effect = lambda records, device=None: [
+            {"prompt_embeds": torch.randn(1, 10, 32), "attention_masks": torch.ones(1, 10)} for _ in records
+        ]
         self.mock_backend.__getitem__.return_value = self.mock_text_cache  # backend['text_embed_cache']
 
     def tearDown(self):

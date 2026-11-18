@@ -35,6 +35,15 @@ class TestS2VConnectSamples(unittest.TestCase):
         audio_path.touch()
         return str(audio_path)
 
+    def _register_dataset(self, bundle):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.data_backend.local import LocalDataBackend
+
+        dataset_id = bundle["id"]
+        backend = LocalDataBackend(None, dataset_id)
+        StateTracker.register_dataset(DatasetRuntime(dataset_id, backend, None, bundle.get("config", {})))
+        StateTracker.register_data_backend(bundle)
+
     def _create_mock_sampler(self, backend_id: str = "video-backend"):
         """Create a mock sampler with the connect_s2v_samples method."""
         from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
@@ -42,6 +51,7 @@ class TestS2VConnectSamples(unittest.TestCase):
         # Create minimal sampler - we only need the connect_s2v_samples method
         sampler = MagicMock(spec=MultiAspectSampler)
         sampler.id = backend_id
+        sampler.dataset_runtime = StateTracker.get_dataset(backend_id)
         sampler.debug_log = MagicMock()
 
         # Bind the actual method to our mock
@@ -55,8 +65,8 @@ class TestS2VConnectSamples(unittest.TestCase):
         self._create_audio_file("video_002")
 
         # Register backends
-        StateTracker.register_data_backend({"id": "video-backend"})
-        StateTracker.register_data_backend(
+        self._register_dataset({"id": "video-backend"})
+        self._register_dataset(
             {
                 "id": "audio-backend",
                 "config": {"instance_data_dir": str(self.audio_dir)},
@@ -87,8 +97,8 @@ class TestS2VConnectSamples(unittest.TestCase):
         self._create_audio_file("video_m4a", ".m4a")
 
         # Register backends
-        StateTracker.register_data_backend({"id": "video-backend"})
-        StateTracker.register_data_backend(
+        self._register_dataset({"id": "video-backend"})
+        self._register_dataset(
             {
                 "id": "audio-backend",
                 "config": {"instance_data_dir": str(self.audio_dir)},
@@ -119,8 +129,8 @@ class TestS2VConnectSamples(unittest.TestCase):
         self._create_audio_file("video_001")
 
         # Register backends
-        StateTracker.register_data_backend({"id": "video-backend"})
-        StateTracker.register_data_backend(
+        self._register_dataset({"id": "video-backend"})
+        self._register_dataset(
             {
                 "id": "audio-backend",
                 "config": {"instance_data_dir": str(self.audio_dir)},
@@ -148,7 +158,7 @@ class TestS2VConnectSamples(unittest.TestCase):
 
     def test_connect_s2v_samples_no_s2v_datasets(self):
         """Test that samples are returned unchanged when no s2v_datasets configured."""
-        StateTracker.register_data_backend({"id": "video-backend"})
+        self._register_dataset({"id": "video-backend"})
         # No s2v_datasets set
 
         samples = (
@@ -173,14 +183,14 @@ class TestS2VConnectSamples(unittest.TestCase):
         (audio_dir_2 / "video_002.wav").touch()  # In audio_dir_2
 
         # Register backends
-        StateTracker.register_data_backend({"id": "video-backend"})
-        StateTracker.register_data_backend(
+        self._register_dataset({"id": "video-backend"})
+        self._register_dataset(
             {
                 "id": "audio-backend-1",
                 "config": {"instance_data_dir": str(self.audio_dir)},
             }
         )
-        StateTracker.register_data_backend(
+        self._register_dataset(
             {
                 "id": "audio-backend-2",
                 "config": {"instance_data_dir": str(audio_dir_2)},
@@ -204,8 +214,8 @@ class TestS2VConnectSamples(unittest.TestCase):
         self._create_audio_file("video_001")
 
         # Register backends
-        StateTracker.register_data_backend({"id": "video-backend"})
-        StateTracker.register_data_backend(
+        self._register_dataset({"id": "video-backend"})
+        self._register_dataset(
             {
                 "id": "audio-backend",
                 "config": {"instance_data_dir": str(self.audio_dir)},
@@ -232,8 +242,8 @@ class TestS2VConnectSamples(unittest.TestCase):
         self._create_audio_file("video_001", ".mp3")
 
         # Register backends
-        StateTracker.register_data_backend({"id": "video-backend"})
-        StateTracker.register_data_backend(
+        self._register_dataset({"id": "video-backend"})
+        self._register_dataset(
             {
                 "id": "audio-backend",
                 "config": {"instance_data_dir": str(self.audio_dir)},

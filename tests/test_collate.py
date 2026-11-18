@@ -13,7 +13,6 @@ from simpletuner.helpers.training.collate import (
     collate_fn,
     compute_latents,
     compute_prompt_embeddings,
-    compute_single_embedding,
     describe_missing_conditioning_pairs,
 )
 from simpletuner.helpers.training.state_tracker import StateTracker
@@ -205,11 +204,18 @@ class CollateFunctionTests(unittest.TestCase):
                     "instance_data_dir": f"/refs/{backend_id}",
                     "conditioning_type": "reference_loose" if backend_id == "second" else None,
                 },
-                "sampler": SimpleNamespace(source_dataset_id=None, caption_strategy="textfile"),
                 "text_embed_cache": SimpleNamespace(disabled=False),
             }
             for backend_id in ("first", "second")
         ]
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+
+        for entry in references:
+            runtime = DatasetRuntime(
+                entry["id"], entry["data_backend"], None, {**entry["config"], "caption_strategy": "textfile"}
+            )
+            runtime.resolve_caption = MagicMock()
+            entry["dataset_runtime"] = runtime
         data_backend = {
             "text_embed_cache": SimpleNamespace(disabled=False),
             "data_backend": _make_stub_data_backend(),
@@ -253,6 +259,7 @@ class CollateFunctionTests(unittest.TestCase):
         cache.model_type = "flux3_image"
         cache.key_type = TextEmbedCacheKey.DATASET_AND_FILENAME
         cache._requires_path_based_keys = True
+        cache.caption_filters = ()
         cache.cache_dir = "cache"
         precache = MagicMock()
         registry = FactoryRegistry.__new__(FactoryRegistry)
@@ -262,7 +269,7 @@ class CollateFunctionTests(unittest.TestCase):
         registry.args.prepend_instance_prompt = False
         registry.args.instance_prompt = ""
         registry.text_encoders = []
-        registry.accelerator = SimpleNamespace(device="cpu")
+        registry.accelerator = SimpleNamespace(device="cpu", process_index=0, num_processes=1)
         init_backend = dict(
             data_backend,
             id="backend-1",
@@ -270,38 +277,35 @@ class CollateFunctionTests(unittest.TestCase):
             text_embed_cache=precache,
             metadata_backend=SimpleNamespace(get_metadata_by_filepath=lambda _: {"target_size": (32, 32)}),
         )
-        registry._deferred_text_embed_backends = [({"caption_strategy": "textfile"}, init_backend)]
-        with (
-            patch.object(StateTracker, "get_conditioning_datasets", return_value=references),
-            patch(
-                "simpletuner.helpers.data_backend.factory.PromptHandler.get_all_captions",
-                return_value=(["caption"], [], ["/train/sample.png"]),
-            ),
-            patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
-        ):
+        from contextlib import nullcontext
+
+        from simpletuner.helpers.metadata.preparation import PreparationView
+
+        metadata = init_backend["metadata_backend"]
+        metadata.open_preparation_view = lambda **kwargs: nullcontext(PreparationView(["/train/sample.png"], metadata))
+        runtime = DatasetRuntime("backend-1", init_backend["data_backend"], metadata, {"caption_strategy": "textfile"})
+        runtime.conditioning_datasets = tuple(ref["dataset_runtime"] for ref in references)
+        runtime.text_embed_cache = precache
+        runtime.resolve_caption = MagicMock(return_value="caption")
+        init_backend["dataset_runtime"] = runtime
+        prefetched = []
+        precache.read_batch_size = precache.text_encoder_batch_size = 2
+        precache.precompute_embeddings.side_effect = lambda records, **kwargs: prefetched.extend(records)
+        registry._deferred_text_embed_backends = [init_backend]
+        with patch("simpletuner.helpers.data_backend.factory.move_text_encoders"):
             registry._process_deferred_text_embeddings()
-        precomputed = precache.compute_embeddings_for_prompts.call_args.args[0][0]
-        self.assertEqual(cache.hash_prompt_with_path(record), cache.hash_prompt_with_path(precomputed))
+        self.assertEqual(cache.hash_prompt_with_path(record), cache.hash_prompt_with_path(prefetched[0]))
 
         self.base_args.conditioning_multidataset_sampling = "random"
+        runtime.resolve_caption.return_value = ["source"]
         reference_captions = {"first": ["first edit", "alternate first edit"], "second": ["second edit"]}
-        registry._deferred_text_embed_backends = [({"caption_strategy": "textfile"}, init_backend)]
-        with (
-            patch.object(StateTracker, "get_conditioning_datasets", return_value=references),
-            patch(
-                "simpletuner.helpers.data_backend.factory.PromptHandler.get_all_captions",
-                return_value=([""], [], ["/train/sample.png"]),
-            ),
-            patch("simpletuner.helpers.data_backend.factory.move_text_encoders"),
-            patch(
-                "simpletuner.helpers.data_backend.factory.PromptHandler.caption_for_sampler",
-                side_effect=lambda sampler, path: reference_captions["first" if "/first/" in path else "second"],
-            ),
-        ):
+        for entry in references:
+            entry["dataset_runtime"].resolve_caption.return_value = reference_captions[entry["id"]]
+        registry._deferred_text_embed_backends = [init_backend]
+        prefetched.clear()
+        with patch("simpletuner.helpers.data_backend.factory.move_text_encoders"):
             registry._process_deferred_text_embeddings()
-        precomputed_keys = {
-            cache.hash_prompt_with_path(entry) for entry in precache.compute_embeddings_for_prompts.call_args.args[0]
-        }
+        precomputed_keys = {cache.hash_prompt_with_path(entry) for entry in prefetched}
         all_samples = self.base_batch[0]["conditioning_samples"]
         selected_keys = set()
         for sample in all_samples:
@@ -409,8 +413,8 @@ class CollateFunctionTests(unittest.TestCase):
         self.assertEqual(latents, ["latent"])
         vae_cache.encode_images.assert_called_once_with([None], ["sample.png"])
 
-    def test_compute_prompt_embeddings_serializes_ondemand_cache_access(self):
-        text_cache = SimpleNamespace(text_cache_ondemand=True)
+    def test_compute_prompt_embeddings_batches_precomputed_cache_access(self):
+        text_cache = MagicMock(text_cache_ondemand=False)
         model = MagicMock()
         model.collate_prompt_embeds.return_value = {"prompt_embeds": torch.ones(2, 1, 1)}
         outputs = [
@@ -418,16 +422,32 @@ class CollateFunctionTests(unittest.TestCase):
             {"prompt_embeds": torch.ones(1, 1, 1)},
         ]
 
-        with (
-            patch.object(StateTracker, "get_default_text_embed_cache", return_value=text_cache),
-            patch("simpletuner.helpers.training.collate.compute_single_embedding", side_effect=outputs) as compute_one,
-            patch("simpletuner.helpers.training.collate.ThreadPoolExecutor") as executor,
-        ):
+        text_cache.read_training_batch.return_value = outputs
+        with patch.object(StateTracker, "get_default_text_embed_cache", return_value=text_cache):
             result = compute_prompt_embeddings(["one", "two"], text_cache, model)
 
-        executor.assert_not_called()
-        self.assertEqual(compute_one.call_count, 2)
+        self.assertEqual([record["prompt"] for record in text_cache.read_training_batch.call_args.args[0]], ["one", "two"])
+        self.assertIsNone(text_cache.read_training_batch.call_args.kwargs["device"])
         self.assertEqual(result["prompt_embeds"].shape, torch.Size([2, 1, 1]))
+
+    def test_compute_prompt_embeddings_preserves_order_between_online_and_precomputed_stores(self):
+        main = MagicMock(text_cache_ondemand=False)
+        default = MagicMock(text_cache_ondemand=True, _requires_path_based_keys=False)
+        default.accelerator.device = torch.device("cpu")
+        main.read_training_batch.return_value = [
+            {"prompt_embeds": torch.tensor([[[1.0]]])},
+            {"prompt_embeds": torch.tensor([[[3.0]]])},
+        ]
+        default.read_training_batch.return_value = [{"prompt_embeds": torch.tensor([[[2.0]]])}]
+        model = MagicMock()
+        model.collate_prompt_embeds.return_value = {}
+
+        with patch.object(StateTracker, "get_default_text_embed_cache", return_value=default):
+            result = compute_prompt_embeddings(["one", "", "three"], main, model)
+
+        self.assertEqual(result["prompt_embeds"].flatten().tolist(), [1.0, 2.0, 3.0])
+        self.assertEqual(main.read_training_batch.call_args.kwargs["device"], default.accelerator.device)
+        self.assertEqual(default.read_training_batch.call_args.kwargs["device"], default.accelerator.device)
 
     def test_empty_prompt_uses_active_model_dropout_cache_policy(self):
         class FalseyModel:
@@ -437,19 +457,22 @@ class CollateFunctionTests(unittest.TestCase):
             def use_text_cache_dropout_sentinel(self):
                 return False
 
+            def collate_prompt_embeds(self, entries):
+                return {}
+
         dataset_cache = MagicMock()
-        default_cache = MagicMock()
+        default_cache = MagicMock(text_cache_ondemand=False)
         default_cache._requires_path_based_keys = True
         default_cache.model = SimpleNamespace()
-        default_cache.compute_prompt_embeddings_with_model.return_value = {"prompt_embeds": torch.ones(1, 1, 1)}
+        default_cache.read_training_batch.return_value = [{"prompt_embeds": torch.ones(1, 1, 1)}]
         model = FalseyModel()
         prompt_entry = {"prompt": "", "key": "dataset:sample.mp4", "metadata": {"context": "sample"}}
 
         with patch.object(StateTracker, "get_default_text_embed_cache", return_value=default_cache):
-            compute_single_embedding(prompt_entry, dataset_cache, model)
+            compute_prompt_embeddings([prompt_entry], dataset_cache, model)
 
         self.assertEqual(prompt_entry["key"], "dataset:sample.mp4")
-        default_cache.compute_prompt_embeddings_with_model.assert_called_once_with(prompt_records=[prompt_entry])
+        default_cache.read_training_batch.assert_called_once_with([prompt_entry], device=None)
 
     def test_collate_fn_stacks_conditioning_image_embeds(self):
         conditioning_tensor = torch.ones(2, 4)
