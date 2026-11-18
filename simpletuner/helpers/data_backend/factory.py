@@ -3839,11 +3839,9 @@ class FactoryRegistry:
                 f"Beginning error scan for dataset {init_backend['id']}. Set 'scan_for_errors' to False in the dataset config to disable this."
             )
             try:
-                init_backend["metadata_backend"].handle_vae_cache_inconsistencies(
-                    vae_cache=init_backend.get("vaecache"),
-                    vae_cache_behavior=backend.get("vae_cache_scan_behaviour", self.args.vae_cache_scan_behaviour),
+                init_backend["dataset_runtime"].scan_cache_and_metadata(
+                    backend.get("vae_cache_scan_behaviour", self.args.vae_cache_scan_behaviour),
                 )
-                init_backend["metadata_backend"].scan_for_metadata()
             except FileNotFoundError:
                 warning_log(
                     f"(id={init_backend['id']}) Skipping metadata scan because data directory was not found: {init_backend.get('instance_data_dir')}"
@@ -4238,6 +4236,9 @@ class FactoryRegistry:
                 conditioning_image_embed_backend,
             )
 
+        if runtime := init_backend.get("dataset_runtime"):
+            runtime.vae_cache = init_backend.get("vaecache")
+            runtime.conditioning_image_embed_cache = init_backend.get("conditioning_image_embed_cache")
         self._handle_error_scanning_and_metadata(backend, init_backend, conditioning_type)
 
         if (
@@ -4267,9 +4268,6 @@ class FactoryRegistry:
             if self._is_multi_process():
                 self.accelerator.wait_for_everyone()
         self._move_text_encoders_for_vae_cache(self.accelerator.device)
-        if runtime := init_backend.get("dataset_runtime"):
-            runtime.vae_cache = init_backend.get("vaecache")
-            runtime.conditioning_image_embed_cache = init_backend.get("conditioning_image_embed_cache")
         init_backend["metadata_backend"].save_cache()
 
         self.data_backends[init_backend["id"]] = init_backend

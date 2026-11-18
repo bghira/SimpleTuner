@@ -10,9 +10,11 @@ import torch
 
 from simpletuner.helpers.caching.vae import VAECache
 from simpletuner.helpers.data_backend.base import BaseDataBackend
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.data_backend.local import LocalDataBackend
 from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
 from simpletuner.helpers.metadata.backends.base import MetadataBackend
+from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
 
 
 class TestCacheGroups(unittest.TestCase):
@@ -72,6 +74,40 @@ class TestVaeCacheTraversal(unittest.TestCase):
         self.assertEqual(len(list(results)), 2)
         cache.cache_data_backend.iter_file_keys.assert_called_once_with(["pt"], "latents/")
         self.assertEqual(cache._read_from_storage_concurrently.call_count, 2)
+
+    def test_native_cache_scan_checks_only_keys_from_the_prepared_view(self):
+        metadata = WebshartMetadataBackend.__new__(WebshartMetadataBackend)
+        metadata.native_policy = "global"
+        metadata.vae_output_scaling_factor = 8
+        metadata.iter_preparation_batches = Mock(return_value=iter([("wide", ("ok", "bad")), ("wide", ("nan", "missing"))]))
+        metadata.scan_for_metadata = Mock(side_effect=AssertionError("read source catalogue"))
+        source = Mock()
+        dataset = DatasetRuntime("prepared", source, metadata, {})
+        dataset.read_samples = Mock(side_effect=lambda refs: [{"target_size": (64, 32)} for _ in refs])
+        cache = dataset.vae_cache = VAECache.__new__(VAECache)
+        cache.metadata_backend = metadata
+        cache.model = SimpleNamespace(vae_output_scaling_factor=4)
+        cache.cache_data_backend = Mock()
+        cache.read_batch_size = 2
+        cache.cache_path_for_image = lambda ref: f"vae/{ref}.pt"
+        contents = {
+            "vae/ok.pt": {"latents": torch.zeros(4, 8, 16)},
+            "vae/bad.pt": torch.zeros(4, 8, 32),
+            "vae/nan.pt": torch.full((4, 8, 16), float("nan")),
+            "vae/missing.pt": None,
+        }
+        cache._read_from_storage_concurrently = lambda keys, hide_errors: ((key, contents[key]) for key in keys)
+
+        dataset.scan_cache_and_metadata("recreate")
+        metadata.iter_preparation_batches.assert_called_once_with(0, 1, 2)
+        self.assertEqual(
+            [item.args[0] for item in cache.cache_data_backend.delete.call_args_list], ["vae/bad.pt", "vae/nan.pt"]
+        )
+        self.assertEqual([item.args[0] for item in dataset.read_samples.call_args_list], [["ok", "bad"], ["nan"]])
+        cache.cache_data_backend.iter_file_keys.assert_not_called()
+        source.delete.assert_not_called()
+        with self.assertRaisesRegex(ValueError, "require.*recreate"):
+            dataset.scan_cache_and_metadata("sync")
 
     def test_local_artifact_listing_streams_directories(self):
         storage = LocalDataBackend(accelerator=None, id="artifacts")

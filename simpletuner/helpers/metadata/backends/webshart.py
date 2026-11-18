@@ -289,6 +289,16 @@ class WebshartMetadataBackend(MetadataBackend):
         if pages.header["view_revision"] != self._published["view_revision"]:
             raise ValueError("Webshart membership changed since the prepared geometry was opened. Reload the dataset.")
 
+    def scan_dataset_cache(self, dataset, cache_behavior):
+        if not self.native_policy:
+            super().scan_dataset_cache(dataset, cache_behavior)
+            return
+        if dataset.vae_cache is None:
+            return
+        if cache_behavior != "recreate":
+            raise ValueError("Native Webshart cache scans require vae_cache_scan_behaviour='recreate'.")
+        dataset.vae_cache.remove_inconsistent_prepared_latents(dataset)
+
     def iter_preparation_batches(self, worker, workers, batch_size):
         if not self.native_policy:
             yield from super().iter_preparation_batches(worker, workers, batch_size)

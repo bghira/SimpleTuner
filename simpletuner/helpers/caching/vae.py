@@ -2352,3 +2352,22 @@ class VAECache(WebhookMixin):
         keys = self.cache_data_backend.iter_file_keys(["pt"], self.cache_dir)
         for batch in batched(keys, self.read_batch_size):
             yield from self._read_from_storage_concurrently(batch, hide_errors=True)
+
+    def remove_inconsistent_prepared_latents(self, dataset):
+        """Check only artifact keys belonging to this prepared dataset revision."""
+        scale = getattr(self.model, "vae_output_scaling_factor", self.metadata_backend.vae_output_scaling_factor)
+        for _, refs in dataset.iter_preparation_batches(batch_size=self.read_batch_size):
+            refs_by_key = {self.cache_path_for_image(ref): ref for ref in refs}
+            entries = {
+                key: content
+                for key, content in self._read_from_storage_concurrently(refs_by_key, hide_errors=True)
+                if content is not None
+            }
+            records = dataset.read_samples([refs_by_key[key] for key in entries])
+            for (key, content), record in zip(entries.items(), records, strict=True):
+                latent = content["latents"] if isinstance(content, dict) else content
+                width, height = record["target_size"]
+                valid = torch.is_tensor(latent) and latent.ndim >= 3 and torch.isfinite(latent).all()
+                if valid and (latent.shape[-1] * scale, latent.shape[-2] * scale) == (width, height):
+                    continue
+                self.cache_data_backend.delete(key)

@@ -256,6 +256,9 @@ class DatasetRuntime:
             raise ValueError("Preparation batch size must be positive.")
         return self.metadata_backend.iter_preparation_batches(worker, workers, batch_size)
 
+    def scan_cache_and_metadata(self, cache_behavior):
+        self.metadata_backend.scan_dataset_cache(self, cache_behavior)
+
     def iter_accepted_captions(self, *, worker=0, workers=1, batch_size=128):
         if self.config["dataset_type"] == "caption":
             for record in self.metadata_backend.iter_records(worker=worker, workers=workers):

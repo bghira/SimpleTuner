@@ -1514,6 +1514,11 @@ class MetadataBackend:
         self.save_cache(enforce_constraints=True)
         logger.info("Completed metadata update.")
 
+    def scan_dataset_cache(self, dataset, cache_behavior):
+        if dataset.vae_cache is not None:
+            self.handle_vae_cache_inconsistencies(dataset.vae_cache, cache_behavior)
+        self.scan_for_metadata()
+
     def handle_vae_cache_inconsistencies(self, vae_cache, vae_cache_behavior: str):
         """handle vae cache inconsistencies with bucket indices"""
         if "deepfloyd" in StateTracker.get_args().model_type:
