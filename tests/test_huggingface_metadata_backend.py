@@ -6,6 +6,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from datasets import Dataset
+
+from simpletuner.helpers.data_backend.huggingface import HuggingfaceDatasetsBackend
 from simpletuner.helpers.metadata.backends.huggingface import HuggingfaceMetadataBackend
 
 
@@ -43,6 +46,30 @@ class _MinimalHuggingfaceMetadataBackend(HuggingfaceMetadataBackend):
 
 
 class HuggingfaceMetadataBackendTests(unittest.TestCase):
+    def test_caption_lookup_projects_columns_and_preserves_filtered_row_order(self):
+        source = HuggingfaceDatasetsBackend(None, "test", "test")
+        source.dataset = Dataset.from_list(
+            [
+                {"text": {"short": "first", "long": "second"}, "fallback": None, "quality": {"score": 1}, "image": b"a"},
+                {"text": {"short": "rejected"}, "fallback": None, "quality": {"score": 0}, "image": b"b"},
+                {"text": None, "fallback": "last", "quality": {"score": 1}, "image": b"c"},
+            ]
+        ).select([2, 0, 1])
+        backend = HuggingfaceMetadataBackend.__new__(HuggingfaceMetadataBackend)
+        backend.data_backend = source
+        backend.dataset_type = "image"
+        backend.caption_column = ["text.short", "text.long"]
+        backend.fallback_caption_column = "fallback"
+        backend.description_column = "description"
+        backend.quality_column = "quality"
+        backend.quality_filter = {"score": 0.5}
+        backend._caption_rows = backend._select_caption_columns(source.dataset)
+        self.assertEqual(backend._caption_rows.column_names, ["text", "fallback", "quality"])
+        self.assertEqual(backend.caption_cache_entry("0.jpg"), "last")
+        self.assertEqual(backend.caption_cache_entry("1.jpg"), ["first", "second"])
+        self.assertIsNone(backend.caption_cache_entry("2.jpg"))
+        self.assertIsNone(backend.caption_cache_entry("3.jpg"))
+
     def test_metadata_reload_keeps_existing_entries_visible_until_read_completes(self):
         read_started = threading.Event()
         allow_read = threading.Event()

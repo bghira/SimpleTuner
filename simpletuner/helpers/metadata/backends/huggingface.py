@@ -134,86 +134,29 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             cache_file_suffix=cache_file_suffix,
             repeats=repeats,
             max_num_samples=max_num_samples,
+            load_cache_on_init=False,
         )
         if not (StateTracker.get_data_backend_config(id) or {}).get("dataset_type"):
             self.dataset_type = ensure_dataset_type(dataset_type)
 
-        if not hasattr(data_backend, "dataset"):
-            raise ValueError("HuggingfaceMetadataBackend requires HuggingfaceDatasetsBackend")
         with accelerator.main_process_first():
-            self.caption_cache = self._extract_captions_to_dict()
-        accelerator.wait_for_everyone()
-        with accelerator.main_process_first():
+            if not hasattr(data_backend, "dataset"):
+                raise ValueError("HuggingfaceMetadataBackend requires HuggingfaceDatasetsBackend")
+            self._caption_rows = self._select_caption_columns(data_backend.dataset)
             self.reload_cache()
             self.load_image_metadata()
         accelerator.wait_for_everyone()
 
-    def _extract_captions_to_dict(self) -> Dict[str, Union[str, List[str]]]:
-        import concurrent.futures
-
-        captions_cache_file = f"{self.cache_file}_captions.json"
-        if self.data_backend.exists(captions_cache_file):
-            try:
-                raw = self.data_backend.read(captions_cache_file)
-                if raw:
-                    captions = json.loads(raw)
-                    logger.info(f"Loaded {len(captions)} captions from cache file {captions_cache_file}")
-                    return captions
-            except Exception as e:
-                logger.warning(f"Error loading caption cache, will regenerate: {e}")
-        logger.info("Extracting captions from Hugging Face dataset...")
-        indices = self._limited_dataset_indices()
-
-        def process_item(idx):
-            item = self.data_backend.dataset[idx]
-            virtual_path = f"{idx}.{self.file_extension}"
-            if self.quality_filter and self.quality_column in item:
-                quality = item[self.quality_column]
-                if not self._passes_quality_filter(quality):
-                    return None
-            caption = self._extract_caption_from_item(item)
-            if caption:
-                return (virtual_path, caption)
+    def _select_caption_columns(self, dataset):
+        if self.data_backend.streaming:
             return None
-
-        captions = {}
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            results = list(
-                tqdm(
-                    executor.map(process_item, indices),
-                    desc="Extracting captions",
-                    total=len(indices),
-                    ncols=100,
-                    mininterval=0.5,
-                    ascii=True,
-                    position=int(os.environ.get("RANK", 0)),
-                )
-            )
-        for result in results:
-            if result:
-                virtual_path, caption = result
-                captions[virtual_path] = caption
-
-        try:
-            self.data_backend.write(captions_cache_file, json.dumps(captions))
-            logger.info(f"Saved {len(captions)} captions to cache file {captions_cache_file}")
-        except Exception as e:
-            logger.warning(f"Error saving caption cache: {e}")
-
-        logger.info(f"Extracted {len(captions)} captions from dataset")
-        return captions
-
-    def _limited_dataset_indices(self) -> List[int]:
-        total_items = len(self.data_backend.dataset)
-        all_files = [f"{idx}.{self.file_extension}" for idx in range(total_items)]
-        limited_files = self._apply_max_num_samples_limit(all_files)
-        indices = []
-        for virtual_path in limited_files:
-            try:
-                indices.append(int(str(virtual_path).rsplit(".", 1)[0]))
-            except (TypeError, ValueError):
-                continue
-        return indices
+        fields = list(self.caption_column) if isinstance(self.caption_column, list) else [self.caption_column]
+        fields.extend((self.fallback_caption_column, self.description_column, self.quality_column))
+        if _dataset_type_value(self.dataset_type) == "audio":
+            fields.extend([*(self.audio_caption_fields or ()), "audio"])
+        requested = {name.split(".", 1)[0] for name in fields if name}
+        columns = [name for name in dataset.column_names if name in requested]
+        return dataset.select_columns(columns) if columns else None
 
     def _extract_caption_from_item(self, item: Dict) -> Optional[Union[str, List[str]]]:
         caption = None
@@ -447,7 +390,22 @@ class HuggingfaceMetadataBackend(MetadataBackend):
         return True
 
     def caption_cache_entry(self, index: str) -> Optional[Union[str, List[str]]]:
-        return self.caption_cache.get(str(index), None)
+        if self._caption_rows is None:
+            return None
+        try:
+            position = self.data_backend._get_index_from_path(index)
+        except ValueError:
+            return None
+        if position is None or not 0 <= position < len(self._caption_rows):
+            return None
+        item = self._caption_rows[position]
+        if (
+            self.quality_filter
+            and self.quality_column in item
+            and not self._passes_quality_filter(item[self.quality_column])
+        ):
+            return None
+        return self._extract_caption_from_item(item)
 
     def _discover_new_files(self, for_metadata: bool = False, ignore_existing_cache: bool = False):
         # for HF datasets, we process all items
@@ -928,8 +886,6 @@ class HuggingfaceMetadataBackend(MetadataBackend):
             image_paths = [image_paths]
 
         for image_path in image_paths:
-            if image_path in self.caption_cache:
-                del self.caption_cache[image_path]
             for bucket, images in self.aspect_ratio_bucket_indices.items():
                 if image_path in images:
                     self.aspect_ratio_bucket_indices[bucket].remove(image_path)
