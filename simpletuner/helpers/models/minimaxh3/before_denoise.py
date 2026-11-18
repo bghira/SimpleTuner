@@ -18,6 +18,7 @@ from diffusers.modular_pipelines.modular_pipeline_utils import ComponentSpec, In
 from diffusers.utils import logging
 from diffusers.utils.torch_utils import randn_tensor
 
+from .image import MiniMaxH3ImageScheduler
 from .modular_pipeline import MiniMaxH3ModularPipeline, MiniMaxH3Ref2VAModularPipeline
 from .packing import (
     MINIMAX_H3_AUDIO_CHANNELS,
@@ -478,6 +479,7 @@ class MiniMaxH3SetTimestepsStep(ModularPipelineBlocks):
         return [
             OutputParam("timesteps", type_hint=torch.Tensor, description="Timesteps of the video schedule."),
             OutputParam("audio_timesteps", type_hint=torch.Tensor, description="Timesteps of the audio schedule."),
+            OutputParam("pdd_step_indices", type_hint=list, description="Image PDD output head for each sampling step."),
             OutputParam(
                 "row_timestep_plan",
                 type_hint=list,
@@ -500,6 +502,9 @@ class MiniMaxH3SetTimestepsStep(ModularPipelineBlocks):
 
         components.scheduler.set_timesteps(block_state.num_inference_steps, device=device)
         block_state.timesteps = components.scheduler.timesteps
+        block_state.pdd_step_indices = (
+            components.scheduler.pdd_step_indices if isinstance(components.scheduler, MiniMaxH3ImageScheduler) else None
+        )
         if components.audio_scheduler is not None:
             components.audio_scheduler.set_timesteps(block_state.num_inference_steps, device=device)
             block_state.audio_timesteps = components.audio_scheduler.timesteps
