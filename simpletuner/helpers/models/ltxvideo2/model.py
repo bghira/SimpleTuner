@@ -1610,48 +1610,41 @@ class LTXVideo2(VideoModelFoundation):
         return getattr(getattr(vocoder, "config", None), "output_sampling_rate", None)
 
     def requires_s2v_validation_inputs(self) -> bool:
-        args = StateTracker.get_args()
-        if not getattr(args, "validation_using_datasets", False):
+        if not getattr(self.config, "validation_using_datasets", False):
             return False
-        eval_ids = getattr(args, "eval_dataset_id", None)
-        eval_list: list[str] = []
-        if isinstance(eval_ids, (list, tuple)):
-            eval_list = [str(item) for item in eval_ids]
-        elif eval_ids:
-            eval_list = [str(eval_ids)]
-        if eval_list:
-            return any(bool(StateTracker.get_s2v_datasets(dataset_id)) for dataset_id in eval_list)
-        return bool(StateTracker.get_s2v_mappings())
+        eval_ids = getattr(self.config, "eval_dataset_id", None)
+        if isinstance(eval_ids, str):
+            eval_ids = (eval_ids,)
+        return any(
+            dataset.audio_datasets
+            for dataset_id, dataset in StateTracker.get_datasets("video", "eval").items()
+            if not eval_ids or dataset_id in eval_ids
+        )
 
     def _load_audio_latents_for_validation(self, audio_path: str) -> Optional[torch.Tensor]:
-        backend_id = self._resolve_audio_backend_id(audio_path)
-        if backend_id is None:
+        dataset = self._resolve_audio_dataset(audio_path)
+        if dataset is None:
             raise ValueError(
                 f"Unable to resolve audio backend for validation audio '{audio_path}'. "
                 "Ensure the audio dataset is linked via s2v_datasets."
             )
-        cache = StateTracker.get_vaecache(id=backend_id)
-        latents = cache.retrieve_from_cache(audio_path)
+        latents = dataset.vae_cache.retrieve_from_cache(audio_path)
         if isinstance(latents, dict):
             latents = latents.get("latents")
         if not torch.is_tensor(latents):
             raise ValueError(f"Expected audio latents to be a Tensor, got {type(latents)}.")
         return latents.to(device=self.accelerator.device, dtype=self.config.weight_dtype)
 
-    def _resolve_audio_backend_id(self, audio_path: str) -> Optional[str]:
-        audio_backends = StateTracker.get_data_backends(_type="audio")
-        if not audio_backends:
-            return None
-        for backend_id, backend in audio_backends.items():
-            config = backend.get("config", {})
-            root = config.get("instance_data_dir")
+    def _resolve_audio_dataset(self, audio_path: str):
+        path_abs = os.path.abspath(audio_path)
+        for dataset in StateTracker.get_datasets("audio").values():
+            root = dataset.config.get("instance_data_dir")
             if not root:
                 continue
             try:
                 root_abs = os.path.abspath(root)
-                path_abs = os.path.abspath(audio_path)
                 if os.path.commonpath([root_abs, path_abs]) == root_abs:
-                    return backend_id
+                    return dataset
             except ValueError:
                 continue
         return None
