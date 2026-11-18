@@ -110,6 +110,16 @@ class TestCaptionMetadataBackend(unittest.TestCase):
         self.assertEqual(records[0].caption_text, "one caption")
         self.assertEqual(records[0].data_backend_id, "caption")
 
+    def test_ingestion_updates_bucket_without_rebuilding_its_index(self):
+        caption_backend = self._create_backend()
+        caption_backend.reset_records()
+        bucket = caption_backend.aspect_ratio_bucket_indices["captions"]
+        for index in range(3):
+            caption_backend._store_record(str(index), f"caption {index}", None)
+            self.assertIs(caption_backend.aspect_ratio_bucket_indices["captions"], bucket)
+        self.assertEqual(bucket, ["0", "1", "2"])
+        self.assertEqual(bucket, caption_backend.list_metadata_ids())
+
     def test_ingest_from_parquet_manifest(self):
         manifest_path = "/manifests/captions.jsonl"
         rows = [

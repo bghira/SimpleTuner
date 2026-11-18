@@ -92,7 +92,7 @@ class CaptionMetadataBackend(MetadataBackend):
                 logger.warning(f"(id={self.id}) Failed to load caption cache: {exc}")
                 self._ordered_ids = []
 
-        self.aspect_ratio_bucket_indices = {"captions": list(self._ordered_ids)}
+        self.aspect_ratio_bucket_indices = {"captions": self._ordered_ids}
 
     def save_cache(self, enforce_constraints: bool = False):
         del enforce_constraints  # Caption datasets do not use bucket constraints.
@@ -101,7 +101,7 @@ class CaptionMetadataBackend(MetadataBackend):
             return
         payload = {
             "config": StateTracker.get_data_backend_config(self.id),
-            "ordered_ids": list(self._ordered_ids),
+            "ordered_ids": self._ordered_ids,
         }
         try:
             self.data_backend.write(self.cache_file, json.dumps(payload))
@@ -135,7 +135,7 @@ class CaptionMetadataBackend(MetadataBackend):
             self.image_metadata[record.metadata_id] = record.to_payload()
 
         self._ordered_ids = ordered_ids
-        self.aspect_ratio_bucket_indices = {"captions": list(self._ordered_ids)}
+        self.aspect_ratio_bucket_indices = {"captions": self._ordered_ids}
         self.image_metadata_loaded = True
 
     def save_image_metadata(self):
@@ -159,9 +159,6 @@ class CaptionMetadataBackend(MetadataBackend):
         self.reset_records()
         if not caption_files:
             logger.warning(f"(id={self.id}) No caption files discovered.")
-            self.caption_records = {}
-            self._ordered_ids = []
-            self.image_metadata = {}
             self.save_image_metadata()
             self.save_cache()
             return 0
@@ -207,7 +204,7 @@ class CaptionMetadataBackend(MetadataBackend):
         self.caption_records[metadata_id] = record
         self.image_metadata[metadata_id] = record.to_payload()
         self._ordered_ids.append(metadata_id)
-        self.aspect_ratio_bucket_indices = {"captions": list(self._ordered_ids)}
+        self.aspect_ratio_bucket_indices["captions"].append(metadata_id)
 
     def _extract_captions_from_file(self, filepath: str) -> Iterator[str]:
         data = self.data_backend.read(filepath)
