@@ -909,6 +909,7 @@ class MiniMaxH3Tests(unittest.TestCase):
 
     def test_text_preparation_keeps_each_first_frame_reference_in_its_own_request(self):
         from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime, TextRequestBuilder
+        from simpletuner.helpers.metadata.backends.base import MetadataBackend
 
         model = MiniMaxH3.__new__(MiniMaxH3)
         model.config = SimpleNamespace()
@@ -916,7 +917,7 @@ class MiniMaxH3Tests(unittest.TestCase):
             DatasetRuntime(
                 name,
                 None,
-                None,
+                MetadataBackend.__new__(MetadataBackend),
                 {"instance_data_dir": f"/cache/{name}", "conditioning_config": {"type": "i2v_first_frame"}},
             )
             for name in ("first", "second")
