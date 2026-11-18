@@ -50,29 +50,7 @@ class TextEmbedBackendConfig(BaseBackendConfig):
             config.compress_cache = bool(compress_arg)
             config.config["compress_cache"] = config.compress_cache
 
-        passthrough_keys = {
-            "cache_dir",
-            "aws_bucket_name",
-            "aws_data_prefix",
-            "aws_endpoint_url",
-            "aws_access_key_id",
-            "aws_secret_access_key",
-            "aws_session_token",
-            "aws_region_name",
-        }
-        for key in passthrough_keys:
-            if key in backend_dict:
-                value = backend_dict[key]
-                config.config[key] = value
-                setattr(config, key, value)
-
-        if backend_dict.get("type") == "aws" and "aws" in backend_dict:
-            aws_block = backend_dict.get("aws", {})
-            config.config["aws"] = aws_block
-            for aws_key, aws_value in aws_block.items():
-                setattr(config, aws_key, aws_value)
-
-        config._apply_memory_backend_settings(backend_dict)
+        config._apply_artifact_storage_settings(backend_dict)
 
         config.apply_defaults(args)
 

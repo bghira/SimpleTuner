@@ -242,6 +242,32 @@ class TestImageEmbedBackendConfig(unittest.TestCase):
         # should not raise exceptions
         config.validate(self.args)
 
+    def test_aws_artifact_options_reach_every_cache_role(self):
+        aws = {
+            "aws_bucket_name": "artifacts",
+            "aws_data_prefix": "caches/image",
+            "aws_endpoint_url": "https://storage.example",
+            "aws_access_key_id": "example-id",
+            "aws_secret_access_key": "example-secret",
+            "aws_max_pool_connections": 24,
+        }
+        for role in ("text_embeds", "image_embeds", "conditioning_image_embeds", "distillation_cache"):
+            with self.subTest(role=role):
+                config = create_backend_config(
+                    {
+                        "id": "artifacts",
+                        "type": "aws",
+                        "dataset_type": role,
+                        "aws_bucket_name": "default",
+                        "aws": aws,
+                    },
+                    self.args,
+                )
+                config.validate(self.args)
+                self.assertEqual(config.dataset_type, role)
+                for key, value in aws.items():
+                    self.assertEqual(getattr(config, key), value)
+
 
 class TestImageBackendConfig(unittest.TestCase):
     """Test ImageBackendConfig class"""
