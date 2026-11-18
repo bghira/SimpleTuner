@@ -1125,12 +1125,7 @@ def collate_fn(batch):
                 if pixel_value is not None:
                     metadata["conditioning_pixel_values"] = pixel_value
                     metadata["conditioning_pixel_values_range"] = (0.0, 1.0)
-            if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME and example_backend_id and example_path:
-                default_key = f"{example_backend_id}:{normalized_identifier}"
-            elif key_type is TextEmbedCacheKey.FILENAME and example_path:
-                default_key = normalize_data_path(example_path, None)
-            else:
-                default_key = caption
+            default_key = key_type.default_key(caption, example_backend_id, example_path, dataset_root)
             key_value = default_key
             key_builder = getattr(model, "text_embed_cache_key_value", None)
             if callable(key_builder):

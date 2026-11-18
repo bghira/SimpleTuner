@@ -227,8 +227,6 @@ class DatasetRuntime:
         on_missing_caption: Callable[[str], None] | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Build artifact requests incrementally, preserving model keys and caption variants."""
-        from simpletuner.helpers.models.common import TextEmbedCacheKey
-
         key_type = model.text_embed_cache_key()
         dataset_root = self.config.get("instance_data_dir")
         for caption, sample_ref in self.iter_caption_records(sample_refs, on_missing_caption=on_missing_caption):
@@ -251,12 +249,7 @@ class DatasetRuntime:
                         dataset_relative_path=relative_path,
                     )
                 )
-            if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME:
-                key = f"{self.id}:{relative_path}"
-            elif key_type is TextEmbedCacheKey.FILENAME:
-                key = normalize_data_path(image_path, None)
-            else:
-                key = caption
+            key = key_type.default_key(caption, self.id, image_path, dataset_root)
             key_builder = getattr(model, "text_embed_cache_key_value", None)
             if callable(key_builder):
                 key = key_builder(prompt=caption, default_key=key, metadata=metadata)

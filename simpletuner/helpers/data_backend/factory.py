@@ -119,7 +119,7 @@ from simpletuner.helpers.distillation.requirements import (
 from simpletuner.helpers.image_manipulation.nsfw_classifier import DEFAULT_NSFW_CHECK_MODELS_CSV
 from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
 from simpletuner.helpers.metadata.utils import DatasetDuplicator
-from simpletuner.helpers.models.common import ModelFoundation, TextEmbedCacheKey
+from simpletuner.helpers.models.common import ModelFoundation
 from simpletuner.helpers.multiaspect.dataset import MultiAspectDataset
 from simpletuner.helpers.multiaspect.sampler import MultiAspectSampler
 from simpletuner.helpers.prompts import CaptionNotFoundError, PromptHandler
@@ -3834,12 +3834,7 @@ class FactoryRegistry:
                         )
                     )
 
-                if key_type is TextEmbedCacheKey.DATASET_AND_FILENAME:
-                    key_value = f"{dataset_id}:{normalized_identifier}"
-                elif key_type is TextEmbedCacheKey.FILENAME:
-                    key_value = normalize_data_path(image_path_str, None)
-                else:
-                    key_value = caption
+                key_value = key_type.default_key(caption, dataset_id, image_path_str, dataset_root)
                 contexts = [metadata]
                 context_key_fn = getattr(self.model, "text_embed_cache_context_key", None)
                 has_context_key = context_key_fn is not None and context_key_fn(metadata) is not None

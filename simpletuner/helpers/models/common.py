@@ -94,6 +94,7 @@ from simpletuner.helpers.training.timestep_distribution import CubicSplineDistri
 from simpletuner.helpers.training.wrappers import strip_compile_wrapper, unwrap_model
 from simpletuner.helpers.utils import ramtorch as ramtorch_utils
 from simpletuner.helpers.utils.hidden_state_buffer import HiddenStateBuffer
+from simpletuner.helpers.utils.pathing import normalize_data_path
 
 logger = logging.getLogger(__name__)
 from simpletuner.helpers.training.multi_process import should_log
@@ -380,6 +381,16 @@ class TextEmbedCacheKey(Enum):
     CAPTION = "caption"
     FILENAME = "filename"
     DATASET_AND_FILENAME = "dataset_and_filename"
+
+    def default_key(
+        self, caption: str, dataset_id: Optional[str], image_path: Optional[str], dataset_root: Optional[str]
+    ) -> str:
+        """The key a caption's embed is filed under, before the model's own key builder sees it."""
+        if self is TextEmbedCacheKey.DATASET_AND_FILENAME and dataset_id and image_path:
+            return f"{dataset_id}:{normalize_data_path(image_path, dataset_root)}"
+        if self is TextEmbedCacheKey.FILENAME and image_path:
+            return normalize_data_path(image_path, None)
+        return caption
 
 
 class PipelineConditioningImageEmbedder:

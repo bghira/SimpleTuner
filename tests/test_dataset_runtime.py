@@ -426,6 +426,38 @@ class DatasetRuntimeCursorTests(unittest.TestCase):
             self.assertIs(StateTracker.get_dataset("images"), self.runtime)
 
 
+class TextEmbedDefaultKeyTests(unittest.TestCase):
+    """Preparation and training file a caption's embed under the same key."""
+
+    def test_each_key_type(self):
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+
+        cases = (
+            (TextEmbedCacheKey.CAPTION, ("a cat", "images", "/data/images/cat.png", "/data/images/"), "a cat"),
+            (
+                TextEmbedCacheKey.FILENAME,
+                ("a cat", "images", "/data/images/cat.png", "/data/images/"),
+                "/data/images/cat.png",
+            ),
+            (
+                TextEmbedCacheKey.DATASET_AND_FILENAME,
+                ("a cat", "images", "/data/images/sub/cat.png", "/data/images/"),
+                "images:sub/cat.png",
+            ),
+            (
+                TextEmbedCacheKey.DATASET_AND_FILENAME,
+                ("a cat", "images", "sub/cat.png", "/data/images"),
+                "images:sub/cat.png",
+            ),
+            (TextEmbedCacheKey.DATASET_AND_FILENAME, ("a cat", None, "/data/images/cat.png", "/data/images"), "a cat"),
+            (TextEmbedCacheKey.DATASET_AND_FILENAME, ("a cat", "images", None, "/data/images"), "a cat"),
+            (TextEmbedCacheKey.FILENAME, ("a cat", "images", None, None), "a cat"),
+        )
+        for key_type, arguments, expected in cases:
+            with self.subTest(key_type=key_type, arguments=arguments):
+                self.assertEqual(key_type.default_key(*arguments), expected)
+
+
 class FactoryTextPreparationTests(unittest.TestCase):
     """The factory caches, for each accepted sample, every caption training can draw for it."""
 

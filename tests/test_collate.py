@@ -194,6 +194,48 @@ class CollateFunctionTests(unittest.TestCase):
             compute_latents_mock.call_args.kwargs["records"]["sample.png"], self.base_batch[0]["training_samples"][0]
         )
 
+    def test_training_reads_the_key_preparation_wrote(self):
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.models.common import TextEmbedCacheKey
+
+        sample_path = "/train/sub/sample.png"
+        self.base_batch[0]["training_samples"][0]["image_path"] = sample_path
+        backend_dict = {
+            "text_embed_cache": SimpleNamespace(disabled=False),
+            "data_backend": _make_stub_data_backend(),
+            "config": {"instance_data_dir": "/train"},
+        }
+        model = _StubModel(requires_conditioning=False)
+        model.text_embed_cache_key = lambda: TextEmbedCacheKey.DATASET_AND_FILENAME
+        patchers, _ = self._patch_state_tracker(
+            model=model,
+            data_backend=backend_dict,
+            text_outputs={"prompt_embeds": torch.zeros(1, 1), "pooled_prompt_embeds": torch.zeros(1, 1)},
+            backend_lookup={"backend-1": backend_dict},
+        )
+        with ExitStack() as stack:
+            mocks = [stack.enter_context(patcher) for patcher in patchers]
+            collate_fn(self.base_batch)
+        training_key = mocks[9].call_args.args[0][0]["key"]
+
+        runtime = DatasetRuntime(
+            "backend-1",
+            backend_dict["data_backend"],
+            SimpleNamespace(get_metadata_by_filepath=lambda _path: None),
+            {
+                "caption_strategy": "instanceprompt",
+                "use_captions": False,
+                "prepend_instance_prompt": False,
+                "instance_prompt": "caption",
+                "disable_multiline_split": False,
+                "instance_data_dir": "/train",
+            },
+        )
+        with patch.object(StateTracker, "get_args", return_value=self.base_args):
+            prepared = next(runtime.iter_text_embed_records(model, [sample_path], init_backend={}))
+        self.assertEqual(training_key, "backend-1:sub/sample.png")
+        self.assertEqual(prepared["key"], training_key)
+
     def test_collate_passes_all_selected_reference_paths_to_text_encoding(self):
         from threading import Thread
 
