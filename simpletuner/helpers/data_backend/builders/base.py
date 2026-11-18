@@ -16,6 +16,7 @@ from simpletuner.helpers.data_backend.dataset_types import (
 from simpletuner.helpers.data_backend.filters import resolve_filter_config
 
 # Import metadata backends at module load so tests can patch these names.
+from simpletuner.helpers.metadata.backends.aligned_conditioning import AlignedConditioningMetadata
 from simpletuner.helpers.metadata.backends.caption import CaptionMetadataBackend
 from simpletuner.helpers.metadata.backends.discovery import DiscoveryMetadataBackend as JsonMetadataBackend
 from simpletuner.helpers.metadata.backends.huggingface import HuggingfaceMetadataBackend
@@ -37,6 +38,7 @@ def create_metadata_provider(
     cache_root,
     preparation_only=False,
     bucket_report=None,
+    aligned_source=None,
 ):
     """Construct the resolved metadata provider for a trainer or standalone dataset job."""
     metadata_backend_args = {}
@@ -47,7 +49,10 @@ def create_metadata_provider(
         metadata_backend_type = "discovery"
     is_caption_dataset = dataset_type is DatasetType.CAPTION
 
-    if metadata_backend_type in {"json", "discovery"}:
+    if aligned_source is not None:
+        MetadataBackendCls = AlignedConditioningMetadata
+        metadata_backend_args["source"] = aligned_source
+    elif metadata_backend_type in {"json", "discovery"}:
         if is_caption_dataset:
             MetadataBackendCls = CaptionMetadataBackend
             metadata_backend_args["caption_ingest_strategy"] = "discovery"
@@ -98,7 +103,7 @@ def create_metadata_provider(
         raise ValueError(f"Unknown metadata backend type: {metadata_backend_type}")
 
     native_webshart = metadata_backend_type == "webshart" and (backend_dict.get("webshart") or {}).get("sampling_policy")
-    if not is_caption_dataset and not native_webshart:
+    if not is_caption_dataset and not native_webshart and aligned_source is None:
         data_backend.bind_source_inventory(get_arg_value(args, "output_dir"), bucket_report)
 
     video_config = backend_dict.get("video", {})

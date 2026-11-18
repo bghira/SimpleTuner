@@ -183,7 +183,7 @@ class TrainingSample:
         training_data_dir = training_backend["config"]["instance_data_dir"]
         if isinstance(self.image_metadata, dict) and self.image_metadata.get("training_sample_path"):
             training_sample_path = self.image_metadata["training_sample_path"]
-            if training_data_dir and not os.path.isabs(training_sample_path):
+            if training_data_dir and not os.path.isabs(training_sample_path) and "://" not in training_sample_path:
                 training_sample_path = os.path.join(training_data_dir, training_sample_path)
             return training_backend["data_backend"].get_abs_path(training_sample_path)
         if not self._image_path:

@@ -2958,6 +2958,11 @@ class FactoryRegistry:
             "video": init_backend["config"].get("video", {}),
             "repeats": init_backend["config"].get("repeats", 0),
         }
+        aligned_source = None
+        if backend.get("auto_generated") and backend.get("metadata_clone_source_id"):
+            source = StateTracker.get_dataset(backend["metadata_clone_source_id"])
+            if source is not None and source.uses_native_schedule is True:
+                aligned_source = source
         init_backend["metadata_backend"] = create_metadata_provider(
             init_backend["id"],
             resolved_config,
@@ -2967,6 +2972,7 @@ class FactoryRegistry:
             instance_data_dir=init_backend["instance_data_dir"],
             cache_root=metadata_cache_root,
             bucket_report=init_backend.get("bucket_report"),
+            aligned_source=aligned_source,
         )
         if backend.get("metadata_backend") == "filesystem":
             backend["metadata_backend"] = "discovery"
@@ -3086,12 +3092,14 @@ class FactoryRegistry:
         apply_padding = not self.args.max_train_steps or self.args.allow_dataset_oversubscription
 
         if has_metadata_clone_source:
-            # when we're duplicating a metadata set, it's already split between processes.
-            info_log(f"Duplicating metadata for generated dataset from {metadata_clone_source_id}")
-            DatasetDuplicator.copy_metadata(
-                source_backend=StateTracker.get_data_backend(metadata_clone_source_id),
-                target_backend=init_backend,
-            )
+            from simpletuner.helpers.metadata.backends.aligned_conditioning import AlignedConditioningMetadata
+
+            if not isinstance(init_backend["metadata_backend"], AlignedConditioningMetadata):
+                info_log(f"Duplicating metadata for generated dataset from {metadata_clone_source_id}")
+                DatasetDuplicator.copy_metadata(
+                    source_backend=StateTracker.get_data_backend(metadata_clone_source_id),
+                    target_backend=init_backend,
+                )
         elif backend.get("conditioning_type", None) in ["reference_strict", "mask"]:
             # special case where strict/mask conditioning alignment allows us to duplicate metadata from the source dataset.
             # we'll search for the source dataset by id and copy metadata from it:

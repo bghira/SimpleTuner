@@ -244,6 +244,10 @@ class WebshartMetadataBackend(MetadataBackend):
                     return pages.describe(spec)
         return DatasetDescription(**self._source_description())
 
+    @property
+    def view_revision(self):
+        return self._published["view_revision"] if self._published else None
+
     def read_page(self, *, bucket=None, offset=0, limit=50):
         with self._open_membership() as source:
             pages = MembershipPages.open(source)

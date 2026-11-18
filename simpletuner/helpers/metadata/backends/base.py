@@ -1387,6 +1387,10 @@ class MetadataBackend:
         summaries = getattr(self.bucket_report, "bucket_summaries", {}) if self.bucket_report else {}
         return DatasetDescription(accepted_samples=summaries.get("post_refresh", {}).get("total_samples"))
 
+    @property
+    def view_revision(self):
+        return self.describe().view_revision
+
     @contextmanager
     def open_preparation_view(self, *, worker=0, workers=1):
         """Traverse accepted membership independently of the training split."""

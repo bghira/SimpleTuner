@@ -178,7 +178,10 @@ class DatasetRuntime:
     def conditioning_ref(self, relative_ref):
         """Resolve a training sample's pairing key inside this conditioning dataset."""
         from simpletuner.helpers.data_backend.webshart import WebshartDataBackend
+        from simpletuner.helpers.metadata.backends.aligned_conditioning import AlignedConditioningMetadata
 
+        if isinstance(self.metadata_backend, AlignedConditioningMetadata):
+            return self.metadata_backend.conditioning_ref(relative_ref)
         if isinstance(self.data_backend, WebshartDataBackend):
             self.data_backend._resolve_sample_ref(relative_ref)
             sample_ref = self.data_backend.normalize_sample_id(relative_ref)

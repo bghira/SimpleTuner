@@ -596,6 +596,98 @@ class TestWebshartParquetBackend(unittest.TestCase):
             self.assertEqual(records[0]["metadata"]["image_paths"], [accepted])
             self.assertNotIn("image_paths", records[1]["metadata"])
 
+    def test_generated_conditioning_reuses_native_prepared_geometry_without_cloning(self):
+        from simpletuner.helpers.data_backend.builders.base import create_metadata_provider
+        from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
+        from simpletuner.helpers.data_backend.local import LocalDataBackend
+        from simpletuner.helpers.data_generation import DataGenerator
+        from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
+        from simpletuner.helpers.metadata.backends.webshart_exclusions import Exclusions, _publish
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        native = {
+            "caption_strategy": "webshart",
+            "webshart": {"sampling_policy": "global"},
+            "resolution": 8,
+            "resolution_type": "pixel",
+        }
+        root = self.root / "generated"
+        derived = {
+            **native,
+            "dataset_type": "conditioning",
+            "metadata_backend": "discovery",
+            "instance_data_dir": str(root),
+            "conditioning_config": {"type": "sdr"},
+        }
+        args = SimpleNamespace(model_family="sdxl", disable_bucket_pruning=False, train_batch_size=1)
+        accelerator = SimpleNamespace(
+            num_processes=1, process_index=0, is_main_process=True, device="cpu", wait_for_everyone=lambda: None
+        )
+        with (
+            patch.object(
+                StateTracker, "get_data_backend_config", side_effect=lambda id: native if id == self.backend.id else derived
+            ),
+            patch.object(StateTracker, "get_args", return_value=args),
+            patch.object(StateTracker, "get_model", return_value=None),
+        ):
+            metadata = WebshartMetadataBackend(
+                id=self.backend.id,
+                instance_data_dir=self.backend.cache_dir,
+                cache_file=str(self.root / "derived-source-buckets"),
+                metadata_file=str(self.root / "derived-source-geometry"),
+                data_backend=self.backend,
+                accelerator=accelerator,
+                batch_size=1,
+                resolution=8,
+                resolution_type="pixel",
+            )
+            self.addCleanup(metadata.close)
+            metadata.compute_aspect_ratio_bucket_indices()
+            source = DatasetRuntime(self.backend.id, self.backend, metadata, native)
+            store = LocalDataBackend(accelerator, "derived")
+            provider = create_metadata_provider(
+                store.id,
+                derived,
+                store,
+                accelerator,
+                args,
+                instance_data_dir=str(root),
+                cache_root=str(root),
+                aligned_source=source,
+            )
+            target = DatasetRuntime(store.id, store, provider, derived)
+            refs, count = source.read_page(limit=2)
+            self.assertEqual(count, 2)
+            with (
+                patch.object(self.backend, "list_files", side_effect=AssertionError("source list materialized")),
+                patch.object(store, "list_files", side_effect=AssertionError("target list materialized")),
+            ):
+                DataGenerator(source, target, accelerator, num_workers=0).generate_dataset()
+                with patch.object(self.backend, "read_image_batch", side_effect=AssertionError("warm source payload read")):
+                    DataGenerator(source, target, accelerator, num_workers=0).generate_dataset()
+
+            targets, target_count = target.read_page(limit=2)
+            self.assertEqual(target_count, 2)
+            self.assertEqual(targets, [target.conditioning_ref(ref) for ref in refs])
+            self.assertTrue(all(Path(path).is_file() for path in targets))
+            records = target.read_samples(targets)
+            self.assertEqual([record["training_sample_path"] for record in records], refs)
+            self.assertEqual(
+                [record["target_size"] for record in records],
+                [record["target_size"] for record in source.read_samples(refs)],
+            )
+            self.assertEqual(provider.aspect_ratio_bucket_indices, {})
+            self.assertEqual(metadata.aspect_ratio_bucket_indices, {})
+            self.assertEqual(provider.image_metadata, {})
+
+            with closing(sqlite3.connect("")) as db:
+                changes = Exclusions(db)
+                changes.add(refs[0], next(iter(metadata.published_bucket_counts())), "decode")
+                _publish(self.backend._cache_path(metadata.cache_file), source.describe().view_revision, db)
+            metadata.reload_cache()
+            with self.assertRaisesRegex(ValueError, "Source membership changed"):
+                target.read_page(limit=2)
+
     def test_capture_publication_reuses_only_unchanged_groups(self):
         from simpletuner.helpers.metadata.backends.webshart import WebshartMetadataBackend
         from simpletuner.helpers.metadata.backends.webshart_exclusions import Exclusions, _publish
