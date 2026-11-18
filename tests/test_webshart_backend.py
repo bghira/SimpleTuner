@@ -497,6 +497,9 @@ class TestWebshartConfig(unittest.TestCase):
 
 class TestWebshartCaptionKeyIntegration(unittest.TestCase):
     def setUp(self):
+        from simpletuner.helpers.training.state_tracker import StateTracker
+
+        self.enterContext(patch.object(StateTracker, "get_args", return_value=SimpleNamespace(only_instance_prompt=False)))
         self.temp = TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -804,7 +807,6 @@ class TestWebshartCaptionKeyIntegration(unittest.TestCase):
         from simpletuner.helpers.training.state_tracker import StateTracker
 
         with (
-            patch.object(StateTracker, "get_args", return_value=SimpleNamespace(only_instance_prompt=False)),
             patch.object(StateTracker, "get_data_backend_config", return_value={"caption_strategy": "webshart"}),
             patch.object(StateTracker, "set_image_files"),
             patch.object(StateTracker, "set_data_backend_config"),

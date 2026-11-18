@@ -713,6 +713,8 @@ class TestFactoryEdgeCases(unittest.TestCase):
                 )
                 with (
                     patch.dict(StateTracker.data_backends, {backend["id"]: init_backend}, clear=True),
+                    patch.object(StateTracker, "own_dataset_resource"),
+                    patch.object(StateTracker, "register_dataset"),
                     patch("simpletuner.helpers.data_backend.factory.MultiAspectDataset"),
                     patch("simpletuner.helpers.data_backend.factory.MultiAspectSampler") as sampler,
                     patch("simpletuner.helpers.data_backend.factory.torch.utils.data.DataLoader"),
