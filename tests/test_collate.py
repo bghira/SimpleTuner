@@ -398,6 +398,22 @@ class CollateFunctionTests(unittest.TestCase):
 
                 torch.testing.assert_close(result["text_conditioning_mask"], torch.tensor([expected]))
 
+    def test_prefetched_legacy_caption_dropout_uses_seed_before_continuation_is_attached(self):
+        backend = {"data_backend": _make_stub_data_backend(), "config": {"instance_data_dir": "/train"}}
+        patchers, _ = self._patch_state_tracker(
+            model=_StubModel(uses_text_embeddings_cache=False), data_backend=backend, text_outputs={}
+        )
+        self.base_args.caption_dropout_probability = 0.5
+        with ExitStack() as stack:
+            for patcher in patchers:
+                stack.enter_context(patcher)
+            stack.enter_context(patch.object(np.random, "rand", side_effect=AssertionError("used ambient RNG")))
+            for seed, expected in ((0, True), (3, False), (0, True)):
+                batch = copy.deepcopy(self.base_batch)
+                batch[0]["training_samples"][0]["caption_dropout_seed"] = seed
+                result = collate_fn(batch)
+                torch.testing.assert_close(result["text_conditioning_mask"], torch.tensor([expected]))
+
     def test_compute_latents_uses_backend_ondemand_mode(self):
         vae_cache = SimpleNamespace(
             vae_cache_ondemand=True,

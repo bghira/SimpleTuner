@@ -570,7 +570,8 @@ def collate_fn(batch, *, dataset=None):
     batch = batch[0]
     examples = batch["training_samples"]
     continuation = examples[0].get("dataset_continuation") if examples else None
-    random_dropout = np.random.default_rng(examples[0]["caption_dropout_seed"]).random if continuation else np.random.rand
+    dropout_seed = examples[0].get("caption_dropout_seed") if examples else None
+    random_dropout = np.random.default_rng(dropout_seed).random if dropout_seed is not None else np.random.rand
     conditioning_examples = batch["conditioning_samples"]
     has_conditioning_captions = False
     if any([sample.caption is not None for sample in conditioning_examples]):
