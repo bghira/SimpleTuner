@@ -1,11 +1,19 @@
 import gzip
 from abc import ABC, abstractmethod
+from contextlib import closing
 from io import BytesIO
 
 import torch
 
 
 class BaseDataBackend(ABC):
+    # A sharded provider can choose a canonical number of source shards per prepared partition.
+    prepared_partition_shards = None
+
+    def count_source_rows(self, *, exclude_null_images=False):
+        """Return the exact source row count when the provider supports it."""
+        raise NotImplementedError("This source does not expose exact row counts.")
+
     def iter_cache_groups(self, bucket_files: dict):
         """Yield (bucket, files) groups in input order; callers drain queues between groups."""
         yield from bucket_files.items()
@@ -38,6 +46,10 @@ class BaseDataBackend(ABC):
         """
         pass
 
+    def bulk_exists(self, identifiers):
+        """Return presence for each requested key in the same order."""
+        return [self.exists(identifier) for identifier in identifiers]
+
     @abstractmethod
     def open_file(self, identifier, mode):
         """
@@ -45,12 +57,21 @@ class BaseDataBackend(ABC):
         """
         pass
 
+    def open_read_stream(self, identifier):
+        """Open a binary reader for persisted metadata or artifact manifests."""
+        return closing(self.open_file(identifier, "rb"))
+
     @abstractmethod
     def list_files(self, file_extensions: list, instance_data_dir: str = None) -> tuple:
         """
         List all files matching the pattern.
         """
         pass
+
+    def iter_file_keys(self, file_extensions, instance_data_dir=None):
+        """Yield matching keys. Backends can replace the legacy grouped listing."""
+        for _, _, keys in self.list_files(file_extensions, instance_data_dir):
+            yield from keys
 
     @abstractmethod
     def get_abs_path(self, sample_path: str = None) -> tuple:
@@ -86,6 +107,14 @@ class BaseDataBackend(ABC):
         Reads content from the backend and loads it with torch.
         """
         pass
+
+    def read_cached_tensors(self, keys):
+        """Return cached tensors in request order, with None for missing keys."""
+        for key in keys:
+            try:
+                yield self.torch_load(key) if self.exists(key) else None
+            except FileNotFoundError:
+                yield None
 
     @abstractmethod
     def torch_save(self, data, filename):
