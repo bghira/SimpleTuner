@@ -323,7 +323,8 @@ def conditioning_pixels(
     return pixels
 
 
-def compute_latents(filepaths, data_backend_id: str, model):
+def compute_latents(filepaths, data_backend_id: str, model, records: dict | None = None):
+    """Latents for a batch. `records` maps each path to the sample record the batch carries, if it has them."""
     # Use a thread pool to fetch latents concurrently
     try:
         if "deepfloyd" in StateTracker.get_args().model_family:
@@ -332,7 +333,7 @@ def compute_latents(filepaths, data_backend_id: str, model):
             return latents
         vae_cache = StateTracker.get_vaecache(id=data_backend_id)
         if getattr(vae_cache, "vae_cache_ondemand", False):
-            latents = vae_cache.encode_images([None] * len(filepaths), filepaths)
+            latents = vae_cache.encode_images([None] * len(filepaths), filepaths, records=records)
         else:
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 latents = list(executor.map(fetch_latent, filepaths, [data_backend_id] * len(filepaths)))
@@ -661,7 +662,9 @@ def collate_fn(batch):
             uses_text_embeddings_cache = True
 
     debug_log("Compute latents")
-    batch_data = compute_latents(filepaths, batch_backend_id, model)
+    batch_data = compute_latents(
+        filepaths, batch_backend_id, model, records={example["image_path"]: example for example in examples}
+    )
     latent_metadata = None
     if isinstance(batch_data[0], dict):
         latent_metadata = []

@@ -2,7 +2,7 @@ import copy
 import unittest
 from contextlib import ExitStack
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import numpy as np
 import torch
@@ -187,6 +187,12 @@ class CollateFunctionTests(unittest.TestCase):
         self.assertTrue(torch.equal(result["add_text_embeds"], text_outputs["pooled_prompt_embeds"]))
         backend_mock = active_mocks[5]
         backend_mock.assert_called()
+        # The sampler's records travel with the paths, so latents are encoded from the geometry the batch was built with.
+        compute_latents_mock = active_mocks[7]
+        self.assertEqual(compute_latents_mock.call_args.args[0], ["sample.png"])
+        self.assertIs(
+            compute_latents_mock.call_args.kwargs["records"]["sample.png"], self.base_batch[0]["training_samples"][0]
+        )
 
     def test_collate_passes_all_selected_reference_paths_to_text_encoding(self):
         from threading import Thread
@@ -405,9 +411,14 @@ class CollateFunctionTests(unittest.TestCase):
             patch.object(StateTracker, "get_vaecache", return_value=vae_cache),
         ):
             latents = compute_latents(["sample.png"], "backend-1", MagicMock())
+            records = {"sample.png": {"target_size": (32, 32)}}
+            compute_latents(["sample.png"], "backend-1", MagicMock(), records=records)
 
         self.assertEqual(latents, ["latent"])
-        vae_cache.encode_images.assert_called_once_with([None], ["sample.png"])
+        self.assertEqual(
+            vae_cache.encode_images.call_args_list,
+            [call([None], ["sample.png"], records=None), call([None], ["sample.png"], records=records)],
+        )
 
     def test_compute_prompt_embeddings_serializes_ondemand_cache_access(self):
         text_cache = SimpleNamespace(text_cache_ondemand=True)

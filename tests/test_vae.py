@@ -39,7 +39,7 @@ if "imageio" not in sys.modules:
     imageio_stub.__spec__ = importlib.machinery.ModuleSpec("imageio", loader=None)
     sys.modules["imageio"] = imageio_stub
 
-from simpletuner.helpers.caching.vae import VAECache
+from simpletuner.helpers.caching.vae import VAECache, prepare_sample
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.models.common import AudioModelFoundation
 from simpletuner.helpers.training import audio_file_extensions, video_file_extensions
@@ -197,11 +197,6 @@ class DummyMetadataBackend:
     def get_metadata_by_filepath(self, filepath, data_backend_id=None):
         return self._metadata.get(filepath, {})
 
-    def get_metadata_attribute_by_filepath(self, filepath, attribute):
-        if attribute == "aspect_bucket":
-            return self._metadata.get(filepath, {}).get("aspect_bucket", "audio")
-        return None
-
 
 class DummyModel:
     def __init__(self):
@@ -240,26 +235,16 @@ class TestVaeCacheAudio(unittest.TestCase):
         vae_cache = VAECache.__new__(VAECache)
         vae_cache.id = "audio-cache"
         vae_cache.dataset_type_enum = DatasetType.AUDIO
-        vae_cache._metadata_search_types = ["image", "video", "conditioning", "audio"]
-        vae_cache.metadata_backend = DummyMetadataBackend(metadata={"track.wav": {"num_samples": 350}})
+        record = {"num_samples": 350}
 
-        with patch.object(StateTracker, "get_metadata_by_filepath", return_value=None):
-            entries = vae_cache._gather_sample_metadata(["track.wav"], samples=torch.zeros(1, 2, 300))
+        entries = vae_cache._gather_sample_metadata(["track.wav"], {"track.wav": record}, samples=torch.zeros(1, 2, 300))
 
         self.assertEqual(entries[0]["metadata"]["num_samples"], 300)
-        self.assertEqual(vae_cache.metadata_backend._metadata["track.wav"]["num_samples"], 350)
+        self.assertEqual(record["num_samples"], 350)
 
     def test_audio_preparation_truncates_to_duration_bucket(self):
         vae_cache = VAECache.__new__(VAECache)
         vae_cache.id = "audio-cache"
-        vae_cache.metadata_backend = DummyMetadataBackend(
-            metadata={
-                "track.wav": {
-                    "bucket_duration_seconds": 3.0,
-                    "truncation_mode": "beginning",
-                }
-            }
-        )
         vae_cache._log_audio_tensor_stats = MagicMock()
 
         with patch.object(
@@ -270,6 +255,7 @@ class TestVaeCacheAudio(unittest.TestCase):
             prepared = vae_cache._prepare_audio_sample(
                 "track.wav",
                 {"waveform": torch.arange(700, dtype=torch.float32).reshape(2, 350), "sample_rate": 100},
+                {"bucket_duration_seconds": 3.0, "truncation_mode": "beginning"},
             )
 
         self.assertEqual(prepared["waveform"].shape, (2, 300))
@@ -278,7 +264,6 @@ class TestVaeCacheAudio(unittest.TestCase):
     def test_audio_preparation_preserves_max_duration_limit(self):
         vae_cache = VAECache.__new__(VAECache)
         vae_cache.id = "audio-cache"
-        vae_cache.metadata_backend = DummyMetadataBackend(metadata={"track.wav": {}})
         vae_cache._log_audio_tensor_stats = MagicMock()
 
         with patch.object(
@@ -289,6 +274,7 @@ class TestVaeCacheAudio(unittest.TestCase):
             prepared = vae_cache._prepare_audio_sample(
                 "track.wav",
                 {"waveform": torch.zeros(2, 350), "sample_rate": 100},
+                {},
             )
 
         self.assertEqual(prepared["waveform"].shape, (2, 300))
@@ -296,9 +282,6 @@ class TestVaeCacheAudio(unittest.TestCase):
     def test_video_audio_preparation_does_not_truncate_to_duration_bucket(self):
         vae_cache = VAECache.__new__(VAECache)
         vae_cache.id = "audio-cache"
-        vae_cache.metadata_backend = DummyMetadataBackend(
-            metadata={"track.mp4": {"bucket_duration_seconds": 3.0, "truncation_mode": "beginning"}}
-        )
         vae_cache._log_audio_tensor_stats = MagicMock()
 
         with patch.object(
@@ -309,6 +292,7 @@ class TestVaeCacheAudio(unittest.TestCase):
             prepared = vae_cache._prepare_audio_sample(
                 "track.mp4",
                 {"waveform": torch.zeros(2, 350), "sample_rate": 100},
+                {"bucket_duration_seconds": 3.0, "truncation_mode": "beginning"},
             )
 
         self.assertEqual(prepared["waveform"].shape, (2, 350))
@@ -321,7 +305,7 @@ class TestVaeCacheAudio(unittest.TestCase):
         vae_cache._cache_vae_dtype = MagicMock(return_value=torch.float32)
         vae_cache.generate_vae_cache_filename = MagicMock(side_effect=lambda filepath: (f"{filepath}.pt", f"{filepath}.pt"))
         vae_cache.encode_images = MagicMock(
-            side_effect=lambda images, filepaths, load_from_cache: [torch.zeros(1) for _ in images]
+            side_effect=lambda images, filepaths, load_from_cache, records: [torch.zeros(1) for _ in images]
         )
         vae_cache._handle_metadata_filtered_sample = MagicMock()
         vae_cache.debug_log = MagicMock()
@@ -398,6 +382,135 @@ class TestVaeCacheAudio(unittest.TestCase):
         self.assertIn("latent_lengths", output)
         self.assertTrue(torch.equal(output["latents"], samples * 2))
         self.assertEqual(output["latent_lengths"].shape[0], 1)
+
+
+class TestVaeCacheRecords(unittest.TestCase):
+    """Geometry reaches the VAE cache in the batch's records; only a caller without records has it looked up."""
+
+    RECORD = {
+        "original_size": (64, 48),
+        "target_size": (32, 24),
+        "intermediary_size": (32, 24),
+        "crop_coordinates": (0, 0),
+        "aspect_ratio": 1.33,
+    }
+
+    def _ondemand_cache(self, cached=()):
+        cache = VAECache.__new__(VAECache)
+        cache.id = "images"
+        cache.vae_cache_ondemand = True
+        cache.dataset_type_enum = DatasetType.IMAGE
+        cache.metadata_backend = MagicMock()
+        cache.metadata_backend.get_metadata_by_filepath.side_effect = lambda path: {"looked_up": path}
+        cache.cache_data_backend = MagicMock()
+        cache.cache_data_backend.exists.side_effect = lambda filename: filename in {f"{path}.pt" for path in cached}
+        cache.generate_vae_cache_filename = lambda filepath: (f"{filepath}.pt", f"{filepath}.pt")
+        cache._read_from_storage_concurrently = lambda paths, hide_errors=False: [(path, "pixels") for path in paths]
+        cache._read_from_storage = MagicMock(side_effect=lambda filename, hide_errors=False: f"cached:{filename}")
+        cache._process_images_in_batch = MagicMock(return_value=["prepared"])
+        cache._encode_images_in_batch = MagicMock(return_value=["encoded"])
+        cache._write_latents_in_batch = MagicMock(side_effect=lambda outputs: ["latent-a", "latent-b"])
+        return cache
+
+    def test_an_ondemand_batch_is_prepared_from_the_records_it_brings(self):
+        cache = self._ondemand_cache()
+        records = {"a.png": dict(self.RECORD), "b.png": dict(self.RECORD)}
+        latents = cache.encode_images([None, None], ["a.png", "b.png"], records=records)
+        self.assertEqual(latents, ["latent-a", "latent-b"])
+        self.assertIs(cache._process_images_in_batch.call_args.kwargs["records"], records)
+        self.assertIs(cache._encode_images_in_batch.call_args.kwargs["records"], records)
+        cache.metadata_backend.get_metadata_by_filepath.assert_not_called()
+
+    def test_an_ondemand_caller_with_only_paths_gets_the_metadata_backends_geometry(self):
+        cache = self._ondemand_cache()
+        cache.encode_images([None, None], ["a.png", "b.png"])
+        expected = {"a.png": {"looked_up": "a.png"}, "b.png": {"looked_up": "b.png"}}
+        self.assertEqual(cache._process_images_in_batch.call_args.kwargs["records"], expected)
+        self.assertEqual(cache._encode_images_in_batch.call_args.kwargs["records"], expected)
+
+    def test_cached_latents_need_no_geometry(self):
+        cache = self._ondemand_cache(cached=("a.png", "b.png"))
+        self.assertEqual(cache.encode_images([None, None], ["a.png", "b.png"]), ["cached:a.png.pt", "cached:b.png.pt"])
+        cache.metadata_backend.get_metadata_by_filepath.assert_not_called()
+        cache._process_images_in_batch.assert_not_called()
+
+    def test_images_are_prepared_with_their_records(self):
+        cache = VAECache.__new__(VAECache)
+        cache.id = "images"
+        cache.dataset_type = "image"
+        cache.dataset_type_enum = DatasetType.IMAGE
+        cache.model = MagicMock()
+        cache.accelerator = SimpleNamespace(device="cpu")
+        cache.vae = SimpleNamespace(dtype=torch.float32)
+        cache.metadata_backend = MagicMock()
+        cache.debug_log = MagicMock()
+        cache.transform_sample = lambda image: torch.zeros(3, 2, 2)
+        cache.batch_processor = MagicMock()
+        cache.batch_processor.process_aspect_grouped_images.side_effect = lambda groups, records: [
+            (path, np.zeros((4, 4, 3), dtype=np.uint8), records[path]) for path, _, _ in groups[None]
+        ]
+        records = {"a.png": dict(self.RECORD), "b.png": dict(self.RECORD, crop_coordinates=(4, 0))}
+        with patch("simpletuner.helpers.caching.vae.prepare_sample", return_value=("image", (0, 0), 1.33)) as prepare:
+            outputs = cache._process_images_in_batch(
+                ["a.png", "b.png"], ["pixels-a", "pixels-b"], disable_queue=True, records=records
+            )
+        self.assertIs(cache.batch_processor.process_aspect_grouped_images.call_args.args[1], records)
+        prepared_with = {call.kwargs["filepath"]: call.kwargs["metadata"] for call in prepare.call_args_list}
+        self.assertEqual(prepared_with, records)
+        self.assertEqual(sorted(output[1] for output in outputs), ["a.png", "b.png"])
+        cache.metadata_backend.get_metadata_by_filepath.assert_not_called()
+        cache.metadata_backend.get_metadata_attribute_by_filepath.assert_not_called()
+
+    def test_queued_images_are_prepared_with_the_metadata_backends_geometry(self):
+        cache = VAECache.__new__(VAECache)
+        cache.id = "audio"
+        cache.dataset_type_enum = DatasetType.AUDIO
+        cache.metadata_backend = MagicMock()
+        cache.metadata_backend.get_metadata_by_filepath.side_effect = lambda path: {"looked_up": path}
+        cache.process_queue = Queue()
+        cache.process_queue.put(("track.wav", "waveform", "3s"))
+        cache._process_audio_samples_in_batch = MagicMock(return_value=[])
+        cache._process_images_in_batch()
+        initial_data, records = cache._process_audio_samples_in_batch.call_args.args
+        self.assertEqual(initial_data, [("track.wav", "waveform", "3s")])
+        self.assertEqual(records, {"track.wav": {"looked_up": "track.wav"}})
+
+    def _prepare(self, metadata, backends, mappings):
+        with (
+            patch.object(StateTracker, "get_data_backend", side_effect=lambda backend_id: backends[backend_id]),
+            patch.object(StateTracker, "data_backends", backends),
+            patch.object(StateTracker, "get_conditioning_mappings", return_value=mappings),
+            patch("simpletuner.helpers.caching.vae.TrainingSample") as training_sample,
+        ):
+            prepare_sample(image="pixels", data_backend_id="control", filepath="a.png", model="model", metadata=metadata)
+        return training_sample
+
+    def test_prepare_sample_uses_the_metadata_it_is_given(self):
+        backends = {"control": {"id": "control", "dataset_type": "eval"}}
+        training_sample = self._prepare(self.RECORD, backends, mappings=[])
+        training_sample.assert_called_once_with(
+            image="pixels", data_backend_id="control", image_metadata=self.RECORD, image_path="a.png", model="model"
+        )
+        training_sample.return_value.prepare.assert_called_once_with()
+
+    def test_a_conditioning_sample_without_geometry_is_prepared_like_its_training_sample(self):
+        train_runtime = MagicMock()
+        train_runtime.describe.return_value = dict(self.RECORD)
+        backends = {"control": {"id": "control"}, "train": {"id": "train", "dataset_runtime": train_runtime}}
+        training_sample = self._prepare(None, backends, mappings=[("train", "control")])
+        train_runtime.describe.assert_called_once_with(training_sample.return_value.training_sample_path.return_value)
+        paired = training_sample.call_args_list[1]
+        self.assertEqual(paired.kwargs["data_backend_id"], "train")
+        self.assertEqual(paired.kwargs["image_metadata"], self.RECORD)
+        training_sample.return_value.prepare_like.assert_called_once()
+        training_sample.return_value.prepare.assert_not_called()
+
+    def test_a_conditioning_sample_with_geometry_is_prepared_on_its_own(self):
+        backends = {"control": {"id": "control"}, "train": {"id": "train", "dataset_runtime": MagicMock()}}
+        training_sample = self._prepare(self.RECORD, backends, mappings=[("train", "control")])
+        training_sample.return_value.prepare.assert_called_once_with()
+        training_sample.return_value.prepare_like.assert_not_called()
+        backends["train"]["dataset_runtime"].describe.assert_not_called()
 
 
 class TestMetadataFilteredSample(unittest.TestCase):

@@ -54,15 +54,10 @@ def prepare_sample(
     data_backend_id: str = None,
     filepath: str = None,
     model=None,
+    metadata: dict | None = None,
 ):
+    """Crop and resize a sample as `metadata`, the geometry its dataset holds for it, says."""
     data_backend = StateTracker.get_data_backend(data_backend_id)
-    dataset_type = data_backend.get("dataset_type", "image")
-    search_types = ["image", "video", "conditioning"]
-    if dataset_type not in search_types:
-        search_types.append(dataset_type)
-    metadata = StateTracker.get_metadata_by_filepath(
-        filepath, data_backend_id=data_backend_id, search_dataset_types=search_types
-    )
     data_sampler = data_backend.get("sampler")
     image_data = image
     if image_data is None:
@@ -79,14 +74,11 @@ def prepare_sample(
     cond_mapping = {y: x for (x, y) in StateTracker.get_conditioning_mappings()}
 
     if data_backend_id in cond_mapping:
-        conditioning_sample_path = training_sample.image_path()
         # locate the partner backend id
         train_id = cond_mapping[data_backend_id]
-        train_data_backend = StateTracker.get_data_backend(train_id)
         train_sample_path = training_sample.training_sample_path(training_dataset_id=train_id)
-        cond_meta = StateTracker.get_metadata_by_filepath(conditioning_sample_path, data_backend_id=data_backend_id)
-        if not cond_meta:
-            train_meta = train_data_backend["metadata_backend"].get_metadata_by_filepath(train_sample_path)
+        if not metadata:
+            train_meta = StateTracker.get_dataset(train_id).describe(train_sample_path)
             prepared_sample = training_sample.prepare_like(
                 TrainingSample(
                     image=None,
@@ -155,10 +147,6 @@ class VAECache(WebhookMixin):
         self.dataset_runtime = dataset_runtime
         self.dataset_type_enum = ensure_dataset_type(dataset_type, default=DatasetType.IMAGE)
         self.dataset_type = self.dataset_type_enum.value
-        _base_search_types = ["image", "video", "conditioning"]
-        self._metadata_search_types = (
-            _base_search_types if self.dataset_type in _base_search_types else _base_search_types + [self.dataset_type]
-        )
         if image_data_backend and image_data_backend.id != id:
             raise ValueError(f"VAECache received incorrect image_data_backend: {image_data_backend}")
         self.image_data_backend = image_data_backend
@@ -773,23 +761,19 @@ class VAECache(WebhookMixin):
             return self._clone_metadata_value(value)
         return value
 
-    def _gather_sample_metadata(self, filepaths, samples: torch.Tensor | None = None):
+    def _records_for(self, filepaths, records: dict | None) -> dict:
+        """
+        Each sample's geometry, by path. A training batch brings its own records; a caller that
+        has only paths gets what the metadata backend holds.
+        """
+        if records is not None:
+            return records
+        return {filepath: self.metadata_backend.get_metadata_by_filepath(filepath) for filepath in filepaths}
+
+    def _gather_sample_metadata(self, filepaths, records: dict, samples: torch.Tensor | None = None):
         metadata_entries = []
         for index, filepath in enumerate(filepaths):
-            resolved_metadata = None
-            try:
-                resolved_metadata = StateTracker.get_metadata_by_filepath(
-                    filepath, data_backend_id=self.id, search_dataset_types=self._metadata_search_types
-                )
-            except Exception as exc:
-                logger.debug(f"StateTracker metadata lookup failed for {filepath}: {exc}")
-            if resolved_metadata is None and self.metadata_backend:
-                try:
-                    resolved_metadata = self.metadata_backend.get_metadata_by_filepath(filepath)
-                except Exception as exc:
-                    logger.debug(f"Metadata backend lookup failed for {filepath}: {exc}")
-                    resolved_metadata = None
-            resolved_metadata = dict(resolved_metadata or {})
+            resolved_metadata = dict(records.get(filepath) or {})
             if self.dataset_type_enum is DatasetType.AUDIO and torch.is_tensor(samples):
                 resolved_metadata["num_samples"] = int(samples[index].shape[-1])
             metadata_entries.append(
@@ -1203,9 +1187,10 @@ class VAECache(WebhookMixin):
             latents_uncached = normalize_ltx2_audio_latents(latents_uncached, self.vae)
         return latents_uncached
 
-    def encode_images(self, images, filepaths, load_from_cache=True):
+    def encode_images(self, images, filepaths, load_from_cache=True, records: dict | None = None):
         # images must be same dimension
         # if load_from_cache=True and entry not found, throws exception
+        # records: the batch's sample records by path, when the caller holds them.
         batch_size = len(images)
         if batch_size != len(filepaths):
             raise ValueError("Mismatch between number of images and filepaths.")
@@ -1225,11 +1210,12 @@ class VAECache(WebhookMixin):
             missing_image_paths = [filepaths[i] for i in missing_images]
             missing_image_data_generator = self._read_from_storage_concurrently(missing_image_paths, hide_errors=True)
             missing_image_data = [retrieved_image_data[1] for retrieved_image_data in missing_image_data_generator]
+            missing_image_records = self._records_for(missing_image_paths, records)
             missing_image_pixel_values = self._process_images_in_batch(
-                missing_image_paths, missing_image_data, disable_queue=True
+                missing_image_paths, missing_image_data, disable_queue=True, records=missing_image_records
             )
             missing_image_vae_outputs = self._encode_images_in_batch(
-                image_pixel_values=missing_image_pixel_values, disable_queue=True
+                image_pixel_values=missing_image_pixel_values, disable_queue=True, records=missing_image_records
             )
             written_latents = self._write_latents_in_batch(missing_image_vae_outputs)
             if len(written_latents) == len(images):
@@ -1272,8 +1258,10 @@ class VAECache(WebhookMixin):
                     for idx, fp in enumerate(debug_filepaths):
                         self._log_audio_tensor_stats("audio_waveform_batch", processed_images[idx], fp)
                 processed_images = self.model.pre_vae_encode_transform_sample(processed_images)
+                uncached_filepaths = [filepaths[i] for i in uncached_image_indices]
                 metadata_for_batch = self._gather_sample_metadata(
-                    [filepaths[i] for i in uncached_image_indices],
+                    uncached_filepaths,
+                    self._records_for(uncached_filepaths, records),
                     samples=processed_images,
                 )
                 latents_uncached = self.model.encode_cache_batch(
@@ -1421,6 +1409,7 @@ class VAECache(WebhookMixin):
         image_paths: list = None,
         image_data: list = None,
         disable_queue: bool = False,
+        records: dict | None = None,
     ) -> None:
         """Process a queue of images using trainingsample for better performance.
         Replaced complex threading with batch operations from trainingsample.
@@ -1428,6 +1417,7 @@ class VAECache(WebhookMixin):
         Args:
             image_paths: list If given, image_data must also be supplied. This will avoid the use of the Queues.
             image_data: list Provided Image objects for corresponding image_paths.
+            records: dict The samples' records by path, when the caller holds them.
 
         Returns:
             None
@@ -1445,15 +1435,14 @@ class VAECache(WebhookMixin):
                 if image_paths:
                     filepath = image_paths.pop()
                     image = image_data.pop()
-                    aspect_bucket = self.metadata_backend.get_metadata_attribute_by_filepath(
-                        filepath=filepath, attribute="aspect_bucket"
-                    )
+                    aspect_bucket = None
                 else:
                     filepath, image, aspect_bucket = self.process_queue.get()
                 initial_data.append((filepath, image, aspect_bucket))
+            records = self._records_for([filepath for filepath, _, _ in initial_data], records)
 
             if self.dataset_type_enum is DatasetType.AUDIO:
-                return self._process_audio_samples_in_batch(initial_data, disable_queue=disable_queue)
+                return self._process_audio_samples_in_batch(initial_data, records, disable_queue=disable_queue)
 
             # Use BatchedTrainingSamples for efficient batch processing
             processed_images = []
@@ -1467,10 +1456,7 @@ class VAECache(WebhookMixin):
 
             # Process using the batch processor
             try:
-                batch_results = self.batch_processor.process_aspect_grouped_images(
-                    aspect_groups,
-                    metadata_backend=self.metadata_backend,
-                )
+                batch_results = self.batch_processor.process_aspect_grouped_images(aspect_groups, records)
 
                 # Convert batch results to processed samples
                 for filepath, processed_image_array, metadata in batch_results:
@@ -1494,6 +1480,7 @@ class VAECache(WebhookMixin):
                             data_backend_id=self.id,
                             filepath=filepath,
                             model=self.model,
+                            metadata=records.get(filepath),
                         )
                         if result:
                             processed_images.append(result)
@@ -1510,6 +1497,7 @@ class VAECache(WebhookMixin):
                             data_backend_id=self.id,
                             filepath=filepath,
                             model=self.model,
+                            metadata=records.get(filepath),
                         )
                         if result:
                             processed_images.append(result)
@@ -1519,7 +1507,7 @@ class VAECache(WebhookMixin):
             # Final Processing - simplified without complex threading
             output_values = []
             first_aspect_ratio = None
-            for idx, (image, crop_coordinates, new_aspect_ratio) in enumerate(processed_images):
+            for idx, (image, _crop_coordinates, new_aspect_ratio) in enumerate(processed_images):
                 is_final_sample = idx == len(processed_images) - 1
                 if first_aspect_ratio is None:
                     first_aspect_ratio = new_aspect_ratio
@@ -1553,17 +1541,6 @@ class VAECache(WebhookMixin):
                 if not disable_queue:
                     self.vae_input_queue.put((pixel_values, filepath, aspect_bucket, is_final_sample))
 
-                # Update crop coordinates metadata if needed
-                if crop_coordinates:
-                    current_crop_coordinates = self.metadata_backend.get_metadata_attribute_by_filepath(
-                        filepath=filepath,
-                        attribute="crop_coordinates",
-                    )
-                    if current_crop_coordinates is not None and tuple(current_crop_coordinates) != tuple(crop_coordinates):
-                        logger.debug(
-                            f"Should be updating crop_coordinates for {filepath} from {current_crop_coordinates} to {crop_coordinates}. But we won't.."
-                        )
-
             self.debug_log(f"Completed processing gathered {len(output_values)} output values.")
         except Exception as e:
             logger.error(f"Error processing images {filepaths if len(filepaths) > 0 else image_paths}: {e}")
@@ -1571,7 +1548,7 @@ class VAECache(WebhookMixin):
             raise e
         return output_values
 
-    def _process_audio_samples_in_batch(self, initial_data: list, disable_queue: bool = False) -> list:
+    def _process_audio_samples_in_batch(self, initial_data: list, records: dict, disable_queue: bool = False) -> list:
         output_values = []
         total_samples = len(initial_data)
         if self.transform_sample is None:
@@ -1579,7 +1556,7 @@ class VAECache(WebhookMixin):
 
         for idx, (filepath, raw_sample, aspect_bucket) in enumerate(initial_data):
             try:
-                prepared_sample = self._prepare_audio_sample(filepath, raw_sample)
+                prepared_sample = self._prepare_audio_sample(filepath, raw_sample, records.get(filepath) or {})
                 if prepared_sample is None:
                     continue
                 transformed = self.transform_sample(prepared_sample)
@@ -1602,14 +1579,7 @@ class VAECache(WebhookMixin):
         self.debug_log(f"Completed processing gathered {len(output_values)} audio samples.")
         return output_values
 
-    def _prepare_audio_sample(self, filepath: str, raw_sample):
-        metadata = {}
-        if self.metadata_backend:
-            try:
-                metadata = self.metadata_backend.get_metadata_by_filepath(filepath) or {}
-            except Exception as exc:
-                logger.debug(f"Falling back to empty metadata for {filepath}: {exc}")
-                metadata = {}
+    def _prepare_audio_sample(self, filepath: str, raw_sample, metadata: dict):
         waveform, sample_rate = self._coerce_audio_waveform(raw_sample, metadata, filepath)
         if waveform is None:
             return None
@@ -1801,7 +1771,9 @@ class VAECache(WebhookMixin):
 
         return waveform_tensor.contiguous(), sample_rate
 
-    def _encode_images_in_batch(self, image_pixel_values: list = None, disable_queue: bool = False) -> None:
+    def _encode_images_in_batch(
+        self, image_pixel_values: list = None, disable_queue: bool = False, records: dict | None = None
+    ) -> None:
         """Encode the batched Image objects using the VAE model.
 
         Raises:
@@ -1862,6 +1834,7 @@ class VAECache(WebhookMixin):
                         [sample.to(dtype=self._cache_vae_dtype()) for sample in group_images],
                         group_filepaths,
                         load_from_cache=False,
+                        records=records,
                     )
                     if latents is None:
                         raise ValueError("Received None from encode_images")

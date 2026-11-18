@@ -120,8 +120,9 @@ class BatchedTrainingSamples:
     def process_aspect_grouped_images(
         self,
         grouped_data: Dict[str, List[Tuple[str, Any, str]]],
-        metadata_backend=None,
+        records: Dict[str, Optional[Dict[str, Any]]],
     ) -> List[Tuple[str, np.ndarray, Dict[str, Any]]]:
+        """Resize each group as its samples' records say. `records` maps a path to the sample's geometry."""
         processed_results = []
 
         for aspect_bucket, group_data in grouped_data.items():
@@ -137,40 +138,13 @@ class BatchedTrainingSamples:
                         if len(img_array.shape) == 3 and img_array.shape[2] == 3:
                             batch_images.append(img_array)
                             batch_filepaths.append(filepath)
-                            # fetch metadata
-                            metadata = None
-                            if metadata_backend:
-                                try:
-                                    metadata = metadata_backend.get_metadata_by_filepath(filepath)
-                                    if self.debug_enabled:
-                                        logger.debug(
-                                            f"Retrieved metadata for {filepath}: "
-                                            f"{'found' if metadata else 'not found'}"
-                                            f"{', keys: ' + str(list(metadata.keys())) if metadata else ''}"
-                                        )
-                                except Exception as e:
-                                    logger.debug(f"Exception getting metadata for {filepath}: {e}")
-                                    metadata = None
-                            batch_metadata.append(metadata or {})
+                            batch_metadata.append(records.get(filepath) or {})
                         else:
                             logger.warning(f"Skipping image {filepath} with unexpected shape: {img_array.shape}")
                     elif isinstance(image, np.ndarray):
                         batch_images.append(image)
                         batch_filepaths.append(filepath)
-                        metadata = None
-                        if metadata_backend:
-                            try:
-                                metadata = metadata_backend.get_metadata_by_filepath(filepath)
-                                if self.debug_enabled:
-                                    logger.debug(
-                                        f"Retrieved metadata for {filepath}: "
-                                        f"{'found' if metadata else 'not found'}"
-                                        f"{', keys: ' + str(list(metadata.keys())) if metadata else ''}"
-                                    )
-                            except Exception as e:
-                                logger.debug(f"Exception getting metadata for {filepath}: {e}")
-                                metadata = None
-                        batch_metadata.append(metadata or {})
+                        batch_metadata.append(records.get(filepath) or {})
 
                 if not batch_images:
                     continue
