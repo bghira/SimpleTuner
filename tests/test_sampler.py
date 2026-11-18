@@ -417,7 +417,18 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.assertEqual(self.sampler.exhausted_buckets, ["old"])
         self.assertEqual(self.metadata_backend.seen_images["same.jpg"], 2)
         self.assertEqual(self.metadata_backend.seen_images["other.jpg"], 0)
-        self.assertTrue(self.metadata_backend.seen_images["legacy.jpg"])
+        self.assertIs(self.metadata_backend.seen_images["legacy.jpg"], True)
+
+    def test_loading_integer_seen_counts_does_not_walk_the_bucket_schedule(self):
+        schedule = MagicMock(wraps={"1.0": ["image1", "image1", "image2"]})
+        schedule.values.side_effect = AssertionError("checkpoint walked the complete bucket schedule")
+        self.metadata_backend.aspect_ratio_bucket_indices = schedule
+        self.sampler.state_manager.load_state.return_value = {"buckets": ["1.0"], "seen_images": {"image1": 2}}
+
+        self.sampler.load_states(self.state_path)
+
+        self.assertEqual(self.metadata_backend.seen_images, {"image1": 2})
+        schedule.values.assert_not_called()
 
     def test_load_states_rejects_batch_size_mismatch_before_mutation(self):
         self.sampler.state_manager.load_state.return_value = {

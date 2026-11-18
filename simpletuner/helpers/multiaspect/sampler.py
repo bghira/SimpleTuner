@@ -2,6 +2,7 @@ import bisect
 import logging
 import os
 import random
+from collections import Counter
 
 import numpy as np
 import torch
@@ -299,17 +300,22 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             self.current_epoch = previous_state["current_epoch"]
         # Merge seen_images into self.state_manager.seen_images Manager.dict:
         if "seen_images" in previous_state:
-            self.logger.info(f"Previous checkpoint had {len(previous_state['seen_images'])} seen {self.sample_type_strs}.")
+            seen = previous_state["seen_images"]
+            self.logger.info(f"Previous checkpoint had {len(seen)} seen {self.sample_type_strs}.")
+            legacy_seen = {ref for ref, value in seen.items() if value is True}
             occurrence_counts = {}
-            for images in self.metadata_backend.aspect_ratio_bucket_indices.values():
-                for image_path in images:
-                    occurrence_counts[image_path] = occurrence_counts.get(image_path, 0) + 1
-            normalized_seen = {
-                image_path: ((occurrence_counts.get(image_path, True) if value else 0) if isinstance(value, bool) else value)
-                for image_path, value in previous_state["seen_images"].items()
-            }
+            if legacy_seen:
+                occurrence_counts = Counter(
+                    ref
+                    for images in self.metadata_backend.aspect_ratio_bucket_indices.values()
+                    for ref in images
+                    if ref in legacy_seen
+                )
             self.metadata_backend.seen_images.clear()
-            self.metadata_backend.seen_images.update(normalized_seen)
+            self.metadata_backend.seen_images.update(
+                (ref, occurrence_counts.get(ref, True) if value is True else 0 if value is False else value)
+                for ref, value in seen.items()
+            )
             self._unseen_indices = {}
 
     def load_buckets(self):
