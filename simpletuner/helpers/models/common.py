@@ -8,6 +8,7 @@ import os
 import random
 from abc import ABC, abstractmethod
 from collections import OrderedDict
+from contextvars import ContextVar
 from enum import Enum
 from numbers import Integral
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Protocol, Sequence
@@ -6047,6 +6048,29 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
 
         return batch
 
+    _prompt_context_scope = ContextVar("prompt_context_scope", default=())
+    _prompt_context_override = None
+
+    @property
+    def _current_prompt_contexts(self):
+        for model, contexts in reversed(self._prompt_context_scope.get()):
+            if model is self:
+                return contexts
+        return self._prompt_context_override
+
+    @_current_prompt_contexts.setter
+    def _current_prompt_contexts(self, contexts):
+        self._prompt_context_override = contexts
+
+    @contextlib.contextmanager
+    def _use_prompt_contexts(self, contexts):
+        scope = self._prompt_context_scope
+        token = scope.set((*scope.get(), (self, contexts)))
+        try:
+            yield
+        finally:
+            scope.reset(token)
+
     @torch.no_grad()
     def encode_text_batch(
         self,
@@ -6062,13 +6086,9 @@ class ModelFoundation(ExplorativeModelingMixin, ABC):
         text_batch = self.convert_prompts_to_json(
             text_batch, is_negative_prompt=is_negative_prompt, prompt_contexts=prompt_contexts
         )
-        previous_context = getattr(self, "_current_prompt_contexts", None)
-        self._current_prompt_contexts = prompt_contexts
-        try:
+        with self._use_prompt_contexts(prompt_contexts):
             encoded_text = self._encode_prompts(text_batch, is_negative_prompt)
             return self._format_text_embedding(encoded_text)
-        finally:
-            self._current_prompt_contexts = previous_context
 
     def _format_text_embedding(self, text_embedding: torch.Tensor):
         """

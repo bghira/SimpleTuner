@@ -225,12 +225,8 @@ class Cosmos3Image(Cosmos2Image):
         is_negative_prompt: bool = False,
         prompt_contexts: Optional[list[dict]] = None,
     ) -> dict:
-        previous_context = getattr(self, "_current_prompt_contexts", None)
-        self._current_prompt_contexts = prompt_contexts
-        try:
+        with self._use_prompt_contexts(prompt_contexts):
             return self._encode_prompts(text_batch, is_negative_prompt)
-        finally:
-            self._current_prompt_contexts = previous_context
 
     def use_text_cache_dropout_sentinel(self) -> bool:
         return False

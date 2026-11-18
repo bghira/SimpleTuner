@@ -1,5 +1,7 @@
 import json
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -111,6 +113,31 @@ class JSONSchemaConverterTests(unittest.TestCase):
         self.assertEqual(json.loads(kwargs["prompt"])["items"], native_layout()["items"])
         with self.assertRaisesRegex(ValueError, "height"):
             foundation.encode_text_batch([layout], prompt_contexts=[{"height": 256, "width": 512}])
+
+    def test_concurrent_prompt_encodes_keep_their_own_geometry_context(self):
+        foundation = model()
+        foundation.config.moss_image_auto_json = False
+        first_entered, second_entered, first_read = Event(), Event(), Event()
+
+        def encode(prompts, negative):
+            if prompts[0] == "first":
+                first_entered.set()
+                self.assertTrue(second_entered.wait(timeout=5))
+                context = foundation._current_prompt_contexts
+                first_read.set()
+                return context
+            second_entered.set()
+            self.assertTrue(first_read.wait(timeout=5))
+            return foundation._current_prompt_contexts
+
+        foundation._encode_prompts = encode
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(foundation.encode_text_batch, ["first"], prompt_contexts=[{"width": 512}])
+            self.assertTrue(first_entered.wait(timeout=5))
+            second = executor.submit(foundation.encode_text_batch, ["second"], prompt_contexts=[{"width": 1024}])
+            self.assertEqual(first.result(), [{"width": 512}])
+            self.assertEqual(second.result(), [{"width": 1024}])
+        self.assertIsNone(foundation._current_prompt_contexts)
 
     def test_cache_namespaces_separate_schema_and_caption_model(self):
         foundation = model()
