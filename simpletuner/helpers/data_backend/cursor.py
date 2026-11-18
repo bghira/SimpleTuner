@@ -1,7 +1,7 @@
 import logging
 import os
 import random
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from math import ceil
 
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
@@ -184,6 +184,18 @@ class DatasetCursor:
         """The distinct samples this rank trains on, by bucket. It does not change between epochs."""
         return {bucket: list(dict.fromkeys(share)) for bucket, share in self._share.items()}
 
+    @property
+    def counts(self) -> dict[str, int]:
+        """The samples in each bucket when the cursor was built."""
+        return dict(self._counts)
+
+    def resume_at(self, consumed: Mapping[str, int]) -> None:
+        """Continue the epoch with this many samples already drawn from each bucket."""
+        # An oversubscribed bucket's length follows the batch size, so a count saved under another
+        # batch size can exceed it.
+        self._consumed = {bucket: min(consumed[bucket], self._lengths[bucket]) for bucket in self._counts}
+        self._orders = None
+
     def finish_epoch(self) -> None:
         self.epoch += 1
         self._consumed = dict.fromkeys(self._counts, 0)
@@ -208,45 +220,229 @@ class DatasetCursor:
         }
 
     def load_state(self, state: dict, *, allow_batch_size_change: bool) -> None:
-        if state.get("format") != STATE_FORMAT:
-            raise ValueError(
-                f"Dataset '{self.dataset_id}': the checkpoint's sampler state was written by an older release "
-                "and cannot be resumed."
-            )
+        _require_current_format(self.dataset_id, state)
         saved, current = state["layout"], self._layout()
         if {**saved, "batch_size": current["batch_size"], "counts": current["counts"]} != current:
-            raise ValueError(
-                f"Dataset '{self.dataset_id}': the checkpoint was written for a different dataset layout "
-                f"(saved {_describe_layout(saved)}, current {_describe_layout(current)})."
-            )
-        if saved["batch_size"] != self.batch_size:
-            if not allow_batch_size_change:
-                raise ValueError(
-                    f"Dataset '{self.dataset_id}' checkpoint batch_size={saved['batch_size']} does not match "
-                    f"current batch_size={self.batch_size}. Resume with the same per-dataset train_batch_size, "
-                    f"or set --i_know_what_i_am_doing / SIMPLETUNER_ALLOW_MODIFYING_BSZ=1 to bypass."
-                )
-            logger.warning(
-                f"Dataset '{self.dataset_id}': resuming with batch_size={self.batch_size} but checkpoint recorded "
-                f"batch_size={saved['batch_size']}. Proceeding because override is set."
-            )
+            raise _different_layout(self.dataset_id, saved, current)
+        _check_batch_size(self.dataset_id, saved["batch_size"], self.batch_size, allow_batch_size_change)
         if state["seed"] != self.seed:
             self.seed = state["seed"]
             self._share = self._build_share()
         self.epoch = state["epoch"]
-        self._orders = None
         if saved["counts"] != current["counts"]:
             logger.warning(
                 f"Dataset '{self.dataset_id}' has changed since the checkpoint was written "
                 f"({sum(saved['counts'].values())} samples then, {sum(current['counts'].values())} now). "
                 f"Epoch {self.epoch} starts over."
             )
-            self._consumed = dict.fromkeys(self._counts, 0)
+            self.resume_at(dict.fromkeys(self._counts, 0))
             return
-        # An oversubscribed bucket's length follows the batch size, so a count saved under another
-        # batch size can exceed it.
-        self._consumed = {bucket: min(state["consumed"][bucket], self._lengths[bucket]) for bucket in self._counts}
+        self.resume_at(state["consumed"])
+
+
+class WindowedCursor:
+    """One rank's traversal of a dataset that is indexed a unit at a time, such as a shard.
+
+    Each epoch shuffles the units and deals them to the ranks. A rank opens a window of its units,
+    trains on every sample in them, closes them and opens the next window.
+    """
+
+    def __init__(
+        self,
+        dataset_id: str,
+        *,
+        unit_count: int,
+        open_unit: Callable[[int, int], Mapping[str, Sequence[str]]],
+        close_unit: Callable[[int], None],
+        window: int,
+        batch_size: int,
+        repeats: int,
+        seed: int,
+        dp_size: int,
+        dp_rank: int,
+    ):
+        self.dataset_id = dataset_id
+        self.unit_count = int(unit_count)
+        self.window = int(window)
+        self.batch_size = int(batch_size)
+        self.repeats = int(repeats)
+        self.seed = seed
+        self.dp_size = int(dp_size)
+        self.dp_rank = int(dp_rank)
+        if self.window < 1:
+            raise ValueError(f"Dataset '{dataset_id}': the window must hold at least one unit, not {window}.")
+        if self.unit_count < self.dp_size:
+            raise ValueError(
+                f"Dataset '{dataset_id}' is divided into {self.unit_count} unit(s), fewer than the {self.dp_size} ranks"
+                " reading it. Every rank needs a unit of its own."
+            )
+        self._open_unit = open_unit
+        self._close_unit = close_unit
+        # Samples a unit holds on average. Every rank is given the same figure, so they plan the
+        # same number of steps for an epoch.
+        self.samples_per_unit: float | None = None
+        self.epoch = 1
+        self._groups = self._deal_units()
+        self._group = 0
+        self._inner: DatasetCursor | None = None
+        self._finished = 0
+
+    def _deal_units(self) -> list[list[int]]:
+        order = list(range(self.unit_count))
+        random.Random(f"{self.seed}:{self.dataset_id}:units:{self.epoch}").shuffle(order)
+        mine = order[self.dp_rank :: self.dp_size]
+        return [mine[start : start + self.window] for start in range(0, len(mine), self.window)]
+
+    def _open_group(self) -> None:
+        pools: dict[str, list[str]] = {}
+        for unit in self._groups[self._group]:
+            for pool, refs in self._open_unit(unit, self.epoch).items():
+                pools.setdefault(pool, []).extend(refs)
+        self._inner = DatasetCursor(
+            self.dataset_id,
+            pools,
+            batch_size=self.batch_size,
+            repeats=self.repeats,
+            seed=f"{self.seed}:{self.epoch}:{self._group}",
+            dp_size=1,
+            dp_rank=0,
+            gradient_accumulation_steps=1,
+            allow_oversubscription=False,
+            # The window is this rank's alone, and a pool smaller than a batch is padded, not refused.
+            shared_by_all_ranks=True,
+        )
+
+    def _close_group(self) -> None:
+        for unit in self._groups[self._group]:
+            self._close_unit(unit)
+        self._inner = None
+
+    def next_batch(self) -> tuple[str, list[str]]:
+        while True:
+            if self._inner is None:
+                if self._group >= len(self._groups):
+                    self.finish_epoch()
+                    raise MultiDatasetExhausted()
+                self._open_group()
+            try:
+                return self._inner.next_batch()
+            except MultiDatasetExhausted:
+                self._finished += self._inner.progress()[1]
+                self._close_group()
+                self._group += 1
+
+    def measure_samples_per_unit(self) -> float:
+        """The average over the window this rank reads first, which is opened to find out."""
+        if self._inner is None:
+            self._open_group()
+        return sum(self._inner.counts.values()) / len(self._groups[self._group])
+
+    def _estimated_samples(self) -> int:
+        if self.samples_per_unit is None:
+            raise RuntimeError(f"Dataset '{self.dataset_id}' has no estimate of its samples per unit yet.")
+        units = sum(len(group) for group in self._groups)
+        return ceil(units * self.samples_per_unit * (self.repeats + 1))
+
+    def __len__(self) -> int:
+        """An estimate: the units are only counted as they are opened."""
+        return max(1, ceil(self._estimated_samples() / self.batch_size))
+
+    def progress(self) -> tuple[int, int]:
+        """Samples consumed in this epoch, and an estimate of the samples in an epoch."""
+        consumed = self._finished + (self._inner.progress()[0] if self._inner is not None else 0)
+        return consumed, max(consumed, self._estimated_samples())
+
+    def rank_share(self) -> dict[str, list[str]]:
+        raise RuntimeError(
+            f"Dataset '{self.dataset_id}' is read a window at a time; the samples a rank trains on cannot be listed."
+        )
+
+    def finish_epoch(self) -> None:
+        if self._inner is not None:
+            self._close_group()
+        self.epoch += 1
+        self._groups = self._deal_units()
+        self._group = 0
+        self._finished = 0
+
+    def _layout(self) -> dict:
+        return {
+            "batch_size": self.batch_size,
+            "repeats": self.repeats,
+            "dp_size": self.dp_size,
+            "dp_rank": self.dp_rank,
+            "window": self.window,
+            "units": self.unit_count,
+        }
+
+    def state(self) -> dict:
+        return {
+            "format": STATE_FORMAT,
+            "epoch": self.epoch,
+            "seed": self.seed,
+            "group": self._group,
+            "finished": self._finished,
+            # The open window: how far each pool has been read, and the pool sizes that count refers to.
+            "consumed": self._inner.state()["consumed"] if self._inner is not None else {},
+            "counts": self._inner.counts if self._inner is not None else None,
+            "layout": self._layout(),
+        }
+
+    def load_state(self, state: dict, *, allow_batch_size_change: bool) -> None:
+        _require_current_format(self.dataset_id, state)
+        saved, current = state["layout"], self._layout()
+        if {**saved, "batch_size": current["batch_size"]} != current:
+            raise _different_layout(self.dataset_id, saved, current)
+        _check_batch_size(self.dataset_id, saved["batch_size"], self.batch_size, allow_batch_size_change)
+        if self._inner is not None:
+            self._close_group()
+        self.seed = state["seed"]
+        self.epoch = state["epoch"]
+        self._groups = self._deal_units()
+        self._group = state["group"]
+        self._finished = state["finished"]
+        if state["counts"] is None:
+            return
+        self._open_group()
+        if self._inner.counts != state["counts"]:
+            logger.warning(
+                f"Dataset '{self.dataset_id}': the units open at the checkpoint held "
+                f"{sum(state['counts'].values())} samples then and hold {sum(self._inner.counts.values())} now. "
+                "That window starts over."
+            )
+            return
+        self._inner.resume_at(state["consumed"])
+
+
+def _require_current_format(dataset_id: str, state: dict) -> None:
+    if state.get("format") != STATE_FORMAT:
+        raise ValueError(
+            f"Dataset '{dataset_id}': the checkpoint's sampler state was written by an older release "
+            "and cannot be resumed."
+        )
+
+
+def _different_layout(dataset_id: str, saved: dict, current: dict) -> ValueError:
+    return ValueError(
+        f"Dataset '{dataset_id}': the checkpoint was written for a different dataset layout "
+        f"(saved {_describe_layout(saved)}, current {_describe_layout(current)})."
+    )
+
+
+def _check_batch_size(dataset_id: str, saved: int, current: int, allow_change: bool) -> None:
+    if saved == current:
+        return
+    if not allow_change:
+        raise ValueError(
+            f"Dataset '{dataset_id}' checkpoint batch_size={saved} does not match "
+            f"current batch_size={current}. Resume with the same per-dataset train_batch_size, "
+            f"or set --i_know_what_i_am_doing / SIMPLETUNER_ALLOW_MODIFYING_BSZ=1 to bypass."
+        )
+    logger.warning(
+        f"Dataset '{dataset_id}': resuming with batch_size={current} but checkpoint recorded "
+        f"batch_size={saved}. Proceeding because override is set."
+    )
 
 
 def _describe_layout(layout: dict) -> str:
-    return f"repeats={layout['repeats']} dp_size={layout['dp_size']} dp_rank={layout['dp_rank']}"
+    return " ".join(f"{key}={value}" for key, value in layout.items() if key not in ("batch_size", "counts"))

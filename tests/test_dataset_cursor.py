@@ -3,7 +3,7 @@ import unittest
 from collections import Counter
 from unittest.mock import patch
 
-from simpletuner.helpers.data_backend.cursor import DatasetCursor
+from simpletuner.helpers.data_backend.cursor import DatasetCursor, WindowedCursor
 from simpletuner.helpers.training.exceptions import MultiDatasetExhausted
 
 
@@ -51,6 +51,48 @@ def per_bucket(batches):
     for bucket, batch in batches:
         ordered.setdefault(bucket, []).extend(batch)
     return ordered
+
+
+class Units:
+    """A dataset indexed a unit at a time. `sizes` gives each unit's samples per pool."""
+
+    def __init__(self, sizes):
+        self.sizes = sizes
+        self.opened = []
+        self.open = set()
+        self.most_open = 0
+
+    def _pools(self, unit):
+        return {pool: [f"unit{unit}/{pool}/{index:03d}" for index in range(size)] for pool, size in self.sizes[unit].items()}
+
+    def open_unit(self, unit, epoch):
+        self.opened.append((unit, epoch))
+        self.open.add(unit)
+        self.most_open = max(self.most_open, len(self.open))
+        return self._pools(unit)
+
+    def close_unit(self, unit):
+        self.open.remove(unit)
+
+    def samples(self):
+        return [ref for unit in range(len(self.sizes)) for refs in self._pools(unit).values() for ref in refs]
+
+    def cursor(self, **overrides):
+        options = dict(window=2, batch_size=2, repeats=0, seed=7, dp_size=1, dp_rank=0)
+        options.update(overrides)
+        cursor = WindowedCursor(
+            "ds", unit_count=len(self.sizes), open_unit=self.open_unit, close_unit=self.close_unit, **options
+        )
+        cursor.samples_per_unit = 6.0
+        return cursor
+
+
+def even_units(count=7):
+    return Units([{"64x64": 4, "96x64": 2} for _ in range(count)])
+
+
+def unit_of(ref):
+    return ref.split("/")[0]
 
 
 class TestEpoch(unittest.TestCase):
@@ -246,6 +288,16 @@ class TestState(unittest.TestCase):
                 self.assertEqual(per_bucket(before + after), expected, f"repeats={repeats} position={position}")
                 self.assertEqual(resumed.epoch, 2)
 
+    def test_a_cursor_that_has_started_reading_resumes_from_the_state_it_is_given(self):
+        buckets = make_buckets(b1_0=9, b1_5=5)
+        saved = make_cursor(buckets)
+        saved.next_batch()
+        resumed = make_cursor(buckets)
+        for _ in range(3):
+            resumed.next_batch()
+        resumed.load_state(saved.state(), allow_batch_size_change=False)
+        self.assertEqual(per_bucket(drain(resumed)), per_bucket(drain(saved)))
+
     def test_resume_keeps_the_epoch_and_the_saved_seed(self):
         cursor = make_cursor(self.buckets, repeats=1, dp_size=2, dp_rank=1)
         drain(cursor)
@@ -308,3 +360,221 @@ class TestState(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWindowedEpoch(unittest.TestCase):
+    def test_ranks_read_every_sample_once_and_share_no_unit(self):
+        units_read = []
+        seen = Counter()
+        for rank in range(2):
+            units = even_units()
+            batches = drain(units.cursor(dp_size=2, dp_rank=rank))
+            seen.update(samples(batches))
+            units_read.append({unit for unit, _epoch in units.opened})
+        self.assertEqual(seen, Counter(even_units().samples()))
+        self.assertFalse(units_read[0] & units_read[1])
+        self.assertEqual(units_read[0] | units_read[1], set(range(7)))
+
+    def test_a_batch_holds_one_pool_of_the_open_window(self):
+        units = even_units()
+        cursor = units.cursor(window=3)
+        for pool, batch in drain(cursor):
+            self.assertEqual({ref.split("/")[1] for ref in batch}, {pool})
+        self.assertEqual(units.most_open, 3)
+        self.assertEqual(units.open, set())
+
+    def test_a_window_is_drained_before_the_next_opens(self):
+        units = even_units(4)
+        order = [unit_of(ref) for ref in samples(drain(units.cursor(window=2)))]
+        first, second = set(order[:12]), set(order[12:])
+        self.assertEqual((len(first), len(second)), (2, 2))
+        self.assertFalse(first & second)
+
+    def test_a_pool_smaller_than_a_batch_is_padded_with_its_own_samples(self):
+        units = Units([{"64x64": 1}, {"64x64": 2}])
+        batches = drain(units.cursor(window=2, batch_size=4))
+        self.assertEqual(len(batches), 1)
+        self.assertEqual(Counter(Counter(batches[0][1]).values()), Counter({2: 1, 1: 2}))
+
+    def test_repeats_read_each_window_more_than_once(self):
+        units = even_units(3)
+        seen = Counter(samples(drain(units.cursor(repeats=2))))
+        self.assertEqual(seen, Counter({ref: 3 for ref in units.samples()}))
+
+    def test_a_window_without_samples_is_skipped(self):
+        units = Units([{}, {"64x64": 2}, {}, {}])
+        self.assertEqual(sorted(samples(drain(units.cursor(window=1)))), ["unit1/64x64/000", "unit1/64x64/001"])
+        self.assertEqual(units.open, set())
+
+    def test_same_seed_gives_the_same_batches(self):
+        self.assertEqual(drain(even_units().cursor()), drain(even_units().cursor()))
+        self.assertNotEqual(drain(even_units().cursor()), drain(even_units().cursor(seed=8)))
+
+    def test_exhaustion_starts_the_next_epoch_with_the_units_dealt_again(self):
+        units = even_units()
+        cursor = units.cursor(dp_size=2, dp_rank=0)
+        drain(cursor)
+        self.assertEqual(cursor.epoch, 2)
+        first = [unit for unit, epoch in units.opened if epoch == 1]
+        drain(cursor)
+        second = [unit for unit, epoch in units.opened if epoch == 2]
+        self.assertEqual(cursor.epoch, 3)
+        self.assertEqual((len(first), len(second)), (4, 4))
+        self.assertNotEqual(first, second)
+
+    def test_finish_epoch_closes_the_open_window(self):
+        units = even_units()
+        cursor = units.cursor()
+        cursor.next_batch()
+        self.assertEqual(len(units.open), 2)
+        cursor.finish_epoch()
+        self.assertEqual(units.open, set())
+        self.assertEqual((cursor.epoch, cursor.progress()[0]), (2, 0))
+
+    def test_progress_counts_across_windows(self):
+        cursor = even_units(4).cursor()
+        for _ in range(7):
+            cursor.next_batch()
+        self.assertEqual(cursor.progress()[0], 14)
+
+    def test_fewer_units_than_ranks_is_a_configuration_error(self):
+        with self.assertRaisesRegex(ValueError, "3 unit\\(s\\), fewer than the 4 ranks"):
+            even_units(3).cursor(dp_size=4, dp_rank=0)
+
+    def test_the_samples_of_a_rank_cannot_be_listed(self):
+        with self.assertRaisesRegex(RuntimeError, "a window at a time"):
+            even_units().cursor().rank_share()
+
+
+class TestWindowedLength(unittest.TestCase):
+    def test_length_needs_an_estimate(self):
+        cursor = even_units().cursor()
+        cursor.samples_per_unit = None
+        with self.assertRaisesRegex(RuntimeError, "no estimate"):
+            len(cursor)
+
+    def test_the_first_window_is_measured_and_stays_open_for_training(self):
+        units = Units([{"64x64": 5}] * 8)
+        cursor = units.cursor(window=4)
+        self.assertEqual(cursor.measure_samples_per_unit(), 5.0)
+        opened = list(units.opened)
+        self.assertEqual(len(opened), 4)
+        cursor.next_batch()
+        self.assertEqual(units.opened, opened)
+        # A rank with fewer units than the window averages over the units it has.
+        self.assertEqual(Units([{"64x64": 5}] * 3).cursor(window=4).measure_samples_per_unit(), 5.0)
+
+    def test_ranks_given_one_estimate_plan_the_same_number_of_batches(self):
+        lengths = []
+        for rank in range(2):
+            cursor = even_units(8).cursor(dp_size=2, dp_rank=rank, batch_size=4)
+            cursor.samples_per_unit = 5.5
+            lengths.append(len(cursor))
+        self.assertEqual(lengths, [6, 6])
+        self.assertEqual(len(even_units(8).cursor(batch_size=4, repeats=1)), 24)
+
+    def test_progress_never_reports_more_consumed_than_total(self):
+        cursor = even_units(4).cursor()
+        cursor.samples_per_unit = 1.0
+        for _ in range(5):
+            cursor.next_batch()
+        self.assertEqual(cursor.progress(), (10, 10))
+
+
+class TestWindowedState(unittest.TestCase):
+    def _resumed(self, state, units=None, **overrides):
+        cursor = (units or even_units()).cursor(**overrides)
+        cursor.load_state(json.loads(json.dumps(state)), allow_batch_size_change=False)
+        return cursor
+
+    def test_resume_at_every_position_yields_the_rest_of_the_epoch(self):
+        expected = drain(even_units().cursor())
+        for position in range(len(expected) + 1):
+            cursor = even_units().cursor()
+            for _ in range(position):
+                cursor.next_batch()
+            units = even_units()
+            resumed = self._resumed(cursor.state(), units)
+            # Each pool continues where it stopped; the pools of a window take turns in a new order.
+            self.assertEqual(resumed.progress(), cursor.progress())
+            rest = drain(resumed)
+            self.assertEqual(per_bucket(rest), per_bucket(expected[position:]), f"position {position}")
+            self.assertEqual(units.open, set())
+            self.assertEqual(resumed.epoch, 2)
+
+    def test_resume_reopens_only_the_saved_window(self):
+        cursor = even_units().cursor()
+        for _ in range(8):
+            cursor.next_batch()
+        units = even_units()
+        self._resumed(cursor.state(), units)
+        self.assertEqual({unit for unit, _epoch in units.opened}, {unit for unit in cursor._groups[cursor._group]})
+
+    def test_resume_closes_a_window_opened_before_it(self):
+        cursor = even_units().cursor()
+        drain(cursor)
+        cursor.next_batch()
+        units = even_units()
+        resumed = units.cursor()
+        resumed.measure_samples_per_unit()
+        resumed.load_state(cursor.state(), allow_batch_size_change=False)
+        self.assertEqual(units.open, set(cursor._groups[0]))
+
+    def test_resume_keeps_the_epoch_and_the_saved_seed(self):
+        cursor = even_units().cursor(seed=1234)
+        drain(cursor)
+        cursor.next_batch()
+        resumed = self._resumed(cursor.state(), seed=99)
+        self.assertEqual((resumed.epoch, resumed.seed), (2, 1234))
+        self.assertEqual(per_bucket(drain(resumed)), per_bucket(drain(cursor)))
+
+    def test_a_window_whose_samples_changed_starts_over(self):
+        cursor = even_units().cursor()
+        for _ in range(2):
+            cursor.next_batch()
+        state = cursor.state()
+        changed = Units([{"64x64": 4, "96x64": 2, "64x96": 1} for _ in range(7)])
+        with patch("simpletuner.helpers.data_backend.cursor.logger") as logger:
+            resumed = self._resumed(state, changed)
+        self.assertIn("held 12 samples then and hold 14 now", logger.warning.call_args.args[0])
+        self.assertEqual(resumed.progress()[0], 0)
+        window = {f"unit{unit}" for unit in cursor._groups[0]}
+        self.assertEqual({unit_of(ref) for ref in samples([resumed.next_batch() for _ in range(7)])}, window)
+        self.assertNotIn(unit_of(resumed.next_batch()[1][0]), window)
+
+    def test_old_format_state_is_refused(self):
+        state = even_units().cursor().state()
+        del state["format"]
+        with self.assertRaisesRegex(ValueError, "older release"):
+            self._resumed(state)
+
+    def test_changed_layout_is_refused(self):
+        state = even_units().cursor(dp_size=2, dp_rank=1).state()
+        for overrides in (dict(dp_size=2, dp_rank=0), dict(dp_size=2, dp_rank=1, window=3), dict(repeats=1)):
+            with self.assertRaisesRegex(ValueError, "different dataset layout"):
+                self._resumed(state, **overrides)
+        with self.assertRaisesRegex(ValueError, "different dataset layout.*units=7.*units=8"):
+            self._resumed(state, even_units(8), dp_size=2, dp_rank=1)
+
+    def test_a_state_from_a_dataset_read_whole_is_refused_and_the_reverse(self):
+        whole = make_cursor(make_buckets(b1_0=8))
+        windowed = even_units().cursor()
+        with self.assertRaisesRegex(ValueError, "different dataset layout"):
+            self._resumed(whole.state())
+        with self.assertRaisesRegex(ValueError, "different dataset layout"):
+            whole.load_state(windowed.state(), allow_batch_size_change=False)
+
+    def test_changed_batch_size_needs_the_override(self):
+        state = even_units().cursor().state()
+        with self.assertRaisesRegex(ValueError, "checkpoint batch_size=2 does not match current batch_size=3"):
+            self._resumed(state, batch_size=3)
+
+    def test_changed_batch_size_continues_with_the_unconsumed_samples(self):
+        cursor = even_units(4).cursor()
+        consumed = samples([cursor.next_batch() for _ in range(3)])
+        resumed = even_units(4).cursor(batch_size=3)
+        with patch("simpletuner.helpers.data_backend.cursor.logger") as logger:
+            resumed.load_state(cursor.state(), allow_batch_size_change=True)
+        self.assertIn("Proceeding because override is set", logger.warning.call_args.args[0])
+        rest = set(samples(drain(resumed)))
+        self.assertEqual(rest, set(even_units(4).samples()) - set(consumed))
