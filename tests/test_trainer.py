@@ -2401,7 +2401,7 @@ class TestTrainer(unittest.TestCase):
         mock_get_data_backends.return_value = {
             "train": {
                 "config": {},
-                "metadata_backend": [object()] * 10,
+                "sampler": [object()] * 10,
             }
         }
 

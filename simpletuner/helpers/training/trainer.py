@@ -3847,10 +3847,7 @@ class Trainer:
                     ) from exc
             if probability_value <= 0:
                 continue
-            try:
-                dataset_batches = len(backend["metadata_backend"] if "metadata_backend" in backend else [])
-            except Exception:
-                dataset_batches = 0
+            dataset_batches = len(backend["sampler"])
             total_num_batches += dataset_batches
 
             schedule = StateTracker.get_dataset_schedule(backend_id) or {}
@@ -3887,10 +3884,7 @@ class Trainer:
                     probability_value = 0.0
             if probability_value <= 0:
                 continue
-            try:
-                dataset_batches = len(backend["metadata_backend"] if "metadata_backend" in backend else [])
-            except Exception:
-                dataset_batches = 0
+            dataset_batches = len(backend["sampler"])
             schedule = StateTracker.get_dataset_schedule(backend_id) or {}
             start_epoch = normalize_start_epoch(schedule.get("start_epoch", backend_config.get("start_epoch", 1)))
             # Accumulate batches by start_epoch

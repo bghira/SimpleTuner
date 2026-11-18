@@ -5,6 +5,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import torch
@@ -41,6 +42,7 @@ def _configure_worker(rank, port, root):
 
     from simpletuner.helpers.data_backend.factory import FactoryRegistry
     from simpletuner.helpers.training.state_tracker import StateTracker
+    from simpletuner.helpers.training.trainer import Trainer
 
     torch.set_default_device("cpu")
 
@@ -130,6 +132,21 @@ def _configure_worker(rank, port, root):
             "buckets": metadata_backend.aspect_ratio_bucket_indices,
             "read_only": metadata_backend.read_only,
         }
+    trainer = object.__new__(Trainer)
+    trainer.distiller = None
+    trainer.lr_scheduler = None
+    trainer.accelerator = accelerator
+    trainer.config = SimpleNamespace(
+        distillation_method=None,
+        gradient_accumulation_steps=1,
+        max_train_steps=0,
+        num_train_epochs=2,
+        strict_epoch_limit=False,
+        train_batch_size=2,
+    )
+    trainer._recalculate_training_steps()
+    report["steps_per_epoch"] = trainer.config.num_update_steps_per_epoch
+    report["max_train_steps"] = trainer.config.max_train_steps
     Path(root, f"report-{rank}.json").write_text(json.dumps(report))
     accelerator.wait_for_everyone()
     accelerator.end_training()
@@ -180,6 +197,9 @@ class TestDistributedDatasetConfiguration(unittest.TestCase):
             self.assertEqual({bucket: len(paths) for bucket, paths in train[1]["share"].items()}, {"1.0": 3, "1.5": 2})
             # A rank with the shorter share wraps, so every rank steps the same number of times.
             self.assertEqual([report["batches"] for report in train], [3, 3])
+            # The trainer plans its epochs from those batches; the conditioning dataset adds none.
+            self.assertEqual([report["steps_per_epoch"] for report in reports], [3, 3])
+            self.assertEqual([report["max_train_steps"] for report in reports], [6, 6])
 
             # The conditioning dataset mirrors the training dataset and is whole on every rank.
             mirrored = [path.replace(os.path.join(root, "train"), os.path.join(root, "control"), 1) for path in kept]
