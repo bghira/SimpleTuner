@@ -93,11 +93,15 @@ class DatasetRuntime:
         ) or bool(getattr(StateTracker.get_args(), "i_know_what_i_am_doing", False))
         self.cursor().load_state(state, allow_batch_size_change=allow_batch_size_change)
 
+    def describe(self, sample_ref: str) -> dict[str, Any] | None:
+        """The geometry this dataset holds for a sample, or None when it holds none."""
+        return self.metadata_backend.get_metadata_by_filepath(sample_ref)
+
     def read_samples(self, sample_refs: Sequence[str]) -> list[dict[str, Any]]:
         """Return independent occurrence metadata in request order, including duplicates."""
         records = []
         for sample_ref in sample_refs:
-            metadata = self.metadata_backend.get_metadata_by_filepath(sample_ref)
+            metadata = self.describe(sample_ref)
             record = deepcopy(metadata) if metadata is not None else {}
             record.setdefault("dataset_type", self.config["dataset_type"])
             record["data_backend_id"] = self.id
@@ -182,7 +186,7 @@ class DatasetRuntime:
                 key = key_builder(prompt=caption, default_key=key, metadata=metadata)
             yield {"prompt": caption, "key": key, "metadata": metadata}
 
-            sample_metadata = self.metadata_backend.get_metadata_by_filepath(image_path)
+            sample_metadata = self.describe(image_path)
             if sample_metadata is not None:
                 for index, entity in enumerate(sample_metadata.get("bbox_entities") or []):
                     label = entity.get("label", "")

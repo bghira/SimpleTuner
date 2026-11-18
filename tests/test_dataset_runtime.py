@@ -85,6 +85,12 @@ class DatasetRuntimeTests(unittest.TestCase):
         self.data_backend.list_files.assert_not_called()
         self.data_backend.read_image.assert_not_called()
 
+    def test_describe_returns_the_geometry_the_dataset_holds_or_none(self):
+        self.assertIs(self.runtime.describe("one.jpg"), self.metadata)
+        self.metadata_backend.get_metadata_by_filepath.assert_called_once_with("one.jpg")
+        self.metadata_backend.get_metadata_by_filepath.return_value = None
+        self.assertIsNone(self.runtime.describe("missing.jpg"))
+
     def test_missing_metadata_preserves_sample_identity_for_sampler_validation(self):
         self.metadata_backend.get_metadata_by_filepath.return_value = None
         self.assertEqual(

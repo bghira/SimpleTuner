@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 from PIL import Image
 
+from simpletuner.helpers.data_backend.dataset_runtime import DatasetRuntime
 from simpletuner.helpers.image_manipulation.batched_training_samples import BatchedTrainingSamples
 from simpletuner.helpers.image_manipulation.training_sample import TrainingSample
 from simpletuner.helpers.metadata.utils.duplicator import DatasetDuplicator
@@ -68,6 +69,38 @@ class TestTrainingSample(unittest.TestCase):
         for name, value in self._state_tracker_original_attrs.items():
             setattr(StateTracker, name, value)
         StateTracker.set_args(self._state_tracker_original_args)
+
+    def test_a_sample_built_without_metadata_does_not_look_any_up(self):
+        with patch.object(StateTracker, "get_metadata_by_filepath", side_effect=AssertionError("looked up by path")):
+            sample = TrainingSample(self.test_image, self.data_backend_id, image_path="sample.png")
+        self.assertIsNone(sample.image_metadata)
+        self.assertFalse(sample.valid_metadata)
+
+    def test_from_image_path_takes_the_geometry_its_dataset_holds(self):
+        recorded = {
+            "original_size": (1024, 768),
+            "target_size": (512, 384),
+            "intermediary_size": (512, 384),
+            "crop_coordinates": (0, 0),
+            "aspect_ratio": 1.33,
+        }
+        metadata_backend = MagicMock()
+        metadata_backend.get_metadata_by_filepath.side_effect = lambda path: recorded if path == "recorded.png" else None
+        data_backend = MagicMock()
+        data_backend.read_image.return_value = self.test_image
+        backend = {
+            "id": self.data_backend_id,
+            "data_backend": data_backend,
+            "dataset_runtime": DatasetRuntime(self.data_backend_id, data_backend, metadata_backend, {}),
+        }
+        with patch.object(StateTracker, "data_backends", {self.data_backend_id: backend}):
+            StateTracker.get_data_backend = lambda _id: backend
+            recorded_sample = TrainingSample.from_image_path("recorded.png", self.data_backend_id)
+            new_sample = TrainingSample.from_image_path("new.png", self.data_backend_id)
+        self.assertTrue(recorded_sample.valid_metadata)
+        self.assertEqual(recorded_sample.target_size, (512, 384))
+        self.assertIsNone(new_sample.image_metadata)
+        self.assertFalse(new_sample.valid_metadata)
 
     def test_batched_images_match_original_sample_preparation(self):
         pixels = np.random.default_rng(42).integers(0, 256, (150, 100, 3), dtype=np.uint8)

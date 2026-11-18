@@ -54,9 +54,7 @@ class TrainingSample:
         self.original_size = None
         self.conditioning_type = conditioning_type
         self.data_backend_id = data_backend_id
-        self.image_metadata = (
-            image_metadata if image_metadata else StateTracker.get_metadata_by_filepath(image_path, data_backend_id)
-        )
+        self.image_metadata = image_metadata
         if isinstance(image, np.ndarray):
             if len(image.shape) == 4:
                 logger.debug(f"Received 4D Shape: {image.shape}")
@@ -141,7 +139,12 @@ class TrainingSample:
     def from_image_path(image_path: str, data_backend_id: str):
         data_backend = StateTracker.get_data_backend(data_backend_id)
         image = data_backend["data_backend"].read_image(image_path)
-        return TrainingSample(image, data_backend_id, image_path=image_path)
+        return TrainingSample(
+            image,
+            data_backend_id,
+            image_metadata=StateTracker.get_dataset(data_backend_id).describe(image_path),
+            image_path=image_path,
+        )
 
     @staticmethod
     def _path_is_within(path: str, root: str) -> bool:
