@@ -64,20 +64,44 @@ class TestVaeCacheTraversal(unittest.TestCase):
         cache.id = "ondemand"
         cache.vae_cache_ondemand = True
         cache.cache_data_backend = Mock()
-        cache.cache_data_backend.exists.return_value = False
+        cache.cache_data_backend.read_cached_tensors.side_effect = lambda keys: [None for _ in keys]
         cache.generate_vae_cache_filename = lambda ref: (f"vae/{ref}.pt", "unused")
         cache._read_from_storage_concurrently = Mock(
             side_effect=[iter([("b", 2), ("a", 1), ("a", 3)]), iter([("b", 2), ("a", 1)])]
         )
-        cache._process_images_in_batch = Mock()
-        cache._encode_images_in_batch = Mock()
-        cache._write_latents_in_batch = Mock(return_value=[10, 20, 30])
+        cache._process_images_in_batch = Mock(return_value=[])
+        cache._encode_images_in_batch = Mock(
+            return_value=[("vae/b.pt", "b", 20), ("vae/a.pt", "a", 10), ("vae/a.pt", "a", 30)]
+        )
+        cache._write_latents_in_batch = Mock(side_effect=lambda entries: [value for _, _, value in entries])
 
         self.assertEqual(cache.encode_images([None, None, None], ["a", "b", "a"]), [10, 20, 30])
         cache._process_images_in_batch.assert_called_once_with(["a", "b", "a"], [1, 2, 3], disable_queue=True)
         with self.assertRaisesRegex(OSError, "Dataset ondemand could not read the requested image a"):
             cache.encode_images([None, None, None], ["a", "b", "a"])
         self.assertEqual(cache._process_images_in_batch.call_count, 1)
+
+    def test_ondemand_cache_merges_a_hit_with_new_latents_in_request_order(self):
+        cache = VAECache.__new__(VAECache)
+        cache.id = "ondemand"
+        cache.vae_cache_ondemand = True
+        cache.vae_cache_disable = True
+        cache.cache_data_backend = Mock()
+        cache.cache_data_backend.read_cached_tensors.side_effect = lambda keys: [
+            torch.tensor(42) if key == "vae/warm.pt" else None for key in keys
+        ]
+        cache.generate_vae_cache_filename = lambda ref: (f"vae/{ref}.pt", ref)
+        cache._read_from_storage_concurrently = Mock(return_value=iter([("last", "pixels"), ("first", "pixels")]))
+        cache._process_images_in_batch = Mock(return_value=[])
+        cache._encode_images_in_batch = Mock(
+            return_value=[("vae/last.pt", "last", torch.tensor(3)), ("vae/first.pt", "first", torch.tensor(1))]
+        )
+
+        actual = cache.encode_images([None] * 3, ["first", "warm", "last"])
+        self.assertEqual([value.item() for value in actual], [1, 42, 3])
+        cache.cache_data_backend.read_cached_tensors.assert_called_once_with(["vae/first.pt", "vae/warm.pt", "vae/last.pt"])
+        cache.cache_data_backend.write_batch.assert_not_called()
+        cache._read_from_storage_concurrently.assert_called_once_with(["first", "last"], hide_errors=True)
 
     def test_latent_cache_samples_by_artifact_key_without_advancing_training_rng(self):
         cache = VAECache.__new__(VAECache)

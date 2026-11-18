@@ -1181,6 +1181,26 @@ class VAECache(WebhookMixin):
             return distribution.sample(generator=generators)
         return distribution.sample()
 
+    def _load_or_encode_latents(self, images, filepaths, cache_paths):
+        latents = list(self.cache_data_backend.read_cached_tensors(cache_paths))
+        missing = [index for index, (_, latent) in enumerate(zip(cache_paths, latents, strict=True)) if latent is None]
+        if not missing:
+            return latents
+
+        pixels = [(images[i], filepaths[i], None, False) for i in missing if images[i] is not None]
+        image_refs = [filepaths[i] for i in missing if images[i] is None]
+        if image_refs:
+            payloads = self._read_from_storage_concurrently(image_refs, hide_errors=True)
+            image_data = list(ordered_sample_payloads(self.id, image_refs, payloads))
+            pixels.extend(self._process_images_in_batch(image_refs, image_data, disable_queue=True))
+        encoded = self._encode_images_in_batch(image_pixel_values=pixels, disable_queue=True) or []
+        written = self._write_latents_in_batch(encoded)
+        outputs = ((ref, latent) for (_, ref, _), latent in zip(encoded, written, strict=True))
+        ordered = ordered_sample_payloads(self.id, (filepaths[i] for i in missing), outputs)
+        for index, latent in zip(missing, ordered, strict=True):
+            latents[index] = latent
+        return latents
+
     def encode_images(self, images, filepaths, load_from_cache=True):
         # images must be same dimension
         # if load_from_cache=True and entry not found, throws exception
@@ -1189,54 +1209,25 @@ class VAECache(WebhookMixin):
             raise ValueError("Mismatch between number of images and filepaths.")
 
         full_filenames = [self.generate_vae_cache_filename(filepath)[0] for filepath in filepaths]
+        if load_from_cache and self.vae_cache_ondemand:
+            return self._load_or_encode_latents(images, filepaths, full_filenames)
 
-        uncached_images = []
         uncached_image_indices = [
-            i for i, filename in enumerate(full_filenames) if not self.cache_data_backend.exists(filename)
+            i
+            for i, filename in enumerate(full_filenames)
+            if not load_from_cache or not self.cache_data_backend.exists(filename)
         ]
-        uncached_image_paths = [filepaths[i] for i, filename in enumerate(full_filenames) if i in uncached_image_indices]
-
-        missing_images = [i for i, image in enumerate(images) if i in uncached_image_indices and image is None]
-        missing_image_pixel_values = []
-        written_latents = []
-        if len(missing_images) > 0 and self.vae_cache_ondemand:
-            missing_image_paths = [filepaths[i] for i in missing_images]
-            returned = self._read_from_storage_concurrently(missing_image_paths, hide_errors=True)
-            missing_image_data = list(ordered_sample_payloads(self.id, missing_image_paths, returned))
-            missing_image_pixel_values = self._process_images_in_batch(
-                missing_image_paths, missing_image_data, disable_queue=True
-            )
-            missing_image_vae_outputs = self._encode_images_in_batch(
-                image_pixel_values=missing_image_pixel_values, disable_queue=True
-            )
-            written_latents = self._write_latents_in_batch(missing_image_vae_outputs)
-            if len(written_latents) == len(images):
-                return written_latents
-
-        if len(uncached_image_indices) > 0:
-            uncached_images = [images[i] for i in uncached_image_indices]
-        elif len(missing_images) > 0 and len(missing_image_pixel_values) > 0:
-            uncached_images = []
-            for i in uncached_image_indices:
-                if images[i] is not None:
-                    uncached_images.append(images[i])
-                elif i in missing_image_pixel_values:
-                    uncached_images.append(missing_image_pixel_values[i])
-
-        if len(uncached_image_indices) > 0 and load_from_cache and not self.vae_cache_ondemand:
-            raise Exception(
-                f"(id={self.id}) Some images were not correctly cached during the VAE Cache operations. Ensure --skip_file_discovery=vae is not set.\nProblematic images: {uncached_image_paths}"
-            )
+        if load_from_cache:
+            if uncached_image_indices:
+                uncached_image_paths = [filepaths[i] for i in uncached_image_indices]
+                raise Exception(
+                    f"(id={self.id}) Some images were not correctly cached during the VAE Cache operations. Ensure --skip_file_discovery=vae is not set.\nProblematic images: {uncached_image_paths}"
+                )
+            return [self._read_from_storage(filename) for filename in full_filenames]
 
         latents = []
-        if load_from_cache:
-            latents = [
-                self._read_from_storage(filename, hide_errors=self.vae_cache_ondemand)
-                for filename in full_filenames
-                if filename not in uncached_images
-            ]
-
-        if len(uncached_images) > 0 and (len(images) != len(latents) or len(filepaths) != len(latents)):
+        uncached_images = [images[i] for i in uncached_image_indices]
+        if uncached_images:
             with torch.no_grad():
                 cache_dtype = self._cache_vae_dtype()
                 target_device = self.accelerator.device
@@ -1328,17 +1319,7 @@ class VAECache(WebhookMixin):
                     logger.debug(f"Adding shape: {single_latent.shape}")
                     latents.append(single_latent)
             elif isinstance(latents_uncached, torch.Tensor):
-                cached_idx, uncached_idx = 0, 0
-                for i in range(batch_size):
-                    if i in uncached_image_indices:
-                        # logger.info(
-                        #     f"Adding latent {uncached_idx} of ({len(latents_uncached)}: {latents_uncached})"
-                        # )
-                        latents.append(latents_uncached[uncached_idx])
-                        uncached_idx += 1
-                    else:
-                        latents.append(self._read_from_storage(full_filenames[i]))
-                        cached_idx += 1
+                latents.extend(latents_uncached)
             else:
                 raise ValueError(f"Unknown handler for latent encoding type: {type(latents_uncached)}")
         return latents
@@ -1346,16 +1327,10 @@ class VAECache(WebhookMixin):
     def _write_latents_in_batch(self, input_latents: list = None):
         # Pull the 'filepaths' and 'latents' from self.write_queue
         filepaths, latents = [], []
-        if input_latents is not None:
-            qlen = len(input_latents)
-        else:
-            qlen = self.write_queue.qsize()
-
-        for _ in range(0, qlen):
-            if input_latents:
-                output_file, filepath, latent_vector = input_latents.pop()
-            else:
-                output_file, filepath, latent_vector = self.write_queue.get()
+        queued = (
+            input_latents if input_latents is not None else (self.write_queue.get() for _ in range(self.write_queue.qsize()))
+        )
+        for output_file, _, latent_vector in queued:
 
             if not self.vae_cache_disable:
                 file_extension = os.path.splitext(output_file)[1]
@@ -1849,7 +1824,7 @@ class VAECache(WebhookMixin):
                     )
                     if latents is None:
                         raise ValueError("Received None from encode_images")
-                    for (index, (_, filepath, output_file)), latent_vector in zip(encode_group, latents):
+                    for (index, (_, filepath, output_file)), latent_vector in zip(encode_group, latents, strict=True):
                         if latent_vector is None:
                             raise ValueError(f"Latent vector is None for filepath {filepath}")
                         encoded_batch.append((index, (output_file, filepath, latent_vector)))
