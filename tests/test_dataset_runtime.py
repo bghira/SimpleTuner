@@ -202,7 +202,7 @@ class DatasetRuntimeTests(unittest.TestCase):
                 sampler.dataset_runtime = self.runtime
                 sampler.data_backend = self.data_backend
                 sampler.source_dataset_id = source_id
-                sampler._val_master_list = ["sample.jpg"]
+                sampler.metadata_backend = SimpleNamespace(aspect_ratio_bucket_indices={"1.0": ["sample.jpg"]})
                 sampler._val_cursor = 0
                 sampler.logger = Mock()
                 sampler.debug_log = Mock()

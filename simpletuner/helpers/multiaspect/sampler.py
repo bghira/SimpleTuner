@@ -1,6 +1,8 @@
+import heapq
 import logging
 import os
 import random
+from itertools import chain
 
 import numpy as np
 import torch
@@ -64,7 +66,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         )
 
         self._val_cursor = 0
-        self._val_master_list = []
         self.conditioning_type = conditioning_type
         self.is_regularisation_data = is_regularisation_data
 
@@ -93,7 +94,6 @@ class MultiAspectSampler(torch.utils.data.Sampler):
         self.instance_prompt = dataset_runtime.config["instance_prompt"]
         self.disable_multiline_split = dataset_runtime.config["disable_multiline_split"]
         self.state_manager = BucketStateManager(self.id)
-        self._val_master_list = sorted(sum(self.metadata_backend.aspect_ratio_bucket_indices.values(), []))
 
     @property
     def cursor(self) -> DatasetCursor:
@@ -146,27 +146,7 @@ class MultiAspectSampler(torch.utils.data.Sampler):
             list: a list of tuples(validation_shortname, validation_prompt, validation_sample)
         """
         results = []
-        seen_paths = set()
-
-        # Don't try to get more images than we have
-        available_count = len(self._val_master_list)
-        actual_batch_size = min(batch_size, available_count)
-
-        if actual_batch_size < batch_size:
-            self.logger.warning(
-                f"Requested {batch_size} validation images but only {available_count} available. "
-                f"Returning {actual_batch_size} unique images."
-            )
-
-        for img_idx in range(actual_batch_size):
-            image_path = self._yield_sequential_image()
-
-            # Skip if we've already seen this path (in case of wraparound)
-            if image_path in seen_paths:
-                continue
-
-            seen_paths.add(image_path)
-
+        for img_idx, image_path in enumerate(self._next_validation_paths(batch_size)):
             image_data = self.data_backend.read_image(image_path)
             image_metadata = self.dataset_runtime.read_samples([image_path])[0]
             training_sample = TrainingSample(
@@ -198,19 +178,26 @@ class MultiAspectSampler(torch.utils.data.Sampler):
 
         return results
 
-    def _yield_sequential_image(self):
+    def _next_validation_paths(self, count: int) -> list[str]:
         """
-        Always return the *next* image in a fixed list, wrapping around when
-        we reach the end.  Nothing is random, so the same N calls → same N
-        paths every run.
+        The next `count` samples of the dataset in path order, continuing where the previous call
+        stopped and wrapping at the end. Nothing is random and every rank holds the whole dataset,
+        so the same calls return the same paths on every rank and in every run.
         """
-        if self._val_cursor >= len(self._val_master_list):
-            self._val_cursor = 0
-            if len(self._val_master_list) == 0:
-                raise MultiDatasetExhausted("No validation images available. Please check your dataset.")
-        path = self._val_master_list[self._val_cursor]
-        self._val_cursor = (self._val_cursor + 1) % len(self._val_master_list)
-        return path
+        buckets = self.metadata_backend.aspect_ratio_bucket_indices.values()
+        available = sum(len(bucket) for bucket in buckets)
+        if count > available:
+            self.logger.warning(
+                f"Requested {count} validation images but only {available} available. "
+                f"Returning {available} unique images."
+            )
+            count = available
+        if count == 0:
+            return []
+        start = self._val_cursor % available
+        ordered = heapq.nsmallest(min(available, start + count), chain.from_iterable(buckets))
+        self._val_cursor = (start + count) % available
+        return [ordered[(start + offset) % len(ordered)] for offset in range(count)]
 
     def yield_single_image(self, filepath: str):
         """

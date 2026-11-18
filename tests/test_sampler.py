@@ -94,6 +94,30 @@ class TestMultiAspectSampler(unittest.TestCase):
         self.assertIn("- Target frame count: 39", overview)
         self.assertIn("- FPS: unknown", overview)
 
+    def test_validation_paths_are_the_first_of_the_whole_dataset_in_path_order(self):
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.5": ["c", "a", "e"], "1.0": ["d", "b"]}
+        self.assertEqual(self.sampler._next_validation_paths(2), ["a", "b"])
+        # A later request continues after the previous one and wraps at the end of the dataset.
+        self.assertEqual(self.sampler._next_validation_paths(2), ["c", "d"])
+        self.assertEqual(self.sampler._next_validation_paths(2), ["e", "a"])
+
+    def test_validation_paths_follow_the_dataset_as_it_is_when_validation_asks(self):
+        self.assertEqual(self.sampler._next_validation_paths(1), ["image1"])
+        self.metadata_backend.aspect_ratio_bucket_indices["1.0"].remove("image2")
+        self.assertEqual(self.sampler._next_validation_paths(2), ["image3", "image4"])
+
+    def test_validation_returns_each_sample_once_when_asked_for_more_than_the_dataset_holds(self):
+        self.sampler.logger = MagicMock()
+        self.assertEqual(self.sampler._next_validation_paths(9), ["image1", "image2", "image3", "image4"])
+        self.sampler.logger.warning.assert_called_once()
+        self.assertIn("only 4 available", self.sampler.logger.warning.call_args.args[0])
+
+    def test_validation_of_a_dataset_without_samples_returns_nothing(self):
+        self.metadata_backend.aspect_ratio_bucket_indices = {"1.0": []}
+        self.sampler.logger = MagicMock()
+        self.assertEqual(self.sampler.retrieve_validation_set(2), [])
+        self.assertIn("only 0 available", self.sampler.logger.warning.call_args.args[0])
+
     def test_save_state(self):
         with patch.object(self.sampler.state_manager, "save_state") as mock_save_state:
             self.sampler.save_state(self.state_path)
